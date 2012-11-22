@@ -95,7 +95,7 @@ module BasicServer
     request.headers = Parser.parse_header(raw_header)
     
     if isequal(request.method, "POST") && count(requests) > 0
-      request.data = shift(requests)
+      request.data = Parser.parse_query(shift(requests))
     end
     
     not_found = "HTTP/1.1 404 Not found\r\n\r\nNot found\n"
@@ -113,7 +113,7 @@ module BasicServer
     else
       return internal_error
     end
-  end
-  
+    
+  end#handle_request
   
 end

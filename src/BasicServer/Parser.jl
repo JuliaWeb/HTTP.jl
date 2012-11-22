@@ -61,6 +61,74 @@ module Parser
     return vec([method, path, version])
   end
   
+  # def parse_query(str)
+  #   query = Hash.new
+  #   if str
+  #     str.split(%r[&;]/).each{|x|
+  #       next if x.empty?
+  #       key, val = x.split(%r=/,2)
+  #       key = unescape_form(key)
+  #       val = unescape_form(val.to_s)
+  #       val = FormData.new(val)
+  #       val.name = key
+  #       if query.has_key?(key)
+  #         query[key].append_data(val)
+  #         next
+  #       end
+  #       query[key] = val
+  #     }
+  #   end
+  #   query
+  # end
+  
+  function parse_query(str)
+    query = Dict{String,Any}()
+    if isa(str, String)
+      str = strip(str)
+      parts = split(str, r"[&;]")
+      for part in parts
+        part = strip(part)
+        if isempty(part) next; end
+        
+        key, value = split(part, "=", 2)
+        key   = unescape_form(key)
+        value = unescape_form(value)
+        if has(query, key)
+          push(query[key], value)
+        else
+          query[key] = [value]
+        end
+      end
+    end
+    return query
+  end
+  
+  #function replace(str, _find, replace)
+  #  return join(split(str, _find), replace)
+  #end
+  
+  escaped_regex = r"%([0-9a-fA-F]{2})"
+  function unescape(str)
+    # def _unescape(str, regex) str.gsub(regex){ $1.hex.chr } end
+    for m in each_match(escaped_regex, str)
+      for capture in m.captures
+        rep = string(char(parse_int(capture, 16)))
+        str = replace(str, "%"+capture, rep)
+      end
+    end
+    return str
+  end
+  
+  function unescape_form(str)
+    str = replace(str, "+", " ")
+    return unescape(str)
+  end
+  
   export parse_header, parse_request_line
   
 end
+
+#post_data = "Name=Jonathan+Doe&Age=23&Formula=a+%2B+b+%3D%3D+13%25%21"
+#data = Parser.parse_query(post_data)
+#println(data)
+
