@@ -110,10 +110,10 @@ module HTTP
         return
       else
         method = string(m.captures[1])
-        uri = string(m.captures[2])
+        path = string(m.captures[2])
         version = string((length(m.captures) > 2 && m.captures[3] != nothing) ? m.captures[3] : "0.9")
       end
-      return vec([method, uri, version])
+      return vec([method, path, version])
     end
   
     export parse_header, parse_request_line
@@ -123,7 +123,7 @@ module HTTP
   
   type Request
     method::String
-    uri::String
+    path::String
     headers::Dict{String,Any}
     version::String
     data::String
@@ -137,15 +137,16 @@ module HTTP
   
 end
 
+# Eventually we'll be able to do load("basic_server.jl") but for now it has
+# to be defined here.
 module BasicServer
   using Base
   import Base.+
   +(a::ASCIIString,b::ASCIIString) = strcat(a, b)
   
   using HTTP
-  println(HTTP.Request)
   
-  function bind(port)
+  function bind(port, app)
     println("Opening...")
     
     sockfd = ccall(:open_any_tcp_port, Int32, (Ptr{Int16},), [int16(port)])
@@ -194,7 +195,7 @@ module BasicServer
       #response_data = handle_request(strip(header))
       response_data = ""
       while length(requests) > 0
-        resp = handle_request(requests)
+        resp = handle_request(requests, app)
         if resp != nothing
           response_data = response_data + resp
         end
@@ -210,7 +211,7 @@ module BasicServer
     
   end#bind
   
-  function handle_request(requests)
+  function handle_request(requests, app)
     if length(requests) == 0
       return nothing
     end
@@ -220,14 +221,14 @@ module BasicServer
       return nothing
     end
     
-    
     request = HTTP.Request()
+    response = HTTP.Response()
     
     request_line, raw_header = split(raw_request, "\n", 2)
     
-    method, uri, version = HTTP.Parse.parse_request_line(request_line)
+    method, path, version = HTTP.Parse.parse_request_line(request_line)
     request.method = method
-    request.uri = uri
+    request.path = path
     request.version= version
     
     request.headers = HTTP.Parse.parse_header(raw_header)
@@ -236,16 +237,33 @@ module BasicServer
       request.data = shift(requests)
     end
     
-    return "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\ntest\r\n"
+    not_found = "HTTP/1.1 404 Not found\r\n\r\nNot found\n"
+    internal_error = "HTTP/1.1 500 Server error\r\n\r\nInternal server error (no app)\n"
+    
+    if isa(app, Function)
+      ret = app(request, response)
+      if isequal(ret, nothing)
+        return not_found
+      else
+        status = string(ret[1])
+        body = string(ret[2])
+        return "HTTP/1.1 "+status+"\r\n\r\n"+body
+      end
+    else
+      return internal_error
+    end
   end
-  
-  app = nothing
-  function set_app(a) app = a; end
   
   
 end
 
-#println(HTTP.parse_header("Content-Type: text/plain\nHost: esherido.com"))
 
+function test_app(req, res)
+  if isequal(req.path, "/")
+    return {200, "Body\n"}
+  else
+    return nothing
+  end
+end
 
-
+BasicServer.bind(8000, test_app)
