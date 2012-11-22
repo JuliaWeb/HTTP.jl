@@ -7,11 +7,11 @@ module BasicServer
   
   load("HTTP/src/BasicServer/Parser")
   
-  function bind(port, app)
-    println("Opening...")
+  function bind(port, app, debug)
+    #println("Opening...")
     
     sockfd = ccall(:open_any_tcp_port, Int32, (Ptr{Int16},), [int16(port)])
-    println("sockfd: "+string(sockfd))
+    #println("sockfd: "+string(sockfd))
     if sockfd == -1
       println("Error opening")
       return
@@ -20,12 +20,12 @@ module BasicServer
     header = ""
     lastline = ""
     
-    println("Serving...")
+    if debug; println("Serving...") end
     
     iter = 0
     
     while true
-      println("iter: "+string(iter))
+      #println("iter: "+string(iter))
       
       connectfd = ccall(:accept, Int32, (Int32, Ptr{Void}, Ptr{Void}), sockfd, C_NULL, C_NULL)
       if connectfd == -1
@@ -71,6 +71,9 @@ module BasicServer
     end
     
   end#bind
+  
+  # Default has debug disabled
+  bind(port, app) = bind(port, app, false)
   
   function handle_request(requests, app)
     if length(requests) == 0

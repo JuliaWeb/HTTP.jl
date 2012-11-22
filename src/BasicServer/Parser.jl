@@ -1,5 +1,10 @@
 module Parser
   using Base
+  import Base.+
+  +(a::ASCIIString,b::ASCIIString) = strcat(a, b)
+  +(a::UTF8String,b::UTF8String) = strcat(a, b)
+  
+  #using HTTP
   
   function parse_header(raw::String)
     header = Dict{String, Any}()
@@ -118,17 +123,61 @@ module Parser
     end
     return str
   end
-  
   function unescape_form(str)
     str = replace(str, "+", " ")
     return unescape(str)
   end
   
+  # control+space+delims+unwise+nonascii
+  # control  = (0x0..0x1f).collect{|c| c.chr }.join + "\x7f"
+  # space    = " "
+  # delims   = '<>#%"'
+  # unwise   = '{}|\\^[]`'
+  # nonascii = (0x80..0xff).collect{|c| c.chr }.join
+  # reserved = ';/?:@&=+$,'
+  # unescaped = control+space+delims+unwise+nonascii
+  control_array = convert(Array{Uint8,1}, vec(0:(parse_int("1f", 16))))
+  control = utf8(ascii(control_array)+"\x7f")
+  space = utf8(" ")
+  delims = utf8("%<>\"")
+  unwise   = utf8("{}|\\^`")
+  nonascii_array = convert(Array{Uint8,1}, vec(parse_int("80", 16):(parse_int("ff", 16))))
+  #nonascii = utf8(string(nonascii_array))
+  reserved = utf8(",;/?:@&=+\$![]'*#")
+  # Strings to be escaped
+  # (Delims goes first so '%' gets escaped first.)
+  unescaped = delims + reserved + control + space + unwise# + nonascii
+  unescaped_form = delims + reserved + control + unwise# + nonascii
+  
+  # Escapes chars (listed in second string); also escapes all non-ASCII chars.
+  function escape_with(str, use)
+    chars = split(use, "")
+    
+    for c in chars
+      _char = c[1] # Character string as Char
+      h = hex(int(_char))
+      if strlen(h) < 2
+        h = "0"+h
+      end
+      str = replace(str, c, "%" + h)
+    end
+    
+    for i in nonascii_array
+      str = replace(str, char(i), "%" + hex(i))
+    end
+    
+    return str
+  end
+  
+  function escape(str)
+    return escape_with(str, unescaped)
+  end
+  function escape_form(str)
+    str = escape_with(str, unescaped_form)
+    return replace(str, " ", "+")
+  end
+  
   export parse_header, parse_request_line
+  export unescape, unescape_form, escape, escape_form
   
 end
-
-#post_data = "Name=Jonathan+Doe&Age=23&Formula=a+%2B+b+%3D%3D+13%25%21"
-#data = Parser.parse_query(post_data)
-#println(data)
-
