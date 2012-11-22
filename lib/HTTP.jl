@@ -109,11 +109,11 @@ module HTTP
         throw(strcat("Bad request: ", request_line))
         return
       else
-        method = m.captures[1]
-        uri = m.captures[2]
-        version = (length(m.captures) > 2 ? m.captures[3] : "0.9")
+        method = string(m.captures[1])
+        uri = string(m.captures[2])
+        version = string((length(m.captures) > 2 && m.captures[3] != nothing) ? m.captures[3] : "0.9")
       end
-      return [method, uri, version]
+      return vec([method, uri, version])
     end
   
     export parse_header, parse_request_line
@@ -126,8 +126,24 @@ module HTTP
     uri::String
     headers::Dict{String,Any}
     version::String
+    data::String
   end
-  Request() = Request("", "", Dict{String,Any}(), "")
+  Request() = Request("", "", Dict{String,Any}(), "", "")
+  
+  type Response
+    headers::Dict{String,Any}
+  end
+  Response() = Response(Dict{String,Any}())
+  
+end
+
+module BasicServer
+  using Base
+  import Base.+
+  +(a::ASCIIString,b::ASCIIString) = strcat(a, b)
+  
+  using HTTP
+  println(HTTP.Request)
   
   function bind(port)
     println("Opening...")
@@ -158,18 +174,31 @@ module HTTP
       println("connectfd: "+string(connectfd))
       iostream = fdio(connectfd)
       
+      #raw = readall(iostream)
+      raw = ""
       nb = true
       while nb
         line = readline(iostream)
-        header = header + line
+        raw = raw + line
         if line == "\r\n" || line == "\n"
           nb = false
         end
       end
       
+      parts = split(raw, "\r")
+      raw = join(parts, "")
+      requests = vec(split(raw, "\n\n"))
+      
       #println(header)
       
-      response_data = handle_request(strip(header))
+      #response_data = handle_request(strip(header))
+      response_data = ""
+      while length(requests) > 0
+        resp = handle_request(requests)
+        if resp != nothing
+          response_data = response_data + resp
+        end
+      end
       
       write(iostream, response_data)
       close(iostream)
@@ -181,24 +210,42 @@ module HTTP
     
   end#bind
   
-  function handle_request(raw_request)
-    request = Request()
+  function handle_request(requests)
+    if length(requests) == 0
+      return nothing
+    end
+    
+    raw_request = strip(shift(requests))
+    if strlen(raw_request) == 0
+      return nothing
+    end
+    
+    
+    request = HTTP.Request()
     
     request_line, raw_header = split(raw_request, "\n", 2)
     
-    method, uri, version = Parse.parse_request_line(request_line)
+    method, uri, version = HTTP.Parse.parse_request_line(request_line)
     request.method = method
     request.uri = uri
     request.version= version
     
-    request.headers = Parse.parse_header(raw_header)
+    request.headers = HTTP.Parse.parse_header(raw_header)
+    
+    if isequal(request.method, "POST") && count(requests) > 0
+      request.data = shift(requests)
+    end
     
     return "HTTP/1.0 200 OK\r\nConnection: close\r\n\r\ntest\r\n"
   end
   
-  export port
+  app = nothing
+  function set_app(a) app = a; end
+  
+  
 end
 
 #println(HTTP.parse_header("Content-Type: text/plain\nHost: esherido.com"))
 
-HTTP.bind(8000)
+
+
