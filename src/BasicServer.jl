@@ -1,7 +1,4 @@
 module BasicServer
-  using Base
-  import Base.+
-  +(a::ASCIIString,b::ASCIIString) = strcat(a, b)
   
   using HTTP
   
@@ -11,7 +8,7 @@ module BasicServer
     #println("Opening...")
     
     sockfd = ccall(:open_any_tcp_port, Int32, (Ptr{Int16},), [int16(port)])
-    #println("sockfd: "+string(sockfd))
+    #println("sockfd: "*string(sockfd))
     if sockfd == -1
       println("Error opening")
       return
@@ -25,7 +22,7 @@ module BasicServer
     iter = 0
     
     while true
-      #println("iter: "+string(iter))
+      #println("iter: "*string(iter))
       
       connectfd = ccall(:accept, Int32, (Int32, Ptr{Void}, Ptr{Void}), sockfd, C_NULL, C_NULL)
       if connectfd == -1
@@ -33,7 +30,7 @@ module BasicServer
         break
       end
       
-      println("connectfd: "+string(connectfd))
+      println("connectfd: "*string(connectfd))
       iostream = fdio(connectfd)
       
       #raw = readall(iostream)
@@ -41,7 +38,7 @@ module BasicServer
       nb = true
       while nb
         line = readline(iostream)
-        raw = raw + line
+        raw = raw * line
         if line == "\r\n" || line == "\n"
           nb = false
         end
@@ -58,7 +55,7 @@ module BasicServer
       while length(requests) > 0
         resp = handle_request(requests, app)
         if resp != nothing
-          response_data = response_data + resp
+          response_data = response_data * resp
         end
       end
       
@@ -89,7 +86,8 @@ module BasicServer
     response = HTTP.Response()
     
     request_line, raw_header = split(raw_request, "\n", 2)
-    
+    @show raw_request
+    @show request_line
     method, path, version = Parser.parse_request_line(request_line)
     request.method = method
     request.path = path
@@ -111,7 +109,7 @@ module BasicServer
       else
         status = string(ret[1])
         body = string(ret[2])
-        return "HTTP/1.1 "+status+"\r\n\r\n"+body
+        return "HTTP/1.1 "*status*"\r\n\r\n"*body
       end
     else
       return internal_error
