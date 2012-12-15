@@ -51,8 +51,10 @@ module Parser
   end
   
   function parse_request_line(request_line)
-    ## m = match(r"^(\S+)\s+(\S+?)(?:\s+HTTP\/(\d+\.\d+))?"m, request_line)
-    m = match(r"^(\S+)\s+(\S+)\s+HTTP\/(\d+\.\d+)"m, request_line)
+    # Reverting to old regex for the non-capturing group because the "HTTP/n.n"
+    # isn't required in older versions of HTTP.
+    m = match(r"^(\S+)\s+(\S+?)(?:\s+HTTP\/(\d+\.\d+))?"m, request_line)
+    # m = match(r"^(\S+)\s+(\S+)\s+HTTP\/(\d+\.\d+)"m, request_line)
     if m == nothing
       throw(strcat("Bad request: ", request_line))
       return
