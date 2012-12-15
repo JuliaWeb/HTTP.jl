@@ -108,10 +108,7 @@ module Parser
     return query
   end
   
-  #function replace(str, _find, replace)
-  #  return join(split(str, _find), replace)
-  #end
-  
+  # Unescaping
   escaped_regex = r"%([0-9a-fA-F]{2})"
   function unescape(str)
     # def _unescape(str, regex) str.gsub(regex){ $1.hex.chr } end
@@ -128,14 +125,7 @@ module Parser
     return unescape(str)
   end
   
-  # control+space+delims+unwise+nonascii
-  # control  = (0x0..0x1f).collect{|c| c.chr }.join + "\x7f"
-  # space    = " "
-  # delims   = '<>#%"'
-  # unwise   = '{}|\\^[]`'
-  # nonascii = (0x80..0xff).collect{|c| c.chr }.join
-  # reserved = ';/?:@&=+$,'
-  # unescaped = control+space+delims+unwise+nonascii
+  # Escaping
   control_array = convert(Array{Uint8,1}, vec(0:(parse_int("1f", 16))))
   control = utf8(ascii(control_array)+"\x7f")
   space = utf8(" ")
