@@ -86,8 +86,7 @@ module BasicServer
     response = HTTP.Response()
     
     request_line, raw_header = split(raw_request, "\n", 2)
-    @show raw_request
-    @show request_line
+    
     method, path, version = Parser.parse_request_line(request_line)
     request.method = method
     request.path = path
