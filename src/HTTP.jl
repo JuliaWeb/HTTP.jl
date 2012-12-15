@@ -48,9 +48,6 @@
 # end
 
 module HTTP
-  using Base
-  import Base.+
-  +(a::ASCIIString,b::ASCIIString) = strcat(a, b)
   
   type Request
     method::String

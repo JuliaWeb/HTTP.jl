@@ -1,8 +1,5 @@
 module Parser
   using Base
-  import Base.+
-  +(a::ASCIIString,b::ASCIIString) = strcat(a, b)
-  +(a::UTF8String,b::UTF8String) = strcat(a, b)
   
   #using HTTP
   
@@ -54,7 +51,10 @@ module Parser
   end
   
   function parse_request_line(request_line)
+    # Reverting to old regex for the non-capturing group because the "HTTP/n.n"
+    # isn't required in older versions of HTTP.
     m = match(r"^(\S+)\s+(\S+?)(?:\s+HTTP\/(\d+\.\d+))?"m, request_line)
+    # m = match(r"^(\S+)\s+(\S+)\s+HTTP\/(\d+\.\d+)"m, request_line)
     if m == nothing
       throw(strcat("Bad request: ", request_line))
       return
@@ -115,7 +115,7 @@ module Parser
     for m in each_match(escaped_regex, str)
       for capture in m.captures
         rep = string(char(parse_int(capture, 16)))
-        str = replace(str, "%"+capture, rep)
+        str = replace(str, "%"*capture, rep)
       end
     end
     return str
@@ -127,7 +127,7 @@ module Parser
   
   # Escaping
   control_array = convert(Array{Uint8,1}, vec(0:(parse_int("1f", 16))))
-  control = utf8(ascii(control_array)+"\x7f")
+  control = utf8(ascii(control_array)*"\x7f")
   space = utf8(" ")
   delims = utf8("%<>\"")
   unwise   = utf8("{}|\\^`")
@@ -136,8 +136,8 @@ module Parser
   reserved = utf8(",;/?:@&=+\$![]'*#")
   # Strings to be escaped
   # (Delims goes first so '%' gets escaped first.)
-  unescaped = delims + reserved + control + space + unwise# + nonascii
-  unescaped_form = delims + reserved + control + unwise# + nonascii
+  unescaped = delims * reserved * control * space * unwise# * nonascii
+  unescaped_form = delims * reserved * control * unwise# * nonascii
   
   # Escapes chars (listed in second string); also escapes all non-ASCII chars.
   function escape_with(str, use)
@@ -147,13 +147,13 @@ module Parser
       _char = c[1] # Character string as Char
       h = hex(int(_char))
       if strlen(h) < 2
-        h = "0"+h
+        h = "0"*h
       end
-      str = replace(str, c, "%" + h)
+      str = replace(str, c, "%" * h)
     end
     
     for i in nonascii_array
-      str = replace(str, char(i), "%" + hex(i))
+      str = replace(str, char(i), "%" * hex(i))
     end
     
     return str
