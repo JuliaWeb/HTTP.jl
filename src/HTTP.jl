@@ -65,4 +65,4 @@ module HTTP
   
 end
 
-require("HTTP/src/BasicServer")
+include("BasicServer.jl")

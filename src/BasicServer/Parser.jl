@@ -146,7 +146,7 @@ module Parser
     for c in chars
       _char = c[1] # Character string as Char
       h = hex(int(_char))
-      if strlen(h) < 2
+      if length(h) < 2
         h = "0"*h
       end
       str = replace(str, c, "%" * h)
