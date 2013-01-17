@@ -1,6 +1,3 @@
-
-require("stream")
-
 module BasicServer
   
   using HTTP
