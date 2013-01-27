@@ -46,13 +46,14 @@ module BasicServer
   end#accept_handler
   
   function bind(port, app, debug)
-    addr = Base.Ip4Addr(uint16(port),uint32(0))
+    addr = Base.InetAddr(Base.IPv4(uint32(0)), uint16(port)) # host, port
     socket = TcpSocket()
-    if Base.bind(socket, addr) != 0
+    if Base.bind(socket, addr) != true
       error("bind: could not bind to socket")
+      return
     end
     socket.ccb = (handle, status) -> accept_handler(handle, status, app, debug)
-    if listen(socket) != 0
+    if listen(socket) != true
       error("listen: could not listen on socket")
     end
     socket.open = true
