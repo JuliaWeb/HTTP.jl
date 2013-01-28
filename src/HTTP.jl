@@ -53,10 +53,11 @@ module HTTP
     method::String
     path::String
     headers::Dict{String,Any}
+    cookies::Dict{String,Any}
     version::String
     data::String
   end
-  Request() = Request("", "", Dict{String,Any}(), "", "")
+  Request() = Request("", "", Dict{String,Any}(), Dict{String,Any}(), "", "")
   
   type Response
     headers::Dict{String,Any}

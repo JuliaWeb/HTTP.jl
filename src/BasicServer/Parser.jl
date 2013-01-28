@@ -1,7 +1,7 @@
 module Parser
   using Base
   
-  #using HTTP
+  # PARSING
   
   function parse_header(raw::String)
     header = Dict{String, Any}()
@@ -43,8 +43,6 @@ module Parser
       if matched == false
         throw(strcat("Bad header: ", line))
       end
-       
-      
     end
     
     return header
@@ -86,11 +84,11 @@ module Parser
   #   query
   # end
   
-  function parse_query(str)
+  function parse_query(str, separators)
     query = Dict{String,Any}()
     if isa(str, String)
       str = strip(str)
-      parts = split(str, r"[&;]")
+      parts = split(str, separators)
       for part in parts
         part = strip(part)
         if isempty(part) next; end
@@ -107,6 +105,20 @@ module Parser
     end
     return query
   end
+  parse_query(str) = parse_query(str, r"[&;]")
+  
+  function parse_cookies(cookie_str)
+    return parse_query(cookie_str, r"[;,]\s*")
+  end
+  
+  # export parse_header, parse_request_line, parse_query, parse_cookies
+  
+  # /PARSING
+  
+  
+  
+  
+  # ESCAPING
   
   # Unescaping
   escaped_regex = r"%([0-9a-fA-F]{2})"
@@ -167,7 +179,6 @@ module Parser
     return replace(str, " ", "+")
   end
   
-  export parse_header, parse_request_line
-  export unescape, unescape_form, escape, escape_form
+  # export unescape, unescape_form, escape, escape_form
   
 end

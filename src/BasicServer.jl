@@ -7,39 +7,58 @@ module BasicServer
   
   function accept_handler(server::TcpSocket, status::Int32, app, debug)
     if status != 0
-      error("Error (", str(status), ")")
+      uv_error("Error (" * string(status) * ")")
     end
     client = TcpSocket()
     err = accept(server, client)
     if err != 0
-      error("accept error: ", _uv_lasterror(globalEventLoop()))
+      uv_error("accept error: " * string(err))
+      return
     end
-    Base.wait_connected(client)
-    # Accept lines until you hit a double-newline
-    raw = ""
-    nb = true
-    while nb
-      #line = readline(iostream)
-      line = Base.readline(client)
-      raw = raw * line
-      if line == "\r\n" || line == "\n"
-        nb = false
-      end
-    end
-    
-    parts = split(raw, "\r")
-    raw = join(parts, "")
-    requests = vec(split(raw, "\n\n"))
-    
-    #response_data = handle_request(strip(header))
     
     response_data = ""
-    while length(requests) > 0
-      resp = handle_request(requests, app)
-      if resp != nothing
-        response_data = response_data * resp
+    try
+      # Accept lines until you hit a double-newline
+      raw = ""
+      nb = true
+      while nb
+        #line = readline(iostream)
+        line = Base.readline(client)
+        raw = raw * line
+        if line == "\r\n" || line == "\n"
+          nb = false
+        end
       end
+    
+      parts = split(raw, "\r")
+      raw = join(parts, "")
+      requests = vec(split(raw, "\n\n"))
+    
+      #response_data = handle_request(strip(header))
+      
+      while length(requests) > 0
+        resp = handle_request(requests, app)
+        if resp != nothing
+          response_data = response_data * resp
+        end
+      end
+    catch e
+      println(e)
+      # TODO: Fix this so it can show a better output
+      # Current output if error happens with no try-catch block:
+      #   
+      #   accept error: -1: resource temporarily unavailable (EAGAIN)
+      #    in uv_error at stream.jl:470
+      #    in accept_handler at /Users/dirk/.julia/HTTP/src/BasicServer.jl:15
+      #    in anonymous at /Users/dirk/.julia/HTTP/src/BasicServer.jl:64
+      #    in _uv_hook_connectioncb at stream.jl:200
+      #    in event_loop at multi.jl:1392
+      #    in bind at /Users/dirk/.julia/HTTP/src/BasicServer.jl:71
+      #    in include_from_node1 at loading.jl:76
+      #    in process_options at client.jl:259
+      #    in _start at client.jl:322
     end
+    
     # Write all the responses and close
     Base.write(client, response_data)
     Base.close(client)
@@ -88,6 +107,9 @@ module BasicServer
     request.version= version
     
     request.headers = Parser.parse_header(raw_header)
+    if has(request.headers, "Cookie")
+      request.cookies = Parser.parse_cookies(join(request.headers["Cookie"], "; "))
+    end
     
     if isequal(request.method, "POST") && count(requests) > 0
       request.data = Parser.parse_query(shift!(requests))

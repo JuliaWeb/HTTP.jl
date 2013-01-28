@@ -2,6 +2,9 @@ require("src/HTTP")
 
 function test_app(req, res)
   if isequal(req.path, "/")
+    
+    println(req.cookies)
+    
     return {200, "Body\n"}
   else
     return nothing
