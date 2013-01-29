@@ -3,7 +3,7 @@ include("BasicServer.jl")
 
 module Ocean
   # """
-  # Fertilize
+  # Fertilizer
   # I'll take bullshit if that's all you got
   # Some fertilizer
   # Fertilizer
