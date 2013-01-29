@@ -65,13 +65,12 @@ module BasicServer
     # Sinatra's pretty log format:
     # 127.0.0.1 - - [29/Jan/2013 12:31:51] "GET / HTTP/1.1" 200 11 0.0006
     
+    # Makes a float into a pretty "12.345" string
     function format(e)
       s = int(floor(e))
       msec = int((e - floor(e)) * 1000)
-      
       return string(s) * "." * lpad(string(msec), 3, "0")
     end
-    
     println(request.method*" "*request.path*" "*string(response.status)*" "*format(elapsed))
   end
   
