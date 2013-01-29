@@ -51,12 +51,16 @@ module Parser
   function parse_request_line(request_line)
     # Reverting to old regex for the non-capturing group because the "HTTP/n.n"
     # isn't required in older versions of HTTP.
-    m = match(r"^(\S+)\s+(\S+?)(?:\s+HTTP\/(\d+\.\d+))?"m, request_line)
+    m = match(r"^(\S+)\s+(\S+)(?:\s+HTTP\/(\d+\.\d+))?"m, request_line)
     # m = match(r"^(\S+)\s+(\S+)\s+HTTP\/(\d+\.\d+)"m, request_line)
     if m == nothing
       throw(strcat("Bad request: ", request_line))
       return
     else
+      show(m.captures)
+      println()
+      show(request_line)
+      println()
       method = string(m.captures[1])
       path = string(m.captures[2])
       version = string((length(m.captures) > 2 && m.captures[3] != nothing) ? m.captures[3] : "0.9")
