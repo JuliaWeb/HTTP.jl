@@ -123,14 +123,60 @@ module BasicServer
       if isequal(ret, nothing)
         return not_found
       else
-        status = string(ret[1])
-        body = string(ret[2])
-        return "HTTP/1.1 "*status*"\r\n\r\n"*body
+        if isa(ret, Array)
+          response.status = ret[1]
+          response.body = string(ret[2])
+        elseif isa(ret, String)
+          response.body = ret
+        else
+          error("Unexpected response format '"*string(typeof(response))*"' from app function")
+        end
+        
+        return build_response(response)
       end
     else
       return internal_error
     end
     
   end#handle_request
+  
+  function build_response(response::HTTP.Response)
+    return "HTTP/1.1 "*string(response.status)*build_headers(response)*"\r\n\r\n"*response.body
+  end
+  
+  function build_headers(response::HTTP.Response)
+    headers = String[]
+    
+    if has(response.headers, "Content-Length")
+      # Grab the first Content-Length in the headers
+      content_lengths = delete!(response.headers, "Content-Length")
+      # TODO: Refactor this to be prettier
+      if isa(content_lengths, String)
+        content_length = content_lengths
+      else
+        content_length = content_lengths[1]
+      end
+    else
+      content_length = length(response.body)
+    end
+    
+    push!(headers, "Content-Length: "*string(content_length))
+    
+    for pairs in response.headers
+      key, values = pairs
+      # TODO: Refactor this to be prettier
+      if isa(values, String)
+        push!(headers, key*": "*values)
+      else
+        for value in values
+          push!(headers, key*": "*value)
+        end
+      end
+    end
+    
+    final = "\r\n" * join(headers, "\r\n")
+    
+    return final
+  end#build_headers
   
 end

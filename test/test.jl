@@ -3,9 +3,15 @@ require("src/HTTP")
 function test_app(req, res)
   if isequal(req.path, "/")
     
-    println(req.cookies)
+    #println(req.cookies)
     
-    return {200, "Body\n"}
+    show(req.path)
+    
+    res.headers["X-Other"] = ["test"]
+    
+    return "Body"
+  elseif isequal(req.path, "/error")
+    return [500, "Special error\n"]
   else
     return nothing
   end

@@ -60,9 +60,11 @@ module HTTP
   Request() = Request("", "", Dict{String,Any}(), Dict{String,Any}(), "", "")
   
   type Response
+    status::Integer
+    body::String
     headers::Dict{String,Any}
   end
-  Response() = Response(Dict{String,Any}())
+  Response() = Response(200, "", Dict{String,Any}())
   
 end
 
