@@ -1,3 +1,70 @@
+
+# HTTP parsing functionality adapted from Webrick parsing.
+# http://www.ruby-doc.org/stdlib-1.9.3/libdoc/webrick/rdoc/WEBrick/HTTPUtils.html#method-c-parse_header
+# 
+# def parse_header(raw)
+#   header = Hash.new([].freeze)
+#   field = nil
+#   raw.each_line{|line|
+#     case line
+#     when %r^([A-Za-z0-9!\#$%&'*+\-.^_`|~]+):\s*(.*?)\s*\z/m
+#       field, value = $1, $2
+#       field.downcase!
+#       header[field] = [] unless header.has_key?(field)
+#       header[field] << value
+#     when %r^\s+(.*?)\s*\z/m
+#       value = $1
+#       unless field
+#         raise HTTPStatus::BadRequest, "bad header '#{line}'."
+#       end
+#       header[field][-1] << " " << value
+#     else
+#       raise HTTPStatus::BadRequest, "bad header '#{line}'."
+#     end
+#   }
+#   header.each{|key, values|
+#     values.each{|value|
+#       value.strip!
+#       value.gsub!(%r\s+/, " ")
+#     }
+#   }
+#   header
+# end
+# 
+# def read_request_line(socket)
+#   @request_line = read_line(socket) if socket
+#   @request_time = Time.now
+#   raise HTTPStatus::EOFError unless @request_line
+#   if /^(\S+)\s+(\S+?)(?:\s+HTTP\/(\d+\.\d+))?\r?\n/mo =~ @request_line
+#     @request_method = $1
+#     @unparsed_uri   = $2
+#     @http_version   = HTTPVersion.new($3 ? $3 : "0.9")
+#   else
+#     rl = @request_line.sub(/\x0d?\x0a\z/o, '')
+#     raise HTTPStatus::BadRequest, "bad Request-Line `#{rl}'."
+#   end
+# end
+# 
+# def parse_query(str)
+#   query = Hash.new
+#   if str
+#     str.split(%r[&;]/).each{|x|
+#       next if x.empty?
+#       key, val = x.split(%r=/,2)
+#       key = unescape_form(key)
+#       val = unescape_form(val.to_s)
+#       val = FormData.new(val)
+#       val.name = key
+#       if query.has_key?(key)
+#         query[key].append_data(val)
+#         next
+#       end
+#       query[key] = val
+#     }
+#   end
+#   query
+# end
+
 module Parser
   using Base
   
@@ -63,26 +130,6 @@ module Parser
     end
     return vec([method, path, version])
   end
-  
-  # def parse_query(str)
-  #   query = Hash.new
-  #   if str
-  #     str.split(%r[&;]/).each{|x|
-  #       next if x.empty?
-  #       key, val = x.split(%r=/,2)
-  #       key = unescape_form(key)
-  #       val = unescape_form(val.to_s)
-  #       val = FormData.new(val)
-  #       val.name = key
-  #       if query.has_key?(key)
-  #         query[key].append_data(val)
-  #         next
-  #       end
-  #       query[key] = val
-  #     }
-  #   end
-  #   query
-  # end
   
   function parse_query(str, separators)
     query = Dict{String,Any}()

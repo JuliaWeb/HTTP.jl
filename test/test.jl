@@ -1,4 +1,5 @@
 require("src/HTTP")
+require("src/BasicServer")
 
 function test_app(req, res)
   if isequal(req.path, "/")
