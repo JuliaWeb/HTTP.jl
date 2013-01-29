@@ -57,10 +57,6 @@ module Parser
       throw(strcat("Bad request: ", request_line))
       return
     else
-      show(m.captures)
-      println()
-      show(request_line)
-      println()
       method = string(m.captures[1])
       path = string(m.captures[2])
       version = string((length(m.captures) > 2 && m.captures[3] != nothing) ? m.captures[3] : "0.9")
