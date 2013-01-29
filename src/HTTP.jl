@@ -65,6 +65,7 @@ module HTTP
     headers::Dict{String,Any}
   end
   Response() = Response(200, "", Dict{String,Any}())
+  Response(status::Integer, body::String) = Response(status, body, Dict{String,Any}())
   
 end
 
