@@ -5,9 +5,11 @@ function test_app(req, res)
     
     #println(req.cookies)
     
-    show(req.path)
+    #show(req.path)
     
-    res.headers["X-Other"] = ["test"]
+    # res.headers["X-Other"] = "test"
+    
+    sleep(rand())
     
     return "Body"
   elseif isequal(req.path, "/error")

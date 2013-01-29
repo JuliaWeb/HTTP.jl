@@ -16,32 +16,31 @@ module BasicServer
       return
     end
     
-    response_data = ""
     try
-      # Accept lines until you hit a double-newline
-      raw = ""
-      nb = true
-      while nb
-        #line = readline(iostream)
-        line = Base.readline(client)
-        raw = raw * line
-        if line == "\r\n" || line == "\n"
-          nb = false
-        end
-      end
-    
-      parts = split(raw, "\r")
-      raw = join(parts, "")
-      requests = vec(split(raw, "\n\n"))
-    
-      #response_data = handle_request(strip(header))
+      # keepalive = true
+      # while keepalive
+        request = handle_request(client)
       
-      while length(requests) > 0
-        resp = handle_request(requests, app)
-        if resp != nothing
-          response_data = response_data * resp
+        if request.method == "POST" || request.method == "PUT"
+          request.data = handle_data(request, client)
         end
-      end
+        
+        response, elapsed = @timed handle_response(request, app)
+      
+        Base.write(client, build_response(response))
+        
+        log(request, response, elapsed)
+        
+        # if request.headers["Connection"][1] == "keep-alive"
+        #   keepalive = true
+        # else
+          # TODO: Make keepalive functional (requires putting a timeout on the
+          # or else it will get stuck in a loop if a client drops
+          # a connection).
+          # keepalive = false
+        # end
+      # end#while keepalive
+      
     catch e
       println(e)
       # TODO: Fix this so it can show a better output
@@ -59,10 +58,90 @@ module BasicServer
       #    in _start at client.jl:322
     end
     
-    # Write all the responses and close
-    Base.write(client, response_data)
     Base.close(client)
   end#accept_handler
+  
+  function log(request, response, elapsed)
+    # Sinatra's pretty log format:
+    # 127.0.0.1 - - [29/Jan/2013 12:31:51] "GET / HTTP/1.1" 200 11 0.0006
+    
+    function format(e)
+      s = int(floor(e))
+      msec = int((e - floor(e)) * 1000)
+      
+      return string(s) * "." * lpad(string(msec), 3, "0")
+    end
+    
+    println(request.method*" "*request.path*" "*string(response.status)*" "*format(elapsed))
+  end
+  
+  function read_block(client)
+    # Accept lines until you hit a double-newline
+    raw = ""
+    nb = true
+    while nb
+      #line = readline(iostream)
+      line = Base.readline(client)
+      raw = raw * line
+      if line == "\r\n" || line == "\n"
+        nb = false
+      end
+    end
+    return raw
+  end
+  
+  function handle_data(request, client)
+    content_length = int(request.headers["Content-Length"][1])
+    binary = Base.read(client, Uint8, content_length)
+    data = UTF8String(binary)
+    return data
+  end
+  
+  function handle_request(client)
+    raw_request = read_block(client)
+    
+    request = HTTP.Request()
+    
+    request_line, raw_header = split(raw_request, "\n", 2)
+    
+    method, path, version = Parser.parse_request_line(request_line)
+    request.method = method
+    request.path = path
+    request.version= version
+    
+    request.headers = Parser.parse_header(raw_header)
+    if has(request.headers, "Cookie")
+      request.cookies = Parser.parse_cookies(join(request.headers["Cookie"], "; "))
+    end
+    
+    return request
+  end
+  
+  function handle_response(request, app)
+    not_found = HTTP.Response(404, "Not found") # "HTTP/1.1 404 Not found\r\n\r\nNot found\n"
+    internal_error = HTTP.Response(500, "Internal server error (no app)") # "HTTP/1.1 500 Server error\r\n\r\nInternal server error (no app)\n"
+    
+    if isa(app, Function)
+      response = HTTP.Response()
+      ret = app(request, response)
+      if isequal(ret, nothing)
+        return not_found
+      else
+      if isa(ret, Array)
+          response.status = ret[1]
+          response.body = string(ret[2])
+        elseif isa(ret, String)
+          response.body = ret
+        else
+          error("Unexpected response format '"*string(typeof(response))*"' from app function")
+        end
+        
+        return response
+      end
+    else
+      return internal_error
+    end
+  end
   
   function bind(port, app, debug)
     addr = Base.InetAddr(Base.IPv4(uint32(0)), uint16(port)) # host, port
@@ -77,7 +156,7 @@ module BasicServer
     end
     socket.open = true
     
-    if debug; println("Looping..."); end
+    if debug; println("Listening on $(string(port))..."); end
     Base.event_loop(false)
     
     close(socket)
@@ -85,60 +164,6 @@ module BasicServer
   
   # Default has debug disabled
   bind(port, app) = bind(port, app, false)
-  
-  function handle_request(requests, app)
-    if length(requests) == 0
-      return nothing
-    end
-    
-    raw_request = strip(shift!(requests))
-    if length(raw_request) == 0
-      return nothing
-    end
-    
-    request = HTTP.Request()
-    response = HTTP.Response()
-    
-    request_line, raw_header = split(raw_request, "\n", 2)
-    
-    method, path, version = Parser.parse_request_line(request_line)
-    request.method = method
-    request.path = path
-    request.version= version
-    
-    request.headers = Parser.parse_header(raw_header)
-    if has(request.headers, "Cookie")
-      request.cookies = Parser.parse_cookies(join(request.headers["Cookie"], "; "))
-    end
-    
-    if isequal(request.method, "POST") && count(requests) > 0
-      request.data = Parser.parse_query(shift!(requests))
-    end
-    
-    not_found = "HTTP/1.1 404 Not found\r\n\r\nNot found\n"
-    internal_error = "HTTP/1.1 500 Server error\r\n\r\nInternal server error (no app)\n"
-    
-    if isa(app, Function)
-      ret = app(request, response)
-      if isequal(ret, nothing)
-        return not_found
-      else
-        if isa(ret, Array)
-          response.status = ret[1]
-          response.body = string(ret[2])
-        elseif isa(ret, String)
-          response.body = ret
-        else
-          error("Unexpected response format '"*string(typeof(response))*"' from app function")
-        end
-        
-        return build_response(response)
-      end
-    else
-      return internal_error
-    end
-    
-  end#handle_request
   
   function build_response(response::HTTP.Response)
     return "HTTP/1.1 "*string(response.status)*build_headers(response)*"\r\n\r\n"*response.body
@@ -159,6 +184,12 @@ module BasicServer
     else
       content_length = length(response.body)
     end
+    
+    # TODO: Support keep-alive connections (see accept_handler above).
+    if has(response.headers, "Connection")
+      delete!(response.headers, "Connection")
+    end
+    push!(headers, "Connection: close")
     
     push!(headers, "Content-Length: "*string(content_length))
     
