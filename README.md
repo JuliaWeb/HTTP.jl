@@ -4,7 +4,7 @@ A Julia library defining the specification and providing the data-types for HTTP
 
 ### Installation
 
-Either clone it into one of your LOAD_PATHs (`git clone git://github.com/dirk/HTTP.jl.git HTTP`) or install it via Pkg (coming soon, hopefully).
+Install it via the standard Julia Pkg system.
 
 ### Other Notes
 
