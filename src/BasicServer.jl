@@ -71,7 +71,12 @@ module BasicServer
       msec = int((e - floor(e)) * 1000)
       return string(s) * "." * lpad(string(msec), 3, "0")
     end
-    println(request.method*" "*request.path*" "*string(response.status)*" "*format(elapsed))
+    
+    fullpath = request.path
+    if length(request.query_string) > 0
+      fullpath = fullpath*"?"*request.query_string
+    end  
+    println(request.method*" "*fullpath*" "*string(response.status)*" "*format(elapsed))
   end
   
   function read_block(client)
@@ -105,7 +110,11 @@ module BasicServer
     
     method, path, version = Parser.parse_request_line(request_line)
     request.method = method
-    request.path = path
+    parts = split(path, "?", 2)
+    request.path = parts[1]
+    if length(parts) == 2
+      request.query_string = parts[2]
+    end
     request.version= version
     
     request.headers = Parser.parse_header(raw_header)

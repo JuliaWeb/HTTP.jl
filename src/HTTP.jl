@@ -6,12 +6,13 @@ module HTTP
   type Request
     method::String
     path::String
+    query_string::String
     headers::Dict{String,Any}
     cookies::Dict{String,Any}
     version::String
     data::String
   end
-  Request() = Request("", "", Dict{String,Any}(), Dict{String,Any}(), "", "")
+  Request() = Request("", "", "", Dict{String,Any}(), Dict{String,Any}(), "", "")
   
   type Response
     status::Integer

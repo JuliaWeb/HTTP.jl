@@ -1,5 +1,5 @@
-include("HTTP.jl")
-include("BasicServer.jl")
+require("HTTP")
+require("HTTP/src/BasicServer")
 
 module Ocean
   # """
@@ -12,7 +12,7 @@ module Ocean
   
   type Route
     method::String
-    path::String
+    path::Any
     opts::Dict{Any,Any}
     handler::Function
   end
@@ -27,19 +27,46 @@ module Ocean
     return App()
   end
   
-  function get(app::App, path::String, handler::Function)
-    _route = Route("GET", path, Dict{Any,Any}(), handler)
-    
-    route(app, _route)
+  function get(app::App, path::Any, handler::Function)
+    route(app, Route("GET", path, Dict{Any,Any}(), handler))
+  end
+  function post(app::App, path::Any, handler::Function)
+    route(app, Route("POST", path, Dict{Any,Any}(), handler))
+  end
+  function put(app::App, path::Any, handler::Function)
+    route(app, Route("PUT", path, Dict{Any,Any}(), handler))
+  end
+  function delete(app::App, path::Any, handler::Function)
+    route(app, Route("DELETE", path, Dict{Any,Any}(), handler))
+  end
+  function any(app::App, path::Any, handler::Function)
+    # TODO: Make a special "ANY" method?
+    for method in ["GET", "POST", "PUT", "DELETE"]
+      route(app, Route(method, path, Dict{Any,Any}(), handler))
+    end
   end
   
+  function route(app::App, method::String, path::Any, opts::Dict{Any,Any}, handler::Function)
+    route(app, Route(method, path, opts, handler))
+  end
   function route(app::App, _route::Route)
     push!(app.routes, _route)
   end
   
-  function route(app::App, method::String, path::String, opts::Dict{Any,Any}, handler::Function)
-    _route = Route(method, path, opts, handler)
-    route(app, _route)
+  function call(app, req, res)
+    for _route in app.routes
+      if _route.method == req.method && _route.path == req.path
+        return _route.handler(req, res, nothing)
+      end
+    end
+    
+    return nothing
+  end
+  
+  function binding(app::App)
+    return function(req, res)
+      call(app, req, res)
+    end
   end
   
 end
