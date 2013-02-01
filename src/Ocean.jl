@@ -53,10 +53,24 @@ module Ocean
     push!(app.routes, _route)
   end
   
+  function route_path_matches(rp::Regex, path::String)
+    return false
+  end
+  function route_path_matches(rp::String, path::String)
+    return rp == path
+  end
+  
+  function route_method_matches(route_method::String, req_method::String)
+    return route_method == req_method
+  end
+  
   function call(app, req, res)
     for _route in app.routes
-      if _route.method == req.method && _route.path == req.path
-        return _route.handler(req, res, nothing)
+      if route_method_matches(_route.method, req.method)#Do the simple comparison first
+        path_match = route_path_matches(_route.path, req.path)
+        if path_match
+          return _route.handler(req, res, nothing)
+        end
       end
     end
     

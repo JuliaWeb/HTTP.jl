@@ -84,9 +84,9 @@ module BasicServer
     raw = ""
     nb = true
     while nb
-      #line = readline(iostream)
       line = Base.readline(client)
       raw = raw * line
+      # readline also got one newline, so just need to check for a single.
       if line == "\r\n" || line == "\n"
         nb = false
       end
