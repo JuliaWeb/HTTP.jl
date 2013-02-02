@@ -12,6 +12,20 @@ module Ocean
   
   import Base.abspath, Base.joinpath, Base.dirname
   
+  export
+    # App construction
+    new_app,
+    # Request methods
+    get,
+    post,
+    put,
+    delete,
+    any,
+    route,
+    # Utilities for interacting with HTTP server API
+    binding,
+    call
+  
   type Route
     method::String
     path::Any
@@ -41,6 +55,8 @@ module Ocean
     
     return _app
   end
+  # Alias for when the module is imported
+  new_app = app
   
   function get(app::App, path::Any, handler::Function)
     route(app, Route("GET", path, Dict{Any,Any}(), handler))
