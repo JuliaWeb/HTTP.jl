@@ -10,6 +10,8 @@ module Ocean
   # Ooooooo
   # """
   
+  import Base.abspath, Base.joinpath, Base.dirname
+  
   type Route
     method::String
     path::Any
@@ -19,12 +21,25 @@ module Ocean
   
   type App
     routes::Array{Route}
+    source_dir::String
+    source_path::String
     
-    App() = new(Route[])
+    App() = new(Route[], "", "")
   end
   
   function app()
-    return App()
+    _app = App()
+    
+    tls = task_local_storage()
+    sp = Base.get(tls, :SOURCE_PATH, nothing)
+    # If sp is nothing then it's coming from the REPL and we'll just use
+    # the pwd.
+    # If it's a string then it's the path to the source file that originally
+    # loaded everything.
+    _app.source_dir  = (sp == nothing) ? pwd() : dirname(sp)
+    _app.source_path = (sp == nothing) ? "(repl)" : sp
+    
+    return _app
   end
   
   function get(app::App, path::Any, handler::Function)

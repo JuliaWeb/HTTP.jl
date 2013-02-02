@@ -2,6 +2,8 @@ require("HTTP/Ocean")
 
 app = Ocean.app()
 
+println(app)
+
 Ocean.any(app, "/", function(req, res, _)
   return "testing"
 end)
