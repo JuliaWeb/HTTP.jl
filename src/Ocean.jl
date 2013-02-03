@@ -26,11 +26,21 @@ module Ocean
     binding,
     call
   
+  include("Ocean/Util.jl")
+  using Util
+  
   type Route
     method::String
-    path::Any
+    path::Union(String, Regex)
     opts::Dict{Any,Any}
     handler::Function
+  end
+  
+  # Extra stuff that goes along with the req-rep pair for route calling.
+  type Extra
+    params::Union(Array, Bool)
+    
+    Extra() = new(false)
   end
   
   type App
@@ -84,10 +94,16 @@ module Ocean
     push!(app.routes, _route)
   end
   
-  function route_path_matches(rp::Regex, path::String)
-    return false
+  function route_path_matches(rp::Regex, path::String, extra::Extra)
+    match = Base.match(rp, path)
+    if match == nothing
+      return false
+    else
+      extra.params = match.captures
+      return true
+    end
   end
-  function route_path_matches(rp::String, path::String)
+  function route_path_matches(rp::String, path::String, extra::Extra)
     return rp == path
   end
   
@@ -95,19 +111,23 @@ module Ocean
     return route_method == req_method
   end
   
+  
+  # Interface with HTTP
   function call(app, req, res)
+    extra = Extra()
     for _route in app.routes
-      if route_method_matches(_route.method, req.method)#Do the simple comparison first
-        path_match = route_path_matches(_route.path, req.path)
+      # Do the simple comparison first
+      if route_method_matches(_route.method, req.method)
+        path_match = route_path_matches(_route.path, req.path, extra)
         if path_match
-          return _route.handler(req, res, nothing)
+          return _route.handler(req, res, extra)
         end
       end
     end
     
     return nothing
   end
-  
+  # Creates a function closure function for HTTP to call with the app.
   function binding(app::App)
     return function(req, res)
       call(app, req, res)
