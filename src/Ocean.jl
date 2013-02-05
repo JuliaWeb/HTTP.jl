@@ -125,7 +125,7 @@ module Ocean
       end
     end
     
-    return nothing
+    return false
   end
   # Creates a function closure function for HTTP to call with the app.
   function binding(app::App)
