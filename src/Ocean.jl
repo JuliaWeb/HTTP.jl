@@ -111,21 +111,39 @@ module Ocean
     return route_method == req_method
   end
   
-  
-  # Interface with HTTP
-  function call(app, req, res)
+  function call_request(app, req, res)
     extra = Extra()
     for _route in app.routes
       # Do the simple comparison first
       if route_method_matches(_route.method, req.method)
         path_match = route_path_matches(_route.path, req.path, extra)
         if path_match
-          return _route.handler(req, res, extra)
+          ret = _route.handler(req, res, extra)
+          if ret != false
+            return ret
+          end
         end
       end
     end
     
     return false
+  end
+  
+  # Interface with HTTP
+  function call(app, req, res)
+    ret = call_request(app, req, res)
+    if isa(ret, String)
+      res.body = ret
+      return true
+    elseif ret == false
+      # TODO: Set up system for not found errors and such
+      # return [404, "Not found"]
+      return false
+    elseif ret == true || ret == nothing
+      return true
+    else
+      error("Unexpected response format '"*string(typeof(ret))*"'")
+    end
   end
   # Creates a function closure function for HTTP to call with the app.
   function binding(app::App)

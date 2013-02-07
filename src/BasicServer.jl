@@ -22,7 +22,7 @@ module BasicServer
         request = handle_request(client)
       
         if request.method == "POST" || request.method == "PUT"
-          request.data = handle_data(request, client)
+          handle_data(request, client)
         end
         
         response, elapsed = @timed handle_response(request, app)
@@ -97,8 +97,11 @@ module BasicServer
   function handle_data(request, client)
     content_length = int(request.headers["Content-Length"][1])
     binary = Base.read(client, Uint8, content_length)
-    data = UTF8String(binary)
-    return data
+    request.raw_data = UTF8String(binary)
+    
+    if has(request.headers, "Content-Type") && has(Set(request.headers["Content-Type"]...), "application/x-www-form-urlencoded")
+      request.data = Parser.parse_query(request.raw_data)
+    end
   end
   
   function handle_request(client)
@@ -115,7 +118,7 @@ module BasicServer
     if length(parts) == 2
       request.query_string = parts[2]
     end
-    request.version= version
+    request.version = version
     
     request.headers = Parser.parse_header(raw_header)
     if has(request.headers, "Cookie")
@@ -135,13 +138,17 @@ module BasicServer
       if isequal(ret, nothing)
         return not_found
       else
-      if isa(ret, Array)
+        if isa(ret, Array)
           response.status = ret[1]
           response.body = string(ret[2])
         elseif isa(ret, String)
           response.body = ret
+        elseif ret == false
+          return not_found
+        elseif ret == true
+          # Pass
         else
-          error("Unexpected response format '"*string(typeof(response))*"' from app function")
+          error("Unexpected response format '"*string(typeof(ret))*"' from app function")
         end
         
         return response

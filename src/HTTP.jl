@@ -10,9 +10,10 @@ module HTTP
     headers::Dict{String,Any}
     cookies::Dict{String,Any}
     version::String
-    data::String
+    raw_data::String
+    data::Any
   end
-  Request() = Request("", "", "", Dict{String,Any}(), Dict{String,Any}(), "", "")
+  Request() = Request("", "", "", Dict{String,Any}(), Dict{String,Any}(), "", "", Dict{String,Any}())
   
   type Response
     status::Integer
