@@ -11,6 +11,7 @@ module Ocean
   # """
   
   import Base.abspath, Base.joinpath, Base.dirname
+  import HTTP
   
   export
     # App construction
@@ -36,19 +37,32 @@ module Ocean
     handler::Function
   end
   
-  # Extra stuff that goes along with the req-rep pair for route calling.
-  type Extra
-    params::Union(Array, Bool)
-    
-    Extra() = new(false)
-  end
-  
   type App
     routes::Array{Route}
     source_dir::String
     source_path::String
     
     App() = new(Route[], "", "")
+  end
+  
+  # Used in Extra
+  const _blank_request = HTTP.Request()
+  const _blank_response = HTTP.Response()
+  const _blank_app = App()
+  const _blank_func = function(); end
+  const _blank_func_1 = function(a); end
+  const _blank_func_2 = function(a, b); end
+  # Extra stuff that goes along with the req-rep pair for route calling.
+  type Extra
+    params::Union(Array, Bool)
+    app::App
+    req::HTTP.Request
+    res::HTTP.Response
+    file::Function
+    
+    Extra(app::App, req::HTTP.Request, res::HTTP.Response) = new(false, app, req, res, _blank_func_1)
+    
+    Extra() = new(_blank_app, _blank_request, _blank_response)
   end
   
   function app()
@@ -67,6 +81,18 @@ module Ocean
   end
   # Alias for when the module is imported
   new_app = app
+  
+  function file(app::App, path::String)
+    if begins_with(path, "/")
+      p = path
+    else
+      p = app.source_dir*"/"*path
+    end
+    f = open(p, "r")
+    r = readall(f)
+    close(f)
+    return r
+  end
   
   function get(app::App, path::Any, handler::Function)
     route(app, Route("GET", path, Dict{Any,Any}(), handler))
@@ -111,8 +137,14 @@ module Ocean
     return route_method == req_method
   end
   
+  function new_extra(app, req, res)
+    extra = Extra(app, req, res)
+    extra.file = Util.enscopen(app, file)
+    return extra
+  end
+  
   function call_request(app, req, res)
-    extra = Extra()
+    extra = new_extra(app, req, res)
     for _route in app.routes
       # Do the simple comparison first
       if route_method_matches(_route.method, req.method)
@@ -139,6 +171,9 @@ module Ocean
       # TODO: Set up system for not found errors and such
       # return [404, "Not found"]
       return false
+    # Returning true (or nothing) will assume response data has been set in
+    # res.body.
+    # Assume nothing return (no return) to mean successful route call.
     elseif ret == true || ret == nothing
       return true
     else

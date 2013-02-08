@@ -6,18 +6,18 @@ using Ocean.Util
 
 Ocean.get(app, "/", function(req, res, _)
   res.headers["Content-Type"] = "text/html"
-  f = open(app.source_dir*"/view.html", "r")
-  r = readall(f)
-  close(f)
-  return r
+  # f = open(app.source_dir*"/view.html", "r")
+  # r = readall(f)
+  # close(f)
+  return _.file("view.html")
 end)
 
 Ocean.post(app, "/", function(req, res, _)
-  return req.data["test"][1]
+  return gs(req.data, "test")
 end)
 
 Ocean.get(app, r"/(.+)", function(req, res, _)
-  println(_)
+  # println(_)
   
   # return _.params[1]
   return false
