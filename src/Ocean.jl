@@ -49,9 +49,9 @@ module Ocean
   const _blank_request = HTTP.Request()
   const _blank_response = HTTP.Response()
   const _blank_app = App()
-  const _blank_func = function(); end
+  # const _blank_func = function(); end
   const _blank_func_1 = function(a); end
-  const _blank_func_2 = function(a, b); end
+  # const _blank_func_2 = function(a, b); end
   # Extra stuff that goes along with the req-rep pair for route calling.
   type Extra
     params::Union(Array, Bool)
