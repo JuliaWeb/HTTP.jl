@@ -1,6 +1,8 @@
 # HTTP.jl
 # Authors: Dirk Gadsden
 
+require("Calendar")
+
 module HTTP
   
   type Request
