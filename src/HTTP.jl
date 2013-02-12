@@ -25,5 +25,3 @@ module HTTP
   
   export Request, Response
 end
-
-#include("BasicServer.jl")

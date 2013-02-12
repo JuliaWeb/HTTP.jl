@@ -60,7 +60,13 @@ module Ocean
     res::HTTP.Response
     file::Function
     
-    Extra(app::App, req::HTTP.Request, res::HTTP.Response) = new(false, app, req, res, _blank_func_1)
+    Extra(app::App, req::HTTP.Request, res::HTTP.Response) = new(
+      false,
+      app,
+      req,
+      res,
+      _blank_func_1
+    )
     
     Extra() = new(_blank_app, _blank_request, _blank_response)
   end
@@ -82,6 +88,7 @@ module Ocean
   # Alias for when the module is imported
   new_app = app
   
+  # Utilities for working within the app
   function file(app::App, path::String)
     if begins_with(path, "/")
       p = path
@@ -94,6 +101,13 @@ module Ocean
     return r
   end
   
+  function route(app::App, _route::Route)
+    push!(app.routes, _route)
+  end
+  function route(app::App, method::String, path::Any, opts::Dict{Any,Any}, handler::Function)
+    route(app, Route(method, path, opts, handler))
+  end
+  # Shortcuts for creating routes.
   function get(app::App, path::Any, handler::Function)
     route(app, Route("GET", path, Dict{Any,Any}(), handler))
   end
@@ -108,16 +122,15 @@ module Ocean
   end
   function any(app::App, path::Any, handler::Function)
     # TODO: Make a special "ANY" method?
-    for method in ["GET", "POST", "PUT", "DELETE"]
-      route(app, Route(method, path, Dict{Any,Any}(), handler))
-    end
+    # for method in ["GET", "POST", "PUT", "DELETE"]
+      route(app, Route("ANY", path, Dict{Any,Any}(), handler))
+    # end
   end
   
-  function route(app::App, method::String, path::Any, opts::Dict{Any,Any}, handler::Function)
-    route(app, Route(method, path, opts, handler))
-  end
-  function route(app::App, _route::Route)
-    push!(app.routes, _route)
+  function new_extra(app, req, res)
+    extra = Extra(app, req, res)
+    extra.file = Util.enscopen(app, file)
+    return extra
   end
   
   function route_path_matches(rp::Regex, path::String, extra::Extra)
@@ -134,13 +147,7 @@ module Ocean
   end
   
   function route_method_matches(route_method::String, req_method::String)
-    return route_method == req_method
-  end
-  
-  function new_extra(app, req, res)
-    extra = Extra(app, req, res)
-    extra.file = Util.enscopen(app, file)
-    return extra
+    return route_method == req_method || route_method == "ANY"
   end
   
   function call_request(app, req, res)
