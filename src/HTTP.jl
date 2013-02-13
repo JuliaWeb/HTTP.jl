@@ -25,5 +25,14 @@ module HTTP
   Response(status::Integer, body::String) = Response(status, body, Dict{String,Any}())
   Response() = Response(200, "")
   
+  type Cookie
+    domain::String
+    path::String
+    expires::String
+    secure::Bool
+    httponly::Bool
+    value::String
+  end
+  
   export Request, Response
 end
