@@ -30,19 +30,12 @@
 
 require("src/HTTP")
 
-cookie = HTTP.new_cookie("key", "value", {"domain" => "localhost", :path => "/"})
-println(cookie)
+c1 = HTTP.new_cookie("key", "value")
+println(c1)
 
-type MyType
-  member1
-  member2
-end
-mytypeinstance = MyType(1, 2)
-mydict = {
-  "member1" => 3,
-  :member2  => 4
-}
-HTTP.Util.opts(mydict, mytypeinstance, [:member1, "member2"])
-@assert mytypeinstance.member1 == 3
-@assert mytypeinstance.member2 == 4
+c2 = HTTP.new_cookie("key", "value", {:expires => Calendar.now() + Calendar.years(10)})
+println(HTTP.cookie_header(c2))
+
+# c3 = HTTP.new_cookie("key", "value")
+# println(c3)
 
