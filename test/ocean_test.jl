@@ -17,9 +17,12 @@ Ocean.post(app, "/", function(req, res, _)
 end)
 
 Ocean.get(app, r"/(.+)", function(req, res, _)
-  # println(_)
+  #println(_)
   
-  # return _.params[1]
+  h = {"test" => "test"}
+  println(h["test"])
+  
+  return _.params[1]
   return false
 end)
 

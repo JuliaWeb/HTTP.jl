@@ -166,6 +166,7 @@ module Parser
   
   
   # ESCAPING
+  # TODO: Make it use the escaping functions now in HTTP.Util.
   
   # Unescaping
   escaped_regex = r"%([0-9a-fA-F]{2})"
