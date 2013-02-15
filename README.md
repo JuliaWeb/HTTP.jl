@@ -9,3 +9,16 @@ Install it via the standard Julia Pkg system.
 ### Other Notes
 
 The current spec is heavily inspired by Ruby's Rack specification. The parser parts of the basic server are based off of the WEBrick Ruby HTTP server.
+
+## Changelog
+
+### 0.0.1 (2013-02-15)
+#### Improvements
+* Add cookie creation functionality
+* Make `ref` for RegexMatch in `Ocean.Util` work properly.
+* Add `Extra` object for route handlers.
+#### Fixes
+* Make `any` shortcut only create a special `"ANY"` route (instead of separate routes for each request method).
+
+### 0.0.0 (2013-02-07)
+* Initial version
