@@ -97,9 +97,7 @@ module Ocean
     else
       p = app.source_dir*"/"*path
     end
-    f = open(p, "r")
-    r = readall(f)
-    close(f)
+    r = open(readall, p, "r")
     return r
   end
   
