@@ -21,9 +21,9 @@ module Template
   #       their performance data. This way you can always get a quick look into
   #       how the template library has performaned.
   
-  function compile(template::String, header::String)
+  function compile(template::String)
     perf = Dict{Symbol,Any}()
-    perf[:scan_and_generate] = @elapsed (code = scan_and_generate(template, header))
+    perf[:scan_and_generate] = @elapsed (code = scan_and_generate(template, ""))
     perf[:parse] = @elapsed (_expr = parse(code))
     return (CompiledTemplate(_expr), perf)
   end
@@ -58,14 +58,14 @@ module Template
     add_code(header * "\n")
     # Find the first starting token
     st_s, st_e = find_token(r"<%[^%]")
-    while head < st_s < st_e <= tail
+    while head <= st_s < st_e <= tail
       # Add the content before the token
       add_raw(t[head:st_s - 1]) # push!(parts, t[head:st_s - 1])
       # Advance the search head to after the opening token
       head = st_e
       # Find the closing token
       et_s, et_e = find_token(r"[^%]%>")
-      if head < et_s < et_e <= tail
+      if head <= et_s < et_e <= tail
         # Add the content between the tokens
         # push!(parts, t[head:et_s])
         c = t[head:et_s]
@@ -100,6 +100,20 @@ module Template
     
     # TODO: Make header for template with variable definitions.
     ct, perf = compile(template, "")
+    
+    perf[:eval] = @elapsed (eval(TemplateScope, ct.expr))
+    perf[:join] = @elapsed (out = join(TemplateScope.__buffer, ""))
+    perf[:reset] = @elapsed (TemplateScope.__reset())
+    return (out, perf)
+  end
+  function run(ct::CompiledTemplate, scope::Dict)
+    perf = Dict{Symbol,Any}()
+    
+    for (k, v) = scope
+      unshift!(ct.expr.args, expr(:(=), {k, v}))
+    end
+    
+    println(ct)
     
     perf[:eval] = @elapsed (eval(TemplateScope, ct.expr))
     perf[:join] = @elapsed (out = join(TemplateScope.__buffer, ""))

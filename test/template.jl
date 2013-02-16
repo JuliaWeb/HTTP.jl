@@ -7,6 +7,8 @@ s = "
 <%% <%= b %> %%>
 "
 
+s2 = "<%= a %>"
+
 macro timeit(name, ex)
     quote
         t = Inf
@@ -17,16 +19,21 @@ macro timeit(name, ex)
     end
 end
 
-total = @elapsed out, perf = Template.run(s)
+ct, perf = Template.compile(s2)
+out, perf = Template.run(ct, {:a => "test"})
+println(out)
 
-perf[:total] = total
-#show(perf)
-#println()
 
-println("performance (msecs):")
-println("scan\t", perf[:scan_and_generate] * 1000)
-println("parse\t", perf[:parse] * 1000)
-println("eval\t", perf[:eval] * 1000)
-println("join\t", perf[:join] * 1000)
-println("reset\t", perf[:reset] * 1000)
-println("\ntotal\t", perf[:total] * 1000)
+# total = @elapsed out, perf = Template.run(s)
+# 
+# perf[:total] = total
+# #show(perf)
+# #println()
+# 
+# println("performance (msecs):")
+# println("scan\t", perf[:scan_and_generate] * 1000)
+# println("parse\t", perf[:parse] * 1000)
+# println("eval\t", perf[:eval] * 1000)
+# println("join\t", perf[:join] * 1000)
+# println("reset\t", perf[:reset] * 1000)
+# println("\ntotal\t", perf[:total] * 1000)
