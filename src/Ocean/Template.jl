@@ -28,6 +28,26 @@ module Template
     return (CompiledTemplate(_expr), perf)
   end
   
+  open_tag = r"<%[^%]"
+  close_tag = r"[^%]%>"
+  
+  function find_token(t::String, tok, head)
+    range = search(t, tok, head)
+    st_s = first(range)
+    st_e = last(range)
+    return (st_s, st_e)
+  end
+  
+  function add_text(parts, c)
+    push!(parts, "push!(__buffer,\"" * escape_string(c) * "\")")
+  end
+  function add_code(parts, c)
+    push!(parts, c)
+  end
+  function add_code_insert(parts, c)
+    push!(parts, "push!(__buffer, begin\n" * c * "\nend)")
+  end
+  
   # Parses the template file by tokens and generates the result code.
   function scan_and_generate(t::String, header::String)
     parts = String[]
@@ -35,49 +55,31 @@ module Template
     head = start(t)
     tail = endof(t)
     
-    function find_token(tok)
-      range = search(t, tok, head)
-      st_s = first(range)
-      st_e = last(range)
-      return (st_s, st_e)
-    end
-    
-    function add_raw(c)
-      push!(parts, "push!(__buffer,\"" * escape_string(c) * "\")")
-    end
-    function add_code(c)
-      push!(parts, c)
-    end
-    function add_code_insert(c)
-      push!(parts, "push!(__buffer, begin\n" * c * "\nend)")
-    end
-    
     # Start by adding the begin block
-    add_code("begin\n")
-    # Insert the header code (for defining variables and such)
-    add_code(header * "\n")
+    add_code(parts, "begin\n")
     # Find the first starting token
-    st_s, st_e = find_token(r"<%[^%]")
+    st_s, st_e = find_token(t, open_tag, head)
     while head <= st_s < st_e <= tail
       # Add the content before the token
-      add_raw(t[head:st_s - 1]) # push!(parts, t[head:st_s - 1])
+      add_text(parts, t[head:st_s - 1]) # push!(parts, t[head:st_s - 1])
       # Advance the search head to after the opening token
       head = st_e
       # Find the closing token
-      et_s, et_e = find_token(r"[^%]%>")
+      et_s, et_e = find_token(t, close_tag, head)
       if head <= et_s < et_e <= tail
         # Add the content between the tokens
         # push!(parts, t[head:et_s])
         c = t[head:et_s]
-        if begins_with(c, '=')
-          add_code_insert(c[2:end])
+        #if begins_with(c, '=')
+        if c[1] == '='
+          add_code_insert(parts, c[2:end])
         else
-          add_code(c)
+          add_code(parts, c)
         end
         # Advance the head to after the closing token
         head = et_e + 1
         # Find the next starting token
-        st_s, st_e = find_token(r"<%[^%]")
+        st_s, st_e = find_token(t, open_tag, head)
       else
         # TODO: Make this get line numbers
         error("Missing end token around character #" * string(et_e))
@@ -85,10 +87,10 @@ module Template
     end
     # If there's any left
     if head < tail
-      add_raw(t[head:tail]) # push!(parts, t[head:tail])
+      add_text(parts, t[head:tail]) # push!(parts, t[head:tail])
     end
     # Close with the opening begin block
-    add_code("\nend")
+    add_code(parts, "\nend")
     
     return join(parts, "\n")
   end
@@ -112,8 +114,6 @@ module Template
     for (k, v) = scope
       unshift!(ct.expr.args, expr(:(=), {k, v}))
     end
-    
-    println(ct)
     
     perf[:eval] = @elapsed (eval(TemplateScope, ct.expr))
     perf[:join] = @elapsed (out = join(TemplateScope.__buffer, ""))

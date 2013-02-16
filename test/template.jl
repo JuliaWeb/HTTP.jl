@@ -2,9 +2,9 @@ require("HTTP/src/Ocean/Template")
 
 
 s = "
-<% a = 1; b = \"test\" %>
-<%= string(a) %>
-<%% <%= b %> %%>
+<% for i = 1:1000 %>
+  <%= string(i) %>
+<% end %>
 "
 
 s2 = "<%= a %>"
@@ -19,9 +19,18 @@ macro timeit(name, ex)
     end
 end
 
-ct, perf = Template.compile(s2)
+ct, perf = Template.compile(s)
+ct, perf = Template.compile(s)
+ct, perf = Template.compile(s)
+println("scan\t", perf[:scan_and_generate] * 1000)
+println("parse\t", perf[:parse] * 1000)
 out, perf = Template.run(ct, {:a => "test"})
-println(out)
+out, perf = Template.run(ct, {:a => "test"})
+out, perf = Template.run(ct, {:a => "test"})
+println("eval\t", perf[:eval] * 1000)
+println("join\t", perf[:join] * 1000)
+println("reset\t", perf[:reset] * 1000)
+#println(out)
 
 
 # total = @elapsed out, perf = Template.run(s)
