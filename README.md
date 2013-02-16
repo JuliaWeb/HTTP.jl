@@ -4,7 +4,7 @@ A Julia library defining the specification and providing the data-types for HTTP
 
 ### Installation
 
-Install it via the standard Julia Pkg system.
+`Pkg.add("HTTP")`
 
 ### Other Notes
 
@@ -12,11 +12,16 @@ The current spec is heavily inspired by Ruby's Rack specification. The parser pa
 
 ## Changelog
 
+### 0.0.2 (WIP)
+#### Improvements
+* New template system(!!!)
+
 ### 0.0.1 (2013-02-15)
 #### Improvements
 * Add cookie creation functionality
 * Make `ref` for RegexMatch in `Ocean.Util` work properly.
 * Add `Extra` object for route handlers.
+
 #### Fixes
 * Make `any` shortcut only create a special `"ANY"` route (instead of separate routes for each request method).
 
