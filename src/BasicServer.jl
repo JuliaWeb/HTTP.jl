@@ -173,6 +173,14 @@ module BasicServer
     end
     socket.open = true
     
+    # Simple echo server:
+    # 
+    # listen(port) do sock,s
+    # s = accept(sock)
+    # s.readcb = (args...)->(l=readline(s);write(s,l);true)
+    # start_reading(s)
+    # end
+    
     if debug; println("Listening on $(string(port))..."); end
     Base.event_loop(false)
     
