@@ -1,6 +1,5 @@
 require("HTTP/src/Ocean/Template")
 
-
 s = "
 <% for i = 1:1000 %>
   <%= string(i) %>
@@ -31,18 +30,3 @@ println("eval\t", perf[:eval] * 1000)
 println("join\t", perf[:join] * 1000)
 println("reset\t", perf[:reset] * 1000)
 #println(out)
-
-
-# total = @elapsed out, perf = Template.run(s)
-# 
-# perf[:total] = total
-# #show(perf)
-# #println()
-# 
-# println("performance (msecs):")
-# println("scan\t", perf[:scan_and_generate] * 1000)
-# println("parse\t", perf[:parse] * 1000)
-# println("eval\t", perf[:eval] * 1000)
-# println("join\t", perf[:join] * 1000)
-# println("reset\t", perf[:reset] * 1000)
-# println("\ntotal\t", perf[:total] * 1000)

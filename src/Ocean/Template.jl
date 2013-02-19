@@ -1,5 +1,6 @@
 
 module TemplateScope
+  # TODO: Optimize string buffer performance
   __buffer = String[]
   __reset = function()
     # __buffer = String[]
@@ -96,10 +97,6 @@ module Template
   end
   
   function run(template::String)
-    # perf = Dict{Symbol,Any}()
-    # perf[:scan_and_generate] = @elapsed (code = scan_and_generate(template, ""))
-    # perf[:parse] = @elapsed (exprs = parse(code))
-    
     # TODO: Make header for template with variable definitions.
     ct, perf = compile(template, "")
     
