@@ -7,6 +7,24 @@ module BasicServer
   
   include("BasicServer/Parser.jl")
   
+  function read_handler(client::TcpSocket, app, debug)
+    request = handle_request(client)
+      
+    if request.method == "POST" || request.method == "PUT"
+      handle_data(request, client)
+    end
+        
+    response, elapsed = @timed handle_response(request, app)
+      
+    Base.write(client, build_response(response))
+        
+    log(request, response, elapsed)
+    
+    Base.close(client)
+    
+    return true
+  end
+  
   function accept_handler(server::TcpSocket, status::Int32, app, debug)
     if status != 0
       uv_error("Error (" * string(status) * ")")
@@ -160,31 +178,45 @@ module BasicServer
     end
   end
   
+  function listen_handler(handle, status, app, debug)
+    println(":")
+    println(handle)
+    println(status)
+  end
+  
+  function bind_no_event(port, app, debug)
+    return listen(port) do sock, status
+      client = accept(sock)
+      #client.readcb = (args...)->(show(args);println();read_handler(client, app, debug);true)
+      client.readcb = (socket, n)->(read_handler(client, app, debug))
+      start_reading(client)
+    end
+  end
+  
   function bind(port, app, debug)
-    addr = Base.InetAddr(Base.IPv4(uint32(0)), uint16(port)) # host, port
-    socket = TcpSocket()
-    if Base.bind(socket, addr) != true
-      error("bind: could not bind to socket")
-      return
-    end
-    socket.ccb = (handle, status) -> accept_handler(handle, status, app, debug)
-    if listen(socket) != true
-      error("listen: could not listen on socket")
-    end
-    socket.open = true
-    
-    # Simple echo server:
-    # 
-    # listen(port) do sock,s
-    # s = accept(sock)
-    # s.readcb = (args...)->(l=readline(s);write(s,l);true)
-    # start_reading(s)
-    # end
-    
+    socket = bind_no_event(port, app, debug)
     if debug; println("Listening on $(string(port))..."); end
     Base.event_loop(false)
-    
     close(socket)
+    return
+    
+    # addr = Base.InetAddr(IPv4(uint32(0)), uint16(port)) # host, port
+    # socket = TcpSocket()
+    # if Base.bind(socket, addr) != true
+    #   error("bind: could not bind to socket")
+    #   return
+    # end
+    # 
+    # socket.ccb = (handle, status) -> accept_handler(handle, status, app, debug)
+    # if listen(socket) != true
+    #   error("listen: could not listen on socket")
+    # end
+    # socket.open = true
+    # 
+    # if debug; println("Listening on $(string(port))..."); end
+    # Base.event_loop(false)
+    # 
+    # close(socket)
   end#bind
   
   # Default has debug disabled
