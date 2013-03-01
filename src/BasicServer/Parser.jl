@@ -140,7 +140,17 @@ module Parser
         part = strip(part)
         if isempty(part) next; end
         
-        key, value = split(part, "=", 2)
+        try
+          key, value = split(part, "=", 2)
+        catch e
+          # Check if it was a BoundsError (no "=")
+          if typeof(e) == BoundsError
+            key = part
+            value = ""
+          else
+            throw(e)
+          end
+        end
         key   = unescape_form(key)
         value = unescape_form(value)
         if has(query, key)
