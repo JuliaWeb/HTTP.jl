@@ -1,5 +1,7 @@
 
 module Util
+  import HTTP
+  
   # Utility to allow match(re, str)[1]
   import Base.ref
   function ref(m::RegexMatch, i::Int64)
@@ -34,5 +36,13 @@ module Util
     end
   end
   
-  export ref, gs, get_single
+  function redirect(res::HTTP.Response, path::String, status::Integer)
+    res.headers["Location"] = "/"
+    res.status = status
+    return "Redirecting to $path..."
+  end
+  redirect(res::HTTP.Response, path::String) = redirect(res, path, 302)
+  
+  
+  export ref, gs, get_single, redirect
 end
