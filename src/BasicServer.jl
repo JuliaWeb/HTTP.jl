@@ -8,21 +8,22 @@ module BasicServer
   include("BasicServer/Parser.jl")
   
   function read_handler(client::TcpSocket, app, debug)
-    request = handle_request(client)
+    try
+      _start = time()
       
-    if request.method == "POST" || request.method == "PUT"
-      handle_data(request, client)
+      request = handle_request(client)
+      if request.method == "POST" || request.method == "PUT"
+        handle_data(request, client)
+      end
+      response = handle_response(request, app)
+      Base.write(client, build_response(response))
+      
+      _elapsed = time() - _start
+      log(request, response, _elapsed)
+    finally
+      Base.close(client)
+      return true
     end
-        
-    response, elapsed = @timed handle_response(request, app)
-      
-    Base.write(client, build_response(response))
-        
-    log(request, response, elapsed)
-    
-    Base.close(client)
-    
-    return true
   end
   
   function accept_handler(server::TcpSocket, status::Int32, app, debug)
@@ -178,12 +179,6 @@ module BasicServer
     end
   end
   
-  function listen_handler(handle, status, app, debug)
-    println(":")
-    println(handle)
-    println(status)
-  end
-  
   function bind_no_event(port, app, debug)
     return listen(port) do sock, status
       client = accept(sock)
@@ -260,6 +255,10 @@ module BasicServer
           push!(headers, key*": "*value)
         end
       end
+    end
+    
+    for cookie in response.cookies
+      push!(headers, HTTP.cookie_header(cookie))
     end
     
     final = "\r\n" * join(headers, "\r\n")
