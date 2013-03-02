@@ -76,8 +76,9 @@ module Ocean
   function app()
     _app = App()
     
-    tls = task_local_storage()
-    sp = Base.get(tls, :SOURCE_PATH, nothing)
+    #tls = task_local_storage()
+    #sp = Base.get(tls, :SOURCE_PATH, nothing)
+    sp = Base.source_path()
     # If sp is nothing then it's coming from the REPL and we'll just use
     # the pwd.
     # If it's a string then it's the path to the source file that originally
