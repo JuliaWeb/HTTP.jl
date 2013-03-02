@@ -4,9 +4,6 @@ app = Ocean.app()
 
 using Ocean.Util
 
-println(app)
-exit()
-
 Ocean.get(app, "/", function(req, res, _)
   res.headers["Content-Type"] = "text/html"
   # f = open(app.source_dir*"/view.html", "r")
