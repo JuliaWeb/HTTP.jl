@@ -140,16 +140,14 @@ module Parser
         part = strip(part)
         if isempty(part) next; end
         
-        try
-          key, value = split(part, "=", 2)
-        catch e
-          # Check if it was a BoundsError (no "=")
-          if typeof(e) == BoundsError
-            key = part
-            value = ""
-          else
-            throw(e)
-          end
+        p = search(part, '=')
+        if p > 0
+          key = part[1:p-1]
+          value = part[p+1:end]
+        else
+          # p = 0 if '=' not found
+          key = part
+          value = ""
         end
         key   = unescape_form(key)
         value = unescape_form(value)
@@ -211,11 +209,10 @@ module Parser
   
   # Escapes chars (listed in second string); also escapes all non-ASCII chars.
   function escape_with(str, use)
-    chars = split(use, "")
+    chars = collect(use)
     
     for c in chars
-      _char = c[1] # Character string as Char
-      h = hex(int(_char))
+      h = hex(int(c))
       if length(h) < 2
         h = "0"*h
       end
