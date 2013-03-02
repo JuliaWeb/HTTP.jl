@@ -97,18 +97,17 @@ module Parser
       if m != nothing && !matched
         value = m.captures[1]
         if field == nothing
-          
           continue
         end
         ti = length(header[field])
-        header[field][ti] = strcat(header[field[ti]], " ", value)
+        header[field][ti] = header[field[ti]] * " " * value
         matched = true
         
         field = nothing
       end
       
       if matched == false
-        throw(strcat("Bad header: ", line))
+        throw("Bad header: " * line)
       end
     end
     
@@ -121,7 +120,7 @@ module Parser
     m = match(r"^(\S+)\s+(\S+)(?:\s+HTTP\/(\d+\.\d+))?"m, request_line)
     # m = match(r"^(\S+)\s+(\S+)\s+HTTP\/(\d+\.\d+)"m, request_line)
     if m == nothing
-      throw(strcat("Bad request: ", request_line))
+      throw("Bad request: " * request_line)
       return
     else
       method = string(m.captures[1])
