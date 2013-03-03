@@ -115,27 +115,34 @@ module Ocean
     return r
   end
   
+  function memo(cache::Associative, key::Union(String,Symbol),compute::Function)
+    key = symbol(key)
+    if has(cache, key)
+      # pass
+    else
+      val = compute()
+      cache[key] = val
+    end
+    return cache[key]
+  end
+  # Allow for memo(cache, key) do ... end
+  memo(compute::Function, cache::Associative, key::Union(String,Symbol)) =
+    memo(cache, key, compute)
+  
   function template(app::App, format::Symbol, path::String, data::Any)
     if format == :ejl
-      sp = symbol("_ejl:" * path)
-      if has(app.cache, sp)
-        _template = app.cache[sp]
-      else
+      _template = memo(app.cache, "_ejl:$path") do
         contents = file(app, path)
-        _template, perf = Template.compile(contents)
-        app.cache[sp] = _template
+        __template, perf = Template.compile(contents)
+        return __template
       end
       output, perf = Template.run(_template, data)
       return output
     elseif format == :mustache
       if Main.isdefined(:Mustache)
-        sp = symbol("_mustache:" * path)
-        if has(app.cache, sp)
-          _template = app.cache[sp]
-        else
+        _template = memo(app.cache, "_mustache:$path") do
           contents = file(app, path)
-          _template = Main.Mustache.parse(contents)
-          app.cache[sp] = _template
+          return Main.Mustache.parse(contents)
         end
         return Main.Mustache.render(_template, data)
       else
