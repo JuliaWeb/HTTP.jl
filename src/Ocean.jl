@@ -44,8 +44,11 @@ module Ocean
     routes::Array{Route}
     source_dir::String
     source_path::String
+    # NOTE: Keys that are symbols starting with "_" (eg. "_file") are reserved
+    #       by Ocean.
+    cache::Dict{Union(String,Symbol),Any}
     
-    App() = new(Route[], "", "")
+    App() = new(Route[], "", "", Dict{Any,Any}())
   end
   
   # Used in Extra
@@ -103,7 +106,12 @@ module Ocean
     else
       p = app.source_dir*"/"*path
     end
+    sp = symbol("_file:" * p)
+    if has(app.cache, sp)
+      return app.cache[sp]
+    end
     r = open(readall, p, "r")
+    app.cache[sp] = r
     return r
   end
   
@@ -114,7 +122,14 @@ module Ocean
       if Main.isdefined(:Mustache)
         contents = file(app, path)
         # TODO: Cache compiled version of template
-        return Main.Mustache.render(contents, data)
+        sp = symbol("_mustache:" * path)
+        if has(app.cache, sp)
+          _template = app.cache[sp]
+        else
+          _template = Main.Mustache.parse(contents)
+          app.cache[sp] = _template
+        end
+        return Main.Mustache.render(_template, data)
       else
         error("Please install and require the Mustache package")
       end
