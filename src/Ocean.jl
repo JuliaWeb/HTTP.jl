@@ -117,23 +117,30 @@ module Ocean
   
   function template(app::App, format::Symbol, path::String, data::Any)
     if format == :ejl
-      
+      sp = symbol("_ejl:" * path)
+      if has(app.cache, sp)
+        _template = app.cache[sp]
+      else
+        contents = file(app, path)
+        _template, perf = Template.compile(contents)
+        app.cache[sp] = _template
+      end
+      output, perf = Template.run(_template, data)
+      return output
     elseif format == :mustache
       if Main.isdefined(:Mustache)
-        contents = file(app, path)
-        # TODO: Cache compiled version of template
         sp = symbol("_mustache:" * path)
         if has(app.cache, sp)
           _template = app.cache[sp]
         else
+          contents = file(app, path)
           _template = Main.Mustache.parse(contents)
           app.cache[sp] = _template
         end
         return Main.Mustache.render(_template, data)
       else
         error("Please install and require the Mustache package")
-      end
-      
+      end#Main.isdefined(:Mustache)
     else
       error("Unrecognized template format " * repr(format))
     end

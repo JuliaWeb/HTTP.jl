@@ -1,5 +1,5 @@
 require("HTTP/Ocean")
-require("Mustache")
+#require("Mustache")
 
 app = Ocean.app()
 
@@ -15,9 +15,10 @@ Ocean.get(app, "/", function(req, res, _)
   
   v = gs(req.cookies, "test")
   if v != false
-    return _.template(:mustache, "view.mustache", {"value" => v})
+    return _.template(:ejl, "view.ejl", {"value" => v})
   else
     return _.file("view.html")
+    
   end
   
 end)
