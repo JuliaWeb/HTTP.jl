@@ -77,7 +77,7 @@ module Parser
     lines = split(raw, "\n")
     for line in lines
       line = strip(line)
-      if isempty(line) continue end
+      if isempty(line); continue; end
       
       matched = false
       m = match(r"^([A-Za-z0-9!\#$%&'*+\-.^_`|~]+):\s*(.*?)\s*\z"m, line)
@@ -96,9 +96,7 @@ module Parser
       m = match(r"^\s+(.*?)\s*\z"m, line)
       if m != nothing && !matched
         value = m.captures[1]
-        if field == nothing
-          continue
-        end
+        if field == nothing; continue; end
         ti = length(header[field])
         header[field][ti] = header[field[ti]] * " " * value
         matched = true
@@ -137,7 +135,7 @@ module Parser
       parts = split(str, separators)
       for part in parts
         part = strip(part)
-        if isempty(part) next; end
+        if isempty(part); next; end
         
         p = search(part, '=')
         if p > 0
