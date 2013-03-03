@@ -46,9 +46,9 @@ module Ocean
     source_path::String
     # NOTE: Keys that are symbols starting with "_" (eg. "_file") are reserved
     #       by Ocean.
-    cache::Dict{Union(String,Symbol),Any}
+    cache::ObjectIdDict
     
-    App() = new(Route[], "", "", Dict{Any,Any}())
+    App() = new(Route[], "", "", ObjectIdDict())
   end
   
   # Used in Extra
