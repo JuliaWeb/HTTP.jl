@@ -20,6 +20,9 @@ module BasicServer
       
       _elapsed = time() - _start
       log(request, response, _elapsed)
+    catch e
+      Base.error_show(OUTPUT_STREAM, e, backtrace())
+      println()
     finally
       Base.close(client)
       return true
