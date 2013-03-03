@@ -1,4 +1,5 @@
 require("HTTP/Ocean")
+require("Mustache")
 
 app = Ocean.app()
 
@@ -10,9 +11,15 @@ Ocean.get(app, "/", function(req, res, _)
   # r = readall(f)
   # close(f)
   
-  println(req.cookies)
+  #println(req.cookies)
   
-  return _.file("view.html")
+  v = gs(req.cookies, "test")
+  if v != false
+    return _.template(:mustache, "view.mustache", {"value" => v})
+  else
+    return _.file("view.html")
+  end
+  
 end)
 
 Ocean.post(app, "/", function(req, res, _)
