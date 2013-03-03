@@ -12,6 +12,7 @@ module Ocean
   # Ooooooo
   # """
   
+  import Pkg
   import Base.abspath, Base.joinpath, Base.dirname
   import HTTP
   
@@ -61,17 +62,21 @@ module Ocean
     req::HTTP.Request
     res::HTTP.Response
     file::Function
+    template::Function
     
     Extra(app::App, req::HTTP.Request, res::HTTP.Response) = new(
       false,
       app,
       req,
       res,
-      _blank_func_1
+      _blank_func_1, # file
+      _blank_func_1 # template
     )
     
     Extra() = new(_blank_app, _blank_request, _blank_response)
   end
+  
+  include("Ocean/Template.jl")
   
   function app()
     _app = App()
@@ -102,6 +107,32 @@ module Ocean
     return r
   end
   
+  function template(app::App, format::Symbol, path::String, data::Any)
+    if format == :ejl
+      
+    elseif format == :mustache
+      if Main.isdefined(:Mustache)
+        contents = file(app, path)
+        # TODO: Cache compiled version of template
+        return Main.Mustache.render(contents, data)
+      else
+        error("Please install and require the Mustache package")
+      end
+      
+    else
+      error("Unrecognized template format " * repr(format))
+    end
+  end
+  template(app::App, format::Symbol, path::String) = 
+    format(app, format, path, Dict())
+  
+  function new_extra(app, req, res)
+    extra = Extra(app, req, res)
+    extra.file = Util.enscopen(app, file)
+    extra.template = Util.enscopen(app, template)
+    return extra
+  end
+  
   function route(app::App, _route::Route)
     push!(app.routes, _route)
   end
@@ -126,12 +157,6 @@ module Ocean
     # for method in ["GET", "POST", "PUT", "DELETE"]
       route(app, Route("ANY", path, Dict{Any,Any}(), handler))
     # end
-  end
-  
-  function new_extra(app, req, res)
-    extra = Extra(app, req, res)
-    extra.file = Util.enscopen(app, file)
-    return extra
   end
   
   function route_path_matches(rp::Regex, path::String, extra::Extra)

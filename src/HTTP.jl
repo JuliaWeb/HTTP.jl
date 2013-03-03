@@ -105,5 +105,5 @@ module HTTP
     return r
   end
   
-  export Request, Response, @opt
+  export Request, Response
 end
