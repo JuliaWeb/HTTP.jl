@@ -1,6 +1,8 @@
 ## HTTP.jl
 
-A Julia library defining the specification and providing the data-types for HTTP servers. It also provides a rudimentary BasicServer that can respond to simple HTTP requests. **The spec and the server are in very active development and significant (breaking) changes should be expected.**
+A Julia library defining the specification and providing the data-types for HTTP servers. It also provides a rudimentary **[BasicServer](#using-basicserver)** that can respond to simple HTTP requests. _The spec and the server are in very active development and some breaking changes should be expected along the way._
+
+Besides the spec and server it provides the **[Ocean](#ocean)** library for more easily building your own apps on top of the HTTP.jl spec (ie. Ocean apps can be run on BasicServer with just one line of code).
 
 ### Installation
 
@@ -145,7 +147,8 @@ Coming soon.
 * New template system
 * Add Mustache.jl template hooks
 * Add cookie handling
-* Add `file` and `template` scoped methods to `Extra` objects
+* Add `file`, `template`, and `redirect` scoped methods to `Extra` objects
+* Add `memo` method to `Util` for easy memoization of data through an associative cache
 * Switch to new evented socket API (and add event-loop-free version of `bind`)
 
 #### Fixes
