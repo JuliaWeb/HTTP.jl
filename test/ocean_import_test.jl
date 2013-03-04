@@ -4,9 +4,7 @@ using Ocean
 
 app = new_app()
 
-println(app)
-
-any(app, "/", function(req, res, _)
+get(app, "/", function(req, res, _)
   return "testing"
 end)
 

@@ -4,11 +4,59 @@ A Julia library defining the specification and providing the data-types for HTTP
 
 ### Installation
 
-`Pkg.add("HTTP")`
+```julia
+Pkg.add("HTTP")
+```
+
+### Getting Started with HTTP.jl
+
+The first component of HTTP.jl is the `HTTP` module. This provides the base `Request`, `Response`, and `Cookie` types as well as some basic helper methods for working with those types (however, actually parsing requests into `Requests`s is left to server implementations). Check out [HTTP.jl](src/HTTP.jl) for the actual code; it's quite readable.
+
+HTTP.Util (in [HTTP/Util.jl](src/HTTP/Util.jl)) also provides some helper methods for escaping and unescaping data.
+
+### Using BasicServer
+
+Coming soon.
 
 ### Other Notes
 
 The current spec is heavily inspired by Ruby's Rack specification. The parser parts of the basic server are based off of the WEBrick Ruby HTTP server.
+
+## Ocean
+
+[Ocean](src/Ocean.jl) is a [Sinatra](http://www.sinatrarb.com/)-like library for creating apps that run on the HTTP.jl API (they can currently only be served using BasicServer).
+
+### Hello World
+
+This will create a basic server on port 8000 that responds with "Hello World" to requests at /.
+
+```julia
+require("HTTP/Ocean")
+
+using Ocean
+
+app = new_app()
+
+get(app, "/", function(req, res, _)
+  return "Hello World"
+end)
+
+BasicServer.bind(8000, binding(app), true)
+```
+
+You can also use Ocean without mucking up your scope with `using`:
+
+```julia
+require("HTTP/Ocean")
+
+app = Ocean.app()
+
+Ocean.get(app, "/", function(req, res, _)
+  return "Hello World"
+end)
+
+BasicServer.bind(8000, Ocean.binding(app), true)
+```
 
 ## Changelog
 
