@@ -8,7 +8,7 @@ A Julia library defining the specification and providing the data-types for HTTP
 Pkg.add("HTTP")
 ```
 
-### Getting Started with HTTP.jl
+### Getting started with HTTP.jl
 
 The first component of HTTP.jl is the `HTTP` module. This provides the base `Request`, `Response`, and `Cookie` types as well as some basic helper methods for working with those types (however, actually parsing requests into `Requests`s is left to server implementations). Check out [HTTP.jl](src/HTTP.jl) for the actual code; it's quite readable.
 
@@ -18,7 +18,7 @@ HTTP.Util (in [HTTP/Util.jl](src/HTTP/Util.jl)) also provides some helper method
 
 Coming soon.
 
-### Other Notes
+### Other notes
 
 The current spec is heavily inspired by Ruby's Rack specification. The parser parts of the basic server are based off of the WEBrick Ruby HTTP server.
 
@@ -58,7 +58,7 @@ end)
 BasicServer.bind(8000, Ocean.binding(app), true)
 ```
 
-### Route Parameters
+### Route parameters
 
 To capture route parameters format your route as a regular expression with capture groups. For example:
 
@@ -73,7 +73,7 @@ A GET request to `/test` would give the response `test`.
 If the route path is a string instead of a regex then `_.params` will be `false`.
 
 
-### Request Data
+### Request data
 
 Let's say we have the following POST handler:
 
@@ -102,7 +102,39 @@ Ocean.get(app, ..., function(req, res, _)
 end)
 ```
 
-### Getting and Setting Cookies
+Redirects are also exposed through Ocean.Extra (see _Using templates_ below):
+
+```julia
+Ocean.get(app, ..., function(req, res, _)
+  return _.redirect("/")
+end)
+```
+
+### Templates and files
+
+The third parameter to the request handler (assumed to be `_`) is a Ocean.Extra (type definition [here](src/Ocean.jl#L62)) object that provides some data and functions for common tasks.
+
+#### Reading files
+
+The `_.file(path::String)` method will return a string of the file's contents or throw an error. If the file starts with `/` then it will open it as an absolute path; if it starts with any other string it will open it relative to the directory of the app file. The contents of files read are cached in `app.cache` with the key `_file:$path`. You can disable caching by making the second parameter `false` (eg. `_.file(path, false)`).
+
+#### Using templates
+
+Ocean provides a method in Extra to easily access ejl (embedded Julia) and Mustache template files (for Mustache you must require the Mustache package yourself with `require("Mustache")` or `using Mustache`). It uses the `_.file` method internally to read the path to the file; it also caches the compiled template data in `app.cache` (with the keys `_ejl:$path` and `_mustache:$path`) so that the templates don't have to be recompiled every request.
+
+Rendering an ejl template:
+
+```julia
+_.template(:ejl, "view.ejl", {"value" => value})
+```
+
+Rendering a Mustache template:
+
+```julia
+_.template(:mustache, "view.mustache", {"value" => value})
+```
+
+### Getting and setting cookies
 
 Coming soon.
 
