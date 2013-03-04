@@ -13,6 +13,8 @@ Ocean.get(app, "/", function(req, res, _)
   
   #println(req.cookies)
   
+  println(_.params)
+  
   v = gs(req.cookies, "test")
   if v != false
     return _.template(:ejl, "view.ejl", {"value" => v})
@@ -34,14 +36,10 @@ Ocean.post(app, "/", function(req, res, _)
   return redirect(res, "/")
 end)
 
-Ocean.get(app, r"/(.+)", function(req, res, _)
-  #println(_)
-  
-  # h = {"test" => "test"}
-  # println(h["test"])
-  # 
-  # return _.params[1]
-  return false
+Ocean.get(app, r"^/(.+)", function(req, res, _)
+  println(_.params)
+  return _.params[1]
+  # return false
 end)
 
 BasicServer.bind(8000, Ocean.binding(app), true)
