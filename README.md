@@ -18,11 +18,11 @@ HTTP.Util (in [HTTP/Util.jl](src/HTTP/Util.jl)) also provides some helper method
 
 ### Using BasicServer
 
-Coming soon.
+See the [BasicServer example](examples/basic_server.jl) to get an idea of the function API BasicServer expects (it's a lot like Rack).
 
 ### Other notes
 
-The current spec is heavily inspired by Ruby's Rack specification. The parser parts of the basic server are based off of the WEBrick Ruby HTTP server.
+The current spec is heavily inspired by Ruby's [Rack specification](http://rack.rubyforge.org/doc/SPEC.html). The parser parts of the basic server are based off of the WEBrick Ruby HTTP server.
 
 ## Ocean
 
@@ -139,6 +139,23 @@ _.template(:mustache, "view.mustache", {"value" => value})
 ### Getting and setting cookies
 
 Coming soon.
+
+## Contributing
+
+Fork, commit, pull request! Tweet/email me or open an issue if you have any problems or ideas.
+
+## Next steps
+
+On the drawing board:
+
+* Ocean: Better routing system (allow for fancy routes like "/model/:id" and such)
+* Ocean: Improve the ejl template system
+* HTTP/BasicServer/Ocean: Improve cookie system
+  * Split up cookie system for complete and appropriate separation of concerns (Maybe have all parsing/generating of HTTP cookies in HTTP? Basic parsing of header pairs would still be handled by the server.)
+* HTTP: Middleware API
+  * HTTP: Session middleware
+* BasicServer: File/binary upload
+* HTTP: Expose access to uploaded binaries on Request objects
 
 ## Changelog
 
