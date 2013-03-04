@@ -152,7 +152,6 @@ Ocean.get(app, "/", function(req, res, _)
   else
     return "Cookie not set"
   end
-  
 end)
 
 # Expects POST data like "test=..." and assigns it to the cookie "test".
