@@ -58,6 +58,7 @@ module Ocean
   # const _blank_func = function(); end
   const _blank_func_1 = function(a); end
   # const _blank_func_2 = function(a, b); end
+  const _blank_func_3 = function(a, b, c); end
   # Extra stuff that goes along with the req-rep pair for route calling.
   type Extra
     params::Union(Array, Bool)
@@ -66,6 +67,7 @@ module Ocean
     res::HTTP.Response
     file::Function
     template::Function
+    redirect::Function
     
     Extra(app::App, req::HTTP.Request, res::HTTP.Response) = new(
       false,
@@ -73,7 +75,8 @@ module Ocean
       req,
       res,
       _blank_func_1, # file
-      _blank_func_1 # template
+      _blank_func_3, # template
+      _blank_func_1 # redirect
     )
     
     Extra() = new(_blank_app, _blank_request, _blank_response)
@@ -100,39 +103,29 @@ module Ocean
   new_app = app
   
   # Utilities for working within the app
-  function file(app::App, path::String)
+  function file(app::App, path::String, do_cache::Bool)
     if begins_with(path, "/")
       p = path
     else
       p = app.source_dir*"/"*path
     end
-    sp = symbol("_file:" * p)
-    if has(app.cache, sp)
-      return app.cache[sp]
+    if do_cache
+      sp = symbol("_file:" * p)
+      if has(app.cache, sp)
+        return app.cache[sp]
+      end
     end
     r = open(readall, p, "r")
-    app.cache[sp] = r
+    if do_cache; app.cache[sp] = r; end
     return r
   end
+  file(app::App, path::String) = file(app, path, true)
   
-  function memo(cache::Associative, key::Union(String,Symbol),compute::Function)
-    key = symbol(key)
-    if has(cache, key)
-      # pass
-    else
-      val = compute()
-      cache[key] = val
-    end
-    return cache[key]
-  end
-  # Allow for memo(cache, key) do ... end
-  memo(compute::Function, cache::Associative, key::Union(String,Symbol)) =
-    memo(cache, key, compute)
-  
-  function template(app::App, format::Symbol, path::String, data::Any)
+  function template(extra::Extra, format::Symbol, path::String, data::Any)
+    app::App = extra.app
     if format == :ejl
       _template = memo(app.cache, "_ejl:$path") do
-        contents = file(app, path)
+        contents = extra.file(path)
         __template, perf = Template.compile(contents)
         return __template
       end
@@ -141,7 +134,7 @@ module Ocean
     elseif format == :mustache
       if Main.isdefined(:Mustache)
         _template = memo(app.cache, "_mustache:$path") do
-          contents = file(app, path)
+          contents = extra.file(path)
           return Main.Mustache.parse(contents)
         end
         return Main.Mustache.render(_template, data)
@@ -155,10 +148,11 @@ module Ocean
   template(app::App, format::Symbol, path::String) = 
     format(app, format, path, Dict())
   
-  function new_extra(app, req, res)
+  function new_extra(app::App, req::HTTP.Request, res::HTTP.Response)
     extra = Extra(app, req, res)
     extra.file = Util.enscopen(app, file)
-    extra.template = Util.enscopen(app, template)
+    extra.template = Util.enscopen(extra, template)
+    extra.redirect = Util.enscopen(res, redirect)
     return extra
   end
   

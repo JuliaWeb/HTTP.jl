@@ -19,8 +19,7 @@ Ocean.get(app, "/", function(req, res, _)
   if v != false
     return _.template(:ejl, "view.ejl", {"value" => v})
   else
-    return _.file("view.html")
-    
+    return _.file("view.html", false)
   end
   
 end)
@@ -36,10 +35,15 @@ Ocean.post(app, "/", function(req, res, _)
   return redirect(res, "/")
 end)
 
+Ocean.get(app, "/test", function(req, res, _)
+  return _.redirect("/")
+end)
+
 Ocean.get(app, r"^/(.+)", function(req, res, _)
   println(_.params)
   return _.params[1]
   # return false
 end)
+
 
 BasicServer.bind(8000, Ocean.binding(app), true)

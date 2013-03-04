@@ -43,6 +43,19 @@ module Util
   end
   redirect(res::HTTP.Response, path::String) = redirect(res, path, 302)
   
+  function memo(cache::Associative, key::Union(String,Symbol),compute::Function)
+    key = symbol(key)
+    if has(cache, key)
+      # pass
+    else
+      val = compute()
+      cache[key] = val
+    end
+    return cache[key]
+  end
+  # Allow for memo(cache, key) do ... end
+  memo(compute::Function, cache::Associative, key::Union(String,Symbol)) =
+    memo(cache, key, compute)
   
-  export ref, gs, get_single, redirect
+  export ref, gs, get_single, redirect, memo
 end
