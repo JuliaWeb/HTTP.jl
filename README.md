@@ -138,7 +138,33 @@ _.template(:mustache, "view.mustache", {"value" => value})
 
 ### Getting and setting cookies
 
-Coming soon.
+These are basic handlers to get and set cookies:
+
+```julia
+require("HTTP/Ocean")
+using Calendar
+using Ocean.Util
+
+Ocean.get(app, "/", function(req, res, _)
+  v = gs(req.cookies, "test")
+  if v != false
+    return "Cookie: " * v
+  else
+    return "Cookie not set"
+  end
+  
+end)
+
+# Expects POST data like "test=..." and assigns it to the cookie "test".
+Ocean.post(app, "/", function(req, res, _)
+  postdata = gs(req.data, "test")
+  
+  cookie = HTTP.new_cookie("test", postdata, {:expires => Calendar.now() + Calendar.years(10)})
+  HTTP.set_cookie(res, cookie)
+  
+  return redirect(res, "/")
+end)
+```
 
 ## Contributing
 
