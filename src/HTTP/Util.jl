@@ -1,5 +1,33 @@
 module Util
   
+  import HTTP
+  
+  function wrap_app(app::Function, req::HTTP.Request, res::HTTP.Response)
+    ret = app(req, res)
+    if isequal(ret, nothing)
+      error("App returned nothing")
+    else
+      # Legacy handling.
+      if isa(ret, Array)
+        res.status = ret[1]
+        res.body = string(ret[2])
+        return true
+      elseif isa(ret, String)
+        res.body = ret
+        return true
+      
+      # Ideally apps will eventually update the response themselves and just
+      # return a bool of whether or not they ran. Currently Ocean conforms to
+      # this.
+      elseif ret == true || ret == false
+        return ret
+      else
+        error("Unexpected response format '"*string(typeof(ret))*"' from app function")
+      end
+    end
+    return false
+  end
+  
   # Function version of @opt.
   function opt(srcdict::Dict, desttype, key::Union(String, Symbol))
     key_str = string(key)
