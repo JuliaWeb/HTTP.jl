@@ -54,15 +54,20 @@ module HTTP
   
   include("HTTP/Util.jl")
   
+  # Utility function for more easily creating HTTP.Cookie objects.
   function new_cookie(key::String, value::String, opts::Dict{Any,Any})
     cookie = Cookie(key, value)
-    # Util.@opt opts cookie :domain
     # Util.opt(opts, cookie, :domain)
     Util.opts(opts, cookie, [:domain, :path, :expires, :secure, :httponly])
     return cookie
   end
+  # Use default options.
   new_cookie(key::String, value::String) = new_cookie(key, value, Dict{Any,Any}())
   
+  # TODO: Maybe rewrite this to shove it straight onto
+  #       resp.headers["Set-Cookie"] instead of the resp.cookies array.
+  #       (Especially considering req.cookies and resp.cookies aren't even the
+  #       same type (Dict vs Array).)
   function set_cookie(resp::Response, cookie::Cookie)
     push!(resp.cookies, cookie)
   end
@@ -76,6 +81,7 @@ module HTTP
     return Calendar.format("EEE, dd MMM yyyy HH:mm:ss zzz", vgmt)
   end
   
+  # Add Calendar.CalendarTime method to Base's isempty method.
   import Base.isempty
   function isempty(c::Calendar.CalendarTime)
     return false
@@ -89,10 +95,6 @@ module HTTP
     if !isempty(c.path)
       r *= "; path=" * c.path
     end
-    #if(
-    #    (isa(c.expires, String) && !isempty(c.expires)) || 
-    #    isa(c.expires, Calendar.CalendarTime)
-    #  )
     if !isempty(c.expires)
       r *= "; expires=" * ensure_rfc1123(c.expires)
     end

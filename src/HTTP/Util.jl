@@ -1,43 +1,5 @@
 module Util
-  # DEPRECATED (See function versions below.)
-  # Allows for assigning hash keys from dict to members in a type.
-  # Example:
-  #   type MyType
-  #     member1
-  #     member2
-  #   end
-  #   mytypeinstance = MyType(1, 2)
-  #   mydict = {
-  #     "member1" => 3,
-  #     :member2  => 4
-  #   }
-  #   @opt mydict mytypeinstance :member1
-  #   @opt mydict mytypeinstance "member2"
-  #   @assert mytypeinstance.member1 == 3
-  #   @assert mytypeinstance.member2 == 4
-  macro opt(srcdict, desttype, key)
-    # Doing `@opt a b :c` makes key be a QuoteNode.
-    if typeof(key) == QuoteNode
-      # a = ":test"; a[2:end] = "test"
-      key = string(key)[2:end]
-    end
-    key_string = string(key)
-    key_symbol = symbol(key)
-    
-    quote_key_symbol = expr(:quote, {key_symbol})
-    type_member_expr = expr(:., {esc(desttype), quote_key_symbol})
-    # type_member_expr = :(type.member)
-    #   Where type is desttype and member is key.
-    quote
-      if has($(esc(srcdict)), $key_string)
-        $(type_member_expr) = $(esc(srcdict))[$key_string]
-      end
-      if has($(esc(srcdict)), $quote_key_symbol)
-        $(type_member_expr) = $(esc(srcdict))[$quote_key_symbol]
-      end
-    end
-  end
-    
+  
   # Function version of @opt.
   function opt(srcdict::Dict, desttype, key::Union(String, Symbol))
     key_str = string(key)
