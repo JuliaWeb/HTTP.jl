@@ -35,15 +35,15 @@ Ocean.post(app, "/", function(req, res, _)
   return redirect(res, "/")
 end)
 
-Ocean.get(app, "/test", function(req, res, _)
+Ocean.get(app, Ocean.pr("/:test1/:test2"), function(req, res, _)
+  println(_.params)
   return _.redirect("/")
 end)
 
-Ocean.get(app, r"^/(.+)", function(req, res, _)
+Ocean.get(app, r"^/(.+)$", function(req, res, _)
   println(_.params)
   return _.params[1]
   # return false
 end)
-
 
 BasicServer.bind(8000, Ocean.binding(app), true)

@@ -26,6 +26,10 @@ module Ocean
     delete,
     any,
     route,
+    # Parameterized routes like "/object/:id"
+    param_route,
+    pr, # Shorthand for param_route
+    @pr_str, # Macro for doing: pr"/object/:id"
     # Utilities for interacting with HTTP server API
     binding,
     call
@@ -33,9 +37,17 @@ module Ocean
   include("Ocean/Util.jl")
   using Util
   
+  type ParamRoute
+    path::Regex
+    names::Array{String,1}
+    
+    ParamRoute(path::Regex, names::Array{String,1}) = new(path, names)
+    ParamRoute() = new(r"", String[])
+  end
+  
   type Route
     method::String
-    path::Union(String, Regex)
+    path::Union(String, Regex, ParamRoute)
     opts::Dict{Any,Any}
     handler::Function
   end
@@ -61,7 +73,7 @@ module Ocean
   const _blank_func_3 = function(a, b, c); end
   # Extra stuff that goes along with the req-rep pair for route calling.
   type Extra
-    params::Union(Array, Bool)
+    params::Union(Array, Dict, Bool)
     app::App
     req::HTTP.Request
     res::HTTP.Response
@@ -182,6 +194,30 @@ module Ocean
     # end
   end
   
+  const _separators = "[^/.?]"
+  const _param_route_matcher = r":(\w+)"
+  function param_route(s::String)
+    names = String[]
+    route = "^" * s * "\$"
+    
+    for m in each_match(_param_route_matcher, s)
+      if contains(names, m.captures[1])
+        error("Param $(m.match) already in use")
+      end
+      push!(names, m.captures[1])
+      
+      _replace = "(" * _separators * "+)"
+      route = replace(route, m.match, _replace)
+    end
+    
+    return ParamRoute(Regex(route), names)
+  end
+  pr = param_route
+  
+  macro pr_str(s)
+    return param_route(s)
+  end
+  
   function route_path_matches(rp::Regex, path::String, extra::Extra)
     match = Base.match(rp, path)
     if match == nothing
@@ -193,6 +229,21 @@ module Ocean
   end
   function route_path_matches(rp::String, path::String, extra::Extra)
     return rp == path
+  end
+  function route_path_matches(rp::ParamRoute, path::String, extra::Extra)
+    match = Base.match(rp.path, path)
+    if match == nothing
+      return false
+    else
+      params = Dict{String,String}()
+      i = 1
+      for name in rp.names
+        params[name] = match.captures[i]
+        i += 1
+      end
+      extra.params = params
+      return true
+    end
   end
   
   function route_method_matches(route_method::String, req_method::String)
