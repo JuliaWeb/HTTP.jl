@@ -74,6 +74,20 @@ A GET request to `/test` would give the response `test`.
 
 If the route path is a string instead of a regex then `_.params` will be `false`.
 
+#### Parameterized routes
+
+A new (and possibly buggy) feature is parameterized routes. You can create a parameterized route path by calling `Ocean.pr` (or `Ocean.param_route`) or just doing `pr"/object/:id"` (this macro-string version is currently only available if you do `using Ocean`). Example:
+
+```julia
+# No-using version
+Ocean.get(app, Ocean.pr("/:test"), function(req, res, _)
+  return _.params["test"]
+end)
+# Using version
+get(app, pr"/:test", function(req, res, _)
+  return _.params["test"]
+end)
+```
 
 ### Request data
 
