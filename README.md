@@ -187,14 +187,16 @@ Fork, commit, pull request! Tweet/email me or open an issue if you have any prob
 
 On the drawing board:
 
-* Ocean: Better routing system (allow for fancy routes like "/model/:id" and such)
+* Ocean: Better routing system (<del>allow for fancy routes like "/model/:id"</del> and such)
 * Ocean: Improve the ejl template system
 * HTTP/BasicServer/Ocean: Improve cookie system
-  * Split up cookie system for complete and appropriate separation of concerns (Maybe have all parsing/generating of HTTP cookies in HTTP? Basic parsing of header pairs would still be handled by the server.)
-* HTTP: Middleware API
+  * <del>Split up cookie system for complete and appropriate separation of concerns</del>
+  * Improve/clear up cookie system to make it more straightforward and consistent
+* HTTP: <del>Middleware API</del>
   * HTTP: Session middleware
 * BasicServer: File/binary upload
 * HTTP: Expose access to uploaded binaries on Request objects
+* Client for performing HTTP requests
 
 ## Changelog
 
