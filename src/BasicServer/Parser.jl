@@ -67,6 +67,7 @@
 
 module Parser
   using Base
+  import HTTP
   
   # PARSING
   
@@ -146,8 +147,8 @@ module Parser
           key = part
           value = ""
         end
-        key   = unescape_form(key)
-        value = unescape_form(value)
+        key   = HTTP.Util.unescape_form(key)
+        value = HTTP.Util.unescape_form(value)
         if has(query, key)
           push(query[key], value)
         else
@@ -166,71 +167,4 @@ module Parser
   # export parse_header, parse_request_line, parse_query, parse_cookies
   
   # /PARSING
-  
-  
-  
-  
-  # ESCAPING
-  # TODO: Make it use the escaping functions now in HTTP.Util.
-  
-  # Unescaping
-  escaped_regex = r"%([0-9a-fA-F]{2})"
-  function unescape(str)
-    # def _unescape(str, regex) str.gsub(regex){ $1.hex.chr } end
-    for m in each_match(escaped_regex, str)
-      for capture in m.captures
-        rep = string(char(parse_int(capture, 16)))
-        str = replace(str, "%"*capture, rep)
-      end
-    end
-    return str
-  end
-  function unescape_form(str)
-    str = replace(str, "+", " ")
-    return unescape(str)
-  end
-  
-  # Escaping
-  control_array = convert(Array{Uint8,1}, vec(0:(parse_int("1f", 16))))
-  control = utf8(ascii(control_array)*"\x7f")
-  space = utf8(" ")
-  delims = utf8("%<>\"")
-  unwise   = utf8("{}|\\^`")
-  nonascii_array = convert(Array{Uint8,1}, vec(parse_int("80", 16):(parse_int("ff", 16))))
-  #nonascii = utf8(string(nonascii_array))
-  reserved = utf8(",;/?:@&=+\$![]'*#")
-  # Strings to be escaped
-  # (Delims goes first so '%' gets escaped first.)
-  unescaped = delims * reserved * control * space * unwise# * nonascii
-  unescaped_form = delims * reserved * control * unwise# * nonascii
-  
-  # Escapes chars (listed in second string); also escapes all non-ASCII chars.
-  function escape_with(str, use)
-    chars = collect(use)
-    
-    for c in chars
-      h = hex(int(c))
-      if length(h) < 2
-        h = "0"*h
-      end
-      str = replace(str, c, "%" * h)
-    end
-    
-    for i in nonascii_array
-      str = replace(str, char(i), "%" * hex(i))
-    end
-    
-    return str
-  end
-  
-  function escape(str)
-    return escape_with(str, unescaped)
-  end
-  function escape_form(str)
-    str = escape_with(str, unescaped_form)
-    return replace(str, " ", "+")
-  end
-  
-  # export unescape, unescape_form, escape, escape_form
-  
 end
