@@ -168,10 +168,10 @@ module Parser
     return parse_query(cookie_str, r"[;,]\s*")
   end
   
-  function chop_crlf(s::String)
+  function _chop(s::String)
     if ends_with(s, CRLF)
       chop(chop(s))
-    else
+    elseif ends_with(s, LF)
       chop(s)
     end
   end
@@ -180,45 +180,43 @@ module Parser
     boundary_start = "--"*boundary
     boundary_regex = Regex("^--"*boundary*"(--)?(?:(?:"*LF*")|(?:"*CRLF*"))\$")
     
-    # data = Dict{String,Any}()
+    # Stores tuples of headers and raw data
     datas = Any[]
     
     header_lines = String[]
-    raw_data = Uint8[]
+    # data_lines = String[]
+    data_buf = memio()
     parsing_header = true
     
     while true
-      raw = Base.readuntil(client, uint8('\n'))
-      line = bytestring(raw)
+      line = Base.readline(client)
       
       if begins_with(line, boundary_start)
         _match = match(boundary_regex, line)
-        if length(header_lines) > 0 && length(raw_data) > 0
+        if length(header_lines) > 0# && length(data_lines) > 0
           headers = join(header_lines, "\n")
-          
-          push!(datas, (headers, raw_data))
+          # data = join(data_lines, "")
+          data = takebuf_string(data_buf)
+          close(data_buf)
+          push!(datas, (headers, data))
         end
+        # End of form data
         if _match.captures[1] == "--"
           break
         end
+        # Reset
         header_lines = String[]
-        #data_lines = String[]
-        raw_data = Uint8[]
+        data_lines = String[]
         parsing_header = true
       else
-      if line == CRLF || line == LF
+        # CRLF separates header and data
+        if line == CRLF
           parsing_header = false
         else
           if parsing_header
-            push!(header_lines, chop_crlf(line))
+            push!(header_lines, _chop(line))
           else
-            if length(raw) < 3
-              show(raw)
-              println()
-            end
-            append!(raw_data, raw)
-            # Put on the '\n' that got gobbled up.
-            # push!(raw_data, uint8('\n'))
+            write(data_buf, line)
           end
         end
       end
@@ -258,7 +256,7 @@ module Parser
         
         ret[name] = [mp]
       else
-        ret[name] = [strip(bytestring(data))]
+        ret[name] = [strip(data)]
       end
     end
     

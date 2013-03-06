@@ -23,9 +23,7 @@ Ocean.get(app, "/", function(req, res, _)
 end)
 
 Ocean.post(app, "/", function(req, res, _)
-  println(req.data)
-  
-  postdata = gs(req.data, "test")
+postdata = gs(req.data, "test")
   if postdata != false
     cookie = HTTP.new_cookie("test", postdata, {:expires => Calendar.now() + Calendar.years(10)})
     HTTP.set_cookie(res, cookie)
@@ -35,7 +33,7 @@ Ocean.post(app, "/", function(req, res, _)
     mp = req.data["test_file"][1]
     
     #tmp = tempname()
-    f = open("/Users/dirk/Desktop/3-test.md", "w")
+    f = open("/Users/dirk/Desktop/8aB8B-test.jpg", "w")
     write(f, mp.data)
     close(f)
     
