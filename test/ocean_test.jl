@@ -13,8 +13,6 @@ Ocean.get(app, "/", function(req, res, _)
   
   #println(req.cookies)
   
-  println(_.params)
-  
   v = gs(req.cookies, "test")
   if v != false
     return _.template(:ejl, "view.ejl", {"value" => v})
@@ -25,12 +23,25 @@ Ocean.get(app, "/", function(req, res, _)
 end)
 
 Ocean.post(app, "/", function(req, res, _)
+  println(req.data)
+  
   postdata = gs(req.data, "test")
+  if postdata != false
+    cookie = HTTP.new_cookie("test", postdata, {:expires => Calendar.now() + Calendar.years(10)})
+    HTTP.set_cookie(res, cookie)
+  end
   
-  cookie = HTTP.new_cookie("test", postdata, {:expires => Calendar.now() + Calendar.years(10)})
-  HTTP.set_cookie(res, cookie)
-  
-  println(res)
+  if has(req.data, "test_file")
+    mp = req.data["test_file"][1]
+    
+    #tmp = tempname()
+    f = open("/Users/dirk/Desktop/3-test.md", "w")
+    write(f, mp.data)
+    close(f)
+    
+    #println(tmp)
+    #run(`open $(dirname(tmp))`)
+  end
   
   return redirect(res, "/")
 end)

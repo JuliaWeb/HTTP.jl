@@ -1,7 +1,9 @@
 <html>
   <body>
-    <form method="post" action="/">
-      <input type="text" name="test" value="<%= value %>" /> <input type="submit" />
+    <form method="post" action="/" enctype="multipart/form-data">
+      <input type="text" name="test" value="<%= value %>" />
+      <input type="file" name="test_file" />
+      <input type="submit" />
     </form>
   </body>
 </html>

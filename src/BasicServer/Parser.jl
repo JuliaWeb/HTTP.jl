@@ -69,6 +69,10 @@ module Parser
   using Base
   import HTTP
   
+  const CR   = "\x0d"
+  const LF   = "\x0a"
+  const CRLF = "\x0d\x0a"
+  
   # PARSING
   
   function parse_header(raw::String)
@@ -162,6 +166,103 @@ module Parser
   
   function parse_cookies(cookie_str)
     return parse_query(cookie_str, r"[;,]\s*")
+  end
+  
+  function chop_crlf(s::String)
+    if ends_with(s, CRLF)
+      chop(chop(s))
+    else
+      chop(s)
+    end
+  end
+  
+  function parse_form_data(request, client, boundary::String)
+    boundary_start = "--"*boundary
+    boundary_regex = Regex("^--"*boundary*"(--)?(?:(?:"*LF*")|(?:"*CRLF*"))\$")
+    
+    # data = Dict{String,Any}()
+    datas = Any[]
+    
+    header_lines = String[]
+    raw_data = Uint8[]
+    parsing_header = true
+    
+    while true
+      raw = Base.readuntil(client, uint8('\n'))
+      line = bytestring(raw)
+      
+      if begins_with(line, boundary_start)
+        _match = match(boundary_regex, line)
+        if length(header_lines) > 0 && length(raw_data) > 0
+          headers = join(header_lines, "\n")
+          
+          push!(datas, (headers, raw_data))
+        end
+        if _match.captures[1] == "--"
+          break
+        end
+        header_lines = String[]
+        #data_lines = String[]
+        raw_data = Uint8[]
+        parsing_header = true
+      else
+      if line == CRLF || line == LF
+          parsing_header = false
+        else
+          if parsing_header
+            push!(header_lines, chop_crlf(line))
+          else
+            if length(raw) < 3
+              show(raw)
+              println()
+            end
+            append!(raw_data, raw)
+            # Put on the '\n' that got gobbled up.
+            # push!(raw_data, uint8('\n'))
+          end
+        end
+      end
+    end
+    
+    ret = Dict{String,Any}()
+    
+    for pairs in datas
+      raw_headers, data = pairs
+      headers = parse_header(raw_headers)
+      
+      if !has(headers, "Content-Disposition")
+        error("Multipart blocks must provide a Content-Disposition header")
+      else
+        disp = headers["Content-Disposition"][1]
+      end
+      
+      _nm = match(r"\s+name=\"([^\"]+)\"", disp)
+      if _nm != nothing
+        name = _nm.captures[1]
+      else
+        error("Multipart blocks must provide a name")
+      end
+      
+      _fm = match(r"\s+filename=\"([^\"]+)\"", disp)
+      if _fm != nothing
+        filename = _fm.captures[1]
+      else; filename = false; end
+      
+      if filename != false && has(headers, "Content-Type")
+        mp = HTTP.Multipart()
+        mp.name = name
+        mp.headers = headers
+        mp.filename = filename
+        mp.mime_type = headers["Content-Type"][1]
+        mp.data = data
+        
+        ret[name] = [mp]
+      else
+        ret[name] = [strip(bytestring(data))]
+      end
+    end
+    
+    return ret
   end
   
   # export parse_header, parse_request_line, parse_query, parse_cookies
