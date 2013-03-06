@@ -198,15 +198,21 @@ On the drawing board:
   * Improve/clear up cookie system to make it more straightforward and consistent
 * HTTP: <del>Middleware API</del>
   * HTTP: Session middleware
-* BasicServer: File/binary upload
+* BasicServer: <del>File/binary upload</del>
 * HTTP: Expose access to uploaded binaries on Request objects
 * Client for performing HTTP requests
 
 ## Changelog
 
-### 0.0.2 (WIP)
+### 0.0.3 (WIP)
 #### Improvements
+* Cookie and session middleware (WIP)
+
+### 0.0.2 (2013-03-06)
+#### Improvements
+* Multipart handling
 * New template system
+* Basic middleware system
 * Add Mustache.jl template hooks
 * Add cookie handling
 * Add `file`, `template`, and `redirect` scoped methods to `Extra` objects
