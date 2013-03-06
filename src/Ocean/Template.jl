@@ -106,6 +106,7 @@ module Template
     return (out, perf)
   end
   function run(ct::CompiledTemplate, scope::Dict)
+    ct = deepcopy(ct)
     perf = Dict{Symbol,Any}()
     
     for (k, v) = scope
