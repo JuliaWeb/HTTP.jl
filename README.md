@@ -104,6 +104,10 @@ POSTing the data `test=testing` would result in something like `{"test"=>["testi
 
 Ocean provides the shorthand method `gs` (for `get_single`). To get the first value of the key `"test"` in the data dictionary you would call `v = gs(req.data, "test")` (it will return `false` if the key does not exist). To access this and other utility methods just do `using Ocean.Util` (look at [Ocean/Util.jl](src/Ocean/Util.jl) to see what exactly Ocean.Util provides).
 
+#### Multipart data
+
+Plain multipart data (without a filename and content-type) will be accessible as a regular array of string(s) in the `req.data` dict. Multipart data with a filename and content-type is stored as Multipart objects ([see type definition](src/HTTP.jl#L46)) in the `req.data` dict.
+
 ### Redirects
 
 Also provided by Ocean.Util (`using Ocean.Util`) is the `redirect` method. This will set the `Location` header in the response headers and the response status to 302 (default).
