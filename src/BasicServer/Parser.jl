@@ -210,7 +210,7 @@ module Parser
         parsing_header = true
       else
         # CRLF separates header and data
-        if line == CRLF
+        if line == CRLF && parsing_header
           parsing_header = false
         else
           if parsing_header

@@ -7,7 +7,10 @@ module HTTP
   
   import Calendar
   
+  typealias Env Dict{Union(String,Symbol),Any}
+  
   type Request
+    env::Env
     method::String
     path::String
     query_string::String
@@ -18,6 +21,7 @@ module HTTP
     data::Any
   end
   Request() = Request(
+    Env(),
     "", "", "",
     Dict{String,Any}(), Dict{String,Any}(),
     "", "",
@@ -116,5 +120,17 @@ module HTTP
     return r
   end
   
-  export Request, Response
+  export Request,
+         Response,
+         Multipart,
+         Cookie,
+         Env,
+         # Methods
+         new_cookie,
+         set_cookie,
+         ensure_rfc1123,
+         isempty,
+         cookie_header
+  #/export
+  
 end
