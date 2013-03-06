@@ -157,8 +157,8 @@ module Ocean
       error("Unrecognized template format " * repr(format))
     end
   end
-  template(app::App, format::Symbol, path::String) = 
-    format(app, format, path, Dict())
+  template(extra::Extra, format::Symbol, path::String) = 
+    template(extra, format, path, Dict())
   
   function new_extra(app::App, req::HTTP.Request, res::HTTP.Response)
     extra = Extra(app, req, res)
