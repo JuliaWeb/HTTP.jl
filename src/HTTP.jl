@@ -43,6 +43,15 @@ module HTTP
     false#httponly
   )
   
+  type Multipart
+    name::String
+    filename::Union(String,Bool)
+    mime_type::Union(String,Bool)
+    headers::Dict{String,Any}
+    data::Any
+  end
+  Multipart() = Multipart("", false, false, Dict{String,Any}(), nothing)
+  
   type Response
     status::Integer
     body::String
