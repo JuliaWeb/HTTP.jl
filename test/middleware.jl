@@ -11,13 +11,22 @@ function test_app(req, res)
   end
 end
 
-function test_middleware(app)
+function test_middleware1(app)
   return function(req, res)
     ret = HTTP.Util.wrap_app(app, req, res)
-    res.body *= " (Middlewared!)"
+    res.body *= " (Middlewar1'ed!)"
     return ret
   end
 end
 
-BasicServer.bind(8000, test_middleware(test_app), true)
+function test_middleware2(app)
+  return function(req, res)
+    ret = HTTP.Util.wrap_app(app, req, res)
+    res.body *= " (Middlewar2'ed!)"
+    return ret
+  end
+end
+
+
+BasicServer.bind(8000, test_middleware1(test_middleware2(test_app)), true)
 
