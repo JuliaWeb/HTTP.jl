@@ -5,6 +5,10 @@ module BasicServer
   using HTTP
   using Base
   
+  const CR   = "\x0d"
+  const LF   = "\x0a"
+  const CRLF = "\x0d\x0a"
+  
   include("BasicServer/Parser.jl")
   
   function read_handler(client::TcpSocket, app, debug)
@@ -66,23 +70,12 @@ module BasicServer
       # end#while keepalive
       
     catch e
-      println(e)
-      # TODO: Fix this so it can show a better output
-      # Current output if error happens with no try-catch block:
-      #   
-      #   accept error: -1: resource temporarily unavailable (EAGAIN)
-      #    in uv_error at stream.jl:470
-      #    in accept_handler at /Users/dirk/.julia/HTTP/src/BasicServer.jl:15
-      #    in anonymous at /Users/dirk/.julia/HTTP/src/BasicServer.jl:64
-      #    in _uv_hook_connectioncb at stream.jl:200
-      #    in event_loop at multi.jl:1392
-      #    in bind at /Users/dirk/.julia/HTTP/src/BasicServer.jl:71
-      #    in include_from_node1 at loading.jl:76
-      #    in process_options at client.jl:259
-      #    in _start at client.jl:322
+      Base.error_show(OUTPUT_STREAM, e, backtrace())
+      println()
+    finally
+      Base.close(client)
+      return true
     end
-    
-    Base.close(client)
   end#accept_handler
   
   function log(request, response, elapsed)
@@ -111,7 +104,7 @@ module BasicServer
       line = Base.readline(client)
       raw = raw * line
       # readline also got one newline, so just need to check for a single.
-      if line == "\r\n" || line == "\n"
+      if line == CRLF || line == LF
         nb = false
       end
     end
@@ -119,12 +112,30 @@ module BasicServer
   end
   
   function handle_data(request, client)
-    content_length = int(request.headers["Content-Length"][1])
-    binary = Base.read(client, Uint8, content_length)
-    request.raw_data = UTF8String(binary)
-    
-    if has(request.headers, "Content-Type") && has(Set(request.headers["Content-Type"]...), "application/x-www-form-urlencoded")
-      request.data = Parser.parse_query(request.raw_data)
+    if has(request.headers, "Content-Type")
+      if length(request.headers["Content-Type"]) != 1
+        error("Only one Content-Type header allowed")
+      end
+      ctype::String = request.headers["Content-Type"][1]
+      
+      println("ctype: " * ctype)
+      
+      if ctype == "application/x-www-form-urlencoded"
+        content_length = int(request.headers["Content-Length"][1])
+        binary = Base.read(client, Uint8, content_length)
+        request.raw_data = UTF8String(binary)
+        request.data = Parser.parse_query(request.raw_data)
+      elseif begins_with(ctype, "multipart/form-data")
+        _match = match(r"multipart\/form-data; boundary=(.+)", ctype)
+        boundary = _match.captures[1]
+        
+        println("boundary: " * boundary)
+        println("Calling parse_form_data")
+        request.data = Parser.parse_form_data(request, client, boundary)
+        println("There")
+      else
+        error("Unrecognized Content-Type: $ctype")
+      end
     end
   end
   
@@ -146,7 +157,9 @@ module BasicServer
     
     request.headers = Parser.parse_header(raw_header)
     if has(request.headers, "Cookie")
-      request.cookies = Parser.parse_cookies(join(request.headers["Cookie"], "; "))
+      request.cookies = Parser.parse_cookies(
+        join(request.headers["Cookie"], "; ")
+      )
     end
     
     return request
@@ -183,12 +196,27 @@ module BasicServer
   end
   
   function bind_no_event(port, app, debug)
-    return listen(port) do sock, status
-      client = accept(sock)
-      #client.readcb = (args...)->(show(args);println();read_handler(client, app, debug);true)
-      client.readcb = (socket, n)->(read_handler(client, app, debug))
-      start_reading(client)
+    # return listen(port) do sock, status
+    #   client = accept(sock)
+    #   #client.readcb = (args...)->(show(args);println();read_handler(client, app, debug);true)
+    #   client.readcb = (socket, n)->(read_handler(client, app, debug))
+    #   start_reading(client)
+    # end
+    
+    addr = Base.InetAddr(Base.IPv4(uint32(0)), uint16(port)) # host, port
+    socket = TcpSocket()
+    if Base.bind(socket, addr) != true
+      error("bind: could not bind to socket")
+      return
     end
+    
+    socket.ccb = (handle, status) -> accept_handler(handle, status, app, debug)
+    if listen(socket) != true
+      error("listen: could not listen on socket")
+    end
+    socket.open = true
+    
+    return socket
   end
   
   function bind(port, app, debug)
@@ -197,24 +225,6 @@ module BasicServer
     Base.event_loop(false)
     close(socket)
     return
-    
-    # addr = Base.InetAddr(IPv4(uint32(0)), uint16(port)) # host, port
-    # socket = TcpSocket()
-    # if Base.bind(socket, addr) != true
-    #   error("bind: could not bind to socket")
-    #   return
-    # end
-    # 
-    # socket.ccb = (handle, status) -> accept_handler(handle, status, app, debug)
-    # if listen(socket) != true
-    #   error("listen: could not listen on socket")
-    # end
-    # socket.open = true
-    # 
-    # if debug; println("Listening on $(string(port))..."); end
-    # Base.event_loop(false)
-    # 
-    # close(socket)
   end#bind
   
   # Default has debug disabled
