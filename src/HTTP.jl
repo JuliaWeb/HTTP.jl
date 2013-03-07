@@ -101,7 +101,7 @@ module HTTP
   end
   
   function cookie_header(c::Cookie)
-    r = "Set-Cookie: "*c.key*"="*Util.escape(c.value)
+    r = "Set-Cookie: "*c.key*"="*Util.escape_form(c.value)
     if !isempty(c.domain)
       r *= "; domain=" * c.domain
     end
