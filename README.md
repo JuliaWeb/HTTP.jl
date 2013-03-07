@@ -197,16 +197,15 @@ On the drawing board:
   * <del>Split up cookie system for complete and appropriate separation of concerns</del>
   * Improve/clear up cookie system to make it more straightforward and consistent
 * HTTP: <del>Middleware API</del>
-  * HTTP: Session middleware
+  * HTTP: <del>Session middleware</del>
 * BasicServer: <del>File/binary upload</del>
-* HTTP: Expose access to uploaded binaries on Request objects
 * Client for performing HTTP requests
 
 ## Changelog
 
 ### 0.0.3 (WIP)
 #### Improvements
-* Cookie and session middleware (WIP)
+* Cookie and session middleware
 
 ### 0.0.2 (2013-03-06)
 #### Improvements
