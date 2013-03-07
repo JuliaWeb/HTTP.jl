@@ -8,5 +8,7 @@ module Middleware
   # The suggested means of action for middleware is to modifiy the req.env
   # dict to send/receive data from the app.
   
+  import HTTP
+  
   include("Middleware/CookieSession.jl")
 end

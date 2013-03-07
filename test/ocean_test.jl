@@ -25,7 +25,7 @@ end)
 Ocean.post(app, "/", function(req, res, _)
 postdata = gs(req.data, "test")
   if postdata != false
-    cookie = HTTP.new_cookie("test", postdata, {:expires => Calendar.now() + Calendar.years(10)})
+    cookie = HTTP.new_cookie("test", postdata, {:expires => Calendar.now() + Calendar.days(10 * 365)})
     HTTP.set_cookie(res, cookie)
   end
   
