@@ -95,18 +95,18 @@ type ParserSettings
 end
 
 function http_parser_execute(parser::Parser, settings::ParserSettings, request::String)
-    ccall((:http_parser_execute, "libhttp_parser"), Csize_t, 
+    ccall((:http_parser_execute, lib), Csize_t, 
             (Ptr{Parser}, Ptr{ParserSettings}, Ptr{Uint8}, Csize_t,), 
             &parser, &settings, convert(Ptr{Uint8}, request), length(request))
 end
 
 function http_method_str(method::Int)
-    val = ccall((:http_method_str, "libhttp_parser"), Ptr{Uint8}, (Int,), method)
+    val = ccall((:http_method_str, lib), Ptr{Uint8}, (Int,), method)
     return bytestring(val)
 end
 
 function http_should_keep_alive(parser::Ptr{Parser})
-    ccall((:http_should_keep_alive, "libhttp_parser"), Int, (Ptr{Parser},), parser)
+    ccall((:http_should_keep_alive, lib), Int, (Ptr{Parser},), parser)
 end
 
 # end module
