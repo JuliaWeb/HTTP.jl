@@ -7,7 +7,7 @@ const lib = "libhttp_parser"
 typealias Headers Dict{String,String}
 
 type Request
-    method::Any
+    method::String
     resource::String
     headers::Headers
     data::String
