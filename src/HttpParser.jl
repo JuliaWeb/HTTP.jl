@@ -113,5 +113,4 @@ function http_should_keep_alive(parser::Ptr{Parser})
     ccall((:http_should_keep_alive, lib), Int, (Ptr{Parser},), parser)
 end
 
-# end module
-end
+end # module HttpParser
