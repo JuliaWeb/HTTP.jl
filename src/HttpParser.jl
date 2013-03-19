@@ -36,7 +36,10 @@ type Parser
     errno_and_upgrade::Cuchar
 
     data::Ptr{Uint8}
+    id::Int
 end
+
+id_pool = 0
 
 Parser() = Parser(
     convert(Cuchar, 0),
@@ -55,6 +58,7 @@ Parser() = Parser(
     convert(Cuchar, 0),
 
     convert(Ptr{Uint8}, Array(Int, 0)),
+    (global id_pool += 1)
 )
 
 function http_parser_init(parser::Parser)
