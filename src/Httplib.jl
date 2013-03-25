@@ -2,8 +2,8 @@ module Httplib
 
 export STATUS_CODES,
        Headers,
-       Response,
-       Request
+       Request,
+       Response
 
 STATUS_CODES = {
     100 => "Continue",
@@ -64,14 +64,47 @@ STATUS_CODES = {
     511 => "Network Authentication Required"      # RFC 6585
 }
 
-# Request / Response
-# ==================
-
+# Default HTTP headers
+#
+#     headers() # => ["Server" => "v\"0.2.0-740.r6df6\""]
+#
 typealias Headers Dict{String,String}
-
-# Default response headers
 headers() = (String => String)["Server" => "Julia/$VERSION"]
 
+# HTTP request
+#
+# - method   => valid HTTP method string (e.g. "GET")
+# - resource => requested resource (e.g. "/hello/world")
+# - headers  => HTTP headers
+# - data     => request data
+# - state    => used to store various data during request processing
+#
+immutable Request
+    method::String
+    resource::String
+    headers::Headers
+    data::String
+    state::Dict
+end
+
+# HTTP response
+#
+# - status   => HTTP status code (see: `STATUS_CODES`)
+# - message  => HTTP status message (see: `STATUS_CODES`)
+# - headers  => HTTP headers
+# - data     => response data
+# - finished => indicates that a Response is "valid" and can be converted to an
+#               actual HTTP response
+#
+# If a Response is instantiated with all of these attributes except for
+# `finished`, `finished` will default to `false`.
+#
+# A Response can also be instantiated with an HTTP status code, in which case
+# sane defaults will be set:
+#
+#     Response(200)
+#     # => Response(200, "OK", ["Server" => "v\"0.2.0-740.r6df6\""], "200 OK", false)
+#
 type Response
     status::Int
     message::String
@@ -87,13 +120,5 @@ Response(s::Int, m::String)                        = Response(s, m, headers(), "
 Response(d::String)                                = Response(200, STATUS_CODES[200], d)
 Response(s::Int)                                   = Response(s, STATUS_CODES[s])
 Response()                                         = Response(200)
-
-immutable Request
-    method::String
-    resource::String
-    headers::Headers
-    data::String
-    state::Dict
-end
 
 end # module Httplib
