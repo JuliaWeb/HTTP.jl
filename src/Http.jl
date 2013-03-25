@@ -1,11 +1,11 @@
 module Http
 
 include("RequestParser.jl")
-export Server, 
-       HttpHandler, 
-       WebsocketHandler, 
-       Request, 
-       Response, 
+export Server,
+       HttpHandler,
+       WebsocketHandler,
+       Request,
+       Response,
        run
 
 STATUS_CODES = {
@@ -75,7 +75,7 @@ immutable HttpHandler
     sock::TcpSocket
     events::Dict
 
-    HttpHandler(handle::Function) = new(handle, TcpSocket(), (ASCIIString=>Function)[])
+    HttpHandler(handle::Function) = new(handle, TcpSocket(), Dict{ASCIIString, Function}())
 end
 
 immutable WebsocketHandler
@@ -87,7 +87,7 @@ end
 
 immutable Server
     http::HttpHandler
-    websock::Union(Nothing,WebsocketHandler)
+    websock::Union(Nothing, WebsocketHandler)
 end
 Server(http::HttpHandler)                        = Server(http, nothing)
 Server(handler::Function)                        = Server(HttpHandler(handler))
@@ -116,7 +116,7 @@ Response(s::Int, m::String, h::Headers, d::String) = Response(s, m, h, d, false)
 Response(s::Int, m::String, h::Headers)            = Response(s, m, h, "", false)
 Response(s::Int, m::String, d::String)             = Response(s, m, headers(), d, false)
 Response(d::String, h::Headers)                    = Response(200, STATUS_CODES[200], h, d, false)
-Response(s::Int, m::String)                        = Response(s, m, headers(), "")
+Response(s::Int, m::String)                        = Response(s, m, headers(), "$s $m")
 Response(d::String)                                = Response(200, STATUS_CODES[200], d)
 Response(s::Int)                                   = Response(s, STATUS_CODES[s])
 Response()                                         = Response(200)
@@ -130,7 +130,7 @@ headers() = (String => String)["Server" => "Julia/$VERSION"]
 is_websocket_handshake(req) = get(req.headers, "Upgrade", false) == "websocket"
 
 function event(event::String, server::Server, args...)
-    has(server.http.events, event) ? server.http.events[event](args...) : false
+    has(server.http.events, event) && server.http.events[event](args...)
 end
 
 # Request -> Response functions
@@ -151,9 +151,7 @@ end
 function process_client(server::Server, client::Client, websockets_enabled::Bool)
     event("connect", server, client)
 
-    client.sock.closecb = function (args...)
-        clean!(client.parser)
-    end
+    client.sock.closecb = (args...) -> clean!(client.parser)
 
     while client.sock.open
         line = readline(client.sock)
@@ -166,28 +164,28 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
 
     # After parsing is done, the HttpHandler & WebsockHandler are passed the Request
     function on_message_complete(req::Request)
-            if websockets_enabled && is_websocket_handshake(req)
-                server.websock.handle(req, client)             # Defer to websockets
-                return true                                    # Keep-alive
+        if websockets_enabled && is_websocket_handshake(req)
+            server.websock.handle(req, client)             # Defer to websockets
+            return true                                    # Keep-alive
+        end
+
+        local response                                     # Init response
+
+        try
+            response = server.http.handle(req, Response()) # Run the server handler
+            if !isa(response, Response)                    # Promote return to Response
+                response = Response(response)
             end
+        catch err
+            response = Response(500)
+            event("error", server, client, err)            # Something went wrong
+            Base.display_error(err, catch_backtrace())     # Prints backtrace without throwing
+        end
 
-            local response                                     # Init response
-
-            try
-                response = server.http.handle(req, Response()) # Run the server handler
-                if !isa(response, Response)                    # Promote return to Response
-                    response = Response(response)
-                end
-            catch err
-                response = Response(500)
-                event("error", server, client, err)            # Something went wrong
-                Base.display_error(err, catch_backtrace())     # Prints backtrace without throwing
-            end
-
-            event("write", server, client, response)
-            write(client.sock, render(response))               # Send the response
-            event("close", server, client)
-            close(client.sock)                                 # Close this connection
+        write(client.sock, render(response))               # Send the response
+        event("write", server, client, response)
+        close(client.sock)                                 # Close this connection
+        event("close", server, client)
     end
 end
 
