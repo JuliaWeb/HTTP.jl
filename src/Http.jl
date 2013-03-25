@@ -1,3 +1,7 @@
+# Http module
+#
+# Serve HTTP requests in Julia.
+#
 module Http
 
 using Httplib
@@ -11,10 +15,11 @@ export HttpHandler,
 
 # `HttpHandler` types are used to instantiate a `Server`.
 #
-# An `HttpHandler` is responsible for the entirety of the request / response cycle.
-# Instantiate an `HttpHandler` with a single `Function` argument, which becomes `HttpHandler.handle`.
-# This handler is called on every incoming request and passed `req::Request, res::Response`.
-# The return value of `HttpHandler.handle` is the response sent to the client for the given `req`.
+# An `HttpHandler` is responsible for the entirety of the request / response 
+# cycle. Instantiate an `HttpHandler` with a single `Function` argument, which 
+# becomes `HttpHandler.handle`. This handler is called on every incoming 
+# request and passed `req::Request, res::Response`. The return value of 
+# `HttpHandler.handle` is the response sent to the client for the given `req`.
 #
 # `HttpHandler.handle` can return a `String`:
 #
@@ -34,9 +39,11 @@ export HttpHandler,
 #         Response(200, "Success", "Hello World!" 
 #     end  
 #
-# `HttpHandler.sock` is used internally to store the `TcpSocket` for incoming connections.
+# `HttpHandler.sock` is used internally to store the `TcpSocket` for incoming 
+# connections.
 #
-# `HttpHandler.events` is a dictionary of functions to call when certain server events occur.
+# `HttpHandler.events` is a dictionary of functions to call when certain 
+# server events occur.
 # Set these functions by direct assignment:
 #
 #     handler.events["listen"] = (port) -> "Listening on $port..."
@@ -48,7 +55,8 @@ export HttpHandler,
 #   - `"write"   => (client::Client, res::Response)`
 #   - `"close"   => (client::Client)`
 #
-# If you want to trigger custom events on your server, use the `event` function:
+# If you want to trigger custom events on your server, use the `event` 
+# function:
 #
 #     # listen for "foo"
 #     handler.events["foo"] = (bar) -> "Hello $bar"
@@ -66,8 +74,9 @@ handle(handler::HttpHandler, req::Request, res::Response) = handler.handle(req, 
 
 # Client encapsulates a single connection
 #
-# When new connections are initialized a `Client` is created with a new id and the connection socket.
-# `Client.parser` will store a `ClientParser` to handle all HTTP parsing for the connection lifecycle.
+# When new connections are initialized a `Client` is created with a new id and 
+# the connection socket. `Client.parser` will store a `ClientParser` to handle 
+# all HTTP parsing for the connection lifecycle.
 #
 type Client
     id::Int
@@ -79,24 +88,33 @@ end
 
 # `WebsocketInterface` defines the abstract protocol for a WebsocketHandler.
 #
-# The methods `is_websocket_handshake` and `handle` will be called if `Server.sockets` is populated.
-# Concrete types of `WebsocketInterface` are required to define these methods.
+# The methods `is_websocket_handshake` and `handle` will be called if `Server.
+# sockets` is populated. Concrete types of `WebsocketInterface` are required 
+# to define these methods.
+#
 abstract WebsocketInterface
-# `is_websocket_handshake` should determine if `req` is a valid websocket upgrade request.
+# `is_websocket_handshake` should determine if `req` is a valid websocket 
+# upgrade request.
+#
 function is_websocket_handshake(handler::WebsocketInterface, req::Request)
     throw("`$(typeof(handler))` does not implement `is_websocket_handshake`.")
 end
-# `handle` is called when `is_websocket_handshake` returns true, and takes full control of the connection.
+# `handle` is called when `is_websocket_handshake` returns true, and takes
+# full control of the connection.
+#
 function handle(handler::WebsocketInterface, req::Request, client::Client)
     throw("`$(typeof(handler))` does not implement `handle`.")
 end
 
-# `Server` types encapsulate an `HttpHandler` and optional `WebsocketInterface` to serve requests.
+# `Server` types encapsulate an `HttpHandler` and optional 
+# `WebsocketInterface` to serve requests.
 # 
-# Instantiate with both an `HttpHandler` and `WebsocketInterface` to serve both protocols.
-# Instantiate with just an `HttpHandler` to serve only standard `Http`
-# Instantiate with just a `Function` to create an `HttpHandler` automatically.
-# Instantiate with just a `WebsocketInterface` to only serve websockets requests and `404` all others. 
+# - Instantiate with both an `HttpHandler` and `WebsocketInterface` to serve 
+#   both protocols.
+# - Instantiate with just an `HttpHandler` to serve only standard `Http`
+# - Instantiate with just a `Function` to create an `HttpHandler` automatically
+# - Instantiate with just a `WebsocketInterface` to only serve websockets 
+#   requests and `404` all others. 
 #
 immutable Server
     http::HttpHandler
@@ -107,7 +125,8 @@ Server(handler::Function)           = Server(HttpHandler(handler))
 Server(websock::WebsocketInterface) = Server(HttpHandler((req, res) -> Response(404)), websock)
 
 # Triggers `event` on `server`.
-# If there is a function bound to `event` in `server.events` it will be called with `args...`
+# If there is a function bound to `event` in `server.events` it will be called 
+# with `args...`
 #
 function event(event::String, server::Server, args...)
     has(server.http.events, event) && server.http.events[event](args...)
@@ -154,7 +173,8 @@ end
 
 # Handles live connections, runs inside a `Task`.
 #
-# Blocks ( yields ) until a line can be read, then passes it into `client.parser`.
+# Blocks ( yields ) until a line can be read, then passes it into `client.
+# parser`.
 #
 function process_client(server::Server, client::Client, websockets_enabled::Bool)
     event("connect", server, client)
@@ -164,19 +184,22 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
         add_data(client.parser, line)
     end
     
-    # Garbage collects parser globals on connection close, (see: `RequestParser.jl`)
+    # Garbage collects parser globals on connection close 
+    # see: `RequestParser.jl`
+    #
     clean!(client.parser)
 end
 
 # Callback factory for providing `on_message_complete` for `client.parser`
 function message_handler(server::Server, client::Client, websockets_enabled::Bool)
 
-    # Called when the `ClientParser` has successfull parsed a complete `Request`.
+    # Called when the `ClientParser` has finished parsing a `Request`.
     #
-    # If websockets are enabled and claim this request, defer to `server.websock` and return.
-    # Otherwise, call `server.http.handle` to get a `Response` for the `client`.
-    # Catches any errors with `server.http.handle`, returns a `500` and writes a stacktrace to `stdout`.
-    # Closes all connections after response ( should be changed to support keep-alive )
+    # If websockets are enabled and claim this request, defer to `server.
+    # websock` and return. Otherwise, call `server.http.handle` to get a 
+    # `Response` for the `client`. Catches any errors with `server.http.
+    # handle`, returns a `500` and writes a stacktrace to `stdout`. Closes all 
+    # connections after response ( should be changed to support keep-alive )
     #
     function on_message_complete(req::Request)
         if websockets_enabled && is_websocket_handshake(server.websock, req)
