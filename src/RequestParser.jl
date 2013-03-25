@@ -1,21 +1,26 @@
+# `RequestParser` handles all the `HttpParser` module stuff for `Http.jl`
+#
+# The `HttpParser` module wraps [Joyent's `http-parser` C library][repo]. 
+# A new `HttpParser` is created for each TCP connection being handled by
+# our server.  Each `HttpParser` is initialized with a set of callback
+# functions, When new data comes in, it is fed into the `http-parser` which
+# calls
+#
+# Not a module, included directly in `Http.jl`
+#
+# [repo]: https://github.com/joyent/http-parser
+#
 using HttpParser
 export RequestParser,
        clean!,
        add_data
 
+# Datatype Tuples for the different `cfunction` signatures used by `HttpParser`
 HTTP_CB      = (Int, (Ptr{Parser},))
 HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
 
-type PartialRequest
-    method::Any
-    resource::String
-    headers::Headers
-    data::String
-end
-PartialRequest() = PartialRequest("", "", Dict{String, String}(), "")
-
 import Httplib.Request
-Request(r::PartialRequest) = Request(r.method, r.resource, r.headers, r.data, Dict())
+Request() = Request("", "", Httplib.headers(), "", Dict{Any, Any}())
 
 # IMPORTANT!!! This requires manual memory management.
 #
@@ -24,11 +29,11 @@ Request(r::PartialRequest) = Request(r.method, r.resource, r.headers, r.data, Di
 # to PartialRequests. Callbacks will lookup their partial in this
 # global dict. Partials must be manually deleted when connections
 # are closed or memory leaks will occur.
-partials = Dict{Ptr{Parser}, PartialRequest}()
+partials = Dict{Ptr{Parser}, Request}()
 message_complete_callbacks = Dict{Int, Function}()
 
 function on_message_begin(parser)
-    partials[parser] = PartialRequest()
+    partials[parser] = Request()
     return 0
 end
 on_message_begin_cb = cfunction(on_message_begin, HTTP_CB...)
@@ -106,13 +111,11 @@ function on_message_complete(parser)
     end
     raw_resource = r.resource
     r.resource = split(r.resource,'?')[1]
-
-    req = Request(r)
-    req.state[:raw_resource] = raw_resource
-    req.state[:url_params]   = url_params
+    r.state[:raw_resource] = raw_resource
+    r.state[:url_params]   = url_params
 
     # TODO: WTF is happening here?
-    message_complete_callbacks[unsafe_ref(parser).id](req)
+    message_complete_callbacks[unsafe_ref(parser).id](r)
 
     return 0
 end
