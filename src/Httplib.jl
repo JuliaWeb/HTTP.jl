@@ -88,7 +88,7 @@ Response(d::String)                                = Response(200, STATUS_CODES[
 Response(s::Int)                                   = Response(s, STATUS_CODES[s])
 Response()                                         = Response(200)
 
-immutable Request
+type Request
     method::String
     resource::String
     headers::Headers
