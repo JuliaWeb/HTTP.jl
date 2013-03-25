@@ -1,8 +1,8 @@
 using HttpParser
-export RequestParser, 
-       Request, 
-       Headers, 
-       clean!, 
+export RequestParser,
+       Request,
+       Headers,
+       clean!,
        add_data
 
 HTTP_CB      = (Int, (Ptr{Parser},))
@@ -38,7 +38,7 @@ end
 Request(r::PartialRequest) = Request(r.method, r.resource, r.headers, r.data, Dict())
 
 function on_message_begin(parser)
-    r = partials[parser] = PartialRequest()
+    partials[parser] = PartialRequest()
     return 0
 end
 on_message_begin_cb = cfunction(on_message_begin, HTTP_CB...)
@@ -121,6 +121,7 @@ function on_message_complete(parser)
     req.state[:raw_resource] = raw_resource
     req.state[:url_params]   = url_params
 
+    # TODO: WTF is happening here?
     message_complete_callbacks[unsafe_ref(parser).id](req)
 
     return 0
