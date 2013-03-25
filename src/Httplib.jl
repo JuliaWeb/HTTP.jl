@@ -79,7 +79,7 @@ headers() = (String => String)["Server" => "Julia/$VERSION"]
 # - data     => request data
 # - state    => used to store various data during request processing
 #
-immutable Request
+type Request
     method::String
     resource::String
     headers::Headers
