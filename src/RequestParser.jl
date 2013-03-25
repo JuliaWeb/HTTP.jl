@@ -1,14 +1,10 @@
 using HttpParser
 export RequestParser,
-       Request,
-       Headers,
        clean!,
        add_data
 
 HTTP_CB      = (Int, (Ptr{Parser},))
 HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
-
-typealias Headers Dict{String,String}
 
 type PartialRequest
     method::Any
@@ -17,6 +13,9 @@ type PartialRequest
     data::String
 end
 PartialRequest() = PartialRequest("", "", Dict{String, String}(), "")
+
+import Httplib.Request
+Request(r::PartialRequest) = Request(r.method, r.resource, r.headers, r.data, Dict())
 
 # IMPORTANT!!! This requires manual memory management.
 #
@@ -27,15 +26,6 @@ PartialRequest() = PartialRequest("", "", Dict{String, String}(), "")
 # are closed or memory leaks will occur.
 partials = Dict{Ptr{Parser}, PartialRequest}()
 message_complete_callbacks = Dict{Int, Function}()
-
-immutable Request
-    method::String
-    resource::String
-    headers::Headers
-    data::String
-    state::Dict
-end
-Request(r::PartialRequest) = Request(r.method, r.resource, r.headers, r.data, Dict())
 
 function on_message_begin(parser)
     partials[parser] = PartialRequest()
