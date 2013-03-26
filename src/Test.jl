@@ -4,6 +4,7 @@ module ParserTest
 
 include("HttpParser.jl")
 using HttpParser
+using Httplib
 
 FIREFOX_REQ = tuple("GET /favicon.ico HTTP/1.1\r\n",
          "Host: 0.0.0.0=5000\r\n",
@@ -38,7 +39,7 @@ WEBSOCK = tuple("DELETE /chat HTTP/1.1\r\n",
         "Sec-WebSocket-Version: 13\r\n",
         "\r\n",)
 
-r = HttpParser.Request("", "", Dict{String,String}(), "")
+r = Request("", "", Dict{String,String}(), "", Dict{String,String}())
 
 function on_message_begin(parser)
     # Clear the resource when the message starts
