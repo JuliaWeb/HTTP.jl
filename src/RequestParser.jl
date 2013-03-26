@@ -34,9 +34,6 @@ HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
 import Httplib.Request
 Request() = Request("", "", Httplib.headers(), "", Dict{Any, Any}())
 
-import Httplib.Request
-Request(r::PartialRequest) = Request(r.method, r.resource, r.headers, r.data, Dict())
-
 # IMPORTANT!!! This requires manual memory management.
 #
 # Each Client needs its own `Request`. Since closures are not
