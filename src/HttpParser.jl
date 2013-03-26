@@ -1,10 +1,17 @@
-# Juliaesque C bindings for Joyent's http-parser library.
+# Julian C bindings for Joyent's http-parser library.
+# see: https://github.com/joyent/http-parser
+#
 module HttpParser
 
 using Httplib
 
 # Export the structs and the C calls.
-export Parser, ParserSettings, http_parser_init, http_parser_execute, http_method_str, http_should_keep_alive
+export Parser, 
+       ParserSettings, 
+       http_parser_init, 
+       http_parser_execute, 
+       http_method_str, 
+       http_should_keep_alive
 
 # The shared C library name.
 const lib = "libhttp_parser"
