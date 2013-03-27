@@ -89,7 +89,7 @@ module Parser
       if m != nothing
         field, value = m.captures[1], m.captures[2]
         if has(header, field)
-          push(header[field], value)
+          push!(header[field], value)
         else
           header[field] = {value}
         end
@@ -130,7 +130,15 @@ module Parser
       path = string(m.captures[2])
       version = string((length(m.captures) > 2 && m.captures[3] != nothing) ? m.captures[3] : "0.9")
     end
-    return vec([method, path, version])
+    return (method, path, version)
+  end
+  
+  function parse_response_line(request_line)
+    m = match(r"^HTTP\/(\d+\.\d+) (\d{3}) ?(.*)$", request_line)
+    version = m.captures[1]
+    status  = m.captures[2]
+    phrase  = m.captures[3]
+    return (version, status, phrase)
   end
   
   function parse_query(str, separators)
@@ -154,7 +162,7 @@ module Parser
         key   = HTTP.Util.unescape_form(key)
         value = HTTP.Util.unescape_form(value)
         if has(query, key)
-          push(query[key], value)
+          push!(query[key], value)
         else
           query[key] = [value]
         end
