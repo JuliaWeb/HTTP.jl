@@ -1,11 +1,22 @@
 module Httplib
 
 export STATUS_CODES,
+       GET,
+       POST,
+       PUT,
+       UPDATE,
+       DELETE,
+       OPTIONS,
+       HEAD,
+       HttpMethodBitmask,
+       HttpMethodBitmasks,
+       HttpMethodNameToBitmask,
+       HttpMethodBitmaskToName,
        Headers,
        Request,
        Response
 
-STATUS_CODES = {
+const STATUS_CODES = {
     100 => "Continue",
     101 => "Switching Protocols",
     102 => "Processing",                          # RFC 2518, obsoleted by RFC 4918
@@ -63,6 +74,31 @@ STATUS_CODES = {
     510 => "Not Extended",                        # RFC 2774
     511 => "Network Authentication Required"      # RFC 6585
 }
+
+# HTTP method bitmasks and indexes, allow for fancy GET | POST | UPDATE style APIs.
+typealias HttpMethodBitmask Int
+
+const HttpMethodBitmasks = HttpMethodBitmask[
+    (const GET     = 2^0),
+    (const POST    = 2^1),
+    (const PUT     = 2^2),
+    (const UPDATE  = 2^3),
+    (const DELETE  = 2^4),
+    (const OPTIONS = 2^5),
+    (const HEAD    = 2^6)
+]
+
+const HttpMethodNameToBitmask = (String => HttpMethodBitmask)[
+    "GET"     => GET,
+    "POST"    => POST,
+    "PUT"     => PUT,
+    "UPDATE"  => UPDATE,
+    "DELETE"  => DELETE,
+    "OPTIONS" => OPTIONS,
+    "HEAD"    => HEAD
+]
+
+const HttpMethodBitmaskToName = (HttpMethodBitmask => String)[v => k for (k, v) in HttpMethodNameToBitmask]
 
 # Default HTTP headers
 #
