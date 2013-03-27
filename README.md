@@ -206,6 +206,7 @@ On the drawing board:
 ### 0.0.3 (WIP)
 #### Improvements
 * Cookie and session middleware
+* Simple (currently blocking) client for performing HTTP requests
 
 ### 0.0.2 (2013-03-06)
 #### Improvements
