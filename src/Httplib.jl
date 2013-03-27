@@ -1,5 +1,7 @@
 module Httplib
 
+using Calendar
+
 export STATUS_CODES,
        GET,
        POST,
@@ -8,6 +10,7 @@ export STATUS_CODES,
        DELETE,
        OPTIONS,
        HEAD,
+       RFC1123_datetime,
        HttpMethodBitmask,
        HttpMethodBitmasks,
        HttpMethodNameToBitmask,
@@ -101,11 +104,31 @@ const HttpMethodNameToBitmask = (String => HttpMethodBitmask)[
 const HttpMethodBitmaskToName = (HttpMethodBitmask => String)[v => k for (k, v) in HttpMethodNameToBitmask]
 
 # Default HTTP headers
+# RFC 1123 datetime formatting constants
+DAY_NAMES = split("Sun Mon Tue Wed Thu Fri Sat")
+RFC1123_FORMAT_STR = "dd MMM yyyy hh:mm:ss"
+
+# Get RFC 1123 datetimes
 #
-#     headers() # => ["Server" => "v\"0.2.0-740.r6df6\""]
+#     RFC1123_datetime( now() ) => "Wed, 27 Mar 2013 08:26:04 GMT"
+#     RFC1123_datetime()        => "Wed, 27 Mar 2013 08:26:04 GMT"
+#
+RFC1123_datetime(t::CalendarTime) = begin
+    t = tz(t,"GMT")
+    "$(DAY_NAMES[dayofweek(t)]), $(format(RFC1123_FORMAT_STR, t)) GMT"
+end
+RFC1123_datetime() = RFC1123_datetime(now())
+
+# HTTP Headers
+#
+# Dict Type for HTTP headers
+# `headers()` for building default Response Headers
 #
 typealias Headers Dict{String,String}
-headers() = (String => String)["Server" => "Julia/$VERSION"]
+headers() = (String => String)[ "Server" => "Julia/$VERSION",
+                                "Content-type" => "text/html; charset=UTF-8",
+                                "Content-language" => "en",
+                                "Date" => RFC1123_datetime() ]
 
 # HTTP request
 #
