@@ -166,8 +166,10 @@ module BasicServer
   end
   
   function handle_response(request, app)
-    not_found = HTTP.Response(404, "Not found") # "HTTP/1.1 404 Not found\r\n\r\nNot found\n"
-    internal_error = HTTP.Response(500, "Internal server error (no app)") # "HTTP/1.1 500 Server error\r\n\r\nInternal server error (no app)\n"
+    not_found = HTTP.Response(404, "Not found")
+    # "HTTP/1.1 404 Not found\r\n\r\nNot found\n"
+    internal_error = HTTP.Response(500, "Internal server error (no app)")
+    # "HTTP/1.1 500 Server error\r\n\r\nInternal server error (no app)\n"
     
     if isa(app, Function)
       response = HTTP.Response()
