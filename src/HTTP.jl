@@ -61,11 +61,12 @@ module HTTP
   
   type Response
     status::Integer
+    phrase::String
     body::String
     headers::Dict{String,Any}
     cookies::Array{Cookie,1}
   end
-  Response(status::Integer, body::String) = Response(status, body, Dict{String,Any}(), Cookie[])
+  Response(status::Integer, body::String) = Response(status, body, "", Dict{String,Any}(), Cookie[])
   Response() = Response(200, "")
   
   include("HTTP/Util.jl")
