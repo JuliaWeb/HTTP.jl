@@ -144,7 +144,7 @@ module BasicServer
     
     request = HTTP.Request()
     
-    request_line, raw_header = split(raw_request, "\n", 2)
+    request_line, raw_header = split(raw_request, CRLF, 2)
     
     method, path, version = Parser.parse_request_line(request_line)
     request.method = method
