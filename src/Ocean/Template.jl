@@ -110,7 +110,7 @@ module Template
     perf = Dict{Symbol,Any}()
     
     for (k, v) = scope
-      unshift!(ct.expr.args, expr(:(=), {symbol(k), v}))
+      unshift!(ct.expr.args, Expr(:(=), {symbol(k), v}))
     end
     
     perf[:eval] = @elapsed (eval(TemplateScope, ct.expr))

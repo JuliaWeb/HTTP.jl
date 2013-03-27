@@ -200,7 +200,7 @@ module Ocean
     names = String[]
     route = "^" * s * "\$"
     
-    for m in each_match(_param_route_matcher, s)
+    for m in eachmatch(_param_route_matcher, s)
       if contains(names, m.captures[1])
         error("Param $(m.match) already in use")
       end

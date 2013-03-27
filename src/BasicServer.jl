@@ -9,7 +9,7 @@ module BasicServer
   const LF   = "\x0a"
   const CRLF = "\x0d\x0a"
   
-  include("BasicServer/Parser.jl")
+  include("Common/Parser.jl")
   
   function read_handler(client::TcpSocket, app, debug)
     try

@@ -64,7 +64,7 @@ module Util
   escaped_regex = r"%([0-9a-fA-F]{2})"
   function unescape(str)
     # def _unescape(str, regex) str.gsub(regex){ $1.hex.chr } end
-    for m in each_match(escaped_regex, str)
+    for m in eachmatch(escaped_regex, str)
       for capture in m.captures
         rep = string(char(parse_int(capture, 16)))
         str = replace(str, "%"*capture, rep)
