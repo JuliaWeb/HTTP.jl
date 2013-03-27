@@ -22,9 +22,12 @@ module HTTP
   end
   Request() = Request(
     Env(),
-    "", "", "",
+    "",# method
+    "",# path
+    "",# query_string
     Dict{String,Any}(), Dict{String,Any}(),
-    "", "",
+    "",# version
+    "",# raw_data
     Dict{String,Any}()
   )
   

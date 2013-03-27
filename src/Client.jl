@@ -6,19 +6,19 @@ module HTTPClient
   
   import HTTP
   import Base
-  import Base.IPv4, Base.IPv6
+  import Base.IPv4
   
   type Connection
-    host::Union(IPv4, IPv6)
+    host::Union(String, IPv4)
     port::Integer
     socket::TcpSocket
   end
   
-  function open(_host::Union(IPv4, String), port::Integer)
-    host::IPv4 = (isa(_host, String) ? Base.getaddrinfo(_host) : _host)
+  function open(host::Union(IPv4, String), port::Integer)
+    host_ip::IPv4 = (isa(host, String) ? Base.getaddrinfo(host) : host)
     socket = TcpSocket()
     
-    Base.connect(socket, host, uint8(port))
+    Base.connect(socket, host_ip, uint8(port))
     
     conn = Connection(host, port, socket)
     return conn
@@ -26,6 +26,32 @@ module HTTPClient
   
   function close(conn::Connection)
     Base.close(conn.socket)
+  end
+  
+  
+  function default_request()
+    req = HTTP.Request()
+    req.version = "1.1"
+    return req
+  end
+  
+  function get(conn::Connection, path::String)
+    req = default_request()
+    req.method = "GET"
+    req.path = path
+    
+    str = build_request(conn, req)
+    println(str)
+    
+    
+  end
+  
+  function build_request(conn::Connection, req::HTTP.Request)
+    s = "$(req.method) $(req.path) HTTP/$(req.version)\n"
+    s *= "Host: $(conn.host)\n"
+    
+    s *= "\n"
+    return s
   end
   
 end
