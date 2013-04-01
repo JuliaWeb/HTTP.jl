@@ -219,6 +219,8 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
             event("error", server, client, err)             # Something went wrong
             Base.display_error(err, catch_backtrace())      # Prints backtrace without throwing
         end
+        response.data = response.data * "\r\n\r\n"
+        response.headers["Content-Length"] = string(length(response.data)+2)
 
         write(client.sock, render(response))                # Send the response
         event("write", server, client, response)
