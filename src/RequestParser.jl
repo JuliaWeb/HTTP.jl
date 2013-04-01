@@ -136,6 +136,8 @@ function on_message_complete(parser)
     #
     message_complete_callbacks[unsafe_ref(parser).id](r)
 
+    delete!(partials, parser, nothing)
+
     return 0
 end
 
@@ -179,6 +181,5 @@ end
 # Call this whenever closing a connection that has a `ClientParser` instance.
 #
 function clean!(parser::ClientParser)
-    delete!(partials, parser.parser, nothing)
     delete!(message_complete_callbacks, parser.parser.id, nothing)
 end
