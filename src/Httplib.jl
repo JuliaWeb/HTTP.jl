@@ -106,7 +106,7 @@ const HttpMethodBitmaskToName = (HttpMethodBitmask => String)[v => k for (k, v) 
 # Default HTTP headers
 # RFC 1123 datetime formatting constants
 DAY_NAMES = split("Sun Mon Tue Wed Thu Fri Sat")
-RFC1123_FORMAT_STR = "dd MMM yyyy hh:mm:ss"
+RFC1123_FORMAT_STR = "dd MMM yyyy HH:mm:ss"
 
 # Get RFC 1123 datetimes
 #
@@ -126,9 +126,9 @@ RFC1123_datetime() = RFC1123_datetime(now())
 #
 typealias Headers Dict{String,String}
 headers() = (String => String)[ "Server" => "Julia/$VERSION",
-                                "Content-type" => "text/html; charset=UTF-8",
-                                "Content-language" => "en",
-                                "Date" => RFC1123_datetime() ]
+                                "Content-Type" => "text/html; charset=utf-8",
+                                "Content-Language" => "en",
+                                "Date" => RFC1123_datetime()]
 
 # HTTP request
 #
