@@ -105,8 +105,7 @@ const HttpMethodBitmaskToName = (HttpMethodBitmask => String)[v => k for (k, v) 
 
 # Default HTTP headers
 # RFC 1123 datetime formatting constants
-DAY_NAMES = split("Sun Mon Tue Wed Thu Fri Sat")
-RFC1123_FORMAT_STR = "dd MMM yyyy HH:mm:ss"
+RFC1123_FORMAT_STR = "EEE, dd MMM yyyy HH:mm:ss"
 
 # Get RFC 1123 datetimes
 #
@@ -115,7 +114,7 @@ RFC1123_FORMAT_STR = "dd MMM yyyy HH:mm:ss"
 #
 RFC1123_datetime(t::CalendarTime) = begin
     t = tz(t,"GMT")
-    "$(DAY_NAMES[dayofweek(t)]), $(format(RFC1123_FORMAT_STR, t)) GMT"
+    format(RFC1123_FORMAT_STR, t) * " GMT"
 end
 RFC1123_datetime() = RFC1123_datetime(now())
 
