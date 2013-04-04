@@ -165,7 +165,7 @@ function run(server::Server, port::Integer)
     event("listen", server, port)
 
     while true # handle requests, Base.wait_accept blocks until a connection is made
-        client = Client(id_pool += 1, Base.wait_accept(sock))
+        client = Client(id_pool += 1, accept(sock))
         client.parser = ClientParser(message_handler(server, client, websockets_enabled))
         @async process_client(server, client, websockets_enabled)
     end
