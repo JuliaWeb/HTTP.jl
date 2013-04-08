@@ -187,6 +187,7 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
     # Garbage collects parser globals on connection close 
     # see: `RequestParser.jl`
     #
+    event("close", server, client)
     clean!(client.parser)
 end
 
@@ -207,7 +208,7 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
             return true
         end
 
-        local response                                      # Init response
+        local response
 
         try
             response = handle(server.http, req, Response()) # Run the server handler
@@ -216,16 +217,18 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
             end
         catch err
             response = Response(500)
-            event("error", server, client, err)             # Something went wrong
+            event("error", server, client, err)
             Base.display_error(err, catch_backtrace())      # Prints backtrace without throwing
         end
 
         response.headers["Content-Length"] = string(length(response.data))
 
-        write(client.sock, render(response))                # Send the response
+        write(client.sock, render(response))
         event("write", server, client, response)
-        close(client.sock)                                  # Close this connection
-        event("close", server, client)
+        
+        if get(req.headers, "Connection", nothing) == "close"
+            close(client.sock)
+        end
     end
 end
 
