@@ -180,8 +180,8 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
     event("connect", server, client)
 
     while client.sock.open
-        line = readline(client.sock)
-        add_data(client.parser, line)
+        data = readavailable(client.sock)
+        add_data(client.parser, data)
     end
     
     # Garbage collects parser globals on connection close 
