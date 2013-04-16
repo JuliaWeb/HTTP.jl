@@ -2,7 +2,7 @@
 #
 # Serve HTTP requests in Julia.
 #
-module Http
+module HttpServer
 
 using Httplib
 include("RequestParser.jl")
