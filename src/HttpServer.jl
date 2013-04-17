@@ -11,7 +11,8 @@ export HttpHandler,
        run,
        # from Httplib
        Request,
-       Response
+       Response,
+       escapeHTML
 
 # `HttpHandler` types are used to instantiate a `Server`.
 #
