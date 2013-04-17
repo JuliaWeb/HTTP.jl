@@ -42,8 +42,8 @@ Request() = Request("", "", Httplib.headers(), "", Dict{Any, Any}())
 # global dict. Partials must be manually deleted when connections
 # are closed or memory leaks will occur.
 #
-partials = Dict{Ptr{Parser}, Request}()
-message_complete_callbacks = Dict{Int, Function}()
+const partials = Dict{Ptr{Parser}, Request}()
+const message_complete_callbacks = Dict{Int, Function}()
 
 # All the `HttpParser` callbacks to be run in C land
 # Each one adds data to the `Request` until it is complete
