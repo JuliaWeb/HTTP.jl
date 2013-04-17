@@ -17,7 +17,8 @@ export STATUS_CODES,
        HttpMethodBitmaskToName,
        Headers,
        Request,
-       Response
+       Response,
+       escapeHTML
 
 const STATUS_CODES = {
     100 => "Continue",
@@ -117,6 +118,17 @@ RFC1123_datetime(t::CalendarTime) = begin
     format(RFC1123_FORMAT_STR, t) * " GMT"
 end
 RFC1123_datetime() = RFC1123_datetime(now())
+
+# Escape HTML characters
+# 
+# Safety first!
+#
+function escapeHTML(i::String)
+    o = replace(i, r"&(?!(\w+|\#\d+);)", "&amp;")
+    o = replace(o, "<", "&lt;")
+    o = replace(o, ">", "&gt;")
+    replace(o, "\"", "&quot;")
+end
 
 # HTTP Headers
 #
