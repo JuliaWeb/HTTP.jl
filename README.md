@@ -1,7 +1,7 @@
 Handle `Http` requests in Julia!
 
 ```.jl
-using Http
+using HttpServer
 
 http = HttpHandler() do req::Request, res::Response
     Response( ismatch(r"^/hello/",req.resource) ? string("Hello ", split(req.resource,'/')[3], "!") : 404 )
