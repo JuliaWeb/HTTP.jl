@@ -12,7 +12,10 @@ export HttpHandler,
        # from Httplib
        Request,
        Response,
-       escapeHTML
+       escapeHTML,
+       encodeURI,
+       decodeURI,
+       parsequerystring
 
 # `HttpHandler` types are used to instantiate a `Server`.
 #
