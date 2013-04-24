@@ -112,23 +112,12 @@ function on_message_complete(parser)
     # delete the temporary header key
     delete!(r.headers, "current_header", nothing)
 
-    # Decode URL variables eg. `foo/bar?a=b&c=d`
-    # Store in `r.state[:url_params]`
-    #
-    m = match(r"\?.*=.*", r.resource)
-    url_params = (String => String)[]
-    if m != nothing
-        for set in split(split(r.resource, "?")[2], "&")
-            key, val = split(set, "=")
-            url_params[key] = val
-        end
-    end
-
     # Add finishing touches to `Request`
     raw_resource = r.resource
-    r.resource = split(r.resource,'?')[1]
+    if contains(r.resource,'?')
+        r.resource, r.state[:url_query] = split(r.resource,'?')
+    end
     r.state[:raw_resource] = raw_resource
-    r.state[:url_params]   = url_params
 
     # Get the `parser.id` from the C pointer `parser`.
     # Retrieve our callback function from the global Dict.
