@@ -3,8 +3,8 @@ module ParserTest
 # This file runs a few tests and acts as an example of how to use the http-parser callbacks
 
 include("HttpParser.jl")
-using HttpParser
 using HttpCommon
+using .HttpParser
 
 FIREFOX_REQ = tuple("GET /favicon.ico HTTP/1.1\r\n",
          "Host: 0.0.0.0=5000\r\n",
@@ -74,7 +74,7 @@ function on_header_value(parser, at, len)
 end
 
 function on_headers_complete(parser)
-    p = unsafe_ref(parser)
+    p = unsafe_load(parser)
     # get first two bits of p.type_and_flags
     
     # The parser type are the bottom two bits
