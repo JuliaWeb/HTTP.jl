@@ -1,19 +1,16 @@
-Handle `Http` requests in Julia!
+This is a basic, non-blocking HTTP server in Julia.
+
+You can write a basic application using just this
+if you're happy dealing with values representing HTTP requests and responses directly.
+For a higher-level view, you could use [Meddle](https://github.com/hackerschool/Meddle.jl) or [Morsel](https://github.com/hackerschool/Morsel.jl).
+If you'd like to use WebSockets as well, you'll need to grab [WebSockets.jl](https://github.com/hackerschool/WebSockets.jl).
 
 ## Installation/Setup
 
-This is not yet a real Julia package, so you'll need to install a few things by hand.
-Go to your `~/.julia/` directory and run:
+This is a Julia package, so you just need to run `Pkg.add("HttpServer")` in a Julia repl.
+It will install this package and all dependencies in your `~/.julia` directory.
 
-~~~~
-git clone git://github.com/hackerschool/HttpParser.jl.git
-git clone git://github.com/hackerschool/Httplib.jl.git
-git clone git://github.com/hackerschool/HttpServer.jl.git
-git clone git://github.com/hackerschool/Websockets.jl.git
-~~~~
-
-You will also need libhttp-parser,
-so you should follow the directions in
+You will also need libhttp-parser, so you should follow the directions in
 [HttpParser](https://github.com/hackerschool/HttpParser.jl)'s README.
 
 To make sure everything is working, you can `cd` into the `~/.julia/HttpServer.jl/` and run `julia examples/hello.jl`. If you open up `localhost:8000/hello/name/`, you should get a greeting from the server.
