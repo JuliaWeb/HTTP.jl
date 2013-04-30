@@ -31,8 +31,8 @@ HTTP_CB      = (Int, (Ptr{Parser},))
 HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
 
 # Need an empty constructor method for building `Request` instances.
-import Httplib.Request
-Request() = Request("", "", Httplib.headers(), "", Dict{Any, Any}())
+import HttpCommon.Request
+Request() = Request("", "", HttpCommon.headers(), "", Dict{Any, Any}())
 
 # IMPORTANT!!! This requires manual memory management.
 #
