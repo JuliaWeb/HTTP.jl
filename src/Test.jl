@@ -4,7 +4,7 @@ module ParserTest
 
 include("HttpParser.jl")
 using HttpParser
-using Httplib
+using HttpCommon
 
 FIREFOX_REQ = tuple("GET /favicon.ico HTTP/1.1\r\n",
          "Host: 0.0.0.0=5000\r\n",
