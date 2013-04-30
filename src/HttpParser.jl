@@ -3,7 +3,7 @@
 #
 module HttpParser
 
-using Httplib
+using HttpCommon
 
 # Export the structs and the C calls.
 export Parser, 
