@@ -15,4 +15,15 @@ This module provides access to Joyent's http-parser library: [http-parser](https
 
 5. cd back to HttpParser.jl
 6. `julia src/Test.jl`
+7. Expect to see text indicating that all assertions have passed.
 
+~~~~
+:::::::::::::
+::         ::
+:: Made at ::
+::         ::
+:::::::::::::
+     ::
+Hacker School
+:::::::::::::
+~~~~
