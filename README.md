@@ -31,3 +31,14 @@ http.events["listen"] = ( port )        -> println("Listening on $port...")
 server = Server( http )
 run( server, 8000 )
 ~~~~
+
+~~~~
+:::::::::::::
+::         ::
+:: Made at ::
+::         ::
+:::::::::::::
+     ::
+Hacker School
+:::::::::::::
+~~~~
