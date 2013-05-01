@@ -17,3 +17,14 @@ This is a Julia package, so you can just run `Pkg.add("HttpCommon")` in the Juli
 
 You will need to have Julia installed from source because
 this code has not been tested in v0.1 at all and probably uses features not found there.
+
+~~~~
+:::::::::::::
+::         ::
+:: Made at ::
+::         ::
+:::::::::::::
+     ::
+Hacker School
+:::::::::::::
+~~~~
