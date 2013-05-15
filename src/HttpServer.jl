@@ -9,7 +9,7 @@ include("RequestParser.jl")
 export HttpHandler,
        Server,
        run,
-       # from Httplib
+       # from HttpCommon
        Request,
        Response,
        escapeHTML,
