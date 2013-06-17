@@ -1,9 +1,12 @@
 # Julian C bindings for Joyent's http-parser library.
 # see: https://github.com/joyent/http-parser
 #
+include("../deps/ext.jl")
 module HttpParser
 
 using HttpCommon
+
+import Base.show
 
 # Export the structs and the C calls.
 export Parser, 
@@ -14,7 +17,7 @@ export Parser,
        http_should_keep_alive
 
 # The shared C library name.
-const lib = "libhttp_parser"
+const lib = :libhttp_parser
 
 # The id pool is used to keep track of incoming requests.
 id_pool = 0
@@ -74,24 +77,28 @@ type ParserSettings
     on_message_complete_cb::Ptr{None}
 end
 
+function show(io::IO,p::Parser)
+    print(io,"HttpParser")
+end
+
 # A helper function to print the internal values of a request
-function print(r::Request)
-    println("=== Resource ====")
-    println("resource: $(r.resource)")
-    println("method: $(r.method)")
-    println("Headers:")
+function show(io::IO,r::Request)
+    println(io,"=== Resource ====")
+    println(io,"resource: $(r.resource)")
+    println(io,"method: $(r.method)")
+    println(io,"Headers:")
     for i=r.headers
         k = i[1]
         v = i[2]
-        println("    $k: $v")
+        println(io,"    $k: $v")
     end
-    println("data: $(r.data)")
-    println("=== End Resource ===")
+    println(io,"data: $(r.data)")
+    println(io,"=== End Resource ===")
 end
 
 # Intializes the Parser object with the correct memory.
-function http_parser_init(parser::Parser)
-    ccall((:http_parser_init, lib), Void, (Ptr{Parser}, Cint), &parser, 0)
+function http_parser_init(parser::Parser,isserver=true)
+    ccall((:http_parser_init, lib), Void, (Ptr{Parser}, Cint), &parser, !isserver)
 end
 
 # Run a request through a parser with specific callbacks on the settings instance.

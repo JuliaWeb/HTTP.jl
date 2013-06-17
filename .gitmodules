@@ -1,0 +1,3 @@
+[submodule "deps/src/http-parser"]
+	path = deps/src/http-parser
+	url = https://github.com/joyent/http-parser.git
