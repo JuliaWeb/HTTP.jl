@@ -69,10 +69,10 @@ export HttpHandler,
 #
 immutable HttpHandler
     handle::Function
-    sock::TcpSocket
+    sock::Base.TcpServer
     events::Dict
 
-    HttpHandler(handle::Function) = new(handle, TcpSocket(), Dict{ASCIIString, Function}())
+    HttpHandler(handle::Function) = new(handle, Base.TcpServer(), Dict{ASCIIString, Function}())
 end
 handle(handler::HttpHandler, req::Request, res::Response) = handler.handle(req, res)
 
@@ -165,7 +165,7 @@ function run(server::Server, port::Integer)
     sock = server.http.sock
     websockets_enabled = server.websock != nothing
     uv_error("listen", !bind(sock, Base.IPv4(uint32(0)), uint16(port)))
-    listen(sock)
+    uv_error("listen", !Base.listen!(sock))
     event("listen", server, port)
 
     while true # handle requests, Base.wait_accept blocks until a connection is made
