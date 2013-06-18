@@ -1,10 +1,11 @@
+include("../src/HttpParser.jl")
 module ParserTest
 
 # This file runs a few tests and acts as an example of how to use the http-parser callbacks
 
-include("HttpParser.jl")
+using HttpParser
 using HttpCommon
-using .HttpParser
+using Base.Test
 
 FIREFOX_REQ = tuple("GET /favicon.ico HTTP/1.1\r\n",
          "Host: 0.0.0.0=5000\r\n",
@@ -125,32 +126,33 @@ function init(test::Tuple)
     for i=1:length(test)
         size = http_parser_execute(parser, settings, test[i])
     end
+
     # errno = parser.errno_and_upgrade & 0xf3
     # upgrade = parser.errno_and_upgrade >>> 7
 end
 
 init(FIREFOX_REQ)
-assert(r.method == "GET")
-assert(r.resource == "/favicon.ico")
-assert(r.headers["Host"] == "0.0.0.0=5000")
-assert(r.headers["User-Agent"] == "Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9) Gecko/2008061015 Firefox/3.0")
-assert(r.headers["Accept"] == "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-assert(r.headers["Accept-Language"] == "en-us,en;q=0.5")
-assert(r.headers["Accept-Encoding"] == "gzip,deflate")
-assert(r.headers["Accept-Charset"] == "ISO-8859-1,utf-8;q=0.7,*;q=0.7")
-assert(r.headers["Keep-Alive"] == "1")
-assert(r.headers["Connection"] == "keep-alive")
-assert(r.data == "")
+@test r.method == "GET"
+@test r.resource == "/favicon.ico"
+@test r.headers["Host"] == "0.0.0.0=5000"
+@test r.headers["User-Agent"] == "Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9) Gecko/2008061015 Firefox/3.0"
+@test r.headers["Accept"] == "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+@test r.headers["Accept-Language"] == "en-us,en;q=0.5"
+@test r.headers["Accept-Encoding"] == "gzip,deflate"
+@test r.headers["Accept-Charset"] == "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
+@test r.headers["Keep-Alive"] == "1"
+@test r.headers["Connection"] == "keep-alive"
+@test r.data == ""
 init(DUMBFUCK)
-assert(r.method == "GET")
-assert(r.resource == "/dumbfuck")
+@test r.method == "GET"
+@test r.resource == "/dumbfuck"
 init(TWO_CHUNKS_MULT_ZERO_END)
-assert(r.method == "POST")
-assert(r.resource == "/two_chunks_mult_zero_end")
-assert(r.data == "hello\r\n5 world\r\n6")
+@test r.method == "POST"
+@test r.resource == "/two_chunks_mult_zero_end"
+@test r.data == "hello\r\n5 world\r\n6"
 init(WEBSOCK)
-assert(r.method == "DELETE")
-assert(r.resource == "/chat")
+@test r.method == "DELETE"
+@test r.resource == "/chat"
 println("All assertions passed!")
 end
 
