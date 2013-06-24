@@ -95,6 +95,7 @@ end
 function on_message_complete(parser)
     state = pd(parser)
     r = state.request
+    r.data = takebuf_string(state.data)
 
     # delete the temporary header key
     delete!(r.headers, "current_header", nothing)
