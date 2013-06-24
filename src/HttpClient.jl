@@ -222,10 +222,11 @@ module HTTPClient
 
     # 
     get(uri::URI; headers = Dict{String,String}()) = process_response(open_stream(uri,headers,"","GET"))
-
+    delete(uri::URI; headers = Dict{String,String}()) = process_response(open_stream(uri,headers,"","DELETE"))
     function post(uri::URI, data::String; headers = Dict{String,String}())
         process_response(open_stream(uri,headers,data,"POST"))
     end
 
     get(string::ASCIIString) = get(URI(string))
+    delete(string::ASCIIString) = delete(URI(string))
 end
