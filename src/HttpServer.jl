@@ -133,7 +133,7 @@ Server(websock::WebSocketInterface) = Server(HttpHandler((req, res) -> Response(
 # with `args...`
 #
 function event(event::String, server::Server, args...)
-    has(server.http.events, event) && server.http.events[event](args...)
+    haskey(server.http.events, event) && server.http.events[event](args...)
 end
 
 # Converts a `Response` to an HTTP response string

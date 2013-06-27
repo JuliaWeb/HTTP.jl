@@ -86,7 +86,7 @@ end
 
 function on_headers_complete(parser)
     r = partials[parser]
-    p = unsafe_ref(parser)
+    p = unsafe_load(parser)
     # get first two bits of p.type_and_flags
     ptype = p.type_and_flags & 0x03
     if ptype == 0
@@ -123,7 +123,7 @@ function on_message_complete(parser)
     # Retrieve our callback function from the global Dict.
     # Call it with the completed `Request`
     #
-    message_complete_callbacks[unsafe_ref(parser).id](r)
+    message_complete_callbacks[unsafe_load(parser).id](r)
 
     delete!(partials, parser, nothing)
 
