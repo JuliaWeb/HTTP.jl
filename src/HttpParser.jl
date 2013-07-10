@@ -42,7 +42,7 @@ type Parser
     # http_errno + upgrade = Single byte
     errno_and_upgrade::Cuchar
 
-    data::Ptr{Uint8}
+    data::Any
     id::Int
 end
 Parser() = Parser(
@@ -105,7 +105,10 @@ end
 function http_parser_execute(parser::Parser, settings::ParserSettings, request::String)
     ccall((:http_parser_execute, lib), Csize_t, 
             (Ptr{Parser}, Ptr{ParserSettings}, Ptr{Uint8}, Csize_t,), 
-            &parser, &settings, convert(Ptr{Uint8}, request), length(request))
+            &parser, &settings, convert(Ptr{Uint8}, request), sizeof(request))
+    if errno(parser) != 0
+        throw(HttpParserError(errno(parser)))
+    end
 end
 
 # Return a String representation of a given an HTTP method.
@@ -118,5 +121,16 @@ end
 function http_should_keep_alive(parser::Ptr{Parser})
     ccall((:http_should_keep_alive, lib), Int, (Ptr{Parser},), parser)
 end
+
+errno(p::Parser) = p.errno_and_upgrade & 0b11111110>>1
+errno_name(errno::Integer) = bytestring(ccall((:http_errno_name,lib),Ptr{Uint8},(Int32,),errno))
+errno_description(errno::Integer) = bytestring(ccall((:http_errno_description,lib),Ptr{Uint8},(Int32,),errno))
+
+immutable HttpParserError <: Exception
+    errno::Int32
+    HttpParserError(errno::Integer) = new(int32(errno))
+end
+
+show(io::IO, err::HttpParserError) = print(io,"HTTP Parser Exception: ",errno_name(err.errno),"(",string(err.errno),"):",errno_description(err.errno))
 
 end # module HttpParser
