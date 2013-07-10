@@ -1,7 +1,8 @@
-module HttpClient
+module HTTPClient
     using HttpParser
     using HttpCommon
     using URIParser
+    using GnuTLS
 
     export URI, get, post
 
@@ -9,11 +10,11 @@ module HttpClient
 
     CRLF = "\r\n"
 
-    import .URIParser.URI
+    import URIParser.URI
 
     function render(request::Request)
         join([
-            request.method*" "*request.resource*" HTTP/1.1",
+            request.method*" "*(isempty(request.resource)?"/":request.resource)*" HTTP/1.1",
             map(h->(h*": "*request.headers[h]),collect(keys(request.headers))),
             "",
             request.data],CRLF)
@@ -32,7 +33,7 @@ module HttpClient
 
     type ResponseParserData
         current_response::Response
-        sock::AsyncStream
+        sock::IO
     end
 
     immutable ResponseParser
@@ -75,6 +76,7 @@ module HttpClient
     end
 
     function on_status_complete(parser)
+        pd(parser).current_response.status = (unsafe_load(parser)).status_code
         return 0
     end
 
@@ -177,23 +179,35 @@ module HttpClient
     ### API
 
     function get(uri::URI)
-        if uri.schema != "http"
+        if uri.schema != "http" && uri.schema != "https"
             error("Unsupported schema \"$(uri.schema)\"")
         end
         ip = Base.getaddrinfo(uri.host)
-        sock = connect(ip, uri.port == 0 ? 80 : uri.port)
+        if uri.schema == "http"
+            stream = connect(ip, uri.port == 0 ? 80 : uri.port)
+        else
+            # Initialize HTTPS
+            sock = connect(ip, uri.port == 0 ? 443 : uri.port)
+            stream = GnuTLS.Session()
+            set_priority_string!(stream)
+            set_credentials!(stream,GnuTLS.CertificateStore())
+            associate_stream(stream,sock)
+            handshake!(stream)
+        end
         resource = uri.path
         if uri.query != ""
             resource = resource*"?"*uri.query
         end
-        write(sock, render(default_get_request(resource,uri.host)))
+        write(stream, render(default_get_request(resource,uri.host)))
         r = Response()
-        rp = ResponseParser(r,sock)
-        while sock.open
-            data = readavailable(sock)
+        rp = ResponseParser(r,stream)
+        while isopen(stream)
+            data = readavailable(stream)
             print(data)
             add_data(rp, data)
+            show(STDOUT,rp)
         end
+        http_parser_execute(rp.parser,rp.settings,"") #EOF
         r
     end 
 
