@@ -146,7 +146,6 @@ type Request
     resource::String
     headers::Headers
     data::String
-    state::Dict
 end
 
 # HTTP response
@@ -169,19 +168,17 @@ end
 #
 type Response
     status::Int
-    message::String
     headers::Headers
     data::String
     finished::Bool
 end
-Response(s::Int, m::String, h::Headers, d::String) = Response(s, m, h, d, false)
-Response(s::Int, m::String, h::Headers)            = Response(s, m, h, "", false)
-Response(s::Int, m::String, d::String)             = Response(s, m, headers(), d, false)
-Response(d::String, h::Headers)                    = Response(200, STATUS_CODES[200], h, d, false)
-Response(s::Int, m::String)                        = Response(s, m, headers(), "$s $m")
-Response(d::String)                                = Response(200, STATUS_CODES[200], d)
-Response(s::Int)                                   = Response(s, STATUS_CODES[s])
-Response()                                         = Response(200)
+Response(s::Int, h::Headers, d::String) = Response(s, h, d, false)
+Response(s::Int, h::Headers)            = Response(s, h, "", false)
+Response(s::Int, d::String)             = Response(s, headers(), d, false)
+Response(d::String, h::Headers)         = Response(200, h, d, false)
+Response(d::String)                     = Response(200, STATUS_CODES[200], d)
+Response(s::Int)                        = Response(s, "")
+Response()                              = Response(200)
 
 # Escape HTML characters
 # 
