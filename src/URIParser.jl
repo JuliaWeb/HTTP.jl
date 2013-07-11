@@ -22,8 +22,8 @@ module URIParser
     end
 
     URI(schema::ASCIIString,host::ASCIIString,port::Integer,path,query::ASCIIString="",fragment="",userinfo="") = 
-        new(schema,host,uint16(port),path,query,fragment,user)
-    URI(host,path) = URI("http",host,uint16(80),path,"","",no_user)
+        URI(schema,host,uint16(port),path,query,fragment,userinfo)
+    URI(host,path) = URI("http",host,uint16(80),path,"","","")
 
     
     # URL parser based on the http-parser package by Joyent
@@ -228,16 +228,18 @@ module URIParser
                     state = :req_query_string_start
                 elseif ch == '#'
                     state = :req_fragment_start
-                elseif !is_url_char(ch)
+                elseif !is_url_char(ch) && ch != '@'
                     error("Path contained unxecpected character")
                 end
             elseif state == :req_query_string_start || state == :req_query_string
                 if ch == '?'
-                    state = :s_req_query_string
+                    state = :req_query_string
                 elseif ch == '#'
                     state = :s_req_fragment_start
                 elseif !is_url_char(ch)
                     error("Query String contained unxecpected character")
+                else
+                    state = :req_query_string
                 end
             elseif state == :s_req_fragment_start
                 if ch == '?'
@@ -246,9 +248,11 @@ module URIParser
                     state = :s_req_fragment_start
                 elseif ch != '#' && !is_url_char(ch)
                     error("Start of Fragement contained unxecpected character")
+                else
+                    state = :req_fragment
                 end
             elseif state == :req_fragment
-                if !is_url_char && ch != '?' && ch != '#'
+                if !is_url_char(ch) && ch != '?' && ch != '#'
                     error("Fragement contained unxecpected character")
                 end
             end
@@ -276,6 +280,8 @@ module URIParser
             if uri.port != 0
                 print(io,':',int(uri.port))
             end
+        else
+            print(io,uri.schema,":")
         end
         print(io,uri.path)
         if !isempty(uri.query)

@@ -1,0 +1,18 @@
+language: cpp
+compiler: 
+    - clang
+notifications:
+    email: false
+    irc: "chat.freenode.com#kfischer-julia"
+before_install:
+    - sudo add-apt-repository ppa:staticfloat/julia-deps -y
+    - sudo add-apt-repository ppa:staticfloat/julianightlies -y
+    - sudo apt-get update -qq -y
+    - sudo apt-get install libpcre3-dev julia -y
+    - git config --global user.name "Travis User"
+    - git config --global user.email "travis@example.net"
+script:
+    - julia -e "Pkg.init()"
+    - mkdir -p ~/.julia/URIParser
+    - cp -R ./* ~/.julia/URIParser
+    - julia ~/.julia/URIParser/test/test.jl
