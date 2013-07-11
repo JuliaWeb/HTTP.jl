@@ -43,7 +43,7 @@ extract parts of the URI as follows:
 	"/path1/path2;paramstring"
 
 	julia> uri.query
-	"q=a&p=r
+	"q=a&p=r"
 
 	julia> uri.fragment
 	"frag"
