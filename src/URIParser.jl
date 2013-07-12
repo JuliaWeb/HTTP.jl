@@ -18,6 +18,7 @@ module URIParser
         query::ASCIIString
         fragment::ASCIIString
         userinfo::ASCIIString
+        specifies_authority::Bool
     end
 
     import Base.isequal
@@ -31,9 +32,9 @@ module URIParser
                              (a.userinfo == b.userinfo)
 
 
-    URI(schema::ASCIIString,host::ASCIIString,port::Integer,path,query::ASCIIString="",fragment="",userinfo="") = 
+    URI(schema::ASCIIString,host::ASCIIString,port::Integer,path,query::ASCIIString="",fragment="",userinfo="",specifies_authority=false) = 
         URI(schema,host,uint16(port),path,query,fragment,userinfo)
-    URI(host,path) = URI("http",host,uint16(80),path,"","","")
+    URI(host,path) = URI("http",host,uint16(80),path,"","","",true)
 
     
     # URL parser based on the http-parser package by Joyent
@@ -142,6 +143,7 @@ module URIParser
         path = ""
         last_state = state = :req_spaces_before_url
         seen_at = false
+        specifies_authority = false
 
         i = start(url)
         li = s = 0
@@ -160,6 +162,8 @@ module URIParser
                 s = li
                 if last_state == :req_schema
                     schema = url[r]
+                elseif last_state == :req_server_start
+                    specifies_authority = true
                 elseif last_state == :req_server
                     server = url[r]
                 elseif last_state == :req_query_string
@@ -221,7 +225,17 @@ module URIParser
                     error("Expecting schema:// or schema: format not schema:/$ch")
                 end
             elseif state == :req_server_start || state == :req_server
-                if ch == '/' && state == :req_server
+                # In accordence with RFC3986:
+                # 'The authority component is preceded by a double slash ("//") and isterminated by the next slash ("/")'
+                # This is different from the joyent http-parser, which considers empty hosts to be invalid. c.f. also the 
+                # following part of RFC 3986:
+                # "If the URI scheme defines a default for host, then that default
+                # applies when the host subcomponent is undefined or when the
+                # registered name is empty (zero length).  For example, the "file" URI
+                # scheme is defined so that no authority, an empty host, and
+                # "localhost" all mean the end-user's machine, whereas the "http"
+                # scheme considers a missing authority or empty host invalid."
+                if ch == '/'
                     state = :req_path
                 elseif ch == '?'
                     state = :req_query_string_start
@@ -270,7 +284,7 @@ module URIParser
             end
         end
         host, port, user = parse_authority(server,seen_at)
-        URI(lowercase(schema),host,port,path,query,fragment,user)
+        URI(lowercase(schema),host,port,path,query,fragment,user,specifies_authority)
     end
 
     URI(url) = parse_url(url)
@@ -279,7 +293,7 @@ module URIParser
     show(io::IO, uri::URI) = print(io,"URI(",uri,")")
 
     function print(io::IO, uri::URI) 
-        if !isempty(uri.host)
+        if uri.specifies_authority || !isempty(uri.host)
             print(io,uri.schema,"://")
             if !isempty(uri.userinfo)
                 print(io,uri.userinfo,'@')

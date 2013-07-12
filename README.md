@@ -47,4 +47,28 @@ extract parts of the URI as follows:
 
 	julia> uri.fragment
 	"frag"
+
+	julia> uri.specifies_authority
+	true
 ```
+
+The `specifies_authority` may need some extra explanation. The reson for its existence is 
+that RFC 3986 differentiates between empty authorities and missing authorities, but there 
+is not way to distinguish these by just looking at the fields. As an example:
+
+```
+	julia> URI("file:///a/b/c").specifies_authority
+	true
+
+	julia> URI("file:///a/b/c").host
+	""
+
+	julia> URI("file:a/b/c").specifies_authority
+	false
+
+	julia> URI("file:a/b/c").host
+	""
+```
+
+Now, while the `file` schema consideres these to be equivalent, this may not necessarily be 
+true for all schemas and thus the distinction is necessary.
