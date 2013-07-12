@@ -18,8 +18,18 @@ module URIParser
         query::ASCIIString
         fragment::ASCIIString
         userinfo::ASCIIString
-
     end
+
+    import Base.isequal
+
+    isequal(a::URI,b::URI) = (a.schema == b.schema) &&
+                             (a.host == b.host) &&
+                             (a.port == b.port) &&
+                             (a.path == b.path) &&
+                             (a.query == b.query) &&
+                             (a.fragment == b.fragment) &&
+                             (a.userinfo == b.userinfo)
+
 
     URI(schema::ASCIIString,host::ASCIIString,port::Integer,path,query::ASCIIString="",fragment="",userinfo="") = 
         URI(schema,host,uint16(port),path,query,fragment,userinfo)
@@ -235,17 +245,17 @@ module URIParser
                 if ch == '?'
                     state = :req_query_string
                 elseif ch == '#'
-                    state = :s_req_fragment_start
+                    state = :req_fragment_start
                 elseif !is_url_char(ch)
                     error("Query String contained unxecpected character")
                 else
                     state = :req_query_string
                 end
-            elseif state == :s_req_fragment_start
+            elseif state == :req_fragment_start
                 if ch == '?'
                     state = :req_fragment
                 elseif ch == '#'
-                    state = :s_req_fragment_start
+                    state = :req_fragment_start
                 elseif ch != '#' && !is_url_char(ch)
                     error("Start of Fragement contained unxecpected character")
                 else
@@ -255,6 +265,8 @@ module URIParser
                 if !is_url_char(ch) && ch != '?' && ch != '#'
                     error("Fragement contained unxecpected character")
                 end
+            else 
+                error("Unrecognized state")
             end
         end
         host, port, user = parse_authority(server,seen_at)
