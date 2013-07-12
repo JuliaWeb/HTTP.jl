@@ -3,6 +3,10 @@ using Base.Test
 
 urls = ["hdfs://user:password@hdfshost:9000/root/folder/file.csv",
     "https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag",
+    "https://user:password@httphost:9000/path1/path2?q=a&p=r#frag",
+    "https://user:password@httphost:9000/path1/path2;paramstring#frag",
+    "https://user:password@httphost:9000/path1/path2#frag",
+    "file:///path/to/file/with?should=work#fine",
     "ftp://ftp.is.co.za/rfc/rfc1808.txt", "http://www.ietf.org/rfc/rfc2396.txt", 
     "ldap://[2001:db8::7]/c=GB?objectClass?one", "mailto:John.Doe@example.com", 
     "news:comp.infosystems.www.servers.unix", "tel:+1-816-555-1212", "telnet://192.0.2.16:80/", 
