@@ -183,7 +183,7 @@ end
 function process_client(server::Server, client::Client, websockets_enabled::Bool)
     event("connect", server, client)
 
-    while client.sock.open
+    while Base.uv_isopen(client.sock)
         data = readavailable(client.sock)
         add_data(client.parser, data)
     end
