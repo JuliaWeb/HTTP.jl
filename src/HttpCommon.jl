@@ -23,6 +23,8 @@ export STATUS_CODES,
        decodeURI,
        parsequerystring
 
+import Base.show
+
 const STATUS_CODES = {
     100 => "Continue",
     101 => "Switching Protocols",
@@ -179,6 +181,8 @@ Response(d::String, h::Headers)         = Response(200, h, d, false)
 Response(d::String)                     = Response(200, STATUS_CODES[200], d)
 Response(s::Int)                        = Response(s, "")
 Response()                              = Response(200)
+
+show(io::IO,r::Response) = print(io,"Response(",r.status," ",STATUS_CODES[r.status],", ",length(r.headers)," Headers, ",sizeof(r.data)," Bytes in Body)")
 
 # Escape HTML characters
 # 
