@@ -3,6 +3,7 @@ module HTTPClient
     using HttpCommon
     using URIParser
     using GnuTLS
+    using Codecs
 
     export URI, get, post
 
@@ -20,12 +21,17 @@ module HTTPClient
             request.data],CRLF)
     end
 
-    function default_get_request(resource,host)
-        Request("GET",resource,(String => String)[
+    function default_request(method,resource,host,data,user_headers=Dict{None,None}())
+        headers = (String => String)[
             "User-Agent" => "HttpClient.jl/0.0.0",
             "Host" => host,
             "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            ],"")
+            ]
+        if !isempty(data)
+            headers["Content-Length"] = dec(length(data))
+        end
+        merge!(headers,user_headers)
+        Request(method,resource,headers,data)
     end
 
     ### Response Parsing
@@ -176,9 +182,7 @@ module HTTPClient
         http_parser_execute(parser.parser, parser.settings, request_data)
     end
 
-    ### API
-
-    function get(uri::URI)
+    function open_stream(uri::URI,headers,data,method)
         if uri.schema != "http" && uri.schema != "https"
             error("Unsupported schema \"$(uri.schema)\"")
         end
@@ -194,22 +198,34 @@ module HTTPClient
             associate_stream(stream,sock)
             handshake!(stream)
         end
+        if uri.userinfo != "" && !haskey(headers,"Authorization")
+            headers["Authorization"] = "Basic "*bytestring(encode(Base64, uri.userinfo))
+        end
         resource = uri.path
         if uri.query != ""
             resource = resource*"?"*uri.query
         end
-        write(stream, render(default_get_request(resource,uri.host)))
+        write(stream, render(default_request(method,resource,uri.host,data,headers)))
+        stream
+    end
+
+    function process_response(stream)
         r = Response()
         rp = ResponseParser(r,stream)
         while isopen(stream)
             data = readavailable(stream)
-            print(data)
             add_data(rp, data)
-            show(STDOUT,rp)
         end
         http_parser_execute(rp.parser,rp.settings,"") #EOF
         r
-    end 
+    end
+
+    # 
+    get(uri::URI; headers = Dict{String,String}()) = process_response(open_stream(uri,headers,"","GET"))
+
+    function post(uri::URI, data::String; headers = Dict{String,String}())
+        process_response(open_stream(uri,headers,data,"POST"))
+    end
 
     get(string::ASCIIString) = get(URI(string))
 end
