@@ -69,7 +69,7 @@ export HttpHandler,
 #
 immutable HttpHandler
     handle::Function
-    sock::Base.TcpServer
+    sock::Base.UVServer
     events::Dict
 
     HttpHandler(handle::Function) = new(handle, Base.TcpServer(), Dict{ASCIIString, Function}())
@@ -82,13 +82,14 @@ handle(handler::HttpHandler, req::Request, res::Response) = handler.handle(req, 
 # the connection socket. `Client.parser` will store a `ClientParser` to handle
 # all HTTP parsing for the connection lifecycle.
 #
-type Client
+type Client{T<:IO}
     id::Int
-    sock::TcpSocket
+    sock::T
     parser::ClientParser
 
-    Client(id::Int, sock::TcpSocket) = new(id, sock)
+    Client(id::Int,sock::T) = new(id,sock)
 end
+Client{T<:IO}(id::Int,sock::T) = Client{T}(id,sock)
 
 # `WebSocketInterface` defines the abstract protocol for a WebSocketHandler.
 #
@@ -138,7 +139,7 @@ end
 
 # Converts a `Response` to an HTTP response string
 function render(response::Response)
-    res = join(["HTTP/1.1", response.status, response.message, "\r\n"], " ")
+    res = join(["HTTP/1.1", response.status, HttpCommon.STATUS_CODES[response.status], "\r\n"], " ")
 
     for header in keys(response.headers)
         res = string(join([ res, header, ": ", response.headers[header] ]), "\r\n")
@@ -175,6 +176,35 @@ function run(server::Server, port::Integer)
     end
 end
 
+using GnuTLS
+
+run_https(server::Server, auth::GnuTLS.CertificateStore, port::Integer) = run_https(server, auth, IPv4(0), port)
+function run_https(server::Server, auth::GnuTLS.CertificateStore, args...)
+    id_pool = 0
+    bind(server.http.sock,args...) || error("Given address not usable")
+    listen(server.http.sock)
+    event("listen", server, args...)
+    websockets_enabled = server.websock != nothing
+
+    while true
+        sess = GnuTLS.Session(true)
+        set_priority_string!(sess)
+        set_credentials!(sess,auth)
+        client = accept(server.http.sock)
+        try
+            associate_stream(sess,client)
+            handshake!(sess)
+        catch e
+            println("Error establishing SSL connection: ", e)
+            close(client)
+            continue
+        end
+        client = Client(id_pool += 1, sess)
+        client.parser = ClientParser(message_handler(server, client, websockets_enabled))
+        @async process_client(server, client, websockets_enabled) 
+    end
+end
+
 # Handles live connections, runs inside a `Task`.
 #
 # Blocks ( yields ) until a line can be read, then passes it into `client.
@@ -183,16 +213,20 @@ end
 function process_client(server::Server, client::Client, websockets_enabled::Bool)
     event("connect", server, client)
 
-    while Base.uv_isopen(client.sock)
-        data = readavailable(client.sock)
-        add_data(client.parser, data)
+    while isopen(client.sock)
+        try 
+            data = readavailable(client.sock)
+            add_data(client.parser, data)
+        catch e
+            if isa(e,GnuTLS.GnuTLSException) && e.code == -110
+                # Because Chrome is buggy on OS X, ignore E_PREMATURE_TERMINATION
+            else
+                rethrow()
+            end
+        end
     end
 
-    # Garbage collects parser globals on connection close
-    # see: `RequestParser.jl`
-    #
     event("close", server, client)
-    clean!(client.parser)
 end
 
 # Callback factory for providing `on_message_complete` for `client.parser`
@@ -231,7 +265,7 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
         event("write", server, client, response)
 
         if get(req.headers, "Connection", nothing) == "close"
-            close(client.sock)
+            #close(client.sock)
         end
     end
 end
