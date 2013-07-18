@@ -1,10 +1,20 @@
 This module provides access to Joyent's http-parser library: [http-parser](https://github.com/joyent/http-parser)
 
+# Installation
+
+```jl
+# in REQUIRE
+HttpParser 0.0.1
+
+# in REPL
+julia> Pkg2.add("HttpParser")
+```
+
 ## Requirements
 
-* libhttp-parser needs to be available as a shared library on your system.
+`libhttp-parser` needs to be available as a shared library. It should be built automatically by `Pkg2`.
 
-### Installing libhttp-parser as a shared library
+### Installing libhttp-parser as a shared library manually
 
 1. clone https://github.com/joyent/http-parser
 2. `cd http-parser`
