@@ -7,11 +7,13 @@ If you'd like to use WebSockets as well, you'll need to grab [WebSockets.jl](htt
 
 ## Installation/Setup
 
-This is a Julia package, so you just need to run `Pkg.add("HttpServer")` in a Julia repl.
-It will install this package and all dependencies in your `~/.julia` directory.
+```jl
+# in REQUIRE
+HttpServer 0.0.1
 
-You will also need libhttp-parser, so you should follow the directions in
-[HttpParser](https://github.com/hackerschool/HttpParser.jl)'s README.
+# in REPL
+julia> Pkg2.add("HttpServer")
+```
 
 To make sure everything is working, you can `cd` into the `~/.julia/HttpServer.jl/` and run `julia examples/hello.jl`. If you open up `localhost:8000/hello/name/`, you should get a greeting from the server.
 
