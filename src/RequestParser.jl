@@ -22,6 +22,7 @@
 # [hprepo]: https://github.com/joyent/http-parser
 #
 using HttpParser
+using HttpCommon
 export RequestParser,
        clean!,
        add_data
@@ -30,31 +31,16 @@ export RequestParser,
 HTTP_CB      = (Int, (Ptr{Parser},))
 HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
 
-# Need an empty constructor method for building `Request` instances.
-import HttpCommon.Request
-Request() = Request("", "", HttpCommon.headers(), "", Dict{Any, Any}())
-
-# IMPORTANT!!! This requires manual memory management.
-#
-# Each Client needs its own `Request`. Since closures are not
-# c-callable, we have to keep a global dictionary of Parser pointers
-# to the in-progress `Request`. Callbacks will lookup their partial in this
-# global dict. Partials must be manually deleted when connections
-# are closed or memory leaks will occur.
-#
-const partials = Dict{Ptr{Parser}, Request}()
-const message_complete_callbacks = Dict{Int, Function}()
-
 # All the `HttpParser` callbacks to be run in C land
 # Each one adds data to the `Request` until it is complete
 #
 function on_message_begin(parser)
-    partials[parser] = Request()
+    pd(parser).request = Request()
     return 0
 end
 
 function on_url(parser, at, len)
-    r = partials[parser]
+    r = pd(parser).request
     r.resource = string(r.resource, bytestring(convert(Ptr{Uint8}, at),int(len)))
     return 0
 end
@@ -69,7 +55,7 @@ end
 # this: https://github.com/joyent/node/blob/master/src/node_http_parser.cc#L207
 
 function on_header_field(parser, at, len)
-    r = partials[parser]
+    r = pd(parser).request
     header = bytestring(convert(Ptr{Uint8}, at))
     header_field = header[1:len]
     r.headers["current_header"] = header_field
@@ -77,7 +63,7 @@ function on_header_field(parser, at, len)
 end
 
 function on_header_value(parser, at, len)
-    r = partials[parser]
+    r = pd(parser).request
     s = bytestring(convert(Ptr{Uint8}, at),int(len))
     r.headers[r.headers["current_header"]] = s
     r.headers["current_header"] = ""
@@ -85,7 +71,7 @@ function on_header_value(parser, at, len)
 end
 
 function on_headers_complete(parser)
-    r = partials[parser]
+    r = pd(parser).request
     p = unsafe_load(parser)
     # get first two bits of p.type_and_flags
     ptype = p.type_and_flags & 0x03
@@ -101,32 +87,23 @@ function on_headers_complete(parser)
 end
 
 function on_body(parser, at, len)
-    r = partials[parser]
-    r.data = string(r.data, bytestring(convert(Ptr{Uint8}, at)))
+    r = pd(parser).request
+    write(pd(parser.data),bytestring(convert(Ptr{Uint8}, at)),len)
     return 0
 end
 
 function on_message_complete(parser)
-    r = partials[parser]
+    state = pd(parser)
+    r = state.request
 
     # delete the temporary header key
     delete!(r.headers, "current_header", nothing)
-
-    # Add finishing touches to `Request`
-    raw_resource = r.resource
-    if contains(r.resource,'?')
-        r.resource, r.state[:url_query] = split(r.resource,'?')
-    end
-    r.state[:raw_resource] = raw_resource
 
     # Get the `parser.id` from the C pointer `parser`.
     # Retrieve our callback function from the global Dict.
     # Call it with the completed `Request`
     #
-    message_complete_callbacks[unsafe_load(parser).id](r)
-
-    delete!(partials, parser, nothing)
-
+    state.complete_cb(r)
     return 0
 end
 
@@ -140,6 +117,17 @@ on_headers_complete_cb = cfunction(on_headers_complete, HTTP_CB...)
 on_body_cb = cfunction(on_body, HTTP_DATA_CB...)
 on_message_complete_cb = cfunction(on_message_complete, HTTP_CB...)
 
+default_complete_cb(r::Request) = nothing
+
+type RequestParserState
+    request::Request
+    data::IOBuffer
+    complete_cb::Function
+end
+RequestParserState() = RequestParserState(Request(),IOBuffer(),default_complete_cb)
+
+pd(p::Ptr{Parser}) = (unsafe_load(p).data)::RequestParserState
+
 # `ClientParser` wraps our `HttpParser`
 # Constructed with `on_message_complete` function.
 #
@@ -149,8 +137,9 @@ immutable ClientParser
 
     function ClientParser(on_message_complete::Function)
         parser = Parser()
+        parser.data = RequestParserState()
         http_parser_init(parser)
-        message_complete_callbacks[parser.id] = on_message_complete
+        parser.data.complete_cb = on_message_complete
 
         settings = ParserSettings(on_message_begin_cb, on_url_cb,
                                   on_status_complete_cb, on_header_field_cb,
@@ -164,11 +153,4 @@ end
 # Passes `request_data` into `parser`
 function add_data(parser::ClientParser, request_data::String)
     http_parser_execute(parser.parser, parser.settings, request_data)
-end
-
-# Garbage collect all data associated with `parser` from the global Dicts.
-# Call this whenever closing a connection that has a `ClientParser` instance.
-#
-function clean!(parser::ClientParser)
-    delete!(message_complete_callbacks, parser.parser.id, nothing)
 end
