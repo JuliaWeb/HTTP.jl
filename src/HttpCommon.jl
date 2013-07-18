@@ -23,6 +23,8 @@ export STATUS_CODES,
        decodeURI,
        parsequerystring
 
+import Base.show
+
 const STATUS_CODES = {
     100 => "Continue",
     101 => "Switching Protocols",
@@ -146,8 +148,8 @@ type Request
     resource::String
     headers::Headers
     data::String
-    state::Dict
 end
+Request() = Request("", "", (String=>String)[], "")
 
 # HTTP response
 #
@@ -169,19 +171,19 @@ end
 #
 type Response
     status::Int
-    message::String
     headers::Headers
     data::String
     finished::Bool
 end
-Response(s::Int, m::String, h::Headers, d::String) = Response(s, m, h, d, false)
-Response(s::Int, m::String, h::Headers)            = Response(s, m, h, "", false)
-Response(s::Int, m::String, d::String)             = Response(s, m, headers(), d, false)
-Response(d::String, h::Headers)                    = Response(200, STATUS_CODES[200], h, d, false)
-Response(s::Int, m::String)                        = Response(s, m, headers(), "$s $m")
-Response(d::String)                                = Response(200, STATUS_CODES[200], d)
-Response(s::Int)                                   = Response(s, STATUS_CODES[s])
-Response()                                         = Response(200)
+Response(s::Int, h::Headers, d::String) = Response(s, h, d, false)
+Response(s::Int, h::Headers)            = Response(s, h, "", false)
+Response(s::Int, d::String)             = Response(s, headers(), d, false)
+Response(d::String, h::Headers)         = Response(200, h, d, false)
+Response(d::String)                     = Response(200, headers(), d,false)
+Response(s::Int)                        = Response(s, headers(), "", false)
+Response()                              = Response(200)
+
+show(io::IO,r::Response) = print(io,"Response(",r.status," ",STATUS_CODES[r.status],", ",length(r.headers)," Headers, ",sizeof(r.data)," Bytes in Body)")
 
 # Escape HTML characters
 # 
