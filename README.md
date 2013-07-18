@@ -13,10 +13,15 @@ This package provides types and helper functions for dealing with the HTTP proto
 
 # Installation
 
-This is a Julia package, so you can just run `Pkg.add("HttpCommon")` in the Julia REPL.
+```jl
+# in REQUIRE
+HttpCommon 0.0.1
 
-You will need to have Julia installed from source because
-this code has not been tested in v0.1 at all and probably uses features not found there.
+# in REPL
+julia> Pkg2.add("HttpCommon")
+```
+
+You will need to have Julia installed from source because this code has not been tested in v0.1 at all and probably uses features not found there.
 
 ~~~~
 :::::::::::::
