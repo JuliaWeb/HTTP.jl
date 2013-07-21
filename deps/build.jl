@@ -15,5 +15,3 @@ run(@build_steps begin
         `cp http-parser/libhttp_parser.so $target`
     end)
 end)
-
-Pkg2.markworking("HttpParser")
