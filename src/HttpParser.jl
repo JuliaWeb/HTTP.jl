@@ -14,7 +14,8 @@ export Parser,
        http_parser_init, 
        http_parser_execute, 
        http_method_str, 
-       http_should_keep_alive
+       http_should_keep_alive,
+       upgrade
 
 # The shared C library name.
 const lib = :libhttp_parser
@@ -121,8 +122,8 @@ end
 function http_should_keep_alive(parser::Ptr{Parser})
     ccall((:http_should_keep_alive, lib), Int, (Ptr{Parser},), parser)
 end
-
-errno(p::Parser) = p.errno_and_upgrade & 0b11111110>>1
+upgrade(p::Parser) = (p.errno_and_upgrade & 0b10000000)>0
+errno(p::Parser) = p.errno_and_upgrade & 0b01111111
 errno_name(errno::Integer) = bytestring(ccall((:http_errno_name,lib),Ptr{Uint8},(Int32,),errno))
 errno_description(errno::Integer) = bytestring(ccall((:http_errno_description,lib),Ptr{Uint8},(Int32,),errno))
 
