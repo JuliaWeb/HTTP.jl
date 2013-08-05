@@ -166,7 +166,7 @@ function run(server::Server, port::Integer)
     sock = server.http.sock
     websockets_enabled = server.websock != nothing
     uv_error("listen", !bind(sock, Base.IPv4(uint32(0)), uint16(port)))
-    uv_error("listen", !Base.listen!(sock))
+    listen(sock)
     event("listen", server, port)
 
     while true # handle requests, Base.wait_accept blocks until a connection is made
