@@ -88,13 +88,14 @@ end
 
 function on_body(parser, at, len)
     r = pd(parser).request
-    write(pd(parser.data),bytestring(convert(Ptr{Uint8}, at)),len)
+    write(pd(parser).data,bytestring(convert(Ptr{Uint8}, at)),len)
     return 0
 end
 
 function on_message_complete(parser)
     state = pd(parser)
     r = state.request
+    r.data = takebuf_string(state.data)
 
     # delete the temporary header key
     delete!(r.headers, "current_header", nothing)

@@ -215,8 +215,19 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
 
     while isopen(client.sock)
         try 
-            data = readavailable(client.sock)
-            add_data(client.parser, data)
+            if !upgrade(client.parser.parser)
+                # IMPORTANT NOTE: This is technically incorrect as there may be data 
+                # in the buffer that we have not yet read. The way to deal with this
+                # is to manuall adjust the position of the buffer, but for that to 
+                # happen, we need use the return value of http_parser_exceute, which
+                # we don't have since we launch websocket handlers in the callback.
+                # Anyway, since there always needs to be a handshake this is probably
+                # file for now. 
+                data = readavailable(client.sock)
+                add_data(client.parser, data)
+            else
+                wait(client.sock.closenotify)
+            end
         catch e
             if isa(e,GnuTLS.GnuTLSException) && e.code == -110
                 # Because Chrome is buggy on OS X, ignore E_PREMATURE_TERMINATION
