@@ -16,6 +16,7 @@ script:
     - julia -e 'Pkg.add("BinDeps")'
     - julia -e 'Pkg.add("Calendar")'
     - julia -e 'Pkg.add("HttpParser")'
+    - julia -e 'Pkg.add("FactCheck")'
     - mkdir -p ~/.julia/HttpCommon
     - cp -R ./* ~/.julia/HttpCommon/
     - julia -e 'Pkg.fixup("HttpCommon")'
