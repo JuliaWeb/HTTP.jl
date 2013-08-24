@@ -2,14 +2,14 @@ language: cpp
 compiler:
     - clang
 notifications:
-    email: false
+    email: true
 before_install:
     - sudo add-apt-repository ppa:staticfloat/julia-deps -y
     - sudo add-apt-repository ppa:staticfloat/julianightlies -y
     - sudo apt-get update -qq -y
     - sudo apt-get install libpcre3-dev julia -y
-    - git config --global user.name "Travis User"
-    - git config --global user.email "travis@example.net"
+    - git config --global user.name "Zach Allaun"
+    - git config --global user.email "zach.allaun@gmail.com"
     - git submodule update --init --recursive
 script:
     - julia -e "Pkg.init()"

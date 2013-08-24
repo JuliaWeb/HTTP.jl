@@ -1,6 +1,10 @@
+# HttpParser
+
 This module provides access to Joyent's http-parser library: [http-parser](https://github.com/joyent/http-parser)
 
-# Installation
+[![Build Status](https://travis-ci.org/[YOUR_GITHUB_USERNAME]/[YOUR_PROJECT_NAME].png)](https://travis-ci.org/[YOUR_GITHUB_USERNAME]/[YOUR_PROJECT_NAME])
+
+## Installation
 
 ```jl
 # in REQUIRE
