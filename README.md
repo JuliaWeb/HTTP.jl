@@ -1,5 +1,6 @@
-HttpCommon
-==========
+# HttpCommon
+
+[![Build Status](https://travis-ci.org/hackerschool/HttpCommon.jl.png)](https://travis-ci.org/hackerschool/HttpCommon.jl)
 
 This package provides types and helper functions for dealing with the HTTP protocl in Julia.
 
