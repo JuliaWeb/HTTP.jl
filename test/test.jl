@@ -40,7 +40,7 @@ WEBSOCK = tuple("DELETE /chat HTTP/1.1\r\n",
         "Sec-WebSocket-Version: 13\r\n",
         "\r\n",)
 
-r = Request("", "", Dict{String,String}(), "", Dict{String,String}())
+r = Request("", "", Dict{String,String}(), "")
 
 function on_message_begin(parser)
     # Clear the resource when the message starts
