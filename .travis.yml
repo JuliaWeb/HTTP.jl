@@ -1,0 +1,22 @@
+language: cpp
+compiler:
+    - clang
+notifications:
+    email: false
+before_install:
+    - sudo add-apt-repository ppa:staticfloat/julia-deps -y
+    - sudo add-apt-repository ppa:staticfloat/julianightlies -y
+    - sudo apt-get update -qq -y
+    - sudo apt-get install libpcre3-dev julia -y
+    - git config --global user.name "Travis User"
+    - git config --global user.email "travis@example.net"
+    - git submodule update --init --recursive
+script:
+    - julia -e "Pkg.init()"
+    - mkdir -p ~/.julia/HttpParser
+    - cp -R ./* ~/.julia/HttpParser/
+    - julia -e 'Pkg.add("BinDeps")'
+    - julia -e 'Pkg.add("Calendar")'
+    - julia -e 'Pkg.fixup("HttpParser")'
+    - julia ~/.julia/HttpParser/test/test.jl
+
