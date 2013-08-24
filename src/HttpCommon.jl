@@ -154,7 +154,6 @@ Request() = Request("", "", (String=>String)[], "")
 # HTTP response
 #
 # - status   => HTTP status code (see: `STATUS_CODES`)
-# - message  => HTTP status message (see: `STATUS_CODES`)
 # - headers  => HTTP headers
 # - data     => response data
 # - finished => indicates that a Response is "valid" and can be converted to an
@@ -186,7 +185,7 @@ Response()                              = Response(200)
 show(io::IO,r::Response) = print(io,"Response(",r.status," ",STATUS_CODES[r.status],", ",length(r.headers)," Headers, ",sizeof(r.data)," Bytes in Body)")
 
 # Escape HTML characters
-# 
+#
 # Safety first!
 #
 function escapeHTML(i::String)
@@ -197,7 +196,7 @@ function escapeHTML(i::String)
 end
 
 # All characters that remain unencoded in URI encoding
-#                                   ( AKA URL encoding 
+#                                   ( AKA URL encoding
 #                                     AKA percent-encoding )
 #
 const URIwhitelist = ['A','B','C','D','E','F','G','H','I',
@@ -234,7 +233,7 @@ function encodeURI(decoded::String)
     encoded
 end
 
-# parsequerystring 
+# parsequerystring
 #
 # Convert a valid querystring to a Dict:
 #
@@ -244,7 +243,7 @@ end
 #
 function parsequerystring(query::String)
     q = Dict{String,String}()
-    if !contains(query,'=') 
+    if !contains(query,'=')
         return throw("Not a valid query string: $query, must contain at least one key=value pair.")
     end
     for set in split(query, "&")
