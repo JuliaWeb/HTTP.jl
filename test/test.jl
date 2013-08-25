@@ -15,24 +15,4 @@ facts("HttpServer utility functions") do
         @fact vals[5] => "Content-Language: en"
         @fact vals[7] => "Hello World!"
     end
-
-    context("updateresponse sets the status") do
-        response = Response(200, "Hello World!")
-        response = HttpServer.updateresponse(response, 500)
-        @fact response.status => 500
-    end
-
-    context("updateresponse sets the data") do
-        response = Response(200, "Hello World!")
-        response = HttpServer.updateresponse(response, "Goodbye, World!")
-        @fact response.data => "Goodbye, World!"
-    end
-
-    context("updateresponse sets both status and data") do
-        response = Response(200, "Hello World!")
-        response = HttpServer.updateresponse(response, (302, "Goodbye, World!"))
-        @fact response.status => 302
-        @fact response.data => "Goodbye, World!"
-    end
 end
-
