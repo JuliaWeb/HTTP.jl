@@ -1,3 +1,7 @@
+# HttpServer.jl
+
+[![Build Status](https://travis-ci.org/hackerschool/HttpServer.jl.png)](https://travis-ci.org/hackerschool/HttpServer.jl)
+
 This is a basic, non-blocking HTTP server in Julia.
 
 You can write a basic application using just this
