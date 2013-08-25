@@ -18,5 +18,6 @@ script:
     - julia -e 'Pkg.add("BinDeps")'
     - julia -e 'Pkg.add("FactCheck")'
     - julia -e 'Pkg.add("HttpCommon")'
+    - julia -e 'Pkg.add("Calendar")'
     - julia -e 'Pkg.fixup("HttpServer")'
     - julia ~/.julia/HttpServer/test/test.jl
