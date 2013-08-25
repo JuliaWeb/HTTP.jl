@@ -2,7 +2,9 @@ language: cpp
 compiler:
     - clang
 notifications:
-    email: true
+    email:
+        - zach.allaun@gmail.com
+        - daniel@danielespeset.com
 before_install:
     - sudo add-apt-repository ppa:staticfloat/julia-deps -y
     - sudo add-apt-repository ppa:staticfloat/julianightlies -y
