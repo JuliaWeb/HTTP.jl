@@ -240,6 +240,20 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
     event("close", server, client)
 end
 
+function updateresponse(res, status::Int)
+    res.status = status
+    res
+end
+function updateresponse(res, data::String)
+    res.data = data
+    res
+end
+function updateresponse(res, data::(Int, String))
+    res.status = data[1]
+    res.data = data[2]
+    res
+end
+
 # Callback factory for providing `on_message_complete` for `client.parser`
 function message_handler(server::Server, client::Client, websockets_enabled::Bool)
 
@@ -260,9 +274,12 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
         local response
 
         try
-            response = handle(server.http, req, Response()) # Run the server handler
-            if !isa(response, Response)                     # Promote return to Response
-                response = Response(response)
+            response = Response()
+            out = handle(server.http, req, response)
+            if isa(out, Response)
+                response = out
+            else
+                response = updateresponse(response, out)
             end
         catch err
             response = Response(500)
