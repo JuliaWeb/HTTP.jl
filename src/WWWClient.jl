@@ -1,4 +1,4 @@
-module HTTPClient
+module WWWClient
     using HttpParser
     using HttpCommon
     using URIParser
@@ -23,7 +23,7 @@ module HTTPClient
 
     function default_request(method,resource,host,data,user_headers=Dict{None,None}())
         headers = (String => String)[
-            "User-Agent" => "HttpClient.jl/0.0.0",
+            "User-Agent" => "WWWClient.jl/0.0.0",
             "Host" => host,
             "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             ]

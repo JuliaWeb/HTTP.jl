@@ -1,4 +1,4 @@
-HTTPClient.jl
+WWWClient.jl
 =============
 
 The Http client package provides basic functionality for talking to http servers. 
@@ -9,28 +9,28 @@ following redirects or interpreting any part of the response). It's API is extre
 
 To query an HTTP server using the GET method, you may use:
 ```julia
-HTTPClient.get("http://example.org")
+WWWClient.get("http://example.org")
 ```
 or, equivalently
 
 ```julia
-HTTPClient.get(URL("http://example.org"))
+WWWClient.get(URL("http://example.org"))
 ```
 
-HTTPClient.jl also natively supports HTTP albeit it does not do certificate validation yet:
+WWWClient.jl also natively supports HTTPS albeit it does not do certificate validation yet:
 ```julia
-HTTPClient.get(URI("https://example.org")) #Note the https
+WWWClient.get(URI("https://example.org")) #Note the https
 ```
 
 Other methods that are available are:
 ```julia
-HTTPClient.post(URI("https://example.org"),data)
-HTTPClient.delete(URI("https://example.org"))
+WWWClient.post(URI("https://example.org"),data)
+WWWClient.delete(URI("https://example.org"))
 ```
 
 # Getting the package
 
 Currently this package is not listed in METADATA, to get it you will have to use
 ```
-Pkg2.clone("https://github.com/loladiro/HTTPClient.jl")
+Pkg.clone("https://github.com/loladiro/WWWClient.jl")
 ```
