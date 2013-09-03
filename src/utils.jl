@@ -43,10 +43,10 @@ const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "
 function isvalid(uri::URI)
     schema = uri.schema
     isempty(schema) && error("Can not validate relative URI")
-    if (contains(non_hierarchical, schema) && (search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
-       (!contains(uses_query, schema) && !isempty(uri.query)) ||                    # query component not allowed 
-       (!contains(uses_fragment, schema) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
-       (!contains(uses_authority, schema) && (!isempty(uri.host) || (0 != uri.port) || !isempty(uri.userinfo))) # authority component not allowed
+    if ((schema in non_hierarchical) && (search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
+       (!(schema in uses_query) && !isempty(uri.query)) ||                    # query component not allowed 
+       (!(schema in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
+       (!(schema in uses_authority) && (!isempty(uri.host) || (0 != uri.port) || !isempty(uri.userinfo))) # authority component not allowed
         return false
     end
     true
