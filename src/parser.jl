@@ -294,7 +294,7 @@ function print(io::IO, uri::URI)
         if !isempty(uri.userinfo)
             print(io,uri.userinfo,'@')
         end
-        if contains(uri.host,':') #is IPv6
+        if ':' in uri.host #is IPv6
             print(io,'[',uri.host,']')
         else
             print(io,uri.host)
