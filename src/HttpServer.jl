@@ -165,7 +165,7 @@ function run(server::Server, port::Integer)
     id_pool = 0 # Increments for each connection
     sock = server.http.sock
     websockets_enabled = server.websock != nothing
-    Base.uv_error("listen", !bind(sock, Base.IPv4(uint32(0)), uint16(port)))
+    Base.uv_error("listen", !Base.bind(sock, Base.IPv4(uint32(0)), uint16(port)))
     listen(sock)
     event("listen", server, port)
 
