@@ -1,6 +1,7 @@
 language: cpp
 compiler:
     - clang
+    - gcc
 notifications:
     email:
         - zach.allaun@gmail.com
