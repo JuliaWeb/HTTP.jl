@@ -98,7 +98,7 @@ function on_message_complete(parser)
     r.data = takebuf_string(state.data)
 
     # delete the temporary header key
-    delete!(r.headers, "current_header", nothing)
+    pop!(r.headers, "current_header", nothing)
 
     # Get the `parser.id` from the C pointer `parser`.
     # Retrieve our callback function from the global Dict.
