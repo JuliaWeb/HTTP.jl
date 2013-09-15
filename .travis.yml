@@ -18,7 +18,9 @@ script:
     - julia -e "Pkg.init()"
     - mkdir -p ~/.julia/HttpParser
     - cp -R ./* ~/.julia/HttpParser/
+    - julia -e 'Pkg.checkout("BinDeps")'
     - julia -e 'Pkg.add("BinDeps")'
+    - julia -e 'Pkg.checkout("BinDeps")'
     - julia -e 'Pkg.add("Calendar")'
     - julia -e 'Pkg.fixup("HttpParser")'
     - julia ~/.julia/HttpParser/test/test.jl
