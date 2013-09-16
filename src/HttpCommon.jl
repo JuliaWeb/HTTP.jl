@@ -228,7 +228,7 @@ end
 function encodeURI(decoded::String)
     encoded = ""
     for c in decoded
-        encoded = encoded * string(contains(URIwhitelist,c) ? c : "%" * uppercase(hex(int(c))))
+        encoded = encoded * string(c in URIwhitelist ? c : "%" * uppercase(hex(int(c))))
     end
     encoded
 end
@@ -243,7 +243,7 @@ end
 #
 function parsequerystring(query::String)
     q = Dict{String,String}()
-    if !contains(query,'=')
+    if !('=' in query)
         return throw("Not a valid query string: $query, must contain at least one key=value pair.")
     end
     for set in split(query, "&")
