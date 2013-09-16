@@ -16,10 +16,10 @@ This package provides types and helper functions for dealing with the HTTP proto
 
 ```jl
 # in REQUIRE
-HttpCommon 0.0.1
+HttpCommon 0.0-
 
 # in REPL
-julia> Pkg2.add("HttpCommon")
+julia> Pkg.add("HttpCommon")
 ```
 
 You will need to have Julia installed from source because this code has not been tested in v0.1 at all and probably uses features not found there.
