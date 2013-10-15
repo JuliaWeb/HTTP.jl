@@ -46,7 +46,7 @@ module WWWClient
     end
 
     immutable ResponseParser
-        parser::Parser 
+        parser::Parser
         settings::ParserSettings
 
         function ResponseParser(r,sock)
@@ -91,7 +91,7 @@ module WWWClient
 
     # Gather the header_field, set the field
     # on header value, set the value for the current field
-    # there might be a better way to do 
+    # there might be a better way to do
     # this: https://github.com/joyent/node/blob/master/src/node_http_parser.cc#L207
 
     function on_header_field(parser, at, len)
@@ -224,23 +224,26 @@ module WWWClient
         r
     end
 
-    function encode_params(params)
-        if isempty(params)
-            return ""
+    # Http Methods
+    for f in [:get, :post, :put, :delete, :head,
+              :trace, :connect, :options, :patch]
+        @eval begin
+            function ($f)(uri::URI,data::String;headers = Dict{String,String}())
+                process_response(open_stream(uri,headers,data,
+                                             string($f)|>uppercase))
+            end
         end
-        string("?",join(["$k=$v" for (k,v) in params],"&)"))
-    end
 
-    # 
-    get(uri::URI; headers = Dict{String,String}()) = process_response(open_stream(uri,headers,"","GET"))
-    delete(uri::URI; headers = Dict{String,String}()) = process_response(open_stream(uri,headers,"","DELETE"))
-    function post(uri::URI, data::String; headers = Dict{String,String}())
-        process_response(open_stream(uri,headers,data,"POST"))
+        @eval ($f)(uri::String,data::String;args...) =
+            ($f)(URI(uri),data;args...)
+
+        @eval ($f)(uri::URI;headers = Dict{String,String}()) =
+            process_response(open_stream(uri,headers,"",string($f)|>uppercase))
+
+        @eval ($f)(string::ASCIIString) = ($f)(URI(string))
     end
     function put(uri::URI, data::String; headers = Dict{String,String}())
         process_response(open_stream(uri,headers,data,"PUT"))
     end
 
-    get(string::ASCIIString) = get(URI(string))
-    delete(string::ASCIIString) = delete(URI(string))
 end
