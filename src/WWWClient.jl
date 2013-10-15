@@ -5,7 +5,7 @@ module WWWClient
     using GnuTLS
     using Codecs
 
-    export URI, get, post
+    export URI, get, post, put, delete
 
     ## URI Parsing
 
@@ -225,6 +225,9 @@ module WWWClient
     delete(uri::URI; headers = Dict{String,String}()) = process_response(open_stream(uri,headers,"","DELETE"))
     function post(uri::URI, data::String; headers = Dict{String,String}())
         process_response(open_stream(uri,headers,data,"POST"))
+    end
+    function put(uri::URI, data::String; headers = Dict{String,String}())
+        process_response(open_stream(uri,headers,data,"PUT"))
     end
 
     get(string::ASCIIString) = get(URI(string))
