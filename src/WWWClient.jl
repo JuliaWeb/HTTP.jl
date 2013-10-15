@@ -175,6 +175,7 @@ module WWWClient
     #
     function clean!(parser::ClientParser)
         pop!(message_complete_callbacks, parser.parser.id, nothing)
+        message_complete_callbacks
     end
 
     # Passes `request_data` into `parser`
