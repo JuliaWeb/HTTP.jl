@@ -19,5 +19,4 @@ script:
     - mkdir -p ~/.julia/HttpParser
     - cp -R ./* ~/.julia/HttpParser/
     - julia -e 'Pkg.add("BinDeps")'
-    - julia -e 'Pkg.fixup("HttpParser")'
     - julia ~/.julia/HttpParser/test/test.jl
