@@ -21,5 +21,4 @@ script:
     - julia -e 'Pkg.add("FactCheck")'
     - mkdir -p ~/.julia/HttpCommon
     - cp -R ./* ~/.julia/HttpCommon/
-    - julia -e 'Pkg.fixup("HttpCommon")'
     - julia ~/.julia/HttpCommon/test/test.jl
