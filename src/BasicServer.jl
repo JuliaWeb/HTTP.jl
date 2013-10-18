@@ -241,7 +241,10 @@ module BasicServer
     
     if has(response.headers, "Content-Length")
       # Grab the first Content-Length in the headers
-      content_lengths = delete!(response.headers, "Content-Length")
+      # After v0.2:
+      #content_lengths = pop!(response.headers, "Content-Length")
+      content_lengths = response.headers["Content-Length"]
+      delete!(response.headers, "Content-Length")
       # TODO: Refactor this to be prettier
       if isa(content_lengths, String)
         content_length = content_lengths
