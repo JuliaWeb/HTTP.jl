@@ -19,4 +19,5 @@ script:
     - mkdir -p ~/.julia/HttpParser
     - cp -R ./* ~/.julia/HttpParser/
     - julia -e 'Pkg.resolve()'
+    - julia ~/.julia/HttpParser/deps/build.jl
     - julia ~/.julia/HttpParser/test/test.jl
