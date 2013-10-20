@@ -19,7 +19,7 @@ HttpServer 0.0.1
 julia> Pkg2.add("HttpServer")
 ```
 
-To make sure everything is working, you can `cd` into the `~/.julia/HttpServer.jl/` and run `julia examples/hello.jl`. If you open up `localhost:8000/hello/name/`, you should get a greeting from the server.
+To make sure everything is working, you can run `cd ~/.julia/HttpServer` and `julia examples/hello.jl`. If you open up `localhost:8000/hello/name/`, you should get a greeting from the server.
 
 
 ## Basic Example:
