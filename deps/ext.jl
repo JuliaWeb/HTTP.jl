@@ -1,3 +1,3 @@
-using BinDeps
 
-find_library("HttpParser", "libhttp_parser", ["libhttp_parser", "libcairo"]) || error("libhttp_parser not found")
+push!(DL_LOAD_PATH, "$(Pkg.dir())/HttpParser/deps/usr/lib/")
+find_library(["libhttp_parser"]) == "" && error("libhttp_parser not found")
