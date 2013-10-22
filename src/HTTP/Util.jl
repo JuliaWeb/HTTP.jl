@@ -64,7 +64,7 @@ module Util
   escaped_regex = r"%([0-9a-fA-F]{2})"
   function unescape(str)
     # def _unescape(str, regex) str.gsub(regex){ $1.hex.chr } end
-    for m in eachmatch(escaped_regex, str)
+    for m in each_match(escaped_regex, str)
       for capture in m.captures
         rep = string(char(parse_int(capture, 16)))
         str = replace(str, "%"*capture, rep)
@@ -79,7 +79,7 @@ module Util
   # Escaping
   control_array = convert(
     Array{Uint8,1},
-    vec(0:(parse_int("1f", 16)))
+    [i for i = 0:parseint("1f",16)]
   )
   control = utf8(ascii(control_array)*"\x7f")
   space = utf8(" ")
@@ -87,7 +87,7 @@ module Util
   unwise   = utf8("{}|\\^`")
   nonascii_array = convert(
     Array{Uint8,1},
-    vec(parse_int("80", 16):(parse_int("ff", 16)))
+    [i for i=parse_int("80", 16):(parse_int("ff", 16))]
   )
   #nonascii = utf8(string(nonascii_array))
   reserved = utf8(",;/?:@&=+\$![]'*#")
