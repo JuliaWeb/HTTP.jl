@@ -17,8 +17,9 @@ immutable URI
     fragment::ASCIIString
     userinfo::ASCIIString
     specifies_authority::Bool
+    URI(schema::ASCIIString,host::ASCIIString,port::Integer,path,query::ASCIIString="",fragment="",userinfo="",specifies_authority=false) = 
+            new(schema,host,uint16(port),path,query,fragment,userinfo,specifies_authority)
 end
-
 
 isequal(a::URI,b::URI) = (a.schema == b.schema) &&
                          (a.host == b.host) &&
@@ -28,11 +29,16 @@ isequal(a::URI,b::URI) = (a.schema == b.schema) &&
                          (a.fragment == b.fragment) &&
                          (a.userinfo == b.userinfo)
 
-
-URI(schema::ASCIIString,host::ASCIIString,port::Integer,path,query::ASCIIString="",fragment="",userinfo="",specifies_authority=false) = 
-    URI(schema,host,uint16(port),path,query,fragment,userinfo)
 URI(host,path) = URI("http",host,uint16(80),path,"","","",true)
-
+URI(uri::URI; schema=nothing, host=nothing, port=nothing, path=nothing, query=nothing, fragment=nothing, userinfo=nothing, specifies_authority=nothing) = 
+URI(schema === nothing ? uri.schema : schema,
+    host === nothing ? uri.host : host,
+    port === nothing ? uri.port : port,
+    path === nothing ? uri.path : path,
+    query === nothing ? uri.query : query,
+    fragment === nothing ? uri.fragment : fragment,
+    userinfo === nothing ? uri.userinfo : userinfo,
+    specifies_authority === nothing ? uri.specifies_authority : specifies_authority)
 
 # URL parser based on the http-parser package by Joyent
 # Licensed under the BSD license
