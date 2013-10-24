@@ -5,6 +5,7 @@ module WWWClient
     using GnuTLS
     using Codecs
 
+    importall Base
     export URI, get, post, put, delete
 
     ## URI Parsing
