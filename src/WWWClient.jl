@@ -5,6 +5,7 @@ module WWWClient
     using GnuTLS
     using Codecs
 
+    importall Base
     export URI, get, post, put, delete
 
     ## URI Parsing
@@ -135,7 +136,7 @@ module WWWClient
         close(p.sock)
 
         # delete the temporary header key
-        delete!(r.headers, "current_header", nothing)
+        pop!(r.headers, "current_header", nothing)
         return 0
     end
 
@@ -174,7 +175,8 @@ module WWWClient
     # Call this whenever closing a connection that has a `ClientParser` instance.
     #
     function clean!(parser::ClientParser)
-        delete!(message_complete_callbacks, parser.parser.id, nothing)
+        pop!(message_complete_callbacks, parser.parser.id, nothing)
+        message_complete_callbacks
     end
 
     # Passes `request_data` into `parser`
