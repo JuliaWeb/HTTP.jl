@@ -27,10 +27,3 @@ Other methods that are available are:
 WWWClient.post(URI("https://example.org"),data)
 WWWClient.delete(URI("https://example.org"))
 ```
-
-# Getting the package
-
-Currently this package is not listed in METADATA, to get it you will have to use
-```
-Pkg.clone("https://github.com/loladiro/WWWClient.jl")
-```
