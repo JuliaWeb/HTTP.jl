@@ -1,4 +1,7 @@
 module WWWClient
+
+    import Base.get, Base.put
+
     using HttpParser
     using HttpCommon
     using URIParser
