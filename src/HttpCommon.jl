@@ -21,7 +21,11 @@ export STATUS_CODES,
        escapeHTML,
        encodeURI,
        decodeURI,
-       parsequerystring
+       parsequerystring,
+       FileResponse,
+       mimetypes
+
+include("mimetypes.jl")
 
 import Base.show
 
@@ -168,21 +172,33 @@ Request() = Request("", "", (String=>String)[], "")
 #     Response(200)
 #     # => Response(200, "OK", ["Server" => "v\"0.2.0-740.r6df6\""], "200 OK", false)
 #
+typealias HttpData Union(String,Array{Uint8})
 type Response
     status::Int
     headers::Headers
-    data::String
+    data::HttpData
     finished::Bool
 end
-Response(s::Int, h::Headers, d::String) = Response(s, h, d, false)
+Response(s::Int, h::Headers, d::HttpData) = Response(s, h, d, false)
 Response(s::Int, h::Headers)            = Response(s, h, "", false)
-Response(s::Int, d::String)             = Response(s, headers(), d, false)
-Response(d::String, h::Headers)         = Response(200, h, d, false)
-Response(d::String)                     = Response(200, headers(), d,false)
+Response(s::Int, d::HttpData)             = Response(s, headers(), d, false)
+Response(d::HttpData, h::Headers)         = Response(200, h, d, false)
+Response(d::HttpData)                     = Response(200, headers(), d,false)
 Response(s::Int)                        = Response(s, headers(), "", false)
 Response()                              = Response(200)
 
 show(io::IO,r::Response) = print(io,"Response(",r.status," ",STATUS_CODES[r.status],", ",length(r.headers)," Headers, ",sizeof(r.data)," Bytes in Body)")
+
+function FileResponse(filename)
+    if isfile(filename)
+        s = open(readbytes,filename)
+        (_, ext) = splitext(filename)
+        mime = length(ext)>1 && haskey(mimetypes,ext[2:end]) ? mimetypes[ext[2:end]] : "application/octet-stream"
+        Response(200, Dict{String,String}({"Content-Type"},{mime}), s)
+    else
+        Response(404, "Not Found - file $filename could not be found")
+    end         
+end
 
 # Escape HTML characters
 #
