@@ -67,12 +67,17 @@ export HttpHandler,
 #     # trigger "foo"
 #     Http.event(server, "foo", "Julia")
 #
+
+defaultevents = Dict{ASCIIString, Function}()
+defaultevents["error"]  = ( client, err ) -> println( err )
+defaultevents["listen"] = ( port )        -> println("Listening on $port...")
+
 immutable HttpHandler
     handle::Function
     sock::Base.UVServer
     events::Dict
 
-    HttpHandler(handle::Function) = new(handle, Base.TcpServer(), Dict{ASCIIString, Function}())
+    HttpHandler(handle::Function) = new(handle, Base.TcpServer(), defaultevents)
 end
 handle(handler::HttpHandler, req::Request, res::Response) = handler.handle(req, res)
 
@@ -138,14 +143,17 @@ function event(event::String, server::Server, args...)
 end
 
 # Converts a `Response` to an HTTP response string
-function render(response::Response)
-    res = join(["HTTP/1.1", response.status, HttpCommon.STATUS_CODES[response.status], "\r\n"], " ")
+import Base.write
+function write{T<:IO}(io::T, response::Response)
+    write(io, join(["HTTP/1.1", response.status, HttpCommon.STATUS_CODES[response.status], "\r\n"], " "))
 
+    response.headers["Content-Length"] = string(length(response.data))
     for header in keys(response.headers)
-        res = string(join([ res, header, ": ", response.headers[header] ]), "\r\n")
+        write(io, string(join([ header, ": ", response.headers[header] ]), "\r\n"))
     end
 
-    res * "\r\n" * response.data
+    write(io, "\r\n")
+    write(io, response.data)
 end
 
 # `run` starts `server` listening on `port`.
@@ -270,9 +278,8 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
             Base.display_error(err, catch_backtrace())      # Prints backtrace without throwing
         end
 
-        response.headers["Content-Length"] = string(length(response.data))
 
-        write(client.sock, render(response))
+        write(client.sock, response)
         event("write", server, client, response)
 
         if get(req.headers, "Connection", nothing) == "close"
