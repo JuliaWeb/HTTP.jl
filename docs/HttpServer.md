@@ -5,6 +5,9 @@ This is a basic, non-blocking HTTP server in Julia.
 You can write a web application using just this
 if you're happy dealing directly with values representing HTTP requests and responses.
 
+The `Request` and `Response` types come from `HttpCommon`; see that section for documentation.
+
+
 ## Installation/Setup
 
     :::julia
