@@ -2,34 +2,36 @@
 
 This is a basic, non-blocking HTTP server in Julia.
 
-You can write a basic application using just this
-if you're happy dealing with values representing HTTP requests and responses directly.
-For a higher-level view, you could use [Meddle](https://github.com/hackerschool/Meddle.jl) or [Morsel](https://github.com/hackerschool/Morsel.jl).
-If you'd like to use WebSockets as well, you'll need to grab [WebSockets.jl](https://github.com/hackerschool/WebSockets.jl).
+You can write a web application using just this
+if you're happy dealing directly with values representing HTTP requests and responses.
 
 ## Installation/Setup
 
     :::julia
-    # in REQUIRE
-    HttpServer 0.0.1
+    julia> Pkg.add("HttpServer")
 
-    # in REPL
-    julia> Pkg2.add("HttpServer")
+## Testing Your Installation
 
-To make sure everything is working, you can `cd` into the `~/.julia/HttpServer.jl/` and run `julia examples/hello.jl`. If you open up `localhost:8000/hello/name/`, you should get a greeting from the server.
-
+1. Move to the `~/.julia/HttpServer.jl/` directory.
+2. Run `julia examples/hello.jl`.
+3. Open `localhost:8000/hello/name` in a browser.
+4. You should see a text greeting from the server in your browser.
 
 ## Basic Example:
 
     :::julia
     using HttpServer
 
+    # Julia's do syntax lets you more easily pass a function as an argument
     http = HttpHandler() do req::Request, res::Response
+        # if the requested path starts with `/hello/`, say hello
+        # otherwise, return a 404 error
         Response( ismatch(r"^/hello/",req.resource) ? string("Hello ", split(req.resource,'/')[3], "!") : 404 )
     end
 
+    # HttpServer supports setting handlers for particular events
     http.events["error"]  = ( client, err ) -> println( err )
     http.events["listen"] = ( port )        -> println("Listening on $port...")
 
-    server = Server( http )
-    run( server, 8000 )
+    server = Server( http ) #create a server from your HttpHandler
+    run( server, 8000 ) #never returns
