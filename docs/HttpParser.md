@@ -1,21 +1,19 @@
 # HttpParser
 
-This module provides access to Joyent's http-parser library: [http-parser](https://github.com/joyent/http-parser)
+This module provides a Julia wrapper around Joyent's http-parser library: [http-parser](https://github.com/joyent/http-parser)
+
+You can look at the code of HttpSever.jl as an example of using HttpParser.jl.
 
 ## Installation
 
     :::julia
-    # in REQUIRE
-    HttpParser 0.0.1
+    julia> Pkg.add("HttpParser")
 
-    # in REPL
-    julia> Pkg2.add("HttpParser")
+### Requirements
 
-## Requirements
+`libhttp-parser` needs to be available as a shared library. It should be built automatically by `Pkg`.
 
-`libhttp-parser` needs to be available as a shared library. It should be built automatically by `Pkg2`.
-
-### Installing libhttp-parser as a shared library manually
+#### Installing libhttp-parser as a shared library manually
 
 1. clone https://github.com/joyent/http-parser
 2. `cd http-parser`
@@ -24,6 +22,6 @@ This module provides access to Joyent's http-parser library: [http-parser](https
 
 ## Test
 
-5. cd back to HttpParser.jl
-6. `julia src/Test.jl`
-7. Expect to see text indicating that all assertions have passed.
+1. Move to `~/.julia/HttpParser/`
+2. Run `julia src/Test.jl`
+3. Expect to see text indicating that all assertions have passed.
