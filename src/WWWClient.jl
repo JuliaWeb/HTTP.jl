@@ -7,8 +7,9 @@ module WWWClient
     using URIParser
     using GnuTLS
     using Codecs
+    using JSON
 
-    export URI, get, post, put, delete
+    export URI, get, post, put, delete, head, options, patch
 
     ## URI Parsing
 
@@ -192,10 +193,10 @@ module WWWClient
         end
         ip = Base.getaddrinfo(uri.host)
         if uri.schema == "http"
-            stream = connect(ip, uri.port == 0 ? 80 : uri.port)
+            stream = Base.connect(ip, uri.port == 0 ? 80 : uri.port)
         else
             # Initialize HTTPS
-            sock = connect(ip, uri.port == 0 ? 443 : uri.port)
+            sock = Base.connect(ip, uri.port == 0 ? 443 : uri.port)
             stream = GnuTLS.Session()
             set_priority_string!(stream)
             set_credentials!(stream,GnuTLS.CertificateStore())
@@ -224,23 +225,52 @@ module WWWClient
         r
     end
 
+    function format_query_str(queryparams; uri = URI(""))
+        query_str = string(uri.query, "&")
+
+        for (k, v) in queryparams
+            query_str *= "$k=$v&"
+        end
+
+        chop(query_str) # remove the trailing &
+    end
+
     # Http Methods
     for f in [:get, :post, :put, :delete, :head,
-              :trace, :connect, :options, :patch]
+              :trace, :options, :patch, :connect]
+
         @eval begin
-            function ($f)(uri::URI,data::String;headers = Dict{String,String}())
-                process_response(open_stream(uri,headers,data,
-                                             string($f)|>uppercase))
+            function ($f)(uri::URI, data::String, headers::Dict{String, String})
+                process_response(open_stream(uri, headers, data,
+                                             string($f) |> uppercase))
             end
         end
 
-        @eval ($f)(uri::String,data::String;args...) =
-            ($f)(URI(uri),data;args...)
+        @eval ($f)(uri::String; args...) = ($f)(URI(uri); args...)
+    end
 
-        @eval ($f)(uri::URI;headers = Dict{String,String}()) =
-            process_response(open_stream(uri,headers,"",string($f)|>uppercase))
+    for f in [:get, :delete, :head, :options, :connect]
+        @eval begin
+            function ($f)(uri::URI; query::Dict = Dict(),
+                                    headers::Dict{String, String} = Dict{String, String}())
 
-        @eval ($f)(string::ASCIIString) = ($f)(URI(string))
+                query_str = format_query_str(query; uri = uri)
+                ($f)(URI(uri; query = query_str), "", headers)
+            end
+        end
+    end
+
+    for f in [:post, :put, :patch, :trace]
+        @eval begin
+            function ($f)(uri::URI; headers = Dict{String, String}(),
+                                    data = Dict(),
+                                    query::Dict = Dict())
+
+                headers["Content-Type"] = "application/json"
+                query_str = format_query_str(query; uri = uri)
+                ($f)(URI(uri; query = query_str), json(data), headers)
+            end
+        end
     end
     function put(uri::URI, data::String; headers = Dict{String,String}())
         process_response(open_stream(uri,headers,data,"PUT"))
