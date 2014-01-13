@@ -2,7 +2,7 @@
 
 [![Build Status](https://travis-ci.org/hackerschool/HttpCommon.jl.png)](https://travis-ci.org/hackerschool/HttpCommon.jl)
 
-This package provides types and helper functions for dealing with the HTTP protocl in Julia.
+This package provides types and helper functions for dealing with the HTTP protocol in Julia.
 
 * types to represent `Request`s, `Response`s, and `Headers`
 * a dictionary of `STATUS_CODES`
