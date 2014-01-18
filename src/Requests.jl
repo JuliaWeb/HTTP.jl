@@ -1,4 +1,4 @@
-module WWWClient
+module Requests
 
     import Base.get, Base.put
 
@@ -27,7 +27,7 @@ module WWWClient
 
     function default_request(method,resource,host,data,user_headers=Dict{None,None}())
         headers = (String => String)[
-            "User-Agent" => "WWWClient.jl/0.0.0",
+            "User-Agent" => "Requests.jl/0.0.0",
             "Host" => host,
             "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             ]

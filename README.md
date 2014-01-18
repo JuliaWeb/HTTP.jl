@@ -1,29 +1,48 @@
-WWWClient.jl
-=============
+# Requests.jl
 
-The Http client package provides basic functionality for talking to http servers. 
-It does not however, implement any of the features you would find in a browser (e.g.
-following redirects or interpreting any part of the response). It's API is extremely simple.
-
-# Usage
-
-To query an HTTP server using the GET method, you may use:
-```julia
-WWWClient.get("http://example.org")
-```
-or, equivalently
+## Quickstart
 
 ```julia
-WWWClient.get(URL("http://example.org"))
+julia> Pkg.clone("https://github.com/forio/Requests.jl")
+
+julia> using Requests
 ```
 
-WWWClient.jl also natively supports HTTPS albeit it does not do certificate validation yet:
+### Make a request
+
 ```julia
-WWWClient.get(URI("https://example.org")) #Note the https
+get("http://httpbin.org/get")
+post("http://httpbin.org/post")
+put("http://httpbin.org/put")
+delete("http://httpbin.org/delete")
+options("http://httpbin.org/get")
 ```
 
-Other methods that are available are:
+### Add query parameters
+
 ```julia
-WWWClient.post(URI("https://example.org"),data)
-WWWClient.delete(URI("https://example.org"))
+get("http://httpbin.org/get"; query = {"title" => "page1"})
+```
+
+### Add data
+
+```julia
+post("http://httpbin.org/post"; data = {"id" => "1fc80620-7fd3-11e3-80a5"})
+```
+
+### Set headers
+
+```julia
+post("http://httpbin.org/post"; headers = {"Date" => "Tue, 15 Nov 1994 08:12:31 GMT"})
+```
+
+### Inspect responses
+
+```julia
+type Response
+    status::Int
+    headers::Headers
+    data::HttpData
+    finished::Bool
+end
 ```
