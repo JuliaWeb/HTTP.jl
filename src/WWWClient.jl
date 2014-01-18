@@ -224,6 +224,13 @@ module WWWClient
         r
     end
 
+    function encode_params(params)
+        if isempty(params)
+            return ""
+        end
+        string("?",join(["$k=$v" for (k,v) in params],"&)"))
+    end
+
     # 
     get(uri::URI; headers = Dict{String,String}()) = process_response(open_stream(uri,headers,"","GET"))
     delete(uri::URI; headers = Dict{String,String}()) = process_response(open_stream(uri,headers,"","DELETE"))
