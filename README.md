@@ -3,7 +3,7 @@
 ## Quickstart
 
 ```julia
-julia> Pkg.clone("https://github.com/forio/Requests.jl")
+julia> Pkg.add("Requests")
 
 julia> using Requests
 ```
