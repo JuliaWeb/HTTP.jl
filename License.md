@@ -1,4 +1,4 @@
-WWWClient.jl is licensed under the MIT License:
+Requests.jl is licensed under the MIT License:
 
 > Copyright (c) 2013: Massachusetts Institute of Technology
 > Copyright (c) 2013: Keno Fischer and other contributors.
