@@ -242,7 +242,7 @@ module Requests
         @eval begin
             function ($f)(uri::URI, data::String, headers::Dict{String, String})
                 process_response(open_stream(uri, headers, data,
-                                             string($f) |> uppercase))
+                                             $(uppercase(string(f)))))
             end
         end
 
