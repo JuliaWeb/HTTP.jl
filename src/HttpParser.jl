@@ -1,8 +1,10 @@
 # Julian C bindings for Joyent's http-parser library.
 # see: https://github.com/joyent/http-parser
 #
-include("../deps/ext.jl")
+
 module HttpParser
+
+include("../deps/build.jl")
 
 using HttpCommon
 
@@ -16,9 +18,6 @@ export Parser,
        http_method_str, 
        http_should_keep_alive,
        upgrade
-
-# The shared C library name.
-const lib = :libhttp_parser
 
 # The id pool is used to keep track of incoming requests.
 id_pool = 0
