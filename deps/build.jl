@@ -18,15 +18,14 @@ end)
 
 
 # Windows
-if Int == Int64
-  # 64-bit
-  provides(Binaries,
-    URI("https://dl.dropboxusercontent.com/u/19359560/libhttp_parser64.dll"),
-    os = :Windows)
-else
-  # 32-bit
-  provides(Binaries,
-    URI("https://dl.dropboxusercontent.com/u/19359560/libhttp_parser32.dll"),
-    os = :Windows)
+provides(Binaries,
+         URI("https://dl.dropboxusercontent.com/u/19359560/libhttp_parser.zip"),
+         os = :Windows)
+@windows_only begin
+    if Int == Int64
+        libhttp_parser = library_dependency("libhttp_parser64")
+    else
+        libhttp_parser = library_dependency("libhttp_parser32")
+    end
 end
 
