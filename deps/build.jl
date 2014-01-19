@@ -1,5 +1,7 @@
 using BinDeps
 
+@BinDeps.setup
+
 depsdir = joinpath(Pkg.dir(),"HttpParser","deps")
 prefix=joinpath(depsdir,"usr")
 uprefix = replace(replace(prefix,"\\","/"),"C:/","/c/")
@@ -29,3 +31,4 @@ provides(Binaries,
     end
 end
 
+@BinDeps.install [:libhttp_parser => :lib]
