@@ -15,3 +15,18 @@ run(@build_steps begin
         `cp http-parser/libhttp_parser.so $target`
     end)
 end)
+
+
+# Windows
+if Int == Int64
+  # 64-bit
+  provides(Binaries,
+    URI("https://dl.dropboxusercontent.com/u/19359560/libhttp_parser64.dll"),
+    os = :Windows)
+else
+  # 32-bit
+  provides(Binaries,
+    URI("https://dl.dropboxusercontent.com/u/19359560/libhttp_parser32.dll"),
+    os = :Windows)
+end
+
