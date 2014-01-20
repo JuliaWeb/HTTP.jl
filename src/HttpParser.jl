@@ -4,7 +4,7 @@
 
 module HttpParser
 
-include("../deps/build.jl")
+include("../deps/deps.jl")
 
 using HttpCommon
 
