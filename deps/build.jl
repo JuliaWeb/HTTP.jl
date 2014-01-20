@@ -2,9 +2,19 @@ using BinDeps
 
 @BinDeps.setup
 
-@unix_only begin
-    libhttp_parser = library_dependency("libhttp_parser")
+aliases = []
+@windows_only begin
+    if WORD_SIZE == 64
+        aliases = ["libhttp_parser64"]
+    else
+        aliases = ["libhttp_parser32"]
+    end
+end
 
+libhttp_parser = library_dependency("libhttp_parser", aliases=aliases)
+
+println(libhttp_parser)
+@unix_only begin
     depsdir = joinpath(Pkg.dir(),"HttpParser","deps")
     prefix=joinpath(depsdir,"usr")
     uprefix = replace(replace(prefix,"\\","/"),"C:/","/c/")
@@ -25,14 +35,9 @@ end
 
 # Windows
 @windows_only begin
-    if Int == Int64
-        libhttp_parser = library_dependency("libhttp_parser64")
-    else
-        libhttp_parser = library_dependency("libhttp_parser32")
-    end
     provides(Binaries,
          URI("https://dl.dropboxusercontent.com/u/19359560/libhttp_parser.zip"),
-         [libhttp_parser], os = :Windows)
+         libhttp_parser, os = :Windows)
 end
 
 @BinDeps.install [:libhttp_parser => :lib]
