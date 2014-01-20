@@ -12,11 +12,7 @@ If you'd like to use WebSockets as well, you'll need to grab [WebSockets.jl](htt
 ## Installation/Setup
 
 ```jl
-# in REQUIRE
-HttpServer 0.0.1
-
-# in REPL
-julia> Pkg2.add("HttpServer")
+Pkg.add("HttpServer")
 ```
 
 To make sure everything is working, you can run `cd ~/.julia/HttpServer` and `julia examples/hello.jl`. If you open up `localhost:8000/hello/name/`, you should get a greeting from the server.
