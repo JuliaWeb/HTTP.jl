@@ -2,7 +2,7 @@
 
 This module provides access to Joyent's http-parser library: [http-parser](https://github.com/joyent/http-parser)
 
-[![Build Status](https://travis-ci.org/hackerschool/HttpParser.jl.png)](https://travis-ci.org/hackerschool/HttpParser.jl)
+[![Build Status](https://travis-ci.org/JuliaLang/HttpParser.jl.png)](https://travis-ci.org/JuliaLang/HttpParser.jl)
 
 ## Installation
 
