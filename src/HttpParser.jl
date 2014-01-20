@@ -32,8 +32,8 @@ type Parser
     header_state::Cuchar
     index::Cuchar
 
-    nread::Cuint
-    content_length::Culong
+    nread::Uint32
+    content_length::Uint64
 
     http_major::Cushort
     http_minor::Cushort
@@ -52,8 +52,8 @@ Parser() = Parser(
     convert(Cuchar, 0),
     convert(Cuchar, 0),
 
-    convert(Cuint, 0),
-    convert(Culong, 0),
+    convert(Uint32, 0),
+    convert(Uint64, 0),
 
     convert(Cushort, 0),
     convert(Cushort, 0),
