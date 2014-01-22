@@ -17,6 +17,8 @@ export HttpHandler,
        encodeURI,
        decodeURI,
        parsequerystring
+       
+import Base: run
 
 # `HttpHandler` types are used to instantiate a `Server`.
 #
