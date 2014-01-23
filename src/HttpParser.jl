@@ -102,7 +102,7 @@ function http_parser_init(parser::Parser,isserver=true)
 end
 
 # Run a request through a parser with specific callbacks on the settings instance.
-function http_parser_execute(parser::Parser, settings::ParserSettings, request::String)
+function http_parser_execute(parser::Parser, settings::ParserSettings, request)
     ccall((:http_parser_execute, lib), Csize_t, 
             (Ptr{Parser}, Ptr{ParserSettings}, Ptr{Uint8}, Csize_t,), 
             &parser, &settings, convert(Ptr{Uint8}, request), sizeof(request))
