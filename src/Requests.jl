@@ -183,7 +183,7 @@ module Requests
     end
 
     # Passes `request_data` into `parser`
-    function add_data(parser::ResponseParser, request_data::String)
+    function add_data(parser::ResponseParser, request_data)
         http_parser_execute(parser.parser, parser.settings, request_data)
     end
 
@@ -240,7 +240,7 @@ module Requests
               :trace, :options, :patch, :connect]
 
         @eval begin
-            function ($f)(uri::URI, data::String, headers::Dict{String, String})
+            function ($f)(uri::URI, data::String, headers::Dict)
                 process_response(open_stream(uri, headers, data,
                                              $(uppercase(string(f)))))
             end
@@ -252,7 +252,7 @@ module Requests
     for f in [:get, :delete, :head, :options, :connect]
         @eval begin
             function ($f)(uri::URI; query::Dict = Dict(),
-                                    headers::Dict{String, String} = Dict{String, String}())
+                                    headers = Dict{String, String}())
 
                 query_str = format_query_str(query; uri = uri)
                 ($f)(URI(uri; query = query_str), "", headers)
