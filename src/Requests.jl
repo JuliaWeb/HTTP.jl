@@ -249,7 +249,7 @@ module Requests
         @eval ($f)(uri::String; args...) = ($f)(URI(uri); args...)
     end
 
-    for f in [:get, :delete, :head, :options, :connect]
+    for f in [:get, :head, :options, :connect]
         @eval begin
             function ($f)(uri::URI; query::Dict = Dict(),
                                     headers = Dict{String, String}())
@@ -260,7 +260,7 @@ module Requests
         end
     end
 
-    for f in [:post, :put, :patch, :trace]
+    for f in [:post, :put, :patch, :delete, :trace]
         @eval begin
             function ($f)(uri::URI; headers = Dict{String, String}(),
                                     data = Dict(),
