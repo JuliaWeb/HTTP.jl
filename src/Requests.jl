@@ -272,8 +272,5 @@ module Requests
             end
         end
     end
-    function put(uri::URI, data::String; headers = Dict{String,String}())
-        process_response(open_stream(uri,headers,data,"PUT"))
-    end
 
 end
