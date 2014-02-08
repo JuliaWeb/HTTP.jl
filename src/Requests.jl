@@ -226,7 +226,7 @@ module Requests
     end
 
     function format_query_str(queryparams; uri = URI(""))
-        query_str = string(uri.query, "&")
+        query_str = isempty(uri.query) ? string() : string(uri.query, "&")
 
         for (k, v) in queryparams
             query_str *= "$k=$v&"
