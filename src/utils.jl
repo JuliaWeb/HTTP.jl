@@ -29,6 +29,23 @@ function path_params(uri::URI, seps=[';',',','='])
 end
 
 ##
+# Splits the query into key value pairs
+function query_params(uri::URI)
+    elems = split(uri.query, '&', false)
+    d = Dict{String, String}()
+    for elem in elems
+        pp = split(elem, "=", true)
+        if length(pp) == 2
+            push!(d, pp[1], pp[2])
+        else
+            push(d, elem, "") #gracefully degrade for ill formed query params
+        end
+    end
+    d
+end
+
+
+##
 # Create equivalent URI without the fragment
 defrag(uri::URI) = URI(uri.schema, uri.host, uri.port, uri.path, uri.query, "", uri.userinfo, uri.specifies_authority)
 
