@@ -15,25 +15,33 @@ using Base.Test
 
 # check query params -------
 
-data = JSON.parse(get("http://httpbin.org/get"; query = { "key1" => "value1" }).data)
+data = JSON.parse(get("http://httpbin.org/get"; query = { "key1" => "value1",
+                                                          "key with spaces" => "value with spaces"}).data)
 @test data["args"]["key1"] == "value1"
+@test data["args"]["key with spaces"] == "value with spaces"
 
 data = JSON.parse(post("http://httpbin.org/post"; query = { "key1" => "value1",
-                                                            "key2" => "value2" }).data)
+                                                            "key2" => "value2",
+                                                            "key with spaces" => "value with spaces"}).data)
 @test data["args"]["key1"] == "value1"
 @test data["args"]["key2"] == "value2"
+@test data["args"]["key with spaces"] == "value with spaces"
 
 data = JSON.parse(put("http://httpbin.org/put"; query = { "key1" => "value1",
                                                           "key2" => "value2",
-                                                          "key3" => 3 }).data)
+                                                          "key3" => 3,
+                                                          "key with spaces" => "value with spaces"}).data)
 @test data["args"]["key1"] == "value1"
 @test data["args"]["key2"] == "value2"
 @test data["args"]["key3"] == "3"
+@test data["args"]["key with spaces"] == "value with spaces"
 
 data = JSON.parse(delete("http://httpbin.org/delete"; query = { "key1" => "value1",
-                                                                "key4" => 4.01 }).data)
+                                                                "key4" => 4.01,
+                                                                "key with spaces" => "value with spaces"}).data)
 @test data["args"]["key1"] == "value1"
 @test data["args"]["key4"] == "4.01"
+@test data["args"]["key with spaces"] == "value with spaces"
 
 data = JSON.parse(options("http://httpbin.org/get"; query = { "key1" => "value1",
                                                               "key2" => "value2",

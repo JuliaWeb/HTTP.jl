@@ -229,9 +229,8 @@ module Requests
         query_str = isempty(uri.query) ? string() : string(uri.query, "&")
 
         for (k, v) in queryparams
-            query_str *= "$k=$v&"
+            query_str *= "$(URIParser.escape(string(k)))=$(URIParser.escape(string(v)))&"
         end
-
         chop(query_str) # remove the trailing &
     end
 
