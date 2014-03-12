@@ -61,7 +61,7 @@ Parser() = Parser(
 
     convert(Cuchar, 0),
 
-    convert(Ptr{Uint8}, Array(Int, 0)),
+    convert(Ptr{Uint8}, C_NULL),
     (global id_pool += 1)
 )
 
