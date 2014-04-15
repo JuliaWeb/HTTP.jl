@@ -17,7 +17,7 @@ immutable URI
     fragment::ASCIIString
     userinfo::ASCIIString
     specifies_authority::Bool
-    URI(schema::ASCIIString,host::ASCIIString,port::Integer,path,query::ASCIIString="",fragment="",userinfo="",specifies_authority=false) = 
+    URI(schema,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) = 
             new(schema,host,uint16(port),path,query,fragment,userinfo,specifies_authority)
 end
 
