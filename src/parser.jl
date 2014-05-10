@@ -21,6 +21,7 @@ immutable URI
             new(schema,host,uint16(port),path,query,fragment,userinfo,specifies_authority)
 end
 
+==(a::URI,b::URI) = isequal(a,b)
 isequal(a::URI,b::URI) = (a.schema == b.schema) &&
                          (a.host == b.host) &&
                          (a.port == b.port) &&
