@@ -110,7 +110,7 @@ data = JSON.parse(post(URI("http://httpbin.org/post");
 @test data["data"] == "√"
 
 # Test file upload
-filename = "runtests.jl"
+filename = Base.source_path() 
 res = post(URI("http://httpbin.org/post"); files = [
   FileParam(readall(filename),"text/julia","file1","runtests.jl"),
   FileParam(open(filename,"r"),"text/julia","file2","runtests.jl",true),
