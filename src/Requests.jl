@@ -32,7 +32,7 @@ module Requests
             "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
             ]
         if !isempty(data)
-            headers["Content-Length"] = dec(length(data))
+            headers["Content-Length"] = dec(sizeof(data))
         end
         merge!(headers,user_headers)
         Request(method,resource,headers,data)

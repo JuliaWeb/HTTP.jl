@@ -102,3 +102,7 @@ data = JSON.parse(delete("http://httpbin.org/delete"; query = { "qkey1" => "valu
 @test data["args"]["qkey4"] == "4.01"
 @test data["json"]["dkey1"] == "data1"
 @test data["json"]["dkey2"] == 9.01
+
+data = JSON.parse(post(URI("http://httpbin.org/post"),"√",{"Content-Type" => "text/plain"}).data)
+
+@test data["data"] == "√"
