@@ -4,15 +4,21 @@ compiler:
 notifications:
     email: false
     irc: "chat.freenode.com#kfischer-julia"
+env:
+    matrix:
+        - JULIAVERSION="julianightlies"
+        - JULIAVERSION="juliareleases"
 before_install:
     - sudo add-apt-repository ppa:staticfloat/julia-deps -y
-    - sudo add-apt-repository ppa:staticfloat/julianightlies -y
+    - sudo add-apt-repository ppa:staticfloat/${JULIAVERSION} -y
     - sudo apt-get update -qq -y
-    - sudo apt-get install libpcre3-dev julia -y
+    - sudo apt-get install git libpcre3-dev julia -y
     - git config --global user.name "Travis User"
     - git config --global user.email "travis@example.net"
 script:
-    - julia -e "Pkg.init()"
-    - mkdir -p ~/.julia/URIParser
-    - cp -R ./* ~/.julia/URIParser
-    - julia ~/.julia/URIParser/test/test.jl
+    - julia -e 'Pkg.init()'
+    - julia -e 'run(`ln -s $(pwd()) $(Pkg.dir("URIParser"))`); Pkg.pin("URIParser"); Pkg.resolve()'
+    - if [ $JULIAVERSION = "julianightlies" ]; then julia --code-coverage test/runtests.jl; fi
+    - if [ $JULIAVERSION = "juliareleases" ]; then julia test/runtests.jl; fi
+after_success:
+    - if [ $JULIAVERSION = "julianightlies" ]; then julia -e 'cd(Pkg.dir("URIParser")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())'; fi
