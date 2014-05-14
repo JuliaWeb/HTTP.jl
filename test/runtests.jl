@@ -130,5 +130,7 @@ filecontent = readall(filename)
 data = JSON.parse(res.data)
 @test data["files"]["file1"] == filecontent
 @test data["files"]["file2"] == filecontent
-@test data["files"]["file3"] == filecontent
+if VERSION >= v"0.3-"
+    @test data["files"]["file3"] == filecontent
+end
 @test data["files"]["file4"] == filecontent
