@@ -16,7 +16,7 @@ before_install:
     - git submodule update --init --recursive
 script:
     - julia -e "Pkg.init()"
-    - julia -e 'run(`ln -s $(pwd()) $(Pkg.dir("HttpParser"))`); Pkg.pin("HttpParser"); Pkg.build("HttpParser"); Pkg.resolve()'
+    - julia -e 'run(`ln -s $(pwd()) $(Pkg.dir("HttpParser"))`); Pkg.pin("HttpParser"); Pkg.resolve(); Pkg.build("HttpParser")'
     - julia --code-coverage test/test.jl
 after_success:
     - julia -e 'cd(Pkg.dir("HttpParser")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())'
