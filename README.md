@@ -3,13 +3,11 @@
 This module provides access to Joyent's http-parser library: [http-parser](https://github.com/joyent/http-parser)
 
 [![Build Status](https://travis-ci.org/JuliaLang/HttpParser.jl.png)](https://travis-ci.org/JuliaLang/HttpParser.jl)
+[![Coverage Status](https://coveralls.io/repos/JuliaLang/HttpParser.jl/badge.png)](https://coveralls.io/r/JuliaLang/HttpParser.jl)
 
 ## Installation
 
 ```jl
-# in REQUIRE
-HttpParser
-
 # in REPL
 julia> Pkg.add("HttpParser")
 ```
@@ -27,7 +25,7 @@ julia> Pkg.add("HttpParser")
 
 ## Test
 
-5. `cd` back to `.julia/HttpParser/`
+5. `cd` back to `.julia/v0.3/HttpParser/`
 6. `julia test/test.jl`
 7. Expect to see text indicating that all assertions have passed.
 
