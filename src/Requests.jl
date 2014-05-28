@@ -141,7 +141,7 @@
 
     function on_body(parser, at, len)
         r = pd(parser).current_response
-        r.data = string(r.data, bytestring(convert(Ptr{Uint8}, at)))
+        r.data = string(r.data, bytestring(convert(Ptr{Uint8}, at), len))
         return 0
     end
 
