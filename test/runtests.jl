@@ -135,5 +135,5 @@ if VERSION >= v"0.3-"
 end
 @test data["files"]["file4"] == filecontent
 
-# Test for chunked responses (we expect 99 lines plus one extra)
+# Test for chunked responses (we expect 100 from split as there are 99 '\n')
 @test size(split(get("http://httpbin.org/stream/99").data, "\n"), 1) == 100
