@@ -47,7 +47,8 @@
         if uri.userinfo != "" && !haskey(headers,"Authorization")
             headers["Authorization"] = "Basic "*bytestring(encode(Base64, uri.userinfo))
         end
-        default_request(method,resource,uri.host,data,headers)
+        host = uri.port == 0 ? uri.host : "$(uri.host):$(uri.port)"
+        default_request(method,resource,host,data,headers)
     end
 
     ### Response Parsing
