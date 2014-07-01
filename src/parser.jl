@@ -275,13 +275,13 @@ function parse_url(url)
             elseif ch == '#'
                 state = :req_fragment_start
             elseif ch != '#' && !is_url_char(ch)
-                error("Start of Fragement contained unexpected character")
+                error("Start of fragment contained unexpected character")
             else
                 state = :req_fragment
             end
         elseif state == :req_fragment
             if !is_url_char(ch) && ch != '?' && ch != '#'
-                error("Fragement contained unexpected character")
+                error("Fragment contained unexpected character")
             end
         else 
             error("Unrecognized state")
