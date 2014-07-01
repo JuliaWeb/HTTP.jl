@@ -192,7 +192,7 @@ function parse_url(url)
         (ch,i) = next(url,i)
 
         if !isascii(ch)
-            "Non-ASCII characters not supported in URIs. Encode the URL and try again."
+            error("Non-ASCII characters not supported in URIs. Encode the URL and try again.")
         end
 
         last_state = state
