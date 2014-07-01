@@ -265,7 +265,7 @@ function parse_url(url)
             elseif ch == '#'
                 state = :req_fragment_start
             elseif !is_url_char(ch)
-                error("Query String contained unexpected character")
+                error("Query string contained unexpected character")
             else
                 state = :req_query_string
             end
