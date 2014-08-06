@@ -36,7 +36,7 @@ function query_params(uri::URI)
     for elem in elems
         pp = split(elem, "=", true)
         if length(pp) == 2
-            push!(d, pp[1], pp[2])
+            push!(d, unescape(pp[1]), unescape(pp[2]))
         else
             push(d, elem, "") #gracefully degrade for ill formed query params
         end

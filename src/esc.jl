@@ -34,7 +34,7 @@ function escape_with(str, use)
       
     for c in chars
         _char = c[1] # Character string as Char
-        h = hex(int(_char))
+        h = uppercase(hex(int(_char)))
         if length(h) < 2
             h = "0"*h
         end
@@ -42,7 +42,7 @@ function escape_with(str, use)
     end
       
     for i in nonascii_array
-        str = replace(str, char(i), "%" * hex(i))
+        str = replace(str, char(i), "%" * uppercase(hex(i)))
     end
       
     return str
