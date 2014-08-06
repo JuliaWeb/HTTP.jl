@@ -24,10 +24,10 @@ end
 @test URI("hdfs://user:password@hdfshost:9000/root/folder/file.csv") == URI("hdfs","hdfshost",9000,"/root/folder/file.csv","","","user:password")
 @test URI("google.com","/some/path") == URI("http://google.com:80/some/path")
 
-@test escape("abcdef 1234-=~!@#\$()_+{}|[]a;") == "abcdef%201234-%3d~%21%40%23%24()_%2b%7b%7d%7c%5b%5da%3b"
+@test escape("abcdef 1234-=~!@#\$()_+{}|[]a;") == "abcdef%201234-%3D~%21%40%23%24()_%2B%7B%7D%7C%5B%5Da%3B"
 @test unescape(escape("abcdef 1234-=~!@#\$()_+{}|[]a;")) == "abcdef 1234-=~!@#\$()_+{}|[]a;"
 
-@test escape_form("abcdef 1234-=~!@#\$()_+{}|[]a;") == "abcdef+1234-%3d~%21%40%23%24()_%2b%7b%7d%7c%5b%5da%3b"
+@test escape_form("abcdef 1234-=~!@#\$()_+{}|[]a;") == "abcdef+1234-%3D~%21%40%23%24()_%2B%7B%7D%7C%5B%5Da%3B"
 @test unescape_form(escape_form("abcdef 1234-=~!@#\$()_+{}|[]a;")) == "abcdef 1234-=~!@#\$()_+{}|[]a;"
 
 @test ("user", "password") == userinfo(URI("https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag"))
