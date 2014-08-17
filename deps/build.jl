@@ -13,7 +13,6 @@ end
 
 libhttp_parser = library_dependency("libhttp_parser", aliases=aliases)
 
-println(libhttp_parser)
 @unix_only begin
     depsdir = joinpath(Pkg.dir(),"HttpParser","deps")
     prefix=joinpath(depsdir,"usr")
