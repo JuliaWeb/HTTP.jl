@@ -59,7 +59,7 @@ same file four times).
 ```
 
 FileParam has the following constructors:
-```
+```julia
     immutable FileParam
         file::Union(IO,Base.File,String,Vector{Uint8})     # The file
         # The content type (default: "", which is interpreted as text/plain serverside)
