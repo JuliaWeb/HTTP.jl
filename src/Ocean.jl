@@ -12,7 +12,6 @@ module Ocean
   # Ooooooo
   # """
   
-  import Pkg
   import Base.abspath, Base.joinpath, Base.dirname
   import HTTP
   
@@ -35,13 +34,12 @@ module Ocean
     call
   
   include("Ocean/Util.jl")
-  using Util
-  
+
   type ParamRoute
     path::Regex
     names::Array{String,1}
     
-    ParamRoute(path::Regex, names::Array{String,1}) = new(path, names)
+    ParamRoute(path::Regex, names::Array{UTF8String,1}) = new(path, names)
     ParamRoute() = new(r"", String[])
   end
   
@@ -116,7 +114,7 @@ module Ocean
   
   # Utilities for working within the app
   function file(app::App, path::String, do_cache::Bool)
-    if begins_with(path, "/")
+    if beginswith(path, "/")
       p = path
     else
       p = app.source_dir*"/"*path
@@ -164,7 +162,7 @@ module Ocean
     extra = Extra(app, req, res)
     extra.file = Util.enscopen(app, file)
     extra.template = Util.enscopen(extra, template)
-    extra.redirect = Util.enscopen(res, redirect)
+    extra.redirect = Util.enscopen(res, Util.redirect)
     return extra
   end
   
@@ -197,14 +195,15 @@ module Ocean
   const _separators = "[^/.?]"
   const _param_route_matcher = r":(\w+)"
   function param_route(s::String)
-    names = String[]
+    names = UTF8String[]
     route = "^" * s * "\$"
     
     for m in eachmatch(_param_route_matcher, s)
-      if contains(names, m.captures[1])
+      capture = m.captures[1]
+      if in(capture, names)
         error("Param $(m.match) already in use")
       end
-      push!(names, m.captures[1])
+      push!(names, capture)
       
       _replace = "(" * _separators * "+)"
       route = replace(route, m.match, _replace)

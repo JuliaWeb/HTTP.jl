@@ -71,7 +71,7 @@ module BasicServer
       # end#while keepalive
 
     catch e
-      Base.showerror(Base.STDOUT, e, backtrace())
+      Base.showerror(Base.STDOUT, e, catch_backtrace())
       println()
     finally
       Base.close(client)
@@ -126,7 +126,7 @@ module BasicServer
         binary = Base.read(client, Uint8, content_length)
         request.raw_data = UTF8String(binary)
         request.data = Parser.parse_query(request.raw_data)
-      elseif begins_with(ctype, "multipart/form-data")
+      elseif beginswith(ctype, "multipart/form-data")
         _match = match(r"multipart\/form-data; boundary=(.+)", ctype)
         boundary = _match.captures[1]
 

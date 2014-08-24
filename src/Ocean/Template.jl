@@ -11,7 +11,7 @@ module TemplateScope
 end
 
 module Template
-  import TemplateScope
+  import Ocean.TemplateScope
   
   type CompiledTemplate
     expr::Expr
@@ -71,7 +71,7 @@ module Template
         # Add the content between the tokens
         # push!(parts, t[head:et_s])
         c = t[head:et_s]
-        #if begins_with(c, '=')
+        #if beginswith(c, '=')
         if c[1] == '='
           add_code_insert(parts, c[2:end])
         else

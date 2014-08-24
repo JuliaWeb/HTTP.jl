@@ -12,7 +12,7 @@ function test_app(req, res)
     
     sleep(rand())
     
-    return "Body"
+    return "Body\n"
   elseif isequal(req.path, "/error")
     return [500, "Special error\n"]
   else

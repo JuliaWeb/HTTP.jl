@@ -199,7 +199,7 @@ module Parser
     while true
       line = Base.readline(client)
       
-      if begins_with(line, boundary_start)
+      if beginswith(line, boundary_start)
         _match = match(boundary_regex, line)
         if length(header_lines) > 0# && length(data_lines) > 0
           headers = join(header_lines, "\n")
