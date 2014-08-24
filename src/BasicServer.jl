@@ -1,27 +1,27 @@
 require("Calendar")
 
 module BasicServer
-  
+
   using HTTP
   using Base
-  
+
   const CR   = "\x0d"
   const LF   = "\x0a"
   const CRLF = "\x0d\x0a"
-  
+
   include("Common/Parser.jl")
-  
-  function read_handler(client::TcpSocket, app, debug)
+
+  function read_handler(client::Base.TcpSocket, app, debug)
     try
       _start = time()
-      
+
       request = handle_request(client)
       if request.method == "POST" || request.method == "PUT"
         handle_data(request, client)
       end
       response = handle_response(request, app)
       Base.write(client, build_response(response))
-      
+
       _elapsed = time() - _start
       log(request, response, _elapsed)
     catch e
@@ -32,33 +32,34 @@ module BasicServer
       return true
     end
   end
-  
-  function accept_handler(server::TcpSocket, status::Int32, app, debug)
+
+  function accept_handler(server::Base.TcpServer, status::Int32, app, debug)
     if status != 0
-      uv_error("Error (" * string(status) * ")")
+      error("Error (" * string(status) * ")")
     end
-    client = TcpSocket()
-    err = accept(server, client)
-    if err != 0
-      uv_error("accept error: " * string(err))
+    client = Base.accept(server)
+    if client.status == -1
+      error("accept error")
       return
     end
-    
+
     try
       # keepalive = true
       # while keepalive
         request = handle_request(client)
-      
+
         if request.method == "POST" || request.method == "PUT"
           handle_data(request, client)
         end
-        
+
         response, elapsed = @timed handle_response(request, app)
-      
-        Base.write(client, build_response(response))
-        
+
+        built_response = build_response(response)
+
+        Base.write(client, built_response)
+
         log(request, response, elapsed)
-        
+
         # if request.headers["Connection"][1] == "keep-alive"
         #   keepalive = true
         # else
@@ -68,34 +69,34 @@ module BasicServer
           # keepalive = false
         # end
       # end#while keepalive
-      
+
     catch e
-      Base.error_show(OUTPUT_STREAM, e, backtrace())
+      Base.showerror(Base.STDOUT, e, backtrace())
       println()
     finally
       Base.close(client)
       return true
     end
   end#accept_handler
-  
+
   function log(request, response, elapsed)
     # Sinatra's pretty log format:
     # 127.0.0.1 - - [29/Jan/2013 12:31:51] "GET / HTTP/1.1" 200 11 0.0006
-    
+
     # Makes a float into a pretty "12.345" string
     function format(e)
       s = int(floor(e))
       msec = int((e - floor(e)) * 1000)
       return string(s) * "." * lpad(string(msec), 3, "0")
     end
-    
+
     fullpath = request.path
     if length(request.query_string) > 0
       fullpath = fullpath*"?"*request.query_string
     end  
     println(request.method*" "*fullpath*" "*string(response.status)*" "*format(elapsed))
   end
-  
+
   function read_block(client)
     # Accept lines until you hit a double-newline
     raw = ""
@@ -110,16 +111,16 @@ module BasicServer
     end
     return raw
   end
-  
+
   function handle_data(request, client)
-    if has(request.headers, "Content-Type")
+    if haskey(request.headers, "Content-Type")
       if length(request.headers["Content-Type"]) != 1
         error("Only one Content-Type header allowed")
       end
       ctype::String = request.headers["Content-Type"][1]
-      
+
       println("ctype: " * ctype)
-      
+
       if ctype == "application/x-www-form-urlencoded"
         content_length = int(request.headers["Content-Length"][1])
         binary = Base.read(client, Uint8, content_length)
@@ -128,7 +129,7 @@ module BasicServer
       elseif begins_with(ctype, "multipart/form-data")
         _match = match(r"multipart\/form-data; boundary=(.+)", ctype)
         boundary = _match.captures[1]
-        
+
         println("boundary: " * boundary)
         println("Calling parse_form_data")
         request.data = Parser.parse_form_data(request, client, boundary)
@@ -138,14 +139,15 @@ module BasicServer
       end
     end
   end
-  
+
   function handle_request(client)
+
     raw_request = read_block(client)
-    
+
     request = HTTP.Request()
-    
+
     request_line, raw_header = split(raw_request, CRLF, 2)
-    
+
     method, path, version = Parser.parse_request_line(request_line)
     request.method = method
     parts = split(path, "?", 2)
@@ -154,23 +156,23 @@ module BasicServer
       request.query_string = parts[2]
     end
     request.version = version
-    
+
     request.headers = Parser.parse_header(raw_header)
-    if has(request.headers, "Cookie")
+    if haskey(request.headers, "Cookie")
       request.cookies = Parser.parse_cookies(
         join(request.headers["Cookie"], "; ")
       )
     end
-    
+
     return request
   end
-  
+
   function handle_response(request, app)
     not_found = HTTP.Response(404, "Not found")
     # "HTTP/1.1 404 Not found\r\n\r\nNot found\n"
     internal_error = HTTP.Response(500, "Internal server error (no app)")
     # "HTTP/1.1 500 Server error\r\n\r\nInternal server error (no app)\n"
-    
+
     if isa(app, Function)
       response = HTTP.Response()
       ret = app(request, response)
@@ -189,14 +191,14 @@ module BasicServer
         else
           error("Unexpected response format '"*string(typeof(ret))*"' from app function")
         end
-        
+
         return response
       end
     else
       return internal_error
     end
   end
-  
+
   function bind_no_event(port, app, debug)
     # return listen(port) do sock, status
     #   client = accept(sock)
@@ -204,42 +206,43 @@ module BasicServer
     #   client.readcb = (socket, n)->(read_handler(client, app, debug))
     #   start_reading(client)
     # end
-    
-    addr = Base.InetAddr(Base.IPv4(uint32(0)), uint16(port)) # host, port
-    socket = TcpSocket()
-    if Base.bind(socket, addr) != true
-      error("bind: could not bind to socket")
-      return
-    end
-    
-    socket.ccb = (handle, status) -> accept_handler(handle, status, app, debug)
-    if listen(socket) != true
-      error("listen: could not listen on socket")
-    end
-    socket.open = true
-    
-    return socket
+
+    addr = Base.IPv4(uint32(0))
+    server = Base.listen(addr, port)
+    # if Base.bind(socket, addr, port) != true
+    #   error("bind: could not bind to socket")
+    #   return
+    # end
+
+    server.ccb = (handle, status) -> accept_handler(handle, status, app, debug)
+    #if listen(socket) != true
+    #  error("listen: could not listen on socket")
+    #end
+    #socket.open = true
+
+    return server
   end
-  
+
   function bind(port, app, debug)
     socket = bind_no_event(port, app, debug)
     if debug; println("Listening on $(string(port))..."); end
-    Base.event_loop(false)
+    #Base.event_loop(false)
+    wait()
     close(socket)
     return
   end#bind
-  
+
   # Default has debug disabled
   bind(port, app) = bind(port, app, false)
-  
+
   function build_response(response::HTTP.Response)
     return "HTTP/1.1 "*string(response.status)*build_headers(response)*"\r\n\r\n"*response.body
   end
-  
+
   function build_headers(response::HTTP.Response)
     headers = String[]
-    
-    if has(response.headers, "Content-Length")
+
+    if haskey(response.headers, "Content-Length")
       # Grab the first Content-Length in the headers
       # After v0.2:
       #content_lengths = pop!(response.headers, "Content-Length")
@@ -254,15 +257,15 @@ module BasicServer
     else
       content_length = length(response.body)
     end
-    
+
     # TODO: Support keep-alive connections (see accept_handler above).
-    if has(response.headers, "Connection")
+    if haskey(response.headers, "Connection")
       delete!(response.headers, "Connection")
     end
     push!(headers, "Connection: close")
-    
+
     push!(headers, "Content-Length: "*string(content_length))
-    
+
     for pairs in response.headers
       key, values = pairs
       # TODO: Refactor this to be prettier
@@ -274,14 +277,14 @@ module BasicServer
         end
       end
     end
-    
+
     for cookie in response.cookies
       push!(headers, HTTP.cookie_header(cookie))
     end
-    
+
     final = "\r\n" * join(headers, "\r\n")
-    
+
     return final
   end#build_headers
-  
+
 end

@@ -66,7 +66,7 @@ module Util
     # def _unescape(str, regex) str.gsub(regex){ $1.hex.chr } end
     for m in each_match(escaped_regex, str)
       for capture in m.captures
-        rep = string(char(parse_int(capture, 16)))
+        rep = string(char(parseint(capture, 16)))
         str = replace(str, "%"*capture, rep)
       end
     end
@@ -87,7 +87,7 @@ module Util
   unwise   = utf8("{}|\\^`")
   nonascii_array = convert(
     Array{Uint8,1},
-    [i for i=parse_int("80", 16):(parse_int("ff", 16))]
+    [i for i=parseint("80", 16):(parseint("ff", 16))]
   )
   #nonascii = utf8(string(nonascii_array))
   reserved = utf8(",;/?:@&=+\$![]'*#")

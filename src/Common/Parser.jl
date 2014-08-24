@@ -88,7 +88,7 @@ module Parser
       m = match(r"^([A-Za-z0-9!\#$%&'*+\-.^_`|~]+):\s*(.*?)\s*\z"m, line)
       if m != nothing
         field, value = m.captures[1], m.captures[2]
-        if has(header, field)
+        if haskey(header, field)
           push!(header[field], value)
         else
           header[field] = {value}
@@ -161,7 +161,7 @@ module Parser
         end
         key   = HTTP.Util.unescape_form(key)
         value = HTTP.Util.unescape_form(value)
-        if has(query, key)
+        if haskey(query, key)
           push!(query[key], value)
         else
           query[key] = [value]
@@ -236,7 +236,7 @@ module Parser
       raw_headers, data = pairs
       headers = parse_header(raw_headers)
       
-      if !has(headers, "Content-Disposition")
+      if !haskey(headers, "Content-Disposition")
         error("Multipart blocks must provide a Content-Disposition header")
       else
         disp = headers["Content-Disposition"][1]
@@ -254,7 +254,7 @@ module Parser
         filename = _fm.captures[1]
       else; filename = false; end
       
-      if filename != false && has(headers, "Content-Type")
+      if filename != false && haskey(headers, "Content-Type")
         mp = HTTP.Multipart()
         mp.name = name
         mp.headers = headers
