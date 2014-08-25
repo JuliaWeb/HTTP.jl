@@ -1,6 +1,6 @@
 module HttpCommon
 
-using Calendar
+using Dates
 
 export STATUS_CODES,
        GET,
@@ -113,20 +113,15 @@ const HttpMethodNameToBitmask = (String => HttpMethodBitmask)[
 
 const HttpMethodBitmaskToName = (HttpMethodBitmask => String)[v => k for (k, v) in HttpMethodNameToBitmask]
 
-# Default HTTP headers
-# RFC 1123 datetime formatting constants
-RFC1123_FORMAT_STR = "EEE, dd MMM yyyy HH:mm:ss"
-
 # Get RFC 1123 datetimes
 #
 #     RFC1123_datetime( now() ) => "Wed, 27 Mar 2013 08:26:04 GMT"
 #     RFC1123_datetime()        => "Wed, 27 Mar 2013 08:26:04 GMT"
 #
-RFC1123_datetime(t::CalendarTime) = begin
-    t = tz(t,"GMT")
-    format(RFC1123_FORMAT_STR, t) * " GMT"
+RFC1123_datetime(t::DateTime) = begin
+    Dates.format(t, Dates.RFC1123Format) * " GMT"
 end
-RFC1123_datetime() = RFC1123_datetime(now())
+RFC1123_datetime() = RFC1123_datetime(Dates.unix2datetime(time()))
 
 # HTTP Headers
 #
