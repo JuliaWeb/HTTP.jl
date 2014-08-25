@@ -121,7 +121,7 @@ const HttpMethodBitmaskToName = (HttpMethodBitmask => String)[v => k for (k, v) 
 RFC1123_datetime(t::DateTime) = begin
     Dates.format(t, Dates.RFC1123Format) * " GMT"
 end
-RFC1123_datetime() = RFC1123_datetime(Dates.unix2datetime(time()))
+RFC1123_datetime() = RFC1123_datetime(Dates.nowutc())
 
 # HTTP Headers
 #
