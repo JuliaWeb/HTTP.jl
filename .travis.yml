@@ -2,23 +2,20 @@ language: cpp
 compiler:
     - clang
 notifications:
-    email:
-        - zach.allaun@gmail.com
-        - daniel@danielespeset.com
+    email: false
+env:
+    - JULIAVERSION="juliareleases" 
+    - JULIAVERSION="julianightlies"
 before_install:
     - sudo add-apt-repository ppa:staticfloat/julia-deps -y
-    - sudo add-apt-repository ppa:staticfloat/julianightlies -y
+    - sudo add-apt-repository ppa:staticfloat/${JULIAVERSION} -y
     - sudo apt-get update -qq -y
     - sudo apt-get install libpcre3-dev julia -y
-    - git config --global user.name "Zach Allaun"
-    - git config --global user.email "zach.allaun@gmail.com"
-    - git submodule update --init --recursive
+    - git config --global user.name "Travis User"
+    - git config --global user.email "travis@example.net"
+    - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
 script:
-    - julia -e "Pkg.init()"
-    - julia -e 'Pkg.add("BinDeps")'
-    - julia -e 'Pkg.add("Dates")'
-    - julia -e 'Pkg.add("HttpParser")'
-    - julia -e 'Pkg.add("FactCheck")'
-    - mkdir -p ~/.julia/HttpCommon
-    - cp -R ./* ~/.julia/HttpCommon/
-    - julia ~/.julia/HttpCommon/test/test.jl
+    - julia -e 'Pkg.init(); Pkg.clone(pwd())'
+    - julia -e 'Pkg.test("HttpCommon", coverage=true)'
+after_success:
+    - julia -e 'cd(Pkg.dir("HttpCommon")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())'

@@ -1,12 +1,12 @@
 using FactCheck
-using Calendar
 using HttpCommon
+using Dates
 
 facts("HttpCommon utility functions") do
 
     context("RFC1123 compliant datetimes") do
-        @fact RFC1123_datetime(ymd_hms(2013, 5, 2, 13, 45, 7, "PST")) =>
-            "Thu, 02 May 2013 20:45:07 GMT"
+        @fact RFC1123_datetime(DateTime(2013, 5, 2, 13, 45, 7)) =>
+            "Thu, 02 May 2013 13:45:07 GMT"
     end
 
     context("Escape HTML") do
