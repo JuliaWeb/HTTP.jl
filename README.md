@@ -1,8 +1,11 @@
-# HttpCommon
+# HttpCommon.jl
 
-[![Build Status](https://travis-ci.org/hackerschool/HttpCommon.jl.png)](https://travis-ci.org/hackerschool/HttpCommon.jl)
+[![Build Status](https://travis-ci.org/JuliaLang/HttpCommon.jl.svg?branch=master)](https://travis-ci.org/JuliaLang/HttpCommon.jl)
+[![Coverage Status](https://img.shields.io/coveralls/JuliaLang/HttpCommon.jl.svg)](https://coveralls.io/r/JuliaLang/HttpCommon.jl)
 
 This package provides types and helper functions for dealing with the HTTP protocol in Julia.
+
+**Installation**: `julia> Pkg.add("HttpCommon")`
 
 * types to represent `Request`s, `Response`s, and `Headers`
 * a dictionary of `STATUS_CODES`
@@ -12,17 +15,7 @@ This package provides types and helper functions for dealing with the HTTP proto
 * a pair of functions to `encodeURI` and `decodeURI`
 * a function to turn a query string from a url into a `Dict{String,String}`
 
-# Installation
 
-```jl
-# in REQUIRE
-HttpCommon 0.0-
-
-# in REPL
-julia> Pkg.add("HttpCommon")
-```
-
-You will need to have Julia installed from source because this code has not been tested in v0.1 at all and probably uses features not found there.
 
 ~~~~
 :::::::::::::
