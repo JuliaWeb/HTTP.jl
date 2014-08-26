@@ -161,7 +161,7 @@ end
 
 # `run` starts `server` listening on `port`.
 #
-# Accepts incoming connections and instatiates each `Client`.
+# Accepts incoming connections and instantiates each `Client`.
 # Manages the `client.id` pool.
 # Spawns a new `Task` for each connection.
 # Blocks forever.
@@ -229,11 +229,11 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
             if !upgrade(client.parser.parser)
                 # IMPORTANT NOTE: This is technically incorrect as there may be data 
                 # in the buffer that we have not yet read. The way to deal with this
-                # is to manuall adjust the position of the buffer, but for that to 
-                # happen, we need use the return value of http_parser_exceute, which
-                # we don't have since we launch websocket handlers in the callback.
+                # is to manually adjust the position of the buffer, but for that to 
+                # happen, we need use the return value of http_parser_execute, which
+                # we don't have, since we launch websocket handlers in the callback.
                 # Anyway, since there always needs to be a handshake this is probably
-                # file for now. 
+                # fine for now. 
                 data = readavailable(client.sock)
                 add_data(client.parser, data)
             else
