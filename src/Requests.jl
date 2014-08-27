@@ -149,6 +149,7 @@
     function on_message_complete(parser)
         p = pd(parser)
         r = p.current_response
+        r.finished = true
         close(p.sock)
 
         # delete the temporary header key
