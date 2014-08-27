@@ -1,6 +1,7 @@
 # HttpServer.jl
 
-[![Build Status](https://travis-ci.org/hackerschool/HttpServer.jl.png)](https://travis-ci.org/hackerschool/HttpServer.jl)
+[![Build Status](https://travis-ci.org/JuliaLang/HttpServer.jl.svg?branch=master)](https://travis-ci.org/JuliaLang/HttpServer.jl)
+[![Coverage Status](https://img.shields.io/coveralls/JuliaLang/HttpServer.jl.svg)](https://coveralls.io/r/JuliaLang/HttpServer.jl)
 
 This is a basic, non-blocking HTTP server in Julia.
 
@@ -9,18 +10,19 @@ if you're happy dealing with values representing HTTP requests and responses dir
 For a higher-level view, you could use [Meddle](https://github.com/hackerschool/Meddle.jl) or [Morsel](https://github.com/hackerschool/Morsel.jl).
 If you'd like to use WebSockets as well, you'll need to grab [WebSockets.jl](https://github.com/hackerschool/WebSockets.jl).
 
-## Installation/Setup
+**Installation**: `Pkg.add("HttpServer")`
 
-```jl
-Pkg.add("HttpServer")
+To make sure everything is working, you can run 
 ```
-
-To make sure everything is working, you can run `cd ~/.julia/HttpServer` and `julia examples/hello.jl`. If you open up `localhost:8000/hello/name/`, you should get a greeting from the server.
+cd ~/.julia/v0.3/HttpServer
+julia examples/hello.jl
+```
+If you open up `localhost:8000/hello/name/` in your browser, you should get a greeting from the server.
 
 
 ## Basic Example:
 
-~~~~.jl
+```julia
 using HttpServer
 
 http = HttpHandler() do req::Request, res::Response
@@ -32,9 +34,9 @@ http.events["listen"] = ( port )        -> println("Listening on $port...")
 
 server = Server( http )
 run( server, 8000 )
-~~~~
+```
 
-~~~~
+```
 :::::::::::::
 ::         ::
 :: Made at ::
@@ -43,4 +45,4 @@ run( server, 8000 )
      ::
 Hacker School
 :::::::::::::
-~~~~
+```
