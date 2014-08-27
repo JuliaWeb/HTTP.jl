@@ -1,7 +1,7 @@
 # HttpCommon.jl
 
-[![Build Status](https://travis-ci.org/JuliaLang/HttpCommon.jl.svg?branch=master)](https://travis-ci.org/JuliaLang/HttpCommon.jl)
-[![Coverage Status](https://img.shields.io/coveralls/JuliaLang/HttpCommon.jl.svg)](https://coveralls.io/r/JuliaLang/HttpCommon.jl)
+[![Build Status](https://travis-ci.org/JuliaWeb/HttpCommon.jl.svg?branch=master)](https://travis-ci.org/JuliaWeb/HttpCommon.jl)
+[![Coverage Status](https://img.shields.io/coveralls/JuliaWeb/HttpCommon.jl.svg)](https://coveralls.io/r/JuliaWeb/HttpCommon.jl)
 
 **Installation**: `julia> Pkg.add("HttpCommon")`
 
@@ -15,6 +15,7 @@ This package provides types and helper functions for dealing with the HTTP proto
 * a pair of functions to `encodeURI` and `decodeURI`
 * a function to turn a query string from a url into a `Dict{String,String}`
 
+---
 
 ~~~~
 :::::::::::::
