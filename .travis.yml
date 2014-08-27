@@ -1,24 +1,21 @@
 language: cpp
 compiler:
-  - clang
+    - clang
 notifications:
-  email:
-    - zach.allaun@gmail.com
-    - daniel@danielespeset.com
+    email: false
+env:
+    - JULIAVERSION="juliareleases" 
+    - JULIAVERSION="julianightlies"
 before_install:
-  - sudo add-apt-repository ppa:staticfloat/julia-deps -y
-  - sudo add-apt-repository ppa:staticfloat/julianightlies -y
-  - sudo apt-get update -qq -y
-  - sudo apt-get install libpcre3-dev julia -y
-  - git config --global user.name "Zach Allaun"
-  - git config --global user.email "zach.allaun@gmail.com"
-  - git submodule update --init --recursive
+    - sudo add-apt-repository ppa:staticfloat/julia-deps -y
+    - sudo add-apt-repository ppa:staticfloat/${JULIAVERSION} -y
+    - sudo apt-get update -qq -y
+    - sudo apt-get install libpcre3-dev julia -y
+    - git config --global user.name "Travis User"
+    - git config --global user.email "travis@example.net"
+    - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
 script:
-  - julia -e "Pkg.init()"
-  - mkdir -p ~/.julia/HttpServer
-  - cp -R ./* ~/.julia/HttpServer/
-  - julia -e 'Pkg.add("BinDeps")'
-  - julia -e 'Pkg.add("FactCheck")'
-  - julia -e 'Pkg.add("HttpCommon")'
-  - julia -e 'Pkg.add("Calendar")'
-  - julia ~/.julia/HttpServer/test/test.jl
+    - julia -e 'Pkg.init(); Pkg.clone(pwd())'
+    - julia -e 'Pkg.test("HttpServer", coverage=true)'
+after_success:
+    - julia -e 'cd(Pkg.dir("HttpServer")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())'
