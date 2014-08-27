@@ -1,14 +1,14 @@
 # HttpServer.jl
 
-[![Build Status](https://travis-ci.org/JuliaLang/HttpServer.jl.svg?branch=master)](https://travis-ci.org/JuliaLang/HttpServer.jl)
-[![Coverage Status](https://img.shields.io/coveralls/JuliaLang/HttpServer.jl.svg)](https://coveralls.io/r/JuliaLang/HttpServer.jl)
+[![Build Status](https://travis-ci.org/JuliaWeb/HttpServer.jl.svg?branch=master)](https://travis-ci.org/JuliaWeb/HttpServer.jl)
+[![Coverage Status](https://img.shields.io/coveralls/JuliaWeb/HttpServer.jl.svg)](https://coveralls.io/r/JuliaWeb/HttpServer.jl)
 
 This is a basic, non-blocking HTTP server in Julia.
 
 You can write a basic application using just this
 if you're happy dealing with values representing HTTP requests and responses directly.
-For a higher-level view, you could use [Meddle](https://github.com/hackerschool/Meddle.jl) or [Morsel](https://github.com/hackerschool/Morsel.jl).
-If you'd like to use WebSockets as well, you'll need to grab [WebSockets.jl](https://github.com/hackerschool/WebSockets.jl).
+For a higher-level view, you could use [Meddle](https://github.com/JuliaWeb/Meddle.jl) or [Morsel](https://github.com/JuliaWeb/Morsel.jl).
+If you'd like to use WebSockets as well, you'll need to grab [WebSockets.jl](https://github.com/JuliaWeb/WebSockets.jl).
 
 **Installation**: `Pkg.add("HttpServer")`
 
@@ -35,6 +35,8 @@ http.events["listen"] = ( port )        -> println("Listening on $port...")
 server = Server( http )
 run( server, 8000 )
 ```
+
+---
 
 ```
 :::::::::::::
