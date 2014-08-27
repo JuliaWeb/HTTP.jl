@@ -1,6 +1,6 @@
 using HttpCommon
 using FactCheck
-import HttpServer
+using HttpServer
 
 facts("HttpServer utility functions") do
     context("HttpServer.write does sensible things") do
@@ -19,3 +19,28 @@ facts("HttpServer utility functions") do
         @fact grep(vals, "Hello") => "Hello World!"
     end
 end
+
+import Requests
+
+facts("HttpServer run") do
+    context("HttpServer can run the example") do
+        http = HttpHandler() do req::Request, res::Response
+            Response( ismatch(r"^/hello/",req.resource) ? string("Hello ", split(req.resource,'/')[3], "!") : 404 )
+        end
+        http.events["error"]  = (client, err) -> println(err)
+        http.events["listen"] = (port )       -> println("Listening on $port...")
+
+        server = Server(http)
+        @async run(server, 8000)
+        sleep(1.0)
+
+        ret = Requests.get("http://localhost:8000/hello/travis")
+        @fact ret.data => "Hello travis!"
+        @fact ret.status => 200
+
+        ret = Requests.get("http://localhost:8000/bad")
+        @fact ret.data => ""
+        @fact ret.status => 404
+    end
+end
+
