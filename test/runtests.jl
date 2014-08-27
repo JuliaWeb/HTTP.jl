@@ -1,8 +1,3 @@
-include("../src/HttpParser.jl")
-module ParserTest
-
-# This file runs a few tests and acts as an example of how to use the http-parser callbacks
-
 using HttpParser
 using HttpCommon
 using Base.Test
@@ -154,5 +149,3 @@ init(WEBSOCK)
 @test r.method == "DELETE"
 @test r.resource == "/chat"
 println("All assertions passed!")
-end
-

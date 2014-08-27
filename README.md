@@ -1,9 +1,9 @@
-# HttpParser
+# HttpParser.jl
 
-This module provides access to Joyent's http-parser library: [http-parser](https://github.com/joyent/http-parser)
+This package provides a Julia wrapper around Joyent's [http-parser](https://github.com/joyent/http-parser) library.
 
-[![Build Status](https://travis-ci.org/JuliaLang/HttpParser.jl.png)](https://travis-ci.org/JuliaLang/HttpParser.jl)
-[![Coverage Status](https://coveralls.io/repos/JuliaLang/HttpParser.jl/badge.png)](https://coveralls.io/r/JuliaLang/HttpParser.jl)
+[![Build Status](https://travis-ci.org/JuliaWeb/HttpParser.jl.png)](https://travis-ci.org/JuliaWeb/HttpParser.jl)
+[![Coverage Status](https://coveralls.io/repos/JuliaWeb/HttpParser.jl/badge.png)](https://coveralls.io/r/JuliaWeb/HttpParser.jl)
 
 ## Installation
 
