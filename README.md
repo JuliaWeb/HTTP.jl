@@ -1,5 +1,11 @@
 # Requests.jl
 
+An HTTP client written in Julia. Uses `joyent/http-parser` via HttpParser.jl.
+
+[![Build Status](https://travis-ci.org/JuliaWeb/Requests.jl.svg?branch=master)](https://travis-ci.org/JuliaWeb/Requests.jl)
+[![Coverage Status](https://img.shields.io/coveralls/JuliaWeb/Requests.jl.svg)](https://coveralls.io/r/JuliaWeb/Requests.jl)
+
+
 ## Quickstart
 
 ```julia
