@@ -15,7 +15,7 @@ before_install:
     - git config --global user.email "travis@example.net"
     - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
 script:
-    - julia -e 'Pkg.init(); Pkg.clone(pwd())'
+    - julia -e 'Pkg.init(); Pkg.clone(pwd()); Pkg.build("HttpParser")'
     - julia -e 'Pkg.test("HttpParser", coverage=true)'
 after_success:
     - julia -e 'cd(Pkg.dir("HttpParser")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())'
