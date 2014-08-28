@@ -35,7 +35,7 @@ end
 # Windows
 @windows_only begin
     provides(Binaries,
-         URI("https://dl.dropboxusercontent.com/u/19359560/libhttp_parser.zip"),
+         URI("https://julialang.s3.amazonaws.com/bin/winnt/extras/libhttp_parser.zip"),
          libhttp_parser, os = :Windows)
 end
 
