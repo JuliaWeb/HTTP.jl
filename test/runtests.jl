@@ -1,6 +1,11 @@
+if VERSION < v"0.4-dev"
+    using Dates
+else
+    using Base.Dates
+end
+
 using FactCheck
 using HttpCommon
-using Dates
 
 facts("HttpCommon utility functions") do
 

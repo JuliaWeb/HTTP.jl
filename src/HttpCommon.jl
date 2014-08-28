@@ -1,6 +1,10 @@
 module HttpCommon
 
-using Dates
+if VERSION < v"0.4-dev"
+    using Dates
+else
+    using Base.Dates
+end
 
 export STATUS_CODES,
        GET,
