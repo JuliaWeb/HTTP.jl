@@ -1,4 +1,4 @@
-if VERSION < v"0.4-dev"
+if VERSION < v"0.4-"
     using Dates
 else
     using Base.Dates
