@@ -150,7 +150,7 @@ import Base.write
 function write{T<:IO}(io::T, response::Response)
     write(io, join(["HTTP/1.1", response.status, HttpCommon.STATUS_CODES[response.status], "\r\n"], " "))
 
-    response.headers["Content-Length"] = string(length(response.data))
+    response.headers["Content-Length"] = string(sizeof(response.data))
     for header in keys(response.headers)
         write(io, string(join([ header, ": ", response.headers[header] ]), "\r\n"))
     end
