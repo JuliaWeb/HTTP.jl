@@ -35,3 +35,6 @@ facts("HttpCommon utility functions") do
     end
 
 end
+
+# Check doesn't throw
+RFC1123_datetime()
