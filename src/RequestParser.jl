@@ -1,4 +1,4 @@
-# `RequestParser` handles all the `HttpParser` module stuff for `Http`
+# `RequestParser` handles all the `HttpParser` module stuff for `HttpServer`
 #
 # The `HttpParser` module wraps [Joyent's `http-parser` C library][hprepo]. 
 # A new `HttpParser` is created for each TCP connection being handled by
@@ -6,7 +6,7 @@
 # functions. When new data comes in, it is fed into the `http-parser` which
 # executes the callbacks as different elements are parsed.  Finally, it calls
 # on_message_complete when the incoming `Request` is fully built. The parser
-# does not care if it recieves just one byte at a time, or mulitple requests.
+# does not care if it receives just one byte at a time, or multiple requests.
 # It will simply parse in order and run the callbacks normally.
 #
 # Because Julia does not support calling closures from C, we have to store
@@ -17,7 +17,7 @@
 # as a key, while `message_complete_callbacks` uses `parser.id`.  These must
 # be manually garbage collected by calling `clean!` when closing connections.
 #
-# Note that this is not a module, it is included directly in `Http.jl`
+# Note that this is not a module, it is included directly in `HttpServer.jl`
 #
 # [hprepo]: https://github.com/joyent/http-parser
 #
