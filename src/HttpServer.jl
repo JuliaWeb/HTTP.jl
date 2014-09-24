@@ -1,4 +1,4 @@
-# Http module
+# HttpServer module
 #
 # Serve HTTP requests in Julia.
 #
@@ -68,7 +68,7 @@ import Base: run
 #     # listen for "foo"
 #     handler.events["foo"] = (bar) -> "Hello $bar"
 #     # trigger "foo"
-#     Http.event(server, "foo", "Julia")
+#     HttpServer.event(server, "foo", "Julia")
 #
 
 defaultevents = Dict{ASCIIString, Function}()
@@ -295,4 +295,4 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
     end
 end
 
-end # module Http
+end # module HttpServer
