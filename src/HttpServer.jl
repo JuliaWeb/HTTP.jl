@@ -80,7 +80,11 @@ immutable HttpHandler
     sock::Base.UVServer
     events::Dict
 
-    HttpHandler(handle::Function) = new(handle, Base.TcpServer(), defaultevents)
+    if VERSION < v"0.4-"
+      HttpHandler(handle::Function) = new(handle, Base.TcpServer(), defaultevents)
+    else
+      HttpHandler(handle::Function) = new(handle, Base.TCPServer(), defaultevents)
+    end
 end
 handle(handler::HttpHandler, req::Request, res::Response) = handler.handle(req, res)
 
