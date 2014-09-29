@@ -67,14 +67,14 @@ Parser() = Parser(
 
 # A composite type that is expecting C functions to be run as callbacks.
 type ParserSettings
-    on_message_begin_cb::Ptr{None}
-    on_url_cb::Ptr{None}
-    on_status_complete_cb::Ptr{None}
-    on_header_field_cb::Ptr{None}
-    on_header_value_cb::Ptr{None}
-    on_headers_complete_cb::Ptr{None}
-    on_body_cb::Ptr{None}
-    on_message_complete_cb::Ptr{None}
+    on_message_begin_cb::Ptr{Void}
+    on_url_cb::Ptr{Void}
+    on_status_complete_cb::Ptr{Void}
+    on_header_field_cb::Ptr{Void}
+    on_header_value_cb::Ptr{Void}
+    on_headers_complete_cb::Ptr{Void}
+    on_body_cb::Ptr{Void}
+    on_message_complete_cb::Ptr{Void}
 end
 
 function show(io::IO,p::Parser)
