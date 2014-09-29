@@ -1,0 +1,301 @@
+<!doctype html>
+
+<meta charset="utf-8">
+
+<title>HttpServer</title>
+
+<link rel="stylesheet" type="text/css"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/4.5.0/codemirror.min.css">
+
+<link rel="stylesheet" type="text/css" href="static/custom.css">
+
+<h1 class='package-header'>HttpServer</h1>
+
+<h1>HttpServer.jl</h1>
+<p><a href="https://travis-ci.org/JuliaLang/HttpServer.jl.svg?branch=master">![Build Status</a>](https://travis-ci.org/JuliaLang/HttpServer.jl) <a href="https://img.shields.io/coveralls/JuliaLang/HttpServer.jl.svg">![Coverage Status</a>](https://coveralls.io/r/JuliaLang/HttpServer.jl)</p>
+<p>This is a basic, non-blocking HTTP server in Julia.</p>
+<p>You can write a basic application using just this if you're happy dealing with values representing HTTP requests and responses directly. For a higher-level view, you could use <a href="https://github.com/hackerschool/Meddle.jl">Meddle</a> or <a href="https://github.com/hackerschool/Morsel.jl">Morsel</a>. If you'd like to use WebSockets as well, you'll need to grab <a href="https://github.com/hackerschool/WebSockets.jl">WebSockets.jl</a>.</p>
+<p><strong>Installation</strong>: <code>Pkg.add("HttpServer")</code></p>
+<p>To make sure everything is working, you can run </p>
+<pre><code>cd ~/.julia/v0.3/HttpServer
+julia examples/hello.jl</code></pre>
+<p>If you open up <code>localhost:8000/hello/name/</code> in your browser, you should get a greeting from the server.</p>
+<p>## Basic Example:</p>
+<pre><code>using HttpServer
+
+http = HttpHandler() do req::Request, res::Response
+    Response( ismatch(r"^/hello/",req.resource) ? string("Hello ", split(req.resource,'/')[3], "!") : 404 )
+end
+
+http.events["error"]  = ( client, err ) -> println( err )
+http.events["listen"] = ( port )        -> println("Listening on $port...")
+
+server = Server( http )
+run( server, 8000 )</code></pre>
+<pre><code>:::::::::::::
+::         ::
+:: Made at ::
+::         ::
+:::::::::::::
+     ::
+Hacker School
+:::::::::::::</code></pre><h1 id='module-reference'>Reference</h1>
+<ul class='index'>
+<li >
+<strong>methods:</strong>
+</li>
+<li >
+<ul >
+<li >
+<a href='#event(event::String,server::Server,args...)'>event(event::String,server::Server,args...)</a></li>
+<li >
+<a href='#handle(handler::WebSocketInterface,req::Request,client::Client{T<:IO})'>handle(handler::WebSocketInterface,req::Request,client::Client{T<:IO})</a></li>
+<li >
+<a href='#is_websocket_handshake(handler::WebSocketInterface,req::Request)'>is_websocket_handshake(handler::WebSocketInterface,req::Request)</a></li>
+<li >
+<a href='#message_handler(server::Server,client::Client{T<:IO},websockets_enabled::Bool)'>message_handler(server::Server,client::Client{T<:IO},websockets_enabled::Bool)</a></li>
+<li >
+<a href='#process_client(server::Server,client::Client{T<:IO},websockets_enabled::Bool)'>process_client(server::Server,client::Client{T<:IO},websockets_enabled::Bool)</a></li>
+<li >
+<a href='#run(server::Server,port::Integer)'>run(server::Server,port::Integer)</a></li>
+<li >
+<a href='#write{T<:IO}(io::T<:IO,response::Response)'>write{T<:IO}(io::T<:IO,response::Response)</a></li>
+</ul>
+</li>
+<li >
+<strong>types:</strong>
+</li>
+<li >
+<ul >
+<li >
+<a href='#Client{T<:IO}'>Client{T<:IO}</a></li>
+<li >
+<a href='#HttpHandler'>HttpHandler</a></li>
+<li >
+<a href='#Server'>Server</a></li>
+<li >
+<a href='#WebSocketInterface'>WebSocketInterface</a></li>
+</ul>
+</li>
+</ul>
+<div class='entries'>
+<div class='entry'>
+<div id='event(event::String,server::Server,args...)' class='entry-name category-method'>
+<div class='category'>[method] &mdash; </div> event(event::String,server::Server,args...)
+</div>
+<div class='entry-body'>
+<p>Triggers <code>event</code> on <code>server</code>.</p>
+<p>If there is a function bound to <code>event</code> in <code>server.events</code> it will be called with <code>args...</code> </p><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L164'>HttpServer/src/HttpServer.jl:164</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class='entry'>
+<div id='handle(handler::WebSocketInterface,req::Request,client::Client{T<:IO})' class='entry-name category-method'>
+<div class='category'>[method] &mdash; </div> handle(handler::WebSocketInterface,req::Request,client::Client{T<:IO})
+</div>
+<div class='entry-body'>
+<p><code>handle</code> is called when <code>is_websocket_handshake</code> returns true, and takes full control of the connection. </p><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L137'>HttpServer/src/HttpServer.jl:137</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class='entry'>
+<div id='is_websocket_handshake(handler::WebSocketInterface,req::Request)' class='entry-name category-method'>
+<div class='category'>[method] &mdash; </div> is_websocket_handshake(handler::WebSocketInterface,req::Request)
+</div>
+<div class='entry-body'>
+<p><code>is_websocket_handshake</code> should determine if <code>req</code> is a valid websocket upgrade request. </p><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L130'>HttpServer/src/HttpServer.jl:130</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class='entry'>
+<div id='message_handler(server::Server,client::Client{T<:IO},websockets_enabled::Bool)' class='entry-name category-method'>
+<div class='category'>[method] &mdash; </div> message_handler(server::Server,client::Client{T<:IO},websockets_enabled::Bool)
+</div>
+<div class='entry-body'>
+<p>Callback factory for providing <code>on_message_complete</code> for <code>client.parser</code></p><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L277'>HttpServer/src/HttpServer.jl:277</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class='entry'>
+<div id='process_client(server::Server,client::Client{T<:IO},websockets_enabled::Bool)' class='entry-name category-method'>
+<div class='category'>[method] &mdash; </div> process_client(server::Server,client::Client{T<:IO},websockets_enabled::Bool)
+</div>
+<div class='entry-body'>
+<p>Handles live connections, runs inside a <code>Task</code>.</p>
+<p>Blocks ( yields ) until a line can be read, then passes it into `client. parser`. </p><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L246'>HttpServer/src/HttpServer.jl:246</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class='entry'>
+<div id='run(server::Server,port::Integer)' class='entry-name category-method'>
+<div class='category'>[method] &mdash; </div> run(server::Server,port::Integer)
+</div>
+<div class='entry-body'>
+<p><code>run</code> starts <code>server</code> listening on <code>port</code>.</p>
+<ul><li>Accepts incoming connections and instantiates each `Client`.</li><li>Manages the `client.id` pool.</li><li>Spawns a new `Task` for each connection.</li><li>Blocks forever.</li></ul>
+<pre><code>server = Server() do req, res
+  "Hello world"
+end
+
+run(server, 8000)</code></pre><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L197'>HttpServer/src/HttpServer.jl:197</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class='entry'>
+<div id='write{T<:IO}(io::T<:IO,response::Response)' class='entry-name category-method'>
+<div class='category'>[method] &mdash; </div> write{T<:IO}(io::T<:IO,response::Response)
+</div>
+<div class='entry-body'>
+<p>Converts a <code>Response</code> to an HTTP response string</p><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L170'>HttpServer/src/HttpServer.jl:170</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class='entry'>
+<div id='Client{T<:IO}' class='entry-name category-type'>
+<div class='category'>[type] &mdash; </div> Client{T<:IO}
+</div>
+<div class='entry-body'>
+<p>Client encapsulates a single connection</p>
+<p>When new connections are initialized a <code>Client</code> is created with a new id and  the connection socket. <code>Client.parser</code> will store a <code>ClientParser</code> to handle  all HTTP parsing for the connection lifecycle. </p><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L110'>HttpServer/src/HttpServer.jl:110</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class='entry'>
+<div id='HttpHandler' class='entry-name category-type'>
+<div class='category'>[type] &mdash; </div> HttpHandler
+</div>
+<div class='entry-body'>
+<p><code>HttpHandler</code> types are used to instantiate a <code>Server</code>.</p>
+<p>An <code>HttpHandler</code> is responsible for the entirety of the request / response cycle. Instantiate an <code>HttpHandler</code> with a single <code>Function</code> argument, which becomes <code>HttpHandler.handle</code>. This handler is called on every incoming request and passed <code>req::Request, res::Response</code>. The return value of <code>HttpHandler.handle</code> is the response sent to the client for the given <code>req</code>.</p>
+<p><code>HttpHandler.handle</code> can return a <code>String</code>:</p>
+<pre><code>handler = HttpHandler() do req, res
+  "Hello world!"
+end</code></pre>
+<p>an HTTP status code as <code>Int</code>:</p>
+<pre><code>handler = HttpHandler() do req, res
+  404
+end</code></pre>
+<p>or a full <code>Response</code> instance:</p>
+<pre><code>handler = HttpHandler() do req, res
+  Response(200, "Success", "Hello World!"
+end</code></pre>
+<p><code>HttpHandler.sock</code> is used internally to store the <code>TcpSocket</code> for incoming connections.</p>
+<p><code>HttpHandler.events</code> is a dictionary of functions to call when certain server events occur. Set these functions by direct assignment:</p>
+<pre><code>handler.events["listen"] = (port) -> "Listening on $port..."</code></pre>
+<p>All default events and their arguments:</p>
+<ul><li>`"listen"  => (port::Int)`</li><li>`"connect" => (client::Client)`</li><li>`"write"   => (client::Client, res::Response)`</li><li>`"close"   => (client::Client)`</li></ul>
+<p>If you want to trigger custom events on your server, use the <code>event</code> function:</p>
+<pre><code># listen for "foo"
+handler.events["foo"] = (bar) -> "Hello $bar"
+# trigger "foo"
+Http.event(server, "foo", "Julia")</code></pre><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L91'>HttpServer/src/HttpServer.jl:91</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class='entry'>
+<div id='Server' class='entry-name category-type'>
+<div class='category'>[type] &mdash; </div> Server
+</div>
+<div class='entry-body'>
+<p><code>Server</code> types encapsulate an <code>HttpHandler</code> and optional <code>WebSocketInterface</code> to serve requests.</p>
+<ul><li>Instantiate with both an `HttpHandler` and `WebSocketInterface` to serve both protocols.</li><li>Instantiate with just an `HttpHandler` to serve only standard `Http`</li><li>Instantiate with just a `Function` to create an `HttpHandler` automatically</li><li>Instantiate with just a `WebSocketInterface` to only serve websockets requests and `404` all others.</li></ul><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L151'>HttpServer/src/HttpServer.jl:151</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+<div class='entry'>
+<div id='WebSocketInterface' class='entry-name category-type'>
+<div class='category'>[type] &mdash; </div> WebSocketInterface
+</div>
+<div class='entry-body'>
+<p><code>WebSocketInterface</code> defines the abstract protocol for a WebSocketHandler.</p>
+<p>The methods <code>is_websocket_handshake</code> and <code>handle</code> will be called if `Server. sockets<code> is populated. Concrete types of `WebSocketInterface</code> are required to define these methods. </p><div class='entry-meta'>
+<strong>Details:</strong>
+<table class='meta-table'>
+<tr >
+<td><strong>source:</strong></td><td >
+<code><a href='https://github.com/JuliaLang/HttpServer.jl/tree/b9b14c23bf930c777f99c93c84617257457c0c6e/src/HttpServer.jl#L125'>HttpServer/src/HttpServer.jl:125</a></code></td>
+</tr>
+</table>
+</div>
+</div>
+</div>
+</div>
+
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/4.5.0/codemirror.min.js"></script>
+<script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/4.5.0/mode/julia/julia.min.js"></script>
+
+
+
+<script type="text/javascript" src="static/custom.js"></script>
+
