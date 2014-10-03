@@ -9,14 +9,6 @@
 # does not care if it receives just one byte at a time, or multiple requests.
 # It will simply parse in order and run the callbacks normally.
 #
-# Because Julia does not support calling closures from C, we have to store
-# both the in-progress `Request` instances and the meat-and-potatoes part
-# of the on_message_complete callbacks in the global Dicts `partials` and
-# `message_complete_callbacks`.  Because the different callbacks are passed
-# slightly different arguments from C, `partials` uses the `parser` pointer
-# as a key, while `message_complete_callbacks` uses `parser.id`.  These must
-# be manually garbage collected by calling `clean!` when closing connections.
-#
 # Note that this is not a module, it is included directly in `HttpServer.jl`
 #
 # [hprepo]: https://github.com/joyent/http-parser
