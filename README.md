@@ -2,6 +2,7 @@
 
 [![Build Status](https://travis-ci.org/JuliaWeb/HttpServer.jl.svg?branch=master)](https://travis-ci.org/JuliaWeb/HttpServer.jl)
 [![Coverage Status](https://img.shields.io/coveralls/JuliaWeb/HttpServer.jl.svg)](https://coveralls.io/r/JuliaWeb/HttpServer.jl)
+[![HttpServer](http://pkg.julialang.org/badges/HttpServer_release.svg)](http://pkg.julialang.org/?pkg=HttpServer&ver=release)
 
 This is a basic, non-blocking HTTP server in Julia.
 
