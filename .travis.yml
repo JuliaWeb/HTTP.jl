@@ -1,19 +1,18 @@
 language: cpp
 compiler:
-    - clang
+    - gcc
+os:
+    - linux
+    - osx
 notifications:
     email: false
 env:
     - JULIAVERSION="juliareleases" 
     - JULIAVERSION="julianightlies"
 before_install:
-    - sudo add-apt-repository ppa:staticfloat/julia-deps -y
-    - sudo add-apt-repository ppa:staticfloat/${JULIAVERSION} -y
-    - sudo apt-get update -qq -y
-    - sudo apt-get install libpcre3-dev julia -y
-    - git config --global user.name "Travis User"
-    - git config --global user.email "travis@example.net"
+    - curl http://julialang.org/install-julia.sh | sh -s $JULIAVERSION
     - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
+    - julia -e 'versioninfo()'
 script:
     - julia -e 'Pkg.init(); Pkg.clone(pwd())'
     - julia -e 'Pkg.test("HttpServer", coverage=true)'
