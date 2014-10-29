@@ -80,7 +80,7 @@ end
 
 function on_body(parser, at, len)
     r = pd(parser).request
-    write(pd(parser).data,bytestring(convert(Ptr{Uint8}, at)),len)
+    write(pd(parser).data, convert(Ptr{Uint8}, at), len)
     return 0
 end
 
