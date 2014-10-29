@@ -58,7 +58,7 @@ function on_header_value(parser, at, len)
     r = pd(parser).request
     s = bytestring(convert(Ptr{Uint8}, at),int(len))
     r.headers[r.headers["current_header"]] = s
-    r.headers["current_header"] = ""
+    delete!(r.headers, "current_header")
     return 0
 end
 
@@ -90,7 +90,7 @@ function on_message_complete(parser)
     r.data = takebuf_string(state.data)
 
     # delete the temporary header key
-    pop!(r.headers, "current_header", nothing)
+    delete!(r.headers, "current_header")
 
     # Get the `parser.id` from the C pointer `parser`.
     # Retrieve our callback function from the global Dict.

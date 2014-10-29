@@ -172,8 +172,8 @@ function write{T<:IO}(io::T, response::Response)
     write(io, join(["HTTP/1.1", response.status, HttpCommon.STATUS_CODES[response.status], "\r\n"], " "))
 
     response.headers["Content-Length"] = string(sizeof(response.data))
-    for header in keys(response.headers)
-        write(io, string(join([ header, ": ", response.headers[header] ]), "\r\n"))
+    for (header,value) in response.headers
+        write(io, string(join([ header, ": ", value ]), "\r\n"))
     end
 
     write(io, "\r\n")
