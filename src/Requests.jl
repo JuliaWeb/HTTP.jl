@@ -120,7 +120,7 @@
         r = pd(parser).current_response
         s = bytestring(convert(Ptr{Uint8}, at),int(len))
         r.headers[r.headers["current_header"]] = s
-        r.headers["current_header"] = ""
+        delete!(r.headers, "current_header")
         return 0
     end
 
@@ -153,7 +153,7 @@
         close(p.sock)
 
         # delete the temporary header key
-        pop!(r.headers, "current_header", nothing)
+        delete!(r.headers, "current_header")
         return 0
     end
 
