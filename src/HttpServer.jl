@@ -4,8 +4,14 @@
 #
 module HttpServer
 
-using Docile
-@docstrings [:manual => ["../README.md"]]
+try
+    using Docile
+    eval(:(@docstrings [:manual => ["../README.md"]]))
+catch
+    macro doc(ex)
+        esc(ex.args[2].args[2])
+    end
+end
 
 using HttpCommon
 include("RequestParser.jl")
