@@ -3,6 +3,7 @@
     import Base: get, put, write
     import Base.FS: File
 
+    using Compat
     using HttpParser
     using HttpCommon
     using URIParser
@@ -27,11 +28,11 @@
     end
 
     function default_request(method,resource,host,data,user_headers=Dict{None,None}())
-        headers = (String => String)[
+        headers = @compat Dict(
             "User-Agent" => "Requests.jl/0.0.0",
             "Host" => host,
             "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            ]
+            )
         if !isempty(data)
             headers["Content-Length"] = dec(sizeof(data))
         end
@@ -120,7 +121,7 @@
         r = pd(parser).current_response
         s = bytestring(convert(Ptr{Uint8}, at),int(len))
         r.headers[r.headers["current_header"]] = s
-        r.headers["current_header"] = ""
+        delete!(r.headers, "current_header")
         return 0
     end
 
@@ -153,7 +154,7 @@
         close(p.sock)
 
         # delete the temporary header key
-        pop!(r.headers, "current_header", nothing)
+        delete!(r.headers, "current_header")
         return 0
     end
 

@@ -1,4 +1,5 @@
 
+using Compat
 using Requests
 using JSON
 using Base.Test
@@ -15,78 +16,88 @@ using Base.Test
 
 # check query params -------
 
-data = JSON.parse(get("http://httpbin.org/get"; query = { "key1" => "value1",
-                                                          "key with spaces" => "value with spaces"}).data)
+data = JSON.parse(get("http://httpbin.org/get";
+                      query = @compat Dict("key1" => "value1",
+                                           "key with spaces" => "value with spaces")).data)
 @test data["args"]["key1"] == "value1"
 @test data["args"]["key with spaces"] == "value with spaces"
 
-data = JSON.parse(post("http://httpbin.org/post"; query = { "key1" => "value1",
-                                                            "key2" => "value2",
-                                                            "key with spaces" => "value with spaces"}).data)
+data = JSON.parse(post("http://httpbin.org/post";
+                       query = @compat Dict("key1" => "value1",
+                                            "key2" => "value2",
+                                            "key with spaces" => "value with spaces")).data)
 @test data["args"]["key1"] == "value1"
 @test data["args"]["key2"] == "value2"
 @test data["args"]["key with spaces"] == "value with spaces"
 
-data = JSON.parse(put("http://httpbin.org/put"; query = { "key1" => "value1",
-                                                          "key2" => "value2",
-                                                          "key3" => 3,
-                                                          "key with spaces" => "value with spaces"}).data)
+data = JSON.parse(put("http://httpbin.org/put";
+                      query = @compat Dict("key1" => "value1",
+                                           "key2" => "value2",
+                                           "key3" => 3,
+                                           "key with spaces" => "value with spaces")).data)
 @test data["args"]["key1"] == "value1"
 @test data["args"]["key2"] == "value2"
 @test data["args"]["key3"] == "3"
 @test data["args"]["key with spaces"] == "value with spaces"
 
-data = JSON.parse(delete("http://httpbin.org/delete"; query = { "key1" => "value1",
-                                                                "key4" => 4.01,
-                                                                "key with spaces" => "value with spaces"}).data)
+data = JSON.parse(delete("http://httpbin.org/delete";
+                         query = @compat Dict("key1" => "value1",
+                                              "key4" => 4.01,
+                                              "key with spaces" => "value with spaces")).data)
 @test data["args"]["key1"] == "value1"
 @test data["args"]["key4"] == "4.01"
 @test data["args"]["key with spaces"] == "value with spaces"
 
-data = JSON.parse(options("http://httpbin.org/get"; query = { "key1" => "value1",
-                                                              "key2" => "value2",
-                                                              "key3" => 3,
-                                                              "key4" => 4.01 }).data)
+data = JSON.parse(options("http://httpbin.org/get";
+                          query = @compat Dict("key1" => "value1",
+                                               "key2" => "value2",
+                                               "key3" => 3,
+                                               "key4" => 4.01)).data)
 @test data == nothing
 
 
 # check data -------
 
-data = JSON.parse(post("http://httpbin.org/post"; json = { "key1" => "value1",
-                                                           "key2" => "value2" }).data)
+data = JSON.parse(post("http://httpbin.org/post";
+                       json = @compat Dict("key1" => "value1",
+                                           "key2" => "value2")).data)
 @test data["json"]["key1"] == "value1"
 @test data["json"]["key2"] == "value2"
 
-data = JSON.parse(put("http://httpbin.org/put"; json = { "key1" => "value1",
-                                                         "key2" => "value2",
-                                                         "key3" => 3 }).data)
+data = JSON.parse(put("http://httpbin.org/put";
+                      json = @compat Dict("key1" => "value1",
+                                          "key2" => "value2",
+                                          "key3" => 3)).data)
 @test data["json"]["key1"] == "value1"
 @test data["json"]["key2"] == "value2"
 @test data["json"]["key3"] == 3
 
-data = JSON.parse(delete("http://httpbin.org/delete"; json = { "key1" => "value1",
-                                                               "key4" => 4.01 }).data)
+data = JSON.parse(delete("http://httpbin.org/delete";
+                         json = @compat Dict("key1" => "value1",
+                                             "key4" => 4.01)).data)
 @test data["json"]["key1"] == "value1"
 @test data["json"]["key4"] == 4.01
 
 
 # query + data -------
 
-data = JSON.parse(post("http://httpbin.org/post"; query = { "qkey1" => "value1",
-                                                            "qkey2" => "value2" },
-                                                  json = { "dkey1" => "data1",
-                                                           "dkey2" => "data2" }).data)
+data = JSON.parse(post("http://httpbin.org/post";
+                       query = (@compat Dict("qkey1" => "value1",
+                                             "qkey2" => "value2")),
+                       json = (@compat Dict("dkey1" => "data1",
+                                            "dkey2" => "data2"))).data)
 @test data["args"]["qkey1"] == "value1"
 @test data["args"]["qkey2"] == "value2"
 @test data["json"]["dkey1"] == "data1"
 @test data["json"]["dkey2"] == "data2"
 
-data = JSON.parse(put("http://httpbin.org/put"; query = { "qkey1" => "value1",
-                                                          "qkey2" => "value2",
-                                                          "qkey3" => 3 },
-                                                json = { "dkey1" => "data1",
-                                                         "dkey2" => "data2",
-                                                         "dkey3" => 5 }).data)
+data = JSON.parse(put("http://httpbin.org/put";
+                      query = (@compat Dict("qkey1" => "value1",
+                                            "qkey2" => "value2",
+                                            "qkey3" => 3)),
+                      json = (@compat Dict("dkey1" => "data1",
+                                           "dkey2" => "data2",
+                                           "dkey3" => 5))).data)
 @test data["args"]["qkey1"] == "value1"
 @test data["args"]["qkey2"] == "value2"
 @test data["args"]["qkey3"] == "3"
@@ -94,30 +105,31 @@ data = JSON.parse(put("http://httpbin.org/put"; query = { "qkey1" => "value1",
 @test data["json"]["dkey2"] == "data2"
 @test data["json"]["dkey3"] == 5
 
-data = JSON.parse(delete("http://httpbin.org/delete"; query = { "qkey1" => "value1",
-                                                                "qkey4" => 4.01 },
-                                                      json = { "dkey1" => "data1",
-                                                               "dkey2" => 9.01 }).data)
+data = JSON.parse(delete("http://httpbin.org/delete";
+                         query = (@compat Dict("qkey1" => "value1",
+                                               "qkey4" => 4.01)),
+                         json = (@compat Dict("dkey1" => "data1",
+                                              "dkey2" => 9.01))).data)
 @test data["args"]["qkey1"] == "value1"
 @test data["args"]["qkey4"] == "4.01"
 @test data["json"]["dkey1"] == "data1"
 @test data["json"]["dkey2"] == 9.01
 
 data = JSON.parse(post(URI("http://httpbin.org/post");
-    data = "√",
-    headers = {"Content-Type" => "text/plain"}).data)
+                       data = "√",
+                       headers = @compat Dict("Content-Type" => "text/plain")).data)
 
 @test data["data"] == "√"
 
 # Test file upload
-filename = Base.source_path() 
+filename = Base.source_path()
 
 files = [
   FileParam(readall(filename),"text/julia","file1","runtests.jl"),
   FileParam(open(filename,"r"),"text/julia","file2","runtests.jl",true),
   FileParam(IOBuffer(readall(filename)),"text/julia","file4","runtests.jl"),
   ]
-  
+
 # Does not work on 0.2, because mmap can't be used on Base.File
 if VERSION >= v"0.3-"
     push!(files,FileParam(Base.File(filename),"text/julia","file3","runtests.jl"))
