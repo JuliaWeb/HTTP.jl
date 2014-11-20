@@ -6,16 +6,9 @@ This package provides a Julia wrapper around Joyent's [http-parser](https://gith
 [![Coverage Status](https://coveralls.io/repos/JuliaWeb/HttpParser.jl/badge.png)](https://coveralls.io/r/JuliaWeb/HttpParser.jl)
 [![HttpParser](http://pkg.julialang.org/badges/HttpParser_release.svg)](http://pkg.julialang.org/?pkg=HttpParser&ver=release)
 
-## Installation
+**Installation**: `julia> Pkg.add("HttpParser")`
 
-```jl
-# in REPL
-julia> Pkg.add("HttpParser")
-```
-
-## Requirements
-
-`libhttp-parser` needs to be available as a shared library. It should be built automatically by `Pkg` on Linux and OSX. On Windows a binary will be downloaded.
+`libhttp-parser` needs to be available as a shared library, but it will be built automatically on Linux and OSX, and downloaded as a binary on Windows.
 
 ### Installing libhttp-parser as a shared library manually
 
