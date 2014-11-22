@@ -6,7 +6,7 @@ module HttpServer
 
 try
     using Docile
-    eval(:(@docstrings [:manual => ["../README.md"]]))
+    eval(:(@docstrings(manual = ["../README.md"])))
 catch
     macro doc(ex)
         esc(ex.args[2].args[2])
