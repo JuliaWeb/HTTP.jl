@@ -38,3 +38,6 @@ end
 
 # Check doesn't throw
 RFC1123_datetime()
+
+# Throw error if any tests fails
+FactCheck.exitstatus()
