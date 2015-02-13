@@ -1,5 +1,7 @@
 module URIParser
 
+using Compat
+
 export URI
 export defrag, userinfo, path_params, query_params, isvalid
 export escape, escape_form, escape_with, unescape, unescape_form

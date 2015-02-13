@@ -19,7 +19,7 @@ end
 # Splits the path into components and parameters
 # See: http://tools.ietf.org/html/rfc3986#section-3.3
 function path_params(uri::URI, seps=[';',',','='])
-    elems = split(uri.path, '/', false)
+    elems = @compat split(uri.path, '/', keep = false)
     p = Array[]
     for elem in elems
         pp = split(elem, seps)
@@ -31,14 +31,14 @@ end
 ##
 # Splits the query into key value pairs
 function query_params(uri::URI)
-    elems = split(uri.query, '&', false)
+    elems = @compat split(uri.query, '&', keep = false)
     d = Dict{String, String}()
     for elem in elems
-        pp = split(elem, "=", true)
+        pp = @compat split(elem, "=", keep = true)
         if length(pp) == 2
-            push!(d, unescape(pp[1]), unescape(pp[2]))
+            d[unescape(pp[1])] = unescape(pp[2])
         else
-            push(d, elem, "") #gracefully degrade for ill formed query params
+            d[elem] = "" #gracefully degrade for ill formed query params
         end
     end
     d
