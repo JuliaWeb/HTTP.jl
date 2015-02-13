@@ -1,12 +1,12 @@
 const escaped_regex = r"%([0-9a-fA-F]{2})"
 
 # Escaping
-const control_array = convert(Array{Uint8,1}, [vec(0:(parseint("1f", 16)))])
+const control_array = [uint8(0:parseint("1f", 16));]
 const control = utf8(ascii(control_array)*"\x7f")
 const space = utf8(" ")
 const delims = utf8("%<>\"")
 const unwise   = utf8("{}|\\^`")
-const nonascii_array = convert(Array{Uint8,1}, [vec(parseint("80", 16):(parseint("ff", 16)))])
+const nonascii_array = [uint8(parseint("80", 16):parseint("ff", 16));]
 
 const reserved = utf8(",;/?:@&=+\$![]'*#")
 # Strings to be escaped
