@@ -121,7 +121,8 @@
         r = pd(parser).current_response
         s = bytestring(convert(Ptr{Uint8}, at),int(len))
         r.headers[r.headers["current_header"]] = s
-        delete!(r.headers, "current_header")
+        r.headers["current_header"] = ""
+        # delete!(r.headers, "current_header")
         return 0
     end
 
@@ -154,7 +155,8 @@
         close(p.sock)
 
         # delete the temporary header key
-        delete!(r.headers, "current_header")
+        pop!(r.headers, "current_header", nothing)
+        # delete!(r.headers, "current_header")
         return 0
     end
 
@@ -228,7 +230,9 @@
         rp = ResponseParser(r,stream)
         while isopen(stream)
             data = readavailable(stream)
-            add_data(rp, data)
+            if length(data) > 0
+                add_data(rp, data)
+            end
         end
         http_parser_execute(rp.parser,rp.settings,"") #EOF
         r
