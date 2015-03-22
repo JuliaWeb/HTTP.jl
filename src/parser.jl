@@ -1,7 +1,7 @@
 is_url_char(c) =  ((@assert c < 0x80); 'A' <= c <= '~' || '$' <= c <= '>' || c == 12 || c == 9)
 is_mark(c) = (c == '-') || (c == '_') || (c == '.') || (c == '!') || (c == '~') ||
              (c == '*') || (c == '\'') || (c == '(') || (c == ')')
-is_userinfo_char(c) = isalnum(c) || is_mark(c) || (c == '%') || (c == ';') || 
+is_userinfo_char(c) = isalnum(c) || is_mark(c) || (c == '%') || (c == ';') ||
              (c == ':') || (c == '&') || (c == '+') || (c == '$' || c == ',')
 isnum(c) = ('0' <= c <= '9')
 ishex(c) =  (isnum(c) || 'a' <= lowercase(c) <= 'f')
@@ -11,14 +11,14 @@ is_host_char(c) = isalnum(c) || (c == '.') || (c == '-')
 immutable URI
     schema::ASCIIString
     host::ASCIIString
-    port::Uint16
+    port::UInt16
     path::ASCIIString
     query::ASCIIString
     fragment::ASCIIString
     userinfo::ASCIIString
     specifies_authority::Bool
-    URI(schema,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) = 
-            new(schema,host,uint16(port),path,query,fragment,userinfo,specifies_authority)
+    URI(schema,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) =
+            new(schema,host,@compat(UInt16(port)),path,query,fragment,userinfo,specifies_authority)
 end
 
 ==(a::URI,b::URI) = isequal(a,b)
@@ -30,8 +30,8 @@ isequal(a::URI,b::URI) = (a.schema == b.schema) &&
                          (a.fragment == b.fragment) &&
                          (a.userinfo == b.userinfo)
 
-URI(host,path) = URI("http",host,uint16(80),path,"","","",true)
-URI(uri::URI; schema=nothing, host=nothing, port=nothing, path=nothing, query=nothing, fragment=nothing, userinfo=nothing, specifies_authority=nothing) = 
+URI(host,path) = URI("http",host,@compat(UInt16(80)),path,"","","",true)
+URI(uri::URI; schema=nothing, host=nothing, port=nothing, path=nothing, query=nothing, fragment=nothing, userinfo=nothing, specifies_authority=nothing) =
 URI(schema === nothing ? uri.schema : schema,
     host === nothing ? uri.host : host,
     port === nothing ? uri.port : port,
@@ -59,7 +59,7 @@ function parse_authority(authority,seen_at)
             state = :done
         end
 
-        if s == 0 
+        if s == 0
             s = li
         end
 
@@ -128,11 +128,11 @@ function parse_authority(authority,seen_at)
                 error("Port must be numeric (decimal)")
             end
             state = :http_host_port
-        else 
+        else
             error("Unexpected state $state")
         end
     end
-    (host,uint16(port==""?0:parseint(port,10)),user)
+    (host, @compat(UInt16(port == "" ? 0 : parse(Int,port,10))), user)
 end
 
 function parse_url(url)
@@ -157,7 +157,7 @@ function parse_url(url)
             state = :done
         end
 
-        if s == 0 
+        if s == 0
             s = li
         end
 
@@ -205,7 +205,7 @@ function parse_url(url)
             else
                 error("Unexpected start of URL")
             end
-        elseif state == :req_schema 
+        elseif state == :req_schema
             if ch == ':'
                 state = :req_schema_slash
             elseif !isalpha(ch)
@@ -216,7 +216,7 @@ function parse_url(url)
                 state = :req_schema_slash_slash
             elseif is_url_char(ch)
                 state = :req_path
-            else 
+            else
                 error("Expecting schema:path schema:/path  format not schema:$ch")
             end
         elseif state == :req_schema_slash_slash
@@ -225,13 +225,13 @@ function parse_url(url)
             elseif is_url_char(ch)
                 s -= 1
                 state = :req_path
-            else 
+            else
                 error("Expecting schema:// or schema: format not schema:/$ch")
             end
         elseif state == :req_server_start || state == :req_server
             # In accordence with RFC3986:
             # 'The authority component is preceded by a double slash ("//") and isterminated by the next slash ("/")'
-            # This is different from the joyent http-parser, which considers empty hosts to be invalid. c.f. also the 
+            # This is different from the joyent http-parser, which considers empty hosts to be invalid. c.f. also the
             # following part of RFC 3986:
             # "If the URI scheme defines a default for host, then that default
             # applies when the host subcomponent is undefined or when the
@@ -283,7 +283,7 @@ function parse_url(url)
             if !is_url_char(ch) && ch != '?' && ch != '#'
                 error("Fragment contained unexpected character")
             end
-        else 
+        else
             error("Unrecognized state")
         end
     end
@@ -295,7 +295,7 @@ URI(url) = parse_url(url)
 
 show(io::IO, uri::URI) = print(io,"URI(",uri,")")
 
-function print(io::IO, uri::URI) 
+function print(io::IO, uri::URI)
     if uri.specifies_authority || !isempty(uri.host)
         print(io,uri.schema,"://")
         if !isempty(uri.userinfo)
@@ -307,7 +307,7 @@ function print(io::IO, uri::URI)
             print(io,uri.host)
         end
         if uri.port != 0
-            print(io,':',int(uri.port))
+            print(io,':',@compat(Int(uri.port)))
         end
     else
         print(io,uri.schema,":")
