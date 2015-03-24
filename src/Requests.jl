@@ -20,10 +20,10 @@
     import URIParser.URI
 
     function render(request::Request)
-        join([
-            request.method*" "*(isempty(request.resource)?"/":request.resource)*" HTTP/1.1",
-            map(h->(h*": "*request.headers[h]),collect(keys(request.headers))),
-            "",
+        join(@compat [
+            request.method*" "*(isempty(request.resource)?"/":request.resource)*" HTTP/1.1";
+            map(h->(h*": "*request.headers[h]),collect(keys(request.headers)));
+            "";
             request.data],CRLF)
     end
 
@@ -95,7 +95,7 @@
 
     function on_url(parser, at, len)
         r = pd(parser).current_response
-        r.resource = string(r.resource, bytestring(convert(Ptr{Uint8}, at),int(len)))
+        r.resource = string(r.resource, bytestring(convert(Ptr{Uint8}, at),@compat Int(len)))
         return 0
     end
 
@@ -119,7 +119,7 @@
 
     function on_header_value(parser, at, len)
         r = pd(parser).current_response
-        s = bytestring(convert(Ptr{Uint8}, at),int(len))
+        s = bytestring(convert(Ptr{Uint8}, at),@compat Int(len))
         r.headers[r.headers["current_header"]] = s
         r.headers["current_header"] = ""
         # delete!(r.headers, "current_header")
