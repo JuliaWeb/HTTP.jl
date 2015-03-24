@@ -105,7 +105,7 @@ end
 function http_parser_execute(parser::Parser, settings::ParserSettings, request)
     ccall((:http_parser_execute, lib), Csize_t, 
             (Ptr{Parser}, Ptr{ParserSettings}, Ptr{Uint8}, Csize_t,), 
-            &parser, &settings, convert(Ptr{Uint8}, request), sizeof(request))
+            &parser, &settings, convert(Ptr{Uint8}, pointer(request)), sizeof(request))
     if errno(parser) != 0
         throw(HttpParserError(errno(parser)))
     end
