@@ -20,11 +20,10 @@
     import URIParser.URI
 
     function render(request::Request)
-        join(@compat [
-            request.method*" "*(isempty(request.resource)?"/":request.resource)*" HTTP/1.1";
-            map(h->(h*": "*request.headers[h]),collect(keys(request.headers)));
-            "";
-            request.data],CRLF)
+        return string(request.method," ",isempty(request.resource) ? "/" : request.resource," HTTP/1.1",CRLF,
+            map(h->string(h,": ",request.headers[h],CRLF), collect(keys(request.headers)))...,
+            "",CRLF,
+            request.data,CRLF)
     end
 
     function default_request(method,resource,host,data,user_headers=Dict{None,None}())
