@@ -3,3 +3,4 @@ HttpCommon
 HttpParser
 GnuTLS
 Docile
+Compat

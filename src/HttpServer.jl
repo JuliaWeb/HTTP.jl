@@ -4,17 +4,16 @@
 #
 module HttpServer
 
-try
+if VERSION < v"0.4.0-dev"
     using Docile
     eval(:(@docstrings(manual = ["../README.md"])))
-catch
-    macro doc(ex)
-        esc(ex.args[2].args[2])
-    end
 end
 
 using HttpCommon
+using Compat
+
 include("RequestParser.jl")
+
 export HttpHandler,
        Server,
        run,
@@ -26,7 +25,7 @@ export HttpHandler,
        encodeURI,
        decodeURI,
        parsequerystring
-       
+
 import Base: run
 
 defaultevents = Dict{ASCIIString, Function}()
@@ -205,7 +204,7 @@ function run(server::Server, port::Integer)
     id_pool = 0 # Increments for each connection
     sock = server.http.sock
     websockets_enabled = server.websock != nothing
-    Base.uv_error("listen", !Base.bind(sock, Base.IPv4(uint32(0)), uint16(port)))
+    Base.uv_error("listen", !Base.bind(sock, Base.IPv4(@compat UInt32(0)), @compat UInt16(port)))
     listen(sock)
     event("listen", server, port)
 

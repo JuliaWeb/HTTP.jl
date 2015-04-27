@@ -33,7 +33,7 @@ end
 
 function on_url(parser, at, len)
     r = pd(parser).request
-    r.resource = string(r.resource, bytestring(convert(Ptr{Uint8}, at),int(len)))
+    r.resource = string(r.resource, bytestring(convert(Ptr{Uint8}, at), @compat Int(len)))
     return 0
 end
 
@@ -56,7 +56,7 @@ end
 
 function on_header_value(parser, at, len)
     r = pd(parser).request
-    s = bytestring(convert(Ptr{Uint8}, at),int(len))
+    s = bytestring(convert(Ptr{Uint8}, at), @compat Int(len))
     r.headers[r.headers["current_header"]] = s
     delete!(r.headers, "current_header")
     return 0
