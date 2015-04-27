@@ -144,6 +144,6 @@ immutable ClientParser
 end
 
 # Passes `request_data` into `parser`
-function add_data(parser::ClientParser, request_data::String)
+function add_data(parser::ClientParser, request_data::HttpCommon.HttpData)
     http_parser_execute(parser.parser, parser.settings, request_data)
 end
