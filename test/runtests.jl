@@ -2,8 +2,8 @@ using HttpCommon
 using FactCheck
 using HttpServer
 
-facts("HttpServer utility functions") do
-    context("HttpServer.write does sensible things") do
+facts("HttpServer utility functions:") do
+    context("`write` correctly writes data response") do
         response = Response(200, "Hello World!")
         buf = IOBuffer();
         HttpServer.write(buf, response)
@@ -22,14 +22,11 @@ end
 
 import Requests
 
-facts("HttpServer run") do
-    context("HttpServer can run the example") do
+facts("HttpServer runs") do
+    context("using HTTP protocol on 0.0.0.0:8000") do
         http = HttpHandler() do req::Request, res::Response
             Response( ismatch(r"^/hello/",req.resource) ? string("Hello ", split(req.resource,'/')[3], "!") : 404 )
         end
-        http.events["error"]  = (client, err) -> println(err)
-        http.events["listen"] = (port )       -> println("Listening on $port...")
-
         server = Server(http)
         @async run(server, 8000)
         sleep(1.0)
@@ -41,6 +38,19 @@ facts("HttpServer run") do
         ret = Requests.get("http://localhost:8000/bad")
         @fact ret.data => ""
         @fact ret.status => 404
+    end
+
+    context("using HTTP protocol on 127.0.1.1:8001") do
+        http = HttpHandler() do req::Request, res::Response
+            Response( ismatch(r"^/hello/",req.resource) ? string("Hello ", split(req.resource,'/')[3], "!") : 404 )
+        end
+        server = Server(http)
+        @async run(server, host=IPv4(127,0,1,1), port=8001)
+        sleep(1.0)
+
+        ret = Requests.get("http://127.0.1.1:8001/hello/travis")
+        @fact ret.data => "Hello travis!"
+        @fact ret.status => 200
     end
 end
 

@@ -6,22 +6,24 @@
 
 This is a basic, non-blocking HTTP server in Julia.
 
-You can write a basic application using just this
-if you're happy dealing with values representing HTTP requests and responses directly.
+You can write a basic application using just this if you're happy dealing with values representing HTTP requests and responses directly.
 For a higher-level view, you could use [Meddle](https://github.com/JuliaWeb/Meddle.jl) or [Morsel](https://github.com/JuliaWeb/Morsel.jl).
 If you'd like to use WebSockets as well, you'll need to grab [WebSockets.jl](https://github.com/JuliaWeb/WebSockets.jl).
 
-**Installation**: `Pkg.add("HttpServer")`
-
-To make sure everything is working, you can run 
+##Installation
+Use Julia package manager to install this package as follows:
 ```
-cd ~/.julia/v0.3/HttpServer
-julia examples/hello.jl
+Pkg.add("HttpServer")
 ```
-If you open up `localhost:8000/hello/name/` in your browser, you should get a greeting from the server.
 
+## Functionality
+* binds to any address and port
+* supports IPv4 & IPv6 addresses
+* supports HTTP, HTTPS and Unix socket transports
 
-## Basic Example:
+You can find many examples of how to use this package in the `examples` folder.
+
+## Example
 
 ```julia
 using HttpServer
@@ -30,12 +32,12 @@ http = HttpHandler() do req::Request, res::Response
     Response( ismatch(r"^/hello/",req.resource) ? string("Hello ", split(req.resource,'/')[3], "!") : 404 )
 end
 
-http.events["error"]  = ( client, err ) -> println( err )
-http.events["listen"] = ( port )        -> println("Listening on $port...")
-
 server = Server( http )
 run( server, 8000 )
+# or
+run(server, host=IPv4(127,0,0,1), port=8000)
 ```
+If you open up `localhost:8000/hello/name/` in your browser, you should get a greeting from the server.
 
 ---
 

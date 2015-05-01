@@ -26,11 +26,11 @@ export HttpHandler,
        decodeURI,
        parsequerystring
 
-import Base: run
+import Base: run, listen
 
 defaultevents = Dict{ASCIIString, Function}()
 defaultevents["error"]  = ( client, err ) -> println( err )
-defaultevents["listen"] = ( port )        -> println("Listening on $port...")
+defaultevents["listen"] = ( saddr )       -> println("Listening on $saddr...")
 
 @doc """
 `HttpHandler` types are used to instantiate a `Server`.
@@ -99,6 +99,7 @@ immutable HttpHandler
     sock::Base.UVServer
     events::Dict
 
+    HttpHandler(handle::Function, sock::Base.UVServer) = new(handle, sock, defaultevents)
     if VERSION < v"0.4-"
       HttpHandler(handle::Function) = new(handle, Base.TcpServer(), defaultevents)
     else
@@ -185,53 +186,58 @@ function write{T<:IO}(io::T, response::Response)
     write(io, response.data)
 end
 
-@doc """ `run` starts `server` listening on `port`.
+@doc """ Start `server` to listen on specified socket address.
 
-* Accepts incoming connections and instantiates each `Client`.
-* Manages the `client.id` pool.
-* Spawns a new `Task` for each connection.
-* Blocks forever.
+    listen(server::Server, host::Base.IpAddr, port::Integer) -> Server
 
-```
-server = Server() do req, res
-  "Hello world"
+    Setup "server" so it listens on "port" on the address specified by "host".
+    To listen on all interfaces pass, "IPv4(0)" or "IPv6(0)" as appropriate.
+""" ->
+function listen(server::Server, host::Base.IpAddr, port::Integer)
+    Base.uv_error("listen", !bind(server.http.sock, host, @compat UInt16(port)))
+    listen(server.http.sock)
+    inet = "$host:$port"
+    event("listen", server, inet)
+    return server
+end
+listen(server::Server, port::Integer) = listen(server, IPv4(0), port)
+
+""" Start `server` to listen on named pipe/domain socket.
+
+    listen(server::Server, path::String) -> Server
+
+    Setup "server" to listen on named pipe/domain socket specified by "path".
+"""
+@unix_only function listen(server::Server, path::String)
+    bind(server.http.sock, path) || throw(ArgumentError("could not listen on path $path"))
+    Base.uv_error("listen", Base._listen(server.http.sock))
+    event("listen", server, path)
+    return server
 end
 
-run(server, 8000)
-```
-""" ->
-function run(server::Server, port::Integer)
+@doc """ Handle HTTP request from client """ ->
+function handle_http_request(server::Server)
     id_pool = 0 # Increments for each connection
-    sock = server.http.sock
     websockets_enabled = server.websock != nothing
-    Base.uv_error("listen", !Base.bind(sock, Base.IPv4(@compat UInt32(0)), @compat UInt16(port)))
-    listen(sock)
-    event("listen", server, port)
-
     while true # handle requests, Base.wait_accept blocks until a connection is made
-        client = Client(id_pool += 1, accept(sock))
+        client = Client(id_pool += 1, accept(server.http.sock))
         client.parser = ClientParser(message_handler(server, client, websockets_enabled))
         @async process_client(server, client, websockets_enabled)
     end
 end
 
 using GnuTLS
-
-run_https(server::Server, auth::GnuTLS.CertificateStore, port::Integer) = run_https(server, auth, IPv4(0), port)
-function run_https(server::Server, auth::GnuTLS.CertificateStore, args...)
-    id_pool = 0
-    bind(server.http.sock,args...) || error("Given address not usable")
-    listen(server.http.sock)
-    event("listen", server, args...)
+@doc """ Handle HTTPS request from client """ ->
+function handle_https_request(server::Server, cert_store::GnuTLS.CertificateStore)
+    id_pool = 0 # Increments for each connection
     websockets_enabled = server.websock != nothing
-
     while true
         sess = GnuTLS.Session(true)
         set_priority_string!(sess)
-        set_credentials!(sess,auth)
+        set_credentials!(sess, cert_store)
         client = accept(server.http.sock)
         try
-            associate_stream(sess,client)
+            associate_stream(sess, client)
             handshake!(sess)
         catch e
             println("Error establishing SSL connection: ", e)
@@ -240,9 +246,67 @@ function run_https(server::Server, auth::GnuTLS.CertificateStore, args...)
         end
         client = Client(id_pool += 1, sess)
         client.parser = ClientParser(message_handler(server, client, websockets_enabled))
-        @async process_client(server, client, websockets_enabled) 
+        @async process_client(server, client, websockets_enabled)
     end
 end
+
+@doc """ `run` starts `server`
+
+Functionality:
+
+* Accepts incoming connections and instantiates each `Client`.
+* Manages the `client.id` pool.
+* Spawns a new `Task` for each connection.
+* Blocks forever.
+
+Method accepts following keyword arguments:
+
+* host - binding address
+* port - binding port
+* ssl  - GnuTLS certificate store object that contains SSL certificates.
+Use this argument to enable HTTPS support.
+* socket - named pipe/domain socket path. Use this argument to enable Unix socket support.
+It's available only on Unix. Network options are ignored.
+
+Compatibility:
+
+* for backward compatibility use `run(server::Server, port::Integer)`
+
+Example:
+```
+server = Server() do req, res
+  "Hello world"
+end
+
+# start server on localhost
+run(server, host=IPv4(127,0,0,1), port=8000)
+# or
+run(server, 8000)
+```
+""" ->
+function run(server::Server; args...)
+    params = Dict(args)
+
+    # parse parameters
+    port = get(params, :port, 0)
+    host = get(params, :host, IPv4(0))
+    use_https = haskey(params, :ssl)
+    use_sockets = @unix? (haskey(params, :socket) && !haskey(params, :port)) : false
+
+    server = if use_sockets
+        listen(server, params[:socket])  # start server on Unix socket
+    else
+        listen(server, host, port)       # start server on network socket
+    end
+
+    if use_https
+        handle_https_request(server, params[:ssl])
+    else
+        handle_http_request(server)
+    end
+end
+# backward compatibility method
+run(server::Server, port::Integer) = run(server, port=port)
 
 @doc """Handles live connections, runs inside a `Task`.
 
