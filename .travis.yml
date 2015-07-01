@@ -1,21 +1,15 @@
-language: cpp
-compiler:
-    - clang
+language: julia
+os:
+    - linux
+    - osx
+julia:
+    - release
+    - nightly
 notifications:
     email: false
-env:
-    - JULIAVERSION="juliareleases" 
-    - JULIAVERSION="julianightlies"
-before_install:
-    - sudo add-apt-repository ppa:staticfloat/julia-deps -y
-    - sudo add-apt-repository ppa:staticfloat/${JULIAVERSION} -y
-    - sudo apt-get update -qq -y
-    - sudo apt-get install libpcre3-dev julia -y
-    - git config --global user.name "Travis User"
-    - git config --global user.email "travis@example.net"
-    - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
 script:
-    - julia -e 'Pkg.init(); Pkg.clone(pwd()); Pkg.build("HttpParser")'
+    - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
+    - julia -e 'Pkg.clone(pwd()); Pkg.build("HttpParser")'
     - julia -e 'Pkg.test("HttpParser", coverage=true)'
 after_success:
     - julia -e 'cd(Pkg.dir("HttpParser")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())'
