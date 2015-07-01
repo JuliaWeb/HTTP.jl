@@ -1,3 +1,5 @@
 julia 0.2-
 HttpCommon 0.0.3-
 BinDeps 0.2.5-
+Compat
+
