@@ -21,7 +21,7 @@ This package provides a Julia wrapper around Joyent's [http-parser](https://gith
 ## Test
 
 5. `cd` back to `.julia/v0.3/HttpParser/`
-6. `julia test/test.jl`
+6. `julia test/runtests.jl`
 7. Expect to see text indicating that all assertions have passed.
 
 ## Building the Windows binaries
