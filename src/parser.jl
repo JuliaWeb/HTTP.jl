@@ -208,7 +208,7 @@ function parse_url(url)
         elseif state == :req_scheme
             if ch == ':'
                 state = :req_scheme_slash
-            elseif !isalpha(ch)
+            elseif !(isalpha(ch) || isdigit(ch) || ch == '+' || ch == '-' || ch == '.')
                 error("Unexpected character $ch after scheme")
             end
         elseif state == :req_scheme_slash

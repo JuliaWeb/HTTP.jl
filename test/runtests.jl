@@ -21,6 +21,9 @@ for url in urls
 		println("Test failed for ",url)
 	end
 end
+if failed != 0
+    exit(failed)
+end
 
 @test URI("hdfs://user:password@hdfshost:9000/root/folder/file.csv") == URI("hdfs","hdfshost",9000,"/root/folder/file.csv","","","user:password")
 @test URI("google.com","/some/path") == URI("http://google.com:80/some/path")
@@ -41,5 +44,5 @@ end
 
 @test false == isvalid(URI("file:///path/to/file/with?should=work#fine"))
 @test true == isvalid(URI("file:///path/to/file/with%3fshould%3dwork%23fine"))
-exit(failed)
 
+@test URI("s3://bucket/key") == URI("s3","bucket",0,"/key")
