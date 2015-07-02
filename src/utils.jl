@@ -47,7 +47,7 @@ end
 
 ##
 # Create equivalent URI without the fragment
-defrag(uri::URI) = URI(uri.schema, uri.host, uri.port, uri.path, uri.query, "", uri.userinfo, uri.specifies_authority)
+defrag(uri::URI) = URI(uri.scheme, uri.host, uri.port, uri.path, uri.query, "", uri.userinfo, uri.specifies_authority)
 
 ##
 # Validate known URI formats
@@ -58,12 +58,12 @@ const uses_query = ["http", "wais", "imap", "https", "shttp", "mms", "gopher", "
 const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "wais", "https", "shttp", "snews", "file", "prospero"]
 
 function isvalid(uri::URI)
-    schema = uri.schema
-    isempty(schema) && error("Can not validate relative URI")
-    if ((schema in non_hierarchical) && (search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
-       (!(schema in uses_query) && !isempty(uri.query)) ||                    # query component not allowed 
-       (!(schema in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
-       (!(schema in uses_authority) && (!isempty(uri.host) || (0 != uri.port) || !isempty(uri.userinfo))) # authority component not allowed
+    scheme = uri.scheme
+    isempty(scheme) && error("Can not validate relative URI")
+    if ((scheme in non_hierarchical) && (search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
+       (!(scheme in uses_query) && !isempty(uri.query)) ||                    # query component not allowed 
+       (!(scheme in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
+       (!(scheme in uses_authority) && (!isempty(uri.host) || (0 != uri.port) || !isempty(uri.userinfo))) # authority component not allowed
         return false
     end
     true
