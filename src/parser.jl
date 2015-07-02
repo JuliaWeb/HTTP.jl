@@ -9,7 +9,7 @@ is_host_char(c) = isalnum(c) || (c == '.') || (c == '-')
 
 
 immutable URI
-    schema::ASCIIString
+    scheme::ASCIIString
     host::ASCIIString
     port::UInt16
     path::ASCIIString
@@ -17,12 +17,12 @@ immutable URI
     fragment::ASCIIString
     userinfo::ASCIIString
     specifies_authority::Bool
-    URI(schema,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) =
-            new(schema,host,@compat(UInt16(port)),path,query,fragment,userinfo,specifies_authority)
+    URI(scheme,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) =
+            new(scheme,host,@compat(UInt16(port)),path,query,fragment,userinfo,specifies_authority)
 end
 
 ==(a::URI,b::URI) = isequal(a,b)
-isequal(a::URI,b::URI) = (a.schema == b.schema) &&
+isequal(a::URI,b::URI) = (a.scheme == b.scheme) &&
                          (a.host == b.host) &&
                          (a.port == b.port) &&
                          (a.path == b.path) &&
@@ -31,8 +31,8 @@ isequal(a::URI,b::URI) = (a.schema == b.schema) &&
                          (a.userinfo == b.userinfo)
 
 URI(host,path) = URI("http",host,@compat(UInt16(80)),path,"","","",true)
-URI(uri::URI; schema=nothing, host=nothing, port=nothing, path=nothing, query=nothing, fragment=nothing, userinfo=nothing, specifies_authority=nothing) =
-URI(schema === nothing ? uri.schema : schema,
+URI(uri::URI; scheme=nothing, host=nothing, port=nothing, path=nothing, query=nothing, fragment=nothing, userinfo=nothing, specifies_authority=nothing) =
+URI(scheme === nothing ? uri.scheme : scheme,
     host === nothing ? uri.host : host,
     port === nothing ? uri.port : port,
     path === nothing ? uri.path : path,
@@ -136,7 +136,7 @@ function parse_authority(authority,seen_at)
 end
 
 function parse_url(url)
-    schema = ""
+    scheme = ""
     host = ""
     server = ""
     port = 80
@@ -164,8 +164,8 @@ function parse_url(url)
         if state != last_state
             r = s:prevind(url,li)
             s = li
-            if last_state == :req_schema
-                schema = url[r]
+            if last_state == :req_scheme
+                scheme = url[r]
             elseif last_state == :req_server_start
                 specifies_authority = true
             elseif last_state == :req_server
@@ -201,32 +201,32 @@ function parse_url(url)
             if ch == '/' || ch == '*'
                 state = :req_path
             elseif isalpha(ch)
-                state = :req_schema
+                state = :req_scheme
             else
                 error("Unexpected start of URL")
             end
-        elseif state == :req_schema
+        elseif state == :req_scheme
             if ch == ':'
-                state = :req_schema_slash
+                state = :req_scheme_slash
             elseif !isalpha(ch)
-                error("Unexpected character $ch after schema")
+                error("Unexpected character $ch after scheme")
             end
-        elseif state == :req_schema_slash
+        elseif state == :req_scheme_slash
             if ch == '/'
-                state = :req_schema_slash_slash
+                state = :req_scheme_slash_slash
             elseif is_url_char(ch)
                 state = :req_path
             else
-                error("Expecting schema:path schema:/path  format not schema:$ch")
+                error("Expecting scheme:path scheme:/path  format not scheme:$ch")
             end
-        elseif state == :req_schema_slash_slash
+        elseif state == :req_scheme_slash_slash
             if ch == '/'
                 state = :req_server_start
             elseif is_url_char(ch)
                 s -= 1
                 state = :req_path
             else
-                error("Expecting schema:// or schema: format not schema:/$ch")
+                error("Expecting scheme:// or scheme: format not scheme:/$ch")
             end
         elseif state == :req_server_start || state == :req_server
             # In accordence with RFC3986:
@@ -288,7 +288,7 @@ function parse_url(url)
         end
     end
     host, port, user = parse_authority(server,seen_at)
-    URI(lowercase(schema),host,port,path,query,fragment,user,specifies_authority)
+    URI(lowercase(scheme),host,port,path,query,fragment,user,specifies_authority)
 end
 
 URI(url) = parse_url(url)
@@ -297,7 +297,7 @@ show(io::IO, uri::URI) = print(io,"URI(",uri,")")
 
 function print(io::IO, uri::URI)
     if uri.specifies_authority || !isempty(uri.host)
-        print(io,uri.schema,"://")
+        print(io,uri.scheme,"://")
         if !isempty(uri.userinfo)
             print(io,uri.userinfo,'@')
         end
@@ -310,7 +310,7 @@ function print(io::IO, uri::URI)
             print(io,':',@compat(Int(uri.port)))
         end
     else
-        print(io,uri.schema,":")
+        print(io,uri.scheme,":")
     end
     print(io,uri.path)
     if !isempty(uri.query)
