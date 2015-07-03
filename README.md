@@ -13,10 +13,11 @@ This package provides a Julia wrapper around Joyent's [http-parser](https://gith
 
 ### Installing libhttp-parser as a shared library manually
 
-1. clone https://github.com/joyent/http-parser
+1. `git clone https://github.com/joyent/http-parser`
 2. `cd http-parser`
-3. `make library # Outputs a .so file, should be a .dylib on OS X`
-4. move the `libhttp_parser.so` to `/usr/local/lib` (rename to `libhttp_parser.dylib` if on OS X)
+3. `git checkout v2.1`
+4. `make library # Outputs a .so file, should be a .dylib on OS X`
+5. move the `libhttp_parser.so` to `/usr/local/lib` (rename to `libhttp_parser.dylib` if on OS X)
 
 ## Test
 
