@@ -173,7 +173,7 @@ immutable ParserUrl
     field_set::UInt16 # Bitmask of (1 << UF_*) values
     port::UInt16      # Converted UF_PORT string
     field_data::NTuple{UF_MAX.val*2, UInt16}
-    ParserUrl() = new(zero(UInt16), zero(UInt16), ntuple(UF_MAX.val*2, i->zero(UInt16)))
+    ParserUrl() = new(zero(UInt16), zero(UInt16), ntuple(i->zero(UInt16), UF_MAX.val*2))
 end
 
 "Parse a URL"
@@ -186,7 +186,7 @@ function parse_url(url::AbstractString; isconnect::Bool = false)
     res > 0 && return parsed, -1
     purl = purl_ref[]
 
-    for (i,uf) in enumerate(UrlFields)
+    for (i,uf) in enumerate(instances(UrlFields))
         !((purl.field_set & (1 << uf.val) > 0) && uf != UF_MAX) && continue
         off = purl.field_data[2*(i-1)+1]
         len = purl.field_data[2*(i-1)+2]
