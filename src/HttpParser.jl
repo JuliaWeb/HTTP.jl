@@ -18,7 +18,8 @@ export Parser,
        http_parser_execute,
        http_method_str,
        http_should_keep_alive,
-       upgrade
+       upgrade,
+       parse_url
 
 # The id pool is used to keep track of incoming requests.
 id_pool = 0
@@ -66,6 +67,10 @@ Parser() = Parser(
     (global id_pool += 1)
 )
 
+# Datatype Tuples for the different `cfunction` signatures for callback functions
+HTTP_CB      = (Int, (Ptr{Parser},))
+HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
+
 # A composite type that is expecting C functions to be run as callbacks.
 type ParserSettings
     on_message_begin_cb::Ptr{Void}
@@ -76,19 +81,45 @@ type ParserSettings
     on_headers_complete_cb::Ptr{Void}
     on_body_cb::Ptr{Void}
     on_message_complete_cb::Ptr{Void}
+    on_chunk_header::Ptr{Void}
+    on_chunk_complete::Ptr{Void}
 end
 
 function show(io::IO,p::Parser)
+    print(io,"libhttp-parser: v$(version()), ")
     print(io,"HTTP/$(p.http_major).$(p.http_minor), ")
     print(io,"Content-Length: $(p.content_length)")
 end
 
-# Intializes the Parser object with the correct memory.
+# A helper function to print the internal values of a request
+function show(io::IO,r::Request)
+    println(io,"=== Resource ====")
+    println(io,"resource: $(r.resource)")
+    println(io,"method: $(r.method)")
+    println(io,"Headers:")
+    for i=r.headers
+        k = i[1]
+        v = i[2]
+        println(io,"    $k: $v")
+    end
+    println(io,"data: $(r.data)")
+    println(io,"=== End Resource ===")
+end
+
+function version()
+    ver = ccall((:http_parser_version, lib), Culong, ())
+    major = (ver >> 16) & 255
+    minor = (ver >> 8) & 255
+    patch = ver & 255
+    return VersionNumber(major, minor, patch)
+end
+
+"Intializes the Parser object with the correct memory."
 function http_parser_init(parser::Parser,isserver=true)
     ccall((:http_parser_init, lib), Void, (Ptr{Parser}, Cint), &parser, !isserver)
 end
 
-# Run a request through a parser with specific callbacks on the settings instance.
+"Run a request through a parser with specific callbacks on the settings instance."
 function http_parser_execute(parser::Parser, settings::ParserSettings, request)
     ccall((:http_parser_execute, lib), Csize_t,
            (Ptr{Parser}, Ptr{ParserSettings}, Cstring, Csize_t,),
@@ -98,20 +129,28 @@ function http_parser_execute(parser::Parser, settings::ParserSettings, request)
     end
 end
 
-# Return a String representation of a given an HTTP method.
+"Returns a string version of the HTTP method."
 function http_method_str(method::Int)
-    val = ccall((:http_method_str, lib), Ptr{UInt8}, (Int,), method)
+    val = ccall((:http_method_str, lib), Cstring, (Int,), method)
     return bytestring(val)
 end
 
 # Is the request a keep-alive request?
 function http_should_keep_alive(parser::Ptr{Parser})
-    ccall((:http_should_keep_alive, lib), Int, (Ptr{Parser},), parser)
+    ccall((:http_should_keep_alive, lib), Int, (Ptr{Parser},), Ref(parser))
 end
-upgrade(p::Parser) = (p.errno_and_upgrade & 0b10000000)>0
-errno(p::Parser) = p.errno_and_upgrade & 0b01111111
-errno_name(errno::Integer) = bytestring(ccall((:http_errno_name,lib),Ptr{UInt8},(Int32,),errno))
-errno_description(errno::Integer) = bytestring(ccall((:http_errno_description,lib),Ptr{UInt8},(Int32,),errno))
+
+"Pauses the parser."
+pause(parser::Parser) = ccall((:http_parser_pause,lib), Void, (Ptr{Parser}, Cint), Ref(parser), zero(Cint))
+"Resumes the parser."
+resume(parser::Parser) = ccall((:http_parser_pause,lib), Void,(Ptr{Parser}, Cint), Ref(parser), one(Cint))
+"Checks if this is the final chunk of the body."
+isfinalchunk(parser::Parser) = ccall((:http_parser_pause,lib), Cint, (Ptr{Parser},), Ref(parser)) == 1
+
+upgrade(parser::Parser) = (parser.errno_and_upgrade & 0b10000000)>0
+errno(parser::Parser) = parser.errno_and_upgrade & 0b01111111
+errno_name(errno::Integer) = bytestring(ccall((:http_errno_name,lib),Cstring,(Int32,),errno))
+errno_description(errno::Integer) = bytestring(ccall((:http_errno_description,lib),Cstring,(Int32,),errno))
 
 immutable HttpParserError <: Exception
     errno::Int32
@@ -119,5 +158,42 @@ immutable HttpParserError <: Exception
 end
 
 show(io::IO, err::HttpParserError) = print(io,"HTTP Parser Exception: ",errno_name(err.errno),"(",string(err.errno),"):",errno_description(err.errno))
+
+
+@enum(UrlFields, UF_SCHEMA           = Cint(0),
+                 UF_HOST             = Cint(1),
+                 UF_PORT             = Cint(2),
+                 UF_PATH             = Cint(3),
+                 UF_QUERY            = Cint(4),
+                 UF_FRAGMENT         = Cint(5),
+                 UF_USERINFO         = Cint(6),
+                 UF_MAX              = Cint(7))
+
+immutable ParserUrl
+    field_set::UInt16 # Bitmask of (1 << UF_*) values
+    port::UInt16      # Converted UF_PORT string
+    field_data::NTuple{UF_MAX.val*2, UInt16}
+    ParserUrl() = new(zero(UInt16), zero(UInt16), ntuple(UF_MAX.val*2, i->zero(UInt16)))
+end
+
+"Parse a URL"
+function parse_url(url::AbstractString; isconnect::Bool = false)
+    parsed = Dict{Symbol,AbstractString}()
+    purl_ref = Ref(ParserUrl())
+    res = ccall((:http_parser_parse_url, lib), Cint,
+                 (Cstring, Csize_t, Cint, Ptr{ParserUrl}),
+                  url, sizeof(url), Cint(isconnect), purl_ref)
+    res > 0 && return parsed, -1
+    purl = purl_ref[]
+
+    for (i,uf) in enumerate(UrlFields)
+        !((purl.field_set & (1 << uf.val) > 0) && uf != UF_MAX) && continue
+        off = purl.field_data[2*(i-1)+1]
+        len = purl.field_data[2*(i-1)+2]
+        parsed[symbol(uf)] = url[(off+1):(off+len)]
+    end
+    return parsed, purl.port
+end
+
 
 end # module HttpParser

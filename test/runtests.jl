@@ -98,14 +98,26 @@ function on_message_complete(parser)
     return 0
 end
 
-c_message_begin_cb = cfunction(on_message_begin, Int, (Ptr{Parser},))
-c_url_cb = cfunction(on_url, Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
-c_status_complete_cb = cfunction(on_status_complete, Int, (Ptr{Parser},))
-c_header_field_cb = cfunction(on_header_field, Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
-c_header_value_cb = cfunction(on_header_value, Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
-c_headers_complete_cb = cfunction(on_headers_complete, Int, (Ptr{Parser},))
-c_body_cb = cfunction(on_body, Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
-c_message_complete_cb = cfunction(on_message_complete, Int, (Ptr{Parser},))
+function on_chunk_header(parser)
+    return 0
+end
+
+function on_chunk_complete(parser)
+    return 0
+end
+
+c_message_begin_cb = cfunction(on_message_begin, HttpParser.HTTP_CB...)
+c_url_cb = cfunction(on_url, HttpParser.HTTP_DATA_CB...)
+c_status_complete_cb = cfunction(on_status_complete, HttpParser.HTTP_CB...)
+c_header_field_cb = cfunction(on_header_field, HttpParser.HTTP_DATA_CB...)
+c_header_value_cb = cfunction(on_header_value, HttpParser.HTTP_DATA_CB...)
+c_headers_complete_cb = cfunction(on_headers_complete, HttpParser.HTTP_CB...)
+c_body_cb = cfunction(on_body, HttpParser.HTTP_DATA_CB...)
+c_message_complete_cb = cfunction(on_message_complete, HttpParser.HTTP_CB...)
+c_body_cb = cfunction(on_body, HttpParser.HTTP_DATA_CB...)
+c_message_complete_cb = cfunction(on_message_complete, HttpParser.HTTP_CB...)
+c_chunk_header_cb = cfunction(on_chunk_header, HttpParser.HTTP_CB...)
+c_chunk_complete_cb = cfunction(on_chunk_complete, HttpParser.HTTP_CB...)
 
 function init(test::Tuple)
     # reset request
@@ -116,7 +128,11 @@ function init(test::Tuple)
     r.data = ""
     parser = Parser()
     http_parser_init(parser)
-    settings = ParserSettings(c_message_begin_cb, c_url_cb, c_status_complete_cb, c_header_field_cb, c_header_value_cb, c_headers_complete_cb, c_body_cb, c_message_complete_cb)
+    settings = ParserSettings(c_message_begin_cb, c_url_cb,
+                              c_status_complete_cb, c_header_field_cb,
+                              c_header_value_cb, c_headers_complete_cb,
+                              c_body_cb, c_message_complete_cb,
+                              c_chunk_header_cb, c_chunk_complete_cb)
 
     for i=1:length(test)
         size = http_parser_execute(parser, settings, test[i])
@@ -145,7 +161,52 @@ init(TWO_CHUNKS_MULT_ZERO_END)
 @test r.method == "POST"
 @test r.resource == "/two_chunks_mult_zero_end"
 @test bytestring(r.data) == "hello world"
+# @test r.data == "hello\r\n5 world\r\n6"
 init(WEBSOCK)
 @test r.method == "DELETE"
 @test r.resource == "/chat"
-println("All assertions passed!")
+
+# URL Parser
+typealias ParsedUrl Dict{Symbol, AbstractString}
+
+@test parse_url("//some_path") == (ParsedUrl(
+    :UF_PATH=>"//some_path"
+), 0)
+
+@test parse_url("HTTP://www.example.com/") == (ParsedUrl(
+    :UF_HOST=>"www.example.com",
+    :UF_PATH=>"/",
+    :UF_SCHEMA=>"HTTP"
+), 0)
+
+@test parse_url("HTTP://www.example.com") == (ParsedUrl(
+    :UF_HOST=>"www.example.com",
+    :UF_SCHEMA=>"HTTP"
+), 0)
+
+@test parse_url("http://user:aaa@www.example.com/") == (ParsedUrl(
+    :UF_HOST=>"www.example.com",
+    :UF_SCHEMA=>"http",
+    :UF_USERINFO=>"user:aaa",
+    :UF_PATH=>"/",
+), 0)
+
+@test parse_url("http://x.com/path?that%27s#all,%20folks") == (ParsedUrl(
+    :UF_HOST=>"x.com",
+    :UF_QUERY=>"that%27s",
+    :UF_FRAGMENT=>"all,%20folks",
+    :UF_SCHEMA=>"http",
+    :UF_PATH=>"/path",
+), 0)
+
+@test parse_url("http://user:pass@example.com:8000/foo/bar?baz=quux#frag") == (ParsedUrl(
+    :UF_PORT=>"8000",
+    :UF_HOST=>"example.com",
+    :UF_QUERY=>"baz=quux",
+    :UF_FRAGMENT=>"frag",
+    :UF_USERINFO=>"user:pass",
+    :UF_PATH=>"/foo/bar",
+    :UF_SCHEMA=>"http"
+), 8000)
+
+info("All assertions passed!")
