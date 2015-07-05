@@ -4,6 +4,7 @@ else
     using Base.Dates
 end
 
+using Compat
 using FactCheck
 using HttpCommon
 
@@ -31,7 +32,7 @@ facts("HttpCommon utility functions") do
 
     context("Parse URL query strings") do
         @fact parsequerystring("foo=%3Ca%20href%3D%27foo%27%3Ebar%3C%2Fa%3Erun%26%2B%2B&bar=123") =>
-            ["foo" => "<a href='foo'>bar</a>run&++", "bar" => "123"]
+        @compat Dict("foo" => "<a href='foo'>bar</a>run&++", "bar" => "123")
     end
 
 end
