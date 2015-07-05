@@ -1,5 +1,7 @@
 module HttpCommon
 
+using Compat
+
 if VERSION < v"0.4-"
     using Dates
 else
@@ -133,7 +135,7 @@ RFC1123_datetime() = RFC1123_datetime(Dates.now(Dates.UTC))
 # `headers()` for building default Response Headers
 #
 typealias Headers Dict{String,String}
-headers() = Dict{String,String}([ 
+headers() = Dict{String,String}([
     ("Server"            , "Julia/$VERSION"),
     ("Content-Type"      , "text/html; charset=utf-8"),
     ("Content-Language"  , "en"),
@@ -198,7 +200,7 @@ function FileResponse(filename)
         Response(200, Dict{String,String}([("Content-Type",mime)]), s)
     else
         Response(404, "Not Found - file $filename could not be found")
-    end         
+    end
 end
 
 # Escape HTML characters
@@ -233,7 +235,8 @@ function decodeURI(encoded::String)
     enc = split(replace(encoded,"+"," "),"%")
     decoded = enc[1]
     for c in enc[2:end]
-        decoded = string(decoded, char(parseint(c[1:2],16)), c[3:end])
+        decoded = @compat string(decoded, Char((parse(Int, c[1:2], 16))),
+                                 c[3:end])
     end
     decoded
 end
@@ -245,7 +248,8 @@ end
 function encodeURI(decoded::String)
     encoded = ""
     for c in decoded
-        encoded = encoded * string(c in URIwhitelist ? c : "%" * uppercase(hex(int(c))))
+        encoded = @compat encoded * string(c in URIwhitelist ? c :
+                                           "%" * uppercase(hex(Int(c))))
     end
     encoded
 end
@@ -256,7 +260,7 @@ end
 #
 #    q = "foo=bar&baz=%3Ca%20href%3D%27http%3A%2F%2Fwww.hackershool.com%27%3Ehello%20world%21%3C%2Fa%3E"
 #    parsequerystring(q)
-#    # => ["foo"=>"bar","baz"=>"<a href='http://www.hackershool.com'>hello world!</a>"]
+#    # => Dict("foo"=>"bar","baz"=>"<a href='http://www.hackershool.com'>hello world!</a>")
 #
 function parsequerystring(query::String)
     q = Dict{String,String}()
