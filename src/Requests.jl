@@ -14,6 +14,7 @@ using URIParser
 using GnuTLS
 using Codecs
 using JSON
+using Zlib
 
 export URI, get, post, put, delete, head, options, patch, FileParam
 
@@ -230,6 +231,9 @@ function process_response(stream, timeout)
         end
     end
     http_parser_execute(rp.parser,rp.settings,"") #EOF
+    if in(get(r.headers,"Content-Encoding",""), ("gzip","deflate"))
+        r.data = bytestring(decompress(r.data))
+    end
     r
 end
 
