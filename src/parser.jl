@@ -5,7 +5,7 @@ is_userinfo_char(c) = isalnum(c) || is_mark(c) || (c == '%') || (c == ';') ||
              (c == ':') || (c == '&') || (c == '+') || (c == '$' || c == ',')
 isnum(c) = ('0' <= c <= '9')
 ishex(c) =  (isnum(c) || 'a' <= lowercase(c) <= 'f')
-is_host_char(c) = isalnum(c) || (c == '.') || (c == '-')
+is_host_char(c) = isalnum(c) || (c == '.') || (c == '-') || (c == '_') || (c == "~")
 
 
 immutable URI
