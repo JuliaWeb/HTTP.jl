@@ -204,12 +204,15 @@
     end
 
     open_stream(uri::URI, headers, data, method) = open_stream(uri,default_request(uri,headers,data,method))
+
+    scheme(uri::URI) = isdefined(uri, :scheme) ? uri.scheme : uri.schema
+
     function open_stream(uri::URI,req::Request)
-        if uri.schema != "http" && uri.schema != "https"
-            error("Unsupported schema \"$(uri.schema)\"")
+        if scheme(uri) != "http" && scheme(uri) != "https"
+            error("Unsupported scheme \"$(scheme(uri))\"")
         end
         ip = Base.getaddrinfo(uri.host)
-        if uri.schema == "http"
+        if scheme(uri) == "http"
             stream = Base.connect(ip, uri.port == 0 ? 80 : uri.port)
         else
             # Initialize HTTPS
