@@ -197,6 +197,39 @@ function clean!(parser::ClientParser)
     message_complete_callbacks
 end
 
+immutable TimeoutException <: Exception
+end
+
+function process_response(stream, timeout)
+    r = Response()
+    rp = ResponseParser(r,stream)
+    # Emulate a Channel for backwards compatibility with .3
+    data_channel = Vector{Tuple{Vector{UInt8}, Bool}}(1)
+    while isopen(stream)
+        c = Condition()
+        data_task = @async begin
+            data_channel[1] = readavailable(stream), true
+            notify(c)
+        end
+        if timeout < Inf
+            timer_task = @async begin
+                sleep(timeout)
+                data_channel[1] = (UInt8[], false)
+                notify(c)
+            end
+        end
+        wait(c)
+        data, got_data = data_channel[1]
+        got_data || throw(TimeoutException())
+        if length(data) > 0
+            add_data(rp, data)
+        end
+    end
+    http_parser_execute(rp.parser,rp.settings,"") #EOF
+    r
+end
+
+
 # Passes `request_data` into `parser`
 function add_data(parser::ResponseParser, request_data)
     http_parser_execute(parser.parser, parser.settings, request_data)
@@ -511,12 +544,14 @@ function prepare_multipart_send(uri, headers, files, verb)
     req, datasizes, boundary, chunked
 end
 
+
 function send_multipart(uri, headers, files, verb)
     req, datasizes, boundary, chunked = prepare_multipart_send(uri,headers,files,verb)
     stream = open_stream(uri,req)
     do_multipart_send(stream,files,datasizes, boundary, chunked)
     process_response(stream)
 end
+
 
 # Http Methods
 #
@@ -529,10 +564,15 @@ end
 
 const checkv = :(has_body && error("Multiple body options specified. Please only specify one"); has_body = true)
 
+timeout_in_sec(::Void) = Inf
+timeout_in_sec(t::Dates.TimePeriod) = convert(Float64, Dates.Second(t))
+timeout_in_sec(t) = convert(Float64, t)
+
 @eval function do_request(uri::URI, verb; headers = Dict{String, String}(),
                         data = nothing,
                         json = nothing,
                         files = FileParam[],
+                        timeout = nothing,
                         query::Dict = Dict())
 
     query_str = format_query_str(query; uri = uri)
@@ -562,8 +602,8 @@ const checkv = :(has_body && error("Multiple body options specified. Please only
         end
         return send_multipart(newuri, headers, files, verb)
     end
-
-    return process_response(open_stream(newuri, headers, body, verb))
+    return process_response(open_stream(newuri, headers, body, verb),
+                            timeout_in_sec(timeout))
 end
 
 for f in [:get, :post, :put, :delete, :head,
