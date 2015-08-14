@@ -58,16 +58,15 @@ get("http://httpbin.org/get"; timeout = .5)    # timeout = Dates.Millisecond(500
 
 ### File upload
 
-The four or so different ways to upload a file called `test.jl` (yes this uploads the
-same file four times).
+The three different ways to upload a file called `test.jl` (yes this uploads the
+same file three times).
 
 ```julia
     filename = "test.jl"
     post("http://httpbin.org/post"; files = [
       FileParam(readall(filename),"text/julia","file1","file1.jl"),
       FileParam(open(filename,"r"),"text/julia","file2","file2.jl",true),
-      FileParam(Base.File(filename),"text/julia","file3","file3.jl"),
-      FileParam(IOBuffer(readall(filename)),"text/julia","file4","file4.jl"),
+      FileParam(IOBuffer(readall(filename)),"text/julia","file3","file3.jl"),
       ])
     ])
 ```
@@ -86,7 +85,6 @@ FileParam has the following constructors:
 
     FileParam(str::Union(String,Vector{Uint8}),ContentType="",name="",filename="")
     FileParam(io::IO,ContentType="",name="",filename="",close::Bool=false)
-    FileParam(io::Base.File,ContentType="",name="",filename="",close::Bool=false)
 
 ```
 
