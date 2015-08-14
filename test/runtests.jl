@@ -130,12 +130,6 @@ files = [
   FileParam(IOBuffer(readall(filename)),"text/julia","file4","runtests.jl"),
   ]
 
-# Does not work on 0.2, because mmap can't be used on Base.File
-if VERSION >= v"0.3-"
-    push!(files,FileParam(Base.File(filename),"text/julia","file3","runtests.jl"))
-end
-
-
 res = post(URI("http://httpbin.org/post"); files = files)
 
 filecontent = readall(filename)

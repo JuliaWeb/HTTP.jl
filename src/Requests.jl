@@ -3,6 +3,10 @@ module Requests
 import Base: get, write
 import Base.FS: File
 
+if VERSION <= v"0.3"
+    import Base: put
+end
+
 using Compat
 using HttpParser
 using HttpCommon
@@ -381,19 +385,18 @@ function write_file(stream,file::IO,datasize,doclose)
 end
 
 # Write a file by mmaping it
-function write_file(stream,file::Union(IOStream,Base.File),datasize,doclose)
+function write_file(stream,file::IOStream,datasize,doclose)
     @assert datasize != -1
-    write(stream,mmap_array(Uint8,(datasize,),file,position(file)))
+    if VERSION <= v"0.3"
+        write(stream, mmap_array(Uint8,(datasize,),file,position(file)))
+    else
+        @show stream, file, datasize, position(file)
+        write(stream, Mmap.mmap(file, Vector{UInt8}, datasize, position(file)))
+    end
     doclose && close(file)
 end
 
 # Write data already in memory
-function write_file(stream,file::Union(String,Array{Uint8}),datasize,doclose)
-    @assert datasize != -1
-    write(stream,file)
-    doclose && close(file)
-end
-
 function write_file(stream,file::Union(String,Array{Uint8}),datasize,doclose)
     @assert datasize != -1
     write(stream,file)
