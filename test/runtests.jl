@@ -140,3 +140,7 @@ data = JSON.parse(res.data)
 
 # Test for chunked responses (we expect 100 from split as there are 99 '\n')
 @test size(split(get("http://httpbin.org/stream/99").data, "\n"), 1) == 100
+
+# Test for gzipped responses
+@test JSON.parse(get("http://httpbin.org/gzip").data)["gzipped"] == true
+@test JSON.parse(get("http://httpbin.org/deflate").data)["deflated"] == true
