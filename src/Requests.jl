@@ -208,7 +208,7 @@ function process_response(stream, timeout)
     r = Response()
     rp = ResponseParser(r,stream)
     # Emulate a Channel for backwards compatibility with .3
-    data_channel = Vector{Tuple{Vector{UInt8}, Bool}}(1)
+    data_channel = @compat Vector{Tuple{Vector{UInt8}, Bool}}(1)
     while isopen(stream)
         c = Condition()
         data_task = @async begin
@@ -557,8 +557,13 @@ end
 
 const checkv = :(has_body && error("Multiple body options specified. Please only specify one"); has_body = true)
 
-timeout_in_sec(::Void) = Inf
-timeout_in_sec(t::Dates.TimePeriod) = convert(Float64, Dates.Second(t))
+
+if VERSION > v"0.4-"
+    timeout_in_sec(::Void) = Inf
+    timeout_in_sec(t::Dates.TimePeriod) = convert(Float64, Dates.Second(t))
+else
+    timeout_in_sec(::Nothing) = Inf
+end
 timeout_in_sec(t) = convert(Float64, t)
 
 @eval function do_request(uri::URI, verb; headers = Dict{String, String}(),
