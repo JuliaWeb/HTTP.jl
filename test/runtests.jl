@@ -127,14 +127,8 @@ filename = Base.source_path()
 files = [
   FileParam(readall(filename),"text/julia","file1","runtests.jl"),
   FileParam(open(filename,"r"),"text/julia","file2","runtests.jl",true),
-  FileParam(IOBuffer(readall(filename)),"text/julia","file4","runtests.jl"),
+  FileParam(IOBuffer(readall(filename)),"text/julia","file3","runtests.jl"),
   ]
-
-# Does not work on 0.2, because mmap can't be used on Base.File
-if VERSION >= v"0.3-"
-    push!(files,FileParam(Base.File(filename),"text/julia","file3","runtests.jl"))
-end
-
 
 res = post(URI("http://httpbin.org/post"); files = files)
 
@@ -142,10 +136,7 @@ filecontent = readall(filename)
 data = JSON.parse(res.data)
 @test data["files"]["file1"] == filecontent
 @test data["files"]["file2"] == filecontent
-if VERSION >= v"0.3-"
-    @test data["files"]["file3"] == filecontent
-end
-@test data["files"]["file4"] == filecontent
+@test data["files"]["file3"] == filecontent
 
 # Test for chunked responses (we expect 100 from split as there are 99 '\n')
 @test size(split(get("http://httpbin.org/stream/99").data, "\n"), 1) == 100
