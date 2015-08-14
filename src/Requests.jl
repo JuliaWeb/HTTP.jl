@@ -369,7 +369,7 @@ function write_part_header(stream,file::FileParam,boundary)
     write(stream,takebuf_array(buf))
 end
 
-# Write a file by reading it in 1MB chunks (unless we know it's size and it's smaller than that)
+# Write a file by reading it in 1MB chunks (unless we know its size and it's smaller than that)
 function write_file(stream,file::IO,datasize,doclose)
     datasize == datasize == -1 : 2^20 : min(2^20,datasize)
     x = Array(Uint8,datasize)
@@ -390,7 +390,6 @@ function write_file(stream,file::IOStream,datasize,doclose)
     if VERSION <= v"0.3"
         write(stream, mmap_array(Uint8,(datasize,),file,position(file)))
     else
-        @show stream, file, datasize, position(file)
         write(stream, Mmap.mmap(file, Vector{UInt8}, datasize, position(file)))
     end
     doclose && close(file)
@@ -475,7 +474,7 @@ function do_multipart_send(stream, files, datasizes, boundary, chunked)
                 write_file(stream,file.file,datasizes[i],file.close)
                 write(stream,CRLF)
             end
-            write(stream,"--$boundary--")
+            write(stream, "--$boundary--", CRLF)
         end
     end
 
@@ -503,15 +502,6 @@ function prepare_multipart_send(uri, headers, files, verb)
         chunked = true
     end
 
-    for file in files
-        if isa(file.file,Base.File)
-            if !isopen(file.file)
-                Base.FS.open(file.file,Base.FS.JL_O_RDONLY,0)
-            end
-            @assert file.close == true
-        end
-    end
-
     datasizes = Array(Int,length(files))
 
     # Try to determine final size of the request. If this fails,
@@ -533,8 +523,8 @@ function prepare_multipart_send(uri, headers, files, verb)
         end
         totalsize += partheadersize(file,size,boundary)
     end
-    # "--" (2) + boundary (sizeof(boundary)) + "--" (2)
-    totalsize += 2 + sizeof(boundary) + 2
+    # "--" (2) + boundary (sizeof(boundary)) + "--" (2) + CRLF (2)
+    totalsize += 2 + sizeof(boundary) + 2 + 2
 
     req = default_request(uri,headers,"",verb)
 
@@ -548,11 +538,11 @@ function prepare_multipart_send(uri, headers, files, verb)
 end
 
 
-function send_multipart(uri, headers, files, verb)
+function send_multipart(uri, headers, files, verb, timeout)
     req, datasizes, boundary, chunked = prepare_multipart_send(uri,headers,files,verb)
     stream = open_stream(uri,req)
     do_multipart_send(stream,files,datasizes, boundary, chunked)
-    process_response(stream)
+    process_response(stream, timeout)
 end
 
 
@@ -580,6 +570,7 @@ timeout_in_sec(t) = convert(Float64, t)
 
     query_str = format_query_str(query; uri = uri)
     newuri = URI(uri; query = query_str)
+    timeout_sec = timeout_in_sec(timeout)
 
     body = ""
     has_body = false
@@ -603,10 +594,9 @@ timeout_in_sec(t) = convert(Float64, t)
         if haskey(headers,"Content-Type") && !beginswith(headers["Content-Type"],"multipart/form-data")
             error("""Tried to send form data with invalid Content-Type. """)
         end
-        return send_multipart(newuri, headers, files, verb)
+        return send_multipart(newuri, headers, files, verb, timeout_sec)
     end
-    return process_response(open_stream(newuri, headers, body, verb),
-                            timeout_in_sec(timeout))
+    return process_response(open_stream(newuri, headers, body, verb), timeout_sec)
 end
 
 for f in [:get, :post, :put, :delete, :head,
