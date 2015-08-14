@@ -6,7 +6,6 @@ const control = utf8(ascii(control_array)*"\x7f")
 const space = utf8(" ")
 const delims = utf8("%<>\"")
 const unwise   = utf8("{}|\\^`")
-const nonascii_array = vcat(@compat(map(UInt8, parse(Int,"80", 16):parse(Int,"ff", 16))))
 
 const reserved = utf8(",;/?:@&=+\$![]'*#")
 # Strings to be escaped
@@ -27,22 +26,33 @@ function unescape(str)
 end
 unescape_form(str) = unescape(replace(str, "+", " "))
 
+hex_string(x) = string('%', uppercase(hex(x)))
 
 # Escapes chars (in second string); also escapes all non-ASCII chars.
 function escape_with(str, use)
-    chars = split(use, "")
-    for c in chars
-        _char = c[1] # Character string as Char
-        h = uppercase(hex(@compat(Int(_char))))
-        if length(h) < 2
-            h = "0"*h
+    str = bytestring(str)
+    out = IOBuffer()
+    chars = Set(use)
+    i = start(str)
+    e = endof(str)
+    while i <= e
+        i_next = nextind(str, i)
+        if i_next == i + 1
+            _char = str[i]
+            if _char in chars
+                write(out, hex_string(@compat(Int(_char))))
+            else
+                write(out, _char)
+            end
+        else
+            while i < i_next
+                write(out, hex_string(str.data[i]))
+                i += 1
+            end
         end
-        str = replace(str, c, "%" * h)
+        i = i_next
     end
-    for i in nonascii_array
-        str = replace(str, @compat(Char(i)), "%" * uppercase(hex(i)))
-    end
-    return str
+    takebuf_string(out)
 end
 
 escape(str) = escape_with(str, unescaped)

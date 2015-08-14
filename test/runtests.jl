@@ -8,9 +8,9 @@ urls = ["hdfs://user:password@hdfshost:9000/root/folder/file.csv#frag",
     "https://user:password@httphost:9000/path1/path2;paramstring#frag",
     "https://user:password@httphost:9000/path1/path2#frag",
     "file:///path/to/file/with%3fshould%3dwork%23fine",
-    "ftp://ftp.is.co.za/rfc/rfc1808.txt", "http://www.ietf.org/rfc/rfc2396.txt", 
-    "ldap://[2001:db8::7]/c=GB?objectClass?one", "mailto:John.Doe@example.com", 
-    "news:comp.infosystems.www.servers.unix", "tel:+1-816-555-1212", "telnet://192.0.2.16:80/", 
+    "ftp://ftp.is.co.za/rfc/rfc1808.txt", "http://www.ietf.org/rfc/rfc2396.txt",
+    "ldap://[2001:db8::7]/c=GB?objectClass?one", "mailto:John.Doe@example.com",
+    "news:comp.infosystems.www.servers.unix", "tel:+1-816-555-1212", "telnet://192.0.2.16:80/",
     "urn:oasis:names:specification:docbook:dtd:xml:4.1.2"]
 
 failed = 0
@@ -28,7 +28,7 @@ end
 @test URI("hdfs://user:password@hdfshost:9000/root/folder/file.csv") == URI("hdfs","hdfshost",9000,"/root/folder/file.csv","","","user:password")
 @test URI("google.com","/some/path") == URI("http://google.com:80/some/path")
 
-@test escape("abcdef 1234-=~!@#\$()_+{}|[]a;") == "abcdef%201234-%3D~%21%40%23%24()_%2B%7B%7D%7C%5B%5Da%3B"
+@test escape("abcdef αβ 1234-=~!@#\$()_+{}|[]a;") == "abcdef%20%CE%B1%CE%B2%201234-%3D~%21%40%23%24()_%2B%7B%7D%7C%5B%5Da%3B"
 @test unescape(escape("abcdef 1234-=~!@#\$()_+{}|[]a;")) == "abcdef 1234-=~!@#\$()_+{}|[]a;"
 
 @test escape_form("abcdef 1234-=~!@#\$()_+{}|[]a;") == "abcdef+1234-%3D~%21%40%23%24()_%2B%7B%7D%7C%5B%5Da%3B"
