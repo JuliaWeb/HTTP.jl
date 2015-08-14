@@ -36,7 +36,7 @@ get("http://httpbin.org/get"; query = {"title" => "page1"})
 post("http://httpbin.org/post"; data = "Hello World")
 ```
 
-### Add data
+### Add JSON data
 
 ```julia
 post("http://httpbin.org/post"; json = {"id" => "1fc80620-7fd3-11e3-80a5"})
@@ -46,6 +46,14 @@ post("http://httpbin.org/post"; json = {"id" => "1fc80620-7fd3-11e3-80a5"})
 
 ```julia
 post("http://httpbin.org/post"; headers = {"Date" => "Tue, 15 Nov 1994 08:12:31 GMT"})
+```
+
+### Set a timeout
+This will throw an error if more than 500ms goes by without receiving any
+new bytes from the server.
+
+```julia
+get("http://httpbin.org/get"; timeout = .5)    # timeout = Dates.Millisecond(500) will also work
 ```
 
 ### File upload
