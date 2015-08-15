@@ -144,3 +144,13 @@ data = JSON.parse(res.data)
 # Test for gzipped responses
 @test JSON.parse(get("http://httpbin.org/gzip").data)["gzipped"] == true
 @test JSON.parse(get("http://httpbin.org/deflate").data)["deflated"] == true
+
+# Test timeout delay
+let
+    if VERSION > v"0.4-"
+        timeout = Dates.Millisecond(500)
+    else
+        timeout = .5
+    end
+    @test_throws Requests.TimeoutException get("http://httpbin.org/delay/1", timeout=timeout)
+end

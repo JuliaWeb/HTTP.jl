@@ -564,7 +564,7 @@ const checkv = :(has_body && error("Multiple body options specified. Please only
 
 if VERSION > v"0.4-"
     timeout_in_sec(::Void) = Inf
-    timeout_in_sec(t::Dates.TimePeriod) = convert(Float64, Dates.Second(t))
+    timeout_in_sec(t::Dates.TimePeriod) = Dates.toms(t)/1000.
 else
     timeout_in_sec(::Nothing) = Inf
 end
