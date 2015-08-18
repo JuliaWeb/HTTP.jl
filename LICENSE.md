@@ -1,7 +1,8 @@
 Requests.jl is licensed under the MIT License:
 
-> Copyright (c) 2013: Massachusetts Institute of Technology
-> Copyright (c) 2013: Keno Fischer and other contributors.
+> Copyright (c) 2015: Massachusetts Institute of Technology.
+>
+> Copyright (c) 2015: Keno Fischer and contributors.
 >
 > Permission is hereby granted, free of charge, to any person obtaining
 > a copy of this software and associated documentation files (the
