@@ -7,10 +7,9 @@ julia:
   - nightly
 notifications:
   email: false
-  irc: "chat.freenode.com#kfischer-julia"
 sudo: false
 script:
   - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
-  - julia --check-bounds=yes -e 'Pkg.clone(pwd()); Pkg.test("URIParser", coverage=true)'
+  - julia -e 'Pkg.clone(pwd()); Pkg.test("URIParser", coverage=true)'
 after_success:
-  - julia -e 'cd(Pkg.dir("URIParser")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())'
+  - julia -e 'cd(Pkg.dir("URIParser")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(process_folder())'
