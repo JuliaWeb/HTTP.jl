@@ -42,11 +42,13 @@ post("http://httpbin.org/post"; data = "Hello World")
 post("http://httpbin.org/post"; json = {"id" => "1fc80620-7fd3-11e3-80a5"})
 ```
 
-### Set headers
+### Set headers and cookies
 
 ```julia
-post("http://httpbin.org/post"; headers = {"Date" => "Tue, 15 Nov 1994 08:12:31 GMT"})
+post("http://httpbin.org/post"; headers = {"Date" => "Tue, 15 Nov 1994 08:12:31 GMT"},
+                                cookies = {"sessionkey" => "abc"})
 ```
+
 
 ### Set a timeout
 This will throw an error if more than 500ms goes by without receiving any
@@ -96,6 +98,7 @@ FileParam has the following constructors:
 type Response
     status::Int
     headers::Headers
+    cookies::Cookies
     data::HttpData
     finished::Bool
 end
