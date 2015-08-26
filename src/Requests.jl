@@ -16,7 +16,12 @@ using Codecs
 using JSON
 using Zlib
 
-export URI, get, post, put, delete, head, options, patch, FileParam
+export URI, get, post, put, delete, head, options, patch, FileParam, jsondata, textdata, bytedata
+
+## Convenience methods for extracting the payload of a response
+bytedata(r::Response) = r.data
+textdata(r::Response) = bytestring(r.data)
+jsondata(r::Response) = JSON.parse(textdata(r))
 
 ## URI Parsing
 
@@ -25,11 +30,12 @@ const CRLF = "\r\n"
 import URIParser.URI
 import HttpCommon: Cookie
 
-function render(request::Request)
-    return string(request.method," ",isempty(request.resource) ? "/" : request.resource," HTTP/1.1",CRLF,
+function render(stream, request::Request)
+    print(stream,request.method," ",isempty(request.resource) ? "/" : request.resource," HTTP/1.1",CRLF,
         map(h->string(h,": ",request.headers[h],CRLF), collect(keys(request.headers)))...,
-        "",CRLF,
-        request.data,CRLF)
+        "",CRLF)
+    write(stream, request.data)
+    write(stream, CRLF)
 end
 
 function default_request(method,resource,host,data,user_headers=Dict{None,None}())
@@ -178,7 +184,8 @@ end
 
 function on_body(parser, at, len)
     r = pd(parser).current_response
-    r.data = string(r.data, bytestring(convert(Ptr{Uint8}, at), len))
+    append!(r.data, pointer_to_array(convert(Ptr{UInt8}, at), (len,)))
+    # r.data = string(r.data, bytestring(convert(Ptr{Uint8}, at), len))
     return 0
 end
 
@@ -263,7 +270,7 @@ function process_response(stream, timeout)
     end
     http_parser_execute(rp.parser,rp.settings,"") #EOF
     if in(get(r.headers,"Content-Encoding",""), ("gzip","deflate"))
-        r.data = bytestring(decompress(r.data))
+        r.data = decompress(r.data)
     end
     r
 end
@@ -294,7 +301,7 @@ function open_stream(uri::URI,req::Request)
         associate_stream(stream,sock)
         handshake!(stream)
     end
-    write(stream, render(req))
+    render(stream, req)
     stream
 end
 
