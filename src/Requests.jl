@@ -621,13 +621,21 @@ end
 cookie_request_header(cookies::AbstractVector{Cookie}) =
     cookie_request_header([cookie.name => cookie.value for cookie in cookies])
 
+function get_redirect_uri(response)
+    300 <= statuscode(response) < 400 || return Nullable{URI}()
+    hdrs = headers(response)
+    haskey(hdrs, "Location") || return Nullable{URI}()
+    Nullable(URI(hdrs["Location"]))
+end
+
 @eval function do_request(uri::URI, verb; headers = Dict{String, String}(),
                         cookies = nothing,
                         data = nothing,
                         json = nothing,
                         files = FileParam[],
                         timeout = nothing,
-                        query::Dict = Dict())
+                        query::Dict = Dict(),
+                        allow_redirects = true)
 
     query_str = format_query_str(query; uri = uri)
     newuri = URI(uri; query = query_str)
@@ -659,9 +667,19 @@ cookie_request_header(cookies::AbstractVector{Cookie}) =
         if haskey(headers,"Content-Type") && !beginswith(headers["Content-Type"],"multipart/form-data")
             error("""Tried to send form data with invalid Content-Type. """)
         end
-        return send_multipart(newuri, headers, files, verb, timeout_sec)
+        response = send_multipart(newuri, headers, files, verb, timeout_sec)
+    else
+        response = process_response(open_stream(newuri, headers, body, verb), timeout_sec)
     end
-    return process_response(open_stream(newuri, headers, body, verb), timeout_sec)
+    if allow_redirects && verb ≠ :head
+        redirect_uri = get_redirect_uri(response)
+        if !isnull(redirect_uri)
+            return do_request(get(redirect_uri), verb; headers=headers,
+                cookies=cookies, data=data, json=json, files=files, timeout=timeout,
+                query=query, allow_redirects=allow_redirects)
+        end
+    end
+    return response
 end
 
 for f in [:get, :post, :put, :delete, :head,
