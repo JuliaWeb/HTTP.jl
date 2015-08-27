@@ -16,7 +16,7 @@ using Codecs
 using JSON
 using Zlib
 
-export URI, FileParam, headers, cookies, statuscode
+export URI, FileParam, headers, cookies, statuscode, post
 
 ## Convenience methods for extracting the payload of a response
 bytes(r::Response) = r.data
