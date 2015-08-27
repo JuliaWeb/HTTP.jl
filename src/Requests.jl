@@ -16,7 +16,7 @@ using Codecs
 using JSON
 using Zlib
 
-export URI, FileParam, headers, cookies, statuscode, post
+export URI, FileParam, headers, cookies, statuscode, post, requestfor, requestsfor
 
 ## Convenience methods for extracting the payload of a response
 bytes(r::Response) = r.data
@@ -28,6 +28,9 @@ headers(r::Response) = r.headers
 cookies(r::Response) = r.cookies
 statuscode(r::Response) = r.status
 
+requestfor(r::Response) = r.requests[end]
+requestsfor(r::Response) = r.requests
+
 ## URI Parsing
 
 const CRLF = "\r\n"
@@ -36,9 +39,10 @@ import URIParser.URI
 import HttpCommon: Cookie
 
 function render(stream, request::Request)
-    print(stream,request.method," ",isempty(request.resource) ? "/" : request.resource," HTTP/1.1",CRLF,
-        map(h->string(h,": ",request.headers[h],CRLF), collect(keys(request.headers)))...,
-        "",CRLF)
+    print(stream,request.method, " ", isempty(request.resource) ? "/" : request.resource,
+          " HTTP/1.1", CRLF,
+          map(h->string(h,": ",request.headers[h],CRLF), collect(keys(request.headers)))...,
+          "", CRLF)
     write(stream, request.data)
     write(stream, CRLF)
 end
@@ -65,7 +69,9 @@ function default_request(uri::URI,headers,data,method)
         headers["Authorization"] = "Basic "*bytestring(encode(Base64, uri.userinfo))
     end
     host = uri.port == 0 ? uri.host : "$(uri.host):$(uri.port)"
-    default_request(method,resource,host,data,headers)
+    request = default_request(method,resource,host,data,headers)
+    request.uri = uri
+    return request
 end
 
 ### Response Parsing
@@ -589,7 +595,7 @@ function send_multipart(uri, headers, files, verb, timeout)
     req, datasizes, boundary, chunked = prepare_multipart_send(uri,headers,files,verb)
     stream = open_stream(uri,req)
     do_multipart_send(stream,files,datasizes, boundary, chunked)
-    process_response(stream, timeout)
+    process_response(stream, timeout), req
 end
 
 
@@ -621,13 +627,40 @@ end
 cookie_request_header(cookies::AbstractVector{Cookie}) =
     cookie_request_header([cookie.name => cookie.value for cookie in cookies])
 
+function get_redirect_uri(response)
+    300 <= statuscode(response) < 400 || return Nullable{URI}()
+    hdrs = headers(response)
+    haskey(hdrs, "Location") || return Nullable{URI}()
+    uri = URI(hdrs["Location"])
+    if isempty(uri.host)  # Redirect URL was given as a relative path
+        request = requestfor(response)
+        uri = URI(request.uri.host, uri.path)
+    end
+    Nullable(uri)
+end
+
+const MAX_REDIRECTS = 5
+
+immutable RedirectException <: Exception
+    max_redirects::Int
+end
+
+function Base.show(io::IO, err::RedirectException)
+    print(io, "Bailing since more than $(err.max_redirects) attempted. ")
+    print(io, "Increase value of max_redirects if this is unintended.")
+end
+
 @eval function do_request(uri::URI, verb; headers = Dict{String, String}(),
                         cookies = nothing,
                         data = nothing,
                         json = nothing,
                         files = FileParam[],
                         timeout = nothing,
-                        query::Dict = Dict())
+                        query::Dict = Dict(),
+                        allow_redirects = true,
+                        max_redirects = MAX_REDIRECTS,
+                        request_history = @compat(Vector{Request}()),
+                        )
 
     query_str = format_query_str(query; uri = uri)
     newuri = URI(uri; query = query_str)
@@ -659,23 +692,41 @@ cookie_request_header(cookies::AbstractVector{Cookie}) =
         if haskey(headers,"Content-Type") && !beginswith(headers["Content-Type"],"multipart/form-data")
             error("""Tried to send form data with invalid Content-Type. """)
         end
-        return send_multipart(newuri, headers, files, verb, timeout_sec)
+        response, request = send_multipart(newuri, headers, files, verb, timeout_sec)
+        push!(request_history, request)
+        response.requests = request_history
+    else
+        request = default_request(newuri, headers, body, verb)
+        push!(request_history, request)
+        response = process_response(open_stream(newuri, request), timeout_sec)
+        response.requests = request_history
     end
-    return process_response(open_stream(newuri, headers, body, verb), timeout_sec)
+    if allow_redirects && verb ≠ :head
+        redirect_uri = get_redirect_uri(response)
+        if !isnull(redirect_uri)
+            length(response.requests) > max_redirects &&
+                throw(RedirectException(max_redirects))
+            return do_request(get(redirect_uri), verb; headers=headers,
+                cookies=cookies, data=data, json=json, files=files, timeout=timeout,
+                query=query, allow_redirects=allow_redirects, max_redirects=max_redirects, request_history=request_history)
+        end
+    end
+    return response
 end
 
 for f in [:get, :post, :put, :delete, :head,
           :trace, :options, :patch, :connect]
-
+    f_str = uppercase(string(f))
     @eval begin
         function ($f)(uri::URI, data::String; headers::Dict=Dict())
-            process_response(open_stream(uri, headers, data,
-                                         $(uppercase(string(f)))))
+            do_request(uri, $f_str; data=data, headers=headers)
+            # process_response(open_stream(uri, headers, data,
+                                        #  $(uppercase(string(f)))))
         end
-    end
 
-    @eval ($f)(uri::String; args...) = ($f)(URI(uri); args...)
-    @eval ($f)(uri::URI; args...) = do_request(uri, $(uppercase(string(f))); args...)
+        ($f)(uri::String; args...) = ($f)(URI(uri); args...)
+        ($f)(uri::URI; args...) = do_request(uri, $f_str; args...)
+    end
 end
 
 end

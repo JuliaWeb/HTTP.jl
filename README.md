@@ -59,6 +59,16 @@ new bytes from the server.
 get("http://httpbin.org/get"; timeout = .5)    # timeout = Dates.Millisecond(500) will also work
 ```
 
+### Controls redirects
+By default, redirects will be followed. `max_redirects` and `allow_redirects` control this behavior.
+
+```julia
+get("http://httpbin.org/redirect/3"; max_redirects=2)  # Throws an error
+
+# Returns a response redirecting the client to "www.google.com"
+get("http://google.com"; allow_redirects=false)  
+```
+
 ### File upload
 
 The three different ways to upload a file called `test.jl` (yes this uploads the
@@ -97,12 +107,14 @@ FileParam has the following constructors:
 
 Via accessors (preferred):
 ```julia
-Requests.text(::Response)   # Get the payload of the response as utf8
+Requests.text(::Response)   # Get the payload of the response as utf8 text
 Requests.bytes(::Response)  # Get the payload as a byte array
-Requests.json(::Response)   # Parse a JSON-encoed response into a Julia object
+Requests.json(::Response)   # Parse a JSON-encoded response into a Julia object
 statuscode(::Response)
 headers(::Response)         # A dictionary from response header fields to values
 cookies(::Response)         # A dictionary from cookie names set by the server to Cookie objects
+requestfor(::Response)      # Returns the request that generated the given response
+requestsfor(::Response)     # Returns the history of redirects that generated the given response.
 ```
 
 or directly through the Response type fields:
@@ -113,5 +125,6 @@ type Response
     cookies::Cookies
     data::Vector{UInt8}
     finished::Bool
+    requests::Vector{Request}
 end
 ```

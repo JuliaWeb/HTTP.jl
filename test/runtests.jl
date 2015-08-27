@@ -158,7 +158,7 @@ end
 
 # Test cookies
 let
-    r = get("http://httpbin.org/cookies/set?a=1&b=2")
+    r = get("http://httpbin.org/cookies/set?a=1&b=2", allow_redirects=false)
     cookies = r.cookies
     @test length(cookies) == 2
     @test cookies["a"].value == "1"
@@ -167,4 +167,13 @@ let
     r = json(get("http://httpbin.org/cookies", cookies=cookies))
     @test r["cookies"]["a"] == "1"
     @test r["cookies"]["b"] == "2"
+end
+
+# Test redirects
+let
+    r = get("http://httpbin.org/absolute-redirect/3")
+    @test length(requestsfor(r)) == 4
+    r = get("http://httpbin.org/relative-redirect/3")
+    @test length(requestsfor(r)) == 4
+    @test_throws Requests.RedirectException get("http://httpbin.org/redirect/3", max_redirects=2)
 end
