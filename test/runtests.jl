@@ -4,6 +4,7 @@ using Requests
 using JSON
 using Base.Test
 
+import Requests: get, post, put, delete, options, bytes, text, json
 
 # simple calls, no headers, data or query params -------
 
@@ -16,13 +17,13 @@ using Base.Test
 
 # check query params -------
 
-data = jsondata(get("http://httpbin.org/get";
+data = json(get("http://httpbin.org/get";
                       query = @compat Dict("key1" => "value1",
                                            "key with spaces" => "value with spaces")))
 @test data["args"]["key1"] == "value1"
 @test data["args"]["key with spaces"] == "value with spaces"
 
-data = jsondata(post("http://httpbin.org/post";
+data = json(post("http://httpbin.org/post";
                        query = @compat Dict("key1" => "value1",
                                             "key2" => "value2",
                                             "key with spaces" => "value with spaces")))
@@ -30,7 +31,7 @@ data = jsondata(post("http://httpbin.org/post";
 @test data["args"]["key2"] == "value2"
 @test data["args"]["key with spaces"] == "value with spaces"
 
-data = jsondata(put("http://httpbin.org/put";
+data = json(put("http://httpbin.org/put";
                       query = @compat Dict("key1" => "value1",
                                            "key2" => "value2",
                                            "key3" => 3,
@@ -40,7 +41,7 @@ data = jsondata(put("http://httpbin.org/put";
 @test data["args"]["key3"] == "3"
 @test data["args"]["key with spaces"] == "value with spaces"
 
-data = jsondata(delete("http://httpbin.org/delete";
+data = json(delete("http://httpbin.org/delete";
                          query = @compat Dict("key1" => "value1",
                                               "key4" => 4.01,
                                               "key with spaces" => "value with spaces")))
@@ -48,7 +49,7 @@ data = jsondata(delete("http://httpbin.org/delete";
 @test data["args"]["key4"] == "4.01"
 @test data["args"]["key with spaces"] == "value with spaces"
 
-data = jsondata(options("http://httpbin.org/get";
+data = json(options("http://httpbin.org/get";
                           query = @compat Dict("key1" => "value1",
                                                "key2" => "value2",
                                                "key3" => 3,
@@ -58,13 +59,13 @@ data = jsondata(options("http://httpbin.org/get";
 
 # check data -------
 
-data = jsondata(post("http://httpbin.org/post";
+data = json(post("http://httpbin.org/post";
                        json = @compat Dict("key1" => "value1",
                                            "key2" => "value2")))
 @test data["json"]["key1"] == "value1"
 @test data["json"]["key2"] == "value2"
 
-data = jsondata(put("http://httpbin.org/put";
+data = json(put("http://httpbin.org/put";
                       json = @compat Dict("key1" => "value1",
                                           "key2" => "value2",
                                           "key3" => 3)))
@@ -72,7 +73,7 @@ data = jsondata(put("http://httpbin.org/put";
 @test data["json"]["key2"] == "value2"
 @test data["json"]["key3"] == 3
 
-data = jsondata(delete("http://httpbin.org/delete";
+data = json(delete("http://httpbin.org/delete";
                          json = @compat Dict("key1" => "value1",
                                              "key4" => 4.01)))
 @test data["json"]["key1"] == "value1"
@@ -81,7 +82,7 @@ data = jsondata(delete("http://httpbin.org/delete";
 
 # query + data -------
 
-data = jsondata(post("http://httpbin.org/post";
+data = json(post("http://httpbin.org/post";
                        query = (@compat Dict("qkey1" => "value1",
                                              "qkey2" => "value2")),
                        json = (@compat Dict("dkey1" => "data1",
@@ -91,7 +92,7 @@ data = jsondata(post("http://httpbin.org/post";
 @test data["json"]["dkey1"] == "data1"
 @test data["json"]["dkey2"] == "data2"
 
-data = jsondata(put("http://httpbin.org/put";
+data = json(put("http://httpbin.org/put";
                       query = (@compat Dict("qkey1" => "value1",
                                             "qkey2" => "value2",
                                             "qkey3" => 3)),
@@ -105,7 +106,7 @@ data = jsondata(put("http://httpbin.org/put";
 @test data["json"]["dkey2"] == "data2"
 @test data["json"]["dkey3"] == 5
 
-data = jsondata(delete("http://httpbin.org/delete";
+data = json(delete("http://httpbin.org/delete";
                          query = (@compat Dict("qkey1" => "value1",
                                                "qkey4" => 4.01)),
                          json = (@compat Dict("dkey1" => "data1",
@@ -115,7 +116,7 @@ data = jsondata(delete("http://httpbin.org/delete";
 @test data["json"]["dkey1"] == "data1"
 @test data["json"]["dkey2"] == 9.01
 
-data = jsondata(post(URI("http://httpbin.org/post");
+data = json(post(URI("http://httpbin.org/post");
                        data = "√",
                        headers = @compat Dict("Content-Type" => "text/plain")))
 
@@ -133,17 +134,17 @@ files = [
 res = post(URI("http://httpbin.org/post"); files = files)
 
 filecontent = readall(filename)
-data = jsondata(res)
+data = json(res)
 @test data["files"]["file1"] == filecontent
 @test data["files"]["file2"] == filecontent
 @test data["files"]["file3"] == filecontent
 
 # Test for chunked responses (we expect 100 from split as there are 99 '\n')
-@test size(split(textdata(get("http://httpbin.org/stream/99")), "\n"), 1) == 100
+@test size(split(text(get("http://httpbin.org/stream/99")), "\n"), 1) == 100
 
 # Test for gzipped responses
-@test jsondata(get("http://httpbin.org/gzip"))["gzipped"] == true
-@test jsondata(get("http://httpbin.org/deflate"))["deflated"] == true
+@test json(get("http://httpbin.org/gzip"))["gzipped"] == true
+@test json(get("http://httpbin.org/deflate"))["deflated"] == true
 
 # Test timeout delay
 let
@@ -163,7 +164,7 @@ let
     @test cookies["a"].value == "1"
     @test cookies["b"].value == "2"
     @test cookies["a"].attrs["Path"] == "/"
-    r = get("http://httpbin.org/cookies", cookies=cookies).data |> JSON.parse
+    r = json(get("http://httpbin.org/cookies", cookies=cookies))
     @test r["cookies"]["a"] == "1"
     @test r["cookies"]["b"] == "2"
 end

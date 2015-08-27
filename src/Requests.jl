@@ -16,12 +16,17 @@ using Codecs
 using JSON
 using Zlib
 
-export URI, get, post, put, delete, head, options, patch, FileParam, jsondata, textdata, bytedata
+export URI, FileParam, headers, cookies, statuscode
 
 ## Convenience methods for extracting the payload of a response
-bytedata(r::Response) = r.data
-textdata(r::Response) = bytestring(r.data)
-jsondata(r::Response) = JSON.parse(textdata(r))
+bytes(r::Response) = r.data
+text(r::Response) = utf8(bytes(r))
+json(r::Response) = JSON.parse(text(r))
+
+## Response getters to future-proof against changes to the Response type
+headers(r::Response) = r.headers
+cookies(r::Response) = r.cookies
+statuscode(r::Response) = r.status
 
 ## URI Parsing
 

@@ -12,6 +12,7 @@ An HTTP client written in Julia. Uses `joyent/http-parser` via [HttpParser.jl](h
 julia> Pkg.add("Requests")
 
 julia> using Requests
+julia> import Requests: get, post, put, delete, options
 ```
 
 ### Make a request
@@ -94,12 +95,23 @@ FileParam has the following constructors:
 
 ### Inspect responses
 
+Via accessors (preferred):
+```julia
+Requests.text(::Response)   # Get the payload of the response as utf8
+Requests.bytes(::Response)  # Get the payload as a byte array
+Requests.json(::Response)   # Parse a JSON-encoed response into a Julia object
+statuscode(::Response)
+headers(::Response)         # A dictionary from response header fields to values
+cookies(::Response)         # A dictionary from cookie names set by the server to Cookie objects
+```
+
+or directly through the Response type fields:
 ```julia
 type Response
     status::Int
     headers::Headers
     cookies::Cookies
-    data::HttpData
+    data::Vector{UInt8}
     finished::Bool
 end
 ```
