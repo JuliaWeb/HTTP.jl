@@ -196,7 +196,7 @@ type Response
     status::Int
     headers::Headers
     cookies::Cookies
-    data::HttpData
+    data::Vector{UInt8}
     finished::Bool
 end
 
