@@ -149,14 +149,16 @@ headers() = Dict{String,String}([
 # - headers  => HTTP headers
 # - data     => request data
 # - state    => used to store various data during request processing
-#
+
+typealias HttpData Vector{UInt8}
+
 type Request
     method::String
     resource::String
     headers::Headers
-    data::String
+    data::HttpData
 end
-Request() = Request("", "", Dict{String,String}(), "")
+Request() = Request("", "", Dict{String,String}(), HttpData())
 
 # HTTP response
 #
@@ -175,7 +177,6 @@ Request() = Request("", "", Dict{String,String}(), "")
 #     Response(200)
 #     # => Response(200, "OK", ["Server" => "v\"0.2.0-740.r6df6\""], "200 OK", false)
 #
-typealias HttpData Union(String,Array{Uint8})
 
 type Cookie
     name::UTF8String
@@ -194,13 +195,16 @@ type Response
     data::HttpData
     finished::Bool
 end
+
 Response(s::Int, h::Headers, d::HttpData) = Response(s, h, Cookies(), d, false)
-Response(s::Int, h::Headers)            = Response(s, h, Cookies(), "", false)
+Response(s::Int, h::Headers)            = Response(s, h, Cookies(), HttpData(), false)
 Response(s::Int, d::HttpData)             = Response(s, headers(), Cookies(), d, false)
 Response(d::HttpData, h::Headers)         = Response(200, h, Cookies(), d, false)
 Response(d::HttpData)                     = Response(200, headers(), Cookies(), d,false)
-Response(s::Int)                        = Response(s, headers(), Cookies(), "", false)
+Response(s::Int)                        = Response(s, headers(), Cookies(), HttpData(), false)
 Response()                              = Response(200)
+
+
 
 show(io::IO,r::Response) = print(io,"Response(",r.status," ",STATUS_CODES[r.status],", ",length(r.headers)," Headers, ",sizeof(r.data)," Bytes in Body)")
 
