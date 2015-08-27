@@ -135,12 +135,12 @@ end
 function parse_set_cookie(value)
     parts = split(value, ';')
     isempty(parts) && return Nullable{Cookie}()
-    nameval = split(parts[1], '=', limit=2)
+    nameval = @compat split(parts[1], '=', limit=2)
     length(nameval)==2 || return Nullable{Cookie}()
     name, value = nameval
     c = Cookie(strip(name), strip(value))
     for part in parts[2:end]
-        nameval = split(part, '=', limit=2)
+        nameval = @compat split(part, '=', limit=2)
         if length(nameval)==2
             name, value = nameval
             c.attrs[strip(name)] = strip(value)
@@ -157,7 +157,7 @@ function on_header_value(parser, at, len)
     r = pd(parser).current_response
     s = bytestring(convert(Ptr{Uint8}, at),@compat Int(len))
     current_header = r.headers["current_header"]
-    if IS_SET_COOKIE(current_header)
+    if ismatch(IS_SET_COOKIE, current_header)
         maybe_cookie = parse_set_cookie(s)
         if !isnull(maybe_cookie)
             cookie = get(maybe_cookie)
