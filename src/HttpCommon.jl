@@ -150,15 +150,19 @@ headers() = Dict{String,String}([
 # - data     => request data
 # - state    => used to store various data during request processing
 
-typealias HttpData Vector{UInt8}
+@compat typealias HttpData Union{Vector{UInt8}, String}
+asbytes(r::ByteString) = r.data
+asbytes(r::String) = asbytes(bytestring(r))
+asbytes(r) = convert(Vector{UInt8}, r)
+
 
 type Request
     method::String
     resource::String
     headers::Headers
-    data::HttpData
+    data::Vector{UInt8}
 end
-Request() = Request("", "", Dict{String,String}(), HttpData())
+Request() = Request("", "", Dict{String,String}(), Vector{UInt8}())
 
 # HTTP response
 #
@@ -196,13 +200,13 @@ type Response
     finished::Bool
 end
 
-Response(s::Int, h::Headers, d::HttpData) = Response(s, h, Cookies(), d, false)
-Response(s::Int, h::Headers)            = Response(s, h, Cookies(), HttpData(), false)
-Response(s::Int, d::HttpData)             = Response(s, headers(), Cookies(), d, false)
-Response(d::HttpData, h::Headers)         = Response(200, h, Cookies(), d, false)
-Response(d::HttpData)                     = Response(200, headers(), Cookies(), d,false)
-Response(s::Int)                        = Response(s, headers(), Cookies(), HttpData(), false)
-Response()                              = Response(200)
+Response(s::Int, h::Headers, d::HttpData) = Response(s, h, Cookies(), asbytes(d), false)
+Response(s::Int, h::Headers)              = Response(s, h, Cookies(), Vector{UInt8}(), false)
+Response(s::Int, d::HttpData)             = Response(s, headers(), Cookies(), asbytes(d), false)
+Response(d::HttpData, h::Headers)         = Response(200, h, Cookies(), asbytes(d), false)
+Response(d::HttpData)                     = Response(200, headers(), Cookies(), asbytes(d), false)
+Response(s::Int)                          = Response(s, headers(), Cookies(), Vector{UInt8}(), false)
+Response()                                = Response(200)
 
 
 
