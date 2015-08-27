@@ -150,7 +150,7 @@ headers() = Dict{String,String}([
 # - data     => request data
 # - state    => used to store various data during request processing
 
-@compat typealias HttpData Union{Vector{UInt8}, String}
+@compat typealias HttpData Union(Vector{UInt8}, String)
 asbytes(r::ByteString) = r.data
 asbytes(r::String) = asbytes(bytestring(r))
 asbytes(r) = convert(Vector{UInt8}, r)
@@ -201,11 +201,11 @@ type Response
 end
 
 Response(s::Int, h::Headers, d::HttpData) = Response(s, h, Cookies(), asbytes(d), false)
-Response(s::Int, h::Headers)              = Response(s, h, Cookies(), Vector{UInt8}(), false)
+Response(s::Int, h::Headers)              = @compat Response(s, h, Cookies(), Vector{UInt8}(), false)
 Response(s::Int, d::HttpData)             = Response(s, headers(), Cookies(), asbytes(d), false)
 Response(d::HttpData, h::Headers)         = Response(200, h, Cookies(), asbytes(d), false)
 Response(d::HttpData)                     = Response(200, headers(), Cookies(), asbytes(d), false)
-Response(s::Int)                          = Response(s, headers(), Cookies(), Vector{UInt8}(), false)
+Response(s::Int)                          = @compat Response(s, headers(), Cookies(), Vector{UInt8}(), false)
 Response()                                = Response(200)
 
 
