@@ -33,7 +33,7 @@ export STATUS_CODES,
 
 include("mimetypes.jl")
 
-import Base.show
+import Base: show, ==
 
 const STATUS_CODES = Dict([
     (100, "Continue"),
@@ -129,6 +129,40 @@ RFC1123_datetime(t::DateTime) = begin
 end
 RFC1123_datetime() = RFC1123_datetime(Dates.now(Dates.UTC))
 
+
+immutable URI
+    scheme::ASCIIString
+    host::ASCIIString
+    port::UInt16
+    path::ASCIIString
+    query::ASCIIString
+    fragment::ASCIIString
+    userinfo::ASCIIString
+    specifies_authority::Bool
+    URI(scheme,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) =
+            new(scheme,host,@compat(UInt16(port)),path,query,fragment,userinfo,specifies_authority)
+end
+
+==(a::URI,b::URI) = isequal(a,b)
+isequal(a::URI,b::URI) = (a.scheme == b.scheme) &&
+                         (a.host == b.host) &&
+                         (a.port == b.port) &&
+                         (a.path == b.path) &&
+                         (a.query == b.query) &&
+                         (a.fragment == b.fragment) &&
+                         (a.userinfo == b.userinfo)
+
+URI(host,path) = URI("http",host,@compat(UInt16(80)),path,"","","",true)
+URI(uri::URI; scheme=nothing, host=nothing, port=nothing, path=nothing, query=nothing, fragment=nothing, userinfo=nothing, specifies_authority=nothing) =
+URI(scheme === nothing ? uri.scheme : scheme,
+    host === nothing ? uri.host : host,
+    port === nothing ? uri.port : port,
+    path === nothing ? uri.path : path,
+    query === nothing ? uri.query : query,
+    fragment === nothing ? uri.fragment : fragment,
+    userinfo === nothing ? uri.userinfo : userinfo,
+    specifies_authority === nothing ? uri.specifies_authority : specifies_authority)
+
 # HTTP Headers
 #
 # Dict Type for HTTP headers
@@ -161,8 +195,17 @@ type Request
     resource::String
     headers::Headers
     data::Vector{UInt8}
+    uri::URI
 end
-Request() = Request("", "", Dict{String,String}(), Vector{UInt8}())
+Request() = Request("", "", Dict{String,String}(), Vector{UInt8}(), URI(""))
+Request(method, resource, headers, data) = Request(method, resource, headers, data, URI(""))
+
+function show(io::IO, r::Request)
+    print(io, "Request(")
+    print(io, r.uri)
+    print(io, ", ", length(r.headers), " Headers")
+    print(io, ", ", sizeof(r.data), " Bytes in Body)")
+end
 
 # HTTP response
 #
@@ -198,14 +241,17 @@ type Response
     cookies::Cookies
     data::Vector{UInt8}
     finished::Bool
+    # The history of requests that generated the response. Can be greater than
+    # one if a redirect was involved.
+    requests::Vector{Request}
 end
 
-Response(s::Int, h::Headers, d::HttpData) = Response(s, h, Cookies(), asbytes(d), false)
-Response(s::Int, h::Headers)              = @compat Response(s, h, Cookies(), Vector{UInt8}(), false)
-Response(s::Int, d::HttpData)             = Response(s, headers(), Cookies(), asbytes(d), false)
-Response(d::HttpData, h::Headers)         = Response(200, h, Cookies(), asbytes(d), false)
-Response(d::HttpData)                     = Response(200, headers(), Cookies(), asbytes(d), false)
-Response(s::Int)                          = @compat Response(s, headers(), Cookies(), Vector{UInt8}(), false)
+Response(s::Int, h::Headers, d::HttpData) = @compat Response(s, h, Cookies(), asbytes(d), false, Vector{Request}())
+Response(s::Int, h::Headers)              = @compat Response(s, h, Vector{UInt8}())
+Response(s::Int, d::HttpData)             = Response(s, headers(), d)
+Response(d::HttpData, h::Headers)         = Response(200, h, d)
+Response(d::HttpData)                     = Response(d, headers())
+Response(s::Int)                          = @compat Response(s, headers(), Vector{UInt8}())
 Response()                                = Response(200)
 
 
