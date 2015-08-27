@@ -1,3 +1,5 @@
+isdefined(Base, :__precompile__) && __precompile__()
+
 module Requests
 
 import Base: get, write
@@ -17,6 +19,22 @@ using JSON
 using Zlib
 
 export URI, FileParam, headers, cookies, statuscode, post, requestfor, requestsfor
+
+# Datatype Tuples for the different `cfunction` signatures used by `HttpParser`
+const HTTP_CB      = (Int, (Ptr{Parser},))
+const HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
+
+function __init__()
+    # Turn all the callbacks into C callable functions.
+    global const on_message_begin_cb = cfunction(on_message_begin, HTTP_CB...)
+    global const on_url_cb = cfunction(on_url, HTTP_DATA_CB...)
+    global const on_status_complete_cb = cfunction(on_status_complete, HTTP_CB...)
+    global const on_header_field_cb = cfunction(on_header_field, HTTP_DATA_CB...)
+    global const on_header_value_cb = cfunction(on_header_value, HTTP_DATA_CB...)
+    global const on_headers_complete_cb = cfunction(on_headers_complete, HTTP_CB...)
+    global const on_body_cb = cfunction(on_body, HTTP_DATA_CB...)
+    global const on_message_complete_cb = cfunction(on_message_complete, HTTP_CB...)
+end
 
 ## Convenience methods for extracting the payload of a response
 bytes(r::Response) = r.data
@@ -99,12 +117,6 @@ immutable ResponseParser
 end
 
 pd(p::Ptr{Parser}) = (unsafe_load(p).data)::ResponseParserData
-
-
-# Datatype Tuples for the different `cfunction` signatures used by `HttpParser`
-const HTTP_CB      = (Int, (Ptr{Parser},))
-const HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
-
 
 # All the `HttpParser` callbacks to be run in C land
 # Each one adds data to the `Request` until it is complete
@@ -212,15 +224,6 @@ function on_message_complete(parser)
     return 0
 end
 
-# Turn all the callbacks into C callable functions.
-on_message_begin_cb = cfunction(on_message_begin, HTTP_CB...)
-on_url_cb = cfunction(on_url, HTTP_DATA_CB...)
-on_status_complete_cb = cfunction(on_status_complete, HTTP_CB...)
-on_header_field_cb = cfunction(on_header_field, HTTP_DATA_CB...)
-on_header_value_cb = cfunction(on_header_value, HTTP_DATA_CB...)
-on_headers_complete_cb = cfunction(on_headers_complete, HTTP_CB...)
-on_body_cb = cfunction(on_body, HTTP_DATA_CB...)
-on_message_complete_cb = cfunction(on_message_complete, HTTP_CB...)
 
 # `ClientParser` wraps our `HttpParser`
 # Constructed with `on_message_complete` function.
@@ -727,6 +730,10 @@ for f in [:get, :post, :put, :delete, :head,
         ($f)(uri::String; args...) = ($f)(URI(uri); args...)
         ($f)(uri::URI; args...) = do_request(uri, $f_str; args...)
     end
+end
+
+if VERSION >= v"0.4.0"
+    include("precompile.jl")
 end
 
 end
