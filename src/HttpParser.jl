@@ -11,11 +11,11 @@ using HttpCommon
 import Base.show
 
 # Export the structs and the C calls.
-export Parser, 
-       ParserSettings, 
-       http_parser_init, 
-       http_parser_execute, 
-       http_method_str, 
+export Parser,
+       ParserSettings,
+       http_parser_init,
+       http_parser_execute,
+       http_method_str,
        http_should_keep_alive,
        upgrade
 
@@ -81,21 +81,6 @@ function show(io::IO,p::Parser)
     print(io,"HttpParser")
 end
 
-# A helper function to print the internal values of a request
-function show(io::IO,r::Request)
-    println(io,"=== Resource ====")
-    println(io,"resource: $(r.resource)")
-    println(io,"method: $(r.method)")
-    println(io,"Headers:")
-    for i=r.headers
-        k = i[1]
-        v = i[2]
-        println(io,"    $k: $v")
-    end
-    println(io,"data: $(r.data)")
-    println(io,"=== End Resource ===")
-end
-
 # Intializes the Parser object with the correct memory.
 function http_parser_init(parser::Parser,isserver=true)
     ccall((:http_parser_init, lib), Void, (Ptr{Parser}, Cint), &parser, !isserver)
@@ -103,8 +88,8 @@ end
 
 # Run a request through a parser with specific callbacks on the settings instance.
 function http_parser_execute(parser::Parser, settings::ParserSettings, request)
-    ccall((:http_parser_execute, lib), Csize_t, 
-            (Ptr{Parser}, Ptr{ParserSettings}, Ptr{Uint8}, Csize_t,), 
+    ccall((:http_parser_execute, lib), Csize_t,
+            (Ptr{Parser}, Ptr{ParserSettings}, Ptr{Uint8}, Csize_t,),
             &parser, &settings, convert(Ptr{Uint8}, pointer(request)), sizeof(request))
     if errno(parser) != 0
         throw(HttpParserError(errno(parser)))
