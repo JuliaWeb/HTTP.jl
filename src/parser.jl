@@ -8,38 +8,7 @@ ishex(c) =  (isnum(c) || 'a' <= lowercase(c) <= 'f')
 is_host_char(c) = isalnum(c) || (c == '.') || (c == '-') || (c == '_') || (c == "~")
 
 
-immutable URI
-    scheme::ASCIIString
-    host::ASCIIString
-    port::UInt16
-    path::ASCIIString
-    query::ASCIIString
-    fragment::ASCIIString
-    userinfo::ASCIIString
-    specifies_authority::Bool
-    URI(scheme,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) =
-            new(scheme,host,@compat(UInt16(port)),path,query,fragment,userinfo,specifies_authority)
-end
 
-==(a::URI,b::URI) = isequal(a,b)
-isequal(a::URI,b::URI) = (a.scheme == b.scheme) &&
-                         (a.host == b.host) &&
-                         (a.port == b.port) &&
-                         (a.path == b.path) &&
-                         (a.query == b.query) &&
-                         (a.fragment == b.fragment) &&
-                         (a.userinfo == b.userinfo)
-
-URI(host,path) = URI("http",host,@compat(UInt16(80)),path,"","","",true)
-URI(uri::URI; scheme=nothing, host=nothing, port=nothing, path=nothing, query=nothing, fragment=nothing, userinfo=nothing, specifies_authority=nothing) =
-URI(scheme === nothing ? uri.scheme : scheme,
-    host === nothing ? uri.host : host,
-    port === nothing ? uri.port : port,
-    path === nothing ? uri.path : path,
-    query === nothing ? uri.query : query,
-    fragment === nothing ? uri.fragment : fragment,
-    userinfo === nothing ? uri.userinfo : userinfo,
-    specifies_authority === nothing ? uri.specifies_authority : specifies_authority)
 
 # URL parser based on the http-parser package by Joyent
 # Licensed under the BSD license
@@ -320,4 +289,3 @@ function print(io::IO, uri::URI)
         print(io,"#",uri.fragment)
     end
 end
-
