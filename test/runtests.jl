@@ -154,3 +154,16 @@ let
     end
     @test_throws Requests.TimeoutException get("http://httpbin.org/delay/1", timeout=timeout)
 end
+
+# Test cookies
+let
+    r = get("http://httpbin.org/cookies/set?a=1&b=2")
+    cookies = r.cookies
+    @test length(cookies) == 2
+    @test cookies["a"].value == "1"
+    @test cookies["b"].value == "2"
+    @test cookies["a"].attrs["Path"] == "/"
+    r = get("http://httpbin.org/cookies", cookies=cookies).data |> JSON.parse
+    @test r["cookies"]["a"] == "1"
+    @test r["cookies"]["b"] == "2"
+end

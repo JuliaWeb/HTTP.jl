@@ -23,6 +23,7 @@ export URI, get, post, put, delete, head, options, patch, FileParam
 const CRLF = "\r\n"
 
 import URIParser.URI
+import HttpCommon: Cookie
 
 function render(request::Request)
     return string(request.method," ",isempty(request.resource) ? "/" : request.resource," HTTP/1.1",CRLF,
@@ -120,10 +121,40 @@ function on_header_field(parser, at, len)
     return 0
 end
 
+function parse_set_cookie(value)
+    parts = split(value, ';')
+    isempty(parts) && return Nullable{Cookie}()
+    nameval = split(parts[1], '=', limit=2)
+    length(nameval)==2 || return Nullable{Cookie}()
+    name, value = nameval
+    c = Cookie(strip(name), strip(value))
+    for part in parts[2:end]
+        nameval = split(part, '=', limit=2)
+        if length(nameval)==2
+            name, value = nameval
+            c.attrs[strip(name)] = strip(value)
+        else
+            c.attrs[strip(nameval[1])] = utf8("")
+        end
+    end
+    return Nullable(c)
+end
+
+const IS_SET_COOKIE = r"set-cookie"i
+
 function on_header_value(parser, at, len)
     r = pd(parser).current_response
     s = bytestring(convert(Ptr{Uint8}, at),@compat Int(len))
-    r.headers[r.headers["current_header"]] = s
+    current_header = r.headers["current_header"]
+    if IS_SET_COOKIE(current_header)
+        maybe_cookie = parse_set_cookie(s)
+        if !isnull(maybe_cookie)
+            cookie = get(maybe_cookie)
+            r.cookies[cookie.name] = cookie
+        end
+    else
+        r.headers[current_header] = s
+    end
     r.headers["current_header"] = ""
     # delete!(r.headers, "current_header")
     return 0
@@ -570,7 +601,16 @@ else
 end
 timeout_in_sec(t) = convert(Float64, t)
 
+cookie_value(c::Cookie) = c.value
+cookie_value(s) = s
+function cookie_request_header(d::Dict)
+    join(["$key=$(cookie_value(val))" for (key,val) in d], ';')
+end
+cookie_request_header(cookies::AbstractVector{Cookie}) =
+    cookie_request_header([cookie.name => cookie.value for cookie in cookies])
+
 @eval function do_request(uri::URI, verb; headers = Dict{String, String}(),
+                        cookies = nothing,
                         data = nothing,
                         json = nothing,
                         files = FileParam[],
@@ -595,6 +635,10 @@ timeout_in_sec(t) = convert(Float64, t)
     if data !== nothing
         $checkv
         body = data
+    end
+
+    if cookies != nothing
+        headers["Cookie"] = cookie_request_header(cookies)
     end
 
     if !isempty(files)
