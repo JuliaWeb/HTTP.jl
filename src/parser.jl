@@ -145,7 +145,7 @@ function parse_url(url)
     fragment = ""
     username = ""
     pass = ""
-    path = ""
+    path = "/"
     last_state = state = :req_spaces_before_url
     seen_at = false
     specifies_authority = false
