@@ -14,7 +14,7 @@ FIREFOX_REQ = tuple("GET /favicon.ico HTTP/1.1\r\n",
          "Connection: keep-alive\r\n",
          "\r\n")
 
-DUMBFUCK = tuple("GET /dumbfuck HTTP/1.1\r\n",
+MALFORMED = tuple("GET /MALFORMED HTTP/1.1\r\n",
          "aaaaaaaaaaaaa:++++++++++\r\n",
          "\r\n")
 
@@ -41,8 +41,8 @@ r = Request("", "", Dict{String,String}(), "")
 function on_message_begin(parser)
     # Clear the resource when the message starts
     r.resource = ""
-    return 0     
-end     
+    return 0
+end
 
 function on_url(parser, at, len)
     # Concatenate the resource for each on_url callback
@@ -73,7 +73,7 @@ end
 function on_headers_complete(parser)
     p = unsafe_load(parser)
     # get first two bits of p.type_and_flags
-    
+
     # The parser type are the bottom two bits
     # 0x03 = 00000011
     ptype = p.type_and_flags & 0x03
@@ -91,7 +91,7 @@ function on_headers_complete(parser)
 end
 
 function on_body(parser, at, len)
-    r.data = string(r.data, bytestring(convert(Ptr{Uint8}, at)), @compat Int(len))
+    append!(r.data, pointer_to_array(convert(Ptr{UInt8}, at), (len,)))
     return 0
 end
 
@@ -138,16 +138,15 @@ init(FIREFOX_REQ)
 @test r.headers["Accept-Charset"] == "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
 @test r.headers["Keep-Alive"] == "1"
 @test r.headers["Connection"] == "keep-alive"
-@test r.data == ""
-init(DUMBFUCK)
+@test isempty(r.data)
+init(MALFORMED)
 @test r.method == "GET"
-@test r.resource == "/dumbfuck"
+@test r.resource == "/MALFORMED"
 init(TWO_CHUNKS_MULT_ZERO_END)
 @test r.method == "POST"
 @test r.resource == "/two_chunks_mult_zero_end"
-@test r.data == "hello\r\n5 world\r\n6"
+@test bytestring(r.data) == "hello world"
 init(WEBSOCK)
 @test r.method == "DELETE"
 @test r.resource == "/chat"
 println("All assertions passed!")
-
