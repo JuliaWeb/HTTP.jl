@@ -710,8 +710,8 @@ end
             length(response.requests) > max_redirects &&
                 throw(RedirectException(max_redirects))
             return do_request(get(redirect_uri), verb; headers=headers,
-                cookies=cookies, data=data, json=json, files=files, timeout=timeout,
-                query=query, allow_redirects=allow_redirects, max_redirects=max_redirects, request_history=request_history)
+                 data=data, json=json, files=files, timeout=timeout,
+                 allow_redirects=allow_redirects, max_redirects=max_redirects, request_history=request_history)
         end
     end
     return response
