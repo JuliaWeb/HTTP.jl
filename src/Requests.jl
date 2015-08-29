@@ -39,7 +39,7 @@ end
 ## Convenience methods for extracting the payload of a response
 bytes(r::Response) = r.data
 text(r::Response) = utf8(bytes(r))
-json(r::Response) = JSON.parse(text(r))
+json(r::Response; kwargs...) = JSON.parse(text(r); kwargs...)
 
 ## Response getters to future-proof against changes to the Response type
 headers(r::Response) = r.headers
