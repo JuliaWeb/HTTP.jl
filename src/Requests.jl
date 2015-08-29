@@ -255,6 +255,11 @@ function clean!(parser::ClientParser)
 end
 
 immutable TimeoutException <: Exception
+    timeout::Float64
+end
+
+function Base.show(io::IO, err::TimeoutException)
+    print(io, "TimeoutException: server did not respond for more than $(err.timeout) seconds. ")
 end
 
 function process_response(stream, timeout)
@@ -277,7 +282,7 @@ function process_response(stream, timeout)
         end
         wait(c)
         data, got_data = data_channel[1]
-        got_data || throw(TimeoutException())
+        got_data || throw(TimeoutException(timeout))
         if length(data) > 0
             add_data(rp, data)
         end
@@ -649,8 +654,7 @@ immutable RedirectException <: Exception
 end
 
 function Base.show(io::IO, err::RedirectException)
-    print(io, "Bailing since more than $(err.max_redirects) attempted. ")
-    print(io, "Increase value of max_redirects if this is unintended.")
+    print(io, "RedirectException: more than $(err.max_redirects) redirects attempted.")
 end
 
 @eval function do_request(uri::URI, verb; headers = Dict{String, String}(),
