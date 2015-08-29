@@ -1,20 +1,16 @@
-language: cpp
-compiler:
-    - gcc
+language: julia
 os:
     - linux
     - osx
+julia:
+    - release
+    - nightly
 notifications:
     email: false
-env:
-    - JULIAVERSION="juliareleases" 
-    - JULIAVERSION="julianightlies"
-before_install:
-    - curl http://julialang.org/install-julia.sh | sh -s $JULIAVERSION
-    - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
-    - julia -e 'versioninfo()'
+sudo: false
 script:
-    - julia -e 'Pkg.init(); Pkg.clone(pwd())'
+    - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
+    - julia -e 'Pkg.clone(pwd()); Pkg.build("HttpServer")'
     - julia -e 'Pkg.test("HttpServer", coverage=true)'
 after_success:
-    - julia -e 'cd(Pkg.dir("HttpServer")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(Coveralls.process_folder())'
+    - julia -e 'cd(Pkg.dir("HttpServer")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(process_folder())'
