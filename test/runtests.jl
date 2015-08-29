@@ -20,7 +20,7 @@ facts("HttpServer utility functions:") do
     end
 end
 
-import Requests
+import Requests: get, text, statuscode
 
 facts("HttpServer runs") do
     context("using HTTP protocol on 0.0.0.0:8000") do
@@ -32,25 +32,24 @@ facts("HttpServer runs") do
         sleep(1.0)
 
         ret = Requests.get("http://localhost:8000/hello/travis")
-        @fact ret.data => "Hello travis!"
-        @fact ret.status => 200
+        @fact text(ret) => "Hello travis!"
+        @fact statuscode(ret) => 200
 
         ret = Requests.get("http://localhost:8000/bad")
-        @fact ret.data => ""
-        @fact ret.status => 404
+        @fact text(ret) => ""
+        @fact statuscode(ret) => 404
     end
 
-    context("using HTTP protocol on 127.0.1.1:8001") do
+    context("using HTTP protocol on 127.0.0.1:8001") do
         http = HttpHandler() do req::Request, res::Response
             Response( ismatch(r"^/hello/",req.resource) ? string("Hello ", split(req.resource,'/')[3], "!") : 404 )
         end
         server = Server(http)
-        @async run(server, host=IPv4(127,0,1,1), port=8001)
+        @async run(server, host=ip"127.0.0.1", port=8001)
         sleep(1.0)
 
-        ret = Requests.get("http://127.0.1.1:8001/hello/travis")
-        @fact ret.data => "Hello travis!"
-        @fact ret.status => 200
+        ret = Requests.get("http://127.0.0.1:8001/hello/travis")
+        @fact text(ret) => "Hello travis!"
+        @fact statuscode(ret) => 200
     end
 end
-
