@@ -11,7 +11,7 @@ is_host_char(c) = isalnum(c) || (c == '.') || (c == '-') || (c == '_') || (c == 
 immutable URI
     scheme::ASCIIString
     host::ASCIIString
-    port::UInt16
+    port::@compat(UInt16)
     path::ASCIIString
     query::ASCIIString
     fragment::ASCIIString
