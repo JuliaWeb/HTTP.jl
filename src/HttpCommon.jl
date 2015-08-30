@@ -169,7 +169,7 @@ type Request
     data::Vector{UInt8}
     uri::URI
 end
-Request() = Request("", "", Dict{String,String}(), Vector{UInt8}(), URI(""))
+Request() = Request("", "", Dict{String,String}(), @compat(Vector{UInt8}()), URI(""))
 Request(method, resource, headers, data) = Request(method, resource, headers, data, URI(""))
 
 function show(io::IO, r::Request)
