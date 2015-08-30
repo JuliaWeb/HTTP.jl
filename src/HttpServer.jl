@@ -220,6 +220,7 @@ function handle_http_request(server::Server)
     id_pool = 0 # Increments for each connection
     websockets_enabled = server.websock != nothing
     while true # handle requests, Base.wait_accept blocks until a connection is made
+        server.http.sock
         client = Client(id_pool += 1, accept(server.http.sock))
         client.parser = ClientParser(message_handler(server, client, websockets_enabled))
         @async process_client(server, client, websockets_enabled)
@@ -296,6 +297,7 @@ function run(server::Server; args...)
     server = if use_sockets
         listen(server, params[:socket])  # start server on Unix socket
     else
+        host, port
         listen(server, host, port)       # start server on network socket
     end
 
@@ -317,16 +319,20 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
     event("connect", server, client)
 
     while isopen(client.sock)
-        try 
+        try
             if !upgrade(client.parser.parser)
-                # IMPORTANT NOTE: This is technically incorrect as there may be data 
+                # IMPORTANT NOTE: This is technically incorrect as there may be data
                 # in the buffer that we have not yet read. The way to deal with this
-                # is to manually adjust the position of the buffer, but for that to 
+                # is to manually adjust the position of the buffer, but for that to
                 # happen, we need use the return value of http_parser_execute, which
                 # we don't have, since we launch websocket handlers in the callback.
                 # Anyway, since there always needs to be a handshake this is probably
-                # fine for now. 
-                data = readavailable(client.sock)
+                # fine for now.
+                if VERSION < v"0.4-"
+                    data = readavailable(client.sock).data
+                else
+                    data = readavailable(client.sock)
+                end
                 add_data(client.parser, data)
             else
                 wait(client.sock.closenotify)

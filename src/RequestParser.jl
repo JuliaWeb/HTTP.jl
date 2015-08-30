@@ -1,6 +1,6 @@
 # `RequestParser` handles all the `HttpParser` module stuff for `HttpServer`
 #
-# The `HttpParser` module wraps [Joyent's `http-parser` C library][hprepo]. 
+# The `HttpParser` module wraps [Joyent's `http-parser` C library][hprepo].
 # A new `HttpParser` is created for each TCP connection being handled by
 # our server.  Each `HttpParser` is initialized with a set of callback
 # functions. When new data comes in, it is fed into the `http-parser` which
@@ -43,7 +43,7 @@ end
 
 # Gather the header_field, set the field
 # on header value, set the value for the current field
-# there might be a better way to do 
+# there might be a better way to do
 # this: https://github.com/joyent/node/blob/master/src/node_http_parser.cc#L207
 
 function on_header_field(parser, at, len)
@@ -58,7 +58,8 @@ function on_header_value(parser, at, len)
     r = pd(parser).request
     s = bytestring(convert(Ptr{Uint8}, at), @compat Int(len))
     r.headers[r.headers["current_header"]] = s
-    delete!(r.headers, "current_header")
+    r.headers["current_header"] = ""
+    # delete!(r.headers, "current_header")
     return 0
 end
 
@@ -80,17 +81,20 @@ end
 
 function on_body(parser, at, len)
     r = pd(parser).request
-    write(pd(parser).data, convert(Ptr{Uint8}, at), len)
+    # write(pd(parser).data, convert(Ptr{Uint8}, at), len)
+    append!(r.data, pointer_to_array(convert(Ptr{UInt8}, at), (len,)))
+    r.data
     return 0
 end
 
 function on_message_complete(parser)
     state = pd(parser)
     r = state.request
-    r.data = takebuf_string(state.data)
+    # r.data = takebuf_array(state.data)
 
     # delete the temporary header key
-    delete!(r.headers, "current_header")
+    # delete!(r.headers, "current_header")
+    pop!(r.headers, "current_header", nothing)
 
     # Get the `parser.id` from the C pointer `parser`.
     # Retrieve our callback function from the global Dict.
@@ -114,10 +118,9 @@ default_complete_cb(r::Request) = nothing
 
 type RequestParserState
     request::Request
-    data::IOBuffer
     complete_cb::Function
 end
-RequestParserState() = RequestParserState(Request(),IOBuffer(),default_complete_cb)
+RequestParserState() = RequestParserState(Request(),default_complete_cb)
 
 pd(p::Ptr{Parser}) = (unsafe_load(p).data)::RequestParserState
 
@@ -144,6 +147,6 @@ immutable ClientParser
 end
 
 # Passes `request_data` into `parser`
-function add_data(parser::ClientParser, request_data::HttpCommon.HttpData)
+function add_data(parser::ClientParser, request_data::Vector{UInt8})
     http_parser_execute(parser.parser, parser.settings, request_data)
 end
