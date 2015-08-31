@@ -50,6 +50,12 @@ post("http://httpbin.org/post"; headers = {"Date" => "Tue, 15 Nov 1994 08:12:31 
                                 cookies = {"sessionkey" => "abc"})
 ```
 
+HTTP basic authentication is parsed and set as a proper `Authorization` header from the URI:
+
+```julia
+post("http://username:password@httpbin.org/post")
+```
+
 
 ### Set a timeout
 This will throw an error if more than 500ms goes by without receiving any
