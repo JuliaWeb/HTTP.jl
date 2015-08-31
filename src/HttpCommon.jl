@@ -159,14 +159,14 @@ headers() = Dict{String,String}([
 @compat typealias HttpData Union(Vector{UInt8}, String)
 asbytes(r::ByteString) = r.data
 asbytes(r::String) = asbytes(bytestring(r))
-asbytes(r) = convert(Vector{UInt8}, r)
+asbytes(r) = @compat convert(Vector{UInt8}, r)
 
 
 type Request
     method::String
     resource::String
     headers::Headers
-    data::Vector{UInt8}
+    data::@compat(Vector{UInt8})
     uri::URI
 end
 Request() = Request("", "", Dict{String,String}(), @compat(Vector{UInt8}()), URI(""))
@@ -211,7 +211,7 @@ type Response
     status::Int
     headers::Headers
     cookies::Cookies
-    data::Vector{UInt8}
+    data::@compat(Vector{UInt8})
     finished::Bool
     # The history of requests that generated the response. Can be greater than
     # one if a redirect was involved.
