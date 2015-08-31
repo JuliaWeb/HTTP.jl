@@ -2,6 +2,7 @@
 #
 # Serve HTTP requests in Julia.
 #
+isdefined(Base, :__precompile__) && __precompile__(false)
 module HttpServer
 
 if VERSION < v"0.4.0-dev"
