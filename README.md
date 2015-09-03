@@ -4,8 +4,9 @@ This package provides a Julia wrapper around Joyent's [http-parser](https://gith
 
 [![Build Status](https://travis-ci.org/JuliaWeb/HttpParser.jl.svg?branch=master)](https://travis-ci.org/JuliaWeb/HttpParser.jl)
 [![Coverage Status](https://coveralls.io/repos/JuliaWeb/HttpParser.jl/badge.svg?branch=master)](https://coveralls.io/r/JuliaWeb/HttpParser.jl?branch=master)
-[![HttpParser](http://pkg.julialang.org/badges/HttpParser_0.3.svg)](http://pkg.julialang.org/?pkg=HttpParser&ver=release)
-[![HttpParser](http://pkg.julialang.org/badges/HttpParser_0.4.svg)](http://pkg.julialang.org/?pkg=HttpParser&ver=nightly)
+
+[![HttpParser](http://pkg.julialang.org/badges/HttpParser_0.3.svg)](http://pkg.julialang.org/?pkg=HttpParser&ver=0.3)
+[![HttpParser](http://pkg.julialang.org/badges/HttpParser_0.4.svg)](http://pkg.julialang.org/?pkg=HttpParser&ver=0.4)
 
 **Installation**: `julia> Pkg.add("HttpParser")`
 
