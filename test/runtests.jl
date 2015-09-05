@@ -16,3 +16,6 @@ using Base.Test
 # Parse URL query strings
 @test parsequerystring("foo=%3Ca%20href%3D%27foo%27%3Ebar%3C%2Fa%3Erun%26%2B%2B&bar=123") ==
         Dict("foo" => "<a href='foo'>bar</a>run&++", "bar" => "123")
+@test parsequerystring("") == Dict()
+@test_throws ArgumentError parsequerystring("looknopairs")
+@test_throws ArgumentError parsequerystring("good=pair&badpair")

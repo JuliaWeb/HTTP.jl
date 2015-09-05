@@ -272,25 +272,28 @@ function encodeURI(decoded::String)
     encoded
 end
 
-# parsequerystring
-#
-# Convert a valid querystring to a Dict:
-#
-#    q = "foo=bar&baz=%3Ca%20href%3D%27http%3A%2F%2Fwww.hackershool.com%27%3Ehello%20world%21%3C%2Fa%3E"
-#    parsequerystring(q)
-#    # => Dict("foo"=>"bar","baz"=>"<a href='http://www.hackershool.com'>hello world!</a>")
-#
-function parsequerystring(query::String)
-    q = Dict{String,String}()
-    if !('=' in query)
-        return throw("Not a valid query string: $query, must contain at least one key=value pair.")
-    end
-    for set in split(query, "&")
-        key, val = split(set, "=")
-        q[decodeURI(key)] = decodeURI(val)
+
+"""
+parsequerystring(query::String)
+
+Convert a valid querystring to a Dict:
+
+    q = "foo=bar&baz=%3Ca%20href%3D%27http%3A%2F%2Fwww.hackershool.com%27%3Ehello%20world%21%3C%2Fa%3E"
+    parsequerystring(q)
+    # Dict{ASCIIString,ASCIIString} with 2 entries:
+    #   "baz" => "<a href='http://www.hackershool.com'>hello world!</a>"
+    #   "foo" => "bar"
+"""
+function parsequerystring{T<:String}(query::T)
+    q = Dict{T,T}()
+    length(query) == 0 && return q
+    for field in split(query, "&")
+        keyval = split(field, "=")
+        length(keyval) != 2 && throw(ArgumentError("Field '$field' did not contain an '='."))
+        q[decodeURI(keyval[1])] = decodeURI(keyval[2])
     end
     q
 end
 
 
-end # module Httplib
+end # module HttpCommon

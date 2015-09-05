@@ -113,20 +113,22 @@ It escapes all non-URI characters (only letters, digits, `-`, `_` , `.`, and `~`
 `decodeURI` returns a new `String` with all the unsafe characters returned to their original meanings.
 It works with the output of `encodeURI` as well as other standard URI encoders.
 
-### `parsequerystring(query::String)`
 
-`parsequerystring` takes a query string (as from a URL) and returns a `Dict{String,String}` representing the same data.
+#### `parsequerystring(query::String)`
 
-An example:
+Convert a valid querystring to a Dict:
 
 ```julia
 q = "foo=bar&baz=%3Ca%20href%3D%27http%3A%2F%2Fwww.hackershool.com%27%3Ehello%20world%21%3C%2Fa%3E"
 parsequerystring(q)
-# => ["foo"=>"bar","baz"=>"<a href='http://www.hackershool.com'>hello world!</a>"]
+# Dict{ASCIIString,ASCIIString} with 2 entries:
+#   "baz" => "<a href='http://www.hackershool.com'>hello world!</a>"
+#   "foo" => "bar"
 ```
 
 
 ---
+
 
 ~~~~
 :::::::::::::
