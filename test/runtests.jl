@@ -3,11 +3,6 @@ using FactCheck
 
 facts("HttpCommon utility functions") do
 
-    context("RFC1123 compliant datetimes") do
-        @fact RFC1123_datetime(DateTime(2013, 5, 2, 13, 45, 7)) -->
-            "Thu, 02 May 2013 13:45:07 GMT"
-    end
-
     context("Escape HTML") do
         @fact escapeHTML("<script type='text/javascript'>alert('sucker');</script> foo bar") -->
             "&lt;script type='text/javascript'&gt;alert('sucker');&lt;/script&gt; foo bar"
@@ -29,9 +24,6 @@ facts("HttpCommon utility functions") do
     end
 
 end
-
-# Check doesn't throw
-RFC1123_datetime()
 
 # Throw error if any tests fails
 FactCheck.exitstatus()

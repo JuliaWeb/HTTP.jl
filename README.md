@@ -74,17 +74,10 @@ The defaults are as follows:
 [ "Server" => "Julia/$VERSION",
   "Content-Type" => "text/html; charset=utf-8",
   "Content-Language" => "en",
-  "Date" => RFC1123_datetime()]
+  "Date" => Dates.format(now(Dates.UTC),Dates.RFC1123Format)]
 ```
 
-The last setting, `"Date"` uses another HttpCommon function:
-
-```julia
-RFC1123_datetime([CalendarTime])
-```
-    
-When an argument is not provided, the current time (`now()`) is used.
-RFC1123 describes the correct format for putting timestamps into HTTP headers.
+Where the last setting, `"Date"` uses RFC1123 formatting for dates in HTTP headers.
 
 ### STATUS_CODES
 

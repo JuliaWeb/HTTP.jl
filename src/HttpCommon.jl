@@ -12,7 +12,6 @@ export STATUS_CODES,
        DELETE,
        OPTIONS,
        HEAD,
-       RFC1123_datetime,
        HttpMethodBitmask,
        HttpMethodBitmasks,
        HttpMethodNameToBitmask,
@@ -115,17 +114,6 @@ const HttpMethodNameToBitmask = Dict{String, HttpMethodBitmask}([
 
 const HttpMethodBitmaskToName = (HttpMethodBitmask => String)[v => k for (k, v) in HttpMethodNameToBitmask]
 
-# Get RFC 1123 datetimes
-#
-#     RFC1123_datetime( now() ) => "Wed, 27 Mar 2013 08:26:04 GMT"
-#     RFC1123_datetime()        => "Wed, 27 Mar 2013 08:26:04 GMT"
-#
-RFC1123_datetime(t::DateTime) = begin
-    Dates.format(t, Dates.RFC1123Format) * " GMT"
-end
-RFC1123_datetime() = RFC1123_datetime(Dates.now(Dates.UTC))
-
-
 
 # HTTP Headers
 #
@@ -137,7 +125,7 @@ headers() = Dict{String,String}([
     ("Server"            , "Julia/$VERSION"),
     ("Content-Type"      , "text/html; charset=utf-8"),
     ("Content-Language"  , "en"),
-    ("Date"              , RFC1123_datetime())
+    ("Date"              , Dates.format(now(Dates.UTC),Dates.RFC1123Format))
 ])
 
 # HTTP request
