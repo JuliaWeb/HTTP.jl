@@ -15,7 +15,6 @@ This package provides types and helper functions for dealing with the HTTP proto
     (maps integer codes to string descriptions; covers all the codes from the RFCs)
 * a bitmask representation of HTTP request methods
 * a function to `escapeHTML` in a `String`
-* a pair of functions to `encodeURI` and `decodeURI`
 * a function to turn a query string from a url into a `Dict{String,String}`
 
 
@@ -102,16 +101,6 @@ The purpose of having bitmasks is that you can write `GET | POST | UPDATE` and e
 ### `escapeHTML(i::String)`
 
 `escapeHTML` will return a new `String` with the following characters escaped: `&`, `<`, `>`, `"`.
-
-### `encodeURI(decoded::String)`
-
-`encodeURI` returns a new, URI-safe string.
-It escapes all non-URI characters (only letters, digits, `-`, `_` , `.`, and `~` are allowed) in the standard way.
-
-### `decodeURI(encoded::String)`
-
-`decodeURI` returns a new `String` with all the unsafe characters returned to their original meanings.
-It works with the output of `encodeURI` as well as other standard URI encoders.
 
 
 #### `parsequerystring(query::String)`
