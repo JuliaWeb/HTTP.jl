@@ -1,16 +1,8 @@
-isdefined(Base, :__precompile__) && __precompile__()
+__precompile__()
 
 module HttpCommon
 
-using Compat
 using URIParser
-
-
-if VERSION < v"0.4-"
-    using Dates
-else
-    using Base.Dates
-end
 
 export STATUS_CODES,
        GET,
@@ -156,20 +148,20 @@ headers() = Dict{String,String}([
 # - data     => request data
 # - state    => used to store various data during request processing
 
-@compat typealias HttpData Union(Vector{UInt8}, String)
+typealias HttpData Union{Vector{UInt8}, String}
 asbytes(r::ByteString) = r.data
 asbytes(r::String) = asbytes(bytestring(r))
-asbytes(r) = @compat convert(Vector{UInt8}, r)
+asbytes(r) = convert(Vector{UInt8}, r)
 
 
 type Request
     method::String
     resource::String
     headers::Headers
-    data::@compat(Vector{UInt8})
+    data::Vector{UInt8}
     uri::URI
 end
-Request() = Request("", "", Dict{String,String}(), @compat(Vector{UInt8}()), URI(""))
+Request() = Request("", "", Dict{String,String}(), UInt8[], URI(""))
 Request(method, resource, headers, data) = Request(method, resource, headers, data, URI(""))
 
 function show(io::IO, r::Request)
@@ -211,19 +203,19 @@ type Response
     status::Int
     headers::Headers
     cookies::Cookies
-    data::@compat(Vector{UInt8})
+    data::Vector{UInt8}
     finished::Bool
     # The history of requests that generated the response. Can be greater than
     # one if a redirect was involved.
     requests::Vector{Request}
 end
 
-Response(s::Int, h::Headers, d::HttpData) = @compat Response(s, h, Cookies(), asbytes(d), false, Vector{Request}())
-Response(s::Int, h::Headers)              = @compat Response(s, h, Vector{UInt8}())
+Response(s::Int, h::Headers, d::HttpData) = Response(s, h, Cookies(), asbytes(d), false, Request[])
+Response(s::Int, h::Headers)              = Response(s, h, UInt8[])
 Response(s::Int, d::HttpData)             = Response(s, headers(), d)
 Response(d::HttpData, h::Headers)         = Response(200, h, d)
 Response(d::HttpData)                     = Response(d, headers())
-Response(s::Int)                          = @compat Response(s, headers(), Vector{UInt8}())
+Response(s::Int)                          = Response(s, headers(), UInt8[])
 Response()                                = Response(200)
 
 
@@ -273,7 +265,7 @@ function decodeURI(encoded::String)
     enc = split(replace(encoded,"+"," "),"%")
     decoded = enc[1]
     for c in enc[2:end]
-        decoded = @compat string(decoded, Char((parse(Int, c[1:2], 16))),
+        decoded = string(decoded, Char((parse(Int, c[1:2], 16))),
                                  c[3:end])
     end
     decoded
@@ -286,7 +278,7 @@ end
 function encodeURI(decoded::String)
     encoded = ""
     for c in decoded
-        encoded = @compat encoded * string(c in URIwhitelist ? c :
+        encoded = encoded * string(c in URIwhitelist ? c :
                                            "%" * uppercase(hex(Int(c))))
     end
     encoded
