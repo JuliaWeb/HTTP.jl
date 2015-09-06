@@ -5,7 +5,6 @@ module Requests
 import Base: get, write
 import Base.FS: File
 
-using Compat
 using HttpParser
 using HttpCommon
 using URIParser
@@ -49,7 +48,7 @@ requestsfor(r::Response) = r.requests
 
 const CRLF = "\r\n"
 
-import URIParser.URI
+import URIParser: URI
 import HttpCommon: Cookie
 
 function render(stream, request::Request)
@@ -181,7 +180,6 @@ function on_header_value(parser, at, len)
         r.headers[current_header] = s
     end
     r.headers["current_header"] = ""
-    # delete!(r.headers, "current_header")
     return 0
 end
 
@@ -204,7 +202,6 @@ end
 function on_body(parser, at, len)
     r = pd(parser).current_response
     append!(r.data, pointer_to_array(convert(Ptr{UInt8}, at), (len,)))
-    # r.data = string(r.data, bytestring(convert(Ptr{Uint8}, at), len))
     return 0
 end
 
@@ -216,7 +213,6 @@ function on_message_complete(parser)
 
     # delete the temporary header key
     pop!(r.headers, "current_header", nothing)
-    # delete!(r.headers, "current_header")
     return 0
 end
 
@@ -585,7 +581,6 @@ function prepare_multipart_send(uri, headers, files, verb)
     req, datasizes, boundary, chunked
 end
 
-
 function send_multipart(uri, headers, files, verb, timeout)
     req, datasizes, boundary, chunked = prepare_multipart_send(uri,headers,files,verb)
     stream = open_stream(uri,req)
@@ -593,25 +588,10 @@ function send_multipart(uri, headers, files, verb, timeout)
     process_response(stream, timeout), req
 end
 
-
-# Http Methods
-#
-# All HTTP methods support the same content arguments. There is some argument to be
-# made for disallowing this, and e.g. not allowing a request body in a GET request.
-# However, having a request-body in a GET request is not explicitly forbidden by the
-# HTTP standard and I think forcing that convention on the user is not the right way
-# to go.
-#
-
 const checkv = :(has_body && error("Multiple body options specified. Please only specify one"); has_body = true)
 
-
-if VERSION > v"0.4-"
-    timeout_in_sec(::Void) = Inf
-    timeout_in_sec(t::Dates.TimePeriod) = Dates.toms(t)/1000.
-else
-    timeout_in_sec(::Nothing) = Inf
-end
+timeout_in_sec(::Void) = Inf
+timeout_in_sec(t::Dates.TimePeriod) = Dates.toms(t)/1000.
 timeout_in_sec(t) = convert(Float64, t)
 
 cookie_value(c::Cookie) = c.value
@@ -644,7 +624,15 @@ function Base.show(io::IO, err::RedirectException)
     print(io, "RedirectException: more than $(err.max_redirects) redirects attempted.")
 end
 
-@eval function do_request(uri::URI, verb; headers = Dict{String, String}(),
+macro check_body()
+  has_body = esc(:has_body)
+  quote
+    $has_body && error("Multiple body options specified. Please only specify one")
+    $has_body = true
+  end
+end
+
+function do_request(uri::URI, verb; headers = Dict{String, String}(),
                         cookies = nothing,
                         data = nothing,
                         json = nothing,
@@ -663,7 +651,7 @@ end
     body = ""
     has_body = false
     if json !== nothing
-        $checkv
+        @check_body
         if get(headers,"Content-Type","application/json") != "application/json"
             error("Tried to send json data with incompatible Content-Type")
         end
@@ -672,7 +660,7 @@ end
     end
 
     if data !== nothing
-        $checkv
+        @check_body
         body = data
     end
 
@@ -681,7 +669,7 @@ end
     end
 
     if !isempty(files)
-        $checkv
+        @check_body
         verb == "POST" || error("Multipart file post only supported with POST")
         if haskey(headers,"Content-Type") && !beginswith(headers["Content-Type"],"multipart/form-data")
             error("""Tried to send form data with invalid Content-Type. """)
@@ -714,8 +702,6 @@ for f in [:get, :post, :put, :delete, :head,
     @eval begin
         function ($f)(uri::URI, data::String; headers::Dict=Dict())
             do_request(uri, $f_str; data=data, headers=headers)
-            # process_response(open_stream(uri, headers, data,
-                                        #  $(uppercase(string(f)))))
         end
 
         ($f)(uri::String; args...) = ($f)(URI(uri); args...)
@@ -723,8 +709,6 @@ for f in [:get, :post, :put, :delete, :head,
     end
 end
 
-if VERSION >= v"0.4.0"
-    include("precompile.jl")
-end
+include("precompile.jl")
 
 end
