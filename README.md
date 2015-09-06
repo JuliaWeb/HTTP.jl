@@ -49,7 +49,7 @@ A `Cookie` represents an HTTP cookie. It has three fields:
 of pairs of strings.
 
 
-#### Response
+#### `Response`
 
 A `Response` represents an HTTP response sent to a client by a server.
 It has six fields:
@@ -68,7 +68,7 @@ Response has many constructors - use `methods(Response)` for full list.
 
 ## Constants
 
-#### STATUS_CODES
+#### `STATUS_CODES`
 
 `STATUS_CODES` is a dictionary (`Int => String`) that maps all the
 status codes defined in RFC's to their descriptions, e.g.
