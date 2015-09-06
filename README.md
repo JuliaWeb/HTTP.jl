@@ -13,7 +13,6 @@ This package provides types and helper functions for dealing with the HTTP proto
 * types to represent `Request`s, `Response`s, and `Headers`
 * a dictionary of `STATUS_CODES`
     (maps integer codes to string descriptions; covers all the codes from the RFCs)
-* a bitmask representation of HTTP request methods
 * a function to `escapeHTML` in a `String`
 * a function to turn a query string from a url into a `Dict{String,String}`
 
@@ -89,15 +88,6 @@ STATUS_CODES[404] #=> "Not Found"
 STATUS_CODES[418] #=> "I'm a teapot"
 STATUS_CODES[500] #=> "Internal Server Error"
 ```
-    
-### HttpMethodBitmasks
-
-HttpCommon provides `Int` bitmasks to represent the HTTP request methods
-(GET, POST, PUT, UPDATE, DELETE, OPTIONS, HEAD).
-There are two dictionaries, `HttpMethodNameToBitmask` and `HttpMethodBitmaskToName`, to allow for mapping back and forth from `String` names to `Int` bitmasks.
-
-The purpose of having bitmasks is that you can write `GET | POST | UPDATE` and end up with a bitmask representing the union of those HTTP methods.
-
 
 #### `escapeHTML(i::String)`
 

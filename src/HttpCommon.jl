@@ -4,18 +4,7 @@ module HttpCommon
 
 import URIParser: URI, unescape
 
-export GET,
-       POST,
-       PUT,
-       UPDATE,
-       DELETE,
-       OPTIONS,
-       HEAD,
-       HttpMethodBitmask,
-       HttpMethodBitmasks,
-       HttpMethodNameToBitmask,
-       HttpMethodBitmaskToName,
-       Headers,
+export Headers,
        Request,
        Response,
        escapeHTML,
@@ -28,31 +17,6 @@ include("mimetypes.jl")
 # All HTTP status codes, as a Dict of code => description
 export STATUS_CODES
 include("status.jl")
-
-# HTTP method bitmasks and indexes, allow for fancy GET | POST | UPDATE style APIs.
-typealias HttpMethodBitmask Int
-
-const HttpMethodBitmasks = HttpMethodBitmask[
-    (const GET     = 2^0),
-    (const POST    = 2^1),
-    (const PUT     = 2^2),
-    (const UPDATE  = 2^3),
-    (const DELETE  = 2^4),
-    (const OPTIONS = 2^5),
-    (const HEAD    = 2^6)
-]
-
-const HttpMethodNameToBitmask = Dict{String, HttpMethodBitmask}([
-    ("GET"     , GET),
-    ("POST"    , POST),
-    ("PUT"     , PUT),
-    ("UPDATE"  , UPDATE),
-    ("DELETE"  , DELETE),
-    ("OPTIONS" , OPTIONS),
-    ("HEAD"    , HEAD)
-])
-
-const HttpMethodBitmaskToName = (HttpMethodBitmask => String)[v => k for (k, v) in HttpMethodNameToBitmask]
 
 
 # HTTP Headers
