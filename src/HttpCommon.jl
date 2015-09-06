@@ -1,234 +1,110 @@
-isdefined(Base, :__precompile__) && __precompile__()
+__precompile__()
 
 module HttpCommon
 
-using Compat
-using URIParser
+import URIParser: URI, unescape
 
+export Headers, Request, Cookie, Response,
+       escapeHTML, parsequerystring,
+       FileResponse
 
-if VERSION < v"0.4-"
-    using Dates
-else
-    using Base.Dates
-end
-
-export STATUS_CODES,
-       GET,
-       POST,
-       PUT,
-       UPDATE,
-       DELETE,
-       OPTIONS,
-       HEAD,
-       RFC1123_datetime,
-       HttpMethodBitmask,
-       HttpMethodBitmasks,
-       HttpMethodNameToBitmask,
-       HttpMethodBitmaskToName,
-       Headers,
-       Request,
-       Response,
-       escapeHTML,
-       encodeURI,
-       decodeURI,
-       parsequerystring,
-       FileResponse,
-       mimetypes
-
+export mimetypes
 include("mimetypes.jl")
 
-import Base: show, ==
-
-const STATUS_CODES = Dict([
-    (100, "Continue"),
-    (101, "Switching Protocols"),
-    (102, "Processing"),                          # RFC 2518, obsoleted by RFC 4918
-    (200, "OK"),
-    (201, "Created"),
-    (202, "Accepted"),
-    (203, "Non-Authoritative Information"),
-    (204, "No Content"),
-    (205, "Reset Content"),
-    (206, "Partial Content"),
-    (207, "Multi-Status"),                        # RFC 4918
-    (300, "Multiple Choices"),
-    (301, "Moved Permanently"),
-    (302, "Moved Temporarily"),
-    (303, "See Other"),
-    (304, "Not Modified"),
-    (305, "Use Proxy"),
-    (307, "Temporary Redirect"),
-    (400, "Bad Request"),
-    (401, "Unauthorized"),
-    (402, "Payment Required"),
-    (403, "Forbidden"),
-    (404, "Not Found"),
-    (405, "Method Not Allowed"),
-    (406, "Not Acceptable"),
-    (407, "Proxy Authentication Required"),
-    (408, "Request Time-out"),
-    (409, "Conflict"),
-    (410, "Gone"),
-    (411, "Length Required"),
-    (412, "Precondition Failed"),
-    (413, "Request Entity Too Large"),
-    (414, "Request-URI Too Large"),
-    (415, "Unsupported Media Type"),
-    (416, "Requested Range Not Satisfiable"),
-    (417, "Expectation Failed"),
-    (418, "I'm a teapot"),                        # RFC 2324
-    (422, "Unprocessable Entity"),                # RFC 4918
-    (423, "Locked"),                              # RFC 4918
-    (424, "Failed Dependency"),                   # RFC 4918
-    (425, "Unordered Collection"),                # RFC 4918
-    (426, "Upgrade Required"),                    # RFC 2817
-    (428, "Precondition Required"),               # RFC 6585
-    (429, "Too Many Requests"),                   # RFC 6585
-    (431, "Request Header Fields Too Large"),     # RFC 6585
-    (500, "Internal Server Error"),
-    (501, "Not Implemented"),
-    (502, "Bad Gateway"),
-    (503, "Service Unavailable"),
-    (504, "Gateway Time-out"),
-    (505, "HTTP Version Not Supported"),
-    (506, "Variant Also Negotiates"),             # RFC 2295
-    (507, "Insufficient Storage"),                # RFC 4918
-    (509, "Bandwidth Limit Exceeded"),
-    (510, "Not Extended"),                        # RFC 2774
-    (511, "Network Authentication Required")      # RFC 6585
-])
-
-# HTTP method bitmasks and indexes, allow for fancy GET | POST | UPDATE style APIs.
-typealias HttpMethodBitmask Int
-
-const HttpMethodBitmasks = HttpMethodBitmask[
-    (const GET     = 2^0),
-    (const POST    = 2^1),
-    (const PUT     = 2^2),
-    (const UPDATE  = 2^3),
-    (const DELETE  = 2^4),
-    (const OPTIONS = 2^5),
-    (const HEAD    = 2^6)
-]
-
-const HttpMethodNameToBitmask = Dict{String, HttpMethodBitmask}([
-    ("GET"     , GET),
-    ("POST"    , POST),
-    ("PUT"     , PUT),
-    ("UPDATE"  , UPDATE),
-    ("DELETE"  , DELETE),
-    ("OPTIONS" , OPTIONS),
-    ("HEAD"    , HEAD)
-])
-
-const HttpMethodBitmaskToName = (HttpMethodBitmask => String)[v => k for (k, v) in HttpMethodNameToBitmask]
-
-# Get RFC 1123 datetimes
-#
-#     RFC1123_datetime( now() ) => "Wed, 27 Mar 2013 08:26:04 GMT"
-#     RFC1123_datetime()        => "Wed, 27 Mar 2013 08:26:04 GMT"
-#
-RFC1123_datetime(t::DateTime) = begin
-    Dates.format(t, Dates.RFC1123Format) * " GMT"
-end
-RFC1123_datetime() = RFC1123_datetime(Dates.now(Dates.UTC))
+# All HTTP status codes, as a Dict of code => description
+export STATUS_CODES
+include("status.jl")
 
 
-
-# HTTP Headers
-#
-# Dict Type for HTTP headers
-# `headers()` for building default Response Headers
-#
+"""
+`Headers` represents the header fields for an HTTP request.
+"""
 typealias Headers Dict{String,String}
-headers() = Dict{String,String}([
-    ("Server"            , "Julia/$VERSION"),
-    ("Content-Type"      , "text/html; charset=utf-8"),
-    ("Content-Language"  , "en"),
-    ("Date"              , RFC1123_datetime())
-])
-
-# HTTP request
-#
-# - method   => valid HTTP method string (e.g. "GET")
-# - resource => requested resource (e.g. "/hello/world")
-# - headers  => HTTP headers
-# - data     => request data
-# - state    => used to store various data during request processing
-
-@compat typealias HttpData Union(Vector{UInt8}, String)
-asbytes(r::ByteString) = r.data
-asbytes(r::String) = asbytes(bytestring(r))
-asbytes(r) = @compat convert(Vector{UInt8}, r)
+headers() = Headers(
+    "Server"            => "Julia/$VERSION",
+    "Content-Type"      => "text/html; charset=utf-8",
+    "Content-Language"  => "en",
+    "Date"              => Dates.format(now(Dates.UTC), Dates.RFC1123Format) )
 
 
+"""
+A `Request` represents an HTTP request sent by a client to a server.
+It has five fields:
+
+* `method`: an HTTP methods string (e.g. "GET")
+* `resource`: the resource requested (e.g. "/hello/world")
+* `headers`: see `Headers` above
+* `data`: the request data as a vector of bytes
+"""
 type Request
-    method::String
-    resource::String
+    method::UTF8String      # HTTP method string (e.g. "GET")
+    resource::UTF8String    # Resource requested (e.g. "/hello/world")
     headers::Headers
-    data::@compat(Vector{UInt8})
+    data::Vector{UInt8}
     uri::URI
 end
-Request() = Request("", "", Dict{String,String}(), @compat(Vector{UInt8}()), URI(""))
+Request() = Request("", "", Headers(), UInt8[], URI(""))
 Request(method, resource, headers, data) = Request(method, resource, headers, data, URI(""))
 
-function show(io::IO, r::Request)
-    print(io, "Request(")
-    print(io, r.uri)
-    print(io, ", ", length(r.headers), " Headers")
-    print(io, ", ", sizeof(r.data), " Bytes in Body)")
-end
+Base.show(io::IO, r::Request) = print(io, "Request(", r.uri, ", ",
+                                        length(r.headers), " headers, ",
+                                        sizeof(r.data), " bytes in body)")
 
-# HTTP response
-#
-# - status   => HTTP status code (see: `STATUS_CODES`)
-# - headers  => HTTP headers
-# - data     => response data
-# - finished => indicates that a Response is "valid" and can be converted to an
-#               actual HTTP response
-#
-# If a Response is instantiated with all of these attributes except for
-# `finished`, `finished` will default to `false`.
-#
-# A Response can also be instantiated with an HTTP status code, in which case
-# sane defaults will be set:
-#
-#     Response(200)
-#     # => Response(200, "OK", ["Server" => "v\"0.2.0-740.r6df6\""], "200 OK", false)
-#
 
+"""
+A `Cookie` represents an HTTP cookie. It has three fields:
+`name` and `value` are strings, and `attrs` is dictionary
+of pairs of strings.
+"""
 type Cookie
     name::UTF8String
     value::UTF8String
     attrs::Dict{UTF8String, UTF8String}
 end
-
 Cookie(name, value) = Cookie(name, value, Dict{UTF8String, UTF8String}())
+Base.show(io::IO, c::Cookie) = print(io, "Cookie(", c.name, ", ", c.value,
+                                        ", ", length(c.attrs), " attributes)")
 
-typealias Cookies Dict{UTF8String, Cookie}
 
+"""
+A `Response` represents an HTTP response sent to a client by a server.
+It has six fields:
+
+* `status`: HTTP status code (see `STATUS_CODES`) [default: `200`]
+* `headers`: `Headers` [default: `HttpCommmon.headers()`]
+* `cookies`: Dictionary of strings => `Cookie`s
+* `data`: the request data as a vector of bytes [default: `UInt8[]`]
+* `finished`: `true` if the `Reponse` is valid, meaning that it can be
+  converted to an actual HTTP response [default: `false`]
+* `requests`: the history of requests that generated the response.
+  Can be greater than one if a redirect was involved.
+
+Response has many constructors - use `methods(Response)` for full list.
+"""
 type Response
     status::Int
     headers::Headers
-    cookies::Cookies
-    data::@compat(Vector{UInt8})
+    cookies::Dict{UTF8String, Cookie}
+    data::Vector{UInt8}
     finished::Bool
-    # The history of requests that generated the response. Can be greater than
-    # one if a redirect was involved.
     requests::Vector{Request}
 end
-
-Response(s::Int, h::Headers, d::HttpData) = @compat Response(s, h, Cookies(), asbytes(d), false, Vector{Request}())
-Response(s::Int, h::Headers)              = @compat Response(s, h, Vector{UInt8}())
+# If a Response is instantiated with all of fields except for `finished`,
+# `finished` will default to `false`.
+typealias HttpData Union{Vector{UInt8}, String}
+Response(s::Int, h::Headers, d::HttpData) = Response(s, h, Dict{UTF8String, Cookie}(), d, false, Request[])
+Response(s::Int, h::Headers)              = Response(s, h, UInt8[])
 Response(s::Int, d::HttpData)             = Response(s, headers(), d)
 Response(d::HttpData, h::Headers)         = Response(200, h, d)
 Response(d::HttpData)                     = Response(d, headers())
-Response(s::Int)                          = @compat Response(s, headers(), Vector{UInt8}())
+Response(s::Int)                          = Response(s, headers(), UInt8[])
 Response()                                = Response(200)
+Base.show(io::IO, r::Response) = print(io, "Response(",
+                                    r.status, " ", STATUS_CODES[r.status], ", ",
+                                    length(r.headers)," headers, ",
+                                    sizeof(r.data)," bytes in body)")
 
 
-
-show(io::IO,r::Response) = print(io,"Response(",r.status," ",STATUS_CODES[r.status],", ",length(r.headers)," Headers, ",sizeof(r.data)," Bytes in Body)")
 
 function FileResponse(filename)
     if isfile(filename)
@@ -241,76 +117,44 @@ function FileResponse(filename)
     end
 end
 
-# Escape HTML characters
-#
-# Safety first!
-#
+
+"""
+escapeHTML(i::String)
+
+Returns a string with special HTML characters escaped: &, <, >, ", '
+"""
 function escapeHTML(i::String)
-    o = replace(i, r"&(?!(\w+|\#\d+);)", "&amp;")
+    # Refer to http://stackoverflow.com/a/7382028/3822752 for spec. links
+    o = replace(i, "&", "&amp;")
+    o = replace(o, "\"", "&quot;")
+    o = replace(o, "'", "&#39;")
     o = replace(o, "<", "&lt;")
     o = replace(o, ">", "&gt;")
-    replace(o, "\"", "&quot;")
+    return o
 end
 
-# All characters that remain unencoded in URI encoding
-#                                   ( AKA URL encoding
-#                                     AKA percent-encoding )
-#
-const URIwhitelist = Set(Any['A','B','C','D','E','F','G','H','I',
-                         'J','K','L','M','N','O','P','Q','R',
-                         'S','T','U','V','W','X','Y','Z',
-                         'a','b','c','d','e','f','g','h','i',
-                         'j','k','l','m','n','o','p','q','r',
-                         's','t','u','v','w','x','y','z',
-                         '0','1','2','3','4','5','6','7','8',
-                         '9','-','_','.','~'])
 
-# decodeURI
-#
-# Decode URI encoded strings
-#
-function decodeURI(encoded::String)
-    enc = split(replace(encoded,"+"," "),"%")
-    decoded = enc[1]
-    for c in enc[2:end]
-        decoded = @compat string(decoded, Char((parse(Int, c[1:2], 16))),
-                                 c[3:end])
-    end
-    decoded
-end
+"""
+parsequerystring(query::String)
 
-# encodeURI
-#
-# Convert strings to URI encoding
-#
-function encodeURI(decoded::String)
-    encoded = ""
-    for c in decoded
-        encoded = @compat encoded * string(c in URIwhitelist ? c :
-                                           "%" * uppercase(hex(Int(c))))
-    end
-    encoded
-end
+Convert a valid querystring to a Dict:
 
-# parsequerystring
-#
-# Convert a valid querystring to a Dict:
-#
-#    q = "foo=bar&baz=%3Ca%20href%3D%27http%3A%2F%2Fwww.hackershool.com%27%3Ehello%20world%21%3C%2Fa%3E"
-#    parsequerystring(q)
-#    # => Dict("foo"=>"bar","baz"=>"<a href='http://www.hackershool.com'>hello world!</a>")
-#
-function parsequerystring(query::String)
-    q = Dict{String,String}()
-    if !('=' in query)
-        return throw("Not a valid query string: $query, must contain at least one key=value pair.")
-    end
-    for set in split(query, "&")
-        key, val = split(set, "=")
-        q[decodeURI(key)] = decodeURI(val)
+    q = "foo=bar&baz=%3Ca%20href%3D%27http%3A%2F%2Fwww.hackershool.com%27%3Ehello%20world%21%3C%2Fa%3E"
+    parsequerystring(q)
+    # Dict{ASCIIString,ASCIIString} with 2 entries:
+    #   "baz" => "<a href='http://www.hackershool.com'>hello world!</a>"
+    #   "foo" => "bar"
+"""
+function parsequerystring{T<:String}(query::T)
+    q = Dict{T,T}()
+    length(query) == 0 && return q
+    for field in split(query, "&")
+        keyval = split(field, "=")
+        length(keyval) != 2 && throw(ArgumentError("Field '$field' did not contain an '='."))
+        q[unescape(keyval[1])] = unescape(keyval[2])
     end
     q
 end
 
 
-end # module Httplib
+end # module HttpCommon

@@ -1,7 +1,7 @@
 # HttpCommon.jl
 
 [![Build Status](https://travis-ci.org/JuliaWeb/HttpCommon.jl.svg?branch=master)](https://travis-ci.org/JuliaWeb/HttpCommon.jl)
-[![Coverage Status](https://coveralls.io/repos/JuliaWeb/HttpCommon.jl/badge.svg?branch=master&service=github)](https://coveralls.io/github/JuliaWeb/HttpCommon.jl?branch=master)
+[![codecov.io](http://codecov.io/github/JuliaWeb/HttpCommon.jl/coverage.svg?branch=master)](http://codecov.io/github/JuliaWeb/HttpCommon.jl?branch=master)
 
 [![HttpCommon](http://pkg.julialang.org/badges/HttpCommon_0.3.svg)](http://pkg.julialang.org/?pkg=HttpCommon&ver=0.3)
 [![HttpCommon](http://pkg.julialang.org/badges/HttpCommon_0.4.svg)](http://pkg.julialang.org/?pkg=HttpCommon&ver=0.4)
@@ -10,86 +10,68 @@
 
 This package provides types and helper functions for dealing with the HTTP protocol in Julia:
 
-* types to represent `Request`s, `Response`s, and `Headers`
+* Types to represent `Headers`, `Request`s, `Cookie`s, and `Response`s
 * a dictionary of `STATUS_CODES`
     (maps integer codes to string descriptions; covers all the codes from the RFCs)
-* a bitmask representation of HTTP request methods
 * a function to `escapeHTML` in a `String`
-* a pair of functions to `encodeURI` and `decodeURI`
 * a function to turn a query string from a url into a `Dict{String,String}`
 
 
-## Documentation
-### Request
+## HTTP Types
 
-A `Request` represents an HTTP request sent by a client to a server. 
+#### `Headers`
 
-```julia    
-type Request
-    method::String
-    resource::String
-    headers::Headers
-    data::String
-end
+`Headers` represents the header fields for an HTTP request, and is type alias for `Dict{String,String}`.
+There is a default constructor, `headers`, that produces a reasonable default set of headers:
+```julia
+Dict( "Server"           => "Julia/$VERSION",
+      "Content-Type"     => "text/html; charset=utf-8",
+      "Content-Language" => "en",
+      "Date"             => Dates.format(now(Dates.UTC), Dates.RFC1123Format) )
 ```
 
-* `method` is an HTTP methods string ("GET", "PUT", etc)
-* `resource` is the url resource requested ("/hello/world")
-* `headers` is a `Dict` of field name `String`s to value `String`s
-* `data` is the data in the request
 
-### Response
+#### `Request`
+
+A `Request` represents an HTTP request sent by a client to a server.
+It has five fields:
+
+* `method`: an HTTP methods string (e.g. "GET")
+* `resource`: the resource requested (e.g. "/hello/world")
+* `headers`: see `Headers` above
+* `data`: the data in the request as a vector of bytes
+
+
+#### `Cookie`
+
+A `Cookie` represents an HTTP cookie. It has three fields:
+`name` and `value` are strings, and `attrs` is dictionary
+of pairs of strings.
+
+
+#### Response
 
 A `Response` represents an HTTP response sent to a client by a server.
+It has six fields:
 
-```julia
-type Response
-    status::Int
-    headers::Headers
-    data::HttpData
-    finished::Bool
-end
-```
+* `status`: HTTP status code (see `STATUS_CODES`) [default: `200`]
+* `headers`: `Headers` [default: `HttpCommmon.headers()`]
+* `cookies`: Dictionary of strings => `Cookie`s
+* `data`: the request data as a vector of bytes [default: `UInt8[]`]
+* `finished`: `true` if the `Reponse` is valid, meaning that it can be
+  converted to an actual HTTP response [default: `false`]
+* `requests`: the history of requests that generated the response.
+  Can be greater than one if a redirect was involved.
 
-* `status` is the HTTP status code (see `STATUS_CODES`) [default: `200`]
-* `headers` is the `Dict` of headers [default: `headers()`, see Headers below]
-* `data` is the response data (as a `String` or `Array{Uint8}`) [default: `""`]
-* `finished` is `true` if the `Reponse` is valid, meaning that it can be converted to an actual HTTP response [default: `false`]
+Response has many constructors - use `methods(Response)` for full list.
 
-There are a variety of constructors for `Response`, which set sane defaults for unspecified values.
 
-```julia
-Response([statuscode::Int])
-Response(statuscode::Int,[h::Headers],[d::HttpData])
-Response(d::HttpData,[h::Headers])
-```
+## Constants
 
-### Headers
+#### STATUS_CODES
 
-`Headers` is a type alias for `Dict{String,String}`.
-There is a default constructor, `headers`, to produce a reasonable default set of headers.
-The defaults are as follows:
-
-```julia
-[ "Server" => "Julia/$VERSION",
-  "Content-Type" => "text/html; charset=utf-8",
-  "Content-Language" => "en",
-  "Date" => RFC1123_datetime()]
-```
-
-The last setting, `"Date"` uses another HttpCommon function:
-
-```julia
-RFC1123_datetime([CalendarTime])
-```
-    
-When an argument is not provided, the current time (`now()`) is used.
-RFC1123 describes the correct format for putting timestamps into HTTP headers.
-
-### STATUS_CODES
-
-`STATUS_CODES` is a `const` `Dict{Int,String}`.
-It maps all the status codes defined in RFC's to their descriptions.
+`STATUS_CODES` is a dictionary (`Int => String`) that maps all the
+status codes defined in RFC's to their descriptions, e.g.
 
 ```julia
 STATUS_CODES[200] #=> "OK"
@@ -97,43 +79,30 @@ STATUS_CODES[404] #=> "Not Found"
 STATUS_CODES[418] #=> "I'm a teapot"
 STATUS_CODES[500] #=> "Internal Server Error"
 ```
-    
-### HttpMethodBitmasks
 
-HttpCommon provides `Int` bitmasks to represent the HTTP request methods
-(GET, POST, PUT, UPDATE, DELETE, OPTIONS, HEAD).
-There are two dictionaries, `HttpMethodNameToBitmask` and `HttpMethodBitmaskToName`, to allow for mapping back and forth from `String` names to `Int` bitmasks.
 
-The purpose of having bitmasks is that you can write `GET | POST | UPDATE` and end up with a bitmask representing the union of those HTTP methods.
+## Utility functions
 
-### `escapeHTML(i::String)`
+#### `escapeHTML(i::String)`
 
-`escapeHTML` will return a new `String` with the following characters escaped: `&`, `<`, `>`, `"`.
+Returns a string with special HTML characters escaped: `&, <, >, ", '`
 
-### `encodeURI(decoded::String)`
 
-`encodeURI` returns a new, URI-safe string.
-It escapes all non-URI characters (only letters, digits, `-`, `_` , `.`, and `~` are allowed) in the standard way.
+#### `parsequerystring(query::String)`
 
-### `decodeURI(encoded::String)`
-
-`decodeURI` returns a new `String` with all the unsafe characters returned to their original meanings.
-It works with the output of `encodeURI` as well as other standard URI encoders.
-
-### `parsequerystring(query::String)`
-
-`parsequerystring` takes a query string (as from a URL) and returns a `Dict{String,String}` representing the same data.
-
-An example:
+Convert a valid querystring to a Dict:
 
 ```julia
 q = "foo=bar&baz=%3Ca%20href%3D%27http%3A%2F%2Fwww.hackershool.com%27%3Ehello%20world%21%3C%2Fa%3E"
 parsequerystring(q)
-# => ["foo"=>"bar","baz"=>"<a href='http://www.hackershool.com'>hello world!</a>"]
+# Dict{ASCIIString,ASCIIString} with 2 entries:
+#   "baz" => "<a href='http://www.hackershool.com'>hello world!</a>"
+#   "foo" => "bar"
 ```
 
 
 ---
+
 
 ~~~~
 :::::::::::::
