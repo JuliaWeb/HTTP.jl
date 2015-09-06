@@ -28,36 +28,29 @@ headers() = Headers(
     "Date"              => Dates.format(now(Dates.UTC), Dates.RFC1123Format) )
 
 
-# HTTP request
-#
-# - method   => valid HTTP method string (e.g. "GET")
-# - resource => requested resource (e.g. "/hello/world")
-# - headers  => HTTP headers
-# - data     => request data
-# - state    => used to store various data during request processing
+"""
+A `Request` represents an HTTP request sent by a client to a server.
+It has five fields:
 
-typealias HttpData Union{Vector{UInt8}, String}
-asbytes(r::ByteString) = r.data
-asbytes(r::String) = asbytes(bytestring(r))
-asbytes(r) = convert(Vector{UInt8}, r)
-
-
+* `method`: an HTTP methods string (e.g. "GET")
+* `resource`: the resource requested (e.g. "/hello/world")
+* `headers`: see `Headers` above
+* `data`: the data in the request as a vector of bytes
+"""
 type Request
-    method::String
-    resource::String
+    method::UTF8String      # HTTP method string (e.g. "GET")
+    resource::UTF8String    # Resource requested (e.g. "/hello/world")
     headers::Headers
     data::Vector{UInt8}
     uri::URI
 end
-Request() = Request("", "", Dict{String,String}(), UInt8[], URI(""))
+Request() = Request("", "", Headers(), UInt8[], URI(""))
 Request(method, resource, headers, data) = Request(method, resource, headers, data, URI(""))
 
-function Base.show(io::IO, r::Request)
-    print(io, "Request(")
-    print(io, r.uri)
-    print(io, ", ", length(r.headers), " Headers")
-    print(io, ", ", sizeof(r.data), " Bytes in Body)")
-end
+Base.show(io::IO, r::Request) = print(io, "Request(", r.uri, ", ",
+                                        length(r.headers), " headers, ",
+                                        sizeof(r.data), " bytes in body)")
+
 
 # HTTP response
 #
@@ -86,6 +79,11 @@ end
 Cookie(name, value) = Cookie(name, value, Dict{UTF8String, UTF8String}())
 
 typealias Cookies Dict{UTF8String, Cookie}
+
+typealias HttpData Union{Vector{UInt8}, String}
+asbytes(r::ByteString) = r.data
+asbytes(r::String) = asbytes(bytestring(r))
+asbytes(r) = convert(Vector{UInt8}, r)
 
 type Response
     status::Int

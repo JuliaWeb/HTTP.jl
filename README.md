@@ -31,23 +31,16 @@ Dict( "Server"           => "Julia/$VERSION",
 ```
 
 
-### Request
+#### Request
 
-A `Request` represents an HTTP request sent by a client to a server. 
+A `Request` represents an HTTP request sent by a client to a server.
+It has five fields:
 
-```julia    
-type Request
-    method::String
-    resource::String
-    headers::Headers
-    data::String
-end
-```
+* `method`: an HTTP methods string (e.g. "GET")
+* `resource`: the resource requested (e.g. "/hello/world")
+* `headers`: see `Headers` above
+* `data`: the data in the request as a vector of bytes
 
-* `method` is an HTTP methods string ("GET", "PUT", etc)
-* `resource` is the url resource requested ("/hello/world")
-* `headers` is a `Dict` of field name `String`s to value `String`s
-* `data` is the data in the request
 
 ### Response
 

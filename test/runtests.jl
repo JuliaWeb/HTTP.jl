@@ -4,6 +4,11 @@ using Base.Test
 # Headers
 @test isa(HttpCommon.headers(), Headers)
 
+# Request
+@test sprint(show, Request()) == "Request(:/, 0 headers, 0 bytes in body)"
+@test sprint(show, Request("GET", "/get", HttpCommon.headers(), "")) ==
+        "Request(:/, 4 headers, 0 bytes in body)"
+
 # Escape HTML
 @test escapeHTML("<script type='text/javascript'>alert('sucker');</script> foo bar") ==
         "&lt;script type=&#39;text/javascript&#39;&gt;alert(&#39;sucker&#39;);&lt;/script&gt; foo bar"
