@@ -1,13 +1,42 @@
 using HttpCommon
 using Base.Test
 
-# Headers
+# headers
 @test isa(HttpCommon.headers(), Headers)
 
 # Request
 @test sprint(show, Request()) == "Request(:/, 0 headers, 0 bytes in body)"
 @test sprint(show, Request("GET", "/get", HttpCommon.headers(), "")) ==
         "Request(:/, 4 headers, 0 bytes in body)"
+
+# Cookie
+@test sprint(show, Cookie("test","it")) ==
+        "Cookie(test, it, 0 attributes)"
+        
+# Response
+h = HttpCommon.headers()
+@test sprint(show, Response(200, h, "HttpCommon")) ==
+        "Response(200 OK, 4 headers, 10 bytes in body)"
+@test sprint(show, Response(200, h, UInt8[1,2,3])) ==
+        "Response(200 OK, 4 headers, 3 bytes in body)"
+@test sprint(show, Response(200, h)) ==
+        "Response(200 OK, 4 headers, 0 bytes in body)"
+@test sprint(show, Response(200, "HttpCommon")) ==
+        "Response(200 OK, 4 headers, 10 bytes in body)"
+@test sprint(show, Response(200, UInt8[1,2,3])) ==
+        "Response(200 OK, 4 headers, 3 bytes in body)"
+@test sprint(show, Response("HttpCommon", h)) ==
+        "Response(200 OK, 4 headers, 10 bytes in body)"
+@test sprint(show, Response(UInt8[1,2,3], h)) ==
+        "Response(200 OK, 4 headers, 3 bytes in body)"
+@test sprint(show, Response("HttpCommon")) ==
+        "Response(200 OK, 4 headers, 10 bytes in body)"
+@test sprint(show, Response(UInt8[1,2,3])) ==
+        "Response(200 OK, 4 headers, 3 bytes in body)"
+@test sprint(show, Response(200)) ==
+        "Response(200 OK, 4 headers, 0 bytes in body)"
+@test sprint(show, Response()) ==
+        "Response(200 OK, 4 headers, 0 bytes in body)"
 
 # Escape HTML
 @test escapeHTML("<script type='text/javascript'>alert('sucker');</script> foo bar") ==

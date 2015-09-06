@@ -10,7 +10,7 @@
 
 This package provides types and helper functions for dealing with the HTTP protocol in Julia:
 
-* types to represent `Request`s, `Response`s, and `Headers`
+* Types to represent `Headers`, `Request`s, `Cookie`s, and `Response`s
 * a dictionary of `STATUS_CODES`
     (maps integer codes to string descriptions; covers all the codes from the RFCs)
 * a function to `escapeHTML` in a `String`
@@ -31,7 +31,7 @@ Dict( "Server"           => "Julia/$VERSION",
 ```
 
 
-#### Request
+#### `Request`
 
 A `Request` represents an HTTP request sent by a client to a server.
 It has five fields:
@@ -42,31 +42,28 @@ It has five fields:
 * `data`: the data in the request as a vector of bytes
 
 
-### Response
+#### `Cookie`
+
+A `Cookie` represents an HTTP cookie. It has three fields:
+`name` and `value` are strings, and `attrs` is dictionary
+of pairs of strings.
+
+
+#### Response
 
 A `Response` represents an HTTP response sent to a client by a server.
+It has six fields:
 
-```julia
-type Response
-    status::Int
-    headers::Headers
-    data::HttpData
-    finished::Bool
-end
-```
+* `status`: HTTP status code (see `STATUS_CODES`) [default: `200`]
+* `headers`: `Headers` [default: `HttpCommmon.headers()`]
+* `cookies`: Dictionary of strings => `Cookie`s
+* `data`: the request data as a vector of bytes [default: `UInt8[]`]
+* `finished`: `true` if the `Reponse` is valid, meaning that it can be
+  converted to an actual HTTP response [default: `false`]
+* `requests`: the history of requests that generated the response.
+  Can be greater than one if a redirect was involved.
 
-* `status` is the HTTP status code (see `STATUS_CODES`) [default: `200`]
-* `headers` is the `Dict` of headers [default: `headers()`, see Headers below]
-* `data` is the response data (as a `String` or `Array{Uint8}`) [default: `""`]
-* `finished` is `true` if the `Reponse` is valid, meaning that it can be converted to an actual HTTP response [default: `false`]
-
-There are a variety of constructors for `Response`, which set sane defaults for unspecified values.
-
-```julia
-Response([statuscode::Int])
-Response(statuscode::Int,[h::Headers],[d::HttpData])
-Response(d::HttpData,[h::Headers])
-```
+Response has many constructors - use `methods(Response)` for full list.
 
 
 #### STATUS_CODES

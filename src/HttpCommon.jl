@@ -4,11 +4,8 @@ module HttpCommon
 
 import URIParser: URI, unescape
 
-export Headers,
-       Request,
-       Response,
-       escapeHTML,
-       parsequerystring,
+export Headers, Request, Cookie, Response,
+       escapeHTML, parsequerystring,
        FileResponse
 
 export mimetypes
@@ -19,7 +16,9 @@ export STATUS_CODES
 include("status.jl")
 
 
-# `Headers` represents the header fields for an HTTP request.
+"""
+`Headers` represents the header fields for an HTTP request.
+"""
 typealias Headers Dict{String,String}
 headers() = Headers(
     "Server"            => "Julia/$VERSION",
@@ -35,7 +34,7 @@ It has five fields:
 * `method`: an HTTP methods string (e.g. "GET")
 * `resource`: the resource requested (e.g. "/hello/world")
 * `headers`: see `Headers` above
-* `data`: the data in the request as a vector of bytes
+* `data`: the request data as a vector of bytes
 """
 type Request
     method::UTF8String      # HTTP method string (e.g. "GET")
@@ -52,61 +51,60 @@ Base.show(io::IO, r::Request) = print(io, "Request(", r.uri, ", ",
                                         sizeof(r.data), " bytes in body)")
 
 
-# HTTP response
-#
-# - status   => HTTP status code (see: `STATUS_CODES`)
-# - headers  => HTTP headers
-# - data     => response data
-# - finished => indicates that a Response is "valid" and can be converted to an
-#               actual HTTP response
-#
-# If a Response is instantiated with all of these attributes except for
-# `finished`, `finished` will default to `false`.
-#
-# A Response can also be instantiated with an HTTP status code, in which case
-# sane defaults will be set:
-#
-#     Response(200)
-#     # => Response(200, "OK", ["Server" => "v\"0.2.0-740.r6df6\""], "200 OK", false)
-#
-
+"""
+A `Cookie` represents an HTTP cookie. It has three fields:
+`name` and `value` are strings, and `attrs` is dictionary
+of pairs of strings.
+"""
 type Cookie
     name::UTF8String
     value::UTF8String
     attrs::Dict{UTF8String, UTF8String}
 end
-
 Cookie(name, value) = Cookie(name, value, Dict{UTF8String, UTF8String}())
+Base.show(io::IO, c::Cookie) = print(io, "Cookie(", c.name, ", ", c.value,
+                                        ", ", length(c.attrs), " attributes)")
 
-typealias Cookies Dict{UTF8String, Cookie}
 
-typealias HttpData Union{Vector{UInt8}, String}
-asbytes(r::ByteString) = r.data
-asbytes(r::String) = asbytes(bytestring(r))
-asbytes(r) = convert(Vector{UInt8}, r)
+"""
+A `Response` represents an HTTP response sent to a client by a server.
+It has six fields:
 
+* `status`: HTTP status code (see `STATUS_CODES`) [default: `200`]
+* `headers`: `Headers` [default: `HttpCommmon.headers()`]
+* `cookies`: Dictionary of strings => `Cookie`s
+* `data`: the request data as a vector of bytes [default: `UInt8[]`]
+* `finished`: `true` if the `Reponse` is valid, meaning that it can be
+  converted to an actual HTTP response [default: `false`]
+* `requests`: the history of requests that generated the response.
+  Can be greater than one if a redirect was involved.
+
+Response has many constructors - use `methods(Response)` for full list.
+"""
 type Response
     status::Int
     headers::Headers
-    cookies::Cookies
+    cookies::Dict{UTF8String, Cookie}
     data::Vector{UInt8}
     finished::Bool
-    # The history of requests that generated the response. Can be greater than
-    # one if a redirect was involved.
     requests::Vector{Request}
 end
-
-Response(s::Int, h::Headers, d::HttpData) = Response(s, h, Cookies(), asbytes(d), false, Request[])
+# If a Response is instantiated with all of fields except for `finished`,
+# `finished` will default to `false`.
+typealias HttpData Union{Vector{UInt8}, String}
+Response(s::Int, h::Headers, d::HttpData) = Response(s, h, Dict{UTF8String, Cookie}(), d, false, Request[])
 Response(s::Int, h::Headers)              = Response(s, h, UInt8[])
 Response(s::Int, d::HttpData)             = Response(s, headers(), d)
 Response(d::HttpData, h::Headers)         = Response(200, h, d)
 Response(d::HttpData)                     = Response(d, headers())
 Response(s::Int)                          = Response(s, headers(), UInt8[])
 Response()                                = Response(200)
+Base.show(io::IO, r::Response) = print(io, "Response(",
+                                    r.status, " ", STATUS_CODES[r.status], ", ",
+                                    length(r.headers)," headers, ",
+                                    sizeof(r.data)," bytes in body)")
 
 
-
-Base.show(io::IO,r::Response) = print(io,"Response(",r.status," ",STATUS_CODES[r.status],", ",length(r.headers)," Headers, ",sizeof(r.data)," Bytes in Body)")
 
 function FileResponse(filename)
     if isfile(filename)
