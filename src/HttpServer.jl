@@ -173,7 +173,7 @@ end
 
 import Base.write
 @doc "Converts a `Response` to an HTTP response string" ->
-function write{T<:IO}(io::T, response::Response)
+function write(io::IO, response::Response)
     write(io, join(["HTTP/1.1", response.status, HttpCommon.STATUS_CODES[response.status], "\r\n"], " "))
 
     response.headers["Content-Length"] = string(sizeof(response.data))
