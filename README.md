@@ -1,7 +1,7 @@
 # HttpServer.jl
 
 [![Build Status](https://travis-ci.org/JuliaWeb/HttpServer.jl.svg?branch=master)](https://travis-ci.org/JuliaWeb/HttpServer.jl)
-[![Coverage Status](https://img.shields.io/coveralls/JuliaWeb/HttpServer.jl.svg)](https://coveralls.io/r/JuliaWeb/HttpServer.jl)
+[![codecov.io](http://codecov.io/github/JuliaWeb/HttpServer.jl/coverage.svg?branch=master)](http://codecov.io/github/JuliaWeb/HttpServer.jl?branch=master)
 
 [![HttpServer](http://pkg.julialang.org/badges/HttpServer_0.3.svg)](http://pkg.julialang.org/?pkg=HttpServer&ver=0.3)
 [![HttpServer](http://pkg.julialang.org/badges/HttpServer_0.4.svg)](http://pkg.julialang.org/?pkg=HttpServer&ver=0.4)
