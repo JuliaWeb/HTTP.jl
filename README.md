@@ -3,7 +3,7 @@
 An HTTP client written in Julia. Uses `joyent/http-parser` via [HttpParser.jl](https://github.com/JuliaWeb/HttpParser.jl).
 
 [![Build Status](https://travis-ci.org/JuliaWeb/Requests.jl.svg?branch=master)](https://travis-ci.org/JuliaWeb/Requests.jl)
-[![Coverage Status](https://coveralls.io/repos/JuliaWeb/Requests.jl/badge.svg?branch=master&service=github)](https://coveralls.io/github/JuliaWeb/Requests.jl?branch=master)
+[![codecov.io](http://codecov.io/github/JuliaWeb/Requests.jl/coverage.svg?branch=master)](http://codecov.io/github/JuliaWeb/Requests.jl?branch=master)
 
 [![Requests](http://pkg.julialang.org/badges/Requests_0.3.svg)](http://pkg.julialang.org/?pkg=Requests&ver=0.3)
 [![Requests](http://pkg.julialang.org/badges/Requests_0.4.svg)](http://pkg.julialang.org/?pkg=Requests&ver=0.4)
