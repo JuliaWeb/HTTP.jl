@@ -23,8 +23,6 @@ export HttpHandler,
        Request,
        Response,
        escapeHTML,
-       encodeURI,
-       decodeURI,
        parsequerystring
 
 import Base: run, listen
