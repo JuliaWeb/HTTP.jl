@@ -2,8 +2,7 @@ __precompile__()
 
 module HttpCommon
 
-using URIParser
-import URIParser: unescape
+import URIParser: URI, unescape
 
 export STATUS_CODES,
        GET,
@@ -26,8 +25,6 @@ export STATUS_CODES,
        mimetypes
 
 include("mimetypes.jl")
-
-import Base: show, ==
 
 const STATUS_CODES = Dict([
     (100, "Continue"),
@@ -151,7 +148,7 @@ end
 Request() = Request("", "", Dict{String,String}(), UInt8[], URI(""))
 Request(method, resource, headers, data) = Request(method, resource, headers, data, URI(""))
 
-function show(io::IO, r::Request)
+function Base.show(io::IO, r::Request)
     print(io, "Request(")
     print(io, r.uri)
     print(io, ", ", length(r.headers), " Headers")
@@ -207,7 +204,7 @@ Response()                                = Response(200)
 
 
 
-show(io::IO,r::Response) = print(io,"Response(",r.status," ",STATUS_CODES[r.status],", ",length(r.headers)," Headers, ",sizeof(r.data)," Bytes in Body)")
+Base.show(io::IO,r::Response) = print(io,"Response(",r.status," ",STATUS_CODES[r.status],", ",length(r.headers)," Headers, ",sizeof(r.data)," Bytes in Body)")
 
 function FileResponse(filename)
     if isfile(filename)
@@ -220,15 +217,20 @@ function FileResponse(filename)
     end
 end
 
-# Escape HTML characters
-#
-# Safety first!
-#
+
+"""
+escapeHTML(i::String)
+
+Returns a string with special HTML characters escaped: &, <, >, ", '
+"""
 function escapeHTML(i::String)
-    o = replace(i, r"&(?!(\w+|\#\d+);)", "&amp;")
+    # Refer to http://stackoverflow.com/a/7382028/3822752 for spec. links
+    o = replace(i, "&", "&amp;")
+    o = replace(o, "\"", "&quot;")
+    o = replace(o, "'", "&#39;")
     o = replace(o, "<", "&lt;")
     o = replace(o, ">", "&gt;")
-    replace(o, "\"", "&quot;")
+    return o
 end
 
 

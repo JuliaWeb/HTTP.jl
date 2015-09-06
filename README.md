@@ -98,9 +98,10 @@ There are two dictionaries, `HttpMethodNameToBitmask` and `HttpMethodBitmaskToNa
 
 The purpose of having bitmasks is that you can write `GET | POST | UPDATE` and end up with a bitmask representing the union of those HTTP methods.
 
-### `escapeHTML(i::String)`
 
-`escapeHTML` will return a new `String` with the following characters escaped: `&`, `<`, `>`, `"`.
+#### `escapeHTML(i::String)`
+
+Returns a string with special HTML characters escaped: `&, <, >, ", '`
 
 
 #### `parsequerystring(query::String)`
