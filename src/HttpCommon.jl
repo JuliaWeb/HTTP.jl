@@ -19,18 +19,14 @@ export STATUS_CODES
 include("status.jl")
 
 
-# HTTP Headers
-#
-# Dict Type for HTTP headers
-# `headers()` for building default Response Headers
-#
+# `Headers` represents the header fields for an HTTP request.
 typealias Headers Dict{String,String}
-headers() = Dict{String,String}([
-    ("Server"            , "Julia/$VERSION"),
-    ("Content-Type"      , "text/html; charset=utf-8"),
-    ("Content-Language"  , "en"),
-    ("Date"              , Dates.format(now(Dates.UTC),Dates.RFC1123Format))
-])
+headers() = Headers(
+    "Server"            => "Julia/$VERSION",
+    "Content-Type"      => "text/html; charset=utf-8",
+    "Content-Language"  => "en",
+    "Date"              => Dates.format(now(Dates.UTC), Dates.RFC1123Format) )
+
 
 # HTTP request
 #

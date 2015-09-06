@@ -1,6 +1,9 @@
 using HttpCommon
 using Base.Test
 
+# Headers
+@test isa(HttpCommon.headers(), Headers)
+
 # Escape HTML
 @test escapeHTML("<script type='text/javascript'>alert('sucker');</script> foo bar") ==
         "&lt;script type=&#39;text/javascript&#39;&gt;alert(&#39;sucker&#39;);&lt;/script&gt; foo bar"

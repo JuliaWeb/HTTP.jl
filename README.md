@@ -17,7 +17,20 @@ This package provides types and helper functions for dealing with the HTTP proto
 * a function to turn a query string from a url into a `Dict{String,String}`
 
 
-## Documentation
+## HTTP Types
+
+#### `Headers`
+
+`Headers` represents the header fields for an HTTP request, and is type alias for `Dict{String,String}`.
+There is a default constructor, `headers`, that produces a reasonable default set of headers:
+```julia
+Dict( "Server"           => "Julia/$VERSION",
+      "Content-Type"     => "text/html; charset=utf-8",
+      "Content-Language" => "en",
+      "Date"             => Dates.format(now(Dates.UTC), Dates.RFC1123Format) )
+```
+
+
 ### Request
 
 A `Request` represents an HTTP request sent by a client to a server. 
@@ -62,22 +75,8 @@ Response(statuscode::Int,[h::Headers],[d::HttpData])
 Response(d::HttpData,[h::Headers])
 ```
 
-### Headers
 
-`Headers` is a type alias for `Dict{String,String}`.
-There is a default constructor, `headers`, to produce a reasonable default set of headers.
-The defaults are as follows:
-
-```julia
-[ "Server" => "Julia/$VERSION",
-  "Content-Type" => "text/html; charset=utf-8",
-  "Content-Language" => "en",
-  "Date" => Dates.format(now(Dates.UTC),Dates.RFC1123Format)]
-```
-
-Where the last setting, `"Date"` uses RFC1123 formatting for dates in HTTP headers.
-
-### STATUS_CODES
+#### STATUS_CODES
 
 `STATUS_CODES` is a `const` `Dict{Int,String}`.
 It maps all the status codes defined in RFC's to their descriptions.
