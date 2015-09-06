@@ -5,11 +5,8 @@ module HttpCommon
 import URIParser: URI, unescape
 
 export Headers, Request, Cookie, Response,
-       escapeHTML, parsequerystring,
-       FileResponse
+       escapeHTML, parsequerystring
 
-export mimetypes
-include("mimetypes.jl")
 
 # All HTTP status codes, as a Dict of code => description
 export STATUS_CODES
@@ -103,19 +100,6 @@ Base.show(io::IO, r::Response) = print(io, "Response(",
                                     r.status, " ", STATUS_CODES[r.status], ", ",
                                     length(r.headers)," headers, ",
                                     sizeof(r.data)," bytes in body)")
-
-
-
-function FileResponse(filename)
-    if isfile(filename)
-        s = open(readbytes,filename)
-        (_, ext) = splitext(filename)
-        mime = length(ext)>1 && haskey(mimetypes,ext[2:end]) ? mimetypes[ext[2:end]] : "application/octet-stream"
-        Response(200, Dict{String,String}([("Content-Type",mime)]), s)
-    else
-        Response(404, "Not Found - file $filename could not be found")
-    end
-end
 
 
 """
