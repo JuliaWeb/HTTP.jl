@@ -11,10 +11,8 @@
 This package provides types and helper functions for dealing with the HTTP protocol in Julia:
 
 * Types to represent `Headers`, `Request`s, `Cookie`s, and `Response`s
-* a dictionary of `STATUS_CODES`
-    (maps integer codes to string descriptions; covers all the codes from the RFCs)
-* a function to `escapeHTML` in a `String`
-* a function to turn a query string from a url into a `Dict{String,String}`
+* A dictionary of `STATUS_CODES` that maps HTTP codes to descriptions
+* Utility functions  `escapeHTML`and  `parsequerystring`
 
 
 ## HTTP Types
@@ -63,7 +61,7 @@ It has six fields:
 * `requests`: the history of requests that generated the response.
   Can be greater than one if a redirect was involved.
 
-Response has many constructors - use `methods(Response)` for full list.
+`Response` has many constructors - use `methods(Response)` for full list.
 
 
 ## Constants
