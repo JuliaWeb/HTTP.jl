@@ -5,10 +5,6 @@ module Requests
 import Base: get, write
 import Base.FS: File
 
-if VERSION <= v"0.3"
-    import Base: put
-end
-
 using Compat
 using HttpParser
 using HttpCommon
@@ -66,7 +62,7 @@ function render(stream, request::Request)
 end
 
 function default_request(method,resource,host,data,user_headers=Dict{None,None}())
-    headers = @compat Dict(
+    headers = Dict(
         "User-Agent" => "Requests.jl/0.0.0",
         "Host" => host,
         "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
@@ -128,7 +124,7 @@ end
 
 function on_url(parser, at, len)
     r = pd(parser).current_response
-    r.resource = string(r.resource, bytestring(convert(Ptr{Uint8}, at),@compat Int(len)))
+    r.resource = string(r.resource, bytestring(convert(Ptr{Uint8}, at), Int(len)))
     return 0
 end
 
@@ -153,12 +149,12 @@ end
 function parse_set_cookie(value)
     parts = split(value, ';')
     isempty(parts) && return Nullable{Cookie}()
-    nameval = @compat split(parts[1], '=', limit=2)
+    nameval = split(parts[1], '=', limit=2)
     length(nameval)==2 || return Nullable{Cookie}()
     name, value = nameval
     c = Cookie(strip(name), strip(value))
     for part in parts[2:end]
-        nameval = @compat split(part, '=', limit=2)
+        nameval = split(part, '=', limit=2)
         if length(nameval)==2
             name, value = nameval
             c.attrs[strip(name)] = strip(value)
@@ -173,7 +169,7 @@ const IS_SET_COOKIE = r"set-cookie"i
 
 function on_header_value(parser, at, len)
     r = pd(parser).current_response
-    s = bytestring(convert(Ptr{Uint8}, at),@compat Int(len))
+    s = bytestring(convert(Ptr{Uint8}, at), Int(len))
     current_header = r.headers["current_header"]
     if ismatch(IS_SET_COOKIE, current_header)
         maybe_cookie = parse_set_cookie(s)
@@ -265,24 +261,20 @@ end
 function process_response(stream, timeout)
     r = Response()
     rp = ResponseParser(r,stream)
-    # Emulate a Channel for backwards compatibility with .3
-    data_channel = @compat Vector{Tuple{Vector{UInt8}, Bool}}(1)
+    data_channel = Channel{Nullable{Vector{UInt8}}}(1)
     while isopen(stream)
-        c = Condition()
         data_task = @async begin
-            data_channel[1] = readavailable(stream), true
-            notify(c)
+            put!(data_channel, Nullable(readavailable(stream)))
         end
         if timeout < Inf
             timer_task = @async begin
                 sleep(timeout)
-                data_channel[1] = (UInt8[], false)
-                notify(c)
+                put!(data_channel, Nullable{Vector{UInt8}}())
             end
         end
-        wait(c)
-        data, got_data = data_channel[1]
-        got_data || throw(TimeoutException(timeout))
+        maybe_data = take!(data_channel)
+        isnull(maybe_data) && throw(TimeoutException(timeout))
+        data = get(maybe_data)
         if length(data) > 0
             add_data(rp, data)
         end
@@ -293,7 +285,6 @@ function process_response(stream, timeout)
     end
     r
 end
-
 
 # Passes `request_data` into `parser`
 function add_data(parser::ResponseParser, request_data)
@@ -448,11 +439,7 @@ end
 # Write a file by mmaping it
 function write_file(stream,file::IOStream,datasize,doclose)
     @assert datasize != -1
-    if VERSION <= v"0.3"
-        write(stream, mmap_array(Uint8,(datasize,),file,position(file)))
-    else
-        write(stream, Mmap.mmap(file, Vector{UInt8}, datasize, position(file)))
-    end
+    write(stream, Mmap.mmap(file, Vector{UInt8}, datasize, position(file)))
     doclose && close(file)
 end
 
@@ -666,7 +653,7 @@ end
                         query::Dict = Dict(),
                         allow_redirects = true,
                         max_redirects = MAX_REDIRECTS,
-                        request_history = @compat(Vector{Request}()),
+                        request_history = Request[],
                         )
 
     query_str = format_query_str(query; uri = uri)
