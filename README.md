@@ -66,10 +66,12 @@ It has six fields:
 Response has many constructors - use `methods(Response)` for full list.
 
 
+## Constants
+
 #### STATUS_CODES
 
-`STATUS_CODES` is a `const` `Dict{Int,String}`.
-It maps all the status codes defined in RFC's to their descriptions.
+`STATUS_CODES` is a dictionary (`Int => String`) that maps all the
+status codes defined in RFC's to their descriptions, e.g.
 
 ```julia
 STATUS_CODES[200] #=> "OK"
@@ -77,6 +79,9 @@ STATUS_CODES[404] #=> "Not Found"
 STATUS_CODES[418] #=> "I'm a teapot"
 STATUS_CODES[500] #=> "Internal Server Error"
 ```
+
+
+## Utility functions
 
 #### `escapeHTML(i::String)`
 
