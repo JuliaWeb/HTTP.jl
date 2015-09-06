@@ -1,5 +1,4 @@
-isdefined(Base, :__precompile__) && __precompile__(false)
-
+__precompile__(true)
 module Requests
 
 import Base: get, write
@@ -8,7 +7,7 @@ import Base.FS: File
 using HttpParser
 using HttpCommon
 using URIParser
-using GnuTLS
+using MbedTLS
 using Codecs
 using JSON
 using Zlib
@@ -29,6 +28,9 @@ function __init__()
     global const on_headers_complete_cb = cfunction(on_headers_complete, HTTP_CB...)
     global const on_body_cb = cfunction(on_body, HTTP_DATA_CB...)
     global const on_message_complete_cb = cfunction(on_message_complete, HTTP_CB...)
+
+    global const TLS_VERIFY = get_default_tls_config(true)
+    global const TLS_NOVERIFY = get_default_tls_config(false)
 end
 
 ## Convenience methods for extracting the payload of a response
@@ -164,13 +166,13 @@ function parse_set_cookie(value)
     return Nullable(c)
 end
 
-const IS_SET_COOKIE = r"set-cookie"i
+const is_set_cookie = r"set-cookie"i
 
 function on_header_value(parser, at, len)
     r = pd(parser).current_response
     s = bytestring(convert(Ptr{Uint8}, at), Int(len))
     current_header = r.headers["current_header"]
-    if ismatch(IS_SET_COOKIE, current_header)
+    if is_set_cookie(current_header)
         maybe_cookie = parse_set_cookie(s)
         if !isnull(maybe_cookie)
             cookie = get(maybe_cookie)
@@ -287,11 +289,32 @@ function add_data(parser::ResponseParser, request_data)
     http_parser_execute(parser.parser, parser.settings, request_data)
 end
 
-open_stream(uri::URI, headers, data, method) = open_stream(uri,default_request(uri,headers,data,method))
+# open_stream(uri::URI, headers, data, method) = open_stream(uri,default_request(uri,headers,data,method))
 
 scheme(uri::URI) = isdefined(uri, :scheme) ? uri.scheme : uri.schema
 
-function open_stream(uri::URI,req::Request)
+function tls_dbg(level, filename, number, msg)
+    warn("MbedTLS emitted debug info: $msg in $filename:$number")
+end
+
+function get_default_tls_config(verify=true)
+    conf = MbedTLS.SSLConfig()
+    MbedTLS.config_defaults!(conf)
+
+    entropy = MbedTLS.Entropy()
+    rng = MbedTLS.CtrDrbg()
+    MbedTLS.seed!(rng, entropy)
+    MbedTLS.rng!(conf, rng)
+
+    MbedTLS.authmode!(conf,
+      verify ? MbedTLS.MBEDTLS_SSL_VERIFY_REQUIRED : MbedTLS.MBEDTLS_SSL_VERIFY_NONE)
+    MbedTLS.dbg!(conf, tls_dbg)
+    MbedTLS.ca_chain!(conf)
+
+    conf
+end
+
+function open_stream(uri::URI,req::Request,tls_conf)
     if scheme(uri) != "http" && scheme(uri) != "https"
         error("Unsupported scheme \"$(scheme(uri))\"")
     end
@@ -301,11 +324,10 @@ function open_stream(uri::URI,req::Request)
     else
         # Initialize HTTPS
         sock = Base.connect(ip, uri.port == 0 ? 443 : uri.port)
-        stream = GnuTLS.Session()
-        set_priority_string!(stream)
-        set_credentials!(stream,GnuTLS.CertificateStore())
-        associate_stream(stream,sock)
-        handshake!(stream)
+        stream = MbedTLS.SSLContext()
+        MbedTLS.setup!(stream, tls_conf)
+        MbedTLS.set_bio!(stream, sock)
+        MbedTLS.handshake(stream)
     end
     render(stream, req)
     stream
@@ -581,9 +603,9 @@ function prepare_multipart_send(uri, headers, files, verb)
     req, datasizes, boundary, chunked
 end
 
-function send_multipart(uri, headers, files, verb, timeout)
+function send_multipart(uri, headers, files, verb, timeout, tls_conf)
     req, datasizes, boundary, chunked = prepare_multipart_send(uri,headers,files,verb)
-    stream = open_stream(uri,req)
+    stream = open_stream(uri,req,tls_conf)
     do_multipart_send(stream,files,datasizes, boundary, chunked)
     process_response(stream, timeout), req
 end
@@ -602,16 +624,22 @@ end
 cookie_request_header(cookies::AbstractVector{Cookie}) =
     cookie_request_header([cookie.name => cookie.value for cookie in cookies])
 
+const is_location = r"^location$"i
+
 function get_redirect_uri(response)
     300 <= statuscode(response) < 400 || return Nullable{URI}()
     hdrs = headers(response)
-    haskey(hdrs, "Location") || return Nullable{URI}()
-    uri = URI(hdrs["Location"])
-    if isempty(uri.host)  # Redirect URL was given as a relative path
-        request = requestfor(response)
-        uri = URI(request.uri.host, uri.path)
+    for (key, val) in hdrs
+        if is_location(key)
+            uri = URI(val)
+            if isempty(uri.host)  # Redirect URL was given as a relative path
+                request = requestfor(response)
+                uri = URI(request.uri.host, uri.path)
+            end
+            return Nullable(uri)
+        end
     end
-    Nullable(uri)
+    return Nullable{URI}()
 end
 
 const MAX_REDIRECTS = 5
@@ -642,6 +670,7 @@ function do_request(uri::URI, verb; headers = Dict{String, String}(),
                         allow_redirects = true,
                         max_redirects = MAX_REDIRECTS,
                         request_history = Request[],
+                        tls_conf = TLS_VERIFY
                         )
 
     query_str = format_query_str(query; uri = uri)
@@ -674,13 +703,13 @@ function do_request(uri::URI, verb; headers = Dict{String, String}(),
         if haskey(headers,"Content-Type") && !beginswith(headers["Content-Type"],"multipart/form-data")
             error("""Tried to send form data with invalid Content-Type. """)
         end
-        response, request = send_multipart(newuri, headers, files, verb, timeout_sec)
+        response, request = send_multipart(newuri, headers, files, verb, timeout_sec, tls_conf)
         push!(request_history, request)
         response.requests = request_history
     else
         request = default_request(newuri, headers, body, verb)
         push!(request_history, request)
-        response = process_response(open_stream(newuri, request), timeout_sec)
+        response = process_response(open_stream(newuri, request, tls_conf), timeout_sec)
         response.requests = request_history
     end
     if allow_redirects && verb ≠ :head

@@ -2,8 +2,7 @@ julia 0.4-
 HttpCommon
 HttpParser
 URIParser
-GnuTLS
+MbedTLS
 Codecs
 JSON
-Compat
 Zlib
