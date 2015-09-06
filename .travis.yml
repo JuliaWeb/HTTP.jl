@@ -3,7 +3,6 @@ os:
     - linux
     - osx
 julia:
-    - release
     - nightly
 notifications:
     email: false
@@ -13,4 +12,4 @@ script:
     - julia -e 'Pkg.clone(pwd())'
     - julia -e 'Pkg.test("Requests", coverage=true)'
 after_success:
-    - julia -e 'cd(Pkg.dir("Requests")); Pkg.add("Coverage"); using Coverage; Coveralls.submit(process_folder())'
+    - julia -e 'cd(Pkg.dir("Requests")); Pkg.add("Coverage"); using Coverage; Codecov.submit(process_folder())'
