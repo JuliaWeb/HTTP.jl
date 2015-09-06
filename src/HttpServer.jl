@@ -388,4 +388,21 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
     end
 end
 
+
+
+include("mimetypes.jl")
+
+function FileResponse(filename)
+    if isfile(filename)
+        s = open(readbytes,filename)
+        (_, ext) = splitext(filename)
+        mime = length(ext)>1 && haskey(mimetypes,ext[2:end]) ? mimetypes[ext[2:end]] : "application/octet-stream"
+        Response(200, Dict{String,String}([("Content-Type",mime)]), s)
+    else
+        Response(404, "Not Found - file $filename could not be found")
+    end
+end
+
+
+
 end # module HttpServer
