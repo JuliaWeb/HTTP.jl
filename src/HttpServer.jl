@@ -356,8 +356,7 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
     # If websockets are enabled and claim this request, defer to `server.
     # websock` and return. Otherwise, call `server.http.handle` to get a
     # `Response` for the `client`. Catches any errors with `server.http.
-    # handle`, returns a `500` and writes a stacktrace to `stdout`. Closes all
-    # connections after response ( should be changed to support keep-alive )
+    # handle`, returns a `500` and writes a stacktrace to `stdout`.
     #
     function on_message_complete(req::Request)
         if websockets_enabled && is_websocket_handshake(server.websock, req)
@@ -378,12 +377,21 @@ function message_handler(server::Server, client::Client, websockets_enabled::Boo
             Base.display_error(err, catch_backtrace())      # Prints backtrace without throwing
         end
 
+        # We have a Keep-Alive header set to 0 or 1 in RequestParser
+        # to denote if the client wants keep-alive or not
+        # We also have to check if the server wants to close the connection
+        # If this is keep-alive, we need to add Connection header with keep-alive
+        local keep_alive = get(req.headers, "Keep-Alive", nothing) == "1" &&
+                           get(response.headers, "Connection", nothing) != "close"
+        if keep_alive
+            response.headers["Connection"] = "keep-alive"
+        end
 
         write(client.sock, response)
         event("write", server, client, response)
 
-        if get(req.headers, "Connection", nothing) == "close"
-            #close(client.sock)
+        if !keep_alive
+            close(client.sock)
         end
     end
 end
