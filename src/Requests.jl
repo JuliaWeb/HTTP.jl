@@ -93,16 +93,15 @@ end
 
 type ResponseParserData
     current_response::Response
-    sock::IO
 end
 
 immutable ResponseParser
     parser::Parser
     settings::ParserSettings
 
-    function ResponseParser(r,sock)
+    function ResponseParser(r)
         parser = Parser()
-        parser.data = ResponseParserData(r,sock)
+        parser.data = ResponseParserData(r)
         http_parser_init(parser,false)
         settings = ParserSettings(on_message_begin_cb, on_url_cb,
                           on_status_complete_cb, on_header_field_cb,
@@ -211,7 +210,7 @@ function on_message_complete(parser)
     p = pd(parser)
     r = p.current_response
     r.finished = true
-    close(p.sock)
+    # close(p.sock)
 
     # delete the temporary header key
     pop!(r.headers, "current_header", nothing)
@@ -258,26 +257,33 @@ end
 
 function process_response(stream, timeout)
     r = Response()
-    rp = ResponseParser(r,stream)
-    data_channel = Channel{Nullable{Vector{UInt8}}}(1)
-    while isopen(stream)
+    r.finished = false
+    rp = ResponseParser(r)
+    data_channel = Channel{Tuple{Symbol, Nullable{Vector{UInt8}}}}(1)
+    while !r.finished
         data_task = @async begin
-            put!(data_channel, Nullable(readavailable(stream)))
+            if eof(stream)
+                put!(data_channel, (:eof, Nullable{Vector{UInt8}}()))
+            else
+                put!(data_channel, (:received, Nullable(readavailable(stream))))
+            end
         end
         if timeout < Inf
             timer_task = @async begin
                 sleep(timeout)
-                put!(data_channel, Nullable{Vector{UInt8}}())
+                put!(data_channel, (:timeout, Nullable{Vector{UInt8}}()))
             end
         end
-        maybe_data = take!(data_channel)
-        isnull(maybe_data) && throw(TimeoutException(timeout))
+        status, maybe_data = take!(data_channel)
+        status == :timeout && throw(TimeoutException(timeout))
+        status == :eof && break
         data = get(maybe_data)
         if length(data) > 0
             add_data(rp, data)
         end
     end
-    http_parser_execute(rp.parser,rp.settings,"") #EOF
+    # http_parser_execute(rp.parser,rp.settings,"") #EOF
+    close(stream)
     if in(get(r.headers,"Content-Encoding",""), ("gzip","deflate"))
         r.data = decompress(r.data)
     end
@@ -331,19 +337,6 @@ function open_stream(uri::URI,req::Request,tls_conf)
     end
     render(stream, req)
     stream
-end
-
-function process_response(stream)
-    r = Response()
-    rp = ResponseParser(r,stream)
-    while isopen(stream)
-        data = readavailable(stream)
-        if length(data) > 0
-            add_data(rp, data)
-        end
-    end
-    http_parser_execute(rp.parser,rp.settings,"") #EOF
-    r
 end
 
 function format_query_str(queryparams; uri = URI(""))
@@ -719,7 +712,8 @@ function do_request(uri::URI, verb; headers = Dict{String, String}(),
                 throw(RedirectException(max_redirects))
             return do_request(get(redirect_uri), verb; headers=headers,
                  data=data, json=json, files=files, timeout=timeout,
-                 allow_redirects=allow_redirects, max_redirects=max_redirects, request_history=request_history)
+                 allow_redirects=allow_redirects, max_redirects=max_redirects,
+                 request_history=request_history, tls_conf=tls_conf)
         end
     end
     return response
