@@ -259,30 +259,29 @@ function process_response(stream, timeout)
     r = Response()
     r.finished = false
     rp = ResponseParser(r)
-    data_channel = Channel{Tuple{Symbol, Nullable{Vector{UInt8}}}}(1)
-    while !r.finished
-        data_task = @async begin
-            if eof(stream)
-                put!(data_channel, (:eof, Nullable{Vector{UInt8}}()))
-            else
-                put!(data_channel, (:received, Nullable(readavailable(stream))))
+    last_received = now()
+    status_channel = Channel{Symbol}(1)
+    if timeout < Inf
+        Timer(0, timeout) do timer
+            delta = now() - last_received
+            if timeout_in_sec(delta) > timeout
+                close(timer)
+                put!(status_channel, :timeout)
             end
-        end
-        if timeout < Inf
-            timer_task = @async begin
-                sleep(timeout)
-                put!(data_channel, (:timeout, Nullable{Vector{UInt8}}()))
-            end
-        end
-        status, maybe_data = take!(data_channel)
-        status == :timeout && throw(TimeoutException(timeout))
-        status == :eof && break
-        data = get(maybe_data)
-        if length(data) > 0
-            add_data(rp, data)
         end
     end
-    # http_parser_execute(rp.parser,rp.settings,"") #EOF
+    @async begin
+        while !r.finished && !eof(stream)
+            last_received = now()
+            data = readavailable(stream)
+            if length(data) > 0
+                add_data(rp, data)
+            end
+        end
+        put!(status_channel, :success)
+    end
+    status = take!(status_channel)
+    status == :timeout && throw(TimeoutException(timeout))
     close(stream)
     if in(get(r.headers,"Content-Encoding",""), ("gzip","deflate"))
         r.data = decompress(r.data)
@@ -602,8 +601,6 @@ function send_multipart(uri, headers, files, verb, timeout, tls_conf)
     do_multipart_send(stream,files,datasizes, boundary, chunked)
     process_response(stream, timeout), req
 end
-
-const checkv = :(has_body && error("Multiple body options specified. Please only specify one"); has_body = true)
 
 timeout_in_sec(::Void) = Inf
 timeout_in_sec(t::Dates.TimePeriod) = Dates.toms(t)/1000.
