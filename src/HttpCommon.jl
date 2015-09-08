@@ -130,7 +130,7 @@ Convert a valid querystring to a Dict:
     #   "foo" => "bar"
 """
 function parsequerystring{T<:String}(query::T)
-    q = Dict{T,T}()
+    q = Dict{String,String}()
     length(query) == 0 && return q
     for field in split(query, "&")
         keyval = split(field, "=")
