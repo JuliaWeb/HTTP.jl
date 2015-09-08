@@ -1,4 +1,4 @@
-__precompile__(true)
+# __precompile__(false)
 module Requests
 
 import Base: get, write
@@ -36,10 +36,12 @@ end
 ## Convenience methods for extracting the payload of a response
 bytes(r::Response) = r.data
 text(r::Response) = utf8(bytes(r))
+Base.bytestring(r::Response) = text(r)
 json(r::Response; kwargs...) = JSON.parse(text(r); kwargs...)
 
 ## Response getters to future-proof against changes to the Response type
 headers(r::Response) = r.headers
+headers(r::Request) = r.eaders
 cookies(r::Response) = r.cookies
 statuscode(r::Response) = r.status
 
@@ -53,13 +55,15 @@ const CRLF = "\r\n"
 import URIParser: URI
 import HttpCommon: Cookie
 
-function render(stream, request::Request)
-    print(stream,request.method, " ", isempty(request.resource) ? "/" : request.resource,
+function send_request(response_stream)
+    socket = response_stream.socket
+    request = requestfor(response_stream)
+    print(socket,request.method, " ", isempty(request.resource) ? "/" : request.resource,
           " HTTP/1.1", CRLF,
           map(h->string(h,": ",request.headers[h],CRLF), collect(keys(request.headers)))...,
           "", CRLF)
-    write(stream, request.data)
-    write(stream, CRLF)
+    write(socket, request.data)
+    write(socket, CRLF)
 end
 
 function default_request(method,resource,host,data,user_headers=Dict{None,None}())
@@ -91,17 +95,13 @@ end
 
 ### Response Parsing
 
-type ResponseParserData
-    current_response::Response
-end
-
 immutable ResponseParser
     parser::Parser
     settings::ParserSettings
 
     function ResponseParser(r)
         parser = Parser()
-        parser.data = ResponseParserData(r)
+        parser.data = r
         http_parser_init(parser,false)
         settings = ParserSettings(on_message_begin_cb, on_url_cb,
                           on_status_complete_cb, on_header_field_cb,
@@ -112,24 +112,25 @@ immutable ResponseParser
     end
 end
 
-pd(p::Ptr{Parser}) = (unsafe_load(p).data)::ResponseParserData
+pd(p::Ptr{Parser}) = (unsafe_load(p).data)::ResponseStream
 
 # All the `HttpParser` callbacks to be run in C land
 # Each one adds data to the `Request` until it is complete
 #
 function on_message_begin(parser)
     #unsafe_ref(parser).data = Response()
+    pd(parser).state = OnMessageBegin
     return 0
 end
 
 function on_url(parser, at, len)
-    r = pd(parser).current_response
+    r = pd(parser).response
     r.resource = string(r.resource, bytestring(convert(Ptr{Uint8}, at), Int(len)))
     return 0
 end
 
 function on_status_complete(parser)
-    pd(parser).current_response.status = (unsafe_load(parser)).status_code
+    pd(parser).response.status = (unsafe_load(parser)).status_code
     return 0
 end
 
@@ -139,7 +140,7 @@ end
 # this: https://github.com/joyent/node/blob/master/src/node_http_parser.cc#L207
 
 function on_header_field(parser, at, len)
-    r = pd(parser).current_response
+    r = pd(parser).response
     header = bytestring(convert(Ptr{Uint8}, at))
     header_field = header[1:len]
     r.headers["current_header"] = header_field
@@ -168,7 +169,7 @@ end
 const is_set_cookie = r"set-cookie"i
 
 function on_header_value(parser, at, len)
-    r = pd(parser).current_response
+    r = pd(parser).response
     s = bytestring(convert(Ptr{Uint8}, at), Int(len))
     current_header = r.headers["current_header"]
     if is_set_cookie(current_header)
@@ -185,7 +186,7 @@ function on_header_value(parser, at, len)
 end
 
 function on_headers_complete(parser)
-    r = pd(parser).current_response
+    r = pd(parser).response
     p = unsafe_load(parser)
     # get first two bits of p.type_and_flags
     ptype = p.type_and_flags & 0x03
@@ -197,54 +198,22 @@ function on_headers_complete(parser)
     r.headers["http_major"] = string(convert(Int, p.http_major))
     r.headers["http_minor"] = string(convert(Int, p.http_minor))
     r.headers["Keep-Alive"] = string(http_should_keep_alive(parser))
+    pop!(r.headers, "current_header", nothing)
+    pd(parser).state = HeadersDone
     return 0
 end
 
 function on_body(parser, at, len)
-    r = pd(parser).current_response
-    append!(r.data, pointer_to_array(convert(Ptr{UInt8}, at), (len,)))
+    response_stream = pd(parser)
+    append!(response_stream.buffer.data, pointer_to_array(convert(Ptr{UInt8}, at), (len,)))
+    response_stream.buffer.size = length(response_stream.buffer.data)
     return 0
 end
 
 function on_message_complete(parser)
-    p = pd(parser)
-    r = p.current_response
-    r.finished = true
-    # close(p.sock)
-
-    # delete the temporary header key
-    pop!(r.headers, "current_header", nothing)
+    response_stream = pd(parser)
+    response_stream.state = BodyDone
     return 0
-end
-
-
-# `ClientParser` wraps our `HttpParser`
-# Constructed with `on_message_complete` function.
-
-immutable ClientParser
-    parser::Parser
-    settings::ParserSettings
-
-    function ClientParser(on_message_complete::Function)
-        parser = Parser()
-        http_parser_init(parser)
-        message_complete_callbacks[parser.id] = on_message_complete
-
-        settings = ParserSettings(on_message_begin_cb, on_url_cb,
-                                  on_status_complete_cb, on_header_field_cb,
-                                  on_header_value_cb, on_headers_complete_cb,
-                                  on_body_cb, on_message_complete_cb)
-
-        new(parser, settings)
-    end
-end
-
-# Garbage collect all data associated with `parser` from the global Dicts.
-# Call this whenever closing a connection that has a `ClientParser` instance.
-#
-function clean!(parser::ClientParser)
-    pop!(message_complete_callbacks, parser.parser.id, nothing)
-    message_complete_callbacks
 end
 
 immutable TimeoutException <: Exception
@@ -255,10 +224,9 @@ function Base.show(io::IO, err::TimeoutException)
     print(io, "TimeoutException: server did not respond for more than $(err.timeout) seconds. ")
 end
 
-function process_response(stream, timeout)
-    r = Response()
-    r.finished = false
-    rp = ResponseParser(r)
+function process_response(stream, timeout, target_state, num_bytes=0)
+    # rp = ResponseParser(stream)
+    rp = stream.parser
     last_received = now()
     status_channel = Channel{Symbol}(1)
     if timeout < Inf
@@ -271,22 +239,28 @@ function process_response(stream, timeout)
         end
     end
     @async begin
-        while !r.finished && !eof(stream)
+        bytes_received = 0
+        while stream.state≠target_state && !eof(stream)
+            if num_bytes > 0 && bytes_received ≥ num_bytes
+                break
+            end
             last_received = now()
-            data = readavailable(stream)
+            data = readavailable(stream.socket)
             if length(data) > 0
                 add_data(rp, data)
+                bytes_received += length(data)
             end
         end
         put!(status_channel, :success)
     end
     status = take!(status_channel)
     status == :timeout && throw(TimeoutException(timeout))
-    close(stream)
-    if in(get(r.headers,"Content-Encoding",""), ("gzip","deflate"))
-        r.data = decompress(r.data)
-    end
-    r
+    # close(stream)
+    # if in(get(r.headers,"Content-Encoding",""), ("gzip","deflate"))
+    #     r.data = decompress(r.data)
+    # end
+    # r
+    stream
 end
 
 # Passes `request_data` into `parser`
@@ -319,6 +293,58 @@ function get_default_tls_config(verify=true)
     conf
 end
 
+@enum ResponseState NotStarted OnMessageBegin HeadersDone OnBody BodyDone
+
+type ResponseStream{T<:IO} <: Base.AsyncStream
+    response::Response
+    socket::T
+    state::ResponseState
+    buffer::IOBuffer
+    parser::ResponseParser
+
+    ResponseStream() = new()
+end
+
+function ResponseStream{T}(response, socket::T)
+    r = ResponseStream{T}()
+    r.response = response
+    r.socket = socket
+    r.state = NotStarted
+    r.buffer = IOBuffer()
+    r.parser = ResponseParser(r)
+    r
+end
+
+function Base.eof(stream::ResponseStream)
+    eof(stream.socket) || (stream.state==BodyDone && eof(stream.buffer))
+end
+#Base.write(stream::ResponseStream, data::Vector{UInt8}) = write(stream.socket, data)
+function Base.readbytes!(stream::ResponseStream, data::Vector{UInt8}, sz)
+    while nb_available(stream.buffer) < sz && !eof(stream.socket) && stream.state≠BodyDone
+        process_response(stream, Inf, BodyDone, 2sz)
+    end
+    sz_buf = readbytes!(stream.buffer, data, sz)
+    sz_buf
+end
+
+function Base.readbytes(stream::ResponseStream, sz)
+    buf = Vector{UInt8}(sz)
+    readbytes!(stream, buf, sz)
+    buf
+end
+
+function Base.readall(stream::ResponseStream)
+    process_response(stream, Inf, BodyDone)
+    readall(stream.buffer)
+end
+
+Base.close(stream::ResponseStream) = stream.isopen=false
+Base.nb_available(stream::ResponseStream) = nb_available(stream.socket) + nb_available(stream.buffer)
+
+for getter in [:headers, :cookies, :statuscode, :requestfor, :requestsfor]
+    @eval $getter(stream::ResponseStream) = $getter(stream.response)
+end
+
 function open_stream(uri::URI,req::Request,tls_conf)
     if scheme(uri) != "http" && scheme(uri) != "https"
         error("Unsupported scheme \"$(scheme(uri))\"")
@@ -334,8 +360,10 @@ function open_stream(uri::URI,req::Request,tls_conf)
         MbedTLS.set_bio!(stream, sock)
         MbedTLS.handshake(stream)
     end
-    render(stream, req)
-    stream
+    # render(stream, req)
+    resp = Response()
+    push!(resp.requests, req)
+    ResponseStream(resp, stream)
 end
 
 function format_query_str(queryparams; uri = URI(""))
@@ -650,7 +678,32 @@ macro check_body()
   end
 end
 
-function do_request(uri::URI, verb; headers = Dict{String, String}(),
+function do_request(uri::URI, verb; kwargs...)
+    response_stream = do_stream_request(uri, verb; kwargs...)
+    process_response(response_stream, Inf, BodyDone)
+    response = response_stream.response
+    response.data = takebuf_array(response_stream.buffer)
+    response
+end
+
+# function default_request_args(overrides)
+#     d = Dict()
+#     d[:headers] = Dict{String, String}()
+#     d[:cookies] = nothing
+#     d[:data] = nothing
+#     d[:json] = nothing
+#     d[:files] = FileParam[]
+#     d[:timeout] = nothing
+#     d[:query] = Dict()
+#     d[:allow_redirects] = true
+#     d[:max_redirects] = MAX_REDIRECTS
+#     d[:request_history] = Request[]
+#     d[:tls_conf] = TLS_VERIFY
+#     merge!(d, overrides)
+#     d
+# end
+
+function do_stream_request(uri::URI, verb; headers = Dict{String, String}(),
                         cookies = nothing,
                         data = nothing,
                         json = nothing,
@@ -699,11 +752,14 @@ function do_request(uri::URI, verb; headers = Dict{String, String}(),
     else
         request = default_request(newuri, headers, body, verb)
         push!(request_history, request)
-        response = process_response(open_stream(newuri, request, tls_conf), timeout_sec)
-        response.requests = request_history
+        response_stream = open_stream(newuri, request, tls_conf)
+        send_request(response_stream)
+        process_response(response_stream, timeout_sec, HeadersDone)
+        response_stream.response.requests = request_history
+        # response.requests = request_history
     end
     if allow_redirects && verb ≠ :head
-        redirect_uri = get_redirect_uri(response)
+        redirect_uri = get_redirect_uri(response_stream)
         if !isnull(redirect_uri)
             length(response.requests) > max_redirects &&
                 throw(RedirectException(max_redirects))
@@ -713,22 +769,29 @@ function do_request(uri::URI, verb; headers = Dict{String, String}(),
                  request_history=request_history, tls_conf=tls_conf)
         end
     end
-    return response
+    return response_stream
 end
 
 for f in [:get, :post, :put, :delete, :head,
           :trace, :options, :patch, :connect]
     f_str = uppercase(string(f))
+    f_stream = symbol(string(f, "_streaming"))
     @eval begin
         function ($f)(uri::URI, data::String; headers::Dict=Dict())
             do_request(uri, $f_str; data=data, headers=headers)
         end
+        function ($f_stream)(uri::URI, data::String; headers::Dict=Dict(0))
+            do_stream_request(uri, $f_str; data=data, headers=headers)
+        end
 
         ($f)(uri::String; args...) = ($f)(URI(uri); args...)
         ($f)(uri::URI; args...) = do_request(uri, $f_str; args...)
+
+        ($f_stream)(uri::String; args...) = ($f_stream)(URI(uri); args...)
+        ($f_stream)(uri::URI; args...) = do_stream_request(uri, $f_str; args...)
     end
 end
 
-include("precompile.jl")
+#include("precompile.jl")
 
 end
