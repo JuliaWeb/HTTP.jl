@@ -11,14 +11,14 @@ is_host_char(c) = isalnum(c) || (c == '.') || (c == '-') || (c == '_') || (c == 
 immutable URI
     scheme::ASCIIString
     host::ASCIIString
-    port::@compat(UInt16)
+    port::UInt16
     path::ASCIIString
     query::ASCIIString
     fragment::ASCIIString
     userinfo::ASCIIString
     specifies_authority::Bool
     URI(scheme,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) =
-            new(scheme,host,@compat(UInt16(port)),path,query,fragment,userinfo,specifies_authority)
+            new(scheme,host,UInt16(port),path,query,fragment,userinfo,specifies_authority)
 end
 
 ==(a::URI,b::URI) = isequal(a,b)
@@ -30,7 +30,7 @@ isequal(a::URI,b::URI) = (a.scheme == b.scheme) &&
                          (a.fragment == b.fragment) &&
                          (a.userinfo == b.userinfo)
 
-URI(host,path) = URI("http",host,@compat(UInt16(80)),path,"","","",true)
+URI(host,path) = URI("http",host,UInt16(80),path,"","","",true)
 URI(uri::URI; scheme=nothing, host=nothing, port=nothing, path=nothing, query=nothing, fragment=nothing, userinfo=nothing, specifies_authority=nothing) =
 URI(scheme === nothing ? uri.scheme : scheme,
     host === nothing ? uri.host : host,
@@ -133,7 +133,7 @@ function parse_authority(authority,seen_at)
             error("Unexpected state $state")
         end
     end
-    (host, @compat(UInt16(port == "" ? 0 : parse(Int,port,10))), user)
+    (host, UInt16(port == "" ? 0 : parse(Int,port,10)), user)
 end
 
 function parse_url(url)
@@ -308,7 +308,7 @@ function print(io::IO, uri::URI)
             print(io,uri.host)
         end
         if uri.port != 0
-            print(io,':',@compat(Int(uri.port)))
+            print(io,':',Int(uri.port))
         end
     else
         print(io,uri.scheme,":")

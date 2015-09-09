@@ -1,7 +1,7 @@
 const escaped_regex = r"%([0-9a-fA-F]{2})"
 
 # Escaping
-const control_array = vcat(@compat(map(UInt8, 0:parse(Int,"1f",16))))
+const control_array = vcat(map(UInt8, 0:parse(Int,"1f",16)))
 const control = utf8(ascii(control_array)*"\x7f")
 const space = utf8(" ")
 const delims = utf8("%<>\"")
@@ -18,7 +18,7 @@ function unescape(str)
     # def _unescape(str, regex) str.gsub(regex){ $1.hex.chr } end
     for m in eachmatch(escaped_regex, str)
         for capture in m.captures
-            rep = string(@compat(Char(parse(Int, capture, 16))))
+            rep = string(Char(parse(Int, capture, 16)))
             str = replace(str, "%"*capture, rep)
         end
     end
@@ -40,7 +40,7 @@ function escape_with(str, use)
         if i_next == i + 1
             _char = str[i]
             if _char in chars
-                write(out, hex_string(@compat(Int(_char))))
+                write(out, hex_string(Int(_char)))
             else
                 write(out, _char)
             end

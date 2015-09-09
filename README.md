@@ -3,7 +3,7 @@
 This Julia package provides URI parsing according to [RFC 3986](http://tools.ietf.org/html/rfc3986).
 
 [![Build Status](https://travis-ci.org/JuliaWeb/URIParser.jl.svg?branch=master)](https://travis-ci.org/JuliaWeb/URIParser.jl)
-[![Coverage Status](https://coveralls.io/repos/JuliaWeb/URIParser.jl/badge.svg?branch=master&service=github)](https://coveralls.io/github/JuliaWeb/URIParser.jl?branch=master)
+[![codecov.io](http://codecov.io/github/JuliaWeb/URIParser.jl/coverage.svg?branch=master)](http://codecov.io/github/JuliaWeb/URIParser.jl?branch=master)
 
 [![URIParser](http://pkg.julialang.org/badges/URIParser_0.3.svg)](http://pkg.julialang.org/?pkg=URIParser&ver=0.3)
 [![URIParser](http://pkg.julialang.org/badges/URIParser_0.4.svg)](http://pkg.julialang.org/?pkg=URIParser&ver=0.4)
