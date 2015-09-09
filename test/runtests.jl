@@ -1,6 +1,5 @@
 using URIParser
 using Base.Test
-using Compat
 
 urls = ["hdfs://user:password@hdfshost:9000/root/folder/file.csv#frag",
     "https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag",
@@ -40,7 +39,7 @@ end
 @test ["dc","example","dc","com"] == path_params(URI("ldap://ldap.example.com/dc=example,dc=com"))[1]
 @test ["servlet","jsessionid","OI24B9ASD7BSSD"] == path_params(URI("http://www.mysite.com/servlet;jsessionid=OI24B9ASD7BSSD"))[1]
 
-@test @compat(Dict("q"=>"a","p"=>"r")) == query_params(URI("https://httphost/path1/path2;paramstring?q=a&p=r#frag"))
+@test Dict("q"=>"a","p"=>"r") == query_params(URI("https://httphost/path1/path2;paramstring?q=a&p=r#frag"))
 
 @test false == isvalid(URI("file:///path/to/file/with?should=work#fine"))
 @test true == isvalid(URI("file:///path/to/file/with%3fshould%3dwork%23fine"))
