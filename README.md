@@ -109,8 +109,6 @@ FileParam has the following constructors:
 
 ```
 
-
-
 ### Inspect responses
 
 Via accessors (preferred):
@@ -134,5 +132,19 @@ type Response
     data::Vector{UInt8}
     finished::Bool
     requests::Vector{Request}
+end
+```
+
+### Streaming API
+
+Write bytes to disk as they are received:
+
+```julia
+stream = Requests.get_streaming("https://upload.wikimedia.org/wikipedia/commons/9/99/Black_cat_being_snowed_on.jpg")
+
+open("cat.jpg", "w") do file
+  while !eof(stream)
+    write(file, readavailable(stream))
+  end
 end
 ```
