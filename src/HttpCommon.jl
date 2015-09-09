@@ -85,12 +85,16 @@ type Response
     data::Vector{UInt8}
     request::Nullable{Request}
     history::Vector{Response}
+
+    # Deprecated fields
+    finished::Bool
+    requests::Vector{Request}
 end
 # If a Response is instantiated with all of fields except for `finished`,
 # `finished` will default to `false`.
 typealias HttpData Union{Vector{UInt8}, String}
 Response(s::Int, h::Headers, d::HttpData) =
-  Response(s, h, Dict{UTF8String, Cookie}(), d, Nullable(), Response[])
+  Response(s, h, Dict{UTF8String, Cookie}(), d, Nullable(), Response[], false, Request[])
 Response(s::Int, h::Headers)              = Response(s, h, UInt8[])
 Response(s::Int, d::HttpData)             = Response(s, headers(), d)
 Response(d::HttpData, h::Headers)         = Response(200, h, d)
