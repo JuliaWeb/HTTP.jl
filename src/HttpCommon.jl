@@ -83,23 +83,26 @@ type Response
     headers::Headers
     cookies::Dict{UTF8String, Cookie}
     data::Vector{UInt8}
-    finished::Bool
-    requests::Vector{Request}
+    request::Nullable{Request}
+    history::Vector{Response}
 end
 # If a Response is instantiated with all of fields except for `finished`,
 # `finished` will default to `false`.
 typealias HttpData Union{Vector{UInt8}, String}
-Response(s::Int, h::Headers, d::HttpData) = Response(s, h, Dict{UTF8String, Cookie}(), d, false, Request[])
+Response(s::Int, h::Headers, d::HttpData) =
+  Response(s, h, Dict{UTF8String, Cookie}(), d, Nullable(), Response[])
 Response(s::Int, h::Headers)              = Response(s, h, UInt8[])
 Response(s::Int, d::HttpData)             = Response(s, headers(), d)
 Response(d::HttpData, h::Headers)         = Response(200, h, d)
 Response(d::HttpData)                     = Response(d, headers())
 Response(s::Int)                          = Response(s, headers(), UInt8[])
 Response()                                = Response(200)
-Base.show(io::IO, r::Response) = print(io, "Response(",
-                                    r.status, " ", STATUS_CODES[r.status], ", ",
-                                    length(r.headers)," headers, ",
-                                    sizeof(r.data)," bytes in body)")
+
+function Base.show(io::IO, r::Response)
+    print(io, "Response(", r.status, " ", STATUS_CODES[r.status], ", ",
+          length(r.headers)," headers, ",
+          sizeof(r.data)," bytes in body)")
+end
 
 
 """
