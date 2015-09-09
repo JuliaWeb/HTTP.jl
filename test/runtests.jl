@@ -2,7 +2,7 @@ using Requests
 using JSON
 using Base.Test
 
-import Requests: get, post, put, delete, options, bytes, text, json
+import Requests: get, post, put, delete, options, bytes, text, json, history
 
 # simple calls, no headers, data or query params -------
 
@@ -166,11 +166,22 @@ end
 # Test redirects
 let
     r = get("http://httpbin.org/absolute-redirect/3")
-    @test length(requestsfor(r)) == 4
+    @test length(history(r)) == 3
     r = get("http://httpbin.org/relative-redirect/3")
-    @test length(requestsfor(r)) == 4
-    @test_throws Requests.RedirectException get("http://httpbin.org/redirect/3", max_redirects=2)
+    @test length(history(r)) == 3
+    @test_throws Requests.RedirectException get("http://httpbin.org/redirect/3", max_redirects=1)
 end
 
 # Test HTTPS
 @test statuscode(get("https://httpbin.org")) == 200
+
+# Test streaming
+let
+    stream = Requests.get_streaming("http://httpbin.org/stream-bytes/100", query=Dict(:chunk_size=>10))
+    N = 0
+    while !eof(stream)
+        bytes = readavailable(stream)
+        N += length(bytes)
+    end
+    @test N==100
+end
