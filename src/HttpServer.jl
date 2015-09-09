@@ -2,16 +2,11 @@
 #
 # Serve HTTP requests in Julia.
 #
-isdefined(Base, :__precompile__) && __precompile__(false)
+__precompile__(false)
 module HttpServer
 
-if VERSION < v"0.4.0-dev"
-    using Docile
-    eval(:(@docstrings(manual = ["../README.md"])))
-end
 
 using HttpCommon
-using Compat
 
 include("RequestParser.jl")
 
@@ -29,10 +24,10 @@ export HttpHandler,
 import Base: run, listen
 
 defaultevents = Dict{ASCIIString, Function}()
-defaultevents["error"]  = ( client, err ) -> println( err )
-defaultevents["listen"] = ( saddr )       -> println("Listening on $saddr...")
+defaultevents["error"]  = ( client, err )->println( err )
+defaultevents["listen"] = ( saddr )      ->println("Listening on $saddr...")
 
-@doc """
+"""
 `HttpHandler` types are used to instantiate a `Server`.
 
 An `HttpHandler` is responsible for the entirety of the request / response
@@ -74,7 +69,7 @@ server events occur.
 Set these functions by direct assignment:
 
 ```
-handler.events["listen"] = (port) -> "Listening on \$port..."
+handler.events["listen"] = (port) "Listening on \$port..."
 ```
 
 All default events and their arguments:
@@ -89,31 +84,27 @@ function:
 
 ```
 # listen for "foo"
-handler.events["foo"] = (bar) -> "Hello \$bar"
+handler.events["foo"] = (bar) "Hello \$bar"
 # trigger "foo"
 HttpServer.event(server, "foo", "Julia")
 ```
-""" ->
+"""
 immutable HttpHandler
     handle::Function
     sock::Base.UVServer
     events::Dict
 
     HttpHandler(handle::Function, sock::Base.UVServer) = new(handle, sock, defaultevents)
-    if VERSION < v"0.4-"
-      HttpHandler(handle::Function) = new(handle, Base.TcpServer(), defaultevents)
-    else
-      HttpHandler(handle::Function) = new(handle, Base.TCPServer(), defaultevents)
-    end
+    HttpHandler(handle::Function) = new(handle, Base.TCPServer(), defaultevents)
 end
 handle(handler::HttpHandler, req::Request, res::Response) = handler.handle(req, res)
 
-@doc """ Client encapsulates a single connection
+""" Client encapsulates a single connection
 
  When new connections are initialized a `Client` is created with a new id and
  the connection socket. `Client.parser` will store a `ClientParser` to handle
  all HTTP parsing for the connection lifecycle.
-""" ->
+"""
 type Client{T<:IO}
     id::Int
     sock::T
@@ -123,29 +114,29 @@ type Client{T<:IO}
 end
 Client{T<:IO}(id::Int,sock::T) = Client{T}(id,sock)
 
-@doc """ `WebSocketInterface` defines the abstract protocol for a WebSocketHandler.
+""" `WebSocketInterface` defines the abstract protocol for a WebSocketHandler.
 
 The methods `is_websocket_handshake` and `handle` will be called if `Server.
 sockets` is populated. Concrete types of `WebSocketInterface` are required
 to define these methods.
-""" ->
+"""
 abstract WebSocketInterface
 
-@doc """ `is_websocket_handshake` should determine if `req` is a valid websocket
+""" `is_websocket_handshake` should determine if `req` is a valid websocket
 upgrade request.
-""" ->
+"""
 function is_websocket_handshake(handler::WebSocketInterface, req::Request)
     throw("`$(typeof(handler))` does not implement `is_websocket_handshake`.")
 end
 
-@doc """ `handle` is called when `is_websocket_handshake` returns true, and takes
+""" `handle` is called when `is_websocket_handshake` returns true, and takes
 full control of the connection.
-""" ->
+"""
 function handle(handler::WebSocketInterface, req::Request, client::Client)
     throw("`$(typeof(handler))` does not implement `handle`.")
 end
 
-@doc """ `Server` types encapsulate an `HttpHandler` and optional
+""" `Server` types encapsulate an `HttpHandler` and optional
 `WebSocketInterface` to serve requests.
 
 * Instantiate with both an `HttpHandler` and `WebSocketInterface` to serve
@@ -154,20 +145,20 @@ end
 * Instantiate with just a `Function` to create an `HttpHandler` automatically
 * Instantiate with just a `WebSocketInterface` to only serve websockets
   requests and `404` all others.
-""" ->
+"""
 immutable Server
     http::HttpHandler
     websock::Union(Nothing, WebSocketInterface)
 end
 Server(http::HttpHandler)           = Server(http, nothing)
 Server(handler::Function)           = Server(HttpHandler(handler))
-Server(websock::WebSocketInterface) = Server(HttpHandler((req, res) -> Response(404)), websock)
+Server(websock::WebSocketInterface) = Server(HttpHandler((req, res)->Response(404)), websock)
 
-@doc """Triggers `event` on `server`.
+"""Triggers `event` on `server`.
 
 If there is a function bound to `event` in `server.events` it will be called
 with `args...`
-""" ->
+"""
 function event(event::String, server::Server, args...)
     haskey(server.http.events, event) && server.http.events[event](args...)
 end
@@ -181,7 +172,7 @@ setcookie!(r::Response, name, value=utf8(""), attrs=Dict{UTF8String, UTF8String}
 setcookie!(r::Response, cookie::Cookie) = (r.cookies[cookie.name] = cookie; r)
 
 import Base.write
-@doc "Converts a `Response` to an HTTP response string" ->
+"Converts a `Response` to an HTTP response string"
 function write(io::IO, response::Response)
     write(io, join(["HTTP/1.1", response.status, HttpCommon.STATUS_CODES[response.status], "\r\n"], " "))
 
@@ -204,15 +195,15 @@ function write(io::IO, response::Response)
     write(io, response.data)
 end
 
-@doc """ Start `server` to listen on specified socket address.
+""" Start `server` to listen on specified socket address.
 
-    listen(server::Server, host::Base.IpAddr, port::Integer) -> Server
+    listen(server::Server, host::Base.IpAddr, port::Integer) Server
 
     Setup "server" so it listens on "port" on the address specified by "host".
     To listen on all interfaces pass, "IPv4(0)" or "IPv6(0)" as appropriate.
-""" ->
+"""
 function listen(server::Server, host::Base.IpAddr, port::Integer)
-    Base.uv_error("listen", !bind(server.http.sock, host, @compat UInt16(port)))
+    Base.uv_error("listen", !bind(server.http.sock, host, UInt16(port)))
     listen(server.http.sock)
     inet = "$host:$port"
     event("listen", server, inet)
@@ -222,7 +213,7 @@ listen(server::Server, port::Integer) = listen(server, IPv4(0), port)
 
 """ Start `server` to listen on named pipe/domain socket.
 
-    listen(server::Server, path::String) -> Server
+    listen(server::Server, path::String) Server
 
     Setup "server" to listen on named pipe/domain socket specified by "path".
 """
@@ -233,7 +224,7 @@ listen(server::Server, port::Integer) = listen(server, IPv4(0), port)
     return server
 end
 
-@doc """ Handle HTTP request from client """ ->
+""" Handle HTTP request from client """
 function handle_http_request(server::Server)
     id_pool = 0 # Increments for each connection
     websockets_enabled = server.websock != nothing
@@ -246,7 +237,7 @@ function handle_http_request(server::Server)
 end
 
 using GnuTLS
-@doc """ Handle HTTPS request from client """ ->
+""" Handle HTTPS request from client """
 function handle_https_request(server::Server, cert_store::GnuTLS.CertificateStore)
     id_pool = 0 # Increments for each connection
     websockets_enabled = server.websock != nothing
@@ -269,7 +260,7 @@ function handle_https_request(server::Server, cert_store::GnuTLS.CertificateStor
     end
 end
 
-@doc """ `run` starts `server`
+""" `run` starts `server`
 
 Functionality:
 
@@ -302,7 +293,7 @@ run(server, host=IPv4(127,0,0,1), port=8000)
 # or
 run(server, 8000)
 ```
-""" ->
+"""
 function run(server::Server; args...)
     params = Dict(args)
 
@@ -328,11 +319,11 @@ end
 # backward compatibility method
 run(server::Server, port::Integer) = run(server, port=port)
 
-@doc """Handles live connections, runs inside a `Task`.
+"""Handles live connections, runs inside a `Task`.
 
 Blocks ( yields ) until a line can be read, then passes it into `client.
 parser`.
-""" ->
+"""
 function process_client(server::Server, client::Client, websockets_enabled::Bool)
     event("connect", server, client)
 
@@ -367,7 +358,7 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
     event("close", server, client)
 end
 
-@doc "Callback factory for providing `on_message_complete` for `client.parser`" ->
+"Callback factory for providing `on_message_complete` for `client.parser`"
 function message_handler(server::Server, client::Client, websockets_enabled::Bool)
 
     # Called when the `ClientParser` has finished parsing a `Request`.
