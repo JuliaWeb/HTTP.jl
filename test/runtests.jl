@@ -2,7 +2,7 @@ using Requests
 using JSON
 using Base.Test
 
-import Requests: get, post, put, delete, options, bytes, text, json
+import Requests: get, post, put, delete, options, bytes, text, json, history
 
 # simple calls, no headers, data or query params -------
 
@@ -147,7 +147,7 @@ data = json(res)
 # Test timeout delay
 let
     timeout = Dates.Millisecond(500)
-    @test_throws Requests.TimeoutException get("http://httpbin.org/delay/1", timeout=timeout)
+    @test_throws Requests.TimeoutException get("http://httpbin.org/delay/3", timeout=timeout)
 end
 
 # Test cookies
@@ -166,11 +166,37 @@ end
 # Test redirects
 let
     r = get("http://httpbin.org/absolute-redirect/3")
-    @test length(requestsfor(r)) == 4
+    @test length(history(r)) == 3
     r = get("http://httpbin.org/relative-redirect/3")
-    @test length(requestsfor(r)) == 4
-    @test_throws Requests.RedirectException get("http://httpbin.org/redirect/3", max_redirects=2)
+    @test length(history(r)) == 3
+    @test_throws Requests.RedirectException get("http://httpbin.org/redirect/3", max_redirects=1)
 end
 
 # Test HTTPS
 @test statuscode(get("https://httpbin.org")) == 200
+
+# Test output streaming
+let
+    stream = Requests.post_streaming(
+      "http://httpbin.org/post", write_body=false,
+      headers=Dict("Transfer-Encoding"=>"chunked"))
+
+    write_chunked(stream, "ab")
+    write_chunked(stream, "cde")
+    write_chunked(stream, "")
+
+    response = JSON.parse(readall(stream))
+    @test response["data"] == "abcde"
+end
+
+
+# Test input streaming
+let
+    stream = Requests.get_streaming("http://httpbin.org/stream-bytes/100", query=Dict(:chunk_size=>10))
+    N = 0
+    while !eof(stream)
+        bytes = readavailable(stream)
+        N += length(bytes)
+    end
+    @test N==100
+end
