@@ -13,9 +13,9 @@ facts("HttpServer utility functions:") do
         @fact grep(vals, "HTTP") --> "HTTP/1.1 200 OK "
         @fact grep(vals, "Server") --> "Server: Julia/$VERSION"
         # default to text/html
-        @fact grep(vals, "Content-Type") => "Content-Type: text/html; charset=utf-8"
+        @fact grep(vals, "Content-Type") --> "Content-Type: text/html; charset=utf-8"
         # skip date
-        @fact grep(vals, "Content-Language") => "Content-Language: en"
+        @fact grep(vals, "Content-Language") --> "Content-Language: en"
         @fact grep(vals, "Hello") --> "Hello World!"
     end
 end
@@ -62,4 +62,17 @@ facts("HttpServer runs") do
         @fact text(ret) --> "Hello travis!"
         @fact statuscode(ret) --> 200
     end
+
+    # context("Testing HTTPS on port 8002") do
+    #     http = HttpHandler() do req, res
+    #         Response("hi")
+    #     end
+    #     server = Server(http)
+    #     cert = MbedTLS.crt_parse_file("my_cert.crt")
+    #     key = MbedTLS.parse_keyfile("my_key.key")
+    #     @async run(server, 8002, ssl=(cert, key))
+    #     sleep(1.0)
+    #     ret = Requests.get("https://localhost:8002")
+    #     @fact text(ret) --> "hi"
+    # end
 end

@@ -2,11 +2,11 @@
 #
 # Serve HTTP requests in Julia.
 #
-__precompile__(false)
+__precompile__()
 module HttpServer
 
-
 using HttpCommon
+using MbedTLS
 
 include("RequestParser.jl")
 
@@ -229,26 +229,28 @@ function handle_http_request(server::Server)
     id_pool = 0 # Increments for each connection
     websockets_enabled = server.websock != nothing
     while true # handle requests, Base.wait_accept blocks until a connection is made
-        server.http.sock
         client = Client(id_pool += 1, accept(server.http.sock))
+        println("connected")
         client.parser = ClientParser(message_handler(server, client, websockets_enabled))
         @async process_client(server, client, websockets_enabled)
     end
 end
 
-using GnuTLS
 """ Handle HTTPS request from client """
-function handle_https_request(server::Server, cert_store::GnuTLS.CertificateStore)
+function handle_https_request(server::Server, ssl_config::MbedTLS.SSLConfig)
     id_pool = 0 # Increments for each connection
     websockets_enabled = server.websock != nothing
     while true
-        sess = GnuTLS.Session(true)
-        set_priority_string!(sess)
-        set_credentials!(sess, cert_store)
+        sess = MbedTLS.SSLContext()
+        MbedTLS.setup!(sess, ssl_config)
+        # set_priority_string!(sess)
+        # set_credentials!(sess, cert_store)
         client = accept(server.http.sock)
         try
-            associate_stream(sess, client)
-            handshake!(sess)
+            MbedTLS.set_bio!(sess, client)
+            MbedTLS.handshake(sess)
+            # associate_stream(sess, client)
+            # handshake!(sess)
         catch e
             println("Error establishing SSL connection: ", e)
             close(client)
@@ -258,6 +260,25 @@ function handle_https_request(server::Server, cert_store::GnuTLS.CertificateStor
         client.parser = ClientParser(message_handler(server, client, websockets_enabled))
         @async process_client(server, client, websockets_enabled)
     end
+end
+
+function default_ssl_config(ssl_cert, key)
+    conf = MbedTLS.SSLConfig()
+    entropy = MbedTLS.Entropy()
+    rng = MbedTLS.CtrDrbg()
+    MbedTLS.config_defaults!(conf, endpoint=MbedTLS.MBEDTLS_SSL_IS_SERVER)
+    MbedTLS.seed!(rng, entropy)
+    MbedTLS.rng!(conf, rng)
+    MbedTLS.dbg!(conf, tls_dbg)
+    MbedTLS.own_cert!(conf, ssl_cert, key)
+    MbedTLS.dbg!(conf, (level, filename, number, msg)->begin
+        warn("MbedTLS emitted debug info: $msg in $filename:$number")
+    end)
+    conf
+end
+
+function handle_https_request(server::Server, ssl_cert::Tuple{MbedTLS.CRT, MbedTLS.PKContext})
+    handle_https_request(server, default_ssl_config(ssl_cert...))
 end
 
 """ `run` starts `server`
@@ -273,8 +294,12 @@ Method accepts following keyword arguments:
 
 * host - binding address
 * port - binding port
-* ssl  - GnuTLS certificate store object that contains SSL certificates.
-Use this argument to enable HTTPS support.
+* ssl  - SSL configuration. Use this argument to enable HTTPS support.
+Can be either an MbedTLS.SSLConfig object that already
+has associated certificates, or a tuple of an MbedTLS.CRT (certificate) and
+MbedTLS.PKContext (private key)). In the latter case, a configuration with reasonable
+defaults will be used.
+
 * socket - named pipe/domain socket path. Use this argument to enable Unix socket support.
 It's available only on Unix. Network options are ignored.
 
@@ -328,7 +353,7 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
     event("connect", server, client)
 
     while isopen(client.sock)
-        try
+        # try
             if !upgrade(client.parser.parser)
                 # IMPORTANT NOTE: This is technically incorrect as there may be data
                 # in the buffer that we have not yet read. The way to deal with this
@@ -337,24 +362,21 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
                 # we don't have, since we launch websocket handlers in the callback.
                 # Anyway, since there always needs to be a handshake this is probably
                 # fine for now.
-                if VERSION < v"0.4-"
-                    data = readavailable(client.sock).data
-                else
-                    data = readavailable(client.sock)
-                end
+                data = readavailable(client.sock)
+                print(bytestring(data))
                 add_data(client.parser, data)
             else
                 wait(client.sock.closenotify)
             end
-        catch e
-            if isa(e,GnuTLS.GnuTLSException) && e.code == -110
-                # Because Chrome is buggy on OS X, ignore E_PREMATURE_TERMINATION
-            else
-                rethrow()
-            end
-        end
+        # catch e
+        #     if isa(e,GnuTLS.GnuTLSException) && e.code == -110
+        #         # Because Chrome is buggy on OS X, ignore E_PREMATURE_TERMINATION
+        #     else
+        #         rethrow()
+        #     end
+        # end
     end
-
+    println("closed")
     event("close", server, client)
 end
 
