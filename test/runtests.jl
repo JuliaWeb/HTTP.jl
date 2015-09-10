@@ -63,16 +63,18 @@ facts("HttpServer runs") do
         @fact statuscode(ret) --> 200
     end
 
-    # context("Testing HTTPS on port 8002") do
-    #     http = HttpHandler() do req, res
-    #         Response("hi")
-    #     end
-    #     server = Server(http)
-    #     cert = MbedTLS.crt_parse_file("my_cert.crt")
-    #     key = MbedTLS.parse_keyfile("my_key.key")
-    #     @async run(server, 8002, ssl=(cert, key))
-    #     sleep(1.0)
-    #     ret = Requests.get("https://localhost:8002")
-    #     @fact text(ret) --> "hi"
-    # end
+    context("Testing HTTPS on port 8002") do
+        http = HttpHandler() do req, res
+            Response("hello")
+        end
+        server = Server(http)
+        cert = MbedTLS.crt_parse_file("my_cert.crt")
+        key = MbedTLS.parse_keyfile("my_key.key")
+        @async run(server, port=8002, ssl=(cert, key))
+        sleep(1.0)
+        client_tls_conf = Requests.TLS_VERIFY
+        MbedTLS.ca_chain!(client_tls_conf, cert)
+        ret = Requests.get("https://localhost:8002", tls_conf=client_tls_conf)
+        @fact text(ret) --> "hello"
+    end
 end

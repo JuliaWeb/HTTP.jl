@@ -230,7 +230,6 @@ function handle_http_request(server::Server)
     websockets_enabled = server.websock != nothing
     while true # handle requests, Base.wait_accept blocks until a connection is made
         client = Client(id_pool += 1, accept(server.http.sock))
-        println("connected")
         client.parser = ClientParser(message_handler(server, client, websockets_enabled))
         @async process_client(server, client, websockets_enabled)
     end
@@ -269,7 +268,6 @@ function default_ssl_config(ssl_cert, key)
     MbedTLS.config_defaults!(conf, endpoint=MbedTLS.MBEDTLS_SSL_IS_SERVER)
     MbedTLS.seed!(rng, entropy)
     MbedTLS.rng!(conf, rng)
-    MbedTLS.dbg!(conf, tls_dbg)
     MbedTLS.own_cert!(conf, ssl_cert, key)
     MbedTLS.dbg!(conf, (level, filename, number, msg)->begin
         warn("MbedTLS emitted debug info: $msg in $filename:$number")
@@ -352,7 +350,7 @@ parser`.
 function process_client(server::Server, client::Client, websockets_enabled::Bool)
     event("connect", server, client)
 
-    while isopen(client.sock)
+    while !eof(client.sock)#isopen(client.sock)
         # try
             if !upgrade(client.parser.parser)
                 # IMPORTANT NOTE: This is technically incorrect as there may be data
@@ -363,8 +361,9 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
                 # Anyway, since there always needs to be a handshake this is probably
                 # fine for now.
                 data = readavailable(client.sock)
-                print(bytestring(data))
-                add_data(client.parser, data)
+                if length(data) > 0
+                    add_data(client.parser, data)
+                end
             else
                 wait(client.sock.closenotify)
             end
@@ -376,7 +375,6 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
         #     end
         # end
     end
-    println("closed")
     event("close", server, client)
 end
 
@@ -444,5 +442,16 @@ function FileResponse(filename)
 end
 
 
+function __init__()
+    # Turn all the callbacks into C callable functions.
+    global const on_message_begin_cb = cfunction(on_message_begin, HTTP_CB...)
+    global const on_url_cb = cfunction(on_url, HTTP_DATA_CB...)
+    global const on_status_complete_cb = cfunction(on_status_complete, HTTP_CB...)
+    global const on_header_field_cb = cfunction(on_header_field, HTTP_DATA_CB...)
+    global const on_header_value_cb = cfunction(on_header_value, HTTP_DATA_CB...)
+    global const on_headers_complete_cb = cfunction(on_headers_complete, HTTP_CB...)
+    global const on_body_cb = cfunction(on_body, HTTP_DATA_CB...)
+    global const on_message_complete_cb = cfunction(on_message_complete, HTTP_CB...)
+end
 
 end # module HttpServer

@@ -28,6 +28,7 @@ HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
 #
 function on_message_begin(parser)
     pd(parser).request = Request()
+
     return 0
 end
 
@@ -104,15 +105,7 @@ function on_message_complete(parser)
     return 0
 end
 
-# Turn all the callbacks into C callable functions.
-on_message_begin_cb = cfunction(on_message_begin, HTTP_CB...)
-on_url_cb = cfunction(on_url, HTTP_DATA_CB...)
-on_status_complete_cb = cfunction(on_status_complete, HTTP_CB...)
-on_header_field_cb = cfunction(on_header_field, HTTP_DATA_CB...)
-on_header_value_cb = cfunction(on_header_value, HTTP_DATA_CB...)
-on_headers_complete_cb = cfunction(on_headers_complete, HTTP_CB...)
-on_body_cb = cfunction(on_body, HTTP_DATA_CB...)
-on_message_complete_cb = cfunction(on_message_complete, HTTP_CB...)
+
 
 default_complete_cb(r::Request) = nothing
 
