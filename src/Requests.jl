@@ -2,6 +2,7 @@ __precompile__()
 module Requests
 
 export URI, FileParam, headers, cookies, statuscode, post, requestfor
+export get_streaming, post_streaming, write_chunked
 
 import Base: get, write
 import Base.FS: File
@@ -130,6 +131,7 @@ end
 macro check_body()
   has_body = esc(:has_body)
   quote
+    write_body || error("Incompatible arguments: write_body cannot be false if a data argument is provided.")
     $has_body && error("Multiple body options specified. Please only specify one")
     $has_body = true
   end
@@ -138,10 +140,7 @@ end
 function do_request(uri::URI, verb; kwargs...)
     response_stream = do_stream_request(uri, verb; kwargs...)
     response = response_stream.response
-    while response_stream.state ≠ BodyDone
-        wait(response_stream)
-    end
-    response.data = takebuf_array(response_stream.buffer)
+    response.data = readbytes(response_stream)
     if get(response.headers, "Content-Encoding", "") ∈ ("gzip","deflate")
         response.data = decompress(response.data)
     end
@@ -158,7 +157,8 @@ function do_stream_request(uri::URI, verb; headers = Dict{String, String}(),
                             allow_redirects = true,
                             max_redirects = MAX_REDIRECTS,
                             history = Response[],
-                            tls_conf = TLS_VERIFY
+                            tls_conf = TLS_VERIFY,
+                            write_body = true,
                             )
 
     query_str = format_query_str(query; uri = uri)
@@ -188,8 +188,10 @@ function do_stream_request(uri::URI, verb; headers = Dict{String, String}(),
     request = default_request(newuri, headers, body, verb)
     if isempty(files)
         response_stream = open_stream(request, tls_conf, timeout_sec)
-        write(response_stream, request.data)
-        write(response_stream, CRLF)
+        if write_body
+            write(response_stream, request.data)
+            write(response_stream, CRLF)
+        end
     else
         @check_body
         verb == "POST" || error("Multipart file post only supported with POST")
@@ -200,23 +202,36 @@ function do_stream_request(uri::URI, verb; headers = Dict{String, String}(),
         response_stream = open_stream(request, tls_conf, timeout_sec)
         send_multipart(response_stream, multipart_settings, files)
     end
-    process_response(response_stream, HeadersDone)
-    response_stream.response.history = history
-    if allow_redirects && verb ≠ :head
-        redirect_uri = get_redirect_uri(response_stream)
-        if !isnull(redirect_uri)
-            length(response_stream.response.history) > max_redirects &&
-                throw(RedirectException(max_redirects))
-            push!(history, response_stream.response)
-            return do_stream_request(get(redirect_uri), verb; headers=headers,
-                 data=data, json=json, files=files, timeout=timeout,
-                 allow_redirects=allow_redirects, max_redirects=max_redirects,
-                 history=history, tls_conf=tls_conf)
+    main_task = current_task()
+    @schedule begin
+        try
+            process_response(response_stream)
+        catch err
+            Base.throwto(main_task, err)
         end
-    end
-    @async begin
-        process_response(response_stream, BodyDone)
+        while response_stream.state < BodyDone
+            wait(response_stream)
+        end
         close(response_stream)
+    end
+    if write_body
+        while response_stream.state < HeadersDone
+            wait(response_stream)
+        end
+        response_stream.response.history = history
+        if allow_redirects && verb ≠ :head
+            redirect_uri = get_redirect_uri(response_stream)
+            if !isnull(redirect_uri)
+                length(response_stream.response.history) > max_redirects &&
+                    throw(RedirectException(max_redirects))
+                push!(history, response_stream.response)
+                return do_stream_request(get(redirect_uri), verb; headers=headers,
+                     data=data, json=json, files=files, timeout=timeout,
+                     allow_redirects=allow_redirects, max_redirects=max_redirects,
+                     history=history, tls_conf=tls_conf)
+            end
+        end
+
     end
     return response_stream
 end

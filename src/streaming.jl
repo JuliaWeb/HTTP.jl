@@ -1,6 +1,6 @@
-@enum ResponseState NotStarted OnMessageBegin HeadersDone OnBody BodyDone
+@enum ResponseState NotStarted OnMessageBegin HeadersDone OnBody BodyDone EarlyEOF
 
-type ResponseStream{T<:IO} <: Base.AsyncStream
+type ResponseStream{T<:IO} <: IO
     response::Response
     socket::T
     state::ResponseState
@@ -46,7 +46,7 @@ function Base.show(io::IO, err::TimeoutException)
     print(io, "TimeoutException: server did not respond for more than $(err.timeout) seconds. ")
 end
 
-function process_response(stream, target_state=BodyDone)
+function process_response(stream)
     rp = stream.parser
     last_received = now()
     status_channel = Channel{Symbol}(1)
@@ -60,8 +60,8 @@ function process_response(stream, target_state=BodyDone)
             end
         end
     end
-    @async begin
-        while stream.state<target_state && !eof(stream)
+    @schedule begin
+        while stream.state < BodyDone && !eof(stream.socket)
             last_received = now()
             data = readavailable(stream.socket)
             if length(data) > 0
@@ -72,6 +72,10 @@ function process_response(stream, target_state=BodyDone)
     end
     status = take!(status_channel)
     status == :timeout && throw(TimeoutException(timeout))
+    if stream.state < BodyDone
+        stream.state = EarlyEOF
+        notify(stream.state_change)
+    end
     stream
 end
 
@@ -96,34 +100,38 @@ function get_default_tls_config(verify=true)
     conf
 end
 
-Base.wait(stream::ResponseStream) = wait(stream.state_change)
-
-function Base.eof(stream::ResponseStream)
-    (eof(stream.socket) || stream.state==BodyDone) && eof(stream.buffer)
+function Base.wait(stream::ResponseStream)
+    stream.state >= BodyDone && return
+    wait(stream.state_change)
 end
 
-Base.write(stream::ResponseStream, data::Vector{UInt8}) = write(stream.socket, data)
+function Base.eof(stream::ResponseStream)
+    eof(stream.buffer) && (stream.state==BodyDone || eof(stream.socket))
+end
 
-function Base.readbytes!(stream::ResponseStream, data::Vector{UInt8}, sz; all::Bool=true)
-    if all
-        while !eof(stream) && nb_available(stream) < sz
-            wait(stream)
-        end
+Base.write(stream::ResponseStream, data::BitArray) = write(steram.socket, data)
+Base.write(stream::ResponseStream, data::AbstractArray) = write(stream.socket, data)
+Base.write(stream::ResponseStream, x::UInt8) = write(stream.socket, x)
+
+function Base.readbytes!(stream::ResponseStream, data::Vector{UInt8}, sz)
+    while stream.state < BodyDone && nb_available(stream) < sz
+        wait(stream)
     end
     readbytes!(stream.buffer, data, sz)
 end
 
-function Base.readbytes(stream::ResponseStream, sz; all::Bool=true)
-    buf = Vector{UInt8}(sz)
-    readbytes!(stream, buf, sz; all=all)
-    buf
-end
-
 function Base.readbytes(stream::ResponseStream)
-    while stream.state ≠ BodyDone
+    while stream.state < BodyDone
         wait(stream)
     end
-    readbytes(stream.buffer)
+    takebuf_array(stream.buffer)
+end
+
+function Base.read(stream::ResponseStream, ::Type{UInt8})
+    while !eof(stream) && nb_available(stream) < 1
+        wait(stream)
+    end
+    read(stream.buffer, UInt8)
 end
 
 function Base.readavailable(stream::ResponseStream)
@@ -132,8 +140,6 @@ function Base.readavailable(stream::ResponseStream)
     end
     readbytes(stream, nb_available(stream))
 end
-
-Base.readall(stream::ResponseStream) = bytestring(readbytes(stream))
 
 Base.close(stream::ResponseStream) = close(stream.socket)
 Base.nb_available(stream::ResponseStream) = nb_available(stream.buffer)
@@ -165,11 +171,6 @@ function open_stream(req::Request, tls_conf=TLS_VERIFY, timeout=Inf)
     stream = ResponseStream(resp, stream)
     stream.timeout = timeout
     send_headers(stream)
-    # process_response(stream, HeadersDone)
-    # @async begin
-    #     process_response(stream, BodyDone)
-    #     stream.response.data = stream.buffer.data
-    # end
     stream
 end
 

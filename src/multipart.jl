@@ -6,11 +6,13 @@
 immutable ChunkedStream
     io::IO
 end
-function write(io::ChunkedStream,arg)
-    write(io.io,string(hex(sizeof(arg)),CRLF))
-    write(io.io,arg)
-    write(io.io,string(CRLF))
+function write_chunked(stream, arg)
+    write(stream,string(hex(sizeof(arg)),CRLF))
+    write(stream,arg)
+    write(stream,string(CRLF))
 end
+
+write(io::ChunkedStream, arg) = write_chunked(io.io, arg)
 
 #
 # File uploads

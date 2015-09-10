@@ -175,7 +175,22 @@ end
 # Test HTTPS
 @test statuscode(get("https://httpbin.org")) == 200
 
-# Test streaming
+# Test output streaming
+let
+    stream = Requests.post_streaming(
+      "http://httpbin.org/post", write_body=false,
+      headers=Dict("Transfer-Encoding"=>"chunked"))
+
+    write_chunked(stream, "ab")
+    write_chunked(stream, "cde")
+    write_chunked(stream, "")
+
+    response = JSON.parse(readall(stream))
+    @test response["data"] == "abcde"
+end
+
+
+# Test input streaming
 let
     stream = Requests.get_streaming("http://httpbin.org/stream-bytes/100", query=Dict(:chunk_size=>10))
     N = 0
