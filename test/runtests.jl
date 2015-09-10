@@ -147,7 +147,7 @@ data = json(res)
 # Test timeout delay
 let
     timeout = Dates.Millisecond(500)
-    @test_throws Requests.TimeoutException get("http://httpbin.org/delay/1", timeout=timeout)
+    @test_throws Requests.TimeoutException get("http://httpbin.org/delay/3", timeout=timeout)
 end
 
 # Test cookies
