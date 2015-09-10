@@ -113,14 +113,14 @@ FileParam has the following constructors:
 
 Via accessors (preferred):
 ```julia
-Requests.text(::Response)   # Get the payload of the response as utf8 text
-Requests.bytes(::Response)  # Get the payload as a byte array
+readall(::Response)         # Get the payload of the response as a string
+readbytes(::Response)       # Get the payload as a byte array
 Requests.json(::Response)   # Parse a JSON-encoded response into a Julia object
-statuscode(::Response)
+statuscode(::Response)      # Get the HTTP status code
 headers(::Response)         # A dictionary from response header fields to values
 cookies(::Response)         # A dictionary from cookie names set by the server to Cookie objects
 requestfor(::Response)      # Returns the request that generated the given response
-requestsfor(::Response)     # Returns the history of redirects that generated the given response.
+Requests.history(::Response)# Returns the history of redirects that generated the given response.
 ```
 
 or directly through the Response type fields:
@@ -130,8 +130,8 @@ type Response
     headers::Headers
     cookies::Cookies
     data::Vector{UInt8}
-    finished::Bool
-    requests::Vector{Request}
+    request::Nullable{Request}
+    history::Vector{Response}
 end
 ```
 
@@ -147,4 +147,18 @@ open("cat.jpg", "w") do file
     write(file, readavailable(stream))
   end
 end
+```
+
+Stream out data of potentially unknown length using chunked encoding:
+```julia
+stream = Requests.post_streaming("http://htpbin.org/post",
+  headers=Dict("Transfer-Encoding"=>"chunked"), write_body=false)  
+# `write_body=false` causes `post_streaming` to only write the headers, allowing you the chance to write the body manually
+for data_chunk in ["first", "second"]
+    write_chunked(stream, data_chunk)
+end
+write_chunked(stream, "")  # Signal that the body is complete
+
+response = readall(stream)  # Get back the server's response
+
 ```
