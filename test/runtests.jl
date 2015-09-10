@@ -15,10 +15,10 @@ urls = ["hdfs://user:password@hdfshost:9000/root/folder/file.csv#frag",
 failed = 0
 for url in urls
     u = URI(url)
-	if !(string(u) == url) || !isvalid(u)
-		failed += 1
-		println("Test failed for ",url)
-	end
+    if !(string(u) == url) || !isvalid(u)
+        failed += 1
+        println("Test failed for ",url)
+    end
 end
 if failed != 0
     exit(failed)
