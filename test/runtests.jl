@@ -25,7 +25,8 @@ import Requests: get, text, statuscode
 facts("HttpServer runs") do
     context("using HTTP protocol on 0.0.0.0:8000") do
         http = HttpHandler() do req::Request, res::Response
-            Response( ismatch(r"^/hello/",req.resource) ? string("Hello ", split(req.resource,'/')[3], "!") : 404 )
+            res = Response( ismatch(r"^/hello/",req.resource) ? string("Hello ", split(req.resource,'/')[3], "!") : 404 )
+            setcookie!(res, "sessionkey", "abc", Dict("Path"=>"/test", "Secure"=>""))
         end
         server = Server(http)
         @async run(server, 8000)
@@ -34,6 +35,13 @@ facts("HttpServer runs") do
         ret = Requests.get("http://localhost:8000/hello/travis")
         @fact text(ret) => "Hello travis!"
         @fact statuscode(ret) => 200
+        @fact haskey(ret.cookies, "sessionkey") --> true
+
+        let cookie = ret.cookies["sessionkey"]
+            @fact cookie.value --> "abc"
+            @fact cookie.attrs["Path"] --> "/test"
+            @fact haskey(cookie.attrs, "Secure") --> true
+        end
 
         ret = Requests.get("http://localhost:8000/bad")
         @fact text(ret) => ""

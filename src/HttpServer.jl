@@ -23,7 +23,8 @@ export HttpHandler,
        Request,
        Response,
        escapeHTML,
-       parsequerystring
+       parsequerystring,
+       setcookie!
 
 import Base: run, listen
 
@@ -171,6 +172,14 @@ function event(event::String, server::Server, args...)
     haskey(server.http.events, event) && server.http.events[event](args...)
 end
 
+"""
+Sets a cookie with the given name, value, and attributes on the given response object.
+"""
+setcookie!(r::Response, name, value=utf8(""), attrs=Dict{UTF8String, UTF8String}()) =
+  setcookie!(r, Cookie(name, value, attrs))
+
+setcookie!(r::Response, cookie::Cookie) = (r.cookies[cookie.name] = cookie; r)
+
 import Base.write
 @doc "Converts a `Response` to an HTTP response string" ->
 function write(io::IO, response::Response)
@@ -179,6 +188,16 @@ function write(io::IO, response::Response)
     response.headers["Content-Length"] = string(sizeof(response.data))
     for (header,value) in response.headers
         write(io, string(join([ header, ": ", value ]), "\r\n"))
+    end
+    for (cookie_name, cookie) in response.cookies
+        write(io, "Set-Cookie: ", cookie_name, "=", cookie.value)
+        for (attr_name, attr_val) in cookie.attrs
+            write(io, "; ", attr_name)
+            if !isempty(attr_val)
+                write(io, "=", attr_val)
+            end
+        end
+        write(io, "\r\n")
     end
 
     write(io, "\r\n")
