@@ -1,4 +1,4 @@
-@enum ResponseState NotStarted OnMessageBegin HeadersDone OnBody BodyDone EarlyEOF
+@enum ResponseState NotStarted OnMessageBegin OnHeaderField OnHeaderValue HeadersDone OnBody BodyDone EarlyEOF
 
 type ResponseStream{T<:IO} <: IO
     response::Response
@@ -9,6 +9,7 @@ type ResponseStream{T<:IO} <: IO
     timeout::Float64
     current_header::Nullable{ASCIIString}
     state_change::Condition
+    cookie_buffer::IOBuffer
     ResponseStream() = new()
 end
 
@@ -22,6 +23,7 @@ function ResponseStream{T}(response, socket::T)
     r.timeout = Inf
     r.current_header = Nullable()
     r.state_change = Condition()
+    r.cookie_buffer = IOBuffer()
     r
 end
 

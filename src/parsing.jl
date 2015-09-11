@@ -44,45 +44,68 @@ function on_header_field(parser, at, len)
     response_stream = pd(parser)
     header = bytestring(convert(Ptr{Uint8}, at))
     header_field = header[1:len]
-    response_stream.current_header = Nullable(header_field)
+    if response_stream.state == OnHeaderField
+        field = string(get(response_stream.current_header, header_field))
+        response_stream.current_header = Nullable(field)
+    else
+        response_stream.current_header = Nullable(header_field)
+    end
+    response_stream.state = OnHeaderField
+    notify(response_stream.state_change)
     return 0
 end
 
-function parse_set_cookie(value)
-    parts = split(value, ';')
-    isempty(parts) && return Nullable{Cookie}()
-    nameval = split(parts[1], '=', limit=2)
-    length(nameval)==2 || return Nullable{Cookie}()
-    name, value = nameval
-    c = Cookie(strip(name), strip(value))
-    for part in parts[2:end]
-        nameval = split(part, '=', limit=2)
-        if length(nameval)==2
-            name, value = nameval
-            c.attrs[strip(name)] = strip(value)
-        else
-            c.attrs[strip(nameval[1])] = utf8("")
+function parse_cookies!(response, cookie_strings)
+    for cookie_str in split(cookie_strings, '\0')
+        isempty(cookie_str) && continue
+        parts = split(cookie_str, ';')
+        isempty(parts) && continue
+        nameval = split(parts[1], '=', limit=2)
+        length(nameval)==2 || continue
+        name, value = nameval
+        c = Cookie(strip(name), strip(value))
+        for part in parts[2:end]
+            nameval = split(part, '=', limit=2)
+            if length(nameval)==2
+                name, value = nameval
+                c.attrs[strip(name)] = strip(value)
+            else
+                c.attrs[strip(nameval[1])] = utf8("")
+            end
         end
+        response.cookies[c.name] = c
     end
-    return Nullable(c)
+    response
 end
 
 const is_set_cookie = r"set-cookie"i
 
 function on_header_value(parser, at, len)
     response_stream = pd(parser)
+    resp = response_stream.response
     s = bytestring(convert(Ptr{Uint8}, at), Int(len))
     current_header = get(response_stream.current_header)
-    if is_set_cookie(current_header)
-        maybe_cookie = parse_set_cookie(s)
-        if !isnull(maybe_cookie)
-            cookie = get(maybe_cookie)
-            response_stream.response.cookies[cookie.name] = cookie
+    if response_stream.state == OnHeaderValue
+        if is_set_cookie(current_header)
+            write(response_stream.cookie_buffer, s)
+        else
+            resp.headers[current_header] = string(resp.headers[current_header], s)
         end
     else
-        response_stream.response.headers[current_header] = s
+        if is_set_cookie(current_header)
+            write(response_stream.cookie_buffer, '\0', s)
+            # maybe_cookie = parse_set_cookie(s)
+            # if !isnull(maybe_cookie)
+            #     cookie = get(maybe_cookie)
+            #     response_stream.response.cookies[cookie.name] = cookie
+            # end
+        else
+            response_stream.response.headers[current_header] = s
+        end
     end
-    response_stream.current_header = Nullable()
+    # response_stream.current_header = Nullable()
+    response_stream.state = OnHeaderValue
+    notify(response_stream.state_change)
     return 0
 end
 
@@ -100,6 +123,8 @@ function on_headers_complete(parser)
     response.headers["http_major"] = string(convert(Int, p.http_major))
     response.headers["http_minor"] = string(convert(Int, p.http_minor))
     response.headers["Keep-Alive"] = string(http_should_keep_alive(parser))
+    parse_cookies!(response, takebuf_string(response_stream.cookie_buffer))
+
     response_stream.state = HeadersDone
     notify(response_stream.state_change)
     return 0
