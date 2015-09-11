@@ -2,16 +2,11 @@
 #
 # Serve HTTP requests in Julia.
 #
-isdefined(Base, :__precompile__) && __precompile__(false)
+__precompile__()
 module HttpServer
 
-if VERSION < v"0.4.0-dev"
-    using Docile
-    eval(:(@docstrings(manual = ["../README.md"])))
-end
-
 using HttpCommon
-using Compat
+using MbedTLS
 
 include("RequestParser.jl")
 
@@ -29,10 +24,10 @@ export HttpHandler,
 import Base: run, listen
 
 defaultevents = Dict{ASCIIString, Function}()
-defaultevents["error"]  = ( client, err ) -> println( err )
-defaultevents["listen"] = ( saddr )       -> println("Listening on $saddr...")
+defaultevents["error"]  = ( client, err )->println( err )
+defaultevents["listen"] = ( saddr )      ->println("Listening on $saddr...")
 
-@doc """
+"""
 `HttpHandler` types are used to instantiate a `Server`.
 
 An `HttpHandler` is responsible for the entirety of the request / response
@@ -74,7 +69,7 @@ server events occur.
 Set these functions by direct assignment:
 
 ```
-handler.events["listen"] = (port) -> "Listening on \$port..."
+handler.events["listen"] = (port) "Listening on \$port..."
 ```
 
 All default events and their arguments:
@@ -89,31 +84,27 @@ function:
 
 ```
 # listen for "foo"
-handler.events["foo"] = (bar) -> "Hello \$bar"
+handler.events["foo"] = (bar) "Hello \$bar"
 # trigger "foo"
 HttpServer.event(server, "foo", "Julia")
 ```
-""" ->
+"""
 immutable HttpHandler
     handle::Function
     sock::Base.UVServer
     events::Dict
 
     HttpHandler(handle::Function, sock::Base.UVServer) = new(handle, sock, defaultevents)
-    if VERSION < v"0.4-"
-      HttpHandler(handle::Function) = new(handle, Base.TcpServer(), defaultevents)
-    else
-      HttpHandler(handle::Function) = new(handle, Base.TCPServer(), defaultevents)
-    end
+    HttpHandler(handle::Function) = new(handle, Base.TCPServer(), defaultevents)
 end
 handle(handler::HttpHandler, req::Request, res::Response) = handler.handle(req, res)
 
-@doc """ Client encapsulates a single connection
+""" Client encapsulates a single connection
 
  When new connections are initialized a `Client` is created with a new id and
  the connection socket. `Client.parser` will store a `ClientParser` to handle
  all HTTP parsing for the connection lifecycle.
-""" ->
+"""
 type Client{T<:IO}
     id::Int
     sock::T
@@ -123,29 +114,29 @@ type Client{T<:IO}
 end
 Client{T<:IO}(id::Int,sock::T) = Client{T}(id,sock)
 
-@doc """ `WebSocketInterface` defines the abstract protocol for a WebSocketHandler.
+""" `WebSocketInterface` defines the abstract protocol for a WebSocketHandler.
 
 The methods `is_websocket_handshake` and `handle` will be called if `Server.
 sockets` is populated. Concrete types of `WebSocketInterface` are required
 to define these methods.
-""" ->
+"""
 abstract WebSocketInterface
 
-@doc """ `is_websocket_handshake` should determine if `req` is a valid websocket
+""" `is_websocket_handshake` should determine if `req` is a valid websocket
 upgrade request.
-""" ->
+"""
 function is_websocket_handshake(handler::WebSocketInterface, req::Request)
     throw("`$(typeof(handler))` does not implement `is_websocket_handshake`.")
 end
 
-@doc """ `handle` is called when `is_websocket_handshake` returns true, and takes
+""" `handle` is called when `is_websocket_handshake` returns true, and takes
 full control of the connection.
-""" ->
+"""
 function handle(handler::WebSocketInterface, req::Request, client::Client)
     throw("`$(typeof(handler))` does not implement `handle`.")
 end
 
-@doc """ `Server` types encapsulate an `HttpHandler` and optional
+""" `Server` types encapsulate an `HttpHandler` and optional
 `WebSocketInterface` to serve requests.
 
 * Instantiate with both an `HttpHandler` and `WebSocketInterface` to serve
@@ -154,20 +145,20 @@ end
 * Instantiate with just a `Function` to create an `HttpHandler` automatically
 * Instantiate with just a `WebSocketInterface` to only serve websockets
   requests and `404` all others.
-""" ->
+"""
 immutable Server
     http::HttpHandler
     websock::Union(Nothing, WebSocketInterface)
 end
 Server(http::HttpHandler)           = Server(http, nothing)
 Server(handler::Function)           = Server(HttpHandler(handler))
-Server(websock::WebSocketInterface) = Server(HttpHandler((req, res) -> Response(404)), websock)
+Server(websock::WebSocketInterface) = Server(HttpHandler((req, res)->Response(404)), websock)
 
-@doc """Triggers `event` on `server`.
+"""Triggers `event` on `server`.
 
 If there is a function bound to `event` in `server.events` it will be called
 with `args...`
-""" ->
+"""
 function event(event::String, server::Server, args...)
     haskey(server.http.events, event) && server.http.events[event](args...)
 end
@@ -181,7 +172,7 @@ setcookie!(r::Response, name, value=utf8(""), attrs=Dict{UTF8String, UTF8String}
 setcookie!(r::Response, cookie::Cookie) = (r.cookies[cookie.name] = cookie; r)
 
 import Base.write
-@doc "Converts a `Response` to an HTTP response string" ->
+"Converts a `Response` to an HTTP response string"
 function write(io::IO, response::Response)
     write(io, join(["HTTP/1.1", response.status, HttpCommon.STATUS_CODES[response.status], "\r\n"], " "))
 
@@ -204,15 +195,15 @@ function write(io::IO, response::Response)
     write(io, response.data)
 end
 
-@doc """ Start `server` to listen on specified socket address.
+""" Start `server` to listen on specified socket address.
 
-    listen(server::Server, host::Base.IpAddr, port::Integer) -> Server
+    listen(server::Server, host::Base.IpAddr, port::Integer) Server
 
     Setup "server" so it listens on "port" on the address specified by "host".
     To listen on all interfaces pass, "IPv4(0)" or "IPv6(0)" as appropriate.
-""" ->
+"""
 function listen(server::Server, host::Base.IpAddr, port::Integer)
-    Base.uv_error("listen", !bind(server.http.sock, host, @compat UInt16(port)))
+    Base.uv_error("listen", !bind(server.http.sock, host, UInt16(port)))
     listen(server.http.sock)
     inet = "$host:$port"
     event("listen", server, inet)
@@ -222,7 +213,7 @@ listen(server::Server, port::Integer) = listen(server, IPv4(0), port)
 
 """ Start `server` to listen on named pipe/domain socket.
 
-    listen(server::Server, path::String) -> Server
+    listen(server::Server, path::String) Server
 
     Setup "server" to listen on named pipe/domain socket specified by "path".
 """
@@ -233,31 +224,32 @@ listen(server::Server, port::Integer) = listen(server, IPv4(0), port)
     return server
 end
 
-@doc """ Handle HTTP request from client """ ->
+""" Handle HTTP request from client """
 function handle_http_request(server::Server)
     id_pool = 0 # Increments for each connection
     websockets_enabled = server.websock != nothing
     while true # handle requests, Base.wait_accept blocks until a connection is made
-        server.http.sock
         client = Client(id_pool += 1, accept(server.http.sock))
         client.parser = ClientParser(message_handler(server, client, websockets_enabled))
         @async process_client(server, client, websockets_enabled)
     end
 end
 
-using GnuTLS
-@doc """ Handle HTTPS request from client """ ->
-function handle_https_request(server::Server, cert_store::GnuTLS.CertificateStore)
+""" Handle HTTPS request from client """
+function handle_https_request(server::Server, ssl_config::MbedTLS.SSLConfig)
     id_pool = 0 # Increments for each connection
     websockets_enabled = server.websock != nothing
     while true
-        sess = GnuTLS.Session(true)
-        set_priority_string!(sess)
-        set_credentials!(sess, cert_store)
+        sess = MbedTLS.SSLContext()
+        MbedTLS.setup!(sess, ssl_config)
+        # set_priority_string!(sess)
+        # set_credentials!(sess, cert_store)
         client = accept(server.http.sock)
         try
-            associate_stream(sess, client)
-            handshake!(sess)
+            MbedTLS.set_bio!(sess, client)
+            MbedTLS.handshake(sess)
+            # associate_stream(sess, client)
+            # handshake!(sess)
         catch e
             println("Error establishing SSL connection: ", e)
             close(client)
@@ -269,7 +261,25 @@ function handle_https_request(server::Server, cert_store::GnuTLS.CertificateStor
     end
 end
 
-@doc """ `run` starts `server`
+function default_ssl_config(ssl_cert, key)
+    conf = MbedTLS.SSLConfig()
+    entropy = MbedTLS.Entropy()
+    rng = MbedTLS.CtrDrbg()
+    MbedTLS.config_defaults!(conf, endpoint=MbedTLS.MBEDTLS_SSL_IS_SERVER)
+    MbedTLS.seed!(rng, entropy)
+    MbedTLS.rng!(conf, rng)
+    MbedTLS.own_cert!(conf, ssl_cert, key)
+    MbedTLS.dbg!(conf, (level, filename, number, msg)->begin
+        warn("MbedTLS emitted debug info: $msg in $filename:$number")
+    end)
+    conf
+end
+
+function handle_https_request(server::Server, ssl_cert::Tuple{MbedTLS.CRT, MbedTLS.PKContext})
+    handle_https_request(server, default_ssl_config(ssl_cert...))
+end
+
+""" `run` starts `server`
 
 Functionality:
 
@@ -282,8 +292,12 @@ Method accepts following keyword arguments:
 
 * host - binding address
 * port - binding port
-* ssl  - GnuTLS certificate store object that contains SSL certificates.
-Use this argument to enable HTTPS support.
+* ssl  - SSL configuration. Use this argument to enable HTTPS support.
+Can be either an MbedTLS.SSLConfig object that already
+has associated certificates, or a tuple of an MbedTLS.CRT (certificate) and
+MbedTLS.PKContext (private key)). In the latter case, a configuration with reasonable
+defaults will be used.
+
 * socket - named pipe/domain socket path. Use this argument to enable Unix socket support.
 It's available only on Unix. Network options are ignored.
 
@@ -302,7 +316,7 @@ run(server, host=IPv4(127,0,0,1), port=8000)
 # or
 run(server, 8000)
 ```
-""" ->
+"""
 function run(server::Server; args...)
     params = Dict(args)
 
@@ -328,16 +342,16 @@ end
 # backward compatibility method
 run(server::Server, port::Integer) = run(server, port=port)
 
-@doc """Handles live connections, runs inside a `Task`.
+"""Handles live connections, runs inside a `Task`.
 
 Blocks ( yields ) until a line can be read, then passes it into `client.
 parser`.
-""" ->
+"""
 function process_client(server::Server, client::Client, websockets_enabled::Bool)
     event("connect", server, client)
 
-    while isopen(client.sock)
-        try
+    while !eof(client.sock)#isopen(client.sock)
+        # try
             if !upgrade(client.parser.parser)
                 # IMPORTANT NOTE: This is technically incorrect as there may be data
                 # in the buffer that we have not yet read. The way to deal with this
@@ -346,28 +360,25 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
                 # we don't have, since we launch websocket handlers in the callback.
                 # Anyway, since there always needs to be a handshake this is probably
                 # fine for now.
-                if VERSION < v"0.4-"
-                    data = readavailable(client.sock).data
-                else
-                    data = readavailable(client.sock)
+                data = readavailable(client.sock)
+                if length(data) > 0
+                    add_data(client.parser, data)
                 end
-                add_data(client.parser, data)
             else
                 wait(client.sock.closenotify)
             end
-        catch e
-            if isa(e,GnuTLS.GnuTLSException) && e.code == -110
-                # Because Chrome is buggy on OS X, ignore E_PREMATURE_TERMINATION
-            else
-                rethrow()
-            end
-        end
+        # catch e
+        #     if isa(e,GnuTLS.GnuTLSException) && e.code == -110
+        #         # Because Chrome is buggy on OS X, ignore E_PREMATURE_TERMINATION
+        #     else
+        #         rethrow()
+        #     end
+        # end
     end
-
     event("close", server, client)
 end
 
-@doc "Callback factory for providing `on_message_complete` for `client.parser`" ->
+"Callback factory for providing `on_message_complete` for `client.parser`"
 function message_handler(server::Server, client::Client, websockets_enabled::Bool)
 
     # Called when the `ClientParser` has finished parsing a `Request`.
@@ -431,5 +442,16 @@ function FileResponse(filename)
 end
 
 
+function __init__()
+    # Turn all the callbacks into C callable functions.
+    global const on_message_begin_cb = cfunction(on_message_begin, HTTP_CB...)
+    global const on_url_cb = cfunction(on_url, HTTP_DATA_CB...)
+    global const on_status_complete_cb = cfunction(on_status_complete, HTTP_CB...)
+    global const on_header_field_cb = cfunction(on_header_field, HTTP_DATA_CB...)
+    global const on_header_value_cb = cfunction(on_header_value, HTTP_DATA_CB...)
+    global const on_headers_complete_cb = cfunction(on_headers_complete, HTTP_CB...)
+    global const on_body_cb = cfunction(on_body, HTTP_DATA_CB...)
+    global const on_message_complete_cb = cfunction(on_message_complete, HTTP_CB...)
+end
 
 end # module HttpServer
