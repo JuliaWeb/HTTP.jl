@@ -1,7 +1,6 @@
 using HttpParser
 using HttpCommon
 using Base.Test
-using Compat
 
 FIREFOX_REQ = tuple("GET /favicon.ico HTTP/1.1\r\n",
          "Host: 0.0.0.0=5000\r\n",
@@ -46,7 +45,7 @@ end
 
 function on_url(parser, at, len)
     # Concatenate the resource for each on_url callback
-    r.resource = string(r.resource, bytestring(convert(Ptr{Uint8}, at), @compat Int(len)))
+    r.resource = string(r.resource, bytestring(convert(Ptr{Uint8}, at), Int(len)))
     return 0
 end
 
@@ -55,14 +54,14 @@ function on_status_complete(parser)
 end
 
 function on_header_field(parser, at, len)
-    header = bytestring(convert(Ptr{Uint8}, at), @compat Int(len))
+    header = bytestring(convert(Ptr{Uint8}, at), Int(len))
     # set the current header
     r.headers["current_header"] = header
     return 0
 end
 
 function on_header_value(parser, at, len)
-    s = bytestring(convert(Ptr{Uint8}, at), @compat Int(len))
+    s = bytestring(convert(Ptr{Uint8}, at), Int(len))
     # once we know we have the header value, that will be the value for current header
     r.headers[r.headers["current_header"]] = s
     # reset current_header
