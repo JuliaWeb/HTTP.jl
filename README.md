@@ -19,7 +19,7 @@ This package provides types and helper functions for dealing with the HTTP proto
 
 #### `Headers`
 
-`Headers` represents the header fields for an HTTP request, and is type alias for `Dict{String,String}`.
+`Headers` represents the header fields for an HTTP request, and is type alias for `Dict{AbstractString,AbstractString}`.
 There is a default constructor, `headers`, that produces a reasonable default set of headers:
 ```julia
 Dict( "Server"           => "Julia/$VERSION",
@@ -68,7 +68,7 @@ It has six fields:
 
 #### `STATUS_CODES`
 
-`STATUS_CODES` is a dictionary (`Int => String`) that maps all the
+`STATUS_CODES` is a dictionary (`Int => AbstractString`) that maps all the
 status codes defined in RFC's to their descriptions, e.g.
 
 ```julia
@@ -81,12 +81,12 @@ STATUS_CODES[500] #=> "Internal Server Error"
 
 ## Utility functions
 
-#### `escapeHTML(i::String)`
+#### `escapeHTML(i::AbstractString)`
 
 Returns a string with special HTML characters escaped: `&, <, >, ", '`
 
 
-#### `parsequerystring(query::String)`
+#### `parsequerystring(query::AbstractString)`
 
 Convert a valid querystring to a Dict:
 
