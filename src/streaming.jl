@@ -90,6 +90,12 @@ function get_default_tls_config(verify=true)
     MbedTLS.config_defaults!(conf)
 
     entropy = MbedTLS.Entropy()
+    rng = RandomDevice()
+    function entropy_func(buffer)
+        buffer[:] = rand(rng, UInt8, length(buffer))
+        length(buffer)
+    end
+    MbedTLS.add_source!(entropy, entropy_func, 0, true)
     rng = MbedTLS.CtrDrbg()
     MbedTLS.seed!(rng, entropy)
     MbedTLS.rng!(conf, rng)
