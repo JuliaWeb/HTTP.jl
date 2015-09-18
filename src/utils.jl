@@ -32,7 +32,7 @@ end
 # Splits the query into key value pairs
 function query_params(uri::URI)
     elems = split(uri.query, '&', keep = false)
-    d = Dict{String, String}()
+    d = Dict{AbstractString, AbstractString}()
     for elem in elems
         pp = split(elem, "=", keep = true)
         if length(pp) == 2
