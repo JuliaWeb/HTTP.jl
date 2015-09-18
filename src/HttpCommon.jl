@@ -16,7 +16,7 @@ include("status.jl")
 """
 `Headers` represents the header fields for an HTTP request.
 """
-typealias Headers Dict{String,String}
+typealias Headers Dict{AbstractString,AbstractString}
 headers() = Headers(
     "Server"            => "Julia/$VERSION",
     "Content-Type"      => "text/html; charset=utf-8",
@@ -92,7 +92,7 @@ type Response
 end
 # If a Response is instantiated with all of fields except for `finished`,
 # `finished` will default to `false`.
-typealias HttpData Union{Vector{UInt8}, String}
+typealias HttpData Union{Vector{UInt8}, AbstractString}
 Response(s::Int, h::Headers, d::HttpData) =
   Response(s, h, Dict{UTF8String, Cookie}(), d, Nullable(), Response[], false, Request[])
 Response(s::Int, h::Headers)              = Response(s, h, UInt8[])
@@ -110,11 +110,11 @@ end
 
 
 """
-escapeHTML(i::String)
+escapeHTML(i::AbstractString)
 
 Returns a string with special HTML characters escaped: &, <, >, ", '
 """
-function escapeHTML(i::String)
+function escapeHTML(i::AbstractString)
     # Refer to http://stackoverflow.com/a/7382028/3822752 for spec. links
     o = replace(i, "&", "&amp;")
     o = replace(o, "\"", "&quot;")
@@ -126,7 +126,7 @@ end
 
 
 """
-parsequerystring(query::String)
+parsequerystring(query::AbstractString)
 
 Convert a valid querystring to a Dict:
 
@@ -136,8 +136,8 @@ Convert a valid querystring to a Dict:
     #   "baz" => "<a href='http://www.hackershool.com'>hello world!</a>"
     #   "foo" => "bar"
 """
-function parsequerystring{T<:String}(query::T)
-    q = Dict{String,String}()
+function parsequerystring{T<:AbstractString}(query::T)
+    q = Dict{AbstractString,AbstractString}()
     length(query) == 0 && return q
     for field in split(query, "&")
         keyval = split(field, "=")
