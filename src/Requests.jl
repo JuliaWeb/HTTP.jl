@@ -147,6 +147,10 @@ function do_request(uri::URI, verb; kwargs...)
     response
 end
 
+parse_request_data(data) = (data, "application/octet-stream")
+parse_request_data(data::Associative) =
+  (format_query_str(data), "application/x-www-form-urlencoded")
+
 function do_stream_request(uri::URI, verb; headers = Dict{String, String}(),
                             cookies = nothing,
                             data = nothing,
@@ -178,7 +182,7 @@ function do_stream_request(uri::URI, verb; headers = Dict{String, String}(),
 
     if data ≠ nothing
         @check_body
-        body = data
+        body, headers["Content-Type"] = parse_request_data(data)
     end
 
     if cookies ≠ nothing

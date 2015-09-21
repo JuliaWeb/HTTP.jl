@@ -77,6 +77,9 @@ data = json(delete("http://httpbin.org/delete";
 @test data["json"]["key1"] == "value1"
 @test data["json"]["key4"] == 4.01
 
+# form-encoded posts
+data = json(post("http://httpbin.org/post", data=Dict("email"=>"a@b.com")))
+@test data["form"]["email"] == "a@b.com"
 
 # query + data -------
 

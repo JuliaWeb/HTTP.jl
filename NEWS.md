@@ -1,6 +1,7 @@
-Requests v0.3.1 Release Notes
+Requests v0.3 Release Notes
 =======
 
+* The `data` argument to `post` can now accept a dictionary, in which case it is assumed that the data should be form-encoded.
 * `Response.data` is now a `Vector{UInt8}` instead of a `String` to correctly handle binary responses. Use `bytestring(::Response)` to get back the response payload as a string.
 * GnuTLS has been replaced with MbedTLS. Pass a `tls_conf` parameter to a request method with type `MbedTLS.SSLConfig` to override the default TLS settings.
 * Redirects are automatically followed unless `allow_redirects=false` is used. `history(::Response)` will return the history of redirect responses that led to the given response.

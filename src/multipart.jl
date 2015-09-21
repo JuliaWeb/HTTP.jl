@@ -28,7 +28,7 @@ write(io::ChunkedStream, arg) = write_chunked(io.io, arg)
 #
 
 immutable FileParam
-    file::Union(IO,Base.File,String,Vector{Uint8})     # The file
+    file::Union{IO,Base.File,AbstractString,Vector{UInt8}}     # The file
     # The content type (default: "", which is interpreted as text/plain serverside)
     ContentType::ASCIIString
     name::ASCIIString                                  # The fieldname (in a form)
@@ -36,7 +36,7 @@ immutable FileParam
     # Whether or not to close the file when the request is done
     close::Bool
 
-    function FileParam(str::Union(String,Vector{Uint8}),ContentType="",name="",filename="")
+    function FileParam(str::Union{AbstractString,Vector{UInt8}},ContentType="",name="",filename="")
         new(str,ContentType,name,filename,false)
     end
 
@@ -54,7 +54,7 @@ end
 
 # Determine whether or not we need to use
 datasize(::IO) = -1
-datasize(f::Union(String,Array{Uint8})) = sizeof(f)
+datasize(f::Union{AbstractString,Array{UInt8}}) = sizeof(f)
 datasize(f::File) = filesize(f)
 datasize(f::IOBuffer) = nb_available(f)
 function datasize(io::IOStream)
@@ -88,7 +88,7 @@ end
 # Write a file by reading it in 1MB chunks (unless we know its size and it's smaller than that)
 function write_file(stream,file::IO,datasize,doclose)
     datasize == datasize == -1 : 2^20 : min(2^20,datasize)
-    x = Array(Uint8,datasize)
+    x = Array(UInt8,datasize)
     while !eof(file)
         nread = readbytes!(file,x)
         if nread == 2^20
@@ -108,7 +108,7 @@ function write_file(stream,file::IOStream,datasize,doclose)
 end
 
 # Write data already in memory
-function write_file(stream,file::Union(String,Array{Uint8}),datasize,doclose)
+function write_file(stream,file::Union{AbstractString,Array{UInt8}},datasize,doclose)
     @assert datasize != -1
     write(stream,file)
     doclose && close(file)
@@ -145,7 +145,7 @@ function partheadersize(file,datasize,boundary)
     totalsize
 end
 
-choose_boundary() = hex(rand(Uint128))
+choose_boundary() = hex(rand(UInt128))
 
 function send_multipart(stream, settings, files)
     chunked, boundary, datasizes = settings.chunked, settings.boundary, settings.datasizes
