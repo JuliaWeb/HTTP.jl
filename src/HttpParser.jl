@@ -115,7 +115,7 @@ errno_description(errno::Integer) = bytestring(ccall((:http_errno_description,li
 
 immutable HttpParserError <: Exception
     errno::Int32
-    HttpParserError(errno::Integer) = new(@compat Int32(errno))
+    HttpParserError(errno::Integer) = new(Int32(errno))
 end
 
 show(io::IO, err::HttpParserError) = print(io,"HTTP Parser Exception: ",errno_name(err.errno),"(",string(err.errno),"):",errno_description(err.errno))
