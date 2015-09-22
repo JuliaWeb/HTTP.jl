@@ -174,6 +174,7 @@ function open_stream(req::Request, tls_conf=TLS_VERIFY, timeout=Inf)
         stream = MbedTLS.SSLContext()
         MbedTLS.setup!(stream, tls_conf)
         MbedTLS.set_bio!(stream, sock)
+        MbedTLS.hostname!(stream, uri.host)
         MbedTLS.handshake(stream)
     end
     resp = Response()
