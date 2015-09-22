@@ -88,7 +88,7 @@ end
 function get_default_tls_config(verify=true)
     conf = MbedTLS.SSLConfig()
     MbedTLS.config_defaults!(conf)
-    
+
     entropy = MbedTLS.Entropy()
     rng = MbedTLS.CtrDrbg()
     MbedTLS.seed!(rng, entropy)

@@ -1,7 +1,7 @@
 Requests v0.3 Release Notes
 =======
 
-* A new convenience method `save(::Response, filename)` has been added which saves the payload of the response to a file. `view(::Response)` will save the response to a temporary file and open it with an external application.
+* A new convenience method `save(::Response, path)` has been added which saves the payload of the response to a file. `view(::Response)` will save the response to a temporary file and open it with an external application.
 * The `data` argument to `post` can now accept a dictionary, in which case it is assumed that the data should be form-encoded.
 * `Response.data` is now a `Vector{UInt8}` instead of a `String` to correctly handle binary responses. Use `bytestring(::Response)` to get back the response payload as a string.
 * GnuTLS has been replaced with MbedTLS. Pass a `tls_conf` parameter to a request method with type `MbedTLS.SSLConfig` to override the default TLS settings.

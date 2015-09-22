@@ -74,42 +74,56 @@ function mimetype(r::Response)
     end
 end
 
-"""
-`save(r::Response, filename)`
-
-Saves the data in the response to a file named `filename`. The extension is
-automatically derived from the mimetype of the response.
-
-`save(r::Response, filename, extension)`
-
-Use the given extension instead of automatically deriving it from the mimetype.
-"""
-function save(r::Response, basename, maybe_ext=Nullable())
-    ext = "txt"
-    if isnull(maybe_ext)
-        maybe_mt = mimetype(r)
-        if !isnull(maybe_mt)
-            mt = get(maybe_mt)
-            if haskey(MIMETYPES, mt)
-                ext = MIMETYPES[mt]
-            else
-                if '/' ∉ mt
-                    ext = mt
-                end
+function contentdisposition(r::Response)
+    if haskey(headers(r), "Content-Disposition")
+        cd = split(headers(r)["Content-Disposition"], ";")
+        if length(cd) ≥ 2
+            filepart = split(cd[2], "=", limit=2)
+            if length(filepart) == 2
+                return Nullable(filepart[2])
             end
         end
-    else
-        ext = get(maybe_ext)
     end
-    path = "$basename.$ext"
-    open(path, "w") do file
-        write(file, bytes(r))
-    end
-    path
+    return Nullable{UTF8String}()
 end
 
-save(r::Response, basename, maybe_ext::AbstractString) =
-  save(r, basename, Nullable(maybe_ext))
+"""
+`save(r::Response, path=".")`
+
+Saves the data in the response in the directory `path`. If the path is a directory,
+then the filename is automatically chosen based on the response headers.
+
+Returns the full pathname of the saved file.
+"""
+function save(r::Response, path=".")
+    if !isdir(path)
+        filename = path
+    else
+        maybe_basename = contentdisposition(r)
+        if !isnull(maybe_basename)
+            filename = joinpath(path, get(maybe_basename))
+        else
+            ext = "txt"
+            maybe_mt = mimetype(r)
+            if !isnull(maybe_mt)
+                mt = get(maybe_mt)
+                if haskey(MIMETYPES, mt)
+                    ext = MIMETYPES[mt]
+                else
+                    if '/' ∉ mt
+                        ext = mt
+                    end
+                end
+            end
+            basefile = Dates.format(now(), "y-m-d-H-M")
+            filename = joinpath(path, "$basefile.$ext")
+        end
+    end
+    open(filename, "w") do file
+        write(file, bytes(r))
+    end
+    filename
+end
 
 """
 `view(r::Response)`
@@ -118,8 +132,7 @@ View the data in the response with whatever application is associated with
 its mimetype.
 """
 function view(r::Response)
-    tempdir = mktempdir()
-    path = save(r, joinpath(tempdir, "response"))
+    path = save(r, mktempdir())
     open_file(path)
 end
 
