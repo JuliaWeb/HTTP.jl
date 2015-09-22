@@ -7,7 +7,6 @@ module HttpParser
 
 include("../deps/deps.jl")
 
-using Compat
 using HttpCommon
 
 import Base.show
@@ -33,8 +32,8 @@ type Parser
     header_state::Cuchar
     index::Cuchar
 
-    nread::Uint32
-    content_length::Uint64
+    nread::UInt32
+    content_length::UInt64
 
     http_major::Cushort
     http_minor::Cushort
@@ -53,8 +52,8 @@ Parser() = Parser(
     convert(Cuchar, 0),
     convert(Cuchar, 0),
 
-    convert(Uint32, 0),
-    convert(Uint64, 0),
+    convert(UInt32, 0),
+    convert(UInt64, 0),
 
     convert(Cushort, 0),
     convert(Cushort, 0),
@@ -63,7 +62,7 @@ Parser() = Parser(
 
     convert(Cuchar, 0),
 
-    convert(Ptr{Uint8}, C_NULL),
+    convert(Ptr{UInt8}, C_NULL),
     (global id_pool += 1)
 )
 
@@ -91,8 +90,8 @@ end
 # Run a request through a parser with specific callbacks on the settings instance.
 function http_parser_execute(parser::Parser, settings::ParserSettings, request)
     ccall((:http_parser_execute, lib), Csize_t,
-            (Ptr{Parser}, Ptr{ParserSettings}, Ptr{Uint8}, Csize_t,),
-            &parser, &settings, convert(Ptr{Uint8}, pointer(request)), sizeof(request))
+            (Ptr{Parser}, Ptr{ParserSettings}, Ptr{UInt8}, Csize_t,),
+            &parser, &settings, convert(Ptr{UInt8}, pointer(request)), sizeof(request))
     if errno(parser) != 0
         throw(HttpParserError(errno(parser)))
     end
@@ -100,7 +99,7 @@ end
 
 # Return a String representation of a given an HTTP method.
 function http_method_str(method::Int)
-    val = ccall((:http_method_str, lib), Ptr{Uint8}, (Int,), method)
+    val = ccall((:http_method_str, lib), Ptr{UInt8}, (Int,), method)
     return bytestring(val)
 end
 
@@ -110,8 +109,8 @@ function http_should_keep_alive(parser::Ptr{Parser})
 end
 upgrade(p::Parser) = (p.errno_and_upgrade & 0b10000000)>0
 errno(p::Parser) = p.errno_and_upgrade & 0b01111111
-errno_name(errno::Integer) = bytestring(ccall((:http_errno_name,lib),Ptr{Uint8},(Int32,),errno))
-errno_description(errno::Integer) = bytestring(ccall((:http_errno_description,lib),Ptr{Uint8},(Int32,),errno))
+errno_name(errno::Integer) = bytestring(ccall((:http_errno_name,lib),Ptr{UInt8},(Int32,),errno))
+errno_description(errno::Integer) = bytestring(ccall((:http_errno_description,lib),Ptr{UInt8},(Int32,),errno))
 
 immutable HttpParserError <: Exception
     errno::Int32
