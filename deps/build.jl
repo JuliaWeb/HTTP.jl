@@ -1,5 +1,4 @@
 using BinDeps
-using Compat
 
 @BinDeps.setup
 
@@ -40,5 +39,5 @@ end
          libhttp_parser, os = :Windows)
 end
 
-@BinDeps.install @compat Dict(:libhttp_parser => :lib)
+@BinDeps.install Dict(:libhttp_parser => :lib)
 
