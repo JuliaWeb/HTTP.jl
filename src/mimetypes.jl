@@ -1,4 +1,4 @@
-mimetypes = Dict{String,String}([
+mimetypes = Dict{AbstractString,AbstractString}([
 ("semd", "application/vnd.semd"),
 ("mrc", "application/marc"),
 ("asc", "application/pgp-signature"),

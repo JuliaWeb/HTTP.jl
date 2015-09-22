@@ -36,7 +36,7 @@ becomes `HttpHandler.handle`. This handler is called on every incoming
 request and passed `req::Request, res::Response`. The return value of
 `HttpHandler.handle` is the response sent to the client for the given `req`.
 
-`HttpHandler.handle` can return a `String`:
+`HttpHandler.handle` can return a `AbstractString`:
 
 ```
 handler = HttpHandler() do req, res
@@ -91,10 +91,10 @@ HttpServer.event(server, "foo", "Julia")
 """
 immutable HttpHandler
     handle::Function
-    sock::Base.UVServer
+    sock::Base.TCPServer
     events::Dict
 
-    HttpHandler(handle::Function, sock::Base.UVServer) = new(handle, sock, defaultevents)
+    HttpHandler(handle::Function, sock::Base.TCPServer) = new(handle, sock, defaultevents)
     HttpHandler(handle::Function) = new(handle, Base.TCPServer(), defaultevents)
 end
 handle(handler::HttpHandler, req::Request, res::Response) = handler.handle(req, res)
@@ -148,7 +148,7 @@ end
 """
 immutable Server
     http::HttpHandler
-    websock::Union(Nothing, WebSocketInterface)
+    websock::Union{Void, WebSocketInterface}
 end
 Server(http::HttpHandler)           = Server(http, nothing)
 Server(handler::Function)           = Server(HttpHandler(handler))
@@ -159,7 +159,7 @@ Server(websock::WebSocketInterface) = Server(HttpHandler((req, res)->Response(40
 If there is a function bound to `event` in `server.events` it will be called
 with `args...`
 """
-function event(event::String, server::Server, args...)
+function event(event::AbstractString, server::Server, args...)
     haskey(server.http.events, event) && server.http.events[event](args...)
 end
 
@@ -213,11 +213,11 @@ listen(server::Server, port::Integer) = listen(server, IPv4(0), port)
 
 """ Start `server` to listen on named pipe/domain socket.
 
-    listen(server::Server, path::String) Server
+    listen(server::Server, path::AbstractString) Server
 
     Setup "server" to listen on named pipe/domain socket specified by "path".
 """
-@unix_only function listen(server::Server, path::String)
+@unix_only function listen(server::Server, path::AbstractString)
     bind(server.http.sock, path) || throw(ArgumentError("could not listen on path $path"))
     Base.uv_error("listen", Base._listen(server.http.sock))
     event("listen", server, path)
@@ -435,7 +435,7 @@ function FileResponse(filename)
         s = open(readbytes,filename)
         (_, ext) = splitext(filename)
         mime = length(ext)>1 && haskey(mimetypes,ext[2:end]) ? mimetypes[ext[2:end]] : "application/octet-stream"
-        Response(200, Dict{String,String}([("Content-Type",mime)]), s)
+        Response(200, Dict{AbstractString,AbstractString}([("Content-Type",mime)]), s)
     else
         Response(404, "Not Found - file $filename could not be found")
     end

@@ -9,7 +9,7 @@ facts("HttpServer utility functions:") do
         HttpServer.write(buf, response)
         response_string = takebuf_string(buf)
         vals = split(response_string, "\r\n")
-        grep(a::Array, k::String) = filter(x -> ismatch(Regex(k), x), a)[1]
+        grep(a::Array, k::AbstractString) = filter(x -> ismatch(Regex(k), x), a)[1]
         @fact grep(vals, "HTTP") --> "HTTP/1.1 200 OK "
         @fact grep(vals, "Server") --> "Server: Julia/$VERSION"
         # default to text/html
