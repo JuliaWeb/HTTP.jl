@@ -95,7 +95,7 @@ same file three times).
 FileParam has the following constructors:
 ```julia
     immutable FileParam
-        file::Union(IO,Base.File,String,Vector{Uint8})     # The file
+        file::Union{IO,Base.File,AbstractString,Vector{UInt8}}     # The file
         # The content type (default: "", which is interpreted as text/plain serverside)
         ContentType::ASCIIString
         name::ASCIIString                                  # The fieldname (in a form)
@@ -104,7 +104,7 @@ FileParam has the following constructors:
         close::Bool
     end
 
-    FileParam(str::Union(String,Vector{Uint8}),ContentType="",name="",filename="")
+    FileParam(str::Union{AbstractString,Vector{UInt8}},ContentType="",name="",filename="")
     FileParam(io::IO,ContentType="",name="",filename="",close::Bool=false)
 
 ```
