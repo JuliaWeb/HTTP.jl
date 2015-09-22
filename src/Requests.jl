@@ -3,6 +3,7 @@ module Requests
 
 export URI, FileParam, headers, cookies, statuscode, post, requestfor
 export get_streaming, post_streaming, write_chunked
+export view, save
 
 import Base: get, write
 import Base.FS: File
@@ -22,6 +23,7 @@ const CRLF = "\r\n"
 include("parsing.jl")
 include("multipart.jl")
 include("streaming.jl")
+include("mimetypes.jl")
 
 function __init__()
     __init_parsing__()
@@ -29,16 +31,18 @@ function __init__()
 end
 
 ## Convenience methods for extracting the payload of a response
-bytes(r::Response) = r.data
-text(r::Response) = utf8(bytes(r))
-Base.bytestring(r::Response) = text(r)
-Base.readall(r::Response) = text(r)
-Base.readbytes(r::Response) = bytes(r)
-json(r::Response; kwargs...) = JSON.parse(text(r); kwargs...)
+for kind in [:Response, :Request]
+    @eval bytes(r::$kind) = r.data
+    @eval text(r::$kind) = utf8(bytes(r))
+    @eval Base.bytestring(r::$kind) = text(r)
+    @eval Base.readall(r::$kind) = text(r)
+    @eval Base.readbytes(r::$kind) = bytes(r)
+    @eval json(r::$kind; kwargs...) = JSON.parse(text(r); kwargs...)
 
-## Response getters to future-proof against changes to the Response type
-headers(r::Response) = r.headers
-headers(r::Request) = r.eaders
+    ## Response getters to future-proof against changes to the Response type
+    @eval headers(r::$kind) = r.headers
+end
+
 cookies(r::Response) = r.cookies
 statuscode(r::Response) = r.status
 
@@ -48,6 +52,77 @@ function requestfor(r::Response)
 end
 
 history(r::Response) = r.history
+
+
+# Stolen from https://github.com/dcjones/Gadfly.jl/blob/7fd56991e55b6617d37d7e3d0d69a310bdd36b05/src/Gadfly.jl#L1016
+function open_file(filename)
+    if OS_NAME == :Darwin
+        run(`open $(filename)`)
+    elseif OS_NAME == :Linux || OS_NAME == :FreeBSD
+        run(`xdg-open $(filename)`)
+    elseif OS_NAME == :Windows
+        run(`$(ENV["COMSPEC"]) /c start $(filename)`)
+    end
+end
+
+function mimetype(r::Response)
+    if haskey(headers(r), "Content-Type")
+        ct = split(headers(r)["Content-Type"], ";")[1]
+        return Nullable(ct)
+    else
+        return Nullable{UTF8String}()
+    end
+end
+
+"""
+`save(r::Response, filename)`
+
+Saves the data in the response to a file named `filename`. The extension is
+automatically derived from the mimetype of the response.
+
+`save(r::Response, filename, extension)`
+
+Use the given extension instead of automatically deriving it from the mimetype.
+"""
+function save(r::Response, basename, maybe_ext=Nullable())
+    ext = "txt"
+    if isnull(maybe_ext)
+        maybe_mt = mimetype(r)
+        if !isnull(maybe_mt)
+            mt = get(maybe_mt)
+            if haskey(MIMETYPES, mt)
+                ext = MIMETYPES[mt]
+            else
+                if '/' ∉ mt
+                    ext = mt
+                end
+            end
+        end
+    else
+        ext = get(maybe_ext)
+    end
+    path = "$basename.$ext"
+    open(path, "w") do file
+        write(file, bytes(r))
+    end
+    path
+end
+
+save(r::Response, basename, maybe_ext::AbstractString) =
+  save(r, basename, Nullable(maybe_ext))
+
+"""
+`view(r::Response)`
+
+View the data in the response with whatever application is associated with
+its mimetype.
+"""
+function view(r::Response)
+    tempdir = mktempdir()
+    path = save(r, joinpath(tempdir, "response"))
+    open_file(path)
+end
+
 
 function default_request(method,resource,host,data,user_headers=Dict{Union{},Union{}}())
     headers = Dict(
