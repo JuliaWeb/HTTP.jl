@@ -49,7 +49,7 @@ end
 
 history(r::Response) = r.history
 
-function default_request(method,resource,host,data,user_headers=Dict{None,None}())
+function default_request(method,resource,host,data,user_headers=Dict{Union{},Union{}}())
     headers = Dict(
         "User-Agent" => "Requests.jl/0.0.0",
         "Host" => host,
@@ -151,7 +151,7 @@ parse_request_data(data) = (data, "application/octet-stream")
 parse_request_data(data::Associative) =
   (format_query_str(data), "application/x-www-form-urlencoded")
 
-function do_stream_request(uri::URI, verb; headers = Dict{String, String}(),
+function do_stream_request(uri::URI, verb; headers = Dict{AbstractString, AbstractString}(),
                             cookies = nothing,
                             data = nothing,
                             json = nothing,
@@ -245,17 +245,17 @@ for f in [:get, :post, :put, :delete, :head,
     f_str = uppercase(string(f))
     f_stream = symbol(string(f, "_streaming"))
     @eval begin
-        function ($f)(uri::URI, data::String; headers::Dict=Dict())
+        function ($f)(uri::URI, data::AbstractString; headers::Dict=Dict())
             do_request(uri, $f_str; data=data, headers=headers)
         end
-        function ($f_stream)(uri::URI, data::String; headers::Dict=Dict())
+        function ($f_stream)(uri::URI, data::AbstractString; headers::Dict=Dict())
             do_stream_request(uri, $f_str; data=data, headers=headers)
         end
 
-        ($f)(uri::String; args...) = ($f)(URI(uri); args...)
+        ($f)(uri::AbstractString; args...) = ($f)(URI(uri); args...)
         ($f)(uri::URI; args...) = do_request(uri, $f_str; args...)
 
-        ($f_stream)(uri::String; args...) = ($f_stream)(URI(uri); args...)
+        ($f_stream)(uri::AbstractString; args...) = ($f_stream)(URI(uri); args...)
         ($f_stream)(uri::URI; args...) = do_stream_request(uri, $f_str; args...)
     end
 end
