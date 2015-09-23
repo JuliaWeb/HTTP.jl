@@ -30,7 +30,7 @@ options("http://httpbin.org/get")
 ### Add query parameters
 
 ```julia
-get("http://httpbin.org/get"; query = {"title" => "page1"})
+get("http://httpbin.org/get"; query = Dict("title" => "page1"))
 ```
 
 ### Add plain text data
@@ -42,14 +42,20 @@ post("http://httpbin.org/post"; data = "Hello World")
 ### Add JSON data
 
 ```julia
-post("http://httpbin.org/post"; json = {"id" => "1fc80620-7fd3-11e3-80a5"})
+post("http://httpbin.org/post"; json = Dict("id" => "1fc80620-7fd3-11e3-80a5"))
+```
+
+### Add form-encoded data
+
+```julia
+post("http://httpbin.org/post"; data=Dict(email=>"a", pw=>"b"))
 ```
 
 ### Set headers and cookies
 
 ```julia
-post("http://httpbin.org/post"; headers = {"Date" => "Tue, 15 Nov 1994 08:12:31 GMT"},
-                                cookies = {"sessionkey" => "abc"})
+post("http://httpbin.org/post"; headers = Dict("Date" => "Tue, 15 Nov 1994 08:12:31 GMT"),
+                                cookies = Dict("sessionkey" => "abc"))
 ```
 
 HTTP basic authentication is parsed and set as a proper `Authorization` header from the URI:
