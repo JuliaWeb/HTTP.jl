@@ -141,6 +141,15 @@ type Response
 end
 ```
 
+### Saving responses
+
+```julia
+cat = get("https://upload.wikimedia.org/wikipedia/commons/8/8e/Termografia_kot.jpg")
+save(cat, "catpic.jpg")  # Save the payload to a file
+view(cat)  # View the payload using your system's default applciation for its mimetype
+```
+
+
 ### Streaming API
 
 Write bytes to disk as they are received:
