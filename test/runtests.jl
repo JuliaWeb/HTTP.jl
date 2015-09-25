@@ -68,8 +68,8 @@ facts("HttpServer runs") do
             Response("hello")
         end
         server = Server(http)
-        cert = MbedTLS.crt_parse_file("my_cert.crt")
-        key = MbedTLS.parse_keyfile("my_key.key")
+        cert = MbedTLS.crt_parse_file("cert.pem")
+        key = MbedTLS.parse_keyfile("key.pem")
         @async run(server, port=8002, ssl=(cert, key))
         sleep(1.0)
         client_tls_conf = Requests.TLS_VERIFY
