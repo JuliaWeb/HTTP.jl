@@ -9,7 +9,7 @@
 This is a basic, non-blocking HTTP server in Julia.
 
 You can write a basic application using just this if you're happy dealing with values representing HTTP requests and responses directly.
-For a higher-level view, you could use [Meddle](https://github.com/JuliaWeb/Meddle.jl) or [Morsel](https://github.com/JuliaWeb/Morsel.jl).
+For a higher-level view, you could use [Mux](https://github.com/one-more-minute/Mux.jl).
 If you'd like to use WebSockets as well, you'll need to grab [WebSockets.jl](https://github.com/JuliaWeb/WebSockets.jl).
 
 ##Installation
