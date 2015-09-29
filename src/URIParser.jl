@@ -11,5 +11,7 @@ import Base: isequal, isvalid, show, print, (==)
 include("parser.jl")
 include("esc.jl")
 include("utils.jl")
+include("precompile.jl")
+_precompile_()
 
 end # module

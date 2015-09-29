@@ -1,0 +1,16 @@
+function _precompile_()
+    ccall(:jl_generating_output, Cint, ()) == 1 || return nothing
+    precompile(URIParser.parse_url, (ASCIIString,))
+    precompile(URIParser.parse_authority, (ASCIIString, Bool,))
+    precompile(URIParser.call, (Array{Any, 1}, Type{URIParser.URI}, URIParser.URI,))
+    precompile(URIParser.escape_with, (ASCIIString, UTF8String,))
+    precompile(URIParser.call, (Type{URIParser.URI}, ASCIIString, ASCIIString, UInt16, ASCIIString, ASCIIString, ASCIIString, ASCIIString, Bool,))
+    precompile(URIParser.is_host_char, (Char,))
+    precompile(URIParser.is_url_char, (Char,))
+    precompile(URIParser.isnum, (Char,))
+    precompile(URIParser.is_mark, (Char,))
+    precompile(URIParser.is_userinfo_char, (Char,))
+    precompile(URIParser.escape, (ASCIIString,))
+    precompile(URIParser.call, (Type{URIParser.URI}, ASCIIString,))
+    precompile(URIParser.ishex, (Char,))
+end
