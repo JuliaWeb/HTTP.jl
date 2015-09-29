@@ -350,5 +350,6 @@ for f in [:get, :post, :put, :delete, :head,
 end
 
 include("precompile.jl")
+# _precompile_()
 
 end
