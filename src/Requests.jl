@@ -230,7 +230,9 @@ function do_request(uri::URI, verb; kwargs...)
     response = response_stream.response
     response.data = readbytes(response_stream)
     if get(response.headers, "Content-Encoding", "") ∈ ("gzip","deflate")
-        response.data = decompress(response.data)
+        if !isempty(response.data)
+            response.data = decompress(response.data)
+        end
     end
     response
 end
@@ -282,7 +284,6 @@ function do_stream_request(uri::URI, verb; headers = Dict{AbstractString, Abstra
         response_stream = open_stream(request, tls_conf, timeout_sec)
         if write_body
             write(response_stream, request.data)
-            write(response_stream, CRLF)
         end
     else
         @check_body

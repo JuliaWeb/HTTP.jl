@@ -111,7 +111,7 @@ function Base.eof(stream::ResponseStream)
     eof(stream.buffer) && (stream.state==BodyDone || eof(stream.socket))
 end
 
-Base.write(stream::ResponseStream, data::BitArray) = write(steram.socket, data)
+Base.write(stream::ResponseStream, data::BitArray) = write(stream.socket, data)
 Base.write(stream::ResponseStream, data::AbstractArray) = write(stream.socket, data)
 Base.write(stream::ResponseStream, x::UInt8) = write(stream.socket, x)
 
@@ -170,6 +170,7 @@ function open_stream(req::Request, tls_conf=TLS_VERIFY, timeout=Inf)
         MbedTLS.handshake(stream)
     end
     resp = Response()
+    empty!(resp.headers)
     resp.request = Nullable(req)
     stream = ResponseStream(resp, stream)
     stream.timeout = timeout
