@@ -123,6 +123,12 @@ data = json(post(URI("http://httpbin.org/post");
 
 @test data["data"] == "√"
 
+# Test custom content type
+data = json(post("http://httpbin.org/post",
+             data="{\"a\": \"b\"}",
+             headers=Dict("Content-Type"=>"application/json")))
+@test data["json"]["a"] == "b"
+
 # Test file upload
 filename = Base.source_path()
 

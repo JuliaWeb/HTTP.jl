@@ -272,7 +272,10 @@ function do_stream_request(uri::URI, verb; headers = Dict{AbstractString, Abstra
 
     if data ≠ nothing
         @check_body
-        body, headers["Content-Type"] = parse_request_data(data)
+        body, default_content_type = parse_request_data(data)
+        if "Content-Type" ∉ keys(headers)
+            headers["Content-Type"] = default_content_type
+        end
     end
 
     if cookies ≠ nothing
