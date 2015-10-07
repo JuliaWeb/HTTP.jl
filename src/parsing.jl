@@ -127,7 +127,13 @@ function on_headers_complete(parser)
 
     response_stream.state = HeadersDone
     notify(response_stream.state_change)
-    return 0
+
+    # From https://github.com/nodejs/http-parser/blob/master/http_parser.h
+    # Comment starting line 72
+    # On a HEAD method return 1 instead of 0 to indicate that the parser
+    # should not expect a body.
+    method = get( response.request ).method
+    return method == "HEAD"?1:0
 end
 
 function on_body(parser, at, len)
