@@ -197,12 +197,12 @@ end
 
 """ Start `server` to listen on specified socket address.
 
-    listen(server::Server, host::Base.IpAddr, port::Integer) Server
+    listen(server::Server, host::Base.IPAddr, port::Integer) Server
 
     Setup "server" so it listens on "port" on the address specified by "host".
     To listen on all interfaces pass, "IPv4(0)" or "IPv6(0)" as appropriate.
 """
-function listen(server::Server, host::Base.IpAddr, port::Integer)
+function listen(server::Server, host::Base.IPAddr, port::Integer)
     Base.uv_error("listen", !bind(server.http.sock, host, UInt16(port)))
     listen(server.http.sock)
     inet = "$host:$port"
