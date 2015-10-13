@@ -80,7 +80,7 @@ function contentdisposition(r::Response)
         if length(cd) ≥ 2
             filepart = split(cd[2], "=", limit=2)
             if length(filepart) == 2
-                return Nullable(filepart[2])
+                return  filepart[2] |> strip |> f->strip(f, '"') |> Nullable
             end
         end
     end
@@ -115,7 +115,7 @@ function save(r::Response, path=".")
                     end
                 end
             end
-            basefile = Dates.format(now(), "y-m-d-H-M")
+            basefile = Dates.format(now(), "mm-dd-yyyy-H-M")
             filename = joinpath(path, "$basefile.$ext")
         end
     end
