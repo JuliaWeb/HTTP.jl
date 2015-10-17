@@ -18,6 +18,7 @@ immutable ResponseParser
     end
 end
 
+
 pd(p::Ptr{Parser}) = (unsafe_load(p).data)::ResponseStream
 
 # All the `HttpParser` callbacks to be run in C land

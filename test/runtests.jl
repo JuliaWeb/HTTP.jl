@@ -209,3 +209,8 @@ let
     end
     @test N==100
 end
+
+# Proxy testing. Would be better to use a real proxy instead of using the real site
+# as the "proxy", but hard to find a reliable unmetered public proxy for testing.
+
+@test get("http://httpbin.org/get"; proxy=Nullable(URI("http://httpbin.org"))).status == 200

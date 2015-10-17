@@ -152,17 +152,38 @@ end
 
 Base.convert(::Type{Response}, stream::ResponseStream) = stream.response
 
-function open_stream(req::Request, tls_conf=TLS_VERIFY, timeout=Inf)
+function open_stream(req::Request, tls_conf=TLS_VERIFY, timeout=Inf,
+                     http_proxy=Nullable{URI}(), https_proxy=Nullable{URI}())
     uri = req.uri
-    if scheme(uri) != "http" && scheme(uri) != "https"
+    connect_method = :direct
+    if scheme(uri) == "http"
+        if !isnull(http_proxy)
+            uri = get(http_proxy)
+        end
+    elseif scheme(uri) == "https"
+        if !isnull(https_proxy)
+            uri = get(https_proxy)
+            connect_method = :tunnel
+        end
+    else
         error("Unsupported scheme \"$(scheme(uri))\"")
     end
+
     ip = Base.getaddrinfo(uri.host)
     if scheme(uri) == "http"
         stream = Base.connect(ip, uri.port == 0 ? 80 : uri.port)
     else
         # Initialize HTTPS
-        sock = Base.connect(ip, uri.port == 0 ? 443 : uri.port)
+        if connect_method == :tunnel
+            sock = Base.connect(ip, uri.port)
+            write(sock, "CONNECT $(req.uri.host):$(req.uri.port) HTTP/1.1\r\n\r\n")
+            resp = readbytes(sock, 39)  # todo: replace with joyent parser
+            if length(resp) < 39
+                error("Proxy failed to tunnel: $ip:$(uri.port) sent back $(bytestring(resp))")
+            end
+        else
+            sock = Base.connect(ip, uri.port == 0 ? 443 : uri.port)
+        end
         stream = MbedTLS.SSLContext()
         MbedTLS.setup!(stream, tls_conf)
         MbedTLS.set_bio!(stream, sock)
