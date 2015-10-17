@@ -4,6 +4,7 @@ module Requests
 export URI, FileParam, headers, cookies, statuscode, post, requestfor
 export get_streaming, post_streaming, write_chunked
 export view, save
+export set_proxy, set_https_proxy, get_request_settings
 
 import Base: get, write
 import Base.FS: File
@@ -28,7 +29,51 @@ include("mimetypes.jl")
 function __init__()
     __init_parsing__()
     __init_streaming__()
+    init_proxy()
 end
+
+type GlobalSettings
+    http_proxy::Nullable{URI}
+    https_proxy::Nullable{URI}
+    max_redirects::Int
+end
+GlobalSettings() = GlobalSettings(Nullable{URI}(), Nullable{URI}(), 5)
+
+function Base.show(io::IO, settings::GlobalSettings)
+    println(io, "HTTP proxy: ", isnull(settings.http_proxy) ? "No proxy" : get(settings.http_proxy))
+    println(io, "HTTPS proxy: ", isnull(settings.https_proxy) ? "No proxy" : get(settings.https_proxy))
+    print(io, "Max redirects: ", settings.max_redirects)
+end
+
+const SETTINGS = GlobalSettings()
+
+function init_proxy()
+    if haskey(ENV, "http_proxy")
+        try
+            proxy = ENV["http_proxy"]
+            set_proxy(proxy)
+            info("Using proxy $proxy from http_proxy environment variable")
+        catch err
+            warn("Problem parsing http_proxy environment variable $(ENV["http_proxy"]); ignoring\n $err")
+        end
+    end
+    if haskey(ENV, "https_proxy")
+        try
+            proxy = ENV["https_proxy"]
+            set_https_proxy(proxy)
+            info("Using HTTPS proxy $proxy from https_proxy environment variable")
+        catch err
+            warn("Problem parsing https_proxy environment variable $(ENV["https_proxy"]); ignoring\n $err")
+        end
+    end
+end
+
+set_proxy(proxy::URI) = set_proxy(Nullable(proxy))
+set_proxy(proxy::Nullable{URI}) = SETTINGS.http_proxy = proxy
+set_proxy(proxy) = set_proxy(URI(proxy))
+set_https_proxy(proxy) = SETTINGS.https_proxy=Nullable(URI(proxy))
+
+get_request_settings() = SETTINGS
 
 ## Convenience methods for extracting the payload of a response
 for kind in [:Response, :Request]
@@ -136,6 +181,8 @@ function view(r::Response)
     open_file(path)
 end
 
+http_port(uri) = uri.port == 0 ? 80 : uri.port
+https_port(uri) = uri.port == 0 ? 443 : uri.port
 
 function default_request(method,resource,host,data,user_headers=Dict{Union{},Union{}}())
     headers = Dict(
@@ -151,12 +198,12 @@ function default_request(method,resource,host,data,user_headers=Dict{Union{},Uni
 end
 
 function default_request(uri::URI,headers,data,method)
-    resource = uri.path
-    if uri.query != ""
-        resource = resource*"?"*uri.query
+    resource = "$(uri.scheme)://$(uri.host)$(uri.path)"
+    if !isempty(uri.query)
+        resource = "$resource?$(uri.query)"
     end
-    if uri.userinfo != "" && !haskey(headers,"Authorization")
-        headers["Authorization"] = "Basic "*bytestring(encode(Base64, uri.userinfo))
+    if !isempty(uri.userinfo) && !haskey(headers,"Authorization")
+        headers["Authorization"] = "Basic $(bytestring(encode(Base64, uri.userinfo)))"
     end
     host = uri.port == 0 ? uri.host : "$(uri.host):$(uri.port)"
     request = default_request(method,resource,host,data,headers)
@@ -206,8 +253,6 @@ function get_redirect_uri(response)
     return Nullable{URI}()
 end
 
-const MAX_REDIRECTS = 5
-
 immutable RedirectException <: Exception
     max_redirects::Int
 end
@@ -229,7 +274,7 @@ function do_request(uri::URI, verb; kwargs...)
     response_stream = do_stream_request(uri, verb; kwargs...)
     response = response_stream.response
     response.data = readbytes(response_stream)
-    if get(response.headers, "Content-Encoding", "") ∈ ("gzip","deflate")
+    if get(response.headers, "Content-Encoding", "") ∈ ("gzip", "deflate")
         if !isempty(response.data)
             response.data = decompress(response.data)
         end
@@ -249,10 +294,12 @@ function do_stream_request(uri::URI, verb; headers = Dict{AbstractString, Abstra
                             timeout = nothing,
                             query::Dict = Dict(),
                             allow_redirects = true,
-                            max_redirects = MAX_REDIRECTS,
+                            max_redirects = SETTINGS.max_redirects,
                             history = Response[],
                             tls_conf = TLS_VERIFY,
                             write_body = true,
+                            proxy = SETTINGS.http_proxy,
+                            https_proxy = SETTINGS.https_proxy
                             )
 
     query_str = format_query_str(query; uri = uri)
@@ -284,7 +331,7 @@ function do_stream_request(uri::URI, verb; headers = Dict{AbstractString, Abstra
 
     request = default_request(newuri, headers, body, verb)
     if isempty(files)
-        response_stream = open_stream(request, tls_conf, timeout_sec)
+        response_stream = open_stream(request, tls_conf, timeout_sec, proxy, https_proxy)
         if write_body
             write(response_stream, request.data)
         end
@@ -295,7 +342,7 @@ function do_stream_request(uri::URI, verb; headers = Dict{AbstractString, Abstra
             error("Tried to send form data with invalid Content-Type. ")
         end
         multipart_settings = prepare_multipart_request!(request, files)
-        response_stream = open_stream(request, tls_conf, timeout_sec)
+        response_stream = open_stream(request, tls_conf, timeout_sec, proxy, https_proxy)
         send_multipart(response_stream, multipart_settings, files)
     end
     main_task = current_task()

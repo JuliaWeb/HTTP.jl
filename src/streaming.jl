@@ -1,4 +1,4 @@
-@enum ResponseState NotStarted OnMessageBegin OnHeaderField OnHeaderValue HeadersDone OnBody BodyDone EarlyEOF
+@enum ResponseState NotStarted OnMessageBegin StatusComplete OnHeaderField OnHeaderValue HeadersDone OnBody BodyDone EarlyEOF
 
 type ResponseStream{T<:IO} <: IO
     response::Response
@@ -111,9 +111,9 @@ function Base.eof(stream::ResponseStream)
     eof(stream.buffer) && (stream.state==BodyDone || eof(stream.socket))
 end
 
-Base.write(stream::ResponseStream, data::BitArray) = write(stream.socket, data)
-Base.write(stream::ResponseStream, data::AbstractArray) = write(stream.socket, data)
-Base.write(stream::ResponseStream, x::UInt8) = write(stream.socket, x)
+for T in [BitArray, AbstractArray, UInt8]
+    @eval Base.write(stream::ResponseStream, data::$T) = write(stream.socket, data)
+end
 
 function Base.readbytes!(stream::ResponseStream, data::Vector{UInt8}, sz)
     while stream.state < BodyDone && nb_available(stream) < sz
@@ -152,21 +152,56 @@ end
 
 Base.convert(::Type{Response}, stream::ResponseStream) = stream.response
 
-function open_stream(req::Request, tls_conf=TLS_VERIFY, timeout=Inf)
+immutable ProxyException <: Exception
+    resp::Response
+end
+
+function Base.show(io::IO, err::ProxyException)
+    print(io, "Failed to open CONNECT tunnel on proxy server. Proxy response was $(err.resp)")
+end
+
+function open_stream(req::Request, tls_conf=TLS_VERIFY, timeout=Inf,
+                     http_proxy=Nullable{URI}(), https_proxy=Nullable{URI}())
     uri = req.uri
-    if scheme(uri) != "http" && scheme(uri) != "https"
+    connect_method = :direct
+    if scheme(uri) == "http"
+        if !isnull(http_proxy)
+            uri = get(http_proxy)
+        end
+    elseif scheme(uri) == "https"
+        if !isnull(https_proxy)
+            uri = get(https_proxy)
+            connect_method = :tunnel
+        end
+    else
         error("Unsupported scheme \"$(scheme(uri))\"")
     end
+
     ip = Base.getaddrinfo(uri.host)
-    if scheme(uri) == "http"
-        stream = Base.connect(ip, uri.port == 0 ? 80 : uri.port)
+    if scheme(req.uri) == "http"
+        stream = Base.connect(ip, http_port(uri))
     else
         # Initialize HTTPS
-        sock = Base.connect(ip, uri.port == 0 ? 443 : uri.port)
+        if connect_method == :tunnel
+            sock = Base.connect(ip, http_port(uri))
+            tunnel_req = Request()
+            tunnel_req.method = "CONNECT"
+            tunnel_resp = Response()
+            tunnel_resp.request = Nullable(tunnel_req)
+            tunnel_resp_stream = ResponseStream(tunnel_resp, sock)
+            tunnel_resp_stream.timeout = timeout
+            write(sock, "CONNECT $(req.uri.host):$(https_port(req.uri)) HTTP/1.1\r\n\r\n")
+            process_response(tunnel_resp_stream)
+            if statuscode(tunnel_resp) ≠ 200
+                throw(ProxyException(tunnel_resp))
+            end
+        else
+            sock = Base.connect(ip, uri.port == 0 ? 443 : uri.port)
+        end
         stream = MbedTLS.SSLContext()
         MbedTLS.setup!(stream, tls_conf)
         MbedTLS.set_bio!(stream, sock)
-        MbedTLS.hostname!(stream, uri.host)
+        MbedTLS.hostname!(stream, req.uri.host)
         MbedTLS.handshake(stream)
     end
     resp = Response()
