@@ -37,7 +37,10 @@ function on_url(parser, at, len)
 end
 
 function on_status_complete(parser)
-    pd(parser).response.status = (unsafe_load(parser)).status_code
+    response_stream = pd(parser)
+    response_stream.response.status = (unsafe_load(parser)).status_code
+    response_stream.state = StatusComplete
+    notify(response_stream.state_change)
     return 0
 end
 
@@ -134,7 +137,11 @@ function on_headers_complete(parser)
     # On a HEAD method return 1 instead of 0 to indicate that the parser
     # should not expect a body.
     method = get( response.request ).method
-    return method == "HEAD"?1:0
+    if method ∈ ("HEAD", "CONNECT")
+        return 1  # Signal HTTP parser to not expect a body
+    else
+        return 0
+    end
 end
 
 function on_body(parser, at, len)

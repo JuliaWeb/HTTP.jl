@@ -214,3 +214,32 @@ end
 # as the "proxy", but hard to find a reliable unmetered public proxy for testing.
 
 @test get("http://httpbin.org/get"; proxy=Nullable(URI("http://httpbin.org"))).status == 200
+
+# Test proxy settings via local squid Docker container if REQUESTS_TEST_PROXY is set to 1
+# before testing.
+# Requires Docker and docker-machine (obtainable via Docker toolbox)
+if get(ENV, "REQUESTS_TEST_PROXY", "0") == "1"
+    run(`docker-machine create -d virtualbox proxytest`)
+    cmds = readall(`docker-machine env proxytest`)
+    for line in split(cmds, '\n')
+        m = match(r"export (?<name>.*?)=(?<val>.*)", line)
+        m===nothing && continue
+        ENV[m[:name]] = m[:val]
+    end
+    @show ENV
+    run(`docker run --name squid -d --restart=always -p 3128:3128 quay.io/sameersbn/squid:3.3.8-2`)
+    ip = IPv4(readall(`docker-machine ip proxytest`))
+    proxy_vars = ["http_proxy", "https_proxy"]
+    for var in proxy_vars
+        ENV[var] = "http://$ip:3128"
+    end
+    ENV["REQUESTS_TEST_PROXY"] = "0"
+    Pkg.test("Requests")
+    ENV["REQUESTS_TEST_PROXY"] = "1"
+    for var in proxy_vars
+        pop!(ENV, var)
+    end
+    run(`docker stop squid`)
+    run(`docker rm -v squid`)
+    run(`docker-machine rm proxytest`)
+end

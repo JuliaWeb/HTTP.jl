@@ -42,7 +42,7 @@ GlobalSettings() = GlobalSettings(Nullable{URI}(), Nullable{URI}(), 5)
 function Base.show(io::IO, settings::GlobalSettings)
     println(io, "HTTP proxy: ", isnull(settings.http_proxy) ? "No proxy" : get(settings.http_proxy))
     println(io, "HTTPS proxy: ", isnull(settings.https_proxy) ? "No proxy" : get(settings.https_proxy))
-    println(io, "Max redirects: ", settings.max_redirects)
+    print(io, "Max redirects: ", settings.max_redirects)
 end
 
 const SETTINGS = GlobalSettings()
@@ -181,6 +181,8 @@ function view(r::Response)
     open_file(path)
 end
 
+http_port(uri) = uri.port == 0 ? 80 : uri.port
+https_port(uri) = uri.port == 0 ? 443 : uri.port
 
 function default_request(method,resource,host,data,user_headers=Dict{Union{},Union{}}())
     headers = Dict(
@@ -272,7 +274,7 @@ function do_request(uri::URI, verb; kwargs...)
     response_stream = do_stream_request(uri, verb; kwargs...)
     response = response_stream.response
     response.data = readbytes(response_stream)
-    if get(response.headers, "Content-Encoding", "") ∈ ("gzip","deflate")
+    if get(response.headers, "Content-Encoding", "") ∈ ("gzip", "deflate")
         if !isempty(response.data)
             response.data = decompress(response.data)
         end
