@@ -5,4 +5,4 @@ URIParser
 MbedTLS
 Codecs
 JSON
-Zlib
+Libz

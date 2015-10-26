@@ -17,7 +17,7 @@ using URIParser
 using MbedTLS
 using Codecs
 using JSON
-using Zlib
+using Libz
 
 const CRLF = "\r\n"
 
@@ -276,7 +276,7 @@ function do_request(uri::URI, verb; kwargs...)
     response.data = readbytes(response_stream)
     if get(response.headers, "Content-Encoding", "") ∈ ("gzip", "deflate")
         if !isempty(response.data)
-            response.data = decompress(response.data)
+            response.data = response.data |> ZlibInflateInputStream |> readbytes
         end
     end
     response
