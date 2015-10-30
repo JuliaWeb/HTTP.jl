@@ -58,3 +58,6 @@ g = URI("google.com","/some/path")
 @test_throws ErrorException URI(".google.com")
 # Unexpected character after scheme
 @test_throws ErrorException URI("ht!tp://google.com")
+
+#  Issue #27
+@test URIParser.escape("t est\n") == "t%20est%0A"
