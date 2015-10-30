@@ -322,7 +322,7 @@ function print(io::IO, uri::URI)
     end
 end
 
-function Base.writemime(io::IO, ::MIME{Symbol("text/html")}, uri::URI)
+function Base.writemime(io::IO, ::MIME"text/html", uri::URI)
     print(io, "<a href=\"")
     print(io, uri)
     print(io, "\">")
