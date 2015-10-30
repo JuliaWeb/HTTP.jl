@@ -61,3 +61,7 @@ g = URI("google.com","/some/path")
 
 #  Issue #27
 @test URIParser.escape("t est\n") == "t%20est%0A"
+
+# Issue #2
+@test sprint(writemime, MIME("text/html"), URI("http://google.com")) ==
+    """<a href="http://google.com/">http://google.com/</a>"""

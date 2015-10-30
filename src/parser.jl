@@ -321,3 +321,11 @@ function print(io::IO, uri::URI)
         print(io,"#",uri.fragment)
     end
 end
+
+function Base.writemime(io::IO, ::MIME{Symbol("text/html")}, uri::URI)
+    print(io, "<a href=\"")
+    print(io, uri)
+    print(io, "\">")
+    print(io, uri)
+    print(io, "</a>")
+end
