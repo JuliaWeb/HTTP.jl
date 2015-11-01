@@ -26,9 +26,7 @@ function unescape(str)
 end
 unescape_form(str) = unescape(replace(str, "+", " "))
 
-hex_string(x) = hex(x, 2) |>
-                uppercase |>
-                x->"%$x"
+hex_string(x) = string('%', uppercase(hex(x,2)))
 
 # Escapes chars (in second string); also escapes all non-ASCII chars.
 function escape_with(str, use)
