@@ -91,21 +91,6 @@ function show(io::IO,p::Parser)
     print(io,"Content-Length: $(p.content_length)")
 end
 
-# A helper function to print the internal values of a request
-function show(io::IO,r::Request)
-    println(io,"=== Resource ====")
-    println(io,"resource: $(r.resource)")
-    println(io,"method: $(r.method)")
-    println(io,"Headers:")
-    for i=r.headers
-        k = i[1]
-        v = i[2]
-        println(io,"    $k: $v")
-    end
-    println(io,"data: $(r.data)")
-    println(io,"=== End Resource ===")
-end
-
 function version()
     ver = ccall((:http_parser_version, lib), Culong, ())
     major = (ver >> 16) & 255
@@ -172,8 +157,8 @@ show(io::IO, err::HttpParserError) = print(io,"HTTP Parser Exception: ",errno_na
 immutable ParserUrl
     field_set::UInt16 # Bitmask of (1 << UF_*) values
     port::UInt16      # Converted UF_PORT string
-    field_data::NTuple{UF_MAX.val*2, UInt16}
-    ParserUrl() = new(zero(UInt16), zero(UInt16), ntuple(i->zero(UInt16), UF_MAX.val*2))
+    field_data::NTuple{Cint(UF_MAX)*2, UInt16}
+    ParserUrl() = new(zero(UInt16), zero(UInt16), ntuple(i->zero(UInt16), Cint(UF_MAX)*2))
 end
 
 "Parse a URL"
@@ -187,7 +172,7 @@ function parse_url(url::AbstractString; isconnect::Bool = false)
     purl = purl_ref[]
 
     for (i,uf) in enumerate(instances(UrlFields))
-        !((purl.field_set & (1 << uf.val) > 0) && uf != UF_MAX) && continue
+        !((purl.field_set & (1 << Cint(uf)) > 0) && uf != UF_MAX) && continue
         off = purl.field_data[2*(i-1)+1]
         len = purl.field_data[2*(i-1)+2]
         parsed[symbol(uf)] = url[(off+1):(off+len)]
