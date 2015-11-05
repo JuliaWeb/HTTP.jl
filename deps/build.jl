@@ -15,15 +15,18 @@ libhttp_parser = library_dependency("libhttp_parser", aliases=aliases)
 
 @unix_only begin
     prefix = BinDeps.usrdir(libhttp_parser)
-    target = joinpath(prefix,"lib","libhttp_parser.$(BinDeps.shlib_ext)")
+    target = "libhttp_parser.$(BinDeps.shlib_ext)"
+    targetpath = joinpath(BinDeps.libdir(libhttp_parser),target)
 
     provides(SimpleBuild,
         (@build_steps begin
             ChangeDirectory(BinDeps.pkgdir(libhttp_parser))
             FileRule("deps/src/http-parser/Makefile",`git submodule update --init`)
-            FileRule(target, @build_steps begin
+            FileRule(targetpath, @build_steps begin
                 ChangeDirectory(BinDeps.srcdir(libhttp_parser))
-                MakeTargets(["-C","http-parser","install"], env=Dict("PREFIX"=>prefix))
+                CreateDirectory(dirname(targetpath))
+                MakeTargets(["-C","http-parser","library"], env=Dict("SONAME"=>target))
+                `cp http-parser/$target $targetpath`
             end)
         end),[libhttp_parser], os = :Unix)
 end
