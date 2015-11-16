@@ -68,8 +68,8 @@ Parser() = Parser(
 )
 
 # Datatype Tuples for the different `cfunction` signatures for callback functions
-HTTP_CB      = (Int, (Ptr{Parser},))
-HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
+const HTTP_CB      = (Int, (Ptr{Parser},))
+const HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
 
 # A composite type that is expecting C functions to be run as callbacks.
 type ParserSettings
