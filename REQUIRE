@@ -1,8 +1,8 @@
-julia 0.4-
-HttpCommon
+julia 0.4
+HttpCommon 0.2.4
 HttpParser
-URIParser
-MbedTLS
+URIParser 0.1.1
+MbedTLS 0.1.4
 Codecs
 JSON
 Libz
