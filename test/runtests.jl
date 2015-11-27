@@ -44,7 +44,6 @@ facts("HttpServer runs") do
             @fact haskey(cookie.attrs, "Secure") --> true
         end
 
-
         ret = Requests.get("http://localhost:8000/bad")
         @fact text(ret) --> ""
         @fact statuscode(ret) --> 404
