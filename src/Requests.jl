@@ -197,11 +197,16 @@ function default_request(method,resource,host,data,user_headers=Dict{Union{},Uni
     Request(method,resource,headers,data)
 end
 
-function default_request(uri::URI,headers,data,method)
-    resource = "$(uri.scheme)://$(uri.host)$(uri.path)"
+function resourcefor(uri::URI)
+    r = uri.path
     if !isempty(uri.query)
-        resource = "$resource?$(uri.query)"
+        r = "$r?$(uri.query)"
     end
+    r
+end
+
+function default_request(uri::URI,headers,data,method)
+    resource = resourcefor(uri)
     if !isempty(uri.userinfo) && !haskey(headers,"Authorization")
         headers["Authorization"] = "Basic $(bytestring(encode(Base64, uri.userinfo)))"
     end

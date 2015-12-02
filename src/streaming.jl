@@ -167,6 +167,7 @@ function open_stream(req::Request, tls_conf=TLS_VERIFY, timeout=Inf,
     if scheme(uri) == "http"
         if !isnull(http_proxy)
             uri = get(http_proxy)
+            connect_method = :tunnel
         end
     elseif scheme(uri) == "https"
         if !isnull(https_proxy)
@@ -176,7 +177,9 @@ function open_stream(req::Request, tls_conf=TLS_VERIFY, timeout=Inf,
     else
         error("Unsupported scheme \"$(scheme(uri))\"")
     end
-
+    if connect_method == :tunnel
+        req.resource = "$(req.uri.scheme)://$(req.uri.host)$(resourcefor(req.uri))"
+    end
     ip = Base.getaddrinfo(uri.host)
     if scheme(req.uri) == "http"
         stream = Base.connect(ip, http_port(uri))
