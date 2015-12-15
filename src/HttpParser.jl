@@ -5,7 +5,9 @@ isdefined(Base, :__precompile__) && __precompile__()
 
 module HttpParser
 
-include("../deps/deps.jl")
+depsjl = joinpath(dirname(@__FILE__), "..", "deps", "deps.jl")
+isfile(depsjl) ? include(depsjl) : error("HttpParser not properly ",
+    "installed. Please run\nPkg.build(\"HttpParser\")")
 
 using HttpCommon
 
