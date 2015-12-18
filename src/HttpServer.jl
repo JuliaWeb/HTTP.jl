@@ -399,6 +399,7 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
     event("close", server, client)
 end
 
+""" Closes the Server `server` by closing the underlying TCPServer `sock` in the HttpHandler. """
 close(server::Server) = close(server.http.sock)
 
 "Callback factory for providing `on_message_complete` for `client.parser`"
