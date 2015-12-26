@@ -237,7 +237,7 @@ function handle_http_request(server::Server)
                 # Server was closed while waiting to accept client. Exit gracefully.
                 return
             else
-                throw(y)
+                throw(e)
             end
         end
         client = Client(id_pool += 1, sock)
@@ -263,7 +263,7 @@ function handle_https_request(server::Server, ssl_config::MbedTLS.SSLConfig)
                 # Server was closed while waiting to accept client. Exit gracefully.
                 return
             else
-                throw(y)
+                throw(e)
             end
         end
         try
