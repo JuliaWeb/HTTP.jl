@@ -233,12 +233,11 @@ function handle_http_request(server::Server)
         try
             sock = accept(server.http.sock)
         catch e
-            if isa(e,Base.UVError) && e.prefix == "accept" && e.code == Base.UV_ECONNABORTED
+            if !isopen(server.http.sock)
                 # Server was closed while waiting to accept client. Exit gracefully.
-                return
-            else
-                throw(e)
+                break
             end
+            throw(e)
         end
         client = Client(id_pool += 1, sock)
         client.parser = ClientParser(message_handler(server, client, websockets_enabled))
@@ -259,12 +258,11 @@ function handle_https_request(server::Server, ssl_config::MbedTLS.SSLConfig)
         try
             sock = accept(server.http.sock)
         catch e
-            if isa(e,Base.UVError) && e.prefix == "accept" && e.code == Base.UV_ECONNABORTED
+            if !isopen(server.http.sock)
                 # Server was closed while waiting to accept client. Exit gracefully.
-                return
-            else
-                throw(e)
+                break
             end
+            throw(e)
         end
         try
             MbedTLS.set_bio!(sess, sock)
