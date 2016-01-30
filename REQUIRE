@@ -1,4 +1,4 @@
-julia 0.4
+julia 0.5-
 HttpCommon 0.2.4
 HttpParser
 URIParser 0.1.1

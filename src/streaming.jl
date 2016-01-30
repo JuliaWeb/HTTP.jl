@@ -111,9 +111,10 @@ function Base.eof(stream::ResponseStream)
     eof(stream.buffer) && (stream.state==BodyDone || eof(stream.socket))
 end
 
-for T in [BitArray, AbstractArray, UInt8]
+for T in [BitArray, Vector{UInt8}, UInt8]
     @eval Base.write(stream::ResponseStream, data::$T) = write(stream.socket, data)
 end
+
 
 function Base.readbytes!(stream::ResponseStream, data::Vector{UInt8}, sz)
     while stream.state < BodyDone && nb_available(stream) < sz
@@ -122,7 +123,7 @@ function Base.readbytes!(stream::ResponseStream, data::Vector{UInt8}, sz)
     readbytes!(stream.buffer, data, sz)
 end
 
-function Base.readbytes(stream::ResponseStream)
+function Base.read(stream::ResponseStream)
     while stream.state < BodyDone
         wait(stream)
     end
@@ -140,7 +141,7 @@ function Base.readavailable(stream::ResponseStream)
     while nb_available(stream) == 0
         wait(stream)
     end
-    readbytes(stream, nb_available(stream))
+    read(stream, nb_available(stream))
 end
 
 Base.close(stream::ResponseStream) = close(stream.socket)
