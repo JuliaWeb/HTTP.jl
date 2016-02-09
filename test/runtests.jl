@@ -1,3 +1,4 @@
+using Compat
 using Requests
 using JSON
 using Base.Test
@@ -133,14 +134,14 @@ data = json(post("http://httpbin.org/post",
 filename = Base.source_path()
 
 files = [
-  FileParam(readall(filename),"text/julia","file1","runtests.jl"),
+  FileParam(readstring(filename),"text/julia","file1","runtests.jl"),
   FileParam(open(filename,"r"),"text/julia","file2","runtests.jl",true),
-  FileParam(IOBuffer(readall(filename)),"text/julia","file3","runtests.jl"),
+  FileParam(IOBuffer(readstring(filename)),"text/julia","file3","runtests.jl"),
   ]
 
 res = post(URI("http://httpbin.org/post"); files = files)
 
-filecontent = readall(filename)
+filecontent = readstring(filename)
 data = json(res)
 @test data["files"]["file1"] == filecontent
 @test data["files"]["file2"] == filecontent
@@ -194,7 +195,7 @@ let
     write_chunked(stream, "cde")
     write_chunked(stream, "")
 
-    response = JSON.parse(readall(stream))
+    response = JSON.parse(readstring(stream))
     @test response["data"] == "abcde"
 end
 
@@ -220,7 +221,7 @@ end
 # Requires Docker and docker-machine (obtainable via Docker toolbox)
 if get(ENV, "REQUESTS_TEST_PROXY", "0") == "1"
     run(`docker-machine create -d virtualbox proxytest`)
-    cmds = readall(`docker-machine env proxytest`)
+    cmds = readstring(`docker-machine env proxytest`)
     for line in split(cmds, '\n')
         m = match(r"export (?<name>.*?)=(?<val>.*)", line)
         m===nothing && continue
@@ -228,7 +229,7 @@ if get(ENV, "REQUESTS_TEST_PROXY", "0") == "1"
     end
     @show ENV
     run(`docker run --name squid -d --restart=always -p 3128:3128 quay.io/sameersbn/squid:3.3.8-2`)
-    ip = IPv4(readall(`docker-machine ip proxytest`))
+    ip = IPv4(readstring(`docker-machine ip proxytest`))
     proxy_vars = ["http_proxy", "https_proxy"]
     for var in proxy_vars
         ENV[var] = "http://$ip:3128"

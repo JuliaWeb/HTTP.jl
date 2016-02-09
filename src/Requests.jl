@@ -7,10 +7,17 @@ export view, save
 export set_proxy, set_https_proxy, get_request_settings
 
 import Base: get, write
-import Base.FS: File
+
+if VERSION < v"0.5.0-dev+1229"
+    import Base.FS: File
+else
+    import Base.Filesystem: File
+end
+
 import URIParser: URI
 import HttpCommon: Cookie
 
+using Compat
 using HttpParser
 using HttpCommon
 using URIParser
@@ -81,7 +88,7 @@ for kind in [:Response, :Request]
     @eval text(r::$kind) = utf8(bytes(r))
     @eval Base.bytestring(r::$kind) = text(r)
     @eval Base.readall(r::$kind) = text(r)
-    @eval Base.readbytes(r::$kind) = bytes(r)
+    @eval Base.read(r::$kind) = bytes(r)
     @eval json(r::$kind; kwargs...) = JSON.parse(text(r); kwargs...)
 
     ## Response getters to future-proof against changes to the Response type
@@ -278,10 +285,10 @@ end
 function do_request(uri::URI, verb; kwargs...)
     response_stream = do_stream_request(uri, verb; kwargs...)
     response = response_stream.response
-    response.data = readbytes(response_stream)
+    response.data = read(response_stream)
     if get(response.headers, "Content-Encoding", "") ∈ ("gzip", "deflate")
         if !isempty(response.data)
-            response.data = response.data |> ZlibInflateInputStream |> readbytes
+            response.data = response.data |> ZlibInflateInputStream |> read
         end
     end
     response
