@@ -1,3 +1,4 @@
+using Compat
 using Requests
 using JSON
 using Base.Test

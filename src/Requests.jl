@@ -7,10 +7,17 @@ export view, save
 export set_proxy, set_https_proxy, get_request_settings
 
 import Base: get, write
-import Base.Filesystem: File
+
+if VERSION < v"0.5.0-dev+1229"
+    import Base.FS: File
+else
+    import Base.Filesystem: File
+end
+
 import URIParser: URI
 import HttpCommon: Cookie
 
+using Compat
 using HttpParser
 using HttpCommon
 using URIParser
