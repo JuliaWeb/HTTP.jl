@@ -5,7 +5,7 @@ const control_array = vcat(map(UInt8, 0:parse(Int,"1f",16)))
 const control = utf8(ascii(control_array)*"\x7f")
 const space = utf8(" ")
 const delims = utf8("%<>\"")
-const unwise   = utf8("{}|\\^`")
+const unwise   = utf8("(){}|\\^`")
 
 const reserved = utf8(",;/?:@&=+\$![]'*#")
 # Strings to be escaped
