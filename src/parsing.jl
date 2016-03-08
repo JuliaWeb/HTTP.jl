@@ -30,12 +30,6 @@ function on_message_begin(parser)
     return 0
 end
 
-function on_url(parser, at, len)
-    pd(parser).response.resource  =
-      string(r.resource, bytestring(convert(Ptr{UInt8}, at), Int(len)))
-    return 0
-end
-
 function on_status_complete(parser)
     response_stream = pd(parser)
     response_stream.response.status = (unsafe_load(parser)).status_code
@@ -173,7 +167,7 @@ const HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
 function __init_parsing__()
     # Turn all the callbacks into C callable functions.
     global const on_message_begin_cb = cfunction(on_message_begin, HTTP_CB...)
-    global const on_url_cb = cfunction(on_url, HTTP_DATA_CB...)
+    global const on_url_cb = C_NULL # callback valid only for Server, not for Request
     global const on_status_complete_cb = cfunction(on_status_complete, HTTP_CB...)
     global const on_header_field_cb = cfunction(on_header_field, HTTP_DATA_CB...)
     global const on_header_value_cb = cfunction(on_header_value, HTTP_DATA_CB...)
