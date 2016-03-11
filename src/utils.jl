@@ -1,8 +1,8 @@
 ##
-# Splits the userinfo portion of an URI in the format user:password and 
+# Splits the userinfo portion of an URI in the format user:password and
 # returns the components as tuple.
 #
-# Note: This is just a convenience method, and this form of usage is 
+# Note: This is just a convenience method, and this form of usage is
 # deprecated as of rfc3986.
 # See: http://tools.ietf.org/html/rfc3986#section-3.2.1
 function userinfo(uri::URI)
@@ -30,8 +30,8 @@ end
 
 ##
 # Splits the query into key value pairs
-function query_params(uri::URI)
-    elems = split(uri.query, '&', keep = false)
+function query_params(query::AbstractString)
+    elems = split(query, '&', keep = false)
     d = Dict{AbstractString, AbstractString}()
     for elem in elems
         pp = split(elem, "=", keep = true)
@@ -43,6 +43,7 @@ function query_params(uri::URI)
     end
     d
 end
+query_params(uri::URI) = query_params(uri.query::AbstractString)
 
 
 ##
@@ -61,12 +62,10 @@ function isvalid(uri::URI)
     scheme = uri.scheme
     isempty(scheme) && error("Can not validate relative URI")
     if ((scheme in non_hierarchical) && (search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
-       (!(scheme in uses_query) && !isempty(uri.query)) ||                    # query component not allowed 
+       (!(scheme in uses_query) && !isempty(uri.query)) ||                    # query component not allowed
        (!(scheme in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
        (!(scheme in uses_authority) && (!isempty(uri.host) || (0 != uri.port) || !isempty(uri.userinfo))) # authority component not allowed
         return false
     end
     true
 end
-
-
