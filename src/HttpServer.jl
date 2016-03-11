@@ -21,7 +21,7 @@ export HttpHandler,
        parsequerystring,
        setcookie!
 
-import Base: run, listen
+import Base: run, listen, close
 
 defaultevents = Dict{ASCIIString, Function}()
 defaultevents["error"]  = ( client, err )->println( err )
@@ -229,7 +229,17 @@ function handle_http_request(server::Server)
     id_pool = 0 # Increments for each connection
     websockets_enabled = server.websock != nothing
     while true # handle requests, Base.wait_accept blocks until a connection is made
-        client = Client(id_pool += 1, accept(server.http.sock))
+        sock = TCPSocket()
+        try
+            sock = accept(server.http.sock)
+        catch e
+            if !isopen(server.http.sock)
+                # Server was closed while waiting to accept client. Exit gracefully.
+                break
+            end
+            throw(e)
+        end
+        client = Client(id_pool += 1, sock)
         client.parser = ClientParser(message_handler(server, client, websockets_enabled))
         @async process_client(server, client, websockets_enabled)
     end
@@ -242,17 +252,26 @@ function handle_https_request(server::Server, ssl_config::MbedTLS.SSLConfig)
     while true
         sess = MbedTLS.SSLContext()
         MbedTLS.setup!(sess, ssl_config)
+        sock = TCPSocket()
         # set_priority_string!(sess)
         # set_credentials!(sess, cert_store)
-        client = accept(server.http.sock)
         try
-            MbedTLS.set_bio!(sess, client)
+            sock = accept(server.http.sock)
+        catch e
+            if !isopen(server.http.sock)
+                # Server was closed while waiting to accept client. Exit gracefully.
+                break
+            end
+            throw(e)
+        end
+        try
+            MbedTLS.set_bio!(sess, sock)
             MbedTLS.handshake(sess)
             # associate_stream(sess, client)
             # handshake!(sess)
         catch e
             println("Error establishing SSL connection: ", e)
-            close(client)
+            close(sock)
             continue
         end
         client = Client(id_pool += 1, sess)
@@ -377,6 +396,9 @@ function process_client(server::Server, client::Client, websockets_enabled::Bool
     end
     event("close", server, client)
 end
+
+""" Closes the Server `server` by closing the underlying TCPServer `sock` in the HttpHandler. """
+close(server::Server) = close(server.http.sock)
 
 "Callback factory for providing `on_message_complete` for `client.parser`"
 function message_handler(server::Server, client::Client, websockets_enabled::Bool)
