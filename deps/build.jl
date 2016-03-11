@@ -2,6 +2,8 @@ using BinDeps
 
 @BinDeps.setup
 
+version=v"2.6.2"
+
 aliases = []
 @windows_only begin
     if WORD_SIZE == 64
@@ -14,21 +16,33 @@ end
 libhttp_parser = library_dependency("libhttp_parser", aliases=aliases)
 
 @unix_only begin
-    prefix = BinDeps.usrdir(libhttp_parser)
+    src_arch = "v$version.zip"
+    src_url = "https://github.com/nodejs/http-parser/archive/$src_arch"
+    src_dir = "http-parser-$version"
+
     target = "libhttp_parser.$(BinDeps.shlib_ext)"
-    targetpath = joinpath(BinDeps.libdir(libhttp_parser),target)
+    targetdwlfile = joinpath(BinDeps.downloadsdir(libhttp_parser),src_arch)
+    targetsrcdir = joinpath(BinDeps.srcdir(libhttp_parser),src_dir)
+    targetlib    = joinpath(BinDeps.libdir(libhttp_parser),target)
 
     provides(SimpleBuild,
         (@build_steps begin
-            ChangeDirectory(BinDeps.pkgdir(libhttp_parser))
-            FileRule("deps/src/http-parser/Makefile",`git submodule update --init`)
-            FileRule(targetpath, @build_steps begin
-                ChangeDirectory(BinDeps.srcdir(libhttp_parser))
-                CreateDirectory(dirname(targetpath))
-                MakeTargets(["-C","http-parser","library"], env=Dict("SONAME"=>target))
-                `cp http-parser/$target $targetpath`
-            end)
-        end),[libhttp_parser], os = :Unix)
+            CreateDirectory(BinDeps.downloadsdir(libhttp_parser))
+            FileDownloader(src_url, targetdwlfile)
+            FileUnpacker(targetdwlfile,BinDeps.srcdir(libhttp_parser),targetsrcdir)
+            @build_steps begin
+                CreateDirectory(BinDeps.libdir(libhttp_parser))
+                @build_steps begin
+                    ChangeDirectory(targetsrcdir)
+                    FileRule(targetlib, @build_steps begin
+                        ChangeDirectory(BinDeps.srcdir(libhttp_parser))
+                        CreateDirectory(dirname(targetlib))
+                        MakeTargets(["-C",src_dir,"library"], env=Dict("SONAME"=>target))
+                        `cp $src_dir/$target $targetlib`
+                    end)
+                end
+            end
+        end), libhttp_parser, os = :Unix)
 end
 
 # Windows
