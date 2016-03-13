@@ -209,4 +209,18 @@ typealias ParsedUrl Dict{Symbol, AbstractString}
     :UF_SCHEMA=>"http"
 ), 8000)
 
+@test HttpParser.version() >= v"2.6"
+
+p = Parser()
+HttpParser.pause(p)
+err = HttpParser.errno(p)
+@test err == 0x1f
+@test HttpParser.errno_name(err) == "HPE_PAUSED"
+@test HttpParser.errno_description(err) == "parser is paused"
+HttpParser.resume(p)
+@test HttpParser.errno(p) == 0x00
+
+ex = HttpParser.HttpParserError(0x1f)
+@test ex.errno == 0x1f
+
 info("All assertions passed!")

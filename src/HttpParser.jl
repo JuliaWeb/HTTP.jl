@@ -126,9 +126,9 @@ function http_should_keep_alive(parser::Ptr{Parser})
 end
 
 "Pauses the parser."
-pause(parser::Parser) = ccall((:http_parser_pause,lib), Void, (Ptr{Parser}, Cint), Ref(parser), zero(Cint))
+pause(parser::Parser) = ccall((:http_parser_pause,lib), Void, (Ptr{Parser}, Cint), Ref(parser), one(Cint))
 "Resumes the parser."
-resume(parser::Parser) = ccall((:http_parser_pause,lib), Void,(Ptr{Parser}, Cint), Ref(parser), one(Cint))
+resume(parser::Parser) = ccall((:http_parser_pause,lib), Void,(Ptr{Parser}, Cint), Ref(parser), zero(Cint))
 "Checks if this is the final chunk of the body."
 isfinalchunk(parser::Parser) = ccall((:http_parser_pause,lib), Cint, (Ptr{Parser},), Ref(parser)) == 1
 
