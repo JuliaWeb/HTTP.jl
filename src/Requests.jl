@@ -367,7 +367,9 @@ function do_stream_request(uri::URI, verb; headers = Dict{AbstractString, Abstra
         while response_stream.state < BodyDone
             wait(response_stream)
         end
-        close(response_stream)
+        if response_stream.state != UpgradeConnection
+            close(response_stream)
+        end
     end
     if write_body
         while response_stream.state < HeadersDone

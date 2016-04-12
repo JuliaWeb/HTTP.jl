@@ -149,7 +149,11 @@ end
 
 function on_message_complete(parser)
     response_stream = pd(parser)
-    response_stream.state = BodyDone
+    if upgrade(unsafe_load(parser))
+        response_stream.state = UpgradeConnection
+    else
+        response_stream.state = BodyDone
+    end
     notify(response_stream.state_change)
     return 0
 end
