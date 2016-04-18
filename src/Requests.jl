@@ -257,7 +257,7 @@ function get_redirect_uri(response)
             uri = URI(val)
             if isempty(uri.host)  # Redirect URL was given as a relative path
                 request = requestfor(response)
-                uri = URI(request.uri.host, uri.path)
+                uri = URI(request.uri.scheme, request.uri.host, request.uri.port, uri.path, uri.query)
             end
             return Nullable(uri)
         end
