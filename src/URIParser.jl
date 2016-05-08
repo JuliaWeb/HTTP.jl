@@ -7,6 +7,7 @@ export defrag, userinfo, path_params, query_params, isvalid
 export escape, escape_form, escape_with, unescape, unescape_form
 
 import Base: isequal, isvalid, show, print, (==)
+using Compat
 
 include("parser.jl")
 include("esc.jl")
