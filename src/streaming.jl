@@ -1,4 +1,4 @@
-@enum ResponseState NotStarted OnMessageBegin StatusComplete OnHeaderField OnHeaderValue HeadersDone OnBody BodyDone EarlyEOF
+@enum ResponseState NotStarted OnMessageBegin StatusComplete OnHeaderField OnHeaderValue HeadersDone OnBody BodyDone EarlyEOF UpgradeConnection
 
 type ResponseStream{T<:IO} <: IO
     response::Response
