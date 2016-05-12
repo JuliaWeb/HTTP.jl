@@ -229,7 +229,11 @@ function format_query_str(queryparams; uri = URI(""))
     query_str = isempty(uri.query) ? string() : string(uri.query, "&")
 
     for (k, v) in queryparams
-        query_str *= "$(URIParser.escape(string(k)))=$(URIParser.escape(string(v)))&"
+        if isa(v, Array)
+            query_str *= join(map(vi -> "$(URIParser.escape(string(k)))=$(URIParser.escape(string(vi)))", v), "&") * "&"
+        else
+            query_str *= "$(URIParser.escape(string(k)))=$(URIParser.escape(string(v)))&"
+        end
     end
     chop(query_str) # remove the trailing &
 end

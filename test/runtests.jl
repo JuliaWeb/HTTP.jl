@@ -18,9 +18,11 @@ import Requests: get, post, put, delete, options, bytes, text, json, history
 
 data = json(get("http://httpbin.org/get";
                       query = Dict("key1" => "value1",
-                                   "key with spaces" => "value with spaces")))
+                                   "key with spaces" => "value with spaces",
+                                   "key2" => ["value2.1", "value2.2"])))
 @test data["args"]["key1"] == "value1"
 @test data["args"]["key with spaces"] == "value with spaces"
+@test data["args"]["key2"] == ["value2.1", "value2.2"]
 
 data = json(post("http://httpbin.org/post";
                        query = Dict("key1" => "value1",

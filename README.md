@@ -31,6 +31,7 @@ options("http://httpbin.org/get")
 
 ```julia
 get("http://httpbin.org/get"; query = Dict("title" => "page1"))
+get("http://httpbin.org/get"; query = Dict("multi" => ["value1", "value2"]))
 ```
 
 ### Add plain text data
