@@ -9,13 +9,13 @@ is_host_char(c) = isalnum(c) || (c == '.') || (c == '-') || (c == '_') || (c == 
 
 
 immutable URI
-    scheme::ASCIIString
-    host::ASCIIString
+    scheme::Compat.ASCIIString
+    host::Compat.ASCIIString
     port::UInt16
-    path::ASCIIString
-    query::ASCIIString
-    fragment::ASCIIString
-    userinfo::ASCIIString
+    path::Compat.ASCIIString
+    query::Compat.ASCIIString
+    fragment::Compat.ASCIIString
+    userinfo::Compat.ASCIIString
     specifies_authority::Bool
     URI(scheme,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) =
             new(scheme,host,UInt16(port),path,query,fragment,userinfo,specifies_authority)
