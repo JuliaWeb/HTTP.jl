@@ -5,6 +5,7 @@
 __precompile__()
 module HttpServer
 
+using Compat; import Compat.String
 using HttpCommon
 using MbedTLS
 
@@ -23,7 +24,7 @@ export HttpHandler,
 
 import Base: run, listen, close
 
-defaultevents = Dict{ASCIIString, Function}()
+defaultevents = Dict{String, Function}()
 defaultevents["error"]  = ( client, err )->println( err )
 defaultevents["listen"] = ( saddr )      ->println("Listening on $saddr...")
 
@@ -166,7 +167,7 @@ end
 """
 Sets a cookie with the given name, value, and attributes on the given response object.
 """
-setcookie!(r::Response, name, value=utf8(""), attrs=Dict{UTF8String, UTF8String}()) =
+setcookie!(r::Response, name, value=utf8(""), attrs=Dict{String, String}()) =
   setcookie!(r, Cookie(name, value, attrs))
 
 setcookie!(r::Response, cookie::Cookie) = (r.cookies[cookie.name] = cookie; r)
