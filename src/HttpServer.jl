@@ -211,17 +211,20 @@ function listen(server::Server, host::Base.IPAddr, port::Integer)
 end
 listen(server::Server, port::Integer) = listen(server, IPv4(0), port)
 
-""" Start `server` to listen on named pipe/domain socket.
+@unix_only begin
+    @doc """
+Start `server` to listen on named pipe/domain socket.
 
     listen(server::Server, path::AbstractString) Server
 
-    Setup "server" to listen on named pipe/domain socket specified by "path".
-"""
-@unix_only function listen(server::Server, path::AbstractString)
-    bind(server.http.sock, path) || throw(ArgumentError("could not listen on path $path"))
-    Base.uv_error("listen", Base._listen(server.http.sock))
-    event("listen", server, path)
-    return server
+Setup "server" to listen on named pipe/domain socket specified by "path".
+    """ ->
+    function listen(server::Server, path::AbstractString)
+        bind(server.http.sock, path) || throw(ArgumentError("could not listen on path $path"))
+        Base.uv_error("listen", Base._listen(server.http.sock))
+        event("listen", server, path)
+        return server
+    end
 end
 
 """ Handle HTTP request from client """
