@@ -39,7 +39,7 @@ Afterwards, you may either pass the API struct directly to another package (prob
 julia> uri = URI("https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag")
 URI(https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag)
 
-julia> uri.schema
+julia> uri.scheme
 "https"
 
 julia> uri.host
@@ -77,4 +77,4 @@ julia> URI("file:a/b/c").host
 ""
 ```
 
-Now, while the `file` schema consideres these to be equivalent, this may not necessarily be true for all schemas and thus the distinction is necessary.
+Now, while the `file` scheme consideres these to be equivalent, this may not necessarily be true for all schemes and thus the distinction is necessary.
