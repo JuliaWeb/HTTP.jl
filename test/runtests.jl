@@ -1,6 +1,8 @@
 using HttpParser
 using HttpCommon
 using Base.Test
+using Compat
+import Compat: String
 
 FIREFOX_REQ = tuple("GET /favicon.ico HTTP/1.1\r\n",
          "Host: 0.0.0.0=5000\r\n",
@@ -45,7 +47,7 @@ end
 
 function on_url(parser, at, len)
     # Concatenate the resource for each on_url callback
-    r.resource = string(r.resource, bytestring(convert(Ptr{UInt8}, at), Int(len)))
+    r.resource = string(r.resource, String(convert(Ptr{UInt8}, at), Int(len)))
     return 0
 end
 
@@ -54,14 +56,14 @@ function on_status_complete(parser)
 end
 
 function on_header_field(parser, at, len)
-    header = bytestring(convert(Ptr{UInt8}, at), Int(len))
+    header = String(convert(Ptr{UInt8}, at), Int(len))
     # set the current header
     r.headers["current_header"] = header
     return 0
 end
 
 function on_header_value(parser, at, len)
-    s = bytestring(convert(Ptr{UInt8}, at), Int(len))
+    s = String(convert(Ptr{UInt8}, at), Int(len))
     # once we know we have the header value, that will be the value for current header
     r.headers[r.headers["current_header"]] = s
     # reset current_header
@@ -160,7 +162,7 @@ init(MALFORMED)
 init(TWO_CHUNKS_MULT_ZERO_END)
 @test r.method == "POST"
 @test r.resource == "/two_chunks_mult_zero_end"
-@test bytestring(r.data) == "hello world"
+@test String(r.data) == "hello world"
 # @test r.data == "hello\r\n5 world\r\n6"
 init(WEBSOCK)
 @test r.method == "DELETE"

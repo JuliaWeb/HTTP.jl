@@ -10,6 +10,8 @@ isfile(depsjl) ? include(depsjl) : error("HttpParser not properly ",
     "installed. Please run\nPkg.build(\"HttpParser\")")
 
 using HttpCommon
+using Compat
+import Compat: String
 
 import Base.show
 
@@ -119,7 +121,7 @@ end
 "Returns a string version of the HTTP method."
 function http_method_str(method::Int)
     val = ccall((:http_method_str, lib), Cstring, (Int,), method)
-    return bytestring(val)
+    return String(val)
 end
 
 # Is the request a keep-alive request?
@@ -136,8 +138,8 @@ isfinalchunk(parser::Parser) = ccall((:http_parser_pause,lib), Cint, (Ptr{Parser
 
 upgrade(parser::Parser) = (parser.errno_and_upgrade & 0b10000000)>0
 errno(parser::Parser) = parser.errno_and_upgrade & 0b01111111
-errno_name(errno::Integer) = bytestring(ccall((:http_errno_name,lib),Cstring,(Int32,),errno))
-errno_description(errno::Integer) = bytestring(ccall((:http_errno_description,lib),Cstring,(Int32,),errno))
+errno_name(errno::Integer) = String(ccall((:http_errno_name,lib),Cstring,(Int32,),errno))
+errno_description(errno::Integer) = String(ccall((:http_errno_description,lib),Cstring,(Int32,),errno))
 
 immutable HttpParserError <: Exception
     errno::Int32
@@ -177,7 +179,7 @@ function parse_url(url::AbstractString; isconnect::Bool = false)
         !((purl.field_set & (1 << Cint(uf)) > 0) && uf != UF_MAX) && continue
         off = purl.field_data[2*(i-1)+1]
         len = purl.field_data[2*(i-1)+2]
-        parsed[symbol(uf)] = url[(off+1):(off+len)]
+        parsed[Symbol(uf)] = url[(off+1):(off+len)]
     end
     return parsed, purl.port
 end
