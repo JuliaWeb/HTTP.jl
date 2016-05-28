@@ -2,6 +2,8 @@ __precompile__()
 
 module HttpCommon
 
+using Compat
+import Compat: UTF8String
 import URIParser: URI, unescape
 
 export Headers, Request, Cookie, Response,
