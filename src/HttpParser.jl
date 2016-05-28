@@ -87,6 +87,8 @@ type ParserSettings
     on_chunk_complete::Ptr{Void}
 end
 
+ParserSettings(on_message_begin_cb, on_url_cb, on_status_complete_cb, on_header_field_cb, on_header_value_cb, on_headers_complete_cb, on_body_cb, on_message_complete_cb) = ParserSettings(on_message_begin_cb, on_url_cb, on_status_complete_cb, on_header_field_cb, on_header_value_cb, on_headers_complete_cb, on_body_cb, on_message_complete_cb, C_NULL, C_NULL)
+
 function show(io::IO,p::Parser)
     print(io,"libhttp-parser: v$(version()), ")
     print(io,"HTTP/$(p.http_major).$(p.http_minor), ")
