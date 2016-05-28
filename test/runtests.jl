@@ -1,6 +1,7 @@
 using HttpCommon
 using Base.Test
-
+using Compat
+import Compat: UTF8String
 # headers
 @test isa(HttpCommon.headers(), Headers)
 
