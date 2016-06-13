@@ -72,10 +72,10 @@ It has six fields:
 status codes defined in RFC's to their descriptions, e.g.
 
 ```julia
-STATUS_CODES[200] #=> "OK"
-STATUS_CODES[404] #=> "Not Found"
-STATUS_CODES[418] #=> "I'm a teapot"
-STATUS_CODES[500] #=> "Internal Server Error"
+STATUS_CODES[200] # => "OK"
+STATUS_CODES[404] # => "Not Found"
+STATUS_CODES[418] # => "I'm a teapot"
+STATUS_CODES[500] # => "Internal Server Error"
 ```
 
 
