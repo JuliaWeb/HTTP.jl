@@ -15,14 +15,19 @@ const unescaped_form = delims * reserved * control * unwise
 
 
 function unescape(str)
-    # def _unescape(str, regex) str.gsub(regex){ $1.hex.chr } end
-    for m in eachmatch(escaped_regex, str)
-        for capture in m.captures
-            rep = string(Char(parse(Int, capture, 16)))
-            str = replace(str, "%"*capture, rep)
+    r = UInt8[]
+    l = length(str)
+    i = 1
+    while i <= l
+        c = str[i]
+        i += 1
+        if c == '%'
+            c = parse(UInt8, str[i:i+1], 16)
+            i += 2
         end
+        push!(r, c)
     end
-    return str
+   return bytestring(r)
 end
 unescape_form(str) = unescape(replace(str, "+", " "))
 
