@@ -40,7 +40,7 @@ end
 
 function on_header_field(parser, at, len)
     response_stream = pd(parser)
-    header = bytestring(convert(Ptr{UInt8}, at))
+    header = unsafe_string(convert(Ptr{UInt8}, at))
     header_field = header[1:len]
     if response_stream.state == OnHeaderField
         field = string(get(response_stream.current_header, header_field))
@@ -68,7 +68,7 @@ function parse_cookies!(response, cookie_strings)
                 name, value = nameval
                 c.attrs[strip(name)] = strip(value)
             else
-                c.attrs[strip(nameval[1])] = utf8("")
+                c.attrs[strip(nameval[1])] = Compat.String("")
             end
         end
         response.cookies[c.name] = c
@@ -81,7 +81,7 @@ const is_set_cookie = r"set-cookie"i
 function on_header_value(parser, at, len)
     response_stream = pd(parser)
     resp = response_stream.response
-    s = bytestring(convert(Ptr{UInt8}, at), Int(len))
+    s = unsafe_string(convert(Ptr{UInt8}, at), Int(len))
     current_header = get(response_stream.current_header)
     if response_stream.state == OnHeaderValue
         if is_set_cookie(current_header)
@@ -140,7 +140,7 @@ end
 
 function on_body(parser, at, len)
     response_stream = pd(parser)
-    append!(response_stream.buffer.data, pointer_to_array(convert(Ptr{UInt8}, at), (len,)))
+    append!(response_stream.buffer.data, unsafe_wrap(Array, convert(Ptr{UInt8}, at), (len,)))
     response_stream.buffer.size = length(response_stream.buffer.data)
     response_stream.state = OnBody
     notify(response_stream.state_change)

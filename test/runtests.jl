@@ -50,12 +50,12 @@ data = json(delete("http://httpbin.org/delete";
 @test data["args"]["key4"] == "4.01"
 @test data["args"]["key with spaces"] == "value with spaces"
 
-data = json(options("http://httpbin.org/get";
+response = options("http://httpbin.org/get";
                           query = Dict("key1" => "value1",
                                        "key2" => "value2",
                                        "key3" => 3,
-                                       "key4" => 4.01)))
-@test data == nothing
+                                       "key4" => 4.01))
+@test length(response.data) == 0
 
 
 # check data -------

@@ -85,7 +85,7 @@ get_request_settings() = SETTINGS
 ## Convenience methods for extracting the payload of a response
 for kind in [:Response, :Request]
     @eval bytes(r::$kind) = r.data
-    @eval text(r::$kind) = utf8(bytes(r))
+    @eval text(r::$kind) = Compat.String(bytes(r))
     @eval Base.bytestring(r::$kind) = text(r)
     @eval Base.readall(r::$kind) = text(r)
     @eval Base.read(r::$kind) = bytes(r)
@@ -122,7 +122,7 @@ function mimetype(r::Response)
         ct = split(headers(r)["Content-Type"], ";")[1]
         return Nullable(ct)
     else
-        return Nullable{UTF8String}()
+        return Nullable{Compat.UTF8String}()
     end
 end
 
@@ -136,7 +136,7 @@ function contentdisposition(r::Response)
             end
         end
     end
-    return Nullable{UTF8String}()
+    return Nullable{Compat.UTF8String}()
 end
 
 """
@@ -215,7 +215,7 @@ end
 function default_request(uri::URI,headers,data,method)
     resource = resourcefor(uri)
     if !isempty(uri.userinfo) && !haskey(headers,"Authorization")
-        headers["Authorization"] = "Basic $(bytestring(encode(Base64, uri.userinfo)))"
+        headers["Authorization"] = "Basic $(String(encode(Base64, uri.userinfo)))"
     end
     host = uri.port == 0 ? uri.host : "$(uri.host):$(uri.port)"
     request = default_request(method,resource,host,data,headers)
@@ -249,7 +249,7 @@ function cookie_request_header(d::Dict)
     join(["$key=$(cookie_value(val))" for (key,val) in d], ';')
 end
 cookie_request_header(cookies::AbstractVector{Cookie}) =
-    cookie_request_header([cookie.name => cookie.value for cookie in cookies])
+    cookie_request_header(Dict([Pair(cookie.name, cookie.value) for cookie in cookies]))
 
 const is_location = r"^location$"i
 
@@ -400,7 +400,7 @@ end
 for f in [:get, :post, :put, :delete, :head,
           :trace, :options, :patch, :connect]
     f_str = uppercase(string(f))
-    f_stream = symbol(string(f, "_streaming"))
+    f_stream = Symbol(string(f, "_streaming"))
     @eval begin
         function ($f)(uri::URI, data::AbstractString; headers::Dict=Dict())
             do_request(uri, $f_str; data=data, headers=headers)
@@ -416,8 +416,5 @@ for f in [:get, :post, :put, :delete, :head,
         ($f_stream)(uri::URI; args...) = do_stream_request(uri, $f_str; args...)
     end
 end
-
-include("precompile.jl")
-# _precompile_()
 
 end

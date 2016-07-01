@@ -7,7 +7,7 @@ type ResponseStream{T<:IO} <: IO
     buffer::IOBuffer
     parser::ResponseParser
     timeout::Float64
-    current_header::Nullable{ASCIIString}
+    current_header::Nullable{Compat.UTF8String}
     state_change::Condition
     cookie_buffer::IOBuffer
     ResponseStream() = new()
