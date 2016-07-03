@@ -8,7 +8,7 @@ export escape, escape_form, escape_with, unescape, unescape_form
 
 import Base: isequal, isvalid, show, print, (==)
 using Compat
-import Compat.String
+import Compat: String
 
 include("parser.jl")
 include("esc.jl")
