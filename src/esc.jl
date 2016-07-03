@@ -2,7 +2,7 @@ const escaped_regex = r"%([0-9a-fA-F]{2})"
 
 # Escaping
 const control_array = vcat(map(UInt8, 0:parse(Int,"1f",16)))
-const control = String(String(control_array)*"\x7f")
+const control = String(control_array)*"\x7f"
 const space = String(" ")
 const delims = String("%<>\"")
 const unwise   = String("(){}|\\^`")
