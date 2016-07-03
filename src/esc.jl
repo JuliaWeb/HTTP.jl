@@ -2,12 +2,12 @@ const escaped_regex = r"%([0-9a-fA-F]{2})"
 
 # Escaping
 const control_array = vcat(map(UInt8, 0:parse(Int,"1f",16)))
-const control = utf8(ascii(control_array)*"\x7f")
-const space = utf8(" ")
-const delims = utf8("%<>\"")
-const unwise   = utf8("(){}|\\^`")
+const control = String(String(control_array)*"\x7f")
+const space = String(" ")
+const delims = String("%<>\"")
+const unwise   = String("(){}|\\^`")
 
-const reserved = utf8(",;/?:@&=+\$![]'*#")
+const reserved = String(",;/?:@&=+\$![]'*#")
 # Strings to be escaped
 # (Delims goes first so '%' gets escaped first.)
 const unescaped = delims * reserved * control * space * unwise
@@ -27,7 +27,7 @@ function unescape(str)
         end
         push!(r, c)
     end
-   return bytestring(r)
+   return String(r)
 end
 unescape_form(str) = unescape(replace(str, "+", " "))
 
