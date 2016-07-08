@@ -215,7 +215,7 @@ end
 function default_request(uri::URI,headers,data,method)
     resource = resourcefor(uri)
     if !isempty(uri.userinfo) && !haskey(headers,"Authorization")
-        headers["Authorization"] = "Basic $(String(encode(Base64, uri.userinfo)))"
+        headers["Authorization"] = "Basic $(encode(Base64, uri.userinfo))"
     end
     host = uri.port == 0 ? uri.host : "$(uri.host):$(uri.port)"
     request = default_request(method,resource,host,data,headers)
