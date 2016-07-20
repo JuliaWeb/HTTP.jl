@@ -34,7 +34,7 @@ end
 
 function on_url(parser, at, len)
     r = pd(parser).request
-    r.resource = string(r.resource, bytestring(convert(Ptr{UInt8}, at), Int(len)))
+    r.resource = string(r.resource, unsafe_string(convert(Ptr{UInt8}, at), Int(len)))
     return 0
 end
 
@@ -49,7 +49,7 @@ end
 
 function on_header_field(parser, at, len)
     r = pd(parser).request
-    header = bytestring(convert(Ptr{UInt8}, at))
+    header = unsafe_string(convert(Ptr{UInt8}, at))
     header_field = header[1:len]
     r.headers["current_header"] = header_field
     return 0
@@ -57,7 +57,7 @@ end
 
 function on_header_value(parser, at, len)
     r = pd(parser).request
-    s = bytestring(convert(Ptr{UInt8}, at), Int(len))
+    s = unsafe_string(convert(Ptr{UInt8}, at), Int(len))
     r.headers[r.headers["current_header"]] = s
     r.headers["current_header"] = ""
     # delete!(r.headers, "current_header")
