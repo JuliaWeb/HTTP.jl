@@ -212,7 +212,7 @@ function listen(server::Server, host::Base.IPAddr, port::Integer)
 end
 listen(server::Server, port::Integer) = listen(server, IPv4(0), port)
 
-@unix_only begin
+if is_unix()
     @doc """
 Start `server` to listen on named pipe/domain socket.
 
@@ -347,7 +347,7 @@ function run(server::Server; args...)
     port = get(params, :port, 0)
     host = get(params, :host, IPv4(0))
     use_https = haskey(params, :ssl)
-    use_sockets = @unix? (haskey(params, :socket) && !haskey(params, :port)) : false
+    use_sockets = is_unix() ? (haskey(params, :socket) && !haskey(params, :port)) : false
 
     server = if use_sockets
         listen(server, params[:socket])  # start server on Unix socket
