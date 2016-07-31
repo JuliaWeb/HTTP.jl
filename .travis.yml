@@ -4,13 +4,14 @@ os:
     - osx
 julia:
     - 0.4
+    - 0.5
     - nightly
 notifications:
     email: false
 sudo: false
-script:
-    - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
-    - julia -e 'Pkg.clone(pwd()); Pkg.build("HttpServer")'
-    - julia -e 'Pkg.test("HttpServer", coverage=true)'
+#script: # use the default script setting which is equivalent to the following
+#    - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
+#    - julia -e 'Pkg.clone(pwd()); Pkg.build("HttpServer")'
+#    - julia -e 'Pkg.test("HttpServer", coverage=true)'
 after_success:
     - julia -e 'cd(Pkg.dir("HttpServer")); Pkg.add("Coverage"); using Coverage; Codecov.submit(process_folder())'
