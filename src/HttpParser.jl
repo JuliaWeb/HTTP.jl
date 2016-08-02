@@ -123,7 +123,7 @@ end
 "Returns a string version of the HTTP method."
 function http_method_str(method::Int)
     val = ccall((:http_method_str, lib), Cstring, (Int,), method)
-    return String(val)
+    return unsafe_string(val)
 end
 
 # Is the request a keep-alive request?
@@ -140,8 +140,8 @@ isfinalchunk(parser::Parser) = ccall((:http_parser_pause,lib), Cint, (Ptr{Parser
 
 upgrade(parser::Parser) = (parser.errno_and_upgrade & 0b10000000)>0
 errno(parser::Parser) = parser.errno_and_upgrade & 0b01111111
-errno_name(errno::Integer) = String(ccall((:http_errno_name,lib),Cstring,(Int32,),errno))
-errno_description(errno::Integer) = String(ccall((:http_errno_description,lib),Cstring,(Int32,),errno))
+errno_name(errno::Integer) = unsafe_string(ccall((:http_errno_name,lib),Cstring,(Int32,),errno))
+errno_description(errno::Integer) = unsafe_string(ccall((:http_errno_description,lib),Cstring,(Int32,),errno))
 
 immutable HttpParserError <: Exception
     errno::Int32
