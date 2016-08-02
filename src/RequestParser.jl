@@ -83,7 +83,7 @@ end
 function on_body(parser, at, len)
     r = pd(parser).request
     # write(pd(parser).data, convert(Ptr{UInt8}, at), len)
-    append!(r.data, pointer_to_array(convert(Ptr{UInt8}, at), (len,)))
+    append!(r.data, unsafe_wrap(Array,convert(Ptr{UInt8}, at), (len,)))
     r.data
     return 0
 end
