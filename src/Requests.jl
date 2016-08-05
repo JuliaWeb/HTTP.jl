@@ -108,11 +108,11 @@ history(r::Response) = r.history
 
 # Stolen from https://github.com/dcjones/Gadfly.jl/blob/7fd56991e55b6617d37d7e3d0d69a310bdd36b05/src/Gadfly.jl#L1016
 function open_file(filename)
-    if OS_NAME == :Darwin
+    if is_apple()
         run(`open $(filename)`)
-    elseif OS_NAME == :Linux || OS_NAME == :FreeBSD
+    elseif is_unix()
         run(`xdg-open $(filename)`)
-    elseif OS_NAME == :Windows
+    elseif is_windows()
         run(`$(ENV["COMSPEC"]) /c start $(filename)`)
     end
 end
