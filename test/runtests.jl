@@ -1,5 +1,6 @@
 using URIParser
 using Base.Test
+using Compat
 
 urls = ["hdfs://user:password@hdfshost:9000/root/folder/file.csv#frag",
     "https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag",
@@ -64,5 +65,6 @@ g = URI("google.com","/some/path")
 @test URIParser.escape("t est\n") == "t%20est%0A"
 
 # Issue #2
-@test sprint(writemime, MIME("text/html"), URI("http://google.com")) ==
+@test sprint((io, mime, obj)->@compat(show(io, mime, obj)),
+             MIME("text/html"), URI("http://google.com")) ==
     """<a href="http://google.com/">http://google.com/</a>"""
