@@ -1,11 +1,12 @@
 using BinDeps
+using Compat
 
 @BinDeps.setup
 
 version=v"2.6.2"
 
 aliases = []
-@windows_only begin
+if is_windows()
     if WORD_SIZE == 64
         aliases = ["libhttp_parser64"]
     else
@@ -15,7 +16,7 @@ end
 
 libhttp_parser = library_dependency("libhttp_parser", aliases=aliases)
 
-@unix_only begin
+if is_unix()
     src_arch = "v$version.zip"
     src_url = "https://github.com/nodejs/http-parser/archive/$src_arch"
     src_dir = "http-parser-$version"
@@ -46,11 +47,10 @@ libhttp_parser = library_dependency("libhttp_parser", aliases=aliases)
 end
 
 # Windows
-@windows_only begin
+if is_windows()
     provides(Binaries,
          URI("https://julialang.s3.amazonaws.com/bin/winnt/extras/libhttp_parser.zip"),
          libhttp_parser, os = :Windows)
 end
 
 @BinDeps.install Dict(:libhttp_parser => :lib)
-
