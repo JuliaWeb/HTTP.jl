@@ -110,8 +110,8 @@ facts("HttpServer runs") do
             Response("hello")
         end
         server = Server(http)
-        cert = MbedTLS.crt_parse_file(Pkg.dir("HttpServer","test","cert.pem"))
-        key = MbedTLS.parse_keyfile(Pkg.dir("HttpServer","test","key.pem"))
+        cert = MbedTLS.crt_parse_file(joinpath(dirname(@__FILE__),"cert.pem"))
+        key = MbedTLS.parse_keyfile(joinpath(dirname(@__FILE__),"key.pem"))
         @async run(server, port=8002, ssl=(cert, key))
         sleep(1.0)
         client_tls_conf = Requests.TLS_VERIFY
@@ -126,8 +126,8 @@ facts("HttpServer runs") do
             Response("hello")
         end
         server = Server(http)
-        cert = MbedTLS.crt_parse_file(Pkg.dir("HttpServer","test","cert.pem"))
-        key = MbedTLS.parse_keyfile(Pkg.dir("HttpServer","test","key.pem"))
+        cert = MbedTLS.crt_parse_file(joinpath(dirname(@__FILE__),"cert.pem"))
+        key = MbedTLS.parse_keyfile(joinpath(dirname(@__FILE__),"key.pem"))
         @async run(server, port=8002, ssl=(cert, key))
         sleep(1.0)
         client_tls_conf = Requests.TLS_VERIFY
