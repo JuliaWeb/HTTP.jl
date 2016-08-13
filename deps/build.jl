@@ -7,7 +7,7 @@ version=v"2.6.2"
 
 aliases = []
 if is_windows()
-    if WORD_SIZE == 64
+    if Sys.WORD_SIZE == 64
         aliases = ["libhttp_parser64"]
     else
         aliases = ["libhttp_parser32"]
