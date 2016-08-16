@@ -246,3 +246,7 @@ if get(ENV, "REQUESTS_TEST_PROXY", "0") == "1"
     run(`docker rm -v squid`)
     run(`docker-machine rm proxytest`)
 end
+
+# Basic auth
+@test get("https://user:pw@httpbin.org/basic-auth/user/pw").status == 200
+@test get("https://user:wrongpw@httpbin.org/basic-auth/user/pw").status == 401
