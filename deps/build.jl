@@ -3,7 +3,7 @@ using Compat
 
 @BinDeps.setup
 
-version=v"2.6.2"
+version=v"2.7.1"
 
 aliases = []
 if is_windows()
@@ -14,7 +14,17 @@ if is_windows()
     end
 end
 
-libhttp_parser = library_dependency("libhttp_parser", aliases=aliases)
+function validate_httpparser(name,handle)
+    try
+        p = Libdl.dlsym(handle, :http_parser_url_init)
+        return p != C_NULL
+    catch
+        return false
+    end
+end
+
+libhttp_parser = library_dependency("libhttp_parser", aliases=aliases,
+                                     validate=validate_httpparser)
 
 if is_unix()
     src_arch = "v$version.zip"
@@ -49,7 +59,7 @@ end
 # Windows
 if is_windows()
     provides(Binaries,
-         URI("https://julialang.s3.amazonaws.com/bin/winnt/extras/libhttp_parser.zip"),
+         URI("https://s3.amazonaws.com/julialang/bin/winnt/extras/libhttp_parser_2_7_1.zip"),
          libhttp_parser, os = :Windows)
 end
 
