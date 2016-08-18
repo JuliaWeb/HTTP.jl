@@ -59,6 +59,7 @@ end
 
 # Windows
 if is_windows()
+    rm(joinpath(dirname(@__FILE__), "usr"); force = true, recursive = true)
     provides(Binaries,
          URI("https://s3.amazonaws.com/julialang/bin/winnt/extras/libhttp_parser_2_7_1.zip"),
          libhttp_parser, os = :Windows)
