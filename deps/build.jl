@@ -19,6 +19,7 @@ function validate_httpparser(name,handle)
         p = Libdl.dlsym(handle, :http_parser_url_init)
         return p != C_NULL
     catch
+        warn("Looks like your binary is old. Please run `rm(\"$(joinpath(dirname(@__FILE__), "usr"))\"; recursive = true)` to delete the old binary and then run `Pkg.build(\"HttpParser\")` again.")
         return false
     end
 end
@@ -59,7 +60,6 @@ end
 
 # Windows
 if is_windows()
-    rm(joinpath(dirname(@__FILE__), "usr"); force = true, recursive = true)
     provides(Binaries,
          URI("https://s3.amazonaws.com/julialang/bin/winnt/extras/libhttp_parser_2_7_1.zip"),
          libhttp_parser, os = :Windows)
