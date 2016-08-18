@@ -45,6 +45,7 @@ if is_unix()
                 CreateDirectory(BinDeps.libdir(libhttp_parser))
                 @build_steps begin
                     ChangeDirectory(targetsrcdir)
+                    `rm -f $src_dir/$target $targetlib`
                     FileRule(targetlib, @build_steps begin
                         ChangeDirectory(BinDeps.srcdir(libhttp_parser))
                         CreateDirectory(dirname(targetlib))
