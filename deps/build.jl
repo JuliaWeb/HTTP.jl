@@ -14,6 +14,7 @@ if is_windows()
     end
 end
 
+# This API used for validation was introduced in 2.6.0, and there have no API changes between 2.6 and 2.7
 function validate_httpparser(name,handle)
     try
         p = Libdl.dlsym(handle, :http_parser_url_init)
