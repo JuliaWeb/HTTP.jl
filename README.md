@@ -19,7 +19,7 @@ The current `http-parser` binary for Windows is cross-compiled using `mingw-w64`
 To build for yourself:
  * `git clone https://github.com/joyent/http-parser`
  * `cd http-parser`
- * `git checkout v2.6.2`
+ * `git checkout v2.7.1`
  * There are currently warnings that are treated as errors. Edit the Makefile to remove -Werror
  * To build 64-bit DLL: `CC=x86_64-w64-mingw32-gcc make library && mv libhttp_parser.so libhttp_parser64.dll`
  * To build 32-bit DLL: `CC=i686-w64-mingw32-gcc make library && mv libhttp_parser.so libhttp_parser32.dll`
