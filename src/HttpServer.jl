@@ -341,6 +341,7 @@ run(server, 8000)
 ```
 """
 function run(server::Server; args...)
+    initcbs()
     params = Dict(args)
 
     # parse parameters
@@ -468,7 +469,8 @@ function FileResponse(filename)
 end
 
 
-function __init__()
+function initcbs()
+    isdefined(HttpServer, :on_message_begin_cb) && return
     # Turn all the callbacks into C callable functions.
     global const on_message_begin_cb = cfunction(on_message_begin, HTTP_CB...)
     global const on_url_cb = cfunction(on_url, HTTP_DATA_CB...)
