@@ -3,7 +3,7 @@ module Requests
 
 export URI, FileParam, headers, cookies, statuscode, post, requestfor
 export get_streaming, post_streaming, write_chunked
-export view, save
+export save
 export set_proxy, set_https_proxy, get_request_settings
 
 import Base: get, write
