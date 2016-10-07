@@ -52,6 +52,18 @@ post("http://httpbin.org/post"; json = Dict("id" => "1fc80620-7fd3-11e3-80a5"))
 post("http://httpbin.org/post"; data=Dict(email=>"a", pw=>"b"))
 ```
 
+### Request compressed data
+
+```julia
+get("http://httpbin.org/get"; compressed=true)
+```
+
+### Send compressed data (GZip)
+
+```julia
+post("http://httpbin.org/post"; data="compress this data", gzip_data=true)
+```
+
 ### Set headers and cookies
 
 ```julia

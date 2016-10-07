@@ -2,6 +2,7 @@ using Compat
 using Requests
 using JSON
 using Base.Test
+using Libz
 
 import Requests: get, post, put, delete, options, bytes, text, json, history
 
@@ -155,6 +156,12 @@ data = json(res)
 # Test for gzipped responses
 @test json(get("http://httpbin.org/gzip"))["gzipped"] == true
 @test json(get("http://httpbin.org/deflate"))["deflated"] == true
+@test json(get("http://httpbin.org/headers"; compressed=true))["headers"]["Accept-Encoding"] == "gzip, deflate"
+
+# Test for gzipped requests
+foo_result = "data:application/octet-stream;base64," * (Vector{UInt8}("foo") |> ZlibDeflateInputStream |> read |> base64encode)
+@test json(post("http://httpbin.org/post"; data="foo", gzip_data=true))["data"] == foo_result
+@test json(post("http://httpbin.org/post"; data=Vector{UInt8}("foo"), gzip_data=true))["data"] == foo_result
 
 # Test timeout delay
 let

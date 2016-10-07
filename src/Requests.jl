@@ -314,6 +314,8 @@ function do_stream_request(uri::URI, verb; headers = Dict{AbstractString, Abstra
                             history = Response[],
                             tls_conf = TLS_VERIFY,
                             write_body = true,
+                            gzip_data = false,
+                            compressed = false,
                             proxy = SETTINGS.http_proxy,
                             https_proxy = SETTINGS.https_proxy
                             )
@@ -339,6 +341,14 @@ function do_stream_request(uri::URI, verb; headers = Dict{AbstractString, Abstra
         if "Content-Type" ∉ keys(headers)
             headers["Content-Type"] = default_content_type
         end
+        if gzip_data
+            headers["Content-Encoding"] = "gzip"
+            body = Vector{UInt8}(body) |> ZlibDeflateInputStream |> read
+        end
+    end
+
+    if compressed
+        headers["Accept-Encoding"] = "gzip, deflate"
     end
 
     if cookies ≠ nothing
@@ -389,7 +399,7 @@ function do_stream_request(uri::URI, verb; headers = Dict{AbstractString, Abstra
                 return do_stream_request(get(redirect_uri), verb; headers=headers,
                      data=data, json=json, files=files, timeout=timeout,
                      allow_redirects=allow_redirects, max_redirects=max_redirects,
-                     history=history, tls_conf=tls_conf)
+                     history=history, tls_conf=tls_conf, compressed=compressed)
             end
         end
 
