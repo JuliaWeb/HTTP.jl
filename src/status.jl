@@ -55,5 +55,6 @@ const STATUS_CODES = Dict([
     (507, "Insufficient Storage"),                # RFC 4918
     (509, "Bandwidth Limit Exceeded"),
     (510, "Not Extended"),                        # RFC 2774
-    (511, "Network Authentication Required")      # RFC 6585
+    (511, "Network Authentication Required"),     # RFC 6585
+    (524, "Connection Timeout from CloudFlare")
 ])
