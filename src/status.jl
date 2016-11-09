@@ -45,6 +45,12 @@ const STATUS_CODES = Dict([
     (428, "Precondition Required"),               # RFC 6585
     (429, "Too Many Requests"),                   # RFC 6585
     (431, "Request Header Fields Too Large"),     # RFC 6585
+    (440, "Login Timeout"),
+    (444, "nginx error: No Response"),
+    (495, "nginx error: SSL Certificate Error"),
+    (496, "nginx error: SSL Certificate Required"),
+    (497, "nginx error: HTTP -> HTTPS"),
+    (499, "nginx error or Antivirus intercepted request or ArcGIS error"),
     (500, "Internal Server Error"),
     (501, "Not Implemented"),
     (502, "Bad Gateway"),
@@ -63,6 +69,6 @@ const STATUS_CODES = Dict([
     (524, "CloudFlare Server Error: Connection Timeout"),
     (525, "CloudFlare Server Error: Connection Failed"),
     (526, "CloudFlare Server Error: Invalid SSL Ceritificate"),
-    (527, "CloudFlare Server Error: Railgun Error")
-
+    (527, "CloudFlare Server Error: Railgun Error"),
+    (530, "Site Frozen")
 ])
