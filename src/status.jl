@@ -56,5 +56,13 @@ const STATUS_CODES = Dict([
     (509, "Bandwidth Limit Exceeded"),
     (510, "Not Extended"),                        # RFC 2774
     (511, "Network Authentication Required"),     # RFC 6585
-    (524, "Connection Timeout from CloudFlare")
+    (520, "CloudFlare Server Error: Unknown"),
+    (521, "CloudFlare Server Error: Connection Refused"),
+    (522, "CloudFlare Server Error: Connection Timeout"),
+    (523, "CloudFlare Server Error: Origin Server Unreachable"),
+    (524, "CloudFlare Server Error: Connection Timeout"),
+    (525, "CloudFlare Server Error: Connection Failed"),
+    (526, "CloudFlare Server Error: Invalid SSL Ceritificate"),
+    (527, "CloudFlare Server Error: Railgun Error")
+
 ])
