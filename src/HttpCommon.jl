@@ -105,7 +105,7 @@ Response(s::Int)                          = Response(s, headers(), UInt8[])
 Response()                                = Response(200)
 
 function Base.show(io::IO, r::Response)
-    print(io, "Response(", r.status, " ", STATUS_CODES[r.status], ", ",
+    print(io, "Response(", r.status, " ", get(STATUS_CODES, r.status, "Unknown Code"), ", ",
           length(r.headers)," headers, ",
           sizeof(r.data)," bytes in body)")
 end

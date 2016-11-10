@@ -38,6 +38,8 @@ h = HttpCommon.headers()
         "Response(200 OK, 4 headers, 0 bytes in body)"
 @test sprint(show, Response()) ==
         "Response(200 OK, 4 headers, 0 bytes in body)"
+@test sprint(show, Response(999)) ==
+        "Response(999 Unknown Code, 4 headers, 0 bytes in body)"
 
 # Escape HTML
 @test escapeHTML("<script type='text/javascript'>alert('sucker');</script> foo bar") ==
