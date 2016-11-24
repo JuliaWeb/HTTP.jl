@@ -459,7 +459,7 @@ include("mimetypes.jl")
 
 function FileResponse(filename)
     if isfile(filename)
-        s = open(readbytes,filename)
+        s = open(read,filename)
         (_, ext) = splitext(filename)
         mime = length(ext)>1 && haskey(mimetypes,ext[2:end]) ? mimetypes[ext[2:end]] : "application/octet-stream"
         Response(200, Dict{AbstractString,AbstractString}([("Content-Type",mime)]), s)
