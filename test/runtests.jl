@@ -61,10 +61,3 @@ resp = String(readavailable(client))
 
 # https://tools.ietf.org/html/rfc7230#section-6.5
 # test an inactive client (i.e. sent keep-alive, but didn't send anything else)
-
-
-
-
-
-
-#
