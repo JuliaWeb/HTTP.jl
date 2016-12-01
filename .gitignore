@@ -1,9 +1,6 @@
-<<<<<<< HEAD
 *.jl.cov
 *.jl.*.cov
 *.jl.mem
 .DS_Store
-=======
 *.key
 *.crt
->>>>>>> httpserver/master
