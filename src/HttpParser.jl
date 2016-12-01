@@ -1,32 +1,7 @@
-# Julian C bindings for Joyent's http-parser library.
-# see: https://github.com/joyent/http-parser
-#
-isdefined(Base, :__precompile__) && __precompile__()
+const libhttp_parser = "/Users/jacobquinn/.julia/v0.5/HttpParser/deps/usr/lib/libhttp_parser.dylib"
 
-module HttpParser
-
-depsjl = joinpath(dirname(@__FILE__), "..", "deps", "deps.jl")
-isfile(depsjl) ? include(depsjl) : error("HttpParser not properly ",
-    "installed. Please run\nPkg.build(\"HttpParser\")")
-
-using HttpCommon
-using Compat
-import Compat: String
-
-import Base.show
-
-# Export the structs and the C calls.
-export Parser,
-       ParserSettings,
-       http_parser_init,
-       http_parser_execute,
-       http_method_str,
-       http_should_keep_alive,
-       upgrade,
-       parse_url
-
-# The id pool is used to keep track of incoming requests.
-id_pool = 0
+parsertype(::Type{Request}) = 0 # HTTP_REQUEST
+parsertype(::Type{Response}) = 1 # HTTP_RESPONSE
 
 # A composite type that matches bit-for-bit a C struct.
 type Parser
@@ -49,31 +24,26 @@ type Parser
     errno_and_upgrade::Cuchar
 
     data::Any
-    id::Int
 end
-Parser() = Parser(
-    convert(Cuchar, 0),
-    convert(Cuchar, 0),
-    convert(Cuchar, 0),
-    convert(Cuchar, 0),
 
-    convert(UInt32, 0),
-    convert(UInt64, 0),
+parserwrapper(::Type{Request}) = ParserRequest()
+parserwrapper(::Type{Response}) = ParserResponse()
 
-    convert(Cushort, 0),
-    convert(Cushort, 0),
-    convert(Cushort, 0),
-    convert(Cuchar, 0),
+function Parser{T}(::Type{T}=Request)
+    parser = Parser(convert(Cuchar, 0), convert(Cuchar, 0), convert(Cuchar, 0), convert(Cuchar, 0),
+                    convert(UInt32, 0), convert(UInt64, 0),
+                    convert(Cushort, 0), convert(Cushort, 0), convert(Cushort, 0), convert(Cuchar, 0),
+                    convert(Cuchar, 0),
+                    convert(Ptr{UInt8}, C_NULL))
+    parser.data = parserwrapper(T)
+    http_parser_init(parser, T)
+    return parser
+end
 
-    convert(Cuchar, 0),
-
-    convert(Ptr{UInt8}, C_NULL),
-    (global id_pool += 1)
-)
-
-# Datatype Tuples for the different `cfunction` signatures for callback functions
-const HTTP_CB      = (Int, (Ptr{Parser},))
-const HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
+# Intializes the Parser object with the correct memory
+function http_parser_init{T}(parser, ::Type{T})
+    ccall((:http_parser_init, libhttp_parser), Void, (Ptr{Parser}, Cint), &parser, parsertype(T))
+end
 
 # A composite type that is expecting C functions to be run as callbacks.
 type ParserSettings
@@ -89,102 +59,253 @@ type ParserSettings
     on_chunk_complete::Ptr{Void}
 end
 
-ParserSettings(on_message_begin_cb, on_url_cb, on_status_complete_cb, on_header_field_cb, on_header_value_cb, on_headers_complete_cb, on_body_cb, on_message_complete_cb) = ParserSettings(on_message_begin_cb, on_url_cb, on_status_complete_cb, on_header_field_cb, on_header_value_cb, on_headers_complete_cb, on_body_cb, on_message_complete_cb, C_NULL, C_NULL)
+ParserSettings(on_message_begin_cb, on_url_cb, on_status_complete_cb, on_header_field_cb, on_header_value_cb, on_headers_complete_cb, on_body_cb, on_message_complete_cb) =
+    ParserSettings(on_message_begin_cb, on_url_cb, on_status_complete_cb, on_header_field_cb, on_header_value_cb, on_headers_complete_cb, on_body_cb, on_message_complete_cb, C_NULL, C_NULL)
 
-function show(io::IO,p::Parser)
+function Base.show(io::IO, p::Parser)
     print(io,"libhttp-parser: v$(version()), ")
     print(io,"HTTP/$(p.http_major).$(p.http_minor), ")
     print(io,"Content-Length: $(p.content_length)")
 end
 
 function version()
-    ver = ccall((:http_parser_version, lib), Culong, ())
+    ver = ccall((:http_parser_version, libhttp_parser), Culong, ())
     major = (ver >> 16) & 255
     minor = (ver >> 8) & 255
     patch = ver & 255
     return VersionNumber(major, minor, patch)
 end
 
-"Intializes the Parser object with the correct memory."
-function http_parser_init(parser::Parser,isserver=true)
-    ccall((:http_parser_init, lib), Void, (Ptr{Parser}, Cint), &parser, !isserver)
-end
-
-"Run a request through a parser with specific callbacks on the settings instance."
-function http_parser_execute(parser::Parser, settings::ParserSettings, request)
-    ccall((:http_parser_execute, lib), Csize_t,
+# Run a request through a parser with specific callbacks on the settings instance
+function http_parser_execute(parser::Parser, settings::ParserSettings, request, len=sizeof(request))
+    return ccall((:http_parser_execute, libhttp_parser), Csize_t,
            (Ptr{Parser}, Ptr{ParserSettings}, Cstring, Csize_t,),
-            Ref(parser), Ref(settings), convert(Cstring, pointer(request)), sizeof(request))
-    if errno(parser) != 0
-        throw(HttpParserError(errno(parser)))
-    end
+            Ref(parser), Ref(settings), convert(Cstring, pointer(request)), len)
 end
 
 "Returns a string version of the HTTP method."
-function http_method_str(method::Int)
-    val = ccall((:http_method_str, lib), Cstring, (Int,), method)
+function http_method_str(method)
+    val = ccall((:http_method_str, libhttp_parser), Cstring, (Int,), method)
     return unsafe_string(val)
 end
 
 # Is the request a keep-alive request?
-function http_should_keep_alive(parser::Ptr{Parser})
-    ccall((:http_should_keep_alive, lib), Int, (Ptr{Parser},), Ref(parser))
-end
+http_should_keep_alive(parser::Ptr{Parser}) = ccall((:http_should_keep_alive, libhttp_parser), Int, (Ptr{Parser},), Ref(parser)) != 0
 
 "Pauses the parser."
-pause(parser::Parser) = ccall((:http_parser_pause,lib), Void, (Ptr{Parser}, Cint), Ref(parser), one(Cint))
+pause(parser::Parser) = ccall((:http_parser_pause, libhttp_parser), Void, (Ptr{Parser}, Cint), Ref(parser), one(Cint))
 "Resumes the parser."
-resume(parser::Parser) = ccall((:http_parser_pause,lib), Void,(Ptr{Parser}, Cint), Ref(parser), zero(Cint))
+resume(parser::Parser) = ccall((:http_parser_pause, libhttp_parser), Void,(Ptr{Parser}, Cint), Ref(parser), zero(Cint))
 "Checks if this is the final chunk of the body."
-isfinalchunk(parser::Parser) = ccall((:http_parser_pause,lib), Cint, (Ptr{Parser},), Ref(parser)) == 1
+isfinalchunk(parser::Parser) = ccall((:http_parser_pause, libhttp_parser), Cint, (Ptr{Parser},), Ref(parser)) == 1
 
-upgrade(parser::Parser) = (parser.errno_and_upgrade & 0b10000000)>0
+upgrade(parser::Parser) = (parser.errno_and_upgrade & 0b10000000) > 0
 errno(parser::Parser) = parser.errno_and_upgrade & 0b01111111
-errno_name(errno::Integer) = unsafe_string(ccall((:http_errno_name,lib),Cstring,(Int32,),errno))
-errno_description(errno::Integer) = unsafe_string(ccall((:http_errno_description,lib),Cstring,(Int32,),errno))
+errno_name(errno::Integer) = unsafe_string(ccall((:http_errno_name, libhttp_parser), Cstring, (Int32,), errno))
+errno_description(errno::Integer) = unsafe_string(ccall((:http_errno_description, libhttp_parser), Cstring, (Int32,), errno))
 
-immutable HttpParserError <: Exception
+immutable ParserError <: Exception
     errno::Int32
-    HttpParserError(errno::Integer) = new(Int32(errno))
+    ParserError(errno::Integer) = new(Int32(errno))
 end
 
-show(io::IO, err::HttpParserError) = print(io,"HTTP Parser Exception: ",errno_name(err.errno),"(",string(err.errno),"):",errno_description(err.errno))
+Base.show(io::IO, err::ParserError) = print(io, "HTTP.ParserError: ", errno_name(err.errno), " (", err.errno, "): ", errno_description(err.errno))
 
-
-@enum(UrlFields, UF_SCHEMA           = Cint(0),
-                 UF_HOST             = Cint(1),
-                 UF_PORT             = Cint(2),
-                 UF_PATH             = Cint(3),
-                 UF_QUERY            = Cint(4),
-                 UF_FRAGMENT         = Cint(5),
-                 UF_USERINFO         = Cint(6),
-                 UF_MAX              = Cint(7))
-
-immutable ParserUrl
-    field_set::UInt16 # Bitmask of (1 << UF_*) values
-    port::UInt16      # Converted UF_PORT string
-    field_data::NTuple{Cint(UF_MAX)*2, UInt16}
-    ParserUrl() = new(zero(UInt16), zero(UInt16), ntuple(i->zero(UInt16), Cint(UF_MAX)*2))
+# Dedicated types for parsing Request/Response types
+type ParserRequest
+    val::Request
+    parsedfield::Bool
+    fieldbuffer::Vector{UInt8}
+    valuebuffer::Vector{UInt8}
+    messagecomplete::Bool
 end
 
-"Parse a URL"
-function parse_url(url::AbstractString; isconnect::Bool = false)
-    parsed = Dict{Symbol,AbstractString}()
-    purl_ref = Ref(ParserUrl())
-    res = ccall((:http_parser_parse_url, lib), Cint,
-                 (Cstring, Csize_t, Cint, Ptr{ParserUrl}),
-                  url, sizeof(url), Cint(isconnect), purl_ref)
-    res > 0 && return parsed, -1
-    purl = purl_ref[]
+ParserRequest() = ParserRequest(Request(), true, UInt8[], UInt8[], false)
 
-    for (i,uf) in enumerate(instances(UrlFields))
-        !((purl.field_set & (1 << Cint(uf)) > 0) && uf != UF_MAX) && continue
-        off = purl.field_data[2*(i-1)+1]
-        len = purl.field_data[2*(i-1)+2]
-        parsed[Symbol(uf)] = url[(off+1):(off+len)]
+type ParserResponse
+    val::Response
+    parsedfield::Bool
+    fieldbuffer::Vector{UInt8}
+    valuebuffer::Vector{UInt8}
+    messagecomplete::Bool
+end
+
+ParserResponse() = ParserResponse(Response(), true, UInt8[], UInt8[], false)
+
+# Default callbacks for requests and responses
+getrequest(p::Ptr{Parser}) = (unsafe_load(p).data)::ParserRequest
+getresponse(p::Ptr{Parser}) = (unsafe_load(p).data)::ParserResponse
+
+# on_message_begin
+function request_on_message_begin(parser)
+    r = getrequest(parser)
+    r.messagecomplete = false
+    return 0
+end
+
+function response_on_message_begin(parser)
+    r = getresponse(parser)
+    r.messagecomplete = false
+    return 0
+end
+
+# on_url (requests only)
+function request_on_url(parser, at, len)
+    r = getrequest(parser)
+    r.val.resource = string(r.val.resource, unsafe_string(convert(Ptr{UInt8}, at), len))
+    r.val.uri = URI(r.val.resource)
+    return 0
+end
+response_on_url(parser, at, len) = 0
+
+# on_status_complete (responses only)
+function response_on_status_complete(parser)
+    r = getresponse(parser)
+    r.val.status = unsafe_load(parser).status_code
+    return 0
+end
+request_on_status_complete(parser) = 0
+
+# on_header_field, on_header_value
+function request_on_header_field(parser, at, len)
+    r = getrequest(parser)
+    if r.parsedfield
+        append!(r.fieldbuffer, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
+    else
+        r.val.headers[String(r.fieldbuffer)] = String(r.valuebuffer)
+        r.fieldbuffer = unsafe_wrap(Array, convert(Ptr{UInt8}, at), len)
     end
-    return parsed, purl.port
+    r.parsedfield = true
+    return 0
 end
 
+function request_on_header_value(parser, at, len)
+    r = getrequest(parser)
+    if r.parsedfield
+        r.valuebuffer = unsafe_wrap(Array, convert(Ptr{UInt8}, at), len)
+    else
+        append!(r.valuebuffer, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
+    end
+    r.parsedfield = false
+    return 0
+end
 
-end # module HttpParser
+function response_on_header_field(parser, at, len)
+    r = getresponse(parser)
+    if r.parsedfield
+        append!(r.fieldbuffer, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
+    else
+        r.val.headers[String(r.fieldbuffer)] = String(r.valuebuffer)
+        r.fieldbuffer = unsafe_wrap(Array, convert(Ptr{UInt8}, at), len)
+    end
+    r.parsedfield = true
+    return 0
+end
+
+function response_on_header_value(parser, at, len)
+    r = getresponse(parser)
+    if r.parsedfield
+        r.valuebuffer = unsafe_wrap(Array, convert(Ptr{UInt8}, at), len)
+    else
+        append!(r.valuebuffer, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
+    end
+    r.parsedfield = false
+    return 0
+end
+
+# on_headers_complete
+function request_on_headers_complete(parser)
+    r = getrequest(parser)
+    p = unsafe_load(parser)
+    if length(r.fieldbuffer) > 0
+        r.val.headers[String(r.fieldbuffer)] = String(r.valuebuffer)
+    end
+    r.val.method = http_method_str(p.method)
+    r.val.major = p.http_major
+    r.val.minor = p.http_minor
+    r.val.keepalive = http_should_keep_alive(parser) != 0
+    return 0
+end
+
+function response_on_headers_complete(parser)
+    r = getresponse(parser)
+    p = unsafe_load(parser)
+    if length(r.fieldbuffer) > 0
+        r.val.headers[String(r.fieldbuffer)] = String(r.valuebuffer)
+    end
+    r.val.status = p.status_code
+    r.val.major = p.http_major
+    r.val.minor = p.http_minor
+    return 0
+end
+
+# on_body
+function on_body(parser, at, len)
+    append!(unsafe_load(parser).data.val.data, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
+    return 0
+end
+
+# on_message_complete
+function request_on_message_complete(parser)
+    r = getrequest(parser)
+    r.messagecomplete = true
+    return 0
+end
+
+function response_on_message_complete(parser)
+    r = getresponse(parser)
+    r.messagecomplete = true
+    return 0
+end
+
+# Main user-facing functions
+function parse(::Type{Request}, str)
+    http_parser_init(DEFAULT_REQUEST_PARSER, Request)
+    http_parser_execute(DEFAULT_REQUEST_PARSER, DEFAULT_REQUEST_PARSER_SETTINGS, str, sizeof(str))
+    if errno(DEFAULT_REQUEST_PARSER) != 0
+        throw(ParserError(errno(DEFAULT_REQUEST_PARSER)))
+    end
+    return (DEFAULT_REQUEST_PARSER.data.val)::Request
+end
+
+function parse(::Type{Response}, str)
+    http_parser_init(DEFAULT_REQUEST_PARSER, Response)
+    http_parser_execute(DEFAULT_RESPONSE_PARSER, DEFAULT_RESPONSE_PARSER_SETTINGS, str, sizeof(str))
+    if errno(DEFAULT_RESPONSE_PARSER) != 0
+        throw(ParserError(errno(DEFAULT_RESPONSE_PARSER)))
+    end
+    return (DEFAULT_RESPONSE_PARSER.data.val)::Response
+end
+
+function __init__parser()
+    HTTP_CB      = (Int, (Ptr{Parser},))
+    HTTP_DATA_CB = (Int, (Ptr{Parser}, Ptr{Cchar}, Csize_t,))
+    # Turn all the callbacks into C callable functions.
+    global const request_on_message_begin_cb = cfunction(request_on_message_begin, HTTP_CB...)
+    global const request_on_url_cb = cfunction(request_on_url, HTTP_DATA_CB...)
+    global const request_on_status_complete_cb = cfunction(request_on_status_complete, HTTP_CB...)
+    global const request_on_header_field_cb = cfunction(request_on_header_field, HTTP_DATA_CB...)
+    global const request_on_header_value_cb = cfunction(request_on_header_value, HTTP_DATA_CB...)
+    global const request_on_headers_complete_cb = cfunction(request_on_headers_complete, HTTP_CB...)
+    global const on_body_cb = cfunction(on_body, HTTP_DATA_CB...)
+    global const request_on_message_complete_cb = cfunction(request_on_message_complete, HTTP_CB...)
+    global const DEFAULT_REQUEST_PARSER_SETTINGS = ParserSettings(request_on_message_begin_cb, request_on_url_cb,
+                                                                  request_on_status_complete_cb, request_on_header_field_cb,
+                                                                  request_on_header_value_cb, request_on_headers_complete_cb,
+                                                                  on_body_cb, request_on_message_complete_cb)
+    global const response_on_message_begin_cb = cfunction(response_on_message_begin, HTTP_CB...)
+    global const response_on_url_cb = cfunction(response_on_url, HTTP_DATA_CB...)
+    global const response_on_status_complete_cb = cfunction(response_on_status_complete, HTTP_CB...)
+    global const response_on_header_field_cb = cfunction(response_on_header_field, HTTP_DATA_CB...)
+    global const response_on_header_value_cb = cfunction(response_on_header_value, HTTP_DATA_CB...)
+    global const response_on_headers_complete_cb = cfunction(response_on_headers_complete, HTTP_CB...)
+    global const response_on_message_complete_cb = cfunction(response_on_message_complete, HTTP_CB...)
+    global const DEFAULT_RESPONSE_PARSER_SETTINGS = ParserSettings(response_on_message_begin_cb, response_on_url_cb,
+                                                                   response_on_status_complete_cb, response_on_header_field_cb,
+                                                                   response_on_header_value_cb, response_on_headers_complete_cb,
+                                                                   on_body_cb, response_on_message_complete_cb)
+    #
+    global const DEFAULT_REQUEST_PARSER = Parser(Request)
+    global const DEFAULT_RESPONSE_PARSER = Parser(Response)
+    return
+end
