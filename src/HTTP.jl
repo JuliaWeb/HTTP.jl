@@ -13,7 +13,7 @@ include("utils.jl")
 include("uri.jl")
 include("types.jl")
 include("parser.jl")
-include("serve.jl")
+include("server.jl")
 
 # package-wide inits
 function __init__()
