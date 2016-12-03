@@ -1,7 +1,7 @@
 
 # HTTP
 
-*Performant, robust HTTP client and server functionality for Julia
+*Performant, robust HTTP client and server functionality for Julia*
 
 | **Documentation**                                                               | **PackageEvaluator**                                            | **Build Status**                                                                                |
 |:-------------------------------------------------------------------------------:|:---------------------------------------------------------------:|:-----------------------------------------------------------------------------------------------:|
