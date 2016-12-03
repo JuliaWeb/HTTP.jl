@@ -76,17 +76,6 @@ function ServerClient{T}(server::Server{T})
     return c
 end
 
-#     if haskey(r.headers, "Expect")
-#         if r.headers["Expect"] == "100-continue"
-#             write(c.socket, "HTTP/1.1 100 Continue\r\n\r\n")
-#         else
-#             # expectation failed
-#             write(c.socket, "HTTP/1.1 417 Expectation Failed\r\n\r\n")
-#             c.replied = true
-#         end
-#     end
-
-
 # gets called when a full request has been parsed by our HTTP.Parser
 function handle!(client::ServerClient)
     local response
