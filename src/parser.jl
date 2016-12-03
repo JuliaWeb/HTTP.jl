@@ -1,4 +1,4 @@
-const libhttp_parser = "/Users/jacobquinn/.julia/v0.5/HttpParser/deps/usr/lib/libhttp_parser.dylib"
+const libhttp_parser = "libhttp_parser"
 
 parsertype(::Type{Request}) = 0 # HTTP_REQUEST
 parsertype(::Type{Response}) = 1 # HTTP_RESPONSE
