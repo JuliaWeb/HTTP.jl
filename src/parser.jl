@@ -137,8 +137,10 @@ ResponseParser() = ResponseParser(Response(), true, "", "", false, false, String
 
 function reset!(r)
     r.parsedfield = true
-    empty!(r.fieldbuffer.data)
-    empty!(r.valuebuffer.data)
+    # empty!(r.fieldbuffer.data)
+    # empty!(r.valuebuffer.data)
+    r.fieldbuffer = ""
+    r.valuebuffer = ""
     r.messagecomplete = r.headerscomplete = false
     empty!(r.cookies)
     return
