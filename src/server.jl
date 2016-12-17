@@ -10,7 +10,52 @@
         # on_message_complete:
 
 #TODO:
+ # allow limits on header sizes/body sizes?
+ # server send 505 for unsupported HTTP versions: https://tools.ietf.org/html/rfc7230#section-2.6
+ # reject requests w/ empty HOST: https://tools.ietf.org/html/rfc7230#section-2.7.1
+ # ignore "userinfo" in URI: https://tools.ietf.org/html/rfc7230#section-2.7.1
+ # http_parser handles URI decoding?
+ # A recipient that receives whitespace between the start-line and the first header field MUST reject the message: https://tools.ietf.org/html/rfc7230#section-3
+ # reject a received response: https://tools.ietf.org/html/rfc7230#section-3.1
+ # invalid request line should respond w/ 400: https://tools.ietf.org/html/rfc7230#section-3.1.1
+ # allow limits on uri size, default = 8000, return 414: https://tools.ietf.org/html/rfc7230#section-3.1.1
  # request/response timeout abilities
+ # add in "events" handling
+ # dealing w/ cookies
+ # be able to pass in a TLS.SSLConfig
+ # make default buffer size arg to Server instead of global const
+ # reverse proxy?
+ # keepalive offload?
+ # auto-caching?
+ # auto-compression?
+ # rate-limiting?
+ # advanced load-balancing?
+ # session persistence?
+ # health report of server?
+ # http authentication subrequests?
+ # ip access control lists?
+ # JWT authentication?
+ # live activity monitoring
+ # live reoconfigure?
+ # handle "many slow client connections?"
+ # memory/performance profiling for thousands of concurrent requests?
+ # fault tolerance?
+ # handle IPv6?
+ # flv & mp4 streaming?
+ # URL rewriting?
+ # bandwidth throttling
+ # server-side includes?
+ # IP address-based geolocation
+ # user-tracking
+ # WebDAV
+ # detect request/file response content types?
+ # multi-process server
+  # worker `serve` function that creates ServerClient, then `take!`s on a Channel{TCPSocket} and @async `process!`
+  # master process does `tcp = accpet(server.tcp)`, then `put!`s it on Channel{TCPSocket}
+ # FastCGI
+ # default handler:
+   # handle all common http requests/etc.
+   # just map straight to filesystem
  # appropriate size limits/timeouts for different parts of request messages
  # handle Expect 100 Continue
  # special case OPTIONS method like go?
@@ -18,14 +63,7 @@
    # read through RFCs, writing tests
  # support auto-decompress, deflate, gunzip
 
-abstract ServerType
-
-immutable http <: ServerType end
-immutable https <: ServerType end
-# immutable ws <: ServerType end
-# immutable wss <: ServerType end
-
-type Server{T <: ServerType} # {I <: IPAddr, H <: ServerHandler, T <: ServerType}
+type Server{T <: Scheme}
     host::IPAddr
     port::Int
     handler::Function
@@ -43,7 +81,7 @@ Base.listen(s::Server) = (s.tcp = listen(s.host, s.port); return nothing)
 
 const DEFAULT_BUFFER_SIZE = 1024
 
-type ServerClient{T <: ServerType, I <: IO}
+type ServerClient{T <: Scheme, I <: IO}
     id::Int
     server::Server
     parser::Parser
@@ -67,10 +105,10 @@ function ServerClient{T}(server::Server{T})
     if T == https
         tls = TLS.SSLContext()
         TLS.setup!(tls, server.tlsconfig)
-        c = ServerClient{https, TLS.SSLContext}(server.count += 1, server, Parser(Request), false, false, Vector{UInt8}(DEFAULT_BUFFER_SIZE), TCPSocket(), tls)
+        c = ServerClient{https, TLS.SSLContext}(server.count += 1, server, Parser(Request, https), false, false, Vector{UInt8}(DEFAULT_BUFFER_SIZE), TCPSocket(), tls)
     else
         tcp = TCPSocket()
-        c = ServerClient{http, TCPSocket}(server.count += 1, server, Parser(Request), false, false, Vector{UInt8}(DEFAULT_BUFFER_SIZE), tcp, tcp)
+        c = ServerClient{http, TCPSocket}(server.count += 1, server, Parser(Request, http), false, false, Vector{UInt8}(DEFAULT_BUFFER_SIZE), tcp, tcp)
     end
     finalizer(c, x->close(x.tcp))
     return c
@@ -140,14 +178,6 @@ function process!{T}(client::ServerClient{T})
     end
     println(client.server.logger, "`process!`: finished processing client: ", client.id); flush(STDOUT)
 end
-
-#behavior I'm seeing
- # setup TCPServer listening on localhost:port
- # create TCPSocket()
- # call `accept(server, client)`
- # call @async process!(client)
- # initialize another TCPSocket() client
- # the @async process! seems to be getting the 2nd TCPSocket client
 
 function serve{T}(server::Server{T})
     println(server.logger, "Starting server to listen on: $(server.host):$(server.port)"); flush(STDOUT)

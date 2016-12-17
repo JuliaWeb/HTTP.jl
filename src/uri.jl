@@ -18,7 +18,8 @@ immutable URI
     userinfo::String
     specifies_authority::Bool
     URI(scheme,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) =
-            new(scheme,host,UInt16(port),path,query,fragment,userinfo,specifies_authority)
+            new(scheme,host,UInt16(port == 0 ? (scheme == "http" ? 80 : scheme == "https" ? 443 : 0) : port),
+                path,query,fragment,userinfo,specifies_authority)
 end
 
 ==(a::URI,b::URI) = (a.scheme   == b.scheme)   &&
@@ -439,3 +440,7 @@ function isvalid(uri::URI)
     end
     true
 end
+
+resource(uri::URI) = "$(uri.path)" * (isempty(uri.query) ? "" : "?$(uri.query)")
+scheme(uri::URI) = uri.scheme
+port(uri::URI) = uri.port == 0 ? (scheme(uri) == "http" ? 80 : 443) : uri.port

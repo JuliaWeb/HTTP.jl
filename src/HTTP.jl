@@ -10,9 +10,12 @@ import Base.==
 
 include("statuscodes.jl")
 include("utils.jl")
+include("sniff.jl")
 include("uri.jl")
+include("cookies.jl")
 include("types.jl")
 include("parser.jl")
+include("client.jl")
 include("server.jl")
 
 # package-wide inits
