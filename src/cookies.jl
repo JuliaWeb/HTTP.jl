@@ -1,18 +1,16 @@
-#TODO:
- # readcookies for requests for server
- # "show" for Cookie for responses (all the attribute fields)
+"""
+A Cookie represents an HTTP cookie as sent in the Set-Cookie header of an
+HTTP response or the Cookie header of an HTTP request.
 
-# A Cookie represents an HTTP cookie as sent in the Set-Cookie header of an
-# HTTP response or the Cookie header of an HTTP request.
-#
-# See http:#tools.ietf.org/html/rfc6265 for details.
+See http:#tools.ietf.org/html/rfc6265 for details.
+"""
 type Cookie
 	name::String
 	value::String
 
 	path::String      # optional
 	domain::String    # optional
-	expires::Nullable{DateTime} # optional
+	expires::DateTime # optional
 
 	# MaxAge=0 means no 'Max-Age' attribute specified.
 	# MaxAge<0 means delete cookie now, equivalently 'Max-Age: 0'
@@ -24,7 +22,50 @@ type Cookie
 	unparsed::Vector{String} # Raw text of unparsed attribute-value pairs
 end
 
-Cookie(name, value) = Cookie(name, value, "", "", Nullable(), 0, false, false, false, String[])
+function Cookie(cookie::Cookie; kwargs...)
+    for (k, v) in kwargs
+        setfield!(cookie, k, convert(fieldtype(Cookie, k), v))
+    end
+    return cookie
+end
+Cookie(; kwargs...) = Cookie(Cookie("", ""); kwargs...)
+
+Cookie(name, value; args...) = Cookie(Cookie(name, value, "", "", DateTime(), 0, false, false, false, String[]); args...)
+
+==(a::Cookie,b::Cookie) = (a.name     == b.name)    &&
+                          (a.value    == b.value)   &&
+                          (a.path     == b.path)    &&
+                          (a.domain   == b.domain)  &&
+                          (a.expires  == b.expires) &&
+                          (a.maxage   == b.maxage)  &&
+                          (a.secure   == b.secure)  &&
+                          (a.httponly == b.httponly)
+
+# request cookie stringify-ing
+function Base.String(c::Cookie)
+    io = IOBuffer()
+    nm = strip(c.name)
+    !iscookienamevalid(nm) && return ""
+    write(io, sanitizeCookieName(nm), '=', sanitizeCookieValue(c.value))
+    length(c.path) > 0 && write(io, "; Path=", sanitizeCookiePath(c.path))
+    length(c.domain) > 0 && validCookieDomain(c.domain) && write(io, "; Domain=", c.domain[1] == '.' ? c.domain[2:end] : c.domain)
+    validCookieExpires(c.expires) && write(io, "; Expires=", Dates.format(c.expires, Dates.RFC1123Format), " GMT")
+    c.maxage > 0 && write(io, "; Max-Age=", string(c.maxage))
+    c.maxage < 0 && write(io, "; Max-Age=0")
+    c.httponly && write(io, "; HttpOnly")
+    c.secure && write(io, "; Secure")
+    return takebuf_string(io)
+end
+
+function Base.string(cookiestring::String, cookies::Vector{Cookie})
+    io = IOBuffer()
+    !isempty(cookiestring) && write(io, cookiestring, cookiestring[end] == ';' ? "" : ";")
+    len = length(cookies)
+    for (i, cookie) in enumerate(cookies)
+        write(io, String(cookie), ifelse(i == len, "", "; "))
+    end
+    return takebuf_string(io)
+end
 
 validcookiepathbyte(b) = (' ' <= b < '\x7f') && b != ';'
 validcookievaluebyte(b) = (' ' <= b < '\x7f') && b != '"' && b != ';' && b != '\\'
@@ -40,6 +81,8 @@ function parsecookievalue(raw, allowdoublequote::Bool)
 end
 
 iscookienamevalid(raw) = raw == "" ? false : any(is_url_char, raw)
+
+const AlternateRFC1123Format = Dates.DateFormat("e, dd-uuu-yyyy HH:MM:SS")
 
 # readSetCookies parses all "Set-Cookie" values from
 # the header h and returns the successfully parsed Cookies.
@@ -86,7 +129,11 @@ function readsetcookies(host, cookiestrings::Vector{String})
                 try
                     c.expires = DateTime(val, Dates.RFC1123Format)
                 catch
-                    continue
+                    try
+                        c.expires = DateTime(val, AlternateRFC1123Format)
+                    catch
+                        continue
+                    end
                 end
             elseif lowerattr == "path"
                 c.path = val
@@ -94,7 +141,7 @@ function readsetcookies(host, cookiestrings::Vector{String})
                 push!(c.unparsed, parts[x])
             end
         end
-        c.domain, c.hostonly = domainandtype(host, c.domain)
+        c.domain, c.hostonly = domainandtype(host == "" ? c.domain : host, c.domain)
         cookies[i] = c
     end
     return cookies
@@ -133,7 +180,7 @@ end
 
 function isIP(host)
     try
-        parse(IPAddr, host)
+        Base.parse(IPAddr, host)
         return true
     catch
         return false
@@ -201,69 +248,34 @@ function domainandtype(host, domain)
 	return domain, false
 end
 
-# request cookie stringify-ing
-function Base.string(cookiestring::String, cookies::Cookie...)
-    io = IOBuffer()
-    !isempty(cookiestring) && write(io, cookiestring, cookiestring[end] == ';' ? "" : ";")
-    for cookie in cookies
-        write(io, cookie.name, '=', cookie.value, ';')
-    end
-    return takebuf_string(io)
-end
-
-# function (c *Cookie) String() String {
-# 	if c == nil || !isCookieNameValid(c.Name) {
-# 		return ""
-# 	}
-# 	var b bytes.Buffer
-# 	b.WriteString(sanitizeCookieName(c.Name))
-# 	b.WriteRune('=')
-# 	b.WriteString(sanitizeCookieValue(c.Value))
-
-
 # readCookies parses all "Cookie" values from the header h and
 # returns the successfully parsed Cookies.
-#
 # if filter isn't empty, only cookies of that name are returned
-# function readCookies(h Header, filter String) []*Cookie {
-# 	lines, ok := h["Cookie"]
-# 	if !ok {
-# 		return []*Cookie{}
-# 	}
-#
-# 	cookies := []*Cookie{}
-# 	for _, line := range lines {
-# 		parts := Strings.Split(Strings.TrimSpace(line), ";")
-# 		if len(parts) == 1 && parts[0] == "" {
-# 			continue
-# 		}
-# 		# Per-line attributes
-# 		parsedPairs := 0
-# 		for i := 0; i < len(parts); i++ {
-# 			parts[i] = Strings.TrimSpace(parts[i])
-# 			if len(parts[i]) == 0 {
-# 				continue
-# 			}
-# 			name, val := parts[i], ""
-# 			if j := Strings.Index(name, "="); j >= 0 {
-# 				name, val = name[:j], name[j+1:]
-# 			}
-# 			if !isCookieNameValid(name) {
-# 				continue
-# 			}
-# 			if filter != "" && filter != name {
-# 				continue
-# 			}
-# 			val, ok := parseCookieValue(val, true)
-# 			if !ok {
-# 				continue
-# 			}
-# 			cookies = append(cookies, &Cookie{Name: name, Value: val})
-# 			parsedPairs++
-# 		}
-# 	}
-# 	return cookies
-# }
+function readcookies(h::Dict{String,String}, filter::String)
+    if !haskey(h, "Cookie") && !haskey(h, "cookie")
+        return Cookie[]
+    end
+    lines = Base.get(h, "Cookie", Base.get(h, "cookie", ""))
+
+    cookies = Cookie[]
+    for part in split(lines, ';')
+        part = strip(part)
+        length(part) <= 1 && continue
+        j = findfirst(part, '=')
+        if j >= 0
+            name, val = part[1:j-1], part[j+1:end]
+        else
+            name, val = part, ""
+        end
+        !iscookienamevalid(name) && continue
+        filter != "" && filter != name && continue
+        val, ok = parsecookievalue(val, true)
+        !ok && continue
+        push!(cookies, Cookie(name, val))
+    end
+    return cookies
+end
+
 #
 # # SetCookie adds a Set-Cookie header to the provided ResponseWriter's headers.
 # # The provided cookie must have a valid Name. Invalid cookies may be
@@ -273,186 +285,71 @@ end
 # 		w.Header().Add("Set-Cookie", v)
 # 	}
 # }
-#
-# # String returns the serialization of the cookie for use in a Cookie
-# # header (if only Name and Value are set) or a Set-Cookie response
-# # header (if other fields are set).
-# # If c is nil or c.Name is invalid, the empty String is returned.
-# function (c *Cookie) String() String {
-# 	if c == nil || !isCookieNameValid(c.Name) {
-# 		return ""
-# 	}
-# 	var b bytes.Buffer
-# 	b.WriteString(sanitizeCookieName(c.Name))
-# 	b.WriteRune('=')
-# 	b.WriteString(sanitizeCookieValue(c.Value))
-#
-# 	if len(c.Path) > 0 {
-# 		b.WriteString("; Path=")
-# 		b.WriteString(sanitizeCookiePath(c.Path))
-# 	}
-# 	if len(c.Domain) > 0 {
-# 		if validCookieDomain(c.Domain) {
-# 			# A c.Domain containing illegal characters is not
-# 			# sanitized but simply dropped which turns the cookie
-# 			# Into a host-only cookie. A leading dot is okay
-# 			# but won't be sent.
-# 			d := c.Domain
-# 			if d[0] == '.' {
-# 				d = d[1:]
-# 			}
-# 			b.WriteString("; Domain=")
-# 			b.WriteString(d)
-# 		} else {
-# 			log.PrIntf("net/http: invalid Cookie.Domain %q; dropping domain attribute", c.Domain)
-# 		}
-# 	}
-# 	if validCookieExpires(c.Expires) {
-# 		b.WriteString("; Expires=")
-# 		b2 := b.Bytes()
-# 		b.Reset()
-# 		b.Write(c.Expires.UTC().AppendFormat(b2, TimeFormat))
-# 	}
-# 	if c.MaxAge > 0 {
-# 		b.WriteString("; Max-Age=")
-# 		b2 := b.Bytes()
-# 		b.Reset()
-# 		b.Write(strconv.AppendInt(b2, Int64(c.MaxAge), 10))
-# 	} else if c.MaxAge < 0 {
-# 		b.WriteString("; Max-Age=0")
-# 	}
-# 	if c.HttpOnly {
-# 		b.WriteString("; HttpOnly")
-# 	}
-# 	if c.Secure {
-# 		b.WriteString("; Secure")
-# 	}
-# 	return b.String()
-# }
-#
-# # validCookieDomain returns whether v is a valid cookie domain-value.
-# function validCookieDomain(v String) Bool {
-# 	if isCookieDomainName(v) {
-# 		return true
-# 	}
-# 	if net.ParseIP(v) != nil && !Strings.Contains(v, ":") {
-# 		return true
-# 	}
-# 	return false
-# }
-#
-# # validCookieExpires returns whether v is a valid cookie expires-value.
-# function validCookieExpires(t time.Time) Bool {
-# 	# IETF RFC 6265 Section 5.1.1.5, the year must not be less than 1601
-# 	return t.Year() >= 1601
-# }
-#
-# # isCookieDomainName returns whether s is a valid domain name or a valid
-# # domain name with a leading dot '.'.  It is almost a direct copy of
-# # package net's isDomainName.
-# function isCookieDomainName(s String) Bool {
-# 	if len(s) == 0 {
-# 		return false
-# 	}
-# 	if len(s) > 255 {
-# 		return false
-# 	}
-#
-# 	if s[0] == '.' {
-# 		# A cookie a domain attribute may start with a leading dot.
-# 		s = s[1:]
-# 	}
-# 	last := byte('.')
-# 	ok := false # Ok once we've seen a letter.
-# 	partlen := 0
-# 	for i := 0; i < len(s); i++ {
-# 		c := s[i]
-# 		switch {
-# 		default:
-# 			return false
-# 		case 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z':
-# 			# No '_' allowed here (in contrast to package net).
-# 			ok = true
-# 			partlen++
-# 		case '0' <= c && c <= '9':
-# 			# fine
-# 			partlen++
-# 		case c == '-':
-# 			# Byte before dash cannot be dot.
-# 			if last == '.' {
-# 				return false
-# 			}
-# 			partlen++
-# 		case c == '.':
-# 			# Byte before dot cannot be dot, dash.
-# 			if last == '.' || last == '-' {
-# 				return false
-# 			}
-# 			if partlen > 63 || partlen == 0 {
-# 				return false
-# 			}
-# 			partlen = 0
-# 		}
-# 		last = c
-# 	}
-# 	if last == '-' || partlen > 63 {
-# 		return false
-# 	}
-#
-# 	return ok
-# }
-#
-# var cookieNameSanitizer = Strings.NewReplacer("\n", "-", "\r", "-")
-#
-# function sanitizeCookieName(n String) String {
-# 	return cookieNameSanitizer.Replace(n)
-# }
-#
-# # http:#tools.ietf.org/html/rfc6265#section-4.1.1
-# # cookie-value      = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
-# # cookie-octet      = %x21 / %x23-2B / %x2D-3A / %x3C-5B / %x5D-7E
-# #           ; US-ASCII characters excluding CTLs,
-# #           ; whitespace DQUOTE, comma, semicolon,
-# #           ; and backslash
-# # We loosen this as spaces and commas are common in cookie values
-# # but we produce a quoted cookie-value in when value starts or ends
-# # with a comma or space.
-# # See https:#golang.org/issue/7243 for the discussion.
-# function sanitizeCookieValue(v String) String {
-# 	v = sanitizeOrWarn("Cookie.Value", validCookieValueByte, v)
-# 	if len(v) == 0 {
-# 		return v
-# 	}
-# 	if v[0] == ' ' || v[0] == ',' || v[len(v)-1] == ' ' || v[len(v)-1] == ',' {
-# 		return `"` + v + `"`
-# 	}
-# 	return v
-# }
-#
-# # path-av           = "Path=" path-value
-# # path-value        = <any CHAR except CTLs or ";">
-# function sanitizeCookiePath(v String) String {
-# 	return sanitizeOrWarn("Cookie.Path", validCookiePathByte, v)
-# }
-#
-# function sanitizeOrWarn(fieldName String, valid function(byte) Bool, v String) String {
-# 	ok := true
-# 	for i := 0; i < len(v); i++ {
-# 		if valid(v[i]) {
-# 			continue
-# 		}
-# 		log.PrIntf("net/http: invalid byte %q in %s; dropping invalid bytes", v[i], fieldName)
-# 		ok = false
-# 		break
-# 	}
-# 	if ok {
-# 		return v
-# 	}
-# 	buf := make([]byte, 0, len(v))
-# 	for i := 0; i < len(v); i++ {
-# 		if b := v[i]; valid(b) {
-# 			buf = append(buf, b)
-# 		}
-# 	}
-# 	return String(buf)
-# }
+
+# validCookieExpires returns whether v is a valid cookie expires-value.
+function validCookieExpires(dt)
+	# IETF RFC 6265 Section 5.1.1.5, the year must not be less than 1601
+	return Dates.year(dt) >= 1601
+end
+
+# validCookieDomain returns whether v is a valid cookie domain-value.
+function validCookieDomain(v::String)
+	isCookieDomainName(v) && return true
+	isIP(v) && !contains(v, ":") && return true
+	return false
+end
+
+# isCookieDomainName returns whether s is a valid domain name or a valid
+# domain name with a leading dot '.'.  It is almost a direct copy of
+# package net's isDomainName.
+function isCookieDomainName(s::String)
+    length(s) == 0 && return false
+    length(s) > 255 && return false
+    s = s[1] == '.' ? s[2:end] : s
+    last = '.'
+    ok = false
+    partlen = 0
+    for c in s
+        if 'a' <= c <= 'z' || 'A' <= c <= 'Z'
+            ok = true
+            partlen += 1
+        elseif '0' <= c <= '9'
+            partlen += 1
+        elseif c == '-'
+            last == '.' && return false
+            partlen += 1
+        elseif c == '.'
+            (last == '.' || last == '-') && return false
+            (partlen > 63 || partlen == 0) && return false
+            partlen = 0
+        else
+            return false
+        end
+        last = c
+    end
+    (last == '-' || partlen > 63) && return false
+    return ok
+end
+
+sanitizeCookieName(n::String) = replace(replace(n, '\n', '-'), '\r', '-')
+
+# http:#tools.ietf.org/html/rfc6265#section-4.1.1
+# cookie-value      = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )
+# cookie-octet      = %x21 / %x23-2B / %x2D-3A / %x3C-5B / %x5D-7E
+#           ; US-ASCII characters excluding CTLs,
+#           ; whitespace DQUOTE, comma, semicolon,
+#           ; and backslash
+# We loosen this as spaces and commas are common in cookie values
+# but we produce a quoted cookie-value in when value starts or ends
+# with a comma or space.
+# See https:#golang.org/issue/7243 for the discussion.
+function sanitizeCookieValue(v::String)
+    v = filter(validcookievaluebyte, v)
+    length(v) == 0 && return v
+    if v[1] == ' ' || v[1] == ',' || v[end] == ' ' || v[end] == ','
+        return string('"', v, '"')
+    end
+    return v
+end
+
+sanitizeCookiePath(v) = filter(validcookiepathbyte, v)

@@ -1,14 +1,21 @@
 using HTTP, Base.Test
 
+# include("utils.jl")
+include("fifobuffer.jl")
+include("sniff.jl")
 include("uri.jl")
+# include("cookies.jl")
+# include("types.jl")
 include("parser.jl")
+include("client.jl")
+# include("server.jl")
 
-server_task = @async HTTP.serve()
-
-client = connect("127.0.0.1", 8081)
-write(client, "OPTIONS * HTTP/1.1\r\n\r\n")
-sleep(1)
-resp = String(readavailable(client))
+# server_task = @async HTTP.serve()
+#
+# client = connect("127.0.0.1", 8081)
+# write(client, "OPTIONS * HTTP/1.1\r\n\r\n")
+# sleep(1)
+# resp = String(readavailable(client))
 
 # reject invalid HTTP versions
 

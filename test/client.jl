@@ -1,4 +1,19 @@
-using Base.Test
+@testset "HTTP.Client" begin
+
+@testset "HTTP.Connection" begin
+    conn = HTTP.Connection(IOBuffer())
+    @test conn.state == HTTP.Busy
+    HTTP.idle!(conn)
+    @test conn.state == HTTP.Idle
+    HTTP.busy!(conn)
+    @test conn.state == HTTP.Busy
+    HTTP.dead!(conn)
+    @test conn.state == HTTP.Dead
+    HTTP.idle!(conn)
+    @test conn.state == HTTP.Dead
+    HTTP.busy!(conn)
+    @test conn.state == HTTP.Dead
+end
 
 #TODO:
  # make more @testsets!!
@@ -85,3 +100,4 @@ HTTP.shouldsend(c, true, "domo.domo.com", "/api/content/v3/users")
         isempty(bytes) && wait(rr.body)
     end
 end
+end # @testset "HTTP.Client"

@@ -1,5 +1,12 @@
 @enum State Busy Idle Dead
 
+"""
+`HTTP.Connection`
+
+Represents a persistent client connection to a remote host; only created
+when a server response includes the "Connection: keep-alive" header. A connection
+will be reused when sending subsequent requests to the same host.
+"""
 type Connection{I <: IO}
     tcp::I
     state::State
@@ -7,11 +14,24 @@ type Connection{I <: IO}
 end
 
 Connection(tcp::IO) = Connection(tcp, Busy, now(Dates.UTC))
-close!(conn::Connection) = close(conn.tcp)
 busy!(conn::Connection) = (conn.state = conn.state == Dead ? (return nothing) : Busy; conn.statetime = now(Dates.UTC); return nothing)
 idle!(conn::Connection) = (conn.state = conn.state == Dead ? (return nothing) : Idle; conn.statetime = now(Dates.UTC); return nothing)
 dead!(conn::Connection) = (conn.state = Dead; conn.statetime = now(Dates.UTC); close(conn.tcp); return nothing)
 
+"""
+`HTTP.Client([logger::IO]; args...)`
+
+A type to make connections to remote hosts, send HTTP requests, and manage state between requests.
+Takes an optional `logger` IO argument where client activity is recorded (defaults to `STDOUT`).
+Additional keyword arguments can be passed that will get transmitted with each HTTP request:
+
+* `chunksize::Int`:
+<!-- * `gzip::Bool`: -->
+* `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
+* `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
+* `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
+* `maxredirects::Int`:
+"""
 type Client{I <: IO}
     # connection pool for keep-alive; key is host
     pool::Dict{String, Vector{Connection}}
@@ -33,8 +53,7 @@ const DEFAULT_CLIENT = Client()
 send!(request::Request; stream::Bool=false, verbose::Bool=true) = send!(DEFAULT_CLIENT, request; stream=stream, verbose=verbose)
 
 function send!(client::Client, request::Request; history::Vector{Response}=Response[], stream::Bool=false, verbose::Bool=true)
-    # connect to remote host
-    verbose && println(client.logger, "Connecting to remote host: $(request.uri)...")
+
     host = request.uri.host
     # check if cookies should be added
     if haskey(client.cookies, host)
@@ -47,9 +66,11 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
         end
         if sum(valids) > 0
             verbose && println(client.logger, "Adding cached cookie for host...")
-            request.headers["Cookie"] = string(Base.get(request.headers, "Cookie", ""), cookies[valids]...)
+            request.headers["Cookie"] = string(Base.get(request.headers, "Cookie", ""), cookies[valids])
         end
     end
+    # connect to remote host
+    verbose && println(client.logger, "Connecting to remote host: $(request.uri)...")
     # check if an open connection to host already exists
     reused = false
     local conn

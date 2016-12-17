@@ -8,6 +8,16 @@
 const MAXSNIFFLENGTH = 512
 const WHITESPACE = Set{UInt8}([UInt8('\t'),UInt8('\n'),UInt8('\u0c'),UInt8('\r'),UInt8(' ')])
 
+"""
+`HTTP.sniff(content::Union{Vector{UInt8}, String, IO})` => `String` (mimetype)
+
+`HTTP.sniff` will look at the first 512 bytes of `content` to try and determine a valid mimetype.
+If a mimetype can't be determined appropriately, `"application/octet-stream"` is returned.
+
+Supports JSON detection through the `HTTP.isjson(content)` function.
+"""
+function sniff end
+
 function sniff(body::IO)
     mark(body)
     data = read(io, MAXSNIFFLENGTH)
@@ -288,7 +298,6 @@ function isjson(bytes, i=0, maxlen=min(length(bytes), MAXSNIFFLENGTH))
         # must read until end of string w/ potential escaped '"'
         i = restofstring(bytes, i, maxlen)
     elseif ZERO <= b <= NINE
-        # number (parse(Float64, str))
         # must read until end of number
         v = zero(Float64)
         ptr = pointer(bytes) + i - 1

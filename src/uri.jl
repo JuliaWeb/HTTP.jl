@@ -7,7 +7,11 @@ isnum(c) = ('0' <= c <= '9')
 ishex(c) =  (isnum(c) || 'a' <= lowercase(c) <= 'f')
 is_host_char(c) = isalnum(c) || (c == '.') || (c == '-') || (c == '_') || (c == "~")
 
+"""
+`HTTP.URI(str::String)` => `HTTP.URI`
 
+A type representing a uri/url used for resource identification on the web.
+"""
 immutable URI
     scheme::String
     host::String
@@ -21,6 +25,8 @@ immutable URI
             new(scheme,host,UInt16(port == 0 ? (scheme == "http" ? 80 : scheme == "https" ? 443 : 0) : port),
                 path,query,fragment,userinfo,specifies_authority)
 end
+
+const URL = URI
 
 ==(a::URI,b::URI) = (a.scheme   == b.scheme)   &&
                     (a.host     == b.host)     &&
@@ -332,6 +338,7 @@ const reserved = String(",;/?:@&=+\$![]'*#")
 const unescaped = delims * reserved * control * space * unwise
 const unescaped_form = delims * reserved * control * unwise
 
+"unescape a uri/url"
 function unescape(str)
     r = UInt8[]
     l = length(str)
@@ -378,6 +385,7 @@ function escape_with(str, use)
     takebuf_string(out)
 end
 
+"create a valid uri/url string by escaping characters"
 escape(str) = escape_with(str, unescaped)
 escape_form(str) = replace(escape_with(str, unescaped_form), " ", "+")
 
@@ -429,6 +437,7 @@ const non_hierarchical = ["gopher", "hdl", "mailto", "news", "telnet", "wais", "
 const uses_query = ["http", "wais", "imap", "https", "shttp", "mms", "gopher", "rtsp", "rtspu", "sip", "sips", "ldap"]
 const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "wais", "https", "shttp", "snews", "file", "prospero"]
 
+"checks of a `HTTP.URI` is valid"
 function isvalid(uri::URI)
     scheme = uri.scheme
     isempty(scheme) && error("Can not validate relative URI")

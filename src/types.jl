@@ -1,5 +1,3 @@
-const DEFAULT_CHUNK_SIZE = 2^20
-
 abstract Scheme
 
 immutable http <: Scheme end
@@ -9,13 +7,17 @@ immutable https <: Scheme end
 
 typealias Headers Dict{String,String}
 
+?(x) = Union{x,Void}
+const null = nothing
+Base.isnull(::Void) = true
+
 type RequestOptions
-    chunksize::Int
-    gzip::Bool
-    connecttimeout::Float64
-    readtimeout::Float64
-    tlsconfig::TLS.SSLConfig
-    maxredirects::Int
+    chunksize::?(Int)
+    gzip::?(Bool)
+    connecttimeout::?(Float64)
+    readtimeout::?(Float64)
+    tlsconfig::?(TLS.SSLConfig)
+    maxredirects::?(Int)
 end
 
 function RequestOptions(options::RequestOptions; kwargs...)
@@ -24,7 +26,14 @@ function RequestOptions(options::RequestOptions; kwargs...)
     end
     return options
 end
-RequestOptions(; kwargs...) = RequestOptions(RequestOptions(DEFAULT_CHUNK_SIZE, false, 10.0, 9.0, TLS.SSLConfig(true), 5); kwargs...)
+function RequestOptions(opts1::RequestOptions, opts2::RequestOptions)
+    for i = 1:nfields(RequestOptions)
+        f = fieldname(RequestOptions, i)
+        isnull(getfield(opts1, f)) && setfield!(opts1, f, getfield(opts2, k))
+    end
+    return opts1
+end
+RequestOptions(; kwargs...) = RequestOptions(RequestOptions(null, null, null, null, null, null); kwargs...)
 
 type Request{I}
     method::String # HTTP method string (e.g. "GET")
@@ -96,7 +105,7 @@ type Response
 end
 
 Response() = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(), Nullable(), Response[])
-Response(n, r::Request) = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(0, n), Nullable(r), Response[])
+Response(n, r::Request) = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(n), Nullable(r), Response[])
 Response(s::Int) = Response(s, defaultheaders(Response), FIFOBuffer())
 Response(body::String) = Response(200, defaultheaders(Response), body)
 Response(s::Int, h::Headers, body) =
