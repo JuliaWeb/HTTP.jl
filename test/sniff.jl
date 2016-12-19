@@ -31,7 +31,6 @@ const test_cases = [
 
 @testset "HTTP.sniff" begin
     for case in test_cases
-        println("Testing `HTTP.sniff` on $(case[1])...")
         @test HTTP.sniff(case[2]) == case[3]
     end
 end
@@ -245,7 +244,7 @@ json_strings = [
 ]
 
 @testset "HTTP.isjson" begin
-    @test HTTP.isjson("")[1]
+    @test !HTTP.isjson("")[1]
     for str in json_strings
         @test HTTP.isjson(str.data)[1]
     end

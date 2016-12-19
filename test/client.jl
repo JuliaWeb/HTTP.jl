@@ -16,11 +16,9 @@
 end
 
 #TODO:
- # make more @testsets!!
  # do a "codepath" @testset!!
  # make sure we send request cookies in write(tcp, request)
  # handle other body types for request sending, Vector{UInt8}, String, IO, FIFOBuffer
- # try to type parser.data as ::Union{RequestParser,ResponseParser}
  # @code_warntype functions to find anything fishy
  # benchmark vs. Requests and python requests?
  # docs

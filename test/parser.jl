@@ -1,3 +1,4 @@
+@testset "HTTP.parse" begin
 reqstr = "GET http://www.techcrunch.com/ HTTP/1.1\r\n" *
          "Host: www.techcrunch.com\r\n" *
          "User-Agent: Fake\r\n" *
@@ -157,3 +158,4 @@ req.headers = HTTP.Headers("Host"=>"www.tutorialspoint.com",
 req.body = "first=Zara&last=Ali".data
 
 @test HTTP.parse(HTTP.Request, reqstr) == req
+end; # @testset "HTTP.parse"

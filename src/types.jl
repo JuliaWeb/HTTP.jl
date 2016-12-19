@@ -9,7 +9,12 @@ typealias Headers Dict{String,String}
 
 ?(x) = Union{x,Void}
 const null = nothing
-Base.isnull(::Void) = true
+isnull(v::Void) = true
+isnull(x) = false
+function get(value, name::Symbol, default)
+    val = getfield(value, name)
+    return isnull(val) ? default : val
+end
 
 type RequestOptions
     chunksize::?(Int)
@@ -18,6 +23,8 @@ type RequestOptions
     readtimeout::?(Float64)
     tlsconfig::?(TLS.SSLConfig)
     maxredirects::?(Int)
+    RequestOptions(ch::?(Int), gzip::?(Bool), ct::?(Float64), rt::?(Float64), tls::?(TLS.SSLConfig), mr::?(Int)) =
+        new(ch, gzip, ct, rt, tls, mr)
 end
 
 function RequestOptions(options::RequestOptions; kwargs...)
@@ -26,14 +33,14 @@ function RequestOptions(options::RequestOptions; kwargs...)
     end
     return options
 end
-function RequestOptions(opts1::RequestOptions, opts2::RequestOptions)
+function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)
         f = fieldname(RequestOptions, i)
-        isnull(getfield(opts1, f)) && setfield!(opts1, f, getfield(opts2, k))
+        isnull(getfield(opts1, f)) && setfield!(opts1, f, getfield(opts2, f))
     end
     return opts1
 end
-RequestOptions(; kwargs...) = RequestOptions(RequestOptions(null, null, null, null, null, null); kwargs...)
+RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null; kwargs...) = RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr); kwargs...)
 
 type Request{I}
     method::String # HTTP method string (e.g. "GET")
@@ -64,9 +71,9 @@ function Request(method, uri, userheaders, body, options::RequestOptions)
         headers["Authorization"] = "Basic $(base64encode(uri.userinfo))"
     end
 
-    if sizeof(body) > options.chunksize
+    if sizeof(body) > get(options, :chunksize, typemax(Int))
         # chunked-transfer
-        headers["Transfer-Encoding"] = "chunked;" * options.gzip ? " gzip;" : ""
+        headers["Transfer-Encoding"] = "chunked;" * get(options, :gzip, false) ? " gzip;" : ""
     else
         # just set the Content-Length
         if !(method in ("GET", "HEAD", "CONNECT"))
@@ -185,7 +192,7 @@ end
 
 function body(io::IO, r::Union{Request, Response})
     hasmessagebody(r) || return
-    if sizeof(r.body) > r.options.chunksize
+    if sizeof(r.body) > get(r.options, :chunksize, typemax(Int))
         # chunked-transfer
         totallen = length(r.body)
         transfered = 0

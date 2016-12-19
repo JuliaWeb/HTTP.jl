@@ -73,6 +73,16 @@ function Base.readavailable(f::FIFOBuffer)
     return bytes
 end
 
+function Base.read(f::FIFOBuffer, ::Type{UInt8})
+    f.nb == 0 && return 0x00, false
+    # data to read
+    @inbounds b = f.buffer[f.f]
+    f.f = mod1(f.f + 1, f.max)
+    f.nb -= 1
+    notify(f.cond)
+    return b, true
+end
+
 function Base.String(f::FIFOBuffer)
     f.nb == 0 && return ""
     if f.f < f.l
@@ -86,17 +96,17 @@ end
 
 function Base.write(f::FIFOBuffer, b::UInt8)
     # buffer full, check if we can grow it
-    if f.nb == f.len
+    if f.nb == f.len || f.len < f.l
         if f.len < f.max
-            append!(f.buffer, zeros(UInt8, min(f.len * 2, f.max)))
-            f.len = length(f.buffer)
+            push!(f.buffer, 0x00)
+            f.len += 1
         else
             return 0
         end
     end
     # write our byte
     @inbounds f.buffer[f.l] = b
-    f.l = mod1(f.l + 1, f.len)
+    f.l = mod1(f.l + 1, f.max)
     f.nb += 1
     notify(f.cond)
     return 1
@@ -105,7 +115,7 @@ end
 function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
     # buffer full, check if we can grow it
     len = length(bytes)
-    if f.nb == f.len
+    if f.nb == f.len || f.len < f.l
         if f.len < f.max
             append!(f.buffer, zeros(UInt8, min(len, f.max - f.len)))
             f.len = length(f.buffer)
@@ -134,7 +144,7 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
         else
             # there's enough room to write bytes through the end of the buffer
             unsafe_copy!(f.buffer, f.l, bytes, 1, len)
-            f.l = mod1(f.l + len, f.len)
+            f.l = mod1(f.l + len, f.max)
         end
     else
         # already in wrap-around state

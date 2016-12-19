@@ -128,7 +128,7 @@
     @test isempty(readavailable(f))
 
     # buffer growing
-    f = HTTP.FIFOBuffer(5, 10)
+    f = HTTP.FIFOBuffer(10)
     @test write(f, UInt8[0x01, 0x02, 0x03, 0x04, 0x05]) == 5
     @test write(f, UInt8[0x06, 0x07, 0x08, 0x09, 0x0a]) == 5
     @test all(readavailable(f) .== 0x01:0x0a)

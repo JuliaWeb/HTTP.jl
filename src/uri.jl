@@ -38,6 +38,19 @@ const URL = URI
 
 URI(host, path) = URI("http", host, UInt16(80), path, "", "", "", true)
 
+function URI(uri::URI; kwargs...)
+    nms = fieldnames(URI)
+    args = Pair{Symbol}[(nms[i] => getfield(uri, i)) for i = 1:nfields(HTTP.URI)]
+    for (k, v) in kwargs
+        for (i, arg) in enumerate(args)
+            if arg[1] == k
+                args[i] = Pair(k, v)
+            end
+        end
+    end
+    return URI([arg[2] for arg in args]...)
+end
+
 # URL parser based on the http-parser package by Joyent
 # Licensed under the BSD license
 
@@ -129,7 +142,7 @@ function parse_authority(authority,seen_at)
             error("Unexpected state $state")
         end
     end
-    (host, UInt16(port == "" ? 0 : Base.parse(Int,port,10)), user)
+    (host, UInt16(port == "" ? 0 : Base.parse(Int, port, 10)), user)
 end
 
 function parse_url(url)
@@ -301,7 +314,11 @@ function Base.print(io::IO, uri::URI)
             print(io,uri.host)
         end
         if uri.port != 0
-            print(io,':',Int(uri.port))
+            if (uri.scheme == "http" && uri.port == 80) ||
+                (uri.scheme == "https" && uri.port == 443)
+            else
+                print(io,':',Int(uri.port))
+            end
         end
     else
         print(io,uri.scheme,":")
@@ -438,7 +455,7 @@ const uses_query = ["http", "wais", "imap", "https", "shttp", "mms", "gopher", "
 const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "wais", "https", "shttp", "snews", "file", "prospero"]
 
 "checks of a `HTTP.URI` is valid"
-function isvalid(uri::URI)
+function Base.isvalid(uri::URI)
     scheme = uri.scheme
     isempty(scheme) && error("Can not validate relative URI")
     if ((scheme in non_hierarchical) && (search(uri.path, '/') > 1)) ||       # path hierarchy not allowed

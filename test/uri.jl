@@ -19,7 +19,7 @@
     @test HTTP.URI("hdfs://user:password@hdfshost:9000/root/folder/file.csv") == HTTP.URI("hdfs","hdfshost",9000,"/root/folder/file.csv","","","user:password")
     @test HTTP.URI("google.com","/some/path") == HTTP.URI("http://google.com:80/some/path")
     g = HTTP.URI("google.com","/some/path")
-    @test HTTP.URI(g,port=160) == HTTP.URI("http://google.com:160/some/path")
+    @test HTTP.URI(g, port=160) == HTTP.URI("http://google.com:160/some/path")
 
     @test HTTP.escape("abcdef αβ 1234-=~!@#\$()_+{}|[]a;") == "abcdef%20%CE%B1%CE%B2%201234-%3D~%21%40%23%24%28%29_%2B%7B%7D%7C%5B%5Da%3B"
     @test HTTP.unescape(HTTP.escape("abcdef 1234-=~!@#\$()_+{}|[]a;")) == "abcdef 1234-=~!@#\$()_+{}|[]a;"
@@ -31,18 +31,18 @@
     @test ("user", "password") == HTTP.userinfo(HTTP.URI("https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag"))
     @test HTTP.URI("https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r") == HTTP.defrag(HTTP.URI("https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag"))
 
-    @test ["dc","example","dc","com"] == HTTP.path_params(HTTP.URI("ldap://ldap.example.com/dc=example,dc=com"))[1]
-    @test ["servlet","jsessionid","OI24B9ASD7BSSD"] == HTTP.path_params(HTTP.URI("http://www.mysite.com/servlet;jsessionid=OI24B9ASD7BSSD"))[1]
+    # @test ["dc","example","dc","com"] == HTTP.path_params(HTTP.URI("ldap://ldap.example.com/dc=example,dc=com"))[1]
+    # @test ["servlet","jsessionid","OI24B9ASD7BSSD"] == HTTP.path_params(HTTP.URI("http://www.mysite.com/servlet;jsessionid=OI24B9ASD7BSSD"))[1]
 
-    @test Dict("q"=>"a","p"=>"r") == HTTP.query_params(HTTP.URI("https://httphost/path1/path2;paramstring?q=a&p=r#frag"))
-    @test Dict("q"=>"a","malformed"=>"") == HTTP.query_params(HTTP.URI("https://foo.net/?q=a&malformed"))
+    # @test Dict("q"=>"a","p"=>"r") == HTTP.query_params(HTTP.URI("https://httphost/path1/path2;paramstring?q=a&p=r#frag"))
+    # @test Dict("q"=>"a","malformed"=>"") == HTTP.query_params(HTTP.URI("https://foo.net/?q=a&malformed"))
 
     @test false == isvalid(HTTP.URI("file:///path/to/file/with?should=work#fine"))
     @test true == isvalid(HTTP.URI("file:///path/to/file/with%3fshould%3dwork%23fine"))
 
     @test HTTP.URI("s3://bucket/key") == HTTP.URI("s3","bucket",0,"/key")
 
-    @test sprint(show, HTTP.URI("http://google.com")) == "HTTP.URI(http://google.com/)"
+    @test sprint(show, HTTP.URI("http://google.com")) == "HTTP.URI(\"http://google.com/\")"
 
     # Error paths
     # Non-ASCII characters

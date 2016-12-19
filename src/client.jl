@@ -44,16 +44,21 @@ type Client{I <: IO}
     options::RequestOptions
 end
 
+const DEFAULT_CHUNK_SIZE = 2^20
+const DEFAULT_REQUEST_OPTIONS = (DEFAULT_CHUNK_SIZE, true, 10.0, 9.0, TLS.SSLConfig(true), 5)
+
 Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection}}(), Dict{String, Vector{Cookie}}(), Parser(Response), logger, options)
-Client(logger::IO; args...) = Client(logger, RequestOptions(; args...))
-Client(; args...) = Client(STDOUT, RequestOptions(; args...))
+Client(logger::IO; args...) = Client(logger, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
+Client(; args...) = Client(STDOUT, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
 
 const DEFAULT_CLIENT = Client()
 
 send!(request::Request; stream::Bool=false, verbose::Bool=true) = send!(DEFAULT_CLIENT, request; stream=stream, verbose=verbose)
 
 function send!(client::Client, request::Request; history::Vector{Response}=Response[], stream::Bool=false, verbose::Bool=true)
-
+    # ensure all Request options are set, using client.options if necessary
+    # this works because client.options are never null (always have a default)
+    update!(request.options, client.options)
     host = request.uri.host
     # check if cookies should be added
     if haskey(client.cookies, host)

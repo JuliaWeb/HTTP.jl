@@ -1,15 +1,17 @@
 using HTTP, Base.Test
 
+@testset "HTTP" begin
 # include("utils.jl")
-include("fifobuffer.jl")
-include("sniff.jl")
-include("uri.jl")
-# include("cookies.jl")
+include("fifobuffer.jl");
+include("sniff.jl");
+include("uri.jl");
+include("cookies.jl");
 # include("types.jl")
-include("parser.jl")
-include("client.jl")
+include("parser.jl");
+include("client.jl");
 # include("server.jl")
 
+end; # @testset "HTTP"
 # server_task = @async HTTP.serve()
 #
 # client = connect("127.0.0.1", 8081)

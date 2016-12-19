@@ -23,7 +23,7 @@ type Parser{R}
     # http_errno + upgrade = Single byte
     errno_and_upgrade::Cuchar
 
-    data::R
+    data::R # a RequestParser or ResponseParser
 end
 
 parserwrapper(::Type{Request}) = RequestParser()
@@ -137,8 +137,6 @@ ResponseParser() = ResponseParser(Response(), true, "", "", false, false, String
 
 function reset!(r)
     r.parsedfield = true
-    # empty!(r.fieldbuffer.data)
-    # empty!(r.valuebuffer.data)
     r.fieldbuffer = ""
     r.valuebuffer = ""
     r.messagecomplete = r.headerscomplete = false
@@ -165,7 +163,7 @@ end
 # on_url (requests only)
 function request_on_url(parser::Ptr{Parser{RequestParser}}, at, len)
     r = unload(parser)
-    r.val.uri = URI(unsafe_string(convert(Ptr{UInt8}, at), len))
+    r.val.uri = URI(str(at, len))
     return 0
 end
 response_on_url(parser, at, len) = 0
@@ -178,14 +176,16 @@ function response_on_status_complete(parser::Ptr{Parser{ResponseParser}})
 end
 request_on_status_complete(parser) = 0
 
+str(at, len) = unsafe_string(convert(Ptr{UInt8}, at), len)
+
 # on_header_field, on_header_value
 function request_on_header_field(parser::Ptr{Parser{RequestParser}}, at, len)
     r = unload(parser)
     if r.parsedfield
-        append!(r.fieldbuffer.data, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
+        r.fieldbuffer *= str(at, len)
     else
         r.val.headers[r.fieldbuffer] = r.valuebuffer
-        r.fieldbuffer = unsafe_string(convert(Ptr{UInt8}, at), len)
+        r.fieldbuffer = str(at, len)
     end
     r.parsedfield = true
     return 0
@@ -193,11 +193,8 @@ end
 
 function request_on_header_value(parser::Ptr{Parser{RequestParser}}, at, len)
     r = unload(parser)
-    if r.parsedfield
-        r.valuebuffer = unsafe_string(convert(Ptr{UInt8}, at), len)
-    else
-        append!(r.valuebuffer.data, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
-    end
+    s = str(at, len)
+    r.valuebuffer = ifelse(r.parsedfield, s, r.valuebuffer * s)
     r.parsedfield = false
     return 0
 end
@@ -226,14 +223,14 @@ end
 function response_on_header_field(parser::Ptr{Parser{ResponseParser}}, at, len)
     r = unload(parser)
     if r.parsedfield
-        append!(r.fieldbuffer.data, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
+        r.fieldbuffer *= str(at, len)
     else
         if issetcookie(r.fieldbuffer)
             push!(r.cookies, r.valuebuffer)
         else
             r.val.headers[r.fieldbuffer] = r.valuebuffer
         end
-        r.fieldbuffer = unsafe_string(convert(Ptr{UInt8}, at), len)
+        r.fieldbuffer = str(at, len)
     end
     r.parsedfield = true
     return 0
@@ -241,11 +238,8 @@ end
 
 function response_on_header_value(parser::Ptr{Parser{ResponseParser}}, at, len)
     r = unload(parser)
-    if r.parsedfield
-        r.valuebuffer = unsafe_string(convert(Ptr{UInt8}, at), len)
-    else
-        append!(r.valuebuffer.data, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
-    end
+    s = str(at, len)
+    r.valuebuffer = ifelse(r.parsedfield, s, r.valuebuffer * s)
     r.parsedfield = false
     return 0
 end
@@ -342,6 +336,14 @@ function response_on_message_complete(parser::Ptr{Parser{ResponseParser}})
 end
 
 # Main user-facing functions
+"""
+`HTTP.parse{R <: Union{Request, Response}}(::Type{R}, str)` => `R`
+
+Given a string input `str`, use [`http-parser`](https://github.com/nodejs/http-parser) to create
+and populate a Julia `Request` or `Response` object.
+"""
+function parse end
+
 function parse(::Type{Request}, str)
     DEFAULT_REQUEST_PARSER.data.val = Request()
     http_parser_init(DEFAULT_REQUEST_PARSER, Request)
