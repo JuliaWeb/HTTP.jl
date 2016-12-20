@@ -434,9 +434,11 @@ function splitpath(uri::URI, starting=2)
     start_ind = i = starting # p[1] == '/'
     while true
         c = p[i]
-        if c == '/' || i == len
+        if c == '/'
             push!(elems, p[start_ind:i-1])
             start_ind = i + 1
+        elseif i == len
+            push!(elems, p[start_ind:i])
         end
         i += 1
         (i > len || c in ('?', '#')) && break
