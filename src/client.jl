@@ -108,15 +108,16 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
     verbose && write(client.logger, request)
     write(tcp, request)
     # create a Response to fill
-    response = Response(stream ? 2^20 : typemax(Int), request)
+    response = Response(stream ? DEFAULT_CHUNK_SIZE : DEFAULT_MAX, request)
     client.parser.data.val = response
     verbose && print(client.logger, "\n\nSent. ")
     # process the response
     process!(client, tcp, conn, request, response, stream, verbose)
-    # check for cookies to cache for this host
     !isempty(response.cookies) && append!(get!(client.cookies, host, Cookie[]), response.cookies)
     # return immediately for streaming responses
     stream && return response
+    verbose && println(client.logger, "Received response: ")
+    verbose && write(client.logger, response); println(client.logger, "\n")
     # check for redirect
     response.history = history
     if request.method != "HEAD" && (300 <= status(response) < 400)
@@ -137,6 +138,7 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
 end
 
 function process!(client, tcp, conn, request, response, stream, verbose)
+    parser = client.parser.data
     while true
         # if no data after 30 seconds, break out
         verbose && println(client.logger, "Checking for response w/ read timeout of = $(request.options.readtimeout)...")
@@ -146,13 +148,12 @@ function process!(client, tcp, conn, request, response, stream, verbose)
         if errno(client.parser) != 0
             # TODO: error in parsing the http response
             break
-        elseif client.parser.data.messagecomplete
-            client.parser.data.messagecomplete = client.parser.data.headerscomplete = false
+        elseif parser.messagecomplete
             response.keepalive || dead!(conn)
             break
-        elseif stream && client.parser.data.headerscomplete
+        elseif stream && parser.headerscomplete
             # async read the response body, returning the current response immediately
-            @async process!(client, tcp, conn, request, response, false, false)
+            response.bodytask = @async process!(client, tcp, conn, request, response, false, false)
             break
         end
         if !isopen(tcp)

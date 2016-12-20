@@ -118,10 +118,11 @@ type RequestParser
     valuebuffer::String
     messagecomplete::Bool
     headerscomplete::Bool
+    task::Task
     cookies::Vector{String}
 end
 
-RequestParser() = RequestParser(Request(), true, "", "", false, false, String[])
+RequestParser() = RequestParser(Request(), true, "", "", false, false, current_task(), String[])
 
 type ResponseParser
     val::Response
@@ -130,10 +131,11 @@ type ResponseParser
     valuebuffer::String
     messagecomplete::Bool
     headerscomplete::Bool
+    task::Task
     cookies::Vector{String}
 end
 
-ResponseParser() = ResponseParser(Response(), true, "", "", false, false, String[])
+ResponseParser() = ResponseParser(Response(), true, "", "", false, false, current_task(), String[])
 
 function reset!(r)
     r.parsedfield = true
@@ -225,11 +227,8 @@ function response_on_header_field(parser::Ptr{Parser{ResponseParser}}, at, len)
     if r.parsedfield
         r.fieldbuffer *= str(at, len)
     else
-        if issetcookie(r.fieldbuffer)
-            push!(r.cookies, r.valuebuffer)
-        else
-            r.val.headers[r.fieldbuffer] = r.valuebuffer
-        end
+        issetcookie(r.fieldbuffer) && push!(r.cookies, r.valuebuffer)
+        r.val.headers[r.fieldbuffer] = get!(r.val.headers, r.fieldbuffer, "") * r.valuebuffer
         r.fieldbuffer = str(at, len)
     end
     r.parsedfield = true
@@ -264,10 +263,9 @@ function response_on_headers_complete(parser::Ptr{Parser{ResponseParser}})
     r = unload(parser)
     p = unsafe_load(parser)
     # store the last header key=>val
-    if issetcookie(r.fieldbuffer)
-        push!(r.cookies, r.valuebuffer)
-    elseif !isempty(r.fieldbuffer)
-        r.val.headers[r.fieldbuffer] = r.valuebuffer
+    issetcookie(r.fieldbuffer) && push!(r.cookies, r.valuebuffer)
+    if !isempty(r.fieldbuffer)
+        r.val.headers[r.fieldbuffer] = get!(r.val.headers, r.fieldbuffer, "") * r.valuebuffer
     end
     r.val.status = p.status_code
     r.val.major = p.http_major
@@ -294,30 +292,42 @@ function response_on_headers_complete(parser::Ptr{Parser{ResponseParser}})
 end
 
 # on_body
-output(body::IO, data) = write(body, data)
-output(body::String, data) = append!(body.data, data)
-output(body::Vector{UInt8}, data) = append!(body, data)
-function output(body::IOBuffer, data)
+output(r, body::IO, data) = (write(body, data); return nothing)
+output(r, body::Vector{UInt8}, data) = (append!(body, data); return nothing)
+output(r, body::String, data) = (r.val.body *= String(data); return nothing)
+function output(r, body::IOBuffer, data)
     append!(body.data, data)
     body.size = length(body.data)
+    return nothing
 end
 
-function output(body::FIFOBuffer, data)
+function output(r, body::FIFOBuffer, data)
     nb = write(body, data)
-    while nb < length(data)
-        wait(body)
-        nb += write(body, data)
+    println("outputting body..."); flush(STDOUT)
+    if current_task() == r.task
+        # main request function hasn't returned yet, so not safe to wait
+        println("still in main task...growing FIFOBuffer...")
+        body.max += length(data) - nb
+        write(body, view(data, nb+1:length(data)))
+    else
+        while nb < length(data)
+            println("waiting...")
+            nb += write(body, data)
+        end
     end
-    return nb
+    println("wrote $nb bytes of data..."); flush(STDOUT)
+    return nothing
 end
 
 function request_on_body(parser::Ptr{Parser{RequestParser}}, at, len)
-    output(unsafe_load(parser).data.val.body, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
+    r = unsafe_load(parser).data
+    output(r, r.val.body, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
     return 0
 end
 
 function response_on_body(parser::Ptr{Parser{ResponseParser}}, at, len)
-    output(unsafe_load(parser).data.val.body, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
+    r = unsafe_load(parser).data
+    output(r, r.val.body, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
     return 0
 end
 
@@ -331,7 +341,8 @@ end
 function response_on_message_complete(parser::Ptr{Parser{ResponseParser}})
     r = unload(parser)
     r.messagecomplete = true
-    r.val.body.eof = true
+    println("messagecomplete...")
+    eof!(r.val.body)
     return 0
 end
 

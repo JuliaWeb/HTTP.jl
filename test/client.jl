@@ -16,7 +16,6 @@
 end
 
 #TODO:
- # do a "codepath" @testset!!
  # make sure we send request cookies in write(tcp, request)
  # handle other body types for request sending, Vector{UInt8}, String, IO, FIFOBuffer
  # @code_warntype functions to find anything fishy
@@ -44,26 +43,39 @@ for sch in ("http", "https")
 
     @test HTTP.get("$sch://httpbin.org/encoding/utf8").status == 200
 
-    # HTTP.connect("$sch://httpbin.org/connect")
-    # @test HTTP.trace("$sch://httpbin.org/trace").status == 200
+    r = HTTP.get("$sch://httpbin.org/cookies")
+    @test String(readavailable(r.body)) == "{\n  \"cookies\": {}\n"
+    @test !haskey(HTTP.DEFAULT_CLIENT.cookies, "httpbin.org")
+    r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor")
+    @test r.status == 200
+    @test String(readavailable(r.body)) == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n"
+    r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
+    @test String(readavailable(r.body)) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n"
 
-    HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor")
-    HTTP.get("$sch://httpbin.org/cookies")
-# begin
-#     r = HTTP.get("$sch://httpbin.org/stream/100"; stream=true)
-#     println("Body has $(r.body.nb) bytes of data...")
-#     sleep(0.1)
-#     println("Body has $(r.body.nb) bytes of data...")
-#     sleep(0.1)
-#     println("Body has $(r.body.nb) bytes of data...")
-#     println(String(readavailable(r.body)))
-#     sleep(0.1)
-#     println("Body has $(r.body.nb) bytes of data...")
-#     sleep(0.1)
-#     println("Body has $(r.body.nb) bytes of data...")
-#     sleep(0.1)
-#     println(String(readavailable(r.body)))
-# end
+    # stream
+
+    # body posting: Vector{UInt8}, String, IOStream, IOBuffer, FIFOBuffer
+    r = HTTP.post("$sch://httpbin.org/post"; body="hey")
+    @test r.status == 200
+    r = HTTP.post("$sch://httpbin.org/post"; body="hey", stream=true)
+    @test r.status == 200
+    r = HTTP.get("$sch://httpbin.org/stream/100")
+    @test r.status == 200
+    totallen = length(r.body) # number of bytes to expect
+    bytes = readavailable(r.body)
+    begin
+        r = HTTP.get("$sch://httpbin.org/stream/100"; stream=true)
+        @test r.status == 200
+        len = length(r.body)
+        @test len < totallen
+        HTTP.@timeout 15.0 begin
+            while !eof(r.body)
+                b = readavailable(r.body)
+                println("lenght = $(length(b))....")
+                # length(b) == 0 && wait(r.body)
+            end
+        end throw(HTTP.TimeoutException(15.0))
+    end
 
     # redirects
     r = HTTP.get("$sch://httpbin.org/redirect/1")
@@ -82,20 +94,20 @@ for sch in ("http", "https")
 end
 
 
-body = """{"username":"jacob.quinn@domo.com","password":"R29sZG1vdXNlNTYh","base64":true}"""
-r = HTTP.post("https://tateboys.domo.com/api/domoweb/auth/login"; body=body)
-client = HTTP.DEFAULT_CLIENT
-cookies = client.cookies["tateboys.domo.com"]
-c = cookies[1]
-HTTP.shouldsend(c, true, "domo.domo.com", "/api/content/v3/users")
-@time rr = HTTP.get("https://tateboys.domo.com/api/query/v1/execute/export/6ad6fbc5-2c8c-4381-b703-49c57cd38f2a?accept=text%2Fcsv&includeHeader=true&fileName=TireShop+Inventry.csv"; verbose=false)
-
-@time begin
-    rr = HTTP.get("https://tateboys.domo.com/api/query/v1/execute/export/6ad6fbc5-2c8c-4381-b703-49c57cd38f2a?accept=text%2Fcsv&includeHeader=true&fileName=TireShop+Inventry.csv"; stream=true, verbose=false)
-    while !eof(rr.body)
-        bytes = readavailable(rr.body)
-        # println("read $(length(bytes)) bytes...")
-        isempty(bytes) && wait(rr.body)
-    end
-end
+# body = """{"username":"jacob.quinn@domo.com","password":"R29sZG1vdXNlNTYh","base64":true}"""
+# r = HTTP.post("https://tateboys.domo.com/api/domoweb/auth/login"; body=body)
+# client = HTTP.DEFAULT_CLIENT
+# cookies = client.cookies["tateboys.domo.com"]
+# c = cookies[1]
+# HTTP.shouldsend(c, true, "domo.domo.com", "/api/content/v3/users")
+# @time rr = HTTP.get("https://tateboys.domo.com/api/query/v1/execute/export/6ad6fbc5-2c8c-4381-b703-49c57cd38f2a?accept=text%2Fcsv&includeHeader=true&fileName=TireShop+Inventry.csv"; verbose=false)
+#
+# @time begin
+#     rr = HTTP.get("https://tateboys.domo.com/api/query/v1/execute/export/6ad6fbc5-2c8c-4381-b703-49c57cd38f2a?accept=text%2Fcsv&includeHeader=true&fileName=TireShop+Inventry.csv"; stream=true, streamsize=1, verbose=false)
+#     while !eof(rr.body)
+#         bytes = readavailable(rr.body)
+#         # println("read $(length(bytes)) bytes...")
+#         isempty(bytes) && wait(rr.body)
+#     end
+# end
 end # @testset "HTTP.Client"

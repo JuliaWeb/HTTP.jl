@@ -33,6 +33,7 @@ function RequestOptions(options::RequestOptions; kwargs...)
     end
     return options
 end
+
 function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)
         f = fieldname(RequestOptions, i)
@@ -40,7 +41,9 @@ function update!(opts1::RequestOptions, opts2::RequestOptions)
     end
     return opts1
 end
-RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null; kwargs...) = RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr); kwargs...)
+
+RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null; kwargs...) =
+    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr); kwargs...)
 
 type Request{I}
     method::String # HTTP method string (e.g. "GET")
@@ -49,7 +52,7 @@ type Request{I}
     uri::URI
     headers::Headers
     keepalive::Bool
-    body::I # Vector{UInt8}, String, IO
+    body::I # Vector{UInt8}, String, IO, FIFOBuffer
     options::RequestOptions
 end
 
@@ -107,16 +110,17 @@ type Response
     keepalive::Bool
     cookies::Vector{Cookie}
     body::FIFOBuffer
+    bodytask::Task
     request::Nullable{Request}
     history::Vector{Response}
 end
 
-Response() = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(), Nullable(), Response[])
-Response(n, r::Request) = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(n), Nullable(r), Response[])
+Response() = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(), Task(1), Nullable(), Response[])
+Response(n, r::Request) = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(n), Task(1), Nullable(r), Response[])
 Response(s::Int) = Response(s, defaultheaders(Response), FIFOBuffer())
 Response(body::String) = Response(200, defaultheaders(Response), body)
 Response(s::Int, h::Headers, body) =
-  Response(s, 1, 1, h, true, Cookie[], body, Nullable(), Response[])
+  Response(s, 1, 1, h, true, Cookie[], body, Task(1), Nullable(), Response[])
 
 defaultheaders(::Type{Response}) = Headers(
     "Server"            => "Julia/$VERSION",
@@ -182,7 +186,7 @@ function hasmessagebody(r::Response)
     if 100 <= r.status < 300 || r.status == 304
         return false
     elseif !isnull(r.request)
-        req = get(r.request)
+        req = Base.get(r.request)
         if req.method in ("HEAD", "CONNECT")
             return false
         end
@@ -190,23 +194,70 @@ function hasmessagebody(r::Response)
     return true
 end
 
-function body(io::IO, r::Union{Request, Response})
-    hasmessagebody(r) || return
-    if sizeof(r.body) > get(r.options, :chunksize, typemax(Int))
-        # chunked-transfer
-        totallen = length(r.body)
-        transfered = 0
-        while transfered < totallen
-            chunk = min(r.options.chunksize, totallen - transfered)
-            write(io, "$(hex(chunk))$CRLF")
-            write(io, view(r.body, (transfered+1):(transfered+chunk)))
-            write(io, CRLF)
-            transfered += chunk
+# Vector{UInt8}, String, IO, or FIFOBuffer
+bodysize(b::Union{Vector{UInt8},String}) = length(b)
+bodysize(b::IOStream) = filesize(b) - position(b)
+bodysize(b::IO) = nb_available(b)
+bodysize(b::FIFOBuffer) = b.nb
+
+function send(io, r, body::Union{Vector{UInt8}, String}, sz)
+    # chunked-transfer: Vector{UInt8}, String
+    transfered = 0
+    while transfered < sz
+        chunk = min(r.options.chunksize, sz - transfered)
+        write(io, "$(hex(chunk))$CRLF")
+        write(io, view(body, (transfered+1):(transfered+chunk)))
+        write(io, CRLF)
+        transfered += chunk
+    end
+end
+
+function send(io, r, body::IO, sz)
+    # chunked-transfer: IO
+    transfered = 0
+    while transfered < sz
+        chunk = min(r.options.chunksize, bodysize(body))
+        write(io, "$(hex(chunk))$CRLF")
+        write(io, readbytes(body, chunk))
+        write(io, CRLF)
+        transfered += chunk
+    end
+end
+
+function send(io, r, body::FIFOBuffer, sz)
+    # chunked-transfer: FIFOBuffer
+    transfered = 0
+    while !eof(body)
+        sz = bodysize(body)
+        if sz == 0
+            wait(body)
+            sz = bodysize(body)
         end
+        chunk = min(r.options.chunksize, sz)
+        write(io, "$(hex(chunk))$CRLF")
+        write(io, readbytes(body, chunk))
+        write(io, CRLF)
+        transfered += chunk
+    end
+end
+
+function body(io::IO, r::Request)
+    hasmessagebody(r) || return
+    # if size of body is > chunksize or body is a FIFOBuffer, we chunk
+    sz = bodysize(r.body)
+    println("sz=$sz; chunksize=$(get(r.options, :chunksize, typemax(Int)))")
+    if sz > get(r.options, :chunksize, typemax(Int)) || typeof(r.body) <: FIFOBuffer
+        println("sending chunked...")
+        send(io, r, r.body, sz)
         write(io, "$(hex(0))$CRLF$CRLF")
     else
         write(io, r.body)
     end
+end
+
+function body(io::IO, r::Response)
+    hasmessagebody(r) || return
+    write(io, String(r.body))
 end
 
 function Base.write(io::IO, r::Union{Request, Response})

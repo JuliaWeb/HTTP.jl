@@ -39,15 +39,23 @@ type FIFOBuffer <: IO
     l::Int   # buffer index that should be written to next, unless nb == len, then buffer is full
     buffer::Vector{UInt8}
     cond::Condition
+    task::Task
     eof::Bool
 end
 
-FIFOBuffer(max) = FIFOBuffer(0, max, 0, 1, 1, UInt8[], Condition(), false)
-FIFOBuffer() = FIFOBuffer(typemax(Int))
+const DEFAULT_MAX = Int(typemax(Int32))^2
+
+FIFOBuffer(max) = FIFOBuffer(0, max, 0, 1, 1, UInt8[], Condition(), current_task(), false)
+FIFOBuffer() = FIFOBuffer(DEFAULT_MAX)
 
 Base.length(f::FIFOBuffer) = f.nb
 Base.wait(f::FIFOBuffer) = wait(f.cond)
 Base.eof(f::FIFOBuffer) = f.eof
+function eof!(f::FIFOBuffer)
+    f.eof = true
+    notify(f.cond)
+    return
+end
 
 # 0 | 1 | 2 | 3 | 4 | 5 |
 #---|---|---|---|---|---|
@@ -59,7 +67,13 @@ Base.eof(f::FIFOBuffer) = f.eof
 #   | x | x |f/l| x | x | full l == f, nb = len, can read f:end, 1:l-1, can't write
 function Base.readavailable(f::FIFOBuffer)
     # no data to read
-    f.nb == 0 && return UInt8[]
+    if f.nb == 0
+        if current_task() == f.task
+            return UInt8[]
+        else # async: block till there's data to read
+            wait(f.cond)
+        end
+    end
     if f.f < f.l
         @inbounds bytes = f.buffer[f.f:f.l-1]
     else
@@ -120,7 +134,11 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
             append!(f.buffer, zeros(UInt8, min(len, f.max - f.len)))
             f.len = length(f.buffer)
         else
-            return 0
+            if current_task() == f.task
+                return 0
+            else # async: block until there's room to write
+                wait(f.cond)
+            end
         end
     end
     if f.f <= f.l

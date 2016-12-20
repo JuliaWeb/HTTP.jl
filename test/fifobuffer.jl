@@ -103,29 +103,32 @@
     @test isempty(readavailable(f))
 
     # condition notification
+    # fill the buffer up
     @test write(f, UInt8[0x01, 0x02, 0x03, 0x04, 0x05]) == 5
+    # a write task is started asynchronously, which means it will wait for a
+    # notify from a read that there's space to write again
     tsk = @async begin
-        wait(f)
         @test write(f, UInt8[0x01, 0x02, 0x03, 0x04, 0x05]) == 5
     end
-    sleep(0.01)
-    @test istaskstarted(tsk)
-    @test !istaskdone(tsk)
     # when data is read in the next readavailble, a notify is sent to f.cond
+    # which wakes up `tsk` to write it's data
     @test all(readavailable(f) .== UInt8[0x01, 0x02, 0x03, 0x04, 0x05])
-    sleep(0.01)
-    @test all(readavailable(f) .== UInt8[0x01, 0x02, 0x03, 0x04, 0x05])
-
-    tsk2 = @async begin
-        wait(f)
-        @test all(readavailable(f) .== UInt8[0x01, 0x02, 0x03, 0x04, 0x05])
+    # meanwhile, we start the next `readavailable` asynchronously, which will block
+    # until `tsk` is done writing
+    @sync @async @test all(readavailable(f) .== UInt8[0x01, 0x02, 0x03, 0x04, 0x05])
+    @sync begin
+        N = 100
+        tsk1 = @async begin
+            for i = 1:N
+                @test write(f, UInt8[0x4a, 0x61, 0x63, 0x6f, 0x62]) == 5
+            end
+        end
+        tsk2 = @async begin
+            for i = 1:N
+                @test all(readavailable(f) .== UInt8[0x4a, 0x61, 0x63, 0x6f, 0x62])
+            end
+        end
     end
-    sleep(0.01)
-    @test istaskstarted(tsk2)
-    @test !istaskdone(tsk2)
-    @test write(f, UInt8[0x01, 0x02, 0x03, 0x04, 0x05]) == 5
-    sleep(0.01)
-    @test isempty(readavailable(f))
 
     # buffer growing
     f = HTTP.FIFOBuffer(10)
