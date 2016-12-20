@@ -24,7 +24,7 @@ macro timeout(t, expr, then, pollint=0.01)
     return quote
         tm = Float64($t)
         start = time()
-        tsk = @async $expr
+        tsk = @async $(esc(expr))
         while !istaskdone(tsk) && (time() - start < tm)
             sleep($pollint)
         end
