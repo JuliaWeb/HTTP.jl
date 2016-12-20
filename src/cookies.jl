@@ -1,3 +1,11 @@
+module Cookies
+
+export Cookie
+
+import Base.==
+
+is_url_char(c) =  ((@assert UInt32(c) < 0x80); 'A' <= c <= '~' || '$' <= c <= '>' || c == '\f' || c == '\t')
+
 """
 A Cookie represents an HTTP cookie as sent in the Set-Cookie header of an
 HTTP response or the Cookie header of an HTTP request.
@@ -42,27 +50,29 @@ Cookie(name, value; args...) = Cookie(Cookie(name, value, "", "", DateTime(), 0,
                           (a.httponly == b.httponly)
 
 # request cookie stringify-ing
-function Base.String(c::Cookie)
+function Base.String(c::Cookie, isrequest::Bool=true)
     io = IOBuffer()
     nm = strip(c.name)
     !iscookienamevalid(nm) && return ""
     write(io, sanitizeCookieName(nm), '=', sanitizeCookieValue(c.value))
-    length(c.path) > 0 && write(io, "; Path=", sanitizeCookiePath(c.path))
-    length(c.domain) > 0 && validCookieDomain(c.domain) && write(io, "; Domain=", c.domain[1] == '.' ? c.domain[2:end] : c.domain)
-    validCookieExpires(c.expires) && write(io, "; Expires=", Dates.format(c.expires, Dates.RFC1123Format), " GMT")
-    c.maxage > 0 && write(io, "; Max-Age=", string(c.maxage))
-    c.maxage < 0 && write(io, "; Max-Age=0")
-    c.httponly && write(io, "; HttpOnly")
-    c.secure && write(io, "; Secure")
+    if !isrequest
+        length(c.path) > 0 && write(io, "; Path=", sanitizeCookiePath(c.path))
+        length(c.domain) > 0 && validCookieDomain(c.domain) && write(io, "; Domain=", c.domain[1] == '.' ? c.domain[2:end] : c.domain)
+        validCookieExpires(c.expires) && write(io, "; Expires=", Dates.format(c.expires, Dates.RFC1123Format), " GMT")
+        c.maxage > 0 && write(io, "; Max-Age=", string(c.maxage))
+        c.maxage < 0 && write(io, "; Max-Age=0")
+        c.httponly && write(io, "; HttpOnly")
+        c.secure && write(io, "; Secure")
+    end
     return takebuf_string(io)
 end
 
-function Base.string(cookiestring::String, cookies::Vector{Cookie})
+function Base.string(cookiestring::String, cookies::Vector{Cookie}, isrequest::Bool=true)
     io = IOBuffer()
     !isempty(cookiestring) && write(io, cookiestring, cookiestring[end] == ';' ? "" : ";")
     len = length(cookies)
     for (i, cookie) in enumerate(cookies)
-        write(io, String(cookie), ifelse(i == len, "", "; "))
+        write(io, String(cookie, isrequest), ifelse(i == len, "", "; "))
     end
     return takebuf_string(io)
 end
@@ -276,16 +286,6 @@ function readcookies(h::Dict{String,String}, filter::String)
     return cookies
 end
 
-#
-# # SetCookie adds a Set-Cookie header to the provided ResponseWriter's headers.
-# # The provided cookie must have a valid Name. Invalid cookies may be
-# # silently dropped.
-# function SetCookie(w ResponseWriter, cookie *Cookie) {
-# 	if v := cookie.String(); v != "" {
-# 		w.Header().Add("Set-Cookie", v)
-# 	}
-# }
-
 # validCookieExpires returns whether v is a valid cookie expires-value.
 function validCookieExpires(dt)
 	# IETF RFC 6265 Section 5.1.1.5, the year must not be less than 1601
@@ -353,3 +353,5 @@ function sanitizeCookieValue(v::String)
 end
 
 sanitizeCookiePath(v) = filter(validcookiepathbyte, v)
+
+end # module

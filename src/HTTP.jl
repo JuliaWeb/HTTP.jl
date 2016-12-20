@@ -1,6 +1,6 @@
 module HTTP
 
-export Request, Response, URI
+export Request, Response, FIFOBuffer, URI
 
 using MbedTLS
 
@@ -14,6 +14,7 @@ include("fifobuffer.jl")
 include("sniff.jl")
 include("uri.jl")
 include("cookies.jl")
+using .Cookies
 
 include("types.jl")
 include("parser.jl")

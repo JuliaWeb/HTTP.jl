@@ -60,7 +60,7 @@ end
     ]
 
     for (h, c) in cookietests
-        @test HTTP.readsetcookies("", [h["Set-Cookie"]]) == c
+        @test HTTP.Cookies.readsetcookies("", [h["Set-Cookie"]]) == c
     end
 end
 
@@ -77,7 +77,7 @@ end
         HTTP.Cookie("quoted2", "cookieAV"),
         HTTP.Cookie("quoted3", "both"),
     ]
-    @test all(HTTP.readsetcookies("", cookiestrings) .== want)
+    @test all(HTTP.Cookies.readsetcookies("", cookiestrings) .== want)
 end
 
 @testset "Cookie sanitize value" begin
@@ -93,7 +93,7 @@ end
         "a " => "\"a \"",
     )
     for (k, v) in values
-        @test HTTP.sanitizeCookieValue(k) == v
+        @test HTTP.Cookies.sanitizeCookieValue(k) == v
     end
 end
 
@@ -104,7 +104,7 @@ end
         "/just;no;semicolon\0orstuff/" => "/justnosemicolonorstuff/",
     )
     for (k, v) in paths
-        @test HTTP.sanitizeCookiePath(k) == v
+        @test HTTP.Cookies.sanitizeCookiePath(k) == v
     end
 end
 
@@ -117,7 +117,7 @@ end
         (Dict("Cookie" => "Cookie-1=\"v\$1\"; c2=\"v2\""), "", [HTTP.Cookie("Cookie-1", "v\$1"), HTTP.Cookie("c2", "v2")]),
     ]
     for (h, filter, cookies) in testcookies
-        @test HTTP.readcookies(h, filter) == cookies
+        @test HTTP.Cookies.readcookies(h, filter) == cookies
     end
 end
 end; # @testset "Cookies"

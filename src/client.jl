@@ -57,15 +57,15 @@ send!(request::Request; stream::Bool=false, verbose::Bool=true) = send!(DEFAULT_
 
 function send!(client::Client, request::Request; history::Vector{Response}=Response[], stream::Bool=false, verbose::Bool=true)
     # ensure all Request options are set, using client.options if necessary
-    # this works because client.options are never null (always have a default)
+    # this works because request.options are null by default whereas client.options always have a default
     update!(request.options, client.options)
     host = request.uri.host
-    # check if cookies should be added
+    # check if cookies should be added to outgoing request based on host
     if haskey(client.cookies, host)
         cookies = client.cookies[host]
         valids = falses(length(cookies))
         for (i, cookie) in enumerate(cookies)
-            if shouldsend(cookie, scheme(request.uri) == "https", host, request.uri.path)
+            if Cookies.shouldsend(cookie, scheme(request.uri) == "https", host, request.uri.path)
                 valids[i] = true
             end
         end

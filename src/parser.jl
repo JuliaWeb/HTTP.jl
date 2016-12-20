@@ -275,7 +275,7 @@ function response_on_headers_complete(parser::Ptr{Parser{ResponseParser}})
     r.val.keepalive = http_should_keep_alive(parser) != 0
     req = r.val.request
     host = isnull(req) ? "" : Base.get(req).uri.host
-    r.val.cookies = readsetcookies(host, r.cookies)
+    r.val.cookies = Cookies.readsetcookies(host, r.cookies)
     r.headerscomplete = true
     # From https://github.com/nodejs/http-parser/blob/master/http_parser.h
     # Comment starting line 72
