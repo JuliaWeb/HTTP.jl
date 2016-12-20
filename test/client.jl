@@ -72,7 +72,6 @@ for sch in ("http", "https")
             while !eof(r.body)
                 b = readavailable(r.body)
                 println("lenght = $(length(b))....")
-                # length(b) == 0 && wait(r.body)
             end
         end throw(HTTP.TimeoutException(15.0))
     end
@@ -93,21 +92,4 @@ for sch in ("http", "https")
     @test_throws HTTP.TimeoutException HTTP.get("$sch://httpbin.org/delay/3"; readtimeout=1.0)
 end
 
-
-# body = """{"username":"jacob.quinn@domo.com","password":"R29sZG1vdXNlNTYh","base64":true}"""
-# r = HTTP.post("https://tateboys.domo.com/api/domoweb/auth/login"; body=body)
-# client = HTTP.DEFAULT_CLIENT
-# cookies = client.cookies["tateboys.domo.com"]
-# c = cookies[1]
-# HTTP.shouldsend(c, true, "domo.domo.com", "/api/content/v3/users")
-# @time rr = HTTP.get("https://tateboys.domo.com/api/query/v1/execute/export/6ad6fbc5-2c8c-4381-b703-49c57cd38f2a?accept=text%2Fcsv&includeHeader=true&fileName=TireShop+Inventry.csv"; verbose=false)
-#
-# @time begin
-#     rr = HTTP.get("https://tateboys.domo.com/api/query/v1/execute/export/6ad6fbc5-2c8c-4381-b703-49c57cd38f2a?accept=text%2Fcsv&includeHeader=true&fileName=TireShop+Inventry.csv"; stream=true, streamsize=1, verbose=false)
-#     while !eof(rr.body)
-#         bytes = readavailable(rr.body)
-#         # println("read $(length(bytes)) bytes...")
-#         isempty(bytes) && wait(rr.body)
-#     end
-# end
 end # @testset "HTTP.Client"
