@@ -30,7 +30,7 @@ const writesetcookietests = [
 
 @testset "String(::Cookie)" begin
     for (cookie, expected) in writesetcookietests
-        @test String(cookie) == expected
+        @test String(cookie, false) == expected
     end
 
     cookies = [HTTP.Cookie("cookie-1", "v\$1"),

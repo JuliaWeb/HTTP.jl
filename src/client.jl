@@ -36,7 +36,7 @@ type Client{I <: IO}
     # connection pool for keep-alive; key is host
     pool::Dict{String, Vector{Connection}}
     # cookies are stored in-memory per host and automatically sent when appropriate
-    cookies::Dict{String, Vector{Cookie}}
+    cookies::Dict{String, Set{Cookie}}
     # buffer::Vector{UInt8} #TODO: create a fixed size buffer for reading bytes off the wire and having http_parser use, this should keep allocations down, need to make sure MbedTLS supports blocking readbytes!
     parser::Parser
     logger::I
@@ -47,7 +47,7 @@ end
 const DEFAULT_CHUNK_SIZE = 2^20
 const DEFAULT_REQUEST_OPTIONS = (DEFAULT_CHUNK_SIZE, true, 10.0, 9.0, TLS.SSLConfig(true), 5)
 
-Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection}}(), Dict{String, Vector{Cookie}}(), Parser(Response), logger, options)
+Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection}}(), Dict{String, Set{Cookie}}(), Parser(Response), logger, options)
 Client(logger::IO; args...) = Client(logger, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
 Client(; args...) = Client(STDOUT, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
 
@@ -63,15 +63,15 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
     # check if cookies should be added to outgoing request based on host
     if haskey(client.cookies, host)
         cookies = client.cookies[host]
-        valids = falses(length(cookies))
+        tosend = Set{Cookie}()
         for (i, cookie) in enumerate(cookies)
             if Cookies.shouldsend(cookie, scheme(request.uri) == "https", host, request.uri.path)
-                valids[i] = true
+                push!(tosend, cookie)
             end
         end
-        if sum(valids) > 0
+        if length(tosend) > 0
             verbose && println(client.logger, "Adding cached cookie for host...")
-            request.headers["Cookie"] = string(Base.get(request.headers, "Cookie", ""), cookies[valids])
+            request.headers["Cookie"] = string(Base.get(request.headers, "Cookie", ""), [c for c in tosend])
         end
     end
     # connect to remote host
@@ -113,7 +113,7 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
     verbose && print(client.logger, "\n\nSent. ")
     # process the response
     process!(client, tcp, conn, request, response, stream, verbose)
-    !isempty(response.cookies) && append!(get!(client.cookies, host, Cookie[]), response.cookies)
+    !isempty(response.cookies) && union!(get!(client.cookies, host, Set{Cookie}()), response.cookies)
     # return immediately for streaming responses
     stream && return response
     verbose && println(client.logger, "Received response: ")
@@ -129,6 +129,7 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
             push!(history, response)
             length(history) > request.options.maxredirects && throw(RedirectException(request.options.maxredirects))
             delete!(request.headers, "Host")
+            delete!(request.headers, "Cookie")
             redirectreq = Request(request.method, uri, request.headers, request.body, request.options)
             verbose && println(client.logger, "Redirecting to $uri...")
             return send!(client, redirectreq; history=history, verbose=verbose)

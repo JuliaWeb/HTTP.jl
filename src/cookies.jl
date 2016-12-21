@@ -49,6 +49,10 @@ Cookie(name, value; args...) = Cookie(Cookie(name, value, "", "", DateTime(), 0,
                           (a.secure   == b.secure)  &&
                           (a.httponly == b.httponly)
 
+function Base.hash(x::Cookie, h::UInt)
+    return hash(x.name, hash(x.value, hash(x.path, hash(x.domain, hash(x.expires, hash(x.maxage, hash(x.secure, hash(x.httponly, h))))))))
+end
+
 # request cookie stringify-ing
 function Base.String(c::Cookie, isrequest::Bool=true)
     io = IOBuffer()

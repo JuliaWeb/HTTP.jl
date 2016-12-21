@@ -195,7 +195,8 @@ function hasmessagebody(r::Response)
 end
 
 # Vector{UInt8}, String, IO, or FIFOBuffer
-bodysize(b::Union{Vector{UInt8},String}) = length(b)
+bodysize(b::String) = bodysize(b.data)
+bodysize(b::Vector{UInt8}) = length(b)
 bodysize(b::IOStream) = filesize(b) - position(b)
 bodysize(b::IO) = nb_available(b)
 bodysize(b::FIFOBuffer) = b.nb

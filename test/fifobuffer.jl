@@ -149,5 +149,6 @@
     @test all(readbytes(f, 5) .== UInt8[0x03, 0x04, 0x05, 0x01])
     @test write(f, UInt8[0x01, 0x02, 0x03, 0x04, 0x05]) == 5
     @test all(readbytes(f, 2) .== 0x01:0x02)
-    @test all(readbytes(f, 3) .== 0x03:0x05)
+    @show r = readbytes(f, 3)
+    @test all(r .== 0x03:0x05)
 end; # testset

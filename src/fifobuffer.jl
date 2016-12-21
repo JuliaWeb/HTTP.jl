@@ -181,26 +181,28 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
                 return 0
             else # async: block until there's room to write
                 wait(f.cond)
+                f.nb == f.len && return 0
             end
         end
     end
     if f.f <= f.l
-        diff = f.len - f.l + 1
-        if len > diff
+        # non-wraparound
+        avail = f.len - f.l + 1
+        if len > avail
             # need to wrap around, and check if there's enough room to write full bytes
-            # write `diff` # of bytes to end of buffer
-            unsafe_copy!(f.buffer, f.l, bytes, 1, diff)
-            if len - diff < f.f
+            # write `avail` # of bytes to end of buffer
+            unsafe_copy!(f.buffer, f.l, bytes, 1, avail)
+            if len - avail < f.f
                 # there's enough room to write the rest of bytes
-                unsafe_copy!(f.buffer, 1, bytes, diff + 1, len - diff)
-                f.l = len - diff
+                unsafe_copy!(f.buffer, 1, bytes, avail + 1, len - avail)
+                f.l = len - avail + 1
             else
                 # not able to write all of bytes
-                unsafe_copy!(f.buffer, 1, bytes, diff + 1, f.f - 1)
+                unsafe_copy!(f.buffer, 1, bytes, avail + 1, f.f - 1)
                 f.l = f.f
-                f.nb += diff + f.f - 1
+                f.nb += avail + f.f - 1
                 notify(f.cond)
-                return diff + f.f - 1
+                return avail + f.f - 1
             end
         else
             # there's enough room to write bytes through the end of the buffer
@@ -209,7 +211,7 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
         end
     else
         # already in wrap-around state
-        if len > f.f - f.l
+        if len > mod1(f.f - f.l, f.max)
             # not able to write all of bytes
             unsafe_copy!(f.buffer, 1, bytes, 1, f.f - f.l)
             f.l = f.f
@@ -219,7 +221,7 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
         else
             # there's enough room to write bytes
             unsafe_copy!(f.buffer, f.l, bytes, 1, len)
-            f.l += len
+            f.l  = mod1(f.l + len, f.max)
         end
     end
     f.nb += len
