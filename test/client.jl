@@ -16,12 +16,11 @@
 end
 
 #TODO:
- # make sure we send request cookies in write(tcp, request)
  # remove warts
  # @code_warntype functions to find anything fishy
  # docs: send!, request!, get/post/etc., FIFOBuffer
  # spec tests
- # turn on travis/appveyor/codecov
+ # "get" response body interface
  # throw up a README "state of the package"
  # figure out http-parser dependency
  ####### v0.1 LINE
@@ -57,6 +56,7 @@ for sch in ("http", "https")
     # stream
     r = HTTP.post("$sch://httpbin.org/post"; body="hey")
     @test r.status == 200
+    # stream, but body is too small to actually stream
     r = HTTP.post("$sch://httpbin.org/post"; body="hey", stream=true)
     @test r.status == 200
     r = HTTP.get("$sch://httpbin.org/stream/100")
@@ -71,7 +71,6 @@ for sch in ("http", "https")
         HTTP.@timeout 15.0 begin
             while !eof(r.body)
                 b = readavailable(r.body)
-                println("lenght = $(length(b))....")
             end
         end throw(HTTP.TimeoutException(15.0))
     end

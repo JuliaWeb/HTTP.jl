@@ -303,19 +303,15 @@ end
 
 function output(r, body::FIFOBuffer, data)
     nb = write(body, data)
-    println("outputting body..."); flush(STDOUT)
     if current_task() == r.task
         # main request function hasn't returned yet, so not safe to wait
-        println("still in main task...growing FIFOBuffer...")
         body.max += length(data) - nb
         write(body, view(data, nb+1:length(data)))
     else
         while nb < length(data)
-            println("waiting...")
             nb += write(body, data)
         end
     end
-    println("wrote $nb bytes of data..."); flush(STDOUT)
     return nothing
 end
 
@@ -341,7 +337,6 @@ end
 function response_on_message_complete(parser::Ptr{Parser{ResponseParser}})
     r = unload(parser)
     r.messagecomplete = true
-    println("messagecomplete...")
     eof!(r.val.body)
     return 0
 end

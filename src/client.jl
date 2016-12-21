@@ -55,7 +55,7 @@ const DEFAULT_CLIENT = Client()
 
 send!(request::Request; stream::Bool=false, verbose::Bool=true) = send!(DEFAULT_CLIENT, request; stream=stream, verbose=verbose)
 
-function send!(client::Client, request::Request; history::Vector{Response}=Response[], stream::Bool=false, verbose::Bool=true)
+function send!(client::Client, request::Request, history::Vector{Response}=Response[], stream::Bool=false, verbose::Bool=true)
     # ensure all Request options are set, using client.options if necessary
     # this works because request.options are null by default whereas client.options always have a default
     update!(request.options, client.options)
@@ -64,11 +64,19 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
     if haskey(client.cookies, host)
         cookies = client.cookies[host]
         tosend = Set{Cookie}()
+        expired = Set{Cookie}()
         for (i, cookie) in enumerate(cookies)
             if Cookies.shouldsend(cookie, scheme(request.uri) == "https", host, request.uri.path)
+                if cookie.expires != DateTime()
+                    if cookie.expires < now(Dates.UTC)
+                        # expired
+                        push!(expired, cookie)
+                    end
+                end
                 push!(tosend, cookie)
             end
         end
+        setdiff!(client.cookies[host], expired)
         if length(tosend) > 0
             verbose && println(client.logger, "Adding cached cookie for host...")
             request.headers["Cookie"] = string(Base.get(request.headers, "Cookie", ""), [c for c in tosend])
@@ -89,7 +97,7 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
                 push!(inds, i)
             elseif c.state == Idle
                 busy!(c)
-                verbose && println("Re-using existing connection to host...")
+                verbose && println(client.logger, "Re-using existing connection to host...")
                 conn, tcp = c, c.tcp
                 reused = true
             end

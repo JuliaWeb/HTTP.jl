@@ -1,5 +1,5 @@
 """
-A `FIFOBuffer` is a first-in, first-out in-memory IO buffer type
+A `FIFOBuffer` is a first-in, first-out, in-memory, async-friendly IO buffer type
 
 Constructors:
 `FIFOBuffer([max])`: creates a `FIFOBuffer` with a maximum size of `max`; this means that bytes can be written
@@ -7,14 +7,13 @@ up until `max` number of bytes have been written (with none being read). At this
 and will return 0 for all subsequent writes. If no `max` argument is given, then an "infinite" size `FIFOBuffer` is returned;
 this essentially allows all writes every time.
 
-Reading is supported via `readavailable`, which "extracts" all bytes that have been written; it also
-calls `notify` on the `FIFOBuffer`'s internal `cond::Condition`. This allows writers a workflow like:
+Reading is supported via `readavailable`, which "extracts" all bytes that have been written, starting at the earliest bytes written
 
 ```julia
 while true
+    bytes = getbytes()
     nb = write(fifo, bytes)
-    nb == 0 && wait(fifo)
-    bytes = getmorebytes()
+
 end
 ```
 
