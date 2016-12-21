@@ -105,7 +105,7 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
     end
     # send request over the wire
     verbose && println(client.logger, "Connected. Sending request...")
-    verbose && write(client.logger, request)
+    verbose && show(client.logger, request)
     write(tcp, request)
     # create a Response to fill
     response = Response(stream ? DEFAULT_CHUNK_SIZE : DEFAULT_MAX, request)
@@ -117,7 +117,7 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
     # return immediately for streaming responses
     stream && return response
     verbose && println(client.logger, "Received response: ")
-    verbose && write(client.logger, response); println(client.logger, "\n")
+    verbose && show(client.logger, response); println(client.logger, "\n")
     # check for redirect
     response.history = history
     if request.method != "HEAD" && (300 <= status(response) < 400)

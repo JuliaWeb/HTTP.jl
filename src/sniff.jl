@@ -20,12 +20,13 @@ function sniff end
 
 function sniff(body::IO)
     mark(body)
-    data = read(io, MAXSNIFFLENGTH)
-    reset(io)
+    data = read(body, MAXSNIFFLENGTH)
+    reset(body)
     return sniff(data)
 end
 
-sniff(str::String) = sniff(str.data)
+sniff(str::String) = sniff(str.data[1:min(length(str.data),MAXSNIFFLENGTH)])
+sniff(f::FIFOBuffer) = sniff(String(f))
 
 function sniff(data::Vector{UInt8})
     firstnonws = 1

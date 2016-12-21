@@ -74,16 +74,16 @@ function Request(method, uri, userheaders, body, options::RequestOptions)
         headers["Authorization"] = "Basic $(base64encode(uri.userinfo))"
     end
 
-    if sizeof(body) > get(options, :chunksize, typemax(Int))
+    if shouldchunk(body, get(options, :chunksize, typemax(Int)))
         # chunked-transfer
-        headers["Transfer-Encoding"] = "chunked;" * get(options, :gzip, false) ? " gzip;" : ""
+        headers["Transfer-Encoding"] = "chunked" * (get(options, :gzip, false) ? "; gzip" : "")
     else
         # just set the Content-Length
         if !(method in ("GET", "HEAD", "CONNECT"))
-            headers["Content-Length"] = dec(sizeof(body))
+            headers["Content-Length"] = dec(bodysize(body))
         end
     end
-    if !haskey(headers, "Content-Type") && length(body) > 0
+    if !haskey(headers, "Content-Type") && bodysize(body) > 0
         headers["Content-Type"] = HTTP.sniff(body)
     end
     sch = uri.scheme == "http" ? http : https
@@ -100,7 +100,7 @@ end
 
 Base.showcompact(io::IO, r::Request) = print(io, "Request(", resource(r.uri), ", ",
                                         length(r.headers), " headers, ",
-                                        sizeof(r.body), " bytes in body)")
+                                        bodysize(r.body), " bytes in body)")
 
 type Response
     status::Int
@@ -139,7 +139,7 @@ defaultheaders(::Type{Response}) = Headers(
 function Base.showcompact(io::IO, r::Response)
     print(io, "Response(", r.status, " ", Base.get(STATUS_CODES, r.status, "Unknown Code"), ", ",
           length(r.headers)," headers, ",
-          sizeof(r.body)," bytes in body)")
+          length(r.body)," bytes in body)")
 end
 
 headers(r::Union{Request,Response}) = r.headers
@@ -179,7 +179,7 @@ function cookies(io::IO, r::Response)
 end
 
 # body
-hasmessagebody(r::Request) = length(r.body) > 0
+hasmessagebody(r::Request) = bodysize(r.body) > 0
 
 # https://tools.ietf.org/html/rfc7230#section-3.3
 function hasmessagebody(r::Response)
@@ -200,11 +200,26 @@ bodysize(b::IOStream) = filesize(b) - position(b)
 bodysize(b::IO) = nb_available(b)
 bodysize(b::FIFOBuffer) = b.nb
 
-function send(io, r, body::Union{Vector{UInt8}, String}, sz)
+shouldchunk(b, chksz) = bodysize(b) > chksz
+shouldchunk(b::FIFOBuffer, chksz) = current_task() == b.task ? bodysize(b) > chksz : true
+
+preview(b::Union{Vector{UInt8},String}) = String(b)
+function preview(b::IO)
+    mark(b)
+    str = readstring(b)
+    reset(b)
+    return str
+end
+preview(b::FIFOBuffer) = String(b)
+
+send(io, r, body::String, sz) = send(io, r, body.data, sz)
+function send(io, r, body::Vector{UInt8}, sz)
     # chunked-transfer: Vector{UInt8}, String
     transfered = 0
     while transfered < sz
         chunk = min(r.options.chunksize, sz - transfered)
+        println("sending chunk...\n")
+        println("$(hex(chunk))$CRLF", String(body[transfered+1:transfered+chunk]), CRLF)
         write(io, "$(hex(chunk))$CRLF")
         write(io, view(body, (transfered+1):(transfered+chunk)))
         write(io, CRLF)
@@ -226,18 +241,17 @@ end
 
 function send(io, r, body::FIFOBuffer, sz)
     # chunked-transfer: FIFOBuffer
-    transfered = 0
+    f = body
     while !eof(body)
-        sz = bodysize(body)
-        if sz == 0
-            wait(body)
-            sz = bodysize(body)
-        end
-        chunk = min(r.options.chunksize, sz)
+        println("before FIFO status: f.nb=$(f.nb), f.f=$(f.f), f.l=$(f.l), f.len=$(f.len), chunksize=$(r.options.chunksize)")
+        bytes = readbytes(body, r.options.chunksize) # read at most chunksize
+        println("after FIFO status: f.nb=$(f.nb), f.f=$(f.f), f.l=$(f.l), f.len=$(f.len), chunksize=$(r.options.chunksize)")
+        println("chunk = $(String(bytes))")
+        chunk = length(bytes)
+        chunk == 0 && continue
         write(io, "$(hex(chunk))$CRLF")
-        write(io, readbytes(body, chunk))
+        write(io, bytes)
         write(io, CRLF)
-        transfered += chunk
     end
 end
 
@@ -245,9 +259,7 @@ function body(io::IO, r::Request)
     hasmessagebody(r) || return
     # if size of body is > chunksize or body is a FIFOBuffer, we chunk
     sz = bodysize(r.body)
-    println("sz=$sz; chunksize=$(get(r.options, :chunksize, typemax(Int)))")
-    if sz > get(r.options, :chunksize, typemax(Int)) || typeof(r.body) <: FIFOBuffer
-        println("sending chunked...")
+    if shouldchunk(r.body, get(r.options, :chunksize, typemax(Int)))
         send(io, r, r.body, sz)
         write(io, "$(hex(0))$CRLF$CRLF")
     else
@@ -272,10 +284,10 @@ function Base.show(io::IO, r::Union{Request,Response})
     println(io, "\"\"\"")
     startline(io, r)
     headers(io, r)
-    if length(r.body) > 1000
-        println(io, "[Request body of $(length(r.body)) bytes]")
-    elseif length(r.body) > 0
-        println(io, String(r.body))
+    if bodysize(r.body) > 1000
+        println(io, "[Request body of $(bodysize(r.body)) bytes]")
+    elseif bodysize(r.body) > 0
+        println(io, preview(r.body))
     end
     println(io, "\"\"\"")
 end

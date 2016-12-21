@@ -18,11 +18,13 @@ end
 #TODO:
  # make sure we send request cookies in write(tcp, request)
  # handle other body types for request sending, Vector{UInt8}, String, IO, FIFOBuffer
+ # remove warts
  # @code_warntype functions to find anything fishy
- # benchmark vs. Requests and python requests?
- # docs
+ # docs: send!, request!, get/post/etc., FIFOBuffer
  # spec tests
- # cleanup cookies.jl file to get server-side stuff done
+ # turn on travis/appveyor/codecov
+ # throw up a README "state of the package"
+ # figure out http-parser dependency
  ####### v0.1 LINE
  # proxy stuff
  # multi-part encoded files
@@ -53,8 +55,6 @@ for sch in ("http", "https")
     @test String(readavailable(r.body)) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n"
 
     # stream
-
-    # body posting: Vector{UInt8}, String, IOStream, IOBuffer, FIFOBuffer
     r = HTTP.post("$sch://httpbin.org/post"; body="hey")
     @test r.status == 200
     r = HTTP.post("$sch://httpbin.org/post"; body="hey", stream=true)
@@ -76,6 +76,52 @@ for sch in ("http", "https")
         end throw(HTTP.TimeoutException(15.0))
     end
 
+    # body posting: Vector{UInt8}, String, IOStream, IOBuffer, FIFOBuffer
+    @test HTTP.post("$sch://httpbin.org/post"; body="hey").status == 200
+    @test HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y']).status == 200
+    io = IOBuffer("hey"); seekstart(io)
+    @test HTTP.post("$sch://httpbin.org/post"; body=io).status == 200
+    tmp = tempname()
+    open(f->write(f, "hey"), tmp, "w")
+    io = open(tmp)
+    @test HTTP.post("$sch://httpbin.org/post"; body=io).status == 200
+    close(io); rm(tmp)
+    f = HTTP.FIFOBuffer(3)
+    write(f, "hey")
+    @test HTTP.post("$sch://httpbin.org/post"; body=f).status == 200
+
+    # chunksize
+    @test HTTP.post("$sch://httpbin.org/post"; body="hey", chunksize=2).status == 200
+    @test HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], chunksize=2).status == 200
+    io = IOBuffer("hey"); seekstart(io)
+    @test HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2).status == 200
+    tmp = tempname()
+    open(f->write(f, "hey"), tmp, "w")
+    io = open(tmp)
+    @test HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2).status == 200
+    close(io); rm(tmp)
+    f = HTTP.FIFOBuffer(3)
+    write(f, "hey")
+    @test HTTP.post("$sch://httpbin.org/post"; body=f, chunksize=2).status == 200
+
+    # asynchronous
+    f = HTTP.FIFOBuffer()
+    write(f, "hey")
+    t = @async HTTP.post("$sch://httpbin.org/post"; body=f)
+    wait(f) # wait for the async call to write it's first data
+    write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
+    write(f, "sailor")
+    HTTP.eof!(f) # setting eof on f causes the async request to send a final chunk and return the response
+    while !istaskdone(t)
+        sleep(0.001)
+    end
+    @test t.result.status == 200
+
+    # chunksize
+    # test FIFOBuffer async vs. non-async
+    # test FIFOBuffer > chunksize vs. < chunksize
+
+
     # redirects
     r = HTTP.get("$sch://httpbin.org/redirect/1")
     @test r.status == 200
@@ -89,6 +135,7 @@ for sch in ("http", "https")
     @test HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd").status == 200
     @test HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd").status == 200
 
+    # readtimeout
     @test_throws HTTP.TimeoutException HTTP.get("$sch://httpbin.org/delay/3"; readtimeout=1.0)
 end
 

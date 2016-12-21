@@ -50,7 +50,16 @@ FIFOBuffer() = FIFOBuffer(DEFAULT_MAX)
 
 Base.length(f::FIFOBuffer) = f.nb
 Base.wait(f::FIFOBuffer) = wait(f.cond)
-Base.eof(f::FIFOBuffer) = f.eof
+function Base.eof(f::FIFOBuffer)
+    if current_task() == f.task
+        # not asynchronous, just read until buffer is empty
+        return f.nb == 0
+    else
+        # if being called asynchronously, allow user
+        # to set eof by calling `eof!`
+        return f.eof
+    end
+end
 function eof!(f::FIFOBuffer)
     f.eof = true
     notify(f.cond)
@@ -72,6 +81,7 @@ function Base.readavailable(f::FIFOBuffer)
             return UInt8[]
         else # async: block till there's data to read
             wait(f.cond)
+            f.nb == 0 && return UInt8[]
         end
     end
     if f.f < f.l
@@ -83,6 +93,39 @@ function Base.readavailable(f::FIFOBuffer)
     end
     f.f = f.l
     f.nb = 0
+    notify(f.cond)
+    return bytes
+end
+
+# read at most `nb` bytes
+function Base.readbytes(f::FIFOBuffer, nb)
+    # no data to read
+    if f.nb == 0
+        if current_task() == f.task
+            return UInt8[]
+        else # async: block till there's data to read
+            wait(f.cond)
+            f.nb == 0 && return UInt8[]
+        end
+    end
+    if f.f < f.l
+        l = (f.l - f.f) <= nb ? (f.l - 1) : (f.f + nb - 1)
+        @inbounds bytes = f.buffer[f.f:l]
+        f.f = mod1(l + 1, f.max)
+    else
+        # we've wrapped around
+        if nb <= (f.len - f.f + 1)
+            # we can read all we need between f.f and f.len
+            @inbounds bytes = f.buffer[f.f:(f.f + nb - 1)]
+            f.f = mod1(f.f + nb, f.max)
+        else
+            @inbounds bytes = f.buffer[f.f:f.len]
+            l = min(f.l - 1, nb - length(bytes))
+            @inbounds append!(bytes, view(f.buffer, 1:l))
+            f.f = mod1(l + 1, f.max)
+        end
+    end
+    f.nb -= length(bytes)
     notify(f.cond)
     return bytes
 end
