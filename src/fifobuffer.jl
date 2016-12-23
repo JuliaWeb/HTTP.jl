@@ -44,8 +44,17 @@ end
 
 const DEFAULT_MAX = Int(typemax(Int32))^2
 
+FIFOBuffer(f::FIFOBuffer) = f
 FIFOBuffer(max) = FIFOBuffer(0, max, 0, 1, 1, UInt8[], Condition(), current_task(), false)
 FIFOBuffer() = FIFOBuffer(DEFAULT_MAX)
+
+FIFOBuffer(str::String) = FIFOBuffer(str.data)
+function FIFOBuffer(bytes::Vector{UInt8})
+    len = length(bytes)
+    return FIFOBuffer(len, len, len, 1, 1, bytes, Condition(), current_task(), false)
+end
+FIFOBuffer(io::IOStream) = FIFOBuffer(read(io))
+FIFOBuffer(io::IO) = FIFOBuffer(readavailable(io))
 
 Base.length(f::FIFOBuffer) = f.nb
 Base.wait(f::FIFOBuffer) = wait(f.cond)

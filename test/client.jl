@@ -50,8 +50,9 @@ for sch in ("http", "https")
     @test r.status == 200
     body = String(readavailable(r.body))
     @test (body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n")
-    r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
-    @test String(readavailable(r.body)) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
+
+    # r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
+    # @test String(readavailable(r.body)) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
 
     # stream
     r = HTTP.post("$sch://httpbin.org/post"; body="hey")
