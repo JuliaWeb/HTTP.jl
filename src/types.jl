@@ -117,7 +117,7 @@ end
 Response() = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(), Task(1), Nullable(), Response[])
 Response(n, r::Request) = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(n), Task(1), Nullable(r), Response[])
 Response(s::Int) = Response(s, defaultheaders(Response), FIFOBuffer())
-Response(body::String) = Response(200, defaultheaders(Response), body)
+Response(body::String) = Response(200, defaultheaders(Response), FIFOBuffer(body))
 Response(s::Int, h::Headers, body) =
   Response(s, 1, 1, h, true, Cookie[], body, Task(1), Nullable(), Response[])
 
@@ -160,7 +160,16 @@ function startline(io::IO, r::Response)
 end
 
 # headers
-function headers(io::IO, r::Union{Request, Response})
+function headers(io::IO, r::Request)
+    for (k, v) in headers(r)
+        write(io, "$k: $v$CRLF")
+    end
+    cookies(io, r)
+    write(io, CRLF)
+end
+
+function headers(io::IO, r::Response)
+    r.headers["Content-Length"] = string(length(r.body))
     for (k, v) in headers(r)
         write(io, "$k: $v$CRLF")
     end
@@ -182,9 +191,9 @@ hasmessagebody(r::Request) = length(r.body) > 0
 
 # https://tools.ietf.org/html/rfc7230#section-3.3
 function hasmessagebody(r::Response)
-    if 100 <= r.status < 300 || r.status == 304
+    if 100 <= r.status < 200 || r.status == 204 || r.status == 304
         return false
-    elseif !isnull(r.request)
+    elseif !Base.isnull(r.request)
         req = Base.get(r.request)
         if req.method in ("HEAD", "CONNECT")
             return false
@@ -216,7 +225,7 @@ end
 
 function body(io::IO, r::Response)
     hasmessagebody(r) || return
-    write(io, String(r.body))
+    write(io, r.body)
 end
 
 function Base.write(io::IO, r::Union{Request, Response})
