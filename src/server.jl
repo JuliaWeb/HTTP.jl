@@ -1,14 +1,3 @@
-# High-level
- # Bind TCPServer and listen to host:port
- # Outer event loop:
-    # accept TCPSocket connections
-    # @async the connection off into it's own green thread
-      # initialize a new HTTP Parser for this new TCPSocket connection
-      # continue reading data off connection and passing it thru to our parser
-      # as parser detects "checkpoints", callback functions will be called
-        # on_url: choose appropriate resource handler from those "registered"
-        # on_message_complete:
-
 #TODO:
  # allow limits on header sizes/body sizes?
  # server send 505 for unsupported HTTP versions: https://tools.ietf.org/html/rfc7230#section-2.6
@@ -22,8 +11,6 @@
  # request/response timeout abilities
  # add in "events" handling
  # dealing w/ cookies
- # be able to pass in a TLS.SSLConfig
- # make default buffer size arg to Server instead of global const
  # reverse proxy?
  # keepalive offload?
  # auto-caching?
@@ -48,10 +35,6 @@
  # IP address-based geolocation
  # user-tracking
  # WebDAV
- # detect request/file response content types?
- # multi-process server
-  # worker `serve` function that creates ServerClient, then `take!`s on a Channel{TCPSocket} and @async `process!`
-  # master process does `tcp = accpet(server.tcp)`, then `put!`s it on Channel{TCPSocket}
  # FastCGI
  # default handler:
    # handle all common http requests/etc.
@@ -62,171 +45,160 @@
  # handle redirects
    # read through RFCs, writing tests
  # support auto-decompress, deflate, gunzip
+ # buffer re-use for server/client wire-reading
 
 type Server{T <: Scheme}
-    host::IPAddr
-    port::Int
     handler::Function
     logger::IO
-    count::Int
+    queue::RemoteChannel{Channel{TCPSocket}}
     tlsconfig::TLS.SSLConfig
-    tcp::Base.TCPServer
 
-    function Server(host::IPAddr, port::Integer, handler::Function, logger::IO)
-        new{T}(host, port, handler, logger, 0)
+    function Server(handler::Function, logger::IO, maxconn::Int, tlsconfig::TLS.SSLConfig=TLS.SSLConfig())
+        new{T}(handler, logger, RemoteChannel(()->Channel{TCPSocket}(maxconn)), tlsconfig)
     end
 end
 
-Base.listen(s::Server) = (s.tcp = listen(s.host, s.port); return nothing)
-
-const DEFAULT_BUFFER_SIZE = 1024
-
-type ServerClient{T <: Scheme, I <: IO}
-    id::Int
-    server::Server
-    parser::Parser
-    keepalive::Bool
-    replied::Bool
-    buffer::Vector{UInt8}
-    tcp::TCPSocket
-    socket::I
-    request::Request
-    response::Response
-
-    function ServerClient(id, server, parser, keepalive, replied, buffer, tcp, socket)
-        sc = new(id, server, parser, keepalive, replied, buffer, tcp, socket)
-        sc.request = parser.data.val
-        sc.response = Response()
-        return sc
-    end
-end
-
-function ServerClient{T}(server::Server{T})
-    if T == https
-        tls = TLS.SSLContext()
-        TLS.setup!(tls, server.tlsconfig)
-        c = ServerClient{https, TLS.SSLContext}(server.count += 1, server, Parser(Request, https), false, false, Vector{UInt8}(DEFAULT_BUFFER_SIZE), TCPSocket(), tls)
-    else
-        tcp = TCPSocket()
-        c = ServerClient{http, TCPSocket}(server.count += 1, server, Parser(Request, http), false, false, Vector{UInt8}(DEFAULT_BUFFER_SIZE), tcp, tcp)
-    end
-    finalizer(c, x->close(x.tcp))
-    return c
-end
-
-# gets called when a full request has been parsed by our HTTP.Parser
-function handle!(client::ServerClient)
-    local response
-    println(client.server.logger, "Received request on client: $(client.id) \n"); flush(STDOUT)
-    show(client.server.logger, client.request)
-    println(client.server.logger); flush(STDOUT)
-    if !client.replied
-        try
-            response = client.server.handler(client.request, client.response)
-        catch err
-            response = Response(500)
-            Base.display_error(err, catch_backtrace())
-        end
-
-        response.headers["Connection"] = client.keepalive ? "keep-alive" : "close"
-        println(client.server.logger, "Responding with response on client: $(client.id) \n"); flush(STDOUT)
-        show(client.server.logger, response)
-        println(client.server.logger); flush(STDOUT)
-        write(client.socket, response)
-    end
-    client.replied = false
-    client.keepalive || close(client.socket)
-    return
-end
-
-initTLS!(client::ServerClient{http}) = return
-function initTLS!(client::ServerClient{https})
+function process!{T}(p, conn, logger, socket::T, handler, parser::Parser{RequestParser})
+    println(logger, "Processing on ServerWorker=$p, conn=$conn...")
     try
-        TLS.associate!(client.socket, client.tcp)
-        TLS.handshake!(client.socket)
-    catch e
-        println("Error establishing SSL connection: ", e); flush(STDOUT)
-        close(client.tcp)
-    end
-    return
-end
-
-function process!{T}(client::ServerClient{T})
-    println(client.server.logger, "`process!`: client connection: ", client.id); flush(STDOUT)
-    initTLS!(client)
-    retry = 1
-    while !eof(client.socket)
-        # if no data after 30 seconds, break out
-        nb = @timeout 10 readbytes!(client.socket, client.buffer, nb_available(client.socket)) break
-        if nb < 1
-            # `retry` tracks how many times we've unsuccessfully read data from the client
-            # give up after 10 seconds of no data received
-            sleep(1)
-            retry += 1
-            retry == 10 && break
-            continue
-        else
-            http_parser_execute(client.parser, DEFAULT_REQUEST_PARSER_SETTINGS, client.buffer, nb)
-            if errno(client.parser) != 0
-                # error in parsing the http request
+        while isopen(socket)
+            # if no data after 10 seconds, break out
+            # allow this as server setting
+            buffer = @timeout 180 readavailable(socket) begin
+                println(logger, "Connection timed out waiting for request on ServerWorker=$p, conn=$conn")
                 break
-            elseif client.parser.data.messagecomplete
-                retry = 0
-                handle!(client)
+            end
+            http_parser_execute(parser, DEFAULT_REQUEST_PARSER_SETTINGS, buffer, length(buffer))
+            if errno(parser) != 0
+                # error in parsing the http request
+                println(logger, "http-parser error on ServerWorker=$p, conn=$conn...")
+                break
+            elseif parser.data.messagecomplete
+                request = parser.data.val
+                response = Response()
+                println(logger, "Received request on ServerWorker=$p, conn=$conn\n")
+                show(logger, request)
+                try
+                    response = handler(request, response)
+                catch e
+                    response = Response(500)
+                    println(logger, e)
+                end
+                response.headers["Connection"] = request.keepalive ? "keep-alive" : "close"
+                println(logger, "Responding with response on ServerWorker=$p, conn=$conn\n")
+                show(logger, response)
+                println(logger)
+                write(socket, response)
+                request.keepalive || close(socket)
             end
         end
+    finally
+        close(socket)
     end
-    println(client.server.logger, "`process!`: finished processing client: ", client.id); flush(STDOUT)
+    println(logger, "Finished processing on ServerWorker=$p, conn=$conn")
+    return nothing
 end
 
-function serve{T}(server::Server{T})
-    println(server.logger, "Starting server to listen on: $(server.host):$(server.port)"); flush(STDOUT)
-    listen(server)
-
+function ServerWorker{T <: Scheme}(p::Int, ::Type{T}, queue, handler, tlsconfig)
+    logger = STDOUT
+    println(logger, "ServerWorker=$p initialized...")
+    conn = 1
     while true
-        # initialize a ServerClient w/ Parser
-        client = ServerClient(server)
-        println(server.logger, "New client initialized: ", client.id); flush(STDOUT)
         try
-            # accept blocks until a new connection is detected
-            accept(server.tcp, client.tcp)
-            println(server.logger, "New client connection accepted: ", client.id); flush(STDOUT)
-
-            let client = client
-                @async process!(client)
+            parser = Parser(Request)
+            tcp = take!(queue)
+            println(logger, "Took TCPSocket off the server queue on ServerWorker=$p...")
+            if T == http
+                let conn=conn, tcp=tcp, parser=parser
+                    @async process!(p, conn, logger, tcp, handler, parser)
+                end
+            else
+                let conn=conn, tcp=tcp, parser=parser
+                    @async process!(p, conn, logger, initTLS!(T, tcp, tlsconfig), handler, parser)
+                end
             end
         catch e
-            if typeof(e) <: InterruptException
-                println(server.logger, "Interrupt detectd, shutting down..."); flush(STDOUT)
-                break
-            else
-                if !isopen(server.tcp)
-                    println(server.logger, "Server TCPServer is closed, shutting down..."); flush(STDOUT)
-                    # Server was closed while waiting to accept client. Exit gracefully.
-                    break
-                end
-                println(server.logger, "Error encountered: $e"); flush(STDOUT)
-                println(server.logger, "Resuming serving..."); flush(STDOUT)
-            end
+            println(logger, "Error encountered on ServerWorker=$p")
+            println(logger, e)
+            continue
         end
+        conn += 1
     end
-    close(server.tcp)
+    println(logger, "ServerWorker=$p shutting down...")
     return
 end
 
-function serve(host::IPAddr,port::Int,
-                  handler=(req, rep) -> Response("Hello World!"),
-                  logger=STDOUT;
-                  cert::String="",
-                  key::String="")
+function initTLS!(::Type{https}, tcp, tlsconfig)
+    try
+        tls = TLS.SSLContext()
+        TLS.setup!(tls, tlsconfig)
+        TLS.associate!(tls, tcp)
+        TLS.handshake!(tls)
+    catch e
+        println("Error establishing SSL connection: ", e)
+        close(tcp)
+    end
+    return tls
+end
+
+# main process event loop; listens on host:port, starts ServerWorkers to process requests
+# accepts new TCP connections and puts them in server.queue to be processed
+function serve{T}(server::Server{T}, host, port)
+    println(server.logger, "Starting workers for request processing...")
+    workers = Future[@spawnat(p, ServerWorker(p, T, server.queue, server.handler, server.tlsconfig)) for p in procs()]
+    println(server.logger, "Starting server to listen on: $(host):$(port)")
+    tcpserver = listen(host, port)
+    while true
+        tcp = TCPSocket()
+        try
+            # accept blocks until a new connection is detected
+            println("going to accept...")
+            accept(tcpserver, tcp)
+            println("accepted...")
+            println(server.logger, "New tcp connection accepted, queuing...")
+            put!(server.queue, tcp)
+        catch e
+            if typeof(e) <: InterruptException
+                println(server.logger, "Interrupt detected, shutting down...")
+                interrupt()
+                break
+            else
+                if !isopen(tcpserver)
+                    println(server.logger, "Server TCPServer is closed, shutting down...")
+                    # Server was closed while waiting to accept client. Exit gracefully.
+                    interrupt()
+                    break
+                end
+                println(server.logger, "Error encountered: $e")
+                println(server.logger, "Resuming serving...")
+            end
+        end
+    end
+    close(tcpserver)
+    return
+end
+
+const DEFAULT_MAX_CONNECTIONS = 10000
+
+function serve(host::IPAddr, port::Int,
+               handler=(req, rep) -> Response("Hello World!"),
+               logger=STDOUT;
+               cert::String="",
+               key::String="",
+               maxconn::Int=DEFAULT_MAX_CONNECTIONS)
     if cert != "" && key != ""
-        server = Server{https}(host, port, handler, logger)
-        server.tlsconfig = TLS.SSLConfig(cert, key)
+        server = Server{https}(handler, logger, maxconn, TLS.SSLConfig(cert, key))
     else
-        server = Server{http}(host, port, handler, logger)
+        server = Server{http}(handler, logger, maxconn)
     end
 
-    return serve(server)
+    return serve(server, host, port)
 end
-serve(; host::IPAddr=IPv4(127,0,0,1), port::Int=8081, handler::Function=(req, rep) -> Response("Hello World!"),
-        logger::IO=STDOUT, cert::String="", key::String="") = serve(host, port, handler, logger; cert=cert, key=key)
+serve(; host::IPAddr=IPv4(127,0,0,1),
+        port::Int=8081,
+        handler::Function=(req, rep) -> Response("Hello World!"),
+        logger::IO=STDOUT,
+        cert::String="",
+        key::String="",
+        maxconn::Int=DEFAULT_MAX_CONNECTIONS) =
+    serve(host, port, handler, logger; cert=cert, key=key, maxconn=maxconn)
