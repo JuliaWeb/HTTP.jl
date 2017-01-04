@@ -13,7 +13,6 @@ Reading is supported via `readavailable`, which "extracts" all bytes that have b
 while true
     bytes = getbytes()
     nb = write(fifo, bytes)
-
 end
 ```
 

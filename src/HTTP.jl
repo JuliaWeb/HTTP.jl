@@ -8,6 +8,8 @@ const TLS = MbedTLS
 
 import Base.==
 
+const DEBUG = false
+
 include("statuscodes.jl")
 include("utils.jl")
 include("fifobuffer.jl")

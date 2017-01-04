@@ -151,12 +151,14 @@ unload{R}(p::Ptr{Parser{R}}) = (unsafe_load(p).data)::R
 
 # on_message_begin
 function request_on_message_begin(parser::Ptr{Parser{RequestParser}})
+    @debug(DEBUG, "request_on_message_begin")
     r = unload(parser)
     reset!(r)
     return 0
 end
 
-function response_on_message_begin(parser::Ptr{Parser{ResponseParser}})
+function response_on_message_begin(parser::Ptr{Parser{ResponseParser}})\
+    @debug(DEBUG, "response_on_message_begin")
     r = unload(parser)
     reset!(r)
     return 0
@@ -164,16 +166,20 @@ end
 
 # on_url (requests only)
 function request_on_url(parser::Ptr{Parser{RequestParser}}, at, len)
+    @debug(DEBUG, "request_on_url")
     r = unload(parser)
     r.val.uri = URI(str(at, len))
+    @debug(DEBUG, r.val.uri)
     return 0
 end
 response_on_url(parser, at, len) = 0
 
 # on_status_complete (responses only)
 function response_on_status_complete(parser::Ptr{Parser{ResponseParser}})
+    @debug(DEBUG, "response_on_status_complete")
     r = unload(parser)
     r.val.status = unsafe_load(parser).status_code
+    @debug(DEBUG, r.val.status)
     return 0
 end
 request_on_status_complete(parser) = 0
@@ -187,6 +193,7 @@ function request_on_header_field(parser::Ptr{Parser{RequestParser}}, at, len)
         r.fieldbuffer *= str(at, len)
     else
         r.val.headers[r.fieldbuffer] = r.valuebuffer
+        @debug(DEBUG, r.val.headers[r.fieldbuffer])
         r.fieldbuffer = str(at, len)
     end
     r.parsedfield = true
@@ -229,6 +236,7 @@ function response_on_header_field(parser::Ptr{Parser{ResponseParser}}, at, len)
     else
         issetcookie(r.fieldbuffer) && push!(r.cookies, r.valuebuffer)
         r.val.headers[r.fieldbuffer] = get!(r.val.headers, r.fieldbuffer, "") * r.valuebuffer
+        @debug(DEBUG, r.val.headers[r.fieldbuffer])
         r.fieldbuffer = str(at, len)
     end
     r.parsedfield = true
@@ -250,8 +258,10 @@ function request_on_headers_complete(parser::Ptr{Parser{RequestParser}})
     # store the last header key=>val
     if !isempty(r.fieldbuffer)
         r.val.headers[r.fieldbuffer] = r.valuebuffer
+        @debug(DEBUG, r.val.headers[r.fieldbuffer])
     end
     r.val.method = http_method_str(p.method)
+    @debug(DEBUG, r.val.method)
     r.val.major = p.http_major
     r.val.minor = p.http_minor
     r.val.keepalive = http_should_keep_alive(parser) != 0
@@ -266,8 +276,10 @@ function response_on_headers_complete(parser::Ptr{Parser{ResponseParser}})
     issetcookie(r.fieldbuffer) && push!(r.cookies, r.valuebuffer)
     if !isempty(r.fieldbuffer)
         r.val.headers[r.fieldbuffer] = get!(r.val.headers, r.fieldbuffer, "") * r.valuebuffer
+        @debug(DEBUG, r.val.headers[r.fieldbuffer])
     end
     r.val.status = p.status_code
+    @debug(DEBUG, r.val.status)
     r.val.major = p.http_major
     r.val.minor = p.http_minor
     r.val.keepalive = http_should_keep_alive(parser) != 0
@@ -303,6 +315,7 @@ end
 
 function output(r, body::FIFOBuffer, data)
     nb = write(body, data)
+    @debug(DEBUG, String(body))
     if current_task() == r.task
         # main request function hasn't returned yet, so not safe to wait
         body.max += length(data) - nb
@@ -316,12 +329,14 @@ function output(r, body::FIFOBuffer, data)
 end
 
 function request_on_body(parser::Ptr{Parser{RequestParser}}, at, len)
+    @debug(DEBUG, "request_on_body")
     r = unsafe_load(parser).data
     output(r, r.val.body, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
     return 0
 end
 
 function response_on_body(parser::Ptr{Parser{ResponseParser}}, at, len)
+    @debug(DEBUG, "response_on_body")
     r = unsafe_load(parser).data
     output(r, r.val.body, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
     return 0

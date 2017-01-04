@@ -32,3 +32,21 @@ macro timeout(t, expr, then, pollint=0.01)
         tsk.result
     end
 end
+
+"""
+A zero-cost debug statement when debugging is "turned on". Set `const DEBUG = true` in HTTP.jl and re-compile the package to see
+debug-level output from the package.
+"""
+macro debug(should, expr)
+    if eval(should)
+        if typeof(expr) == String
+            return esc(:(println("[DEBUG - ", @__FILE__, ":", @__LINE__, "]: ", $expr)))
+        else
+            return esc(:(println("[DEBUG - ", @__FILE__, ":", @__LINE__, "]: ", $(sprint(Base.show_unquoted, expr)), " = ", $expr)))
+        end
+    else
+        if typeof(expr) != String
+            return esc(:($expr))
+        end
+    end
+end

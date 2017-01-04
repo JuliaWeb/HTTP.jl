@@ -179,6 +179,7 @@ function process!(client, conn, request, response, stream, verbose)
         # if no data after 30 seconds, break out
         verbose && println(client.logger, "Checking for response w/ read timeout of = $(request.options.readtimeout)...")
         buffer = @timeout request.options.readtimeout readavailable(conn.tcp) throw(TimeoutException(request.options.readtimeout))
+        @debug(DEBUG, String(buffer))
         verbose && println(client.logger, "Received response bytes; processing...")
         http_parser_execute(client.parser, DEFAULT_RESPONSE_PARSER_SETTINGS, buffer, length(buffer))
         if errno(client.parser) != 0
