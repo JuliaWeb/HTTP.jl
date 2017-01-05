@@ -306,15 +306,6 @@ function response_on_headers_complete(parser::Ptr{Parser{ResponseParser}})
 end
 
 # on_body
-output(r, body::IO, data) = (write(body, data); return nothing)
-output(r, body::Vector{UInt8}, data) = (append!(body, data); return nothing)
-output(r, body::String, data) = (r.val.body *= String(data); return nothing)
-function output(r, body::IOBuffer, data)
-    append!(body.data, data)
-    body.size = length(body.data)
-    return nothing
-end
-
 function output(r, body::FIFOBuffer, data)
     nb = write(body, data)
     @debug(DEBUG, String(body))
@@ -354,7 +345,7 @@ end
 function response_on_message_complete(parser::Ptr{Parser{ResponseParser}})
     r = unload(parser)
     r.messagecomplete = true
-    eof!(r.val.body)
+    close(r.val.body)
     return 0
 end
 

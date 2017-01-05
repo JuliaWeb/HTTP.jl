@@ -405,13 +405,14 @@ end
 escape(str) = escape_with(str, unescaped)
 escape_form(str) = replace(escape_with(str, unescaped_form), " ", "+")
 
-##
-# Splits the userinfo portion of an URI in the format user:password and
-# returns the components as tuple.
-#
-# Note: This is just a convenience method, and this form of usage is
-# deprecated as of rfc3986.
-# See: http://tools.ietf.org/html/rfc3986#section-3.2.1
+"""
+Splits the userinfo portion of an URI in the format user:password and
+returns the components as tuple.
+
+Note: This is just a convenience method, and this form of usage is
+deprecated as of rfc3986.
+See: http://tools.ietf.org/html/rfc3986#section-3.2.1
+"""
 function userinfo(uri::URI)
     Base.warn_once("Use of the format user:password is deprecated (rfc3986)")
     uinfo = uri.userinfo
@@ -422,9 +423,10 @@ function userinfo(uri::URI)
     (username, password)
 end
 
-##
-# Splits the path into components and parameters
-# See: http://tools.ietf.org/html/rfc3986#section-3.3
+"""
+Splits the path into components and parameters
+See: http://tools.ietf.org/html/rfc3986#section-3.3
+"""
 function splitpath(uri::URI, starting=2)
     elems = String[]
     p = uri.path

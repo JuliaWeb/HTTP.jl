@@ -106,7 +106,9 @@ function ServerWorker{T <: Scheme}(p::Int, ::Type{T}, queue, handler, tlsconfig)
     while true
         try
             parser = Parser(Request)
+            println("going to take...")
             tcp = take!(queue)
+            tcp = Base.init_stdio(tcp.handle)
             println(logger, "Took TCPSocket off the server queue on ServerWorker=$p...")
             if T == http
                 let conn=conn, tcp=tcp, parser=parser
@@ -145,7 +147,13 @@ end
 # accepts new TCP connections and puts them in server.queue to be processed
 function serve{T}(server::Server{T}, host, port)
     println(server.logger, "Starting workers for request processing...")
-    workers = Future[@spawnat(p, ServerWorker(p, T, server.queue, server.handler, server.tlsconfig)) for p in procs()]
+    if nprocs() > 1
+        for p in filter(x->x != 1, procs())
+            @spawnat(p, ServerWorker(p, T, server.queue, server.handler, server.tlsconfig))
+        end
+    else
+        @spawnat(1, ServerWorker(1, T, server.queue, server.handler, server.tlsconfig))
+    end
     println(server.logger, "Starting server to listen on: $(host):$(port)")
     tcpserver = listen(host, port)
     while true

@@ -4,3 +4,5 @@
 .DS_Store
 *.key
 *.crt
+docs/build/
+docs/site/

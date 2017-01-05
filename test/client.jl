@@ -15,21 +15,6 @@
     @test conn.state == HTTP.Dead
 end
 
-#TODO:
- # remove warts
- # @code_warntype functions to find anything fishy
- # docs: send!, request!, get/post/etc., FIFOBuffer
- # spec tests
- # "get" response body interface
- # throw up a README "state of the package"
- # figure out http-parser dependency
- ####### v0.1 LINE
- # proxy stuff
- # multi-part encoded files
- # response caching?
- # digest authentication
- # auto-gzip response
-
 for sch in ("http", "https")
 
     @test HTTP.get("$sch://httpbin.org/ip").status == 200
@@ -111,7 +96,7 @@ for sch in ("http", "https")
     wait(f) # wait for the async call to write it's first data
     write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
     write(f, "sailor")
-    HTTP.eof!(f) # setting eof on f causes the async request to send a final chunk and return the response
+    close(f) # setting eof on f causes the async request to send a final chunk and return the response
     while !istaskdone(t)
         sleep(0.001)
     end

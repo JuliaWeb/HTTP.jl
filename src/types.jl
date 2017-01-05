@@ -16,6 +16,10 @@ function get(value, name::Symbol, default)
     return isnull(val) ? default : val
 end
 
+"""
+A type to represent various http request options. Lives as a separate type so that options can be set
+at the `HTTP.Client` level to be applied to every request sent.
+"""
 type RequestOptions
     chunksize::?(Int)
     gzip::?(Bool)
@@ -45,14 +49,17 @@ end
 RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null; kwargs...) =
     RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr); kwargs...)
 
+"""
+A type representing an HTTP request.
+"""
 type Request
-    method::String # HTTP method string (e.g. "GET")
+    method::String
     major::Int8
     minor::Int8
     uri::URI
     headers::Headers
     keepalive::Bool
-    body::FIFOBuffer # Vector{UInt8}, String, IO, FIFOBuffer
+    body::FIFOBuffer
     options::RequestOptions
 end
 
@@ -101,6 +108,9 @@ Base.showcompact(io::IO, r::Request) = print(io, "Request(", resource(r.uri), ",
                                         length(r.headers), " headers, ",
                                         length(r.body), " bytes in body)")
 
+"""
+A type representing an HTTP response.
+"""
 type Response
     status::Int
     major::Int8
@@ -146,6 +156,8 @@ history(r::Response) = r.history
 cookies(r::Response) = r.cookies
 status(r::Response) = r.status
 statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
+bytes(r::Response) = readavailable(r.body)
+Base.string(r::Response) = String(bytes(r.body))
 
 const CRLF = "\r\n"
 
@@ -206,11 +218,11 @@ shouldchunk(b::FIFOBuffer, chksz) = current_task() == b.task ? length(b) > chksz
 
 function body(io::IO, r::Request)
     hasmessagebody(r) || return
-    # if size of body is > chunksize or body is a FIFOBuffer, we chunk
     sz = length(r.body)
-    if shouldchunk(r.body, get(r.options, :chunksize, typemax(Int)))
+    chksz = get(r.options, :chunksize, typemax(Int))
+    if shouldchunk(r.body, chksz)
         while !eof(r.body)
-            bytes = readbytes(r.body, r.options.chunksize) # read at most chunksize
+            bytes = readbytes(r.body, chksz) # read at most chunksize
             chunk = length(bytes)
             chunk == 0 && continue
             write(io, "$(hex(chunk))$CRLF")
@@ -221,6 +233,7 @@ function body(io::IO, r::Request)
     else
         write(io, r.body)
     end
+    return
 end
 
 function body(io::IO, r::Response)
@@ -242,6 +255,8 @@ function Base.show(io::IO, r::Union{Request,Response})
     headers(io, r)
     if length(r.body) > 1000
         println(io, "[Request body of $(length(r.body)) bytes]")
+        println(io, String(readbytes(r.body, 1000)))
+        println(io, "...")
     elseif length(r.body) > 0
         println(io, String(r.body))
     end

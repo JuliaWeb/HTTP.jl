@@ -25,12 +25,12 @@ A type to make connections to remote hosts, send HTTP requests, and manage state
 Takes an optional `logger` IO argument where client activity is recorded (defaults to `STDOUT`).
 Additional keyword arguments can be passed that will get transmitted with each HTTP request:
 
-* `chunksize::Int`:
+* `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`
 <!-- * `gzip::Bool`: -->
 * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
 * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
 * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
-* `maxredirects::Int`:
+* `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
 """
 type Client{I <: IO}
     # connection pools for keep-alive; key is host
@@ -54,12 +54,23 @@ Client(; args...) = Client(STDOUT, RequestOptions(DEFAULT_REQUEST_OPTIONS...; ar
 
 const DEFAULT_CLIENT = Client()
 
+"""
+    `HTTP.send!([client::HTTP.Client,] request; stream::Bool=false)`
+
+Send an `HTTP.Request` to its associated host/uri. Set the keyword argument `stream=true` to enable
+response streaming, which will result in `HTTP.send!` potentially returning before the entire response
+body has been received. If the response body buffer fills all the way up, it will block until its contents
+are read, freeing up additional space to write.
+"""
+function send! end
+
 send!(request::Request; stream::Bool=false, verbose::Bool=true) = send!(DEFAULT_CLIENT, request; stream=stream, verbose=verbose)
 
 function send!(client::Client, request::Request; history::Vector{Response}=Response[], stream::Bool=false, verbose::Bool=true)
     # ensure all Request options are set, using client.options if necessary
     # this works because request.options are null by default whereas client.options always have a default
     update!(request.options, client.options)
+    client.logger != STDOUT && (verbose = true)
     return scheme(request.uri) == "http" ? send!(client, request, getconn(http, client, request , verbose), history, stream, verbose) :
                                            send!(client, request, getconn(https, client, request, verbose), history, stream, verbose)
 end
@@ -234,8 +245,23 @@ for f in [:get, :post, :put, :delete, :head,
           :trace, :options, :patch, :connect]
     f_str = uppercase(string(f))
     @eval begin
+        @doc """
+            $($f)(uri) -> Response
+            $($f)(client::HTTP.Client, uri) -> Response
+
+        Build and execute an http "$($f_str)" request. Additional keyword arguments supported, include:
+
+        * `stream::Bool=false`: enable response body streaming; depending on the response body size, the request will return before the full body has been received; as the response body is read, additional bytes will be recieved and put in the response body. Readers should read until `eof(response.body) == true`
+        * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`
+        <!-- * `gzip::Bool`: -->
+        * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
+        * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
+        * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
+        * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
+        """ function $(f) end
         ($f)(uri::AbstractString; args...) = ($f)(URI(uri); args...)
         ($f)(uri::URI; args...) = request!(DEFAULT_CLIENT, $f_str, uri,; args...)
         ($f)(client::Client, uri::URI; args...) = request!(client, $f_str, uri,; args...)
+        ($f)(client::Client, uri::AbstractString; args...) = request!(client, $f_str, URI(uri),; args...)
     end
 end
