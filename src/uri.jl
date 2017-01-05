@@ -53,7 +53,6 @@ end
 
 # URL parser based on the http-parser package by Joyent
 # Licensed under the BSD license
-
 # Parse authority (user@host:port)
 # return (host,port,user)
 function parse_authority(authority,seen_at)

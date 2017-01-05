@@ -1,4 +1,6 @@
-const libhttp_parser = "libhttp_parser"
+# const libhttp_parser = "libhttp_parser"
+include(joinpath(Pkg.dir("HttpParser"), "deps", "deps.jl"))
+const libhttp_parser = lib
 
 parsertype(::Type{Request}) = 0 # HTTP_REQUEST
 parsertype(::Type{Response}) = 1 # HTTP_RESPONSE

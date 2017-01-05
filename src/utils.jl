@@ -34,8 +34,13 @@ macro timeout(t, expr, then, pollint=0.01)
 end
 
 """
-A zero-cost debug statement when debugging is "turned on". Set `const DEBUG = true` in HTTP.jl and re-compile the package to see
-debug-level output from the package.
+    @debug DEBUG expr
+    @debug DEBUG "message"
+
+A macro to aid when needing to turn on extremely verbose output for debugging.
+Set `const DEBUG = true` in HTTP.jl and re-compile the package to see
+debug-level output from the package. When `DEBUG = false`, all `@debug` statements
+compile to `nothing`.
 """
 macro debug(should, expr)
     if eval(should)

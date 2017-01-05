@@ -1,6 +1,6 @@
 module HTTP
 
-export Request, Response, FIFOBuffer, URI
+export Request, Response, FIFOBuffer
 
 using MbedTLS
 

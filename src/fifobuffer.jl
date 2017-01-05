@@ -9,24 +9,35 @@ this essentially allows all writes every time.
 
 Reading is supported via `readavailable`, which "extracts" all bytes that have been written, starting at the earliest bytes written
 
-```julia
-while true
-    bytes = getbytes()
-    nb = write(fifo, bytes)
-end
-```
+A `FIFOBuffer` is built to be used asynchronously to allow buffered reading and writing. In particular, a `FIFOBuffer`
+detects if it is being read from/written to the main task, or asynchronously, and will behave slightly differently depending on which.
 
-Writing also calls `notify` on the condition, so readers can operate like:
+Specifically, when reading from a `FIFOBuffer`, if accessed from the main task, it will not block if there are no bytes available to read.
+If being read from asynchronously, however, reading will block until additional bytes have been written. An example of this in action is:
 
 ```julia
-while !eof(fifo)
-    bytes = readavailable(fifo)
-    if isempty(bytes)
-        wait(fifo)
-    else
-        dosomethingwithbytes(bytes)
+f = HTTP.FIFOBuffer(5) # create a FIFOBuffer that will hold at most 5 bytes, currently empty
+f2 = HTTP.FIFOBuffer(5) # a 2nd buffer that we'll write to asynchronously
+
+# start an asynchronous reading task
+tsk = @async begin
+    while !eof(f)
+        write(f2, readavailable(f))
     end
 end
+
+# now write some bytes to the buffer
+# writing triggers our async task to wake up and read the bytes we just wrote
+# leaving the buffer empty again and blocking again until more bytes have been written
+write(f, [0x01, 0x02, 0x03, 0x04, 0x05])
+
+# we can see that `f2` now holds the bytes we wrote to `f`
+String(readavailable(f2))
+
+# our async task will continue until `f` is closed
+close(f)
+
+istaskdone(tsk) # true
 ```
 """
 type FIFOBuffer <: IO
@@ -67,7 +78,7 @@ function Base.eof(f::FIFOBuffer)
         return f.eof
     end
 end
-function eof!(f::FIFOBuffer)
+function Base.close(f::FIFOBuffer)
     f.eof = true
     notify(f.cond)
     return
