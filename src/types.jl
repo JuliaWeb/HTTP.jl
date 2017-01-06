@@ -156,8 +156,9 @@ history(r::Response) = r.history
 cookies(r::Response) = r.cookies
 status(r::Response) = r.status
 statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
+body(r::Response) = r.body
 bytes(r::Response) = readavailable(r.body)
-Base.string(r::Response) = String(bytes(r.body))
+Base.string(r::Response) = String(bytes(r))
 
 const CRLF = "\r\n"
 

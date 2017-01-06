@@ -249,15 +249,85 @@ for f in [:get, :post, :put, :delete, :head,
             $($f)(uri) -> Response
             $($f)(client::HTTP.Client, uri) -> Response
 
-        Build and execute an http "$($f_str)" request. Additional keyword arguments supported, include:
+        Build and execute an http "$($f_str)" request. Query parameters must be included in the uri itself.
+        Returns a `Response` object that includes the resulting status code (`HTTP.status(r)` and `HTTP.statustext(r)`),
+        response headers (`HTTP.headers(r)`), cookies (`HTTP.cookies(r)`), response history if redirects were involved
+        (`HTTP.history(r)`), and response body (`HTTP.body(r)` or `string(r)` or `HTTP.bytes(r)`).
 
-        * `stream::Bool=false`: enable response body streaming; depending on the response body size, the request will return before the full body has been received; as the response body is read, additional bytes will be recieved and put in the response body. Readers should read until `eof(response.body) == true`
+        Additional keyword arguments supported, include:
+
+        * `headers::Dict{String,String}`: headers given as Dict to be sent with the request
+        * `body`: a request body can be given as a `String`, `Vector{UInt8}`, `IO`, or `HTTP.FIFOBuffer`; see example below for how to utilize `HTTP.FIFOBuffer` for "streaming" request bodies
+        * `stream::Bool=false`: enable response body streaming; depending on the response body size, the request will return before the full body has been received; as the response body is read, additional bytes will be recieved and put in the response body. Readers should read until `eof(response.body) == true`; see below for an example of response streaming
         * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`
         <!-- * `gzip::Bool`: -->
         * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
         * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
         * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
         * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
+
+        Simple request example:
+        ```julia
+        julia> resp = HTTP.get("http://httpbin.org/ip")
+        HTTP.Response:
+        """
+        HTTP/1.1 200 OK
+        Connection: keep-alive
+        Content-Length: 32
+        Access-Control-Allow-Credentials: true
+        Date: Fri, 06 Jan 2017 05:07:07 GMT
+        Content-Type: application/json
+        Access-Control-Allow-Origin: *
+        Server: nginx
+
+        {
+          "origin": "65.130.216.45"
+        }
+
+        """
+
+        julia> string(resp)
+        "{\n  \"origin\": \"65.130.216.45\"\n}\n"
+        ```
+
+        Response streaming example:
+        ```julia
+        julia> r = HTTP.get("http://httpbin.org/stream/100"; stream=true)
+        HTTP.Response:
+        """
+        HTTP/1.1 200 OK
+        Content-Length: 0
+
+        """
+
+        julia> body = HTTP.body(r)
+        HTTP.FIFOBuffer(0,1048576,0,1,1,UInt8[],Condition(Any[]),Task (runnable) @0x000000010d221690,false)
+
+        julia> while true
+            println(String(readavailable(body)))
+            eof(body) && break
+        end
+        {"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 0, "origin": "65.130.216.45"}
+        {"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 1, "origin": "65.130.216.45"}
+        {"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 2, "origin": "65.130.216.45"}
+        {"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 3, "origin": "65.130.216.45"}
+        ...
+        ```
+
+        Request streaming example:
+        ```julia
+        # create a FIFOBuffer for sending our request body
+        f = HTTP.FIFOBuffer()
+        # write initial data
+        write(f, "hey")
+        # start an HTTP.post asynchronously
+        t = @async HTTP.post("$sch://httpbin.org/post"; body=f)
+        write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
+        write(f, "sailor")
+        close(f) # setting eof on f causes the async request to send a final chunk and return the response
+
+        resp = t.result # get our response by getting the result of our asynchronous task
+        ```
         """ function $(f) end
         ($f)(uri::AbstractString; args...) = ($f)(URI(uri); args...)
         ($f)(uri::URI; args...) = request!(DEFAULT_CLIENT, $f_str, uri,; args...)

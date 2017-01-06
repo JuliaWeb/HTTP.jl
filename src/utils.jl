@@ -22,13 +22,13 @@ checking if `expr` has finished executing (short for polling interval).
 """
 macro timeout(t, expr, then, pollint=0.01)
     return quote
-        tm = Float64($t)
+        tm = Float64($(esc(t)))
         start = time()
         tsk = @async $(esc(expr))
         while !istaskdone(tsk) && (time() - start < tm)
             sleep($pollint)
         end
-        istaskdone(tsk) || $then
+        istaskdone(tsk) || $(esc(then))
         tsk.result
     end
 end
