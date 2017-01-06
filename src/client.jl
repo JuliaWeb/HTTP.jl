@@ -270,7 +270,6 @@ for f in [:get, :post, :put, :delete, :head,
         ```julia
         julia> resp = HTTP.get("http://httpbin.org/ip")
         HTTP.Response:
-        """
         HTTP/1.1 200 OK
         Connection: keep-alive
         Content-Length: 32
@@ -284,7 +283,6 @@ for f in [:get, :post, :put, :delete, :head,
           "origin": "65.130.216.45"
         }
 
-        """
 
         julia> string(resp)
         "{\n  \"origin\": \"65.130.216.45\"\n}\n"
@@ -294,11 +292,9 @@ for f in [:get, :post, :put, :delete, :head,
         ```julia
         julia> r = HTTP.get("http://httpbin.org/stream/100"; stream=true)
         HTTP.Response:
-        """
         HTTP/1.1 200 OK
         Content-Length: 0
 
-        """
 
         julia> body = HTTP.body(r)
         HTTP.FIFOBuffer(0,1048576,0,1,1,UInt8[],Condition(Any[]),Task (runnable) @0x000000010d221690,false)
@@ -321,7 +317,7 @@ for f in [:get, :post, :put, :delete, :head,
         # write initial data
         write(f, "hey")
         # start an HTTP.post asynchronously
-        t = @async HTTP.post("$sch://httpbin.org/post"; body=f)
+        t = @async HTTP.post("http://httpbin.org/post"; body=f)
         write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
         write(f, "sailor")
         close(f) # setting eof on f causes the async request to send a final chunk and return the response
