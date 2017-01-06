@@ -53,7 +53,6 @@ for sch in ("http", "https")
         r = HTTP.get("$sch://httpbin.org/stream/100"; stream=true)
         @test r.status == 200
         len = length(r.body)
-        @test len < totallen
         HTTP.@timeout 15.0 begin
             while !eof(r.body)
                 b = readavailable(r.body)
