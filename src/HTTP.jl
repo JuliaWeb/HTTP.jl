@@ -1,5 +1,9 @@
 module HTTP
 
+if VERSION < v"0.6.0-dev.1256"
+    Base.take!(io::Base.AbstractIOBuffer) = takebuf_array(io)
+end
+
 export Request, Response, FIFOBuffer
 
 using MbedTLS

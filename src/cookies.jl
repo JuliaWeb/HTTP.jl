@@ -1,5 +1,9 @@
 module Cookies
 
+if VERSION < v"0.6.0-dev.1256"
+    Base.take!(io::Base.AbstractIOBuffer) = takebuf_array(io)
+end
+
 export Cookie
 
 import Base.==
@@ -68,7 +72,7 @@ function Base.String(c::Cookie, isrequest::Bool=true)
         c.httponly && write(io, "; HttpOnly")
         c.secure && write(io, "; Secure")
     end
-    return takebuf_string(io)
+    return String(take!(io))
 end
 
 function Base.string(cookiestring::String, cookies::Vector{Cookie}, isrequest::Bool=true)
@@ -78,7 +82,7 @@ function Base.string(cookiestring::String, cookies::Vector{Cookie}, isrequest::B
     for (i, cookie) in enumerate(cookies)
         write(io, String(cookie, isrequest), ifelse(i == len, "", "; "))
     end
-    return takebuf_string(io)
+    return String(take!(io))
 end
 
 validcookiepathbyte(b) = (' ' <= b < '\x7f') && b != ';'

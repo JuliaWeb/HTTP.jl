@@ -398,7 +398,7 @@ function escape_with(str, use)
         end
         i = i_next
     end
-    takebuf_string(out)
+    String(take!(out))
 end
 
 "create a valid uri/url string by escaping characters"
