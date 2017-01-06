@@ -348,7 +348,7 @@ sanitizeCookieName(n::String) = replace(replace(n, '\n', '-'), '\r', '-')
 # with a comma or space.
 # See https:#golang.org/issue/7243 for the discussion.
 function sanitizeCookieValue(v::String)
-    v = filter(validcookievaluebyte, v)
+    v = filter(validcookievaluebyte, (c for c in v))
     length(v) == 0 && return v
     if v[1] == ' ' || v[1] == ',' || v[end] == ' ' || v[end] == ','
         return string('"', v, '"')
