@@ -59,7 +59,7 @@ req = HTTP.Request()
 req.method = "POST"
 req.uri = HTTP.URI("/")
 req.headers = HTTP.Headers("Transfer-Encoding"=>"chunked", "Host"=>"foo.com")
-req.body = "foobar".data
+req.body = HTTP.FIFOBuffer("foobar")
 
 @test HTTP.parse(HTTP.Request, reqstr) == req
 
@@ -155,7 +155,7 @@ req.headers = HTTP.Headers("Host"=>"www.tutorialspoint.com",
                  "Content-Type"=>"text/xml; charset=utf-8",
                  "Accept-Language"=>"en-us",
                  "Accept-Encoding"=>"gzip, deflate")
-req.body = "first=Zara&last=Ali".data
+req.body = HTTP.FIFOBuffer("first=Zara&last=Ali")
 
 @test HTTP.parse(HTTP.Request, reqstr) == req
 end; # @testset "HTTP.parse"

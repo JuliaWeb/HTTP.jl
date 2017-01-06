@@ -30,7 +30,7 @@ for sch in ("http", "https")
 
     r = HTTP.get("$sch://httpbin.org/cookies")
     body = String(readavailable(r.body))
-    @test (body == "{\n  \"cookies\": {}\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n")
+    @test (body == "{\n  \"cookies\": {}\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n")
     r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor")
     @test r.status == 200
     body = String(readavailable(r.body))

@@ -66,6 +66,7 @@ end
 FIFOBuffer(io::IOStream) = FIFOBuffer(read(io))
 FIFOBuffer(io::IO) = FIFOBuffer(readavailable(io))
 
+==(a::FIFOBuffer, b::FIFOBuffer) = String(a) == String(b)
 Base.length(f::FIFOBuffer) = f.nb
 Base.wait(f::FIFOBuffer) = wait(f.cond)
 function Base.eof(f::FIFOBuffer)
