@@ -256,7 +256,7 @@ function Base.show(io::IO, r::Union{Request,Response})
     headers(io, r)
     if length(r.body) > 1000
         println(io, "[Request body of $(length(r.body)) bytes]")
-        println(io, String(readbytes(r.body, 1000)))
+        println(io, String(r.body)[1:1000])
         println(io, "...")
     elseif length(r.body) > 0
         println(io, String(r.body))

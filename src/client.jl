@@ -46,7 +46,7 @@ type Client{I <: IO}
 end
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_REQUEST_OPTIONS = (DEFAULT_CHUNK_SIZE, true, 10.0, 9.0, TLS.SSLConfig(true), 5)
+const DEFAULT_REQUEST_OPTIONS = (DEFAULT_CHUNK_SIZE, true, 30.0, 30.0, TLS.SSLConfig(true), 5)
 
 Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(), Dict{String, Vector{Connection{TLS.SSLContext}}}(), Dict{String, Set{Cookie}}(), Parser(Response), logger, options)
 Client(logger::IO; args...) = Client(logger, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
@@ -70,6 +70,7 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
     # ensure all Request options are set, using client.options if necessary
     # this works because request.options are null by default whereas client.options always have a default
     update!(request.options, client.options)
+    length(request.body) > request.options.chunksize && (request.options.chunksize = length(request.body) + 1)
     client.logger != STDOUT && (verbose = true)
     return scheme(request.uri) == "http" ? send!(client, request, getconn(http, client, request , verbose), history, stream, verbose) :
                                            send!(client, request, getconn(https, client, request, verbose), history, stream, verbose)
@@ -101,8 +102,10 @@ function getconn{S}(::Type{S}, client, request, verbose)
             elseif c.state == Idle
                 busy!(c)
                 verbose && println(client.logger, "Re-using existing connection to host...")
-                conn, tcp = c, c.tcp
+                conn = c
                 reused = true
+                # read off any stale bytes left over from a possible error in a previous request
+                nb_available(c.tcp) > 0 && (readavailable(c.tcp))
             end
         end
         deleteat!(conns, inds)
@@ -190,7 +193,7 @@ function process!(client, conn, request, response, stream, verbose)
         # if no data after 30 seconds, break out
         verbose && println(client.logger, "Checking for response w/ read timeout of = $(request.options.readtimeout)...")
         buffer = @timeout request.options.readtimeout readavailable(conn.tcp) throw(TimeoutException(request.options.readtimeout))
-        @debug(DEBUG, String(buffer))
+        # @debug(DEBUG, String(buffer))
         verbose && println(client.logger, "Received response bytes; processing...")
         http_parser_execute(client.parser, DEFAULT_RESPONSE_PARSER_SETTINGS, buffer, length(buffer))
         if errno(client.parser) != 0
@@ -202,6 +205,7 @@ function process!(client, conn, request, response, stream, verbose)
         elseif stream && parser.headerscomplete
             # async read the response body, returning the current response immediately
             response.bodytask = @async process!(client, conn, request, response, false, false)
+            response.body.task = response.bodytask
             break
         end
         if !isopen(conn.tcp)

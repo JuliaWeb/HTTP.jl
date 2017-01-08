@@ -307,14 +307,20 @@ end
 
 # on_body
 function output(r, body::FIFOBuffer, data)
+    @debug(DEBUG, "output: writing...1")
     nb = write(body, data)
     @debug(DEBUG, String(body))
+    @debug(DEBUG, "output: nb=$nb")
     if current_task() == r.task
         # main request function hasn't returned yet, so not safe to wait
         body.max += length(data) - nb
-        write(body, view(data, nb+1:length(data)))
+        @debug(DEBUG, "output: writing...2")
+        nb2 = write(body, view(data, nb+1:length(data)))
+        @debug(DEBUG, "output: nb2=$nb2")
+        @debug(DEBUG, String(body))
     else
         while nb < length(data)
+            @debug(DEBUG, "output: writing...3")
             nb += write(body, data)
         end
     end
@@ -337,14 +343,17 @@ end
 
 # on_message_complete
 function request_on_message_complete(parser::Ptr{Parser{RequestParser}})
+    @debug(DEBUG, "request_on_message_complete")
     r = unload(parser)
     r.messagecomplete = true
     return 0
 end
 
 function response_on_message_complete(parser::Ptr{Parser{ResponseParser}})
+    @debug(DEBUG, "response_on_message_complete")
     r = unload(parser)
     r.messagecomplete = true
+    @debug(DEBUG, "closing body...")
     close(r.val.body)
     return 0
 end
