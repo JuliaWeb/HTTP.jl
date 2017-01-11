@@ -392,7 +392,7 @@ function escape_with(str, use)
             end
         else
             while i < i_next
-                write(out, hex_string(str.data[i]))
+                write(out, hex_string(Vector{UInt8}(str)[i]))
                 i += 1
             end
         end

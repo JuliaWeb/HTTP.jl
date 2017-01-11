@@ -58,7 +58,7 @@ FIFOBuffer(f::FIFOBuffer) = f
 FIFOBuffer(max) = FIFOBuffer(0, max, 0, 1, 1, UInt8[], Condition(), current_task(), false)
 FIFOBuffer() = FIFOBuffer(DEFAULT_MAX)
 
-FIFOBuffer(str::String) = FIFOBuffer(str.data)
+FIFOBuffer(str::String) = FIFOBuffer(Vector{UInt8}(str))
 function FIFOBuffer(bytes::Vector{UInt8})
     len = length(bytes)
     return FIFOBuffer(len, len, len, 1, 1, bytes, Condition(), current_task(), false)

@@ -25,7 +25,7 @@ function sniff(body::IO)
     return sniff(data)
 end
 
-sniff(str::String) = sniff(str.data[1:min(length(str.data),MAXSNIFFLENGTH)])
+sniff(str::String) = sniff(Vector{UInt8}(str)[1:min(length(Vector{UInt8}(str)),MAXSNIFFLENGTH)])
 sniff(f::FIFOBuffer) = sniff(String(f))
 
 function sniff(data::Vector{UInt8})
@@ -103,8 +103,8 @@ function byteequal(data1, data2, len)
     return true
 end
 
-const mp4ftype = "ftyp".data
-const mp4 = "mp4".data
+const mp4ftype = Vector{UInt8}("ftyp")
+const mp4 = Vector{UInt8}("mp4")
 
 # Byte swap int
 bigend(b) = UInt32(b[4]) | UInt32(b[3])<<8 | UInt32(b[2])<<16 | UInt32(b[1])<<24
@@ -161,20 +161,20 @@ const SNIFF_SIGNATURES = [
 	HTMLSig("<BR"),
 	HTMLSig("<P"),
 	HTMLSig("<!--"),
-	Masked([0xff,0xff,0xff,0xff,0xff], "<?xml".data, true, "text/xml; charset=utf-8"),
-	Exact("%PDF-".data, "application/pdf"),
-	Exact("%!PS-Adobe-".data, "application/postscript"),
+	Masked([0xff,0xff,0xff,0xff,0xff], Vector{UInt8}("<?xml"), true, "text/xml; charset=utf-8"),
+	Exact(Vector{UInt8}("%PDF-"), "application/pdf"),
+	Exact(Vector{UInt8}("%!PS-Adobe-"), "application/postscript"),
 
 	# UTF BOMs.
 	Masked([0xFF,0xFF,0x00,0x00], [0xFE,0xFF,0x00,0x00], "text/plain; charset=utf-16be"),
 	Masked([0xFF,0xFF,0x00,0x00], [0xFF,0xFE,0x00,0x00], "text/plain; charset=utf-16le"),
 	Masked([0xFF,0xFF,0xFF,0x00], [0xEF,0xBB,0xBF,0x00], "text/plain; charset=utf-8"),
 
-	Exact("GIF87a".data, "image/gif"),
-	Exact("GIF89a".data, "image/gif"),
+	Exact(Vector{UInt8}("GIF87a"), "image/gif"),
+	Exact(Vector{UInt8}("GIF89a"), "image/gif"),
 	Exact([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A], "image/png"),
 	Exact([0xFF,0xD8,0xFF], "image/jpeg"),
-	Exact("BM".data, "image/bmp"),
+	Exact(Vector{UInt8}("BM"), "image/bmp"),
 	Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF],
 		   UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'W','E','B','P','V','P'],
 		   "image/webp"),
@@ -186,7 +186,7 @@ const SNIFF_SIGNATURES = [
 		   UInt8['F','O','R','M',0x00,0x00,0x00,0x00,'A','I','F','F'],
 		   "audio/aiff"),
 	Masked([0xFF,0xFF,0xFF,0xFF],
-		   ".snd".data,
+		   Vector{UInt8}(".snd"),
 		   "audio/basic"),
 	Masked(UInt8['O','g','g','S',0x00],
 		   UInt8[0x4F,0x67,0x67,0x53,0x00],
@@ -195,7 +195,7 @@ const SNIFF_SIGNATURES = [
 		   UInt8['M','T','h','d',0x00,0x00,0x00,0x06],
 		   "audio/midi"),
 	Masked([0xFF,0xFF,0xFF],
-		   "ID3".data,
+		   Vector{UInt8}("ID3"),
 		   "audio/mpeg"),
 	Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
 		   UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'A','V','I',' '],

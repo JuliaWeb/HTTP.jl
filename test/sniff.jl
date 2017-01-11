@@ -2,18 +2,18 @@ const test_cases = [
 ("Empty", UInt8[], "text/plain; charset=utf-8"),
 ("Binary", UInt8[1, 2, 3], "application/octet-stream"),
 
-("HTML document #1", "<HtMl><bOdY>blah blah blah</body></html>".data, "text/html; charset=utf-8"),
-("HTML document #2", "<HTML></HTML>".data, "text/html; charset=utf-8"),
-("HTML document #3 (leading whitespace)", "   <!DOCTYPE HTML>...".data, "text/html; charset=utf-8"),
-("HTML document #4 (leading CRLF)", "\r\n<html>...".data, "text/html; charset=utf-8"),
+("HTML document #1", Vector{UInt8}("<HtMl><bOdY>blah blah blah</body></html>"), "text/html; charset=utf-8"),
+("HTML document #2", Vector{UInt8}("<HTML></HTML>"), "text/html; charset=utf-8"),
+("HTML document #3 (leading whitespace)", Vector{UInt8}("   <!DOCTYPE HTML>..."), "text/html; charset=utf-8"),
+("HTML document #4 (leading CRLF)", Vector{UInt8}("\r\n<html>..."), "text/html; charset=utf-8"),
 
-("Plain text", "This is not HTML. It has ☃ though.".data, "text/plain; charset=utf-8"),
+("Plain text", Vector{UInt8}("This is not HTML. It has ☃ though."), "text/plain; charset=utf-8"),
 
-("XML", "\n<?xml!".data, "text/xml; charset=utf-8"),
+("XML", Vector{UIn8}("\n<?xml!"), "text/xml; charset=utf-8"),
 
 # Image types.
-("GIF 87a", "GIF87a".data, "image/gif"),
-("GIF 89a", "GIF89a...".data, "image/gif"),
+("GIF 87a", Vector{UInt8}("GIF87a"), "image/gif"),
+("GIF 89a", Vector{UInt8}("GIF89a..."), "image/gif"),
 
 # Audio types.
 ("MIDI audio", UInt8['M','T','h','d',0x00,0x00,0x00,0x06,0x00,0x01], "audio/midi"),
@@ -246,6 +246,6 @@ json_strings = [
 @testset "HTTP.isjson" begin
     @test !HTTP.isjson("")[1]
     for str in json_strings
-        @test HTTP.isjson(str.data)[1]
+        @test HTTP.isjson(Vector{UInt8}(str))[1]
     end
 end
