@@ -70,7 +70,9 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
     # ensure all Request options are set, using client.options if necessary
     # this works because request.options are null by default whereas client.options always have a default
     update!(request.options, client.options)
-    length(request.body) > request.options.chunksize && (request.options.chunksize = length(request.body) + 1)
+    # if the provided request body is compressed, avoid any chunked transfer since it ruins the compression scheme
+    length(request.body) > 3 && iscompressed(String(request.body)[1:4]) &&
+        length(request.body) > request.options.chunksize && (request.options.chunksize = length(request.body) + 1)
     client.logger != STDOUT && (verbose = true)
     return scheme(request.uri) == "http" ? send!(client, request, getconn(http, client, request , verbose), history, stream, verbose) :
                                            send!(client, request, getconn(https, client, request, verbose), history, stream, verbose)
