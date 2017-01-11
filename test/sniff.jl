@@ -9,7 +9,7 @@ const test_cases = [
 
 ("Plain text", Vector{UInt8}("This is not HTML. It has ☃ though."), "text/plain; charset=utf-8"),
 
-("XML", Vector{UIn8}("\n<?xml!"), "text/xml; charset=utf-8"),
+("XML", Vector{UInt8}("\n<?xml!"), "text/xml; charset=utf-8"),
 
 # Image types.
 ("GIF 87a", Vector{UInt8}("GIF87a"), "image/gif"),
