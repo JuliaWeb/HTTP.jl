@@ -405,6 +405,15 @@ end
 escape(str) = escape_with(str, unescaped)
 escape_form(str) = replace(escape_with(str, unescaped_form), " ", "+")
 
+function escape(d::Dict)
+    io = IOBuffer()
+    for (i, (k,v)) in enumerate(d)
+        write(io, HTTP.escape(k), "=", HTTP.escape(v))
+        i == length(d) || write(io, "&")
+    end
+    return String(take!(io))
+end
+
 """
 Splits the userinfo portion of an URI in the format user:password and
 returns the components as tuple.
