@@ -1,435 +1,140 @@
-is_url_char(c) =  ((@assert UInt32(c) < 0x80); 'A' <= c <= '~' || '$' <= c <= '>' || c == '\f' || c == '\t')
-is_mark(c) = (c == '-') || (c == '_') || (c == '.') || (c == '!') || (c == '~') ||
-             (c == '*') || (c == '\'') || (c == '(') || (c == ')')
-is_userinfo_char(c) = isalnum(c) || is_mark(c) || (c == '%') || (c == ';') ||
-             (c == ':') || (c == '&') || (c == '+') || (c == '$' || c == ',')
-isnum(c) = ('0' <= c <= '9')
-ishex(c) =  (isnum(c) || 'a' <= lowercase(c) <= 'f')
-is_host_char(c) = isalnum(c) || (c == '.') || (c == '-') || (c == '_') || (c == "~")
+immutable ParsingError <: Exception
+    msg::String
+end
+Base.show(io::IO, p::ParsingError) = println("HTTP.ParsingError: ", p.msg)
 
-"""
-`HTTP.URI(str::String)` => `HTTP.URI`
+# URI
+immutable Offset
+    off::UInt16
+    len::UInt16
+end
+Offset() = Offset(0, 0)
+Base.getindex(A::Vector{UInt8}, o::Offset) = String(A[o.off:(o.off + o.len - 1)])
 
-A type representing a uri/url used for resource identification on the web.
-"""
 immutable URI
-    scheme::String
-    host::String
-    port::UInt16
-    path::String
-    query::String
-    fragment::String
-    userinfo::String
-    specifies_authority::Bool
-    URI(scheme,host,port,path,query="",fragment="",userinfo="",specifies_authority=false) =
-            new(scheme,host,UInt16(port == 0 ? (scheme == "http" ? 80 : scheme == "https" ? 443 : 0) : port),
-                path,query,fragment,userinfo,specifies_authority)
+    data::Vector{UInt8}
+    offsets::NTuple{8, Offset}
 end
 
 const URL = URI
 
-==(a::URI,b::URI) = (a.scheme   == b.scheme)   &&
-                    (a.host     == b.host)     &&
-                    (a.port     == b.port)     &&
-                    (a.path     == b.path)     &&
-                    (a.query    == b.query)    &&
-                    (a.fragment == b.fragment) &&
-                    (a.userinfo == b.userinfo)
+URI(str::String) = http_parser_parse_url(Vector{UInt8}(str))
 
-URI(host, path) = URI("http", host, UInt16(80), path, "", "", "", true)
+==(a::URI,b::URI) = scheme(a) == scheme(b) &&
+                    host(a) == host(b) &&
+                    path(a) == path(b) &&
+                    query(a) == query(b) &&
+                    fragment(a) == fragment(b) &&
+                    userinfo(a) == userinfo(b) &&
+                    ((!hasport(a) || !hasport(b)) || (port(a) == port(b)))
 
-function URI(uri::URI; kwargs...)
-    nms = fieldnames(URI)
-    args = Pair{Symbol}[(nms[i] => getfield(uri, i)) for i = 1:nfields(HTTP.URI)]
-    for (k, v) in kwargs
-        for (i, arg) in enumerate(args)
-            if arg[1] == k
-                args[i] = Pair(k, v)
-            end
-        end
-    end
-    return URI([arg[2] for arg in args]...)
+function URI(host::String, path::String;
+            scheme::String="http", userinfo::String="",
+            port::Union{Integer,String}="", query::Union{String,Dict{String,String}}="", fragment::String="")
+    io = IOBuffer()
+    print(io, scheme, userinfo, host, port, path, isa(query, Dict) ? escape(query) : query, fragment)
+    str = String(take!(io))
+    return URI(str)
 end
 
-# URL parser based on the http-parser package by Joyent
-# Licensed under the BSD license
-# Parse authority (user@host:port)
-# return (host,port,user)
-function parse_authority(authority,seen_at)
-    host=""
-    port=""
-    user=""
-    last_state = state = seen_at ? :http_userinfo_start : :http_host_start
-    i = start(authority)
-    li = s = 0
-    while true
-        if done(authority,li)
-            last_state = state
-            state = :done
-        end
-
-        if s == 0
-            s = li
-        end
-
-        if state != last_state
-            r = s:prevind(authority,li)
-            s = li
-            if last_state == :http_userinfo
-                user = authority[r]
-            elseif last_state == :http_host || last_state == :http_host_v6
-                host = authority[r]
-            elseif last_state == :http_host_port
-                port = authority[r]
-            end
-        end
-
-        if state == :done
-            break
-        end
-
-        if done(authority,i)
-            li = i
-            continue
-        end
-
-        li = i
-        (ch,i) = next(authority,i)
-
-        last_state = state
-        if state == :http_userinfo || state == :http_userinfo_start
-            if ch == '@'
-                state = :http_host_start
-            elseif is_userinfo_char(ch)
-                state = :http_userinfo
-            else
-                error("Unexpected character '$ch' in userinfo")
-            end
-        elseif state == :http_host_start
-            if ch == '['
-                state = :http_host_v6_start
-            elseif is_host_char(ch)
-                state = :http_host
-            else
-                error("Unexpected character '$ch' at the beginning of the host string")
-            end
-        elseif state == :http_host
-            if ch == ':'
-                state = :http_host_port_start
-            elseif !is_host_char(ch)
-                error("Unexpected character '$ch' in host")
-            end
-        elseif state == :http_host_v6_end
-            if ch != ':'
-                error("Only port allowed in authority after IPv6 address")
-            end
-            state = :http_host_port_start
-        elseif state == :http_host_v6 || state == :http_host_v6_start
-            if ch == ']' && state == :http_host_v6
-                state = :http_host_v6_end
-            elseif ishex(ch) || ch == ':' || ch == '.'
-                state = :http_host_v6
-            else
-                error("Unrecognized character in IPv6 address")
-            end
-        elseif state == :http_host_port || state == :http_host_port_start
-            if !isnum(ch)
-                error("Port must be numeric (decimal)")
-            end
-            state = :http_host_port
-        else
-            error("Unexpected state $state")
-        end
-    end
-    (host, UInt16(port == "" ? 0 : Base.parse(Int, port, 10)), user)
+# accessors
+for uf in instances(HTTP.http_parser_url_fields)
+    uf == UF_MAX && break
+    nm = lowercase(string(uf)[4:end])
+    has = Symbol(string("has", nm))
+    @eval $has(uri::URI) = uri.offsets[Int($uf)].len > 0
+    uf == UF_PORT && continue
+    @eval $(Symbol(nm))(uri::URI) = uri.data[uri.offsets[Int($uf)]]
 end
 
-function parse_url(url)
-    scheme = ""
-    host = ""
-    server = ""
-    port = 80
-    query = ""
-    fragment = ""
-    username = ""
-    pass = ""
-    path = "/"
-    last_state = state = :req_spaces_before_url
-    seen_at = false
-    specifies_authority = false
-    i = start(url)
-    li = s = 0
-    while true
-        if done(url,li)
-            last_state = state
-            state = :done
-        end
-
-        if s == 0
-            s = li
-        end
-
-        if state != last_state
-            r = s:prevind(url,li)
-            s = li
-            if last_state == :req_scheme
-                scheme = url[r]
-            elseif last_state == :req_server_start
-                specifies_authority = true
-            elseif last_state == :req_server
-                server = url[r]
-            elseif last_state == :req_query_string
-                query = url[r]
-            elseif last_state == :req_path
-                path = url[r]
-            elseif last_state == :req_fragment
-                fragment = url[r]
-            end
-        end
-        if state == :done
-            break
-        end
-
-        if done(url,i)
-            li = i
-            continue
-        end
-
-        li = i
-        (ch,i) = next(url,i)
-        if !isascii(ch)
-            error("Non-ASCII characters not supported in URIs. Encode the URL and try again.")
-        end
-
-        last_state = state
-
-        if state == :req_spaces_before_url
-            if ch == '/' || ch == '*'
-                state = :req_path
-            elseif isalpha(ch)
-                state = :req_scheme
-            else
-                error("Unexpected start of URL")
-            end
-        elseif state == :req_scheme
-            if ch == ':'
-                state = :req_scheme_slash
-            elseif !(isalpha(ch) || isdigit(ch) || ch == '+' || ch == '-' || ch == '.')
-                error("Unexpected character $ch after scheme")
-            end
-        elseif state == :req_scheme_slash
-            if ch == '/'
-                state = :req_scheme_slash_slash
-            elseif is_url_char(ch)
-                state = :req_path
-            else
-                error("Expecting scheme:path scheme:/path  format not scheme:$ch")
-            end
-        elseif state == :req_scheme_slash_slash
-            if ch == '/'
-                state = :req_server_start
-            elseif is_url_char(ch)
-                s -= 1
-                state = :req_path
-            else
-                error("Expecting scheme:// or scheme: format not scheme:/$ch")
-            end
-        elseif state == :req_server_start || state == :req_server
-            # In accordence with RFC3986:
-            # 'The authority component is preceded by a double slash ("//") and isterminated by the next slash ("/")'
-            # This is different from the joyent http-parser, which considers empty hosts to be invalid. c.f. also the
-            # following part of RFC 3986:
-            # "If the URI scheme defines a default for host, then that default
-            # applies when the host subcomponent is undefined or when the
-            # registered name is empty (zero length).  For example, the "file" URI
-            # scheme is defined so that no authority, an empty host, and
-            # "localhost" all mean the end-user's machine, whereas the "http"
-            # scheme considers a missing authority or empty host invalid."
-            if ch == '/'
-                state = :req_path
-            elseif ch == '?'
-                state = :req_query_string_start
-            elseif ch == '@'
-                seen_at = true
-                state = :req_server
-            elseif is_userinfo_char(ch) || ch == '[' || ch == ']'
-                state = :req_server
-            else
-                error("Unexpected character $ch in server")
-            end
-        elseif state == :req_path
-            if ch == '?'
-                state = :req_query_string_start
-            elseif ch == '#'
-                state = :req_fragment_start
-            elseif !is_url_char(ch) && ch != '@'
-                error("Path contained unexpected character")
-            end
-        elseif state == :req_query_string_start || state == :req_query_string
-            if ch == '?'
-                state = :req_query_string
-            elseif ch == '#'
-                state = :req_fragment_start
-            elseif !is_url_char(ch)
-                error("Query string contained unexpected character")
-            else
-                state = :req_query_string
-            end
-        elseif state == :req_fragment_start
-            if ch == '?'
-                state = :req_fragment
-            elseif ch == '#'
-                state = :req_fragment_start
-            elseif ch != '#' && !is_url_char(ch)
-                error("Start of fragment contained unexpected character")
-            else
-                state = :req_fragment
-            end
-        elseif state == :req_fragment
-            if !is_url_char(ch) && ch != '?' && ch != '#'
-                error("Fragment contained unexpected character")
-            end
-        else
-            error("Unrecognized state")
-        end
+# special def for port
+function port(uri::URI)
+    if hasport(uri)
+        return uri.data[uri.offsets[Int(UF_PORT)]]
+    else
+        sch = scheme(uri)
+        return sch == "http" ? "80" : sch == "https" ? "443" : ""
     end
-    host, port, user = parse_authority(server,seen_at)
-    return URI(lowercase(scheme),host,port,path,query,fragment,user,specifies_authority)
+    return ""
 end
 
-URI(url) = parse_url(url)
+resource(uri::URI) = path(uri) * (isempty(query(uri)) ? "" : "?$(query(uri))")
 
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
 
-function Base.print(io::IO, uri::URI)
-    if uri.specifies_authority || !isempty(uri.host)
-        print(io,uri.scheme,"://")
-        if !isempty(uri.userinfo)
-            print(io,uri.userinfo,'@')
-        end
-        if ':' in uri.host #is IPv6
-            print(io,'[',uri.host,']')
-        else
-            print(io,uri.host)
-        end
-        if uri.port != 0
-            if (uri.scheme == "http" && uri.port == 80) ||
-                (uri.scheme == "https" && uri.port == 443)
-            else
-                print(io,':',Int(uri.port))
-            end
-        end
+Base.print(io::IO, u::URI) = print(io, scheme(u), userinfo(u), host(u), port(u), path(u), query(u), fragment(u))
+function Base.print(io::IO, sch, userinfo, host, port, path, query, fragment)
+    if sch in uses_authority
+        print(io, sch, "://")
+        !isempty(userinfo) && print(io, userinfo, "@")
+        print(io, ':' in host ? "[$host]" : host)
+        print(io, ((sch == "http" && port == "80") ||
+                   (sch == "https" && port == "443") || isempty(port)) ? "" : ":$port")
     else
-        print(io,uri.scheme,":")
+        print(io, sch, ":")
     end
-    print(io,uri.path)
-    if !isempty(uri.query)
-        print(io,"?",uri.query)
-    end
-    if !isempty(uri.fragment)
-        print(io,"#",uri.fragment)
-    end
+    print(io, path, isempty(query) ? "" : "?$query", isempty(fragment) ? "" : "#$fragment")
 end
 
-function Base.show(io::IO, ::MIME"text/html", uri::URI)
-    print(io, "<a href=\"")
-    print(io, uri)
-    print(io, "\">")
-    print(io, uri)
-    print(io, "</a>")
-end
+# Validate known URI formats
+const uses_authority = ["hdfs", "ftp", "http", "gopher", "nntp", "telnet", "imap", "wais", "file", "mms", "https", "shttp", "snews", "prospero", "rtsp", "rtspu", "rsync", "svn", "svn+ssh", "sftp" ,"nfs", "git", "git+ssh", "ldap", "s3"]
+const uses_params = ["ftp", "hdl", "prospero", "http", "imap", "https", "shttp", "rtsp", "rtspu", "sip", "sips", "mms", "sftp", "tel"]
+const non_hierarchical = ["gopher", "hdl", "mailto", "news", "telnet", "wais", "imap", "snews", "sip", "sips"]
+const uses_query = ["http", "wais", "imap", "https", "shttp", "mms", "gopher", "rtsp", "rtspu", "sip", "sips", "ldap"]
+const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "wais", "https", "shttp", "snews", "file", "prospero"]
 
-const escaped_regex = r"%([0-9a-fA-F]{2})"
-
-# Escaping
-const control_array = vcat(map(UInt8, 0:Base.parse(Int,"1f",16)))
-const control = String(control_array)*"\x7f"
-const space = String(" ")
-const delims = String("%<>\"")
-const unwise   = String("(){}|\\^`")
-
-const reserved = String(",;/?:@&=+\$![]'*#")
-# Strings to be escaped
-# (Delims goes first so '%' gets escaped first.)
-const unescaped = delims * reserved * control * space * unwise
-const unescaped_form = delims * reserved * control * unwise
-
-"unescape a uri/url"
-function unescape(str)
-    r = UInt8[]
-    l = length(str)
-    i = 1
-    while i <= l
-        c = str[i]
-        i += 1
-        if c == '%'
-            c = Base.parse(UInt8, str[i:i+1], 16)
-            i += 2
-        end
-        push!(r, c)
+"checks if a `HTTP.URI` is valid"
+function Base.isvalid(uri::URI)
+    sch = scheme(uri)
+    isempty(sch) && throw(ArgumentError("can not validate relative URI"))
+    if ((sch in non_hierarchical) && (search(path(uri), '/') > 1)) ||       # path hierarchy not allowed
+       (!(sch in uses_query) && !isempty(query(uri))) ||                    # query component not allowed
+       (!(sch in uses_fragment) && !isempty(fragment(uri))) ||              # fragment identifier component not allowed
+       (!(sch in uses_authority) && (!isempty(host(uri)) || ("" != port(uri)) || !isempty(userinfo(uri)))) # authority component not allowed
+        return false
     end
-   return String(r)
+    return true
 end
-unescape_form(str) = unescape(replace(str, "+", " "))
 
-hex_string(x) = string('%', uppercase(hex(x,2)))
+lower(c::UInt8) = c | 0x20
+const bHOSTCHARS = Set{UInt8}([UInt8('.'), UInt8('-'), UInt8('_'), UInt8('~')])
+ishostchar(c::UInt8) = (UInt8('a') <= lower(c) <= UInt8('z')) || UInt8('0') <= c <= UInt8('9') || c in bHOSTCHARS
 
-# Escapes chars (in second string); also escapes all non-ASCII chars.
-function escape_with(str, use)
-    str = String(str)
+hexstring(x) = string('%', uppercase(hex(x,2)))
+
+"percent-encode a uri/url string"
+function escape(str)
     out = IOBuffer()
-    chars = Set(use)
-    i = start(str)
-    e = endof(str)
-    while i <= e
-        i_next = nextind(str, i)
-        if i_next == i + 1
-            _char = str[i]
-            if _char in chars
-                write(out, hex_string(Int(_char)))
-            else
-                write(out, _char)
-            end
-        else
-            while i < i_next
-                write(out, hex_string(Vector{UInt8}(str)[i]))
-                i += 1
-            end
-        end
-        i = i_next
+    for c in Vector{UInt8}(str)
+        write(out, !ishostchar(c) ? hexstring(Int(c)) : c)
     end
-    String(take!(out))
+    return String(take!(out))
 end
-
-"create a valid uri/url string by escaping characters"
-escape(str) = escape_with(str, unescaped)
-escape_form(str) = replace(escape_with(str, unescaped_form), " ", "+")
 
 function escape(d::Dict)
     io = IOBuffer()
     for (i, (k,v)) in enumerate(d)
-        write(io, HTTP.escape(k), "=", HTTP.escape(v))
+        write(io, escape(k), "=", escape(v))
         i == length(d) || write(io, "&")
     end
     return String(take!(io))
 end
 
-"""
-Splits the userinfo portion of an URI in the format user:password and
-returns the components as tuple.
-
-Note: This is just a convenience method, and this form of usage is
-deprecated as of rfc3986.
-See: http://tools.ietf.org/html/rfc3986#section-3.2.1
-"""
-function userinfo(uri::URI)
-    Base.warn_once("Use of the format user:password is deprecated (rfc3986)")
-    uinfo = uri.userinfo
-    sep = search(uinfo, ':')
-    l = length(uinfo)
-    username = uinfo[1:(sep-1)]
-    password = ((sep == l) || (sep == 0)) ? "" : uinfo[(sep+1):l]
-    (username, password)
+"unescape a percent-encoded uri/url"
+function unescape(str)
+    out = IOBuffer()
+    i = 1
+    while !done(str, i)
+        c, i = next(str, i)
+        if c == '%'
+            c1, i = next(str, i)
+            c, i = next(str, i)
+            write(out, Base.parse(UInt8, string(c1, c), 16))
+        else
+            write(out, c)
+        end
+    end
+    return String(take!(out))
 end
 
 """
@@ -438,7 +143,7 @@ See: http://tools.ietf.org/html/rfc3986#section-3.3
 """
 function splitpath(uri::URI, starting=2)
     elems = String[]
-    p = uri.path
+    p = path(uri)
     len = length(p)
     len > 1 || return elems
     start_ind = i = starting # p[1] == '/'
@@ -456,29 +161,184 @@ function splitpath(uri::URI, starting=2)
     return elems
 end
 
-# Create equivalent URI without the fragment
-defrag(uri::URI) = URI(uri.scheme, uri.host, uri.port, uri.path, uri.query, "", uri.userinfo, uri.specifies_authority)
+# url parsing
+function parseurlchar(s, ch::Char, strict::Bool)
+    (ch == ' ' || ch == '\r' || ch == '\n') && return s_dead
+    strict && (ch == '\t' || ch == '\f') && return s_dead
 
-# Validate known URI formats
-const uses_authority = ["hdfs", "ftp", "http", "gopher", "nntp", "telnet", "imap", "wais", "file", "mms", "https", "shttp", "snews", "prospero", "rtsp", "rtspu", "rsync", "svn", "svn+ssh", "sftp" ,"nfs", "git", "git+ssh", "ldap"]
-const uses_params = ["ftp", "hdl", "prospero", "http", "imap", "https", "shttp", "rtsp", "rtspu", "sip", "sips", "mms", "sftp", "tel"]
-const non_hierarchical = ["gopher", "hdl", "mailto", "news", "telnet", "wais", "imap", "snews", "sip", "sips"]
-const uses_query = ["http", "wais", "imap", "https", "shttp", "mms", "gopher", "rtsp", "rtspu", "sip", "sips", "ldap"]
-const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "wais", "https", "shttp", "snews", "file", "prospero"]
-
-"checks of a `HTTP.URI` is valid"
-function Base.isvalid(uri::URI)
-    scheme = uri.scheme
-    isempty(scheme) && error("Can not validate relative URI")
-    if ((scheme in non_hierarchical) && (search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
-       (!(scheme in uses_query) && !isempty(uri.query)) ||                    # query component not allowed
-       (!(scheme in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
-       (!(scheme in uses_authority) && (!isempty(uri.host) || (0 != uri.port) || !isempty(uri.userinfo))) # authority component not allowed
-        return false
+    if s == s_req_spaces_before_url
+        (ch == '/' || ch == '*') && return s_req_path
+        isalpha(ch) && return s_req_schema
+    elseif s == s_req_schema
+        isalphanum(ch) && return s
+        ch == ':' && return s_req_schema_slash
+    elseif s == s_req_schema_slash
+        ch == '/' && return s_req_schema_slash_slash
+        isurlchar(ch) && return s_req_path
+    elseif s == s_req_schema_slash_slash
+        ch == '/' && return s_req_server_start
+        isurlchar(ch) && return s_req_path
+    elseif s == s_req_server_with_at
+        ch == '@' && return s_dead
+        ch == '/' && return s_req_path
+        ch == '?' && return s_req_query_string_start
+        (isuserinfochar(ch) || ch == '[' || ch == ']') && return s_req_server
+    elseif s == s_req_server_start || s == s_req_server
+        ch == '/' && return s_req_path
+        ch == '?' && return s_req_query_string_start
+        ch == '@' && return s_req_server_with_at
+        (isuserinfochar(ch) || ch == '[' || ch == ']') && return s_req_server
+    elseif s == s_req_path
+        (isurlchar(ch) || ch == '@') && return s
+        ch == '?' && return s_req_query_string_start
+        ch == '#' && return s_req_fragment_start
+    elseif s == s_req_query_string_start || s == s_req_query_string
+        isurlchar(ch) && return s_req_query_string
+        ch == '?' && return s_req_query_string
+        ch == '#' && return s_req_fragment_start
+    elseif s == s_req_fragment_start
+        isurlchar(ch) && return s_req_fragment
+        ch == '?' && return s_req_fragment
+        ch == '#' && return s
+    elseif s == s_req_fragment
+        isurlchar(ch) && return s
+        (ch == '?' || ch == '#') && return s
     end
-    true
+    #= We should never fall out of the switch above unless there's an error =#
+    return s_dead;
 end
 
-resource(uri::URI) = "$(uri.path)" * (isempty(uri.query) ? "" : "?$(uri.query)")
-scheme(uri::URI) = uri.scheme
-port(uri::URI) = uri.port == 0 ? (scheme(uri) == "http" ? 80 : 443) : uri.port
+function http_parse_host_char(s::http_host_state, ch)
+    if s == s_http_userinfo || s == s_http_userinfo_start
+        ch == '@' && return s_http_host_start
+        isuserinfochar(ch) && return s_http_userinfo
+    elseif s == s_http_host_start
+        ch == '[' && return s_http_host_v6_start
+        ishostchar(ch) && return s_http_host
+    elseif s == s_http_host
+        ishostchar(ch) && return s_http_host
+        ch == ':' && return s_http_host_port_start
+    elseif s == s_http_host_v6_end
+        ch == ':' && return s_http_host_port_start
+    elseif s == s_http_host_v6
+        ch == ']' && return s_http_host_v6_end
+        (ishex(ch) || ch == ':' || ch == '.') && return s_http_host_v6
+        s == s_http_host_v6 && ch == '%' && return s_http_host_v6_zone_start
+    elseif s == s_http_host_v6_start
+        (ishex(ch) || ch == ':' || ch == '.') && return s_http_host_v6
+        s == s_http_host_v6 && ch == '%' && return s_http_host_v6_zone_start
+    elseif s == s_http_host_v6_zone
+        ch == ']' && return s_http_host_v6_end
+        (isalphanum(ch) || ch == '%' || ch == '.' || ch == '-' || ch == '_' || ch == '~') && return s_http_host_v6_zone
+    elseif s == s_http_host_v6_zone_start
+        (isalphanum(ch) || ch == '%' || ch == '.' || ch == '-' || ch == '_' || ch == '~') && return s_http_host_v6_zone
+    elseif s == s_http_host_port || s == s_http_host_port_start
+        isnum(ch) && return s_http_host_port
+    end
+    return s_http_host_dead
+end
+
+function http_parse_host(buf, host::Offset, foundat)
+    portoff = portlen = uioff = uilen = UInt16(0)
+    off = len = UInt16(0)
+    s = ifelse(foundat, s_http_userinfo_start, s_http_host_start)
+
+    for i = host.off:(host.off + host.len - 1)
+        p = Char(buf[i])
+        new_s = http_parse_host_char(s, p)
+        new_s == s_http_host_dead && throw(ParsingError("encountered invalid host character: \n$(String(buf))\n$(lpad("", i-1, "-"))^"))
+        if new_s == s_http_host
+            if s != s_http_host
+                off = i
+            end
+            len += 1
+
+        elseif new_s == s_http_host_v6
+            if s != s_http_host_v6
+                off = i
+            end
+            len += 1
+
+        elseif new_s == s_http_host_v6_zone_start || new_s == s_http_host_v6_zone
+            len += 1
+
+        elseif new_s == s_http_host_port
+            if s != s_http_host_port
+                portoff = i
+                portlen = 0
+            end
+            portlen += 1
+
+        elseif new_s == s_http_userinfo
+            if s != s_http_userinfo
+                uioff = i
+                uilen = 0
+            end
+            uilen += 1
+        end
+        s = new_s
+    end
+    if s in (s_http_host_start, s_http_host_v6_start, s_http_host_v6, s_http_host_v6_zone_start,
+             s_http_host_v6_zone, s_http_host_port_start, s_http_userinfo, s_http_userinfo_start)
+        throw(ParsingError("ended in unexpected parsing state: $s"))
+    end
+    # (host, port, userinfo)
+    return Offset(off, len), Offset(portoff, portlen), Offset(uioff, uilen)
+end
+
+function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::Bool=false)
+    s = ifelse(isconnect, s_req_server_start, s_req_spaces_before_url)
+    old_uf = UF_MAX
+    off = len = 0
+    foundat = false
+    offsets = Dict{http_parser_url_fields, Offset}()
+    for i = startind:buflen
+        p = Char(buf[i])
+        olds = s
+        s = parseurlchar(s, p, false)
+        if s == s_dead
+            throw(ParsingError("encountered invalid url character for parsing state = $(ParsingStateCode(olds)): \n$(String(buf))\n$(lpad("", i-1, "-"))^"))
+        elseif s in (s_req_schema_slash, s_req_schema_slash_slash, s_req_server_start, s_req_query_string_start, s_req_fragment_start)
+            continue
+        elseif s == s_req_schema
+            uf = UF_SCHEME
+        elseif s == s_req_server_with_at
+            foundat = true
+            uf = UF_HOST
+        elseif s == s_req_server
+            uf = UF_HOST
+        elseif s == s_req_path
+            uf = UF_PATH
+        elseif s == s_req_query_string
+            uf = UF_QUERY
+        elseif s == s_req_fragment
+            uf = UF_FRAGMENT
+        else
+            throw(ParsingError("ended in unexpected parsing state: $s"))
+        end
+        if uf == old_uf
+            len += 1
+            continue
+        end
+        offsets[old_uf] = Offset(off, len)
+        off = i
+        len = 1
+        old_uf = uf
+    end
+    offsets[old_uf] = Offset(off, len)
+    if haskey(offsets, UF_SCHEME) && (!haskey(offsets, UF_HOST) && !haskey(offsets, UF_PATH))
+        throw(ParsingError("URI must include host with scheme"))
+    end
+    if haskey(offsets, UF_HOST)
+        host, port, userinfo = http_parse_host(buf, offsets[UF_HOST], foundat)
+        offsets[UF_HOST] = host
+        offsets[UF_PORT] = port
+        offsets[UF_USERINFO] = userinfo
+    end
+    # CONNECT requests can only contain "hostname:port"
+    if isconnect
+        (haskey(offsets, UF_HOST) && haskey(offsets, UF_PORT)) || throw(ParsingError("connect requests must contain both hostname and port"))
+        length(offsets) > 2 && throw(ParsingError("connect requests can only contain hostname:port values"))
+    end
+    return URI(buf, ntuple(x->Base.get(offsets, http_parser_url_fields(x), Offset()), Int(UF_MAX)))
+end

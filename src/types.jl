@@ -53,17 +53,49 @@ RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null; kwarg
 A type representing an HTTP request.
 """
 type Request
-    method::String
-    major::Int8
-    minor::Int8
+    method::HTTP.Method
+    major::Int16
+    minor::Int16
     uri::URI
-    headers::Headers
-    keepalive::Bool
+    headers::Headers # includes cookies
     body::FIFOBuffer
-    options::RequestOptions
 end
 
-Request(; args...) = Request("GET", Int8(1), Int8(1), URI(""), Headers(), true, FIFOBuffer(), RequestOptions(; args...))
+type Response
+    status::Int32
+    major::Int16
+    minor::Int16
+    cookies::Vector{Cookie}
+    headers::Headers
+    body::FIFOBuffer
+    request::Nullable{Request}
+    history::Vector{Response}
+end
+# type Request
+#     method::String
+#     major::Int8
+#     minor::Int8
+#     uri::URI
+#     headers::Headers
+#     keepalive::Bool
+#     body::FIFOBuffer
+#     options::RequestOptions
+# end
+
+# type Response
+#     status::Int
+#     major::Int8
+#     minor::Int8
+#     headers::Headers
+#     keepalive::Bool
+#     cookies::Vector{Cookie}
+#     body::FIFOBuffer
+#     bodytask::Task
+#     request::Nullable{Request}
+#     history::Vector{Response}
+# end
+
+Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
 
 defaultheaders(::Type{Request}) = Headers(
     "User-Agent" => "HTTP.jl/0.0.0",
@@ -74,11 +106,11 @@ Request(method, uri, userheaders=Headers(), body=FIFOBuffer(); args...) = Reques
 
 function Request{T}(method, uri, userheaders, body::T, options::RequestOptions)
     headers = defaultheaders(Request)
+    m = isa(method, String) ? MethodMap[method] : method
+    headers["Host"] = port(uri) == "" ? host(uri) : "$(host(uri)):$(port(uri))"
 
-    headers["Host"] = uri.port == 0 ? uri.host : "$(uri.host):$(uri.port)"
-
-    if !isempty(uri.userinfo) && !haskey(headers,"Authorization")
-        headers["Authorization"] = "Basic $(base64encode(uri.userinfo))"
+    if !isempty(userinfo(uri)) && !haskey(headers,"Authorization")
+        headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
     end
     fifobody = FIFOBuffer(body)
     if shouldchunk(fifobody, get(options, :chunksize, typemax(Int)))
@@ -93,7 +125,7 @@ function Request{T}(method, uri, userheaders, body::T, options::RequestOptions)
     if !haskey(headers, "Content-Type") && length(fifobody) > 0
         headers["Content-Type"] = HTTP.sniff(fifobody)
     end
-    return Request(method, Int8(1), Int8(1), uri, merge!(headers, userheaders), true, fifobody, options)
+    return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), fifobody)
 end
 
 ==(a::Request,b::Request) = (a.method    == b.method)    &&
@@ -101,7 +133,6 @@ end
                             (a.minor     == b.minor)     &&
                             (a.uri       == b.uri)       &&
                             (a.headers   == b.headers)   &&
-                            (a.keepalive == b.keepalive) &&
                             (a.body      == b.body)
 
 Base.showcompact(io::IO, r::Request) = print(io, "Request(", resource(r.uri), ", ",
@@ -111,18 +142,18 @@ Base.showcompact(io::IO, r::Request) = print(io, "Request(", resource(r.uri), ",
 """
 A type representing an HTTP response.
 """
-type Response
-    status::Int
-    major::Int8
-    minor::Int8
-    headers::Headers
-    keepalive::Bool
-    cookies::Vector{Cookie}
-    body::FIFOBuffer
-    bodytask::Task
-    request::Nullable{Request}
-    history::Vector{Response}
-end
+# type Response
+#     status::Int
+#     major::Int8
+#     minor::Int8
+#     headers::Headers
+#     keepalive::Bool
+#     cookies::Vector{Cookie}
+#     body::FIFOBuffer
+#     bodytask::Task
+#     request::Nullable{Request}
+#     history::Vector{Response}
+# end
 
 Response() = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(), Task(1), Nullable(), Response[])
 Response(n, r::Request) = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(n), Task(1), Nullable(r), Response[])

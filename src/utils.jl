@@ -55,3 +55,39 @@ macro debug(should, expr)
         end
     end
 end
+
+# parsing utils
+lower(c) = Char(UInt32(c) | 0x20)
+isurlchar(c) =  'A' <= c <= '~' || '$' <= c <= '>' || c == '\f' || c == '\t'
+const MARKS = Set{Char}(['-', '_', '.', '!', '~', '*', '\'', '(', ')'])
+ismark(c) = c in MARKS
+isalpha(c) = 'a' <= lower(c) <= 'z'
+isnum(c) = '0' <= c <= '9'
+isalphanum(c) = isalpha(c) || isnum(c)
+const USERINFOCHARS = Set{Char}(['%', ';', ':', '&', '+', '$', ','])
+isuserinfochar(c) = isalphanum(c) || ismark(c) || c in USERINFOCHARS
+ishex(c) =  isnum(c) || ('a' <= lower(c) <= 'f')
+const HOSTCHARS = Set{Char}(['.', '-', '_', '~'])
+ishostchar(c) = isalphanum(c) || c in HOSTCHARS
+isheaderchar(c) = c == CR || c == LF || c == Char(9) || (c > Char(31) && c != Char(127))
+
+macro shifted(meth, i, char)
+    return esc(:(Int32($meth) << Int32(16) | Int32($i) << Int32(8) | Int32($char)))
+end
+
+macro errorif(cond, err)
+    return esc(quote
+        $cond && @err($err)
+    end)
+end
+
+macro err(e)
+    return esc(quote
+        errno = $e
+        @goto error
+    end)
+end
+
+macro strictcheck(cond)
+    return esc(:(strict && @errorif($cond, HPE_STRICT)))
+end

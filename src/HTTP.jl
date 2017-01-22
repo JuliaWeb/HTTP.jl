@@ -12,9 +12,11 @@ const TLS = MbedTLS
 
 import Base.==
 
-const DEBUG = false
+const DEBUG = true
 
-include("statuscodes.jl")
+const MAINTASK = current_task()
+
+include("consts.jl")
 include("utils.jl")
 include("fifobuffer.jl")
 include("sniff.jl")
@@ -29,7 +31,7 @@ include("server.jl")
 
 # package-wide inits
 function __init__()
-    __init__parser()
+
 end
 
 end # module

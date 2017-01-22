@@ -104,65 +104,61 @@ const AlternateRFC1123Format = Dates.DateFormat("e, dd-uuu-yyyy HH:MM:SS")
 
 # readSetCookies parses all "Set-Cookie" values from
 # the header h and returns the successfully parsed Cookies.
-function readsetcookies(host, cookiestrings::Vector{String})
-    count = length(cookiestrings)
-    count == 0 && return Cookie[]
-    cookies = Vector{Cookie}(count)
-    for (i, cookie) in enumerate(cookiestrings)
-        parts = split(strip(cookie), ';')
-        length(parts) == 1 && parts[1] == "" && continue
-        parts[1] = strip(parts[1])
-        j = findfirst(parts[1], '=')
-        j < 1 && continue
-        name, value = parts[1][1:j-1], parts[1][j+1:end]
-        iscookienamevalid(name) || continue
-        value, ok = parsecookievalue(value, true)
-        ok || continue
-        c = Cookie(name, value)
-        for x = 2:length(parts)
-            parts[x] = strip(parts[x])
-            length(parts[x]) == 0 && continue
-            attr, val = parts[x], ""
-            j = findfirst(parts[x], '=')
-            if j > 0
-                attr, val = attr[1:j-1], attr[j+1:end]
-            end
-            lowerattr = lowercase(attr)
-            val, ok = parsecookievalue(val, false)
-            if !ok
-                push!(c.unparsed, parts[x])
-                continue
-            end
-            if lowerattr == "secure"
-                c.secure = true
-            elseif lowerattr == "httponly"
-                c.httponly = true
-            elseif lowerattr == "domain"
-                c.domain = val
-            elseif lowerattr == "max-age"
-                secs = tryparse(Int, val)
-                (isnull(secs) || val[1] == '0') && continue
-                c.maxage = max(Base.get(secs), -1)
-            elseif lowerattr == "expires"
-                try
-                    c.expires = DateTime(val, Dates.RFC1123Format)
-                catch
-                    try
-                        c.expires = DateTime(val, AlternateRFC1123Format)
-                    catch
-                        continue
-                    end
-                end
-            elseif lowerattr == "path"
-                c.path = val
-            else
-                push!(c.unparsed, parts[x])
-            end
+readsetcookies(host, cookies) = Cookie[readsetcookie(host, c) for c in cookies]
+
+function readsetcookie(host, cookie)
+    parts = split(strip(cookie), ';')
+    length(parts) == 1 && parts[1] == "" && return Cookie()
+    parts[1] = strip(parts[1])
+    j = findfirst(parts[1], '=')
+    j < 1 && return Cookie()
+    name, value = parts[1][1:j-1], parts[1][j+1:end]
+    iscookienamevalid(name) || return Cookie()
+    value, ok = parsecookievalue(value, true)
+    ok || return Cookie()
+    c = Cookie(name, value)
+    for x = 2:length(parts)
+        parts[x] = strip(parts[x])
+        length(parts[x]) == 0 && continue
+        attr, val = parts[x], ""
+        j = findfirst(parts[x], '=')
+        if j > 0
+            attr, val = attr[1:j-1], attr[j+1:end]
         end
-        c.domain, c.hostonly = domainandtype(host == "" ? c.domain : host, c.domain)
-        cookies[i] = c
+        lowerattr = lowercase(attr)
+        val, ok = parsecookievalue(val, false)
+        if !ok
+            push!(c.unparsed, parts[x])
+            continue
+        end
+        if lowerattr == "secure"
+            c.secure = true
+        elseif lowerattr == "httponly"
+            c.httponly = true
+        elseif lowerattr == "domain"
+            c.domain = val
+        elseif lowerattr == "max-age"
+            secs = tryparse(Int, val)
+            (isnull(secs) || val[1] == '0') && continue
+            c.maxage = max(Base.get(secs), -1)
+        elseif lowerattr == "expires"
+            try
+                c.expires = DateTime(val, Dates.RFC1123Format)
+            catch
+                try
+                    c.expires = DateTime(val, AlternateRFC1123Format)
+                catch
+                    continue
+                end
+            end
+        elseif lowerattr == "path"
+            c.path = val
+        else
+            push!(c.unparsed, parts[x])
+        end
     end
-    return cookies
+    c.domain, c.hostonly = domainandtype(host == "" ? c.domain : host, c.domain)
+    return c
 end
 
 # shouldsend determines whether e's cookie qualifies to be included in a

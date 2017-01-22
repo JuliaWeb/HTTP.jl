@@ -1,4 +1,4 @@
-@enum State Busy Idle Dead
+@enum ConnectionState Busy Idle Dead
 
 """
 `HTTP.Connection`
@@ -9,7 +9,7 @@ will be reused when sending subsequent requests to the same host.
 """
 type Connection{I <: IO}
     tcp::I
-    state::State
+    state::ConnectionState
     statetime::DateTime
 end
 
@@ -39,7 +39,7 @@ type Client{I <: IO}
     # cookies are stored in-memory per host and automatically sent when appropriate
     cookies::Dict{String, Set{Cookie}}
     # buffer::Vector{UInt8} #TODO: create a fixed size buffer for reading bytes off the wire and having http_parser use, this should keep allocations down, need to make sure MbedTLS supports blocking readbytes!
-    parser::Parser{ResponseParser}
+    parser::Parser
     logger::I
     # global request settings
     options::RequestOptions
@@ -48,7 +48,7 @@ end
 const DEFAULT_CHUNK_SIZE = 2^20
 const DEFAULT_REQUEST_OPTIONS = (DEFAULT_CHUNK_SIZE, true, 30.0, 30.0, TLS.SSLConfig(true), 5)
 
-Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(), Dict{String, Vector{Connection{TLS.SSLContext}}}(), Dict{String, Set{Cookie}}(), Parser(Response), logger, options)
+Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(), Dict{String, Vector{Connection{TLS.SSLContext}}}(), Dict{String, Set{Cookie}}(), Parser(), logger, options)
 Client(logger::IO; args...) = Client(logger, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
 Client(; args...) = Client(STDOUT, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
 
@@ -106,6 +106,7 @@ function getconn{S}(::Type{S}, client, request, verbose)
                 verbose && println(client.logger, "Re-using existing connection to host...")
                 conn = c
                 reused = true
+                @debug(DEBUG, nb_available(c.tcp))
                 # read off any stale bytes left over from a possible error in a previous request
                 nb_available(c.tcp) > 0 && (readavailable(c.tcp))
             end
@@ -195,16 +196,18 @@ function process!(client, conn, request, response, stream, verbose)
         # if no data after 30 seconds, break out
         verbose && println(client.logger, "Checking for response w/ read timeout of = $(request.options.readtimeout)...")
         buffer = @timeout request.options.readtimeout readavailable(conn.tcp) throw(TimeoutException(request.options.readtimeout))
-        # @debug(DEBUG, String(buffer))
+        length(buffer) < 1 && continue
+        # @debug(DEBUG, buffer)
         verbose && println(client.logger, "Received response bytes; processing...")
-        http_parser_execute(client.parser, DEFAULT_RESPONSE_PARSER_SETTINGS, buffer, length(buffer))
-        if errno(client.parser) != 0
+        errno, flags, nread = HTTP.parse!(response, client.parser, buffer)
+        # http_parser_execute(client.parser, DEFAULT_RESPONSE_PARSER_SETTINGS, buffer, length(buffer))
+        if errno(client.parser) != 0 # check errno
             # TODO: error in parsing the http response
             break
-        elseif parser.messagecomplete
-            response.keepalive || dead!(conn)
+        elseif parser.messagecomplete # check flags for messagecomplete
+            response.keepalive || dead!(conn) # check flags for keepalive
             break
-        elseif stream && parser.headerscomplete
+        elseif stream && parser.headerscomplete # check flags for headerscomplete
             # async read the response body, returning the current response immediately
             response.bodytask = @async process!(client, conn, request, response, false, false)
             response.body.task = response.bodytask

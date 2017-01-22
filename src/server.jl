@@ -1,5 +1,5 @@
 #TODO:
- # allow limits on header sizes/body sizes?
+ # allow limits on header sizes/body sizes? http-parser
  # server send 505 for unsupported HTTP versions: https://tools.ietf.org/html/rfc7230#section-2.6
  # reject requests w/ empty HOST: https://tools.ietf.org/html/rfc7230#section-2.7.1
  # ignore "userinfo" in URI: https://tools.ietf.org/html/rfc7230#section-2.7.1
@@ -58,7 +58,7 @@ type Server{T <: Scheme}
     end
 end
 
-function process!{T}(p, conn, logger, socket::T, handler, parser::Parser{RequestParser})
+function process!{T}(p, conn, logger, socket::T, handler, parser::Parser)
     println(logger, "Processing on ServerWorker=$p, conn=$conn...")
     try
         while isopen(socket)
