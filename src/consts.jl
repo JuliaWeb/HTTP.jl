@@ -444,7 +444,7 @@ const normal_url_char = UInt8[
 
 @enum(http_parser_url_fields,
       UF_SCHEME   = 1
-    , UF_HOST     = 2
+    , UF_HOSTNAME = 2
     , UF_PORT     = 3
     , UF_PATH     = 4
     , UF_QUERY    = 5

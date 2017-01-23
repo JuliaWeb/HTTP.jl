@@ -7,12 +7,12 @@ immutable https <: Scheme end
 
 typealias Headers Dict{String,String}
 
-?(x) = Union{x,Void}
+?{T}(::Type{T}) = Union{T, Void}
 const null = nothing
 isnull(v::Void) = true
 isnull(x) = false
-function get(value, name::Symbol, default)
-    val = getfield(value, name)
+function get{T, R}(value::T, name::Symbol, default::R)::R
+    val = getfield(value, name)::?(R)
     return isnull(val) ? default : val
 end
 
@@ -61,72 +61,43 @@ type Request
     body::FIFOBuffer
 end
 
-type Response
-    status::Int32
-    major::Int16
-    minor::Int16
-    cookies::Vector{Cookie}
-    headers::Headers
-    body::FIFOBuffer
-    request::Nullable{Request}
-    history::Vector{Response}
-end
-# type Request
-#     method::String
-#     major::Int8
-#     minor::Int8
-#     uri::URI
-#     headers::Headers
-#     keepalive::Bool
-#     body::FIFOBuffer
-#     options::RequestOptions
-# end
-
-# type Response
-#     status::Int
-#     major::Int8
-#     minor::Int8
-#     headers::Headers
-#     keepalive::Bool
-#     cookies::Vector{Cookie}
-#     body::FIFOBuffer
-#     bodytask::Task
-#     request::Nullable{Request}
-#     history::Vector{Response}
-# end
-
-Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
+# accessors
+method(r::Request) = r.method
+uri(r::Request) = r.uri
+headers(r::Request) = r.headers
+body(r::Request) = r.body
 
 defaultheaders(::Type{Request}) = Headers(
     "User-Agent" => "HTTP.jl/0.0.0",
-    "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"
 )
 
-Request(method, uri, userheaders=Headers(), body=FIFOBuffer(); args...) = Request(method, uri, userheaders, body, RequestOptions(; args...))
-
-function Request{T}(method, uri, userheaders, body::T, options::RequestOptions)
+function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer; options::RequestOptions=RequestOptions())
     headers = defaultheaders(Request)
-    m = isa(method, String) ? MethodMap[method] : method
-    headers["Host"] = port(uri) == "" ? host(uri) : "$(host(uri)):$(port(uri))"
+    headers["Host"] = host(uri)
 
     if !isempty(userinfo(uri)) && !haskey(headers,"Authorization")
         headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
     end
-    fifobody = FIFOBuffer(body)
-    if shouldchunk(fifobody, get(options, :chunksize, typemax(Int)))
+    if shouldchunk(body, get(options, :chunksize, typemax(Int)))
         # chunked-transfer
         headers["Transfer-Encoding"] = "chunked" * (get(options, :gzip, false) ? "; gzip" : "")
     else
         # just set the Content-Length
-        if !(method in ("GET", "HEAD", "CONNECT"))
-            headers["Content-Length"] = dec(length(fifobody))
+        if !(m in (GET, HEAD, CONNECT))
+            headers["Content-Length"] = dec(length(body))
         end
     end
-    if !haskey(headers, "Content-Type") && length(fifobody) > 0
-        headers["Content-Type"] = HTTP.sniff(fifobody)
+    if !haskey(headers, "Content-Type") && length(body) > 0
+        headers["Content-Type"] = HTTP.sniff(body)
     end
-    return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), fifobody)
+    return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
+
+Request{T}(method, uri, h, body::T; args...) = Request(isa(method, String) ? MethodMap[method] : method,
+                               isa(uri, String) ? URI(uri) : uri, h, FIFOBuffer(body); options=RequestOptions(args...))
+
+Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
 
 ==(a::Request,b::Request) = (a.method    == b.method)    &&
                             (a.major     == b.major)     &&
@@ -142,25 +113,41 @@ Base.showcompact(io::IO, r::Request) = print(io, "Request(", resource(r.uri), ",
 """
 A type representing an HTTP response.
 """
-# type Response
-#     status::Int
-#     major::Int8
-#     minor::Int8
-#     headers::Headers
-#     keepalive::Bool
-#     cookies::Vector{Cookie}
-#     body::FIFOBuffer
-#     bodytask::Task
-#     request::Nullable{Request}
-#     history::Vector{Response}
-# end
+type Response
+    status::Int32
+    major::Int16
+    minor::Int16
+    cookies::Vector{Cookie}
+    headers::Headers
+    body::FIFOBuffer
+    request::Nullable{Request}
+    history::Vector{Response}
+end
 
-Response() = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(), Task(1), Nullable(), Response[])
-Response(n, r::Request) = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(n), Task(1), Nullable(r), Response[])
-Response(s::Int) = Response(s, defaultheaders(Response), FIFOBuffer())
-Response(body::String) = Response(200, defaultheaders(Response), FIFOBuffer(body))
-Response(s::Int, h::Headers, body) =
-  Response(s, 1, 1, h, true, Cookie[], body, Task(1), Nullable(), Response[])
+# accessors
+status(r::Response) = r.status
+cookies(r::Response) = r.cookies
+headers(r::Response) = r.headers
+body(r::Response) = r.body
+request(r::Response) = r.request
+history(r::Response) = r.history
+statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
+body(r::Union{Request, Response}) = r.body
+bytes(r::Response) = readavailable(r.body)
+Base.string(r::Response) = String(bytes(r))
+
+Response(; status::Int=200,
+         cookies::Vector{Cookie}=Cookie[],
+         headers::Headers=Headers(),
+         body::FIFOBuffer=FIFOBuffer(),
+         request::Nullable{Request}=Nullable{Request}(),
+         history::Vector{Response}=Response[]) =
+    Response(status, Int16(1), Int16(1), cookies, headers, body, request, history)
+
+Response(n::Int, r::Request) = Response(; body=FIFOBuffer(n), request=Nullable(r))
+Response(s::Int) = Response(; status=s)
+Response(b::Union{Vector{UInt8, String}) = Response(; headers=defaultheaders(Response), body=FIFOBuffer(b))
+Response(s::Int, h::Headers, body) = Response(; status=s, headers=h, body=FIFOBuffer(body))
 
 defaultheaders(::Type{Response}) = Headers(
     "Server"            => "Julia/$VERSION",
@@ -181,15 +168,6 @@ function Base.showcompact(io::IO, r::Response)
           length(r.headers)," headers, ",
           length(r.body)," bytes in body)")
 end
-
-headers(r::Union{Request,Response}) = r.headers
-history(r::Response) = r.history
-cookies(r::Response) = r.cookies
-status(r::Response) = r.status
-statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
-body(r::Response) = r.body
-bytes(r::Response) = readavailable(r.body)
-Base.string(r::Response) = String(bytes(r))
 
 const CRLF = "\r\n"
 
@@ -292,5 +270,5 @@ function Base.show(io::IO, r::Union{Request,Response})
     elseif length(r.body) > 0
         println(io, String(r.body))
     end
-    println(io, "\"\"\"")
+    print(io, "\"\"\"")
 end

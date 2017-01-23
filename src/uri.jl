@@ -21,18 +21,18 @@ const URL = URI
 URI(str::String) = http_parser_parse_url(Vector{UInt8}(str))
 
 ==(a::URI,b::URI) = scheme(a) == scheme(b) &&
-                    host(a) == host(b) &&
+                    hostname(a) == hostname(b) &&
                     path(a) == path(b) &&
                     query(a) == query(b) &&
                     fragment(a) == fragment(b) &&
                     userinfo(a) == userinfo(b) &&
                     ((!hasport(a) || !hasport(b)) || (port(a) == port(b)))
 
-function URI(host::String, path::String;
+function URI(hostname::String, path::String;
             scheme::String="http", userinfo::String="",
             port::Union{Integer,String}="", query::Union{String,Dict{String,String}}="", fragment::String="")
     io = IOBuffer()
-    print(io, scheme, userinfo, host, port, path, isa(query, Dict) ? escape(query) : query, fragment)
+    print(io, scheme, userinfo, hostname, port, path, isa(query, Dict) ? escape(query) : query, fragment)
     str = String(take!(io))
     return URI(str)
 end
@@ -59,15 +59,16 @@ function port(uri::URI)
 end
 
 resource(uri::URI) = path(uri) * (isempty(query(uri)) ? "" : "?$(query(uri))")
+host(uri::URI) = hostname(uri) * (isempty(port(uri)) ? "" : ":$(port(uri))")
 
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
 
-Base.print(io::IO, u::URI) = print(io, scheme(u), userinfo(u), host(u), port(u), path(u), query(u), fragment(u))
-function Base.print(io::IO, sch, userinfo, host, port, path, query, fragment)
+Base.print(io::IO, u::URI) = print(io, scheme(u), userinfo(u), hostname(u), port(u), path(u), query(u), fragment(u))
+function Base.print(io::IO, sch, userinfo, hostname, port, path, query, fragment)
     if sch in uses_authority
         print(io, sch, "://")
         !isempty(userinfo) && print(io, userinfo, "@")
-        print(io, ':' in host ? "[$host]" : host)
+        print(io, ':' in hostname ? "[$hostname]" : hostname)
         print(io, ((sch == "http" && port == "80") ||
                    (sch == "https" && port == "443") || isempty(port)) ? "" : ":$port")
     else
@@ -90,7 +91,7 @@ function Base.isvalid(uri::URI)
     if ((sch in non_hierarchical) && (search(path(uri), '/') > 1)) ||       # path hierarchy not allowed
        (!(sch in uses_query) && !isempty(query(uri))) ||                    # query component not allowed
        (!(sch in uses_fragment) && !isempty(fragment(uri))) ||              # fragment identifier component not allowed
-       (!(sch in uses_authority) && (!isempty(host(uri)) || ("" != port(uri)) || !isempty(userinfo(uri)))) # authority component not allowed
+       (!(sch in uses_authority) && (!isempty(hostname(uri)) || ("" != port(uri)) || !isempty(userinfo(uri)))) # authority component not allowed
         return false
     end
     return true
