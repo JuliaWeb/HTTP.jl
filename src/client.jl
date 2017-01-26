@@ -71,7 +71,7 @@ function send!(client::Client, request::Request; history::Vector{Response}=Respo
     # this works because request.options are null by default whereas client.options always have a default
     update!(request.options, client.options)
     # if the provided request body is compressed, avoid any chunked transfer since it ruins the compression scheme
-    length(request.body) > 3 && iscompressed(String(request.body)[1:4]) &&
+    length(request.body) > 3 && iscompressed(Vector{UInt8}(String(request.body))[1:4]) &&
         length(request.body) > request.options.chunksize && (request.options.chunksize = length(request.body) + 1)
     client.logger != STDOUT && (verbose = true)
     return scheme(request.uri) == "http" ? send!(client, request, getconn(http, client, request , verbose), history, stream, verbose) :
@@ -86,6 +86,10 @@ getconnections(::Type{https}, client, host) = client.httpspool[host]
 
 setconnection!(::Type{http}, client, host, conn) = push!(get!(client.httppool, host, Connection[]), conn)
 setconnection!(::Type{https}, client, host, conn) = push!(get!(client.httpspool, host, Connection[]), conn)
+
+stalebytes(c::TCPSocket) = (nb_available(c) > 0 && readavailable(c); return)
+# this is an ugly hack for MbedTLS since nb_available seems to be unreliable sometimes
+stalebytes(c::TLS.SSLContext) = stalebytes(c.bio)
 
 function getconn{S}(::Type{S}, client, request, verbose)
     # connect to remote host
@@ -107,7 +111,7 @@ function getconn{S}(::Type{S}, client, request, verbose)
                 conn = c
                 reused = true
                 # read off any stale bytes left over from a possible error in a previous request
-                nb_available(c.tcp) > 0 && (readavailable(c.tcp))
+                stalebytes(c.tcp)
             end
         end
         deleteat!(conns, inds)
