@@ -87,7 +87,7 @@ getconnections(::Type{https}, client, host) = client.httpspool[host]
 setconnection!(::Type{http}, client, host, conn) = push!(get!(client.httppool, host, Connection[]), conn)
 setconnection!(::Type{https}, client, host, conn) = push!(get!(client.httpspool, host, Connection[]), conn)
 
-stalebytes(c::TCPSocket) = (nb_available(c) > 0 && readavailable(c); return)
+stalebytes(c::TCPSocket) = (eof(c) || readavailable(c); return)
 # this is an ugly hack for MbedTLS since nb_available seems to be unreliable sometimes
 stalebytes(c::TLS.SSLContext) = stalebytes(c.bio)
 
@@ -102,6 +102,9 @@ function getconn{S}(::Type{S}, client, request, verbose)
         conns = getconnections(S, client, host)
         inds = Int[]
         for (i, c) in enumerate(conns)
+            # read off any stale bytes left over from a possible error in a previous request
+            # this will also trigger any sockets that timed out to be set to closed
+            stalebytes(c.tcp)
             if !isopen(c.tcp)
                 dead!(c)
                 push!(inds, i)
@@ -110,8 +113,6 @@ function getconn{S}(::Type{S}, client, request, verbose)
                 verbose && println(client.logger, "Re-using existing connection to host...")
                 conn = c
                 reused = true
-                # read off any stale bytes left over from a possible error in a previous request
-                stalebytes(c.tcp)
             end
         end
         deleteat!(conns, inds)
