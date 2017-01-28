@@ -100,7 +100,7 @@ end
 
 iscookienamevalid(raw) = raw == "" ? false : any(is_url_char, raw)
 
-const AlternateRFC1123Format = Dates.DateFormat("e, dd-uuu-yyyy HH:MM:SS")
+const AlternateRFC1123Format = Dates.DateFormat("e, dd-uuu-yyyy HH:MM:SS G\\MT")
 
 # readSetCookies parses all "Set-Cookie" values from
 # the header h and returns the successfully parsed Cookies.
