@@ -16,6 +16,11 @@ const DEBUG = true
 
 const MAINTASK = current_task()
 
+immutable ParsingError <: Exception
+    msg::String
+end
+Base.show(io::IO, p::ParsingError) = println("HTTP.ParsingError: ", p.msg)
+
 include("consts.jl")
 include("utils.jl")
 include("fifobuffer.jl")

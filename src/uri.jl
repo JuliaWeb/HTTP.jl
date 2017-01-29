@@ -1,8 +1,3 @@
-immutable ParsingError <: Exception
-    msg::String
-end
-Base.show(io::IO, p::ParsingError) = println("HTTP.ParsingError: ", p.msg)
-
 # URI
 immutable Offset
     off::UInt16
@@ -10,6 +5,7 @@ immutable Offset
 end
 Offset() = Offset(0, 0)
 Base.getindex(A::Vector{UInt8}, o::Offset) = String(A[o.off:(o.off + o.len - 1)])
+Base.isempty(o::Offset) = o.off == 0x0000 && o.len == 0x0000
 
 immutable URI
     data::Vector{UInt8}
@@ -18,29 +14,29 @@ end
 
 const URL = URI
 
-URI(str::String) = http_parser_parse_url(Vector{UInt8}(str))
-
-==(a::URI,b::URI) = scheme(a) == scheme(b) &&
-                    hostname(a) == hostname(b) &&
-                    path(a) == path(b) &&
-                    query(a) == query(b) &&
-                    fragment(a) == fragment(b) &&
-                    userinfo(a) == userinfo(b) &&
-                    ((!hasport(a) || !hasport(b)) || (port(a) == port(b)))
-
-function URI(hostname::String, path::String;
+function URI(hostname::String, path::String="";
             scheme::String="http", userinfo::String="",
-            port::Union{Integer,String}="", query::Union{String,Dict{String,String}}="", fragment::String="")
+            port::Union{Integer,String}="", query::Union{String,Dict{String,String}}="",
+            fragment::String="", isconnect::Bool=false)
     io = IOBuffer()
-    print(io, scheme, userinfo, hostname, port, path, isa(query, Dict) ? escape(query) : query, fragment)
-    str = String(take!(io))
-    return URI(str)
+    print(io, scheme, userinfo, hostname, string(port), path, isa(query, Dict) ? escape(query) : query, fragment)
+    return Base.parse(URI, String(take!(io)); isconnect=isconnect)
 end
+
+Base.parse(::Type{URI}, str::String; isconnect::Bool=false) = http_parser_parse_url(Vector{UInt8}(str), 1, sizeof(str), isconnect)
+
+==(a::URI,b::URI) = scheme(a)   == scheme(b)    &&
+                    hostname(a) == hostname(b)  &&
+                    path(a)     == path(b)      &&
+                    query(a)    == query(b)     &&
+                    fragment(a) == fragment(b)  &&
+                    userinfo(a) == userinfo(b)  &&
+                    ((!hasport(a) || !hasport(b)) || (port(a) == port(b)))
 
 # accessors
 for uf in instances(HTTP.http_parser_url_fields)
     uf == UF_MAX && break
-    nm = lowercase(string(uf)[4:end])
+        nm = lowercase(string(uf)[4:end])
     has = Symbol(string("has", nm))
     @eval $has(uri::URI) = uri.offsets[Int($uf)].len > 0
     uf == UF_PORT && continue
@@ -64,7 +60,7 @@ host(uri::URI) = hostname(uri) * (isempty(port(uri)) ? "" : ":$(port(uri))")
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
 
 Base.print(io::IO, u::URI) = print(io, scheme(u), userinfo(u), hostname(u), port(u), path(u), query(u), fragment(u))
-function Base.print(io::IO, sch, userinfo, hostname, port, path, query, fragment)
+function Base.print(io::IO, sch::String, userinfo::String, hostname::String, port::String, path::String, query::String, fragment::String)
     if sch in uses_authority
         print(io, sch, "://")
         !isempty(userinfo) && print(io, userinfo, "@")
@@ -293,7 +289,7 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
     off = len = 0
     foundat = false
     offsets = Dict{http_parser_url_fields, Offset}()
-    for i = startind:buflen
+    for i = startind:(startind + buflen - 1)
         p = Char(buf[i])
         olds = s
         s = parseurlchar(s, p, false)
@@ -305,9 +301,9 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
             uf = UF_SCHEME
         elseif s == s_req_server_with_at
             foundat = true
-            uf = UF_HOST
+            uf = UF_HOSTNAME
         elseif s == s_req_server
-            uf = UF_HOST
+            uf = UF_HOSTNAME
         elseif s == s_req_path
             uf = UF_PATH
         elseif s == s_req_query_string
@@ -321,24 +317,29 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
             len += 1
             continue
         end
-        offsets[old_uf] = Offset(off, len)
+        if old_uf != UF_MAX
+            offsets[old_uf] = Offset(off, len)
+        end
         off = i
         len = 1
         old_uf = uf
     end
     offsets[old_uf] = Offset(off, len)
-    if haskey(offsets, UF_SCHEME) && (!haskey(offsets, UF_HOST) && !haskey(offsets, UF_PATH))
+    if haskey(offsets, UF_SCHEME) && (!haskey(offsets, UF_HOSTNAME) && !haskey(offsets, UF_PATH))
         throw(ParsingError("URI must include host with scheme"))
     end
-    if haskey(offsets, UF_HOST)
-        host, port, userinfo = http_parse_host(buf, offsets[UF_HOST], foundat)
-        offsets[UF_HOST] = host
+    if haskey(offsets, UF_HOSTNAME)
+        host, port, userinfo = http_parse_host(buf, offsets[UF_HOSTNAME], foundat)
+        offsets[UF_HOSTNAME] = host
         offsets[UF_PORT] = port
-        offsets[UF_USERINFO] = userinfo
+        if !isempty(userinfo)
+            offsets[UF_USERINFO] = userinfo
+        end
     end
     # CONNECT requests can only contain "hostname:port"
     if isconnect
-        (haskey(offsets, UF_HOST) && haskey(offsets, UF_PORT)) || throw(ParsingError("connect requests must contain both hostname and port"))
+        (haskey(offsets, UF_HOSTNAME) && haskey(offsets, UF_PORT)) || throw(ParsingError("connect requests must contain both hostname and port"))
+        @show offsets
         length(offsets) > 2 && throw(ParsingError("connect requests can only contain hostname:port values"))
     end
     return URI(buf, ntuple(x->Base.get(offsets, http_parser_url_fields(x), Offset()), Int(UF_MAX)))

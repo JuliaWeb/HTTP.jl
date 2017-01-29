@@ -39,12 +39,12 @@ req.headers = HTTP.Headers("Host"=>"test")
 reqstr = "GET ../../../../etc/passwd HTTP/1.1\r\n" *
          "Host: test\r\n\r\n"
 
-@test_throws HTTP.ParserError HTTP.parse(HTTP.Request, reqstr)
+@test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
 
 reqstr = "GET  HTTP/1.1\r\n" *
          "Host: test\r\n\r\n"
 
-@test_throws HTTP.ParserError HTTP.parse(HTTP.Request, reqstr)
+@test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
 
 reqstr = "POST / HTTP/1.1\r\n" *
          "Host: foo.com\r\n" *
@@ -72,7 +72,7 @@ reqstr = "POST / HTTP/1.1\r\n" *
          "0\r\n" *
          "\r\n"
 
-@test_throws HTTP.ParserError HTTP.parse(HTTP.Request, reqstr)
+@test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
 
 reqstr = "CONNECT www.google.com:443 HTTP/1.1\r\n\r\n"
 

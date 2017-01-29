@@ -52,7 +52,12 @@ onmessagebegin(r) = @debug(DEBUG, "onmessagebegin")
 # should we just make a copy of the byte vector for URI here?
 function onurl(r, bytes, i, j)
     @debug(DEBUG, "onurl")
-    setfield!(r, :uri, http_parser_parse_url(bytes[i:j]))
+    @debug(DEBUG, i - j + 1)
+    @debug(DEBUG, "'$(String(bytes[i:j]))'")
+    @debug(DEBUG, r.method)
+    uri = http_parser_parse_url(bytes, i, j - i + 1, r.method == CONNECT)
+    @debug(DEBUG, uri)
+    setfield!(r, :uri, uri)
     nothing
 end
 onstatus(r) = @debug(DEBUG, "onstatus")
@@ -67,9 +72,9 @@ end
 function onheadervalue(p, r, bytes, i, j, issetcookie, host)
     @debug(DEBUG, "onheadervalue2")
     append!(p.valuebuffer, view(bytes, i:j))
-    val = String(copy(p.valuebuffer))
+    val = unsafe_string(pointer(p.valuebuffer), length(p.valuebuffer))
     issetcookie && push!(r.cookies, Cookies.readsetcookie(host, val))
-    r.headers[String(copy(p.fieldbuffer))] = val
+    r.headers[unsafe_string(pointer(p.fieldbuffer), length(p.fieldbuffer))] = val
     empty!(p.fieldbuffer)
     empty!(p.valuebuffer)
     return
@@ -77,19 +82,22 @@ end
 onheaderscomplete(r) = @debug(DEBUG, "onheaderscomplete")
 function onbody(r, bytes, i, j)
     @debug(DEBUG, "onbody")
+    @debug(DEBUG, String(r.body))
+    @debug(DEBUG, String(bytes[i:j]))
     len = j - i + 1
     nb = write(r.body, view(bytes, i:j))
     if nb < len # didn't write all available bytes
         if current_task() == MAINTASK
             # main request function hasn't returned yet, so not safe to wait
             r.body.max += len - nb
-            write(r.body, view(bytes, (i+nb):j))
+            write(r.body, view(bytes, (i + nb):j))
         else
             while nb < len
-                nb += write(body, view(bytes, (i+nb):j))
+                nb += write(body, view(bytes, (i + nb):j))
             end
         end
     end
+    @debug(DEBUG, String(r.body))
     return
 end
 onmessagecomplete(r::Request) = @debug(DEBUG, "onmessagecomplete")
@@ -346,7 +354,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             elseif ch == 'O'
                 r.method = OPTIONS
             elseif ch == 'P'
-                r.method = POS
+                r.method = POST
             elseif ch == 'R'
                 r.method = REPORT
             elseif ch == 'S'
@@ -705,7 +713,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
             elseif parser.header_state == h_content_length
                 @errorif(!isnum(ch), HPE_INVALID_CONTENT_LENGTH)
-                @errorif((parser.flags & F_CONTENTLENGTH) != 0, HPE_UNEXPECTED_CONTENT_LENGTH)
+                @errorif((parser.flags & F_CONTENTLENGTH > 0) != 0, HPE_UNEXPECTED_CONTENT_LENGTH)
                 parser.flags |= F_CONTENTLENGTH
                 parser.content_length = UInt64(ch - '0')
 
@@ -946,7 +954,8 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
         elseif p_state == s_headers_almost_done
             @debug(DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != LF)
-            if (parser.flags & F_TRAILING) > 0
+            if (parser.flags & F_TRAILING
+                ) > 0
                 #= End of a chunked request =#
                 p_state = s_message_done
                 # CALLBACK_NOTIFY_NOADVANCE(chunk_complete)
@@ -1020,7 +1029,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     p_state = s_body_identity
                     @debug(DEBUG, ParsingStateCode(p_state))
                 else
-                    if !http_message_needs_eof(parser)
+                    if !http_message_needs_eof(parser, r)
                         #= Assume content-length 0 - read the next =#
                         p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                         parser.state = p_state
@@ -1088,7 +1097,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
         elseif p_state == s_chunk_size_start
             @debug(DEBUG, ParsingStateCode(p_state))
             assert(parser.nread == 1)
-            assert(parser.flags & F_CHUNKED)
+            assert(parser.flags & F_CHUNKED > 0)
 
             unhex_val = unhex[Int(ch)+1]
             @errorif(unhex_val == -1, HPE_INVALID_CHUNK_SIZE)
@@ -1098,7 +1107,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
         elseif p_state == s_chunk_size
             @debug(DEBUG, ParsingStateCode(p_state))
-            assert(parser.flags & F_CHUNKED)
+            assert(parser.flags & F_CHUNKED > 0)
             if ch == CR
                 p_state = s_chunk_size_almost_done
             else
@@ -1124,7 +1133,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
         elseif p_state == s_chunk_parameters
             @debug(DEBUG, ParsingStateCode(p_state))
-            assert(parser.flags & F_CHUNKED)
+            assert(parser.flags & F_CHUNKED > 0)
             #= just ignore this shit. TODO check for overflow =#
             if ch == CR
                 p_state = s_chunk_size_almost_done
@@ -1132,7 +1141,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
         elseif p_state == s_chunk_size_almost_done
             @debug(DEBUG, ParsingStateCode(p_state))
-            assert(parser.flags & F_CHUNKED)
+            assert(parser.flags & F_CHUNKED > 0)
             @strictcheck(ch != LF)
 
             parser.nread = 0
@@ -1149,7 +1158,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             @debug(DEBUG, ParsingStateCode(p_state))
             to_read = UInt64(min(parser.content_length, len - p + 1))
 
-            assert(parser.flags & F_CHUNKED)
+            assert(parser.flags & F_CHUNKED > 0)
             assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
 
             #= See the explanation in s_body_identity for why the content
@@ -1165,16 +1174,16 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
         elseif p_state == s_chunk_data_almost_done
             @debug(DEBUG, ParsingStateCode(p_state))
-            assert(parser.flags & F_CHUNKED)
+            assert(parser.flags & F_CHUNKED > 0)
             assert(parser.content_length == 0)
             @strictcheck(ch != CR)
             p_state = s_chunk_data_done
-            onbody(r, bytes, body_mark, p)
+            onbody(r, bytes, body_mark, p - 1)
             body_mark = 0
 
         elseif p_state == s_chunk_data_done
             @debug(DEBUG, ParsingStateCode(p_state))
-            assert(parser.flags & F_CHUNKED)
+            assert(parser.flags & F_CHUNKED > 0)
             @strictcheck(ch != LF)
             parser.nread = 0
             p_state = s_chunk_size_start
@@ -1228,11 +1237,11 @@ function http_message_needs_eof(parser, r::Response)
     if (div(r.status, 100) == 1 || #= 1xx e.g. Continue =#
         r.status == 204 ||     #= No Content =#
         r.status == 304 ||     #= Not Modified =#
-        parser.flags & F_SKIPBODY)       #= response to a HEAD request =#
+        parser.flags & F_SKIPBODY > 0)       #= response to a HEAD request =#
         return false
     end
 
-    if (parser.flags & F_CHUNKED) || parser.content_length != ULLONG_MAX
+    if (parser.flags & F_CHUNKED > 0) || parser.content_length != ULLONG_MAX
         return false
     end
 
@@ -1242,12 +1251,12 @@ end
 function http_should_keep_alive(parser, r)
     if r.major > 0 && r.minor > 0
         #= HTTP/1.1 =#
-        if parser.flags & F_CONNECTION_CLOSE
+        if parser.flags & F_CONNECTION_CLOSE > 0
             return false
         end
     else
         #= HTTP/1.0 or earlier =#
-        if !(parser.flags & F_CONNECTION_KEEP_ALIVE)
+        if !(parser.flags & F_CONNECTION_KEEP_ALIVE > 0)
             return false
         end
     end

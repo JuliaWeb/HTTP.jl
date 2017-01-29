@@ -94,7 +94,7 @@ function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer; op
     return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
 
-Request{T}(method, uri, h, body::T; args...) = Request(isa(method, String) ? MethodMap[method] : method,
+Request{T}(method, uri, h, body::T; args...) = Request(convert(Method, method),
                                isa(uri, String) ? URI(uri) : uri, h, FIFOBuffer(body); options=RequestOptions(args...))
 
 Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
@@ -146,7 +146,7 @@ Response(; status::Int=200,
 
 Response(n::Int, r::Request) = Response(; body=FIFOBuffer(n), request=Nullable(r))
 Response(s::Int) = Response(; status=s)
-Response(b::Union{Vector{UInt8, String}) = Response(; headers=defaultheaders(Response), body=FIFOBuffer(b))
+Response(b::Union{Vector{UInt8}, String}) = Response(; headers=defaultheaders(Response), body=FIFOBuffer(b))
 Response(s::Int, h::Headers, body) = Response(; status=s, headers=h, body=FIFOBuffer(body))
 
 defaultheaders(::Type{Response}) = Headers(
