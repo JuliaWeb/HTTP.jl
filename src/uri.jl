@@ -9,7 +9,7 @@ Base.isempty(o::Offset) = o.off == 0x0000 && o.len == 0x0000
 
 immutable URI
     data::Vector{UInt8}
-    offsets::NTuple{8, Offset}
+    offsets::NTuple{7, Offset}
 end
 
 const URL = URI
@@ -342,5 +342,5 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
         @show offsets
         length(offsets) > 2 && throw(ParsingError("connect requests can only contain hostname:port values"))
     end
-    return URI(buf, ntuple(x->Base.get(offsets, http_parser_url_fields(x), Offset()), Int(UF_MAX)))
+    return URI(buf, ntuple(x->Base.get(offsets, http_parser_url_fields(x), Offset()), Int(UF_MAX) - 1))
 end
