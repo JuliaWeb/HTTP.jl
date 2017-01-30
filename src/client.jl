@@ -87,7 +87,7 @@ getconnections(::Type{https}, client, host) = client.httpspool[host]
 setconnection!(::Type{http}, client, host, conn) = push!(get!(client.httppool, host, Connection[]), conn)
 setconnection!(::Type{https}, client, host, conn) = push!(get!(client.httpspool, host, Connection[]), conn)
 
-stalebytes(c::TCPSocket) = (eof(c) || readavailable(c); return)
+stalebytes(c::TCPSocket) = (nb_available(c) > 0 && readavailable(c); return)
 # this is an ugly hack for MbedTLS since nb_available seems to be unreliable sometimes
 stalebytes(c::TLS.SSLContext) = stalebytes(c.bio)
 
