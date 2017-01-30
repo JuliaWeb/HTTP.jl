@@ -6,6 +6,7 @@ end
 Offset() = Offset(0, 0)
 Base.getindex(A::Vector{UInt8}, o::Offset) = String(A[o.off:(o.off + o.len - 1)])
 Base.isempty(o::Offset) = o.off == 0x0000 && o.len == 0x0000
+==(a::Offset, b::Offset) = a.off == b.off && a.len == b.len
 
 immutable URI
     data::Vector{UInt8}
