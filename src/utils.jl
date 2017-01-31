@@ -60,7 +60,7 @@ ismark(c) = c in MARKS
 isalpha(c) = 'a' <= lower(c) <= 'z'
 isnum(c) = '0' <= c <= '9'
 isalphanum(c) = isalpha(c) || isnum(c)
-const USERINFOCHARS = Set{Char}(['%', ';', ':', '&', '+', '$', ','])
+const USERINFOCHARS = Set{Char}(['%', ';', ':', '&', '=', '+', '$', ','])
 isuserinfochar(c) = isalphanum(c) || ismark(c) || c in USERINFOCHARS
 ishex(c) =  isnum(c) || ('a' <= lower(c) <= 'f')
 const HOSTCHARS = Set{Char}(['.', '-', '_', '~'])

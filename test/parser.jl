@@ -58,7 +58,7 @@ reqstr = "POST / HTTP/1.1\r\n" *
 req = HTTP.Request()
 req.method = "POST"
 req.uri = HTTP.URI("/")
-req.headers = HTTP.Headers("Transfer-Encoding"=>"chunked", "Host"=>"foo.com")
+req.headers = HTTP.Headers("Transfer-Encoding"=>"chunked", "Host"=>"foo.com", "Trailer-Key"=>"Trailer-Value")
 req.body = HTTP.FIFOBuffer("foobar")
 
 @test HTTP.parse(HTTP.Request, reqstr) == req
@@ -78,7 +78,7 @@ reqstr = "CONNECT www.google.com:443 HTTP/1.1\r\n\r\n"
 
 req = HTTP.Request()
 req.method = "CONNECT"
-req.uri = HTTP.URI("www.google.com:443")
+req.uri = HTTP.URI("www.google.com:443"; isconnect=true)
 
 @test HTTP.parse(HTTP.Request, reqstr) == req
 
@@ -121,7 +121,6 @@ reqstr = "GET / HTTP/1.1\r\nHost: issue8261.com\r\nConnection: close\r\n\r\n"
 req = HTTP.Request()
 req.uri = HTTP.URI("/")
 req.headers = HTTP.Headers("Host"=>"issue8261.com", "Connection"=>"close")
-req.keepalive = false
 
 @test HTTP.parse(HTTP.Request, reqstr) == req
 
@@ -131,7 +130,6 @@ req = HTTP.Request()
 req.method = "HEAD"
 req.uri = HTTP.URI("/")
 req.headers = HTTP.Headers("Host"=>"issue8261.com", "Connection"=>"close", "Content-Length"=>"0")
-req.keepalive = false
 
 @test HTTP.parse(HTTP.Request, reqstr) == req
 

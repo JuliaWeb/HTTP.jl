@@ -19,6 +19,8 @@ function URI(hostname::String, path::String="";
             scheme::String="http", userinfo::String="",
             port::Union{Integer,String}="", query::Union{String,Dict{String,String}}="",
             fragment::String="", isconnect::Bool=false)
+    # hostname might be full url
+    
     io = IOBuffer()
     print(io, scheme, userinfo, hostname, string(port), path, isa(query, Dict) ? escape(query) : query, fragment)
     return Base.parse(URI, String(take!(io)); isconnect=isconnect)
@@ -111,9 +113,10 @@ end
 
 function escape(d::Dict)
     io = IOBuffer()
+    len = length(d)
     for (i, (k,v)) in enumerate(d)
         write(io, escape(k), "=", escape(v))
-        i == length(d) || write(io, "&")
+        i == len || write(io, "&")
     end
     return String(take!(io))
 end
@@ -340,7 +343,6 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
     # CONNECT requests can only contain "hostname:port"
     if isconnect
         (haskey(offsets, UF_HOSTNAME) && haskey(offsets, UF_PORT)) || throw(ParsingError("connect requests must contain both hostname and port"))
-        @show offsets
         length(offsets) > 2 && throw(ParsingError("connect requests can only contain hostname:port values"))
     end
     return URI(buf, ntuple(x->Base.get(offsets, http_parser_url_fields(x), Offset()), Int(UF_MAX) - 1))
