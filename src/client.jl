@@ -185,7 +185,7 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
         setdiff!(client.cookies[host], expired)
         if length(tosend) > 0
             verbose && println(client.logger, "Adding cached cookie for host...")
-            req.headers["Cookie"] = string(Base.get(req.headers, "Cookie", ""), [c for c in tosend]...)
+            req.headers["Cookie"] = string(Base.get(req.headers, "Cookie", ""), [c for c in tosend])
         end
     end
     # send request over the wire
