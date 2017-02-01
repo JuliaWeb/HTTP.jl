@@ -1,4 +1,4 @@
-@testset "HTTP.parse" begin
+@testset "HTTP.parse(HTTP.Request/HTTP.Response, str)" begin
 reqstr = "GET http://www.techcrunch.com/ HTTP/1.1\r\n" *
          "Host: www.techcrunch.com\r\n" *
          "User-Agent: Fake\r\n" *
@@ -82,21 +82,21 @@ req.uri = HTTP.URI("www.google.com:443"; isconnect=true)
 
 @test HTTP.parse(HTTP.Request, reqstr) == req
 
-# reqstr = "CONNECT 127.0.0.1:6060 HTTP/1.1\r\n\r\n"
-#
-# req = HTTP.Request()
-# req.method = "CONNECT"
-# req.uri = HTTP.URI("127.0.0.1:6060")
-#
-# @test HTTP.parse(HTTP.Request, reqstr) == req
-
-reqstr = "CONNECT /_goRPC_ HTTP/1.1\r\n\r\n"
+reqstr = "CONNECT 127.0.0.1:6060 HTTP/1.1\r\n\r\n"
 
 req = HTTP.Request()
 req.method = "CONNECT"
-req.uri = HTTP.URI("/_goRPC_")
+req.uri = HTTP.URI("127.0.0.1:6060"; isconnect=true)
 
 @test HTTP.parse(HTTP.Request, reqstr) == req
+
+# reqstr = "CONNECT /_goRPC_ HTTP/1.1\r\n\r\n"
+#
+# req = HTTP.Request()
+# req.method = "CONNECT"
+# req.uri = HTTP.URI("/_goRPC_"; isconnect=true)
+
+# @test HTTP.parse(HTTP.Request, reqstr) == req
 
 reqstr = "NOTIFY * HTTP/1.1\r\nServer: foo\r\n\r\n"
 

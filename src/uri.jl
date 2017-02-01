@@ -15,17 +15,18 @@ end
 
 const URL = URI
 
-function URI(hostname::String, path::String="";
-            scheme::String="http", userinfo::String="",
+function URI(;hostname::String="", path::String="",
+            scheme::String="", userinfo::String="",
             port::Union{Integer,String}="", query::Union{String,Dict{String,String}}="",
             fragment::String="", isconnect::Bool=false)
     # hostname might be full url
-    
+    hostname != "" && scheme == "" && (scheme = "http")
     io = IOBuffer()
     print(io, scheme, userinfo, hostname, string(port), path, isa(query, Dict) ? escape(query) : query, fragment)
     return Base.parse(URI, String(take!(io)); isconnect=isconnect)
 end
 
+URI(str::String; isconnect::Bool=false) = Base.parse(URI, str; isconnect=isconnect)
 Base.parse(::Type{URI}, str::String; isconnect::Bool=false) = http_parser_parse_url(Vector{UInt8}(str), 1, sizeof(str), isconnect)
 
 ==(a::URI,b::URI) = scheme(a)   == scheme(b)    &&
@@ -57,7 +58,7 @@ function port(uri::URI)
     return ""
 end
 
-resource(uri::URI) = path(uri) * (isempty(query(uri)) ? "" : "?$(query(uri))")
+resource(uri::URI; isconnect::Bool=false) = isconnect ? host(uri) : path(uri) * (isempty(query(uri)) ? "" : "?$(query(uri))")
 host(uri::URI) = hostname(uri) * (isempty(port(uri)) ? "" : ":$(port(uri))")
 
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
@@ -70,8 +71,10 @@ function Base.print(io::IO, sch::String, userinfo::String, hostname::String, por
         print(io, ':' in hostname ? "[$hostname]" : hostname)
         print(io, ((sch == "http" && port == "80") ||
                    (sch == "https" && port == "443") || isempty(port)) ? "" : ":$port")
-    else
+    elseif path != "" && path != "*" && sch != ""
         print(io, sch, ":")
+    elseif hostname != "" && port != "" # CONNECT
+        print(io, hostname, ":", port)
     end
     print(io, path, isempty(query) ? "" : "?$query", isempty(fragment) ? "" : "#$fragment")
 end

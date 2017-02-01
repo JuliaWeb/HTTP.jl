@@ -26,8 +26,8 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
         @test isvalid(u)
     end
 
-    @test parse(HTTP.URI, "hdfs://user:password@hdfshost:9000/root/folder/file.csv") == HTTP.URI("hdfshost", "/root/folder/file.csv"; scheme="hdfs", port=9000, userinfo="user:password")
-    @test parse(HTTP.URI, "http://google.com:80/some/path") == HTTP.URI("google.com", "/some/path")
+    @test parse(HTTP.URI, "hdfs://user:password@hdfshost:9000/root/folder/file.csv") == HTTP.URI(hostname="hdfshost", path="/root/folder/file.csv", scheme="hdfs", port=9000, userinfo="user:password")
+    @test parse(HTTP.URI, "http://google.com:80/some/path") == HTTP.URI(hostname="google.com", path="/some/path")
 
     @test HTTP.escape("abcdef αβ 1234-=~!@#\$()_+{}|[]a;") == "abcdef%20%CE%B1%CE%B2%201234-%3D~%21%40%23%24%28%29_%2B%7B%7D%7C%5B%5Da%3B"
     @test HTTP.unescape(HTTP.escape("abcdef 1234-=~!@#\$()_+{}|[]a;")) == "abcdef 1234-=~!@#\$()_+{}|[]a;"
@@ -44,7 +44,7 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
     @test false == isvalid(parse(HTTP.URI, "file:///path/to/file/with?should=work#fine"))
     @test true == isvalid( parse(HTTP.URI, "file:///path/to/file/with%3fshould%3dwork%23fine"))
 
-    @test parse(HTTP.URI, "s3://bucket/key") == HTTP.URI("bucket", "/key"; scheme="s3")
+    @test parse(HTTP.URI, "s3://bucket/key") == HTTP.URI(hostname="bucket", path="/key", scheme="s3")
 
     @test sprint(show, parse(HTTP.URI, "http://google.com")) == "HTTP.URI(\"http://google.com\")"
 

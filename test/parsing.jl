@@ -19,20 +19,16 @@
  * IN THE SOFTWARE.
  =#
 
-reload("HParsing")
-using Base.Test
+using HTTP, Base.Test
 
 const MAX_HEADERS = 13
 const MAX_ELEMENT_SIZE = 2048
 const MAX_CHUNKS = 16
 
-@enum helement NONE FIELD VALUE
-
 type Message
     name::String
     raw::String
-    mtype::HParsing.http_parser_type
-    method::HParsing.http_method
+    method::HTTP.Method
     status_code::Int
     response_status::String
     request_path::String
@@ -43,24 +39,15 @@ type Message
     body_size::Int
     host::String
     userinfo::String
-    port::UInt16
+    port::String
     num_headers::Int
-    last_header_element::helement
-    headers::Dict{String,String}{String,String}
+    headers::Dict{String,String}
     should_keep_alive::Bool
-    num_chunks::Int
-    num_chunks_complete::Int
-    chunk_lengths::Vector{UInt8}
     upgrade::String
     http_major::Int
     http_minor::Int
-    message_begin_cb_called::Bool
-    headers_complete_cb_called::Bool
-    message_complete_cb_called::Bool
-    message_complete_on_eof::Bool
-    body_is_final::Bool
 
-    Message(name::String) = new(name)
+    Message(name::String) = new(name, "", HTTP.GET, 200, "", "", "", "", "", "", 0, "", "", "", 0, HTTP.Headers(), true, "", 1, 1)
 end
 
 function Message(; name::String="", kwargs...)
@@ -75,26 +62,18 @@ function Message(; name::String="", kwargs...)
     return m
 end
 
-const currently_parsing_eof = num_messages = 1
-
-const messages = Vector{Message}(5)
-
-# static http_parser_settings *current_pause_parser;
-
 #= * R E Q U E S T S * =#
 const requests = Message[
   Message(name= "curl get"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /test HTTP/1.1\r\n" *
          "User-Agent: curl/7.18.0 (i486-pc-linux-gnu) libcurl/7.18.0 OpenSSL/0.9.8g zlib/1.2.3.3 libidn/1.1\r\n" *
          "Host: 0.0.0.0=5000\r\n" *
-         "Accept: *#=\r\n" *
+         "Accept: */*\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/test"
@@ -103,15 +82,14 @@ const requests = Message[
   ,headers=Dict{String,String}(
       "User-Agent"=> "curl/7.18.0 (i486-pc-linux-gnu) libcurl/7.18.0 OpenSSL/0.9.8g zlib/1.2.3.3 libidn/1.1"
     , "Host"=> "0.0.0.0=5000"
-    , "Accept"=> "*#="
+    , "Accept"=> "*/*"
     )
   ,body= ""
 ), Message(name= "firefox get"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /favicon.ico HTTP/1.1\r\n" *
          "Host: 0.0.0.0=5000\r\n" *
          "User-Agent: Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9) Gecko/2008061015 Firefox/3.0\r\n" *
-         "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*#=;q=0.8\r\n" *
+         "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n" *
          "Accept-Language: en-us,en;q=0.5\r\n" *
          "Accept-Encoding: gzip,deflate\r\n" *
          "Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n" *
@@ -119,10 +97,9 @@ const requests = Message[
          "Connection: keep-alive\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/favicon.ico"
@@ -131,7 +108,7 @@ const requests = Message[
   ,headers=Dict{String,String}(
       "Host"=> "0.0.0.0=5000"
     , "User-Agent"=> "Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9) Gecko/2008061015 Firefox/3.0"
-    , "Accept"=> "text/html,application/xhtml+xml,application/xml;q=0.9,*#=;q=0.8"
+    , "Accept"=> "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     , "Accept-Language"=> "en-us,en;q=0.5"
     , "Accept-Encoding"=> "gzip,deflate"
     , "Accept-Charset"=> "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
@@ -140,15 +117,13 @@ const requests = Message[
   )
   ,body= ""
 ), Message(name= "dumbfuck"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /dumbfuck HTTP/1.1\r\n" *
          "aaaaaaaaaaaaa:++++++++++\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/dumbfuck"
@@ -159,14 +134,12 @@ const requests = Message[
   )
   ,body= ""
 ), Message(name= "fragment in url"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /forums/1/topics/2375?page=1#posts-17408 HTTP/1.1\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= "page=1"
   ,fragment= "posts-17408"
   ,request_path= "/forums/1/topics/2375"
@@ -175,14 +148,12 @@ const requests = Message[
   ,num_headers= 0
   ,body= ""
 ), Message(name= "get no headers no body"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /get_no_headers_no_body/world HTTP/1.1\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false #= would need Connection: close =#
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/get_no_headers_no_body/world"
@@ -190,35 +161,31 @@ const requests = Message[
   ,num_headers= 0
   ,body= ""
 ), Message(name= "get one header no body"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /get_one_header_no_body HTTP/1.1\r\n" *
-         "Accept: *#=\r\n" *
+         "Accept: */*\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false #= would need Connection: close =#
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/get_one_header_no_body"
   ,request_url= "/get_one_header_no_body"
   ,num_headers= 1
   ,headers=Dict{String,String}(
-       "Accept" => "*#="
+       "Accept" => "*/*"
   )
   ,body= ""
 ), Message(name= "get funky content length body hello"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /get_funky_content_length_body_hello HTTP/1.0\r\n" *
          "conTENT-Length: 5\r\n" *
          "\r\n" *
          "HELLO"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 0
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/get_funky_content_length_body_hello"
@@ -229,31 +196,28 @@ const requests = Message[
   )
   ,body= "HELLO"
 ), Message(name= "post identity body world"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "POST /post_identity_body_world?q=search#hey HTTP/1.1\r\n" *
-         "Accept: *#=\r\n" *
+         "Accept: */*\r\n" *
          "Transfer-Encoding: identity\r\n" *
          "Content-Length: 5\r\n" *
          "\r\n" *
          "World"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HParsing.HTTP_POST
+  ,method= HTTP.POST
   ,query_string= "q=search"
   ,fragment= "hey"
   ,request_path= "/post_identity_body_world"
   ,request_url= "/post_identity_body_world?q=search#hey"
   ,num_headers= 3
   ,headers=Dict{String,String}(
-      "Accept"=> "*#="
+      "Accept"=> "*/*"
     , "Transfer-Encoding"=> "identity"
     , "Content-Length"=> "5"
   )
   ,body= "World"
 ), Message(name= "post - chunked body: all your base are belong to us"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "POST /post_chunked_all_your_base HTTP/1.1\r\n" *
          "Transfer-Encoding: chunked\r\n" *
          "\r\n" *
@@ -261,10 +225,9 @@ const requests = Message[
          "0\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HParsing.HTTP_POST
+  ,method= HTTP.POST
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/post_chunked_all_your_base"
@@ -274,10 +237,7 @@ const requests = Message[
       "Transfer-Encoding" => "chunked"
   )
   ,body= "all your base are belong to us"
-  ,num_chunks_complete= 2
-  ,chunk_lengths= [0x1e]
 ), Message(name= "two chunks ; triple zero ending"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "POST /two_chunks_mult_zero_end HTTP/1.1\r\n" *
          "Transfer-Encoding: chunked\r\n" *
          "\r\n" *
@@ -286,10 +246,9 @@ const requests = Message[
          "000\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_POST
+  ,method= HTTP.POST
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/two_chunks_mult_zero_end"
@@ -299,10 +258,7 @@ const requests = Message[
       "Transfer-Encoding"=> "chunked"
   )
   ,body= "hello world"
-  ,num_chunks_complete= 3
-  ,chunk_lengths= [0x05, 0x06]
 ), Message(name= "chunked with trailing headers. blech."
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "POST /chunked_w_trailing_headers HTTP/1.1\r\n" *
          "Transfer-Encoding: chunked\r\n" *
          "\r\n" *
@@ -313,10 +269,9 @@ const requests = Message[
          "Content-Type: text/plain\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_POST
+  ,method= HTTP.POST
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/chunked_w_trailing_headers"
@@ -328,10 +283,7 @@ const requests = Message[
     , "Content-Type"=> "text/plain"
   )
   ,body= "hello world"
-  ,num_chunks_complete= 3
-  ,chunk_lengths= [0x05, 0x06]
 ), Message(name= "with bullshit after the length"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "POST /chunked_w_bullshit_after_length HTTP/1.1\r\n" *
          "Transfer-Encoding: chunked\r\n" *
          "\r\n" *
@@ -340,10 +292,9 @@ const requests = Message[
          "0\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_POST
+  ,method= HTTP.POST
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/chunked_w_bullshit_after_length"
@@ -353,16 +304,12 @@ const requests = Message[
       "Transfer-Encoding"=> "chunked"
   )
   ,body= "hello world"
-  ,num_chunks_complete= 3
-  ,chunk_lengths= [0x05, 0x06]
 ), Message(name= "with quotes"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /with_\"stupid\"_quotes?foo=\"bar\" HTTP/1.1\r\n\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= "foo=\"bar\""
   ,fragment= ""
   ,request_path= "/with_\"stupid\"_quotes"
@@ -371,16 +318,14 @@ const requests = Message[
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name = "apachebench get"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /test HTTP/1.0\r\n" *
          "Host: 0.0.0.0:5000\r\n" *
          "User-Agent: ApacheBench/2.3\r\n" *
-         "Accept: *#=\r\n\r\n"
+         "Accept: */*\r\n\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 0
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/test"
@@ -388,17 +333,15 @@ const requests = Message[
   ,num_headers= 3
   ,headers=Dict{String,String}( "Host"=> "0.0.0.0:5000"
              , "User-Agent"=> "ApacheBench/2.3"
-             , "Accept"=> "*#="
+             , "Accept"=> "*/*"
            )
   ,body= ""
 ), Message(name = "query url with question mark"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /test.cgi?foo=bar?baz HTTP/1.1\r\n\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= "foo=bar?baz"
   ,fragment= ""
   ,request_path= "/test.cgi"
@@ -407,13 +350,11 @@ const requests = Message[
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name = "newline prefix get"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "\r\nGET /test HTTP/1.1\r\n\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/test"
@@ -422,7 +363,6 @@ const requests = Message[
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name = "upgrade request"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /demo HTTP/1.1\r\n" *
          "Host: example.com\r\n" *
          "Connection: Upgrade\r\n" *
@@ -430,14 +370,13 @@ const requests = Message[
          "Sec-WebSocket-Protocol: sample\r\n" *
          "Upgrade: WebSocket\r\n" *
          "Sec-WebSocket-Key1: 4 @1  46546xW%0l 1 5\r\n" *
-         "Origin: http:#example.com\r\n" *
+         "Origin: http://example.com\r\n" *
          "\r\n" *
          "Hot diggity dogg"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/demo"
@@ -450,11 +389,10 @@ const requests = Message[
              , "Sec-WebSocket-Protocol"=> "sample"
              , "Upgrade"=> "WebSocket"
              , "Sec-WebSocket-Key1"=> "4 @1  46546xW%0l 1 5"
-             , "Origin"=> "http:#example.com"
+             , "Origin"=> "http://example.com"
            )
   ,body= ""
 ), Message(name = "connect request"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "CONNECT 0-home0.netscape.com:443 HTTP/1.0\r\n" *
          "User-agent: Mozilla/1.1N\r\n" *
          "Proxy-authorization: basic aGVsbG86d29ybGQ=\r\n" *
@@ -462,13 +400,14 @@ const requests = Message[
          "some data\r\n" *
          "and yet even more data"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 0
-  ,method= HParsing.HTTP_CONNECT
+  ,method= HTTP.CONNECT
   ,query_string= ""
   ,fragment= ""
   ,request_path= ""
+  ,host="0-home0.netscape.com"
+  ,port="443"
   ,request_url= "0-home0.netscape.com:443"
   ,num_headers= 2
   ,upgrade="some data\r\nand yet even more data"
@@ -477,14 +416,12 @@ const requests = Message[
            )
   ,body= ""
 ), Message(name= "report request"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "REPORT /test HTTP/1.1\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_REPORT
+  ,method= HTTP.REPORT
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/test"
@@ -493,14 +430,12 @@ const requests = Message[
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name= "request with no http version"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /\r\n" *
          "\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 0
   ,http_minor= 9
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/"
@@ -509,17 +444,15 @@ const requests = Message[
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name= "m-search request"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "M-SEARCH * HTTP/1.1\r\n" *
          "HOST: 239.255.255.250:1900\r\n" *
          "MAN: \"ssdp:discover\"\r\n" *
          "ST: \"ssdp:all\"\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_MSEARCH
+  ,method= HTTP.MSEARCH
   ,query_string= ""
   ,fragment= ""
   ,request_path= "*"
@@ -530,95 +463,54 @@ const requests = Message[
              , "ST"=> "\"ssdp:all\""
            )
   ,body= ""
-), Message(name= "line folding in header value"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "GET / HTTP/1.1\r\n" *
-         "Line1:   abc\r\n" *
-         "\tdef\r\n" *
-         " ghi\r\n" *
-         "\t\tjkl\r\n" *
-         "  mno \r\n" *
-         "\t \tqrs\r\n" *
-         "Line2: \t line2\t\r\n" *
-         "Line3:\r\n" *
-         " line3\r\n" *
-         "Line4: \r\n" *
-         " \r\n" *
-         "Connection:\r\n" *
-         " close\r\n" *
-         "\r\n"
-  ,should_keep_alive= false
-  ,message_complete_on_eof= false
-  ,http_major= 1
-  ,http_minor= 1
-  ,method= HParsing.HTTP_GET
-  ,query_string= ""
-  ,fragment= ""
-  ,request_path= "/"
-  ,request_url= "/"
-  ,num_headers= 5
-  ,headers=Dict{String,String}( "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
-             , "Line2"=> "line2\t"
-             , "Line3"=> "line3"
-             , "Line4"=> ""
-             , "Connection"=> "close"
-           )
-  ,body= ""
 ), Message(name= "host terminated by a query string"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "GET http:#hypnotoad.org?hail=all HTTP/1.1\r\n" *
+  ,raw= "GET http://hypnotoad.org?hail=all HTTP/1.1\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= "hail=all"
   ,fragment= ""
   ,request_path= ""
-  ,request_url= "http:#hypnotoad.org?hail=all"
+  ,request_url= "http://hypnotoad.org?hail=all"
   ,host= "hypnotoad.org"
   ,num_headers= 0
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name= "host:port terminated by a query string"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "GET http:#hypnotoad.org:1234?hail=all HTTP/1.1\r\n" *
+  ,raw= "GET http://hypnotoad.org:1234?hail=all HTTP/1.1\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= "hail=all"
   ,fragment= ""
   ,request_path= ""
-  ,request_url= "http:#hypnotoad.org:1234?hail=all"
+  ,request_url= "http://hypnotoad.org:1234?hail=all"
   ,host= "hypnotoad.org"
-  ,port= UInt16(1234)
+  ,port= "1234"
   ,num_headers= 0
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name= "host:port terminated by a space"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "GET http:#hypnotoad.org:1234 HTTP/1.1\r\n" *
+  ,raw= "GET http://hypnotoad.org:1234 HTTP/1.1\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= ""
-  ,request_url= "http:#hypnotoad.org:1234"
+  ,request_url= "http://hypnotoad.org:1234"
   ,host= "hypnotoad.org"
-  ,port= UInt16(1234)
+  ,port= "1234"
   ,num_headers= 0
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name = "PATCH request"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "PATCH /file.txt HTTP/1.1\r\n" *
          "Host: www.example.com\r\n" *
          "Content-Type: application/example\r\n" *
@@ -627,10 +519,9 @@ const requests = Message[
          "\r\n" *
          "cccccccccc"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_PATCH
+  ,method= HTTP.PATCH
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/file.txt"
@@ -643,20 +534,20 @@ const requests = Message[
            )
   ,body= "cccccccccc"
 ), Message(name = "connect caps request"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "CONNECT HOME0.NETSCAPE.COM:443 HTTP/1.0\r\n" *
          "User-agent: Mozilla/1.1N\r\n" *
          "Proxy-authorization: basic aGVsbG86d29ybGQ=\r\n" *
          "\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 0
-  ,method= HParsing.HTTP_CONNECT
+  ,method= HTTP.CONNECT
   ,query_string= ""
   ,fragment= ""
   ,request_path= ""
   ,request_url= "HOME0.NETSCAPE.COM:443"
+  ,host="HOME0.NETSCAPE.COM"
+  ,port="443"
   ,num_headers= 2
   ,upgrade=""
   ,headers=Dict{String,String}( "User-agent"=> "Mozilla/1.1N"
@@ -664,15 +555,13 @@ const requests = Message[
            )
   ,body= ""
 ), Message(name= "utf-8 path request"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "GET /δ¶/δt/pope?q=1#narf HTTP/1.1\r\n" *
          "Host: github.com\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= "q=1"
   ,fragment= "narf"
   ,request_path= "/δ¶/δt/pope"
@@ -681,20 +570,20 @@ const requests = Message[
   ,headers=Dict{String,String}("Host" => "github.com")
   ,body= ""
 ), Message(name = "hostname underscore"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "CONNECT home_0.netscape.com:443 HTTP/1.0\r\n" *
          "User-agent: Mozilla/1.1N\r\n" *
          "Proxy-authorization: basic aGVsbG86d29ybGQ=\r\n" *
          "\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 0
-  ,method= HParsing.HTTP_CONNECT
+  ,method= HTTP.CONNECT
   ,query_string= ""
   ,fragment= ""
   ,request_path= ""
   ,request_url= "home_0.netscape.com:443"
+  ,host="home_0.netscape.com"
+  ,port="443"
   ,num_headers= 2
   ,upgrade=""
   ,headers=Dict{String,String}( "User-agent"=> "Mozilla/1.1N"
@@ -709,10 +598,9 @@ const requests = Message[
          "\r\n" *
          "q=42\r\n" #= note the trailing CRLF =#
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_POST
+  ,method= HTTP.POST
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/"
@@ -733,10 +621,9 @@ const requests = Message[
          "\r\n" *
          "q=42\r\n" #= note the trailing CRLF =#
   ,should_keep_alive= false
-  ,message_complete_on_eof= false #= input buffer isn't empty when on_message_complete is called =#
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_POST
+  ,method= HTTP.POST
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/"
@@ -750,15 +637,13 @@ const requests = Message[
            )
   ,body= "q=42"
 ), Message(name = "PURGE request"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "PURGE /file.txt HTTP/1.1\r\n" *
          "Host: www.example.com\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_PURGE
+  ,method= HTTP.PURGE
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/file.txt"
@@ -767,15 +652,13 @@ const requests = Message[
   ,headers=Dict{String,String}( "Host"=> "www.example.com" )
   ,body= ""
 ), Message(name = "SEARCH request"
-  ,mtype= HParsing.HTTP_REQUEST
   ,raw= "SEARCH / HTTP/1.1\r\n" *
          "Host: www.example.com\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_SEARCH
+  ,method= HTTP.SEARCH
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/"
@@ -784,25 +667,206 @@ const requests = Message[
   ,headers=Dict{String,String}( "Host"=> "www.example.com")
   ,body= ""
 ), Message(name= "host:port and basic_auth"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "GET http:#a%12:b!&*\$@hypnotoad.org:1234/toto HTTP/1.1\r\n" *
+  ,raw= "GET http://a%12:b!&*\$@hypnotoad.org:1234/toto HTTP/1.1\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,fragment= ""
   ,request_path= "/toto"
-  ,request_url= "http:#a%12:b!&*\$@hypnotoad.org:1234/toto"
+  ,request_url= "http://a%12:b!&*\$@hypnotoad.org:1234/toto"
   ,host= "hypnotoad.org"
   ,userinfo= "a%12:b!&*\$"
-  ,port= UInt16(1234)
+  ,port= "1234"
   ,num_headers= 0
   ,headers=Dict{String,String}()
   ,body= ""
+), Message(name = "upgrade post request"
+  ,raw= "POST /demo HTTP/1.1\r\n" *
+         "Host: example.com\r\n" *
+         "Connection: Upgrade\r\n" *
+         "Upgrade: HTTP/2.0\r\n" *
+         "Content-Length: 15\r\n" *
+         "\r\n" *
+         "sweet post body" *
+         "Hot diggity dogg"
+  ,should_keep_alive= true
+  ,http_major= 1
+  ,http_minor= 1
+  ,method= HTTP.POST
+  ,request_path= "/demo"
+  ,request_url= "/demo"
+  ,num_headers= 4
+  ,upgrade="Hot diggity dogg"
+  ,headers=Dict{String,String}( "Host"=> "example.com"
+             , "Connection"=> "Upgrade"
+             , "Upgrade"=> "HTTP/2.0"
+             , "Content-Length"=> "15"
+           )
+  ,body= "sweet post body"
+), Message(name = "connect with body request"
+  ,raw= "CONNECT foo.bar.com:443 HTTP/1.0\r\n" *
+         "User-agent: Mozilla/1.1N\r\n" *
+         "Proxy-authorization: basic aGVsbG86d29ybGQ=\r\n" *
+         "Content-Length: 10\r\n" *
+         "\r\n" *
+         "blarfcicle"
+  ,should_keep_alive= false
+  ,http_major= 1
+  ,http_minor= 0
+  ,method= HTTP.CONNECT
+  ,request_url= "foo.bar.com:443"
+  ,host="foo.bar.com"
+  ,port="443"
+  ,num_headers= 3
+  ,upgrade="blarfcicle"
+  ,headers=Dict{String,String}( "User-agent"=> "Mozilla/1.1N"
+             , "Proxy-authorization"=> "basic aGVsbG86d29ybGQ="
+             , "Content-Length"=> "10"
+           )
+  ,body= ""
+), Message(name = "link request"
+  ,raw= "LINK /images/my_dog.jpg HTTP/1.1\r\n" *
+         "Host: example.com\r\n" *
+         "Link: <http://example.com/profiles/joe>; rel=\"tag\"\r\n" *
+         "Link: <http://example.com/profiles/sally>; rel=\"tag\"\r\n" *
+         "\r\n"
+  ,should_keep_alive= true
+  ,http_major= 1
+  ,http_minor= 1
+  ,method= HTTP.LINK
+  ,request_path= "/images/my_dog.jpg"
+  ,request_url= "/images/my_dog.jpg"
+  ,query_string= ""
+  ,fragment= ""
+  ,num_headers= 2
+  ,headers=Dict{String,String}( "Host"=> "example.com"
+             , "Link"=> "<http://example.com/profiles/joe>; rel=\"tag\", <http://example.com/profiles/sally>; rel=\"tag\""
+           )
+  ,body= ""
+), Message(name = "link request"
+  ,raw= "UNLINK /images/my_dog.jpg HTTP/1.1\r\n" *
+         "Host: example.com\r\n" *
+         "Link: <http://example.com/profiles/sally>; rel=\"tag\"\r\n" *
+         "\r\n"
+  ,should_keep_alive= true
+  ,http_major= 1
+  ,http_minor= 1
+  ,method= HTTP.UNLINK
+  ,request_path= "/images/my_dog.jpg"
+  ,request_url= "/images/my_dog.jpg"
+  ,query_string= ""
+  ,fragment= ""
+  ,num_headers= 2
+  ,headers=Dict{String,String}( "Host"=> "example.com"
+	     , "Link"=> "<http://example.com/profiles/sally>; rel=\"tag\""
+           )
+  ,body= ""
+), Message(name = "multiple connection header values with folding"
+  ,raw= "GET /demo HTTP/1.1\r\n" *
+         "Host: example.com\r\n" *
+         "Connection: Something,\r\n" *
+         " Upgrade, ,Keep-Alive\r\n" *
+         "Sec-WebSocket-Key2: 12998 5 Y3 1  .P00\r\n" *
+         "Sec-WebSocket-Protocol: sample\r\n" *
+         "Upgrade: WebSocket\r\n" *
+         "Sec-WebSocket-Key1: 4 @1  46546xW%0l 1 5\r\n" *
+         "Origin: http://example.com\r\n" *
+         "\r\n" *
+         "Hot diggity dogg"
+  ,should_keep_alive= true
+  ,http_major= 1
+  ,http_minor= 1
+  ,method= HTTP.GET
+  ,query_string= ""
+  ,fragment= ""
+  ,request_path= "/demo"
+  ,request_url= "/demo"
+  ,num_headers= 7
+  ,upgrade="Hot diggity dogg"
+  ,headers=Dict{String,String}( "Host"=> "example.com"
+             , "Connection"=> "Something, Upgrade, ,Keep-Alive"
+             , "Sec-WebSocket-Key2"=> "12998 5 Y3 1  .P00"
+             , "Sec-WebSocket-Protocol"=> "sample"
+             , "Upgrade"=> "WebSocket"
+             , "Sec-WebSocket-Key1"=> "4 @1  46546xW%0l 1 5"
+             , "Origin"=> "http://example.com"
+           )
+  ,body= ""
 ), Message(name= "line folding in header value"
-  ,mtype= HParsing.HTTP_REQUEST
+  ,raw= "GET / HTTP/1.1\r\n" *
+         "Line1:   abc\r\n" *
+         "\tdef\r\n" *
+         " ghi\r\n" *
+         "\t\tjkl\r\n" *
+         "  mno \r\n" *
+         "\t \tqrs\r\n" *
+         "Line2: \t line2\t\r\n" *
+         "Line3:\r\n" *
+         " line3\r\n" *
+         "Line4: \r\n" *
+         " \r\n" *
+         "Connection:\r\n" *
+         " close\r\n" *
+         "\r\n"
+  ,should_keep_alive= false
+  ,http_major= 1
+  ,http_minor= 1
+  ,method= HTTP.GET
+  ,query_string= ""
+  ,fragment= ""
+  ,request_path= "/"
+  ,request_url= "/"
+  ,num_headers= 5
+  ,headers=Dict{String,String}( "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
+             , "Line2"=> "line2\t"
+             , "Line3"=> "line3"
+             , "Line4"=> ""
+             , "Connection"=> "close"
+           )
+  ,body= ""
+), Message(name = "multiple connection header values with folding and lws"
+  ,raw= "GET /demo HTTP/1.1\r\n" *
+         "Connection: keep-alive, upgrade\r\n" *
+         "Upgrade: WebSocket\r\n" *
+         "\r\n" *
+         "Hot diggity dogg"
+  ,should_keep_alive= true
+  ,http_major= 1
+  ,http_minor= 1
+  ,method= HTTP.GET
+  ,query_string= ""
+  ,fragment= ""
+  ,request_path= "/demo"
+  ,request_url= "/demo"
+  ,num_headers= 2
+  ,upgrade="Hot diggity dogg"
+  ,headers=Dict{String,String}( "Connection"=> "keep-alive, upgrade"
+             , "Upgrade"=> "WebSocket"
+           )
+  ,body= ""
+), Message(name = "multiple connection header values with folding and lws"
+  ,raw= "GET /demo HTTP/1.1\r\n" *
+         "Connection: keep-alive, \r\n upgrade\r\n" *
+         "Upgrade: WebSocket\r\n" *
+         "\r\n" *
+         "Hot diggity dogg"
+  ,should_keep_alive= true
+  ,http_major= 1
+  ,http_minor= 1
+  ,method= HTTP.GET
+  ,query_string= ""
+  ,fragment= ""
+  ,request_path= "/demo"
+  ,request_url= "/demo"
+  ,num_headers= 2
+  ,upgrade="Hot diggity dogg"
+  ,headers=Dict{String,String}( "Connection"=> "keep-alive,  upgrade"
+             , "Upgrade"=> "WebSocket"
+           )
+  ,body= ""
+), Message(name= "line folding in header value"
   ,raw= "GET / HTTP/1.1\n" *
          "Line1:   abc\n" *
          "\tdef\n" *
@@ -819,10 +883,9 @@ const requests = Message[
          " close\n" *
          "\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
-  ,method= HParsing.HTTP_GET
+  ,method= HTTP.GET
   ,query_string= ""
   ,fragment= ""
   ,request_path= "/"
@@ -835,180 +898,35 @@ const requests = Message[
              , "Connection"=> "close"
            )
   ,body= ""
-), Message(name = "multiple connection header values with folding"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "GET /demo HTTP/1.1\r\n" *
-         "Host: example.com\r\n" *
-         "Connection: Something,\r\n" *
-         " Upgrade, ,Keep-Alive\r\n" *
-         "Sec-WebSocket-Key2: 12998 5 Y3 1  .P00\r\n" *
-         "Sec-WebSocket-Protocol: sample\r\n" *
-         "Upgrade: WebSocket\r\n" *
-         "Sec-WebSocket-Key1: 4 @1  46546xW%0l 1 5\r\n" *
-         "Origin: http:#example.com\r\n" *
-         "\r\n" *
-         "Hot diggity dogg"
-  ,should_keep_alive= true
-  ,message_complete_on_eof= false
-  ,http_major= 1
-  ,http_minor= 1
-  ,method= HParsing.HTTP_GET
-  ,query_string= ""
-  ,fragment= ""
-  ,request_path= "/demo"
-  ,request_url= "/demo"
-  ,num_headers= 7
-  ,upgrade="Hot diggity dogg"
-  ,headers=Dict{String,String}( "Host"=> "example.com"
-             , "Connection"=> "Something, Upgrade, ,Keep-Alive"
-             , "Sec-WebSocket-Key2"=> "12998 5 Y3 1  .P00"
-             , "Sec-WebSocket-Protocol"=> "sample"
-             , "Upgrade"=> "WebSocket"
-             , "Sec-WebSocket-Key1"=> "4 @1  46546xW%0l 1 5"
-             , "Origin"=> "http:#example.com"
-           )
-  ,body= ""
-), Message(name = "multiple connection header values with folding and lws"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "GET /demo HTTP/1.1\r\n" *
-         "Connection: keep-alive, upgrade\r\n" *
-         "Upgrade: WebSocket\r\n" *
-         "\r\n" *
-         "Hot diggity dogg"
-  ,should_keep_alive= true
-  ,message_complete_on_eof= false
-  ,http_major= 1
-  ,http_minor= 1
-  ,method= HParsing.HTTP_GET
-  ,query_string= ""
-  ,fragment= ""
-  ,request_path= "/demo"
-  ,request_url= "/demo"
-  ,num_headers= 2
-  ,upgrade="Hot diggity dogg"
-  ,headers=Dict{String,String}( "Connection"=> "keep-alive, upgrade"
-             , "Upgrade"=> "WebSocket"
-           )
-  ,body= ""
-), Message(name = "multiple connection header values with folding and lws"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "GET /demo HTTP/1.1\r\n" *
-         "Connection: keep-alive, \r\n upgrade\r\n" *
-         "Upgrade: WebSocket\r\n" *
-         "\r\n" *
-         "Hot diggity dogg"
-  ,should_keep_alive= true
-  ,message_complete_on_eof= false
-  ,http_major= 1
-  ,http_minor= 1
-  ,method= HParsing.HTTP_GET
-  ,query_string= ""
-  ,fragment= ""
-  ,request_path= "/demo"
-  ,request_url= "/demo"
-  ,num_headers= 2
-  ,upgrade="Hot diggity dogg"
-  ,headers=Dict{String,String}( "Connection"=> "keep-alive,  upgrade"
-             , "Upgrade"=> "WebSocket"
-           )
-  ,body= ""
-), Message(name = "upgrade post request"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "POST /demo HTTP/1.1\r\n" *
-         "Host: example.com\r\n" *
-         "Connection: Upgrade\r\n" *
-         "Upgrade: HTTP/2.0\r\n" *
-         "Content-Length: 15\r\n" *
-         "\r\n" *
-         "sweet post body" *
-         "Hot diggity dogg"
-  ,should_keep_alive= true
-  ,message_complete_on_eof= false
-  ,http_major= 1
-  ,http_minor= 1
-  ,method= HParsing.HTTP_POST
-  ,request_path= "/demo"
-  ,request_url= "/demo"
-  ,num_headers= 4
-  ,upgrade="Hot diggity dogg"
-  ,headers=Dict{String,String}( "Host"=> "example.com"
-             , "Connection"=> "Upgrade"
-             , "Upgrade"=> "HTTP/2.0"
-             , "Content-Length"=> "15"
-           )
-  ,body= "sweet post body"
-), Message(name = "connect with body request"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "CONNECT foo.bar.com:443 HTTP/1.0\r\n" *
-         "User-agent: Mozilla/1.1N\r\n" *
-         "Proxy-authorization: basic aGVsbG86d29ybGQ=\r\n" *
-         "Content-Length: 10\r\n" *
-         "\r\n" *
-         "blarfcicle"
-  ,should_keep_alive= false
-  ,message_complete_on_eof= false
-  ,http_major= 1
-  ,http_minor= 0
-  ,method= HParsing.HTTP_CONNECT
-  ,request_url= "foo.bar.com:443"
-  ,num_headers= 3
-  ,upgrade="blarfcicle"
-  ,headers=Dict{String,String}( "User-agent"=> "Mozilla/1.1N"
-             , "Proxy-authorization"=> "basic aGVsbG86d29ybGQ="
-             , "Content-Length"=> "10"
-           )
-  ,body= ""
-), Message(name = "link request"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "LINK /images/my_dog.jpg HTTP/1.1\r\n" *
-         "Host: example.com\r\n" *
-         "Link: <http:#example.com/profiles/joe>; rel=\"tag\"\r\n" *
-         "Link: <http:#example.com/profiles/sally>; rel=\"tag\"\r\n" *
-         "\r\n"
-  ,should_keep_alive= true
-  ,message_complete_on_eof= false
-  ,http_major= 1
-  ,http_minor= 1
-  ,method= HParsing.HTTP_LINK
-  ,request_path= "/images/my_dog.jpg"
-  ,request_url= "/images/my_dog.jpg"
-  ,query_string= ""
-  ,fragment= ""
-  ,num_headers= 3
-  ,headers=Dict{String,String}( "Host"=> "example.com"
-             , "Link"=> "<http:#example.com/profiles/joe>; rel=\"tag\""
-	     , "Link"=> "<http:#example.com/profiles/sally>; rel=\"tag\""
-           )
-  ,body= ""
-), Message(name = "link request"
-  ,mtype= HParsing.HTTP_REQUEST
-  ,raw= "UNLINK /images/my_dog.jpg HTTP/1.1\r\n" *
-         "Host: example.com\r\n" *
-         "Link: <http:#example.com/profiles/sally>; rel=\"tag\"\r\n" *
-         "\r\n"
-  ,should_keep_alive= true
-  ,message_complete_on_eof= false
-  ,http_major= 1
-  ,http_minor= 1
-  ,method= HParsing.HTTP_UNLINK
-  ,request_path= "/images/my_dog.jpg"
-  ,request_url= "/images/my_dog.jpg"
-  ,query_string= ""
-  ,fragment= ""
-  ,num_headers= 2
-  ,headers=Dict{String,String}( "Host"=> "example.com"
-	     , "Link"=> "<http:#example.com/profiles/sally>; rel=\"tag\""
-           )
-  ,body= ""
-), Message() #= sentinel =#
+)
 ]
+
+@testset "HTTP.parse(HTTP.Request, str)" begin
+    for req in requests
+        println("TESTING: $(req.name)")
+        r = HTTP.parse(HTTP.Request, req.raw)
+        @test HTTP.major(r) == req.http_major
+        @test HTTP.minor(r) == req.http_minor
+        @test HTTP.method(r) == req.method
+        @test HTTP.query(HTTP.uri(r)) == req.query_string
+        @test HTTP.fragment(HTTP.uri(r)) == req.fragment
+        @test HTTP.path(HTTP.uri(r)) == req.request_path
+        @test HTTP.hostname(HTTP.uri(r)) == req.host
+        @test HTTP.userinfo(HTTP.uri(r)) == req.userinfo
+        @test HTTP.port(HTTP.uri(r)) in (req.port, "80", "443")
+        @test string(HTTP.uri(r)) == req.request_url
+        @test length(HTTP.headers(r)) == req.num_headers
+        @test HTTP.headers(r) == req.headers
+        @test String(readavailable(HTTP.body(r))) == req.body
+        @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == req.should_keep_alive
+    end
+end
 
 #= * R E S P O N S E S * =#
 const responses = Message[
     Message(name= "google 301"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 301 Moved Permanently\r\n" *
-         "Location: http:#www.google.com/\r\n" *
+         "Location: http://www.google.com/\r\n" *
          "Content-Type: text/html; charset=UTF-8\r\n" *
          "Date: Sun, 26 Apr 2009 11:11:49 GMT\r\n" *
          "Expires: Tue, 26 May 2009 11:11:49 GMT\r\n" *
@@ -1021,17 +939,16 @@ const responses = Message[
          "<TITLE>301 Moved</TITLE></HEAD><BODY>\n" *
          "<H1>301 Moved</H1>\n" *
          "The document has moved\n" *
-         "<A HREF=\"http:#www.google.com/\">here</A>.\r\n" *
+         "<A HREF=\"http://www.google.com/\">here</A>.\r\n" *
          "</BODY></HTML>\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 301
   ,response_status= "Moved Permanently"
   ,num_headers= 8
   ,headers=Dict{String,String}(
-      "Location"=> "http:#www.google.com/"
+      "Location"=> "http://www.google.com/"
     , "Content-Type"=> "text/html; charset=UTF-8"
     , "Date"=> "Sun, 26 Apr 2009 11:11:49 GMT"
     , "Expires"=> "Tue, 26 May 2009 11:11:49 GMT"
@@ -1044,10 +961,9 @@ const responses = Message[
           "<TITLE>301 Moved</TITLE></HEAD><BODY>\n" *
           "<H1>301 Moved</H1>\n" *
           "The document has moved\n" *
-          "<A HREF=\"http:#www.google.com/\">here</A>.\r\n" *
+          "<A HREF=\"http://www.google.com/\">here</A>.\r\n" *
           "</BODY></HTML>\r\n"
 ), Message(name= "no content-length response"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\r\n" *
          "Date: Tue, 04 Aug 2009 07:59:32 GMT\r\n" *
          "Server: Apache\r\n" *
@@ -1056,7 +972,7 @@ const responses = Message[
          "Connection: close\r\n" *
          "\r\n" *
          "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" *
-         "<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http:#schemas.xmlsoap.org/soap/envelope/\">\n" *
+         "<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http://schemas.xmlsoap.org/soap/envelope/\">\n" *
          "  <SOAP-ENV:Body>\n" *
          "    <SOAP-ENV:Fault>\n" *
          "       <faultcode>SOAP-ENV:Client</faultcode>\n" *
@@ -1065,7 +981,6 @@ const responses = Message[
          "  </SOAP-ENV:Body>\n" *
          "</SOAP-ENV:Envelope>"
   ,should_keep_alive= false
-  ,message_complete_on_eof= true
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1079,7 +994,7 @@ const responses = Message[
     , "Connection"=> "close"
   )
   ,body= "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" *
-          "<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http:#schemas.xmlsoap.org/soap/envelope/\">\n" *
+          "<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http://schemas.xmlsoap.org/soap/envelope/\">\n" *
           "  <SOAP-ENV:Body>\n" *
           "    <SOAP-ENV:Fault>\n" *
           "       <faultcode>SOAP-ENV:Client</faultcode>\n" *
@@ -1088,10 +1003,8 @@ const responses = Message[
           "  </SOAP-ENV:Body>\n" *
           "</SOAP-ENV:Envelope>"
 ), Message(name= "404 no headers no body"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 404 Not Found\r\n\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= true
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 404
@@ -1101,10 +1014,8 @@ const responses = Message[
   ,body_size= 0
   ,body= ""
 ), Message(name= "301 no response phrase"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 301\r\n\r\n"
   ,should_keep_alive = false
-  ,message_complete_on_eof= true
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 301
@@ -1113,7 +1024,6 @@ const responses = Message[
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name="200 trailing space on chunked body"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\r\n" *
          "Content-Type: text/plain\r\n" *
          "Transfer-Encoding: chunked\r\n" *
@@ -1127,7 +1037,6 @@ const responses = Message[
          "0  \r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1141,17 +1050,13 @@ const responses = Message[
   ,body =
          "This is the data in the first chunk\r\n" *
          "and this is the second one\r\n"
-  ,num_chunks_complete= 3
-  ,chunk_lengths= [0x25, 0x1c]
 ), Message(name="no carriage ret"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\n" *
          "Content-Type: text/html; charset=utf-8\n" *
          "Connection: close\n" *
          "\n" *
-         "these headers are from http:#news.ycombinator.com/"
+         "these headers are from http://news.ycombinator.com/"
   ,should_keep_alive= false
-  ,message_complete_on_eof= true
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1161,9 +1066,8 @@ const responses = Message[
       "Content-Type"=> "text/html; charset=utf-8"
     , "Connection"=> "close"
   )
-  ,body= "these headers are from http:#news.ycombinator.com/"
+  ,body= "these headers are from http://news.ycombinator.com/"
 ), Message(name="proxy connection"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\r\n" *
          "Content-Type: text/html; charset=UTF-8\r\n" *
          "Content-Length: 11\r\n" *
@@ -1172,7 +1076,6 @@ const responses = Message[
          "\r\n" *
          "hello world"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1186,14 +1089,12 @@ const responses = Message[
   )
   ,body= "hello world"
 ), Message(name="underscore header key"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\r\n" *
          "Server: DCLK-AdSvr\r\n" *
          "Content-Type: text/xml\r\n" *
          "Content-Length: 0\r\n" *
          "DCLK_imp: v7;x;114750856;0-0;0;17820020;0/0;21603567/21621457/1;;~okv=;dcmt=text/xml;;~cs=o\r\n\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1207,20 +1108,18 @@ const responses = Message[
   )
   ,body= ""
 ), Message(name= "bonjourmadame.fr"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.0 301 Moved Permanently\r\n" *
          "Date: Thu, 03 Jun 2010 09:56:32 GMT\r\n" *
          "Server: Apache/2.2.3 (Red Hat)\r\n" *
          "Cache-Control: public\r\n" *
          "Pragma: \r\n" *
-         "Location: http:#www.bonjourmadame.fr/\r\n" *
+         "Location: http://www.bonjourmadame.fr/\r\n" *
          "Vary: Accept-Encoding\r\n" *
          "Content-Length: 0\r\n" *
          "Content-Type: text/html; charset=UTF-8\r\n" *
          "Connection: keep-alive\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 0
   ,status_code= 301
@@ -1231,7 +1130,7 @@ const responses = Message[
     , "Server"=> "Apache/2.2.3 (Red Hat)"
     , "Cache-Control"=> "public"
     , "Pragma"=> ""
-    , "Location"=> "http:#www.bonjourmadame.fr/"
+    , "Location"=> "http://www.bonjourmadame.fr/"
     , "Vary"=>  "Accept-Encoding"
     , "Content-Length"=> "0"
     , "Content-Type"=> "text/html; charset=UTF-8"
@@ -1239,7 +1138,6 @@ const responses = Message[
   )
   ,body= ""
 ), Message(name= "field underscore"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\r\n" *
          "Date: Tue, 28 Sep 2010 01:14:13 GMT\r\n" *
          "Server: Apache\r\n" *
@@ -1255,7 +1153,6 @@ const responses = Message[
          "\r\n" *
          "0\r\n\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1275,17 +1172,13 @@ const responses = Message[
     , "Connection"=> "close"
   )
   ,body= ""
-  ,num_chunks_complete= 1
-  ,chunk_lengths= UInt8[]
 ), Message(name= "non-ASCII in status line"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 500 Oriëntatieprobleem\r\n" *
          "Date: Fri, 5 Nov 2010 23:07:12 GMT+2\r\n" *
          "Content-Length: 0\r\n" *
          "Connection: close\r\n" *
          "\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 500
@@ -1298,11 +1191,9 @@ const responses = Message[
   )
   ,body= ""
 ), Message(name= "http version 0.9"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/0.9 200 OK\r\n" *
          "\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= true
   ,http_major= 0
   ,http_minor= 9
   ,status_code= 200
@@ -1311,13 +1202,11 @@ const responses = Message[
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name= "neither content-length nor transfer-encoding response"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\r\n" *
          "Content-Type: text/plain\r\n" *
          "\r\n" *
          "hello world"
   ,should_keep_alive= false
-  ,message_complete_on_eof= true
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1328,12 +1217,10 @@ const responses = Message[
   )
   ,body= "hello world"
 ), Message(name= "HTTP/1.0 with keep-alive and EOF-terminated 200 status"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.0 200 OK\r\n" *
          "Connection: keep-alive\r\n" *
          "\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= true
   ,http_major= 1
   ,http_minor= 0
   ,status_code= 200
@@ -1345,12 +1232,10 @@ const responses = Message[
   ,body_size= 0
   ,body= ""
 ), Message(name= "HTTP/1.0 with keep-alive and a 204 status"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.0 204 No content\r\n" *
          "Connection: keep-alive\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 0
   ,status_code= 204
@@ -1362,11 +1247,9 @@ const responses = Message[
   ,body_size= 0
   ,body= ""
 ), Message(name= "HTTP/1.1 with an EOF-terminated 200 status"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\r\n" *
          "\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= true
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1376,11 +1259,9 @@ const responses = Message[
   ,body_size= 0
   ,body= ""
 ), Message(name= "HTTP/1.1 with a 204 status"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 204 No content\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 204
@@ -1390,12 +1271,10 @@ const responses = Message[
   ,body_size= 0
   ,body= ""
 ), Message(name= "HTTP/1.1 with a 204 status and keep-alive disabled"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 204 No content\r\n" *
          "Connection: close\r\n" *
          "\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 204
@@ -1407,14 +1286,12 @@ const responses = Message[
   ,body_size= 0
   ,body= ""
 ), Message(name= "HTTP/1.1 with chunked endocing and a 200 response"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\r\n" *
          "Transfer-Encoding: chunked\r\n" *
          "\r\n" *
          "0\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1425,9 +1302,7 @@ const responses = Message[
   )
   ,body_size= 0
   ,body= ""
-  ,num_chunks_complete= 1
 ), Message(name= "field space"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\r\n" *
          "Server: Microsoft-IIS/6.0\r\n" *
          "X-Powered-By: ASP.NET\r\n" *
@@ -1439,7 +1314,6 @@ const responses = Message[
          "\r\n" *
          "<xml>hello</xml>" #= fake body =#
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1456,14 +1330,13 @@ const responses = Message[
   )
   ,body= "<xml>hello</xml>"
 ), Message(name= "amazon.com"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 301 MovedPermanently\r\n" *
          "Date: Wed, 15 May 2013 17:06:33 GMT\r\n" *
          "Server: Server\r\n" *
          "x-amz-id-1: 0GPHKXSJQ826RK7GZEB2\r\n" *
-         "p3p: policyref=\"http:#www.amazon.com/w3c/p3p.xml\",CP=\"CAO DSP LAW CUR ADM IVAo IVDo CONo OTPo OUR DELi PUBi OTRi BUS PHY ONL UNI PUR FIN COM NAV INT DEM CNT STA HEA PRE LOC GOV OTC \"\r\n" *
+         "p3p: policyref=\"http://www.amazon.com/w3c/p3p.xml\",CP=\"CAO DSP LAW CUR ADM IVAo IVDo CONo OTPo OUR DELi PUBi OTRi BUS PHY ONL UNI PUR FIN COM NAV INT DEM CNT STA HEA PRE LOC GOV OTC \"\r\n" *
          "x-amz-id-2: STN69VZxIFSz9YJLbz1GDbxpbjG6Qjmmq5E3DxRhOUw+Et0p4hr7c/Q8qNcx4oAD\r\n" *
-         "Location: http:#www.amazon.com/Dan-Brown/e/B000AP9DSU/ref=s9_pop_gw_al1?_encoding=UTF8&refinementId=618073011&pf_rd_m=ATVPDKIKX0DER&pf_rd_s=center-2&pf_rd_r=0SHYY5BZXN3KR20BNFAY&pf_rd_t=101&pf_rd_p=1263340922&pf_rd_i=507846\r\n" *
+         "Location: http://www.amazon.com/Dan-Brown/e/B000AP9DSU/ref=s9_pop_gw_al1?_encoding=UTF8&refinementId=618073011&pf_rd_m=ATVPDKIKX0DER&pf_rd_s=center-2&pf_rd_r=0SHYY5BZXN3KR20BNFAY&pf_rd_t=101&pf_rd_p=1263340922&pf_rd_i=507846\r\n" *
          "Vary: Accept-Encoding,User-Agent\r\n" *
          "Content-Type: text/html; charset=ISO-8859-1\r\n" *
          "Transfer-Encoding: chunked\r\n" *
@@ -1473,7 +1346,6 @@ const responses = Message[
          "0\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 301
@@ -1482,22 +1354,18 @@ const responses = Message[
   ,headers=Dict{String,String}( "Date"=> "Wed, 15 May 2013 17:06:33 GMT"
              , "Server"=> "Server"
              , "x-amz-id-1"=> "0GPHKXSJQ826RK7GZEB2"
-             , "p3p"=> "policyref=\"http:#www.amazon.com/w3c/p3p.xml\"=>CP=\"CAO DSP LAW CUR ADM IVAo IVDo CONo OTPo OUR DELi PUBi OTRi BUS PHY ONL UNI PUR FIN COM NAV INT DEM CNT STA HEA PRE LOC GOV OTC \""
+             , "p3p"=> "policyref=\"http://www.amazon.com/w3c/p3p.xml\"=>CP=\"CAO DSP LAW CUR ADM IVAo IVDo CONo OTPo OUR DELi PUBi OTRi BUS PHY ONL UNI PUR FIN COM NAV INT DEM CNT STA HEA PRE LOC GOV OTC \""
              , "x-amz-id-2"=> "STN69VZxIFSz9YJLbz1GDbxpbjG6Qjmmq5E3DxRhOUw+Et0p4hr7c/Q8qNcx4oAD"
-             , "Location"=> "http:#www.amazon.com/Dan-Brown/e/B000AP9DSU/ref=s9_pop_gw_al1?_encoding=UTF8&refinementId=618073011&pf_rd_m=ATVPDKIKX0DER&pf_rd_s=center-2&pf_rd_r=0SHYY5BZXN3KR20BNFAY&pf_rd_t=101&pf_rd_p=1263340922&pf_rd_i=507846"
+             , "Location"=> "http://www.amazon.com/Dan-Brown/e/B000AP9DSU/ref=s9_pop_gw_al1?_encoding=UTF8&refinementId=618073011&pf_rd_m=ATVPDKIKX0DER&pf_rd_s=center-2&pf_rd_r=0SHYY5BZXN3KR20BNFAY&pf_rd_t=101&pf_rd_p=1263340922&pf_rd_i=507846"
              , "Vary"=> "Accept-Encoding,User-Agent"
              , "Content-Type"=> "text/html; charset=ISO-8859-1"
              , "Transfer-Encoding"=> "chunked"
            )
   ,body= "\n"
-  ,num_chunks_complete= 2
-  ,chunk_lengths= [ 0x01 ]
 ), Message(name= "empty reason phrase after space"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 \r\n" *
          "\r\n"
   ,should_keep_alive= false
-  ,message_complete_on_eof= true
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1506,7 +1374,6 @@ const responses = Message[
   ,headers=Dict{String,String}()
   ,body= ""
 ), Message(name= "Content-Length-X"
-  ,mtype= HParsing.HTTP_RESPONSE
   ,raw= "HTTP/1.1 200 OK\r\n" *
          "Content-Length-X: 0\r\n" *
          "Transfer-Encoding: chunked\r\n" *
@@ -1516,7 +1383,6 @@ const responses = Message[
          "0\r\n" *
          "\r\n"
   ,should_keep_alive= true
-  ,message_complete_on_eof= false
   ,http_major= 1
   ,http_minor= 1
   ,status_code= 200
@@ -1526,465 +1392,9 @@ const responses = Message[
              , "Transfer-Encoding"=> "chunked"
            )
   ,body= "OK"
-  ,num_chunks_complete= 2
-  ,chunk_lengths= [0x02]
 ), Message() #= sentinel =#
 ]
 
-function request_url_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  strlncat(messages[num_messages].request_url,
-           sizeof(messages[num_messages].request_url),
-           buf,
-           len);
-  return 0;
-end
-
-function header_field_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-struct message *m = &messages[num_messages];
-
-  if (m.last_header_element != FIELD)
-    m.num_headers += 1;
-
-  strlncat(m.headers[m.num_headers-1][0],
-           sizeof(m.headers[m.num_headers-1][0]),
-           buf,
-           len);
-
-  m.last_header_element = FIELD;
-
-  return 0;
-end
-
-function header_value_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  struct message *m = &messages[num_messages];
-
-  strlncat(m.headers[m.num_headers-1][1],
-           sizeof(m.headers[m.num_headers-1][1]),
-           buf,
-           len);
-
-  m.last_header_element = VALUE;
-
-  return 0;
-end
-
-function check_body_is_final(p::HParsing.Parser)
-  if (messages[num_messages].body_is_final) {
-    error("\n\n *** Error http_body_is_final() should return 1 "
-                    "on last on_body callback call "
-                    "but it doesn't! ***\n\n");
-    assert(0);
-  }
-  messages[num_messages].body_is_final = http_body_is_final(p);
-end
-
-function body_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  strlncat(messages[num_messages].body,
-           sizeof(messages[num_messages].body),
-           buf,
-           len);
-  messages[num_messages].body_size += len;
-  check_body_is_final(p);
- # print("body_cb: '%s'\n", requests[num_messages]body);
-  return 0;
-end
-
-function count_body_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  messages[num_messages].body_size += len;
-  check_body_is_final(p);
-  return 0;
-end
-
-function message_begin_cb(p::HParsing.Parser)
-  messages[num_messages].message_begin_cb_called = true;
-  return 0;
-end
-
-function headers_complete_cb(p::HParsing.Parser)
-  messages[num_messages].method = parser.method;
-  messages[num_messages].status_code = parser.status_code;
-  messages[num_messages].http_major = parser.http_major;
-  messages[num_messages].http_minor = parser.http_minor;
-  messages[num_messages].headers_complete_cb_called = true;
-  messages[num_messages].should_keep_alive = http_should_keep_alive(parser);
-  return 0;
-end
-
-function message_complete_cb(p::HParsing.Parser)
-  if (messages[num_messages].should_keep_alive != http_should_keep_alive(parser))
-  {
-    error("\n\n *** Error http_should_keep_alive() should have same "
-                    "value in both on_message_complete and on_headers_complete "
-                    "but it doesn't! ***\n\n");
-    assert(0);
-  }
-
-  if (messages[num_messages].body_size &&
-      http_body_is_final(p) &&
-      !messages[num_messages].body_is_final)
-  {
-    error("\n\n *** Error http_body_is_final() should return 1 "
-                    "on last on_body callback call "
-                    "but it doesn't! ***\n\n");
-    assert(0);
-  }
-
-  messages[num_messages].message_complete_cb_called = true;
-
-  messages[num_messages].message_complete_on_eof = currently_parsing_eof;
-
-  num_messages += 1;
-  return 0;
-end
-
-function response_status_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  strlncat(messages[num_messages].response_status,
-           sizeof(messages[num_messages].response_status),
-           buf,
-           len);
-  return 0;
-end
-
-function chunk_header_cb(p::HParsing.Parser)
-  int chunk_idx = messages[num_messages].num_chunks;
-  messages[num_messages].num_chunks += 1;
-  if (chunk_idx < MAX_CHUNKS) {
-    messages[num_messages].chunk_lengths[chunk_idx] = p.content_length;
-  }
-
-  return 0;
-end
-
-function chunk_complete_cb(p::HParsing.Parser)
-
-  #= Here we want to verify that each chunk_header_cb is matched by a
-   * chunk_complete_cb, so not only should the total number of calls to
-   * both callbacks be the same, but they also should be interleaved
-   * properly =#
-  assert(messages[num_messages].num_chunks ==
-         messages[num_messages].num_chunks_complete + 1);
-
-  messages[num_messages].num_chunks_complete += 1;
-  return 0;
-end
-
-#= These dontcall_* callbacks exist so that we can verify that when we're
- * paused, no additional callbacks are invoked =#
-function dontcall_message_begin_cb(p::HParsing.Parser)
-  if (p) { } # gcc
-  error("\n\n*** on_message_begin() called on paused parser ***\n\n");
-end
-
-function dontcall_header_field_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  if (p || buf || len) { } # gcc
-  error("\n\n*** on_header_field() called on paused parser ***\n\n");
-end
-
-function dontcall_header_value_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  if (p || buf || len) { } # gcc
-  error("\n\n*** on_header_value() called on paused parser ***\n\n");
-end
-
-function dontcall_request_url_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  if (p || buf || len) { } # gcc
-  error("\n\n*** on_request_url() called on paused parser ***\n\n");
-end
-
-function dontcall_body_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  if (p || buf || len) { } # gcc
-  error("\n\n*** on_body_cb() called on paused parser ***\n\n");
-end
-
-function dontcall_headers_complete_cb(p::HParsing.Parser)
-  if (p) { } # gcc
-  error("\n\n*** on_headers_complete() called on paused "
-                  "parser ***\n\n");
-end
-
-function dontcall_message_complete_cb(p::HParsing.Parser)
-  if (p) { } # gcc
-  error("\n\n*** on_message_complete() called on paused "
-                  "parser ***\n\n");
-end
-
-function dontcall_response_status_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  if (p || buf || len) { } # gcc
-  error("\n\n*** on_status() called on paused parser ***\n\n");
-end
-
-function dontcall_chunk_header_cb(p::HParsing.Parser)
-  if (p) { } # gcc
-  error("\n\n*** on_chunk_header() called on paused parser ***\n\n");
-end
-
-function dontcall_chunk_complete_cb(p::HParsing.Parser)
-  if (p) { } # gcc
-  error("\n\n*** on_chunk_complete() "
-          "called on paused parser ***\n\n");
-end
-
-static http_parser_settings settings_dontcall =
-  {.on_message_begin = dontcall_message_begin_cb
-  ,.on_header_field = dontcall_header_field_cb
-  ,.on_header_value = dontcall_header_value_cb
-  ,.on_url = dontcall_request_url_cb
-  ,.on_status = dontcall_response_status_cb
-  ,.on_body = dontcall_body_cb
-  ,.on_headers_complete = dontcall_headers_complete_cb
-  ,.on_message_complete = dontcall_message_complete_cb
-  ,.on_chunk_header = dontcall_chunk_header_cb
-  ,.on_chunk_complete = dontcall_chunk_complete_cb
-  };
-
-#= These pause_* callbacks always pause the parser and just invoke the regular
- * callback that tracks content. Before returning, we overwrite the parser
- * settings to point to the _dontcall variety so that we can verify that
- * the pause actually did, you know, pause. =#
-function pause_message_begin_cb(p::HParsing.Parser)
-  http_parser_pause(p, 1);
-  *current_pause_parser = settings_dontcall;
-  return message_begin_cb(p);
-end
-
-function pause_header_field_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  http_parser_pause(p, 1);
-  *current_pause_parser = settings_dontcall;
-  return header_field_cb(p, buf, len);
-end
-
-function pause_header_value_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  http_parser_pause(p, 1);
-  *current_pause_parser = settings_dontcall;
-  return header_value_cb(p, buf, len);
-end
-
-function pause_request_url_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  http_parser_pause(p, 1);
-  *current_pause_parser = settings_dontcall;
-  return request_url_cb(p, buf, len);
-end
-
-function pause_body_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  http_parser_pause(p, 1);
-  *current_pause_parser = settings_dontcall;
-  return body_cb(p, buf, len);
-end
-
-function pause_headers_complete_cb(p::HParsing.Parser)
-  http_parser_pause(p, 1);
-  *current_pause_parser = settings_dontcall;
-  return headers_complete_cb(p);
-end
-
-function pause_message_complete_cb(p::HParsing.Parser)
-  http_parser_pause(p, 1);
-  *current_pause_parser = settings_dontcall;
-  return message_complete_cb(p);
-end
-
-function pause_response_status_cb(p::HParsing.Parser, buf::Ptr{Void}, len::Csize_t)
-  http_parser_pause(p, 1);
-  *current_pause_parser = settings_dontcall;
-  return response_status_cb(p, buf, len);
-end
-
-function pause_chunk_header_cb(p::HParsing.Parser)
-  http_parser_pause(p, 1);
-  *current_pause_parser = settings_dontcall;
-  return chunk_header_cb(p);
-end
-
-function pause_chunk_complete_cb(p::HParsing.Parser)
-  http_parser_pause(p, 1);
-  *current_pause_parser = settings_dontcall;
-  return chunk_complete_cb(p);
-end
-
-function connect_headers_complete_cb(p::HParsing.Parser)
-  headers_complete_cb(p);
-  return 1;
-end
-
-function connect_message_complete_cb(p::HParsing.Parser)
-  messages[num_messages].should_keep_alive = http_should_keep_alive(parser);
-  return message_complete_cb(p);
-end
-
-static http_parser_settings settings_pause =
-  {.on_message_begin = pause_message_begin_cb
-  ,.on_header_field = pause_header_field_cb
-  ,.on_header_value = pause_header_value_cb
-  ,.on_url = pause_request_url_cb
-  ,.on_status = pause_response_status_cb
-  ,.on_body = pause_body_cb
-  ,.on_headers_complete = pause_headers_complete_cb
-  ,.on_message_complete = pause_message_complete_cb
-  ,.on_chunk_header = pause_chunk_header_cb
-  ,.on_chunk_complete = pause_chunk_complete_cb
-  };
-
-static http_parser_settings settings =
-  {.on_message_begin = message_begin_cb
-  ,.on_header_field = header_field_cb
-  ,.on_header_value = header_value_cb
-  ,.on_url = request_url_cb
-  ,.on_status = response_status_cb
-  ,.on_body = body_cb
-  ,.on_headers_complete = headers_complete_cb
-  ,.on_message_complete = message_complete_cb
-  ,.on_chunk_header = chunk_header_cb
-  ,.on_chunk_complete = chunk_complete_cb
-  };
-
-static http_parser_settings settings_count_body =
-  {.on_message_begin = message_begin_cb
-  ,.on_header_field = header_field_cb
-  ,.on_header_value = header_value_cb
-  ,.on_url = request_url_cb
-  ,.on_status = response_status_cb
-  ,.on_body = count_body_cb
-  ,.on_headers_complete = headers_complete_cb
-  ,.on_message_complete = message_complete_cb
-  ,.on_chunk_header = chunk_header_cb
-  ,.on_chunk_complete = chunk_complete_cb
-  };
-
-static http_parser_settings settings_connect =
-  {.on_message_begin = message_begin_cb
-  ,.on_header_field = header_field_cb
-  ,.on_header_value = header_value_cb
-  ,.on_url = request_url_cb
-  ,.on_status = response_status_cb
-  ,.on_body = dontcall_body_cb
-  ,.on_headers_complete = connect_headers_complete_cb
-  ,.on_message_complete = connect_message_complete_cb
-  ,.on_chunk_header = chunk_header_cb
-  ,.on_chunk_complete = chunk_complete_cb
-  };
-
-static http_parser_settings settings_null =
-  {.on_message_begin = 0
-  ,.on_header_field = 0
-  ,.on_header_value = 0
-  ,.on_url = 0
-  ,.on_status = 0
-  ,.on_body = 0
-  ,.on_headers_complete = 0
-  ,.on_message_complete = 0
-  ,.on_chunk_header = 0
-  ,.on_chunk_complete = 0
-  };
-
-function parser_init (enum http_parser_type type)
-  num_messages = 0;
-
-  assert(parser == NULL);
-
-  parser = malloc(sizeof(http_parser));
-
-  http_parser_init(parser, type);
-
-  memset(&messages, 0, sizeof messages);
-
-end
-
-void
-parser_free ()
-{
-  assert(parser);
-  free(parser);
-  parser = NULL;
-end
-
-size_t parse (const char *buf, size_t len)
-{
-  size_t nparsed;
-  currently_parsing_eof = (len == 0);
-  nparsed = http_parser_execute(parser, &settings, buf, len);
-  return nparsed;
-end
-
-size_t parse_count_body (const char *buf, size_t len)
-{
-  size_t nparsed;
-  currently_parsing_eof = (len == 0);
-  nparsed = http_parser_execute(parser, &settings_count_body, buf, len);
-  return nparsed;
-end
-
-size_t parse_pause (const char *buf, size_t len)
-{
-  size_t nparsed;
-  http_parser_settings s = settings_pause;
-
-  currently_parsing_eof = (len == 0);
-  current_pause_parser = &s;
-  nparsed = http_parser_execute(parser, current_pause_parser, buf, len);
-  return nparsed;
-end
-
-size_t parse_connect (const char *buf, size_t len)
-{
-  size_t nparsed;
-  currently_parsing_eof = (len == 0);
-  nparsed = http_parser_execute(parser, &settings_connect, buf, len);
-  return nparsed;
-end
-
-static inline int
-check_str_eq (const struct message *m,
-              const char *prop,
-              const char *expected,
-              const char *found) {
-  if ((expected == NULL) != (found == NULL)) {
-    print("\n*** Error: %s in '%s' ***\n\n", prop, m.name);
-    print("expected %s\n", (expected == NULL) ? "NULL" : expected);
-    print("   found %s\n", (found == NULL) ? "NULL" : found);
-    return 0;
-  }
-  if (expected != NULL && 0 != strcmp(expected, found)) {
-    print("\n*** Error: %s in '%s' ***\n\n", prop, m.name);
-    print("expected '%s'\n", expected);
-    print("   found '%s'\n", found);
-    return 0;
-  }
-  return 1;
-end
-
-static inline int
-check_num_eq (const struct message *m,
-              const char *prop,
-              int expected,
-              int found) {
-  if (expected != found) {
-    print("\n*** Error: %s in '%s' ***\n\n", prop, m.name);
-    print("expected %d\n", expected);
-    print("   found %d\n", found);
-    return 0;
-  }
-  return 1;
-end
-
-#define MESSAGE_CHECK_STR_EQ(expected, found, prop) \
-  if (!check_str_eq(expected, #prop, expected.prop, found.prop)) return 0
-
-#define MESSAGE_CHECK_NUM_EQ(expected, found, prop) \
-  if (!check_num_eq(expected, #prop, expected.prop, found.prop)) return 0
-
-#define MESSAGE_CHECK_URL_EQ(u, expected, found, prop, fn)           \
-do {                                                                 \
-  char ubuf[256];                                                    \
-                                                                     \
-  if ((u).field_set & (1 << (fn))) {                                \
-    memcpy(ubuf, (found).request_url + (u).field_data[(fn)].off,   \
-      (u).field_data[(fn)].len);                                    \
-    ubuf[(u).field_data[(fn)].len] = '\0';                          \
-  } else {                                                           \
-    ubuf[0] = '\0';                                                  \
-  }                                                                  \
-                                                                     \
-  check_str_eq(expected, #prop, expected.prop, ubuf);               \
-end while(0)
 
 int
 message_eq (int index, int connect, const struct message *expected)
@@ -1995,7 +1405,7 @@ message_eq (int index, int connect, const struct message *expected)
   MESSAGE_CHECK_NUM_EQ(expected, m, http_major);
   MESSAGE_CHECK_NUM_EQ(expected, m, http_minor);
 
-  if (expected.type == HParsing.HTTP_REQUEST) {
+  if (expected.type == HTTP.REQUEST) {
     MESSAGE_CHECK_NUM_EQ(expected, m, method);
   } else {
     MESSAGE_CHECK_NUM_EQ(expected, m, status_code);
@@ -2007,9 +1417,6 @@ message_eq (int index, int connect, const struct message *expected)
     MESSAGE_CHECK_NUM_EQ(expected, m, message_complete_on_eof);
   }
 
-  assert(m.message_begin_cb_called);
-  assert(m.headers_complete_cb_called);
-  assert(m.message_complete_cb_called);
 
 
   MESSAGE_CHECK_STR_EQ(expected, m, request_url);
@@ -2051,12 +1458,7 @@ message_eq (int index, int connect, const struct message *expected)
   }
 
   if (connect) {
-    check_num_eq(m, "num_chunks_complete", 0, m.num_chunks_complete);
   } else {
-    assert(m.num_chunks == m.num_chunks_complete);
-    MESSAGE_CHECK_NUM_EQ(expected, m, num_chunks_complete);
-    for (i = 0; i < m.num_chunks && i < MAX_CHUNKS; i++) {
-      MESSAGE_CHECK_NUM_EQ(expected, m, chunk_lengths[i]);
     }
   }
 
@@ -2184,7 +1586,7 @@ test_preserve_data (void)
   char my_data[] = "application-specific data";
   http_parser parser;
   parser.data = my_data;
-  http_parser_init(&parser, HParsing.HTTP_REQUEST);
+  http_parser_init(&parser, HTTP.REQUEST);
   if (parser.data != my_data) {
     print("\n*** parser.data not preserved accross http_parser_init ***\n\n");
   }
@@ -2280,7 +1682,7 @@ end
 void
 test_simple (const char *buf, enum http_errno err_expected)
 {
-  parser_init(HParsing.HTTP_REQUEST);
+  parser_init(HTTP.REQUEST);
 
   enum http_errno err;
 
@@ -2307,7 +1709,7 @@ void
 test_invalid_header_content (int req, const char* str)
 {
   http_parser parser;
-  http_parser_init(&parser, req ? HParsing.HTTP_REQUEST : HParsing.HTTP_RESPONSE);
+  http_parser_init(&parser, req ? HTTP.REQUEST : HTTP.RESPONSE);
   size_t parsed;
   const char *buf;
   buf = req ?
@@ -2340,7 +1742,7 @@ void
 test_invalid_header_field (int req, const char* str)
 {
   http_parser parser;
-  http_parser_init(&parser, req ? HParsing.HTTP_REQUEST : HParsing.HTTP_RESPONSE);
+  http_parser_init(&parser, req ? HTTP.REQUEST : HTTP.RESPONSE);
   size_t parsed;
   const char *buf;
   buf = req ?
@@ -2373,7 +1775,7 @@ void
 test_double_content_length_error (int req)
 {
   http_parser parser;
-  http_parser_init(&parser, req ? HParsing.HTTP_REQUEST : HParsing.HTTP_RESPONSE);
+  http_parser_init(&parser, req ? HTTP.REQUEST : HTTP.RESPONSE);
   size_t parsed;
   const char *buf;
   buf = req ?
@@ -2399,7 +1801,7 @@ void
 test_chunked_content_length_error (int req)
 {
   http_parser parser;
-  http_parser_init(&parser, req ? HParsing.HTTP_REQUEST : HParsing.HTTP_RESPONSE);
+  http_parser_init(&parser, req ? HTTP.REQUEST : HTTP.RESPONSE);
   size_t parsed;
   const char *buf;
   buf = req ?
@@ -2425,7 +1827,7 @@ void
 test_header_cr_no_lf_error (int req)
 {
   http_parser parser;
-  http_parser_init(&parser, req ? HParsing.HTTP_REQUEST : HParsing.HTTP_RESPONSE);
+  http_parser_init(&parser, req ? HTTP.REQUEST : HTTP.RESPONSE);
   size_t parsed;
   const char *buf;
   buf = req ?
@@ -2451,7 +1853,7 @@ void
 test_header_overflow_error (int req)
 {
   http_parser parser;
-  http_parser_init(&parser, req ? HParsing.HTTP_REQUEST : HParsing.HTTP_RESPONSE);
+  http_parser_init(&parser, req ? HTTP.REQUEST : HTTP.RESPONSE);
   size_t parsed;
   const char *buf;
   buf = req ? "GET / HTTP/1.1\r\n" : "HTTP/1.0 200 OK\r\n";
@@ -2479,7 +1881,7 @@ void
 test_header_nread_value ()
 {
   http_parser parser;
-  http_parser_init(&parser, HParsing.HTTP_REQUEST);
+  http_parser_init(&parser, HTTP.REQUEST);
   size_t parsed;
   const char *buf;
   buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n";
@@ -2494,7 +1896,7 @@ static void
 test_content_length_overflow (const char *buf, size_t buflen, int expect_ok)
 {
   http_parser parser;
-  http_parser_init(&parser, HParsing.HTTP_RESPONSE);
+  http_parser_init(&parser, HTTP.RESPONSE);
   http_parser_execute(&parser, &settings_null, buf, buflen);
 
   if (expect_ok)
@@ -2541,7 +1943,7 @@ void
 test_no_overflow_long_body (int req, size_t length)
 {
   http_parser parser;
-  http_parser_init(&parser, req ? HParsing.HTTP_REQUEST : HParsing.HTTP_RESPONSE);
+  http_parser_init(&parser, req ? HTTP.REQUEST : HTTP.RESPONSE);
   size_t parsed;
   size_t i;
   char buf1[3000];
@@ -2783,7 +2185,6 @@ test_message_pause (const struct message *msg)
 
     # We can only set the upgrade buffer once we've gotten our message
     # completion callback.
-    if (messages[0]message_complete_cb_called &&
         msg.upgrade &&
         parser.upgrade) {
       messages[0]upgrade = buf + nread;
@@ -2870,28 +2271,28 @@ main (void)
 
   ## OVERFLOW CONDITIONS
 
-  test_header_overflow_error(HParsing.HTTP_REQUEST);
-  test_no_overflow_long_body(HParsing.HTTP_REQUEST, 1000);
-  test_no_overflow_long_body(HParsing.HTTP_REQUEST, 100000);
+  test_header_overflow_error(HTTP.REQUEST);
+  test_no_overflow_long_body(HTTP.REQUEST, 1000);
+  test_no_overflow_long_body(HTTP.REQUEST, 100000);
 
-  test_header_overflow_error(HParsing.HTTP_RESPONSE);
-  test_no_overflow_long_body(HParsing.HTTP_RESPONSE, 1000);
-  test_no_overflow_long_body(HParsing.HTTP_RESPONSE, 100000);
+  test_header_overflow_error(HTTP.RESPONSE);
+  test_no_overflow_long_body(HTTP.RESPONSE, 1000);
+  test_no_overflow_long_body(HTTP.RESPONSE, 100000);
 
   test_header_content_length_overflow_error();
   test_chunk_content_length_overflow_error();
 
   ## HEADER FIELD CONDITIONS
-  test_double_content_length_error(HParsing.HTTP_REQUEST);
-  test_chunked_content_length_error(HParsing.HTTP_REQUEST);
-  test_header_cr_no_lf_error(HParsing.HTTP_REQUEST);
-  test_invalid_header_field_token_error(HParsing.HTTP_REQUEST);
-  test_invalid_header_field_content_error(HParsing.HTTP_REQUEST);
-  test_double_content_length_error(HParsing.HTTP_RESPONSE);
-  test_chunked_content_length_error(HParsing.HTTP_RESPONSE);
-  test_header_cr_no_lf_error(HParsing.HTTP_RESPONSE);
-  test_invalid_header_field_token_error(HParsing.HTTP_RESPONSE);
-  test_invalid_header_field_content_error(HParsing.HTTP_RESPONSE);
+  test_double_content_length_error(HTTP.REQUEST);
+  test_chunked_content_length_error(HTTP.REQUEST);
+  test_header_cr_no_lf_error(HTTP.REQUEST);
+  test_invalid_header_field_token_error(HTTP.REQUEST);
+  test_invalid_header_field_content_error(HTTP.REQUEST);
+  test_double_content_length_error(HTTP.RESPONSE);
+  test_chunked_content_length_error(HTTP.RESPONSE);
+  test_header_cr_no_lf_error(HTTP.RESPONSE);
+  test_invalid_header_field_token_error(HTTP.RESPONSE);
+  test_invalid_header_field_content_error(HTTP.RESPONSE);
 
   ## RESPONSES
 
@@ -2929,10 +2330,8 @@ main (void)
       "\r\n");
     struct message large_chunked =
       Message(name= "large chunked"
-      ,mtype= HParsing.HTTP_RESPONSE
       ,raw= msg
       ,should_keep_alive= false
-      ,message_complete_on_eof= false
       ,http_major= 1
       ,http_minor= 0
       ,status_code= 200
@@ -2943,10 +2342,8 @@ main (void)
         , "Content-Type"=> "text/plain"
         }
       ,body_size= 31337*1024
-      ,num_chunks_complete= 31338
       };
     for (i = 0; i < MAX_CHUNKS; i++) {
-      large_chunkedchunk_lengths[i] = 1024;
     }
     test_message_count_body(&large_chunked);
     free(msg);
@@ -3115,7 +2512,7 @@ main (void)
   # no content-length
   # error if there is a body without content length
   const char *bad_get_no_headers_no_body = "GET /bad_get_no_headers_no_body/world HTTP/1.1\r\n"
-                                           "Accept: *#=\r\n"
+                                           "Accept: */*\r\n"
                                            "\r\n"
                                            "HELLO";
   test_simple(bad_get_no_headers_no_body, 0);

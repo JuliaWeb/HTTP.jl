@@ -54,7 +54,7 @@ end
 
 # parsing utils
 lower(c) = Char(UInt32(c) | 0x20)
-isurlchar(c) =  'A' <= c <= '~' || '$' <= c <= '>' || c == '\f' || c == '\t'
+isurlchar(c) =  c > '\u80' ? true : normal_url_char[Int(c) + 1] # 'A' <= c <= '~' || '$' <= c <= '>' || c == '\f' || c == '\t'
 const MARKS = Set{Char}(['-', '_', '.', '!', '~', '*', '\'', '(', ')'])
 ismark(c) = c in MARKS
 isalpha(c) = 'a' <= lower(c) <= 'z'

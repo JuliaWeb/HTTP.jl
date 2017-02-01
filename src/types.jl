@@ -63,6 +63,8 @@ end
 
 # accessors
 method(r::Request) = r.method
+major(r::Request) = r.major
+minor(r::Request) = r.minor
 uri(r::Request) = r.uri
 headers(r::Request) = r.headers
 body(r::Request) = r.body
@@ -95,7 +97,8 @@ function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer; op
 end
 
 Request{T}(method, uri, h, body::T; args...) = Request(convert(Method, method),
-                               isa(uri, String) ? URI(uri) : uri, h, FIFOBuffer(body); options=RequestOptions(args...))
+                               isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
+                               h, FIFOBuffer(body); options=RequestOptions(args...))
 
 Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
 
@@ -126,6 +129,8 @@ end
 
 # accessors
 status(r::Response) = r.status
+major(r::Response) = r.major
+minor(r::Response) = r.minor
 cookies(r::Response) = r.cookies
 headers(r::Response) = r.headers
 body(r::Response) = r.body
@@ -174,7 +179,9 @@ const CRLF = "\r\n"
 ## Request & Response writing
 # start lines
 function startline(io::IO, r::Request)
-    write(io, "$(r.method) $(resource(r.uri)) HTTP/$(r.major).$(r.minor)$CRLF")
+    res = resource(uri(r); isconnect=r.method == CONNECT)
+    res = res == "" ? "/" : res
+    write(io, "$(r.method) $res HTTP/$(r.major).$(r.minor)$CRLF")
 end
 
 function startline(io::IO, r::Response)
@@ -226,15 +233,18 @@ end
 
 shouldchunk(b::FIFOBuffer, chksz) = current_task() == b.task ? length(b) > chksz : true
 
-function body(io::IO, r::Request)
+function body(io::IO, r::Request, opts)
     hasmessagebody(r) || return
     sz = length(r.body)
-    chksz = get(r.options, :chunksize, typemax(Int))
+    chksz = get(opts, :chunksize, typemax(Int))
+    @debug(DEBUG, chksz)
     if shouldchunk(r.body, chksz)
+        @debug(DEBUG, "chunking...")
         while !eof(r.body)
             bytes = readbytes(r.body, chksz) # read at most chunksize
             chunk = length(bytes)
             chunk == 0 && continue
+            @debug(DEBUG, "chunk = $(hex(chunk))$CRLF")
             write(io, "$(hex(chunk))$CRLF")
             write(io, bytes)
             write(io, CRLF)
@@ -246,15 +256,15 @@ function body(io::IO, r::Request)
     return
 end
 
-function body(io::IO, r::Response)
+function body(io::IO, r::Response, opts)
     hasmessagebody(r) || return
     write(io, r.body)
 end
 
-function Base.write(io::IO, r::Union{Request, Response})
+function Base.write(io::IO, r::Union{Request, Response}, opts)
     startline(io, r)
     headers(io, r)
-    body(io, r)
+    body(io, r, opts)
     return
 end
 
@@ -263,8 +273,10 @@ function Base.show(io::IO, r::Union{Request,Response})
     println(io, "\"\"\"")
     startline(io, r)
     headers(io, r)
-    if length(r.body) > 1000
-        println(io, "[Request body of $(length(r.body)) bytes]")
+    if iscompressed(String(r.body))
+        println(io, "[compressed $(typeof(r)) body of $(length(r.body)) bytes]")
+    elseif length(r.body) > 1000
+        println(io, "[$(typeof(r)) body of $(length(r.body)) bytes]")
         println(io, String(r.body)[1:1000])
         println(io, "...")
     elseif length(r.body) > 0
