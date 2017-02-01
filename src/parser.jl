@@ -1106,7 +1106,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
         elseif p_state == s_body_identity_eof
             @debug(DEBUG, ParsingStateCode(p_state))
             body_mark = p
-            p = len - 1 # TODO: maybe not - 1?
+            p = len
 
         elseif p_state == s_message_done
             @debug(DEBUG, ParsingStateCode(p_state))
