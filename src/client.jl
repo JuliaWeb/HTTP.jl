@@ -108,11 +108,6 @@ setconnection!(::Type{https}, client, host, conn) = push!(get!(client.httpspool,
 
 function stalebytes(c::TCPSocket)
     !isopen(c) && return
-    try
-        @debug(DEBUG, write(c, '\n'))
-    catch
-        return
-    end
     @debug(DEBUG, nb_available(c))
     nb_available(c) > 0 && readavailable(c)
     return
@@ -158,6 +153,8 @@ end
 
 sockettype(::Type{http}) = TCPSocket
 sockettype(::Type{https}) = TLS.SSLContext
+schemetype(::Type{TCPSocket}) = http
+schemetype(::Type{TLS.SSLContext}) = https
 
 initTLS!(::Type{http}, hostname, opts, socket) = socket
 function initTLS!(::Type{https}, hostname, opts, socket)
@@ -191,11 +188,18 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     # send request over the wire
     verbose && println(client.logger, "Connected. Sending request...")
     verbose && show(client.logger, req)
-    write(conn.tcp, req, opts)
+    try
+        write(conn.tcp, req, opts)
+    catch
+        verbose && println(client.logger, "Error sending request, retrying on a fresh connection...")
+        conn = getconn(schemetype(T), client, host, opts, verbose)
+        write(conn.tcp, req, opts)
+    end
     # create a Response to fill
     response = Response(stream ? DEFAULT_CHUNK_SIZE : DEFAULT_MAX, req)
     verbose && print(client.logger, "\n\nSent. ")
     # process the response
+    reset!(client.parser)
     process!(client, conn, opts, host, method(req), response, stream, verbose)
     !isempty(response.cookies) && union!(get!(client.cookies, host, Set{Cookie}()), response.cookies)
     # return immediately for streaming responses
@@ -235,7 +239,7 @@ function process!(client, conn, opts, host, method, response, stream, verbose)
         length(buffer) < 1 && continue
         # @debug(DEBUG, buffer)
         verbose && println(client.logger, "Received response bytes; processing...")
-        errno, headerscomplete, messagecomplete = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
+        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
         @debug(DEBUG, errno)
         @debug(DEBUG, headerscomplete)
         @debug(DEBUG, messagecomplete)

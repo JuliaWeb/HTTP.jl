@@ -198,7 +198,7 @@ function headers(io::IO, r::Request)
 end
 
 function headers(io::IO, r::Response)
-    r.headers["Content-Length"] = string(length(r.body))
+    length(r.body) > 0 && setindex!(r.headers, string(length(r.body)), "Content-Length")
     for (k, v) in headers(r)
         write(io, "$k: $v$CRLF")
     end
