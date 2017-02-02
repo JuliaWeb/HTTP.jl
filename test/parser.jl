@@ -1543,7 +1543,6 @@ const responses = Message[
         @test String(readavailable(HTTP.body(r))) == resp.body
         @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == resp.should_keep_alive
     end
-
 end
 
 @testset "HTTP.parse errors" begin
