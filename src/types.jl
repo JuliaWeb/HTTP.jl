@@ -81,12 +81,16 @@ function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer; op
     if !isempty(userinfo(uri)) && !haskey(headers,"Authorization")
         headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
     end
+    @debug(DEBUG, options)
+    @debug(DEBUG, shouldchunk(body, get(options, :chunksize, typemax(Int))))
     if shouldchunk(body, get(options, :chunksize, typemax(Int)))
         # chunked-transfer
+        @debug(DEBUG, "setting Transfer-Encoding to chunked")
         headers["Transfer-Encoding"] = "chunked" * (get(options, :gzip, false) ? "; gzip" : "")
     else
         # just set the Content-Length
         if !(m in (GET, HEAD, CONNECT))
+            @debug(DEBUG, "setting Content-Length")
             headers["Content-Length"] = dec(length(body))
         end
     end
@@ -96,9 +100,9 @@ function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer; op
     return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
 
-Request{T}(method, uri, h, body::T; args...) = Request(convert(Method, method),
+Request{T}(method, uri, h, body::T; options::RequestOptions=RequestOptions()) = Request(convert(Method, method),
                                isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
-                               h, FIFOBuffer(body); options=RequestOptions(args...))
+                               h, FIFOBuffer(body); options=options)
 
 Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
 
@@ -244,8 +248,10 @@ function body(io::IO, r::Request, opts)
             bytes = readbytes(r.body, chksz) # read at most chunksize
             chunk = length(bytes)
             chunk == 0 && continue
-            @debug(DEBUG, "chunk = $(hex(chunk))$CRLF")
-            write(io, "$(hex(chunk))$CRLF")
+            ch = "$(hex(chunk))$CRLF"
+            @debug(DEBUG, ch)
+            write(io, ch)
+            @debug(DEBUG, bytes)
             write(io, bytes)
             write(io, CRLF)
         end

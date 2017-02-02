@@ -35,8 +35,6 @@ function Message(; name::String="", kwargs...)
     return m
 end
 
-# @testset "HTTP.parse" begin
-
 #= * R E Q U E S T S * =#
 const requests = Message[
   Message(name= "curl get"
@@ -876,187 +874,6 @@ const requests = Message[
 )
 ]
 
-# @testset "HTTP.parse(HTTP.Request, str)" begin
-    for req in requests
-        println("TESTING: $(req.name)")
-        upgrade = Ref{String}()
-        r = HTTP.parse(HTTP.Request, req.raw; extra=upgrade)
-        @test HTTP.major(r) == req.http_major
-        @test HTTP.minor(r) == req.http_minor
-        @test HTTP.method(r) == req.method
-        @test HTTP.query(HTTP.uri(r)) == req.query_string
-        @test HTTP.fragment(HTTP.uri(r)) == req.fragment
-        @test HTTP.path(HTTP.uri(r)) == req.request_path
-        @test HTTP.hostname(HTTP.uri(r)) == req.host
-        @test HTTP.userinfo(HTTP.uri(r)) == req.userinfo
-        @test HTTP.port(HTTP.uri(r)) in (req.port, "80", "443")
-        @test string(HTTP.uri(r)) == req.request_url
-        @test length(HTTP.headers(r)) == req.num_headers
-        @test HTTP.headers(r) == req.headers
-        @test String(readavailable(HTTP.body(r))) == req.body
-        @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == req.should_keep_alive
-        @test upgrade[] == req.upgrade
-    end
-
-    reqstr = "GET http://www.techcrunch.com/ HTTP/1.1\r\n" *
-             "Host: www.techcrunch.com\r\n" *
-             "User-Agent: Fake\r\n" *
-             "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n" *
-             "Accept-Language: en-us,en;q=0.5\r\n" *
-             "Accept-Encoding: gzip,deflate\r\n" *
-             "Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n" *
-             "Keep-Alive: 300\r\n" *
-             "Content-Length: 7\r\n" *
-             "Proxy-Connection: keep-alive\r\n\r\n"
-
-    req = HTTP.Request("GET",
-        HTTP.URI("http://www.techcrunch.com/"),
-        Dict("Content-Length"=>"7","Host"=>"www.techcrunch.com","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Proxy-Connection"=>"keep-alive","Accept-Language"=>"en-us,en;q=0.5","Keep-Alive"=>"300","User-Agent"=>"Fake","Accept-Encoding"=>"gzip,deflate"),
-        UInt8[]
-    )
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    reqstr = "GET / HTTP/1.1\r\n" *
-             "Host: foo.com\r\n\r\n"
-
-    req = HTTP.Request()
-    req.uri = HTTP.URI("/")
-    req.headers = HTTP.Headers("Host"=>"foo.com")
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    reqstr = "GET //user@host/is/actually/a/path/ HTTP/1.1\r\n" *
-             "Host: test\r\n\r\n"
-
-    req = HTTP.Request()
-    req.uri = HTTP.URI("//user@host/is/actually/a/path/")
-    req.headers = HTTP.Headers("Host"=>"test")
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    reqstr = "GET ../../../../etc/passwd HTTP/1.1\r\n" *
-             "Host: test\r\n\r\n"
-
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
-
-    reqstr = "GET  HTTP/1.1\r\n" *
-             "Host: test\r\n\r\n"
-
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
-
-    reqstr = "POST / HTTP/1.1\r\n" *
-             "Host: foo.com\r\n" *
-             "Transfer-Encoding: chunked\r\n\r\n" *
-             "3\r\nfoo\r\n" *
-             "3\r\nbar\r\n" *
-             "0\r\n" *
-             "Trailer-Key: Trailer-Value\r\n" *
-             "\r\n"
-
-    req = HTTP.Request()
-    req.method = "POST"
-    req.uri = HTTP.URI("/")
-    req.headers = HTTP.Headers("Transfer-Encoding"=>"chunked", "Host"=>"foo.com", "Trailer-Key"=>"Trailer-Value")
-    req.body = HTTP.FIFOBuffer("foobar")
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    reqstr = "POST / HTTP/1.1\r\n" *
-             "Host: foo.com\r\n" *
-             "Transfer-Encoding: chunked\r\n" *
-             "Content-Length: 9999\r\n\r\n" * # to be removed.
-             "3\r\nfoo\r\n" *
-             "3\r\nbar\r\n" *
-             "0\r\n" *
-             "\r\n"
-
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
-
-    reqstr = "CONNECT www.google.com:443 HTTP/1.1\r\n\r\n"
-
-    req = HTTP.Request()
-    req.method = "CONNECT"
-    req.uri = HTTP.URI("www.google.com:443"; isconnect=true)
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    reqstr = "CONNECT 127.0.0.1:6060 HTTP/1.1\r\n\r\n"
-
-    req = HTTP.Request()
-    req.method = "CONNECT"
-    req.uri = HTTP.URI("127.0.0.1:6060"; isconnect=true)
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    # reqstr = "CONNECT /_goRPC_ HTTP/1.1\r\n\r\n"
-    #
-    # req = HTTP.Request()
-    # req.method = "CONNECT"
-    # req.uri = HTTP.URI("/_goRPC_"; isconnect=true)
-
-    # @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    reqstr = "NOTIFY * HTTP/1.1\r\nServer: foo\r\n\r\n"
-
-    req = HTTP.Request()
-    req.method = "NOTIFY"
-    req.uri = HTTP.URI("*")
-    req.headers = HTTP.Headers("Server"=>"foo")
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    reqstr = "OPTIONS * HTTP/1.1\r\nServer: foo\r\n\r\n"
-
-    req = HTTP.Request()
-    req.method = "OPTIONS"
-    req.uri = HTTP.URI("*")
-    req.headers = HTTP.Headers("Server"=>"foo")
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    reqstr = "GET / HTTP/1.1\r\nHost: issue8261.com\r\nConnection: close\r\n\r\n"
-
-    req = HTTP.Request()
-    req.uri = HTTP.URI("/")
-    req.headers = HTTP.Headers("Host"=>"issue8261.com", "Connection"=>"close")
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    reqstr = "HEAD / HTTP/1.1\r\nHost: issue8261.com\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
-
-    req = HTTP.Request()
-    req.method = "HEAD"
-    req.uri = HTTP.URI("/")
-    req.headers = HTTP.Headers("Host"=>"issue8261.com", "Connection"=>"close", "Content-Length"=>"0")
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-
-    reqstr = "POST /cgi-bin/process.cgi HTTP/1.1\r\n" *
-             "User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n" *
-             "Host: www.tutorialspoint.com\r\n" *
-             "Content-Type: text/xml; charset=utf-8\r\n" *
-             "Content-Length: 19\r\n" *
-             "Accept-Language: en-us\r\n" *
-             "Accept-Encoding: gzip, deflate\r\n" *
-             "Connection: Keep-Alive\r\n\r\n" *
-             "first=Zara&last=Ali\r\n\r\n"
-
-    req = HTTP.Request()
-    req.method = "POST"
-    req.uri = HTTP.URI("/cgi-bin/process.cgi")
-    req.headers = HTTP.Headers("Host"=>"www.tutorialspoint.com",
-                     "Connection"=>"Keep-Alive",
-                     "Content-Length"=>"19",
-                     "User-Agent"=>"Mozilla/4.0 (compatible; MSIE5.01; Windows NT)",
-                     "Content-Type"=>"text/xml; charset=utf-8",
-                     "Accept-Language"=>"en-us",
-                     "Accept-Encoding"=>"gzip, deflate")
-    req.body = HTTP.FIFOBuffer("first=Zara&last=Ali")
-
-    @test HTTP.parse(HTTP.Request, reqstr) == req
-end
-
 #= * R E S P O N S E S * =#
 const responses = Message[
     Message(name= "google 301"
@@ -1530,102 +1347,308 @@ const responses = Message[
 )
 ]
 
-@testset "HTTP.parse(HTTP.Response, str)" begin
-    for resp in responses
-        println("TESTING: $(resp.name)")
-        r = HTTP.parse(HTTP.Response, resp.raw)
-        @test HTTP.major(r) == resp.http_major
-        @test HTTP.minor(r) == resp.http_minor
-        @test HTTP.status(r) == resp.status_code
-        @test HTTP.statustext(r) == resp.response_status
-        @test length(HTTP.headers(r)) == resp.num_headers
-        @test HTTP.headers(r) == resp.headers
-        @test String(readavailable(HTTP.body(r))) == resp.body
-        @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == resp.should_keep_alive
-    end
-end
+@testset "HTTP.parse" begin
 
-@testset "HTTP.parse errors" begin
-    reqstr = "GET / HTTP/1.1\r\n" * "Foo: F\01ailure"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-    r = HTTP.parse(HTTP.Request, reqstr; lenient=true)
-
-    @test HTTP.method(r) == HTTP.GET
-    @test HTTP.uri(r) == HTTP.URI("/")
-    @test length(HTTP.headers(r)) == 0
-
-    reqstr = "GET / HTTP/1.1\r\n" * "Foo: B\02ar"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-    r = HTTP.parse(HTTP.Request, reqstr; lenient=true)
-
-    @test HTTP.method(r) == HTTP.GET
-    @test HTTP.uri(r) == HTTP.URI("/")
-    @test length(HTTP.headers(r)) == 0
-
-    respstr = "HTTP/1.1 200 OK\r\n" * "Foo: F\01ailure"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-    r = HTTP.parse(HTTP.Response, respstr; lenient=true)
-    @test HTTP.status(r) == 200
-    @test length(HTTP.headers(r)) == 0
-
-    respstr = "HTTP/1.1 200 OK\r\n" * "Foo: B\02ar"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-    r = HTTP.parse(HTTP.Response, respstr; lenient=true)
-    @test HTTP.status(r) == 200
-    @test length(HTTP.headers(r)) == 0
-
-    reqstr = "GET / HTTP/1.1\r\n" * "Fo@: Failure"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=true)
-
-    reqstr = "GET / HTTP/1.1\r\n" * "Foo\01\test: Bar"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=true)
-
-    respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=true)
-
-    respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=true)
-
-    reqstr = "GET / HTTP/1.1\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-    respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-
-    reqstr = "GET / HTTP/1.1\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-    respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-
-    reqstr = "GET / HTTP/1.1\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-    respstr = "HTTP/1.1 200 OK\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
-    @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-
-    for r in ((HTTP.Request, "GET / HTTP/1.1\r\n"), (HTTP.Response, "HTTP/1.0 200 OK\r\n"))
-        HTTP.DEFAULT_PARSER.state = HTTP.s_start_req_or_res
-        HTTP.DEFAULT_PARSER.header_state = 0x00
-        R = r[1]()
-        e, h, m, ex = HTTP.parse!(R, HTTP.DEFAULT_PARSER, Vector{UInt8}(r[2]))
-        @test e == HTTP.HPE_OK
-        @test !h
-        @test !m
-        @test ex == ""
-        buf = "header-key: header-value\r\n"
-        for i = 1:10000
-            e, h, m, ex = HTTP.parse!(R, HTTP.DEFAULT_PARSER, Vector{UInt8}(r[2]))
-            e == HTTP.HPE_HEADER_OVERFLOW && break
+    @testset "HTTP.parse(HTTP.Request, str)" begin
+        for req in requests
+            println("TESTING: $(req.name)")
+            upgrade = Ref{String}()
+            r = HTTP.parse(HTTP.Request, req.raw; extra=upgrade)
+            @test HTTP.major(r) == req.http_major
+            @test HTTP.minor(r) == req.http_minor
+            @test HTTP.method(r) == req.method
+            @test HTTP.query(HTTP.uri(r)) == req.query_string
+            @test HTTP.fragment(HTTP.uri(r)) == req.fragment
+            @test HTTP.path(HTTP.uri(r)) == req.request_path
+            @test HTTP.hostname(HTTP.uri(r)) == req.host
+            @test HTTP.userinfo(HTTP.uri(r)) == req.userinfo
+            @test HTTP.port(HTTP.uri(r)) in (req.port, "80", "443")
+            @test string(HTTP.uri(r)) == req.request_url
+            @test length(HTTP.headers(r)) == req.num_headers
+            @test HTTP.headers(r) == req.headers
+            @test String(readavailable(HTTP.body(r))) == req.body
+            @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == req.should_keep_alive
+            @test upgrade[] == req.upgrade
         end
-        @test e == HTTP.HPE_HEADER_OVERFLOW
+
+        reqstr = "GET http://www.techcrunch.com/ HTTP/1.1\r\n" *
+                 "Host: www.techcrunch.com\r\n" *
+                 "User-Agent: Fake\r\n" *
+                 "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n" *
+                 "Accept-Language: en-us,en;q=0.5\r\n" *
+                 "Accept-Encoding: gzip,deflate\r\n" *
+                 "Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n" *
+                 "Keep-Alive: 300\r\n" *
+                 "Content-Length: 7\r\n" *
+                 "Proxy-Connection: keep-alive\r\n\r\n"
+
+        req = HTTP.Request("GET",
+            HTTP.URI("http://www.techcrunch.com/"),
+            Dict("Content-Length"=>"7","Host"=>"www.techcrunch.com","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Proxy-Connection"=>"keep-alive","Accept-Language"=>"en-us,en;q=0.5","Keep-Alive"=>"300","User-Agent"=>"Fake","Accept-Encoding"=>"gzip,deflate"),
+            UInt8[]
+        )
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        reqstr = "GET / HTTP/1.1\r\n" *
+                 "Host: foo.com\r\n\r\n"
+
+        req = HTTP.Request()
+        req.uri = HTTP.URI("/")
+        req.headers = HTTP.Headers("Host"=>"foo.com")
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        reqstr = "GET //user@host/is/actually/a/path/ HTTP/1.1\r\n" *
+                 "Host: test\r\n\r\n"
+
+        req = HTTP.Request()
+        req.uri = HTTP.URI("//user@host/is/actually/a/path/")
+        req.headers = HTTP.Headers("Host"=>"test")
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        reqstr = "GET ../../../../etc/passwd HTTP/1.1\r\n" *
+                 "Host: test\r\n\r\n"
+
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
+
+        reqstr = "GET  HTTP/1.1\r\n" *
+                 "Host: test\r\n\r\n"
+
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
+
+        reqstr = "POST / HTTP/1.1\r\n" *
+                 "Host: foo.com\r\n" *
+                 "Transfer-Encoding: chunked\r\n\r\n" *
+                 "3\r\nfoo\r\n" *
+                 "3\r\nbar\r\n" *
+                 "0\r\n" *
+                 "Trailer-Key: Trailer-Value\r\n" *
+                 "\r\n"
+
+        req = HTTP.Request()
+        req.method = "POST"
+        req.uri = HTTP.URI("/")
+        req.headers = HTTP.Headers("Transfer-Encoding"=>"chunked", "Host"=>"foo.com", "Trailer-Key"=>"Trailer-Value")
+        req.body = HTTP.FIFOBuffer("foobar")
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        reqstr = "POST / HTTP/1.1\r\n" *
+                 "Host: foo.com\r\n" *
+                 "Transfer-Encoding: chunked\r\n" *
+                 "Content-Length: 9999\r\n\r\n" * # to be removed.
+                 "3\r\nfoo\r\n" *
+                 "3\r\nbar\r\n" *
+                 "0\r\n" *
+                 "\r\n"
+
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
+
+        reqstr = "CONNECT www.google.com:443 HTTP/1.1\r\n\r\n"
+
+        req = HTTP.Request()
+        req.method = "CONNECT"
+        req.uri = HTTP.URI("www.google.com:443"; isconnect=true)
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        reqstr = "CONNECT 127.0.0.1:6060 HTTP/1.1\r\n\r\n"
+
+        req = HTTP.Request()
+        req.method = "CONNECT"
+        req.uri = HTTP.URI("127.0.0.1:6060"; isconnect=true)
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        # reqstr = "CONNECT /_goRPC_ HTTP/1.1\r\n\r\n"
+        #
+        # req = HTTP.Request()
+        # req.method = "CONNECT"
+        # req.uri = HTTP.URI("/_goRPC_"; isconnect=true)
+
+        # @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        reqstr = "NOTIFY * HTTP/1.1\r\nServer: foo\r\n\r\n"
+
+        req = HTTP.Request()
+        req.method = "NOTIFY"
+        req.uri = HTTP.URI("*")
+        req.headers = HTTP.Headers("Server"=>"foo")
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        reqstr = "OPTIONS * HTTP/1.1\r\nServer: foo\r\n\r\n"
+
+        req = HTTP.Request()
+        req.method = "OPTIONS"
+        req.uri = HTTP.URI("*")
+        req.headers = HTTP.Headers("Server"=>"foo")
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        reqstr = "GET / HTTP/1.1\r\nHost: issue8261.com\r\nConnection: close\r\n\r\n"
+
+        req = HTTP.Request()
+        req.uri = HTTP.URI("/")
+        req.headers = HTTP.Headers("Host"=>"issue8261.com", "Connection"=>"close")
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        reqstr = "HEAD / HTTP/1.1\r\nHost: issue8261.com\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+
+        req = HTTP.Request()
+        req.method = "HEAD"
+        req.uri = HTTP.URI("/")
+        req.headers = HTTP.Headers("Host"=>"issue8261.com", "Connection"=>"close", "Content-Length"=>"0")
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
+
+        reqstr = "POST /cgi-bin/process.cgi HTTP/1.1\r\n" *
+                 "User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n" *
+                 "Host: www.tutorialspoint.com\r\n" *
+                 "Content-Type: text/xml; charset=utf-8\r\n" *
+                 "Content-Length: 19\r\n" *
+                 "Accept-Language: en-us\r\n" *
+                 "Accept-Encoding: gzip, deflate\r\n" *
+                 "Connection: Keep-Alive\r\n\r\n" *
+                 "first=Zara&last=Ali\r\n\r\n"
+
+        req = HTTP.Request()
+        req.method = "POST"
+        req.uri = HTTP.URI("/cgi-bin/process.cgi")
+        req.headers = HTTP.Headers("Host"=>"www.tutorialspoint.com",
+                         "Connection"=>"Keep-Alive",
+                         "Content-Length"=>"19",
+                         "User-Agent"=>"Mozilla/4.0 (compatible; MSIE5.01; Windows NT)",
+                         "Content-Type"=>"text/xml; charset=utf-8",
+                         "Accept-Language"=>"en-us",
+                         "Accept-Encoding"=>"gzip, deflate")
+        req.body = HTTP.FIFOBuffer("first=Zara&last=Ali")
+
+        @test HTTP.parse(HTTP.Request, reqstr) == req
     end
 
-    buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"
-    r = HTTP.parse(HTTP.Request, buf)
-    @test HTTP.DEFAULT_PARSER.nread == length(buf)
+    @testset "HTTP.parse(HTTP.Response, str)" begin
+        for resp in responses
+            println("TESTING: $(resp.name)")
+            r = HTTP.parse(HTTP.Response, resp.raw)
+            @test HTTP.major(r) == resp.http_major
+            @test HTTP.minor(r) == resp.http_minor
+            @test HTTP.status(r) == resp.status_code
+            @test HTTP.statustext(r) == resp.response_status
+            @test length(HTTP.headers(r)) == resp.num_headers
+            @test HTTP.headers(r) == resp.headers
+            @test String(readavailable(HTTP.body(r))) == resp.body
+            @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == resp.should_keep_alive
+        end
+    end
 
+    @testset "HTTP.parse errors" begin
+        reqstr = "GET / HTTP/1.1\r\n" * "Foo: F\01ailure"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
+        r = HTTP.parse(HTTP.Request, reqstr; lenient=true)
 
-end
-end # @testset
+        @test HTTP.method(r) == HTTP.GET
+        @test HTTP.uri(r) == HTTP.URI("/")
+        @test length(HTTP.headers(r)) == 0
+
+        reqstr = "GET / HTTP/1.1\r\n" * "Foo: B\02ar"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
+        r = HTTP.parse(HTTP.Request, reqstr; lenient=true)
+
+        @test HTTP.method(r) == HTTP.GET
+        @test HTTP.uri(r) == HTTP.URI("/")
+        @test length(HTTP.headers(r)) == 0
+
+        respstr = "HTTP/1.1 200 OK\r\n" * "Foo: F\01ailure"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
+        r = HTTP.parse(HTTP.Response, respstr; lenient=true)
+        @test HTTP.status(r) == 200
+        @test length(HTTP.headers(r)) == 0
+
+        respstr = "HTTP/1.1 200 OK\r\n" * "Foo: B\02ar"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
+        r = HTTP.parse(HTTP.Response, respstr; lenient=true)
+        @test HTTP.status(r) == 200
+        @test length(HTTP.headers(r)) == 0
+
+        reqstr = "GET / HTTP/1.1\r\n" * "Fo@: Failure"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=true)
+
+        reqstr = "GET / HTTP/1.1\r\n" * "Foo\01\test: Bar"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=true)
+
+        respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=true)
+
+        respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=true)
+
+        reqstr = "GET / HTTP/1.1\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
+        respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
+
+        reqstr = "GET / HTTP/1.1\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
+        respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
+
+        reqstr = "GET / HTTP/1.1\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
+        respstr = "HTTP/1.1 200 OK\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
+
+        for r in ((HTTP.Request, "GET / HTTP/1.1\r\n"), (HTTP.Response, "HTTP/1.0 200 OK\r\n"))
+            HTTP.reset!(HTTP.DEFAULT_PARSER)
+            R = r[1]()
+            e, h, m, ex = HTTP.parse!(R, HTTP.DEFAULT_PARSER, Vector{UInt8}(r[2]))
+            @test e == HTTP.HPE_OK
+            @test !h
+            @test !m
+            @test ex == ""
+            buf = "header-key: header-value\r\n"
+            for i = 1:10000
+                e, h, m, ex = HTTP.parse!(R, HTTP.DEFAULT_PARSER, Vector{UInt8}(r[2]))
+                e == HTTP.HPE_HEADER_OVERFLOW && break
+            end
+            @test e == HTTP.HPE_HEADER_OVERFLOW
+        end
+
+        buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"
+        r = HTTP.parse(HTTP.Request, buf)
+        @test HTTP.DEFAULT_PARSER.nread == length(buf)
+
+        respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "1844674407370955160" * "\r\n\r\n"
+        r = HTTP.parse(HTTP.Response, respstr)
+        @test HTTP.status(r) == 200
+        @test HTTP.headers(r) == Dict("Content-Length"=>"1844674407370955160")
+
+        respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551615" * "\r\n\r\n"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+        respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551616" * "\r\n\r\n"
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+
+        respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFE" * "\r\n..."
+        r = HTTP.parse(HTTP.Response, respstr)
+        @test HTTP.status(r) == 200
+        @test HTTP.headers(r) == Dict("Transfer-Encoding"=>"chunked")
+
+        respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFF" * "\r\n..."
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+        respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "10000000000000000" * "\r\n..."
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+
+        # "POST / HTTP/1.0\r\nConnection: Keep-Alive\r\nContent-Length: 1000\r\n\r\n"
+        # "POST / HTTP/1.0\r\nConnection: Keep-Alive\r\nContent-Length: 100000\r\n\r\n"
+        #
+        # "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: 1000\r\n\r\n"
+        # "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: 100000\r\n\r\n"
+    end
+end # @testset HTTP.parse

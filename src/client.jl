@@ -52,8 +52,6 @@ Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connect
 Client(logger::IO; args...) = Client(logger, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
 Client(; args...) = Client(STDOUT, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
 
-const DEFAULT_CLIENT = Client()
-
 """
     `HTTP.request([client::HTTP.Client,] req::HTTP.Request; stream::Bool=false, verbose=false)`
     `HTTP.request([client,] method, uri; headers=HTTP.Headers(), body="", stream=false, verbose=false)`
@@ -65,19 +63,19 @@ are read, freeing up additional space to write.
 """
 function request end
 
-const EMPTYBODY = FIFOBuffer()
-
+request(uri::String; args...) = request(DEFAULT_CLIENT, GET, URI(uri); args...)
 request(uri::URI; args...) = request(DEFAULT_CLIENT, GET, uri; args...)
-request(method, uri::URI; args...) = request(DEFAULT_CLIENT, method, uri; args...)
+request(method, uri::String; args...) = request(DEFAULT_CLIENT, convert(Method, method), URI(uri); args...)
+request(method, uri::URI; args...) = request(DEFAULT_CLIENT,    convert(Method, method), uri; args...)
 function request(client::Client, method, uri::URI;
                     headers::Headers=Headers(),
                     body=EMPTYBODY,
                     stream::Bool=false,
                     verbose::Bool=true,
                     args...)
-    req = Request(method, uri, headers, body)
-    @debug(DEBUG, resource(req.uri))
     opts = RequestOptions(; args...)
+    req = Request(method, uri, headers, body; options=opts)
+    @debug(DEBUG, resource(req.uri))
     return request(client, req, opts; stream=stream, verbose=verbose)
 end
 
@@ -200,7 +198,8 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     verbose && print(client.logger, "\n\nSent. ")
     # process the response
     reset!(client.parser)
-    process!(client, conn, opts, host, method(req), response, stream, verbose)
+    success = process!(client, conn, opts, host, method(req), response, stream, verbose)
+    !success && return request(client, req, opts; history=history, stream=stream, verbose=verbose)
     !isempty(response.cookies) && union!(get!(client.cookies, host, Set{Cookie}()), response.cookies)
     # return immediately for streaming responses
     stream && return response
@@ -236,7 +235,13 @@ function process!(client, conn, opts, host, method, response, stream, verbose)
         # if no data after 30 seconds, break out
         verbose && println(client.logger, "Checking for response w/ read timeout of = $(opts.readtimeout)...")
         buffer = @timeout opts.readtimeout readavailable(conn.tcp) throw(TimeoutException(opts.readtimeout))
-        length(buffer) < 1 && continue
+        @debug(DEBUG, length(buffer))
+        @debug(DEBUG, isopen(conn.tcp))
+        if length(buffer) == 0 && !isopen(conn.tcp)
+            dead!(conn)
+            verbose && println(client.logger, "Request was sent, but connection closed before receiving response, trying again...")
+            return false
+        end
         # @debug(DEBUG, buffer)
         verbose && println(client.logger, "Received response bytes; processing...")
         errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
@@ -253,13 +258,10 @@ function process!(client, conn, opts, host, method, response, stream, verbose)
             response.body.task = @async process!(client, conn, opts, host, method, response, false, false)
             break
         end
-        if !isopen(conn.tcp)
-            dead!(conn)
-            break
-        end
+        !isopen(conn.tcp) && (dead!(conn); break)
     end
     !stream && idle!(conn)
-    return nothing
+    return true
 end
 
 immutable RedirectException <: Exception

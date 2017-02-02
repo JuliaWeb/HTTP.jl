@@ -1,3 +1,4 @@
+__precompile__()
 module HTTP
 
 if VERSION < v"0.6.0-dev.1256"
@@ -12,7 +13,8 @@ const TLS = MbedTLS
 
 import Base.==
 
-const DEBUG = true
+const DEBUG = false
+const PARSING_DEBUG = false
 
 const MAINTASK = current_task()
 
@@ -34,9 +36,16 @@ include("parser.jl")
 include("client.jl")
 include("server.jl")
 
+if VERSION >= v"0.4.0-dev+5512"
+    include("precompile.jl")
+    _precompile_()
+end
+
 # package-wide inits
 function __init__()
-
+    global const EMPTYBODY = FIFOBuffer()
+    global const DEFAULT_PARSER = Parser()
+    global const DEFAULT_CLIENT = Client()
 end
 
 end # module

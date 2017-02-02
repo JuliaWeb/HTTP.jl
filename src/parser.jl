@@ -55,29 +55,29 @@ macro nread(n)
     end)
 end
 
-onmessagebegin(r) = @debug(DEBUG, "onmessagebegin")
+onmessagebegin(r) = @debug(PARSING_DEBUG, "onmessagebegin")
 # should we just make a copy of the byte vector for URI here?
 function onurl(r, bytes, i, j)
-    @debug(DEBUG, "onurl")
-    @debug(DEBUG, i - j + 1)
-    @debug(DEBUG, "'$(String(bytes[i:j]))'")
-    @debug(DEBUG, r.method)
+    @debug(PARSING_DEBUG, "onurl")
+    @debug(PARSING_DEBUG, i - j + 1)
+    @debug(PARSING_DEBUG, "'$(String(bytes[i:j]))'")
+    @debug(PARSING_DEBUG, r.method)
     uri = http_parser_parse_url(bytes, i, j - i + 1, r.method == CONNECT)
-    @debug(DEBUG, uri)
+    @debug(PARSING_DEBUG, uri)
     setfield!(r, :uri, uri)
     nothing
 end
-onstatus(r) = @debug(DEBUG, "onstatus")
+onstatus(r) = @debug(PARSING_DEBUG, "onstatus")
 function onheaderfield(p::Parser, bytes, i, j)
-    @debug(DEBUG, "onheaderfield")
+    @debug(PARSING_DEBUG, "onheaderfield")
     append!(p.fieldbuffer, view(bytes, i:j))
 end
 function onheadervalue(p::Parser, bytes, i, j)
-    @debug(DEBUG, "onheadervalue")
+    @debug(PARSING_DEBUG, "onheadervalue")
     append!(p.valuebuffer, view(bytes, i:j))
 end
 function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY)
-    @debug(DEBUG, "onheadervalue2")
+    @debug(PARSING_DEBUG, "onheadervalue2")
     append!(p.valuebuffer, view(bytes, i:j))
     key = unsafe_string(pointer(p.fieldbuffer), length(p.fieldbuffer))
     val = unsafe_string(pointer(p.valuebuffer), length(p.valuebuffer))
@@ -94,11 +94,11 @@ function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY)
     empty!(p.valuebuffer)
     return
 end
-onheaderscomplete(r) = @debug(DEBUG, "onheaderscomplete")
+onheaderscomplete(r) = @debug(PARSING_DEBUG, "onheaderscomplete")
 function onbody(r, bytes, i, j)
-    @debug(DEBUG, "onbody")
-    @debug(DEBUG, String(r.body))
-    @debug(DEBUG, String(bytes[i:j]))
+    @debug(PARSING_DEBUG, "onbody")
+    @debug(PARSING_DEBUG, String(r.body))
+    @debug(PARSING_DEBUG, String(bytes[i:j]))
     len = j - i + 1
     nb = write(r.body, view(bytes, i:j))
     if nb < len # didn't write all available bytes
@@ -112,13 +112,11 @@ function onbody(r, bytes, i, j)
             end
         end
     end
-    @debug(DEBUG, String(r.body))
+    @debug(PARSING_DEBUG, String(r.body))
     return
 end
-onmessagecomplete(r::Request) = @debug(DEBUG, "onmessagecomplete")
-onmessagecomplete(r::Response) = (@debug(DEBUG, "onmessagecomplete"); close(r.body))
-
-const DEFAULT_PARSER = Parser()
+onmessagecomplete(r::Request) = @debug(PARSING_DEBUG, "onmessagecomplete")
+onmessagecomplete(r::Response) = (@debug(PARSING_DEBUG, "onmessagecomplete"); close(r.body))
 
 function parse{T <: Union{Request, Response}}(::Type{T}, str; extra::Ref{String}=Ref{String}(), lenient::Bool=true)
     r = T()
@@ -141,10 +139,10 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
     KEY = Ref{String}()
     if len == 0
         if p_state == s_body_identity_eof
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             parser.state = p_state
             onmessagecomplete(r)
-            @debug(DEBUG, "this 6")
+            @debug(PARSING_DEBUG, "this 6")
             return HPE_OK, true, true, ""
         elseif p_state in (s_dead, s_start_req_or_res, s_start_res, s_start_req)
             return HPE_OK, false, false, ""
@@ -154,11 +152,11 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
     end
 
     if p_state == s_header_field
-        @debug(DEBUG, ParsingStateCode(p_state))
+        @debug(PARSING_DEBUG, ParsingStateCode(p_state))
         header_field_mark = header_field_end_mark = 1
     end
     if p_state == s_header_value
-        @debug(DEBUG, ParsingStateCode(p_state))
+        @debug(PARSING_DEBUG, ParsingStateCode(p_state))
         header_value_mark = 1
     end
     if p_state in (s_req_path, s_req_schema, s_req_schema_slash, s_req_schema_slash_slash,
@@ -171,7 +169,8 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
     p = 1
     while p <= len
         ch = Char(bytes[p])
-        @debug(DEBUG, Base.escape_string(string(ch)))
+        @debug(PARSING_DEBUG, "top of main for-loop")
+        @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
         if p_state <= s_headers_done
             @nread(1)
         end
@@ -179,7 +178,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
         @label reexecute
 
         if p_state == s_dead
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             #= this state is used after a 'Connection: close' message
              # the parser will error out if it reads another message
             =#
@@ -187,7 +186,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             @err HPE_CLOSED_CONNECTION
 
         elseif p_state == s_start_req_or_res
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
 
             (ch == CR || ch == LF) && @goto breakout
             parser.flags = 0
@@ -203,7 +202,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_res_or_resp_H
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == 'T'
                 p_state = s_res_HT
             else
@@ -214,7 +213,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_start_res
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             parser.flags = 0
             parser.content_length = ULLONG_MAX
             if ch == 'H'
@@ -227,34 +226,34 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             onmessagebegin(r)
 
         elseif p_state == s_res_H
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != 'T')
             p_state = s_res_HT
 
         elseif p_state == s_res_HT
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != 'T')
             p_state = s_res_HTT
 
         elseif p_state == s_res_HTT
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != 'P')
             p_state = s_res_HTTP
 
         elseif p_state == s_res_HTTP
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != '/')
             p_state = s_res_first_http_major
 
         elseif p_state == s_res_first_http_major
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
             r.major = Int16(ch - '0')
             p_state = s_res_http_major
 
         #= major HTTP version or dot =#
         elseif p_state == s_res_http_major
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == '.'
                 p_state = s_res_first_http_minor
                 @goto breakout
@@ -266,14 +265,14 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
         #= first digit of minor HTTP version =#
         elseif p_state == s_res_first_http_minor
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
             r.minor = Int16(ch - '0')
             p_state = s_res_http_minor
 
         #= minor HTTP version or end of request line =#
         elseif p_state == s_res_http_minor
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == ' '
                 p_state = s_res_first_status_code
                 @goto breakout
@@ -284,7 +283,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             @errorif(r.minor > 999, HPE_INVALID_VERSION)
 
         elseif p_state == s_res_first_status_code
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if !isnum(ch)
                 ch == ' ' && @goto breakout
                 @err(HPE_INVALID_STATUS)
@@ -293,7 +292,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             p_state = s_res_status_code
 
         elseif p_state == s_res_status_code
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if !isnum(ch)
                 if ch == ' '
                     p_state = s_res_status_start
@@ -311,7 +310,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_res_status_start
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == CR
                 p_state = s_res_line_almost_done
             elseif ch == LF
@@ -323,7 +322,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_res_status
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == CR
                 p_state = s_res_line_almost_done
                 parser.state = p_state
@@ -337,12 +336,12 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_res_line_almost_done
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != LF)
             p_state = s_header_field_start
 
         elseif p_state == s_start_req
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             (ch == CR || ch == LF) && @goto breakout
             parser.flags = 0
             parser.content_length = ULLONG_MAX
@@ -390,17 +389,17 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             onmessagebegin(r)
 
         elseif p_state == s_req_method
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(ch == '\0', HPE_INVALID_METHOD)
 
             matcher = string(r.method)
-            @debug(DEBUG, matcher)
-            @debug(DEBUG, parser.index)
-            @debug(DEBUG, Base.escape_string(string(ch)))
+            @debug(PARSING_DEBUG, matcher)
+            @debug(PARSING_DEBUG, parser.index)
+            @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
             if ch == ' ' && parser.index == length(matcher) + 1
                 p_state = s_req_spaces_before_url
             elseif ch == matcher[parser.index]
-                @debug(DEBUG, "nada")
+                @debug(PARSING_DEBUG, "nada")
             elseif isalpha(ch)
                 c = @shifted(r.method, parser.index - 1, ch)
                 if c == @shifted(POST, 1, 'U')
@@ -441,17 +440,17 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     @err(HPE_INVALID_METHOD)
                 end
             elseif ch == '-' && parser.index == 2 && r.method == MKCOL
-                @debug(DEBUG, "matched MSEARCH")
+                @debug(PARSING_DEBUG, "matched MSEARCH")
                 r.method = MSEARCH
                 parser.index -= 1
             else
                 @err(HPE_INVALID_METHOD)
             end
             parser.index += 1
-            @debug(DEBUG, parser.index)
+            @debug(PARSING_DEBUG, parser.index)
 
         elseif p_state == s_req_spaces_before_url
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             ch == ' ' && @goto breakout
             url_mark = p
             if r.method == CONNECT
@@ -485,7 +484,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_req_http_start
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == 'H'
                 p_state = s_req_http_H
             elseif ch == ' '
@@ -494,35 +493,35 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_req_http_H
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != 'T')
             p_state = s_req_http_HT
 
         elseif p_state == s_req_http_HT
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != 'T')
             p_state = s_req_http_HTT
 
         elseif p_state == s_req_http_HTT
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != 'P')
             p_state = s_req_http_HTTP
 
         elseif p_state == s_req_http_HTTP
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != '/')
             p_state = s_req_first_http_major
 
         #= first digit of major HTTP version =#
         elseif p_state == s_req_first_http_major
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(ch < '1' || ch > '9', HPE_INVALID_VERSION)
             r.major = Int16(ch - '0')
             p_state = s_req_http_major
 
         #= major HTTP version or dot =#
         elseif p_state == s_req_http_major
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == '.'
                 p_state = s_req_first_http_minor
             elseif !isnum(ch)
@@ -535,14 +534,14 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
         #= first digit of minor HTTP version =#
         elseif p_state == s_req_first_http_minor
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
             r.minor = Int16(ch - '0')
             p_state = s_req_http_minor
 
         #= minor HTTP version or end of request line =#
         elseif p_state == s_req_http_minor
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == CR
                 p_state = s_req_line_almost_done
             elseif ch == LF
@@ -557,12 +556,12 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
         #= end of request line =#
         elseif p_state == s_req_line_almost_done
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(ch != LF, HPE_LF_EXPECTED)
             p_state = s_header_field_start
 
         elseif p_state == s_header_field_start
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == CR
                 p_state = s_headers_almost_done
             elseif ch == LF
@@ -594,28 +593,28 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_header_field
-            @debug(DEBUG, "parsing header_field")
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, "parsing header_field")
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             start = p
             while p <= len
                 ch = Char(bytes[p])
-                @debug(DEBUG, Base.escape_string(string(ch)))
+                @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
                 c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
                 c == Char(0) && break
                 h = parser.header_state
                 if h == h_general
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
 
                 elseif h == h_C
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
                     parser.index += 1
                     parser.header_state = c == 'o' ? h_CO : h_general
                 elseif h == h_CO
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
                     parser.index += 1
                     parser.header_state = c == 'n' ? h_CON : h_general
                 elseif h == h_CON
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
                     parser.index += 1
                     if c == 'n'
                         parser.header_state = h_matching_connection
@@ -626,7 +625,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     end
                 #= connection =#
                 elseif h == h_matching_connection
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
                     parser.index += 1
                     if parser.index > length(CONNECTION) || c != CONNECTION[parser.index]
                         parser.header_state = h_general
@@ -635,7 +634,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     end
                 #= proxy-connection =#
                 elseif h == h_matching_proxy_connection
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
                     parser.index += 1
                     if parser.index > length(PROXY_CONNECTION) || c != PROXY_CONNECTION[parser.index]
                         parser.header_state = h_general
@@ -644,7 +643,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     end
                 #= content-length =#
                 elseif h == h_matching_content_length
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
                     parser.index += 1
                     if parser.index > length(CONTENT_LENGTH) || c != CONTENT_LENGTH[parser.index]
                         parser.header_state = h_general
@@ -653,7 +652,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     end
                 #= transfer-encoding =#
                 elseif h == h_matching_transfer_encoding
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
                     parser.index += 1
                     if parser.index > length(TRANSFER_ENCODING) || c != TRANSFER_ENCODING[parser.index]
                         parser.header_state = h_general
@@ -662,7 +661,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     end
                 #= upgrade =#
                 elseif h == h_matching_upgrade
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
                     parser.index += 1
                     if parser.index > length(UPGRADE) || c != UPGRADE[parser.index]
                         parser.header_state = h_general
@@ -671,7 +670,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     end
                 #= set-cookie =#
                 elseif h == h_matching_setcookie
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
                     parser.index += 1
                     if parser.index > length(SETCOOKIE) || c != SETCOOKIE[parser.index]
                         parser.header_state = h_general
@@ -706,7 +705,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_header_value_discard_ws
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             (ch == ' ' || ch == '\t') && @goto breakout
             if ch == CR
                 p_state = s_header_value_discard_ws_almost_done
@@ -719,7 +718,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             @goto s_header_value_start_label
         #= FALLTHROUGH =#
         elseif p_state == s_header_value_start
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @label s_header_value_start_label
             header_value_mark = p
             p_state = s_header_value
@@ -758,19 +757,19 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_header_value
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             start = p
             h = parser.header_state
             while p <= len
                 ch = Char(bytes[p])
-                @debug(DEBUG, Base.escape_string(string('\'', ch, '\'')))
-                @debug(DEBUG, lenient)
-                @debug(DEBUG, isheaderchar(ch))
+                @debug(PARSING_DEBUG, Base.escape_string(string('\'', ch, '\'')))
+                @debug(PARSING_DEBUG, lenient)
+                @debug(PARSING_DEBUG, isheaderchar(ch))
                 if ch == CR
                     p_state = s_header_almost_done
                     parser.header_state = h
                     parser.state = p_state
-                    @debug(DEBUG, "onheadervalue 1")
+                    @debug(PARSING_DEBUG, "onheadervalue 1")
                     onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
                     header_value_mark = 0
                     break
@@ -779,7 +778,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     @nread(p - start)
                     parser.header_state = h
                     parser.state = p_state
-                    @debug(DEBUG, "onheadervalue 2")
+                    @debug(PARSING_DEBUG, "onheadervalue 2")
                     onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
                     header_value_mark = 0
                     @goto reexecute
@@ -790,29 +789,29 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 c = lower(ch)
 
                 if h == h_general
-                    @debug(DEBUG, parser.header_state)
+                    @debug(PARSING_DEBUG, parser.header_state)
                     limit = len - p
                     limit = min(limit, HTTP_MAX_HEADER_SIZE)
                     ptr = pointer(bytes, p)
-                    @debug(DEBUG, Base.escape_string(string('\'', Char(bytes[p]), '\'')))
+                    @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[p]), '\'')))
                     p_cr = ccall(:memchr, Ptr{UInt8}, (Ptr{Void}, Cint, Csize_t), ptr, CR, limit)
                     p_lf = ccall(:memchr, Ptr{UInt8}, (Ptr{Void}, Cint, Csize_t), ptr, LF, limit)
-                    @debug(DEBUG, limit)
-                    @debug(DEBUG, Int(p_cr))
-                    @debug(DEBUG, Int(p_lf))
+                    @debug(PARSING_DEBUG, limit)
+                    @debug(PARSING_DEBUG, Int(p_cr))
+                    @debug(PARSING_DEBUG, Int(p_lf))
                     if p_cr != C_NULL
                         if p_lf != C_NULL && p_cr >= p_lf
-                            @debug(DEBUG, Base.escape_string(string('\'', Char(bytes[p + (p_lf - ptr + 1)]), '\'')))
+                            @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[p + (p_lf - ptr + 1)]), '\'')))
                             p += p_lf - ptr
                         else
-                            @debug(DEBUG, Base.escape_string(string('\'', Char(bytes[p + (p_cr - ptr + 1)]), '\'')))
+                            @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[p + (p_cr - ptr + 1)]), '\'')))
                             p += p_cr - ptr
                         end
                     elseif p_lf != C_NULL
-                        @debug(DEBUG, Base.escape_string(string('\'', Char(bytes[p + (p_lf - ptr + 1)]), '\'')))
+                        @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[p + (p_lf - ptr + 1)]), '\'')))
                         p += p_lf - ptr
                     else
-                        @debug(DEBUG, Base.escape_string(string('\'', Char(bytes[len]), '\'')))
+                        @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[len]), '\'')))
                         p = len + 1
                     end
                     p -= 1
@@ -832,7 +831,9 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                         t += UInt64(ch - '0')
 
                         #= Overflow? Test against a conservative limit for simplicity. =#
-                        if div(ULLONG_MAX - 10, 10) < parser.content_length
+                        @debug(PARSING_DEBUG, "this content_length 1")
+                        @debug(PARSING_DEBUG, Int(parser.content_length))
+                        if div(ULLONG_MAX - 10, 10) < t
                             parser.header_state = h
                             @err(HPE_INVALID_CONTENT_LENGTH)
                         end
@@ -932,12 +933,12 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_header_almost_done
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(ch != LF, HPE_LF_EXPECTED)
             p_state = s_header_value_lws
 
         elseif p_state == s_header_value_lws
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == ' ' || ch == '\t'
                 p_state = s_header_value_start
                 @goto reexecute
@@ -957,12 +958,12 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             @goto reexecute
 
         elseif p_state == s_header_value_discard_ws_almost_done
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != LF)
             p_state = s_header_value_discard_lws
 
         elseif p_state == s_header_value_discard_lws
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == ' ' || ch == '\t'
                 p_state = s_header_value_discard_ws
             else
@@ -980,14 +981,14 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 header_value_mark = p
                 p_state = s_header_field_start
                 parser.state = p_state
-                @debug(DEBUG, "onheadervalue 3")
+                @debug(PARSING_DEBUG, "onheadervalue 3")
                 onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
                 header_value_mark = 0
                 @goto reexecute
             end
 
         elseif p_state == s_headers_almost_done
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != LF)
             if (parser.flags & F_TRAILING
                 ) > 0
@@ -1004,10 +1005,10 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             p_state = s_headers_done
 
             #= Set this here so that on_headers_complete() callbacks can see it =#
-            @debug(DEBUG, "checking for upgrade...")
+            @debug(PARSING_DEBUG, "checking for upgrade...")
             upgrade = ((parser.flags & (F_UPGRADE | F_CONNECTION_UPGRADE)) ==
             (F_UPGRADE | F_CONNECTION_UPGRADE) || (typeof(r) == Request && r.method == CONNECT))
-            @debug(DEBUG, upgrade)
+            @debug(PARSING_DEBUG, upgrade)
             #= Here we call the headers_complete callback. This is somewhat
             * different than other callbacks because if the user returns 1, we
             * will interpret that as saying that this message has no body. This
@@ -1026,7 +1027,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             @goto reexecute
 
         elseif p_state == s_headers_done
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != LF)
 
             parser.nread = UInt32(0)
@@ -1039,7 +1040,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                 parser.state = p_state
                 onmessagecomplete(r)
-                @debug(DEBUG, "this 1")
+                @debug(PARSING_DEBUG, "this 1")
                 return errno, true, true, String(bytes[p+1:end])
             end
 
@@ -1047,41 +1048,42 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                 parser.state = p_state
                 onmessagecomplete(r)
-                @debug(DEBUG, "this 2")
+                @debug(PARSING_DEBUG, "this 2")
                 return errno, true, true, ""
             elseif parser.flags & F_CHUNKED > 0
                 #= chunked encoding - ignore Content-Length header =#
                 p_state = s_chunk_size_start
+                # @goto reexecute
             else
                 if parser.content_length == 0
                     #= Content-Length header given but zero: Content-Length: 0\r\n =#
                     p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                     parser.state = p_state
                     onmessagecomplete(r)
-                    @debug(DEBUG, "this 3")
+                    @debug(PARSING_DEBUG, "this 3")
                     return errno, true, true, ""
                 elseif parser.content_length != ULLONG_MAX
                     #= Content-Length header given and non-zero =#
                     p_state = s_body_identity
-                    @debug(DEBUG, ParsingStateCode(p_state))
+                    @debug(PARSING_DEBUG, ParsingStateCode(p_state))
                 else
                     if !http_message_needs_eof(parser, r)
                         #= Assume content-length 0 - read the next =#
                         p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                         parser.state = p_state
                         onmessagecomplete(r)
-                        @debug(DEBUG, "this 4")
+                        @debug(PARSING_DEBUG, "this 4")
                         return errno, true, true, String(bytes[p+1:end])
                     else
                         #= Read body until EOF =#
                         p_state = s_body_identity_eof
-                        @debug(DEBUG, ParsingStateCode(p_state))
+                        @debug(PARSING_DEBUG, ParsingStateCode(p_state))
                     end
                 end
             end
 
         elseif p_state == s_body_identity
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             to_read = UInt64(min(parser.content_length, len - p + 1))
 
             assert(parser.content_length != 0
@@ -1108,7 +1110,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 * complete-on-length. It's not clear that this distinction is
                 * important for applications, but let's keep it for now.
                 =#
-                @debug(DEBUG, "this onbody 1")
+                @debug(PARSING_DEBUG, "this onbody 1")
                 onbody(r, bytes, body_mark, p)
                 body_mark = 0
                 # CALLBACK_DATA_(body, p - body_mark + 1, p - data)
@@ -1117,16 +1119,16 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
         #= read until EOF =#
         elseif p_state == s_body_identity_eof
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             body_mark = p
             p = len
 
         elseif p_state == s_message_done
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
             parser.state = p_state
             onmessagecomplete(r)
-            @debug(DEBUG, "this 5")
+            @debug(PARSING_DEBUG, "this 5")
             if upgrade
                 #= Exit, the rest of the message is in a different protocol. =#
                 parser.state = p_state
@@ -1134,7 +1136,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_chunk_size_start
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             assert(parser.nread == 1)
             assert(parser.flags & F_CHUNKED > 0)
 
@@ -1145,13 +1147,13 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             p_state = s_chunk_size
 
         elseif p_state == s_chunk_size
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             assert(parser.flags & F_CHUNKED > 0)
             if ch == CR
                 p_state = s_chunk_size_almost_done
             else
                 unhex_val = unhex[Int(ch)+1]
-
+                @debug(PARSING_DEBUG, unhex_val)
                 if unhex_val == -1
                     if ch == ';' || ch == ' '
                         p_state = s_chunk_parameters
@@ -1164,14 +1166,16 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 t += UInt64(unhex_val)
 
                 #= Overflow? Test against a conservative limit for simplicity. =#
-                if div(ULLONG_MAX - 16, 16) < parser.content_length
+                @debug(PARSING_DEBUG, "this content_length 2")
+                @debug(PARSING_DEBUG, Int(parser.content_length))
+                if div(ULLONG_MAX - 16, 16) < t
                     @err(HPE_INVALID_CONTENT_LENGTH)
                 end
                 parser.content_length = t
             end
 
         elseif p_state == s_chunk_parameters
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             assert(parser.flags & F_CHUNKED > 0)
             #= just ignore this shit. TODO check for overflow =#
             if ch == CR
@@ -1179,7 +1183,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_chunk_size_almost_done
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             assert(parser.flags & F_CHUNKED > 0)
             @strictcheck(ch != LF)
 
@@ -1194,7 +1198,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             # CALLBACK_NOTIFY(chunk_header)
 
         elseif p_state == s_chunk_data
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             to_read = UInt64(min(parser.content_length, len - p + 1))
 
             assert(parser.flags & F_CHUNKED > 0)
@@ -1212,17 +1216,17 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             end
 
         elseif p_state == s_chunk_data_almost_done
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             assert(parser.flags & F_CHUNKED > 0)
             assert(parser.content_length == 0)
             @strictcheck(ch != CR)
             p_state = s_chunk_data_done
-            @debug(DEBUG, "this onbody 2")
+            @debug(PARSING_DEBUG, "this onbody 2")
             onbody(r, bytes, body_mark, p - 1)
             body_mark = 0
 
         elseif p_state == s_chunk_data_done
-            @debug(DEBUG, ParsingStateCode(p_state))
+            @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             assert(parser.flags & F_CHUNKED > 0)
             @strictcheck(ch != LF)
             parser.nread = 0
@@ -1253,18 +1257,18 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             (status_mark > 0 ? 1 : 0)) <= 1)
 
     header_field_mark > 0 && onheaderfield(parser, bytes, header_field_mark, min(len, p))
-    @debug(DEBUG, "onheadervalue 4")
-    @debug(DEBUG, len)
-    @debug(DEBUG, p)
+    @debug(PARSING_DEBUG, "onheadervalue 4")
+    @debug(PARSING_DEBUG, len)
+    @debug(PARSING_DEBUG, p)
     header_value_mark > 0 && onheadervalue(parser, bytes, header_value_mark, min(len, p))
     url_mark > 0 && onurl(r, bytes, url_mark, min(len, p))
-    @debug(DEBUG, "this onbody 3")
+    @debug(PARSING_DEBUG, "this onbody 3")
     body_mark > 0 && onbody(r, bytes, body_mark, min(len, p - 1))
     status_mark > 0 && onstatus(r)
 
     parser.state = p_state
-    @debug(DEBUG, "exiting maybe unfinished...")
-    @debug(DEBUG, ParsingStateCode(p_state))
+    @debug(PARSING_DEBUG, "exiting maybe unfinished...")
+    @debug(PARSING_DEBUG, ParsingStateCode(p_state))
     b = p_state == start_state || p_state == s_dead
     h = b | (p_state >= s_headers_done)
     m = b | (p_state >= s_message_done)
@@ -1277,8 +1281,8 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
     parser.state = s_start_req_or_res
     parser.header_state = 0x00
-    @debug(DEBUG, "exiting due to error...")
-    @debug(DEBUG, errno)
+    @debug(PARSING_DEBUG, "exiting due to error...")
+    @debug(PARSING_DEBUG, errno)
     return errno, false, false, ""
 end
 

@@ -45,9 +45,9 @@ compile to `nothing`.
 macro debug(should, expr)
     if eval(should)
         if typeof(expr) == String
-            return esc(:(println("[DEBUG - ", @__FILE__, ":", @__LINE__, "]: ", $expr)))
+            return esc(:(println("[DEBUG - ", @__FILE__, ":", @__LINE__, "]: ", $(escape_string(expr)))))
         else
-            return esc(:(println("[DEBUG - ", @__FILE__, ":", @__LINE__, "]: ", $(sprint(Base.show_unquoted, expr)), " = ", $expr)))
+            return esc(:(println("[DEBUG - ", @__FILE__, ":", @__LINE__, "]: ", $(sprint(Base.show_unquoted, expr)), " = ", escape_string(string($expr)))))
         end
     end
 end
