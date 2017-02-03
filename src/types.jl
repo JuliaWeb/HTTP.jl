@@ -5,6 +5,11 @@ immutable https <: Scheme end
 # immutable ws <: Scheme end
 # immutable wss <: Scheme end
 
+sockettype(::Type{http}) = TCPSocket
+sockettype(::Type{https}) = TLS.SSLContext
+schemetype(::Type{TCPSocket}) = http
+schemetype(::Type{TLS.SSLContext}) = https
+
 typealias Headers Dict{String,String}
 
 ?{T}(::Type{T}) = Union{T, Void}
@@ -38,6 +43,9 @@ function RequestOptions(options::RequestOptions; kwargs...)
     return options
 end
 
+RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null; kwargs...) =
+    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr); kwargs...)
+
 function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)
         f = fieldname(RequestOptions, i)
@@ -45,9 +53,6 @@ function update!(opts1::RequestOptions, opts2::RequestOptions)
     end
     return opts1
 end
-
-RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null; kwargs...) =
-    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr); kwargs...)
 
 """
 A type representing an HTTP request.
@@ -81,16 +86,12 @@ function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer; op
     if !isempty(userinfo(uri)) && !haskey(headers,"Authorization")
         headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
     end
-    @debug(DEBUG, options)
-    @debug(DEBUG, shouldchunk(body, get(options, :chunksize, typemax(Int))))
     if shouldchunk(body, get(options, :chunksize, typemax(Int)))
         # chunked-transfer
-        @debug(DEBUG, "setting Transfer-Encoding to chunked")
         headers["Transfer-Encoding"] = "chunked" * (get(options, :gzip, false) ? "; gzip" : "")
     else
         # just set the Content-Length
         if !(m in (GET, HEAD, CONNECT))
-            @debug(DEBUG, "setting Content-Length")
             headers["Content-Length"] = dec(length(body))
         end
     end
@@ -241,17 +242,17 @@ function body(io::IO, r::Request, opts)
     hasmessagebody(r) || return
     sz = length(r.body)
     chksz = get(opts, :chunksize, typemax(Int))
-    @debug(DEBUG, chksz)
+    @debug(DEBUG, @__LINE__, chksz)
     if shouldchunk(r.body, chksz)
-        @debug(DEBUG, "chunking...")
+        @debug(DEBUG, @__LINE__, "chunking...")
         while !eof(r.body)
             bytes = readbytes(r.body, chksz) # read at most chunksize
             chunk = length(bytes)
             chunk == 0 && continue
             ch = "$(hex(chunk))$CRLF"
-            @debug(DEBUG, ch)
+            @debug(DEBUG, @__LINE__, ch)
             write(io, ch)
-            @debug(DEBUG, bytes)
+            @debug(DEBUG, @__LINE__, bytes)
             write(io, bytes)
             write(io, CRLF)
         end

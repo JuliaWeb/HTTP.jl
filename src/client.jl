@@ -18,6 +18,15 @@ busy!(conn::Connection) = (conn.state = conn.state == Dead ? (return nothing) : 
 idle!(conn::Connection) = (conn.state = conn.state == Dead ? (return nothing) : Idle; conn.statetime = now(Dates.UTC); return nothing)
 dead!(conn::Connection) = (conn.state = Dead; conn.statetime = now(Dates.UTC); close(conn.tcp); return nothing)
 
+Base.haskey(::Type{http}, client, host) = haskey(client.httppool, host)
+Base.haskey(::Type{https}, client, host) = haskey(client.httpspool, host)
+
+getconnections(::Type{http}, client, host) = client.httppool[host]
+getconnections(::Type{https}, client, host) = client.httpspool[host]
+
+setconnection!(::Type{http}, client, host, conn) = push!(get!(client.httppool, host, Connection[]), conn)
+setconnection!(::Type{https}, client, host, conn) = push!(get!(client.httpspool, host, Connection[]), conn)
+
 """
 `HTTP.Client([logger::IO]; args...)`
 
@@ -46,7 +55,7 @@ type Client{I <: IO}
 end
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_REQUEST_OPTIONS = (DEFAULT_CHUNK_SIZE, true, 30.0, 30.0, TLS.SSLConfig(true), 5)
+const DEFAULT_REQUEST_OPTIONS = (DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5)
 
 Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(), Dict{String, Vector{Connection{TLS.SSLContext}}}(), Dict{String, Set{Cookie}}(), Parser(), logger, options)
 Client(logger::IO; args...) = Client(logger, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
@@ -66,23 +75,21 @@ function request end
 request(uri::String; args...) = request(DEFAULT_CLIENT, GET, URI(uri); args...)
 request(uri::URI; args...) = request(DEFAULT_CLIENT, GET, uri; args...)
 request(method, uri::String; args...) = request(DEFAULT_CLIENT, convert(Method, method), URI(uri); args...)
-request(method, uri::URI; args...) = request(DEFAULT_CLIENT,    convert(Method, method), uri; args...)
+request(method, uri::URI; args...) = request(DEFAULT_CLIENT, convert(Method, method), uri; args...)
 function request(client::Client, method, uri::URI;
                     headers::Headers=Headers(),
                     body=EMPTYBODY,
                     stream::Bool=false,
-                    verbose::Bool=true,
+                    verbose::Bool=false,
                     args...)
     opts = RequestOptions(; args...)
     req = Request(method, uri, headers, body; options=opts)
-    @debug(DEBUG, resource(req.uri))
     return request(client, req, opts; stream=stream, verbose=verbose)
 end
 
-request(req::Request; stream::Bool=false, verbose::Bool=true, args...) = request(DEFAULT_CLIENT, req, RequestOptions(; args...); stream=stream, verbose=verbose)
+request(req::Request; stream::Bool=false, verbose::Bool=false, args...) = request(DEFAULT_CLIENT, req, RequestOptions(; args...); stream=stream, verbose=verbose)
 
-function request(client::Client, req::Request, opts::RequestOptions; history::Vector{Response}=Response[], stream::Bool=false, verbose::Bool=true)
-    @debug(DEBUG, "starting request...")
+function request(client::Client, req::Request, opts::RequestOptions; history::Vector{Response}=Response[], stream::Bool=false, verbose::Bool=false)
     # ensure all Request options are set, using client.options if necessary
     # this works because req.options are null by default whereas client.options always have a default
     update!(opts, client.options)
@@ -95,18 +102,9 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
                                            request(client, req, opts, getconn(https, client, h, opts, verbose), history, stream, verbose)
 end
 
-Base.haskey(::Type{http}, client, host) = haskey(client.httppool, host)
-Base.haskey(::Type{https}, client, host) = haskey(client.httpspool, host)
-
-getconnections(::Type{http}, client, host) = client.httppool[host]
-getconnections(::Type{https}, client, host) = client.httpspool[host]
-
-setconnection!(::Type{http}, client, host, conn) = push!(get!(client.httppool, host, Connection[]), conn)
-setconnection!(::Type{https}, client, host, conn) = push!(get!(client.httpspool, host, Connection[]), conn)
-
 function stalebytes(c::TCPSocket)
     !isopen(c) && return
-    @debug(DEBUG, nb_available(c))
+    @debug(DEBUG, @__LINE__, nb_available(c))
     nb_available(c) > 0 && readavailable(c)
     return
 end
@@ -127,7 +125,7 @@ function getconn{S}(::Type{S}, client, host, opts, verbose)
             # read off any stale bytes left over from a possible error in a previous request
             # this will also trigger any sockets that timed out to be set to closed
             stalebytes(c.tcp)
-            if !isopen(c.tcp)
+            if !isopen(c.tcp) || c.state == Dead
                 dead!(c)
                 push!(inds, i)
             elseif c.state == Idle
@@ -148,11 +146,6 @@ function getconn{S}(::Type{S}, client, host, opts, verbose)
     end
     return conn
 end
-
-sockettype(::Type{http}) = TCPSocket
-sockettype(::Type{https}) = TLS.SSLContext
-schemetype(::Type{TCPSocket}) = http
-schemetype(::Type{TLS.SSLContext}) = https
 
 initTLS!(::Type{http}, hostname, opts, socket) = socket
 function initTLS!(::Type{https}, hostname, opts, socket)
@@ -207,16 +200,15 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     verbose && show(client.logger, response); verbose && println(client.logger, "\n")
     # check for redirect
     response.history = history
-    if req.method != "HEAD" && (300 <= status(response) < 400)
-        @debug(DEBUG, "checking for redirect...")
+    if req.method != HEAD && (300 <= status(response) < 400)
+        @debug(DEBUG, @__LINE__, "checking for redirect...")
         key = haskey(response.headers, "Location") ? "Location" :
               haskey(response.headers, "location") ? "location" : ""
         if key != ""
             newuri = URI(response.headers[key])
-            @debug(DEBUG, "found redirect location: $newuri")
+            @debug(DEBUG, @__LINE__, "found redirect location: $newuri")
             u = uri(req)
             newuri = !isempty(hostname(newuri)) ? newuri : URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
-            @debug(DEBUG, newuri)
             push!(history, response)
             length(history) > opts.maxredirects && throw(RedirectException(opts.maxredirects))
             delete!(req.headers, "Host")
@@ -235,19 +227,19 @@ function process!(client, conn, opts, host, method, response, stream, verbose)
         # if no data after 30 seconds, break out
         verbose && println(client.logger, "Checking for response w/ read timeout of = $(opts.readtimeout)...")
         buffer = @timeout opts.readtimeout readavailable(conn.tcp) throw(TimeoutException(opts.readtimeout))
-        @debug(DEBUG, length(buffer))
-        @debug(DEBUG, isopen(conn.tcp))
+        @debug(DEBUG, @__LINE__, length(buffer))
+        @debug(DEBUG, @__LINE__, isopen(conn.tcp))
         if length(buffer) == 0 && !isopen(conn.tcp)
             dead!(conn)
             verbose && println(client.logger, "Request was sent, but connection closed before receiving response, trying again...")
             return false
         end
-        # @debug(DEBUG, buffer)
+        # @debug(DEBUG, @__LINE__, buffer)
         verbose && println(client.logger, "Received response bytes; processing...")
         errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
-        @debug(DEBUG, errno)
-        @debug(DEBUG, headerscomplete)
-        @debug(DEBUG, messagecomplete)
+        @debug(DEBUG, @__LINE__, errno)
+        @debug(DEBUG, @__LINE__, headerscomplete)
+        @debug(DEBUG, @__LINE__, messagecomplete)
         if errno != HPE_OK
             break
         elseif messagecomplete
@@ -283,6 +275,7 @@ end
 for f in [:get, :post, :put, :delete, :head,
           :trace, :options, :patch, :connect]
     f_str = uppercase(string(f))
+    method = convert(Method, f_str)
     @eval begin
         @doc """
             $($f)(uri) -> Response
@@ -364,9 +357,9 @@ for f in [:get, :post, :put, :delete, :head,
         resp = t.result # get our response by getting the result of our asynchronous task
         ```
         """ function $(f) end
-        ($f)(uri::AbstractString; args...) = ($f)(URI(uri; isconnect=$(f_str == "CONNECT")); args...)
-        ($f)(uri::URI; args...) = request(DEFAULT_CLIENT, $(convert(Method, f_str)), uri,; args...)
-        ($f)(client::Client, uri::AbstractString; args...) = request(client, $(convert(Method, f_str)), URI(uri; isconnect=$(f_str == "CONNECT")),; args...)
-        ($f)(client::Client, uri::URI; args...) = request(client, $(convert(Method, f_str)), uri,; args...)
+        ($f)(uri::AbstractString; args...) = request(DEFAULT_CLIENT, $method, URI(uri; isconnect=$(f_str == "CONNECT")); args...)
+        ($f)(uri::URI; args...) = request(DEFAULT_CLIENT, $method, uri; args...)
+        ($f)(client::Client, uri::AbstractString; args...) = request(client, $method, URI(uri; isconnect=$(f_str == "CONNECT")); args...)
+        ($f)(client::Client, uri::URI; args...) = request(client, $method, uri; args...)
     end
 end

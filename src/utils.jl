@@ -42,12 +42,12 @@ Set `const DEBUG = true` in HTTP.jl and re-compile the package to see
 debug-level output from the package. When `DEBUG = false`, all `@debug` statements
 compile to `nothing`.
 """
-macro debug(should, expr)
+macro debug(should, line, expr)
     if eval(should)
         if typeof(expr) == String
-            return esc(:(println("[DEBUG - ", @__FILE__, ":", @__LINE__, "]: ", $(escape_string(expr)))))
+            return esc(:(println("[DEBUG - ", @__FILE__, ":", $line, "]: ", $(escape_string(expr)))))
         else
-            return esc(:(println("[DEBUG - ", @__FILE__, ":", @__LINE__, "]: ", $(sprint(Base.show_unquoted, expr)), " = ", escape_string(string($expr)))))
+            return esc(:(println("[DEBUG - ", @__FILE__, ":", $line, "]: ", $(sprint(Base.show_unquoted, expr)), " = ", escape_string(string($expr)))))
         end
     end
 end
