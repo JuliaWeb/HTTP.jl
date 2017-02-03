@@ -247,7 +247,7 @@ function http_parse_host(buf, host::Offset, foundat)
     off = len = UInt16(0)
     s = ifelse(foundat, s_http_userinfo_start, s_http_host_start)
 
-    for i = host.off:(host.off + host.len - 1)
+    for i = host.off:(host.off + host.len - 0x0001)
         p = Char(buf[i])
         new_s = http_parse_host_char(s, p)
         new_s == s_http_host_dead && throw(ParsingError("encountered invalid host character: \n$(String(buf))\n$(lpad("", i-1, "-"))^"))
@@ -255,30 +255,30 @@ function http_parse_host(buf, host::Offset, foundat)
             if s != s_http_host
                 off = i
             end
-            len += 1
+            len += 0x0001
 
         elseif new_s == s_http_host_v6
             if s != s_http_host_v6
                 off = i
             end
-            len += 1
+            len += 0x0001
 
         elseif new_s == s_http_host_v6_zone_start || new_s == s_http_host_v6_zone
-            len += 1
+            len += 0x0001
 
         elseif new_s == s_http_host_port
             if s != s_http_host_port
                 portoff = i
-                portlen = 0
+                portlen = 0x0000
             end
-            portlen += 1
+            portlen += 0x0001
 
         elseif new_s == s_http_userinfo
             if s != s_http_userinfo
                 uioff = i
-                uilen = 0
+                uilen = 0x0000
             end
-            uilen += 1
+            uilen += 0x0001
         end
         s = new_s
     end

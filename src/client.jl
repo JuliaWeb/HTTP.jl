@@ -55,12 +55,14 @@ type Client{I <: IO}
 end
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_REQUEST_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5))
 
 Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(),
                                                      Dict{String, Vector{Connection{TLS.SSLContext}}}(),
                                                      Dict{String, Set{Cookie}}(),
                                                      Parser(), logger, options)
+
+const DEFAULT_REQUEST_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5))
+
 @eval begin
     Client(logger::IO; args...) = Client(logger, RequestOptions($(DEFAULT_REQUEST_OPTIONS)...; args...))
     Client(; args...) = Client(STDOUT, RequestOptions($(DEFAULT_REQUEST_OPTIONS)...; args...))
@@ -144,7 +146,7 @@ function getconn{S}(::Type{S}, client, host, opts, verbose)
         deleteat!(conns, inds)
     end
     if !reused
-        socket = @timeout opts.connecttimeout Base.connect(Base.getaddrinfo(hostname), Base.parse(Int, port)) throw(TimeoutException(opts.connecttimeout))
+        socket = @timeout opts.connecttimeout::Float64 Base.connect(Base.getaddrinfo(hostname), Base.parse(Int, port)) throw(TimeoutException(opts.connecttimeout::Float64))
         # initialize TLS if necessary
         tcp = initTLS!(S, hostname, opts, socket)
         conn = Connection(tcp)
@@ -156,7 +158,7 @@ end
 initTLS!(::Type{http}, hostname, opts, socket) = socket
 function initTLS!(::Type{https}, hostname, opts, socket)
     stream = TLS.SSLContext()
-    TLS.setup!(stream, opts.tlsconfig)
+    TLS.setup!(stream, opts.tlsconfig::TLS.SSLConfig)
     TLS.associate!(stream, socket)
     TLS.hostname!(stream, hostname)
     TLS.handshake!(stream)
@@ -212,7 +214,7 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
               haskey(response.headers, "location") ? "location" : ""
         if key != ""
             push!(history, response)
-            length(history) > opts.maxredirects && throw(RedirectException(opts.maxredirects))
+            length(history) > opts.maxredirects::Int && throw(RedirectException(opts.maxredirects::Int))
             newuri = URI(response.headers[key])
             @debug(DEBUG, @__LINE__, "found redirect location: $newuri")
             u = uri(req)
@@ -232,7 +234,7 @@ function process!(client, conn, opts, host, method, response, stream, verbose)
     while true
         # if no data after 30 seconds, break out
         verbose && println(client.logger, "Checking for response w/ read timeout of = $(opts.readtimeout)...")
-        buffer = @timeout opts.readtimeout readavailable(conn.tcp) throw(TimeoutException(opts.readtimeout))
+        buffer = @timeout opts.readtimeout::Float64 readavailable(conn.tcp) throw(TimeoutException(opts.readtimeout::Float64))
         @debug(DEBUG, @__LINE__, length(buffer))
         @debug(DEBUG, @__LINE__, isopen(conn.tcp))
         if length(buffer) == 0 && !isopen(conn.tcp)

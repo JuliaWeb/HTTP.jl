@@ -44,6 +44,7 @@ function reset!(p::Parser)
     p.content_length = 0x0000000000000000
     empty!(p.fieldbuffer)
     empty!(p.valuebuffer)
+    return
 end
 
 const HTTP_MAX_HEADER_SIZE = 80 * 1024
@@ -65,16 +66,18 @@ function onurl(r, bytes, i, j)
     uri = http_parser_parse_url(bytes, i, j - i + 1, r.method == CONNECT)
     @debug(PARSING_DEBUG, @__LINE__, uri)
     setfield!(r, :uri, uri)
-    nothing
+    return
 end
 onstatus(r) = @debug(PARSING_DEBUG, @__LINE__, "onstatus")
 function onheaderfield(p::Parser, bytes, i, j)
     @debug(PARSING_DEBUG, @__LINE__, "onheaderfield")
     append!(p.fieldbuffer, view(bytes, i:j))
+    return
 end
 function onheadervalue(p::Parser, bytes, i, j)
     @debug(PARSING_DEBUG, @__LINE__, "onheadervalue")
     append!(p.valuebuffer, view(bytes, i:j))
+    return
 end
 function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY)
     @debug(PARSING_DEBUG, @__LINE__, "onheadervalue2")
@@ -129,7 +132,7 @@ end
 
 const start_state = s_start_req_or_res
 
-function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(bytes);
+function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(bytes),
         lenient::Bool=true, host::String="", method::HTTP.Method=GET)::Tuple{ParsingErrorCode, Bool, Bool, String}
     strict = !lenient
     p_state = parser.state
@@ -401,40 +404,40 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             elseif ch == matcher[parser.index]
                 @debug(PARSING_DEBUG, @__LINE__, "nada")
             elseif isalpha(ch)
-                c = @shifted(r.method, parser.index - 1, ch)
-                if c == @shifted(POST, 1, 'U')
+                ci = @shifted(r.method, Int(parser.index) - 1, ch)
+                if ci == @shifted(POST, 1, 'U')
                     r.method = PUT
-                elseif c == @shifted(POST, 1, 'A')
+                elseif ci == @shifted(POST, 1, 'A')
                     r.method =  PATCH
-                elseif c == @shifted(CONNECT, 1, 'H')
+                elseif ci == @shifted(CONNECT, 1, 'H')
                     r.method =  CHECKOUT
-                elseif c == @shifted(CONNECT, 2, 'P')
+                elseif ci == @shifted(CONNECT, 2, 'P')
                     r.method =  COPY
-                elseif c == @shifted(MKCOL, 1, 'O')
+                elseif ci == @shifted(MKCOL, 1, 'O')
                     r.method =  MOVE
-                elseif c == @shifted(MKCOL, 1, 'E')
+                elseif ci == @shifted(MKCOL, 1, 'E')
                     r.method =  MERGE
-                elseif c == @shifted(MKCOL, 2, 'A')
+                elseif ci == @shifted(MKCOL, 2, 'A')
                     r.method =  MKACTIVITY
-                elseif c == @shifted(MKCOL, 3, 'A')
+                elseif ci == @shifted(MKCOL, 3, 'A')
                     r.method =  MKCALENDAR
-                elseif c == @shifted(SUBSCRIBE, 1, 'E')
+                elseif ci == @shifted(SUBSCRIBE, 1, 'E')
                     r.method =  SEARCH
-                elseif c == @shifted(REPORT, 2, 'B')
+                elseif ci == @shifted(REPORT, 2, 'B')
                     r.method =  REBIND
-                elseif c == @shifted(POST, 1, 'R')
+                elseif ci == @shifted(POST, 1, 'R')
                     r.method =  PROPFIND
-                elseif c == @shifted(PROPFIND, 4, 'P')
+                elseif ci == @shifted(PROPFIND, 4, 'P')
                     r.method =  PROPPATCH
-                elseif c == @shifted(PUT, 2, 'R')
+                elseif ci == @shifted(PUT, 2, 'R')
                     r.method =  PURGE
-                elseif c == @shifted(LOCK, 1, 'I')
+                elseif ci == @shifted(LOCK, 1, 'I')
                     r.method =  LINK
-                elseif c == @shifted(UNLOCK, 2, 'S')
+                elseif ci == @shifted(UNLOCK, 2, 'S')
                     r.method =  UNSUBSCRIBE
-                elseif c == @shifted(UNLOCK, 2, 'B')
+                elseif ci == @shifted(UNLOCK, 2, 'B')
                     r.method =  UNBIND
-                elseif c == @shifted(UNLOCK, 3, 'I')
+                elseif ci == @shifted(UNLOCK, 3, 'I')
                     r.method =  UNLINK
                 else
                     @err(HPE_INVALID_METHOD)
@@ -792,10 +795,10 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
                     limit = len - p
                     limit = min(limit, HTTP_MAX_HEADER_SIZE)
-                    ptr = pointer(bytes, p)
+                    ptr = Int(pointer(bytes, p))
                     @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p]), '\'')))
-                    p_cr = ccall(:memchr, Ptr{UInt8}, (Ptr{Void}, Cint, Csize_t), ptr, CR, limit)
-                    p_lf = ccall(:memchr, Ptr{UInt8}, (Ptr{Void}, Cint, Csize_t), ptr, LF, limit)
+                    p_cr = ccall(:memchr, Int, (Ptr{Void}, Cint, Csize_t), ptr, CR, limit)
+                    p_lf = ccall(:memchr, Int, (Ptr{Void}, Cint, Csize_t), ptr, LF, limit)
                     @debug(PARSING_DEBUG, @__LINE__, limit)
                     @debug(PARSING_DEBUG, @__LINE__, Int(p_cr))
                     @debug(PARSING_DEBUG, @__LINE__, Int(p_lf))
@@ -905,7 +908,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
                 elseif h in (h_connection_keep_alive, h_connection_close, h_connection_upgrade)
                     if ch == ','
-                        if (h == h_connection_keep_alive)
+                        if h == h_connection_keep_alive
                             parser.flags |= F_CONNECTION_KEEP_ALIVE
                         elseif h == h_connection_close
                             parser.flags |= F_CONNECTION_CLOSE
@@ -1096,7 +1099,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             =#
             body_mark = p
             parser.content_length -= to_read
-            p += to_read - 1
+            p += Int(to_read) - 1
 
             if parser.content_length == 0
                 p_state = s_message_done
@@ -1113,7 +1116,6 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 @debug(PARSING_DEBUG, @__LINE__, "this onbody 1")
                 onbody(r, bytes, body_mark, p)
                 body_mark = 0
-                # CALLBACK_DATA_(body, p - body_mark + 1, p - data)
                 @goto reexecute
             end
 
@@ -1209,7 +1211,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             =#
             body_mark = p
             parser.content_length -= to_read
-            p += to_read - 1
+            p += Int(to_read) - 1
 
             if parser.content_length == 0
                 p_state = s_chunk_data_almost_done
@@ -1270,9 +1272,9 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
     @debug(PARSING_DEBUG, @__LINE__, "exiting maybe unfinished...")
     @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
     b = p_state == start_state || p_state == s_dead
-    h = b | (p_state >= s_headers_done)
+    he = b | (p_state >= s_headers_done)
     m = b | (p_state >= s_message_done)
-    return errno, h, m, String(bytes[p:end])
+    return errno, he, m, String(bytes[p:end])
 
     @label error
     if errno == HPE_OK

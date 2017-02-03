@@ -198,7 +198,6 @@ function headers(io::IO, r::Request)
     for (k, v) in headers(r)
         write(io, "$k: $v$CRLF")
     end
-    cookies(io, r)
     write(io, CRLF)
 end
 
@@ -207,17 +206,7 @@ function headers(io::IO, r::Response)
     for (k, v) in headers(r)
         write(io, "$k: $v$CRLF")
     end
-    cookies(io, r)
     write(io, CRLF)
-end
-
-# cookies
-function cookies(io::IO, r::Request)
-
-end
-
-function cookies(io::IO, r::Response)
-
 end
 
 # body
@@ -242,17 +231,13 @@ function body(io::IO, r::Request, opts)
     hasmessagebody(r) || return
     sz = length(r.body)
     chksz = get(opts, :chunksize, typemax(Int))
-    @debug(DEBUG, @__LINE__, chksz)
     if shouldchunk(r.body, chksz)
-        @debug(DEBUG, @__LINE__, "chunking...")
         while !eof(r.body)
             bytes = readbytes(r.body, chksz) # read at most chunksize
             chunk = length(bytes)
             chunk == 0 && continue
             ch = "$(hex(chunk))$CRLF"
-            @debug(DEBUG, @__LINE__, ch)
             write(io, ch)
-            @debug(DEBUG, @__LINE__, bytes)
             write(io, bytes)
             write(io, CRLF)
         end
@@ -266,6 +251,7 @@ end
 function body(io::IO, r::Response, opts)
     hasmessagebody(r) || return
     write(io, r.body)
+    return
 end
 
 function Base.write(io::IO, r::Union{Request, Response}, opts)

@@ -53,22 +53,23 @@ macro debug(should, line, expr)
 end
 
 # parsing utils
-lower(c) = Char(UInt32(c) | 0x20)
-isurlchar(c) =  c > '\u80' ? true : normal_url_char[Int(c) + 1] # 'A' <= c <= '~' || '$' <= c <= '>' || c == '\f' || c == '\t'
+#TODO: avoid the Sets here, can probably make a macro to unroll the equals
+@inline lower(c) = Char(UInt32(c) | 0x20)
+@inline isurlchar(c) =  c > '\u80' ? true : normal_url_char[Int(c) + 1] # 'A' <= c <= '~' || '$' <= c <= '>' || c == '\f' || c == '\t'
 const MARKS = Set{Char}(['-', '_', '.', '!', '~', '*', '\'', '(', ')'])
-ismark(c) = c in MARKS
-isalpha(c) = 'a' <= lower(c) <= 'z'
-isnum(c) = '0' <= c <= '9'
-isalphanum(c) = isalpha(c) || isnum(c)
+@inline ismark(c) = c in MARKS
+@inline isalpha(c) = 'a' <= lower(c) <= 'z'
+@inline isnum(c) = '0' <= c <= '9'
+@inline isalphanum(c) = isalpha(c) || isnum(c)
 const USERINFOCHARS = Set{Char}(['%', ';', ':', '&', '=', '+', '$', ','])
-isuserinfochar(c) = isalphanum(c) || ismark(c) || c in USERINFOCHARS
-ishex(c) =  isnum(c) || ('a' <= lower(c) <= 'f')
+@inline isuserinfochar(c) = isalphanum(c) || ismark(c) || c in USERINFOCHARS
+@inline ishex(c) =  isnum(c) || ('a' <= lower(c) <= 'f')
 const HOSTCHARS = Set{Char}(['.', '-', '_', '~'])
-ishostchar(c) = isalphanum(c) || c in HOSTCHARS
-isheaderchar(c) = c == CR || c == LF || c == Char(9) || (c > Char(31) && c != Char(127))
+@inline ishostchar(c) = isalphanum(c) || c in HOSTCHARS
+@inline isheaderchar(c) = c == CR || c == LF || c == Char(9) || (c > Char(31) && c != Char(127))
 
 macro shifted(meth, i, char)
-    return esc(:(Int32($meth) << Int32(16) | Int32($i) << Int32(8) | Int32($char)))
+    return esc(:(Int($meth) << Int(16) | Int($i) << Int(8) | Int($char)))
 end
 
 macro errorif(cond, err)

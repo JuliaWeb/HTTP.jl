@@ -297,7 +297,7 @@ for i in instances(ParsingStateCode)
     @eval const $(Symbol(string(i)[2:end])) = UInt8($i)
 end
 
-# =4header states
+# header states
 const h_general = 0x00
 const h_C = 0x01
 const h_CO = 0x02
