@@ -90,13 +90,14 @@ end
 request(req::Request; stream::Bool=false, verbose::Bool=false, args...) = request(DEFAULT_CLIENT, req, RequestOptions(; args...); stream=stream, verbose=verbose)
 
 function request(client::Client, req::Request, opts::RequestOptions; history::Vector{Response}=Response[], stream::Bool=false, verbose::Bool=false)
+    client.logger != STDOUT && (verbose = true)
     # ensure all Request options are set, using client.options if necessary
     # this works because req.options are null by default whereas client.options always have a default
     update!(opts, client.options)
     # if the provided req body is compressed, avoid any chunked transfer since it ruins the compression scheme
-    length(req.body) > 3 && iscompressed(Vector{UInt8}(String(req.body))[1:4]) &&
-        length(req.body) > opts.chunksize && (opts.chunksize = length(req.body) + 1)
-    client.logger != STDOUT && (verbose = true)
+    if iscompressed(String(req.body)) && length(req.body) > opts.chunksize
+        opts.chunksize = length(req.body) + 1
+    end
     h = host(uri(req))
     return scheme(uri(req)) == "http" ? request(client, req, opts, getconn(http, client, h, opts, verbose), history, stream, verbose) :
                                            request(client, req, opts, getconn(https, client, h, opts, verbose), history, stream, verbose)
@@ -205,12 +206,12 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
         key = haskey(response.headers, "Location") ? "Location" :
               haskey(response.headers, "location") ? "location" : ""
         if key != ""
+            push!(history, response)
+            length(history) > opts.maxredirects && throw(RedirectException(opts.maxredirects))
             newuri = URI(response.headers[key])
             @debug(DEBUG, @__LINE__, "found redirect location: $newuri")
             u = uri(req)
             newuri = !isempty(hostname(newuri)) ? newuri : URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
-            push!(history, response)
-            length(history) > opts.maxredirects && throw(RedirectException(opts.maxredirects))
             delete!(req.headers, "Host")
             delete!(req.headers, "Cookie")
             redirectreq = Request(req.method, newuri, req.headers, req.body)
@@ -275,7 +276,7 @@ end
 for f in [:get, :post, :put, :delete, :head,
           :trace, :options, :patch, :connect]
     f_str = uppercase(string(f))
-    method = convert(Method, f_str)
+    meth = convert(Method, f_str)
     @eval begin
         @doc """
             $($f)(uri) -> Response
@@ -357,9 +358,9 @@ for f in [:get, :post, :put, :delete, :head,
         resp = t.result # get our response by getting the result of our asynchronous task
         ```
         """ function $(f) end
-        ($f)(uri::AbstractString; args...) = request(DEFAULT_CLIENT, $method, URI(uri; isconnect=$(f_str == "CONNECT")); args...)
-        ($f)(uri::URI; args...) = request(DEFAULT_CLIENT, $method, uri; args...)
-        ($f)(client::Client, uri::AbstractString; args...) = request(client, $method, URI(uri; isconnect=$(f_str == "CONNECT")); args...)
-        ($f)(client::Client, uri::URI; args...) = request(client, $method, uri; args...)
+        ($f)(uri::AbstractString; args...) = request(DEFAULT_CLIENT, $meth, URI(uri; isconnect=$(f_str == "CONNECT")); args...)
+        ($f)(uri::URI; args...) = request(DEFAULT_CLIENT, $meth, uri; args...)
+        ($f)(client::Client, uri::AbstractString; args...) = request(client, $meth, URI(uri; isconnect=$(f_str == "CONNECT")); args...)
+        ($f)(client::Client, uri::URI; args...) = request(client, $meth, uri; args...)
     end
 end
