@@ -795,24 +795,24 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                     @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
                     limit = len - p
                     limit = min(limit, HTTP_MAX_HEADER_SIZE)
-                    ptr = Int(pointer(bytes, p))
+                    ptr = pointer(bytes, p)
                     @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p]), '\'')))
-                    p_cr = ccall(:memchr, Int, (Ptr{Void}, Cint, Csize_t), ptr, CR, limit)
-                    p_lf = ccall(:memchr, Int, (Ptr{Void}, Cint, Csize_t), ptr, LF, limit)
+                    p_cr = ccall(:memchr, Ptr{Void}, (Ptr{Void}, Cint, Csize_t), ptr, CR, limit)
+                    p_lf = ccall(:memchr, Ptr{Void}, (Ptr{Void}, Cint, Csize_t), ptr, LF, limit)
                     @debug(PARSING_DEBUG, @__LINE__, limit)
                     @debug(PARSING_DEBUG, @__LINE__, Int(p_cr))
                     @debug(PARSING_DEBUG, @__LINE__, Int(p_lf))
                     if p_cr != C_NULL
                         if p_lf != C_NULL && p_cr >= p_lf
-                            @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p + (p_lf - ptr + 1)]), '\'')))
-                            p += p_lf - ptr
+                            @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p + Int(p_lf - ptr + 1)]), '\'')))
+                            p += Int(p_lf - ptr)
                         else
-                            @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p + (p_cr - ptr + 1)]), '\'')))
-                            p += p_cr - ptr
+                            @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p + Int(p_cr - ptr + 1)]), '\'')))
+                            p += Int(p_cr - ptr)
                         end
                     elseif p_lf != C_NULL
-                        @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p + (p_lf - ptr + 1)]), '\'')))
-                        p += p_lf - ptr
+                        @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p + Int(p_lf - ptr + 1)]), '\'')))
+                        p += Int(p_lf - ptr)
                     else
                         @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[len]), '\'')))
                         p = len + 1
