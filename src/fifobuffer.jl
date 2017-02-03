@@ -1,4 +1,4 @@
-if VERSION < 0.5.0-dev+2228
+if VERSION < v"0.5.0-dev+2228"
     import Base.readbytes
 end
 
