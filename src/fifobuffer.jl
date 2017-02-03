@@ -1,7 +1,3 @@
-if VERSION < v"0.5.0-dev+2228"
-    import Base.readbytes
-end
-
 """
 A `FIFOBuffer` is a first-in, first-out, in-memory, async-friendly IO buffer type
 
@@ -121,7 +117,7 @@ function Base.readavailable(f::FIFOBuffer)
 end
 
 # read at most `nb` bytes
-function Base.readbytes(f::FIFOBuffer, nb)
+function Base.read(f::FIFOBuffer, nb::Int)
     # no data to read
     if f.nb == 0
         if current_task() == f.task

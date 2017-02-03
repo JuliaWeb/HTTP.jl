@@ -233,7 +233,7 @@ function body(io::IO, r::Request, opts)
     chksz = get(opts, :chunksize, typemax(Int))
     if shouldchunk(r.body, chksz)
         while !eof(r.body)
-            bytes = readbytes(r.body, chksz) # read at most chunksize
+            bytes = read(r.body, chksz) # read at most chunksize
             chunk = length(bytes)
             chunk == 0 && continue
             ch = "$(hex(chunk))$CRLF"
