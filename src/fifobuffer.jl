@@ -1,3 +1,7 @@
+if VERSION < 0.5.0-dev+2228
+    import Base.readbytes
+end
+
 """
 A `FIFOBuffer` is a first-in, first-out, in-memory, async-friendly IO buffer type
 

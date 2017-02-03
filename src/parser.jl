@@ -132,7 +132,7 @@ end
 
 const start_state = s_start_req_or_res
 
-function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(bytes),
+function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(bytes);
         lenient::Bool=true, host::String="", method::HTTP.Method=GET)::Tuple{ParsingErrorCode, Bool, Bool, String}
     strict = !lenient
     p_state = parser.state
