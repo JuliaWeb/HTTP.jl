@@ -55,11 +55,16 @@ type Client{I <: IO}
 end
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_REQUEST_OPTIONS = (DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5)
+const DEFAULT_REQUEST_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5))
 
-Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(), Dict{String, Vector{Connection{TLS.SSLContext}}}(), Dict{String, Set{Cookie}}(), Parser(), logger, options)
-Client(logger::IO; args...) = Client(logger, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
-Client(; args...) = Client(STDOUT, RequestOptions(DEFAULT_REQUEST_OPTIONS...; args...))
+Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(),
+                                                     Dict{String, Vector{Connection{TLS.SSLContext}}}(),
+                                                     Dict{String, Set{Cookie}}(),
+                                                     Parser(), logger, options)
+@eval begin
+    Client(logger::IO; args...) = Client(logger, RequestOptions($(DEFAULT_REQUEST_OPTIONS)...; args...))
+    Client(; args...) = Client(STDOUT, RequestOptions($(DEFAULT_REQUEST_OPTIONS)...; args...))
+end
 
 """
     `HTTP.request([client::HTTP.Client,] req::HTTP.Request; stream::Bool=false, verbose=false)`
