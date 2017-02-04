@@ -5,14 +5,19 @@ immutable https <: Scheme end
 # immutable ws <: Scheme end
 # immutable wss <: Scheme end
 
+sockettype(::Type{http}) = TCPSocket
+sockettype(::Type{https}) = TLS.SSLContext
+schemetype(::Type{TCPSocket}) = http
+schemetype(::Type{TLS.SSLContext}) = https
+
 typealias Headers Dict{String,String}
 
-?(x) = Union{x,Void}
+?{T}(::Type{T}) = Union{T, Void}
 const null = nothing
 isnull(v::Void) = true
 isnull(x) = false
-function get(value, name::Symbol, default)
-    val = getfield(value, name)
+function get{T, R}(value::T, name::Symbol, default::R)::R
+    val = getfield(value, name)::?(R)
     return isnull(val) ? default : val
 end
 
@@ -27,16 +32,25 @@ type RequestOptions
     readtimeout::?(Float64)
     tlsconfig::?(TLS.SSLConfig)
     maxredirects::?(Int)
-    RequestOptions(ch::?(Int), gzip::?(Bool), ct::?(Float64), rt::?(Float64), tls::?(TLS.SSLConfig), mr::?(Int)) =
-        new(ch, gzip, ct, rt, tls, mr)
+    allowredirects::?(Bool)
+    RequestOptions(ch::?(Int), gzip::?(Bool), ct::?(Float64), rt::?(Float64), tls::?(TLS.SSLConfig), mr::?(Int), ar::?(Bool)) =
+        new(ch, gzip, ct, rt, tls, mr, ar)
 end
+
+const RequestOptionsFieldTypes = Dict(:chunksize=>Int, :gzip=>Bool,
+                                      :connecttimeout=>Float64, :readtimeout=>Float64,
+                                      :tlsconfig=>TLS.SSLConfig,
+                                      :maxredirects=>Int, :allowredirects=>Bool)
 
 function RequestOptions(options::RequestOptions; kwargs...)
     for (k, v) in kwargs
-        setfield!(options, k, v)
+        setfield!(options, k, convert(RequestOptionsFieldTypes[k], v))
     end
     return options
 end
+
+RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null, ar=null; kwargs...) =
+    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar); kwargs...)
 
 function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)
@@ -46,62 +60,64 @@ function update!(opts1::RequestOptions, opts2::RequestOptions)
     return opts1
 end
 
-RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null; kwargs...) =
-    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr); kwargs...)
-
 """
 A type representing an HTTP request.
 """
 type Request
-    method::String
-    major::Int8
-    minor::Int8
+    method::HTTP.Method
+    major::Int16
+    minor::Int16
     uri::URI
-    headers::Headers
-    keepalive::Bool
+    headers::Headers # includes cookies
     body::FIFOBuffer
-    options::RequestOptions
 end
 
-Request(; args...) = Request("GET", Int8(1), Int8(1), URI(""), Headers(), true, FIFOBuffer(), RequestOptions(; args...))
+# accessors
+method(r::Request) = r.method
+major(r::Request) = r.major
+minor(r::Request) = r.minor
+uri(r::Request) = r.uri
+headers(r::Request) = r.headers
+body(r::Request) = r.body
 
 defaultheaders(::Type{Request}) = Headers(
     "User-Agent" => "HTTP.jl/0.0.0",
-    "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"
 )
 
-Request(method, uri, userheaders=Headers(), body=FIFOBuffer(); args...) = Request(method, uri, userheaders, body, RequestOptions(; args...))
-
-function Request{T}(method, uri, userheaders, body::T, options::RequestOptions)
+function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer; options::RequestOptions=RequestOptions())
     headers = defaultheaders(Request)
+    headers["Host"] = host(uri)
 
-    headers["Host"] = uri.port == 0 ? uri.host : "$(uri.host):$(uri.port)"
-
-    if !isempty(uri.userinfo) && !haskey(headers,"Authorization")
-        headers["Authorization"] = "Basic $(base64encode(uri.userinfo))"
+    if !isempty(userinfo(uri)) && !haskey(headers,"Authorization")
+        headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
     end
-    fifobody = FIFOBuffer(body)
-    if shouldchunk(fifobody, get(options, :chunksize, typemax(Int)))
+    if shouldchunk(body, get(options, :chunksize, typemax(Int)))
         # chunked-transfer
         headers["Transfer-Encoding"] = "chunked" * (get(options, :gzip, false) ? "; gzip" : "")
     else
         # just set the Content-Length
-        if !(method in ("GET", "HEAD", "CONNECT"))
-            headers["Content-Length"] = dec(length(fifobody))
+        if !(m in (GET, HEAD, CONNECT))
+            headers["Content-Length"] = dec(length(body))
         end
     end
-    if !haskey(headers, "Content-Type") && length(fifobody) > 0
-        headers["Content-Type"] = HTTP.sniff(fifobody)
+    if !haskey(headers, "Content-Type") && length(body) > 0
+        headers["Content-Type"] = HTTP.sniff(body)
     end
-    return Request(method, Int8(1), Int8(1), uri, merge!(headers, userheaders), true, fifobody, options)
+    return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
+
+Request{T}(method, uri, h, body::T; options::RequestOptions=RequestOptions()) = Request(convert(Method, method),
+                               isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
+                               h, FIFOBuffer(body); options=options)
+
+Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
 
 ==(a::Request,b::Request) = (a.method    == b.method)    &&
                             (a.major     == b.major)     &&
                             (a.minor     == b.minor)     &&
                             (a.uri       == b.uri)       &&
                             (a.headers   == b.headers)   &&
-                            (a.keepalive == b.keepalive) &&
                             (a.body      == b.body)
 
 Base.showcompact(io::IO, r::Request) = print(io, "Request(", resource(r.uri), ", ",
@@ -112,24 +128,42 @@ Base.showcompact(io::IO, r::Request) = print(io, "Request(", resource(r.uri), ",
 A type representing an HTTP response.
 """
 type Response
-    status::Int
-    major::Int8
-    minor::Int8
-    headers::Headers
-    keepalive::Bool
+    status::Int32
+    major::Int16
+    minor::Int16
     cookies::Vector{Cookie}
+    headers::Headers
     body::FIFOBuffer
-    bodytask::Task
     request::Nullable{Request}
     history::Vector{Response}
 end
 
-Response() = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(), Task(1), Nullable(), Response[])
-Response(n, r::Request) = Response(200, 1, 1, Headers(), true, Cookie[], FIFOBuffer(n), Task(1), Nullable(r), Response[])
-Response(s::Int) = Response(s, defaultheaders(Response), FIFOBuffer())
-Response(body::String) = Response(200, defaultheaders(Response), FIFOBuffer(body))
-Response(s::Int, h::Headers, body) =
-  Response(s, 1, 1, h, true, Cookie[], body, Task(1), Nullable(), Response[])
+# accessors
+status(r::Response) = r.status
+major(r::Response) = r.major
+minor(r::Response) = r.minor
+cookies(r::Response) = r.cookies
+headers(r::Response) = r.headers
+body(r::Response) = r.body
+request(r::Response) = r.request
+history(r::Response) = r.history
+statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
+body(r::Union{Request, Response}) = r.body
+bytes(r::Response) = readavailable(r.body)
+Base.string(r::Response) = String(bytes(r))
+
+Response(; status::Int=200,
+         cookies::Vector{Cookie}=Cookie[],
+         headers::Headers=Headers(),
+         body::FIFOBuffer=FIFOBuffer(),
+         request::Nullable{Request}=Nullable{Request}(),
+         history::Vector{Response}=Response[]) =
+    Response(status, Int16(1), Int16(1), cookies, headers, body, request, history)
+
+Response(n::Integer, r::Request) = Response(; body=FIFOBuffer(n), request=Nullable(r))
+Response(s::Integer) = Response(; status=s)
+Response(b::Union{Vector{UInt8}, String}) = Response(; headers=defaultheaders(Response), body=FIFOBuffer(b))
+Response(s::Integer, h::Headers, body) = Response(; status=s, headers=h, body=FIFOBuffer(body))
 
 defaultheaders(::Type{Response}) = Headers(
     "Server"            => "Julia/$VERSION",
@@ -151,21 +185,14 @@ function Base.showcompact(io::IO, r::Response)
           length(r.body)," bytes in body)")
 end
 
-headers(r::Union{Request,Response}) = r.headers
-history(r::Response) = r.history
-cookies(r::Response) = r.cookies
-status(r::Response) = r.status
-statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
-body(r::Response) = r.body
-bytes(r::Response) = readavailable(r.body)
-Base.string(r::Response) = String(bytes(r))
-
 const CRLF = "\r\n"
 
 ## Request & Response writing
 # start lines
 function startline(io::IO, r::Request)
-    write(io, "$(r.method) $(resource(r.uri)) HTTP/$(r.major).$(r.minor)$CRLF")
+    res = resource(uri(r); isconnect=r.method == CONNECT)
+    res = res == "" ? "/" : res
+    write(io, "$(r.method) $res HTTP/$(r.major).$(r.minor)$CRLF")
 end
 
 function startline(io::IO, r::Response)
@@ -177,26 +204,15 @@ function headers(io::IO, r::Request)
     for (k, v) in headers(r)
         write(io, "$k: $v$CRLF")
     end
-    cookies(io, r)
     write(io, CRLF)
 end
 
 function headers(io::IO, r::Response)
-    r.headers["Content-Length"] = string(length(r.body))
+    length(r.body) > 0 && setindex!(r.headers, string(length(r.body)), "Content-Length")
     for (k, v) in headers(r)
         write(io, "$k: $v$CRLF")
     end
-    cookies(io, r)
     write(io, CRLF)
-end
-
-# cookies
-function cookies(io::IO, r::Request)
-
-end
-
-function cookies(io::IO, r::Response)
-
 end
 
 # body
@@ -217,16 +233,17 @@ end
 
 shouldchunk(b::FIFOBuffer, chksz) = current_task() == b.task ? length(b) > chksz : true
 
-function body(io::IO, r::Request)
+function body(io::IO, r::Request, opts)
     hasmessagebody(r) || return
     sz = length(r.body)
-    chksz = get(r.options, :chunksize, typemax(Int))
+    chksz = get(opts, :chunksize, typemax(Int))
     if shouldchunk(r.body, chksz)
         while !eof(r.body)
-            bytes = readbytes(r.body, chksz) # read at most chunksize
+            bytes = read(r.body, chksz) # read at most chunksize
             chunk = length(bytes)
             chunk == 0 && continue
-            write(io, "$(hex(chunk))$CRLF")
+            ch = "$(hex(chunk))$CRLF"
+            write(io, ch)
             write(io, bytes)
             write(io, CRLF)
         end
@@ -237,15 +254,16 @@ function body(io::IO, r::Request)
     return
 end
 
-function body(io::IO, r::Response)
+function body(io::IO, r::Response, opts)
     hasmessagebody(r) || return
     write(io, r.body)
+    return
 end
 
-function Base.write(io::IO, r::Union{Request, Response})
+function Base.write(io::IO, r::Union{Request, Response}, opts)
     startline(io, r)
     headers(io, r)
-    body(io, r)
+    body(io, r, opts)
     return
 end
 
@@ -254,12 +272,14 @@ function Base.show(io::IO, r::Union{Request,Response})
     println(io, "\"\"\"")
     startline(io, r)
     headers(io, r)
-    if length(r.body) > 1000
-        println(io, "[Request body of $(length(r.body)) bytes]")
+    if iscompressed(String(r.body))
+        println(io, "[compressed $(typeof(r)) body of $(length(r.body)) bytes]")
+    elseif length(r.body) > 1000
+        println(io, "[$(typeof(r)) body of $(length(r.body)) bytes]")
         println(io, String(r.body)[1:1000])
         println(io, "...")
     elseif length(r.body) > 0
         println(io, String(r.body))
     end
-    println(io, "\"\"\"")
+    print(io, "\"\"\"")
 end

@@ -1,5 +1,14 @@
 using HTTP, Base.Test
 
+#TODO
+ # fix segfault on travis (probably can't precompile TLS.SSLConfig)
+ # redo verbose logging to be more pretty/relevant
+ # review entire API from top-down
+ # make plan for doc updates
+ # finish parser tests
+ # find some more URI/parser/client test cases (requests.py, httppie, curl?, Requests.jl)
+ # look over webstack github issues
+
 @testset "HTTP" begin
 # include("utils.jl")
 include("fifobuffer.jl");

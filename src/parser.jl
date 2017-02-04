@@ -1,424 +1,1323 @@
-# const libhttp_parser = "libhttp_parser"
-include(joinpath(Pkg.dir("HttpParser"), "deps", "deps.jl"))
-const libhttp_parser = lib
+# Based on src/http/ngx_http_parse.c from NGINX copyright Igor Sysoev
+#
+# Additional changes are licensed under the same terms as NGINX and
+# copyright Joyent, Inc. and other Node contributors. All rights reserved.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to
+# deal in the Software without restriction, including without limitation the
+# rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+# sell copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+# IN THE SOFTWARE.
+#
 
-parsertype(::Type{Request}) = 0 # HTTP_REQUEST
-parsertype(::Type{Response}) = 1 # HTTP_RESPONSE
-
-# A composite type that matches bit-for-bit a C struct.
-type Parser{R}
-    # parser + flag = Single byte
-    type_and_flags::Cuchar
-
-    state::Cuchar
-    header_state::Cuchar
-    index::Cuchar
-
+type Parser
+    state::UInt8
+    header_state::UInt8
+    index::UInt8
+    flags::UInt8
     nread::UInt32
     content_length::UInt64
-
-    http_major::Cushort
-    http_minor::Cushort
-    status_code::Cushort
-    method::Cuchar
-
-    # http_errno + upgrade = Single byte
-    errno_and_upgrade::Cuchar
-
-    data::R # a RequestParser or ResponseParser
+    fieldbuffer::Vector{UInt8}
+    valuebuffer::Vector{UInt8}
 end
 
-parserwrapper(::Type{Request}) = RequestParser()
-parserwrapper(::Type{Response}) = ResponseParser()
+Parser() = Parser(s_start_req_or_res, 0x00, 0, 0, 0, 0, UInt8[], UInt8[])
 
-function Parser{T}(::Type{T}=Request)
-    parser = Parser(convert(Cuchar, 0), convert(Cuchar, 0), convert(Cuchar, 0), convert(Cuchar, 0),
-                    convert(UInt32, 0), convert(UInt64, 0),
-                    convert(Cushort, 0), convert(Cushort, 0), convert(Cushort, 0), convert(Cuchar, 0),
-                    convert(Cuchar, 0),
-                    parserwrapper(T))
-    http_parser_init(parser, T)
-    return parser
-end
-
-# Intializes the Parser object with the correct memory
-function http_parser_init{R, T}(parser::Parser{R}, ::Type{T})
-    ccall((:http_parser_init, libhttp_parser), Void, (Ptr{Parser{R}}, Cint), Ref(parser), parsertype(T))
-end
-
-# A composite type that is expecting C functions to be run as callbacks.
-type ParserSettings
-    on_message_begin_cb::Ptr{Void}
-    on_url_cb::Ptr{Void}
-    on_status_complete_cb::Ptr{Void}
-    on_header_field_cb::Ptr{Void}
-    on_header_value_cb::Ptr{Void}
-    on_headers_complete_cb::Ptr{Void}
-    on_body_cb::Ptr{Void}
-    on_message_complete_cb::Ptr{Void}
-    on_chunk_header::Ptr{Void}
-    on_chunk_complete::Ptr{Void}
-end
-
-ParserSettings(on_message_begin_cb, on_url_cb, on_status_complete_cb, on_header_field_cb, on_header_value_cb, on_headers_complete_cb, on_body_cb, on_message_complete_cb) =
-    ParserSettings(on_message_begin_cb, on_url_cb, on_status_complete_cb, on_header_field_cb, on_header_value_cb, on_headers_complete_cb, on_body_cb, on_message_complete_cb, C_NULL, C_NULL)
-
-function Base.show{R}(io::IO, p::Parser{R})
-    print(io,"$(typeof(p)): v$(version()), ")
-    print(io,"HTTP/$(p.http_major).$(p.http_minor), ")
-    print(io,"Content-Length: $(p.content_length)")
-end
-
-function version()
-    ver = ccall((:http_parser_version, libhttp_parser), Culong, ())
-    major = (ver >> 16) & 255
-    minor = (ver >> 8) & 255
-    patch = ver & 255
-    return VersionNumber(major, minor, patch)
-end
-
-# Run a request through a parser with specific callbacks on the settings instance
-function http_parser_execute{R}(parser::Parser{R}, settings::ParserSettings, request, len=sizeof(request))
-    return ccall((:http_parser_execute, libhttp_parser), Csize_t,
-           (Ptr{Parser{R}}, Ptr{ParserSettings}, Cstring, Csize_t,),
-            Ref(parser), Ref(settings), convert(Cstring, pointer(request)), len)
-end
-
-"Returns a string version of the HTTP method."
-function http_method_str(method)
-    val = ccall((:http_method_str, libhttp_parser), Cstring, (Int,), method)
-    return unsafe_string(val)
-end
-
-# Is the request a keep-alive request?
-http_should_keep_alive{R}(parser::Ptr{Parser{R}}) = ccall((:http_should_keep_alive, libhttp_parser), Int, (Ptr{Parser{R}},), Ref(parser)) != 0
-
-"Pauses the parser."
-pause{R}(parser::Parser{R}) = ccall((:http_parser_pause, libhttp_parser), Void, (Ptr{Parser{R}}, Cint), Ref(parser), one(Cint))
-"Resumes the parser."
-resume{R}(parser::Parser{R}) = ccall((:http_parser_pause, libhttp_parser), Void,(Ptr{Parser{R}}, Cint), Ref(parser), zero(Cint))
-"Checks if this is the final chunk of the body."
-isfinalchunk{R}(parser::Parser{R}) = ccall((:http_parser_pause, libhttp_parser), Cint, (Ptr{Parser{R}},), Ref(parser)) == 1
-
-upgrade{R}(parser::Parser{R}) = (parser.errno_and_upgrade & 0b10000000) > 0
-errno{R}(parser::Parser{R}) = parser.errno_and_upgrade & 0b01111111
-errno_name(errno::Integer) = unsafe_string(ccall((:http_errno_name, libhttp_parser), Cstring, (Int32,), errno))
-errno_description(errno::Integer) = unsafe_string(ccall((:http_errno_description, libhttp_parser), Cstring, (Int32,), errno))
-
-immutable ParserError <: Exception
-    errno::Int32
-    ParserError(errno::Integer) = new(Int32(errno))
-end
-
-Base.show(io::IO, err::ParserError) = print(io, "HTTP.ParserError: ", errno_name(err.errno), " (", err.errno, "): ", errno_description(err.errno))
-
-# Dedicated types for parsing Request/Response types
-type RequestParser
-    val::Request
-    parsedfield::Bool
-    fieldbuffer::String
-    valuebuffer::String
-    messagecomplete::Bool
-    headerscomplete::Bool
-    task::Task
-    cookies::Vector{String}
-end
-
-RequestParser() = RequestParser(Request(), true, "", "", false, false, current_task(), String[])
-
-type ResponseParser
-    val::Response
-    parsedfield::Bool
-    fieldbuffer::String
-    valuebuffer::String
-    messagecomplete::Bool
-    headerscomplete::Bool
-    task::Task
-    cookies::Vector{String}
-end
-
-ResponseParser() = ResponseParser(Response(), true, "", "", false, false, current_task(), String[])
-
-function reset!(r)
-    r.parsedfield = true
-    r.fieldbuffer = ""
-    r.valuebuffer = ""
-    r.messagecomplete = r.headerscomplete = false
-    empty!(r.cookies)
+function reset!(p::Parser)
+    p.state = start_state
+    p.header_state = 0x00
+    p.index = 0x00
+    p.flags = 0x00
+    p.nread = 0x00000000
+    p.content_length = 0x0000000000000000
+    empty!(p.fieldbuffer)
+    empty!(p.valuebuffer)
     return
 end
 
-# Default callbacks for requests and responses
-unload{R}(p::Ptr{Parser{R}}) = (unsafe_load(p).data)::R
+const HTTP_MAX_HEADER_SIZE = 80 * 1024
 
-# on_message_begin
-function request_on_message_begin(parser::Ptr{Parser{RequestParser}})
-    @debug(DEBUG, "request_on_message_begin")
-    r = unload(parser)
-    reset!(r)
-    return 0
+macro nread(n)
+    return esc(quote
+        parser.nread += UInt32($n)
+        @errorif(parser.nread > HTTP_MAX_HEADER_SIZE, HPE_HEADER_OVERFLOW)
+    end)
 end
 
-function response_on_message_begin(parser::Ptr{Parser{ResponseParser}})\
-    @debug(DEBUG, "response_on_message_begin")
-    r = unload(parser)
-    reset!(r)
-    return 0
+onmessagebegin(r) = @debug(PARSING_DEBUG, @__LINE__, "onmessagebegin")
+# should we just make a copy of the byte vector for URI here?
+function onurl(r, bytes, i, j)
+    @debug(PARSING_DEBUG, @__LINE__, "onurl")
+    @debug(PARSING_DEBUG, @__LINE__, i - j + 1)
+    @debug(PARSING_DEBUG, @__LINE__, "'$(String(bytes[i:j]))'")
+    @debug(PARSING_DEBUG, @__LINE__, r.method)
+    uri = http_parser_parse_url(bytes, i, j - i + 1, r.method == CONNECT)
+    @debug(PARSING_DEBUG, @__LINE__, uri)
+    setfield!(r, :uri, uri)
+    return
 end
-
-# on_url (requests only)
-function request_on_url(parser::Ptr{Parser{RequestParser}}, at, len)
-    @debug(DEBUG, "request_on_url")
-    r = unload(parser)
-    r.val.uri = URI(str(at, len))
-    @debug(DEBUG, r.val.uri)
-    return 0
+onstatus(r) = @debug(PARSING_DEBUG, @__LINE__, "onstatus")
+function onheaderfield(p::Parser, bytes, i, j)
+    @debug(PARSING_DEBUG, @__LINE__, "onheaderfield")
+    append!(p.fieldbuffer, view(bytes, i:j))
+    return
 end
-response_on_url(parser, at, len) = 0
-
-# on_status_complete (responses only)
-function response_on_status_complete(parser::Ptr{Parser{ResponseParser}})
-    @debug(DEBUG, "response_on_status_complete")
-    r = unload(parser)
-    r.val.status = unsafe_load(parser).status_code
-    @debug(DEBUG, r.val.status)
-    return 0
+function onheadervalue(p::Parser, bytes, i, j)
+    @debug(PARSING_DEBUG, @__LINE__, "onheadervalue")
+    append!(p.valuebuffer, view(bytes, i:j))
+    return
 end
-request_on_status_complete(parser) = 0
-
-str(at, len) = unsafe_string(convert(Ptr{UInt8}, at), len)
-
-# on_header_field, on_header_value
-function request_on_header_field(parser::Ptr{Parser{RequestParser}}, at, len)
-    r = unload(parser)
-    if r.parsedfield
-        r.fieldbuffer *= str(at, len)
+function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY)
+    @debug(PARSING_DEBUG, @__LINE__, "onheadervalue2")
+    append!(p.valuebuffer, view(bytes, i:j))
+    key = unsafe_string(pointer(p.fieldbuffer), length(p.fieldbuffer))
+    val = unsafe_string(pointer(p.valuebuffer), length(p.valuebuffer))
+    if key == ""
+        key = KEY[]
+        setindex!(r.headers, string(r.headers[key], val), key)
     else
-        r.val.headers[r.fieldbuffer] = r.valuebuffer
-        @debug(DEBUG, r.val.headers[r.fieldbuffer])
-        r.fieldbuffer = str(at, len)
+        KEY[] = key
+        val2 = get!(r.headers, key, val)
+        val2 !== val && setindex!(r.headers, string(val2, ", ", val), key)
     end
-    r.parsedfield = true
-    return 0
+    issetcookie && push!(r.cookies, Cookies.readsetcookie(host, val))
+    empty!(p.fieldbuffer)
+    empty!(p.valuebuffer)
+    return
 end
-
-function request_on_header_value(parser::Ptr{Parser{RequestParser}}, at, len)
-    r = unload(parser)
-    s = str(at, len)
-    r.valuebuffer = ifelse(r.parsedfield, s, r.valuebuffer * s)
-    r.parsedfield = false
-    return 0
-end
-
-macro eq(b, c)
-    return esc(:(($b == $c || $b == $(uppercase(c)))))
-end
-
-function issetcookie(bytes)
-    length(bytes) == 10 || return false
-    @inbounds begin
-    @eq(bytes[1], 's') || return false
-    @eq(bytes[2], 'e') || return false
-    @eq(bytes[3], 't') || return false
-    bytes[4] == '-' || return false
-    @eq(bytes[5], 'c') || return false
-    @eq(bytes[6], 'o') || return false
-    @eq(bytes[7], 'o') || return false
-    @eq(bytes[8], 'k') || return false
-    @eq(bytes[9], 'i') || return false
-    @eq(bytes[10], 'e') || return false
+onheaderscomplete(r) = @debug(PARSING_DEBUG, @__LINE__, "onheaderscomplete")
+function onbody(r, bytes, i, j)
+    @debug(PARSING_DEBUG, @__LINE__, "onbody")
+    @debug(PARSING_DEBUG, @__LINE__, String(r.body))
+    @debug(PARSING_DEBUG, @__LINE__, String(bytes[i:j]))
+    len = j - i + 1
+    nb = write(r.body, view(bytes, i:j))
+    if nb < len # didn't write all available bytes
+        if current_task() == MAINTASK
+            # main request function hasn't returned yet, so not safe to wait
+            r.body.max += len - nb
+            write(r.body, view(bytes, (i + nb):j))
+        else
+            while nb < len
+                nb += write(r.body, view(bytes, (i + nb):j))
+            end
+        end
     end
+    @debug(PARSING_DEBUG, @__LINE__, String(r.body))
+    return
+end
+onmessagecomplete(r::Request) = @debug(PARSING_DEBUG, @__LINE__, "onmessagecomplete")
+onmessagecomplete(r::Response) = (@debug(PARSING_DEBUG, @__LINE__, "onmessagecomplete"); close(r.body))
+
+function parse{T <: Union{Request, Response}}(::Type{T}, str; extra::Ref{String}=Ref{String}(), lenient::Bool=true)
+    r = T()
+    reset!(DEFAULT_PARSER)
+    err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str); lenient=lenient)
+    err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
+    extra[] = upgrade
+    return r
+end
+
+const start_state = s_start_req_or_res
+
+function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(bytes);
+        lenient::Bool=true, host::String="", method::HTTP.Method=GET)::Tuple{ParsingErrorCode, Bool, Bool, String}
+    strict = !lenient
+    p_state = parser.state
+    status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
+    errno = HPE_OK
+    upgrade = false
+    KEY = Ref{String}()
+    if len == 0
+        if p_state == s_body_identity_eof
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            parser.state = p_state
+            onmessagecomplete(r)
+            @debug(PARSING_DEBUG, @__LINE__, "this 6")
+            return HPE_OK, true, true, ""
+        elseif p_state in (s_dead, s_start_req_or_res, s_start_res, s_start_req)
+            return HPE_OK, false, false, ""
+        else
+            return HPE_INVALID_EOF_STATE, false, false, ""
+        end
+    end
+
+    if p_state == s_header_field
+        @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+        header_field_mark = header_field_end_mark = 1
+    end
+    if p_state == s_header_value
+        @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+        header_value_mark = 1
+    end
+    if p_state in (s_req_path, s_req_schema, s_req_schema_slash, s_req_schema_slash_slash,
+                   s_req_server_start, s_req_server, s_req_server_with_at,
+                   s_req_query_string_start, s_req_query_string, s_req_fragment)
+        url_mark = 1
+    elseif p_state == s_res_status
+        status_mark = 1
+    end
+    p = 1
+    while p <= len
+        ch = Char(bytes[p])
+        @debug(PARSING_DEBUG, @__LINE__, "top of main for-loop")
+        @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string(ch)))
+        if p_state <= s_headers_done
+            @nread(1)
+        end
+
+        @label reexecute
+
+        if p_state == s_dead
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            #= this state is used after a 'Connection: close' message
+             # the parser will error out if it reads another message
+            =#
+            (ch == CR || ch == LF) && @goto breakout
+            @err HPE_CLOSED_CONNECTION
+
+        elseif p_state == s_start_req_or_res
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+
+            (ch == CR || ch == LF) && @goto breakout
+            parser.flags = 0
+            parser.content_length = ULLONG_MAX
+
+            if ch == 'H'
+                p_state = s_res_or_resp_H
+                parser.state = p_state
+                onmessagebegin(r)
+            else
+                p_state = s_start_req
+                @goto reexecute
+            end
+
+        elseif p_state == s_res_or_resp_H
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == 'T'
+                p_state = s_res_HT
+            else
+                @errorif(ch != 'E', HPE_INVALID_CONSTANT)
+                r.method = HEAD
+                parser.index = 3
+                p_state = s_req_method
+            end
+
+        elseif p_state == s_start_res
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            parser.flags = 0
+            parser.content_length = ULLONG_MAX
+            if ch == 'H'
+                p_state = s_res_H
+            elseif ch == CR || ch == LF
+            else
+                @err HPE_INVALID_CONSTANT
+            end
+            parser.state = p_state
+            onmessagebegin(r)
+
+        elseif p_state == s_res_H
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != 'T')
+            p_state = s_res_HT
+
+        elseif p_state == s_res_HT
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != 'T')
+            p_state = s_res_HTT
+
+        elseif p_state == s_res_HTT
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != 'P')
+            p_state = s_res_HTTP
+
+        elseif p_state == s_res_HTTP
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != '/')
+            p_state = s_res_first_http_major
+
+        elseif p_state == s_res_first_http_major
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @errorif(!isnum(ch), HPE_INVALID_VERSION)
+            r.major = Int16(ch - '0')
+            p_state = s_res_http_major
+
+        #= major HTTP version or dot =#
+        elseif p_state == s_res_http_major
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == '.'
+                p_state = s_res_first_http_minor
+                @goto breakout
+            end
+            @errorif(!isnum(ch), HPE_INVALID_VERSION)
+            r.major *= Int16(10)
+            r.major += Int16(ch - '0')
+            @errorif(r.major > 999, HPE_INVALID_VERSION)
+
+        #= first digit of minor HTTP version =#
+        elseif p_state == s_res_first_http_minor
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @errorif(!isnum(ch), HPE_INVALID_VERSION)
+            r.minor = Int16(ch - '0')
+            p_state = s_res_http_minor
+
+        #= minor HTTP version or end of request line =#
+        elseif p_state == s_res_http_minor
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == ' '
+                p_state = s_res_first_status_code
+                @goto breakout
+            end
+            @errorif(!isnum(ch), HPE_INVALID_VERSION)
+            r.minor *= Int16(10)
+            r.minor += Int16(ch - '0')
+            @errorif(r.minor > 999, HPE_INVALID_VERSION)
+
+        elseif p_state == s_res_first_status_code
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if !isnum(ch)
+                ch == ' ' && @goto breakout
+                @err(HPE_INVALID_STATUS)
+            end
+            r.status = Int32(ch - '0')
+            p_state = s_res_status_code
+
+        elseif p_state == s_res_status_code
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if !isnum(ch)
+                if ch == ' '
+                    p_state = s_res_status_start
+                elseif ch == CR
+                    p_state = s_res_line_almost_done
+                elseif ch == LF
+                    p_state = s_header_field_start
+                else
+                    @err(HPE_INVALID_STATUS)
+                end
+            else
+                r.status *= Int32(10)
+                r.status += Int32(ch - '0')
+                @errorif(r.status > 999, HPE_INVALID_STATUS)
+            end
+
+        elseif p_state == s_res_status_start
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == CR
+                p_state = s_res_line_almost_done
+            elseif ch == LF
+                p_state = s_header_field_start
+            else
+                status_mark = p
+                p_state = s_res_status
+                parser.index = 1
+            end
+
+        elseif p_state == s_res_status
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == CR
+                p_state = s_res_line_almost_done
+                parser.state = p_state
+                onstatus(r)
+                status_mark = 0
+            elseif ch == LF
+                p_state = s_header_field_start
+                parser.state = p_state
+                onstatus(r)
+                status_mark = 0
+            end
+
+        elseif p_state == s_res_line_almost_done
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != LF)
+            p_state = s_header_field_start
+
+        elseif p_state == s_start_req
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            (ch == CR || ch == LF) && @goto breakout
+            parser.flags = 0
+            parser.content_length = ULLONG_MAX
+
+            @errorif(!isalpha(ch), HPE_INVALID_METHOD)
+
+            r.method = HTTP.Method(0)
+            parser.index = 2
+
+            if ch == 'A'
+                r.method = ACL
+            elseif ch == 'B'
+                r.method = BIND
+            elseif ch == 'C'
+                r.method = CONNECT
+            elseif ch == 'D'
+                r.method = DELETE
+            elseif ch == 'G'
+                r.method = GET
+            elseif ch == 'H'
+                r.method = HEAD
+            elseif ch == 'L'
+                r.method = LOCK
+            elseif ch == 'M'
+                r.method = MKCOL
+            elseif ch == 'N'
+                r.method = NOTIFY
+            elseif ch == 'O'
+                r.method = OPTIONS
+            elseif ch == 'P'
+                r.method = POST
+            elseif ch == 'R'
+                r.method = REPORT
+            elseif ch == 'S'
+                r.method = SUBSCRIBE
+            elseif ch == 'T'
+                r.method = TRACE
+            elseif ch == 'U'
+                r.method = UNLOCK
+            else
+                @err(HPE_INVALID_METHOD)
+            end
+            p_state = s_req_method
+            parser.state = p_state
+            onmessagebegin(r)
+
+        elseif p_state == s_req_method
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @errorif(ch == '\0', HPE_INVALID_METHOD)
+
+            matcher = string(r.method)
+            @debug(PARSING_DEBUG, @__LINE__, matcher)
+            @debug(PARSING_DEBUG, @__LINE__, parser.index)
+            @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string(ch)))
+            if ch == ' ' && parser.index == length(matcher) + 1
+                p_state = s_req_spaces_before_url
+            elseif ch == matcher[parser.index]
+                @debug(PARSING_DEBUG, @__LINE__, "nada")
+            elseif isalpha(ch)
+                ci = @shifted(r.method, Int(parser.index) - 1, ch)
+                if ci == @shifted(POST, 1, 'U')
+                    r.method = PUT
+                elseif ci == @shifted(POST, 1, 'A')
+                    r.method =  PATCH
+                elseif ci == @shifted(CONNECT, 1, 'H')
+                    r.method =  CHECKOUT
+                elseif ci == @shifted(CONNECT, 2, 'P')
+                    r.method =  COPY
+                elseif ci == @shifted(MKCOL, 1, 'O')
+                    r.method =  MOVE
+                elseif ci == @shifted(MKCOL, 1, 'E')
+                    r.method =  MERGE
+                elseif ci == @shifted(MKCOL, 2, 'A')
+                    r.method =  MKACTIVITY
+                elseif ci == @shifted(MKCOL, 3, 'A')
+                    r.method =  MKCALENDAR
+                elseif ci == @shifted(SUBSCRIBE, 1, 'E')
+                    r.method =  SEARCH
+                elseif ci == @shifted(REPORT, 2, 'B')
+                    r.method =  REBIND
+                elseif ci == @shifted(POST, 1, 'R')
+                    r.method =  PROPFIND
+                elseif ci == @shifted(PROPFIND, 4, 'P')
+                    r.method =  PROPPATCH
+                elseif ci == @shifted(PUT, 2, 'R')
+                    r.method =  PURGE
+                elseif ci == @shifted(LOCK, 1, 'I')
+                    r.method =  LINK
+                elseif ci == @shifted(UNLOCK, 2, 'S')
+                    r.method =  UNSUBSCRIBE
+                elseif ci == @shifted(UNLOCK, 2, 'B')
+                    r.method =  UNBIND
+                elseif ci == @shifted(UNLOCK, 3, 'I')
+                    r.method =  UNLINK
+                else
+                    @err(HPE_INVALID_METHOD)
+                end
+            elseif ch == '-' && parser.index == 2 && r.method == MKCOL
+                @debug(PARSING_DEBUG, @__LINE__, "matched MSEARCH")
+                r.method = MSEARCH
+                parser.index -= 1
+            else
+                @err(HPE_INVALID_METHOD)
+            end
+            parser.index += 1
+            @debug(PARSING_DEBUG, @__LINE__, parser.index)
+
+        elseif p_state == s_req_spaces_before_url
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            ch == ' ' && @goto breakout
+            url_mark = p
+            if r.method == CONNECT
+                p_state = s_req_server_start
+            end
+            p_state = parseurlchar(p_state, ch, strict)
+            @errorif(p_state == s_dead, HPE_INVALID_URL)
+
+        elseif p_state in (s_req_schema, s_req_schema_slash, s_req_schema_slash_slash, s_req_server_start)
+            @errorif(ch in (' ', CR, LF), HPE_INVALID_URL)
+            p_state = parseurlchar(p_state, ch, strict)
+            @errorif(p_state == s_dead, HPE_INVALID_URL)
+
+        elseif p_state in (s_req_server, s_req_server_with_at, s_req_path, s_req_query_string_start,
+                           s_req_query_string, s_req_fragment_start, s_req_fragment)
+            if ch == ' '
+                p_state = s_req_http_start
+                parser.state = p_state
+                onurl(r, bytes, url_mark, p-1)
+                url_mark = 0
+            elseif ch in (CR, LF)
+                r.major = Int16(0)
+                r.minor = Int16(9)
+                p_state = ch == CR ? s_req_line_almost_done : s_header_field_start
+                parser.state = p_state
+                onurl(r, bytes, url_mark, p-1)
+                url_mark = 0
+            else
+                p_state = parseurlchar(p_state, ch, strict)
+                @errorif(p_state == s_dead, HPE_INVALID_URL)
+            end
+
+        elseif p_state == s_req_http_start
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == 'H'
+                p_state = s_req_http_H
+            elseif ch == ' '
+            else
+                @err(HPE_INVALID_CONSTANT)
+            end
+
+        elseif p_state == s_req_http_H
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != 'T')
+            p_state = s_req_http_HT
+
+        elseif p_state == s_req_http_HT
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != 'T')
+            p_state = s_req_http_HTT
+
+        elseif p_state == s_req_http_HTT
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != 'P')
+            p_state = s_req_http_HTTP
+
+        elseif p_state == s_req_http_HTTP
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != '/')
+            p_state = s_req_first_http_major
+
+        #= first digit of major HTTP version =#
+        elseif p_state == s_req_first_http_major
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @errorif(ch < '1' || ch > '9', HPE_INVALID_VERSION)
+            r.major = Int16(ch - '0')
+            p_state = s_req_http_major
+
+        #= major HTTP version or dot =#
+        elseif p_state == s_req_http_major
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == '.'
+                p_state = s_req_first_http_minor
+            elseif !isnum(ch)
+                @err(HPE_INVALID_VERSION)
+            else
+                r.major *= Int16(10)
+                r.major += Int16(ch - '0')
+                @errorif(r.major > 999, HPE_INVALID_VERSION)
+            end
+
+        #= first digit of minor HTTP version =#
+        elseif p_state == s_req_first_http_minor
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @errorif(!isnum(ch), HPE_INVALID_VERSION)
+            r.minor = Int16(ch - '0')
+            p_state = s_req_http_minor
+
+        #= minor HTTP version or end of request line =#
+        elseif p_state == s_req_http_minor
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == CR
+                p_state = s_req_line_almost_done
+            elseif ch == LF
+                p_state = s_header_field_start
+            else
+                #= XXX allow spaces after digit? =#
+                @errorif(!isnum(ch), HPE_INVALID_VERSION)
+                r.minor *= Int16(10)
+                r.minor += Int16(ch - '0')
+                @errorif(r.minor > 999, HPE_INVALID_VERSION)
+            end
+
+        #= end of request line =#
+        elseif p_state == s_req_line_almost_done
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @errorif(ch != LF, HPE_LF_EXPECTED)
+            p_state = s_header_field_start
+
+        elseif p_state == s_header_field_start
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == CR
+                p_state = s_headers_almost_done
+            elseif ch == LF
+                #= they might be just sending \n instead of \r\n so this would be
+                 * the second \n to denote the end of headers=#
+                p_state = s_headers_almost_done
+                @goto reexecute
+            else
+                c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
+                @errorif(c == Char(0), HPE_INVALID_HEADER_TOKEN)
+                header_field_mark = header_field_end_mark = p
+                parser.index = 1
+                issetcookie = false
+                p_state = s_header_field
+
+                if c == 'c'
+                    parser.header_state = h_C
+                elseif c == 'p'
+                    parser.header_state = h_matching_proxy_connection
+                elseif c == 't'
+                    parser.header_state = h_matching_transfer_encoding
+                elseif c == 'u'
+                    parser.header_state = h_matching_upgrade
+                elseif c == 's'
+                    parser.header_state = h_matching_setcookie
+                else
+                    parser.header_state = h_general
+                end
+            end
+
+        elseif p_state == s_header_field
+            @debug(PARSING_DEBUG, @__LINE__, "parsing header_field")
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            start = p
+            while p <= len
+                ch = Char(bytes[p])
+                @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string(ch)))
+                c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
+                c == Char(0) && break
+                h = parser.header_state
+                if h == h_general
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+
+                elseif h == h_C
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+                    parser.index += 1
+                    parser.header_state = c == 'o' ? h_CO : h_general
+                elseif h == h_CO
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+                    parser.index += 1
+                    parser.header_state = c == 'n' ? h_CON : h_general
+                elseif h == h_CON
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+                    parser.index += 1
+                    if c == 'n'
+                        parser.header_state = h_matching_connection
+                    elseif c == 't'
+                        parser.header_state = h_matching_content_length
+                    else
+                        parser.header_state = h_general
+                    end
+                #= connection =#
+                elseif h == h_matching_connection
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+                    parser.index += 1
+                    if parser.index > length(CONNECTION) || c != CONNECTION[parser.index]
+                        parser.header_state = h_general
+                    elseif parser.index == length(CONNECTION)
+                        parser.header_state = h_connection
+                    end
+                #= proxy-connection =#
+                elseif h == h_matching_proxy_connection
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+                    parser.index += 1
+                    if parser.index > length(PROXY_CONNECTION) || c != PROXY_CONNECTION[parser.index]
+                        parser.header_state = h_general
+                    elseif parser.index == length(PROXY_CONNECTION)
+                        parser.header_state = h_connection
+                    end
+                #= content-length =#
+                elseif h == h_matching_content_length
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+                    parser.index += 1
+                    if parser.index > length(CONTENT_LENGTH) || c != CONTENT_LENGTH[parser.index]
+                        parser.header_state = h_general
+                    elseif parser.index == length(CONTENT_LENGTH)
+                        parser.header_state = h_content_length
+                    end
+                #= transfer-encoding =#
+                elseif h == h_matching_transfer_encoding
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+                    parser.index += 1
+                    if parser.index > length(TRANSFER_ENCODING) || c != TRANSFER_ENCODING[parser.index]
+                        parser.header_state = h_general
+                    elseif parser.index == length(TRANSFER_ENCODING)
+                        parser.header_state = h_transfer_encoding
+                    end
+                #= upgrade =#
+                elseif h == h_matching_upgrade
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+                    parser.index += 1
+                    if parser.index > length(UPGRADE) || c != UPGRADE[parser.index]
+                        parser.header_state = h_general
+                    elseif parser.index == length(UPGRADE)
+                        parser.header_state = h_upgrade
+                    end
+                #= set-cookie =#
+                elseif h == h_matching_setcookie
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+                    parser.index += 1
+                    if parser.index > length(SETCOOKIE) || c != SETCOOKIE[parser.index]
+                        parser.header_state = h_general
+                    elseif parser.index == length(SETCOOKIE)
+                        parser.header_state = h_general
+                        issetcookie = true
+                    end
+                elseif h in (h_connection, h_content_length, h_transfer_encoding, h_upgrade)
+                    if ch != ' '
+                        parser.header_state = h_general
+                    end
+                else
+                    error("Unknown header_state")
+                end
+                p += 1
+            end
+
+            @nread(p - start)
+
+            if p == len
+                p -= 1
+                @goto breakout
+            end
+            if ch == ':'
+                p_state = s_header_value_discard_ws
+                parser.state = p_state
+                header_field_end_mark = p
+                onheaderfield(parser, bytes, header_field_mark, p - 1)
+                header_field_mark = 0
+            else
+                @err(HPE_INVALID_HEADER_TOKEN)
+            end
+
+        elseif p_state == s_header_value_discard_ws
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            (ch == ' ' || ch == '\t') && @goto breakout
+            if ch == CR
+                p_state = s_header_value_discard_ws_almost_done
+                @goto breakout
+            end
+            if ch == LF
+                p_state = s_header_value_discard_lws
+                @goto breakout
+            end
+            @goto s_header_value_start_label
+        #= FALLTHROUGH =#
+        elseif p_state == s_header_value_start
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @label s_header_value_start_label
+            header_value_mark = p
+            p_state = s_header_value
+            parser.index = 1
+            c = lower(ch)
+
+            if parser.header_state == h_upgrade
+                parser.flags |= F_UPGRADE
+                parser.header_state = h_general
+            elseif parser.header_state == h_transfer_encoding
+                #= looking for 'Transfer-Encoding: chunked' =#
+                parser.header_state =  c == 'c' ? h_matching_transfer_encoding_chunked : h_general
+
+            elseif parser.header_state == h_content_length
+                @errorif(!isnum(ch), HPE_INVALID_CONTENT_LENGTH)
+                @errorif((parser.flags & F_CONTENTLENGTH > 0) != 0, HPE_UNEXPECTED_CONTENT_LENGTH)
+                parser.flags |= F_CONTENTLENGTH
+                parser.content_length = UInt64(ch - '0')
+
+            elseif parser.header_state == h_connection
+                #= looking for 'Connection: keep-alive' =#
+                if c == 'k'
+                    parser.header_state = h_matching_connection_keep_alive
+                #= looking for 'Connection: close' =#
+                elseif c == 'c'
+                    parser.header_state = h_matching_connection_close
+                elseif c == 'u'
+                    parser.header_state = h_matching_connection_upgrade
+                else
+                    parser.header_state = h_matching_connection_token
+                end
+            #= Multi-value `Connection` header =#
+            elseif parser.header_state == h_matching_connection_token_start
+            else
+              parser.header_state = h_general
+            end
+
+        elseif p_state == s_header_value
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            start = p
+            h = parser.header_state
+            while p <= len
+                ch = Char(bytes[p])
+                @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', ch, '\'')))
+                @debug(PARSING_DEBUG, @__LINE__, lenient)
+                @debug(PARSING_DEBUG, @__LINE__, isheaderchar(ch))
+                if ch == CR
+                    p_state = s_header_almost_done
+                    parser.header_state = h
+                    parser.state = p_state
+                    @debug(PARSING_DEBUG, @__LINE__, "onheadervalue 1")
+                    onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
+                    header_value_mark = 0
+                    break
+                elseif ch == LF
+                    p_state = s_header_almost_done
+                    @nread(p - start)
+                    parser.header_state = h
+                    parser.state = p_state
+                    @debug(PARSING_DEBUG, @__LINE__, "onheadervalue 2")
+                    onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
+                    header_value_mark = 0
+                    @goto reexecute
+                elseif !lenient && !isheaderchar(ch)
+                    @err(HPE_INVALID_HEADER_TOKEN)
+                end
+
+                c = lower(ch)
+
+                if h == h_general
+                    @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
+                    limit = len - p
+                    limit = min(limit, HTTP_MAX_HEADER_SIZE)
+                    ptr = pointer(bytes, p)
+                    @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p]), '\'')))
+                    p_cr = ccall(:memchr, Ptr{Void}, (Ptr{Void}, Cint, Csize_t), ptr, CR, limit)
+                    p_lf = ccall(:memchr, Ptr{Void}, (Ptr{Void}, Cint, Csize_t), ptr, LF, limit)
+                    @debug(PARSING_DEBUG, @__LINE__, limit)
+                    @debug(PARSING_DEBUG, @__LINE__, Int(p_cr))
+                    @debug(PARSING_DEBUG, @__LINE__, Int(p_lf))
+                    if p_cr != C_NULL
+                        if p_lf != C_NULL && p_cr >= p_lf
+                            @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p + Int(p_lf - ptr + 1)]), '\'')))
+                            p += Int(p_lf - ptr)
+                        else
+                            @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p + Int(p_cr - ptr + 1)]), '\'')))
+                            p += Int(p_cr - ptr)
+                        end
+                    elseif p_lf != C_NULL
+                        @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p + Int(p_lf - ptr + 1)]), '\'')))
+                        p += Int(p_lf - ptr)
+                    else
+                        @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[len]), '\'')))
+                        p = len + 1
+                    end
+                    p -= 1
+
+                elseif h == h_connection || h == h_transfer_encoding
+                    error("Shouldn't get here.")
+                elseif h == h_content_length
+                    t = UInt64(0)
+                    if ch == ' '
+                    else
+                        if !isnum(ch)
+                            parser.header_state = h
+                            @err(HPE_INVALID_CONTENT_LENGTH)
+                        end
+                        t = parser.content_length
+                        t *= UInt64(10)
+                        t += UInt64(ch - '0')
+
+                        #= Overflow? Test against a conservative limit for simplicity. =#
+                        @debug(PARSING_DEBUG, @__LINE__, "this content_length 1")
+                        @debug(PARSING_DEBUG, @__LINE__, Int(parser.content_length))
+                        if div(ULLONG_MAX - 10, 10) < t
+                            parser.header_state = h
+                            @err(HPE_INVALID_CONTENT_LENGTH)
+                        end
+                        parser.content_length = t
+                     end
+
+                #= Transfer-Encoding: chunked =#
+                elseif h == h_matching_transfer_encoding_chunked
+                    parser.index += 1
+                    if parser.index > length(CHUNKED) || c != CHUNKED[parser.index]
+                        h = h_general
+                    elseif parser.index == length(CHUNKED)
+                        h = h_transfer_encoding_chunked
+                    end
+
+                elseif h == h_matching_connection_token_start
+                    #= looking for 'Connection: keep-alive' =#
+                    if c == 'k'
+                        h = h_matching_connection_keep_alive
+                    #= looking for 'Connection: close' =#
+                    elseif c == 'c'
+                        h = h_matching_connection_close
+                    elseif c == 'u'
+                        h = h_matching_connection_upgrade
+                    elseif tokens[Int(c)+1] > '\0'
+                        h = h_matching_connection_token
+                    elseif c == ' ' || c == '\t'
+                    #= Skip lws =#
+                    else
+                        h = h_general
+                    end
+                #= looking for 'Connection: keep-alive' =#
+                elseif h == h_matching_connection_keep_alive
+                    parser.index += 1
+                    if parser.index > length(KEEP_ALIVE) || c != KEEP_ALIVE[parser.index]
+                        h = h_matching_connection_token
+                    elseif parser.index == length(KEEP_ALIVE)
+                        h = h_connection_keep_alive
+                    end
+
+                #= looking for 'Connection: close' =#
+                elseif h == h_matching_connection_close
+                    parser.index += 1
+                    if parser.index > length(CLOSE) || c != CLOSE[parser.index]
+                        h = h_matching_connection_token
+                    elseif parser.index == length(CLOSE)
+                        h = h_connection_close
+                    end
+
+                #= looking for 'Connection: upgrade' =#
+                elseif h == h_matching_connection_upgrade
+                    parser.index += 1
+                    if parser.index > length(UPGRADE) || c != UPGRADE[parser.index]
+                        h = h_matching_connection_token
+                    elseif parser.index == length(UPGRADE)
+                        h = h_connection_upgrade
+                    end
+
+                elseif h == h_matching_connection_token
+                    if ch == ','
+                        h = h_matching_connection_token_start
+                        parser.index = 1
+                    end
+
+                elseif h == h_transfer_encoding_chunked
+                    if ch != ' '
+                        h = h_general
+                    end
+
+                elseif h in (h_connection_keep_alive, h_connection_close, h_connection_upgrade)
+                    if ch == ','
+                        if h == h_connection_keep_alive
+                            parser.flags |= F_CONNECTION_KEEP_ALIVE
+                        elseif h == h_connection_close
+                            parser.flags |= F_CONNECTION_CLOSE
+                        elseif h == h_connection_upgrade
+                            parser.flags |= F_CONNECTION_UPGRADE
+                        end
+                        h = h_matching_connection_token_start
+                        parser.index = 1
+                    elseif ch != ' '
+                        h = h_matching_connection_token
+                    end
+
+                else
+                    p_state = s_header_value
+                    h = h_general
+                end
+                p += 1
+            end
+            parser.header_state = h
+
+            @nread(p - start)
+
+            if p == len
+                p -= 1
+            end
+
+        elseif p_state == s_header_almost_done
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @errorif(ch != LF, HPE_LF_EXPECTED)
+            p_state = s_header_value_lws
+
+        elseif p_state == s_header_value_lws
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == ' ' || ch == '\t'
+                p_state = s_header_value_start
+                @goto reexecute
+            end
+            #= finished the header =#
+            if parser.header_state == h_connection_keep_alive
+                parser.flags |= F_CONNECTION_KEEP_ALIVE
+            elseif parser.header_state == h_connection_close
+                parser.flags |= F_CONNECTION_CLOSE
+            elseif parser.header_state == h_transfer_encoding_chunked
+                parser.flags |= F_CHUNKED
+            elseif parser.header_state == h_connection_upgrade
+                parser.flags |= F_CONNECTION_UPGRADE
+            end
+
+            p_state = s_header_field_start
+            @goto reexecute
+
+        elseif p_state == s_header_value_discard_ws_almost_done
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != LF)
+            p_state = s_header_value_discard_lws
+
+        elseif p_state == s_header_value_discard_lws
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            if ch == ' ' || ch == '\t'
+                p_state = s_header_value_discard_ws
+            else
+                if parser.header_state == h_connection_keep_alive
+                    parser.flags |= F_CONNECTION_KEEP_ALIVE
+                elseif parser.header_state == h_connection_close
+                    parser.flags |= F_CONNECTION_CLOSE
+                elseif parser.header_state == h_connection_upgrade
+                    parser.flags |= F_CONNECTION_UPGRADE
+                elseif parser.header_state == h_transfer_encoding_chunked
+                    parser.flags |= F_CHUNKED
+                end
+
+                #= header value was empty =#
+                header_value_mark = p
+                p_state = s_header_field_start
+                parser.state = p_state
+                @debug(PARSING_DEBUG, @__LINE__, "onheadervalue 3")
+                onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
+                header_value_mark = 0
+                @goto reexecute
+            end
+
+        elseif p_state == s_headers_almost_done
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != LF)
+            if (parser.flags & F_TRAILING
+                ) > 0
+                #= End of a chunked request =#
+                p_state = s_message_done
+                # CALLBACK_NOTIFY_NOADVANCE(chunk_complete)
+                @goto reexecute
+            end
+
+            #= Cannot use chunked encoding and a content-length header together
+            per the HTTP specification. =#
+            @errorif((parser.flags & F_CHUNKED) > 0 && (parser.flags & F_CONTENTLENGTH) > 0, HPE_UNEXPECTED_CONTENT_LENGTH)
+
+            p_state = s_headers_done
+
+            #= Set this here so that on_headers_complete() callbacks can see it =#
+            @debug(PARSING_DEBUG, @__LINE__, "checking for upgrade...")
+            upgrade = ((parser.flags & (F_UPGRADE | F_CONNECTION_UPGRADE)) ==
+            (F_UPGRADE | F_CONNECTION_UPGRADE) || (typeof(r) == Request && r.method == CONNECT))
+            @debug(PARSING_DEBUG, @__LINE__, upgrade)
+            #= Here we call the headers_complete callback. This is somewhat
+            * different than other callbacks because if the user returns 1, we
+            * will interpret that as saying that this message has no body. This
+            * is needed for the annoying case of recieving a response to a HEAD
+            * request.
+            *
+            * We'd like to use CALLBACK_NOTIFY_NOADVANCE() here but we cannot, so
+            * we have to simulate it by handling a change in errno below.
+            =#
+            onheaderscomplete(r)
+            if method == HEAD
+                parser.flags |= F_SKIPBODY
+            elseif method == CONNECT
+                upgrade = true
+            end
+            @goto reexecute
+
+        elseif p_state == s_headers_done
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            @strictcheck(ch != LF)
+
+            parser.nread = UInt32(0)
+
+            hasBody = parser.flags & F_CHUNKED > 0 ||
+                (parser.content_length > 0 && parser.content_length != ULLONG_MAX)
+            if upgrade && ((typeof(r) == Request && r.method == CONNECT) ||
+                                  (parser.flags & F_SKIPBODY) > 0 || !hasBody)
+                #= Exit, the rest of the message is in a different protocol. =#
+                p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
+                parser.state = p_state
+                onmessagecomplete(r)
+                @debug(PARSING_DEBUG, @__LINE__, "this 1")
+                return errno, true, true, String(bytes[p+1:end])
+            end
+
+            if parser.flags & F_SKIPBODY > 0
+                p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
+                parser.state = p_state
+                onmessagecomplete(r)
+                @debug(PARSING_DEBUG, @__LINE__, "this 2")
+                return errno, true, true, ""
+            elseif parser.flags & F_CHUNKED > 0
+                #= chunked encoding - ignore Content-Length header =#
+                p_state = s_chunk_size_start
+                # @goto reexecute
+            else
+                if parser.content_length == 0
+                    #= Content-Length header given but zero: Content-Length: 0\r\n =#
+                    p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
+                    parser.state = p_state
+                    onmessagecomplete(r)
+                    @debug(PARSING_DEBUG, @__LINE__, "this 3")
+                    return errno, true, true, ""
+                elseif parser.content_length != ULLONG_MAX
+                    #= Content-Length header given and non-zero =#
+                    p_state = s_body_identity
+                    @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+                else
+                    if !http_message_needs_eof(parser, r)
+                        #= Assume content-length 0 - read the next =#
+                        p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
+                        parser.state = p_state
+                        onmessagecomplete(r)
+                        @debug(PARSING_DEBUG, @__LINE__, "this 4")
+                        return errno, true, true, String(bytes[p+1:end])
+                    else
+                        #= Read body until EOF =#
+                        p_state = s_body_identity_eof
+                        @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+                    end
+                end
+            end
+
+        elseif p_state == s_body_identity
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            to_read = UInt64(min(parser.content_length, len - p + 1))
+
+            assert(parser.content_length != 0
+                && parser.content_length != ULLONG_MAX)
+
+            #= The difference between advancing content_length and p is because
+            * the latter will automaticaly advance on the next loop iteration.
+            * Further, if content_length ends up at 0, we want to see the last
+            * byte again for our message complete callback.
+            =#
+            body_mark = p
+            parser.content_length -= to_read
+            p += Int(to_read) - 1
+
+            if parser.content_length == 0
+                p_state = s_message_done
+
+                #= Mimic CALLBACK_DATA_NOADVANCE() but with one extra byte.
+                *
+                * The alternative to doing this is to wait for the next byte to
+                * trigger the data callback, just as in every other case. The
+                * problem with this is that this makes it difficult for the test
+                * harness to distinguish between complete-on-EOF and
+                * complete-on-length. It's not clear that this distinction is
+                * important for applications, but let's keep it for now.
+                =#
+                @debug(PARSING_DEBUG, @__LINE__, "this onbody 1")
+                onbody(r, bytes, body_mark, p)
+                body_mark = 0
+                @goto reexecute
+            end
+
+        #= read until EOF =#
+        elseif p_state == s_body_identity_eof
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            body_mark = p
+            p = len
+
+        elseif p_state == s_message_done
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
+            parser.state = p_state
+            onmessagecomplete(r)
+            @debug(PARSING_DEBUG, @__LINE__, "this 5")
+            if upgrade
+                #= Exit, the rest of the message is in a different protocol. =#
+                parser.state = p_state
+                return errno, true, true, String(bytes[p+1:end])
+            end
+
+        elseif p_state == s_chunk_size_start
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            assert(parser.nread == 1)
+            assert(parser.flags & F_CHUNKED > 0)
+
+            unhex_val = unhex[Int(ch)+1]
+            @errorif(unhex_val == -1, HPE_INVALID_CHUNK_SIZE)
+
+            parser.content_length = unhex_val
+            p_state = s_chunk_size
+
+        elseif p_state == s_chunk_size
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            assert(parser.flags & F_CHUNKED > 0)
+            if ch == CR
+                p_state = s_chunk_size_almost_done
+            else
+                unhex_val = unhex[Int(ch)+1]
+                @debug(PARSING_DEBUG, @__LINE__, unhex_val)
+                if unhex_val == -1
+                    if ch == ';' || ch == ' '
+                        p_state = s_chunk_parameters
+                        @goto breakout
+                    end
+                    @err(HPE_INVALID_CHUNK_SIZE)
+                end
+                t = parser.content_length
+                t *= UInt64(16)
+                t += UInt64(unhex_val)
+
+                #= Overflow? Test against a conservative limit for simplicity. =#
+                @debug(PARSING_DEBUG, @__LINE__, "this content_length 2")
+                @debug(PARSING_DEBUG, @__LINE__, Int(parser.content_length))
+                if div(ULLONG_MAX - 16, 16) < t
+                    @err(HPE_INVALID_CONTENT_LENGTH)
+                end
+                parser.content_length = t
+            end
+
+        elseif p_state == s_chunk_parameters
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            assert(parser.flags & F_CHUNKED > 0)
+            #= just ignore this shit. TODO check for overflow =#
+            if ch == CR
+                p_state = s_chunk_size_almost_done
+            end
+
+        elseif p_state == s_chunk_size_almost_done
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            assert(parser.flags & F_CHUNKED > 0)
+            @strictcheck(ch != LF)
+
+            parser.nread = 0
+
+            if parser.content_length == 0
+                parser.flags |= F_TRAILING
+                p_state = s_header_field_start
+            else
+                p_state = s_chunk_data
+            end
+            # CALLBACK_NOTIFY(chunk_header)
+
+        elseif p_state == s_chunk_data
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            to_read = UInt64(min(parser.content_length, len - p + 1))
+
+            assert(parser.flags & F_CHUNKED > 0)
+            assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
+
+            #= See the explanation in s_body_identity for why the content
+            * length and data pointers are managed this way.
+            =#
+            body_mark = p
+            parser.content_length -= to_read
+            p += Int(to_read) - 1
+
+            if parser.content_length == 0
+                p_state = s_chunk_data_almost_done
+            end
+
+        elseif p_state == s_chunk_data_almost_done
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            assert(parser.flags & F_CHUNKED > 0)
+            assert(parser.content_length == 0)
+            @strictcheck(ch != CR)
+            p_state = s_chunk_data_done
+            @debug(PARSING_DEBUG, @__LINE__, "this onbody 2")
+            onbody(r, bytes, body_mark, p - 1)
+            body_mark = 0
+
+        elseif p_state == s_chunk_data_done
+            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+            assert(parser.flags & F_CHUNKED > 0)
+            @strictcheck(ch != LF)
+            parser.nread = 0
+            p_state = s_chunk_size_start
+            # CALLBACK_NOTIFY(chunk_complete)
+
+        else
+            error("unhandled state")
+        end
+        @label breakout
+        p += 1
+    end
+
+    #= Run callbacks for any marks that we have leftover after we ran our of
+     * bytes. There should be at most one of these set, so it's OK to invoke
+     * them in series (unset marks will not result in callbacks).
+     *
+     * We use the NOADVANCE() variety of callbacks here because 'p' has already
+     * overflowed 'data' and this allows us to correct for the off-by-one that
+     * we'd otherwise have (since CALLBACK_DATA() is meant to be run with a 'p'
+     * value that's in-bounds).
+     =#
+
+    assert(((header_field_mark > 0 ? 1 : 0) +
+            (header_value_mark > 0 ? 1 : 0) +
+            (url_mark > 0 ? 1 : 0)  +
+            (body_mark > 0 ? 1 : 0) +
+            (status_mark > 0 ? 1 : 0)) <= 1)
+
+    header_field_mark > 0 && onheaderfield(parser, bytes, header_field_mark, min(len, p))
+    @debug(PARSING_DEBUG, @__LINE__, "onheadervalue 4")
+    @debug(PARSING_DEBUG, @__LINE__, len)
+    @debug(PARSING_DEBUG, @__LINE__, p)
+    header_value_mark > 0 && onheadervalue(parser, bytes, header_value_mark, min(len, p))
+    url_mark > 0 && onurl(r, bytes, url_mark, min(len, p))
+    @debug(PARSING_DEBUG, @__LINE__, "this onbody 3")
+    body_mark > 0 && onbody(r, bytes, body_mark, min(len, p - 1))
+    status_mark > 0 && onstatus(r)
+
+    parser.state = p_state
+    @debug(PARSING_DEBUG, @__LINE__, "exiting maybe unfinished...")
+    @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
+    b = p_state == start_state || p_state == s_dead
+    he = b | (p_state >= s_headers_done)
+    m = b | (p_state >= s_message_done)
+    return errno, he, m, String(bytes[p:end])
+
+    @label error
+    if errno == HPE_OK
+        errno = HPE_UNKNOWN
+    end
+
+    parser.state = s_start_req_or_res
+    parser.header_state = 0x00
+    @debug(PARSING_DEBUG, @__LINE__, "exiting due to error...")
+    @debug(PARSING_DEBUG, @__LINE__, errno)
+    return errno, false, false, ""
+end
+
+#= Does the parser need to see an EOF to find the end of the message? =#
+http_message_needs_eof(parser, r::Request) = false
+function http_message_needs_eof(parser, r::Response)
+    #= See RFC 2616 section 4.4 =#
+    if (div(r.status, 100) == 1 || #= 1xx e.g. Continue =#
+        r.status == 204 ||     #= No Content =#
+        r.status == 304 ||     #= Not Modified =#
+        parser.flags & F_SKIPBODY > 0)       #= response to a HEAD request =#
+        return false
+    end
+
+    if (parser.flags & F_CHUNKED > 0) || parser.content_length != ULLONG_MAX
+        return false
+    end
+
     return true
 end
 
-function response_on_header_field(parser::Ptr{Parser{ResponseParser}}, at, len)
-    r = unload(parser)
-    if r.parsedfield
-        r.fieldbuffer *= str(at, len)
+function http_should_keep_alive(parser, r)
+    if r.major > 0 && r.minor > 0
+        #= HTTP/1.1 =#
+        if parser.flags & F_CONNECTION_CLOSE > 0
+            return false
+        end
     else
-        issetcookie(r.fieldbuffer) && push!(r.cookies, r.valuebuffer)
-        r.val.headers[r.fieldbuffer] = get!(r.val.headers, r.fieldbuffer, "") * r.valuebuffer
-        @debug(DEBUG, r.val.headers[r.fieldbuffer])
-        r.fieldbuffer = str(at, len)
-    end
-    r.parsedfield = true
-    return 0
-end
-
-function response_on_header_value(parser::Ptr{Parser{ResponseParser}}, at, len)
-    r = unload(parser)
-    s = str(at, len)
-    r.valuebuffer = ifelse(r.parsedfield, s, r.valuebuffer * s)
-    r.parsedfield = false
-    return 0
-end
-
-# on_headers_complete
-function request_on_headers_complete(parser::Ptr{Parser{RequestParser}})
-    r = unload(parser)
-    p = unsafe_load(parser)
-    # store the last header key=>val
-    if !isempty(r.fieldbuffer)
-        r.val.headers[r.fieldbuffer] = r.valuebuffer
-        @debug(DEBUG, r.val.headers[r.fieldbuffer])
-    end
-    r.val.method = http_method_str(p.method)
-    @debug(DEBUG, r.val.method)
-    r.val.major = p.http_major
-    r.val.minor = p.http_minor
-    r.val.keepalive = http_should_keep_alive(parser) != 0
-    r.headerscomplete = true
-    return 0
-end
-
-function response_on_headers_complete(parser::Ptr{Parser{ResponseParser}})
-    r = unload(parser)
-    p = unsafe_load(parser)
-    # store the last header key=>val
-    issetcookie(r.fieldbuffer) && push!(r.cookies, r.valuebuffer)
-    if !isempty(r.fieldbuffer)
-        r.val.headers[r.fieldbuffer] = get!(r.val.headers, r.fieldbuffer, "") * r.valuebuffer
-        @debug(DEBUG, r.val.headers[r.fieldbuffer])
-    end
-    r.val.status = p.status_code
-    @debug(DEBUG, r.val.status)
-    r.val.major = p.http_major
-    r.val.minor = p.http_minor
-    r.val.keepalive = http_should_keep_alive(parser) != 0
-    req = r.val.request
-    host = isnull(req) ? "" : Base.get(req).uri.host
-    r.val.cookies = Cookies.readsetcookies(host, r.cookies)
-    r.headerscomplete = true
-    # From https://github.com/nodejs/http-parser/blob/master/http_parser.h
-    # Comment starting line 72
-    # On a HEAD method return 1 instead of 0 to indicate that the parser
-    # should not expect a body.
-    method = isnull(req) ? "" : Base.get(req).method
-    if method == "HEAD"
-        r.messagecomplete = true
-        return 1  # Signal HTTP parser to not expect a body
-    elseif method == "CONNECT"
-        r.messagecomplete = true
-        return 2
-    else
-        return 0
-    end
-end
-
-# on_body
-function output(r, body::FIFOBuffer, data)
-    @debug(DEBUG, "output: writing...1")
-    nb = write(body, data)
-    @debug(DEBUG, String(body))
-    @debug(DEBUG, "output: nb=$nb")
-    if current_task() == r.task
-        # main request function hasn't returned yet, so not safe to wait
-        body.max += length(data) - nb
-        @debug(DEBUG, "output: writing...2")
-        nb2 = write(body, view(data, nb+1:length(data)))
-        @debug(DEBUG, "output: nb2=$nb2")
-        @debug(DEBUG, String(body))
-    else
-        while nb < length(data)
-            @debug(DEBUG, "output: writing...3")
-            nb += write(body, data)
+        #= HTTP/1.0 or earlier =#
+        if !(parser.flags & F_CONNECTION_KEEP_ALIVE > 0)
+            return false
         end
     end
-    return nothing
-end
 
-function request_on_body(parser::Ptr{Parser{RequestParser}}, at, len)
-    @debug(DEBUG, "request_on_body")
-    r = unsafe_load(parser).data
-    output(r, r.val.body, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
-    return 0
-end
-
-function response_on_body(parser::Ptr{Parser{ResponseParser}}, at, len)
-    @debug(DEBUG, "response_on_body")
-    r = unsafe_load(parser).data
-    output(r, r.val.body, unsafe_wrap(Array, convert(Ptr{UInt8}, at), len))
-    return 0
-end
-
-# on_message_complete
-function request_on_message_complete(parser::Ptr{Parser{RequestParser}})
-    @debug(DEBUG, "request_on_message_complete")
-    r = unload(parser)
-    r.messagecomplete = true
-    return 0
-end
-
-function response_on_message_complete(parser::Ptr{Parser{ResponseParser}})
-    @debug(DEBUG, "response_on_message_complete")
-    r = unload(parser)
-    r.messagecomplete = true
-    @debug(DEBUG, "closing body...")
-    close(r.val.body)
-    return 0
-end
-
-# Main user-facing functions
-"""
-`HTTP.parse{R <: Union{Request, Response}}(::Type{R}, str)` => `R`
-
-Given a string input `str`, use [`http-parser`](https://github.com/nodejs/http-parser) to create
-and populate a Julia `Request` or `Response` object.
-"""
-function parse end
-
-function parse(::Type{Request}, str)
-    DEFAULT_REQUEST_PARSER.data.val = Request()
-    http_parser_init(DEFAULT_REQUEST_PARSER, Request)
-    http_parser_execute(DEFAULT_REQUEST_PARSER, DEFAULT_REQUEST_PARSER_SETTINGS, str, sizeof(str))
-    if errno(DEFAULT_REQUEST_PARSER) != 0
-        throw(ParserError(errno(DEFAULT_REQUEST_PARSER)))
-    end
-    return (DEFAULT_REQUEST_PARSER.data.val)::Request
-end
-
-function parse(::Type{Response}, str)
-    DEFAULT_RESPONSE_PARSER.data.val = Response()
-    http_parser_init(DEFAULT_RESPONSE_PARSER, Response)
-    http_parser_execute(DEFAULT_RESPONSE_PARSER, DEFAULT_RESPONSE_PARSER_SETTINGS, str, sizeof(str))
-    if errno(DEFAULT_RESPONSE_PARSER) != 0
-        throw(ParserError(errno(DEFAULT_RESPONSE_PARSER)))
-    end
-    return (DEFAULT_RESPONSE_PARSER.data.val)::Response
-end
-
-function __init__parser()
-    HTTP_REQUEST_CB      = (Int, (Ptr{Parser{RequestParser}},))
-    HTTP_DATA_REQUEST_CB = (Int, (Ptr{Parser{RequestParser}}, Ptr{Cchar}, Csize_t,))
-    HTTP_RESPONSE_CB      = (Int, (Ptr{Parser{ResponseParser}},))
-    HTTP_DATA_RESPONSE_CB = (Int, (Ptr{Parser{ResponseParser}}, Ptr{Cchar}, Csize_t,))
-    # Turn all the callbacks into C callable functions.
-    global const request_on_message_begin_cb = cfunction(request_on_message_begin, HTTP_REQUEST_CB...)
-    global const request_on_url_cb = cfunction(request_on_url, HTTP_DATA_REQUEST_CB...)
-    global const request_on_status_complete_cb = cfunction(request_on_status_complete, HTTP_REQUEST_CB...)
-    global const request_on_header_field_cb = cfunction(request_on_header_field, HTTP_DATA_REQUEST_CB...)
-    global const request_on_header_value_cb = cfunction(request_on_header_value, HTTP_DATA_REQUEST_CB...)
-    global const request_on_headers_complete_cb = cfunction(request_on_headers_complete, HTTP_REQUEST_CB...)
-    global const request_on_body_cb = cfunction(request_on_body, HTTP_DATA_REQUEST_CB...)
-    global const request_on_message_complete_cb = cfunction(request_on_message_complete, HTTP_REQUEST_CB...)
-    global const DEFAULT_REQUEST_PARSER_SETTINGS = ParserSettings(request_on_message_begin_cb, request_on_url_cb,
-                                                                  request_on_status_complete_cb, request_on_header_field_cb,
-                                                                  request_on_header_value_cb, request_on_headers_complete_cb,
-                                                                  request_on_body_cb, request_on_message_complete_cb)
-    global const response_on_message_begin_cb = cfunction(response_on_message_begin, HTTP_RESPONSE_CB...)
-    global const response_on_url_cb = cfunction(response_on_url, HTTP_DATA_RESPONSE_CB...)
-    global const response_on_status_complete_cb = cfunction(response_on_status_complete, HTTP_RESPONSE_CB...)
-    global const response_on_header_field_cb = cfunction(response_on_header_field, HTTP_DATA_RESPONSE_CB...)
-    global const response_on_header_value_cb = cfunction(response_on_header_value, HTTP_DATA_RESPONSE_CB...)
-    global const response_on_headers_complete_cb = cfunction(response_on_headers_complete, HTTP_RESPONSE_CB...)
-    global const response_on_body_cb = cfunction(response_on_body, HTTP_DATA_RESPONSE_CB...)
-    global const response_on_message_complete_cb = cfunction(response_on_message_complete, HTTP_RESPONSE_CB...)
-    global const DEFAULT_RESPONSE_PARSER_SETTINGS = ParserSettings(response_on_message_begin_cb, response_on_url_cb,
-                                                                   response_on_status_complete_cb, response_on_header_field_cb,
-                                                                   response_on_header_value_cb, response_on_headers_complete_cb,
-                                                                   response_on_body_cb, response_on_message_complete_cb)
-    #
-    global const DEFAULT_REQUEST_PARSER = Parser(Request)
-    global const DEFAULT_RESPONSE_PARSER = Parser(Response)
-    return
+  return !http_message_needs_eof(parser, r)
 end

@@ -119,3 +119,17 @@ for sch in ("http", "https")
 end
 
 end # @testset "HTTP.Client"
+
+
+# HTTP.Request:
+# """
+# POST /post HTTP/1.1
+# Cookie: hey=sailor
+# Content-Length: 3
+# Host: httpbin.org:80
+# Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json
+# Content-Type: text/plain; charset=utf-8
+# User-Agent: HTTP.jl/0.0.0
+#
+# hey
+# """
