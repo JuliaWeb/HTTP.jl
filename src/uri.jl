@@ -17,7 +17,7 @@ const URL = URI
 
 function URI(;hostname::String="", path::String="",
             scheme::String="", userinfo::String="",
-            port::Union{Integer,String}="", query::Union{String,Dict{String,String}}="",
+            port::Union{Integer,String}="", query="",
             fragment::String="", isconnect::Bool=false)
     # hostname might be full url
     hostname != "" && scheme == "" && (scheme = "http")
@@ -113,6 +113,8 @@ function escape(str)
     end
     return String(take!(out))
 end
+
+escape(A::Vector{String}) = join(map(escape, A), ',')
 
 function escape(d::Dict)
     io = IOBuffer()

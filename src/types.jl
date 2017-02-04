@@ -32,19 +32,25 @@ type RequestOptions
     readtimeout::?(Float64)
     tlsconfig::?(TLS.SSLConfig)
     maxredirects::?(Int)
-    RequestOptions(ch::?(Int), gzip::?(Bool), ct::?(Float64), rt::?(Float64), tls::?(TLS.SSLConfig), mr::?(Int)) =
-        new(ch, gzip, ct, rt, tls, mr)
+    allowredirects::?(Bool)
+    RequestOptions(ch::?(Int), gzip::?(Bool), ct::?(Float64), rt::?(Float64), tls::?(TLS.SSLConfig), mr::?(Int), ar::?(Bool)) =
+        new(ch, gzip, ct, rt, tls, mr, ar)
 end
+
+const RequestOptionsFieldTypes = Dict(:chunksize=>Int, :gzip=>Bool,
+                                      :connecttimeout=>Float64, :readtimeout=>Float64,
+                                      :tlsconfig=>TLS.SSLConfig,
+                                      :maxredirects=>Int, :allowredirects=>Bool)
 
 function RequestOptions(options::RequestOptions; kwargs...)
     for (k, v) in kwargs
-        setfield!(options, k, v)
+        setfield!(options, k, convert(RequestOptionsFieldTypes[k], v))
     end
     return options
 end
 
-RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null; kwargs...) =
-    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr); kwargs...)
+RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null, ar=null; kwargs...) =
+    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar); kwargs...)
 
 function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)

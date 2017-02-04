@@ -13,8 +13,8 @@ const TLS = MbedTLS
 
 import Base.==
 
-const DEBUG = true
-const PARSING_DEBUG = true
+const DEBUG = false
+const PARSING_DEBUG = false
 
 immutable ParsingError <: Exception
     msg::String

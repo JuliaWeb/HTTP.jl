@@ -61,7 +61,7 @@ Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connect
                                                      Dict{String, Set{Cookie}}(),
                                                      Parser(), logger, options)
 
-const DEFAULT_REQUEST_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5))
+const DEFAULT_REQUEST_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5, true))
 
 @eval begin
     Client(logger::IO; args...) = Client(logger, RequestOptions($(DEFAULT_REQUEST_OPTIONS)...; args...))
@@ -208,7 +208,7 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     verbose && show(client.logger, response); verbose && println(client.logger, "\n")
     # check for redirect
     response.history = history
-    if req.method != HEAD && (300 <= status(response) < 400)
+    if req.method != HEAD && (300 <= status(response) < 400) && opts.allowredirects::Bool
         @debug(DEBUG, @__LINE__, "checking for redirect...")
         key = haskey(response.headers, "Location") ? "Location" :
               haskey(response.headers, "location") ? "location" : ""
