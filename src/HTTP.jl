@@ -13,10 +13,8 @@ const TLS = MbedTLS
 
 import Base.==
 
-const DEBUG = false
-const PARSING_DEBUG = false
-
-const MAINTASK = current_task()
+const DEBUG = true
+const PARSING_DEBUG = true
 
 immutable ParsingError <: Exception
     msg::String
@@ -46,6 +44,7 @@ function __init__()
     global const EMPTYBODY = FIFOBuffer()
     global const DEFAULT_PARSER = Parser()
     global const DEFAULT_CLIENT = Client()
+    global const MAINTASK = current_task()
 end
 
 end # module

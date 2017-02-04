@@ -111,7 +111,7 @@ function onbody(r, bytes, i, j)
             write(r.body, view(bytes, (i + nb):j))
         else
             while nb < len
-                nb += write(body, view(bytes, (i + nb):j))
+                nb += write(r.body, view(bytes, (i + nb):j))
             end
         end
     end

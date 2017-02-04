@@ -41,18 +41,18 @@ istaskdone(tsk) # true
 ```
 """
 type FIFOBuffer <: IO
-    len::Int # length of buffer in bytes
-    max::Int # the max size buffer is allowed to grow to
-    nb::Int  # number of bytes available to read in buffer
-    f::Int   # buffer index that should be read next, unless nb == 0, then buffer is empty
-    l::Int   # buffer index that should be written to next, unless nb == len, then buffer is full
+    len::Int64 # length of buffer in bytes
+    max::Int64 # the max size buffer is allowed to grow to
+    nb::Int64  # number of bytes available to read in buffer
+    f::Int64   # buffer index that should be read next, unless nb == 0, then buffer is empty
+    l::Int64   # buffer index that should be written to next, unless nb == len, then buffer is full
     buffer::Vector{UInt8}
     cond::Condition
     task::Task
     eof::Bool
 end
 
-const DEFAULT_MAX = Int(typemax(Int32))^2
+const DEFAULT_MAX = Int64(typemax(Int32))^Int64(2)
 
 FIFOBuffer(f::FIFOBuffer) = f
 FIFOBuffer(max) = FIFOBuffer(0, max, 0, 1, 1, UInt8[], Condition(), current_task(), false)
