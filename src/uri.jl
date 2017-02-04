@@ -114,13 +114,19 @@ function escape(str)
     return String(take!(out))
 end
 
-escape(A::Vector{String}) = join(map(escape, A), ',')
+escape(io, k, v) = write(io, escape(k), "=", escape(v))
+function escape(io, k, A::Vector{String})
+    for (i, v) in enumerate(A)
+        write(io, escape(k), "=", escape(v))
+        i == len || write(io, "&")
+    end
+end
 
 function escape(d::Dict)
     io = IOBuffer()
     len = length(d)
     for (i, (k,v)) in enumerate(d)
-        write(io, escape(k), "=", escape(v))
+        escape(io, k, v)
         i == len || write(io, "&")
     end
     return String(take!(io))

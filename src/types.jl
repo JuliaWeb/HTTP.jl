@@ -160,10 +160,10 @@ Response(; status::Int=200,
          history::Vector{Response}=Response[]) =
     Response(status, Int16(1), Int16(1), cookies, headers, body, request, history)
 
-Response(n::Int, r::Request) = Response(; body=FIFOBuffer(n), request=Nullable(r))
-Response(s::Int) = Response(; status=s)
+Response(n::Integer, r::Request) = Response(; body=FIFOBuffer(n), request=Nullable(r))
+Response(s::Integer) = Response(; status=s)
 Response(b::Union{Vector{UInt8}, String}) = Response(; headers=defaultheaders(Response), body=FIFOBuffer(b))
-Response(s::Int, h::Headers, body) = Response(; status=s, headers=h, body=FIFOBuffer(body))
+Response(s::Integer, h::Headers, body) = Response(; status=s, headers=h, body=FIFOBuffer(body))
 
 defaultheaders(::Type{Response}) = Headers(
     "Server"            => "Julia/$VERSION",
