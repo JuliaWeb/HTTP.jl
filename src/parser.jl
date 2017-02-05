@@ -393,14 +393,14 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
         elseif p_state == s_req_method
             @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
-            @errorif(ch == '\0', HPE_INVALID_METHOD)
-
             matcher = string(r.method)
             @debug(PARSING_DEBUG, @__LINE__, matcher)
             @debug(PARSING_DEBUG, @__LINE__, parser.index)
             @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string(ch)))
             if ch == ' ' && parser.index == length(matcher) + 1
                 p_state = s_req_spaces_before_url
+            elseif parser.index > length(matcher)
+                @err(HPE_INVALID_METHOD)
             elseif ch == matcher[parser.index]
                 @debug(PARSING_DEBUG, @__LINE__, "nada")
             elseif isalpha(ch)

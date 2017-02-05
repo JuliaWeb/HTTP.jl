@@ -79,10 +79,10 @@ are read, freeing up additional space to write.
 """
 function request end
 
-request(uri::String; args...) = request(DEFAULT_CLIENT, GET, URI(uri); args...)
-request(uri::URI; args...) = request(DEFAULT_CLIENT, GET, uri; args...)
-request(method, uri::String; args...) = request(DEFAULT_CLIENT, convert(Method, method), URI(uri); args...)
-request(method, uri::URI; args...) = request(DEFAULT_CLIENT, convert(Method, method), uri; args...)
+request(uri::String; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, GET, URI(uri); verbose=verbose, args...))
+request(uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, GET, uri; verbose=verbose, args...))
+request(method, uri::String; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(Method, method), URI(uri); verbose=verbose, args...))
+request(method, uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(Method, method), uri; verbose=verbose, args...))
 function request(client::Client, method, uri::URI;
                     headers::Headers=Headers(),
                     body=EMPTYBODY,
@@ -90,7 +90,7 @@ function request(client::Client, method, uri::URI;
                     verbose::Bool=false,
                     args...)
     opts = RequestOptions(; args...)
-    req = Request(method, uri, headers, body; options=opts)
+    req = Request(method, uri, headers, body; options=opts, verbose=verbose, io=client.logger)
     return request(client, req, opts; stream=stream, verbose=verbose)
 end
 
@@ -101,6 +101,7 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
     # ensure all Request options are set, using client.options if necessary
     # this works because req.options are null by default whereas client.options always have a default
     update!(opts, client.options)
+    @log(verbose, client.logger, "using request options: " * join((s=>getfield(opts, s) for s in fieldnames(opts)), ", "))
     # if the provided req body is compressed, avoid any chunked transfer since it ruins the compression scheme
     if iscompressed(String(req.body)) && length(req.body) > opts.chunksize
         opts.chunksize = length(req.body) + 1
@@ -121,12 +122,12 @@ stalebytes(c::TLS.SSLContext) = stalebytes(c.bio)
 
 function getconn{S}(::Type{S}, client, host, opts, verbose)
     # connect to remote host
-    verbose && println(client.logger, "Connecting to remote host: $(host)...")
     # check if an open connection to host already exists
     reused = false
     hostname, port = split(host, ':'; limit=2)
     local conn::Connection{sockettype(S)}
     if haskey(S, client, hostname)
+        @log(verbose, client.logger, "checking if any existing connections to '$hostname' are re-usable")
         conns = getconnections(S, client, hostname)
         inds = Int[]
         for (i, c) in enumerate(conns)
@@ -134,11 +135,12 @@ function getconn{S}(::Type{S}, client, host, opts, verbose)
             # this will also trigger any sockets that timed out to be set to closed
             stalebytes(c.tcp)
             if !isopen(c.tcp) || c.state == Dead
+                @log(verbose, client.logger, "found a dead connection to delete")
                 dead!(c)
                 push!(inds, i)
             elseif c.state == Idle
+                @log(verbose, client.logger, "found re-usable connection")
                 busy!(c)
-                verbose && println(client.logger, "Re-using existing connection to host...")
                 conn = c
                 reused = true
             end
@@ -146,6 +148,7 @@ function getconn{S}(::Type{S}, client, host, opts, verbose)
         deleteat!(conns, inds)
     end
     if !reused
+        @log(verbose, client.logger, "creating a new connection to '$hostname'")
         socket = @timeout opts.connecttimeout::Float64 Base.connect(Base.getaddrinfo(hostname), Base.parse(Int, port)) throw(TimeoutException(opts.connecttimeout::Float64))
         # initialize TLS if necessary
         tcp = initTLS!(S, hostname, opts, socket)
@@ -174,55 +177,53 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
         expired = Set{Cookie}()
         for (i, cookie) in enumerate(cookies)
             if Cookies.shouldsend(cookie, scheme(uri(req)) == "https", host, path(uri(req)))
-                cookie.expires != DateTime() && cookie.expires < now(Dates.UTC) && (push!(expired, cookie); continue)
+                cookie.expires != DateTime() && cookie.expires < now(Dates.UTC) && (push!(expired, cookie); @log(verbose, client.logger, "deleting expired cookie"); continue)
                 push!(tosend, cookie)
             end
         end
         setdiff!(client.cookies[host], expired)
         if length(tosend) > 0
-            verbose && println(client.logger, "Adding cached cookie for host...")
+            @log(verbose, client.logger, "adding cached cookies for host to request header")
             req.headers["Cookie"] = string(Base.get(req.headers, "Cookie", ""), [c for c in tosend])
         end
     end
     # send request over the wire
-    verbose && println(client.logger, "Connected. Sending request...")
-    verbose && show(client.logger, req)
+    @log(verbose, client.logger, "sending request over the wire")
+    verbose && show(client.logger, req); verbose && print(client.logger, "\n")
     try
         write(conn.tcp, req, opts)
     catch
-        verbose && println(client.logger, "Error sending request, retrying on a fresh connection...")
+        @log(verbose, client.logger, "error sending request, retrying on a new connection")
         conn = getconn(schemetype(T), client, host, opts, verbose)
         write(conn.tcp, req, opts)
     end
     # create a Response to fill
     response = Response(stream ? DEFAULT_CHUNK_SIZE : DEFAULT_MAX, req)
-    verbose && print(client.logger, "\n\nSent. ")
     # process the response
     reset!(client.parser)
     success = process!(client, conn, opts, host, method(req), response, stream, verbose)
     !success && return request(client, req, opts; history=history, stream=stream, verbose=verbose)
-    !isempty(response.cookies) && union!(get!(client.cookies, host, Set{Cookie}()), response.cookies)
+    !isempty(response.cookies) && (@log(verbose, client.logger, "caching received cookies for host"); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
     # return immediately for streaming responses
     stream && return response
-    verbose && println(client.logger, "Received response: ")
-    verbose && show(client.logger, response); verbose && println(client.logger, "\n")
+    @log(verbose, client.logger, "received response")
+    verbose && show(client.logger, response); verbose && print(client.logger, "\n")
     # check for redirect
     response.history = history
     if req.method != HEAD && (300 <= status(response) < 400) && opts.allowredirects::Bool
-        @debug(DEBUG, @__LINE__, "checking for redirect...")
+        @log(verbose, client.logger, "checking for location to redirect")
         key = haskey(response.headers, "Location") ? "Location" :
               haskey(response.headers, "location") ? "location" : ""
         if key != ""
             push!(history, response)
             length(history) > opts.maxredirects::Int && throw(RedirectException(opts.maxredirects::Int))
             newuri = URI(response.headers[key])
-            @debug(DEBUG, @__LINE__, "found redirect location: $newuri")
             u = uri(req)
             newuri = !isempty(hostname(newuri)) ? newuri : URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
             delete!(req.headers, "Host")
             delete!(req.headers, "Cookie")
             redirectreq = Request(req.method, newuri, req.headers, req.body)
-            verbose && println(client.logger, "Redirecting to $(newuri)...")
+            @log(verbose, client.logger, "redirecting to $(newuri)")
             return request(client, redirectreq, opts, conn, history, false, verbose)
         end
     end
@@ -233,28 +234,28 @@ function process!(client, conn, opts, host, method, response, stream, verbose)
     parser = client.parser
     while true
         # if no data after 30 seconds, break out
-        verbose && println(client.logger, "Checking for response w/ read timeout of = $(opts.readtimeout)...")
+        @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
         buffer = @timeout opts.readtimeout::Float64 readavailable(conn.tcp) throw(TimeoutException(opts.readtimeout::Float64))
         @debug(DEBUG, @__LINE__, length(buffer))
         @debug(DEBUG, @__LINE__, isopen(conn.tcp))
         if length(buffer) == 0 && !isopen(conn.tcp)
             dead!(conn)
-            verbose && println(client.logger, "Request was sent, but connection closed before receiving response, trying again...")
+            @log(verbose, client.logger, "request was sent, but connection closed before receiving response, retrying request")
             return false
         end
-        # @debug(DEBUG, @__LINE__, buffer)
-        verbose && println(client.logger, "Received response bytes; processing...")
+        @log(verbose, client.logger, "received bytes from the wire, processing")
         errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
         @debug(DEBUG, @__LINE__, errno)
         @debug(DEBUG, @__LINE__, headerscomplete)
         @debug(DEBUG, @__LINE__, messagecomplete)
         if errno != HPE_OK
-            break
+            throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[err])"))
         elseif messagecomplete
-            http_should_keep_alive(parser, response) || dead!(conn)
+            http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
             break
         elseif stream && headerscomplete
             # async read the response body, returning the current response immediately
+            @log(verbose, client.logger, "processing the rest of response asynchronously")
             response.body.task = @async process!(client, conn, opts, host, method, response, false, false)
             break
         end
@@ -365,8 +366,8 @@ for f in [:get, :post, :put, :delete, :head,
         resp = t.result # get our response by getting the result of our asynchronous task
         ```
         """ function $(f) end
-        ($f)(uri::AbstractString; args...) = request(DEFAULT_CLIENT, $meth, URI(uri; isconnect=$(f_str == "CONNECT")); args...)
-        ($f)(uri::URI; args...) = request(DEFAULT_CLIENT, $meth, uri; args...)
+        ($f)(uri::AbstractString; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, $meth, URI(uri; isconnect=$(f_str == "CONNECT")); verbose=verbose, args...))
+        ($f)(uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, $meth, uri; verbose=verbose, args...))
         ($f)(client::Client, uri::AbstractString; args...) = request(client, $meth, URI(uri; isconnect=$(f_str == "CONNECT")); args...)
         ($f)(client::Client, uri::URI; args...) = request(client, $meth, uri; args...)
     end

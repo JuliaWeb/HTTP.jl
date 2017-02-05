@@ -85,24 +85,32 @@ defaultheaders(::Type{Request}) = Headers(
     "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"
 )
 
-function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer; options::RequestOptions=RequestOptions())
+function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer;
+                    options::RequestOptions=RequestOptions(),
+                    verbose::Bool=false,
+                    io::IO=STDOUT)
     headers = defaultheaders(Request)
     headers["Host"] = host(uri)
 
     if !isempty(userinfo(uri)) && !haskey(headers,"Authorization")
         headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
+        @log(verbose, io, "adding basic authentication header")
     end
     if shouldchunk(body, get(options, :chunksize, typemax(Int)))
         # chunked-transfer
+        @log(verbose, io, "using chunked transfer encoding")
         headers["Transfer-Encoding"] = "chunked" * (get(options, :gzip, false) ? "; gzip" : "")
     else
         # just set the Content-Length
         if !(m in (GET, HEAD, CONNECT))
+            @log(verbose, io, "setting Content-Length header")
             headers["Content-Length"] = dec(length(body))
         end
     end
     if !haskey(headers, "Content-Type") && length(body) > 0
-        headers["Content-Type"] = HTTP.sniff(body)
+        sn = HTTP.sniff(body)
+        headers["Content-Type"] = sn
+        @log(verbose, io, "setting Content-Type header to: $sn")
     end
     return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end

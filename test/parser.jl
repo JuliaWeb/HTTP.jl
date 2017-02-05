@@ -1645,10 +1645,122 @@ const responses = Message[
         respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "10000000000000000" * "\r\n..."
         @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
 
-        # "POST / HTTP/1.0\r\nConnection: Keep-Alive\r\nContent-Length: 1000\r\n\r\n"
-        # "POST / HTTP/1.0\r\nConnection: Keep-Alive\r\nContent-Length: 100000\r\n\r\n"
-        #
-        # "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: 1000\r\n\r\n"
-        # "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: 100000\r\n\r\n"
+        p = HTTP.Parser()
+        for len in (1000, 100000)
+            HTTP.reset!(p)
+            reqstr = "POST / HTTP/1.0\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
+            r = HTTP.Request()
+            e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}(reqstr))
+            @test e == HTTP.HPE_OK
+            @test h
+            @test !m
+            for i = 1:len-1
+                e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}("a"))
+                @test e == HTTP.HPE_OK
+                @test h
+                @test !m
+            end
+            e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}("a"))
+            @test e == HTTP.HPE_OK
+            @test h
+            @test m
+        end
+
+        for len in (1000, 100000)
+            HTTP.reset!(p)
+            respstr = "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
+            r = HTTP.Response()
+            e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}(respstr))
+            @test e == HTTP.HPE_OK
+            @test h
+            @test !m
+            for i = 1:len-1
+                e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}("a"))
+                @test e == HTTP.HPE_OK
+                @test h
+                @test !m
+            end
+            e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}("a"))
+            @test e == HTTP.HPE_OK
+            @test h
+            @test m
+        end
+
+        reqstr = requests[1].raw * requests[2].raw
+        HTTP.reset!(p)
+        r = HTTP.Request()
+        e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}(reqstr))
+        @test e == HTTP.HPE_OK
+        @test h
+        @test m
+        HTTP.reset!(p)
+        e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}(ex))
+        @test e == HTTP.HPE_OK
+        @test h
+        @test m
+
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, "GET / HTP/1.1\r\n\r\n")
+
+        r = HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n" * "Test: Düsseldorf\r\n")
+        @test HTTP.headers(r) == Dict("Test" => "Düsseldorf")
+
+        r = HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba")
+        @test String(readavailable(r.body)) == "fooba"
+
+        for m in instances(HTTP.Method)
+            m == HTTP.CONNECT && continue
+            me = m == HTTP.MSEARCH ? "M-SEARCH" : "$m"
+            r = HTTP.parse(HTTP.Request, "$me / HTTP/1.1\r\n\r\n")
+            @test HTTP.method(r) == m
+        end
+
+        for m in ("ASDF","C******","COLA","GEM","GETA","M****","MKCOLA","PROPPATCHA","PUN","PX","SA","hello world")
+            @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, "$m / HTTP/1.1\r\n\r\n")
+        end
+
+        @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n" * "name\r\n" * " : value\r\n\r\n")
+
+        reqstr = "GET / HTTP/1.1\r\n" *
+        "X-SSL-Bullshit:   -----BEGIN CERTIFICATE-----\r\n" *
+        "\tMIIFbTCCBFWgAwIBAgICH4cwDQYJKoZIhvcNAQEFBQAwcDELMAkGA1UEBhMCVUsx\r\n" *
+        "\tETAPBgNVBAoTCGVTY2llbmNlMRIwEAYDVQQLEwlBdXRob3JpdHkxCzAJBgNVBAMT\r\n" *
+        "\tAkNBMS0wKwYJKoZIhvcNAQkBFh5jYS1vcGVyYXRvckBncmlkLXN1cHBvcnQuYWMu\r\n" *
+        "\tdWswHhcNMDYwNzI3MTQxMzI4WhcNMDcwNzI3MTQxMzI4WjBbMQswCQYDVQQGEwJV\r\n" *
+        "\tSzERMA8GA1UEChMIZVNjaWVuY2UxEzARBgNVBAsTCk1hbmNoZXN0ZXIxCzAJBgNV\r\n" *
+        "\tBAcTmrsogriqMWLAk1DMRcwFQYDVQQDEw5taWNoYWVsIHBhcmQYJKoZIhvcNAQEB\r\n" *
+        "\tBQADggEPADCCAQoCggEBANPEQBgl1IaKdSS1TbhF3hEXSl72G9J+WC/1R64fAcEF\r\n" *
+        "\tW51rEyFYiIeZGx/BVzwXbeBoNUK41OK65sxGuflMo5gLflbwJtHBRIEKAfVVp3YR\r\n" *
+        "\tgW7cMA/s/XKgL1GEC7rQw8lIZT8RApukCGqOVHSi/F1SiFlPDxuDfmdiNzL31+sL\r\n" *
+        "\t0iwHDdNkGjy5pyBSB8Y79dsSJtCW/iaLB0/n8Sj7HgvvZJ7x0fr+RQjYOUUfrePP\r\n" *
+        "\tu2MSpFyf+9BbC/aXgaZuiCvSR+8Snv3xApQY+fULK/xY8h8Ua51iXoQ5jrgu2SqR\r\n" *
+        "\twgA7BUi3G8LFzMBl8FRCDYGUDy7M6QaHXx1ZWIPWNKsCAwEAAaOCAiQwggIgMAwG\r\n" *
+        "\tA1UdEwEB/wQCMAAwEQYJYIZIAYb4QgHTTPAQDAgWgMA4GA1UdDwEB/wQEAwID6DAs\r\n" *
+        "\tBglghkgBhvhCAQ0EHxYdVUsgZS1TY2llbmNlIFVzZXIgQ2VydGlmaWNhdGUwHQYD\r\n" *
+        "\tVR0OBBYEFDTt/sf9PeMaZDHkUIldrDYMNTBZMIGaBgNVHSMEgZIwgY+AFAI4qxGj\r\n" *
+        "\tloCLDdMVKwiljjDastqooXSkcjBwMQswCQYDVQQGEwJVSzERMA8GA1UEChMIZVNj\r\n" *
+        "\taWVuY2UxEjAQBgNVBAsTCUF1dGhvcml0eTELMAkGA1UEAxMCQ0ExLTArBgkqhkiG\r\n" *
+        "\t9w0BCQEWHmNhLW9wZXJhdG9yQGdyaWQtc3VwcG9ydC5hYy51a4IBADApBgNVHRIE\r\n" *
+        "\tIjAggR5jYS1vcGVyYXRvckBncmlkLXN1cHBvcnQuYWMudWswGQYDVR0gBBIwEDAO\r\n" *
+        "\tBgwrBgEEAdkvAQEBAQYwPQYJYIZIAYb4QgEEBDAWLmh0dHA6Ly9jYS5ncmlkLXN1\r\n" *
+        "\tcHBvcnQuYWMudmT4sopwqlBWsvcHViL2NybC9jYWNybC5jcmwwPQYJYIZIAYb4QgEDBDAWLmh0\r\n" *
+        "\tdHA6Ly9jYS5ncmlkLXN1cHBvcnQuYWMudWsvcHViL2NybC9jYWNybC5jcmwwPwYD\r\n" *
+        "\tVR0fBDgwNjA0oDKgMIYuaHR0cDovL2NhLmdyaWQt5hYy51ay9wdWIv\r\n" *
+        "\tY3JsL2NhY3JsLmNybDANBgkqhkiG9w0BAQUFAAOCAQEAS/U4iiooBENGW/Hwmmd3\r\n" *
+        "\tXCy6Zrt08YjKCzGNjorT98g8uGsqYjSxv/hmi0qlnlHs+k/3Iobc3LjS5AMYr5L8\r\n" *
+        "\tUO7OSkgFFlLHQyC9JzPfmLCAugvzEbyv4Olnsr8hbxF1MbKZoQxUZtMVu29wjfXk\r\n" *
+        "\thTeApBv7eaKCWpSp7MCbvgzm74izKhu3vlDk9w6qVrxePfGgpKPqfHiOoGhFnbTK\r\n" *
+        "\twTC6o2xq5y0qZ03JonF7OJspEd3I5zKY3E+ov7/ZhW6DqT8UFvsAdjvQbXyhV8Eu\r\n" *
+        "\tYhixw1aKEPzNjNowuIseVogKOLXxWI5vAi5HgXdS0/ES5gDGsABo4fqovUKlgop3\r\n" *
+        "\tRA==\r\n" *
+        "\t-----END CERTIFICATE-----\r\n" *
+        "\r\n"
+
+        r = HTTP.parse(HTTP.Request, reqstr)
+        @test HTTP.method(r) == HTTP.GET
+
+        # @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\nHost: www.example.com\r\nConnection\r\033\065\325eep-Alive\r\nAccept-Encoding: gzip\r\n\r\n")
+
+        r = HTTP.parse(HTTP.Request, "GET /bad_get_no_headers_no_body/world HTTP/1.1\r\nAccept: */*\r\n\r\nHELLO")
+        @test String(readavailable(HTTP.body(r))) == ""
     end
 end # @testset HTTP.parse

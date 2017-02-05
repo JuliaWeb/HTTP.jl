@@ -1,26 +1,20 @@
 using HTTP, Base.Test
 
 #TODO
- # fix segfault on travis (probably can't precompile TLS.SSLConfig)
  # redo verbose logging to be more pretty/relevant
- # review entire API from top-down
  # make plan for doc updates
- # finish parser tests
- # find some more URI/parser/client test cases (requests.py, httppie, curl?, Requests.jl)
- # look over webstack github issues
 
 @testset "HTTP" begin
-# include("utils.jl")
 include("fifobuffer.jl");
 include("sniff.jl");
 include("uri.jl");
 include("cookies.jl");
-# include("types.jl")
 include("parser.jl");
 include("client.jl");
 # include("server.jl")
 
-end; # @testset "HTTP"
+end;
+
 # server_task = @async HTTP.serve()
 #
 # client = connect("127.0.0.1", 8081)
@@ -110,5 +104,3 @@ end; # @testset "HTTP"
 # https://tools.ietf.org/html/rfc7230#section-3.3
 # never a repsonse body in HEAD/CONNECT requests
 # 1xx, 204, 304 don't include bodies
-
-

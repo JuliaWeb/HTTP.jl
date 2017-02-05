@@ -52,20 +52,34 @@ macro debug(should, line, expr)
     end
 end
 
+macro log(verbose, io, stmt)
+    # "[HTTP]: Connecting to remote host..."
+    return :($verbose && println($io, "[HTTP]: $($stmt)"))
+end
+
 # parsing utils
-#TODO: avoid the Sets here, can probably make a macro to unroll the equals
+macro anyeq(var, vals...)
+    ret = e = Expr(:||)
+    for (i, v) in enumerate(vals)
+        x = :($var == $v)
+        push!(e.args, x)
+        i >= length(vals) - 1 && continue
+        ne = Expr(:||)
+        push!(e.args, ne)
+        e = ne
+    end
+    return ret
+end
+
 @inline lower(c) = Char(UInt32(c) | 0x20)
 @inline isurlchar(c) =  c > '\u80' ? true : normal_url_char[Int(c) + 1] # 'A' <= c <= '~' || '$' <= c <= '>' || c == '\f' || c == '\t'
-const MARKS = Set{Char}(['-', '_', '.', '!', '~', '*', '\'', '(', ')'])
-@inline ismark(c) = c in MARKS
+@inline ismark(c) = @anyeq(c, '-', '_', '.', '!', '~', '*', '\'', '(', ')')
 @inline isalpha(c) = 'a' <= lower(c) <= 'z'
 @inline isnum(c) = '0' <= c <= '9'
 @inline isalphanum(c) = isalpha(c) || isnum(c)
-const USERINFOCHARS = Set{Char}(['%', ';', ':', '&', '=', '+', '$', ','])
-@inline isuserinfochar(c) = isalphanum(c) || ismark(c) || c in USERINFOCHARS
+@inline isuserinfochar(c) = isalphanum(c) || ismark(c) || @anyeq(c, '%', ';', ':', '&', '=', '+', '$', ',')
 @inline ishex(c) =  isnum(c) || ('a' <= lower(c) <= 'f')
-const HOSTCHARS = Set{Char}(['.', '-', '_', '~'])
-@inline ishostchar(c) = isalphanum(c) || c in HOSTCHARS
+@inline ishostchar(c) = isalphanum(c) || @anyeq(c, '.', '-', '_', '~')
 @inline isheaderchar(c) = c == CR || c == LF || c == Char(9) || (c > Char(31) && c != Char(127))
 
 macro shifted(meth, i, char)
