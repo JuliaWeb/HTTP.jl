@@ -68,7 +68,7 @@ macro anyeq(var, vals...)
         push!(e.args, ne)
         e = ne
     end
-    return ret
+    return esc(ret)
 end
 
 @inline lower(c) = Char(UInt32(c) | 0x20)
