@@ -42,8 +42,8 @@ Contributions are very welcome, as are feature requests and suggestions. Please 
 [travis-img]: https://travis-ci.org/JuliaWeb/HTTP.jl.svg?branch=master
 [travis-url]: https://travis-ci.org/JuliaWeb/HTTP.jl
 
-[appveyor-img]: https://ci.appveyor.com/api/projects/status/wcm124d03d2ey5o2?svg=true
-[appveyor-url]: https://ci.appveyor.com/project/juliaweb/http-jl-groth
+[appveyor-img]: https://ci.appveyor.com/api/projects/status/qdy0vfps9gne3sd7?svg=true
+[appveyor-url]: https://ci.appveyor.com/project/quinnj/http-jl
 
 [codecov-img]: https://codecov.io/gh/JuliaWeb/HTTP.jl/branch/master/graph/badge.svg
 [codecov-url]: https://codecov.io/gh/JuliaWeb/HTTP.jl
