@@ -54,7 +54,7 @@ end
 
 macro log(verbose, io, stmt)
     # "[HTTP]: Connecting to remote host..."
-    return :($verbose && println($io, "[HTTP]: $($stmt)"))
+    return esc(:($verbose && println($io, "[HTTP]: $($stmt)")))
 end
 
 # parsing utils
