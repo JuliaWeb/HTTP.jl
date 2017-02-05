@@ -181,7 +181,7 @@ function pathmatch(cookie::Cookie, requestpath)
     if startswith(requestpath, cookie.path)
         if cookie.path[end] == '/'
             return true # The "/any/" matches "/any/path" case.
-        elseif requestpath[length(cookie.path)] == '/'
+        elseif length(requestpath) >= length(cookie.path) + 1 && requestpath[length(cookie.path)+1] == '/'
             return true # The "/any" matches "/any/path" case.
         end
 	end

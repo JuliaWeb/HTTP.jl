@@ -1,4 +1,11 @@
 @testset "Cookies" begin
+    c = HTTP.Cookies.Cookie()
+    @test c.name == ""
+    @test HTTP.Cookies.domainmatch(c, "")
+
+    c.path = "/any"
+    @test HTTP.Cookies.pathmatch(c, "/any/path")
+    @test HTTP.Cookies.pathmatch(c, "/nottherightpath")
 
 const writesetcookietests = [
 	(HTTP.Cookie("cookie-1", "v\$1"), "cookie-1=v\$1"),

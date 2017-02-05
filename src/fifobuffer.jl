@@ -232,11 +232,12 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
         # already in wrap-around state
         if len > mod1(f.f - f.l, f.max)
             # not able to write all of bytes
-            unsafe_copy!(f.buffer, 1, bytes, 1, f.f - f.l)
+            nb = f.f - f.l
+            unsafe_copy!(f.buffer, 1, bytes, 1, nb)
             f.l = f.f
-            f.nb += f.f - f.l
+            f.nb += nb
             notify(f.cond)
-            return f.f - f.l
+            return nb
         else
             # there's enough room to write bytes
             unsafe_copy!(f.buffer, f.l, bytes, 1, len)

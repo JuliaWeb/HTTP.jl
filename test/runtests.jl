@@ -1,7 +1,6 @@
 using HTTP, Base.Test
 
 #TODO
- # redo verbose logging to be more pretty/relevant
  # make plan for doc updates
 
 @testset "HTTP" begin

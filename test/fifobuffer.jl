@@ -151,4 +151,29 @@
     @test all(read(f, 2) .== 0x01:0x02)
     r = read(f, 3)
     @test all(r .== 0x03:0x05)
+
+    f2 = HTTP.FIFOBuffer(f)
+    @test f == f2
+
+    f = HTTP.FIFOBuffer(5)
+    @test isempty(read(f, 1))
+    t = @async read(f, 1)
+    write(f, 0x01)
+    @test t.result == [0x01]
+
+    @test write(f, [0x01, 0x02, 0x03, 0x04, 0x05]) == 5
+    @test write(f, [0x01, 0x02]) == 0
+
+    @test readavailable(f) == [0x01, 0x02, 0x03, 0x04, 0x05]
+
+    # ensure we're in a wrap-around state
+    @test write(f, [0x01, 0x02, 0x03, 0x04]) == 4
+    @test f.f > f.l
+
+    @test write(f, [0x05]) == 1
+    @test readavailable(f) == [0x01, 0x02, 0x03, 0x04, 0x05]
+
+    @test write(f, [0x01, 0x02, 0x03, 0x04]) == 4
+    @test write(f, [0x05, 0x06]) == 1
+    @test readavailable(f) == [0x01, 0x02, 0x03, 0x04, 0x05]
 end; # testset

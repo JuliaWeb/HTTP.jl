@@ -116,6 +116,44 @@ for sch in ("http", "https")
 
     # readtimeout
     @test_throws HTTP.TimeoutException HTTP.get("$sch://httpbin.org/delay/3"; readtimeout=1.0)
+
+    # custom client & other high-level entries
+    buf = IOBuffer()
+    cli = HTTP.Client(buf)
+    HTTP.get(cli, "$sch://httpbin.org/ip")
+    seekstart(buf)
+    @test length(String(take!(buf))) > 0
+
+    r = HTTP.request("$sch://httpbin.org/ip")
+    @test HTTP.status(r) == 200
+
+    uri = HTTP.URI("$sch://httpbin.org/ip")
+    r = HTTP.request(uri)
+    @test HTTP.status(r) == 200
+    r = HTTP.get(uri)
+    @test HTTP.status(r) == 200
+    r = HTTP.get(cli, uri)
+    @test HTTP.status(r) == 200
+
+    r = HTTP.request(HTTP.GET, "$sch://httpbin.org/ip")
+    @test HTTP.status(r) == 200
+
+    uri = HTTP.URI("$sch://httpbin.org/ip")
+    r = HTTP.request("GET", uri)
+    @test HTTP.status(r) == 200
+
+    req = HTTP.Request(HTTP.GET, uri, HTTP.Headers(), HTTP.FIFOBuffer())
+    r = HTTP.request(req)
+    @test HTTP.status(r) == 200
+
+    for c in HTTP.DEFAULT_CLIENT.httppool["httpbin.org"]
+        HTTP.dead!(c)
+    end
+
+    # gzip body = "hey"
+    # body = UInt8[0x1f,0x8b,0x08,0x00,0x00,0x00,0x00,0x00,0x00,0x03,0xcb,0x48,0xad,0x04,0x00,0xf0,0x15,0xd6,0x88,0x03,0x00,0x00,0x00]
+    # r = HTTP.post("$sch://httpbin.org/post"; body=body, chunksize=1)
+
 end
 
 end # @testset "HTTP.Client"
