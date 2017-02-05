@@ -115,9 +115,9 @@ function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer;
     return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
 
-Request{T}(method, uri, h, body::T; options::RequestOptions=RequestOptions()) = Request(convert(Method, method),
+Request{T}(method, uri, h, body::T; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) = Request(convert(Method, method),
                                isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
-                               h, FIFOBuffer(body); options=options)
+                               h, FIFOBuffer(body); options=options, io=io, verbose=verbose)
 
 Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
 
