@@ -159,7 +159,7 @@
     @test isempty(read(f, 1))
     t = @async read(f, 1)
     write(f, 0x01)
-    @test t.result == [0x01]
+    @test wait(t) == [0x01]
 
     @test write(f, [0x01, 0x02, 0x03, 0x04, 0x05]) == 5
     @test write(f, [0x01, 0x02]) == 0

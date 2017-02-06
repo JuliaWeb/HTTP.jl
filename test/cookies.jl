@@ -5,7 +5,7 @@
 
     c.path = "/any"
     @test HTTP.Cookies.pathmatch(c, "/any/path")
-    @test HTTP.Cookies.pathmatch(c, "/nottherightpath")
+    @test !HTTP.Cookies.pathmatch(c, "/nottherightpath")
 
 const writesetcookietests = [
 	(HTTP.Cookie("cookie-1", "v\$1"), "cookie-1=v\$1"),
