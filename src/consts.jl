@@ -453,6 +453,22 @@ const normal_url_char = Bool[
     , UF_USERINFO = 7
     , UF_MAX      = 8
 )
+const UF_SCHEME_MASK = 0x01
+const UF_HOSTNAME_MASK = 0x02
+const UF_PORT_MASK = 0x04
+const UF_PATH_MASK = 0x08
+const UF_QUERY_MASK = 0x10
+const UF_FRAGMENT_MASK = 0x20
+const UF_USERINFO_MASK = 0x40
+
+function Base.getindex{T}(A::Vector{T}, i::http_parser_url_fields)
+    @inbounds v = A[Int(i)]
+    return v
+end
+function Base.setindex!{T}(A::Vector{T}, v::T, i::http_parser_url_fields)
+    @inbounds v = setindex!(A, v, Int(i))
+    return v
+end
 
 @enum(http_host_state,
     s_http_host_dead = 1,
