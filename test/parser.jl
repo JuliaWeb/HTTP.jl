@@ -1351,7 +1351,7 @@ const responses = Message[
 
     @testset "HTTP.parse(HTTP.Request, str)" begin
         for req in requests
-            println("TESTING: $(req.name)")
+            println("TEST - parser.jl - Request: $(req.name)")
             upgrade = Ref{String}()
             r = HTTP.parse(HTTP.Request, req.raw; extra=upgrade)
             @test HTTP.major(r) == req.http_major
@@ -1532,7 +1532,7 @@ const responses = Message[
 
     @testset "HTTP.parse(HTTP.Response, str)" begin
         for resp in responses
-            println("TESTING: $(resp.name)")
+            println("TEST - parser.jl - Response: $(resp.name)")
             r = HTTP.parse(HTTP.Response, resp.raw)
             @test HTTP.major(r) == resp.http_major
             @test HTTP.minor(r) == resp.http_minor

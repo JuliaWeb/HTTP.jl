@@ -9,25 +9,37 @@ end
 URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(nm, url, isconnect, ntuple(x->HTTP.Offset(), 7), shouldthrow)
 
 @testset "HTTP.URI" begin
-    urls = ["hdfs://user:password@hdfshost:9000/root/folder/file.csv#frag",
-        "https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag",
-        "https://user:password@httphost:9000/path1/path2?q=a&p=r#frag",
-        "https://user:password@httphost:9000/path1/path2;paramstring#frag",
-        "https://user:password@httphost:9000/path1/path2#frag",
-        "file:///path/to/file/with%3fshould%3dwork%23fine",
-        "ftp://ftp.is.co.za/rfc/rfc1808.txt", "http://www.ietf.org/rfc/rfc2396.txt",
-        "ldap://[2001:db8::7]/c=GB?objectClass?one", "mailto:John.Doe@example.com",
-        "news:comp.infosystems.www.servers.unix", "tel:+1-816-555-1212", "telnet://192.0.2.16:80/",
-        "urn:oasis:names:specification:docbook:dtd:xml:4.1.2"]
+    urls = [("hdfs://user:password@hdfshost:9000/root/folder/file.csv#frag", ["root", "folder", "file.csv"]),
+            ("https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag", ["path1", "path2;paramstring"]),
+            ("https://user:password@httphost:9000/path1/path2?q=a&p=r#frag", ["path1","path2"]),
+            ("https://user:password@httphost:9000/path1/path2;paramstring#frag", ["path1","path2;paramstring"]),
+            ("https://user:password@httphost:9000/path1/path2#frag", ["path1","path2"]),
+            ("file:///path/to/file/with%3fshould%3dwork%23fine", ["path","to","file","with%3fshould%3dwork%23fine"]),
+            ("ftp://ftp.is.co.za/rfc/rfc1808.txt", ["rfc","rfc1808.txt"]),
+            ("http://www.ietf.org/rfc/rfc2396.txt", ["rfc","rfc2396.txt"]),
+            ("ldap://[2001:db8::7]/c=GB?objectClass?one", ["c=GB"]),
+            ("mailto:John.Doe@example.com", ["John.Doe@example.com"]),
+            ("news:comp.infosystems.www.servers.unix", ["comp.infosystems.www.servers.unix"]),
+            ("tel:+1-816-555-1212", ["+1-816-555-1212"]),
+            ("telnet://192.0.2.16:80/", String[]),
+            ("urn:oasis:names:specification:docbook:dtd:xml:4.1.2", ["oasis:names:specification:docbook:dtd:xml:4.1.2"])
+            ]
 
-    for url in urls
+    for (url, splpath) in urls
         u = parse(HTTP.URI, url)
         @test string(u) == url
         @test isvalid(u)
+        @test HTTP.splitpath(u) == splpath
     end
 
     @test parse(HTTP.URI, "hdfs://user:password@hdfshost:9000/root/folder/file.csv") == HTTP.URI(hostname="hdfshost", path="/root/folder/file.csv", scheme="hdfs", port=9000, userinfo="user:password")
     @test parse(HTTP.URI, "http://google.com:80/some/path") == HTTP.URI(hostname="google.com", path="/some/path")
+
+    @test isempty(HTTP.Offset())
+    @test HTTP.lower(UInt8('A')) == UInt8('a')
+    @test HTTP.hexstring(1) == "%01"
+
+    @test HTTP.escape(Dict("key1"=>"value1", "key2"=>["value2", "value3"])) == "key2=value2&key2=value3&key1=value1"
 
     @test HTTP.escape("abcdef αβ 1234-=~!@#\$()_+{}|[]a;") == "abcdef%20%CE%B1%CE%B2%201234-%3D~%21%40%23%24%28%29_%2B%7B%7D%7C%5B%5Da%3B"
     @test HTTP.unescape(HTTP.escape("abcdef 1234-=~!@#\$()_+{}|[]a;")) == "abcdef 1234-=~!@#\$()_+{}|[]a;"
@@ -35,11 +47,7 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
 
     @test "user:password" == HTTP.userinfo(parse(HTTP.URI, "https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag"))
 
-    # @test ["dc","example","dc","com"] == HTTP.path_params(HTTP.URI("ldap://ldap.example.com/dc=example,dc=com"))[1]
-    # @test ["servlet","jsessionid","OI24B9ASD7BSSD"] == HTTP.path_params(HTTP.URI("http://www.mysite.com/servlet;jsessionid=OI24B9ASD7BSSD"))[1]
 
-    # @test Dict("q"=>"a","p"=>"r") == HTTP.query_params(HTTP.URI("https://httphost/path1/path2;paramstring?q=a&p=r#frag"))
-    # @test Dict("q"=>"a","malformed"=>"") == HTTP.query_params(HTTP.URI("https://foo.net/?q=a&malformed"))
 
     @test false == isvalid(parse(HTTP.URI, "file:///path/to/file/with?should=work#fine"))
     @test true == isvalid( parse(HTTP.URI, "file:///path/to/file/with%3fshould%3dwork%23fine"))
@@ -398,7 +406,7 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
         ]
 
         for u in urltests
-            println("TEST: $(u.name)")
+            println("TEST - uri.jl: $(u.name)")
             if u.shouldthrow
                 @test_throws HTTP.ParsingError parse(HTTP.URI, u.url; isconnect=u.isconnect)
             else

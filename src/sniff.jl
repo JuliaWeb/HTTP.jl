@@ -32,7 +32,7 @@ function sniff(body::IO)
     return sniff(data)
 end
 
-sniff(str::String) = sniff(Vector{UInt8}(str)[1:min(length(Vector{UInt8}(str)),MAXSNIFFLENGTH)])
+sniff(str::String) = sniff(Vector{UInt8}(str)[1:min(length(Vector{UInt8}(str)), MAXSNIFFLENGTH)])
 sniff(f::FIFOBuffer) = sniff(String(f))
 
 function sniff(data::Vector{UInt8})

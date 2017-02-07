@@ -128,7 +128,7 @@ Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
                             (a.headers   == b.headers)   &&
                             (a.body      == b.body)
 
-Base.showcompact(io::IO, r::Request) = print(io, "Request(", resource(r.uri), ", ",
+Base.showcompact(io::IO, r::Request) = print(io, "Request(\"", resource(r.uri), "\", ",
                                         length(r.headers), " headers, ",
                                         length(r.body), " bytes in body)")
 

@@ -31,8 +31,11 @@ const test_cases = [
 
 @testset "HTTP.sniff" begin
     for case in test_cases
+        println("TEST - sniff.jl: ", case[1])
         @test HTTP.sniff(case[2]) == case[3]
     end
+
+    @test HTTP.sniff(IOBuffer(test_cases[1][2])) == HTTP.sniff(test_cases[1][2])
 end
 
 json_strings = [

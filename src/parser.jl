@@ -147,7 +147,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             onmessagecomplete(r)
             @debug(PARSING_DEBUG, @__LINE__, "this 6")
             return HPE_OK, true, true, ""
-        elseif p_state in (s_dead, s_start_req_or_res, s_start_res, s_start_req)
+        elseif @anyeq(p_state, s_dead, s_start_req_or_res, s_start_res, s_start_req)
             return HPE_OK, false, false, ""
         else
             return HPE_INVALID_EOF_STATE, false, false, ""
@@ -162,7 +162,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
         @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
         header_value_mark = 1
     end
-    if p_state in (s_req_path, s_req_schema, s_req_schema_slash, s_req_schema_slash_slash,
+    if @anyeq(p_state, s_req_path, s_req_schema, s_req_schema_slash, s_req_schema_slash_slash,
                    s_req_server_start, s_req_server, s_req_server_with_at,
                    s_req_query_string_start, s_req_query_string, s_req_fragment)
         url_mark = 1
@@ -171,7 +171,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
     end
     p = 1
     while p <= len
-        ch = Char(bytes[p])
+        @inbounds ch = Char(bytes[p])
         @debug(PARSING_DEBUG, @__LINE__, "top of main for-loop")
         @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string(ch)))
         if p_state <= s_headers_done
@@ -462,12 +462,12 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             p_state = parseurlchar(p_state, ch, strict)
             @errorif(p_state == s_dead, HPE_INVALID_URL)
 
-        elseif p_state in (s_req_schema, s_req_schema_slash, s_req_schema_slash_slash, s_req_server_start)
+        elseif @anyeq(p_state, s_req_schema, s_req_schema_slash, s_req_schema_slash_slash, s_req_server_start)
             @errorif(ch in (' ', CR, LF), HPE_INVALID_URL)
             p_state = parseurlchar(p_state, ch, strict)
             @errorif(p_state == s_dead, HPE_INVALID_URL)
 
-        elseif p_state in (s_req_server, s_req_server_with_at, s_req_path, s_req_query_string_start,
+        elseif @anyeq(p_state, s_req_server, s_req_server_with_at, s_req_path, s_req_query_string_start,
                            s_req_query_string, s_req_fragment_start, s_req_fragment)
             if ch == ' '
                 p_state = s_req_http_start
@@ -477,7 +477,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             elseif ch in (CR, LF)
                 r.major = Int16(0)
                 r.minor = Int16(9)
-                p_state = ch == CR ? s_req_line_almost_done : s_header_field_start
+                p_state = ifelse(ch == CR, s_req_line_almost_done, s_header_field_start)
                 parser.state = p_state
                 onurl(r, bytes, url_mark, p-1)
                 url_mark = 0
@@ -733,7 +733,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 parser.header_state = h_general
             elseif parser.header_state == h_transfer_encoding
                 #= looking for 'Transfer-Encoding: chunked' =#
-                parser.header_state =  c == 'c' ? h_matching_transfer_encoding_chunked : h_general
+                parser.header_state =  ifelse(c == 'c', h_matching_transfer_encoding_chunked, h_general)
 
             elseif parser.header_state == h_content_length
                 @errorif(!isnum(ch), HPE_INVALID_CONTENT_LENGTH)
@@ -764,7 +764,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             start = p
             h = parser.header_state
             while p <= len
-                ch = Char(bytes[p])
+                @inbounds ch = Char(bytes[p])
                 @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', ch, '\'')))
                 @debug(PARSING_DEBUG, @__LINE__, lenient)
                 @debug(PARSING_DEBUG, @__LINE__, isheaderchar(ch))
@@ -993,8 +993,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
         elseif p_state == s_headers_almost_done
             @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
             @strictcheck(ch != LF)
-            if (parser.flags & F_TRAILING
-                ) > 0
+            if (parser.flags & F_TRAILING) > 0
                 #= End of a chunked request =#
                 p_state = s_message_done
                 # CALLBACK_NOTIFY_NOADVANCE(chunk_complete)
@@ -1089,8 +1088,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
             to_read = UInt64(min(parser.content_length, len - p + 1))
 
-            assert(parser.content_length != 0
-                && parser.content_length != ULLONG_MAX)
+            assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
 
             #= The difference between advancing content_length and p is because
             * the latter will automaticaly advance on the next loop iteration.
@@ -1233,7 +1231,6 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             @strictcheck(ch != LF)
             parser.nread = 0
             p_state = s_chunk_size_start
-            # CALLBACK_NOTIFY(chunk_complete)
 
         else
             error("unhandled state")
