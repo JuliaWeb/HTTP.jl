@@ -348,7 +348,9 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
         len = 1
         old_uf = uf
     end
-    offsets[old_uf] = Offset(off, len)
+    if old_uf != UF_MAX
+        offsets[old_uf] = Offset(off, len)
+    end
     check = ~(UF_HOSTNAME_MASK | UF_PATH_MASK)
     if (mask & UF_SCHEME_MASK > 0) && (mask | check == check)
         throw(ParsingError("URI must include host or path with scheme"))
