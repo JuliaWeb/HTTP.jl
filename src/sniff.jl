@@ -4,6 +4,7 @@ const GZIP = UInt8[0x1f, 0x8b, 0x08]
 
 iscompressed(bytes) = length(bytes) > 3 && (all(bytes[1:4] .== ZIP) || all(bytes[1:3] .== GZIP))
 iscompressed(str::String) = iscompressed(Vector{UInt8}(str))
+
 # Based on the net/http/sniff.go implementation of DetectContentType
 # sniff implements the algorithm described
 # at http://mimesniff.spec.whatwg.org/ to determine the

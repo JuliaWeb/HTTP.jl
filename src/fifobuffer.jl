@@ -2,33 +2,39 @@
 A `FIFOBuffer` is a first-in, first-out, in-memory, async-friendly IO buffer type
 
 Constructors:
+    `FIFOBuffer([max::Integer])`
+    `FIFOBuffer(string_or_bytes_vector)`
+    `FIFOBuffer(io::IO)`
+
 `FIFOBuffer([max])`: creates a `FIFOBuffer` with a maximum size of `max`; this means that bytes can be written
 up until `max` number of bytes have been written (with none being read). At this point, the `FIFOBuffer` is full
-and will return 0 for all subsequent writes. If no `max` argument is given, then an "infinite" size `FIFOBuffer` is returned;
+and will return 0 for all subsequent writes. If no `max` argument is given, then a default size of `typemax(Int32)^2` is used;
 this essentially allows all writes every time.
 
-Reading is supported via `readavailable`, which "extracts" all bytes that have been written, starting at the earliest bytes written
+Reading is supported via `readavailable(f)` and `read(f, nb)`, which returns all or `nb` bytes, respectively, starting at the earliest bytes written.
+
+You may call `String(f::FIFOBuffer)` to view the current contents in the buffer without consuming them.
 
 A `FIFOBuffer` is built to be used asynchronously to allow buffered reading and writing. In particular, a `FIFOBuffer`
 detects if it is being read from/written to the main task, or asynchronously, and will behave slightly differently depending on which.
 
-Specifically, when reading from a `FIFOBuffer`, if accessed from the main task, it will not block if there are no bytes available to read.
+Specifically, when reading from a `FIFOBuffer`, if accessed from the main task, it will not block if there are no bytes available to read, instead returning an empty `UInt8[]`.
 If being read from asynchronously, however, reading will block until additional bytes have been written. An example of this in action is:
 
 ```julia
 f = HTTP.FIFOBuffer(5) # create a FIFOBuffer that will hold at most 5 bytes, currently empty
 f2 = HTTP.FIFOBuffer(5) # a 2nd buffer that we'll write to asynchronously
 
-# start an asynchronous reading task
+# start an asynchronous writing task with the 2nd buffer
 tsk = @async begin
     while !eof(f)
         write(f2, readavailable(f))
     end
 end
 
-# now write some bytes to the buffer
+# now write some bytes to the first buffer
 # writing triggers our async task to wake up and read the bytes we just wrote
-# leaving the buffer empty again and blocking again until more bytes have been written
+# leaving the first buffer empty again and blocking again until more bytes have been written
 write(f, [0x01, 0x02, 0x03, 0x04, 0x05])
 
 # we can see that `f2` now holds the bytes we wrote to `f`

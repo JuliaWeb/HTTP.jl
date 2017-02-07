@@ -1,17 +1,14 @@
 using HTTP, Base.Test
 
-#TODO
- # make plan for doc updates
-
 @testset "HTTP" begin
-include("fifobuffer.jl");
-include("sniff.jl");
-include("uri.jl");
-include("cookies.jl");
-include("parser.jl");
-include("client.jl");
-# include("server.jl")
 
+    include("fifobuffer.jl");
+    include("sniff.jl");
+    include("uri.jl");
+    include("cookies.jl");
+    include("parser.jl");
+    include("client.jl");
+    # include("server.jl")
 end;
 
 # server_task = @async HTTP.serve()
