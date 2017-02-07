@@ -17,76 +17,76 @@ end
 
 for sch in ("http", "https")
 
-    @test HTTP.get("$sch://httpbin.org/ip").status == 200
-    @test HTTP.head("$sch://httpbin.org/ip").status == 200
-    @test HTTP.options("$sch://httpbin.org/ip").status == 200
-    @test HTTP.post("$sch://httpbin.org/ip").status == 405
-    @test HTTP.post("$sch://httpbin.org/post").status == 200
-    @test HTTP.put("$sch://httpbin.org/put").status == 200
-    @test HTTP.delete("$sch://httpbin.org/delete").status == 200
-    @test HTTP.patch("$sch://httpbin.org/patch").status == 200
+    @test HTTP.status(HTTP.get("$sch://httpbin.org/ip")) == 200
+    @test HTTP.status(HTTP.head("$sch://httpbin.org/ip")) == 200
+    @test HTTP.status(HTTP.options("$sch://httpbin.org/ip")) == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/ip")) == 405
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post")) == 200
+    @test HTTP.status(HTTP.put("$sch://httpbin.org/put")) == 200
+    @test HTTP.status(HTTP.delete("$sch://httpbin.org/delete")) == 200
+    @test HTTP.status(HTTP.patch("$sch://httpbin.org/patch")) == 200
 
-    @test HTTP.get("$sch://httpbin.org/encoding/utf8").status == 200
+    @test HTTP.status(HTTP.get("$sch://httpbin.org/encoding/utf8")) == 200
 
     r = HTTP.get("$sch://httpbin.org/cookies")
-    body = String(readavailable(r.body))
+    body = string(r)
     @test (body == "{\n  \"cookies\": {}\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n")
     r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor")
-    @test r.status == 200
-    body = String(readavailable(r.body))
+    @test HTTP.status(r) == 200
+    body = string(r)
     @test (body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n")
 
     # r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
-    # @test String(readavailable(r.body)) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
+    # @test string(r) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
 
     # stream
     r = HTTP.post("$sch://httpbin.org/post"; body="hey")
-    @test r.status == 200
+    @test HTTP.status(r) == 200
     # stream, but body is too small to actually stream
     r = HTTP.post("$sch://httpbin.org/post"; body="hey", stream=true)
-    @test r.status == 200
+    @test HTTP.status(r) == 200
     r = HTTP.get("$sch://httpbin.org/stream/100")
-    @test r.status == 200
-    totallen = length(r.body) # number of bytes to expect
-    bytes = readavailable(r.body)
+    @test HTTP.status(r) == 200
+    totallen = length(HTTP.body(r)) # number of bytes to expect
+    bytes = readavailable(HTTP.body(r))
     begin
         r = HTTP.get("$sch://httpbin.org/stream/100"; stream=true)
-        @test r.status == 200
-        len = length(r.body)
+        @test HTTP.status(r) == 200
+        len = length(HTTP.body(r))
         HTTP.@timeout 15.0 begin
-            while !eof(r.body)
-                b = readavailable(r.body)
+            while !eof(HTTP.body(r))
+                b = readavailable(HTTP.body(r))
             end
         end throw(HTTP.TimeoutException(15.0))
     end
 
     # body posting: Vector{UInt8}, String, IOStream, IOBuffer, FIFOBuffer
-    @test HTTP.post("$sch://httpbin.org/post"; body="hey").status == 200
-    @test HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y']).status == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body="hey")) == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'])) == 200
     io = IOBuffer("hey"); seekstart(io)
-    @test HTTP.post("$sch://httpbin.org/post"; body=io).status == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=io)) == 200
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
     io = open(tmp)
-    @test HTTP.post("$sch://httpbin.org/post"; body=io).status == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=io)) == 200
     close(io); rm(tmp)
     f = HTTP.FIFOBuffer(3)
     write(f, "hey")
-    @test HTTP.post("$sch://httpbin.org/post"; body=f).status == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=f)) == 200
 
     # chunksize
-    @test HTTP.post("$sch://httpbin.org/post"; body="hey", chunksize=2).status == 200
-    @test HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], chunksize=2).status == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body="hey", chunksize=2)) == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], chunksize=2)) == 200
     io = IOBuffer("hey"); seekstart(io)
-    @test HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2).status == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2)) == 200
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
     io = open(tmp)
-    @test HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2).status == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2)) == 200
     close(io); rm(tmp)
     f = HTTP.FIFOBuffer(3)
     write(f, "hey")
-    @test HTTP.post("$sch://httpbin.org/post"; body=f, chunksize=2).status == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=f, chunksize=2)) == 200
 
     # asynchronous
     f = HTTP.FIFOBuffer()
@@ -96,23 +96,20 @@ for sch in ("http", "https")
     write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
     write(f, "sailor")
     close(f) # setting eof on f causes the async request to send a final chunk and return the response
-    while !istaskdone(t)
-        sleep(0.001)
-    end
-    @test t.result.status == 200
+    @test HTTP.status(wait(t)) == 200
 
     # redirects
     r = HTTP.get("$sch://httpbin.org/redirect/1")
-    @test r.status == 200
-    @test length(r.history) == 1
+    @test HTTP.status(r) == 200
+    @test length(HTTP.history(r)) == 1
     @test_throws HTTP.RedirectException HTTP.get("$sch://httpbin.org/redirect/6")
-    @test HTTP.get("$sch://httpbin.org/relative-redirect/1").status == 200
-    @test HTTP.get("$sch://httpbin.org/absolute-redirect/1").status == 200
-    @test HTTP.get("$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fexample.com").status == 200
+    @test HTTP.status(HTTP.get("$sch://httpbin.org/relative-redirect/1")) == 200
+    @test HTTP.status(HTTP.get("$sch://httpbin.org/absolute-redirect/1")) == 200
+    @test HTTP.status(HTTP.get("$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fexample.com")) == 200
 
-    @test HTTP.post("$sch://httpbin.org/post"; body="√").status == 200
-    @test HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd").status == 200
-    @test HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd").status == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body="√")) == 200
+    @test HTTP.status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd")) == 200
+    @test HTTP.status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd")) == 200
 
     # readtimeout
     @test_throws HTTP.TimeoutException HTTP.get("$sch://httpbin.org/delay/3"; readtimeout=1.0)
@@ -145,10 +142,16 @@ for sch in ("http", "https")
     req = HTTP.Request(HTTP.GET, uri, HTTP.Headers(), HTTP.FIFOBuffer())
     r = HTTP.request(req)
     @test HTTP.status(r) == 200
+    @test !HTTP.isnull(HTTP.request(r))
+    @test length(HTTP.bytes(r)) > 0
 
     for c in HTTP.DEFAULT_CLIENT.httppool["httpbin.org"]
         HTTP.dead!(c)
     end
+
+    r = HTTP.get(cli, "$sch://httpbin.org/ip")
+    @test isempty(HTTP.cookies(r))
+    @test isempty(HTTP.history(r))
 
     # gzip body = "hey"
     # body = UInt8[0x1f,0x8b,0x08,0x00,0x00,0x00,0x00,0x00,0x00,0x03,0xcb,0x48,0xad,0x04,0x00,0xf0,0x15,0xd6,0x88,0x03,0x00,0x00,0x00]

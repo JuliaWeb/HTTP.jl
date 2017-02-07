@@ -56,7 +56,6 @@ function port(uri::URI)
         sch = scheme(uri)
         return sch == "http" ? "80" : sch == "https" ? "443" : ""
     end
-    return ""
 end
 
 resource(uri::URI; isconnect::Bool=false) = isconnect ? host(uri) : path(uri) * (isempty(query(uri)) ? "" : "?$(query(uri))")
@@ -101,8 +100,7 @@ function Base.isvalid(uri::URI)
 end
 
 lower(c::UInt8) = c | 0x20
-const bHOSTCHARS = Set{UInt8}([UInt8('.'), UInt8('-'), UInt8('_'), UInt8('~')])
-ishostchar(c::UInt8) = (UInt8('a') <= lower(c) <= UInt8('z')) || UInt8('0') <= c <= UInt8('9') || c in bHOSTCHARS
+ishostchar(c::UInt8) = (UInt8('a') <= lower(c) <= UInt8('z')) || UInt8('0') <= c <= UInt8('9') || @anyeq(c, UInt8('.'), UInt8('-'), UInt8('_'), UInt8('~'))
 
 hexstring(x) = string('%', uppercase(hex(x,2)))
 
@@ -117,6 +115,7 @@ end
 
 escape(io, k, v) = write(io, escape(k), "=", escape(v))
 function escape(io, k, A::Vector{String})
+    len = length(A)
     for (i, v) in enumerate(A)
         write(io, escape(k), "=", escape(v))
         i == len || write(io, "&")
@@ -159,7 +158,7 @@ function splitpath(uri::URI, starting=2)
     p = path(uri)
     len = length(p)
     len > 1 || return elems
-    start_ind = i = starting # p[1] == '/'
+    start_ind = i = ifelse(p[1] == '/', 2, 1)
     while true
         c = p[i]
         if c == '/'
@@ -304,9 +303,8 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
     old_uf = UF_MAX
     off = len = 0
     foundat = false
-    offsets = Vector{Offset}(Int(UF_MAX)-1)
+    offsets = Offset[Offset(), Offset(), Offset(), Offset(), Offset(), Offset(), Offset()]
     mask = 0x00
-    foreach(i->offsets[i] = Offset(), 1:Int(UF_MAX)-1)
     for i = startind:(startind + buflen - 1)
         @inbounds p = Char(buf[i])
         olds = s

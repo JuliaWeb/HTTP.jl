@@ -1,7 +1,9 @@
 using HTTP, Base.Test
 
 @testset "HTTP" begin
-
+    include("../src/precompile.jl") # to make codecov happy
+    _precompile_()
+    
     include("fifobuffer.jl");
     include("sniff.jl");
     include("uri.jl");

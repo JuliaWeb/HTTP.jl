@@ -3,12 +3,26 @@ module Cookies
 export Cookie
 
 import Base.==
-
-is_url_char(c) =  ((@assert UInt32(c) < 0x80); 'A' <= c <= '~' || '$' <= c <= '>' || c == '\f' || c == '\t')
+import HTTP.isurlchar
 
 """
+    `Cookie()`
+    `Cookie(; kwargs...)`
+    `Cookie(name, value; kwargs...)`
+
 A Cookie represents an HTTP cookie as sent in the Set-Cookie header of an
-HTTP response or the Cookie header of an HTTP request.
+HTTP response or the Cookie header of an HTTP request. Supported fields
+(which can be set using keyword arguments) include:
+
+  * `name`: name of the cookie
+  * `value`: value of the cookie
+  * `path`: applicable path for the cookie
+  * `domain`: applicable domain for the cookie
+  * `expires`: a `DateTime` representing when the cookie should expire
+  * `maxage`: `maxage == 0` means no max age, `maxage < 0` means delete cookie now, `max age > 0` means the # of seconds until expiration
+  * `secure::Bool`: secure cookie attribute
+  * `httponly::Bool`: httponly cookie attribute
+  * `hostonly::Bool`: hostonly cookie attribute
 
 See http:#tools.ietf.org/html/rfc6265 for details.
 """
@@ -94,7 +108,7 @@ function parsecookievalue(raw, allowdoublequote::Bool)
     return raw, true
 end
 
-iscookienamevalid(raw) = raw == "" ? false : any(is_url_char, raw)
+iscookienamevalid(raw) = raw == "" ? false : any(isurlchar, raw)
 
 const AlternateRFC1123Format = Dates.DateFormat("e, dd-uuu-yyyy HH:MM:SS G\\MT")
 
