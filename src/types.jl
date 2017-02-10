@@ -89,9 +89,12 @@ function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer;
                     options::RequestOptions=RequestOptions(),
                     verbose::Bool=false,
                     io::IO=STDOUT)
-    headers = defaultheaders(Request)
-    headers["Host"] = host(uri)
-
+    if m != CONNECT
+        headers = defaultheaders(Request)
+        headers["Host"] = host(uri)
+    else
+        headers = Headers()
+    end
     if !isempty(userinfo(uri)) && !haskey(headers,"Authorization")
         headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
         @log(verbose, io, "adding basic authentication header")

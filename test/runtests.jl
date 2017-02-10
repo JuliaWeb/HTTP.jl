@@ -1,14 +1,31 @@
 using HTTP, Base.Test
 
+# TODO
+  # query keyword in high-level client.jl
+  # detect and auto-escape URI's if needed
+  # docs:
+    # uri.jl
+    # HTTP.parse
+    # types.jl
+    # review of client.jl
+    # manual page
+  # server.jl
+    # add max header, max uri, max body
+    # docs
+    # tests
+  # proxy stuff, multi-part files, digest auth
+
 @testset "HTTP" begin
     include("../src/precompile.jl") # to make codecov happy
     _precompile_()
-    
+
+    include("utils.jl");
     include("fifobuffer.jl");
     include("sniff.jl");
     include("uri.jl");
     include("cookies.jl");
     include("parser.jl");
+    include("types.jl");
     include("client.jl");
     # include("server.jl")
 end;

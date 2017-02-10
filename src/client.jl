@@ -54,18 +54,17 @@ type Client{I <: IO}
     options::RequestOptions
 end
 
-const DEFAULT_CHUNK_SIZE = 2^20
-
 Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(),
                                                      Dict{String, Vector{Connection{TLS.SSLContext}}}(),
                                                      Dict{String, Set{Cookie}}(),
                                                      Parser(), logger, options)
 
-const DEFAULT_REQUEST_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5, true))
+const DEFAULT_CHUNK_SIZE = 2^20
+const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5, true))
 
 @eval begin
-    Client(logger::IO; args...) = Client(logger, RequestOptions($(DEFAULT_REQUEST_OPTIONS)...; args...))
-    Client(; args...) = Client(STDOUT, RequestOptions($(DEFAULT_REQUEST_OPTIONS)...; args...))
+    Client(logger::IO; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
+    Client(; args...) = Client(STDOUT, RequestOptions($(DEFAULT_OPTIONS)...; args...))
 end
 
 """
@@ -107,18 +106,18 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
         opts.chunksize = length(req.body) + 1
     end
     h = host(uri(req))
-    return scheme(uri(req)) == "http" ? request(client, req, opts, getconn(http, client, h, opts, verbose), history, stream, verbose) :
-                                           request(client, req, opts, getconn(https, client, h, opts, verbose), history, stream, verbose)
+    return scheme(uri(req)) == "https" ? request(client, req, opts, getconn(https, client, h, opts, verbose), history, stream, verbose) :
+                                           request(client, req, opts, getconn(http, client, h, opts, verbose), history, stream, verbose)
 end
 
-function stalebytes(c::TCPSocket)
+function stalebytes!(c::TCPSocket)
     !isopen(c) && return
     @debug(DEBUG, @__LINE__, nb_available(c))
     nb_available(c) > 0 && readavailable(c)
     return
 end
 # this is an ugly hack for MbedTLS since nb_available seems to be unreliable sometimes
-stalebytes(c::TLS.SSLContext) = stalebytes(c.bio)
+stalebytes!(c::TLS.SSLContext) = stalebytes!(c.bio)
 
 function getconn{S}(::Type{S}, client, host, opts, verbose)
     # connect to remote host
@@ -133,7 +132,7 @@ function getconn{S}(::Type{S}, client, host, opts, verbose)
         for (i, c) in enumerate(conns)
             # read off any stale bytes left over from a possible error in a previous request
             # this will also trigger any sockets that timed out to be set to closed
-            stalebytes(c.tcp)
+            stalebytes!(c.tcp)
             if !isopen(c.tcp) || c.state == Dead
                 @log(verbose, client.logger, "found a dead connection to delete")
                 dead!(c)
@@ -201,7 +200,7 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     response = Response(stream ? DEFAULT_CHUNK_SIZE : DEFAULT_MAX, req)
     # process the response
     reset!(client.parser)
-    success = process!(client, conn, opts, host, method(req), response, stream, verbose)
+    success = process!(client, conn, opts, host, method(req), response, Ref{Float64}(time()), stream, verbose)
     !success && return request(client, req, opts; history=history, stream=stream, verbose=verbose)
     !isempty(response.cookies) && (@log(verbose, client.logger, "caching received cookies for host"); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
     # return immediately for streaming responses
@@ -230,38 +229,46 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     return response
 end
 
-function process!(client, conn, opts, host, method, response, stream, verbose)
+function process!(client, conn, opts, host, method, response, starttime, stream, verbose)
     parser = client.parser
-    while true
-        # if no data after 30 seconds, break out
-        @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
-        buffer = @timeout opts.readtimeout::Float64 readavailable(conn.tcp) throw(TimeoutException(opts.readtimeout::Float64))
-        @debug(DEBUG, @__LINE__, length(buffer))
-        @debug(DEBUG, @__LINE__, isopen(conn.tcp))
-        if length(buffer) == 0 && !isopen(conn.tcp)
-            dead!(conn)
-            @log(verbose, client.logger, "request was sent, but connection closed before receiving response, retrying request")
-            return false
+    tsk = @async begin
+        while true
+            # if no data after 30 seconds, break out
+            @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
+            buffer = readavailable(conn.tcp)
+            @debug(DEBUG, @__LINE__, length(buffer))
+            @debug(DEBUG, @__LINE__, isopen(conn.tcp))
+            if length(buffer) == 0 && !isopen(conn.tcp)
+                dead!(conn)
+                @log(verbose, client.logger, "request was sent, but connection closed before receiving response, retrying request")
+                return false
+            end
+            starttime[] = time() # reset the timeout while still receiving bytes
+            @log(verbose, client.logger, "received bytes from the wire, processing")
+            errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
+            @debug(DEBUG, @__LINE__, errno)
+            @debug(DEBUG, @__LINE__, headerscomplete)
+            @debug(DEBUG, @__LINE__, messagecomplete)
+            if errno != HPE_OK
+                throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[err])"))
+            elseif messagecomplete
+                http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
+                break
+            elseif stream && headerscomplete
+                # async read the response body, returning the current response immediately
+                @log(verbose, client.logger, "processing the rest of response asynchronously")
+                response.body.task = @async process!(client, conn, opts, host, method, response, starttime, false, false)
+                break
+            end
+            !isopen(conn.tcp) && (dead!(conn); break)
         end
-        @log(verbose, client.logger, "received bytes from the wire, processing")
-        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
-        @debug(DEBUG, @__LINE__, errno)
-        @debug(DEBUG, @__LINE__, headerscomplete)
-        @debug(DEBUG, @__LINE__, messagecomplete)
-        if errno != HPE_OK
-            throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[err])"))
-        elseif messagecomplete
-            http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
-            break
-        elseif stream && headerscomplete
-            # async read the response body, returning the current response immediately
-            @log(verbose, client.logger, "processing the rest of response asynchronously")
-            response.body.task = @async process!(client, conn, opts, host, method, response, false, false)
-            break
-        end
-        !isopen(conn.tcp) && (dead!(conn); break)
+        !stream && idle!(conn)
     end
-    !stream && idle!(conn)
+    timeout = opts.readtimeout::Float64
+    while !istaskdone(tsk) && (time() - starttime[] < timeout)
+        sleep(0.001)
+    end
+    istaskdone(tsk) || throw(TimeoutException(timeout))
     return true
 end
 

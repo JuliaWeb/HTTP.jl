@@ -996,7 +996,6 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             if (parser.flags & F_TRAILING) > 0
                 #= End of a chunked request =#
                 p_state = s_message_done
-                # CALLBACK_NOTIFY_NOADVANCE(chunk_complete)
                 @goto reexecute
             end
 
@@ -1055,7 +1054,6 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             elseif parser.flags & F_CHUNKED > 0
                 #= chunked encoding - ignore Content-Length header =#
                 p_state = s_chunk_size_start
-                # @goto reexecute
             else
                 if parser.content_length == 0
                     #= Content-Length header given but zero: Content-Length: 0\r\n =#
@@ -1195,7 +1193,6 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             else
                 p_state = s_chunk_data
             end
-            # CALLBACK_NOTIFY(chunk_header)
 
         elseif p_state == s_chunk_data
             @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
