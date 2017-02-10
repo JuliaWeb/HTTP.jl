@@ -45,6 +45,8 @@ function __init__()
     global const DEFAULT_PARSER = Parser()
     global const DEFAULT_CLIENT = Client()
     global const MAINTASK = current_task()
+    HTTP.parse(HTTP.Response, "HTTP/1.1 200 OK\r\n\r\n")
+    HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n\r\n")
 end
 
 end # module
