@@ -37,10 +37,10 @@ end
 
 ServerOptions(; tlsconfig::TLS.SSLConfig=TLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
-                ratelimit::Rational{Int}=Int64(5)//Int64(1),
-                maxuri::Int=DEFAULT_MAX_URI,
-                maxheader::Int=DEFAULT_MAX_HEADER,
-                maxbody::Int=DEFAULT_MAX_BODY,
+                ratelimit::Rational{Int64}=Int64(5)//Int64(1),
+                maxuri::Int64=DEFAULT_MAX_URI,
+                maxheader::Int64=DEFAULT_MAX_HEADER,
+                maxbody::Int64=DEFAULT_MAX_BODY,
                 support100continue::Bool=true) =
     ServerOptions(tlsconfig, readtimeout, ratelimit, maxbody, maxuri, maxheader, support100continue)
 
