@@ -13,10 +13,17 @@
 
 @test HTTP.Response(200) == HTTP.Response(200)
 
-show(HTTP.Response(200))
-showcompact(HTTP.Response(200))
+io = IOBuffer()
+show(io, HTTP.Response(200))
+@test String(take!(io)) == "HTTP.Response:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\n\"\"\""
 
-show(HTTP.Request())
-showcompact(HTTP.Request())
+showcompact(io, HTTP.Response(200))
+@test String(take!(io)) == "Response(200 OK, 0 headers, 0 bytes in body)"
+
+show(io, HTTP.Request())
+@test String(take!(io)) == "HTTP.Request:\n\"\"\"\nGET / HTTP/1.1\r\n\r\n\"\"\""
+
+showcompact(io, HTTP.Request())
+@test String(take!(io)) == "Request(\"\", 0 headers, 0 bytes in body)"
 
 end
