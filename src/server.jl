@@ -37,7 +37,7 @@ end
 
 ServerOptions(; tlsconfig::TLS.SSLConfig=TLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
-                ratelimit::Rational{Int}=5//1,
+                ratelimit::Rational{Int}=Int64(5)//Int64(1),
                 maxuri::Int=DEFAULT_MAX_URI,
                 maxheader::Int=DEFAULT_MAX_HEADER,
                 maxbody::Int=DEFAULT_MAX_BODY,
@@ -52,7 +52,7 @@ An http/https server. Supports listening on a `host` and `port` via the `HTTP.se
 objects as inputs and returns the, potentially modified, `Response`. `logger` indicates where logging output should be directed.
 When `HTTP.serve` is called, it aims to "never die", catching and recovering from all internal errors. To forcefully stop, one can obviously
 kill the julia process, interrupt (ctrl/cmd+c) if main task, or send the kill signal over a server comm channel like:
-`put!(server.comm, HTTP.KILL)`. 
+`put!(server.comm, HTTP.KILL)`.
 
 Supported keyword arguments include:
   * `cert`: if https, the cert file to use, as passed to `TLS.SSLConfig(cert, key)`
