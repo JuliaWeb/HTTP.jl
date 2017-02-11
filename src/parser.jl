@@ -133,8 +133,8 @@ full request or response (but may include more than one). Supported keyword argu
 """
 function parse{T <: Union{Request, Response}}(::Type{T}, str;
                 extra::Ref{String}=Ref{String}(), lenient::Bool=true,
-                maxuri::Int=DEFAULT_MAX_URI, maxheader::Int=DEFAULT_MAX_HEADER,
-                maxbody::Int=DEFAULT_MAX_BODY)
+                maxuri::Int64=DEFAULT_MAX_URI, maxheader::Int64=DEFAULT_MAX_HEADER,
+                maxbody::Int64=DEFAULT_MAX_BODY)
     r = T()
     reset!(DEFAULT_PARSER)
     err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str);
@@ -145,14 +145,14 @@ function parse{T <: Union{Request, Response}}(::Type{T}, str;
 end
 
 const start_state = s_start_req_or_res
-const DEFAULT_MAX_HEADER = 80 * 1024
-const DEFAULT_MAX_URI = 8000
+const DEFAULT_MAX_HEADER = Int64(80 * 1024)
+const DEFAULT_MAX_URI = Int64(8000)
 const DEFAULT_MAX_BODY = Int64(2)^32 # 4Gib
 
 function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(bytes);
         lenient::Bool=true, host::String="", method::HTTP.Method=GET,
-        maxuri::Int=DEFAULT_MAX_URI, maxheader::Int=DEFAULT_MAX_HEADER,
-        maxbody::Int=DEFAULT_MAX_BODY)::Tuple{ParsingErrorCode, Bool, Bool, String}
+        maxuri::Int64=DEFAULT_MAX_URI, maxheader::Int64=DEFAULT_MAX_HEADER,
+        maxbody::Int64=DEFAULT_MAX_BODY)::Tuple{ParsingErrorCode, Bool, Bool, String}
     strict = !lenient
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
@@ -1242,7 +1242,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             @strictcheck(ch != CR)
             p_state = s_chunk_data_done
             @debug(PARSING_DEBUG, @__LINE__, "this onbody 2")
-            onbody(r, bytes, body_mark, p - 1)
+            body_mark > 0 && onbody(r, bytes, body_mark, p - 1)
             body_mark = 0
 
         elseif p_state == s_chunk_data_done
