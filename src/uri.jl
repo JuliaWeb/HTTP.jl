@@ -45,7 +45,7 @@ function URI(;hostname::String="", path::String="",
             fragment::String="", isconnect::Bool=false)
     hostname != "" && scheme == "" && !isconnect && (scheme = "http")
     io = IOBuffer()
-    print(io, scheme, userinfo, hostname, string(port), path, escape(query), fragment)
+    printuri(io, scheme, userinfo, hostname, string(port), path, escape(query), fragment)
     return Base.parse(URI, String(take!(io)); isconnect=isconnect)
 end
 
@@ -108,8 +108,8 @@ host(uri::URI) = hostname(uri) * (isempty(port(uri)) ? "" : ":$(port(uri))")
 
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
 
-Base.print(io::IO, u::URI) = print(io, scheme(u), userinfo(u), hostname(u), port(u), path(u), query(u), fragment(u))
-function Base.print(io::IO, sch::String, userinfo::String, hostname::String, port::String, path::String, query::String, fragment::String)
+Base.print(io::IO, u::URI) = printuri(io, scheme(u), userinfo(u), hostname(u), port(u), path(u), query(u), fragment(u))
+function printuri(io::IO, sch::String, userinfo::String, hostname::String, port::String, path::String, query::String, fragment::String)
     if sch in uses_authority
         print(io, sch, "://")
         !isempty(userinfo) && print(io, userinfo, "@")
