@@ -9,6 +9,29 @@ Base.isempty(o::Offset) = o.off == 0x0000 && o.len == 0x0000
 ==(a::Offset, b::Offset) = a.off == b.off && a.len == b.len
 const EMPTYOFFSET = Offset()
 
+"""
+    HTTP.URI(host; userinfo="", path="", query="", fragment="", isconnect=false)
+    HTTP.URI(; scheme="", hostname="", port="", ...)
+    parse(HTTP.URI, str::String; isconnect=false)
+
+A type representing a valid uri. Can be constructed from distinct parts using the various
+supported keyword arguments. With a raw, already-encoded uri string, use `parse(HTTP.URI, str)`
+to parse the `HTTP.URI` directly. The `HTTP.URI` constructors will automatically escape any provided
+`query` arguments, typically provided as `"key"=>"value"::Pair` or `Dict("key"=>"value")`.
+Note that multiple values for a single query key can provided like `Dict("key"=>["value1", "value2"])`.
+
+For efficiency, the internal representation is stored as a set of offsets and lengths to the various uri components.
+To access and return these components as strings, use the various accessor methods:
+  * `HTTP.scheme`: returns the scheme (if any) associated with the uri
+  * `HTTP.userinfo`: returns the userinfo (if any) associated with the uri
+  * `HTTP.hostname`: returns the hostname only of the uri
+  * `HTTP.port`: returns the port of the uri; will return "80" or "443" by default if the scheme is "http" or "https", respectively
+  * `HTTP.host`: returns the "hostname:port" combination
+  * `HTTP.path`: returns the path for a uri
+  * `HTTP.query`: returns the query for a uri
+  * `HTTP.fragment`: returns the fragment for a uri
+  * `HTTP.resource`: returns the path-query-fragment combination
+"""
 immutable URI
     data::Vector{UInt8}
     offsets::NTuple{7, Offset}
@@ -37,7 +60,9 @@ function URI(str::String; userinfo::String="", path::String="",
             str = string(str, path, ifelse(query == "", "", "?" * escape(query)),
                          ifelse(fragment == "", "", "#$fragment"))
         else
-            if path == "" && userinfo == "" && query == "" && fragment == "" && ':' in str
+            if startswith(str, "/") || str == "*"
+                # relative uri like "/" or "*", leave it alone
+            elseif path == "" && userinfo == "" && query == "" && fragment == "" && ':' in str
                 isconnect = true
             else
                 str = string("http://", userinfo == "" ? "" : "$userinfo@",
@@ -78,7 +103,7 @@ function port(uri::URI)
     end
 end
 
-resource(uri::URI; isconnect::Bool=false) = isconnect ? host(uri) : path(uri) * (isempty(query(uri)) ? "" : "?$(query(uri))")
+resource(uri::URI; isconnect::Bool=false) = isconnect ? host(uri) : path(uri) * (isempty(query(uri)) ? "" : "?$(query(uri))") * (isempty(fragment(uri)) ? "" : "#$(fragment(uri))")
 host(uri::URI) = hostname(uri) * (isempty(port(uri)) ? "" : ":$(port(uri))")
 
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
@@ -129,7 +154,9 @@ lower(c::UInt8) = c | 0x20
                             UInt8(']'), UInt8('`'))
 hexstring(x) = string('%', uppercase(hex(x,2)))
 
-"percent-encode a uri/url string"
+"percent-encode a string, dict, or pair for a uri"
+function escape end
+
 function escape(str, f=shouldencode)
     out = IOBuffer()
     for c in Vector{UInt8}(str)
@@ -176,7 +203,7 @@ function unescape(str)
 end
 
 """
-Splits the path into components and parameters
+Splits the path into components
 See: http://tools.ietf.org/html/rfc3986#section-3.3
 """
 function splitpath(uri::URI, starting=2)
