@@ -36,9 +36,9 @@ import Base.==
 import HTTP.isurlchar
 
 """
-    `Cookie()`
-    `Cookie(; kwargs...)`
-    `Cookie(name, value; kwargs...)`
+    Cookie()
+    Cookie(; kwargs...)
+    Cookie(name, value; kwargs...)
 
 A Cookie represents an HTTP cookie as sent in the Set-Cookie header of an
 HTTP response or the Cookie header of an HTTP request. Supported fields

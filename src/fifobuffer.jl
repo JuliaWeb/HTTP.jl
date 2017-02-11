@@ -1,10 +1,9 @@
 """
-A `FIFOBuffer` is a first-in, first-out, in-memory, async-friendly IO buffer type
+    FIFOBuffer([max::Integer])
+    FIFOBuffer(string_or_bytes_vector)
+    FIFOBuffer(io::IO)
 
-Constructors:
-    `FIFOBuffer([max::Integer])`
-    `FIFOBuffer(string_or_bytes_vector)`
-    `FIFOBuffer(io::IO)`
+A `FIFOBuffer` is a first-in, first-out, in-memory, async-friendly IO buffer type.
 
 `FIFOBuffer([max])`: creates a `FIFOBuffer` with a maximum size of `max`; this means that bytes can be written
 up until `max` number of bytes have been written (with none being read). At this point, the `FIFOBuffer` is full
