@@ -119,6 +119,18 @@ end
 onmessagecomplete(r::Request) = @debug(PARSING_DEBUG, @__LINE__, "onmessagecomplete")
 onmessagecomplete(r::Response) = (@debug(PARSING_DEBUG, @__LINE__, "onmessagecomplete"); close(r.body))
 
+"""
+    HTTP.parse([HTTP.Request, HTTP.Response], str; kwargs...)
+
+Parse a `HTTP.Request` or `HTTP.Response` from a string. `str` must contain at least one
+full request or response (but may include more than one). Supported keyword arguments include:
+
+  * `extra`: a `Ref{String}` that will be used to store any extra bytes beyond a full request or response
+  * `lenient`: whether the request/response parsing should allow additional characters
+  * `maxuri`: the maximum allowed size of a uri in a request
+  * `maxheader`: the maximum allowed size of headers
+  * `maxbody`: the maximum allowed size of a request or response body
+"""
 function parse{T <: Union{Request, Response}}(::Type{T}, str;
                 extra::Ref{String}=Ref{String}(), lenient::Bool=true,
                 maxuri::Int=DEFAULT_MAX_URI, maxheader::Int=DEFAULT_MAX_HEADER,

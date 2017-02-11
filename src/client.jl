@@ -4,7 +4,7 @@
 `HTTP.Connection`
 
 Represents a persistent client connection to a remote host; only created
-when a server response includes the "Connection: keep-alive" header. A connection
+when a server response includes the "Connection: keep-alive" header. An open and non-idle connection
 will be reused when sending subsequent requests to the same host.
 """
 type Connection{I <: IO}
@@ -30,16 +30,16 @@ setconnection!(::Type{https}, client, host, conn) = push!(get!(client.httpspool,
 """
 `HTTP.Client([logger::IO]; args...)`
 
-A type to make connections to remote hosts, send HTTP requests, and manage state between requests.
+A type to facilitate connections to remote hosts, send HTTP requests, and manage state between requests.
 Takes an optional `logger` IO argument where client activity is recorded (defaults to `STDOUT`).
 Additional keyword arguments can be passed that will get transmitted with each HTTP request:
 
 * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`
-<!-- * `gzip::Bool`: -->
 * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
 * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
 * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
 * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
+* `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
 """
 type Client{I <: IO}
     # connection pools for keep-alive; key is host
@@ -297,7 +297,7 @@ for f in [:get, :post, :put, :delete, :head,
             $($f)(uri) -> Response
             $($f)(client::HTTP.Client, uri) -> Response
 
-        Build and execute an http "$($f_str)" request. Query parameters must be included in the uri itself.
+        Build and execute an http "$($f_str)" request. Query parameters can be passed via the `query` keyword argument as a `Dict`.
         Returns a `Response` object that includes the resulting status code (`HTTP.status(r)` and `HTTP.statustext(r)`),
         response headers (`HTTP.headers(r)`), cookies (`HTTP.cookies(r)`), response history if redirects were involved
         (`HTTP.history(r)`), and response body (`HTTP.body(r)` or `string(r)` or `HTTP.bytes(r)`).
@@ -308,11 +308,11 @@ for f in [:get, :post, :put, :delete, :head,
         * `body`: a request body can be given as a `String`, `Vector{UInt8}`, `IO`, or `HTTP.FIFOBuffer`; see example below for how to utilize `HTTP.FIFOBuffer` for "streaming" request bodies
         * `stream::Bool=false`: enable response body streaming; depending on the response body size, the request will return before the full body has been received; as the response body is read, additional bytes will be recieved and put in the response body. Readers should read until `eof(response.body) == true`; see below for an example of response streaming
         * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`
-        <!-- * `gzip::Bool`: -->
         * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
         * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
         * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
         * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
+        * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
 
         Simple request example:
         ```julia
@@ -370,7 +370,7 @@ for f in [:get, :post, :put, :delete, :head,
         write(f, "sailor")
         close(f) # setting eof on f causes the async request to send a final chunk and return the response
 
-        resp = t.result # get our response by getting the result of our asynchronous task
+        resp = wait(t) # get our response by getting the result of our asynchronous task
         ```
         """ function $(f) end
         ($f)(uri::AbstractString; verbose::Bool=false, query="", args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, $meth, URI(uri; query=query, isconnect=$(f_str == "CONNECT")); verbose=verbose, args...))

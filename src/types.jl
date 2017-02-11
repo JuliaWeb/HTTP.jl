@@ -22,8 +22,17 @@ function get{T, R}(value::T, name::Symbol, default::R)::R
 end
 
 """
+    RequestOptions(; chunksize=, connecttimeout=, readtimeout=, tlsconfig=, maxredirects=, allowredirects=)
+
 A type to represent various http request options. Lives as a separate type so that options can be set
-at the `HTTP.Client` level to be applied to every request sent.
+at the `HTTP.Client` level to be applied to every request sent. Options include:
+
+  * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`
+  * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
+  * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
+  * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
+  * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
+  * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
 """
 type RequestOptions
     chunksize::?(Int)
@@ -61,7 +70,21 @@ function update!(opts1::RequestOptions, opts2::RequestOptions)
 end
 
 """
-A type representing an HTTP request.
+    Request()
+    Request(method, uri, headers, body; options=RequestOptions())
+
+A type representing an http request. `method` can be provided as a string or `HTTP.GET` type enum.
+`uri` can be provided as an actual `HTTP.URI` or string. `headers` should be provided as a `Dict`.
+`body` may be provided as string, byte vector, IO, or `HTTP.FIFOBuffer`.
+`options` should be a `RequestOptions` type, see `?HTTP.RequestOptions` for details.
+
+Accessor methods include:
+  * `HTTP.method`: method for a request
+  * `HTTP.major`: major http version for a request
+  * `HTTP.minor`: minor http version for a request
+  * `HTTP.uri`: uri for a request
+  * `HTTP.headers`: headers for a request
+  * `HTTP.body`: body for a request as a `HTTP.FIFOBuffer`
 """
 type Request
     method::HTTP.Method
@@ -136,7 +159,26 @@ Base.showcompact(io::IO, r::Request) = print(io, "Request(\"", resource(r.uri), 
                                         length(r.body), " bytes in body)")
 
 """
-A type representing an HTTP response.
+    Response(status)
+    Response(status, headers, body)
+
+A type representing an http response. `status` represents the http status code for the response.
+`headers` should be provided as a `Dict`. `body` can be provided as a string, byte vector, IO, or `HTTP.FIFOBuffer`.
+
+Accessor methods include:
+  * `HTTP.status`: status for a response
+  * `HTTP.statustext`: statustext for a response
+  * `HTTP.major`: major http version for a response
+  * `HTTP.minor`: minor http version for a response
+  * `HTTP.cookies`: cookies for a response, returned as a `Vector{HTTP.Cookie}`
+  * `HTTP.headers`: headers for a response
+  * `HTTP.request`: the `HTTP.Request` that resulted in this response
+  * `HTTP.history`: history for a response if redirects were followed from an original request
+  * `HTTP.body`: body for a response as a `HTTP.FIFOBuffer`
+
+Two convenience methods are provided for accessing a response body:
+  * `string(r)`: consume the reponse body, returning it as a `String`
+  * `HTTP.bytes(r)`: consume the response body, returning it as a `Vector{UInt8}`
 """
 type Response
     status::Int32
