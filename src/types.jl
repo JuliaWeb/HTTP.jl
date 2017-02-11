@@ -108,7 +108,7 @@ defaultheaders(::Type{Request}) = Headers(
     "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"
 )
 
-function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer;
+function Request(m::HTTP.Method, uri::URI, userheaders::Headers, body::FIFOBuffer;
                     options::RequestOptions=RequestOptions(),
                     verbose::Bool=false,
                     io::IO=STDOUT)
@@ -141,7 +141,7 @@ function Request(m::Method, uri::URI, userheaders::Headers, body::FIFOBuffer;
     return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
 
-Request{T}(method, uri, h, body::T; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) = Request(convert(Method, method),
+Request{T}(method, uri, h, body::T; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) = Request(convert(HTTP.Method, method),
                                isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
                                h, FIFOBuffer(body); options=options, io=io, verbose=verbose)
 
