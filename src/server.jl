@@ -3,7 +3,6 @@
  # dealing w/ cookies
  # reverse proxy?
  # auto-compression
- # rate-limiting
  # health report of server
  # http authentication subrequests?
  # ip access control lists?
@@ -23,11 +22,8 @@
  # default handler:
    # handle all common http requests/etc.
    # just map straight to filesystem
- # allow disabling Expect: 100-continue support (return 417 response instead)
  # special case OPTIONS method like go?
  # buffer re-use for server/client wire-reading
- # allow setting max request body size accepted (response 413)
- # allow setting max uri size (response 414)
  # easter egg (response 418)
 type ServerOptions
     tlsconfig::TLS.SSLConfig
@@ -48,110 +44,132 @@ ServerOptions(; tlsconfig::TLS.SSLConfig=TLS.SSLConfig(true),
                 support100continue::Bool=true) =
     ServerOptions(tlsconfig, readtimeout, ratelimit, maxbody, maxuri, maxheader, support100continue)
 
+"""
+    Server(handler, logger::IO=STDOUT; kwargs...)
+
+An http/https server. Supports listening on a `host` and `port` via the `HTTP.serve(server, host, port)` function.
+`handler` is a function of the form `f(::Request, ::Response) -> Response`, i.e. it takes both a `Request` and pre-built `Response`
+objects as inputs and returns the, potentially modified, `Response`. `logger` indicates where logging output should be directed.
+When `HTTP.serve` is called, it aims to "never die", catching and recovering from all internal errors. To forcefully stop, one can obviously
+kill the julia process, interrupt (ctrl/cmd+c) if main task, or send the kill signal over a server comm channel like:
+`put!(server.comm, HTTP.KILL)`. 
+
+Supported keyword arguments include:
+  * `cert`: if https, the cert file to use, as passed to `TLS.SSLConfig(cert, key)`
+  * `key`: if https, the key file to use, as passed to `TLS.SSLConfig(cert, key)`
+  * `tlsconfig`: pass in an already-constructed `TLS.SSLConfig` instance
+  * `readtimeout`: how long a client connection will be left open without receiving any bytes
+  * `ratelimit`: a `Rational{Int}` of the form `5//1` indicating how many `messages//second` should be allowed per client IP address; requests exceeding the rate limit will be dropped
+  * `maxuri`: the maximum size in bytes that a request uri can be; default 8000
+  * `maxheader`: the maximum size in bytes that request headers can be; default 8kb
+  * `maxbody`: the maximum size in bytes that a request body can be; default 4gb
+  * `support100continue`: a `Bool` indicating whether `Expect: 100-continue` headers should be supported for delayed request body sending; default = `true`
+"""
 type Server{T <: Scheme, I <: IO}
     handler::Function
     logger::I
+    comm::Channel{Any}
     options::ServerOptions
 
-    Server(handler::Function, logger::I,options=ServerOptions()) = new{T, I}(handler, logger, options)
+    Server(handler::Function, logger::I, ch=Channel(), options=ServerOptions()) = new{T, I}(handler, logger, ch, options)
 end
 
-function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl)
+function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl, starttime, verbose)
     handler, logger, options = server.handler, server.logger, server.options
     startedprocessingrequest = error = false
     rate = Float64(server.options.ratelimit.num)
     rl.allowance += 1.0 # because it was just decremented right before we got here
     response = Response()
-    @log(true, logger, "processing on connection i=$i...")
+    @log(verbose, logger, "processing on connection i=$i...")
     try
-        while isopen(tcp)
-            update!(rl)
-            @log(true, server.logger, """
-                Rate-Limiting = $rl:
-                lastcheck: $(rl.lastcheck)
-                  current: $current
-               timepassed: $timepassed
-        current allowance: $(rl.allowance)
-            """)
-            if rl.allowance > rate
-                @log(true, server.logger, "throttling on connection i=$i")
-                rl.allowance = rate
-            end
-            if rl.allowance < 1.0
-                @log(true, server.logger, "sleeping on connection i=$i due to rate limiting")
-                sleep(1.0)
-            else
-                rl.allowance -= 1.0
-                @log(true, server.logger, "reading request bytes with readtimeout=$(options.readtimeout)")
-                buffer = @timeout options.readtimeout readavailable(tcp) begin
-                    @log(true, logger, "connection i=$i timed out waiting for request bytes")
-                    startedprocessingrequest || break
-                    error = true
-                    response.status = 408
+        tsk = @async begin
+            while isopen(tcp)
+                update!(rl, server.options.ratelimit)
+                if rl.allowance > rate
+                    @log(verbose, server.logger, "throttling on connection i=$i")
+                    rl.allowance = rate
                 end
-                errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(request, parser, buffer)
-                startedprocessingrequest = true
-                if errno != HPE_OK
-                    # error in parsing the http request
-                    @log(true, logger, "error parsing request on connection i=$i: $(ParsingErrorCodeMap[errno])")
-                    if errno == HPE_INVALID_VERSION
-                        reponse.status = 505
-                    elseif errno == HPE_HEADER_OVERFLOW
-                        reponse.status = 431
-                    elseif errno == HPE_URI_OVERFLOW
-                        reponse.status = 414
-                    elseif errno == HPE_BODY_OVERFLOW
-                        response.status = 413
-                    elseif errno == HPE_INVALID_METHOD
-                        reponse.status = 405
-                    else
-                        reponse.status = 400
-                    end
-                    error = true
-                elseif headerscomplete && Base.get(HTTP.headers(request), "Expect", "") == "100-continue"
-                    if options.support100continue
-                        @log(true, logger, "sending 100 Continue response to get request body")
-                        write(tcp, Response(100), options)
-                        continue
-                    else
-                        response.status = 417
+                if rl.allowance < 1.0
+                    @log(verbose, server.logger, "sleeping on connection i=$i due to rate limiting")
+                    sleep(1.0)
+                else
+                    rl.allowance -= 1.0
+                    @log(verbose, server.logger, "reading request bytes with readtimeout=$(options.readtimeout)")
+                    buffer = readavailable(tcp)
+                    length(buffer) > 0 || break
+                    starttime[] = time() # reset the timeout while still receiving bytes
+                    errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(request, parser, buffer)
+                    startedprocessingrequest = true
+                    if errno != HPE_OK
+                        # error in parsing the http request
+                        @log(verbose, logger, "error parsing request on connection i=$i: $(ParsingErrorCodeMap[errno])")
+                        if errno == HPE_INVALID_VERSION
+                            reponse.status = 505
+                        elseif errno == HPE_HEADER_OVERFLOW
+                            reponse.status = 431
+                        elseif errno == HPE_URI_OVERFLOW
+                            reponse.status = 414
+                        elseif errno == HPE_BODY_OVERFLOW
+                            response.status = 413
+                        elseif errno == HPE_INVALID_METHOD
+                            reponse.status = 405
+                        else
+                            reponse.status = 400
+                        end
                         error = true
-                    end
-                elseif length(upgrade) > 0
-                    @log(true, logger, "received upgrade request on connection i=$i")
-                    response.status = 501
-                    response.body = FIFOBuffer("upgrade requests are not currently supported")
-                    error = true
-                elseif messagecomplete
-                    @log(true, logger, "received request on connection i=$i")
-                    # show(logger, request)
-                    try
-                        response = handler(request, response)
-                    catch e
-                        response.status = 500
+                    elseif headerscomplete && Base.get(HTTP.headers(request), "Expect", "") == "100-continue"
+                        if options.support100continue
+                            @log(verbose, logger, "sending 100 Continue response to get request body")
+                            write(tcp, Response(100), options)
+                            continue
+                        else
+                            response.status = 417
+                            error = true
+                        end
+                    elseif length(upgrade) > 0
+                        @log(verbose, logger, "received upgrade request on connection i=$i")
+                        response.status = 501
+                        response.body = FIFOBuffer("upgrade requests are not currently supported")
                         error = true
-                        @log(true, logger, e)
+                    elseif messagecomplete
+                        @log(verbose, logger, "received request on connection i=$i")
+                        verbose && (show(logger, request); println(logger))
+                        try
+                            response = handler(request, response)
+                        catch e
+                            response.status = 500
+                            error = true
+                            @log(verbose, logger, e)
+                        end
+                        if http_should_keep_alive(parser, request) && !error
+                            get!(HTTP.headers(response), "Connection", "keep-alive")
+                            reset!(parser)
+                            request = Request()
+                        else
+                            get!(HTTP.headers(response), "Connection", "close")
+                            close(tcp)
+                        end
+                        @log(verbose, logger, "responding with response on connection i=$i")
+                        verbose && (show(logger, response); println(logger))
+                        write(tcp, response, options)
+                        error && break
+                        startedprocessingrequest = false
                     end
-                    if http_should_keep_alive(parser, request) && !error
-                        get!(HTTP.headers(response), "Connection", "keep-alive")
-                        reset!(parser)
-                        request = Request()
-                    else
-                        get!(HTTP.headers(response), "Connection", "close")
-                        close(tcp)
-                    end
-                    @log(true, logger, "responding with response on connection i=$i")
-                    # show(logger, response)
-                    write(tcp, response, options)
-                    error && break
-                    startedprocessingrequest = false
                 end
             end
+        end
+        timeout = options.readtimeout
+        while !istaskdone(tsk) && (time() - starttime[] < timeout)
+            sleep(0.001)
+        end
+        if !istaskdone(tsk)
+            @log(verbose, logger, "connection i=$i timed out waiting for request bytes")
+            startedprocessingrequest && write(tcp, Response(408), options)
         end
     finally
         close(tcp)
     end
-    @log(true, logger, "finished processing on connection i=$i")
+    @log(verbose, logger, "finished processing on connection i=$i")
     return nothing
 end
 
@@ -174,20 +192,28 @@ type RateLimit
     lastcheck::DateTime
 end
 
-function update!(rl::RateLimit)
+function update!(rl::RateLimit, ratelimit)
     current = now()
     timepassed = float(Dates.value(current - rl.lastcheck)) / 1000.0
     rl.lastcheck = current
-    rl.allowance += timepassed * server.options.ratelimit
+    rl.allowance += timepassed * ratelimit
     return nothing
 end
 
-function serve{T, I}(server::Server{T, I}, host, port)
-    @log(true, server.logger, "starting server to listen on: $(host):$(port)")
+@enum Signals KILL
+
+function serve{T, I}(server::Server{T, I}, host, port, verbose)
+    @log(verbose, server.logger, "starting server to listen on: $(host):$(port)")
     tcpserver = listen(host, port)
     ratelimits = Dict{IPAddr, RateLimit}()
     rate = Float64(server.options.ratelimit.num)
     i = 0
+    @async begin
+        while true
+            val = take!(server.comm)
+            val == KILL && close(tcpserver)
+        end
+    end
     while true
         p = Parser()
         request = Request()
@@ -196,44 +222,36 @@ function serve{T, I}(server::Server{T, I}, host, port)
             tcp = accept(tcpserver)
             ip = getsockname(tcp)[1]
             rl = get!(ratelimits, ip, RateLimit(rate, now()))
-            update!(rl)
-            @log(true, server.logger, """
-                Rate-Limiting = $rl:
-                   tcp ip: $ip
-                lastcheck: $(rl.lastcheck)
-                  current: $current
-               timepassed: $timepassed
-        current allowance: $(rl.allowance)
-            """)
+            update!(rl, server.options.ratelimit)
             if rl.allowance > rate
-                @log(true, server.logger, "throttling $ip")
+                @log(verbose, server.logger, "throttling $ip")
                 rl.allowance = rate
             end
             if rl.allowance < 1.0
-                @log(true, server.logger, "discarding connection from $ip due to rate limiting")
+                @log(verbose, server.logger, "discarding connection from $ip due to rate limiting")
                 close(tcp)
             else
                 rl.allowance -= 1.0
-                @log(true, server.logger, "new tcp connection accepted, reading request...")
-                let p=p, request=request, i=i, tcp=tcp, rl=rl
-                    @async process!(server, p, request, i, initTLS!(T, tcp, server.options.tlsconfig::TLS.SSLConfig), rl)
+                @log(verbose, server.logger, "new tcp connection accepted, reading request...")
+                let server=server, p=p, request=request, i=i, tcp=tcp, rl=rl
+                    @async process!(server, p, request, i, initTLS!(T, tcp, server.options.tlsconfig::TLS.SSLConfig), rl, Ref{Float64}(time()), verbose)
                 end
                 i += 1
             end
         catch e
             if typeof(e) <: InterruptException
-                @log(true, server.logger, "interrupt detected, shutting down...")
+                @log(verbose, server.logger, "interrupt detected, shutting down...")
                 interrupt()
                 break
             else
                 if !isopen(tcpserver)
-                    @log(true, server.logger, "server TCPServer is closed, shutting down...")
+                    @log(verbose, server.logger, "server TCPServer is closed, shutting down...")
                     # Server was closed while waiting to accept client. Exit gracefully.
                     interrupt()
                     break
                 end
-                @log(true, server.logger, "error encountered: $e")
-                @log(true, server.logger, "resuming serving...")
+                @log(verbose, server.logger, "error encountered: $e")
+                @log(verbose, server.logger, "resuming serving...")
             end
         end
     end
@@ -241,18 +259,41 @@ function serve{T, I}(server::Server{T, I}, host, port)
     return
 end
 
-function serve{I}(host::IPAddr, port::Int,
-               handler=(req, rep) -> Response("Hello World!"),
+function Server{I}(handler=(req, rep) -> Response("Hello World!"),
                logger::I=STDOUT;
                cert::String="",
                key::String="",
                args...)
     if cert != "" && key != ""
-        server = Server{https, I}(handler, logger, ServerOptions(tlsconfig=TLS.SSLConfig(cert, key), args...))
+        server = Server{https, I}(handler, logger, Channel(), ServerOptions(tlsconfig=TLS.SSLConfig(cert, key), args...))
     else
-        server = Server{http, I}(handler, logger, ServerOptions(args...))
+        server = Server{http, I}(handler, logger, Channel(), ServerOptions(args...))
     end
-    return serve(server, host, port)
+    return server
+end
+
+"""
+    HTTP.serve([server,] host::IPAddr, port::Int; verbose::Bool=true, kwargs...)
+
+Start a server listening on the provided `host` and `port`. `verbose` indicates whether server activity should be logged.
+Optional keyword arguments allow construction of `Server` on the fly if the `server` argument isn't provided directly.
+See `?HTTP.Server` for more details on server construction and supported keyword arguments.
+By default, `HTTP.serve` aims to "never die", catching and recovering from all internal errors. Two methods for stopping
+`HTTP.serve` include interrupting (ctrl/cmd+c) if blocking on the main task, or sending the kill signal via the server's comm channel
+(`put!(server.comm, HTTP.KILL)`).
+"""
+function serve end
+
+serve(server::Server, host=IPv4(127,0,0,1), port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
+function serve{I}(host::IPAddr, port::Int,
+                   handler=(req, rep) -> Response("Hello World!"),
+                   logger::I=STDOUT;
+                   cert::String="",
+                   key::String="",
+                   verbose::Bool=true,
+                   args...)
+    server = Server(host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
+    return serve(server, host, port, verbose)
 end
 serve(; host::IPAddr=IPv4(127,0,0,1),
         port::Int=8081,
@@ -260,5 +301,6 @@ serve(; host::IPAddr=IPv4(127,0,0,1),
         logger::IO=STDOUT,
         cert::String="",
         key::String="",
+        verbose::Bool=true,
         args...) =
-    serve(host, port, handler, logger; cert=cert, key=key, args...)
+    serve(host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
