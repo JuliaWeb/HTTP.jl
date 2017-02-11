@@ -250,7 +250,7 @@ function process!(client, conn, opts, host, method, response, starttime, stream,
             @debug(DEBUG, @__LINE__, headerscomplete)
             @debug(DEBUG, @__LINE__, messagecomplete)
             if errno != HPE_OK
-                throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[err])"))
+                throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])"))
             elseif messagecomplete
                 http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
                 break

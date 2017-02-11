@@ -33,18 +33,18 @@ type ServerOptions
     tlsconfig::TLS.SSLConfig
     readtimeout::Float64
     ratelimit::Rational{Int}
-    maxbody::Int
     maxuri::Int
     maxheader::Int
+    maxbody::Int
     support100continue::Bool
 end
 
 ServerOptions(; tlsconfig::TLS.SSLConfig=TLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
                 ratelimit::Rational{Int}=5//1,
-                maxbody::Int=2^32,
-                maxuri::Int=8000,
-                maxheader::Int=80 * 1024,
+                maxuri::Int=DEFAULT_MAX_URI,
+                maxheader::Int=DEFAULT_MAX_HEADER,
+                maxbody::Int=DEFAULT_MAX_BODY,
                 support100continue::Bool=true) =
     ServerOptions(tlsconfig, readtimeout, ratelimit, maxbody, maxuri, maxheader, support100continue)
 
@@ -98,6 +98,10 @@ function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl)
                         reponse.status = 505
                     elseif errno == HPE_HEADER_OVERFLOW
                         reponse.status = 431
+                    elseif errno == HPE_URI_OVERFLOW
+                        reponse.status = 414
+                    elseif errno == HPE_BODY_OVERFLOW
+                        response.status = 413
                     elseif errno == HPE_INVALID_METHOD
                         reponse.status = 405
                     else

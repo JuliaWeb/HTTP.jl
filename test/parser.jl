@@ -1626,7 +1626,7 @@ const responses = Message[
         @test HTTP.DEFAULT_PARSER.nread == length(buf)
 
         respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "1844674407370955160" * "\r\n\r\n"
-        r = HTTP.parse(HTTP.Response, respstr)
+        r = HTTP.parse(HTTP.Response, respstr; maxbody=1844674407370955160)
         @test HTTP.status(r) == 200
         @test HTTP.headers(r) == Dict("Content-Length"=>"1844674407370955160")
 

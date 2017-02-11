@@ -47,12 +47,10 @@ function reset!(p::Parser)
     return
 end
 
-const HTTP_MAX_HEADER_SIZE = 80 * 1024
-
 macro nread(n)
     return esc(quote
         parser.nread += UInt32($n)
-        @errorif(parser.nread > HTTP_MAX_HEADER_SIZE, HPE_HEADER_OVERFLOW)
+        @errorif(parser.nread > maxheader, HPE_HEADER_OVERFLOW)
     end)
 end
 
@@ -121,19 +119,28 @@ end
 onmessagecomplete(r::Request) = @debug(PARSING_DEBUG, @__LINE__, "onmessagecomplete")
 onmessagecomplete(r::Response) = (@debug(PARSING_DEBUG, @__LINE__, "onmessagecomplete"); close(r.body))
 
-function parse{T <: Union{Request, Response}}(::Type{T}, str; extra::Ref{String}=Ref{String}(), lenient::Bool=true)
+function parse{T <: Union{Request, Response}}(::Type{T}, str;
+                extra::Ref{String}=Ref{String}(), lenient::Bool=true,
+                maxuri::Int=DEFAULT_MAX_URI, maxheader::Int=DEFAULT_MAX_HEADER,
+                maxbody::Int=DEFAULT_MAX_BODY)
     r = T()
     reset!(DEFAULT_PARSER)
-    err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str); lenient=lenient)
+    err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str);
+        lenient=lenient, maxuri=maxuri, maxheader=maxheader, maxbody=maxbody)
     err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
     extra[] = upgrade
     return r
 end
 
 const start_state = s_start_req_or_res
+const DEFAULT_MAX_HEADER = 80 * 1024
+const DEFAULT_MAX_URI = 8000
+const DEFAULT_MAX_BODY = 2^32 # 4Gib
 
 function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(bytes);
-        lenient::Bool=true, host::String="", method::HTTP.Method=GET)::Tuple{ParsingErrorCode, Bool, Bool, String}
+        lenient::Bool=true, host::String="", method::HTTP.Method=GET,
+        maxuri::Int=DEFAULT_MAX_URI, maxheader::Int=DEFAULT_MAX_HEADER,
+        maxbody::Int=DEFAULT_MAX_BODY)::Tuple{ParsingErrorCode, Bool, Bool, String}
     strict = !lenient
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
@@ -472,6 +479,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             if ch == ' '
                 p_state = s_req_http_start
                 parser.state = p_state
+                p - url_mark > maxuri && @err(HPE_URI_OVERFLOW)
                 onurl(r, bytes, url_mark, p-1)
                 url_mark = 0
             elseif ch in (CR, LF)
@@ -479,6 +487,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 r.minor = Int16(9)
                 p_state = ifelse(ch == CR, s_req_line_almost_done, s_header_field_start)
                 parser.state = p_state
+                p - url_mark > maxuri && @err(HPE_URI_OVERFLOW)
                 onurl(r, bytes, url_mark, p-1)
                 url_mark = 0
             else
@@ -794,7 +803,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 if h == h_general
                     @debug(PARSING_DEBUG, @__LINE__, parser.header_state)
                     limit = len - p
-                    limit = min(limit, HTTP_MAX_HEADER_SIZE)
+                    limit = min(limit, maxheader)
                     ptr = pointer(bytes, p)
                     @debug(PARSING_DEBUG, @__LINE__, Base.escape_string(string('\'', Char(bytes[p]), '\'')))
                     p_cr = ccall(:memchr, Ptr{Void}, (Ptr{Void}, Cint, Csize_t), ptr, CR, limit)
@@ -839,6 +848,8 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                         if div(ULLONG_MAX - 10, 10) < t
                             parser.header_state = h
                             @err(HPE_INVALID_CONTENT_LENGTH)
+                        elseif t > maxbody
+                            @err(HPE_BODY_OVERFLOW)
                         end
                         parser.content_length = t
                      end
@@ -1085,7 +1096,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
         elseif p_state == s_body_identity
             @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
             to_read = UInt64(min(parser.content_length, len - p + 1))
-
+            to_read > maxbody && @err(HPE_BODY_OVERFLOW)
             assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
 
             #= The difference between advancing content_length and p is because
@@ -1257,6 +1268,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
     @debug(PARSING_DEBUG, @__LINE__, len)
     @debug(PARSING_DEBUG, @__LINE__, p)
     header_value_mark > 0 && onheadervalue(parser, bytes, header_value_mark, min(len, p))
+    url_mark > 0 && (min(len, p) - url_mark > maxuri) && @err(HPE_URI_OVERFLOW)
     url_mark > 0 && onurl(r, bytes, url_mark, min(len, p))
     @debug(PARSING_DEBUG, @__LINE__, "this onbody 3")
     body_mark > 0 && onbody(r, bytes, body_mark, min(len, p - 1))

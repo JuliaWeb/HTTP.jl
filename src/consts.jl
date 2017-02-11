@@ -189,6 +189,8 @@ Base.convert(::Type{Method}, s::String) = MethodMap[s]
     HPE_INVALID_INTERNAL_STATE,
     HPE_STRICT,
     HPE_PAUSED,
+    HPE_URI_OVERFLOW,
+    HPE_BODY_OVERFLOW,
     HPE_UNKNOWN,
 )
 
@@ -225,6 +227,8 @@ const ParsingErrorCodeMap = Dict(
     HPE_INVALID_INTERNAL_STATE => "encountered unexpected internal state",
     HPE_STRICT => "strict mode assertion failed",
     HPE_PAUSED => "parser is paused",
+    HPE_URI_OVERFLOW => "uri exceeded configured maximum uri size",
+    HPE_BODY_OVERFLOW => "body exceeded configured maximum body size",
     HPE_UNKNOWN => "an unknown error occurred",
 )
 
