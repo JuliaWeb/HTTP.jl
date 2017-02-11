@@ -1,3 +1,5 @@
+# based on the src/net/http/cookie.go implementation
+
 module Cookies
 
 export Cookie

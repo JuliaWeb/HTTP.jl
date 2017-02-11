@@ -1,5 +1,8 @@
 The HTTP.jl package is licensed under the MIT "Expat" License:
 
+> src/parser.jl based on src/http/ngx_http_parse.c from NGINX copyright Igor Sysoev
+> src/cookies.jl based on src/net/http/cookie.go Copyright 2009 The Go Authors
+
 > Copyright (c) 2016: quinnj.
 >
 > Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -19,4 +22,4 @@ The HTTP.jl package is licensed under the MIT "Expat" License:
 > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
-> 
+>
