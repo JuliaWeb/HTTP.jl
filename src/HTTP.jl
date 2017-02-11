@@ -3,7 +3,7 @@ module HTTP
 
 export Request, Response, FIFOBuffer
 
-using MbedTLS
+using MbedTLS, Compat
 
 const TLS = MbedTLS
 
