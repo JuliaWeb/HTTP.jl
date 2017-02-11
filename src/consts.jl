@@ -150,7 +150,7 @@ const MethodMap = Dict(
     "LINK" => LINK,
     "UNLINK" => UNLINK,
 )
-Base.convert(::Type{Method}, s::String) = MethodMap[s]
+Base.convert(::Type{HTTP.Method}, s::String) = MethodMap[s]
 
 # parsing codes
 @enum(ParsingErrorCode,
