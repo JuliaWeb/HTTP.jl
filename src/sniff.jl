@@ -44,7 +44,7 @@ function sniff(data::Vector{UInt8})
     for sig in SNIFF_SIGNATURES
         ismatch(sig, data, firstnonws) && return contenttype(sig)
     end
-	return "application/octet-stream" # fallback
+    return "application/octet-stream" # fallback
 end
 
 immutable Exact
@@ -73,7 +73,7 @@ contenttype(m::Masked) = m.contenttype
 
 function ismatch(m::Masked, data::Vector{UInt8}, firstnonws)
     # pattern matching algorithm section 6
-	# https://mimesniff.spec.whatwg.org/#pattern-matching-algorithm
+    # https://mimesniff.spec.whatwg.org/#pattern-matching-algorithm
     sk = (m.skipws ? firstnonws : 1) - 1
     length(m.pat) != length(m.mask) && return false
     length(data) < length(m.mask) && return false
@@ -118,7 +118,7 @@ bigend(b) = UInt32(b[4]) | UInt32(b[3])<<8 | UInt32(b[2])<<16 | UInt32(b[1])<<24
 
 function ismatch(::Type{MP4Sig}, data::Vector{UInt8}, firstnonws)
     # https://mimesniff.spec.whatwg.org/#signature-for-mp4
-	# c.f. section 6.2.1
+    # c.f. section 6.2.1
     length(data) < 12 && return false
     boxsize = Int(bigend(data))
     (boxsize % 4 != 0 || length(data) < boxsize) && return false
@@ -151,69 +151,69 @@ ismatch(::Type{JSONSig}, data::Vector{UInt8}, firstnonws) = isjson(data)[1]
 
 # Data matching the table in section 6.
 const SNIFF_SIGNATURES = [
-	HTMLSig("<!DOCTYPE HTML"),
-	HTMLSig("<HTML"),
-	HTMLSig("<HEAD"),
-	HTMLSig("<SCRIPT"),
-	HTMLSig("<IFRAME"),
-	HTMLSig("<H1"),
-	HTMLSig("<DIV"),
-	HTMLSig("<FONT"),
-	HTMLSig("<TABLE"),
-	HTMLSig("<A"),
-	HTMLSig("<STYLE"),
-	HTMLSig("<TITLE"),
-	HTMLSig("<B"),
-	HTMLSig("<BODY"),
-	HTMLSig("<BR"),
-	HTMLSig("<P"),
-	HTMLSig("<!--"),
-	Masked([0xff,0xff,0xff,0xff,0xff], Vector{UInt8}("<?xml"), true, "text/xml; charset=utf-8"),
-	Exact(Vector{UInt8}("%PDF-"), "application/pdf"),
-	Exact(Vector{UInt8}("%!PS-Adobe-"), "application/postscript"),
+    HTMLSig("<!DOCTYPE HTML"),
+    HTMLSig("<HTML"),
+    HTMLSig("<HEAD"),
+    HTMLSig("<SCRIPT"),
+    HTMLSig("<IFRAME"),
+    HTMLSig("<H1"),
+    HTMLSig("<DIV"),
+    HTMLSig("<FONT"),
+    HTMLSig("<TABLE"),
+    HTMLSig("<A"),
+    HTMLSig("<STYLE"),
+    HTMLSig("<TITLE"),
+    HTMLSig("<B"),
+    HTMLSig("<BODY"),
+    HTMLSig("<BR"),
+    HTMLSig("<P"),
+    HTMLSig("<!--"),
+    Masked([0xff,0xff,0xff,0xff,0xff], Vector{UInt8}("<?xml"), true, "text/xml; charset=utf-8"),
+    Exact(Vector{UInt8}("%PDF-"), "application/pdf"),
+    Exact(Vector{UInt8}("%!PS-Adobe-"), "application/postscript"),
 
-	# UTF BOMs.
-	Masked([0xFF,0xFF,0x00,0x00], [0xFE,0xFF,0x00,0x00], "text/plain; charset=utf-16be"),
-	Masked([0xFF,0xFF,0x00,0x00], [0xFF,0xFE,0x00,0x00], "text/plain; charset=utf-16le"),
-	Masked([0xFF,0xFF,0xFF,0x00], [0xEF,0xBB,0xBF,0x00], "text/plain; charset=utf-8"),
+    # UTF BOMs.
+    Masked([0xFF,0xFF,0x00,0x00], [0xFE,0xFF,0x00,0x00], "text/plain; charset=utf-16be"),
+    Masked([0xFF,0xFF,0x00,0x00], [0xFF,0xFE,0x00,0x00], "text/plain; charset=utf-16le"),
+    Masked([0xFF,0xFF,0xFF,0x00], [0xEF,0xBB,0xBF,0x00], "text/plain; charset=utf-8"),
 
-	Exact(Vector{UInt8}("GIF87a"), "image/gif"),
-	Exact(Vector{UInt8}("GIF89a"), "image/gif"),
-	Exact([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A], "image/png"),
-	Exact([0xFF,0xD8,0xFF], "image/jpeg"),
-	Exact(Vector{UInt8}("BM"), "image/bmp"),
-	Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF],
-		   UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'W','E','B','P','V','P'],
-		   "image/webp"),
-	Exact([0x00,0x00,0x01,0x00], "image/vnd.microsoft.icon"),
-	Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
-		   UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'W','A','V','E'],
-		   "audio/wave"),
-	Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
-		   UInt8['F','O','R','M',0x00,0x00,0x00,0x00,'A','I','F','F'],
-		   "audio/aiff"),
-	Masked([0xFF,0xFF,0xFF,0xFF],
-		   Vector{UInt8}(".snd"),
-		   "audio/basic"),
-	Masked(UInt8['O','g','g','S',0x00],
-		   UInt8[0x4F,0x67,0x67,0x53,0x00],
-		   "application/ogg"),
-	Masked([0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF],
-		   UInt8['M','T','h','d',0x00,0x00,0x00,0x06],
-		   "audio/midi"),
-	Masked([0xFF,0xFF,0xFF],
-		   Vector{UInt8}("ID3"),
-		   "audio/mpeg"),
-	Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
-		   UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'A','V','I',' '],
-		"video/avi"),
-	Exact([0x1A,0x45,0xDF,0xA3], "video/webm"),
-	Exact([0x52,0x61,0x72,0x20,0x1A,0x07,0x00], "application/x-rar-compressed"),
-	Exact([0x50,0x4B,0x03,0x04], "application/zip"),
-	Exact([0x1F,0x8B,0x08], "application/x-gzip"),
-	MP4Sig,
+    Exact(Vector{UInt8}("GIF87a"), "image/gif"),
+    Exact(Vector{UInt8}("GIF89a"), "image/gif"),
+    Exact([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A], "image/png"),
+    Exact([0xFF,0xD8,0xFF], "image/jpeg"),
+    Exact(Vector{UInt8}("BM"), "image/bmp"),
+    Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF],
+           UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'W','E','B','P','V','P'],
+           "image/webp"),
+    Exact([0x00,0x00,0x01,0x00], "image/vnd.microsoft.icon"),
+    Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
+           UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'W','A','V','E'],
+           "audio/wave"),
+    Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
+           UInt8['F','O','R','M',0x00,0x00,0x00,0x00,'A','I','F','F'],
+           "audio/aiff"),
+    Masked([0xFF,0xFF,0xFF,0xFF],
+           Vector{UInt8}(".snd"),
+           "audio/basic"),
+    Masked(UInt8['O','g','g','S',0x00],
+           UInt8[0x4F,0x67,0x67,0x53,0x00],
+           "application/ogg"),
+    Masked([0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF],
+           UInt8['M','T','h','d',0x00,0x00,0x00,0x06],
+           "audio/midi"),
+    Masked([0xFF,0xFF,0xFF],
+           Vector{UInt8}("ID3"),
+           "audio/mpeg"),
+    Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
+           UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'A','V','I',' '],
+        "video/avi"),
+    Exact([0x1A,0x45,0xDF,0xA3], "video/webm"),
+    Exact([0x52,0x61,0x72,0x20,0x1A,0x07,0x00], "application/x-rar-compressed"),
+    Exact([0x50,0x4B,0x03,0x04], "application/zip"),
+    Exact([0x1F,0x8B,0x08], "application/x-gzip"),
+    MP4Sig,
     JSONSig,
-	TextSig, # should be last
+    TextSig, # should be last
 ]
 
 function ignorewhitespace(bytes, i, maxlen)

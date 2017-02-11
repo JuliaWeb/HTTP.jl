@@ -27,21 +27,21 @@ HTTP response or the Cookie header of an HTTP request. Supported fields
 See http:#tools.ietf.org/html/rfc6265 for details.
 """
 type Cookie
-	name::String
-	value::String
+    name::String
+    value::String
 
-	path::String      # optional
-	domain::String    # optional
-	expires::DateTime # optional
+    path::String      # optional
+    domain::String    # optional
+    expires::DateTime # optional
 
-	# MaxAge=0 means no 'Max-Age' attribute specified.
-	# MaxAge<0 means delete cookie now, equivalently 'Max-Age: 0'
-	# MaxAge>0 means Max-Age attribute present and given in seconds
-	maxage::Int
-	secure::Bool
-	httponly::Bool
+    # MaxAge=0 means no 'Max-Age' attribute specified.
+    # MaxAge<0 means delete cookie now, equivalently 'Max-Age: 0'
+    # MaxAge>0 means Max-Age attribute present and given in seconds
+    maxage::Int
+    secure::Bool
+    httponly::Bool
     hostonly::Bool
-	unparsed::Vector{String} # Raw text of unparsed attribute-value pairs
+    unparsed::Vector{String} # Raw text of unparsed attribute-value pairs
 end
 
 function Cookie(cookie::Cookie; kwargs...)
@@ -175,18 +175,18 @@ end
 # request to host/path. It is the caller's responsibility to check if the
 # cookie is expired.
 function shouldsend(cookie::Cookie, https::Bool, host, path)
-	return domainmatch(cookie, host) && pathmatch(cookie, path) && (https || !cookie.secure)
+    return domainmatch(cookie, host) && pathmatch(cookie, path) && (https || !cookie.secure)
 end
 
 # domainMatch implements "domain-match" of RFC 6265 section 5.1.3.
 function domainmatch(cookie::Cookie, host)
-	cookie.domain == host && return true
-	return !cookie.hostonly && hasdotsuffix(host, cookie.domain)
+    cookie.domain == host && return true
+    return !cookie.hostonly && hasdotsuffix(host, cookie.domain)
 end
 
 # hasdotsuffix reports whether s ends in "."+suffix.
 function hasdotsuffix(s, suffix)
-	return length(s) > length(suffix) && s[length(s)-length(suffix)] == '.' && s[length(s)-length(suffix)+1:end] == suffix
+    return length(s) > length(suffix) && s[length(s)-length(suffix)] == '.' && s[length(s)-length(suffix)+1:end] == suffix
 end
 
 # pathMatch implements "path-match" according to RFC 6265 section 5.1.4.
@@ -198,8 +198,8 @@ function pathmatch(cookie::Cookie, requestpath)
         elseif length(requestpath) >= length(cookie.path) + 1 && requestpath[length(cookie.path)+1] == '/'
             return true # The "/any" matches "/any/path" case.
         end
-	end
-	return false
+    end
+    return false
 end
 
 function isIP(host)
@@ -213,63 +213,63 @@ end
 
 # domainAndType determines the cookie's domain and hostOnly attribute.
 function domainandtype(host, domain)
-	if domain == ""
-		# No domain attribute in the SetCookie header indicates a
-		# host cookie.
-		return host, true
-	end
+    if domain == ""
+        # No domain attribute in the SetCookie header indicates a
+        # host cookie.
+        return host, true
+    end
 
-	if isIP(host)
-		# According to RFC 6265 domain-matching includes not being
-		# an IP address.
-		# TODO: This might be relaxed as in common browsers.
-		return "", false
-	end
+    if isIP(host)
+        # According to RFC 6265 domain-matching includes not being
+        # an IP address.
+        # TODO: This might be relaxed as in common browsers.
+        return "", false
+    end
 
-	# From here on: If the cookie is valid, it is a domain cookie (with
-	# the one exception of a public suffix below).
-	# See RFC 6265 section 5.2.3.
-	if domain[1] == '.'
-		domain = domain[2:end]
-	end
+    # From here on: If the cookie is valid, it is a domain cookie (with
+    # the one exception of a public suffix below).
+    # See RFC 6265 section 5.2.3.
+    if domain[1] == '.'
+        domain = domain[2:end]
+    end
 
-	if length(domain) == 0 || domain[1] == '.'
-		# Received either "Domain=." or "Domain=..some.thing",
-		# both are illegal.
-		return "", false
-	end
-	domain = lowercase(domain)
+    if length(domain) == 0 || domain[1] == '.'
+        # Received either "Domain=." or "Domain=..some.thing",
+        # both are illegal.
+        return "", false
+    end
+    domain = lowercase(domain)
 
-	if domain[end] == '.'
-		# We received stuff like "Domain=www.example.com.".
-		# Browsers do handle such stuff (actually differently) but
-		# RFC 6265 seems to be clear here (e.g. section 4.1.2.3) in
-		# requiring a reject.  4.1.2.3 is not normative, but
-		# "Domain Matching" (5.1.3) and "Canonicalized Host Names"
-		# (5.1.2) are.
-		return "", false
-	end
+    if domain[end] == '.'
+        # We received stuff like "Domain=www.example.com.".
+        # Browsers do handle such stuff (actually differently) but
+        # RFC 6265 seems to be clear here (e.g. section 4.1.2.3) in
+        # requiring a reject.  4.1.2.3 is not normative, but
+        # "Domain Matching" (5.1.3) and "Canonicalized Host Names"
+        # (5.1.2) are.
+        return "", false
+    end
 
     #TODO:
-	# See RFC 6265 section 5.3 #5.
-	# if j.psList != nil
-	# 	if ps := j.psList.PublicSuffix(domain); ps != "" && !hasDotSuffix(domain, ps)
-	# 		if host == domain
-	# 			# This is the one exception in which a cookie
-	# 			# with a domain attribute is a host cookie.
-	# 			return host, true, nil
-	# 		end
-	# 		return "", false
-	# 	end
-	# end
+    # See RFC 6265 section 5.3 #5.
+    # if j.psList != nil
+    #     if ps := j.psList.PublicSuffix(domain); ps != "" && !hasDotSuffix(domain, ps)
+    #         if host == domain
+    #             # This is the one exception in which a cookie
+    #             # with a domain attribute is a host cookie.
+    #             return host, true, nil
+    #         end
+    #         return "", false
+    #     end
+    # end
 
-	# The domain must domain-match host: www.mycompany.com cannot
-	# set cookies for .ourcompetitors.com.
-	if host != domain && !hasdotsuffix(host, domain)
-		return "", false
-	end
+    # The domain must domain-match host: www.mycompany.com cannot
+    # set cookies for .ourcompetitors.com.
+    if host != domain && !hasdotsuffix(host, domain)
+        return "", false
+    end
 
-	return domain, false
+    return domain, false
 end
 
 # readCookies parses all "Cookie" values from the header h and
@@ -302,15 +302,15 @@ end
 
 # validCookieExpires returns whether v is a valid cookie expires-value.
 function validCookieExpires(dt)
-	# IETF RFC 6265 Section 5.1.1.5, the year must not be less than 1601
-	return Dates.year(dt) >= 1601
+    # IETF RFC 6265 Section 5.1.1.5, the year must not be less than 1601
+    return Dates.year(dt) >= 1601
 end
 
 # validCookieDomain returns whether v is a valid cookie domain-value.
 function validCookieDomain(v::String)
-	isCookieDomainName(v) && return true
-	isIP(v) && !contains(v, ":") && return true
-	return false
+    isCookieDomainName(v) && return true
+    isIP(v) && !contains(v, ":") && return true
+    return false
 end
 
 # isCookieDomainName returns whether s is a valid domain name or a valid
