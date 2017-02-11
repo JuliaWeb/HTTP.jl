@@ -9,17 +9,24 @@
 Note that the HTTP methods of POST, DELETE, PUT, etc. all follow the same format as `HTTP.get`, documented below.
 ```@docs
 HTTP.get
-HTTP.send!
+HTTP.request
 HTTP.Client
 HTTP.Connection
 ```
 
+## Server
+```@docs
+HTTP.serve
+HTTP.Server
+```
+
 ## HTTP Types
 ```@docs
+HTTP.URI
 HTTP.Request
+HTTP.RequestOptions
 HTTP.Response
 HTTP.Cookie
-HTTP.URI
 HTTP.FIFOBuffer
 ```
 
@@ -28,8 +35,8 @@ HTTP.FIFOBuffer
 HTTP.parse
 HTTP.escape
 HTTP.unescape
-HTTP.userinfo
 HTTP.splitpath
 HTTP.isvalid
 HTTP.sniff
+HTTP.escapeHTML
 ```
