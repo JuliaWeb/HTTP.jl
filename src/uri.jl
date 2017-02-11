@@ -4,7 +4,7 @@ immutable Offset
     len::UInt16
 end
 Offset() = Offset(0, 0)
-Base.getindex(A::Vector{UInt8}, o::Offset) = String(A[o.off:(o.off + o.len - 1)])
+Base.getindex(A::Vector{UInt8}, o::Offset) = A[o.off:(o.off + o.len - 1)]
 Base.isempty(o::Offset) = o.off == 0x0000 && o.len == 0x0000
 ==(a::Offset, b::Offset) = a.off == b.off && a.len == b.len
 const EMPTYOFFSET = Offset()
@@ -86,17 +86,17 @@ Base.parse(::Type{URI}, str::String; isconnect::Bool=false) = http_parser_parse_
 # accessors
 for uf in instances(HTTP.http_parser_url_fields)
     uf == UF_MAX && break
-        nm = lowercase(string(uf)[4:end])
+    nm = lowercase(string(uf)[4:end])
     has = Symbol(string("has", nm))
     @eval $has(uri::URI) = uri.offsets[Int($uf)].len > 0
     uf == UF_PORT && continue
-    @eval $(Symbol(nm))(uri::URI) = uri.data[uri.offsets[Int($uf)]]
+    @eval $(Symbol(nm))(uri::URI) = String(uri.data[uri.offsets[Int($uf)]])
 end
 
 # special def for port
 function port(uri::URI)
     if hasport(uri)
-        return uri.data[uri.offsets[Int(UF_PORT)]]
+        return String(uri.data[uri.offsets[Int(UF_PORT)]])
     else
         sch = scheme(uri)
         return sch == "http" ? "80" : sch == "https" ? "443" : ""
