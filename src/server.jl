@@ -29,9 +29,9 @@ type ServerOptions
     tlsconfig::TLS.SSLConfig
     readtimeout::Float64
     ratelimit::Rational{Int}
-    maxuri::Int
-    maxheader::Int
-    maxbody::Int
+    maxuri::Int64
+    maxheader::Int64
+    maxbody::Int64
     support100continue::Bool
 end
 
