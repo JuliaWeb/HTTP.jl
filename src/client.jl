@@ -78,9 +78,9 @@ are read, freeing up additional space to write.
 """
 function request end
 
-request(uri::String; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, GET, URI(uri); verbose=verbose, args...))
+request(uri::String; verbose::Bool=false, query="", args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, GET, URI(uri; query=query); verbose=verbose, args...))
 request(uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, GET, uri; verbose=verbose, args...))
-request(method, uri::String; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(Method, method), URI(uri); verbose=verbose, args...))
+request(method, uri::String; verbose::Bool=false, query="", args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(Method, method), URI(uri; query=query); verbose=verbose, args...))
 request(method, uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(Method, method), uri; verbose=verbose, args...))
 function request(client::Client, method, uri::URI;
                     headers::Headers=Headers(),
@@ -373,9 +373,9 @@ for f in [:get, :post, :put, :delete, :head,
         resp = t.result # get our response by getting the result of our asynchronous task
         ```
         """ function $(f) end
-        ($f)(uri::AbstractString; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, $meth, URI(uri; isconnect=$(f_str == "CONNECT")); verbose=verbose, args...))
+        ($f)(uri::AbstractString; verbose::Bool=false, query="", args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, $meth, URI(uri; query=query, isconnect=$(f_str == "CONNECT")); verbose=verbose, args...))
         ($f)(uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, $meth, uri; verbose=verbose, args...))
-        ($f)(client::Client, uri::AbstractString; args...) = request(client, $meth, URI(uri; isconnect=$(f_str == "CONNECT")); args...)
+        ($f)(client::Client, uri::AbstractString; query="", args...) = request(client, $meth, URI(uri; query=query, isconnect=$(f_str == "CONNECT")); args...)
         ($f)(client::Client, uri::URI; args...) = request(client, $meth, uri; args...)
     end
 end

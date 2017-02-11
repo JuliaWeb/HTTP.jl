@@ -20,14 +20,34 @@ function URI(;hostname::String="", path::String="",
             scheme::String="", userinfo::String="",
             port::Union{Integer,String}="", query="",
             fragment::String="", isconnect::Bool=false)
-    # hostname might be full url
-    hostname != "" && scheme == "" && (scheme = "http")
+    hostname != "" && scheme == "" && !isconnect && (scheme = "http")
     io = IOBuffer()
-    print(io, scheme, userinfo, hostname, string(port), path, isa(query, Dict) ? escape(query) : query, fragment)
+    print(io, scheme, userinfo, hostname, string(port), path, escape(query), fragment)
     return Base.parse(URI, String(take!(io)); isconnect=isconnect)
 end
 
-URI(str::String; isconnect::Bool=false) = Base.parse(URI, str; isconnect=isconnect)
+# we assume `str` is at least hostname & port
+# if all others keywords are empty, assume CONNECT
+# can include path, userinfo, query, & fragment
+function URI(str::String; userinfo::String="", path::String="",
+                          query="", fragment::String="",
+                          isconnect::Bool=false)
+    if str != ""
+        if startswith(str, "http") || startswith(str, "https")
+            str = string(str, path, ifelse(query == "", "", "?" * escape(query)),
+                         ifelse(fragment == "", "", "#$fragment"))
+        else
+            if path == "" && userinfo == "" && query == "" && fragment == "" && ':' in str
+                isconnect = true
+            else
+                str = string("http://", userinfo == "" ? "" : "$userinfo@",
+                             str, path, ifelse(query == "", "", "?" * escape(query)),
+                             ifelse(fragment == "", "", "#$fragment"))
+            end
+        end
+    end
+    return Base.parse(URI, str; isconnect=isconnect)
+end
 Base.parse(::Type{URI}, str::String; isconnect::Bool=false) = http_parser_parse_url(Vector{UInt8}(str), 1, sizeof(str), isconnect)
 
 ==(a::URI,b::URI) = scheme(a)   == scheme(b)    &&
@@ -100,15 +120,20 @@ function Base.isvalid(uri::URI)
 end
 
 lower(c::UInt8) = c | 0x20
-ishostchar(c::UInt8) = (UInt8('a') <= lower(c) <= UInt8('z')) || UInt8('0') <= c <= UInt8('9') || @anyeq(c, UInt8('.'), UInt8('-'), UInt8('_'), UInt8('~'))
-
+@inline shouldencode(c) = c < 0x1f || c > 0x7f || @anyeq(c,
+                            UInt8(';'), UInt8('/'), UInt8('?'), UInt8(':'),
+                            UInt8('@'), UInt8('='), UInt8('&'), UInt8(' '),
+                            UInt8('"'), UInt8('<'), UInt8('>'), UInt8('#'),
+                            UInt8('%'), UInt8('{'), UInt8('}'), UInt8('|'),
+                            UInt8('\\'), UInt8('^'), UInt8('~'), UInt8('['),
+                            UInt8(']'), UInt8('`'))
 hexstring(x) = string('%', uppercase(hex(x,2)))
 
 "percent-encode a uri/url string"
-function escape(str)
+function escape(str, f=shouldencode)
     out = IOBuffer()
     for c in Vector{UInt8}(str)
-        write(out, !ishostchar(c) ? hexstring(Int(c)) : c)
+        write(out, f(c) ? hexstring(Int(c)) : c)
     end
     return String(take!(out))
 end
@@ -122,6 +147,7 @@ function escape(io, k, A::Vector{String})
     end
 end
 
+escape(p::Pair) = escape(Dict(p))
 function escape(d::Dict)
     io = IOBuffer()
     len = length(d)

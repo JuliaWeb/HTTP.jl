@@ -28,6 +28,8 @@ for sch in ("http", "https")
 
     @test HTTP.status(HTTP.get("$sch://httpbin.org/encoding/utf8")) == 200
 
+    @test HTTP.headers(HTTP.get("$sch://httpbin.org/response-headers"; query=Dict("hey"=>"dude")))["hey"] == "dude"
+
     r = HTTP.get("$sch://httpbin.org/cookies")
     body = string(r)
     @test (body == "{\n  \"cookies\": {}\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n")
