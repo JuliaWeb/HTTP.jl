@@ -147,7 +147,7 @@ end
 const start_state = s_start_req_or_res
 const DEFAULT_MAX_HEADER = 80 * 1024
 const DEFAULT_MAX_URI = 8000
-const DEFAULT_MAX_BODY = 2^32 # 4Gib
+const DEFAULT_MAX_BODY = Int64(2)^32 # 4Gib
 
 function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(bytes);
         lenient::Bool=true, host::String="", method::HTTP.Method=GET,
