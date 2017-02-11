@@ -80,8 +80,8 @@ function request end
 
 request(uri::String; verbose::Bool=false, query="", args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, GET, URI(uri; query=query); verbose=verbose, args...))
 request(uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, GET, uri; verbose=verbose, args...))
-request(method, uri::String; verbose::Bool=false, query="", args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(Method, method), URI(uri; query=query); verbose=verbose, args...))
-request(method, uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(Method, method), uri; verbose=verbose, args...))
+request(method, uri::String; verbose::Bool=false, query="", args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(HTTP.Method, method), URI(uri; query=query); verbose=verbose, args...))
+request(method, uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(HTTP.Method, method), uri; verbose=verbose, args...))
 function request(client::Client, method, uri::URI;
                     headers::Headers=Headers(),
                     body=EMPTYBODY,
@@ -291,7 +291,7 @@ end
 for f in [:get, :post, :put, :delete, :head,
           :trace, :options, :patch, :connect]
     f_str = uppercase(string(f))
-    meth = convert(Method, f_str)
+    meth = convert(HTTP.Method, f_str)
     @eval begin
         @doc """
             $($f)(uri) -> Response
