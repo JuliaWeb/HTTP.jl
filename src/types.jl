@@ -114,7 +114,7 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, body::FIFOBuffe
                     io::IO=STDOUT)
     if m != CONNECT
         headers = defaultheaders(Request)
-        headers["Host"] = host(uri)
+        headers["Host"] = string(hostname(uri), hasport(uri) ? string(':', port(uri)) : "")
     else
         headers = Headers()
     end
