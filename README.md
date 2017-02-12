@@ -10,11 +10,9 @@
 
 ## Installation
 
-<!-- The package is registered in `METADATA.jl` and so can be installed with `Pkg.add`. -->
-This package is not yet registered, so it must be installed via `Pkg.clone`.
-
+The package is registered in `METADATA.jl` and so can be installed with `Pkg.add`.
 ```julia
-julia> Pkg.clone("https://github.com/JuliaWeb/HTTP.jl")
+julia> Pkg.add("HTTP")
 ```
 
 <!-- ## Documentation
