@@ -123,7 +123,7 @@ function getconn{S}(::Type{S}, client, host, opts, verbose)
     # connect to remote host
     # check if an open connection to host already exists
     reused = false
-    hostname, port = split(host, ':'; limit=2)
+    hostname, port = splithostport(host)
     local conn::Connection{sockettype(S)}
     if haskey(S, client, hostname)
         @log(verbose, client.logger, "checking if any existing connections to '$hostname' are re-usable")
@@ -148,13 +148,22 @@ function getconn{S}(::Type{S}, client, host, opts, verbose)
     end
     if !reused
         @log(verbose, client.logger, "creating a new connection to '$hostname'")
-        socket = @timeout opts.connecttimeout::Float64 Base.connect(Base.getaddrinfo(hostname), Base.parse(Int, port)) throw(TimeoutException(opts.connecttimeout::Float64))
+        socket = @timeout opts.connecttimeout::Float64 Base.connect(Base.getaddrinfo(hostname), Base.get(port, S == http ? 80 : S == https ? 443 : assert(false))) throw(TimeoutException(opts.connecttimeout::Float64))
         # initialize TLS if necessary
         tcp = initTLS!(S, hostname, opts, socket)
         conn = Connection(tcp)
         setconnection!(S, client, hostname, conn)
     end
     return conn
+end
+
+function splithostport(host)
+    vals = split(host, ':'; limit=2)
+    if length(vals) == 1
+        return vals[1], Nullable{Int}()
+    else
+        return vals[1], Nullable(Base.parse(Int, vals[2]))
+    end
 end
 
 initTLS!(::Type{http}, hostname, opts, socket) = socket
