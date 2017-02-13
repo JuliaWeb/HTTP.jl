@@ -157,7 +157,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
     errno = HPE_OK
-    upgrade = false
+    upgrade = issetcookie = false
     KEY = Ref{String}()
     if len == 0
         if p_state == s_body_identity_eof
