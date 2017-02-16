@@ -31,8 +31,14 @@ include("client.jl")
 include("server.jl")
 
 if VERSION >= v"0.4.0-dev+5512"
-    include("precompile.jl")
-    _precompile_()
+    include("precompile/precompile_Base.jl")
+    _precompile_1()
+    include("precompile/precompile_Core.jl")
+    _precompile_2()
+    include("precompile/precompile_MbedTLS.jl")
+    _precompile_3()
+    include("precompile/precompile_HTTP.jl")
+    _precompile_4()
 end
 
 # package-wide inits
@@ -41,8 +47,8 @@ function __init__()
     global const DEFAULT_PARSER = Parser()
     global const DEFAULT_CLIENT = Client()
     global const MAINTASK = current_task()
-    HTTP.parse(HTTP.Response, "HTTP/1.1 200 OK\r\n\r\n")
-    HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n\r\n")
+    # HTTP.parse(HTTP.Response, "HTTP/1.1 200 OK\r\n\r\n")
+    # HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n\r\n")
 end
 
 end # module
