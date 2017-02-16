@@ -122,7 +122,7 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, body::FIFOBuffe
         headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
         @log(verbose, io, "adding basic authentication header")
     end
-    if shouldchunk(body, get(options, :chunksize, typemax(Int)))
+    if length(body) > 0 && shouldchunk(body, get(options, :chunksize, typemax(Int)))
         # chunked-transfer
         @log(verbose, io, "using chunked transfer encoding")
         headers["Transfer-Encoding"] = "chunked" * (get(options, :gzip, false) ? "; gzip" : "")
