@@ -9,9 +9,6 @@ using HTTP, Base.Test
   # proxy stuff, multi-part files, digest auth
 
 @testset "HTTP" begin
-    include("../src/precompile.jl") # to make codecov happy
-    _precompile_()
-
     include("utils.jl");
     include("fifobuffer.jl");
     include("sniff.jl");
