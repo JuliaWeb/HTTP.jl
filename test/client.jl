@@ -26,6 +26,9 @@ for sch in ("http", "https")
     @test HTTP.status(HTTP.delete("$sch://httpbin.org/delete")) == 200
     @test HTTP.status(HTTP.patch("$sch://httpbin.org/patch")) == 200
 
+    # Testing within tasks, see https://github.com/JuliaWeb/HTTP.jl/issues/18
+    @test HTTP.status(wait(@schedule HTTP.get("$sch://httpbin.org/ip"))) == 200
+
     @test HTTP.status(HTTP.get("$sch://httpbin.org/encoding/utf8")) == 200
 
     @test HTTP.headers(HTTP.get("$sch://httpbin.org/response-headers"; query=Dict("hey"=>"dude")))["hey"] == "dude"
