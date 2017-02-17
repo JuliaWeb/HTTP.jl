@@ -242,7 +242,7 @@ function process!(client, conn, opts, host, method, response, starttime, stream,
     parser = client.parser
     tsk = @async begin
         while true
-            # if no data after 30 seconds, break out
+            # if no data after `readtimeout` seconds, break out
             @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
             buffer = readavailable(conn.tcp)
             @debug(DEBUG, @__LINE__, length(buffer))
@@ -262,14 +262,14 @@ function process!(client, conn, opts, host, method, response, starttime, stream,
                 throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])"))
             elseif messagecomplete
                 http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
-                break
+                return true
             elseif stream && headerscomplete
                 # async read the response body, returning the current response immediately
                 @log(verbose, client.logger, "processing the rest of response asynchronously")
                 response.body.task = @async process!(client, conn, opts, host, method, response, starttime, false, false)
-                break
+                return true
             end
-            !isopen(conn.tcp) && (dead!(conn); break)
+            !isopen(conn.tcp) && (dead!(conn); return false)
         end
         !stream && idle!(conn)
     end
@@ -278,7 +278,7 @@ function process!(client, conn, opts, host, method, response, starttime, stream,
         sleep(0.001)
     end
     istaskdone(tsk) || throw(TimeoutException(timeout))
-    return true
+    return tsk.result::Bool
 end
 
 immutable RedirectException <: Exception
