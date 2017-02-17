@@ -388,3 +388,22 @@ resp = wait(t) # get our response by getting the result of our asynchronous task
         ($f)(client::Client, uri::URI; args...) = request(client, $meth, uri; args...)
     end
 end
+
+function download(uri::AbstractString, file; threshold::Int=50000000, verbose::Bool=false, query="", args...)
+    re = HTTP.get(uri; verbose=verbose, query=query, stream=true, args...)
+    body = HTTP.body(res)
+    file = get(HTTP.headers(res), "Content-Encoding", "") == "gzip" ? string(file, ".gz") : file
+    nbytes = 0
+    open(file, "w") do f
+        while !eof(body)
+            # should we replace \N here too?
+            nbytes += write(f, readavailable(body))
+            if nbytes > threshold
+                println("[$(now())]: downloaded $nbytes bytes..."); flush(STDOUT)
+                threshold += 50000000
+            end
+        end
+        length(body) > 0 && write(f, readavailable(body))
+    end
+    return file
+end
