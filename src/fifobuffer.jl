@@ -193,6 +193,68 @@ function Base.write(f::FIFOBuffer, b::UInt8)
     return 1
 end
 
+function Base.write(f::FIFOBuffer, bytes::AbstractVector{UInt8})
+    # buffer full, check if we can grow it
+    len = length(bytes)
+    if f.nb == f.len || f.len < f.l
+        if f.len < f.max
+            append!(f.buffer, zeros(UInt8, min(len, f.max - f.len)))
+            f.len = length(f.buffer)
+        else
+            if current_task() == f.task
+                return 0
+            else # async: block until there's room to write
+                @debug(DEBUG, @__LINE__, "FIFOBuffer write() waiting...")
+                wait(f.cond)
+                f.nb == f.len && return 0
+            end
+        end
+    end
+    if f.f <= f.l
+        # non-wraparound
+        avail = f.len - f.l + 1
+        if len > avail
+            # need to wrap around, and check if there's enough room to write full bytes
+            # write `avail` # of bytes to end of buffer
+            copy!(f.buffer, f.l, bytes, 1, avail)
+            if len - avail < f.f
+                # there's enough room to write the rest of bytes
+                copy!(f.buffer, 1, bytes, avail + 1, len - avail)
+                f.l = len - avail + 1
+            else
+                # not able to write all of bytes
+                copy!(f.buffer, 1, bytes, avail + 1, f.f - 1)
+                f.l = f.f
+                f.nb += avail + f.f - 1
+                notify(f.cond)
+                return avail + f.f - 1
+            end
+        else
+            # there's enough room to write bytes through the end of the buffer
+            copy!(f.buffer, f.l, bytes, 1, len)
+            f.l = mod1(f.l + len, f.max)
+        end
+    else
+        # already in wrap-around state
+        if len > mod1(f.f - f.l, f.max)
+            # not able to write all of bytes
+            nb = f.f - f.l
+            copy!(f.buffer, 1, bytes, 1, nb)
+            f.l = f.f
+            f.nb += nb
+            notify(f.cond)
+            return nb
+        else
+            # there's enough room to write bytes
+            copy!(f.buffer, f.l, bytes, 1, len)
+            f.l  = mod1(f.l + len, f.max)
+        end
+    end
+    f.nb += len
+    notify(f.cond)
+    return len
+end
+
 function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
     # buffer full, check if we can grow it
     len = length(bytes)
@@ -204,6 +266,7 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
             if current_task() == f.task
                 return 0
             else # async: block until there's room to write
+                @debug(DEBUG, @__LINE__, "FIFOBuffer write() waiting...")
                 wait(f.cond)
                 f.nb == f.len && return 0
             end

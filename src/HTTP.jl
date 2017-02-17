@@ -37,8 +37,8 @@ if VERSION >= v"0.4.0-dev+5512"
     _precompile_2()
     include("precompile/precompile_MbedTLS.jl")
     _precompile_3()
-    include("precompile/precompile_HTTP.jl")
-    _precompile_4()
+    # include("precompile/precompile_HTTP.jl")
+    # _precompile_4()
 end
 
 # package-wide inits
