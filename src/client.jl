@@ -390,9 +390,9 @@ resp = wait(t) # get our response by getting the result of our asynchronous task
 end
 
 function download(uri::AbstractString, file; threshold::Int=50000000, verbose::Bool=false, query="", args...)
-    re = HTTP.get(uri; verbose=verbose, query=query, stream=true, args...)
+    res = HTTP.get(uri; verbose=verbose, query=query, stream=true, args...)
     body = HTTP.body(res)
-    file = get(HTTP.headers(res), "Content-Encoding", "") == "gzip" ? string(file, ".gz") : file
+    file = Base.get(HTTP.headers(res), "Content-Encoding", "") == "gzip" ? string(file, ".gz") : file
     nbytes = 0
     open(file, "w") do f
         while !eof(body)
