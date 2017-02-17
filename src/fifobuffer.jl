@@ -216,14 +216,14 @@ function Base.write(f::FIFOBuffer, bytes::AbstractVector{UInt8})
         if len > avail
             # need to wrap around, and check if there's enough room to write full bytes
             # write `avail` # of bytes to end of buffer
-            unsafe_copy!(f.buffer, f.l, bytes, 1, avail)
+            copy!(f.buffer, f.l, bytes, 1, avail)
             if len - avail < f.f
                 # there's enough room to write the rest of bytes
-                unsafe_copy!(f.buffer, 1, bytes, avail + 1, len - avail)
+                copy!(f.buffer, 1, bytes, avail + 1, len - avail)
                 f.l = len - avail + 1
             else
                 # not able to write all of bytes
-                unsafe_copy!(f.buffer, 1, bytes, avail + 1, f.f - 1)
+                copy!(f.buffer, 1, bytes, avail + 1, f.f - 1)
                 f.l = f.f
                 f.nb += avail + f.f - 1
                 notify(f.cond)
@@ -231,7 +231,7 @@ function Base.write(f::FIFOBuffer, bytes::AbstractVector{UInt8})
             end
         else
             # there's enough room to write bytes through the end of the buffer
-            unsafe_copy!(f.buffer, f.l, bytes, 1, len)
+            copy!(f.buffer, f.l, bytes, 1, len)
             f.l = mod1(f.l + len, f.max)
         end
     else
@@ -239,14 +239,14 @@ function Base.write(f::FIFOBuffer, bytes::AbstractVector{UInt8})
         if len > mod1(f.f - f.l, f.max)
             # not able to write all of bytes
             nb = f.f - f.l
-            unsafe_copy!(f.buffer, 1, bytes, 1, nb)
+            copy!(f.buffer, 1, bytes, 1, nb)
             f.l = f.f
             f.nb += nb
             notify(f.cond)
             return nb
         else
             # there's enough room to write bytes
-            unsafe_copy!(f.buffer, f.l, bytes, 1, len)
+            copy!(f.buffer, f.l, bytes, 1, len)
             f.l  = mod1(f.l + len, f.max)
         end
     end
