@@ -193,7 +193,7 @@ function Base.write(f::FIFOBuffer, b::UInt8)
     return 1
 end
 
-function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
+function Base.write(f::FIFOBuffer, bytes::AbstractVector{UInt8})
     # buffer full, check if we can grow it
     len = length(bytes)
     if f.nb == f.len || f.len < f.l
