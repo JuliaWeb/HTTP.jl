@@ -204,6 +204,7 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
             if current_task() == f.task
                 return 0
             else # async: block until there's room to write
+                @debug(DEBUG, @__LINE__, "FIFOBuffer write() waiting...")
                 wait(f.cond)
                 f.nb == f.len && return 0
             end
