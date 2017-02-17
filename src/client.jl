@@ -252,7 +252,7 @@ function process!(client, conn, opts, host, method, response, starttime, stream,
                 @log(verbose, client.logger, "request was sent, but connection closed before receiving response, retrying request")
                 return false
             end
-            starttime[] = time() # reset the timeout while still receiving bytes
+            length(buffer) > 0 && (starttime[] = time()) # reset the timeout while still receiving bytes
             @log(verbose, client.logger, "received bytes from the wire, processing")
             errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
             @debug(DEBUG, @__LINE__, errno)

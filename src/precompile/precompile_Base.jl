@@ -1,6 +1,5 @@
 function _precompile_1()
     ccall(:jl_generating_output, Cint, ()) == 1 || return nothing
-    precompile(Base.safe_mul, (UInt8, UInt8,))
     precompile(Base.Enums.enum_argument_error, (Symbol, UInt8,))
     precompile(Base.string, (Char, String,))
     precompile(Base.copy!, (Array{UInt8, 1}, Int64, Base.SubArray{UInt8, 1, Array{UInt8, 1}, Tuple{Base.UnitRange{Int64}}, true}, Int64, Int64,))
