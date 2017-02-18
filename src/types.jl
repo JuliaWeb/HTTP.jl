@@ -111,7 +111,11 @@ defaultheaders(::Type{Request}) = Headers(
     "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"
 )
 
-function Request(m::HTTP.Method, uri::URI, userheaders::Headers, body::FIFOBuffer;
+hasname(io::IO) = false
+hasname(io::IOStream) = true
+getname(io::IOStream) = replace(io.name[1:end-1], "<file ", "")
+
+function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
                     options::RequestOptions=RequestOptions(),
                     verbose::Bool=false,
                     io::IO=STDOUT)
@@ -124,6 +128,28 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, body::FIFOBuffe
     if !isempty(userinfo(uri)) && !haskey(headers, "Authorization")
         headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
         @log(verbose, io, "adding basic authentication header")
+    end
+    if isa(b, Dict)
+        # form data
+        body = FIFOBuffer()
+        boundary = hex(rand(UInt128))
+        headers["Content-Type"] = "multipart/form-data; boundary=$boundary"
+        len = length(b)
+        for (i, (k, v)) in enumerate(b)
+            write(body, "--" * boundary * "\r\n")
+            write(body, "Content-Disposition: form-data; name=\"$k\";")
+            if isa(v, IO)
+                hasname(v) && write(body, " filename=\"$(getname(v))\";\r\n")
+                write(body, "Content-Type: $(HTTP.sniff(v))\r\n\r\n")
+                write(body, readavailable(v))
+            else
+                write(body, "\r\n\r\n")
+                escape(body, k, v)
+            end
+            write(body, "--" * boundary * "--" * "\r\n")
+        end
+    else
+        body = FIFOBuffer(b)
     end
     if length(body) > 0 && shouldchunk(body, get(options, :chunksize, typemax(Int)))
         # chunked-transfer
