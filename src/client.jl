@@ -240,42 +240,40 @@ end
 
 function process!(client, conn, opts, host, method, response, starttime, stream, verbose)
     parser = client.parser
-    buffer = UInt8[]
     tsk = @async begin
-        while true
-            # if no data after `readtimeout` seconds, break out
-            @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
-            try
+        try
+            while true
+                # if no data after `readtimeout` seconds, break out
+                @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
                 buffer = readavailable(conn.tcp)
-            catch
-                # io error
-                return false
+                @debug(DEBUG, @__LINE__, length(buffer))
+                @debug(DEBUG, @__LINE__, isopen(conn.tcp))
+                if length(buffer) == 0 && !isopen(conn.tcp)
+                    dead!(conn)
+                    @log(verbose, client.logger, "request was sent, but connection closed before receiving response, retrying request")
+                    return false
+                end
+                length(buffer) > 0 && (starttime[] = time()) # reset the timeout while still receiving bytes
+                @log(verbose, client.logger, "received bytes from the wire, processing")
+                errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
+                @debug(DEBUG, @__LINE__, errno)
+                @debug(DEBUG, @__LINE__, headerscomplete)
+                @debug(DEBUG, @__LINE__, messagecomplete)
+                if errno != HPE_OK
+                    throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])"))
+                elseif messagecomplete
+                    http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
+                    return true
+                elseif stream && headerscomplete
+                    # async read the response body, returning the current response immediately
+                    @log(verbose, client.logger, "processing the rest of response asynchronously")
+                    response.body.task = @async process!(client, conn, opts, host, method, response, starttime, false, false)
+                    return true
+                end
+                !isopen(conn.tcp) && (dead!(conn); return false)
             end
-            @debug(DEBUG, @__LINE__, length(buffer))
-            @debug(DEBUG, @__LINE__, isopen(conn.tcp))
-            if length(buffer) == 0 && !isopen(conn.tcp)
-                dead!(conn)
-                @log(verbose, client.logger, "request was sent, but connection closed before receiving response, retrying request")
-                return false
-            end
-            length(buffer) > 0 && (starttime[] = time()) # reset the timeout while still receiving bytes
-            @log(verbose, client.logger, "received bytes from the wire, processing")
-            errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
-            @debug(DEBUG, @__LINE__, errno)
-            @debug(DEBUG, @__LINE__, headerscomplete)
-            @debug(DEBUG, @__LINE__, messagecomplete)
-            if errno != HPE_OK
-                throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])"))
-            elseif messagecomplete
-                http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
-                return true
-            elseif stream && headerscomplete
-                # async read the response body, returning the current response immediately
-                @log(verbose, client.logger, "processing the rest of response asynchronously")
-                response.body.task = @async process!(client, conn, opts, host, method, response, starttime, false, false)
-                return true
-            end
-            !isopen(conn.tcp) && (dead!(conn); return false)
+        catch
+            return false
         end
         !stream && idle!(conn)
     end
