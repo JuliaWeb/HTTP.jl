@@ -240,11 +240,17 @@ end
 
 function process!(client, conn, opts, host, method, response, starttime, stream, verbose)
     parser = client.parser
+    buffer = UInt8[]
     tsk = @async begin
         while true
             # if no data after `readtimeout` seconds, break out
             @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
-            buffer = readavailable(conn.tcp)
+            try
+                buffer = readavailable(conn.tcp)
+            catch
+                # io error
+                return false
+            end
             @debug(DEBUG, @__LINE__, length(buffer))
             @debug(DEBUG, @__LINE__, isopen(conn.tcp))
             if length(buffer) == 0 && !isopen(conn.tcp)
