@@ -116,7 +116,6 @@ function stalebytes!(c::TCPSocket)
     nb_available(c) > 0 && readavailable(c)
     return
 end
-# this is an ugly hack for MbedTLS since nb_available seems to be unreliable sometimes
 stalebytes!(c::TLS.SSLContext) = stalebytes!(c.bio)
 
 function getconn{S}(::Type{S}, client, host, opts, verbose)

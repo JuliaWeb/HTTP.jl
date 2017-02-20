@@ -118,7 +118,7 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, body::FIFOBuffe
     else
         headers = Headers()
     end
-    if !isempty(userinfo(uri)) && !haskey(headers,"Authorization")
+    if !isempty(userinfo(uri)) && !haskey(headers, "Authorization")
         headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
         @log(verbose, io, "adding basic authentication header")
     end
@@ -143,7 +143,7 @@ end
 
 Request{T}(method, uri, h, body::T; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) = Request(convert(HTTP.Method, method),
                                isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
-                               h, FIFOBuffer(body); options=options, io=io, verbose=verbose)
+                               h, body; options=options, io=io, verbose=verbose)
 
 Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
 
@@ -244,7 +244,7 @@ const CRLF = "\r\n"
 # start lines
 function startline(io::IO, r::Request)
     res = resource(uri(r); isconnect=r.method == CONNECT)
-    res = res == "" ? "/" : res
+    res = ifelse(res == "", "/", res)
     write(io, "$(r.method) $res HTTP/$(r.major).$(r.minor)$CRLF")
 end
 
@@ -269,34 +269,17 @@ function headers(io::IO, r::Response)
 end
 
 # body
-hasmessagebody(r::Request) = length(r.body) > 0
-
-# https://tools.ietf.org/html/rfc7230#section-3.3
-function hasmessagebody(r::Response)
-    if 100 <= r.status < 200 || r.status == 204 || r.status == 304
-        return false
-    elseif !Base.isnull(r.request)
-        req = Base.get(r.request)
-        if req.method in ("HEAD", "CONNECT")
-            return false
-        end
-    end
-    return true
-end
-
 shouldchunk(b::FIFOBuffer, chksz) = current_task() == b.task ? length(b) > chksz : true
 
 function body(io::IO, r::Request, opts)
-    hasmessagebody(r) || return
-    sz = length(r.body)
+    length(r.body) > 0 || return
     chksz = get(opts, :chunksize, typemax(Int))
     if shouldchunk(r.body, chksz)
         while !eof(r.body)
             bytes = read(r.body, chksz) # read at most chunksize
             chunk = length(bytes)
             chunk == 0 && continue
-            ch = "$(hex(chunk))$CRLF"
-            write(io, ch)
+            write(io, "$(hex(chunk))$CRLF")
             write(io, bytes)
             write(io, CRLF)
         end
@@ -305,6 +288,19 @@ function body(io::IO, r::Request, opts)
         write(io, r.body)
     end
     return
+end
+
+# https://tools.ietf.org/html/rfc7230#section-3.3
+function hasmessagebody(r::Response)
+    if 100 <= status(r) < 200 || status(r) == 204 || status(r) == 304
+        return false
+    elseif !Base.isnull(request(r))
+        req = Base.get(request(r))
+        if method(req) in ("HEAD", "CONNECT")
+            return false
+        end
+    end
+    return true
 end
 
 function body(io::IO, r::Response, opts)
@@ -330,7 +326,7 @@ function Base.show(io::IO, r::Union{Request,Response})
     elseif length(r.body) > 1000
         println(io, "[$(typeof(r)) body of $(length(r.body)) bytes]")
         println(io, String(r.body)[1:1000])
-        println(io, "...")
+        println(io, "⋮")
     elseif length(r.body) > 0
         println(io, String(r.body))
     end
