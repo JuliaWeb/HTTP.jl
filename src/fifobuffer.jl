@@ -239,7 +239,7 @@ function Base.write(f::FIFOBuffer, bytes::AbstractVector{UInt8})
         if len > mod1(f.f - f.l, f.max)
             # not able to write all of bytes
             nb = f.f - f.l
-            copy!(f.buffer, 1, bytes, 1, nb)
+            copy!(f.buffer, f.l, bytes, 1, nb)
             f.l = f.f
             f.nb += nb
             notify(f.cond)
@@ -301,7 +301,7 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
         if len > mod1(f.f - f.l, f.max)
             # not able to write all of bytes
             nb = f.f - f.l
-            unsafe_copy!(f.buffer, 1, bytes, 1, nb)
+            unsafe_copy!(f.buffer, f.l, bytes, 1, nb)
             f.l = f.f
             f.nb += nb
             notify(f.cond)

@@ -167,6 +167,9 @@
     @test readavailable(f) == [0x01, 0x02, 0x03, 0x04, 0x05]
 
     # ensure we're in a wrap-around state
+    f = HTTP.FIFOBuffer(5)
+    @test write(f, [0x01, 0x02, 0x03]) == 3
+    @test readavailable(f) == [0x01, 0x02, 0x03]
     @test write(f, [0x01, 0x02, 0x03, 0x04]) == 4
     @test f.f > f.l
 
