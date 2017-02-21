@@ -157,7 +157,8 @@ hexstring(x) = string('%', uppercase(hex(x,2)))
 "percent-encode a string, dict, or pair for a uri"
 function escape end
 
-function escape(str, f=shouldencode)
+escape(v::Number) = string(v)
+function escape(str::AbstractString, f=shouldencode)
     out = IOBuffer()
     for c in Vector{UInt8}(str)
         write(out, f(c) ? hexstring(Int(c)) : c)
