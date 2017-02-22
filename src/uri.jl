@@ -158,6 +158,7 @@ hexstring(x) = string('%', uppercase(hex(x,2)))
 function escape end
 
 escape(v::Number) = string(v)
+escape{T}(v::Nullable{T}) = Base.isnull(v) ? "" : string(get(v))
 function escape(str::AbstractString, f=shouldencode)
     out = IOBuffer()
     for c in Vector{UInt8}(str)
