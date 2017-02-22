@@ -40,6 +40,7 @@ Additional keyword arguments can be passed that will get transmitted with each H
 * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
 * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
 * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
+* `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 """
 type Client{I <: IO}
     # connection pools for keep-alive; key is host
@@ -60,7 +61,7 @@ Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connect
                                                      Parser(), logger, options)
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5, true))
+const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5, true, false))
 
 @eval begin
     Client(logger::IO; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
@@ -227,11 +228,16 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
             newuri = URI(response.headers[key])
             u = uri(req)
             newuri = !isempty(hostname(newuri)) ? newuri : URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
-            delete!(req.headers, "Host")
-            delete!(req.headers, "Cookie")
-            redirectreq = Request(req.method, newuri, req.headers, req.body)
+            if opts.forwardheaders::Bool
+                h = headers(req)
+                delete!(h, "Host")
+                delete!(h, "Cookie")
+            else
+                h = Headers()
+            end
+            redirectreq = Request(req.method, newuri, h, req.body)
             @log(verbose, client.logger, "redirecting to $(newuri)")
-            return request(client, redirectreq, opts, conn, history, false, verbose)
+            return request(client, redirectreq, opts; history=history, stream=false, verbose=verbose)
         end
     end
     return response

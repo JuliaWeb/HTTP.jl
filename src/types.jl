@@ -33,6 +33,7 @@ at the `HTTP.Client` level to be applied to every request sent. Options include:
   * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
   * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
   * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
+  * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 """
 type RequestOptions
     chunksize::?(Int)
@@ -42,14 +43,16 @@ type RequestOptions
     tlsconfig::?(TLS.SSLConfig)
     maxredirects::?(Int)
     allowredirects::?(Bool)
-    RequestOptions(ch::?(Int), gzip::?(Bool), ct::?(Float64), rt::?(Float64), tls::?(TLS.SSLConfig), mr::?(Int), ar::?(Bool)) =
-        new(ch, gzip, ct, rt, tls, mr, ar)
+    forwardheaders::?(Bool)
+    RequestOptions(ch::?(Int), gzip::?(Bool), ct::?(Float64), rt::?(Float64), tls::?(TLS.SSLConfig), mr::?(Int), ar::?(Bool), fh::?(Bool)) =
+        new(ch, gzip, ct, rt, tls, mr, ar, fh)
 end
 
 const RequestOptionsFieldTypes = Dict(:chunksize=>Int, :gzip=>Bool,
                                       :connecttimeout=>Float64, :readtimeout=>Float64,
                                       :tlsconfig=>TLS.SSLConfig,
-                                      :maxredirects=>Int, :allowredirects=>Bool)
+                                      :maxredirects=>Int, :allowredirects=>Bool,
+                                      :forwardheaders=>Bool)
 
 function RequestOptions(options::RequestOptions; kwargs...)
     for (k, v) in kwargs
@@ -58,8 +61,8 @@ function RequestOptions(options::RequestOptions; kwargs...)
     return options
 end
 
-RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null, ar=null; kwargs...) =
-    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar); kwargs...)
+RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null, ar=null, fh=null; kwargs...) =
+    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar, fh); kwargs...)
 
 function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)
