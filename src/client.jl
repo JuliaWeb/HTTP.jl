@@ -103,7 +103,7 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
     update!(opts, client.options)
     @log(verbose, client.logger, "using request options: " * join((s=>getfield(opts, s) for s in fieldnames(opts)), ", "))
     # if the provided req body is compressed, avoid any chunked transfer since it ruins the compression scheme
-    if iscompressed(String(req.body)) && length(req.body) > opts.chunksize
+    if iscompressed(req.body) && length(req.body) > opts.chunksize
         opts.chunksize = length(req.body) + 1
     end
     h = host(uri(req))
