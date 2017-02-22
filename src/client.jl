@@ -196,7 +196,7 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     end
     # send request over the wire
     @log(verbose, client.logger, "sending request over the wire")
-    verbose && show(client.logger, req); verbose && print(client.logger, "\n")
+    verbose && show(client.logger, req, opts); verbose && print(client.logger, "\n")
     try
         write(conn.tcp, req, opts)
     catch
@@ -213,8 +213,9 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     !isempty(response.cookies) && (@log(verbose, client.logger, "caching received cookies for host"); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
     # return immediately for streaming responses
     stream && return response
+    idle!(conn)
     @log(verbose, client.logger, "received response")
-    verbose && show(client.logger, response); verbose && print(client.logger, "\n")
+    verbose && show(client.logger, response, opts); verbose && print(client.logger, "\n")
     # check for redirect
     response.history = history
     if req.method != HEAD && (300 <= status(response) < 400) && opts.allowredirects::Bool

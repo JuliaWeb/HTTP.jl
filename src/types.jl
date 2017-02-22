@@ -271,9 +271,10 @@ end
 # body
 shouldchunk(b::FIFOBuffer, chksz) = current_task() == b.task ? length(b) > chksz : true
 
-function body(io::IO, r::Request, opts)
+function body(io::IO, r::Request, opts, consume)
     length(r.body) > 0 || return
     chksz = get(opts, :chunksize, typemax(Int))
+    cpy = consume ? r.body : deepcopy(r.body)
     if shouldchunk(r.body, chksz)
         while !eof(r.body)
             bytes = read(r.body, chksz) # read at most chunksize
@@ -286,6 +287,9 @@ function body(io::IO, r::Request, opts)
         write(io, "$(hex(0))$CRLF$CRLF")
     else
         write(io, r.body)
+    end
+    if !consume
+        r.body = cpy
     end
     return
 end
@@ -303,32 +307,39 @@ function hasmessagebody(r::Response)
     return true
 end
 
-function body(io::IO, r::Response, opts)
+function body(io::IO, r::Response, opts, consume)
     hasmessagebody(r) || return
-    write(io, r.body)
+    if consume
+        write(io, r.body)
+    else
+        write(io, String(r.body))
+    end
     return
 end
 
-function Base.write(io::IO, r::Union{Request, Response}, opts)
+function Base.write(io::IO, r::Union{Request, Response}, opts, consume=true)
     startline(io, r)
     headers(io, r)
-    body(io, r, opts)
+    body(io, r, opts, consume)
     return
 end
 
-function Base.show(io::IO, r::Union{Request,Response})
+function Base.show(io::IO, r::Union{Request,Response}, opts=RequestOptions())
     println(io, typeof(r), ":")
     println(io, "\"\"\"")
     startline(io, r)
     headers(io, r)
-    if iscompressed(String(r.body))
-        println(io, "[compressed $(typeof(r)) body of $(length(r.body)) bytes]")
-    elseif length(r.body) > 1000
-        println(io, "[$(typeof(r)) body of $(length(r.body)) bytes]")
-        println(io, String(r.body)[1:1000])
+    buf = IOBuffer()
+    body(buf, r, opts, false)
+    b = take!(buf)
+    if iscompressed(b)
+        println(io, "[compressed $(typeof(r)) body of $(length(b)) bytes]")
+    elseif length(b) > 1000
+        println(io, "[$(typeof(r)) body of $(length(b)) bytes]")
+        println(io, String(b)[1:1000])
         println(io, "⋮")
-    elseif length(r.body) > 0
-        println(io, String(r.body))
+    elseif length(b) > 0
+        print(io, String(b))
     end
     print(io, "\"\"\"")
 end
