@@ -112,7 +112,6 @@ end
 
 function stalebytes!(c::TCPSocket)
     !isopen(c) && return
-    @debug(DEBUG, @__LINE__, nb_available(c))
     nb_available(c) > 0 && readavailable(c)
     return
 end
@@ -241,47 +240,43 @@ end
 function process!(client, conn, opts, host, method, response, starttime, stream, verbose)
     parser = client.parser
     tsk = @async begin
-        try
-            while true
-                # if no data after `readtimeout` seconds, break out
-                @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
-                buffer = readavailable(conn.tcp)
-                @debug(DEBUG, @__LINE__, length(buffer))
-                @debug(DEBUG, @__LINE__, isopen(conn.tcp))
-                if length(buffer) == 0 && !isopen(conn.tcp)
+        while true
+            # if no data after `readtimeout` seconds, break out
+            @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
+            buffer = readavailable(conn.tcp)
+            if length(buffer) == 0
+                if !isopen(conn.tcp)
                     dead!(conn)
                     @log(verbose, client.logger, "request was sent, but connection closed before receiving response, retrying request")
                     return false
                 end
-                length(buffer) > 0 && (starttime[] = time()) # reset the timeout while still receiving bytes
-                @log(verbose, client.logger, "received bytes from the wire, processing")
-                errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
-                @debug(DEBUG, @__LINE__, errno)
-                @debug(DEBUG, @__LINE__, headerscomplete)
-                @debug(DEBUG, @__LINE__, messagecomplete)
-                if errno != HPE_OK
-                    throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])"))
-                elseif messagecomplete
-                    http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
-                    return true
-                elseif stream && headerscomplete
-                    # async read the response body, returning the current response immediately
-                    @log(verbose, client.logger, "processing the rest of response asynchronously")
-                    response.body.task = @async process!(client, conn, opts, host, method, response, starttime, false, false)
-                    return true
-                end
-                !isopen(conn.tcp) && (dead!(conn); return false)
+            else
+                starttime[] = time() # reset the timeout while still receiving bytes
             end
-        catch
-            return false
+            @log(verbose, client.logger, "received bytes from the wire, processing")
+            errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
+            if errno != HPE_OK
+                idle!(conn)
+                throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])"))
+            elseif messagecomplete
+                http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
+                idle!(conn)
+                return true
+            elseif stream && headerscomplete
+                # async read the response body, returning the current response immediately
+                @log(verbose, client.logger, "processing the rest of response asynchronously")
+                response.body.task = @async process!(client, conn, opts, host, method, response, starttime, false, false)
+                return true
+            end
+            !isopen(conn.tcp) && (dead!(conn); return false)
         end
-        !stream && idle!(conn)
     end
     timeout = opts.readtimeout::Float64
     while !istaskdone(tsk) && (time() - starttime[] < timeout)
         sleep(0.001)
     end
     istaskdone(tsk) || throw(TimeoutException(timeout))
+    isa(tsk.result, Exception) && throw(tsk.result)
     return tsk.result::Bool
 end
 
