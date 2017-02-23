@@ -209,7 +209,7 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     # process the response
     reset!(client.parser)
     success = process!(client, conn, opts, host, method(req), response, Ref{Float64}(time()), stream, verbose)
-    !success && return request(client, req, opts; history=history, stream=stream, verbose=verbose)
+    !success && (idle!(conn); return request(client, req, opts; history=history, stream=stream, verbose=verbose))
     !isempty(response.cookies) && (@log(verbose, client.logger, "caching received cookies for host"); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
     # return immediately for streaming responses
     stream && return response
@@ -281,8 +281,8 @@ function process!(client, conn, opts, host, method, response, starttime, stream,
     while !istaskdone(tsk) && (time() - starttime[] < timeout)
         sleep(0.001)
     end
-    istaskdone(tsk) || throw(TimeoutException(timeout))
-    isa(tsk.result, Exception) && throw(tsk.result)
+    istaskdone(tsk) || (idle!(conn); throw(TimeoutException(timeout)))
+    isa(tsk.result, Exception) && (idle!(conn); throw(tsk.result))
     return tsk.result::Bool
 end
 
