@@ -8,12 +8,14 @@ when a server response includes the "Connection: keep-alive" header. An open and
 will be reused when sending subsequent requests to the same host.
 """
 type Connection{I <: IO}
+    id::Int
     tcp::I
     state::ConnectionState
     statetime::DateTime
 end
 
-Connection(tcp::IO) = Connection(tcp, Busy, now(Dates.UTC))
+Connection(tcp::IO) = Connection(0, tcp, Busy, now(Dates.UTC))
+Connection(id::Int, tcp::IO) = Connection(id, tcp, Busy, now(Dates.UTC))
 busy!(conn::Connection) = (conn.state = conn.state == Dead ? (return nothing) : Busy; conn.statetime = now(Dates.UTC); return nothing)
 idle!(conn::Connection) = (conn.state = conn.state == Dead ? (return nothing) : Idle; conn.statetime = now(Dates.UTC); return nothing)
 dead!(conn::Connection) = (conn.state = Dead; conn.statetime = now(Dates.UTC); close(conn.tcp); return nothing)
@@ -53,15 +55,16 @@ type Client{I <: IO}
     logger::I
     # global request settings
     options::RequestOptions
+    connectioncount::Int
 end
 
 Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(),
                                                      Dict{String, Vector{Connection{TLS.SSLContext}}}(),
                                                      Dict{String, Set{Cookie}}(),
-                                                     Parser(), logger, options)
+                                                     Parser(), logger, options, 1)
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 10.0, 10.0, TLS.SSLConfig(true), 5, true, false))
+const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, TLS.SSLConfig(true), 5, true, false))
 
 @eval begin
     Client(logger::IO; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
@@ -128,29 +131,34 @@ function getconn{S}(::Type{S}, client, host, opts, verbose)
         @log(verbose, client.logger, "checking if any existing connections to '$hostname' are re-usable")
         conns = getconnections(S, client, hostname)
         inds = Int[]
-        for (i, c) in enumerate(conns)
+        i = 1
+        while i <= length(conns)
+            c = conns[i]
             # read off any stale bytes left over from a possible error in a previous request
             # this will also trigger any sockets that timed out to be set to closed
             stalebytes!(c.tcp)
             if !isopen(c.tcp) || c.state == Dead
-                @log(verbose, client.logger, "found a dead connection to delete")
+                @log(verbose, client.logger, "found dead connection #$(c.id) to delete")
                 dead!(c)
                 push!(inds, i)
             elseif c.state == Idle
-                @log(verbose, client.logger, "found re-usable connection")
+                @log(verbose, client.logger, "found re-usable connection #$(c.id)")
                 busy!(c)
                 conn = c
                 reused = true
+                break
             end
+            i += 1
         end
         deleteat!(conns, inds)
     end
     if !reused
-        @log(verbose, client.logger, "creating a new connection to '$hostname'")
         socket = @timeout opts.connecttimeout::Float64 Base.connect(Base.getaddrinfo(hostname), Base.get(port, S == http ? 80 : S == https ? 443 : assert(false))) throw(TimeoutException(opts.connecttimeout::Float64))
         # initialize TLS if necessary
         tcp = initTLS!(S, hostname, opts, socket)
-        conn = Connection(tcp)
+        conn = Connection(client.connectioncount, tcp)
+        client.connectioncount += 1
+        @log(verbose, client.logger, "created new connection #$(conn.id) to '$hostname'")
         setconnection!(S, client, hostname, conn)
     end
     return conn
@@ -200,7 +208,8 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     try
         write(conn.tcp, req, opts)
     catch
-        @log(verbose, client.logger, "error sending request, retrying on a new connection")
+        @log(verbose, client.logger, "error sending request on connection #$(conn.id), retrying on a new connection")
+        dead!(conn)
         conn = getconn(schemetype(T), client, host, opts, verbose)
         write(conn.tcp, req, opts)
     end
@@ -263,7 +272,7 @@ function process!(client, conn, opts, host, method, response, starttime, stream,
             errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
             if errno != HPE_OK
                 idle!(conn)
-                throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])"))
+                return ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])")
             elseif messagecomplete
                 http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
                 idle!(conn)
