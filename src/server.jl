@@ -104,17 +104,17 @@ function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl, start
                         # error in parsing the http request
                         @log(verbose, logger, "error parsing request on connection i=$i: $(ParsingErrorCodeMap[errno])")
                         if errno == HPE_INVALID_VERSION
-                            reponse.status = 505
+                            response.status = 505
                         elseif errno == HPE_HEADER_OVERFLOW
-                            reponse.status = 431
+                            response.status = 431
                         elseif errno == HPE_URI_OVERFLOW
-                            reponse.status = 414
+                            response.status = 414
                         elseif errno == HPE_BODY_OVERFLOW
                             response.status = 413
                         elseif errno == HPE_INVALID_METHOD
-                            reponse.status = 405
+                            response.status = 405
                         else
-                            reponse.status = 400
+                            response.status = 400
                         end
                         error = true
                     elseif headerscomplete && Base.get(HTTP.headers(request), "Expect", "") == "100-continue"
