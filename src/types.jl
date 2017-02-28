@@ -88,6 +88,10 @@ Accessor methods include:
   * `HTTP.uri`: uri for a request
   * `HTTP.headers`: headers for a request
   * `HTTP.body`: body for a request as a `HTTP.FIFOBuffer`
+
+Two convenience methods are provided for accessing a request body:
+  * `take!(r)`: consume the request body, returning it as a `Vector{UInt8}`
+  * `take!(String, r)`: consume the request body, returning it as a `String`
 """
 type Request
     method::HTTP.Method
@@ -188,8 +192,8 @@ Accessor methods include:
   * `HTTP.body`: body for a response as a `HTTP.FIFOBuffer`
 
 Two convenience methods are provided for accessing a response body:
-  * `string(r)`: consume the reponse body, returning it as a `String`
-  * `HTTP.bytes(r)`: consume the response body, returning it as a `Vector{UInt8}`
+  * `take!(r)`: consume the response body, returning it as a `Vector{UInt8}`
+  * `take!(String, r)`: consume the response body, returning it as a `String`
 """
 type Response
     status::Int32
