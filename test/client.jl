@@ -34,15 +34,15 @@ for sch in ("http", "https")
     @test HTTP.headers(HTTP.get("$sch://httpbin.org/response-headers"; query=Dict("hey"=>"dude")))["hey"] == "dude"
 
     r = HTTP.get("$sch://httpbin.org/cookies")
-    body = string(r)
+    body = take!(String, r)
     @test (body == "{\n  \"cookies\": {}\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n")
     r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor")
     @test HTTP.status(r) == 200
-    body = string(r)
+    body = take!(String, r)
     @test (body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n")
 
     # r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
-    # @test string(r) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
+    # @test take!(String, r) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
 
     # stream
     r = HTTP.post("$sch://httpbin.org/post"; body="hey")
@@ -53,14 +53,14 @@ for sch in ("http", "https")
     r = HTTP.get("$sch://httpbin.org/stream/100")
     @test HTTP.status(r) == 200
     totallen = length(HTTP.body(r)) # number of bytes to expect
-    bytes = readavailable(HTTP.body(r))
+    bytes = take!(r)
     begin
         r = HTTP.get("$sch://httpbin.org/stream/100"; stream=true)
         @test HTTP.status(r) == 200
         len = length(HTTP.body(r))
         HTTP.@timeout 15.0 begin
             while !eof(HTTP.body(r))
-                b = readavailable(HTTP.body(r))
+                b = take!(r)
             end
         end throw(HTTP.TimeoutException(15.0))
     end
@@ -96,7 +96,7 @@ for sch in ("http", "https")
     # multipart
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
     @test HTTP.status(r) == 200
-    @test startswith(string(r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -104,7 +104,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
-    @test startswith(string(r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     # asynchronous
     f = HTTP.FIFOBuffer()
@@ -161,7 +161,7 @@ for sch in ("http", "https")
     r = HTTP.request(req)
     @test HTTP.status(r) == 200
     @test !HTTP.isnull(HTTP.request(r))
-    @test length(HTTP.bytes(r)) > 0
+    @test length(take!(r)) > 0
 
     for c in HTTP.DEFAULT_CLIENT.httppool["httpbin.org"]
         HTTP.dead!(c)

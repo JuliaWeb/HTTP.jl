@@ -208,13 +208,12 @@ major(r::Response) = r.major
 minor(r::Response) = r.minor
 cookies(r::Response) = r.cookies
 headers(r::Response) = r.headers
-body(r::Response) = r.body
 request(r::Response) = r.request
 history(r::Response) = r.history
 statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
 body(r::Union{Request, Response}) = r.body
-bytes(r::Response) = readavailable(r.body)
-Base.string(r::Response) = String(bytes(r))
+Base.take!(r::Union{Request, Response}) = readavailable(body(r))
+Base.take!(::Type{String}, r::Union{Request, Response}) = String(take!(r))
 
 Response(; status::Int=200,
          cookies::Vector{Cookie}=Cookie[],
