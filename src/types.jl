@@ -293,7 +293,7 @@ function body(io::IO, r::Request, opts, consume)
         if isa(r.body, Dict)
             cpy = r.body
             for (k, v) in cpy
-                isa(v, IOStream) && mark(v)
+                isa(v, IO) && mark(v)
             end
         else
             cpy = deepcopy(r.body)
@@ -311,7 +311,7 @@ function body(io::IO, r::Request, opts, consume)
         if isa(r.body, Dict)
             # check for IOStreams to reset
             for (k, v) in r.body
-                isa(v, IOStream) && reset(v)
+                isa(v, IO) && reset(v)
             end
         end
     end
