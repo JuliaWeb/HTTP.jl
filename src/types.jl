@@ -309,7 +309,7 @@ function body(io::IO, r::Request, opts, consume)
     if !consume
         r.body = cpy
         if isa(r.body, Dict)
-            # check for IOStreams to reset
+            # check for IOs to reset
             for (k, v) in r.body
                 isa(v, IO) && reset(v)
             end
@@ -328,8 +328,6 @@ function sendchunks(io, body::FIFOBuffer, headers, chksz)
     end
 end
 
-hasname(io::IO) = false
-hasname(io::IOStream) = true
 getname(io::IOStream) = replace(io.name[1:end-1], "<file ", "")
 
 function sendchunks(wire, body::Dict, headers, chksz)
@@ -340,13 +338,13 @@ function sendchunks(wire, body::Dict, headers, chksz)
         write(io, "--" * boundary * "$CRLF")
         write(io, "Content-Disposition: form-data; name=\"$k\"")
         if isa(v, IOStream)
-            hasname(v) && write(io, "; filename=\"$(getname(v))\"")
+            write(io, "; filename=\"$(getname(v))\"")
             write(io, "$(CRLF)Content-Type: $(HTTP.sniff(v))$CRLF$CRLF")
             write(io, read(v), "$CRLF")
         elseif isa(v, IO)
-            hasname(v) && write(io, "; filename=\"$(getname(v))\"")
-            write(io, "$(CRLF)Content-Type: $(HTTP.sniff(v))$CRLF$CRLF")
-            write(io, readavailable(v), "$CRLF")
+            write(io, "; filename=\"$k\"$(CRLF)Content-Type: $(HTTP.sniff(v))$CRLF$CRLF")
+            vdata = readavailable(v)
+            write(io, vdata, "$CRLF")
         else
             write(io, "$CRLF$CRLF")
             write(io, escape(v), "$CRLF")
