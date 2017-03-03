@@ -320,15 +320,25 @@ for f in [:get, :post, :put, :delete, :head,
     $($f)(uri) -> Response
     $($f)(client::HTTP.Client, uri) -> Response
 
-Build and execute an http "$($f_str)" request. Query parameters can be passed via the `query` keyword argument as a `Dict`.
+Build and execute an http "$($f_str)" request. Query parameters can be passed via the `query` keyword argument as a `Dict`. Multiple
+query parameters with the same key can be passed like `Dict("key1"=>["value1", "value2"], "key2"=>...)`.
 Returns a `Response` object that includes the resulting status code (`HTTP.status(r)` and `HTTP.statustext(r)`),
 response headers (`HTTP.headers(r)`), cookies (`HTTP.cookies(r)`), response history if redirects were involved
-(`HTTP.history(r)`), and response body (`HTTP.body(r)` or `string(r)` or `HTTP.bytes(r)`).
+(`HTTP.history(r)`), and response body (`HTTP.body(r)` or `take!(String, r)` or `take!(r)`).
+
+The body or payload for a request can be given through the `body` keyword arugment.
+The body can be given as a `String`, `Vector{UInt8}`, `IO`, `HTTP.FIFOBuffer` or `Dict` argument type.
+See examples below for how to use an `HTTP.FIFOBuffer` for asynchronous streaming uploads.
+If the body is provided as a `Dict`, the request body will be uploaded using the multipart/form-data encoding.
+The key-value pairs in the Dict will constitute the name and value of each multipart boundary chunk.
+Files and other large data arguments can be provided as values as IO arguments: either an `IOStream` such as returned via `open(file)`,
+an `IOBuffer` for in-memory data, or even an `HTTP.FIFOBuffer`. For complete control over the multipart details, an
+`HTTP.Multipart` type is provided to support setting the `Content-Type`, `filename`, and `Content-Transfer-Encoding` if desired. See `?HTTP.Multipart` for more details.
 
 Additional keyword arguments supported, include:
 
 * `headers::Dict{String,String}`: headers given as Dict to be sent with the request
-* `body`: a request body can be given as a `String`, `Vector{UInt8}`, `IO`, or `HTTP.FIFOBuffer`; see example below for how to utilize `HTTP.FIFOBuffer` for "streaming" request bodies
+* `body`: a request body can be given as a `String`, `Vector{UInt8}`, `IO`, `HTTP.FIFOBuffer` or `Dict`; see example below for how to utilize `HTTP.FIFOBuffer` for "streaming" request bodies; a `Dict` argument will be converted to a multipart form upload
 * `stream::Bool=false`: enable response body streaming; depending on the response body size, the request will return before the full body has been received; as the response body is read, additional bytes will be recieved and put in the response body. Readers should read until `eof(response.body) == true`; see below for an example of response streaming
 * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`
 * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
@@ -410,10 +420,9 @@ function download(uri::AbstractString, file; threshold::Int=50000000, verbose::B
     nbytes = 0
     open(file, "w") do f
         while !eof(body)
-            # should we replace \N here too?
             nbytes += write(f, readavailable(body))
             if nbytes > threshold
-                println("[$(now())]: downloaded $nbytes bytes..."); flush(STDOUT)
+                verbose && println("[$(now())]: downloaded $nbytes bytes..."); flush(STDOUT)
                 threshold += 50000000
             end
         end
