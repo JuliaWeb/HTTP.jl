@@ -122,7 +122,7 @@ function Form(d::Dict)
             io = IOBuffer()
         else
             write(io, "$CRLF$CRLF")
-            write(io, escape(v), "$CRLF")
+            write(io, escape(v))
         end
         i == len && write(io, "--" * boundary * "--" * "$CRLF")
     end
@@ -148,7 +148,7 @@ type Multipart{T <: IO} <: IO
     contenttransferencoding::String
 end
 Multipart{T}(f::String, data::T, ct="", cte="") = Multipart(f, data, ct, cte)
-Base.show{T}(io::IO, m::Multipart{T}) = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", contenttransferencoding=\"$(m.contenttransferencoding)\", contenttype=\"$(m.contenttype)\", data=::$T)")
+Base.show{T}(io::IO, m::Multipart{T}) = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", data=::$T, contenttype=\"$(m.contenttype)\", contenttransferencoding=\"$(m.contenttransferencoding)\")")
 
 Base.nb_available{T}(m::Multipart{T}) = isa(m.data, IOStream) ? filesize(m.data) - position(m.data) : nb_available(m.data)
 Base.eof{T}(m::Multipart{T}) = eof(m.data)
