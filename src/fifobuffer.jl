@@ -73,7 +73,10 @@ FIFOBuffer(io::IO) = FIFOBuffer(readavailable(io))
 
 ==(a::FIFOBuffer, b::FIFOBuffer) = String(a) == String(b)
 Base.length(f::FIFOBuffer) = f.nb
+Base.nb_available(f::FIFOBuffer) = f.nb
 Base.wait(f::FIFOBuffer) = wait(f.cond)
+Base.read(f::FIFOBuffer) = readavailable(f)
+
 function Base.eof(f::FIFOBuffer)
     if current_task() == f.task
         # not asynchronous, just read until buffer is empty

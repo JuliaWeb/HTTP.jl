@@ -72,6 +72,99 @@ function update!(opts1::RequestOptions, opts2::RequestOptions)
     return opts1
 end
 
+# Form request body
+type Form <: IO
+    data::Vector{IO}
+    index::Int
+    boundary::String
+end
+
+Base.eof(f::Form) = f.index > length(f.data)
+Base.length(f::Form) = sum(x->isa(x, IOStream) ? filesize(x) : nb_available(x), f.data)
+
+Base.readavailable(f::Form) = read(f)
+function Base.read(f::Form)
+    result = UInt8[]
+    for io in f.data
+        append!(result, read(io))
+    end
+    f.index = length(f.data) + 1
+    return result
+end
+
+function Base.read(f::Form, n::Int)
+    nb = 0
+    result = UInt8[]
+    while nb < n
+        d = read(f.data[f.index], n - nb)
+        nb += length(d)
+        append!(result, d)
+        eof(f.data[f.index]) && (f.index += 1)
+        f.index > length(f.data) && break
+    end
+    return result
+end
+
+function Form(d::Dict)
+    boundary = hex(rand(UInt128))
+    data = IO[]
+    io = IOBuffer()
+    len = length(d)
+    for (i, (k, v)) in enumerate(d)
+        write(io, (i == 1 ? "" : "$CRLF") * "--" * boundary * "$CRLF")
+        write(io, "Content-Disposition: form-data; name=\"$k\"")
+        if isa(v, IO)
+            writemultipartheader(io, v)
+            seekstart(io)
+            push!(data, io)
+            push!(data, v)
+            io = IOBuffer()
+        else
+            write(io, "$CRLF$CRLF")
+            write(io, escape(v), "$CRLF")
+        end
+        i == len && write(io, "--" * boundary * "--" * "$CRLF")
+    end
+    seekstart(io)
+    push!(data, io)
+    return Form(data, 1, boundary)
+end
+
+function writemultipartheader(io::IOBuffer, i::IOStream)
+    write(io, "; filename=\"$(i.name[7:end-1])\"$CRLF")
+    write(io, "Content-Type: $(HTTP.sniff(i))$CRLF$CRLF")
+    return
+end
+function writemultipartheader(io::IOBuffer, i::IO)
+    write(io, "$CRLF$CRLF")
+    return
+end
+
+type Multipart{T <: IO} <: IO
+    filename::String
+    data::T
+    contenttype::String
+    contenttransferencoding::String
+end
+Multipart{T}(f::String, data::T, ct="", cte="") = Multipart(f, data, ct, cte)
+Base.show{T}(io::IO, m::Multipart{T}) = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", contenttransferencoding=\"$(m.contenttransferencoding)\", contenttype=\"$(m.contenttype)\", data=::$T)")
+
+Base.nb_available{T}(m::Multipart{T}) = isa(m.data, IOStream) ? filesize(m.data) : nb_available(m.data)
+Base.eof{T}(m::Multipart{T}) = eof(m.data)
+Base.read{T}(m::Multipart{T}, n::Int) = read(m.data, n)
+Base.read{T}(m::Multipart{T}) = read(m.data)
+Base.mark{T}(m::Multipart{T}) = mark(m.data)
+Base.reset{T}(m::Multipart{T}) = reset(m.data)
+
+function writemultipartheader(io::IOBuffer, i::Multipart)
+    write(io, "; filename=\"$(i.filename)\"$CRLF")
+    contenttype = i.contenttype == "" ? HTTP.sniff(i.data) : i.contenttype
+    write(io, "Content-Type: $(contenttype)$CRLF")
+    write(io, i.contenttransferencoding == "" ? "$CRLF" : "Content-Transfer-Encoding: $(i.contenttransferencoding)$CRLF$CRLF")
+    return
+end
+
+# Request
 """
     Request()
     Request(method, uri, headers, body; options=RequestOptions())
@@ -99,7 +192,7 @@ type Request
     minor::Int16
     uri::URI
     headers::Headers # includes cookies
-    body::Union{FIFOBuffer, Dict}
+    body::Union{FIFOBuffer, Form}
 end
 
 # accessors
@@ -131,24 +224,12 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
     end
     if isa(b, Dict)
         # form data
-        boundary = hex(rand(UInt128))
-        headers["Content-Type"] = "multipart/form-data; boundary=$boundary"
-        body = b
+        body = Form(b)
+        headers["Content-Type"] = "multipart/form-data; boundary=$(body.boundary)"
     else
         body = FIFOBuffer(b)
     end
-    if length(body) > 0 && shouldchunk(body, get(options, :chunksize, typemax(Int)))
-        # chunked-transfer
-        @log(verbose, io, "using chunked transfer encoding")
-        headers["Transfer-Encoding"] = "chunked" * (get(options, :gzip, false) ? "; gzip" : "")
-    else
-        # just set the Content-Length
-        if !(m in (GET, HEAD, CONNECT))
-            @log(verbose, io, "setting Content-Length header")
-            headers["Content-Length"] = dec(length(body))
-        end
-    end
-    if !haskey(headers, "Content-Type") && length(body) > 0 && !isa(body, Dict)
+    if !haskey(headers, "Content-Type") && length(body) > 0 && !isa(body, Form)
         sn = HTTP.sniff(body)
         headers["Content-Type"] = sn
         @log(verbose, io, "setting Content-Type header to: $sn")
@@ -156,9 +237,9 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
     return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
 
-Request{T}(method, uri, h, body::T; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) = Request(convert(HTTP.Method, method),
-                               isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
-                               h, body; options=options, io=io, verbose=verbose)
+Request{T}(method, uri, h, body::T; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) =
+    Request(convert(HTTP.Method, method), isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
+            h, body; options=options, io=io, verbose=verbose)
 
 Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
 
@@ -271,7 +352,7 @@ function headers(io::IO, r::Request)
     for (k, v) in headers(r)
         write(io, "$k: $v$CRLF")
     end
-    write(io, CRLF)
+    # write(io, CRLF); we let the body write this in case of chunked transfer
 end
 
 function headers(io::IO, r::Response)
@@ -279,83 +360,45 @@ function headers(io::IO, r::Response)
     for (k, v) in headers(r)
         write(io, "$k: $v$CRLF")
     end
-    write(io, CRLF)
+    # write(io, CRLF); we let the body write this in case of chunked transfer
 end
 
 # body
-shouldchunk(b::FIFOBuffer, chksz) = current_task() == b.task ? length(b) > chksz : true
-shouldchunk(b::Dict, chksz) = true
-
 function body(io::IO, r::Request, opts, consume)
-    length(r.body) > 0 || return
+    (length(r.body) == 0 || r.method in (GET, HEAD, CONNECT)) && (write(io, "$CRLF"); return)
     chksz = get(opts, :chunksize, typemax(Int))
     if !consume
-        if isa(r.body, Dict)
+        if isa(r.body, Form)
             cpy = r.body
-            for (k, v) in cpy
-                isa(v, IOStream) && mark(v)
-            end
+            index = r.body.index
+            foreach(mark, r.body.data)
         else
             cpy = deepcopy(r.body)
         end
     end
-    if shouldchunk(r.body, chksz)
-        sendchunks(io, r.body, r.headers, chksz)
-        # send final chunk
+    if length(r.body) > chksz || (isa(r.body, FIFOBuffer) && r.body.task != current_task())
+        # chunked transfer
+        write(io, "Transfer-Encoding: chunked$CRLF$CRLF")
+        while !eof(r.body)
+            bytes = read(r.body, chksz) # read at most chunksize
+            chunk = length(bytes)
+            chunk == 0 && continue
+            write(io, "$(hex(chunk))$CRLF")
+            write(io, bytes, CRLF)
+        end
         write(io, "$(hex(0))$CRLF$CRLF")
     else
+        write(io, "Content-Length: $(dec(length(r.body)))$CRLF$CRLF")
         write(io, r.body)
     end
     if !consume
         r.body = cpy
-        if isa(r.body, Dict)
-            # check for IOStreams to reset
-            for (k, v) in r.body
-                isa(v, IOStream) && reset(v)
-            end
+        if isa(r.body, Form)
+            r.body.index = index
+            foreach(reset, r.body.data)
         end
     end
     return
-end
-
-function sendchunks(io, body::FIFOBuffer, headers, chksz)
-    while !eof(body)
-        bytes = read(body, chksz) # read at most chunksize
-        chunk = length(bytes)
-        chunk == 0 && continue
-        write(io, "$(hex(chunk))$CRLF")
-        write(io, bytes, CRLF)
-    end
-end
-
-hasname(io::IO) = false
-hasname(io::IOStream) = true
-getname(io::IOStream) = replace(io.name[1:end-1], "<file ", "")
-
-function sendchunks(wire, body::Dict, headers, chksz)
-    len = length(body)
-    boundary = split(headers["Content-Type"], "boundary=")[2]
-    io = IOBuffer()
-    for (i, (k, v)) in enumerate(body)
-        write(io, "--" * boundary * "$CRLF")
-        write(io, "Content-Disposition: form-data; name=\"$k\"")
-        if isa(v, IOStream)
-            hasname(v) && write(io, "; filename=\"$(getname(v))\"$CRLF")
-            write(io, "Content-Type: $(HTTP.sniff(v))$CRLF$CRLF")
-            write(io, read(v), "$CRLF")
-        elseif isa(v, IO)
-            hasname(v) && write(io, "; filename=\"$(getname(v))\"$CRLF")
-            write(io, "Content-Type: $(HTTP.sniff(v))$CRLF$CRLF")
-            write(io, readavailable(v), "$CRLF")
-        else
-            write(io, "$CRLF$CRLF")
-            write(io, escape(v), "$CRLF")
-        end
-        i == len && write(io, "--" * boundary * "--" * "$CRLF")
-        b = take!(io)
-        write(wire, "$(hex(length(b)))$CRLF")
-        write(wire, b, CRLF)
-    end
 end
 
 # https://tools.ietf.org/html/rfc7230#section-3.3
@@ -374,8 +417,10 @@ end
 function body(io::IO, r::Response, opts, consume)
     hasmessagebody(r) || return
     if consume
+        write(io, "$CRLF")
         write(io, r.body)
     else
+        write(io, "$CRLF")
         write(io, String(r.body))
     end
     return

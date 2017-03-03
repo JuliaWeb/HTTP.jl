@@ -166,6 +166,7 @@ function escape(str::AbstractString, f=shouldencode)
     end
     return String(take!(out))
 end
+escape(bytes::Vector{UInt8}) = bytes
 
 escape(io, k, v) = write(io, escape(k), "=", escape(v))
 function escape(io, k, A::Vector{String})

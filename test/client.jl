@@ -98,6 +98,10 @@ for sch in ("http", "https")
     @test HTTP.status(r) == 200
     @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
+    r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"), chunksize=10)
+    @test HTTP.status(r) == 200
+    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
     io = open(tmp)
@@ -105,6 +109,32 @@ for sch in ("http", "https")
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
     @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+
+    tmp = tempname()
+    open(f->write(f, "hey"), tmp, "w")
+    io = open(tmp)
+    r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io), chunksize=10)
+    close(io); rm(tmp)
+    @test HTTP.status(r) == 200
+    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+
+    tmp = tempname()
+    open(f->write(f, "hey"), tmp, "w")
+    io = open(tmp)
+    m = HTTP.Multipart("mycoolfile.txt", io)
+    r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m))
+    close(io); rm(tmp)
+    @test HTTP.status(r) == 200
+    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+
+    tmp = tempname()
+    open(f->write(f, "hey"), tmp, "w")
+    io = open(tmp)
+    m = HTTP.Multipart("mycoolfile", io, "application/octet-stream")
+    r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m), chunksize=10)
+    close(io); rm(tmp)
+    @test HTTP.status(r) == 200
+    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     # asynchronous
     f = HTTP.FIFOBuffer()

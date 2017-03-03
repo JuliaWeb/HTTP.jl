@@ -410,10 +410,9 @@ function download(uri::AbstractString, file; threshold::Int=50000000, verbose::B
     nbytes = 0
     open(file, "w") do f
         while !eof(body)
-            # should we replace \N here too?
             nbytes += write(f, readavailable(body))
             if nbytes > threshold
-                println("[$(now())]: downloaded $nbytes bytes..."); flush(STDOUT)
+                verbose && println("[$(now())]: downloaded $nbytes bytes..."); flush(STDOUT)
                 threshold += 50000000
             end
         end
