@@ -108,7 +108,9 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
-    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    str = take!(String
+    @show str
+    @test startswith(str, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")

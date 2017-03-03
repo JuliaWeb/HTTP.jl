@@ -79,8 +79,9 @@ type Form <: IO
     boundary::String
 end
 
+Form(f::Form) = f
 Base.eof(f::Form) = f.index > length(f.data)
-Base.length(f::Form) = sum(x->isa(x, IOStream) ? filesize(x) : nb_available(x), f.data)
+Base.length(f::Form) = sum(x->isa(x, IOStream) ? filesize(x) - position(x) : nb_available(x), f.data)
 
 Base.readavailable(f::Form) = read(f)
 function Base.read(f::Form)
@@ -92,7 +93,7 @@ function Base.read(f::Form)
     return result
 end
 
-function Base.read(f::Form, n::Int)
+function Base.read(f::Form, n::Integer)
     nb = 0
     result = UInt8[]
     while nb < n
@@ -149,9 +150,9 @@ end
 Multipart{T}(f::String, data::T, ct="", cte="") = Multipart(f, data, ct, cte)
 Base.show{T}(io::IO, m::Multipart{T}) = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", contenttransferencoding=\"$(m.contenttransferencoding)\", contenttype=\"$(m.contenttype)\", data=::$T)")
 
-Base.nb_available{T}(m::Multipart{T}) = isa(m.data, IOStream) ? filesize(m.data) : nb_available(m.data)
+Base.nb_available{T}(m::Multipart{T}) = isa(m.data, IOStream) ? filesize(m.data) - position(m.data) : nb_available(m.data)
 Base.eof{T}(m::Multipart{T}) = eof(m.data)
-Base.read{T}(m::Multipart{T}, n::Int) = read(m.data, n)
+Base.read{T}(m::Multipart{T}, n::Integer) = read(m.data, n)
 Base.read{T}(m::Multipart{T}) = read(m.data)
 Base.mark{T}(m::Multipart{T}) = mark(m.data)
 Base.reset{T}(m::Multipart{T}) = reset(m.data)
@@ -222,7 +223,7 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
         headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
         @log(verbose, io, "adding basic authentication header")
     end
-    if isa(b, Dict)
+    if isa(b, Dict) || isa(b, Form)
         # form data
         body = Form(b)
         headers["Content-Type"] = "multipart/form-data; boundary=$(body.boundary)"
