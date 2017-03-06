@@ -367,7 +367,6 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             (ch == CR || ch == LF) && @goto breakout
             parser.flags = 0
             parser.content_length = ULLONG_MAX
-
             @errorif(!isalpha(ch), HPE_INVALID_METHOD)
 
             r.method = HTTP.Method(0)
@@ -1146,7 +1145,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
         elseif p_state == s_message_done
             @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
-            p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
+            # p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
             parser.state = p_state
             onmessagecomplete(r)
             @debug(PARSING_DEBUG, @__LINE__, "this 5")

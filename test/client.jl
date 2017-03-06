@@ -109,7 +109,6 @@ for sch in ("http", "https")
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
     str = take!(String, r)
-    @show str
     @test startswith(str, "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()

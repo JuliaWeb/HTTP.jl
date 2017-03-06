@@ -272,7 +272,7 @@ function process!(client, conn, opts, host, method, response, starttime, stream,
             errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
             if errno != HPE_OK
                 idle!(conn)
-                return ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])")
+                return ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])\nCurrent response buffer contents: $(String(buffer))")
             elseif messagecomplete
                 http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
                 idle!(conn)
