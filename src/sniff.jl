@@ -154,6 +154,13 @@ contenttype(::Type{JSONSig}) = "application/json; charset=utf-8"
 
 ismatch(::Type{JSONSig}, data::Vector{UInt8}, firstnonws) = isjson(data)[1]
 
+const DISPLAYABLE_TYPES = ["text/html; charset=utf-8",
+                    "text/plain; charset=utf-8",
+                    "application/json; charset=utf-8",
+                    "text/xml; charset=utf-8",
+                    "text/plain; charset=utf-16be",
+                    "text/plain; charset=utf-16le"]
+
 # Data matching the table in section 6.
 const SNIFF_SIGNATURES = [
     HTMLSig("<!DOCTYPE HTML"),

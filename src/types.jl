@@ -460,14 +460,20 @@ function Base.show(io::IO, r::Union{Request,Response}, opts=RequestOptions())
     buf = IOBuffer()
     body(buf, r, opts, false)
     b = take!(buf)
-    if iscompressed(b)
-        println(io, "[compressed $(typeof(r)) body of $(length(b)) bytes]")
-    elseif length(b) > 1000
-        println(io, "[$(typeof(r)) body of $(length(b)) bytes]")
-        println(io, String(b)[1:1000])
-        println(io, "⋮")
-    elseif length(b) > 0
-        print(io, String(b))
+    if length(b) > 0
+        contenttype = HTTP.sniff(b)
+        if contenttype in DISPLAYABLE_TYPES
+            if length(b) > 500
+                println(io, "\n[$(typeof(r)) body of $(length(b)) bytes]")
+                println(io, String(b)[1:500])
+                println(io, "⋮")
+            else
+                print(io, String(b))
+            end
+        else
+            contenttype = Base.get(r.headers, "Content-Type", contenttype)
+            println(io, "\n[$(length(b)) bytes of '$contenttype' data]")
+        end
     end
     print(io, "\"\"\"")
 end
