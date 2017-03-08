@@ -385,15 +385,14 @@ end
 # body
 function body(io::IO, r::Request, opts, consume)
     (length(r.body) == 0 || r.method in (GET, HEAD, CONNECT)) && (write(io, "$CRLF"); return)
+    # make sure we don't try to "show" the body if we're doing an asynchronous upload
+    isa(r.body, FIFOBuffer) && r.body.task != current_task() && !consume && return
     chksz = get(opts, :chunksize, typemax(Int))
-    if !consume
-        if isa(r.body, Form)
-            cpy = r.body
-            index = r.body.index
-            foreach(mark, r.body.data)
-        else
-            cpy = deepcopy(r.body)
-        end
+    if isa(r.body, Form)
+        index = r.body.index
+        foreach(mark, r.body.data)
+    else
+        f, l, nb = r.body.f, r.body.l, r.body.nb
     end
     if length(r.body) > chksz || (isa(r.body, FIFOBuffer) && r.body.task != current_task())
         # chunked transfer
@@ -410,12 +409,13 @@ function body(io::IO, r::Request, opts, consume)
         write(io, "Content-Length: $(dec(length(r.body)))$CRLF$CRLF")
         write(io, r.body)
     end
-    if !consume
-        r.body = cpy
-        if isa(r.body, Form)
-            r.body.index = index
-            foreach(reset, r.body.data)
-        end
+    if isa(r.body, Form)
+        r.body.index = index
+        foreach(reset, r.body.data)
+    else
+        r.body.f = f
+        r.body.l = l
+        r.body.nb = nb
     end
     return
 end
@@ -435,13 +435,8 @@ end
 
 function body(io::IO, r::Response, opts, consume)
     hasmessagebody(r) || return
-    if consume
-        write(io, "$CRLF")
-        write(io, r.body)
-    else
-        write(io, "$CRLF")
-        write(io, String(r.body))
-    end
+    write(io, "$CRLF")
+    write(io, String(r.body))
     return
 end
 
@@ -465,10 +460,10 @@ function Base.show(io::IO, r::Union{Request,Response}, opts=RequestOptions())
         if contenttype in DISPLAYABLE_TYPES
             if length(b) > 500
                 println(io, "\n[$(typeof(r)) body of $(length(b)) bytes]")
-                println(io, String(b)[1:500])
+                println(io, String(b)[1:750])
                 println(io, "⋮")
             else
-                print(io, String(b))
+                println(io, String(b))
             end
         else
             contenttype = Base.get(r.headers, "Content-Type", contenttype)
