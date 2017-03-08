@@ -467,7 +467,9 @@ function Base.show(io::IO, r::Union{Request,Response}, opts=RequestOptions())
             end
         else
             contenttype = Base.get(r.headers, "Content-Type", contenttype)
-            println(io, "\n[$(length(b)) bytes of '$contenttype' data]")
+            encoding = Base.get(r.headers, "Content-Encoding", "")
+            encodingtxt = encoding == "" ? "" : " with '$encoding' encoding"
+            println(io, "\n[$(length(b)) bytes of '$contenttype' data$encodingtxt]")
         end
     end
     print(io, "\"\"\"")
