@@ -43,6 +43,7 @@ Additional keyword arguments can be passed that will get transmitted with each H
 * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
 * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
 * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
+* `retries::Int`: # of times a request will be tried before throwing an error; default = 3
 """
 type Client{I <: IO}
     # connection pools for keep-alive; key is host
@@ -64,7 +65,7 @@ Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connect
                                                      Parser(), logger, options, 1)
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, TLS.SSLConfig(true), 5, true, false))
+const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, TLS.SSLConfig(true), 5, true, false, 3))
 
 @eval begin
     Client(logger::IO; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
@@ -99,7 +100,7 @@ end
 
 request(req::Request; stream::Bool=false, verbose::Bool=false, args...) = request(DEFAULT_CLIENT, req, RequestOptions(; args...); stream=stream, verbose=verbose)
 
-function request(client::Client, req::Request, opts::RequestOptions; history::Vector{Response}=Response[], stream::Bool=false, verbose::Bool=false)
+function request(client::Client, req::Request, opts::RequestOptions; history::Vector{Response}=Response[], retryattempt::Int=1, stream::Bool=false, verbose::Bool=false)
     client.logger != STDOUT && (verbose = true)
     # ensure all Request options are set, using client.options if necessary
     # this works because req.options are null by default whereas client.options always have a default
@@ -110,8 +111,8 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
         opts.chunksize = length(req.body) + 1
     end
     h = host(uri(req))
-    return scheme(uri(req)) == "https" ? request(client, req, opts, getconn(https, client, h, opts, verbose), history, stream, verbose) :
-                                           request(client, req, opts, getconn(http, client, h, opts, verbose), history, stream, verbose)
+    return scheme(uri(req)) == "https" ? request(client, req, opts, getconn(https, client, h, opts, verbose), history, retryattempt, stream, verbose) :
+                                           request(client, req, opts, getconn(http, client, h, opts, verbose), history, retryattempt, stream, verbose)
 end
 
 function stalebytes!(c::TCPSocket)
@@ -183,7 +184,7 @@ function initTLS!(::Type{https}, hostname, opts, socket)
     return stream
 end
 
-function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Connection{T}, history, stream::Bool, verbose::Bool)
+function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Connection{T}, history, retryattempt, stream::Bool, verbose::Bool)
     host = hostname(uri(req))
     # check if cookies should be added to outgoing request based on host
     if haskey(client.cookies, host)
@@ -217,8 +218,12 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     response = Response(stream ? DEFAULT_CHUNK_SIZE : DEFAULT_MAX, req)
     # process the response
     reset!(client.parser)
-    success = process!(client, conn, opts, host, method(req), response, Ref{Float64}(time()), stream, verbose)
-    !success && (idle!(conn); return request(client, req, opts; history=history, stream=stream, verbose=verbose))
+    success = process!(client, conn, opts, host, method(req), response, Ref{Float64}(time()), retryattempt, stream, verbose)
+    if !success
+        idle!(conn)
+        retryattempt >= opts.retries::Int && throw(RetryException(opts.retries::Int))
+        return request(client, req, opts; history=history, retryattempt=retryattempt+1, stream=stream, verbose=verbose)
+    end
     !isempty(response.cookies) && (@log(verbose, client.logger, "caching received cookies for host"); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
     # return immediately for streaming responses
     stream && return response
@@ -252,7 +257,7 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     return response
 end
 
-function process!(client, conn, opts, host, method, response, starttime, stream, verbose)
+function process!(client, conn, opts, host, method, response, starttime, retryattempt, stream, verbose)
     parser = client.parser
     tsk = @async begin
         while true
@@ -280,7 +285,7 @@ function process!(client, conn, opts, host, method, response, starttime, stream,
             elseif stream && headerscomplete
                 # async read the response body, returning the current response immediately
                 @log(verbose, client.logger, "processing the rest of response asynchronously")
-                response.body.task = @async process!(client, conn, opts, host, method, response, starttime, false, false)
+                response.body.task = @async process!(client, conn, opts, host, method, response, starttime, retryattempt, false, false)
                 return true
             end
             !isopen(conn.tcp) && (dead!(conn); return false)
@@ -290,7 +295,7 @@ function process!(client, conn, opts, host, method, response, starttime, stream,
     while !istaskdone(tsk) && (time() - starttime[] < timeout)
         sleep(0.001)
     end
-    istaskdone(tsk) || (idle!(conn); throw(TimeoutException(timeout)))
+    istaskdone(tsk) || (idle!(conn); retryattempt >= opts.retries::Int ? throw(TimeoutException(timeout)) : return false)
     isa(tsk.result, Exception) && (idle!(conn); throw(tsk.result))
     return tsk.result::Bool
 end
@@ -309,6 +314,14 @@ end
 
 function Base.show(io::IO, err::TimeoutException)
     print(io, "TimeoutException: server did not respond for more than $(err.timeout) seconds. ")
+end
+
+immutable RetryException <: Exception
+    retries::Int
+end
+
+function Base.show(io::IO, err::RetryException)
+    print(io, "RetryException: # of allowed retries ($(err.retries)) was exceeded when making request")
 end
 
 for f in [:get, :post, :put, :delete, :head,
@@ -346,6 +359,8 @@ Additional keyword arguments supported, include:
 * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
 * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
 * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
+* `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
+* `retries::Int`: # of times a request will be tried before throwing an error; default = 3
 
 Simple request example:
 ```julia

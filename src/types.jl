@@ -34,6 +34,7 @@ at the `HTTP.Client` level to be applied to every request sent. Options include:
   * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
   * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
   * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
+  * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
 """
 type RequestOptions
     chunksize::?(Int)
@@ -44,15 +45,17 @@ type RequestOptions
     maxredirects::?(Int)
     allowredirects::?(Bool)
     forwardheaders::?(Bool)
-    RequestOptions(ch::?(Int), gzip::?(Bool), ct::?(Float64), rt::?(Float64), tls::?(TLS.SSLConfig), mr::?(Int), ar::?(Bool), fh::?(Bool)) =
-        new(ch, gzip, ct, rt, tls, mr, ar, fh)
+    retries::?(Int)
+    RequestOptions(ch::?(Int), gzip::?(Bool), ct::?(Float64), rt::?(Float64), tls::?(TLS.SSLConfig), mr::?(Int), ar::?(Bool), fh::?(Bool), tr::?(Int)) =
+        new(ch, gzip, ct, rt, tls, mr, ar, fh, tr)
 end
 
 const RequestOptionsFieldTypes = Dict(:chunksize=>Int, :gzip=>Bool,
                                       :connecttimeout=>Float64, :readtimeout=>Float64,
                                       :tlsconfig=>TLS.SSLConfig,
                                       :maxredirects=>Int, :allowredirects=>Bool,
-                                      :forwardheaders=>Bool)
+                                      :forwardheaders=>Bool,
+                                      :retries=>Int)
 
 function RequestOptions(options::RequestOptions; kwargs...)
     for (k, v) in kwargs
@@ -61,8 +64,8 @@ function RequestOptions(options::RequestOptions; kwargs...)
     return options
 end
 
-RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null, ar=null, fh=null; kwargs...) =
-    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar, fh); kwargs...)
+RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null, ar=null, fh=null, tr=null; kwargs...) =
+    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar, fh, tr); kwargs...)
 
 function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)
@@ -458,7 +461,7 @@ function Base.show(io::IO, r::Union{Request,Response}, opts=RequestOptions())
     if length(b) > 0
         contenttype = HTTP.sniff(b)
         if contenttype in DISPLAYABLE_TYPES
-            if length(b) > 500
+            if length(b) > 750
                 println(io, "\n[$(typeof(r)) body of $(length(b)) bytes]")
                 println(io, String(b)[1:750])
                 println(io, "⋮")
