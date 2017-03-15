@@ -321,6 +321,7 @@ statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
 body(r::Union{Request, Response}) = r.body
 Base.take!(r::Union{Request, Response}) = readavailable(body(r))
 Base.take!(::Type{String}, r::Union{Request, Response}) = String(take!(r))
+Base.String(r::Union{Request, Response}) = String(body(r))
 
 Response(; status::Int=200,
          cookies::Vector{Cookie}=Cookie[],
@@ -378,7 +379,7 @@ function headers(io::IO, r::Request)
 end
 
 function headers(io::IO, r::Response)
-    length(r.body) > 0 && setindex!(r.headers, string(length(r.body)), "Content-Length")
+    hasmessagebody(r) && setindex!(r.headers, string(length(body(r))), "Content-Length")
     for (k, v) in headers(r)
         write(io, "$k: $v$CRLF")
     end
@@ -429,7 +430,7 @@ function hasmessagebody(r::Response)
         return false
     elseif !Base.isnull(request(r))
         req = Base.get(request(r))
-        if method(req) in ("HEAD", "CONNECT")
+        if method(req) in (HEAD, CONNECT)
             return false
         end
     end
@@ -458,7 +459,7 @@ function Base.show(io::IO, r::Union{Request,Response}, opts=RequestOptions())
     buf = IOBuffer()
     body(buf, r, opts, false)
     b = take!(buf)
-    if length(b) > 0
+    if length(b) > 2
         contenttype = HTTP.sniff(b)
         if contenttype in DISPLAYABLE_TYPES
             if length(b) > 750
@@ -474,6 +475,8 @@ function Base.show(io::IO, r::Union{Request,Response}, opts=RequestOptions())
             encodingtxt = encoding == "" ? "" : " with '$encoding' encoding"
             println(io, "\n[$(length(b)) bytes of '$contenttype' data$encodingtxt]")
         end
+    else
+        print(io, String(b))
     end
     print(io, "\"\"\"")
 end

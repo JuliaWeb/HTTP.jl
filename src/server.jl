@@ -20,7 +20,7 @@
  # WebDAV
  # FastCGI
  # default handler:
-   # handle all common http requests/etc.
+   # handle all inon http requests/etc.
    # just map straight to filesystem
  # special case OPTIONS method like go?
  # buffer re-use for server/client wire-reading
@@ -51,8 +51,8 @@ An http/https server. Supports listening on a `host` and `port` via the `HTTP.se
 `handler` is a function of the form `f(::Request, ::Response) -> Response`, i.e. it takes both a `Request` and pre-built `Response`
 objects as inputs and returns the, potentially modified, `Response`. `logger` indicates where logging output should be directed.
 When `HTTP.serve` is called, it aims to "never die", catching and recovering from all internal errors. To forcefully stop, one can obviously
-kill the julia process, interrupt (ctrl/cmd+c) if main task, or send the kill signal over a server comm channel like:
-`put!(server.comm, HTTP.KILL)`.
+kill the julia process, interrupt (ctrl/cmd+c) if main task, or send the kill signal over a server in channel like:
+`put!(server.in, HTTP.KILL)`.
 
 Supported keyword arguments include:
   * `cert`: if https, the cert file to use, as passed to `TLS.SSLConfig(cert, key)`
@@ -68,21 +68,23 @@ Supported keyword arguments include:
 type Server{T <: Scheme, I <: IO}
     handler::Function
     logger::I
-    comm::Channel{Any}
+    in::Channel{Any}
+    out::Channel{Any}
     options::ServerOptions
 
-    Server(handler::Function, logger::I, ch=Channel(), options=ServerOptions()) = new{T, I}(handler, logger, ch, options)
+    Server(handler::Function, logger::I, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) = new{T, I}(handler, logger, ch, ch2, options)
 end
 
 function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl, starttime, verbose)
     handler, logger, options = server.handler, server.logger, server.options
-    startedprocessingrequest = error = false
+    startedprocessingrequest = error = alreadysent100continue = false
     rate = Float64(server.options.ratelimit.num)
     rl.allowance += 1.0 # because it was just decremented right before we got here
     response = Response()
     @log(verbose, logger, "processing on connection i=$i...")
     try
         tsk = @async begin
+            request.body.task = current_task()
             while isopen(tcp)
                 update!(rl, server.options.ratelimit)
                 if rl.allowance > rate
@@ -117,10 +119,12 @@ function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl, start
                             response.status = 400
                         end
                         error = true
-                    elseif headerscomplete && Base.get(HTTP.headers(request), "Expect", "") == "100-continue"
+                    elseif headerscomplete && Base.get(HTTP.headers(request), "Expect", "") == "100-continue" && !alreadysent100continue
                         if options.support100continue
                             @log(verbose, logger, "sending 100 Continue response to get request body")
                             write(tcp, Response(100), options)
+                            parser.state = s_body_identity
+                            alreadysent100continue = true
                             continue
                         else
                             response.status = 417
@@ -133,7 +137,7 @@ function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl, start
                         error = true
                     elseif messagecomplete
                         @log(verbose, logger, "received request on connection i=$i")
-                        verbose && (show(logger, request); println(logger))
+                        verbose && (show(logger, request, RequestOptions()); println(logger))
                         try
                             response = handler(request, response)
                         catch e
@@ -150,10 +154,10 @@ function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl, start
                             close(tcp)
                         end
                         @log(verbose, logger, "responding with response on connection i=$i")
-                        verbose && (show(logger, response); println(logger))
+                        verbose && (show(logger, response, options); println(logger))
                         write(tcp, response, options)
                         error && break
-                        startedprocessingrequest = false
+                        startedprocessingrequest = alreadysent100continue = false
                     end
                 end
             end
@@ -210,7 +214,7 @@ function serve{T, I}(server::Server{T, I}, host, port, verbose)
     i = 0
     @async begin
         while true
-            val = take!(server.comm)
+            val = take!(server.in)
             val == KILL && close(tcpserver)
         end
     end
@@ -265,9 +269,9 @@ function Server{I}(handler=(req, rep) -> Response("Hello World!"),
                key::String="",
                args...)
     if cert != "" && key != ""
-        server = Server{https, I}(handler, logger, Channel(), ServerOptions(; tlsconfig=TLS.SSLConfig(cert, key), args...))
+        server = Server{https, I}(handler, logger, Channel(), Channel(), ServerOptions(; tlsconfig=TLS.SSLConfig(cert, key), args...))
     else
-        server = Server{http, I}(handler, logger, Channel(), ServerOptions(args...))
+        server = Server{http, I}(handler, logger, Channel(), Channel(), ServerOptions(args...))
     end
     return server
 end
@@ -279,8 +283,8 @@ Start a server listening on the provided `host` and `port`. `verbose` indicates 
 Optional keyword arguments allow construction of `Server` on the fly if the `server` argument isn't provided directly.
 See `?HTTP.Server` for more details on server construction and supported keyword arguments.
 By default, `HTTP.serve` aims to "never die", catching and recovering from all internal errors. Two methods for stopping
-`HTTP.serve` include interrupting (ctrl/cmd+c) if blocking on the main task, or sending the kill signal via the server's comm channel
-(`put!(server.comm, HTTP.KILL)`).
+`HTTP.serve` include interrupting (ctrl/cmd+c) if blocking on the main task, or sending the kill signal via the server's in channel
+(`put!(server.in, HTTP.KILL)`).
 """
 function serve end
 

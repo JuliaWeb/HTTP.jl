@@ -76,6 +76,7 @@ Base.length(f::FIFOBuffer) = f.nb
 Base.nb_available(f::FIFOBuffer) = f.nb
 Base.wait(f::FIFOBuffer) = wait(f.cond)
 Base.read(f::FIFOBuffer) = readavailable(f)
+Base.flush(f::FIFOBuffer) = nothing
 
 function Base.eof(f::FIFOBuffer)
     if current_task() == f.task
@@ -319,3 +320,5 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
     notify(f.cond)
     return len
 end
+
+Base.write(f::FIFOBuffer, str::String) = write(f, Vector{UInt8}(str))
