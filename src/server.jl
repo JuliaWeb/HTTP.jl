@@ -180,11 +180,11 @@ function initTLS!(::Type{https}, tcp, tlsconfig)
         TLS.setup!(tls, tlsconfig)
         TLS.associate!(tls, tcp)
         TLS.handshake!(tls)
+        return tls
     catch e
         close(tcp)
         error("Error establishing SSL connection: $e")
     end
-    return tls
 end
 
 type RateLimit
@@ -265,7 +265,7 @@ function Server{I}(handler=(req, rep) -> Response("Hello World!"),
                key::String="",
                args...)
     if cert != "" && key != ""
-        server = Server{https, I}(handler, logger, Channel(), ServerOptions(tlsconfig=TLS.SSLConfig(cert, key), args...))
+        server = Server{https, I}(handler, logger, Channel(), ServerOptions(; tlsconfig=TLS.SSLConfig(cert, key), args...))
     else
         server = Server{http, I}(handler, logger, Channel(), ServerOptions(args...))
     end
@@ -292,7 +292,7 @@ function serve{I}(host::IPAddr, port::Int,
                    key::String="",
                    verbose::Bool=true,
                    args...)
-    server = Server(host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
+    server = Server(handler, logger; cert=cert, key=key, args...)
     return serve(server, host, port, verbose)
 end
 serve(; host::IPAddr=IPv4(127,0,0,1),
