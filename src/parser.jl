@@ -159,9 +159,10 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
     errno = HPE_OK
     upgrade = issetcookie = false
     KEY = Ref{String}()
+    @debug(PARSING_DEBUG, @__LINE__, len)
+    @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
     if len == 0
         if p_state == s_body_identity_eof
-            @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
             parser.state = p_state
             onmessagecomplete(r)
             @debug(PARSING_DEBUG, @__LINE__, "this 6")

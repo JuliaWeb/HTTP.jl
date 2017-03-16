@@ -1,4 +1,4 @@
-abstract Scheme
+@compat abstract type Scheme end
 
 immutable http <: Scheme end
 immutable https <: Scheme end
@@ -10,7 +10,7 @@ sockettype(::Type{https}) = TLS.SSLContext
 schemetype(::Type{TCPSocket}) = http
 schemetype(::Type{TLS.SSLContext}) = https
 
-typealias Headers Dict{String,String}
+const Headers = Dict{String,String}
 
 ?{T}(::Type{T}) = Union{T, Void}
 const null = nothing
@@ -438,8 +438,8 @@ function hasmessagebody(r::Response)
 end
 
 function body(io::IO, r::Response, opts, consume)
-    hasmessagebody(r) || return
     write(io, "$CRLF")
+    hasmessagebody(r) || (write(io, "$CRLF"); return)
     write(io, String(r.body))
     return
 end

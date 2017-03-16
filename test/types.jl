@@ -15,13 +15,13 @@
 
 io = IOBuffer()
 show(io, HTTP.Response(200))
-@test String(take!(io)) == "HTTP.Response:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\n\n\"\"\""
+@test String(take!(io)) == "HTTP.Response:\n\"\"\"\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n\"\"\""
 
 showcompact(io, HTTP.Response(200))
 @test String(take!(io)) == "Response(200 OK, 0 headers, 0 bytes in body)"
 
 show(io, HTTP.Request())
-@test String(take!(io)) == "HTTP.Request:\n\"\"\"\nGET / HTTP/1.1\r\n\r\n\n\"\"\""
+@test String(take!(io)) == "HTTP.Request:\n\"\"\"\nGET / HTTP/1.1\r\n\r\n\"\"\""
 
 showcompact(io, HTTP.Request())
 @test String(take!(io)) == "Request(\"\", 0 headers, 0 bytes in body)"

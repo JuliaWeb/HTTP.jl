@@ -72,7 +72,7 @@ type Server{T <: Scheme, I <: IO}
     out::Channel{Any}
     options::ServerOptions
 
-    Server(handler::Function, logger::I, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) = new{T, I}(handler, logger, ch, ch2, options)
+    (::Type{Server{T, I}}){T, I}(handler::Function, logger::I, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) = new{T, I}(handler, logger, ch, ch2, options)
 end
 
 function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl, starttime, verbose)
@@ -269,9 +269,9 @@ function Server{I}(handler=(req, rep) -> Response("Hello World!"),
                key::String="",
                args...)
     if cert != "" && key != ""
-        server = Server{https, I}(handler, logger, Channel(), Channel(), ServerOptions(; tlsconfig=TLS.SSLConfig(cert, key), args...))
+        server = Server{https, I}(handler, logger, Channel(1), Channel(1), ServerOptions(; tlsconfig=TLS.SSLConfig(cert, key), args...))
     else
-        server = Server{http, I}(handler, logger, Channel(), Channel(), ServerOptions(args...))
+        server = Server{http, I}(handler, logger, Channel(1), Channel(1), ServerOptions(args...))
     end
     return server
 end
