@@ -61,7 +61,9 @@ log = readstring(serverlog)
 client = String(readavailable(tcp))
 
 print(client)
-@test contains(client, "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 15\r\n")
+@test contains(client, "HTTP/1.1 200 OK\r\n")
+@test contains(client, "Connection: keep-alive\r\n")
+@test contains(client, "Content-Length: 15\r\n")
 @test contains(client, "\r\n\r\nBody of Request")
 
 put!(server.in, HTTP.KILL)
