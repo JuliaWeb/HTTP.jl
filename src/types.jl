@@ -430,16 +430,14 @@ function hasmessagebody(r::Response)
         return false
     elseif !Base.isnull(request(r))
         req = Base.get(request(r))
-        if method(req) in (HEAD, CONNECT)
-            return false
-        end
+        method(req) in (HEAD, CONNECT) && return false
     end
     return true
 end
 
 function body(io::IO, r::Response, opts, consume)
     write(io, "$CRLF")
-    hasmessagebody(r) || (write(io, "$CRLF"); return)
+    hasmessagebody(r) || return
     write(io, String(r.body))
     return
 end

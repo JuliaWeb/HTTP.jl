@@ -20,7 +20,7 @@
  # WebDAV
  # FastCGI
  # default handler:
-   # handle all inon http requests/etc.
+   # handle all common http requests/etc.
    # just map straight to filesystem
  # special case OPTIONS method like go?
  # buffer re-use for server/client wire-reading

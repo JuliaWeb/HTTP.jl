@@ -31,7 +31,7 @@ for sch in ("http", "https")
 
     @test HTTP.status(HTTP.get("$sch://httpbin.org/encoding/utf8")) == 200
 
-    @test HTTP.headers(HTTP.get("$sch://httpbin.org/response-headers"; query=Dict("hey"=>"dude")))["hey"] == "dude"
+    @test HTTP.headers(HTTP.get("$sch://httpbin.org/response-headers"; query=Dict("hey"=>"dude")))["Hey"] == "dude"
 
     r = HTTP.get("$sch://httpbin.org/cookies")
     body = take!(String, r)
