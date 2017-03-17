@@ -20,38 +20,43 @@ r = HTTP.get("http://127.0.0.1:8081/"; readtimeout=30)
 @test HTTP.status(r) == 200
 @test take!(String, r) == ""
 
-readstring(serverlog)
+print(readstring(serverlog))
 
 # invalid HTTP
+sleep(2.0)
 tcp = connect(ip"127.0.0.1", 8081)
 write(tcp, "GET / HTP/1.1\r\n\r\n")
-sleep(1.0)
+sleep(2.0)
 log = readstring(serverlog)
 
-@test contains(log, "error parsing request on connection i=1: invalid HTTP version")
+print(log)
+@test contains(log, "invalid HTTP version")
 
 # bad method
+sleep(2.0)
 tcp = connect(ip"127.0.0.1", 8081)
 write(tcp, "BADMETHOD / HTTP/1.1\r\n\r\n")
-sleep(1.0)
+sleep(2.0)
 
 log = readstring(serverlog)
 
-@test contains(log, "error parsing request on connection i=2: invalid HTTP method")
+print(log)
+@test contains(log, "invalid HTTP method")
 
 # Expect: 100-continue
+sleep(2.0)
 tcp = connect(ip"127.0.0.1", 8081)
 write(tcp, "POST / HTTP/1.1\r\nContent-Length: 15\r\nExpect: 100-continue\r\n\r\n")
-sleep(1.0)
+sleep(2.0)
 
 log = readstring(serverlog)
 
 @test contains(log, "sending 100 Continue response to get request body")
 client = String(readavailable(tcp))
-@test client == "HTTP/1.1 100 Continue\r\n\r\n\r\n"
+@test client == "HTTP/1.1 100 Continue\r\n\r\n"
 
 write(tcp, "Body of Request")
-sleep(1.0)
+sleep(2.0)
 log = readstring(serverlog)
 client = String(readavailable(tcp))
 
