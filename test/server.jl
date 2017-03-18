@@ -18,7 +18,7 @@ sleep(1.0)
 r = HTTP.get("http://127.0.0.1:8081/"; readtimeout=30)
 
 @test HTTP.status(r) == 200
-@test take!(String, r) == ""
+@test String(take!(r)) == ""
 
 print(readstring(serverlog))
 
