@@ -206,7 +206,7 @@ Accessor methods include:
 
 Two convenience methods are provided for accessing a request body:
   * `take!(r)`: consume the request body, returning it as a `Vector{UInt8}`
-  * `take!(String, r)`: consume the request body, returning it as a `String`
+  * `String(take!(r))`: consume the request body, returning it as a `String`
 """
 type Request
     method::HTTP.Method
@@ -296,7 +296,7 @@ Accessor methods include:
 
 Two convenience methods are provided for accessing a response body:
   * `take!(r)`: consume the response body, returning it as a `Vector{UInt8}`
-  * `take!(String, r)`: consume the response body, returning it as a `String`
+  * `String(take!(r))`: consume the response body, returning it as a `String`
 """
 type Response
     status::Int32
@@ -320,7 +320,6 @@ history(r::Response) = r.history
 statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
 body(r::Union{Request, Response}) = r.body
 Base.take!(r::Union{Request, Response}) = readavailable(body(r))
-Base.take!(::Type{String}, r::Union{Request, Response}) = String(take!(r))
 Base.String(r::Union{Request, Response}) = String(body(r))
 
 Response(; status::Int=200,

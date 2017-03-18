@@ -36,15 +36,15 @@ for sch in ("http", "https")
     @test (haskey(h, "Hey") ? h["Hey"] == "dude" : h["hey"] == "dude")
 
     r = HTTP.get("$sch://httpbin.org/cookies")
-    body = take!(String, r)
+    body = String(take!(r))
     @test (body == "{\n  \"cookies\": {}\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n")
     r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor")
     @test HTTP.status(r) == 200
-    body = take!(String, r)
+    body = String(take!(r))
     @test (body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n")
 
     # r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
-    # @test take!(String, r) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
+    # @test String(take!(r)) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
 
     # stream
     r = HTTP.post("$sch://httpbin.org/post"; body="hey")
@@ -98,11 +98,11 @@ for sch in ("http", "https")
     # multipart
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
     @test HTTP.status(r) == 200
-    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"), chunksize=1000)
     @test HTTP.status(r) == 200
-    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -110,7 +110,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
-    str = take!(String, r)
+    str = String(take!(r))
     @test startswith(str, "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()
@@ -119,7 +119,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io), chunksize=1000)
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
-    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -128,7 +128,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m))
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
-    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -137,7 +137,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m), chunksize=1000)
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
-    @test startswith(take!(String, r), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     # asynchronous
     f = HTTP.FIFOBuffer()
