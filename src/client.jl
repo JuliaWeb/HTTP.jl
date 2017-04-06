@@ -266,7 +266,13 @@ function process!(client, conn, opts, host, method, response, starttime, retryat
         while true
             # if no data after `readtimeout` seconds, break out
             @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
-            buffer = readavailable(conn.tcp)
+            local buffer
+            try
+                buffer = readavailable(conn.tcp)
+            catch e
+                @log(verbose, client.logger, "IO-related error reading from conn.tcp of type: $(typeof(conn.tcp))")
+                return false
+            end
             if length(buffer) == 0
                 if !isopen(conn.tcp)
                     dead!(conn)
