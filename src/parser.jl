@@ -1030,8 +1030,11 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
 
             #= Set this here so that on_headers_complete() callbacks can see it =#
             @debug(PARSING_DEBUG, @__LINE__, "checking for upgrade...")
-            upgrade = ((parser.flags & (F_UPGRADE | F_CONNECTION_UPGRADE)) ==
-            (F_UPGRADE | F_CONNECTION_UPGRADE) || (typeof(r) == Request && r.method == CONNECT))
+            if (parser.flags & F_UPGRADE > 0) && (parser.flags & F_CONNECTION_UPGRADE > 0)
+                upgrade = typeof(r) == Request || r.status == 101
+            else
+                upgrade = typeof(r) == Request && r.method == CONNECT
+            end
             @debug(PARSING_DEBUG, @__LINE__, upgrade)
             #= Here we call the headers_complete callback. This is somewhat
             * different than other callbacks because if the user returns 1, we
