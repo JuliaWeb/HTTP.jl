@@ -441,13 +441,14 @@ function download(uri::AbstractString, file; threshold::Int=50000000, verbose::B
     res = HTTP.get(uri; verbose=verbose, query=query, stream=true, args...)
     body = HTTP.body(res)
     file = Base.get(HTTP.headers(res), "Content-Encoding", "") == "gzip" ? string(file, ".gz") : file
+    threshold_step = threshold
     nbytes = 0
     open(file, "w") do f
         while !eof(body)
             nbytes += write(f, readavailable(body))
             if nbytes > threshold
                 verbose && println("[$(now())]: downloaded $nbytes bytes..."); flush(STDOUT)
-                threshold += 50000000
+                threshold += threshold_step
             end
         end
         length(body) > 0 && write(f, readavailable(body))
