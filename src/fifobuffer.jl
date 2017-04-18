@@ -158,7 +158,7 @@ function Base.read(f::FIFOBuffer, nb::Int)
     return bytes
 end
 
-function Base.read(f::FIFOBuffer, ::Type{UInt8})
+function Base.read(f::FIFOBuffer, ::Type{Tuple{UInt8,Bool}})
     f.nb == 0 && return 0x00, false
     # data to read
     @inbounds b = f.buffer[f.f]
@@ -166,6 +166,12 @@ function Base.read(f::FIFOBuffer, ::Type{UInt8})
     f.nb -= 1
     notify(f.cond)
     return b, true
+end
+
+function Base.read(f::FIFOBuffer, ::Type{UInt8})
+    byte, valid = read(f, Tuple{UInt8,Bool})
+    valid || throw(EOFError())
+    return byte
 end
 
 function Base.String(f::FIFOBuffer)
