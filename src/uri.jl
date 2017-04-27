@@ -210,8 +210,11 @@ Splits the path into components
 See: http://tools.ietf.org/html/rfc3986#section-3.3
 """
 function splitpath(uri::URI, starting=2)
+    return splitpath(path(uri), starting)
+end
+
+function splitpath(p::String, starting=2)
     elems = String[]
-    p = path(uri)
     len = length(p)
     len > 1 || return elems
     start_ind = i = ifelse(p[1] == '/', 2, 1)
