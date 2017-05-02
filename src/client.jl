@@ -348,7 +348,7 @@ Build and execute an http "$($f_str)" request. Query parameters can be passed vi
 query parameters with the same key can be passed like `Dict("key1"=>["value1", "value2"], "key2"=>...)`.
 Returns a `Response` object that includes the resulting status code (`HTTP.status(r)` and `HTTP.statustext(r)`),
 response headers (`HTTP.headers(r)`), cookies (`HTTP.cookies(r)`), response history if redirects were involved
-(`HTTP.history(r)`), and response body (`HTTP.body(r)` or `take!(String, r)` or `take!(r)`).
+(`HTTP.history(r)`), and response body (`HTTP.body(r)` or `String(take!(r)` or `take!(r)`).
 
 The body or payload for a request can be given through the `body` keyword arugment.
 The body can be given as a `String`, `Vector{UInt8}`, `IO`, `HTTP.FIFOBuffer` or `Dict` argument type.
