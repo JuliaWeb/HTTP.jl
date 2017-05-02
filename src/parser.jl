@@ -1294,7 +1294,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
     @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
     b = p_state == start_state || p_state == s_dead
     he = b | (p_state >= s_headers_done)
-    m = b | (p_state >= s_message_done)
+    m = b | (p_state >= s_body_identity_eof)
     return errno, he, m, String(bytes[p:end])
 
     @label error
