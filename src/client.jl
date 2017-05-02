@@ -100,8 +100,10 @@ end
 
 request(req::Request; stream::Bool=false, verbose::Bool=false, args...) = request(DEFAULT_CLIENT, req, RequestOptions(; args...); stream=stream, verbose=verbose)
 
-function request(client::Client, req::Request, opts::RequestOptions; history::Vector{Response}=Response[], retryattempt::Int=1, stream::Bool=false, verbose::Bool=false)
+function request(client::Client, req::Request, opts::RequestOptions; history::Vector{Response}=Response[], retryattempt::Int=0, stream::Bool=false, verbose::Bool=false)
     client.logger != STDOUT && (verbose = true)
+    # retryattempt can't be negative
+    retryattempt = max(0, retryattempt)
     # ensure all Request options are set, using client.options if necessary
     # this works because req.options are null by default whereas client.options always have a default
     update!(opts, client.options)
