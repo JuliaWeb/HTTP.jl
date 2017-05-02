@@ -85,7 +85,7 @@ function Base.eof(f::FIFOBuffer)
     else
         # if being called asynchronously, allow user
         # to set eof by calling `eof!`
-        return f.eof
+        return f.eof && f.nb == 0
     end
 end
 function Base.close(f::FIFOBuffer)

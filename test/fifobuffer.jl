@@ -189,4 +189,12 @@
     @test b == [0x01, 0x02, 0x03]
     @test read(f, UInt8) == 0x04
     @test_throws EOFError read(f, UInt8)
+
+    # ensure we return eof == false if there are still bytes to be read
+    f = HTTP.FIFOBuffer(5)
+    write(f, [0x01, 0x02, 0x03, 0x04])
+    close(f)
+    @async begin
+        @test !eof(f)
+    end
 end; # testset
