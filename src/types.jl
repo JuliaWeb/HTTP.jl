@@ -442,9 +442,11 @@ function body(io::IO, r::Response, opts, consume)
 end
 
 function Base.write(io::IO, r::Union{Request, Response}, opts, consume=true)
-    startline(io, r)
-    headers(io, r)
-    body(io, r, opts, consume)
+    i = IOBuffer()
+    startline(i, r)
+    headers(i, r)
+    body(i, r, opts, consume)
+    write(io, take!(i))
     return
 end
 
