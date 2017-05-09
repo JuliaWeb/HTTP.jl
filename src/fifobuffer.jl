@@ -79,7 +79,14 @@ Base.read(f::FIFOBuffer) = readavailable(f)
 Base.flush(f::FIFOBuffer) = nothing
 
 function Base.eof(f::FIFOBuffer)
-    return f.eof && f.nb == 0
+    if current_task() == f.task
+        # not asynchronous, just read until buffer is empty
+        return f.nb == 0
+    else
+        # if being called asynchronously, allow user
+        # to set eof by calling `eof!`
+        return f.eof && f.nb == 0
+    end
 end
 function Base.close(f::FIFOBuffer)
     f.eof = true
@@ -114,7 +121,6 @@ function Base.readavailable(f::FIFOBuffer)
     end
     f.f = f.l
     f.nb = 0
-    f.eof = true
     notify(f.cond)
     return bytes
 end
@@ -148,7 +154,6 @@ function Base.read(f::FIFOBuffer, nb::Int)
         end
     end
     f.nb -= length(bytes)
-    f.nb == 0 && (f.eof = true)
     notify(f.cond)
     return bytes
 end
@@ -159,7 +164,6 @@ function Base.read(f::FIFOBuffer, ::Type{Tuple{UInt8,Bool}})
     @inbounds b = f.buffer[f.f]
     f.f = mod1(f.f + 1, f.max)
     f.nb -= 1
-    f.nb == 0 && (f.eof = true)
     notify(f.cond)
     return b, true
 end
