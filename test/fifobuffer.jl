@@ -197,4 +197,23 @@
     @async begin
         @test !eof(f)
     end
+
+    # Issue #45
+    # Ensure that we don't encounter an EOF when reading before data is written
+    f = HTTP.FIFOBuffer(5)
+    bytes = [0x01, 0x02, 0x03, 0x04]
+    write(f, bytes)
+    @test !eof(f)
+    @sync begin
+        @async begin
+            bytes_read = UInt8[]
+            while !eof(f)
+                println("reading byte...")
+                push!(bytes_read, read(f, UInt8))
+            end
+            @test bytes_read == bytes
+        end
+        close(f)
+    end
+    @test eof(f)
 end; # testset

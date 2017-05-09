@@ -159,7 +159,7 @@ function Base.read(f::FIFOBuffer, nb::Int)
 end
 
 function Base.read(f::FIFOBuffer, ::Type{Tuple{UInt8,Bool}})
-    f.nb == 0 && return 0x00, false
+    eof(f) && return 0x00, false
     # data to read
     @inbounds b = f.buffer[f.f]
     f.f = mod1(f.f + 1, f.max)
