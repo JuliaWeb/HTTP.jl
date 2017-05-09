@@ -155,7 +155,12 @@ function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl, start
                         end
                         @log(verbose, logger, "responding with response on connection i=$i")
                         verbose && (show(logger, response, options); println(logger))
-                        write(tcp, response, options)
+                        try
+                            write(tcp, response, options)
+                        catch e
+                            @log(verbose, logger, e)
+                            error = true
+                        end
                         error && break
                         startedprocessingrequest = alreadysent100continue = false
                     end
