@@ -1382,11 +1382,9 @@ const responses = Message[
                  "Content-Length: 7\r\n" *
                  "Proxy-Connection: keep-alive\r\n\r\n"
 
-        req = HTTP.Request("GET",
-            HTTP.URI("http://www.techcrunch.com/"),
-            Dict("Content-Length"=>"7","Host"=>"www.techcrunch.com","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Proxy-Connection"=>"keep-alive","Accept-Language"=>"en-us,en;q=0.5","Keep-Alive"=>"300","User-Agent"=>"Fake","Accept-Encoding"=>"gzip,deflate"),
-            UInt8[]
-        )
+        req = HTTP.Request()
+        req.uri = HTTP.URI("http://www.techcrunch.com/")
+        req.headers = Dict("Content-Length"=>"7","Host"=>"www.techcrunch.com","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Proxy-Connection"=>"keep-alive","Accept-Language"=>"en-us,en;q=0.5","Keep-Alive"=>"300","User-Agent"=>"Fake","Accept-Encoding"=>"gzip,deflate")
 
         @test HTTP.parse(HTTP.Request, reqstr) == req
 
