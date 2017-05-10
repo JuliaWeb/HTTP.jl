@@ -276,7 +276,7 @@ function Server{I}(handler=(req, rep) -> Response("Hello World!"),
     if cert != "" && key != ""
         server = Server{https, I}(handler, logger, Channel(1), Channel(1), ServerOptions(; tlsconfig=TLS.SSLConfig(cert, key), args...))
     else
-        server = Server{http, I}(handler, logger, Channel(1), Channel(1), ServerOptions(args...))
+        server = Server{http, I}(handler, logger, Channel(1), Channel(1), ServerOptions(; args...))
     end
     return server
 end
