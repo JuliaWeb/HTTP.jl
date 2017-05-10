@@ -198,13 +198,13 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
         expired = Set{Cookie}()
         for (i, cookie) in enumerate(cookies)
             if Cookies.shouldsend(cookie, scheme(uri(req)) == "https", host, path(uri(req)))
-                cookie.expires != DateTime() && cookie.expires < now(Dates.UTC) && (push!(expired, cookie); @log(verbose, client.logger, "deleting expired cookie"); continue)
+                cookie.expires != DateTime() && cookie.expires < now(Dates.UTC) && (push!(expired, cookie); @log(verbose, client.logger, "deleting expired cookie: " * cookie.name); continue)
                 push!(tosend, cookie)
             end
         end
         setdiff!(client.cookies[host], expired)
         if length(tosend) > 0
-            @log(verbose, client.logger, "adding cached cookies for host to request header")
+            @log(verbose, client.logger, "adding cached cookies for host to request header: " * join(map(x->x.name, tosend), ", "))
             req.headers["Cookie"] = string(Base.get(req.headers, "Cookie", ""), [c for c in tosend])
         end
     end
@@ -229,7 +229,7 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
         retryattempt >= opts.retries::Int && throw(RetryException(opts.retries::Int))
         return request(client, req, opts; history=history, retryattempt=retryattempt+1, stream=stream, verbose=verbose)
     end
-    !isempty(response.cookies) && (@log(verbose, client.logger, "caching received cookies for host"); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
+    !isempty(response.cookies) && (@log(verbose, client.logger, "caching received cookies for host: " * join(map(x->x.name, response.cookies), ", ")); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
     # return immediately for streaming responses
     stream && return response
     idle!(conn)
