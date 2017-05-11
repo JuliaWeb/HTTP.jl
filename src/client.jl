@@ -72,6 +72,10 @@ const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, TLS.SSLConfig(t
     Client(; args...) = Client(STDOUT, RequestOptions($(DEFAULT_OPTIONS)...; args...))
 end
 
+function setclient!(client::Client)
+    global const DEFAULT_CLIENT = client
+end
+
 """
     HTTP.request([client::HTTP.Client,] req::HTTP.Request; stream::Bool=false, verbose=false)
     HTTP.request([client,] method, uri; headers=HTTP.Headers(), body="", stream=false, verbose=false)
