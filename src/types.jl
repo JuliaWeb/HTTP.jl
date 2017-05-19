@@ -237,7 +237,9 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
     if m != CONNECT
         headers = defaultheaders(Request)
         headers["Host"] = string(hostname(uri), hasport(uri) ? string(':', port(uri)) : "")
-        headers["Origin"] = string(uri)
+        if m != GET
+            headers["Origin"] = replace(string(uri), resource(uri), "")
+        end
     else
         headers = Headers()
     end
