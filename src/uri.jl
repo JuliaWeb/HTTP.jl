@@ -145,13 +145,13 @@ function Base.isvalid(uri::URI)
 end
 
 lower(c::UInt8) = c | 0x20
-@inline shouldencode(c) = c < 0x1f || c > 0x7f || @anyeq(c,
-                            UInt8(';'), UInt8('/'), UInt8('?'), UInt8(':'),
-                            UInt8('@'), UInt8('='), UInt8('&'), UInt8(' '),
-                            UInt8('"'), UInt8('<'), UInt8('>'), UInt8('#'),
-                            UInt8('%'), UInt8('{'), UInt8('}'), UInt8('|'),
-                            UInt8('\\'), UInt8('^'), UInt8('~'), UInt8('['),
-                            UInt8(']'), UInt8('`'))
+# RFC3986 Unreserved Characters (and '~' Unsafe per RFC1738).
+@inline shouldencode(c) = !((c >= UInt8('A') && c <= UInt8('Z'))
+                         || (c >= UInt8('a') && c <= UInt8('z'))
+                         || (c >= UInt8('0') && c <= UInt8('9'))
+                         || c == UInt8('-')
+                         || c == UInt8('.')
+                         || c == UInt8('_'))
 hexstring(x) = string('%', uppercase(hex(x,2)))
 
 "percent-encode a string, dict, or pair for a uri"
@@ -177,8 +177,8 @@ function escape(io, k, A::Vector{String})
     end
 end
 
-escape(p::Pair) = escape(Dict(p))
-function escape(d::Dict)
+escape(p::Pair) = escape([p])
+function escape(d::Union{Dict,Vector{Pair}})
     io = IOBuffer()
     len = length(d)
     for (i, (k,v)) in enumerate(d)
