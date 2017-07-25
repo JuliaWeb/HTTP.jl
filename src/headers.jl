@@ -58,11 +58,11 @@ immutable AlreadyCanonical
 end
 
 """
-    Headers() <: Associative{String,String}()
+    Headers <: Associative{String,String}
 
 A type to represent headers. Keys containing invalid characters are returned as is. Valid keys are canonicalized, uppercasing the first character and characters following a '-' and lowercasing other characters. So, for valid keys, Headers is case-insensitive.
 """
-immutable Headers{K<:String,V<:String} <: Associative{K,V}
+immutable Headers{K<:String,V<:String} <: Associative{String,String}
     d::Dict{K,V}
 
     function Headers{K,V}() where V where K
