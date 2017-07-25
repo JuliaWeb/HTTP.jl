@@ -25,6 +25,7 @@ include("uri.jl")
 include("cookies.jl")
 using .Cookies
 
+include("headers.jl")
 include("types.jl")
 include("parser.jl")
 include("client.jl")

@@ -9,9 +9,12 @@
 
 @test HTTP.status(HTTP.Response(300)) == 300
 @test String(HTTP.body(HTTP.Response("hello world"))) == "hello world"
-@test HTTP.status(HTTP.Response(300, Dict{String,String}(), "")) == 300
+@test HTTP.status(HTTP.Response(300, HTTP.Headers(), "")) == 300
 
 @test HTTP.Response(200) == HTTP.Response(200)
+@test HTTP.Response(300, HTTP.Headers(), "") == HTTP.Response(300, Dict{String,String}(), "")
+
+@test_throws ErrorException HTTP.Response(200, Dict("redundant" => "1", "Redundant" => "2"), "")
 
 io = IOBuffer()
 show(io, HTTP.Response(200))
@@ -25,5 +28,4 @@ show(io, HTTP.Request())
 
 showcompact(io, HTTP.Request())
 @test String(take!(io)) == "Request(\"\", 0 headers, 0 bytes in body)"
-
 end

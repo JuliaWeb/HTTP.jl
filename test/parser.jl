@@ -103,7 +103,7 @@ const requests = Message[
   ,request_url= "/dumbfuck"
   ,num_headers= 1
   ,headers=Dict{String,String}(
-      "aaaaaaaaaaaaa"=>  "++++++++++"
+      "Aaaaaaaaaaaaa"=>  "++++++++++"
   )
   ,body= ""
 ), Message(name= "fragment in url"
@@ -165,7 +165,7 @@ const requests = Message[
   ,request_url= "/get_funky_content_length_body_hello"
   ,num_headers= 1
   ,headers=Dict{String,String}(
-       "conTENT-Length" => "5"
+       "Content-Length" => "5"
   )
   ,body= "HELLO"
 ), Message(name= "post identity body world"
@@ -358,10 +358,10 @@ const requests = Message[
   ,upgrade="Hot diggity dogg"
   ,headers=Dict{String,String}( "Host"=> "example.com"
              , "Connection"=> "Upgrade"
-             , "Sec-WebSocket-Key2"=> "12998 5 Y3 1  .P00"
-             , "Sec-WebSocket-Protocol"=> "sample"
+             , "Sec-Websocket-Key2"=> "12998 5 Y3 1  .P00"
+             , "Sec-Websocket-Protocol"=> "sample"
              , "Upgrade"=> "WebSocket"
-             , "Sec-WebSocket-Key1"=> "4 @1  46546xW%0l 1 5"
+             , "Sec-Websocket-Key1"=> "4 @1  46546xW%0l 1 5"
              , "Origin"=> "http://example.com"
            )
   ,body= ""
@@ -384,8 +384,8 @@ const requests = Message[
   ,request_url= "0-home0.netscape.com:443"
   ,num_headers= 2
   ,upgrade="some data\r\nand yet even more data"
-  ,headers=Dict{String,String}( "User-agent"=> "Mozilla/1.1N"
-             , "Proxy-authorization"=> "basic aGVsbG86d29ybGQ="
+  ,headers=Dict{String,String}( "User-Agent"=> "Mozilla/1.1N"
+             , "Proxy-Authorization"=> "basic aGVsbG86d29ybGQ="
            )
   ,body= ""
 ), Message(name= "report request"
@@ -431,9 +431,9 @@ const requests = Message[
   ,request_path= "*"
   ,request_url= "*"
   ,num_headers= 3
-  ,headers=Dict{String,String}( "HOST"=> "239.255.255.250:1900"
-             , "MAN"=> "\"ssdp:discover\""
-             , "ST"=> "\"ssdp:all\""
+  ,headers=Dict{String,String}( "Host"=> "239.255.255.250:1900"
+             , "Man"=> "\"ssdp:discover\""
+             , "St"=> "\"ssdp:all\""
            )
   ,body= ""
 ), Message(name= "host terminated by a query string"
@@ -523,8 +523,8 @@ const requests = Message[
   ,port="443"
   ,num_headers= 2
   ,upgrade=""
-  ,headers=Dict{String,String}( "User-agent"=> "Mozilla/1.1N"
-             , "Proxy-authorization"=> "basic aGVsbG86d29ybGQ="
+  ,headers=Dict{String,String}( "User-Agent"=> "Mozilla/1.1N"
+             , "Proxy-Authorization"=> "basic aGVsbG86d29ybGQ="
            )
   ,body= ""
 ), Message(name= "utf-8 path request"
@@ -559,8 +559,8 @@ const requests = Message[
   ,port="443"
   ,num_headers= 2
   ,upgrade=""
-  ,headers=Dict{String,String}( "User-agent"=> "Mozilla/1.1N"
-             , "Proxy-authorization"=> "basic aGVsbG86d29ybGQ="
+  ,headers=Dict{String,String}( "User-Agent"=> "Mozilla/1.1N"
+             , "Proxy-Authorization"=> "basic aGVsbG86d29ybGQ="
            )
   ,body= ""
 ), Message(name = "eat CRLF between requests, no \"Connection: close\" header"
@@ -694,8 +694,8 @@ const requests = Message[
   ,port="443"
   ,num_headers= 3
   ,upgrade="blarfcicle"
-  ,headers=Dict{String,String}( "User-agent"=> "Mozilla/1.1N"
-             , "Proxy-authorization"=> "basic aGVsbG86d29ybGQ="
+  ,headers=Dict{String,String}( "User-Agent"=> "Mozilla/1.1N"
+             , "Proxy-Authorization"=> "basic aGVsbG86d29ybGQ="
              , "Content-Length"=> "10"
            )
   ,body= ""
@@ -760,10 +760,10 @@ const requests = Message[
   ,upgrade="Hot diggity dogg"
   ,headers=Dict{String,String}( "Host"=> "example.com"
              , "Connection"=> "Something, Upgrade, ,Keep-Alive"
-             , "Sec-WebSocket-Key2"=> "12998 5 Y3 1  .P00"
-             , "Sec-WebSocket-Protocol"=> "sample"
+             , "Sec-Websocket-Key2"=> "12998 5 Y3 1  .P00"
+             , "Sec-Websocket-Protocol"=> "sample"
              , "Upgrade"=> "WebSocket"
-             , "Sec-WebSocket-Key1"=> "4 @1  46546xW%0l 1 5"
+             , "Sec-Websocket-Key1"=> "4 @1  46546xW%0l 1 5"
              , "Origin"=> "http://example.com"
            )
   ,body= ""
@@ -904,7 +904,7 @@ const responses = Message[
     , "Content-Type"=> "text/html; charset=UTF-8"
     , "Date"=> "Sun, 26 Apr 2009 11:11:49 GMT"
     , "Expires"=> "Tue, 26 May 2009 11:11:49 GMT"
-    , "X-\$PrototypeBI-Version"=> "1.6.0.3"
+    , "X-\$prototypebi-Version"=> "1.6.0.3"
     , "Cache-Control"=> "public, max-age=2592000"
     , "Server"=> "gws"
     , "Content-Length"=> "219  "
@@ -1056,7 +1056,7 @@ const responses = Message[
       "Server"=> "DCLK-AdSvr"
     , "Content-Type"=> "text/xml"
     , "Content-Length"=> "0"
-    , "DCLK_imp"=> "v7;x;114750856;0-0;0;17820020;0/0;21603567/21621457/1;;~okv=;dcmt=text/xml;;~cs=o"
+    , "Dclk_imp"=> "v7;x;114750856;0-0;0;17820020;0/0;21603567/21621457/1;;~okv=;dcmt=text/xml;;~cs=o"
   )
   ,body= ""
 ), Message(name= "bonjourmadame.fr"
@@ -1305,9 +1305,9 @@ const responses = Message[
   ,num_headers= 9
   ,headers=Dict{String,String}( "Date"=> "Wed, 15 May 2013 17:06:33 GMT"
              , "Server"=> "Server"
-             , "x-amz-id-1"=> "0GPHKXSJQ826RK7GZEB2"
-             , "p3p"=> "policyref=\"http://www.amazon.com/w3c/p3p.xml\",CP=\"CAO DSP LAW CUR ADM IVAo IVDo CONo OTPo OUR DELi PUBi OTRi BUS PHY ONL UNI PUR FIN COM NAV INT DEM CNT STA HEA PRE LOC GOV OTC \""
-             , "x-amz-id-2"=> "STN69VZxIFSz9YJLbz1GDbxpbjG6Qjmmq5E3DxRhOUw+Et0p4hr7c/Q8qNcx4oAD"
+             , "X-Amz-Id-1"=> "0GPHKXSJQ826RK7GZEB2"
+             , "P3p"=> "policyref=\"http://www.amazon.com/w3c/p3p.xml\",CP=\"CAO DSP LAW CUR ADM IVAo IVDo CONo OTPo OUR DELi PUBi OTRi BUS PHY ONL UNI PUR FIN COM NAV INT DEM CNT STA HEA PRE LOC GOV OTC \""
+             , "X-Amz-Id-2"=> "STN69VZxIFSz9YJLbz1GDbxpbjG6Qjmmq5E3DxRhOUw+Et0p4hr7c/Q8qNcx4oAD"
              , "Location"=> "http://www.amazon.com/Dan-Brown/e/B000AP9DSU/ref=s9_pop_gw_al1?_encoding=UTF8&refinementId=618073011&pf_rd_m=ATVPDKIKX0DER&pf_rd_s=center-2&pf_rd_r=0SHYY5BZXN3KR20BNFAY&pf_rd_t=101&pf_rd_p=1263340922&pf_rd_i=507846"
              , "Vary"=> "Accept-Encoding,User-Agent"
              , "Content-Type"=> "text/html; charset=ISO-8859-1"
@@ -1384,7 +1384,7 @@ const responses = Message[
 
         req = HTTP.Request()
         req.uri = HTTP.URI("http://www.techcrunch.com/")
-        req.headers = Dict("Content-Length"=>"7","Host"=>"www.techcrunch.com","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Proxy-Connection"=>"keep-alive","Accept-Language"=>"en-us,en;q=0.5","Keep-Alive"=>"300","User-Agent"=>"Fake","Accept-Encoding"=>"gzip,deflate")
+        req.headers = HTTP.Headers("Content-Length"=>"7","Host"=>"www.techcrunch.com","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Proxy-Connection"=>"keep-alive","Accept-Language"=>"en-us,en;q=0.5","Keep-Alive"=>"300","User-Agent"=>"Fake","Accept-Encoding"=>"gzip,deflate")
 
         @test HTTP.parse(HTTP.Request, reqstr) == req
 
