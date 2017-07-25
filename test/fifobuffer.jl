@@ -202,18 +202,20 @@
     # Ensure that we don't encounter an EOF when reading before data is written
     f = HTTP.FIFOBuffer(5)
     bytes = [0x01, 0x02, 0x03, 0x04]
-    write(f, bytes)
+    @test eof(f)
+    f.content_length = length(bytes)  # We know how many bytes there are to read before EOF
     @test !eof(f)
     @sync begin
         @async begin
             bytes_read = UInt8[]
             while !eof(f)
-                println("reading byte...")
                 push!(bytes_read, read(f, UInt8))
             end
             @test bytes_read == bytes
         end
-        close(f)
+        yield()
+        write(f, bytes)
     end
+    close(f)
     @test eof(f)
 end; # testset

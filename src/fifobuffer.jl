@@ -54,19 +54,20 @@ type FIFOBuffer <: IO
     buffer::Vector{UInt8}
     cond::Condition
     task::Task
-    eof::Bool
+    content_pos::Int64    # total number of bytes read from buffer
+    content_length::Int64 # expected number of bytes to read from buffer. content_pos == content_length marks EOF
 end
 
 const DEFAULT_MAX = Int64(typemax(Int32))^Int64(2)
 
 FIFOBuffer(f::FIFOBuffer) = f
-FIFOBuffer(max) = FIFOBuffer(0, max, 0, 1, 1, UInt8[], Condition(), current_task(), false)
+FIFOBuffer(max) = FIFOBuffer(0, max, 0, 1, 1, UInt8[], Condition(), current_task(), 0, -1)
 FIFOBuffer() = FIFOBuffer(DEFAULT_MAX)
 
 FIFOBuffer(str::String) = FIFOBuffer(Vector{UInt8}(str))
 function FIFOBuffer(bytes::Vector{UInt8})
     len = length(bytes)
-    return FIFOBuffer(len, len, len, 1, 1, bytes, Condition(), current_task(), false)
+    return FIFOBuffer(len, len, len, 1, 1, bytes, Condition(), current_task(), 0, -1)
 end
 FIFOBuffer(io::IOStream) = FIFOBuffer(read(io))
 FIFOBuffer(io::IO) = FIFOBuffer(readavailable(io))
@@ -79,17 +80,10 @@ Base.read(f::FIFOBuffer) = readavailable(f)
 Base.flush(f::FIFOBuffer) = nothing
 
 function Base.eof(f::FIFOBuffer)
-    if current_task() == f.task
-        # not asynchronous, just read until buffer is empty
-        return f.nb == 0
-    else
-        # if being called asynchronously, allow user
-        # to set eof by calling `eof!`
-        return f.eof && f.nb == 0
-    end
+    return f.content_length >= 0 && f.content_pos >= f.content_length || f.content_length < 0 && f.nb == 0
 end
 function Base.close(f::FIFOBuffer)
-    f.eof = true
+    f.content_length = f.content_pos
     notify(f.cond)
     return
 end
@@ -121,6 +115,7 @@ function Base.readavailable(f::FIFOBuffer)
     end
     f.f = f.l
     f.nb = 0
+    f.content_pos += length(bytes)
     notify(f.cond)
     return bytes
 end
@@ -154,16 +149,22 @@ function Base.read(f::FIFOBuffer, nb::Int)
         end
     end
     f.nb -= length(bytes)
+    f.content_pos += length(bytes)
     notify(f.cond)
     return bytes
 end
 
 function Base.read(f::FIFOBuffer, ::Type{Tuple{UInt8,Bool}})
+    # block read if running asynchronously and the buffer is empty
+    if !eof(f) && f.nb == 0 && current_task() != f.task
+        wait(f.cond)
+    end
     eof(f) && return 0x00, false
     # data to read
     @inbounds b = f.buffer[f.f]
     f.f = mod1(f.f + 1, f.max)
     f.nb -= 1
+    f.content_pos += 1
     notify(f.cond)
     return b, true
 end

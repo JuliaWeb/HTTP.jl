@@ -290,6 +290,10 @@ function process!(client, conn, opts, host, method, response, starttime, retryat
             end
             @log(verbose, client.logger, "received bytes from the wire, processing")
             errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
+            # if content-length is missing users could encounter an EOF if reading occurs faster than writing
+            if haskey(response.headers, "Content-Length")
+                response.body.content_length = Base.parse(Int64, response.headers["Content-Length"])
+            end
             if errno != HPE_OK
                 idle!(conn)
                 return ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])\nCurrent response buffer contents: $(String(buffer))")
