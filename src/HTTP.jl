@@ -17,6 +17,8 @@ struct ParsingError <: Exception
 end
 Base.show(io::IO, p::ParsingError) = println("HTTP.ParsingError: ", p.msg)
 
+const CRLF = "\r\n"
+
 include("consts.jl")
 include("utils.jl")
 include("fifobuffer.jl")
@@ -25,6 +27,7 @@ include("uri.jl")
 include("cookies.jl")
 using .Cookies
 
+include("multipart.jl")
 include("types.jl")
 include("parser.jl")
 include("client.jl")
