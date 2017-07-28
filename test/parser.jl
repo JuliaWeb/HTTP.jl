@@ -1,4 +1,4 @@
-type Message
+mutable struct Message
     name::String
     raw::String
     method::HTTP.Method

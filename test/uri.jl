@@ -1,4 +1,4 @@
-type URLTest
+mutable struct URLTest
     name::String
     url::String
     isconnect::Bool
