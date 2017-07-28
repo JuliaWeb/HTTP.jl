@@ -22,7 +22,7 @@
 # IN THE SOFTWARE.
 #
 
-type Parser
+mutable struct Parser
     state::UInt8
     header_state::UInt8
     index::UInt8
@@ -96,14 +96,14 @@ function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY)
     return
 end
 onheaderscomplete(r) = @debug(PARSING_DEBUG, @__LINE__, "onheaderscomplete")
-function onbody(r, bytes, i, j)
+function onbody(r, maintask, bytes, i, j)
     @debug(PARSING_DEBUG, @__LINE__, "onbody")
     @debug(PARSING_DEBUG, @__LINE__, String(r.body))
     @debug(PARSING_DEBUG, @__LINE__, String(bytes[i:j]))
     len = j - i + 1
     nb = write(r.body, view(bytes, i:j))
     if nb < len # didn't write all available bytes
-        if current_task() == MAINTASK
+        if current_task() == maintask
             # main request function hasn't returned yet, so not safe to wait
             r.body.max += len - nb
             write(r.body, view(bytes, (i + nb):j))
@@ -131,14 +131,15 @@ full request or response (but may include more than one). Supported keyword argu
   * `maxheader`: the maximum allowed size of headers
   * `maxbody`: the maximum allowed size of a request or response body
 """
-function parse{T <: Union{Request, Response}}(::Type{T}, str;
+function parse(T::Type{<:Union{Request, Response}}, str;
                 extra::Ref{String}=Ref{String}(), lenient::Bool=true,
                 maxuri::Int64=DEFAULT_MAX_URI, maxheader::Int64=DEFAULT_MAX_HEADER,
-                maxbody::Int64=DEFAULT_MAX_BODY)
+                maxbody::Int64=DEFAULT_MAX_BODY,
+                maintask::Task=current_task())
     r = T()
     reset!(DEFAULT_PARSER)
     err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str);
-        lenient=lenient, maxuri=maxuri, maxheader=maxheader, maxbody=maxbody)
+        lenient=lenient, maxuri=maxuri, maxheader=maxheader, maxbody=maxbody, maintask=maintask)
     err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
     extra[] = upgrade
     return r
@@ -148,11 +149,12 @@ const start_state = s_start_req_or_res
 const DEFAULT_MAX_HEADER = Int64(80 * 1024)
 const DEFAULT_MAX_URI = Int64(8000)
 const DEFAULT_MAX_BODY = Int64(2)^32 # 4Gib
+const DEFAULT_PARSER = Parser()
 
-function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(bytes);
+function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
         lenient::Bool=true, host::String="", method::HTTP.Method=GET,
         maxuri::Int64=DEFAULT_MAX_URI, maxheader::Int64=DEFAULT_MAX_HEADER,
-        maxbody::Int64=DEFAULT_MAX_BODY)::Tuple{ParsingErrorCode, Bool, Bool, String}
+        maxbody::Int64=DEFAULT_MAX_BODY, maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, String}
     strict = !lenient
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
@@ -1136,7 +1138,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
                 * important for applications, but let's keep it for now.
                 =#
                 @debug(PARSING_DEBUG, @__LINE__, "this onbody 1")
-                onbody(r, bytes, body_mark, p)
+                onbody(r, maintask, bytes, body_mark, p)
                 body_mark = 0
                 @goto reexecute
             end
@@ -1245,7 +1247,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
             @strictcheck(ch != CR)
             p_state = s_chunk_data_done
             @debug(PARSING_DEBUG, @__LINE__, "this onbody 2")
-            body_mark > 0 && onbody(r, bytes, body_mark, p - 1)
+            body_mark > 0 && onbody(r, maintask, bytes, body_mark, p - 1)
             body_mark = 0
 
         elseif p_state == s_chunk_data_done
@@ -1286,7 +1288,7 @@ function parse!{T <: Union{Request, Response}}(r::T, parser, bytes, len=length(b
     url_mark > 0 && (min(len, p) - url_mark > maxuri) && @err(HPE_URI_OVERFLOW)
     url_mark > 0 && onurl(r, bytes, url_mark, min(len, p))
     @debug(PARSING_DEBUG, @__LINE__, "this onbody 3")
-    body_mark > 0 && onbody(r, bytes, body_mark, min(len, p - 1))
+    body_mark > 0 && onbody(r, maintask, bytes, body_mark, min(len, p - 1))
     status_mark > 0 && onstatus(r)
 
     parser.state = p_state
