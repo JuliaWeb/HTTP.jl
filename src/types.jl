@@ -1,9 +1,9 @@
-@compat abstract type Scheme end
+abstract type Scheme end
 
-immutable http <: Scheme end
-immutable https <: Scheme end
-# immutable ws <: Scheme end
-# immutable wss <: Scheme end
+struct http <: Scheme end
+struct https <: Scheme end
+# struct ws <: Scheme end
+# struct wss <: Scheme end
 
 sockettype(::Type{http}) = TCPSocket
 sockettype(::Type{https}) = TLS.SSLContext
@@ -12,13 +12,12 @@ schemetype(::Type{TLS.SSLContext}) = https
 
 const Headers = Dict{String,String}
 
-?{T}(::Type{T}) = Union{T, Void}
-const null = nothing
-isnull(v::Void) = true
-isnull(x) = false
-function get{T, R}(value::T, name::Symbol, default::R)::R
-    val = getfield(value, name)::?(R)
-    return isnull(val) ? default : val
+const Option{T} = Union{T, Void}
+not(::Void) = true
+not(x) = false
+function get(value::T, name::Symbol, default::R)::R where {T, R}
+    val = getfield(value, name)::Option{R}
+    return not(val) ? default : val
 end
 
 """
@@ -36,17 +35,17 @@ at the `HTTP.Client` level to be applied to every request sent. Options include:
   * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
   * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
 """
-type RequestOptions
-    chunksize::?(Int)
-    gzip::?(Bool)
-    connecttimeout::?(Float64)
-    readtimeout::?(Float64)
-    tlsconfig::?(TLS.SSLConfig)
-    maxredirects::?(Int)
-    allowredirects::?(Bool)
-    forwardheaders::?(Bool)
-    retries::?(Int)
-    RequestOptions(ch::?(Int), gzip::?(Bool), ct::?(Float64), rt::?(Float64), tls::?(TLS.SSLConfig), mr::?(Int), ar::?(Bool), fh::?(Bool), tr::?(Int)) =
+mutable struct RequestOptions
+    chunksize::Option{Int}
+    gzip::Option{Bool}
+    connecttimeout::Option{Float64}
+    readtimeout::Option{Float64}
+    tlsconfig::Option{TLS.SSLConfig}
+    maxredirects::Option{Int}
+    allowredirects::Option{Bool}
+    forwardheaders::Option{Bool}
+    retries::Option{Int}
+    RequestOptions(ch::Option{Int}, gzip::Option{Bool}, ct::Option{Float64}, rt::Option{Float64}, tls::Option{TLS.SSLConfig}, mr::Option{Int}, ar::Option{Bool}, fh::Option{Bool}, tr::Option{Int}) =
         new(ch, gzip, ct, rt, tls, mr, ar, fh, tr)
 end
 
@@ -64,13 +63,13 @@ function RequestOptions(options::RequestOptions; kwargs...)
     return options
 end
 
-RequestOptions(chunk=null, gzip=null, ct=null, rt=null, tls=null, mr=null, ar=null, fh=null, tr=null; kwargs...) =
+RequestOptions(chunk=nothing, gzip=nothing, ct=nothing, rt=nothing, tls=nothing, mr=nothing, ar=nothing, fh=nothing, tr=nothing; kwargs...) =
     RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar, fh, tr); kwargs...)
 
 function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)
         f = fieldname(RequestOptions, i)
-        isnull(getfield(opts1, f)) && setfield!(opts1, f, getfield(opts2, f))
+        not(getfield(opts1, f)) && setfield!(opts1, f, getfield(opts2, f))
     end
     return opts1
 end
@@ -85,7 +84,7 @@ Files and other large data arguments can be provided as values as IO arguments: 
 an `IOBuffer` for in-memory data, or even an `HTTP.FIFOBuffer`. For complete control over a multipart chunk's details, an
 `HTTP.Multipart` type is provided to support setting the `Content-Type`, `filename`, and `Content-Transfer-Encoding` if desired. See `?HTTP.Multipart` for more details.
 """
-type Form <: IO
+mutable struct Form <: IO
     data::Vector{IO}
     index::Int
     boundary::String
@@ -162,21 +161,21 @@ The `data` argument must be an `IO` type such as `IOStream`, `IOBuffer`, or `HTT
 The `content_tyep` and `content_transfer_encoding` arguments allow the manual setting of these multipart headers. `Content-Type` will default to the result
 of the `HTTP.sniff(data)` mimetype detection algorithm, whereas `Content-Transfer-Encoding` will be left out if not specified.
 """
-type Multipart{T <: IO} <: IO
+mutable struct Multipart{T <: IO} <: IO
     filename::String
     data::T
     contenttype::String
     contenttransferencoding::String
 end
-Multipart{T}(f::String, data::T, ct="", cte="") = Multipart(f, data, ct, cte)
-Base.show{T}(io::IO, m::Multipart{T}) = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", data=::$T, contenttype=\"$(m.contenttype)\", contenttransferencoding=\"$(m.contenttransferencoding)\")")
+Multipart(f::String, data::T, ct="", cte="") where {T} = Multipart(f, data, ct, cte)
+Base.show(io::IO, m::Multipart{T}) where {T} = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", data=::$T, contenttype=\"$(m.contenttype)\", contenttransferencoding=\"$(m.contenttransferencoding)\")")
 
-Base.nb_available{T}(m::Multipart{T}) = isa(m.data, IOStream) ? filesize(m.data) - position(m.data) : nb_available(m.data)
-Base.eof{T}(m::Multipart{T}) = eof(m.data)
-Base.read{T}(m::Multipart{T}, n::Integer) = read(m.data, n)
-Base.read{T}(m::Multipart{T}) = read(m.data)
-Base.mark{T}(m::Multipart{T}) = mark(m.data)
-Base.reset{T}(m::Multipart{T}) = reset(m.data)
+Base.nb_available(m::Multipart{T}) where {T} = isa(m.data, IOStream) ? filesize(m.data) - position(m.data) : nb_available(m.data)
+Base.eof(m::Multipart{T}) where {T} = eof(m.data)
+Base.read(m::Multipart{T}, n::Integer) where {T} = read(m.data, n)
+Base.read(m::Multipart{T}) where {T} = read(m.data)
+Base.mark(m::Multipart{T}) where {T} = mark(m.data)
+Base.reset(m::Multipart{T}) where {T} = reset(m.data)
 
 function writemultipartheader(io::IOBuffer, i::Multipart)
     write(io, "; filename=\"$(i.filename)\"$CRLF")
@@ -208,7 +207,7 @@ Two convenience methods are provided for accessing a request body:
   * `take!(r)`: consume the request body, returning it as a `Vector{UInt8}`
   * `String(take!(r))`: consume the request body, returning it as a `String`
 """
-type Request
+mutable struct Request
     method::HTTP.Method
     major::Int16
     minor::Int16
@@ -233,7 +232,7 @@ defaultheaders(::Type{Request}) = Headers(
 function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
                     options::RequestOptions=RequestOptions(),
                     verbose::Bool=false,
-                    io::IO=STDOUT)
+                    io::Option{IO}=STDOUT)
     if m != CONNECT
         headers = defaultheaders(Request)
         headers["Host"] = string(hostname(uri), hasport(uri) ? string(':', port(uri)) : "")
@@ -262,7 +261,7 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
     return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
 
-Request{T}(method, uri, h, body::T; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) =
+Request(method, uri, h, body::T; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) where {T} =
     Request(convert(HTTP.Method, method), isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
             h, body; options=options, io=io, verbose=verbose)
 
@@ -301,7 +300,7 @@ Two convenience methods are provided for accessing a response body:
   * `take!(r)`: consume the response body, returning it as a `Vector{UInt8}`
   * `String(take!(r))`: consume the response body, returning it as a `String`
 """
-type Response
+mutable struct Response
     status::Int32
     major::Int16
     minor::Int16

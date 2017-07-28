@@ -3,9 +3,8 @@
 @test HTTP.schemetype(TCPSocket) == HTTP.http
 @test HTTP.schemetype(HTTP.TLS.SSLContext) == HTTP.https
 
-@test HTTP.?(Int) == Union{Int, Void}
-@test HTTP.isnull(nothing)
-@test !HTTP.isnull(1)
+@test HTTP.not(nothing)
+@test !HTTP.not(1)
 
 @test HTTP.status(HTTP.Response(300)) == 300
 @test String(HTTP.body(HTTP.Response("hello world"))) == "hello world"

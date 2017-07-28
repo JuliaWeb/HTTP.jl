@@ -56,7 +56,7 @@ HTTP response or the Cookie header of an HTTP request. Supported fields
 
 See http:#tools.ietf.org/html/rfc6265 for details.
 """
-type Cookie
+mutable struct Cookie
     name::String
     value::String
 
@@ -376,6 +376,7 @@ function isCookieDomainName(s::String)
 end
 
 sanitizeCookieName(n::String) = replace(replace(n, '\n', '-'), '\r', '-')
+sanitizeCookieName(n) = sanitizeCookieName(String(n))
 
 # http:#tools.ietf.org/html/rfc6265#section-4.1.1
 # cookie-value      = *cookie-octet / ( DQUOTE *cookie-octet DQUOTE )

@@ -45,7 +45,7 @@ close(f)
 istaskdone(tsk) # true
 ```
 """
-type FIFOBuffer <: IO
+mutable struct FIFOBuffer <: IO
     len::Int64 # length of buffer in bytes
     max::Int64 # the max size buffer is allowed to grow to
     nb::Int64  # number of bytes available to read in buffer
@@ -62,6 +62,8 @@ const DEFAULT_MAX = Int64(typemax(Int32))^Int64(2)
 FIFOBuffer(f::FIFOBuffer) = f
 FIFOBuffer(max) = FIFOBuffer(0, max, 0, 1, 1, UInt8[], Condition(), current_task(), false)
 FIFOBuffer() = FIFOBuffer(DEFAULT_MAX)
+
+const EMPTYBODY = FIFOBuffer()
 
 FIFOBuffer(str::String) = FIFOBuffer(Vector{UInt8}(str))
 function FIFOBuffer(bytes::Vector{UInt8})

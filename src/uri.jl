@@ -1,5 +1,5 @@
 # URI
-immutable Offset
+struct Offset
     off::UInt16
     len::UInt16
 end
@@ -32,7 +32,7 @@ To access and return these components as strings, use the various accessor metho
   * `HTTP.fragment`: returns the fragment for a uri
   * `HTTP.resource`: returns the path-query-fragment combination
 """
-immutable URI
+struct URI
     data::Vector{UInt8}
     offsets::NTuple{7, Offset}
 end
@@ -158,7 +158,7 @@ hexstring(x) = string('%', uppercase(hex(x,2)))
 function escape end
 
 escape(v::Number) = string(v)
-escape{T}(v::Nullable{T}) = Base.isnull(v) ? "" : string(get(v))
+escape(v::Nullable{T}) where {T} = Base.isnull(v) ? "" : string(get(v))
 function escape(str::AbstractString, f=shouldencode)
     out = IOBuffer()
     for c in Vector{UInt8}(str)

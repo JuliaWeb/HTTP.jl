@@ -50,7 +50,7 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
 
     @test HTTP.escape(Dict("key1"=>"value1", "key2"=>["value2", "value3"])) == "key2=value2&key2=value3&key1=value1"
 
-    @test HTTP.escape("abcdef αβ 1234-=~!@#\$()_+{}|[]a;") == "abcdef%20%CE%B1%CE%B2%201234-%3D%7E!%40%23\$()_+%7B%7D%7C%5B%5Da%3B"
+    @test HTTP.escape("abcdef αβ 1234-=~!@#\$()_+{}|[]a;") == "abcdef%20%CE%B1%CE%B2%201234-%3D%7E%21%40%23%24%28%29_%2B%7B%7D%7C%5B%5Da%3B"
     @test HTTP.unescape(HTTP.escape("abcdef 1234-=~!@#\$()_+{}|[]a;")) == "abcdef 1234-=~!@#\$()_+{}|[]a;"
     @test HTTP.unescape(HTTP.escape("👽")) == "👽"
 

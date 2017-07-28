@@ -7,7 +7,7 @@ Represents a persistent client connection to a remote host; only created
 when a server response includes the "Connection: keep-alive" header. An open and non-idle connection
 will be reused when sending subsequent requests to the same host.
 """
-type Connection{I <: IO}
+mutable struct Connection{I <: IO}
     id::Int
     tcp::I
     state::ConnectionState
@@ -45,7 +45,7 @@ Additional keyword arguments can be passed that will get transmitted with each H
 * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
 """
-type Client{I <: IO}
+mutable struct Client
     # connection pools for keep-alive; key is host
     httppool::Dict{String, Vector{Connection{TCPSocket}}}
     httpspool::Dict{String, Vector{Connection{TLS.SSLContext}}}
@@ -53,24 +53,25 @@ type Client{I <: IO}
     cookies::Dict{String, Set{Cookie}}
     # buffer::Vector{UInt8} #TODO: create a fixed size buffer for reading bytes off the wire and having http_parser use, this should keep allocations down, need to make sure MbedTLS supports blocking readbytes!
     parser::Parser
-    logger::I
+    logger::Option{IO}
     # global request settings
     options::RequestOptions
     connectioncount::Int
 end
 
-Client(logger::IO, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(),
+Client(logger::Option{IO}, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(),
                                                      Dict{String, Vector{Connection{TLS.SSLContext}}}(),
                                                      Dict{String, Set{Cookie}}(),
                                                      Parser(), logger, options, 1)
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, TLS.SSLConfig(true), 5, true, false, 3))
+const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, nothing, 5, true, false, 3))
 
 @eval begin
-    Client(logger::IO; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
-    Client(; args...) = Client(STDOUT, RequestOptions($(DEFAULT_OPTIONS)...; args...))
+    Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
+    Client(; args...) = Client(nothing, RequestOptions($(DEFAULT_OPTIONS)...; args...))
 end
+const DEFAULT_CLIENT = Client()
 
 function setclient!(client::Client)
     global const DEFAULT_CLIENT = client
@@ -98,6 +99,7 @@ function request(client::Client, method, uri::URI;
                     verbose::Bool=false,
                     args...)
     opts = RequestOptions(; args...)
+    not(opts.tlsconfig) && (opts.tlsconfig = TLS.SSLConfig(true))
     req = Request(method, uri, headers, body; options=opts, verbose=verbose, io=client.logger)
     return request(client, req, opts; stream=stream, verbose=verbose)
 end
@@ -105,6 +107,7 @@ end
 request(req::Request; stream::Bool=false, verbose::Bool=false, args...) = request(DEFAULT_CLIENT, req, RequestOptions(; args...); stream=stream, verbose=verbose)
 
 function request(client::Client, req::Request, opts::RequestOptions; history::Vector{Response}=Response[], retryattempt::Int=0, stream::Bool=false, verbose::Bool=false)
+    not(client.logger) && (client.logger = STDOUT)
     client.logger != STDOUT && (verbose = true)
     # retryattempt can't be negative
     retryattempt = max(0, retryattempt)
@@ -117,8 +120,8 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
         opts.chunksize = length(req.body) + 1
     end
     h = host(uri(req))
-    return scheme(uri(req)) == "https" ? request(client, req, opts, getconn(https, client, h, opts, verbose), history, retryattempt, stream, verbose) :
-                                           request(client, req, opts, getconn(http, client, h, opts, verbose), history, retryattempt, stream, verbose)
+    return scheme(uri(req)) == "https" ? request(client, req, opts, getconn(https, client, h, opts, verbose), history, retryattempt, stream, current_task(), verbose) :
+                                           request(client, req, opts, getconn(http, client, h, opts, verbose), history, retryattempt, stream, current_task(), verbose)
 end
 
 function stalebytes!(c::TCPSocket)
@@ -128,7 +131,7 @@ function stalebytes!(c::TCPSocket)
 end
 stalebytes!(c::TLS.SSLContext) = stalebytes!(c.bio)
 
-function getconn{S}(::Type{S}, client, host, opts, verbose)
+function getconn(::Type{S}, client, host, opts, verbose) where {S}
     # connect to remote host
     # check if an open connection to host already exists
     reused = false
@@ -193,7 +196,7 @@ function initTLS!(::Type{https}, hostname, opts, socket)
     return stream
 end
 
-function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Connection{T}, history, retryattempt, stream::Bool, verbose::Bool)
+function request(client::Client, req::Request, opts::RequestOptions, conn::Connection{T}, history, retryattempt, stream::Bool, tsk, verbose::Bool) where {T}
     host = hostname(uri(req))
     # check if cookies should be added to outgoing request based on host
     if haskey(client.cookies, host)
@@ -227,7 +230,7 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     response = Response(stream ? DEFAULT_CHUNK_SIZE : DEFAULT_MAX, req)
     # process the response
     reset!(client.parser)
-    success = process!(client, conn, opts, host, method(req), response, Ref{Float64}(time()), retryattempt, stream, verbose)
+    success = process!(client, conn, opts, host, method(req), response, Ref{Float64}(time()), retryattempt, stream, tsk, verbose)
     if !success
         idle!(conn)
         retryattempt >= opts.retries::Int && throw(RetryException(opts.retries::Int))
@@ -266,7 +269,7 @@ function request{T}(client::Client, req::Request, opts::RequestOptions, conn::Co
     return response
 end
 
-function process!(client, conn, opts, host, method, response, starttime, retryattempt, stream, verbose)
+function process!(client, conn, opts, host, method, response, starttime, retryattempt, stream, maintask, verbose)
     parser = client.parser
     tsk = @async begin
         while true
@@ -289,7 +292,7 @@ function process!(client, conn, opts, host, method, response, starttime, retryat
                 starttime[] = time() # reset the timeout while still receiving bytes
             end
             @log(verbose, client.logger, "received bytes from the wire, processing")
-            errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method)
+            errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method, maintask=maintask)
             if errno != HPE_OK
                 idle!(conn)
                 return ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])\nCurrent response buffer contents: $(String(buffer))")
@@ -300,7 +303,7 @@ function process!(client, conn, opts, host, method, response, starttime, retryat
             elseif stream && headerscomplete
                 # async read the response body, returning the current response immediately
                 @log(verbose, client.logger, "processing the rest of response asynchronously")
-                response.body.task = @async process!(client, conn, opts, host, method, response, starttime, retryattempt, false, false)
+                response.body.task = @async process!(client, conn, opts, host, method, response, starttime, retryattempt, false, maintask, false)
                 return true
             end
             !isopen(conn.tcp) && (dead!(conn); return false)
@@ -315,7 +318,7 @@ function process!(client, conn, opts, host, method, response, starttime, retryat
     return tsk.result::Bool
 end
 
-immutable RedirectException <: Exception
+struct RedirectException <: Exception
     maxredirects::Int
 end
 
@@ -323,7 +326,7 @@ function Base.show(io::IO, err::RedirectException)
     print(io, "RedirectException: more than $(err.maxredirects) redirects attempted")
 end
 
-immutable TimeoutException <: Exception
+struct TimeoutException <: Exception
     timeout::Float64
 end
 
@@ -331,7 +334,7 @@ function Base.show(io::IO, err::TimeoutException)
     print(io, "TimeoutException: server did not respond for more than $(err.timeout) seconds. ")
 end
 
-immutable RetryException <: Exception
+struct RetryException <: Exception
     retries::Int
 end
 

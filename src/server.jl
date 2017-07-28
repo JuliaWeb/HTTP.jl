@@ -25,7 +25,7 @@
  # special case OPTIONS method like go?
  # buffer re-use for server/client wire-reading
  # easter egg (response 418)
-type ServerOptions
+mutable struct ServerOptions
     tlsconfig::TLS.SSLConfig
     readtimeout::Float64
     ratelimit::Rational{Int}
@@ -65,17 +65,17 @@ Supported keyword arguments include:
   * `maxbody`: the maximum size in bytes that a request body can be; default 4gb
   * `support100continue`: a `Bool` indicating whether `Expect: 100-continue` headers should be supported for delayed request body sending; default = `true`
 """
-type Server{T <: Scheme, I <: IO}
+mutable struct Server{T <: Scheme, I <: IO}
     handler::Function
     logger::I
     in::Channel{Any}
     out::Channel{Any}
     options::ServerOptions
 
-    (::Type{Server{T, I}}){T, I}(handler::Function, logger::I, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) = new{T, I}(handler, logger, ch, ch2, options)
+    Server{T, I}(handler::Function, logger::I, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) where {T, I} = new{T, I}(handler, logger, ch, ch2, options)
 end
 
-function process!{T, I}(server::Server{T, I}, parser, request, i, tcp, rl, starttime, verbose)
+function process!(server::Server{T, I}, parser, request, i, tcp, rl, starttime, verbose) where {T, I}
     handler, logger, options = server.handler, server.logger, server.options
     startedprocessingrequest = error = alreadysent100continue = false
     rate = Float64(server.options.ratelimit.num)
@@ -196,7 +196,7 @@ function initTLS!(::Type{https}, tcp, tlsconfig)
     end
 end
 
-type RateLimit
+mutable struct RateLimit
     allowance::Float64
     lastcheck::DateTime
 end
@@ -211,7 +211,7 @@ end
 
 @enum Signals KILL
 
-function serve{T, I}(server::Server{T, I}, host, port, verbose)
+function serve(server::Server{T, I}, host, port, verbose) where {T, I}
     @log(verbose, server.logger, "starting server to listen on: $(host):$(port)")
     tcpserver = listen(host, port)
     ratelimits = Dict{IPAddr, RateLimit}()
@@ -268,11 +268,11 @@ function serve{T, I}(server::Server{T, I}, host, port, verbose)
     return
 end
 
-function Server{I}(handler=(req, rep) -> Response("Hello World!"),
+function Server(handler=(req, rep) -> Response("Hello World!"),
                logger::I=STDOUT;
                cert::String="",
                key::String="",
-               args...)
+               args...) where {I}
     if cert != "" && key != ""
         server = Server{https, I}(handler, logger, Channel(1), Channel(1), ServerOptions(; tlsconfig=TLS.SSLConfig(cert, key), args...))
     else
@@ -294,13 +294,13 @@ By default, `HTTP.serve` aims to "never die", catching and recovering from all i
 function serve end
 
 serve(server::Server, host=IPv4(127,0,0,1), port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
-function serve{I}(host::IPAddr, port::Int,
+function serve(host::IPAddr, port::Int,
                    handler=(req, rep) -> Response("Hello World!"),
                    logger::I=STDOUT;
                    cert::String="",
                    key::String="",
                    verbose::Bool=true,
-                   args...)
+                   args...) where {I}
     server = Server(handler, logger; cert=cert, key=key, args...)
     return serve(server, host, port, verbose)
 end

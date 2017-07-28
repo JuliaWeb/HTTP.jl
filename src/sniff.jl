@@ -52,7 +52,7 @@ function sniff(data::Vector{UInt8})
     return "application/octet-stream" # fallback
 end
 
-immutable Exact
+struct Exact
     sig::Vector{UInt8}
     contenttype::String
 end
@@ -66,7 +66,7 @@ function ismatch(e::Exact, data::Vector{UInt8}, firstnonws)
     return true
 end
 
-immutable Masked
+struct Masked
     mask::Vector{UInt8}
     pat::Vector{UInt8}
     skipws::Bool
@@ -88,7 +88,7 @@ function ismatch(m::Masked, data::Vector{UInt8}, firstnonws)
     return true
 end
 
-immutable HTMLSig
+struct HTMLSig
     html::Vector{UInt8}
 end
 
@@ -105,7 +105,7 @@ function ismatch(h::HTMLSig, data::Vector{UInt8}, firstnonws)
     return true
 end
 
-immutable MP4Sig end
+struct MP4Sig end
 contenttype(::Type{MP4Sig}) = "video/mp4"
 
 function byteequal(data1, data2, len)
@@ -135,7 +135,7 @@ function ismatch(::Type{MP4Sig}, data::Vector{UInt8}, firstnonws)
     return false
 end
 
-immutable TextSig end
+struct TextSig end
 contenttype(::Type{TextSig}) = "text/plain; charset=utf-8"
 
 function ismatch(::Type{TextSig}, data::Vector{UInt8}, firstnonws)
@@ -149,7 +149,7 @@ function ismatch(::Type{TextSig}, data::Vector{UInt8}, firstnonws)
     return true
 end
 
-immutable JSONSig end
+struct JSONSig end
 contenttype(::Type{JSONSig}) = "application/json; charset=utf-8"
 
 ismatch(::Type{JSONSig}, data::Vector{UInt8}, firstnonws) = isjson(data)[1]

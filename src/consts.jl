@@ -465,11 +465,11 @@ const UF_QUERY_MASK = 0x10
 const UF_FRAGMENT_MASK = 0x20
 const UF_USERINFO_MASK = 0x40
 
-@inline function Base.getindex{T}(A::Vector{T}, i::http_parser_url_fields)
+@inline function Base.getindex(A::Vector{T}, i::http_parser_url_fields) where {T}
     @inbounds v = A[Int(i)]
     return v
 end
-@inline function Base.setindex!{T}(A::Vector{T}, v::T, i::http_parser_url_fields)
+@inline function Base.setindex!(A::Vector{T}, v::T, i::http_parser_url_fields) where {T}
     @inbounds v = setindex!(A, v, Int(i))
     return v
 end
