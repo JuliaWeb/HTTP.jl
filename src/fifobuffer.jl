@@ -51,6 +51,8 @@ mutable struct FIFOBuffer <: IO
     nb::Int64  # number of bytes available to read in buffer
     f::Int64   # buffer index that should be read next, unless nb == 0, then buffer is empty
     l::Int64   # buffer index that should be written to next, unless nb == len, then buffer is full
+    expectedlength::Int64 # when a known # of bytes will pass through the buffer (i.e. known Content-Length header)
+    expectedpos::Int64 # # of bytes accumulated (i.e. read from buffer) towards expectedlength
     buffer::Vector{UInt8}
     cond::Condition
     task::Task
@@ -60,7 +62,7 @@ end
 const DEFAULT_MAX = Int64(typemax(Int32))^Int64(2)
 
 FIFOBuffer(f::FIFOBuffer) = f
-FIFOBuffer(max) = FIFOBuffer(0, max, 0, 1, 1, UInt8[], Condition(), current_task(), false)
+FIFOBuffer(max) = FIFOBuffer(0, max, 0, 1, 1, -1, 0, UInt8[], Condition(), current_task(), false)
 FIFOBuffer() = FIFOBuffer(DEFAULT_MAX)
 
 const EMPTYBODY = FIFOBuffer()
@@ -68,7 +70,7 @@ const EMPTYBODY = FIFOBuffer()
 FIFOBuffer(str::String) = FIFOBuffer(Vector{UInt8}(str))
 function FIFOBuffer(bytes::Vector{UInt8})
     len = length(bytes)
-    return FIFOBuffer(len, len, len, 1, 1, bytes, Condition(), current_task(), false)
+    return FIFOBuffer(len, len, len, 1, 1, -1, 0, bytes, Condition(), current_task(), false)
 end
 FIFOBuffer(io::IOStream) = FIFOBuffer(read(io))
 FIFOBuffer(io::IO) = FIFOBuffer(readavailable(io))
@@ -81,13 +83,17 @@ Base.read(f::FIFOBuffer) = readavailable(f)
 Base.flush(f::FIFOBuffer) = nothing
 
 function Base.eof(f::FIFOBuffer)
-    if current_task() == f.task
-        # not asynchronous, just read until buffer is empty
-        return f.nb == 0
+    if f.expectedlength < 0
+        if current_task() == f.task
+            # not asynchronous, just read until buffer is empty
+            return f.nb == 0
+        else
+            # if being called asynchronously, allow user
+            # to set eof by calling `eof!`
+            return f.eof && f.nb == 0
+        end
     else
-        # if being called asynchronously, allow user
-        # to set eof by calling `eof!`
-        return f.eof && f.nb == 0
+        return f.expectedpos >= f.expectedlength
     end
 end
 function Base.close(f::FIFOBuffer)
@@ -123,6 +129,7 @@ function Base.readavailable(f::FIFOBuffer)
     end
     f.f = f.l
     f.nb = 0
+    f.expectedpos += length(bytes)
     notify(f.cond)
     return bytes
 end
@@ -156,16 +163,26 @@ function Base.read(f::FIFOBuffer, nb::Int)
         end
     end
     f.nb -= length(bytes)
+    f.expectedpos += length(bytes)
     notify(f.cond)
     return bytes
 end
 
 function Base.read(f::FIFOBuffer, ::Type{Tuple{UInt8,Bool}})
-    eof(f) && return 0x00, false
+    # no data to read
+    if f.nb == 0
+        if current_task() == f.task
+            return 0x00, false
+        else # async: block till there's data to read
+            wait(f.cond)
+            f.nb == 0 && return 0x00, false
+        end
+    end
     # data to read
     @inbounds b = f.buffer[f.f]
     f.f = mod1(f.f + 1, f.max)
     f.nb -= 1
+    f.expectedpos += 1
     notify(f.cond)
     return b, true
 end
