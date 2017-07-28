@@ -22,7 +22,7 @@ julia> Pkg.add("HTTP")
 
 ## Project Status
 
-The package is tested against Julia 0.5 and 0.6 on Linux, OS X, and Windows.
+The package is tested against Julia 0.6 & current master on Linux, OS X, and Windows.
 
 ## Contributing and Questions
 
