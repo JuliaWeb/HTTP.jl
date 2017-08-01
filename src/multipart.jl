@@ -82,7 +82,7 @@ Multipart(filename::String, data::IO, content_type=HTTP.sniff(data), content_tra
 A type to represent a single multipart upload chunk for a file. This type would be used as the value in a
 key-value pair of a Dict passed to an http request, like `HTTP.post(url; body=Dict("key"=>HTTP.Multipart("MyFile.txt", open("MyFile.txt"))))`.
 The `data` argument must be an `IO` type such as `IOStream`, `IOBuffer`, or `HTTP.FIFOBuffer`.
-The `content_tyep` and `content_transfer_encoding` arguments allow the manual setting of these multipart headers. `Content-Type` will default to the result
+The `content_type` and `content_transfer_encoding` arguments allow the manual setting of these multipart headers. `Content-Type` will default to the result
 of the `HTTP.sniff(data)` mimetype detection algorithm, whereas `Content-Transfer-Encoding` will be left out if not specified.
 """
 mutable struct Multipart{T <: IO} <: IO
