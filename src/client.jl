@@ -100,6 +100,8 @@ function request(client::Client, method, uri::URI;
                     args...)
     opts = RequestOptions(; args...)
     not(opts.tlsconfig) && (opts.tlsconfig = TLS.SSLConfig(true))
+    not(client.logger) && (client.logger = STDOUT)
+    client.logger != STDOUT && (verbose = true)
     req = Request(method, uri, headers, body; options=opts, verbose=verbose, io=client.logger)
     return request(client, req, opts; stream=stream, verbose=verbose)
 end
@@ -107,8 +109,6 @@ end
 request(req::Request; stream::Bool=false, verbose::Bool=false, args...) = request(DEFAULT_CLIENT, req, RequestOptions(; args...); stream=stream, verbose=verbose)
 
 function request(client::Client, req::Request, opts::RequestOptions; history::Vector{Response}=Response[], retryattempt::Int=0, stream::Bool=false, verbose::Bool=false)
-    not(client.logger) && (client.logger = STDOUT)
-    client.logger != STDOUT && (verbose = true)
     # retryattempt can't be negative
     retryattempt = max(0, retryattempt)
     # ensure all Request options are set, using client.options if necessary
