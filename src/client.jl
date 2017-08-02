@@ -99,6 +99,7 @@ function request(client::Client, method, uri::URI;
                     verbose::Bool=false,
                     args...)
     opts = RequestOptions(; args...)
+    not(opts.tlsconfig) && (opts.tlsconfig = TLS.SSLConfig(true))
     not(client.logger) && (client.logger = STDOUT)
     client.logger != STDOUT && (verbose = true)
     req = Request(method, uri, headers, body; options=opts, verbose=verbose, io=client.logger)
