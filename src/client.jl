@@ -99,8 +99,7 @@ function request(client::Client, method, uri::URI;
                     verbose::Bool=false,
                     args...)
     opts = RequestOptions(; args...)
-    not(opts.tlsconfig) && (opts.tlsconfig = TLS.SSLConfig(true))
-    not(client.logger) && (client.logger = STDOUT)
+    verbose && not(client.logger) && (client.logger = STDOUT)
     client.logger != STDOUT && (verbose = true)
     req = Request(method, uri, headers, body; options=opts, verbose=verbose, io=client.logger)
     return request(client, req, opts; stream=stream, verbose=verbose)
@@ -113,7 +112,9 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
     retryattempt = max(0, retryattempt)
     # ensure all Request options are set, using client.options if necessary
     # this works because req.options are null by default whereas client.options always have a default
+
     update!(opts, client.options)
+    not(opts.tlsconfig) && (opts.tlsconfig = TLS.SSLConfig(true))
     @log(verbose, client.logger, "using request options: " * join((s=>getfield(opts, s) for s in fieldnames(typeof(opts))), ", "))
     # if the provided req body is compressed, avoid any chunked transfer since it ruins the compression scheme
     if iscompressed(req.body) && length(req.body) > opts.chunksize
