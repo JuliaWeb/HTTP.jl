@@ -65,17 +65,17 @@ Supported keyword arguments include:
   * `maxbody`: the maximum size in bytes that a request body can be; default 4gb
   * `support100continue`: a `Bool` indicating whether `Expect: 100-continue` headers should be supported for delayed request body sending; default = `true`
 """
-mutable struct Server{T <: Scheme, I <: IO}
-    handler::Function
-    logger::I
+mutable struct Server{T <: Scheme, H <: Handler}
+    handler::H
+    logger::IO
     in::Channel{Any}
     out::Channel{Any}
     options::ServerOptions
 
-    Server{T, I}(handler::Function, logger::I, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) where {T, I} = new{T, I}(handler, logger, ch, ch2, options)
+    Server{T, H}(handler::H, logger::IO, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) where {T, H} = new{T, H}(handler, logger, ch, ch2, options)
 end
 
-function process!(server::Server{T, I}, parser, request, i, tcp, rl, starttime, verbose) where {T, I}
+function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, verbose) where {T, H}
     handler, logger, options = server.handler, server.logger, server.options
     startedprocessingrequest = error = alreadysent100continue = false
     rate = Float64(server.options.ratelimit.num)
@@ -139,7 +139,7 @@ function process!(server::Server{T, I}, parser, request, i, tcp, rl, starttime, 
                         @log(verbose, logger, "received request on connection i=$i")
                         verbose && (show(logger, request, RequestOptions()); println(logger))
                         try
-                            response = handler(request, response)
+                            response = handle(handler, request, response)
                         catch e
                             response.status = 500
                             error = true
@@ -211,7 +211,7 @@ end
 
 @enum Signals KILL
 
-function serve(server::Server{T, I}, host, port, verbose) where {T, I}
+function serve(server::Server{T, H}, host, port, verbose) where {T, H}
     @log(verbose, server.logger, "starting server to listen on: $(host):$(port)")
     tcpserver = listen(host, port)
     ratelimits = Dict{IPAddr, RateLimit}()
@@ -268,15 +268,16 @@ function serve(server::Server{T, I}, host, port, verbose) where {T, I}
     return
 end
 
-function Server(handler=(req, rep) -> Response("Hello World!"),
-               logger::I=STDOUT;
+Server(h::Function, l::IO; cert::String="", key::String="", args...) = Server(HandlerFunction(h), l; cert=cert, key=key, args...)
+function Server(handler::H=HandlerFunction((req, rep) -> Response("Hello World!")),
+               logger::IO=STDOUT;
                cert::String="",
                key::String="",
-               args...) where {I}
+               args...) where {H <: Handler}
     if cert != "" && key != ""
-        server = Server{https, I}(handler, logger, Channel(1), Channel(1), ServerOptions(; tlsconfig=TLS.SSLConfig(cert, key), args...))
+        server = Server{https, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; tlsconfig=TLS.SSLConfig(cert, key), args...))
     else
-        server = Server{http, I}(handler, logger, Channel(1), Channel(1), ServerOptions(; args...))
+        server = Server{http, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; args...))
     end
     return server
 end
@@ -306,7 +307,7 @@ function serve(host::IPAddr, port::Int,
 end
 serve(; host::IPAddr=IPv4(127,0,0,1),
         port::Int=8081,
-        handler::Function=(req, rep) -> Response("Hello World!"),
+        handler=(req, rep) -> Response("Hello World!"),
         logger::IO=STDOUT,
         cert::String="",
         key::String="",

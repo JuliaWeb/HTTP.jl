@@ -31,6 +31,8 @@ include("multipart.jl")
 include("types.jl")
 include("parser.jl")
 include("client.jl")
+include("handlers.jl")
+using .Handlers
 include("server.jl")
 
 end # module
