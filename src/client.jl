@@ -166,7 +166,9 @@ function getconn(::Type{S}, client, host, opts, verbose) where {S}
         end
     end
     if !reused
-        socket = @timeout opts.connecttimeout::Float64 Base.connect(Base.getaddrinfo(hostname), Base.get(port, S == http ? 80 : S == https ? 443 : assert(false))) throw(TimeoutException(opts.connecttimeout::Float64))
+        ip = Base.getaddrinfo(hostname)
+        @log(verbose, client.logger, "connecting to IP: $ip")
+        socket = @timeout opts.connecttimeout::Float64 Base.connect(ip, Base.get(port, S == http ? 80 : S == https ? 443 : assert(false))) throw(TimeoutException(opts.connecttimeout::Float64))
         # initialize TLS if necessary
         tcp = initTLS!(S, hostname, opts, socket)
         conn = Connection(client.connectioncount, tcp)
