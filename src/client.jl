@@ -114,7 +114,7 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
     # ensure all Request options are set, using client.options if necessary
     # this works because req.options are null by default whereas client.options always have a default
     update!(opts, client.options)
-    @log(verbose, client.logger, "using request options: " * join((s=>getfield(opts, s) for s in fieldnames(opts)), ", "))
+    @log(verbose, client.logger, "using request options: " * join((s=>getfield(opts, s) for s in fieldnames(typeof(opts))), ", "))
     # if the provided req body is compressed, avoid any chunked transfer since it ruins the compression scheme
     if iscompressed(req.body) && length(req.body) > opts.chunksize
         opts.chunksize = length(req.body) + 1
