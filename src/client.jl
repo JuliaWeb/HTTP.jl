@@ -99,7 +99,7 @@ function request(client::Client, method, uri::URI;
                     verbose::Bool=false,
                     args...)
     opts = RequestOptions(; args...)
-    verbose && not(client.logger) && (client.logger = STDOUT)
+    not(client.logger) && (client.logger = STDOUT)
     client.logger != STDOUT && (verbose = true)
     req = Request(method, uri, headers, body; options=opts, verbose=verbose, io=client.logger)
     return request(client, req, opts; stream=stream, verbose=verbose)
