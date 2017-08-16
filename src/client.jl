@@ -99,7 +99,6 @@ function request(client::Client, method, uri::URI;
                     verbose::Bool=false,
                     args...)
     opts = RequestOptions(; args...)
-    not(opts.tlsconfig) && (opts.tlsconfig = TLS.SSLConfig(true))
     not(client.logger) && (client.logger = STDOUT)
     client.logger != STDOUT && (verbose = true)
     req = Request(method, uri, headers, body; options=opts, verbose=verbose, io=client.logger)
@@ -116,6 +115,7 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
 
     update!(opts, client.options)
     not(opts.tlsconfig) && (opts.tlsconfig = TLS.SSLConfig(true))
+    @log(verbose, client.logger, "making $(method(req)) request for host: '$(host(uri(req)))' and resource: '$(resource(uri(req)))'")
     @log(verbose, client.logger, "using request options: " * join((s=>getfield(opts, s) for s in fieldnames(typeof(opts))), ", "))
     # if the provided req body is compressed, avoid any chunked transfer since it ruins the compression scheme
     if iscompressed(req.body) && length(req.body) > opts.chunksize
