@@ -2,7 +2,7 @@ module URIs
 
 import Base.==
 
-using ..HTTP
+include("urlparser.jl")
 
 export URI, URL,
        hasscheme, scheme,
@@ -17,16 +17,6 @@ export URI, URL,
        splitpath
     
 # URI
-struct Offset
-    off::UInt16
-    len::UInt16
-end
-Offset() = Offset(0, 0)
-Base.getindex(A::Vector{UInt8}, o::Offset) = A[o.off:(o.off + o.len - 1)]
-Base.isempty(o::Offset) = o.off == 0x0000 && o.len == 0x0000
-==(a::Offset, b::Offset) = a.off == b.off && a.len == b.len
-const EMPTYOFFSET = Offset()
-
 """
     HTTP.URI(host; userinfo="", path="", query="", fragment="", isconnect=false)
     HTTP.URI(; scheme="", hostname="", port="", ...)
@@ -91,7 +81,7 @@ function URI(str::String; userinfo::String="", path::String="",
     end
     return Base.parse(URI, str; isconnect=isconnect)
 end
-Base.parse(::Type{URI}, str::String; isconnect::Bool=false) = HTTP.http_parser_parse_url(Vector{UInt8}(str), 1, sizeof(str), isconnect)
+Base.parse(::Type{URI}, str::String; isconnect::Bool=false) = http_parser_parse_url(Vector{UInt8}(str), 1, sizeof(str), isconnect)
 
 ==(a::URI,b::URI) = scheme(a)   == scheme(b)    &&
                     hostname(a) == hostname(b)  &&
@@ -102,19 +92,19 @@ Base.parse(::Type{URI}, str::String; isconnect::Bool=false) = HTTP.http_parser_p
                     ((!hasport(a) || !hasport(b)) || (port(a) == port(b)))
 
 # accessors
-for uf in instances(HTTP.http_parser_url_fields)
-    uf == HTTP.UF_MAX && break
+for uf in instances(http_parser_url_fields)
+    uf == UF_MAX && break
     nm = lowercase(string(uf)[4:end])
     has = Symbol(string("has", nm))
     @eval $has(uri::URI) = uri.offsets[Int($uf)].len > 0
-    uf == HTTP.UF_PORT && continue
+    uf == UF_PORT && continue
     @eval $(Symbol(nm))(uri::URI) = String(uri.data[uri.offsets[Int($uf)]])
 end
 
 # special def for port
 function port(uri::URI)
     if hasport(uri)
-        return String(uri.data[uri.offsets[Int(HTTP.UF_PORT)]])
+        return String(uri.data[uri.offsets[Int(UF_PORT)]])
     else
         sch = scheme(uri)
         return sch == "http" ? "80" : sch == "https" ? "443" : ""

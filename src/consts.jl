@@ -150,7 +150,7 @@ const MethodMap = Dict(
     "LINK" => LINK,
     "UNLINK" => UNLINK,
 )
-Base.convert(::Type{HTTP.Method}, s::String) = MethodMap[s]
+Base.convert(::Type{Method}, s::String) = MethodMap[s]
 
 # parsing codes
 @enum(ParsingErrorCode,
@@ -446,33 +446,6 @@ const normal_url_char = Bool[
 #= 120  x   121  y   122  z   123  {   124,   125  }   126  ~   127 del =#
         true,   true,   true,   true,   true,   true,   true,   false,
 ]
-
-@enum(http_parser_url_fields,
-      UF_SCHEME   = 1
-    , UF_HOSTNAME = 2
-    , UF_PORT     = 3
-    , UF_PATH     = 4
-    , UF_QUERY    = 5
-    , UF_FRAGMENT = 6
-    , UF_USERINFO = 7
-    , UF_MAX      = 8
-)
-const UF_SCHEME_MASK = 0x01
-const UF_HOSTNAME_MASK = 0x02
-const UF_PORT_MASK = 0x04
-const UF_PATH_MASK = 0x08
-const UF_QUERY_MASK = 0x10
-const UF_FRAGMENT_MASK = 0x20
-const UF_USERINFO_MASK = 0x40
-
-@inline function Base.getindex(A::Vector{T}, i::http_parser_url_fields) where {T}
-    @inbounds v = A[Int(i)]
-    return v
-end
-@inline function Base.setindex!(A::Vector{T}, v::T, i::http_parser_url_fields) where {T}
-    @inbounds v = setindex!(A, v, Int(i))
-    return v
-end
 
 @enum(http_host_state,
     s_http_host_dead = 1,
