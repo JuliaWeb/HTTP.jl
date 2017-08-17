@@ -111,7 +111,6 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
     retryattempt = max(0, retryattempt)
     # ensure all Request options are set, using client.options if necessary
     # this works because req.options are null by default whereas client.options always have a default
-
     update!(opts, client.options)
     not(opts.tlsconfig) && (opts.tlsconfig = TLS.SSLConfig(true))
     @log(verbose, client.logger, "making $(method(req)) request for host: '$(host(uri(req)))' and resource: '$(resource(uri(req)))'")

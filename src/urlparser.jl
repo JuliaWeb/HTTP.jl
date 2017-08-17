@@ -1,6 +1,11 @@
 include("consts.jl")
 include("utils.jl")
 
+struct URLParsingError <: Exception
+    msg::String
+end
+Base.show(io::IO, p::URLParsingError) = println("HTTP.URLParsingError: ", p.msg)
+
 struct Offset
     off::UInt16
     len::UInt16
@@ -123,7 +128,7 @@ function http_parse_host(buf, host::Offset, foundat)
     for i = host.off:(host.off + host.len - 0x0001)
         p = Char(buf[i])
         new_s = http_parse_host_char(s, p)
-        new_s == s_http_host_dead && throw(ParsingError("encountered invalid host character: \n$(String(buf))\n$(lpad("", i-1, "-"))^"))
+        new_s == s_http_host_dead && throw(URLParsingError("encountered invalid host character: \n$(String(buf))\n$(lpad("", i-1, "-"))^"))
         if new_s == s_http_host
             if s != s_http_host
                 off = i
@@ -157,7 +162,7 @@ function http_parse_host(buf, host::Offset, foundat)
     end
     if @anyeq(s, s_http_host_start, s_http_host_v6_start, s_http_host_v6, s_http_host_v6_zone_start,
              s_http_host_v6_zone, s_http_host_port_start, s_http_userinfo, s_http_userinfo_start)
-        throw(ParsingError("ended in unexpected parsing state: $s"))
+        throw(URLParsingError("ended in unexpected parsing state: $s"))
     end
     # (host, port, userinfo)
     return Offset(off, len), Offset(portoff, portlen), Offset(uioff, uilen)
@@ -175,7 +180,7 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
         olds = s
         s = parseurlchar(s, p, false)
         if s == s_dead
-            throw(ParsingError("encountered invalid url character for parsing state = $(ParsingStateCode(olds)): \n$(String(buf))\n$(lpad("", i-1, "-"))^"))
+            throw(URLParsingError("encountered invalid url character for parsing state = $(ParsingStateCode(olds)): \n$(String(buf))\n$(lpad("", i-1, "-"))^"))
         elseif @anyeq(s, s_req_schema_slash, s_req_schema_slash_slash, s_req_server_start, s_req_query_string_start, s_req_fragment_start)
             continue
         elseif s == s_req_schema
@@ -198,7 +203,7 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
             uf = UF_FRAGMENT
             mask |= UF_FRAGMENT_MASK
         else
-            throw(ParsingError("ended in unexpected parsing state: $s"))
+            throw(URLParsingError("ended in unexpected parsing state: $s"))
         end
         if uf == old_uf
             len += 1
@@ -216,7 +221,7 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
     end
     check = ~(UF_HOSTNAME_MASK | UF_PATH_MASK)
     if (mask & UF_SCHEME_MASK > 0) && (mask | check == check)
-        throw(ParsingError("URI must include host or path with scheme"))
+        throw(URLParsingError("URI must include host or path with scheme"))
     end
     if mask & UF_HOSTNAME_MASK > 0
         host, port, userinfo = http_parse_host(buf, offsets[UF_HOSTNAME], foundat)
@@ -236,7 +241,7 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
     # CONNECT requests can only contain "hostname:port"
     if isconnect
         chk = UF_HOSTNAME_MASK | UF_PORT_MASK
-        ((mask | chk) > chk) && throw(ParsingError("connect requests must contain and can only contain both hostname and port"))
+        ((mask | chk) > chk) && throw(URLParsingError("connect requests must contain and can only contain both hostname and port"))
     end
     return URI(buf, (offsets[UF_SCHEME],
                      offsets[UF_HOSTNAME],

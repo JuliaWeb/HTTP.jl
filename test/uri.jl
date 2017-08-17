@@ -67,11 +67,11 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
 
     # Error paths
     # Non-ASCII characters
-    @test_throws HTTP.ParsingError parse(HTTP.URI, "http://🍕.com")
+    @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, "http://🍕.com")
     # Unexpected start of URL
-    @test_throws HTTP.ParsingError parse(HTTP.URI, ".google.com")
+    @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, ".google.com")
     # Unexpected character after scheme
-    @test_throws HTTP.ParsingError parse(HTTP.URI, "ht!tp://google.com")
+    @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, "ht!tp://google.com")
 
     #  Issue #27
     @test HTTP.escape("t est\n") == "t%20est%0A"
@@ -417,7 +417,7 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
         for u in urltests
             println("TEST - uri.jl: $(u.name)")
             if u.shouldthrow
-                @test_throws HTTP.ParsingError parse(HTTP.URI, u.url; isconnect=u.isconnect)
+                @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, u.url; isconnect=u.isconnect)
             else
                 url = parse(HTTP.URI, u.url; isconnect=u.isconnect)
                 @test u.offsets == url.offsets
