@@ -1,9 +1,9 @@
-__precompile__()
+__precompile__(true)
 module HTTP
 
 export Request, Response, FIFOBuffer
 
-using MbedTLS, Compat
+using MbedTLS
 
 const TLS = MbedTLS
 
@@ -21,19 +21,27 @@ const CRLF = "\r\n"
 
 include("consts.jl")
 include("utils.jl")
-include("fifobuffer.jl")
-include("sniff.jl")
 include("uri.jl")
+using .URIs
+include("fifobuffer.jl")
+using .FIFOBuffers
 include("cookies.jl")
 using .Cookies
-
 include("multipart.jl")
 include("types.jl")
+
 include("parser.jl")
+include("sniff.jl")
+
 include("client.jl")
 include("handlers.jl")
 using .Handlers
 include("server.jl")
+using .Nitrogen
+
+function __init__()
+    global const DEFAULT_CLIENT = Client()
+end
 
 end # module
 # @time HTTP.parse(HTTP.Response, "HTTP/1.1 200 OK\r\n\r\n")

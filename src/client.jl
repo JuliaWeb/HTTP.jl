@@ -71,7 +71,6 @@ const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, nothing, 5, tru
     Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
     Client(; args...) = Client(nothing, RequestOptions($(DEFAULT_OPTIONS)...; args...))
 end
-const DEFAULT_CLIENT = Client()
 
 function setclient!(client::Client)
     global const DEFAULT_CLIENT = client
@@ -94,7 +93,7 @@ request(method, uri::String; verbose::Bool=false, query="", args...) = (@log(ver
 request(method, uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(HTTP.Method, method), uri; verbose=verbose, args...))
 function request(client::Client, method, uri::URI;
                     headers::Headers=Headers(),
-                    body=EMPTYBODY,
+                    body=FIFOBuffers.EMPTYBODY,
                     stream::Bool=false,
                     verbose::Bool=false,
                     args...)
@@ -112,7 +111,6 @@ function request(client::Client, req::Request, opts::RequestOptions; history::Ve
     retryattempt = max(0, retryattempt)
     # ensure all Request options are set, using client.options if necessary
     # this works because req.options are null by default whereas client.options always have a default
-
     update!(opts, client.options)
     not(opts.tlsconfig) && (opts.tlsconfig = TLS.SSLConfig(true))
     @log(verbose, client.logger, "making $(method(req)) request for host: '$(host(uri(req)))' and resource: '$(resource(uri(req)))'")
@@ -231,7 +229,7 @@ function request(client::Client, req::Request, opts::RequestOptions, conn::Conne
         write(conn.tcp, req, opts)
     end
     # create a Response to fill
-    response = Response(stream ? DEFAULT_CHUNK_SIZE : DEFAULT_MAX, req)
+    response = Response(stream ? DEFAULT_CHUNK_SIZE : FIFOBuffers.DEFAULT_MAX, req)
     # process the response
     reset!(client.parser)
     success = process!(client, conn, opts, host, method(req), response, Ref{Float64}(time()), retryattempt, stream, tsk, verbose)

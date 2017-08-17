@@ -1,3 +1,9 @@
+module FIFOBuffers
+
+import Base.==
+
+export FIFOBuffer
+
 """
     FIFOBuffer([max::Integer])
     FIFOBuffer(string_or_bytes_vector)
@@ -233,7 +239,6 @@ function Base.write(f::FIFOBuffer, bytes::AbstractVector{UInt8})
             if current_task() == f.task
                 return 0
             else # async: block until there's room to write
-                @debug(DEBUG, @__LINE__, "FIFOBuffer write() waiting...")
                 wait(f.cond)
                 f.nb == f.len && return 0
             end
@@ -295,7 +300,6 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
             if current_task() == f.task
                 return 0
             else # async: block until there's room to write
-                @debug(DEBUG, @__LINE__, "FIFOBuffer write() waiting...")
                 wait(f.cond)
                 f.nb == f.len && return 0
             end
@@ -347,3 +351,5 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8})
 end
 
 Base.write(f::FIFOBuffer, str::String) = write(f, Vector{UInt8}(str))
+
+end # module

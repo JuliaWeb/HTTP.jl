@@ -2,11 +2,11 @@ mutable struct URLTest
     name::String
     url::String
     isconnect::Bool
-    offsets::NTuple{7, HTTP.Offset}
+    offsets::NTuple{7, HTTP.URIs.Offset}
     shouldthrow::Bool
 end
 
-URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(nm, url, isconnect, ntuple(x->HTTP.Offset(), 7), shouldthrow)
+URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(nm, url, isconnect, ntuple(x->HTTP.URIs.Offset(), 7), shouldthrow)
 
 @testset "HTTP.URI" begin
     # constructor
@@ -44,9 +44,9 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
     @test parse(HTTP.URI, "hdfs://user:password@hdfshost:9000/root/folder/file.csv") == HTTP.URI(hostname="hdfshost", path="/root/folder/file.csv", scheme="hdfs", port=9000, userinfo="user:password")
     @test parse(HTTP.URI, "http://google.com:80/some/path") == HTTP.URI(hostname="google.com", path="/some/path")
 
-    @test isempty(HTTP.Offset())
+    @test isempty(HTTP.URIs.Offset())
     @test HTTP.lower(UInt8('A')) == UInt8('a')
-    @test HTTP.hexstring(1) == "%01"
+    @test HTTP.URIs.hexstring(1) == "%01"
 
     @test HTTP.escape(Dict("key1"=>"value1", "key2"=>["value2", "value3"])) == "key2=value2&key2=value3&key1=value1"
 
@@ -67,172 +67,172 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
 
     # Error paths
     # Non-ASCII characters
-    @test_throws HTTP.ParsingError parse(HTTP.URI, "http://🍕.com")
+    @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, "http://🍕.com")
     # Unexpected start of URL
-    @test_throws HTTP.ParsingError parse(HTTP.URI, ".google.com")
+    @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, ".google.com")
     # Unexpected character after scheme
-    @test_throws HTTP.ParsingError parse(HTTP.URI, "ht!tp://google.com")
+    @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, "ht!tp://google.com")
 
     #  Issue #27
     @test HTTP.escape("t est\n") == "t%20est%0A"
 
     @testset "HTTP.parse(HTTP.URI, str)" begin
 
-        const urltests = URLTest[
+        urltests = URLTest[
         URLTest("proxy request"
          ,"http://hostname/"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(8, 8) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(16, 1) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(8, 8) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(16, 1) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("proxy request with port"
          ,"http://hostname:444/"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(8, 8) # UF_HOST
-             ,HTTP.Offset(17, 3) # UF_PORT
-             ,HTTP.Offset(20, 1) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(8, 8) # UF_HOST
+             ,HTTP.URIs.Offset(17, 3) # UF_PORT
+             ,HTTP.URIs.Offset(20, 1) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("CONNECT request"
          ,"hostname:443"
          ,true
-             ,(HTTP.Offset(0, 0) # UF_SCHEMA
-             ,HTTP.Offset(1, 8) # UF_HOST
-             ,HTTP.Offset(10, 3) # UF_PORT
-             ,HTTP.Offset(0, 0) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(0, 0) # UF_SCHEMA
+             ,HTTP.URIs.Offset(1, 8) # UF_HOST
+             ,HTTP.URIs.Offset(10, 3) # UF_PORT
+             ,HTTP.URIs.Offset(0, 0) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("proxy ipv6 request"
          ,"http://[1:2::3:4]/"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(9, 8) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(18, 1) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(9, 8) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(18, 1) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("proxy ipv6 request with port"
          ,"http://[1:2::3:4]:67/"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(9, 8) # UF_HOST
-             ,HTTP.Offset(19, 2) # UF_PORT
-             ,HTTP.Offset(21, 1) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(9, 8) # UF_HOST
+             ,HTTP.URIs.Offset(19, 2) # UF_PORT
+             ,HTTP.URIs.Offset(21, 1) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("CONNECT ipv6 address"
          ,"[1:2::3:4]:443"
          ,true
-             ,(HTTP.Offset(0, 0) # UF_SCHEMA
-             ,HTTP.Offset(2, 8) # UF_HOST
-             ,HTTP.Offset(12, 3) # UF_PORT
-             ,HTTP.Offset(0, 0) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(0, 0) # UF_SCHEMA
+             ,HTTP.URIs.Offset(2, 8) # UF_HOST
+             ,HTTP.URIs.Offset(12, 3) # UF_PORT
+             ,HTTP.URIs.Offset(0, 0) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("ipv4 in ipv6 address"
          ,"http://[2001:0000:0000:0000:0000:0000:1.9.1.1]/"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(9,37) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(47, 1) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(9,37) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(47, 1) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("extra ? in query string"
          ,"http://a.tbcdn.cn/p/fp/2010c/??fp-header-min.css,fp-base-min.css,fp-channel-min.css,fp-product-min.css,fp-mall-min.css,fp-category-min.css,fp-sub-min.css,fp-gdp4p-min.css,fp-css3-min.css,fp-misc-min.css?t=20101022.css"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(8,10) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(18,12) # UF_PATH
-             ,HTTP.Offset(31,187) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(8,10) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(18,12) # UF_PATH
+             ,HTTP.URIs.Offset(31,187) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("space URL encoded"
          ,"/toto.html?toto=a%20b"
          ,false
-             ,(HTTP.Offset(0, 0) # UF_SCHEMA
-             ,HTTP.Offset(0, 0) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(1,10) # UF_PATH
-             ,HTTP.Offset(12,10) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(0, 0) # UF_SCHEMA
+             ,HTTP.URIs.Offset(0, 0) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(1,10) # UF_PATH
+             ,HTTP.URIs.Offset(12,10) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("URL fragment"
          ,"/toto.html#titi"
          ,false
-             ,(HTTP.Offset(0, 0) # UF_SCHEMA
-             ,HTTP.Offset(0, 0) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(1,10) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(12, 4) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(0, 0) # UF_SCHEMA
+             ,HTTP.URIs.Offset(0, 0) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(1,10) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(12, 4) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("complex URL fragment"
          ,"http://www.webmasterworld.com/r.cgi?f=21&d=8405&url=http://www.example.com/index.html?foo=bar&hello=world#midpage"
          ,false
-         ,(HTTP.Offset(  1,  4) # UF_SCHEMA
-          ,HTTP.Offset(  8, 22) # UF_HOST
-          ,HTTP.Offset(  0,  0) # UF_PORT
-          ,HTTP.Offset( 30,  6) # UF_PATH
-          ,HTTP.Offset( 37, 69) # UF_QUERY
-          ,HTTP.Offset(107,  7) # UF_FRAGMENT
-          ,HTTP.Offset(  0,  0) # UF_USERINFO
+         ,(HTTP.URIs.Offset(  1,  4) # UF_SCHEMA
+          ,HTTP.URIs.Offset(  8, 22) # UF_HOST
+          ,HTTP.URIs.Offset(  0,  0) # UF_PORT
+          ,HTTP.URIs.Offset( 30,  6) # UF_PATH
+          ,HTTP.URIs.Offset( 37, 69) # UF_QUERY
+          ,HTTP.URIs.Offset(107,  7) # UF_FRAGMENT
+          ,HTTP.URIs.Offset(  0,  0) # UF_USERINFO
           )
          ,false
          ), URLTest("complex URL from node js url parser doc"
          ,"http://host.com:8080/p/a/t/h?query=string#hash"
          ,false
-         ,(   HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(8, 8) # UF_HOST
-             ,HTTP.Offset(17, 4) # UF_PORT
-             ,HTTP.Offset(21, 8) # UF_PATH
-             ,HTTP.Offset(30,12) # UF_QUERY
-             ,HTTP.Offset(43, 4) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+         ,(   HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(8, 8) # UF_HOST
+             ,HTTP.URIs.Offset(17, 4) # UF_PORT
+             ,HTTP.URIs.Offset(21, 8) # UF_PATH
+             ,HTTP.URIs.Offset(30,12) # UF_QUERY
+             ,HTTP.URIs.Offset(43, 4) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
              ,false
          ), URLTest("complex URL with basic auth from node js url parser doc"
          ,"http://a:b@host.com:8080/p/a/t/h?query=string#hash"
          ,false
-         ,(   HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(12, 8) # UF_HOST
-             ,HTTP.Offset(21, 4) # UF_PORT
-             ,HTTP.Offset(25, 8) # UF_PATH
-             ,HTTP.Offset(34,12) # UF_QUERY
-             ,HTTP.Offset(47, 4) # UF_FRAGMENT
-             ,HTTP.Offset(8, 3) # UF_USERINFO
+         ,(   HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(12, 8) # UF_HOST
+             ,HTTP.URIs.Offset(21, 4) # UF_PORT
+             ,HTTP.URIs.Offset(25, 8) # UF_PATH
+             ,HTTP.URIs.Offset(34,12) # UF_QUERY
+             ,HTTP.URIs.Offset(47, 4) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(8, 3) # UF_USERINFO
              )
             ,false
          ), URLTest("double @"
@@ -270,13 +270,13 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
          ), URLTest("proxy basic auth with space url encoded"
          ,"http://a%20:b@host.com/"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-              ,HTTP.Offset(15, 8) # UF_HOST
-              ,HTTP.Offset(0, 0) # UF_PORT
-              ,HTTP.Offset(23, 1) # UF_PATH
-              ,HTTP.Offset(0, 0) # UF_QUERY
-              ,HTTP.Offset(0, 0) # UF_FRAGMENT
-              ,HTTP.Offset(8, 6) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+              ,HTTP.URIs.Offset(15, 8) # UF_HOST
+              ,HTTP.URIs.Offset(0, 0) # UF_PORT
+              ,HTTP.URIs.Offset(23, 1) # UF_PATH
+              ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+              ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+              ,HTTP.URIs.Offset(8, 6) # UF_USERINFO
              )
          ,false
          ), URLTest("carriage return in URL"
@@ -290,13 +290,13 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
          ), URLTest("proxy basic auth with double :"
          ,"http://a::b@host.com/"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(13, 8) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(21, 1) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(8, 4) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(13, 8) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(21, 1) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(8, 4) # UF_USERINFO
              )
          ,false
          ), URLTest("line feed in URL"
@@ -306,13 +306,13 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
          ), URLTest("proxy empty basic auth"
          ,"http://@hostname/fo"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(9, 8) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(17, 3) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(9, 8) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(17, 3) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("proxy line feed in hostname"
@@ -330,13 +330,13 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
          ), URLTest("proxy basic auth with unreservedchars"
          ,"http://a!;-_!=+\$@host.com/"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(18, 8) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(26, 1) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(8, 9) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(18, 8) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(26, 1) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(8, 9) # UF_USERINFO
              )
          ,false
          ), URLTest("proxy only empty basic auth"
@@ -354,25 +354,25 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
          ), URLTest("ipv6 address with Zone ID"
          ,"http://[fe80::a%25eth0]/"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(9,14) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(24, 1) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(9,14) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(24, 1) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("ipv6 address with Zone ID, but '%' is not percent-encoded"
          ,"http://[fe80::a%eth0]/"
          ,false
-             ,(HTTP.Offset(1, 4) # UF_SCHEMA
-             ,HTTP.Offset(9,12) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(22, 1) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(1, 4) # UF_SCHEMA
+             ,HTTP.URIs.Offset(9,12) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(22, 1) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("ipv6 address ending with '%'"
@@ -390,25 +390,25 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
          ), URLTest("tab in URL"
          ,"/foo\tbar/"
          ,false
-             ,(HTTP.Offset(0, 0) # UF_SCHEMA
-             ,HTTP.Offset(0, 0) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(1, 9) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(0, 0) # UF_SCHEMA
+             ,HTTP.URIs.Offset(0, 0) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(1, 9) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          ), URLTest("form feed in URL"
          ,"/foo\fbar/"
          ,false
-             ,(HTTP.Offset(0, 0) # UF_SCHEMA
-             ,HTTP.Offset(0, 0) # UF_HOST
-             ,HTTP.Offset(0, 0) # UF_PORT
-             ,HTTP.Offset(1, 9) # UF_PATH
-             ,HTTP.Offset(0, 0) # UF_QUERY
-             ,HTTP.Offset(0, 0) # UF_FRAGMENT
-             ,HTTP.Offset(0, 0) # UF_USERINFO
+             ,(HTTP.URIs.Offset(0, 0) # UF_SCHEMA
+             ,HTTP.URIs.Offset(0, 0) # UF_HOST
+             ,HTTP.URIs.Offset(0, 0) # UF_PORT
+             ,HTTP.URIs.Offset(1, 9) # UF_PATH
+             ,HTTP.URIs.Offset(0, 0) # UF_QUERY
+             ,HTTP.URIs.Offset(0, 0) # UF_FRAGMENT
+             ,HTTP.URIs.Offset(0, 0) # UF_USERINFO
              )
          ,false
          )
@@ -417,7 +417,7 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
         for u in urltests
             println("TEST - uri.jl: $(u.name)")
             if u.shouldthrow
-                @test_throws HTTP.ParsingError parse(HTTP.URI, u.url; isconnect=u.isconnect)
+                @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, u.url; isconnect=u.isconnect)
             else
                 url = parse(HTTP.URI, u.url; isconnect=u.isconnect)
                 @test u.offsets == url.offsets

@@ -61,7 +61,7 @@ function onurl(r, bytes, i, j)
     @debug(PARSING_DEBUG, @__LINE__, i - j + 1)
     @debug(PARSING_DEBUG, @__LINE__, "'$(String(bytes[i:j]))'")
     @debug(PARSING_DEBUG, @__LINE__, r.method)
-    uri = http_parser_parse_url(bytes, i, j - i + 1, r.method == CONNECT)
+    uri = URIs.http_parser_parse_url(bytes, i, j - i + 1, r.method == CONNECT)
     @debug(PARSING_DEBUG, @__LINE__, uri)
     setfield!(r, :uri, uri)
     return
@@ -153,7 +153,7 @@ const DEFAULT_MAX_BODY = Int64(2)^32 # 4Gib
 const DEFAULT_PARSER = Parser()
 
 function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
-        lenient::Bool=true, host::String="", method::HTTP.Method=GET,
+        lenient::Bool=true, host::String="", method::Method=GET,
         maxuri::Int64=DEFAULT_MAX_URI, maxheader::Int64=DEFAULT_MAX_HEADER,
         maxbody::Int64=DEFAULT_MAX_BODY, maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, String}
     strict = !lenient
@@ -373,7 +373,7 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
             parser.content_length = ULLONG_MAX
             @errorif(!isalpha(ch), HPE_INVALID_METHOD)
 
-            r.method = HTTP.Method(0)
+            r.method = Method(0)
             parser.index = 2
 
             if ch == 'A'
@@ -481,12 +481,12 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
             if r.method == CONNECT
                 p_state = s_req_server_start
             end
-            p_state = parseurlchar(p_state, ch, strict)
+            p_state = URIs.parseurlchar(p_state, ch, strict)
             @errorif(p_state == s_dead, HPE_INVALID_URL)
 
         elseif @anyeq(p_state, s_req_schema, s_req_schema_slash, s_req_schema_slash_slash, s_req_server_start)
             @errorif(ch in (' ', CR, LF), HPE_INVALID_URL)
-            p_state = parseurlchar(p_state, ch, strict)
+            p_state = URIs.parseurlchar(p_state, ch, strict)
             @errorif(p_state == s_dead, HPE_INVALID_URL)
 
         elseif @anyeq(p_state, s_req_server, s_req_server_with_at, s_req_path, s_req_query_string_start,
@@ -506,7 +506,7 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
                 onurl(r, bytes, url_mark, p-1)
                 url_mark = 0
             else
-                p_state = parseurlchar(p_state, ch, strict)
+                p_state = URIs.parseurlchar(p_state, ch, strict)
                 @errorif(p_state == s_dead, HPE_INVALID_URL)
             end
 
