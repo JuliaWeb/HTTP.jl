@@ -71,7 +71,6 @@ const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, nothing, 5, tru
     Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
     Client(; args...) = Client(nothing, RequestOptions($(DEFAULT_OPTIONS)...; args...))
 end
-const DEFAULT_CLIENT = Client()
 
 function setclient!(client::Client)
     global const DEFAULT_CLIENT = client
@@ -94,7 +93,7 @@ request(method, uri::String; verbose::Bool=false, query="", args...) = (@log(ver
 request(method, uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(HTTP.Method, method), uri; verbose=verbose, args...))
 function request(client::Client, method, uri::URI;
                     headers::Headers=Headers(),
-                    body=EMPTYBODY,
+                    body=FIFOBuffers.EMPTYBODY,
                     stream::Bool=false,
                     verbose::Bool=false,
                     args...)
@@ -231,7 +230,7 @@ function request(client::Client, req::Request, opts::RequestOptions, conn::Conne
         write(conn.tcp, req, opts)
     end
     # create a Response to fill
-    response = Response(stream ? DEFAULT_CHUNK_SIZE : DEFAULT_MAX, req)
+    response = Response(stream ? DEFAULT_CHUNK_SIZE : FIFOBuffers.DEFAULT_MAX, req)
     # process the response
     reset!(client.parser)
     success = process!(client, conn, opts, host, method(req), response, Ref{Float64}(time()), retryattempt, stream, tsk, verbose)

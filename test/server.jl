@@ -4,7 +4,7 @@
 server = HTTP.Server()
 tsk = @async HTTP.serve(server)
 sleep(1.0)
-put!(server.in, HTTP.KILL)
+put!(server.in, HTTP.Nitrogen.KILL)
 sleep(0.1)
 @test istaskdone(tsk)
 
@@ -20,14 +20,14 @@ r = HTTP.get("http://127.0.0.1:8081/"; readtimeout=30)
 @test HTTP.status(r) == 200
 @test String(take!(r)) == ""
 
-print(readstring(serverlog))
+print(String(read(serverlog)))
 
 # invalid HTTP
 sleep(2.0)
 tcp = connect(ip"127.0.0.1", 8081)
 write(tcp, "GET / HTP/1.1\r\n\r\n")
 sleep(2.0)
-log = readstring(serverlog)
+log = String(read(serverlog))
 
 print(log)
 @test contains(log, "invalid HTTP version")
@@ -38,7 +38,7 @@ tcp = connect(ip"127.0.0.1", 8081)
 write(tcp, "BADMETHOD / HTTP/1.1\r\n\r\n")
 sleep(2.0)
 
-log = readstring(serverlog)
+log = String(read(serverlog))
 
 print(log)
 @test contains(log, "invalid HTTP method")
@@ -49,7 +49,7 @@ tcp = connect(ip"127.0.0.1", 8081)
 write(tcp, "POST / HTTP/1.1\r\nContent-Length: 15\r\nExpect: 100-continue\r\n\r\n")
 sleep(2.0)
 
-log = readstring(serverlog)
+log = String(read(serverlog))
 
 @test contains(log, "sending 100 Continue response to get request body")
 client = String(readavailable(tcp))
@@ -57,7 +57,7 @@ client = String(readavailable(tcp))
 
 write(tcp, "Body of Request")
 sleep(2.0)
-log = readstring(serverlog)
+log = String(read(serverlog))
 client = String(readavailable(tcp))
 
 print(client)
@@ -66,7 +66,7 @@ print(client)
 @test contains(client, "Content-Length: 15\r\n")
 @test contains(client, "\r\n\r\nBody of Request")
 
-put!(server.in, HTTP.KILL)
+put!(server.in, HTTP.Nitrogen.KILL)
 
 # test readtimeout, before sending anything and then mid-request
 

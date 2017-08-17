@@ -7,7 +7,7 @@
     @test HTTP.Cookies.pathmatch(c, "/any/path")
     @test !HTTP.Cookies.pathmatch(c, "/nottherightpath")
 
-const writesetcookietests = [
+    writesetcookietests = [
 	(HTTP.Cookie("cookie-1", "v\$1"), "cookie-1=v\$1"),
 	(HTTP.Cookie("cookie-2", "two", maxage=3600), "cookie-2=two; Max-Age=3600"),
 	(HTTP.Cookie("cookie-3", "three", domain=".example.com"), "cookie-3=three; Domain=example.com"),

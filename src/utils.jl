@@ -71,6 +71,8 @@ macro anyeq(var, vals...)
     return esc(ret)
 end
 
+@inline hexstring(x) = string('%', uppercase(hex(x,2)))
+@inline lower(c::UInt8) = c | 0x20
 @inline lower(c) = Char(UInt32(c) | 0x20)
 @inline isurlchar(c) =  c > '\u80' ? true : normal_url_char[Int(c) + 1]
 @inline ismark(c) = @anyeq(c, '-', '_', '.', '!', '~', '*', '\'', '(', ')')
