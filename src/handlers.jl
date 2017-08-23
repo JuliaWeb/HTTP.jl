@@ -52,6 +52,10 @@ struct Router <: Handler
     end
 end
 
+if VERSION < v"0.7.0-DEV.1395"
+    Val(v) = Val{v}()
+end
+
 const SCHEMES = Dict{String, Val}("http" => Val(:http), "https" => Val(:https))
 const METHODS = Dict{String, Val}()
 for m in instances(HTTP.Method)

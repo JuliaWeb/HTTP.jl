@@ -45,16 +45,21 @@ mutable struct RequestOptions
     allowredirects::Option{Bool}
     forwardheaders::Option{Bool}
     retries::Option{Int}
-    RequestOptions(ch::Option{Int}, gzip::Option{Bool}, ct::Option{Float64}, rt::Option{Float64}, tls::Option{TLS.SSLConfig}, mr::Option{Int}, ar::Option{Bool}, fh::Option{Bool}, tr::Option{Int}) =
-        new(ch, gzip, ct, rt, tls, mr, ar, fh, tr)
+    managecookies::Option{Bool}
+    RequestOptions(ch::Option{Int}, gzip::Option{Bool}, ct::Option{Float64}, rt::Option{Float64}, tls::Option{TLS.SSLConfig}, mr::Option{Int}, ar::Option{Bool}, fh::Option{Bool}, tr::Option{Int}, mc::Option{Bool}) =
+        new(ch, gzip, ct, rt, tls, mr, ar, fh, tr, mc)
 end
 
-const RequestOptionsFieldTypes = Dict(:chunksize=>Int, :gzip=>Bool,
-                                      :connecttimeout=>Float64, :readtimeout=>Float64,
-                                      :tlsconfig=>TLS.SSLConfig,
-                                      :maxredirects=>Int, :allowredirects=>Bool,
-                                      :forwardheaders=>Bool,
-                                      :retries=>Int)
+const RequestOptionsFieldTypes = Dict(:chunksize      => Int,
+                                      :gzip           => Bool,
+                                      :connecttimeout => Float64,
+                                      :readtimeout    => Float64,
+                                      :tlsconfig      => TLS.SSLConfig,
+                                      :maxredirects   => Int,
+                                      :allowredirects => Bool,
+                                      :forwardheaders => Bool,
+                                      :retries        => Int,
+                                      :managecookies  => Bool)
 
 function RequestOptions(options::RequestOptions; kwargs...)
     for (k, v) in kwargs
@@ -63,8 +68,8 @@ function RequestOptions(options::RequestOptions; kwargs...)
     return options
 end
 
-RequestOptions(chunk=nothing, gzip=nothing, ct=nothing, rt=nothing, tls=nothing, mr=nothing, ar=nothing, fh=nothing, tr=nothing; kwargs...) =
-    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar, fh, tr); kwargs...)
+RequestOptions(chunk=nothing, gzip=nothing, ct=nothing, rt=nothing, tls=nothing, mr=nothing, ar=nothing, fh=nothing, tr=nothing, mc=nothing; kwargs...) =
+    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar, fh, tr, mc); kwargs...)
 
 function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)
@@ -124,10 +129,7 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
                     io::Option{IO}=STDOUT)
     if m != CONNECT
         headers = defaultheaders(Request)
-        headers["Host"] = string(hostname(uri), hasport(uri) ? string(':', port(uri)) : "")
-        if m != GET
-            headers["Origin"] = headers["Host"]
-        end
+        headers["Host"] = host(uri)
     else
         headers = Headers()
     end
@@ -142,6 +144,9 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
     else
         body = FIFOBuffer(b)
     end
+    if iscompressed(body) && length(body) > get(opts, :chunksize, 0)
+        opts.chunksize = length(body) + 1
+    end
     if !haskey(headers, "Content-Type") && length(body) > 0 && !isa(body, Form)
         sn = HTTP.sniff(body)
         headers["Content-Type"] = sn
@@ -150,8 +155,9 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
     return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
 
-Request(method, uri, h, body::T; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) where {T} =
-    Request(convert(HTTP.Method, method), isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
+Request(method, uri, h=Headers(), body=""; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) =
+    Request(convert(HTTP.Method, method),
+            isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
             h, body; options=options, io=io, verbose=verbose)
 
 Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
