@@ -14,7 +14,8 @@ A `FIFOBuffer` is a first-in, first-out, in-memory, async-friendly IO buffer typ
 `FIFOBuffer([max])`: creates a `FIFOBuffer` with a maximum size of `max`; this means that bytes can be written
 up until `max` number of bytes have been written (with none being read). At this point, the `FIFOBuffer` is full
 and will return 0 for all subsequent writes. If no `max` argument is given, then a default size of `typemax(Int32)^2` is used;
-this essentially allows all writes every time.
+this essentially allows all writes every time. Note that providing a string or byte vector argument mirrors the behavior of `Base.IOBuffer`
+in that the `max` size of the `FIFOBuffer` is the length of the string/byte vector; it is also not writeable.
 
 Reading is supported via `readavailable(f)` and `read(f, nb)`, which returns all or `nb` bytes, respectively, starting at the earliest bytes written.
 

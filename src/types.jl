@@ -34,6 +34,7 @@ at the `HTTP.Client` level to be applied to every request sent. Options include:
   * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
   * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
   * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
+  * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
 """
 mutable struct RequestOptions
     chunksize::Option{Int}
@@ -100,7 +101,7 @@ Accessor methods include:
 
 Two convenience methods are provided for accessing a request body:
   * `take!(r)`: consume the request body, returning it as a `Vector{UInt8}`
-  * `String(take!(r))`: consume the request body, returning it as a `String`
+  * `String(r)`: consume the request body, returning it as a `String`
 """
 mutable struct Request
     method::HTTP.Method
@@ -197,7 +198,7 @@ Accessor methods include:
 
 Two convenience methods are provided for accessing a response body:
   * `take!(r)`: consume the response body, returning it as a `Vector{UInt8}`
-  * `String(take!(r))`: consume the response body, returning it as a `String`
+  * `String(r)`: consume the response body, returning it as a `String`
 """
 mutable struct Response
     status::Int32
