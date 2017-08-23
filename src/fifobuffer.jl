@@ -76,7 +76,7 @@ const EMPTYBODY = FIFOBuffer()
 FIFOBuffer(str::String) = FIFOBuffer(Vector{UInt8}(str))
 function FIFOBuffer(bytes::Vector{UInt8})
     len = length(bytes)
-    return FIFOBuffer(len, len, len, 1, 1, -1, 0, bytes, Condition(), current_task(), false)
+    return FIFOBuffer(len, len, len, 1, 1, -1, 0, bytes, Condition(), current_task(), true)
 end
 FIFOBuffer(io::IOStream) = FIFOBuffer(read(io))
 FIFOBuffer(io::IO) = FIFOBuffer(readavailable(io))
@@ -87,6 +87,13 @@ Base.nb_available(f::FIFOBuffer) = f.nb
 Base.wait(f::FIFOBuffer) = wait(f.cond)
 Base.read(f::FIFOBuffer) = readavailable(f)
 Base.flush(f::FIFOBuffer) = nothing
+Base.position(f::FIFOBuffer) = f.f, f.l, f.nb
+function Base.seek(f::FIFOBuffer, pos::Tuple{Int, Int, Int})
+    f.f = pos[1]
+    f.l = pos[2]
+    f.nb = pos[3]
+    return
+end
 
 function Base.eof(f::FIFOBuffer)
     if f.expectedlength < 0

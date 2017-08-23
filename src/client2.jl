@@ -208,11 +208,13 @@ function connectandsend(client, ::Type{sch}, hostname, port, req, opts, verbose)
     opts.managecookies::Bool && addcookies!(client, hostname, req, verbose)
     try
         @log(verbose, client.logger, "sending request over the wire")
-        verbose && show(client.logger, req, opts); verbose && print(client.logger, "\n")
+        reqstr = string(req, opts)
+        verbose && (println(client.logger, "HTTP.Request:\n"); println(client.logger, reqstr))
         # EH: throws ArgumentError if socket is closed, UVError; retry if UVError,
-        @retryif Base.UVError write(conn.socket, req, opts)
+        @retryif Base.UVError write(conn.socket, reqstr)
         !isopen(conn.socket) && throw(CLOSED_ERROR)
     catch e
+        @log(verbose, client.logger, backtrace())
         typeof(e) <: ArgumentError && throw(ClosedError(e, backtrace()))
         throw(SendError(e, backtrace()))
     end
@@ -233,7 +235,8 @@ end
 function processresponse!(client, conn, response, host, method, maintask, stream, verbose)
     while true
         buffer, err = getbytes(conn.socket)
-        if length(buffer) == 0 || !isopen(conn.socket)
+        if length(buffer) == 0 && !isopen(conn.socket)
+            @log(verbose, client.logger, "socket closed before full response received")
             dead!(conn)
             if method in (GET, HEAD, OPTIONS)
                 # retry the entire request

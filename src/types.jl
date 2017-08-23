@@ -83,6 +83,7 @@ end
 """
     Request()
     Request(method, uri, headers, body; options=RequestOptions())
+    Request(; method=HTTP.GET, uri=HTTP.URI(""), major=1, minor=1, headers=HTTP.Headers(), body="")
 
 A type representing an http request. `method` can be provided as a string or `HTTP.GET` type enum.
 `uri` can be provided as an actual `HTTP.URI` or string. `headers` should be provided as a `Dict`.
@@ -148,7 +149,7 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
         opts.chunksize = length(body) + 1
     end
     if !haskey(headers, "Content-Type") && length(body) > 0 && !isa(body, Form)
-        sn = HTTP.sniff(body)
+        sn = sniff(body)
         headers["Content-Type"] = sn
         @log(verbose, io, "setting Content-Type header to: $sn")
     end
@@ -160,7 +161,8 @@ Request(method, uri, h=Headers(), body=""; options::RequestOptions=RequestOption
             isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
             h, body; options=options, io=io, verbose=verbose)
 
-Request() = Request(GET, Int16(1), Int16(1), URI(""), Headers(), FIFOBuffer())
+Request(; method::Method=GET, major::Integer=Int16(1), minor::Integer=Int16(1), uri=URI(""), headers=Headers(), body=FIFOBuffer("")) =
+    Request(method, major, minor, uri, headers, body)
 
 ==(a::Request,b::Request) = (a.method    == b.method)    &&
                             (a.major     == b.major)     &&
@@ -174,8 +176,10 @@ Base.showcompact(io::IO, r::Request) = print(io, "Request(\"", resource(r.uri), 
                                         length(r.body), " bytes in body)")
 
 """
-    Response(status)
-    Response(status, headers, body)
+    Response(status::Integer)
+    Response(status::Integer, body::String)
+    Response(status::Integer, headers, body)
+    Response(; status=200, cookies=HTTP.Cookie[], headers=HTTP.Headers(), body="")
 
 A type representing an http response. `status` represents the http status code for the response.
 `headers` should be provided as a `Dict`. `body` can be provided as a string, byte vector, IO, or `HTTP.FIFOBuffer`.
@@ -222,13 +226,14 @@ Base.String(r::Union{Request, Response}) = String(body(r))
 Response(; status::Int=200,
          cookies::Vector{Cookie}=Cookie[],
          headers::Headers=Headers(),
-         body::FIFOBuffer=FIFOBuffer(),
+         body::FIFOBuffer=FIFOBuffer(""),
          request::Nullable{Request}=Nullable{Request}(),
          history::Vector{Response}=Response[]) =
     Response(status, Int16(1), Int16(1), cookies, headers, body, request, history)
 
 Response(n::Integer, r::Request) = Response(; body=FIFOBuffer(n), request=Nullable(r))
 Response(s::Integer) = Response(; status=s)
+Response(s::Integer, msg) = Response(; status=s, body=FIFOBuffer(msg))
 Response(b::Union{Vector{UInt8}, String}) = Response(; headers=defaultheaders(Response), body=FIFOBuffer(b))
 Response(s::Integer, h::Headers, body) = Response(; status=s, headers=h, body=FIFOBuffer(body))
 
@@ -265,15 +270,7 @@ function startline(io::IO, r::Response)
 end
 
 # headers
-function headers(io::IO, r::Request)
-    for (k, v) in headers(r)
-        write(io, "$k: $v$CRLF")
-    end
-    # write(io, CRLF); we let the body write this in case of chunked transfer
-end
-
-function headers(io::IO, r::Response)
-    hasmessagebody(r) && setindex!(r.headers, string(length(body(r))), "Content-Length")
+function headers(io::IO, r::Union{Request, Response})
     for (k, v) in headers(r)
         write(io, "$k: $v$CRLF")
     end
@@ -281,43 +278,6 @@ function headers(io::IO, r::Response)
 end
 
 # body
-function body(io::IO, r::Request, opts, consume)
-    (length(r.body) == 0 || r.method in (GET, HEAD, CONNECT)) && (write(io, "$CRLF"); return)
-    # make sure we don't try to "show" the body if we're doing an asynchronous upload
-    isa(r.body, FIFOBuffer) && r.body.task != current_task() && !consume && return
-    chksz = get(opts, :chunksize, typemax(Int))
-    if isa(r.body, Form)
-        index = r.body.index
-        foreach(mark, r.body.data)
-    else
-        f, l, nb = r.body.f, r.body.l, r.body.nb
-    end
-    if length(r.body) > chksz || (isa(r.body, FIFOBuffer) && r.body.task != current_task())
-        # chunked transfer
-        write(io, "Transfer-Encoding: chunked$CRLF$CRLF")
-        while !eof(r.body)
-            bytes = read(r.body, chksz) # read at most chunksize
-            chunk = length(bytes)
-            chunk == 0 && continue
-            write(io, "$(hex(chunk))$CRLF")
-            write(io, bytes, CRLF)
-        end
-        write(io, "$(hex(0))$CRLF$CRLF")
-    else
-        write(io, "Content-Length: $(dec(length(r.body)))$CRLF$CRLF")
-        write(io, r.body)
-    end
-    if isa(r.body, Form)
-        r.body.index = index
-        foreach(reset, r.body.data)
-    else
-        r.body.f = f
-        r.body.l = l
-        r.body.nb = nb
-    end
-    return
-end
-
 # https://tools.ietf.org/html/rfc7230#section-3.3
 function hasmessagebody(r::Response)
     if 100 <= status(r) < 200 || status(r) == 204 || status(r) == 304
@@ -328,40 +288,69 @@ function hasmessagebody(r::Response)
     end
     return true
 end
+hasmessagebody(r::Request) = length(r.body) > 0 && !(r.method in (GET, HEAD, CONNECT))
 
-function body(io::IO, r::Response, opts, consume)
-    write(io, "$CRLF")
-    hasmessagebody(r) || return
-    write(io, String(r.body))
+function body(io::IO, r::Union{Request, Response}, opts)
+    if !hasmessagebody(r)
+        write(io, "$CRLF")
+        return
+    end
+    chksz = get(opts, :chunksize, typemax(Int))
+    pos = position(r.body)
+    @sync begin
+        @async begin
+            chunked = false
+            bytes = UInt8[]
+            while !eof(r.body)
+                bytes = read(r.body, chksz)
+                eof(r.body) && !chunked && break
+                if !chunked
+                    write(io, "Transfer-Encoding: chunked$CRLF$CRLF")
+                end
+                chunked = true
+                chunk = length(bytes)
+                chunk == 0 && break
+                write(io, "$(hex(chunk))$CRLF")
+                write(io, bytes, CRLF)
+            end
+            if chunked
+                write(io, "$(hex(0))$CRLF$CRLF")
+            else
+                write(io, "Content-Length: $(dec(length(bytes)))$CRLF$CRLF")
+                write(io, bytes)
+            end
+        end
+    end
+    seek(r.body, pos)
     return
 end
 
-function Base.write(io::IO, r::Union{Request, Response}, opts, consume=true)
+Base.write(io::IO, r::Union{Request, Response}, opts) = write(io, string(r))
+function Base.string(r::Union{Request, Response}, opts=RequestOptions())
     i = IOBuffer()
     startline(i, r)
     headers(i, r)
-    body(i, r, opts, consume)
-    write(io, take!(i))
-    return
+    body(i, r, opts)
+    return String(take!(i))
 end
 
-function Base.show(io::IO, r::Union{Request,Response}, opts=RequestOptions())
+function Base.show(io::IO, r::Union{Request,Response}; opts=RequestOptions())
     println(io, typeof(r), ":")
     println(io, "\"\"\"")
     startline(io, r)
     headers(io, r)
     buf = IOBuffer()
-    body(buf, r, opts, false)
+    body(buf, r, opts)
     b = take!(buf)
     if length(b) > 2
-        contenttype = HTTP.sniff(b)
+        contenttype = sniff(b)
         if contenttype in DISPLAYABLE_TYPES
             if length(b) > 750
                 println(io, "\n[$(typeof(r)) body of $(length(b)) bytes]")
                 println(io, String(b)[1:750])
                 println(io, "⋮")
             else
-                println(io, String(b))
+                print(io, String(b))
             end
         else
             contenttype = Base.get(r.headers, "Content-Type", contenttype)
