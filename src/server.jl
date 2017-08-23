@@ -102,7 +102,12 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                 else
                     rl.allowance -= 1.0
                     HTTP.@log(verbose, server.logger, "reading request bytes with readtimeout=$(options.readtimeout)")
-                    buffer = readavailable(tcp)
+                    # EH:
+                    buffer = try
+                        readavailable(tcp)
+                    catch e
+                        UInt8[]
+                    end
                     length(buffer) > 0 || break
                     starttime[] = time() # reset the timeout while still receiving bytes
                     errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(request, parser, buffer)
@@ -127,7 +132,13 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                     elseif headerscomplete && Base.get(HTTP.headers(request), "Expect", "") == "100-continue" && !alreadysent100continue
                         if options.support100continue
                             HTTP.@log(verbose, logger, "sending 100 Continue response to get request body")
-                            write(tcp, HTTP.Response(100), options)
+                            # EH:
+                            try
+                                write(tcp, HTTP.Response(100), options)
+                            catch e
+                                HTTP.@log(verbose, logger, e)
+                                error = true
+                            end
                             parser.state = HTTP.s_body_identity
                             alreadysent100continue = true
                             continue
@@ -156,15 +167,17 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             request = HTTP.Request()
                         else
                             get!(HTTP.headers(response), "Connection", "close")
-                            close(tcp)
-                        end
-                        HTTP.@log(verbose, logger, "responding with response on connection i=$i")
-                        verbose && (show(logger, response, options); println(logger))
-                        try
-                            write(tcp, response, options)
-                        catch e
-                            HTTP.@log(verbose, logger, e)
                             error = true
+                        end
+                        if !error
+                            HTTP.@log(verbose, logger, "responding with response on connection i=$i")
+                            verbose && (show(logger, response, options); println(logger))
+                            try
+                                write(tcp, response, options)
+                            catch e
+                                HTTP.@log(verbose, logger, e)
+                                error = true
+                            end
                         end
                         error && break
                         startedprocessingrequest = alreadysent100continue = false
