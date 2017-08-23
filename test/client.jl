@@ -16,7 +16,9 @@
 end
 
 for sch in ("http", "https")
+    println("runnin $sch client tests...")
 
+    println("simple GET, HEAD, POST, DELETE, etc.")
     @test HTTP.status(HTTP.get("$sch://httpbin.org/ip")) == 200
     @test HTTP.status(HTTP.head("$sch://httpbin.org/ip")) == 200
     @test HTTP.status(HTTP.options("$sch://httpbin.org/ip")) == 200
@@ -27,14 +29,17 @@ for sch in ("http", "https")
     @test HTTP.status(HTTP.patch("$sch://httpbin.org/patch")) == 200
 
     # Testing within tasks, see https://github.com/JuliaWeb/HTTP.jl/issues/18
+    println("async client request")
     @test HTTP.status(wait(@schedule HTTP.get("$sch://httpbin.org/ip"))) == 200
 
     @test HTTP.status(HTTP.get("$sch://httpbin.org/encoding/utf8")) == 200
 
+    println("pass query to uri")
     r = HTTP.get("$sch://httpbin.org/response-headers"; query=Dict("hey"=>"dude"))
     h = HTTP.headers(r)
     @test (haskey(h, "Hey") ? h["Hey"] == "dude" : h["hey"] == "dude")
 
+    println("cookie requests")
     r = HTTP.get("$sch://httpbin.org/cookies")
     body = String(take!(r))
     @test (body == "{\n  \"cookies\": {}\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n")
@@ -47,6 +52,7 @@ for sch in ("http", "https")
     # @test String(take!(r)) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
 
     # stream
+    println("client streaming tests")
     r = HTTP.post("$sch://httpbin.org/post"; body="hey")
     @test HTTP.status(r) == 200
     # stream, but body is too small to actually stream
@@ -68,6 +74,7 @@ for sch in ("http", "https")
     end
 
     # body posting: Vector{UInt8}, String, IOStream, IOBuffer, FIFOBuffer
+    println("client body posting of various types")
     @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body="hey")) == 200
     @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'])) == 200
     io = IOBuffer("hey"); seekstart(io)
@@ -82,6 +89,7 @@ for sch in ("http", "https")
     @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=f)) == 200
 
     # chunksize
+    println("client transfer-encoding chunked")
     @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body="hey", chunksize=2)) == 200
     @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], chunksize=2)) == 200
     io = IOBuffer("hey"); seekstart(io)
@@ -96,6 +104,7 @@ for sch in ("http", "https")
     @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=f, chunksize=2)) == 200
 
     # multipart
+    println("client multipart body")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
     @test HTTP.status(r) == 200
     @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
@@ -140,6 +149,7 @@ for sch in ("http", "https")
     @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     # asynchronous
+    println("asynchronous client request body")
     f = HTTP.FIFOBuffer()
     write(f, "hey")
     t = @async HTTP.post("$sch://httpbin.org/post"; body=f)
@@ -150,6 +160,7 @@ for sch in ("http", "https")
     @test_broken HTTP.status(wait(t)) == 200
 
     # redirects
+    println("client redirect following")
     r = HTTP.get("$sch://httpbin.org/redirect/1")
     @test HTTP.status(r) == 200
     @test length(HTTP.history(r)) == 1
@@ -159,13 +170,15 @@ for sch in ("http", "https")
     @test HTTP.status(HTTP.get("$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fexample.com")) == 200
 
     @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body="√")) == 200
+    println("client basic auth")
     @test HTTP.status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd")) == 200
     @test HTTP.status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd")) == 200
 
     # readtimeout
-    @test_throws HTTP.TimeoutException HTTP.get("$sch://httpbin.org/delay/3"; readtimeout=1.0)
+    # @test_throws HTTP.TimeoutException HTTP.get("$sch://httpbin.org/delay/3"; readtimeout=1.0)
 
     # custom client & other high-level entries
+    println("high-level client request methods")
     buf = IOBuffer()
     cli = HTTP.Client(buf)
     HTTP.get(cli, "$sch://httpbin.org/ip")

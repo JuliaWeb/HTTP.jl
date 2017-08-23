@@ -13,6 +13,35 @@ function escapeHTML(i::String)
     return o
 end
 
+macro retry(expr)
+    :(@retry 2 $(esc(expr)))
+end
+
+macro retry(N, expr)
+    :(@retryif Any $N $(esc(expr)))
+end
+
+macro retryif(cond, expr)
+    :(@retryif $(esc(cond)) 2 $(esc(expr)))
+end
+
+macro retryif(cond, N, expr)
+    quote
+        local __r__
+        for i = 1:$N
+            try
+                __r__ = $(esc(expr))
+                break
+            catch e
+                typeof(e) <: $(esc(cond)) || rethrow(e)
+                i == $N && rethrow(e)
+                sleep(0.1)
+            end
+        end
+        __r__
+    end
+end
+
 """
 @timeout secs expr then pollint
 

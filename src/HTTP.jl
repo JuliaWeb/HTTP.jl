@@ -33,7 +33,8 @@ include("types.jl")
 include("parser.jl")
 include("sniff.jl")
 
-include("client.jl")
+# include("client.jl")
+include("client2.jl")
 include("handlers.jl")
 using .Handlers
 include("server.jl")
