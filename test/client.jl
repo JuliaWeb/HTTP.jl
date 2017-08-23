@@ -84,8 +84,7 @@ for sch in ("http", "https")
     io = open(tmp)
     @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=io)) == 200
     close(io); rm(tmp)
-    f = HTTP.FIFOBuffer(3)
-    write(f, "hey")
+    f = HTTP.FIFOBuffer("hey")
     @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=f)) == 200
 
     # chunksize
@@ -99,8 +98,7 @@ for sch in ("http", "https")
     io = open(tmp)
     @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2)) == 200
     close(io); rm(tmp)
-    f = HTTP.FIFOBuffer(3)
-    write(f, "hey")
+    f = HTTP.FIFOBuffer("hey")
     @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=f, chunksize=2)) == 200
 
     # multipart
@@ -150,14 +148,16 @@ for sch in ("http", "https")
 
     # asynchronous
     println("asynchronous client request body")
-    f = HTTP.FIFOBuffer()
-    write(f, "hey")
-    t = @async HTTP.post("$sch://httpbin.org/post"; body=f)
-    wait(f) # wait for the async call to write it's first data
-    write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
-    write(f, "sailor")
-    close(f) # setting eof on f causes the async request to send a final chunk and return the response
-    @test_broken HTTP.status(wait(t)) == 200
+    begin
+        f = HTTP.FIFOBuffer()
+        write(f, "hey")
+        t = @async HTTP.post("$sch://httpbin.org/post"; body=f)
+        wait(f) # wait for the async call to write it's first data
+        write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
+        write(f, "sailor")
+        close(f) # setting eof on f causes the async request to send a final chunk and return the response
+        @test_broken HTTP.status(wait(t)) == 200
+    end
 
     # redirects
     println("client redirect following")
