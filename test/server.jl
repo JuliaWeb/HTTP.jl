@@ -102,7 +102,12 @@ println(log)
 
 # handler throw error
 
-# keep-alive vs. close
+# keep-alive vs. close: issue #81
+tsk = @async HTTP.serve(HTTP.Server((req, res) -> Response("Hello\n"), STDOUT), ip"127.0.0.1", 8083)
+sleep(2.0)
+r = HTTP.request(HTTP.Request(major=1, minor=0, uri=HTTP.URI("http://127.0.0.1:8083/"), headers=Dict("Host"=>"127.0.0.1:8083")))
+@test HTTP.status(r) == 200
+@test HTTP.headers(r)["Connection"] == "close"
 
 # body too big
 

@@ -85,7 +85,7 @@ end
 
 function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, verbose) where {T, H}
     handler, logger, options = server.handler, server.logger, server.options
-    startedprocessingrequest = error = alreadysent100continue = false
+    startedprocessingrequest = error = shouldclose = alreadysent100continue = false
     rate = Float64(server.options.ratelimit.num)
     rl.allowance += 1.0 # because it was just decremented right before we got here
     HTTP.@log(verbose, logger, "processing on connection i=$i...")
@@ -168,7 +168,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             request = HTTP.Request()
                         else
                             get!(HTTP.headers(response), "Connection", "close")
-                            error = true
+                            shouldclose = true
                         end
                         if !error
                             HTTP.@log(verbose, logger, "responding with response on connection i=$i")
@@ -181,7 +181,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                                 error = true
                             end
                         end
-                        error && break
+                        (error || shouldclose) && break
                         startedprocessingrequest = alreadysent100continue = false
                     end
                 end
