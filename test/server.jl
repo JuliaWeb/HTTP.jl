@@ -89,7 +89,7 @@ end, serverlog)
 
 tsk = @async HTTP.serve(server, IPv4(0,0,0,0), 8082)
 sleep(5.0)
-r = HTTP.get("http://0.0.0.0:8082/"; readtimeout=30, verbose=true)
+r = HTTP.get("http://localhost:8082/"; readtimeout=30, verbose=true)
 log = String(read(serverlog))
 println(log)
 @test length(String(r)) > 175
