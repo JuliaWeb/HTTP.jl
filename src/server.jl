@@ -80,7 +80,7 @@ mutable struct Server{T <: HTTP.Scheme, H <: HTTP.Handler}
     out::Channel{Any}
     options::ServerOptions
 
-    Server{T, H}(handler::H, logger::IO, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) where {T, H} = new{T, H}(handler, logger, ch, ch2, options)
+    Server{T, H}(handler::H, logger::IO=STDOUT, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) where {T, H} = new{T, H}(handler, logger, ch, ch2, options)
 end
 
 function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, verbose) where {T, H}
@@ -288,7 +288,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
     return
 end
 
-Server(h::Function, l::IO; cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
+Server(h::Function, l::IO=STDOUT; cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
 function Server(handler::H=HTTP.HandlerFunction((req, rep) -> HTTP.Response("Hello World!")),
                logger::IO=STDOUT;
                cert::String="",
