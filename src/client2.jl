@@ -113,13 +113,6 @@ function Base.show(io::IO, err::RedirectException)
     print(io, "RedirectException: more than $(err.maxredirects) redirects attempted")
 end
 
-struct RetryException <: Exception
-    retries::Int
-end
-function Base.show(io::IO, err::RetryException)
-    print(io, "RetryException: # of allowed retries ($(err.retries)) was exceeded when making request")
-end
-
 initTLS!(::Type{http}, hostname, opts, socket) = socket
 
 function initTLS!(::Type{https}, hostname, opts, socket)
@@ -241,7 +234,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
             dead!(conn)
             if method in (GET, HEAD, OPTIONS)
                 # retry the entire request
-                return false
+                return false, err
             else
                 throw(err)
             end
@@ -256,11 +249,11 @@ function processresponse!(client, conn, response, host, method, maintask, stream
             http_should_keep_alive(client.parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
             # idle! on a Dead will stay Dead
             idle!(conn)
-            return true
+            return true, nothing
         elseif stream && headerscomplete
             @log(verbose, client.logger, "processing the rest of response asynchronously")
             response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, false)
-            return true
+            return true, nothing
         end
     end
     # shouldn't ever reach here
@@ -306,9 +299,9 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     
     response = Response(stream ? DEFAULT_CHUNK_SIZE : FIFOBuffers.DEFAULT_MAX, req)
     reset!(client.parser)
-    success = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, verbose)
+    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, verbose)
     if !success
-        retry >= opts.retries::Int && throw(RetryException(opts.retries::Int))
+        retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
     end
     @log(verbose, client.logger, "received response")
