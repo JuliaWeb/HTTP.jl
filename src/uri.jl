@@ -185,12 +185,11 @@ function escape(io, k, A::Vector{String})
 end
 
 escape(p::Pair) = escape([p])
-function escape(d::Union{Dict,Vector{Pair}})
+function escape(d)
     io = IOBuffer()
-    len = length(d)
     for (i, (k,v)) in enumerate(d)
+        i == 1 || write(io, "&")
         escape(io, k, v)
-        i == len || write(io, "&")
     end
     return String(take!(io))
 end

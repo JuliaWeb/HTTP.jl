@@ -54,6 +54,10 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
     @test HTTP.unescape(HTTP.escape("abcdef 1234-=~!@#\$()_+{}|[]a;")) == "abcdef 1234-=~!@#\$()_+{}|[]a;"
     @test HTTP.unescape(HTTP.escape("👽")) == "👽"
 
+    @test HTTP.escape([("foo", "bar"), (1, 2)]) == "foo=bar&1=2"
+    @test HTTP.escape(Dict(["foo" => "bar", 1 => 2])) == "1=2&foo=bar"
+    @test HTTP.escape(["foo" => "bar", 1 => 2]) == "foo=bar&1=2"
+
     @test "user:password" == HTTP.userinfo(parse(HTTP.URI, "https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag"))
 
 
