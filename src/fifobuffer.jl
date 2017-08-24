@@ -14,7 +14,8 @@ A `FIFOBuffer` is a first-in, first-out, in-memory, async-friendly IO buffer typ
 `FIFOBuffer([max])`: creates a `FIFOBuffer` with a maximum size of `max`; this means that bytes can be written
 up until `max` number of bytes have been written (with none being read). At this point, the `FIFOBuffer` is full
 and will return 0 for all subsequent writes. If no `max` argument is given, then a default size of `typemax(Int32)^2` is used;
-this essentially allows all writes every time.
+this essentially allows all writes every time. Note that providing a string or byte vector argument mirrors the behavior of `Base.IOBuffer`
+in that the `max` size of the `FIFOBuffer` is the length of the string/byte vector; it is also not writeable.
 
 Reading is supported via `readavailable(f)` and `read(f, nb)`, which returns all or `nb` bytes, respectively, starting at the earliest bytes written.
 
@@ -76,7 +77,7 @@ const EMPTYBODY = FIFOBuffer()
 FIFOBuffer(str::String) = FIFOBuffer(Vector{UInt8}(str))
 function FIFOBuffer(bytes::Vector{UInt8})
     len = length(bytes)
-    return FIFOBuffer(len, len, len, 1, 1, -1, 0, bytes, Condition(), current_task(), false)
+    return FIFOBuffer(len, len, len, 1, 1, -1, 0, bytes, Condition(), current_task(), true)
 end
 FIFOBuffer(io::IOStream) = FIFOBuffer(read(io))
 FIFOBuffer(io::IO) = FIFOBuffer(readavailable(io))
@@ -87,6 +88,13 @@ Base.nb_available(f::FIFOBuffer) = f.nb
 Base.wait(f::FIFOBuffer) = wait(f.cond)
 Base.read(f::FIFOBuffer) = readavailable(f)
 Base.flush(f::FIFOBuffer) = nothing
+Base.position(f::FIFOBuffer) = f.f, f.l, f.nb
+function Base.seek(f::FIFOBuffer, pos::Tuple{Int64, Int64, Int64})
+    f.f = pos[1]
+    f.l = pos[2]
+    f.nb = pos[3]
+    return
+end
 
 function Base.eof(f::FIFOBuffer)
     if f.expectedlength < 0

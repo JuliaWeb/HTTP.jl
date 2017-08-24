@@ -34,6 +34,7 @@ Additional keyword arguments can be passed that will get transmitted with each H
 * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
 * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
+* `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
 """
 mutable struct Client
     # connection pools for keep-alive; key is host
@@ -208,11 +209,13 @@ function connectandsend(client, ::Type{sch}, hostname, port, req, opts, verbose)
     opts.managecookies::Bool && addcookies!(client, hostname, req, verbose)
     try
         @log(verbose, client.logger, "sending request over the wire")
-        verbose && show(client.logger, req, opts); verbose && print(client.logger, "\n")
+        reqstr = string(req, opts)
+        verbose && (println(client.logger, "HTTP.Request:\n"); println(client.logger, reqstr))
         # EH: throws ArgumentError if socket is closed, UVError; retry if UVError,
-        @retryif Base.UVError write(conn.socket, req, opts)
+        @retryif Base.UVError write(conn.socket, reqstr)
         !isopen(conn.socket) && throw(CLOSED_ERROR)
     catch e
+        @log(verbose, client.logger, backtrace())
         typeof(e) <: ArgumentError && throw(ClosedError(e, backtrace()))
         throw(SendError(e, backtrace()))
     end
@@ -233,7 +236,8 @@ end
 function processresponse!(client, conn, response, host, method, maintask, stream, verbose)
     while true
         buffer, err = getbytes(conn.socket)
-        if length(buffer) == 0 || !isopen(conn.socket)
+        if length(buffer) == 0 && !isopen(conn.socket)
+            @log(verbose, client.logger, "socket closed before full response received")
             dead!(conn)
             if method in (GET, HEAD, OPTIONS)
                 # retry the entire request
@@ -364,7 +368,7 @@ Build and execute an http "$($f_str)" request. Query parameters can be passed vi
 query parameters with the same key can be passed like `Dict("key1"=>["value1", "value2"], "key2"=>...)`.
 Returns a `Response` object that includes the resulting status code (`HTTP.status(r)` and `HTTP.statustext(r)`),
 response headers (`HTTP.headers(r)`), cookies (`HTTP.cookies(r)`), response history if redirects were involved
-(`HTTP.history(r)`), and response body (`HTTP.body(r)` or `String(take!(r)` or `take!(r)`).
+(`HTTP.history(r)`), and response body (`HTTP.body(r)` or `String(r)` or `take!(r)`).
 
 The body or payload for a request can be given through the `body` keyword arugment.
 The body can be given as a `String`, `Vector{UInt8}`, `IO`, `HTTP.FIFOBuffer` or `Dict` argument type.
@@ -389,52 +393,78 @@ Additional keyword arguments supported, include:
 * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
 * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
+* `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
 
 Simple request example:
 ```julia
 julia> resp = HTTP.get("http://httpbin.org/ip")
 HTTP.Response:
+\"\"\"
 HTTP/1.1 200 OK
 Connection: keep-alive
+X-Powered-By: Flask
 Content-Length: 32
+Via: 1.1 vegur
 Access-Control-Allow-Credentials: true
-Date: Fri, 06 Jan 2017 05:07:07 GMT
+X-Processed-Time: 0.000903129577637
+Date: Wed, 23 Aug 2017 23:35:59 GMT
 Content-Type: application/json
 Access-Control-Allow-Origin: *
-Server: nginx
+Server: meinheld/0.6.1
+Content-Length: 32
 
-{
-  "origin": "65.130.216.45"
+{ 
+  "origin": "50.207.241.62"
 }
+\"\"\"
 
 
-julia> string(resp)
+julia> String(resp)
 "{\n  \"origin\": \"65.130.216.45\"\n}\n"
 ```
 
-Response streaming example:
+Response streaming example (asynchronous download):
 ```julia
 julia> r = HTTP.get("http://httpbin.org/stream/100"; stream=true)
 HTTP.Response:
+\"\"\"
 HTTP/1.1 200 OK
-Content-Length: 0
+Connection: keep-alive
+X-Powered-By: Flask
+Transfer-Encoding: chunked
+Via: 1.1 vegur
+Access-Control-Allow-Credentials: true
+X-Processed-Time: 0.000981092453003
+Date: Wed, 23 Aug 2017 23:36:56 GMT
+Content-Type: application/json
+Access-Control-Allow-Origin: *
+Server: meinheld/0.6.1
 
+[HTTP.Response body of 27415 bytes]
+Content-Length: 27390
+
+{"id": 0, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
+{"id": 1, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
+{"id": 2, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "
+⋮
+```
+\"\"\"
 
 julia> body = HTTP.body(r)
-HTTP.FIFOBuffer(0,1048576,0,1,1,UInt8[],Condition(Any[]),Task (runnable) @0x000000010d221690,false)
+HTTP.FIFOBuffers.FIFOBuffer(27390, 1048576, 27390, 1, 27391, -1, 27390, UInt8[0x7b, 0x22, 0x69, 0x64, 0x22, 0x3a, 0x20, 0x30, 0x2c, 0x20  …  0x6e, 0x2f, 0x6a, 0x73, 0x6f, 0x6e, 0x22, 0x7d, 0x7d, 0x0a], Condition(Any[]), Task (done) @0x0000000112d84250, true)
 
 julia> while true
-    println(String(readavailable(body)))
-    eof(body) && break
-end
-{"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 0, "origin": "65.130.216.45"}
-{"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 1, "origin": "65.130.216.45"}
-{"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 2, "origin": "65.130.216.45"}
-{"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 3, "origin": "65.130.216.45"}
+           println(String(readavailable(body)))
+           eof(body) && break
+       end
+{"id": 0, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
+{"id": 1, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
+{"id": 2, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
+{"id": 3, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
 ...
 ```
 
-Request streaming example:
+Request streaming example (asynchronous upload):
 ```julia
 # create a FIFOBuffer for sending our request body
 f = HTTP.FIFOBuffer()

@@ -1538,7 +1538,7 @@ const responses = Message[
             @test HTTP.statustext(r) == resp.response_status
             @test length(HTTP.headers(r)) == resp.num_headers
             @test HTTP.headers(r) == resp.headers
-            @test String(readavailable(HTTP.body(r))) == resp.body
+            @test String(r) == resp.body
             @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == resp.should_keep_alive
         end
     end

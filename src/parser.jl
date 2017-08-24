@@ -137,7 +137,7 @@ function parse(T::Type{<:Union{Request, Response}}, str;
                 maxuri::Int64=DEFAULT_MAX_URI, maxheader::Int64=DEFAULT_MAX_HEADER,
                 maxbody::Int64=DEFAULT_MAX_BODY,
                 maintask::Task=current_task())
-    r = T()
+    r = T(body=FIFOBuffer())
     reset!(DEFAULT_PARSER)
     err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str);
         lenient=lenient, maxuri=maxuri, maxheader=maxheader, maxbody=maxbody, maintask=maintask)

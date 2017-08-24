@@ -17,6 +17,16 @@ end
 Form(f::Form) = f
 Base.eof(f::Form) = f.index > length(f.data)
 Base.length(f::Form) = sum(x->isa(x, IOStream) ? filesize(x) - position(x) : nb_available(x), f.data)
+function Base.position(f::Form)
+    index = f.index
+    foreach(mark, f.data)
+    return index
+end
+function Base.seek(f::Form, pos)
+    f.index = pos
+    foreach(reset, f.data)
+    return
+end
 
 Base.readavailable(f::Form) = read(f)
 function Base.read(f::Form)

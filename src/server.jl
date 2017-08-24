@@ -38,22 +38,25 @@ mutable struct ServerOptions
     maxheader::Int64
     maxbody::Int64
     support100continue::Bool
+    chunksize::Int
 end
 
+const DEFAULT_CHUNK_SIZE = 2^20
 ServerOptions(; tlsconfig::HTTP.TLS.SSLConfig=HTTP.TLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
                 ratelimit::Rational{Int64}=Int64(5)//Int64(1),
                 maxuri::Int64=HTTP.DEFAULT_MAX_URI,
                 maxheader::Int64=HTTP.DEFAULT_MAX_HEADER,
                 maxbody::Int64=HTTP.DEFAULT_MAX_BODY,
-                support100continue::Bool=true) =
-    ServerOptions(tlsconfig, readtimeout, ratelimit, maxbody, maxuri, maxheader, support100continue)
+                support100continue::Bool=true,
+                chunksize::Int=DEFAULT_CHUNK_SIZE) =
+    ServerOptions(tlsconfig, readtimeout, ratelimit, maxbody, maxuri, maxheader, support100continue, chunksize)
 
 """
     Server(handler, logger::IO=STDOUT; kwargs...)
 
 An http/https server. Supports listening on a `host` and `port` via the `HTTP.serve(server, host, port)` function.
-`handler` is a function of the form `f(::Request, ::Response) -> Response`, i.e. it takes both a `Request` and pre-built `Response`
+`handler` is a function of the form `f(::Request, ::Response) -> HTTP.Response`, i.e. it takes both a `Request` and pre-built `Response`
 objects as inputs and returns the, potentially modified, `Response`. `logger` indicates where logging output should be directed.
 When `HTTP.serve` is called, it aims to "never die", catching and recovering from all internal errors. To forcefully stop, one can obviously
 kill the julia process, interrupt (ctrl/cmd+c) if main task, or send the kill signal over a server in channel like:
@@ -85,7 +88,6 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
     startedprocessingrequest = error = alreadysent100continue = false
     rate = Float64(server.options.ratelimit.num)
     rl.allowance += 1.0 # because it was just decremented right before we got here
-    response = HTTP.Response()
     HTTP.@log(verbose, logger, "processing on connection i=$i...")
     try
         tsk = @async begin
@@ -116,17 +118,17 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                         # error in parsing the http request
                         HTTP.@log(verbose, logger, "error parsing request on connection i=$i: $(HTTP.ParsingErrorCodeMap[errno])")
                         if errno == HTTP.HPE_INVALID_VERSION
-                            response.status = 505
+                            response = HTTP.Response(505)
                         elseif errno == HTTP.HPE_HEADER_OVERFLOW
-                            response.status = 431
+                            response = HTTP.Response(431)
                         elseif errno == HTTP.HPE_URI_OVERFLOW
-                            response.status = 414
+                            response = HTTP.Response(414)
                         elseif errno == HTTP.HPE_BODY_OVERFLOW
-                            response.status = 413
+                            response = HTTP.Response(413)
                         elseif errno == HTTP.HPE_INVALID_METHOD
-                            response.status = 405
+                            response = HTTP.Response(405)
                         else
-                            response.status = 400
+                            response = HTTP.Response(400)
                         end
                         error = true
                     elseif headerscomplete && Base.get(HTTP.headers(request), "Expect", "") == "100-continue" && !alreadysent100continue
@@ -143,21 +145,20 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             alreadysent100continue = true
                             continue
                         else
-                            response.status = 417
+                            response = HTTP.Response(417)
                             error = true
                         end
                     elseif length(upgrade) > 0
                         HTTP.@log(verbose, logger, "received upgrade request on connection i=$i")
-                        response.status = 501
-                        response.body = HTTP.FIFOBuffer("upgrade requests are not currently supported")
+                        response = HTTP.Response(501, "upgrade requests are not currently supported")
                         error = true
                     elseif messagecomplete
                         HTTP.@log(verbose, logger, "received request on connection i=$i")
-                        verbose && (show(logger, request, HTTP.RequestOptions()); println(logger))
+                        verbose && (println(logger, "HTTP.Request:\n"); println(logger, string(request)))
                         try
-                            response = Handlers.handle(handler, request, response)
+                            response = Handlers.handle(handler, request, HTTP.Response())
                         catch e
-                            response.status = 500
+                            response = HTTP.Response(500)
                             error = true
                             HTTP.@log(verbose, logger, e)
                         end
@@ -171,9 +172,10 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                         end
                         if !error
                             HTTP.@log(verbose, logger, "responding with response on connection i=$i")
-                            verbose && (show(logger, response, options); println(logger))
+                            respstr = string(response, options)
+                            verbose && (println(logger, "HTTP.Response:\n"); println(logger, respstr))
                             try
-                                write(tcp, response, options)
+                                write(tcp, respstr)
                             catch e
                                 HTTP.@log(verbose, logger, e)
                                 error = true

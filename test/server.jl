@@ -12,7 +12,7 @@ sleep(0.1)
 
 # echo response
 serverlog = HTTP.FIFOBuffer()
-server = HTTP.Server((req, rep) -> Response(String(req)), serverlog)
+server = HTTP.Server((req, rep) -> HTTP.Response(String(req)), serverlog)
 tsk = @async HTTP.serve(server)
 sleep(1.0)
 r = HTTP.get("http://127.0.0.1:8081/"; readtimeout=30)
@@ -67,6 +67,32 @@ print(client)
 @test contains(client, "\r\n\r\nBody of Request")
 
 put!(server.in, HTTP.Nitrogen.KILL)
+
+serverlog = HTTP.FIFOBuffer()
+server = HTTP.Server((req, rep) -> begin
+    io = HTTP.FIFOBuffer()
+    @async begin
+        i = 0
+        while true
+            println(io, "data: $(now())\n")
+            sleep(2)
+            i += 1
+            i > 5 && break
+        end
+        close(io)
+    end
+    r = HTTP.Response(200, Dict(
+        "Content-Type" => "text/event-stream",
+        "Cache-Control" => "no-cache",
+        "Connection" => "keep-alive"), io)
+end, serverlog)
+
+tsk = @async HTTP.serve(server, IPv4(0,0,0,0), 8082)
+sleep(5.0)
+r = HTTP.get("http://localhost:8082/"; readtimeout=30, verbose=true)
+log = String(read(serverlog))
+println(log)
+@test length(String(r)) > 175
 
 # test readtimeout, before sending anything and then mid-request
 
