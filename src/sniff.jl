@@ -90,6 +90,7 @@ end
 
 struct HTMLSig
     html::Vector{UInt8}
+    HTMLSig(str::String) = new(Vector{UInt8}(str))
 end
 
 contenttype(h::HTMLSig) = "text/html; charset=utf-8"
