@@ -35,6 +35,7 @@ at the `HTTP.Client` level to be applied to every request sent. Options include:
   * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
   * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
   * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
+  * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code
 """
 mutable struct RequestOptions
     chunksize::Option{Int}
@@ -47,8 +48,9 @@ mutable struct RequestOptions
     forwardheaders::Option{Bool}
     retries::Option{Int}
     managecookies::Option{Bool}
-    RequestOptions(ch::Option{Int}, gzip::Option{Bool}, ct::Option{Float64}, rt::Option{Float64}, tls::Option{TLS.SSLConfig}, mr::Option{Int}, ar::Option{Bool}, fh::Option{Bool}, tr::Option{Int}, mc::Option{Bool}) =
-        new(ch, gzip, ct, rt, tls, mr, ar, fh, tr, mc)
+    statusraise::Option{Bool}
+    RequestOptions(ch::Option{Int}, gzip::Option{Bool}, ct::Option{Float64}, rt::Option{Float64}, tls::Option{TLS.SSLConfig}, mr::Option{Int}, ar::Option{Bool}, fh::Option{Bool}, tr::Option{Int}, mc::Option{Bool}, sr::Option{Bool}) =
+        new(ch, gzip, ct, rt, tls, mr, ar, fh, tr, mc, sr)
 end
 
 const RequestOptionsFieldTypes = Dict(:chunksize      => Int,
@@ -60,7 +62,8 @@ const RequestOptionsFieldTypes = Dict(:chunksize      => Int,
                                       :allowredirects => Bool,
                                       :forwardheaders => Bool,
                                       :retries        => Int,
-                                      :managecookies  => Bool)
+                                      :managecookies  => Bool,
+                                      :statusraise    => Bool)
 
 function RequestOptions(options::RequestOptions; kwargs...)
     for (k, v) in kwargs
@@ -69,8 +72,8 @@ function RequestOptions(options::RequestOptions; kwargs...)
     return options
 end
 
-RequestOptions(chunk=nothing, gzip=nothing, ct=nothing, rt=nothing, tls=nothing, mr=nothing, ar=nothing, fh=nothing, tr=nothing, mc=nothing; kwargs...) =
-    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar, fh, tr, mc); kwargs...)
+RequestOptions(chunk=nothing, gzip=nothing, ct=nothing, rt=nothing, tls=nothing, mr=nothing, ar=nothing, fh=nothing, tr=nothing, mc=nothing, sr=nothing; kwargs...) =
+    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar, fh, tr, mc, sr); kwargs...)
 
 function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)

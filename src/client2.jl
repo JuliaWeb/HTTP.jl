@@ -35,6 +35,7 @@ Additional keyword arguments can be passed that will get transmitted with each H
 * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
 * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
+* `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code
 """
 mutable struct Client
     # connection pools for keep-alive; key is host
@@ -56,7 +57,7 @@ Client(logger::Option{IO}, options::RequestOptions) = Client(Dict{String, Vector
                                                      Parser(), logger, options, 1)
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, nothing, 5, true, false, 3, true))
+const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true))
 
 @eval begin
     Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
@@ -111,6 +112,12 @@ struct RedirectException <: Exception
 end
 function Base.show(io::IO, err::RedirectException)
     print(io, "RedirectException: more than $(err.maxredirects) redirects attempted")
+end
+struct StatusError <: Exception
+    status::Int
+end
+function Base.show(io::IO, err::StatusError)
+    print(io, "HTTP.StatusError: received a '$(err.status) - $(Base.get(STATUS_CODES, err.status, "Unknown Code"))' status in response")
 end
 
 initTLS!(::Type{http}, hostname, opts, socket) = socket
@@ -226,18 +233,14 @@ function getbytes(socket)
     end
 end
 
-function processresponse!(client, conn, response, host, method, maintask, stream, verbose)
+function processresponse!(client, conn, response, host, method, maintask, statusraise, stream, verbose)
     while true
         buffer, err = getbytes(conn.socket)
         if length(buffer) == 0 && !isopen(conn.socket)
             @log(verbose, client.logger, "socket closed before full response received")
             dead!(conn)
-            if method in (GET, HEAD, OPTIONS)
-                # retry the entire request
-                return false, err
-            else
-                throw(err)
-            end
+            # retry the entire request
+            return false, err
         end
         @log(verbose, client.logger, "received bytes from the wire, processing")
         # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
@@ -249,10 +252,10 @@ function processresponse!(client, conn, response, host, method, maintask, stream
             http_should_keep_alive(client.parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
             # idle! on a Dead will stay Dead
             idle!(conn)
-            return true, nothing
+            return true, StatusError(status(response))
         elseif stream && headerscomplete
             @log(verbose, client.logger, "processing the rest of response asynchronously")
-            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, false)
+            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, statusraise, false, false)
             return true, nothing
         end
     end
@@ -299,7 +302,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     
     response = Response(stream ? DEFAULT_CHUNK_SIZE : FIFOBuffers.DEFAULT_MAX, req)
     reset!(client.parser)
-    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, verbose)
+    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), opts.statusraise::Bool, stream, verbose)
     if !success
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
@@ -310,7 +313,12 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     if opts.allowredirects::Bool && req.method != HEAD && (300 <= status(response) < 400)
         return redirect(response, client, req, opts, stream, history, retry, verbose)
     end
-    return response
+    if success && ((200 <= status(response) < 300) || !opts.statusraise::Bool)
+        return response
+    else
+        retry >= opts.retries::Int && throw(err)
+        return request(client, req, opts, stream, history, retry + 1, verbose)
+    end
 end
 
 request(req::Request; 
@@ -387,6 +395,7 @@ Additional keyword arguments supported, include:
 * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
 * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
+* `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code
 
 Simple request example:
 ```julia

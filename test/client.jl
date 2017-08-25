@@ -22,7 +22,7 @@ for sch in ("http", "https")
     @test HTTP.status(HTTP.get("$sch://httpbin.org/ip")) == 200
     @test HTTP.status(HTTP.head("$sch://httpbin.org/ip")) == 200
     @test HTTP.status(HTTP.options("$sch://httpbin.org/ip")) == 200
-    @test HTTP.status(HTTP.post("$sch://httpbin.org/ip")) == 405
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/ip"; statusraise=false)) == 405
     @test HTTP.status(HTTP.post("$sch://httpbin.org/post")) == 200
     @test HTTP.status(HTTP.put("$sch://httpbin.org/put")) == 200
     @test HTTP.status(HTTP.delete("$sch://httpbin.org/delete")) == 200
@@ -156,7 +156,7 @@ for sch in ("http", "https")
         write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
         write(f, "sailor")
         close(f) # setting eof on f causes the async request to send a final chunk and return the response
-        @test_broken HTTP.status(wait(t)) == 200
+        @test HTTP.status(wait(t)) == 200
     end
 
     # redirects
