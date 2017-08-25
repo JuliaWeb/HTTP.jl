@@ -80,9 +80,13 @@ end
 function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY)
     @debug(PARSING_DEBUG, @__LINE__, "onheadervalue2")
     append!(p.valuebuffer, view(bytes, i:j))
-    key = unsafe_string(pointer(p.fieldbuffer), length(p.fieldbuffer))
+    key = canonicalize!(unsafe_string(pointer(p.fieldbuffer), length(p.fieldbuffer)))
     val = unsafe_string(pointer(p.valuebuffer), length(p.valuebuffer))
     if key == ""
+        # the header value was parsed in two parts,
+        # KEY[] holds the most recently parsed header field,
+        # and we already stored the first part of the header value in r.headers
+        # get the first part and concatenate it with the second part we have now
         key = KEY[]
         setindex!(r.headers, string(r.headers[key], val), key)
     else

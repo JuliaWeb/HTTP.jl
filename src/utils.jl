@@ -100,6 +100,8 @@ macro anyeq(var, vals...)
     return esc(ret)
 end
 
+@inline islower(b::UInt8) = UInt8('a') <= b <= UInt8('z')
+@inline isupper(b::UInt8) = UInt8('A') <= b <= UInt8('Z')
 @inline lower(c::UInt8) = c | 0x20
 @inline lower(c) = Char(UInt32(c) | 0x20)
 @inline isurlchar(c) =  c > '\u80' ? true : normal_url_char[Int(c) + 1]
@@ -131,4 +133,21 @@ end
 
 macro strictcheck(cond)
     return esc(:(strict && @errorif($cond, HPE_STRICT)))
+end
+
+# ensure the first character and subsequent characters that follow a '-' are uppercase
+function canonicalize!(s::String)
+    toUpper = UInt8('A') - UInt8('a')
+    bytes = Vector{UInt8}(s)
+    upper = true
+    for i = 1:length(bytes)
+        @inbounds b = bytes[i]
+        if upper
+            islower(b) && (bytes[i] = b + toUpper)
+        else
+            isupper(b) && (bytes[i] = lower(b))
+        end
+        upper = b == UInt8('-')
+    end
+    return s
 end

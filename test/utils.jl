@@ -26,4 +26,22 @@ end
 @test HTTP.ishex('1')
 @test !HTTP.ishex(']')
 
+@test HTTP.canonicalize!("accept") == "Accept"
+@test HTTP.canonicalize!("Accept") == "Accept"
+@test HTTP.canonicalize!("eXcept-this") == "Except-This"
+@test HTTP.canonicalize!("exCept-This") == "Except-This"
+@test HTTP.canonicalize!("not-valid") == "Not-Valid"
+@test HTTP.canonicalize!("♇") == "♇"
+@test HTTP.canonicalize!("bλ-a") == "Bλ-A"
+@test HTTP.canonicalize!("not fixable") == "Not fixable"
+@test HTTP.canonicalize!("aaaaaaaaaaaaa") == "Aaaaaaaaaaaaa"
+@test HTTP.canonicalize!("conTENT-Length") == "Content-Length"
+@test HTTP.canonicalize!("Sec-WebSocket-Key2") == "Sec-Websocket-Key2"
+@test HTTP.canonicalize!("User-agent") == "User-Agent"
+@test HTTP.canonicalize!("Proxy-authorization") == "Proxy-Authorization"
+@test HTTP.canonicalize!("HOST") == "Host"
+@test HTTP.canonicalize!("ST") == "St"
+@test HTTP.canonicalize!("X-\$PrototypeBI-Version") == "X-\$prototypebi-Version"
+@test HTTP.canonicalize!("DCLK_imp") == "Dclk_imp"
+
 end
