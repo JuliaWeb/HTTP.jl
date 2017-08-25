@@ -115,6 +115,7 @@ function Base.show(io::IO, err::RedirectException)
 end
 struct StatusError <: Exception
     status::Int
+    response::Response
 end
 function Base.show(io::IO, err::StatusError)
     print(io, "HTTP.StatusError: received a '$(err.status) - $(Base.get(STATUS_CODES, err.status, "Unknown Code"))' status in response")
@@ -233,7 +234,7 @@ function getbytes(socket)
     end
 end
 
-function processresponse!(client, conn, response, host, method, maintask, statusraise, stream, verbose)
+function processresponse!(client, conn, response, host, method, maintask, stream, verbose)
     while true
         buffer, err = getbytes(conn.socket)
         if length(buffer) == 0 && !isopen(conn.socket)
@@ -252,10 +253,10 @@ function processresponse!(client, conn, response, host, method, maintask, status
             http_should_keep_alive(client.parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
             # idle! on a Dead will stay Dead
             idle!(conn)
-            return true, StatusError(status(response))
+            return true, StatusError(status(response), response)
         elseif stream && headerscomplete
             @log(verbose, client.logger, "processing the rest of response asynchronously")
-            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, statusraise, false, false)
+            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, false)
             return true, nothing
         end
     end
@@ -302,7 +303,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     
     response = Response(stream ? DEFAULT_CHUNK_SIZE : FIFOBuffers.DEFAULT_MAX, req)
     reset!(client.parser)
-    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), opts.statusraise::Bool, stream, verbose)
+    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, verbose)
     if !success
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
