@@ -871,7 +871,6 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
                             @err(HPE_BODY_OVERFLOW)
                         end
                         parser.content_length = t
-                        r.body.expectedlength = Int64(t)
                      end
 
                 #= Transfer-Encoding: chunked =#
