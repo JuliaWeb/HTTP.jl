@@ -35,8 +35,8 @@ include("sniff.jl")
 
 # include("client.jl")
 include("client2.jl")
-include("handlers.jl")
-using .Handlers
+include("routing.jl")
+using .Routing
 include("server.jl")
 using .Nitrogen
 

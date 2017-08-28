@@ -1,6 +1,6 @@
 module Nitrogen
 
-using ..HTTP, ..Handlers
+using ..HTTP, ..Routing
 
 export Server, ServerOptions, serve
 #TODO:
@@ -156,7 +156,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                         HTTP.@log(verbose, logger, "received request on connection i=$i")
                         verbose && (println(logger, "HTTP.Request:\n"); println(logger, string(request)))
                         try
-                            response = Handlers.handle(handler, request, HTTP.Response())
+                            response = Routing.handle(handler, request, HTTP.Response())
                         catch e
                             response = HTTP.Response(500)
                             error = true
