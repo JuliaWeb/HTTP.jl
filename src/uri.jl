@@ -153,7 +153,10 @@ function Base.isvalid(uri::URI)
 end
 
 # RFC3986 Unreserved Characters (and '~' Unsafe per RFC1738).
-@inline isunsafe(c::Char) = !(c in "-._") && (!isascii(c) || !isalnum(c))
+@inline issafe(c::Char) = c == '-' ||
+                          c == '.' ||
+                          c == '_' ||
+                          (isascii(c) && isalnum(c))
 
 utf8_chars(str::AbstractString) = (Char(c) for c in Vector{UInt8}(str))
 
@@ -161,8 +164,8 @@ utf8_chars(str::AbstractString) = (Char(c) for c in Vector{UInt8}(str))
 function escape end
 
 escape(c::Char) = string('%', uppercase(hex(c,2)))
-escape(str::AbstractString, check::Function=isunsafe) = 
-    join(check(c) ? escape(c) : c for c in utf8_chars(str))
+escape(str::AbstractString, safe::Function=issafe) = 
+    join(safe(c) ? c : escape(c) for c in utf8_chars(str))
 
 escape(bytes::Vector{UInt8}) = bytes
 escape(v::Number) = escape(string(v))
