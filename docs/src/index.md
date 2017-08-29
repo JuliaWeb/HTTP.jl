@@ -14,10 +14,15 @@ HTTP.Client
 HTTP.Connection
 ```
 
-## Server
+## Server / Handlers
 ```@docs
 HTTP.serve
 HTTP.Server
+HTTP.Handler
+HTTP.HandlerFunction
+HTTP.Router
+HTTP.register!
+HTTP.FourOhFour
 ```
 
 ## HTTP Types
