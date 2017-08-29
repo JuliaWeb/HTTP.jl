@@ -153,46 +153,27 @@ function Base.isvalid(uri::URI)
 end
 
 # RFC3986 Unreserved Characters (and '~' Unsafe per RFC1738).
-@inline shouldencode(c) = !((c >= UInt8('A') && c <= UInt8('Z'))
-                         || (c >= UInt8('a') && c <= UInt8('z'))
-                         || (c >= UInt8('0') && c <= UInt8('9'))
-                         || c == UInt8('-')
-                         || c == UInt8('.')
-                         || c == UInt8('_'))
-hexstring(x) = string('%', uppercase(hex(x,2)))
+@inline issafe(c::Char) = c == '-' ||
+                          c == '.' ||
+                          c == '_' ||
+                          (isascii(c) && isalnum(c))
+
+utf8_chars(str::AbstractString) = (Char(c) for c in Vector{UInt8}(str))
 
 "percent-encode a string, dict, or pair for a uri"
 function escape end
 
-escape(v::Number) = string(v)
-escape(v::Nullable{T}) where {T} = Base.isnull(v) ? "" : string(get(v))
-function escape(str::AbstractString, f=shouldencode)
-    out = IOBuffer()
-    for c in Vector{UInt8}(str)
-        write(out, f(c) ? hexstring(Int(c)) : c)
-    end
-    return String(take!(out))
-end
+escape(c::Char) = string('%', uppercase(hex(c,2)))
+escape(str::AbstractString, safe::Function=issafe) = 
+    join(safe(c) ? c : escape(c) for c in utf8_chars(str))
+
 escape(bytes::Vector{UInt8}) = bytes
+escape(v::Number) = escape(string(v))
+escape(v::Nullable) = Base.isnull(v) ? "" : escape(get(v))
 
-escape(io, k, v) = write(io, escape(k), "=", escape(v))
-function escape(io, k, A::Vector{String})
-    len = length(A)
-    for (i, v) in enumerate(A)
-        write(io, escape(k), "=", escape(v))
-        i == len || write(io, "&")
-    end
-end
-
-escape(p::Pair) = escape([p])
-function escape(d)
-    io = IOBuffer()
-    for (i, (k,v)) in enumerate(d)
-        i == 1 || write(io, "&")
-        escape(io, k, v)
-    end
-    return String(take!(io))
-end
+escape(key, value) = string(escape(key), "=", escape(value))
+escape(key, values::Vector) = escape(key => v for v in values)
+escape(query) = join((escape(k, v) for (k,v) in query), "&")
 
 "unescape a percent-encoded uri/url"
 function unescape(str)

@@ -46,7 +46,7 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
 
     @test isempty(HTTP.URIs.Offset())
     @test HTTP.lower(UInt8('A')) == UInt8('a')
-    @test HTTP.URIs.hexstring(1) == "%01"
+    @test HTTP.escape(Char(1)) == "%01"
 
     @test HTTP.escape(Dict("key1"=>"value1", "key2"=>["value2", "value3"])) == "key2=value2&key2=value3&key1=value1"
 
