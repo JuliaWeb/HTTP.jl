@@ -1300,7 +1300,7 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
     @debug(PARSING_DEBUG, @__LINE__, "exiting maybe unfinished...")
     @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
     b = p_state == start_state || p_state == s_dead
-    he = b | (p_state >= s_headers_done)
+    he = b | (p_state >= s_chunk_size_start)
     m = b | (p_state >= s_body_identity_eof)
     return errno, he, m, String(bytes[p:end])
 

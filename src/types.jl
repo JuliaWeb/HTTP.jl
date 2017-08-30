@@ -344,26 +344,30 @@ function Base.show(io::IO, r::Union{Request,Response}; opts=RequestOptions())
     startline(io, r)
     headers(io, r)
     buf = IOBuffer()
-    body(buf, r, opts)
-    b = take!(buf)
-    if length(b) > 2
-        contenttype = sniff(b)
-        if contenttype in DISPLAYABLE_TYPES
-            if length(b) > 750
-                println(io, "\n[$(typeof(r)) body of $(length(b)) bytes]")
-                println(io, String(b)[1:750])
-                println(io, "⋮")
+    if isopen(r.body)
+        print(io, "\n[open HTTP.FIFOBuffer with $(length(r.body)) bytes to read")
+    else
+        body(buf, r, opts)
+        b = take!(buf)
+        if length(b) > 2
+            contenttype = sniff(b)
+            if contenttype in DISPLAYABLE_TYPES
+                if length(b) > 750
+                    println(io, "\n[$(typeof(r)) body of $(length(b)) bytes]")
+                    println(io, String(b)[1:750])
+                    println(io, "⋮")
+                else
+                    print(io, String(b))
+                end
             else
-                print(io, String(b))
+                contenttype = Base.get(r.headers, "Content-Type", contenttype)
+                encoding = Base.get(r.headers, "Content-Encoding", "")
+                encodingtxt = encoding == "" ? "" : " with '$encoding' encoding"
+                println(io, "\n[$(length(b)) bytes of '$contenttype' data$encodingtxt]")
             end
         else
-            contenttype = Base.get(r.headers, "Content-Type", contenttype)
-            encoding = Base.get(r.headers, "Content-Encoding", "")
-            encodingtxt = encoding == "" ? "" : " with '$encoding' encoding"
-            println(io, "\n[$(length(b)) bytes of '$contenttype' data$encodingtxt]")
+            print(io, String(b))
         end
-    else
-        print(io, String(b))
     end
     print(io, "\"\"\"")
 end

@@ -16,6 +16,7 @@ end
 
 Form(f::Form) = f
 Base.eof(f::Form) = f.index > length(f.data)
+Base.isopen(f::Form) = false
 Base.length(f::Form) = sum(x->isa(x, IOStream) ? filesize(x) - position(x) : nb_available(x), f.data)
 function Base.position(f::Form)
     index = f.index

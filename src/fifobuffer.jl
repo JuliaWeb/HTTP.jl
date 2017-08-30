@@ -97,6 +97,7 @@ function Base.seek(f::FIFOBuffer, pos::Tuple{Int64, Int64, Int64})
 end
 
 Base.eof(f::FIFOBuffer) = f.eof && f.nb == 0
+Base.isopen(f::FIFOBuffer) = !f.eof
 function Base.close(f::FIFOBuffer)
     f.eof = true
     notify(f.cond)
@@ -170,7 +171,7 @@ end
 function Base.read(f::FIFOBuffer, ::Type{Tuple{UInt8,Bool}})
     # no data to read
     if f.nb == 0
-        if current_task() == f.task
+        if current_task() == f.task || f.eof
             return 0x00, false
         else # async: block till there's data to read
             f.eof && return 0x00, false
@@ -210,7 +211,12 @@ function Base.write(f::FIFOBuffer, b::UInt8)
             push!(f.buffer, 0x00)
             f.len += 1
         else
-            return 0
+            if current_task() == f.task || f.eof
+                return 0
+            else # async: block until there's room to write
+                wait(f.cond)
+                f.nb == f.len && return 0
+            end
         end
     end
     # write our byte
