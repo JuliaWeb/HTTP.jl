@@ -164,7 +164,7 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
     errno = HPE_OK
-    upgrade = issetcookie = false
+    upgrade = issetcookie = headersdone = false
     KEY = Ref{String}()
     @debug(PARSING_DEBUG, @__LINE__, len)
     @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
@@ -1053,6 +1053,7 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
             * we have to simulate it by handling a change in errno below.
             =#
             onheaderscomplete(r)
+            headersdone = true
             if method == HEAD
                 parser.flags |= F_SKIPBODY
             elseif method == CONNECT
@@ -1300,7 +1301,7 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
     @debug(PARSING_DEBUG, @__LINE__, "exiting maybe unfinished...")
     @debug(PARSING_DEBUG, @__LINE__, ParsingStateCode(p_state))
     b = p_state == start_state || p_state == s_dead
-    he = b | (p_state >= s_chunk_size_start)
+    he = b | (headersdone || p_state >= s_headers_done)
     m = b | (p_state >= s_body_identity_eof)
     return errno, he, m, String(bytes[p:end])
 

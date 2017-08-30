@@ -345,7 +345,7 @@ function Base.show(io::IO, r::Union{Request,Response}; opts=RequestOptions())
     headers(io, r)
     buf = IOBuffer()
     if isopen(r.body)
-        print(io, "\n[open HTTP.FIFOBuffer with $(length(r.body)) bytes to read")
+        println(io, "\n[open HTTP.FIFOBuffer with $(length(r.body)) bytes to read]")
     else
         body(buf, r, opts)
         b = take!(buf)
