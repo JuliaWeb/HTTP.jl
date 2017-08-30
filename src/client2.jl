@@ -223,6 +223,29 @@ function connectandsend(client, ::Type{sch}, hostname, port, req, opts, verbose)
     return conn
 end
 
+function redirect(response, client, req, opts, stream, history, retry, verbose)
+    @log(verbose, client.logger, "checking for location to redirect")
+    key = haskey(response.headers, "Location") ? "Location" :
+          haskey(response.headers, "location") ? "location" : ""
+    if key != ""
+        push!(history, response)
+        length(history) > opts.maxredirects::Int && throw(RedirectException(opts.maxredirects::Int))
+        newuri = URI(response.headers[key])
+        u = uri(req)
+        newuri = !isempty(hostname(newuri)) ? newuri : URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
+        if opts.forwardheaders::Bool
+            h = headers(req)
+            delete!(h, "Host")
+            delete!(h, "Cookie")
+        else
+            h = Headers()
+        end
+        redirectreq = Request(req.method, newuri, h, req.body)
+        @log(verbose, client.logger, "redirecting to $(newuri)")
+        return request(client, redirectreq, opts, stream, history, retry, verbose)
+    end
+end
+
 const CLOSED_ERROR = ClosedError(ErrorException(""), "error receiving response; connection was closed prematurely")
 function getbytes(socket)
     try
@@ -240,6 +263,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
         if length(buffer) == 0 && !isopen(conn.socket)
             @log(verbose, client.logger, "socket closed before full response received")
             dead!(conn)
+            close(response.body)
             # retry the entire request
             return false, err
         end
@@ -263,29 +287,6 @@ function processresponse!(client, conn, response, host, method, maintask, stream
     # shouldn't ever reach here
     dead!(conn)
     return false
-end
-
-function redirect(response, client, req, opts, stream, history, retry, verbose)
-    @log(verbose, client.logger, "checking for location to redirect")
-    key = haskey(response.headers, "Location") ? "Location" :
-          haskey(response.headers, "location") ? "location" : ""
-    if key != ""
-        push!(history, response)
-        length(history) > opts.maxredirects::Int && throw(RedirectException(opts.maxredirects::Int))
-        newuri = URI(response.headers[key])
-        u = uri(req)
-        newuri = !isempty(hostname(newuri)) ? newuri : URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
-        if opts.forwardheaders::Bool
-            h = headers(req)
-            delete!(h, "Host")
-            delete!(h, "Cookie")
-        else
-            h = Headers()
-        end
-        redirectreq = Request(req.method, newuri, h, req.body)
-        @log(verbose, client.logger, "redirecting to $(newuri)")
-        return request(client, redirectreq, opts, stream, history, retry, verbose)
-    end
 end
 
 function request(client::Client, req::Request, opts::RequestOptions, stream::Bool, history::Vector{Response}, retry::Int, verbose::Bool)
