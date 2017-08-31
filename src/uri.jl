@@ -15,11 +15,11 @@ export URI, URL,
        resource, host,
        escape, unescape,
        splitpath
-    
-# URI
+
 """
-    HTTP.URI(host; userinfo="", path="", query="", fragment="", isconnect=false)
+    HTTP.URL(host; userinfo="", path="", query="", fragment="", isconnect=false)
     HTTP.URI(; scheme="", hostname="", port="", ...)
+    HTTP.URI(str; isconnect=false)
     parse(HTTP.URI, str::String; isconnect=false)
 
 A type representing a valid uri. Can be constructed from distinct parts using the various
@@ -45,8 +45,6 @@ struct URI
     offsets::NTuple{7, Offset}
 end
 
-const URL = URI
-
 function URI(;hostname::String="", path::String="",
             scheme::String="", userinfo::String="",
             port::Union{Integer,String}="", query="",
@@ -60,7 +58,7 @@ end
 # we assume `str` is at least hostname & port
 # if all others keywords are empty, assume CONNECT
 # can include path, userinfo, query, & fragment
-function URI(str::String; userinfo::String="", path::String="",
+function URL(str::String; userinfo::String="", path::String="",
                           query="", fragment::String="",
                           isconnect::Bool=false)
     if str != ""
@@ -81,6 +79,7 @@ function URI(str::String; userinfo::String="", path::String="",
     end
     return Base.parse(URI, str; isconnect=isconnect)
 end
+URI(str::String; isconnect::Bool=false) = Base.parse(URI, str; isconnect=isconnect)
 Base.parse(::Type{URI}, str::String; isconnect::Bool=false) = http_parser_parse_url(Vector{UInt8}(str), 1, sizeof(str), isconnect)
 
 ==(a::URI,b::URI) = scheme(a)   == scheme(b)    &&
@@ -128,6 +127,11 @@ function printuri(io::IO, sch::String, userinfo::String, hostname::String, port:
         print(io, sch, ":")
     elseif hostname != "" && port != "" # CONNECT
         print(io, hostname, ":", port)
+    end
+    if (isempty(hostname) || hostname[end] != '/') &&
+       (isempty(path) || path[1] != '/') &&
+       (!isempty(fragment) || !isempty(path))
+        path = (!isempty(sch) && sch == "http" || sch == "https") ? string("/", path) : path
     end
     print(io, path, isempty(query) ? "" : "?$query", isempty(fragment) ? "" : "#$fragment")
 end

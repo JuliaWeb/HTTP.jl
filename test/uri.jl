@@ -11,12 +11,12 @@ URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool) = URLTest(n
 @testset "HTTP.URI" begin
     # constructor
     @test string(HTTP.URI("")) == ""
-    @test HTTP.URI("google.com") == HTTP.URI("http://google.com")
-    @test HTTP.URI("google.com/") == HTTP.URI("http://google.com/")
-    @test HTTP.URI("google.com/"; userinfo="user") == HTTP.URI("http://user@google.com/")
-    @test HTTP.URI("google.com/"; path="user") == HTTP.URI("http://google.com/user")
-    @test HTTP.URI("google.com/"; query=Dict("key"=>"value")) == HTTP.URI("http://google.com/?key=value")
-    @test HTTP.URI("google.com/"; fragment="user") == HTTP.URI("http://google.com/#user")
+    @test HTTP.URI(hostname="google.com") == HTTP.URI("http://google.com")
+    @test HTTP.URI(hostname="google.com", path="/") == HTTP.URI("http://google.com/")
+    @test HTTP.URI(hostname="google.com", userinfo="user") == HTTP.URI("http://user@google.com")
+    @test HTTP.URI(hostname="google.com", path="user") == HTTP.URI("http://google.com/user")
+    @test HTTP.URI(hostname="google.com", query=Dict("key"=>"value")) == HTTP.URI("http://google.com?key=value")
+    @test HTTP.URI(hostname="google.com", fragment="user") == HTTP.URI("http://google.com/#user")
 
     urls = [("hdfs://user:password@hdfshost:9000/root/folder/file.csv#frag", ["root", "folder", "file.csv"]),
             ("https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag", ["path1", "path2;paramstring"]),
