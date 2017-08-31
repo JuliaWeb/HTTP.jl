@@ -9,25 +9,15 @@ will be reused when sending subsequent requests to the same host.
 """
 mutable struct Connection{I <: IO}
     id::Int
-    tcp::I
+    socket::I
     state::ConnectionState
-    statetime::DateTime
 end
 
-Connection(tcp::IO) = Connection(0, tcp, Busy, now(Dates.UTC))
-Connection(id::Int, tcp::IO) = Connection(id, tcp, Busy, now(Dates.UTC))
-busy!(conn::Connection) = (conn.state = conn.state == Dead ? (return nothing) : Busy; conn.statetime = now(Dates.UTC); return nothing)
-idle!(conn::Connection) = (conn.state = conn.state == Dead ? (return nothing) : Idle; conn.statetime = now(Dates.UTC); return nothing)
-dead!(conn::Connection) = (conn.state = Dead; conn.statetime = now(Dates.UTC); close(conn.tcp); return nothing)
-
-Base.haskey(::Type{http}, client, host) = haskey(client.httppool, host)
-Base.haskey(::Type{https}, client, host) = haskey(client.httpspool, host)
-
-getconnections(::Type{http}, client, host) = client.httppool[host]
-getconnections(::Type{https}, client, host) = client.httpspool[host]
-
-setconnection!(::Type{http}, client, host, conn) = push!(get!(client.httppool, host, Connection[]), conn)
-setconnection!(::Type{https}, client, host, conn) = push!(get!(client.httpspool, host, Connection[]), conn)
+Connection(tcp::IO) = Connection(0, tcp, Busy)
+Connection(id::Int, tcp::IO) = Connection(id, tcp, Busy)
+busy!(conn::Connection) = (conn.state == Dead || (conn.state = Busy); return nothing)
+idle!(conn::Connection) = (conn.state == Dead || (conn.state = Idle); return nothing)
+dead!(conn::Connection) = (conn.state == Dead || (conn.state = Dead; close(conn.socket)); return nothing)
 
 """
     HTTP.Client([logger::IO]; args...)
@@ -44,6 +34,8 @@ Additional keyword arguments can be passed that will get transmitted with each H
 * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
 * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
+* `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
+* `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code
 """
 mutable struct Client
     # connection pools for keep-alive; key is host
@@ -65,7 +57,7 @@ Client(logger::Option{IO}, options::RequestOptions) = Client(Dict{String, Vector
                                                      Parser(), logger, options, 1)
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, nothing, 5, true, false, 3))
+const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true))
 
 @eval begin
     Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
@@ -76,52 +68,68 @@ function setclient!(client::Client)
     global const DEFAULT_CLIENT = client
 end
 
-"""
-    HTTP.request([client::HTTP.Client,] req::HTTP.Request; stream::Bool=false, verbose=false)
-    HTTP.request([client,] method, uri; headers=HTTP.Headers(), body="", stream=false, verbose=false)
+Base.haskey(::Type{http}, client, host) = haskey(client.httppool, host)
+Base.haskey(::Type{https}, client, host) = haskey(client.httpspool, host)
 
-Make an `HTTP.Request` to its associated host/uri. Set the keyword argument `stream=true` to enable
-response streaming, which will result in `HTTP.request` potentially returning before the entire response
-body has been received. If the response body buffer fills all the way up, it will block until its contents
-are read, freeing up additional space to write.
-"""
-function request end
+getconnections(::Type{http}, client, host) = client.httppool[host]
+getconnections(::Type{https}, client, host) = client.httpspool[host]
 
-request(uri::String; verbose::Bool=false, query="", args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, GET, URI(uri; query=query); verbose=verbose, args...))
-request(uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, GET, uri; verbose=verbose, args...))
-request(method, uri::String; verbose::Bool=false, query="", args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(HTTP.Method, method), URI(uri; query=query); verbose=verbose, args...))
-request(method, uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, convert(HTTP.Method, method), uri; verbose=verbose, args...))
-function request(client::Client, method, uri::URI;
-                    headers::Headers=Headers(),
-                    body=FIFOBuffers.EMPTYBODY,
-                    stream::Bool=false,
-                    verbose::Bool=false,
-                    args...)
-    opts = RequestOptions(; args...)
-    not(client.logger) && (client.logger = STDOUT)
-    client.logger != STDOUT && (verbose = true)
-    req = Request(method, uri, headers, body; options=opts, verbose=verbose, io=client.logger)
-    return request(client, req, opts; stream=stream, verbose=verbose)
+setconnection!(::Type{http}, client, host, conn) = push!(get!(client.httppool, host, Connection[]), conn)
+setconnection!(::Type{https}, client, host, conn) = push!(get!(client.httpspool, host, Connection[]), conn)
+
+backtrace() = sprint(Base.show_backtrace, catch_backtrace())
+
+abstract type HTTPError <: Exception end
+
+function Base.show(io::IO, e::HTTPError)
+    println(io, "$(typeof(e)):")
+    println(io, "Exception: $(e.e)")
+    print(io, e.msg)
 end
 
-request(req::Request; stream::Bool=false, verbose::Bool=false, args...) = request(DEFAULT_CLIENT, req, RequestOptions(; args...); stream=stream, verbose=verbose)
+struct ConnectError <: HTTPError
+    e::Exception
+    msg::String
+end
 
-function request(client::Client, req::Request, opts::RequestOptions; history::Vector{Response}=Response[], retryattempt::Int=0, stream::Bool=false, verbose::Bool=false)
-    # retryattempt can't be negative
-    retryattempt = max(0, retryattempt)
-    # ensure all Request options are set, using client.options if necessary
-    # this works because req.options are null by default whereas client.options always have a default
-    update!(opts, client.options)
-    not(opts.tlsconfig) && (opts.tlsconfig = TLS.SSLConfig(true))
-    @log(verbose, client.logger, "making $(method(req)) request for host: '$(host(uri(req)))' and resource: '$(resource(uri(req)))'")
-    @log(verbose, client.logger, "using request options: " * join((s=>getfield(opts, s) for s in fieldnames(typeof(opts))), ", "))
-    # if the provided req body is compressed, avoid any chunked transfer since it ruins the compression scheme
-    if iscompressed(req.body) && length(req.body) > opts.chunksize
-        opts.chunksize = length(req.body) + 1
-    end
-    h = host(uri(req))
-    return scheme(uri(req)) == "https" ? request(client, req, opts, getconn(https, client, h, opts, verbose), history, retryattempt, stream, current_task(), verbose) :
-                                           request(client, req, opts, getconn(http, client, h, opts, verbose), history, retryattempt, stream, current_task(), verbose)
+struct SendError <: HTTPError
+    e::Exception
+    msg::String
+end
+
+struct ClosedError <: HTTPError
+    e::Exception
+    msg::String
+end
+
+struct ReadError <: HTTPError
+    e::Exception
+    msg::String
+end
+
+struct RedirectException <: Exception
+    maxredirects::Int
+end
+function Base.show(io::IO, err::RedirectException)
+    print(io, "RedirectException: more than $(err.maxredirects) redirects attempted")
+end
+struct StatusError <: Exception
+    status::Int
+    response::Response
+end
+function Base.show(io::IO, err::StatusError)
+    print(io, "HTTP.StatusError: received a '$(err.status) - $(Base.get(STATUS_CODES, err.status, "Unknown Code"))' status in response")
+end
+
+initTLS!(::Type{http}, hostname, opts, socket) = socket
+
+function initTLS!(::Type{https}, hostname, opts, socket)
+    stream = TLS.SSLContext()
+    TLS.setup!(stream, get(opts, :tlsconfig, TLS.SSLConfig(true))::TLS.SSLConfig)
+    TLS.associate!(stream, socket)
+    TLS.hostname!(stream, hostname)
+    TLS.handshake!(stream)
+    return stream
 end
 
 function stalebytes!(c::TCPSocket)
@@ -131,75 +139,53 @@ function stalebytes!(c::TCPSocket)
 end
 stalebytes!(c::TLS.SSLContext) = stalebytes!(c.bio)
 
-function getconn(::Type{S}, client, host, opts, verbose) where {S}
-    # connect to remote host
-    # check if an open connection to host already exists
-    reused = false
-    hostname, port = splithostport(host)
-    local conn::Connection{sockettype(S)}
-    if haskey(S, client, hostname)
+function connect(client, sch, hostname, port, opts, verbose)
+    if haskey(sch, client, hostname)
         @log(verbose, client.logger, "checking if any existing connections to '$hostname' are re-usable")
-        conns = getconnections(S, client, hostname)
+        conns = getconnections(sch, client, hostname)
         inds = Int[]
         i = 1
         while i <= length(conns)
             c = conns[i]
             # read off any stale bytes left over from a possible error in a previous request
             # this will also trigger any sockets that timed out to be set to closed
-            stalebytes!(c.tcp)
-            if !isopen(c.tcp) || c.state == Dead
+            stalebytes!(c.socket)
+            if !isopen(c.socket) || c.state == Dead
                 @log(verbose, client.logger, "found dead connection #$(c.id) to delete")
                 dead!(c)
                 push!(inds, i)
             elseif c.state == Idle
                 @log(verbose, client.logger, "found re-usable connection #$(c.id)")
                 busy!(c)
-                conn = c
-                reused = true
-                break
+                try
+                    deleteat!(conns, sort!(unique(inds)))
+                end
+                return c
             end
             i += 1
         end
         try
             deleteat!(conns, sort!(unique(inds)))
-        catch
         end
     end
-    if !reused
-        ip = Base.getaddrinfo(hostname)
-        @log(verbose, client.logger, "connecting to IP: $ip")
-        socket = @timeout opts.connecttimeout::Float64 Base.connect(ip, Base.get(port, S == http ? 80 : S == https ? 443 : assert(false))) throw(TimeoutException(opts.connecttimeout::Float64))
-        # initialize TLS if necessary
-        tcp = initTLS!(S, hostname, opts, socket)
-        conn = Connection(client.connectioncount, tcp)
+    # if no re-usable connection was found, make a new connection
+    try
+        # EH: throws DNSError, OutOfMemoryError, or SystemError; retry once, but otherwise, we can't do much
+        ip = @retry Base.getaddrinfo(hostname)
+        # EH: throws error, ArgumentError for out-of-range port, UVError; retry if UVError
+        tcp = @retryif Base.UVError Base.connect(ip, Base.parse(Int, port))
+        socket = initTLS!(sch, hostname, opts, tcp)
+        conn = Connection(client.connectioncount, socket)
         client.connectioncount += 1
+        setconnection!(sch, client, hostname, conn)
         @log(verbose, client.logger, "created new connection #$(conn.id) to '$hostname'")
-        setconnection!(S, client, hostname, conn)
-    end
-    return conn
-end
-
-function splithostport(host)
-    vals = split(host, ':'; limit=2)
-    if length(vals) == 1
-        return vals[1], Nullable{Int}()
-    else
-        return vals[1], Nullable(Base.parse(Int, vals[2]))
+        return conn
+    catch e
+        throw(ConnectError(e, backtrace()))
     end
 end
 
-initTLS!(::Type{http}, hostname, opts, socket) = socket
-function initTLS!(::Type{https}, hostname, opts, socket)
-    stream = TLS.SSLContext()
-    TLS.setup!(stream, opts.tlsconfig::TLS.SSLConfig)
-    TLS.associate!(stream, socket)
-    TLS.hostname!(stream, hostname)
-    TLS.handshake!(stream)
-    return stream
-end
-
-function request(client::Client, req::Request, opts::RequestOptions, conn::Connection{T}, history, retryattempt, stream::Bool, tsk, verbose::Bool) where {T}
-    host = hostname(uri(req))
+function addcookies!(client, host, req, verbose)
     # check if cookies should be added to outgoing request based on host
     if haskey(client.cookies, host)
         cookies = client.cookies[host]
@@ -217,151 +203,180 @@ function request(client::Client, req::Request, opts::RequestOptions, conn::Conne
             req.headers["Cookie"] = string(Base.get(req.headers, "Cookie", ""), [c for c in tosend])
         end
     end
-    # send request over the wire
-    @log(verbose, client.logger, "sending request over the wire")
-    verbose && show(client.logger, req, opts); verbose && print(client.logger, "\n")
+end
+
+function connectandsend(client, ::Type{sch}, hostname, port, req, opts, verbose) where sch
+    conn = connect(client, sch, hostname, port, opts, verbose)
+    opts.managecookies::Bool && addcookies!(client, hostname, req, verbose)
     try
-        write(conn.tcp, req, opts)
-    catch
-        @log(verbose, client.logger, "error sending request on connection #$(conn.id), retrying on a new connection")
-        dead!(conn)
-        conn = getconn(schemetype(T), client, host, opts, verbose)
-        write(conn.tcp, req, opts)
+        @log(verbose, client.logger, "sending request over the wire")
+        reqstr = string(req, opts)
+        verbose && (println(client.logger, "HTTP.Request:\n"); println(client.logger, reqstr))
+        # EH: throws ArgumentError if socket is closed, UVError; retry if UVError,
+        @retryif Base.UVError write(conn.socket, reqstr)
+        !isopen(conn.socket) && throw(CLOSED_ERROR)
+    catch e
+        @log(verbose, client.logger, backtrace())
+        typeof(e) <: ArgumentError && throw(ClosedError(e, backtrace()))
+        throw(SendError(e, backtrace()))
     end
-    # create a Response to fill
+    return conn
+end
+
+function redirect(response, client, req, opts, stream, history, retry, verbose)
+    @log(verbose, client.logger, "checking for location to redirect")
+    key = haskey(response.headers, "Location") ? "Location" :
+          haskey(response.headers, "location") ? "location" : ""
+    if key != ""
+        push!(history, response)
+        length(history) > opts.maxredirects::Int && throw(RedirectException(opts.maxredirects::Int))
+        newuri = URIs.URL(response.headers[key])
+        u = uri(req)
+        newuri = !isempty(hostname(newuri)) ? newuri : URIs.URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
+        if opts.forwardheaders::Bool
+            h = headers(req)
+            delete!(h, "Host")
+            delete!(h, "Cookie")
+        else
+            h = Headers()
+        end
+        redirectreq = Request(req.method, newuri, h, req.body)
+        @log(verbose, client.logger, "redirecting to $(newuri)")
+        return request(client, redirectreq, opts, stream, history, retry, verbose)
+    end
+end
+
+const CLOSED_ERROR = ClosedError(ErrorException(""), "error receiving response; connection was closed prematurely")
+function getbytes(socket)
+    try
+        # EH: returns UInt8[] when socket is closed, error when socket is not readable, AssertionErrors, UVError;
+        buffer = @retry readavailable(socket)
+        return buffer, CLOSED_ERROR
+    catch e
+        return UInt8[], ReadError(e, backtrace())
+    end
+end
+
+function processresponse!(client, conn, response, host, method, maintask, stream, verbose)
+    while true
+        buffer, err = getbytes(conn.socket)
+        if length(buffer) == 0 && !isopen(conn.socket)
+            @log(verbose, client.logger, "socket closed before full response received")
+            dead!(conn)
+            close(response.body)
+            # retry the entire request
+            return false, err
+        end
+        @log(verbose, client.logger, "received bytes from the wire, processing")
+        # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
+        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method, maintask=maintask)
+        if errno != HPE_OK
+            dead!(conn)
+            throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])\nCurrent response buffer contents: $(String(buffer))"))
+        elseif messagecomplete
+            http_should_keep_alive(client.parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
+            # idle! on a Dead will stay Dead
+            idle!(conn)
+            return true, StatusError(status(response), response)
+        elseif stream && headerscomplete
+            @log(verbose, client.logger, "processing the rest of response asynchronously")
+            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, false)
+            return true, nothing
+        end
+    end
+    # shouldn't ever reach here
+    dead!(conn)
+    return false
+end
+
+function request(client::Client, req::Request, opts::RequestOptions, stream::Bool, history::Vector{Response}, retry::Int, verbose::Bool)
+    retry = max(0, retry) # ensure non-negative
+    update!(opts, client.options)
+    verbose && not(client.logger) && (client.logger = STDOUT)
+    @log(verbose, client.logger, "using request options: " * join((s=>getfield(opts, s) for s in fieldnames(typeof(opts))), ", "))
+    u = uri(req)
+    host = hostname(u)
+    sch = scheme(u) == "http" ? http : https
+    @log(verbose, client.logger, "making $(method(req)) request for host: '$host' and resource: '$(resource(u))'")
+    # maybe allow retrying for all kinds of errors?
+    p = port(u)
+    conn = @retryif ClosedError 4 connectandsend(client, sch, host, ifelse(p == "", "80", p), req, opts, verbose)
+    
     response = Response(stream ? DEFAULT_CHUNK_SIZE : FIFOBuffers.DEFAULT_MAX, req)
-    # process the response
     reset!(client.parser)
-    success = process!(client, conn, opts, host, method(req), response, Ref{Float64}(time()), retryattempt, stream, tsk, verbose)
+    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, verbose)
     if !success
-        idle!(conn)
-        retryattempt >= opts.retries::Int && throw(RetryException(opts.retries::Int))
-        return request(client, req, opts; history=history, retryattempt=retryattempt+1, stream=stream, verbose=verbose)
+        retry >= opts.retries::Int && throw(err)
+        return request(client, req, opts, stream, history, retry + 1, verbose)
     end
-    !isempty(response.cookies) && (@log(verbose, client.logger, "caching received cookies for host: " * join(map(x->x.name, response.cookies), ", ")); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
-    # return immediately for streaming responses
-    stream && return response
-    idle!(conn)
     @log(verbose, client.logger, "received response")
-    verbose && show(client.logger, response, opts); verbose && print(client.logger, "\n")
-    # check for redirect
+    opts.managecookies::Bool && !isempty(response.cookies) && (@log(verbose, client.logger, "caching received cookies for host: " * join(map(x->x.name, response.cookies), ", ")); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
     response.history = history
-    if req.method != HEAD && (300 <= status(response) < 400) && opts.allowredirects::Bool
-        @log(verbose, client.logger, "checking for location to redirect")
-        key = haskey(response.headers, "Location") ? "Location" :
-              haskey(response.headers, "location") ? "location" : ""
-        if key != ""
-            push!(history, response)
-            length(history) > opts.maxredirects::Int && throw(RedirectException(opts.maxredirects::Int))
-            newuri = URI(response.headers[key])
-            u = uri(req)
-            newuri = !isempty(hostname(newuri)) ? newuri : URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
-            if opts.forwardheaders::Bool
-                h = headers(req)
-                delete!(h, "Host")
-                delete!(h, "Cookie")
-            else
-                h = Headers()
-            end
-            redirectreq = Request(req.method, newuri, h, req.body)
-            @log(verbose, client.logger, "redirecting to $(newuri)")
-            return request(client, redirectreq, opts; history=history, stream=false, verbose=verbose)
-        end
+    if opts.allowredirects::Bool && req.method != HEAD && (300 <= status(response) < 400)
+        return redirect(response, client, req, opts, stream, history, retry, verbose)
     end
-    return response
-end
-
-function process!(client, conn, opts, host, method, response, starttime, retryattempt, stream, maintask, verbose)
-    parser = client.parser
-    tsk = @async begin
-        while true
-            # if no data after `readtimeout` seconds, break out
-            @log(verbose, client.logger, "waiting for response; will timeout afer $(opts.readtimeout) seconds")
-            local buffer
-            try
-                buffer = readavailable(conn.tcp)
-            catch e
-                @log(verbose, client.logger, "IO-related error reading from conn.tcp of type: $(typeof(conn.tcp))")
-                return false
-            end
-            if length(buffer) == 0
-                if !isopen(conn.tcp)
-                    dead!(conn)
-                    @log(verbose, client.logger, "request was sent, but connection closed before receiving response, retrying request")
-                    return false
-                end
-            else
-                starttime[] = time() # reset the timeout while still receiving bytes
-            end
-            @log(verbose, client.logger, "received bytes from the wire, processing")
-            errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method, maintask=maintask)
-            if errno != HPE_OK
-                idle!(conn)
-                return ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])\nCurrent response buffer contents: $(String(buffer))")
-            elseif messagecomplete
-                http_should_keep_alive(parser, response) || (@log(verbose, client.logger, "closing connection (no keep-alive)"); dead!(conn))
-                idle!(conn)
-                return true
-            elseif stream && headerscomplete
-                # async read the response body, returning the current response immediately
-                @log(verbose, client.logger, "processing the rest of response asynchronously")
-                response.body.task = @async process!(client, conn, opts, host, method, response, starttime, retryattempt, false, maintask, false)
-                return true
-            end
-            !isopen(conn.tcp) && (dead!(conn); return false)
-        end
+    if success && ((200 <= status(response) < 300) || !opts.statusraise::Bool)
+        return response
+    else
+        retry >= opts.retries::Int && throw(err)
+        return request(client, req, opts, stream, history, retry + 1, verbose)
     end
-    timeout = opts.readtimeout::Float64
-    while !istaskdone(tsk) && (time() - starttime[] < timeout)
-        sleep(0.001)
-    end
-    istaskdone(tsk) || (idle!(conn); retryattempt >= opts.retries::Int ? throw(TimeoutException(timeout)) : return false)
-    isa(tsk.result, Exception) && (idle!(conn); throw(tsk.result))
-    return tsk.result::Bool
 end
 
-struct RedirectException <: Exception
-    maxredirects::Int
-end
+request(req::Request; 
+            opts::RequestOptions=RequestOptions(),
+            stream::Bool=false,
+            history::Vector{Response}=Response[],
+            retry::Int=0,
+            verbose::Bool=false,
+            args...) =
+    request(DEFAULT_CLIENT, req, RequestOptions(opts; args...), stream, history, retry, verbose)
+request(client::Client, req::Request;
+            opts::RequestOptions=RequestOptions(),
+            stream::Bool=false,
+            history::Vector{Response}=Response[],
+            retry::Int=0,
+            verbose::Bool=false,
+            args...) =
+    request(client, req, RequestOptions(opts; args...), stream, history, retry, verbose)
 
-function Base.show(io::IO, err::RedirectException)
-    print(io, "RedirectException: more than $(err.maxredirects) redirects attempted")
+# build Request
+function request(client::Client, method, uri::URI;
+                 headers::Headers=Headers(),
+                 body=FIFOBuffers.EMPTYBODY,
+                 stream::Bool=false,
+                 verbose::Bool=false,
+                 args...)
+    opts = RequestOptions(; args...)
+    not(client.logger) && (client.logger = STDOUT)
+    client.logger != STDOUT && (verbose = true)
+    req = Request(method, uri, headers, body; options=opts, verbose=verbose, io=client.logger)
+    return request(client, req; opts=opts, stream=stream, verbose=verbose)
 end
-
-struct TimeoutException <: Exception
-    timeout::Float64
-end
-
-function Base.show(io::IO, err::TimeoutException)
-    print(io, "TimeoutException: server did not respond for more than $(err.timeout) seconds. ")
-end
-
-struct RetryException <: Exception
-    retries::Int
-end
-
-function Base.show(io::IO, err::RetryException)
-    print(io, "RetryException: # of allowed retries ($(err.retries)) was exceeded when making request")
-end
+request(uri::String; verbose::Bool=false, query="", args...) = request(DEFAULT_CLIENT, GET, URIs.URL(uri; query=query); verbose=verbose, args...)
+request(uri::URI; verbose::Bool=false, args...) = request(DEFAULT_CLIENT, GET, uri; verbose=verbose, args...)
+request(method, uri::String; verbose::Bool=false, query="", args...) = request(DEFAULT_CLIENT, convert(HTTP.Method, method), URIs.URL(uri; query=query); verbose=verbose, args...)
+request(method, uri::URI; verbose::Bool=false, args...) = request(DEFAULT_CLIENT, convert(HTTP.Method, method), uri; verbose=verbose, args...)
 
 for f in [:get, :post, :put, :delete, :head,
           :trace, :options, :patch, :connect]
     f_str = uppercase(string(f))
-    meth = convert(HTTP.Method, f_str)
+    meth = convert(Method, f_str)
     @eval begin
         @doc """
-    $($f)(uri) -> Response
-    $($f)(client::HTTP.Client, uri) -> Response
+    $($f)(uri; kwargs...) -> Response
+    $($f)(client::HTTP.Client, uri; kwargs...) -> Response
 
 Build and execute an http "$($f_str)" request. Query parameters can be passed via the `query` keyword argument as a `Dict`. Multiple
 query parameters with the same key can be passed like `Dict("key1"=>["value1", "value2"], "key2"=>...)`.
 Returns a `Response` object that includes the resulting status code (`HTTP.status(r)` and `HTTP.statustext(r)`),
 response headers (`HTTP.headers(r)`), cookies (`HTTP.cookies(r)`), response history if redirects were involved
-(`HTTP.history(r)`), and response body (`HTTP.body(r)` or `String(take!(r)` or `take!(r)`).
+(`HTTP.history(r)`), and response body (`HTTP.body(r)` or `String(r)` or `take!(r)`).
 
 The body or payload for a request can be given through the `body` keyword arugment.
 The body can be given as a `String`, `Vector{UInt8}`, `IO`, `HTTP.FIFOBuffer` or `Dict` argument type.
 See examples below for how to use an `HTTP.FIFOBuffer` for asynchronous streaming uploads.
+
 If the body is provided as a `Dict`, the request body will be uploaded using the multipart/form-data encoding.
 The key-value pairs in the Dict will constitute the name and value of each multipart boundary chunk.
 Files and other large data arguments can be provided as values as IO arguments: either an `IOStream` such as returned via `open(file)`,
@@ -381,52 +396,79 @@ Additional keyword arguments supported, include:
 * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
 * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
+* `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
+* `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code
 
 Simple request example:
 ```julia
 julia> resp = HTTP.get("http://httpbin.org/ip")
 HTTP.Response:
+\"\"\"
 HTTP/1.1 200 OK
 Connection: keep-alive
+X-Powered-By: Flask
 Content-Length: 32
+Via: 1.1 vegur
 Access-Control-Allow-Credentials: true
-Date: Fri, 06 Jan 2017 05:07:07 GMT
+X-Processed-Time: 0.000903129577637
+Date: Wed, 23 Aug 2017 23:35:59 GMT
 Content-Type: application/json
 Access-Control-Allow-Origin: *
-Server: nginx
+Server: meinheld/0.6.1
+Content-Length: 32
 
-{
-  "origin": "65.130.216.45"
+{ 
+  "origin": "50.207.241.62"
 }
+\"\"\"
 
 
-julia> string(resp)
+julia> String(resp)
 "{\n  \"origin\": \"65.130.216.45\"\n}\n"
 ```
 
-Response streaming example:
+Response streaming example (asynchronous download):
 ```julia
 julia> r = HTTP.get("http://httpbin.org/stream/100"; stream=true)
 HTTP.Response:
+\"\"\"
 HTTP/1.1 200 OK
-Content-Length: 0
+Connection: keep-alive
+X-Powered-By: Flask
+Transfer-Encoding: chunked
+Via: 1.1 vegur
+Access-Control-Allow-Credentials: true
+X-Processed-Time: 0.000981092453003
+Date: Wed, 23 Aug 2017 23:36:56 GMT
+Content-Type: application/json
+Access-Control-Allow-Origin: *
+Server: meinheld/0.6.1
 
+[HTTP.Response body of 27415 bytes]
+Content-Length: 27390
+
+{"id": 0, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
+{"id": 1, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
+{"id": 2, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "
+⋮
+```
+\"\"\"
 
 julia> body = HTTP.body(r)
-HTTP.FIFOBuffer(0,1048576,0,1,1,UInt8[],Condition(Any[]),Task (runnable) @0x000000010d221690,false)
+HTTP.FIFOBuffers.FIFOBuffer(27390, 1048576, 27390, 1, 27391, -1, 27390, UInt8[0x7b, 0x22, 0x69, 0x64, 0x22, 0x3a, 0x20, 0x30, 0x2c, 0x20  …  0x6e, 0x2f, 0x6a, 0x73, 0x6f, 0x6e, 0x22, 0x7d, 0x7d, 0x0a], Condition(Any[]), Task (done) @0x0000000112d84250, true)
 
 julia> while true
-    println(String(readavailable(body)))
-    eof(body) && break
-end
-{"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 0, "origin": "65.130.216.45"}
-{"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 1, "origin": "65.130.216.45"}
-{"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 2, "origin": "65.130.216.45"}
-{"url": "http://httpbin.org/stream/100", "headers": {"Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "User-Agent": "HTTP.jl/0.0.0"}, "args": {}, "id": 3, "origin": "65.130.216.45"}
+           println(String(readavailable(body)))
+           eof(body) && break
+       end
+{"id": 0, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
+{"id": 1, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
+{"id": 2, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
+{"id": 3, "origin": "50.207.241.62", "args": {}, "url": "http://httpbin.org/stream/100", "headers": {"Connection": "close", "User-Agent": "HTTP.jl/0.0.0", "Host": "httpbin.org", "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json"}}
 ...
 ```
 
-Request streaming example:
+Request streaming example (asynchronous upload):
 ```julia
 # create a FIFOBuffer for sending our request body
 f = HTTP.FIFOBuffer()
@@ -441,15 +483,15 @@ close(f) # setting eof on f causes the async request to send a final chunk and r
 resp = wait(t) # get our response by getting the result of our asynchronous task
 ```
         """ function $(f) end
-        ($f)(uri::AbstractString; verbose::Bool=false, query="", args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, $meth, URI(uri; query=query, isconnect=$(f_str == "CONNECT")); verbose=verbose, args...))
-        ($f)(uri::URI; verbose::Bool=false, args...) = (@log(verbose, STDOUT, "using default client"); request(DEFAULT_CLIENT, $meth, uri; verbose=verbose, args...))
-        ($f)(client::Client, uri::AbstractString; query="", args...) = request(client, $meth, URI(uri; query=query, isconnect=$(f_str == "CONNECT")); args...)
+        ($f)(uri::AbstractString; verbose::Bool=false, query="", args...) = request(DEFAULT_CLIENT, $meth, URIs.URL(uri; query=query, isconnect=$(f_str == "CONNECT")); verbose=verbose, args...)
+        ($f)(uri::URI; verbose::Bool=false, args...) = request(DEFAULT_CLIENT, $meth, uri; verbose=verbose, args...)
+        ($f)(client::Client, uri::AbstractString; query="", args...) = request(client, $meth, URIs.URL(uri; query=query, isconnect=$(f_str == "CONNECT")); args...)
         ($f)(client::Client, uri::URI; args...) = request(client, $meth, uri; args...)
     end
 end
 
 function download(uri::AbstractString, file; threshold::Int=50000000, verbose::Bool=false, query="", args...)
-    res = HTTP.get(uri; verbose=verbose, query=query, stream=true, args...)
+    res = request(GET, uri; verbose=verbose, query=query, stream=true, args...)
     body = HTTP.body(res)
     file = Base.get(HTTP.headers(res), "Content-Encoding", "") == "gzip" ? string(file, ".gz") : file
     threshold_step = threshold
