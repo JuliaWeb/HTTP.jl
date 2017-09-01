@@ -39,10 +39,10 @@ using .Handlers
 include("server.jl")
 using .Nitrogen
 
-include("precompile/precompile_Base.jl"); _precompile_()
-include("precompile/precompile_Base.jl"); _precompile_()
-include("precompile/precompile_Base.jl"); _precompile_()
-include("precompile/precompile_Base.jl"); _precompile_()
+include("precompile/precompile_HTTP.jl"); _precompile_()
+# include("precompile/precompile_Base.jl"); _precompile_()
+# include("precompile/precompile_Base.jl"); _precompile_()
+# include("precompile/precompile_Base.jl"); _precompile_()
 
 function __init__()
     global const DEFAULT_CLIENT = Client()
