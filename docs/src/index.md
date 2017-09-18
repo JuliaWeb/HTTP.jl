@@ -9,7 +9,6 @@
 Note that the HTTP methods of POST, DELETE, PUT, etc. all follow the same format as `HTTP.get`, documented below.
 ```@docs
 HTTP.get
-HTTP.request
 HTTP.Client
 HTTP.Connection
 ```
@@ -22,7 +21,6 @@ HTTP.Handler
 HTTP.HandlerFunction
 HTTP.Router
 HTTP.register!
-HTTP.FourOhFour
 ```
 
 ## HTTP Types
