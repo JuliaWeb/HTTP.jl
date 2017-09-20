@@ -36,6 +36,7 @@ at the `HTTP.Client` level to be applied to every request sent. Options include:
   * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
   * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
   * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code
+  * `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
 """
 mutable struct RequestOptions
     chunksize::Option{Int}
@@ -49,8 +50,9 @@ mutable struct RequestOptions
     retries::Option{Int}
     managecookies::Option{Bool}
     statusraise::Option{Bool}
-    RequestOptions(ch::Option{Int}, gzip::Option{Bool}, ct::Option{Float64}, rt::Option{Float64}, tls::Option{TLS.SSLConfig}, mr::Option{Int}, ar::Option{Bool}, fh::Option{Bool}, tr::Option{Int}, mc::Option{Bool}, sr::Option{Bool}) =
-        new(ch, gzip, ct, rt, tls, mr, ar, fh, tr, mc, sr)
+    insecure::Option{Bool}
+    RequestOptions(ch::Option{Int}, gzip::Option{Bool}, ct::Option{Float64}, rt::Option{Float64}, tls::Option{TLS.SSLConfig}, mr::Option{Int}, ar::Option{Bool}, fh::Option{Bool}, tr::Option{Int}, mc::Option{Bool}, sr::Option{Bool}, i::Option{Bool}) =
+        new(ch, gzip, ct, rt, tls, mr, ar, fh, tr, mc, sr, i)
 end
 
 const RequestOptionsFieldTypes = Dict(:chunksize      => Int,
@@ -63,7 +65,8 @@ const RequestOptionsFieldTypes = Dict(:chunksize      => Int,
                                       :forwardheaders => Bool,
                                       :retries        => Int,
                                       :managecookies  => Bool,
-                                      :statusraise    => Bool)
+                                      :statusraise    => Bool,
+                                      :insecure       => Bool)
 
 function RequestOptions(options::RequestOptions; kwargs...)
     for (k, v) in kwargs
@@ -72,8 +75,8 @@ function RequestOptions(options::RequestOptions; kwargs...)
     return options
 end
 
-RequestOptions(chunk=nothing, gzip=nothing, ct=nothing, rt=nothing, tls=nothing, mr=nothing, ar=nothing, fh=nothing, tr=nothing, mc=nothing, sr=nothing; kwargs...) =
-    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar, fh, tr, mc, sr); kwargs...)
+RequestOptions(chunk=nothing, gzip=nothing, ct=nothing, rt=nothing, tls=nothing, mr=nothing, ar=nothing, fh=nothing, tr=nothing, mc=nothing, sr=nothing, i=nothing; kwargs...) =
+    RequestOptions(RequestOptions(chunk, gzip, ct, rt, tls, mr, ar, fh, tr, mc, sr, i); kwargs...)
 
 function update!(opts1::RequestOptions, opts2::RequestOptions)
     for i = 1:nfields(RequestOptions)

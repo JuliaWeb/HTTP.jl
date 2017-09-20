@@ -36,6 +36,7 @@ Additional keyword arguments can be passed that will get transmitted with each H
 * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
 * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
 * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code
+* `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
 """
 mutable struct Client
     # connection pools for keep-alive; key is host
@@ -57,7 +58,7 @@ Client(logger::Option{IO}, options::RequestOptions) = Client(Dict{String, Vector
                                                      Parser(), logger, options, 1)
 
 const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true))
+const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true, false))
 
 @eval begin
     Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
@@ -125,7 +126,7 @@ initTLS!(::Type{http}, hostname, opts, socket) = socket
 
 function initTLS!(::Type{https}, hostname, opts, socket)
     stream = TLS.SSLContext()
-    TLS.setup!(stream, get(opts, :tlsconfig, TLS.SSLConfig(true))::TLS.SSLConfig)
+    TLS.setup!(stream, get(opts, :tlsconfig, TLS.SSLConfig(!opts.insecure::Bool))::TLS.SSLConfig)
     TLS.associate!(stream, socket)
     TLS.hostname!(stream, hostname)
     TLS.handshake!(stream)
