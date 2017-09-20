@@ -174,7 +174,8 @@ function connect(client, sch, hostname, port, opts, verbose)
         # EH: throws DNSError, OutOfMemoryError, or SystemError; retry once, but otherwise, we can't do much
         ip = @retry Base.getaddrinfo(hostname)
         # EH: throws error, ArgumentError for out-of-range port, UVError; retry if UVError
-        tcp = @retryif Base.UVError Base.connect(ip, Base.parse(Int, port))
+        tcp = @retryif Base.UVError @timeout(opts.connecttimeout::Float64,
+                                        Base.connect(ip, Base.parse(Int, port)), error("connect timeout"))
         socket = initTLS!(sch, hostname, opts, tcp)
         conn = Connection(client.connectioncount, socket)
         client.connectioncount += 1
@@ -251,20 +252,20 @@ function redirect(response, client, req, opts, stream, history, retry, verbose)
 end
 
 const CLOSED_ERROR = ClosedError(ErrorException(""), "error receiving response; connection was closed prematurely")
-function getbytes(socket)
+function getbytes(socket, tm)
     try
         # EH: returns UInt8[] when socket is closed, error when socket is not readable, AssertionErrors, UVError;
-        buffer = @retry readavailable(socket)
+        buffer = @retry @timeout(tm, readavailable(socket), error("read timeout"))
         return buffer, CLOSED_ERROR
     catch e
         return UInt8[], ReadError(e, backtrace())
     end
 end
 
-function processresponse!(client, conn, response, host, method, maintask, stream, verbose)
+function processresponse!(client, conn, response, host, method, maintask, stream, tm, verbose)
     logger = client.logger
     while true
-        buffer, err = getbytes(conn.socket)
+        buffer, err = getbytes(conn.socket, tm)
         if length(buffer) == 0 && !isopen(conn.socket)
             @log "socket closed before full response received"
             dead!(conn)
@@ -285,7 +286,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
             return true, StatusError(status(response), response)
         elseif stream && headerscomplete
             @log "processing the rest of response asynchronously"
-            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, false)
+            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, tm, false)
             return true, nothing
         end
     end
@@ -310,7 +311,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     
     response = Response(stream ? DEFAULT_CHUNK_SIZE : FIFOBuffers.DEFAULT_MAX, req)
     reset!(client.parser)
-    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, verbose)
+    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, verbose)
     if !success
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
