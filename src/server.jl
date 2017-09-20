@@ -88,22 +88,22 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
     startedprocessingrequest = error = shouldclose = alreadysent100continue = false
     rate = Float64(server.options.ratelimit.num)
     rl.allowance += 1.0 # because it was just decremented right before we got here
-    HTTP.@log(verbose, logger, "processing on connection i=$i...")
+    HTTP.@log "processing on connection i=$i..."
     try
         tsk = @async begin
             request.body.task = current_task()
             while isopen(tcp)
                 update!(rl, server.options.ratelimit)
                 if rl.allowance > rate
-                    HTTP.@log(verbose, server.logger, "throttling on connection i=$i")
+                    HTTP.@log "throttling on connection i=$i"
                     rl.allowance = rate
                 end
                 if rl.allowance < 1.0
-                    HTTP.@log(verbose, server.logger, "sleeping on connection i=$i due to rate limiting")
+                    HTTP.@log "sleeping on connection i=$i due to rate limiting"
                     sleep(1.0)
                 else
                     rl.allowance -= 1.0
-                    HTTP.@log(verbose, server.logger, "reading request bytes with readtimeout=$(options.readtimeout)")
+                    HTTP.@log "reading request bytes with readtimeout=$(options.readtimeout)"
                     # EH:
                     buffer = try
                         readavailable(tcp)
@@ -116,7 +116,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                     startedprocessingrequest = true
                     if errno != HTTP.HPE_OK
                         # error in parsing the http request
-                        HTTP.@log(verbose, logger, "error parsing request on connection i=$i: $(HTTP.ParsingErrorCodeMap[errno])")
+                        HTTP.@log "error parsing request on connection i=$i: $(HTTP.ParsingErrorCodeMap[errno])"
                         if errno == HTTP.HPE_INVALID_VERSION
                             response = HTTP.Response(505)
                         elseif errno == HTTP.HPE_HEADER_OVERFLOW
@@ -133,12 +133,12 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                         error = true
                     elseif headerscomplete && Base.get(HTTP.headers(request), "Expect", "") == "100-continue" && !alreadysent100continue
                         if options.support100continue
-                            HTTP.@log(verbose, logger, "sending 100 Continue response to get request body")
+                            HTTP.@log "sending 100 Continue response to get request body"
                             # EH:
                             try
                                 write(tcp, HTTP.Response(100), options)
                             catch e
-                                HTTP.@log(verbose, logger, e)
+                                HTTP.@log e
                                 error = true
                             end
                             parser.state = HTTP.s_body_identity
@@ -149,18 +149,18 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             error = true
                         end
                     elseif length(upgrade) > 0
-                        HTTP.@log(verbose, logger, "received upgrade request on connection i=$i")
+                        HTTP.@log "received upgrade request on connection i=$i"
                         response = HTTP.Response(501, "upgrade requests are not currently supported")
                         error = true
                     elseif messagecomplete
-                        HTTP.@log(verbose, logger, "received request on connection i=$i")
+                        HTTP.@log "received request on connection i=$i"
                         verbose && (println(logger, "HTTP.Request:\n"); println(logger, string(request)))
                         try
                             response = Handlers.handle(handler, request, HTTP.Response())
                         catch e
                             response = HTTP.Response(500)
                             error = true
-                            HTTP.@log(verbose, logger, e)
+                            HTTP.@log e
                         end
                         if HTTP.http_should_keep_alive(parser, request) && !error
                             get!(HTTP.headers(response), "Connection", "keep-alive")
@@ -171,13 +171,13 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             shouldclose = true
                         end
                         if !error
-                            HTTP.@log(verbose, logger, "responding with response on connection i=$i")
+                            HTTP.@log "responding with response on connection i=$i"
                             respstr = string(response, options)
                             verbose && (println(logger, "HTTP.Response:\n"); println(logger, respstr))
                             try
                                 write(tcp, respstr)
                             catch e
-                                HTTP.@log(verbose, logger, e)
+                                HTTP.@log e
                                 error = true
                             end
                         end
@@ -192,13 +192,13 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
             sleep(0.001)
         end
         if !istaskdone(tsk)
-            HTTP.@log(verbose, logger, "connection i=$i timed out waiting for request bytes")
+            HTTP.@log "connection i=$i timed out waiting for request bytes"
             startedprocessingrequest && write(tcp, HTTP.Response(408), options)
         end
     finally
         close(tcp)
     end
-    HTTP.@log(verbose, logger, "finished processing on connection i=$i")
+    HTTP.@log "finished processing on connection i=$i"
     return nothing
 end
 
@@ -232,7 +232,8 @@ end
 @enum Signals KILL
 
 function serve(server::Server{T, H}, host, port, verbose) where {T, H}
-    HTTP.@log(verbose, server.logger, "starting server to listen on: $(host):$(port)")
+    logger = server.logger
+    HTTP.@log "starting server to listen on: $(host):$(port)"
     tcpserver = listen(host, port)
     ratelimits = Dict{IPAddr, RateLimit}()
     rate = Float64(server.options.ratelimit.num)
@@ -253,15 +254,15 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
             rl = get!(ratelimits, ip, RateLimit(rate, now()))
             update!(rl, server.options.ratelimit)
             if rl.allowance > rate
-                HTTP.@log(verbose, server.logger, "throttling $ip")
+                HTTP.@log "throttling $ip"
                 rl.allowance = rate
             end
             if rl.allowance < 1.0
-                HTTP.@log(verbose, server.logger, "discarding connection from $ip due to rate limiting")
+                HTTP.@log "discarding connection from $ip due to rate limiting"
                 close(tcp)
             else
                 rl.allowance -= 1.0
-                HTTP.@log(verbose, server.logger, "new tcp connection accepted, reading request...")
+                HTTP.@log "new tcp connection accepted, reading request..."
                 let server=server, p=p, request=request, i=i, tcp=tcp, rl=rl
                     @async process!(server, p, request, i, initTLS!(T, tcp, server.options.tlsconfig::HTTP.TLS.SSLConfig), rl, Ref{Float64}(time()), verbose)
                 end
@@ -269,18 +270,18 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
             end
         catch e
             if typeof(e) <: InterruptException
-                HTTP.@log(verbose, server.logger, "interrupt detected, shutting down...")
+                HTTP.@log "interrupt detected, shutting down..."
                 interrupt()
                 break
             else
                 if !isopen(tcpserver)
-                    HTTP.@log(verbose, server.logger, "server TCPServer is closed, shutting down...")
+                    HTTP.@log "server TCPServer is closed, shutting down..."
                     # Server was closed while waiting to accept client. Exit gracefully.
                     interrupt()
                     break
                 end
-                HTTP.@log(verbose, server.logger, "error encountered: $e")
-                HTTP.@log(verbose, server.logger, "resuming serving...")
+                HTTP.@log "error encountered: $e"
+                HTTP.@log "resuming serving..."
             end
         end
     end

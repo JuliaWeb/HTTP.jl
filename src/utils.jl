@@ -62,6 +62,22 @@ macro timeout(t, expr, then, pollint=0.01)
     end
 end
 
+macro src()
+    @static if VERSION >= v"0.7-" && length(:(@test).args) == 2
+        esc(quote
+            (__module__,
+             __source__.file == nothing ? "?" : String(__source__.file),
+             __source__.line)
+        end)
+    else
+        esc(quote
+            (current_module(),
+             (p = Base.source_path(); p == nothing ? "REPL" : p),
+             Int(unsafe_load(cglobal(:jl_lineno, Cint))))
+        end)
+    end
+end
+
 """
     @debug DEBUG expr
     @debug DEBUG "message"
@@ -71,19 +87,23 @@ Set `const DEBUG = true` in HTTP.jl and re-compile the package to see
 debug-level output from the package. When `DEBUG = false`, all `@debug` statements
 compile to `nothing`.
 """
-macro debug(should, line, expr)
-    if eval(should)
-        if typeof(expr) == String
-            return esc(:(println("[DEBUG - ", @__FILE__, ":", $line, "]: ", $(escape_string(expr)))))
-        else
-            return esc(:(println("[DEBUG - ", @__FILE__, ":", $line, "]: ", $(sprint(Base.show_unquoted, expr)), " = ", escape_string(string($expr)))))
+macro debug(should, expr)
+    m, f, l = @src()
+    if typeof(expr) == String
+        e = esc(:(println("[DEBUG - ", $m, '.', $f, ":", $(rpad(l, 5, ' ')), "]: ", $(escape_string(expr)))))
+    else
+        e = esc(:(println("[DEBUG - ", $m, '.', $f, ":", $(rpad(l, 5, ' ')), "]: ", $(sprint(Base.show_unquoted, expr)), " = ", escape_string(string($expr)))))
+    end
+    return quote
+        @static if $should
+            $e 
         end
     end
 end
 
-macro log(verbose, io, stmt)
+macro log(stmt)
     # "[HTTP]: Connecting to remote host..."
-    return esc(:($verbose && (write($io, "[HTTP - $(now())]: $($stmt)\n"); flush($io))))
+    return esc(:(verbose && (write(logger, "[HTTP - $(rpad(now(), 23, ' '))]: $($stmt)\n"); flush(logger))))
 end
 
 # parsing utils

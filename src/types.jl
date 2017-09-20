@@ -131,7 +131,7 @@ defaultheaders(::Type{Request}) = Headers(
 function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
                     options::RequestOptions=RequestOptions(),
                     verbose::Bool=false,
-                    io::Option{IO}=STDOUT)
+                    logger::Option{IO}=STDOUT)
     if m != CONNECT
         headers = defaultheaders(Request)
         headers["Host"] = host(uri)
@@ -140,7 +140,7 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
     end
     if !isempty(userinfo(uri)) && !haskey(headers, "Authorization")
         headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
-        @log(verbose, io, "adding basic authentication header")
+        @log "adding basic authentication header"
     end
     if isa(b, Dict) || isa(b, Form)
         # form data
@@ -155,7 +155,7 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
     if !haskey(headers, "Content-Type") && length(body) > 0 && !isa(body, Form)
         sn = sniff(body)
         headers["Content-Type"] = sn
-        @log(verbose, io, "setting Content-Type header to: $sn")
+        @log "setting Content-Type header to: $sn"
     end
     return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
