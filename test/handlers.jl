@@ -1,4 +1,3 @@
-reload("HTTP")
 using Base.Test
 
 @testset "HTTP.Handler" begin
