@@ -39,6 +39,8 @@ using .Handlers
 include("server.jl")
 using .Nitrogen
 
+include("precompile.jl")
+
 function __init__()
     global const DEFAULT_CLIENT = Client()
 end
