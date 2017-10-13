@@ -24,6 +24,10 @@ julia> Pkg.add("HTTP")
 
 The package is tested against Julia 0.6 & current master on Linux, OS X, and Windows.
 
+## Known Limitations
+
+- The first HTTP request may be delayed up to 5 seconds [due to precompilation issues](https://discourse.julialang.org/t/package-compilation-woes/5658).
+
 ## Contributing and Questions
 
 Contributions are very welcome, as are feature requests and suggestions. Please open an
