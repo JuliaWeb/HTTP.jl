@@ -34,7 +34,7 @@ HandlerFunction(f::Function)
 
 A Function-wrapper type that is a subtype of `Handler`. Takes a single Function as an argument.
 The provided argument should be of the form `f(request, response) => Response`, i.e. it accepts
-both a `Request` and `Response` and returns a `Response`. 
+both a `Request` and `Response` and returns a `Response`.
 """
 struct HandlerFunction{F <: Function} <: Handler
     func::F # func(req, resp)
@@ -80,7 +80,7 @@ const EMPTYVAL = val(())
 
 """
 HTTP.register!(r::Router, url, handler)
-HTTP.register!(r::Router, m::Union{Method, String}, url, handler)
+HTTP.register!(r::Router, m::Union{HTTP.Method, String}, url, handler)
 
 Function to map request urls matching `url` and an optional method `m` to another `handler::HTTP.Handler`.
 URLs are registered one at a time, and multiple urls can map to the same handler.
@@ -97,7 +97,7 @@ The following examples show how various urls will direct how a request is routed
 - `"/gmail/userId/*/inbox`: match any request matching the path pattern, "*" is used as a wildcard that matches any value between the two "/"
 """
 register!(r::Router, url, handler) = register!(r, "", url, handler)
-register!(r::Router, m::Method, url, handler) = register!(r, string(m), url, handler)
+register!(r::Router, m::HTTP.Method, url, handler) = register!(r, string(m), url, handler)
 
 function register!(r::Router, method::String, url, handler)
     m = isempty(method) ? Any : typeof(METHODS[method])
@@ -137,7 +137,7 @@ end
 
 function handle(r::Router, req, resp)
     # get the url/path of the request
-    m = val(HTTP.method(req))
+    m = val(Symbol(HTTP.method(req)))
     uri = HTTP.uri(req)
     # get scheme, host, split path into strings and get Vals
     s = get(SCHEMES, HTTP.scheme(uri), EMPTYVAL)

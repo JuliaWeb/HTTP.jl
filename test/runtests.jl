@@ -16,6 +16,7 @@ using HTTP, Base.Test
     include("cookies.jl");
     include("parser.jl");
     include("types.jl");
+    include("handlers.jl")
     include("client.jl");
     include("server.jl")
 end;

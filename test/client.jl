@@ -16,7 +16,7 @@
 end
 
 for sch in ("http", "https")
-    println("runnin $sch client tests...")
+    println("running $sch client tests...")
 
     println("simple GET, HEAD, POST, DELETE, etc.")
     @test HTTP.status(HTTP.get("$sch://httpbin.org/ip")) == 200

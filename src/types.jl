@@ -163,10 +163,10 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
     return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
 end
 
-Request(method, uri, h=Headers(), body=""; options::RequestOptions=RequestOptions(), io::IO=STDOUT, verbose::Bool=false) =
+Request(method, uri, h=Headers(), body=""; options::RequestOptions=RequestOptions(), logger::Option{IO}=STDOUT, verbose::Bool=false) =
     Request(convert(HTTP.Method, method),
             isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
-            h, body; options=options, io=io, verbose=verbose)
+            h, body; options=options, logger=logger, verbose=verbose)
 
 Request(; method::Method=GET, major::Integer=Int16(1), minor::Integer=Int16(1), uri=URI(""), headers=Headers(), body=FIFOBuffer("")) =
     Request(method, major, minor, uri, headers, body)
