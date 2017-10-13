@@ -45,10 +45,10 @@ struct URI
     offsets::NTuple{7, Offset}
 end
 
-function URI(;hostname::String="", path::String="",
-            scheme::String="", userinfo::String="",
-            port::Union{Integer,String}="", query="",
-            fragment::String="", isconnect::Bool=false)
+function URI(;hostname::AbstractString="", path::AbstractString="",
+            scheme::AbstractString="", userinfo::AbstractString="",
+            port::Union{Integer,AbstractString}="", query="",
+            fragment::AbstractString="", isconnect::Bool=false)
     hostname != "" && scheme == "" && !isconnect && (scheme = "http")
     io = IOBuffer()
     printuri(io, scheme, userinfo, hostname, string(port), path, escape(query), fragment)
@@ -58,8 +58,8 @@ end
 # we assume `str` is at least hostname & port
 # if all others keywords are empty, assume CONNECT
 # can include path, userinfo, query, & fragment
-function URL(str::String; userinfo::String="", path::String="",
-                          query="", fragment::String="",
+function URL(str::AbstractString; userinfo::AbstractString="", path::AbstractString="",
+                          query="", fragment::AbstractString="",
                           isconnect::Bool=false)
     if str != ""
         if startswith(str, "http") || startswith(str, "https")
@@ -79,8 +79,8 @@ function URL(str::String; userinfo::String="", path::String="",
     end
     return Base.parse(URI, str; isconnect=isconnect)
 end
-URI(str::String; isconnect::Bool=false) = Base.parse(URI, str; isconnect=isconnect)
-Base.parse(::Type{URI}, str::String; isconnect::Bool=false) = http_parser_parse_url(Vector{UInt8}(str), 1, sizeof(str), isconnect)
+URI(str::AbstractString; isconnect::Bool=false) = Base.parse(URI, str; isconnect=isconnect)
+Base.parse(::Type{URI}, str::AbstractString; isconnect::Bool=false) = http_parser_parse_url(Vector{UInt8}(str), 1, sizeof(str), isconnect)
 
 ==(a::URI,b::URI) = scheme(a)   == scheme(b)    &&
                     hostname(a) == hostname(b)  &&

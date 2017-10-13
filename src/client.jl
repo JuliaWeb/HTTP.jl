@@ -361,7 +361,7 @@ function request(client::Client, method, uri::URI;
     req = Request(method, uri, headers, body; options=opts, verbose=verbose, logger=client.logger)
     return request(client, req; opts=opts, stream=stream, verbose=verbose)
 end
-request(uri::String; verbose::Bool=false, query="", args...) = request(DEFAULT_CLIENT, GET, URIs.URL(uri; query=query); verbose=verbose, args...)
+request(uri::AbstractString; verbose::Bool=false, query="", args...) = request(DEFAULT_CLIENT, GET, URIs.URL(uri; query=query); verbose=verbose, args...)
 request(uri::URI; verbose::Bool=false, args...) = request(DEFAULT_CLIENT, GET, uri; verbose=verbose, args...)
 request(method, uri::String; verbose::Bool=false, query="", args...) = request(DEFAULT_CLIENT, convert(HTTP.Method, method), URIs.URL(uri; query=query); verbose=verbose, args...)
 request(method, uri::URI; verbose::Bool=false, args...) = request(DEFAULT_CLIENT, convert(HTTP.Method, method), uri; verbose=verbose, args...)
