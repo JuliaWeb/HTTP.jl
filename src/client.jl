@@ -57,8 +57,7 @@ Client(logger::Option{IO}, options::RequestOptions) = Client(Dict{String, Vector
                                                      Dict{String, Set{Cookie}}(),
                                                      Parser(), logger, options, 1)
 
-const DEFAULT_CHUNK_SIZE = 2^20
-const DEFAULT_OPTIONS = :((DEFAULT_CHUNK_SIZE, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true, false))
+const DEFAULT_OPTIONS = :((nothing, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true, false))
 
 @eval begin
     Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
@@ -310,7 +309,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     p = port(u)
     conn = @retryif ClosedError 4 connectandsend(client, sch, host, ifelse(p == "", "80", p), req, opts, verbose)
     
-    response = Response(stream ? DEFAULT_CHUNK_SIZE : FIFOBuffers.DEFAULT_MAX, req)
+    response = Response(stream ? 2^24 : FIFOBuffers.DEFAULT_MAX, req)
     reset!(client.parser)
     success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, verbose)
     if !success

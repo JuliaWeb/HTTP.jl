@@ -38,10 +38,9 @@ mutable struct ServerOptions
     maxheader::Int64
     maxbody::Int64
     support100continue::Bool
-    chunksize::Int
+    chunksize::Union{Void, Int}
 end
 
-const DEFAULT_CHUNK_SIZE = 2^20
 ServerOptions(; tlsconfig::HTTP.TLS.SSLConfig=HTTP.TLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
                 ratelimit::Rational{Int64}=Int64(5)//Int64(1),
@@ -49,7 +48,7 @@ ServerOptions(; tlsconfig::HTTP.TLS.SSLConfig=HTTP.TLS.SSLConfig(true),
                 maxheader::Int64=HTTP.DEFAULT_MAX_HEADER,
                 maxbody::Int64=HTTP.DEFAULT_MAX_BODY,
                 support100continue::Bool=true,
-                chunksize::Int=DEFAULT_CHUNK_SIZE) =
+                chunksize::Union{Void, Int}=nothing) =
     ServerOptions(tlsconfig, readtimeout, ratelimit, maxbody, maxuri, maxheader, support100continue, chunksize)
 
 """

@@ -302,14 +302,14 @@ function body(io::IO, r::Union{Request, Response}, opts)
         write(io, "$CRLF")
         return
     end
-    chksz = get(opts, :chunksize, typemax(Int))
+    chksz = get(opts, :chunksize, 0)
     pos = position(r.body)
     @sync begin
         @async begin
             chunked = false
             bytes = UInt8[]
             while !eof(r.body)
-                bytes = read(r.body, chksz)
+                bytes = chksz == 0 ? read(r.body) : read(r.body, chksz)
                 eof(r.body) && !chunked && break
                 if !chunked
                     write(io, "Transfer-Encoding: chunked$CRLF$CRLF")
