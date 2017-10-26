@@ -77,10 +77,14 @@ function onheadervalue(p::Parser, bytes, i, j)
     append!(p.valuebuffer, view(bytes, i:j))
     return
 end
-function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY)
+function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY, canonicalizeheaders)
     @debug(PARSING_DEBUG, "onheadervalue2")
     append!(p.valuebuffer, view(bytes, i:j))
-    key = canonicalize!(unsafe_string(pointer(p.fieldbuffer), length(p.fieldbuffer)))
+    if canonicalizeheaders
+        key = canonicalize!(unsafe_string(pointer(p.fieldbuffer), length(p.fieldbuffer)))
+    else
+        key = unsafe_string(pointer(p.fieldbuffer), length(p.fieldbuffer))
+    end
     val = unsafe_string(pointer(p.valuebuffer), length(p.valuebuffer))
     if key == ""
         # the header value was parsed in two parts,
@@ -140,11 +144,12 @@ function parse(T::Type{<:Union{Request, Response}}, str;
                 extra::Ref{String}=Ref{String}(), lenient::Bool=true,
                 maxuri::Int64=DEFAULT_MAX_URI, maxheader::Int64=DEFAULT_MAX_HEADER,
                 maxbody::Int64=DEFAULT_MAX_BODY,
-                maintask::Task=current_task())
+                maintask::Task=current_task(),
+                canonicalizeheaders::Bool=true)
     r = T(body=FIFOBuffer())
     reset!(DEFAULT_PARSER)
     err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str);
-        lenient=lenient, maxuri=maxuri, maxheader=maxheader, maxbody=maxbody, maintask=maintask)
+        lenient=lenient, maxuri=maxuri, maxheader=maxheader, maxbody=maxbody, maintask=maintask, canonicalizeheaders=canonicalizeheaders)
     err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
     extra[] = upgrade
     return r
@@ -159,10 +164,11 @@ const DEFAULT_PARSER = Parser()
 function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
         lenient::Bool=true, host::String="", method::Method=GET,
         maxuri::Int64=DEFAULT_MAX_URI, maxheader::Int64=DEFAULT_MAX_HEADER,
-        maxbody::Int64=DEFAULT_MAX_BODY, maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, String}
-    return parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader, maxbody, maintask)
+        maxbody::Int64=DEFAULT_MAX_BODY, maintask::Task=current_task(),
+        canonicalizeheaders::Bool=true)::Tuple{ParsingErrorCode, Bool, Bool, String}
+    return parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader, maxbody, maintask, canonicalizeheaders)
 end
-function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader, maxbody, maintask)
+function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader, maxbody, maintask, canonicalizeheaders)
     strict = !lenient
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
@@ -804,7 +810,7 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
                     parser.header_state = h
                     parser.state = p_state
                     @debug(PARSING_DEBUG, "onheadervalue 1")
-                    onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
+                    onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY, canonicalizeheaders)
                     header_value_mark = 0
                     break
                 elseif ch == LF
@@ -813,7 +819,7 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
                     parser.header_state = h
                     parser.state = p_state
                     @debug(PARSING_DEBUG, "onheadervalue 2")
-                    onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
+                    onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY, canonicalizeheaders)
                     header_value_mark = 0
                     @goto reexecute
                 elseif !lenient && !isheaderchar(ch)
@@ -1018,7 +1024,7 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
                 p_state = s_header_field_start
                 parser.state = p_state
                 @debug(PARSING_DEBUG, "onheadervalue 3")
-                onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
+                onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY, canonicalizeheaders)
                 header_value_mark = 0
                 @goto reexecute
             end

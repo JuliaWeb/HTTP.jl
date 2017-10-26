@@ -37,6 +37,7 @@ Additional keyword arguments can be passed that will get transmitted with each H
 * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules); default = `true`
 * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
 * `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
+* `canonicalizeheaders::Bool`: whether header field names should be canonicalized in responses, e.g. `content-type` is canonicalized to `Content-Type`; default = `true`
 """
 mutable struct Client
     # connection pools for keep-alive; key is host
@@ -57,7 +58,8 @@ Client(logger::Option{IO}, options::RequestOptions) = Client(Dict{String, Vector
                                                      Dict{String, Set{Cookie}}(),
                                                      Parser(), logger, options, 1)
 
-const DEFAULT_OPTIONS = :((nothing, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true, false))
+# this is where we provide all the default request options
+const DEFAULT_OPTIONS = :((nothing, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true, false, true))
 
 @eval begin
     Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
@@ -273,7 +275,7 @@ function getbytes(socket, tm)
     end
 end
 
-function processresponse!(client, conn, response, host, method, maintask, stream, tm, verbose)
+function processresponse!(client, conn, response, host, method, maintask, stream, tm, canonicalizeheaders, verbose)
     logger = client.logger
     while true
         buffer, err = getbytes(conn.socket, tm)
@@ -286,7 +288,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
         end
         @log "received bytes from the wire, processing"
         # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
-        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method, maintask=maintask)
+        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method, maintask=maintask, canonicalizeheaders=canonicalizeheaders)
         if errno != HPE_OK
             dead!(conn)
             throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])\nCurrent response buffer contents: $(String(buffer))"))
@@ -297,7 +299,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
             return true, StatusError(status(response), response)
         elseif stream && headerscomplete
             @log "processing the rest of response asynchronously"
-            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, tm, false)
+            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, tm, canonicalizeheaders, false)
             return true, nothing
         end
     end
@@ -322,7 +324,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     
     response = Response(stream ? 2^24 : FIFOBuffers.DEFAULT_MAX, req)
     reset!(client.parser)
-    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, verbose)
+    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, opts.canonicalizeheaders::Bool, verbose)
     if !success
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
@@ -417,6 +419,7 @@ Additional keyword arguments supported, include:
 * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules); default = `true`
 * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
 * `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
+* `canonicalizeheaders::Bool`: whether header field names should be canonicalized in responses, e.g. `content-type` is canonicalized to `Content-Type`; default = `true`
 
 Simple request example:
 ```julia
