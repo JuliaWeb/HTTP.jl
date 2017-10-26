@@ -70,7 +70,7 @@ for sch in ("http", "https")
             while !eof(HTTP.body(r))
                 b = take!(r)
             end
-        end throw(HTTP.TimeoutException(15.0))
+        end throw(error("timed out"))
     end
 
     # body posting: Vector{UInt8}, String, IOStream, IOBuffer, FIFOBuffer
@@ -164,7 +164,7 @@ for sch in ("http", "https")
     r = HTTP.get("$sch://httpbin.org/redirect/1")
     @test HTTP.status(r) == 200
     @test length(HTTP.history(r)) == 1
-    @test_throws HTTP.RedirectException HTTP.get("$sch://httpbin.org/redirect/6")
+    @test_throws HTTP.RedirectError HTTP.get("$sch://httpbin.org/redirect/6")
     @test HTTP.status(HTTP.get("$sch://httpbin.org/relative-redirect/1")) == 200
     @test HTTP.status(HTTP.get("$sch://httpbin.org/absolute-redirect/1")) == 200
     @test HTTP.status(HTTP.get("$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fexample.com")) == 200
@@ -173,9 +173,6 @@ for sch in ("http", "https")
     println("client basic auth")
     @test HTTP.status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd")) == 200
     @test HTTP.status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd")) == 200
-
-    # readtimeout
-    # @test_throws HTTP.TimeoutException HTTP.get("$sch://httpbin.org/delay/3"; readtimeout=1.0)
 
     # custom client & other high-level entries
     println("high-level client request methods")
@@ -222,6 +219,9 @@ for sch in ("http", "https")
 
     # ensure we can use AbstractString for requests
     r = HTTP.get(SubString("http://httpbin.org/ip",1))
+
+    # canonicalizeheaders
+    @test HTTP.status(HTTP.get("$sch://httpbin.org/ip"; canonicalizeheaders=false)) == 200
 
     # r = HTTP.connect("http://47.89.41.164:80")
     # gzip body = "hey"
