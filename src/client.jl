@@ -79,6 +79,16 @@ setconnection!(::Type{https}, client, host, conn) = push!(get!(client.httpspool,
 
 backtrace() = sprint(Base.show_backtrace, catch_backtrace())
 
+"""
+Abstract error type that all other HTTP errors subtype, including:
+
+  * `HTTP.ConnectError`: thrown if a valid connection cannot be opened to the requested host/port
+  * `HTTP.SendError`: thrown if a request is not able to be sent to the server
+  * `HTTP.ClosedError`: thrown during sending or receiving if the connection to the server has been closed
+  * `HTTP.ReadError`: thrown if an I/O error occurs when receiving a response from a server
+  * `HTTP.RedirectError`: thrown if the number of http redirects exceeds the http request option `maxredirects`
+  * `HTTP.StatusError`: thrown if a non-successful http status code is returned from the server, never thrown if `statusraise=false` is passed as a request option
+"""
 abstract type HTTPError <: Exception end
 
 function Base.show(io::IO, e::HTTPError)
@@ -86,34 +96,35 @@ function Base.show(io::IO, e::HTTPError)
     println(io, "Exception: $(e.e)")
     print(io, e.msg)
 end
-
+"An HTTP error thrown if a valid connection cannot be opened to the requested host/port"
 struct ConnectError <: HTTPError
     e::Exception
     msg::String
 end
-
+"An HTTP error thrown if a request is not able to be sent to the server"
 struct SendError <: HTTPError
     e::Exception
     msg::String
 end
-
+"An HTTP error thrown during sending or receiving if the connection to the server has been closed"
 struct ClosedError <: HTTPError
     e::Exception
     msg::String
 end
-
+"An HTTP error thrown if an I/O error occurs when receiving a response from a server"
 struct ReadError <: HTTPError
     e::Exception
     msg::String
 end
-
-struct RedirectException <: Exception
+"An HTTP error thrown if the number of http redirects exceeds the http request option `maxredirects`"
+struct RedirectError <: HTTPError
     maxredirects::Int
 end
-function Base.show(io::IO, err::RedirectException)
-    print(io, "RedirectException: more than $(err.maxredirects) redirects attempted")
+function Base.show(io::IO, err::RedirectError)
+    print(io, "RedirectError: more than $(err.maxredirects) redirects attempted")
 end
-struct StatusError <: Exception
+"An HTTP error thrown if a non-successful http status code is returned from the server, never thrown if `statusraise=false` is passed as a request option"
+struct StatusError <: HTTPError
     status::Int
     response::Response
 end
@@ -234,7 +245,7 @@ function redirect(response, client, req, opts, stream, history, retry, verbose)
           haskey(response.headers, "location") ? "location" : ""
     if key != ""
         push!(history, response)
-        length(history) > opts.maxredirects::Int && throw(RedirectException(opts.maxredirects::Int))
+        length(history) > opts.maxredirects::Int && throw(RedirectError(opts.maxredirects::Int))
         newuri = URIs.URL(response.headers[key])
         u = uri(req)
         newuri = !isempty(hostname(newuri)) ? newuri : URIs.URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))

@@ -13,6 +13,16 @@ HTTP.Client
 HTTP.Connection
 ```
 
+### HTTP request errors
+```@docs
+HTTP.ConnectError
+HTTP.SendError
+HTTP.ClosedError
+HTTP.ReadError
+HTTP.RedirectError
+HTTP.StatusError
+```
+
 ## Server / Handlers
 ```@docs
 HTTP.serve
