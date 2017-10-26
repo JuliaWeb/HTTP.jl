@@ -730,7 +730,7 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
 
             @nread(p - start)
 
-            if p == len
+            if p >= len
                 p -= 1
                 @goto breakout
             end
