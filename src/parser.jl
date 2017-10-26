@@ -1311,7 +1311,7 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
     @debug(PARSING_DEBUG, ParsingStateCode(p_state))
     b = p_state == start_state || p_state == s_dead
     he = b | (headersdone || p_state >= s_headers_done)
-    m = b | (p_state >= s_body_identity_eof)
+    m = b | (p_state >= s_message_done)
     return errno, he, m, String(bytes[p:end])
 
     @label error
