@@ -26,16 +26,16 @@ A type to facilitate connections to remote hosts, send HTTP requests, and manage
 Takes an optional `logger` IO argument where client activity is recorded (defaults to `STDOUT`).
 Additional keyword arguments can be passed that will get transmitted with each HTTP request:
 
-* `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`
+* `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`; default = `nothing`
 * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
 * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
-* `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
-* `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
+* `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection; default = `nothing`
+* `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request; default = 5
 * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
 * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
-* `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
-* `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code
+* `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules); default = `true`
+* `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
 * `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
 """
 mutable struct Client
@@ -395,16 +395,17 @@ Additional keyword arguments supported, include:
 * `headers::Dict{String,String}`: headers given as Dict to be sent with the request
 * `body`: a request body can be given as a `String`, `Vector{UInt8}`, `IO`, `HTTP.FIFOBuffer` or `Dict`; see example below for how to utilize `HTTP.FIFOBuffer` for "streaming" request bodies; a `Dict` argument will be converted to a multipart form upload
 * `stream::Bool=false`: enable response body streaming; depending on the response body size, the request will return before the full body has been received; as the response body is read, additional bytes will be recieved and put in the response body. Readers should read until `eof(response.body) == true`; see below for an example of response streaming
-* `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`
+* `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`; default = `nothing`
 * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
 * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
-* `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
-* `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
+* `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection; default = `nothing`
+* `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request; default = 5
 * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
 * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
 * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
-* `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
-* `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code
+* `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules); default = `true`
+* `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
+* `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
 
 Simple request example:
 ```julia

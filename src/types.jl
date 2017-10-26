@@ -26,16 +26,16 @@ end
 A type to represent various http request options. Lives as a separate type so that options can be set
 at the `HTTP.Client` level to be applied to every request sent. Options include:
 
-  * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`
+  * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`; default = `nothing`
   * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
   * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
-  * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection
-  * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request
+  * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection; default = `nothing`
+  * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request; default = 5
   * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
   * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
   * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
-  * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules)
-  * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code
+  * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules); default = `true`
+  * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
   * `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
 """
 mutable struct RequestOptions
