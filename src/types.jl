@@ -131,7 +131,7 @@ body(r::Request) = r.body
 
 defaultheaders(::Type{Request}) = Headers(
     "User-Agent" => "HTTP.jl/0.0.0",
-    # "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json; charset=utf-8"
+    "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json; charset=utf-8"
 )
 
 function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
