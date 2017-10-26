@@ -154,7 +154,7 @@ function _precompile_()
     @assert precompile(HTTP.Request, (HTTP.Method, HTTP.URI, Dict{String, String}, HTTP.FIFOBuffer))
     @assert precompile(HTTP.request, (HTTP.Request,))
     @assert precompile(HTTP.request, (HTTP.Client, HTTP.Request))
-    @assert precompile(HTTP.request, (HTTP.Client, HTTP.Request, HTTP.RequestOptions, Bool, Vector{HTTP.Response}, Int64, Bool))
+    @assert precompile(HTTP.request, (HTTP.Client, HTTP.Request, HTTP.RequestOptions, Bool, Vector{HTTP.Response}, Int, Bool))
     @static if VERSION < v"0.7-DEV"
         @assert precompile(HTTP.Client, (Base.AbstractIOBuffer{Array{UInt8, 1}}, HTTP.RequestOptions,))
         @assert precompile(HTTP.URIs.printuri, (Base.AbstractIOBuffer{Array{UInt8, 1}}, String, String, String, String, String, String, String,))
