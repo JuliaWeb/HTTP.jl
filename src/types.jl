@@ -10,7 +10,7 @@ sockettype(::Type{https}) = TLS.SSLContext
 schemetype(::Type{TCPSocket}) = http
 schemetype(::Type{TLS.SSLContext}) = https
 
-const Headers = Dict{String,String}
+const Headers = Dict{Any, Any}
 
 const Option{T} = Union{T, Void}
 not(::Void) = true

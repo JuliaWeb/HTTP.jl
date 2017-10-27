@@ -243,8 +243,7 @@ end
 function redirect(response, client, req, opts, stream, history, retry, verbose)
     logger = client.logger
     @log "checking for location to redirect"
-    key = haskey(response.headers, "Location") ? "Location" :
-          haskey(response.headers, "location") ? "location" : ""
+    key = haskey(response.headers, "Location") ? "Location" : ""
     if key != ""
         push!(history, response)
         length(history) > opts.maxredirects::Int && throw(RedirectError(opts.maxredirects::Int))
@@ -407,7 +406,7 @@ an `IOBuffer` for in-memory data, or even an `HTTP.FIFOBuffer`. For complete con
 
 Additional keyword arguments supported, include:
 
-* `headers::Dict{String,String}`: headers given as Dict to be sent with the request
+* `headers::Dict`: headers given as Dict to be sent with the request
 * `body`: a request body can be given as a `String`, `Vector{UInt8}`, `IO`, `HTTP.FIFOBuffer` or `Dict`; see example below for how to utilize `HTTP.FIFOBuffer` for "streaming" request bodies; a `Dict` argument will be converted to a multipart form upload
 * `stream::Bool=false`: enable response body streaming; depending on the response body size, the request will return before the full body has been received; as the response body is read, additional bytes will be recieved and put in the response body. Readers should read until `eof(response.body) == true`; see below for an example of response streaming
 * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`; default = `nothing`

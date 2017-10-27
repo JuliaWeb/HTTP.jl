@@ -8,7 +8,7 @@
 
 @test HTTP.status(HTTP.Response(300)) == 300
 @test String(HTTP.body(HTTP.Response("hello world"))) == "hello world"
-@test HTTP.status(HTTP.Response(300, Dict{String,String}(), "")) == 300
+@test HTTP.status(HTTP.Response(300, HTTP.Headers(), "")) == 300
 
 @test HTTP.Response(200) == HTTP.Response(200)
 
