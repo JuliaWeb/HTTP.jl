@@ -271,6 +271,7 @@ function getbytes(socket, tm)
         buffer = @retry @timeout(tm, readavailable(socket), error("read timeout"))
         return buffer, CLOSED_ERROR
     catch e
+        isa(e, InterruptException) && throw(e)
         return UInt8[], ReadError(e, backtrace())
     end
 end
@@ -279,16 +280,17 @@ function processresponse!(client, conn, response, host, method, maintask, stream
     logger = client.logger
     while true
         buffer, err = getbytes(conn.socket, tm)
-        if length(buffer) == 0 && !isopen(conn.socket)
+        @log "received bytes from the wire, processing"
+        # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
+        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method, maintask=maintask, canonicalizeheaders=canonicalizeheaders)
+        @log "parsed bytes received from wire"
+        if length(buffer) == 0 && !isopen(conn.socket) && !messagecomplete
             @log "socket closed before full response received"
             dead!(conn)
             close(response.body)
             # retry the entire request
             return false, err
         end
-        @log "received bytes from the wire, processing"
-        # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
-        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method, maintask=maintask, canonicalizeheaders=canonicalizeheaders)
         if errno != HPE_OK
             dead!(conn)
             throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])\nCurrent response buffer contents: $(String(buffer))"))
