@@ -10,7 +10,7 @@ sockettype(::Type{https}) = TLS.SSLContext
 schemetype(::Type{TCPSocket}) = http
 schemetype(::Type{TLS.SSLContext}) = https
 
-const Headers = Dict{Any, Any}
+const Headers = Dict{String, String}
 
 const Option{T} = Union{T, Void}
 not(::Void) = true
@@ -133,8 +133,9 @@ defaultheaders(::Type{Request}) = Headers(
     "User-Agent" => "HTTP.jl/0.0.0",
     "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json; charset=utf-8"
 )
+makeheaders(d::Dict) = Headers((string(k), string(v)) for (k, v) in d)
 
-function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
+function Request(m::HTTP.Method, uri::URI, userheaders::Dict, b;
                     options::RequestOptions=RequestOptions(),
                     verbose::Bool=false,
                     logger::Option{IO}=STDOUT)
@@ -163,7 +164,7 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Headers, b;
         headers["Content-Type"] = sn
         @log "setting Content-Type header to: $sn"
     end
-    return Request(m, Int16(1), Int16(1), uri, merge!(headers, userheaders), body)
+    return Request(m, Int16(1), Int16(1), uri, merge!(headers, makeheaders(userheaders)), body)
 end
 
 Request(method, uri, h=Headers(), body=""; options::RequestOptions=RequestOptions(), logger::Option{IO}=STDOUT, verbose::Bool=false) =

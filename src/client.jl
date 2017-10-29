@@ -363,7 +363,7 @@ request(client::Client, req::Request;
 
 # build Request
 function request(client::Client, method, uri::URI;
-                 headers::Headers=Headers(),
+                 headers::Dict=Headers(),
                  body=FIFOBuffers.EMPTYBODY,
                  stream::Bool=false,
                  verbose::Bool=false,
