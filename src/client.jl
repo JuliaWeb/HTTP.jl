@@ -301,11 +301,13 @@ function processresponse!(client, conn, response, host, method, maintask, stream
         elseif stream && headerscomplete
             @log "processing the rest of response asynchronously"
             response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, tm, canonicalizeheaders, false)
-            return true, nothing
+            return true, StatusError(status(response), response)
         end
     end
     # shouldn't ever reach here
     dead!(conn)
+    @assert false
+    # FIXME Can't return ::Bool without ::Exception
     return false
 end
 
@@ -327,6 +329,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     reset!(client.parser)
     success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, opts.canonicalizeheaders::Bool, verbose)
     if !success
+        @assert err != nothing
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
     end
@@ -336,9 +339,11 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     if opts.allowredirects::Bool && req.method != HEAD && (300 <= status(response) < 400)
         return redirect(response, client, req, opts, stream, history, retry, verbose)
     end
-    if success && ((200 <= status(response) < 300) || !opts.statusraise::Bool)
+    @assert success
+    if (200 <= status(response) < 300) || !opts.statusraise::Bool
         return response
     else
+        @assert err != nothing
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
     end
