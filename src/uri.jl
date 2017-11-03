@@ -136,10 +136,11 @@ function printuri(io::IO, sch::String, userinfo::String, hostname::String, port:
     print(io, path, isempty(query) ? "" : "?$query", isempty(fragment) ? "" : "#$fragment")
 end
 
-function queryparams(uri::URI)
+queryparams(uri::URI) = queryparams(query(uri))
+function queryparams(q::AbstractString)
     Dict(unescape(k) => unescape(v)
         for (k,v) in ([split(e, "=")..., ""][1:2]
-            for e in split(query(uri), "&", keep=false)))
+            for e in split(q, "&", keep=false)))
 end
 
 # Validate known URI formats
