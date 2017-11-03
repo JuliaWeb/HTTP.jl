@@ -186,16 +186,9 @@ escape(key, value) = string(escape(key), "=", escape(value))
 escape(key, values::Vector) = escape(key => v for v in values)
 escape(query) = join((escape(k, v) for (k,v) in query), "&")
 
-function needtounescape(str)
-    for b in str
-        b == '%' && return true
-    end
-    return false
-end
-
 "unescape a percent-encoded uri/url"
 function unescape(str)
-    needtounescape(str) || return str
+    contains(str, "%") || return str
     out = IOBuffer()
     i = 1
     while !done(str, i)
