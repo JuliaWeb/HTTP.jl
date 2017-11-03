@@ -14,7 +14,7 @@ export URI, URL,
        hasport, port,
        resource, host,
        escape, unescape,
-       splitpath
+       splitpath, queryparams
 
 """
     HTTP.URL(host; userinfo="", path="", query="", fragment="", isconnect=false)
@@ -134,6 +134,12 @@ function printuri(io::IO, sch::String, userinfo::String, hostname::String, port:
         path = (!isempty(sch) && sch == "http" || sch == "https") ? string("/", path) : path
     end
     print(io, path, isempty(query) ? "" : "?$query", isempty(fragment) ? "" : "#$fragment")
+end
+
+function queryparams(uri::URI)
+    Dict(unescape(k) => unescape(v)
+        for (k,v) in ([split(e, "=")..., ""][1:2]
+            for e in split(query(uri), "&", keep=false)))
 end
 
 # Validate known URI formats
