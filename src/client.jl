@@ -302,12 +302,9 @@ function processresponse!(client, conn, response, host, method, maintask, stream
         elseif stream && headerscomplete
             @log "processing the rest of response asynchronously"
             response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, tm, canonicalizeheaders, false)
-            return true, nothing
+            return true, StatusError(status(response), response)
         end
     end
-    # shouldn't ever reach here
-    dead!(conn)
-    return false
 end
 
 function request(client::Client, req::Request, opts::RequestOptions, stream::Bool, history::Vector{Response}, retry::Int, verbose::Bool)
@@ -337,7 +334,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     if opts.allowredirects::Bool && req.method != HEAD && (300 <= status(response) < 400)
         return redirect(response, client, req, opts, stream, history, retry, verbose)
     end
-    if success && ((200 <= status(response) < 300) || !opts.statusraise::Bool)
+    if (200 <= status(response) < 300) || !opts.statusraise::Bool
         return response
     else
         retry >= opts.retries::Int && throw(err)
