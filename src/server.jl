@@ -39,6 +39,7 @@ mutable struct ServerOptions
     maxbody::Int64
     support100continue::Bool
     chunksize::Union{Void, Int}
+    logbody::Bool
 end
 
 ServerOptions(; tlsconfig::HTTP.TLS.SSLConfig=HTTP.TLS.SSLConfig(true),
@@ -48,8 +49,9 @@ ServerOptions(; tlsconfig::HTTP.TLS.SSLConfig=HTTP.TLS.SSLConfig(true),
                 maxheader::Int64=HTTP.DEFAULT_MAX_HEADER,
                 maxbody::Int64=HTTP.DEFAULT_MAX_BODY,
                 support100continue::Bool=true,
-                chunksize::Union{Void, Int}=nothing) =
-    ServerOptions(tlsconfig, readtimeout, ratelimit, maxbody, maxuri, maxheader, support100continue, chunksize)
+                chunksize::Union{Void, Int}=nothing,
+                logbody::Bool=true) =
+    ServerOptions(tlsconfig, readtimeout, ratelimit, maxbody, maxuri, maxheader, support100continue, chunksize, logbody)
 
 """
     Server(handler, logger::IO=STDOUT; kwargs...)
@@ -71,6 +73,7 @@ Supported keyword arguments include:
   * `maxheader`: the maximum size in bytes that request headers can be; default 8kb
   * `maxbody`: the maximum size in bytes that a request body can be; default 4gb
   * `support100continue`: a `Bool` indicating whether `Expect: 100-continue` headers should be supported for delayed request body sending; default = `true`
+  * `logbody`: whether the Response body should be logged when `verbose=true` logging is enabled; default = `true`
 """
 mutable struct Server{T <: HTTP.Scheme, H <: HTTP.Handler}
     handler::H

@@ -38,6 +38,7 @@ Additional keyword arguments can be passed that will get transmitted with each H
 * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
 * `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
 * `canonicalizeheaders::Bool`: whether header field names should be canonicalized in responses, e.g. `content-type` is canonicalized to `Content-Type`; default = `true`
+* `logbody::Bool`: whether the request body should be logged when `verbose=true` is passed; default = `true`
 """
 mutable struct Client
     # connection pools for keep-alive; key is host
@@ -59,7 +60,7 @@ Client(logger::Option{IO}, options::RequestOptions) = Client(Dict{String, Vector
                                                      Parser(), logger, options, 1)
 
 # this is where we provide all the default request options
-const DEFAULT_OPTIONS = :((nothing, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true, false, true))
+const DEFAULT_OPTIONS = :((nothing, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true, false, true, true))
 
 @eval begin
     Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
@@ -421,6 +422,7 @@ Additional keyword arguments supported, include:
 * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
 * `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
 * `canonicalizeheaders::Bool`: whether header field names should be canonicalized in responses, e.g. `content-type` is canonicalized to `Content-Type`; default = `true`
+* `logbody::Bool`: whether the request body should be logged when `verbose=true` is passed; default = `true`
 
 Simple request example:
 ```julia
