@@ -186,8 +186,16 @@ escape(key, value) = string(escape(key), "=", escape(value))
 escape(key, values::Vector) = escape(key => v for v in values)
 escape(query) = join((escape(k, v) for (k,v) in query), "&")
 
+function needtounescape(str)
+    for b in str
+        b == '%' && return true
+    end
+    return false
+end
+
 "unescape a percent-encoded uri/url"
 function unescape(str)
+    needtounescape(str) || return str
     out = IOBuffer()
     i = 1
     while !done(str, i)
@@ -207,11 +215,10 @@ end
 Splits the path into components
 See: http://tools.ietf.org/html/rfc3986#section-3.3
 """
-function splitpath(uri::URI, starting=2)
-    return splitpath(path(uri), starting)
-end
+function splitpath end
 
-function splitpath(p::String, starting=2)
+splitpath(uri::URI) = splitpath(path(uri))
+function splitpath(p::String)
     elems = String[]
     len = length(p)
     len > 1 || return elems
