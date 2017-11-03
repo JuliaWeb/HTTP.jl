@@ -12,6 +12,10 @@ import Base.==
 const DEBUG = false
 const PARSING_DEBUG = false
 
+if VERSION > v"0.7-DEV"
+    using Base64
+end
+
 struct ParsingError <: Exception
     msg::String
 end
