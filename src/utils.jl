@@ -171,3 +171,17 @@ function canonicalize!(s::String)
     end
     return s
 end
+
+iso8859_1_to_utf8(str::String) = iso8859_1_to_utf8(Vector{UInt8}(str))
+function iso8859_1_to_utf8(bytes::Vector{UInt8})
+    io = IOBuffer()
+    for b in bytes
+        if b < 0x80
+            write(io, b)
+        else
+            write(io, 0xc0 | b >> 6)
+            write(io, 0x80 | b & 0x3f)
+        end
+    end
+    return String(take!(io))
+end

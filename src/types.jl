@@ -235,7 +235,13 @@ history(r::Response) = r.history
 statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
 body(r::Union{Request, Response}) = r.body
 Base.take!(r::Union{Request, Response}) = readavailable(body(r))
-Base.String(r::Union{Request, Response}) = String(body(r))
+function Base.String(r::Union{Request, Response})
+    if contains(Base.get(headers(r), "Content-Type", ""), "ISO-8859-1")
+        return iso8859_1_to_utf8(String(body(r)))
+    else
+        return String(body(r))
+    end
+end
 
 Response(; status::Int=200,
          cookies::Vector{Cookie}=Cookie[],
