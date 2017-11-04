@@ -110,15 +110,15 @@ function onbody(r, maintask, bytes, i, j)
     @debug(PARSING_DEBUG, String(bytes[i:j]))
     len = j - i + 1
     #TODO: avoid copying the bytes here? can we somehow write the bytes to a FIFOBuffer more efficiently?
-    nb = write(r.body, bytes, i, j)
+    nb = write(r.body, bytes[i:j])
     if nb < len # didn't write all available bytes
         if current_task() == maintask
             # main request function hasn't returned yet, so not safe to wait
             r.body.max += len - nb
-            write(r.body, bytes, i + nb, j)
+            write(r.body, bytes[i + nb:j])
         else
             while nb < len
-                nb += write(r.body, bytes, i + nb, j)
+                nb += write(r.body, bytes[i + nb:j])
             end
         end
     end

@@ -88,6 +88,11 @@ for sch in ("http", "https")
     @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=f)) == 200
 
     # chunksize
+    #
+    #     FIXME
+    #     Currently httpbin.org responds with 411 status and “Length Required”
+    #     message to any POST/PUT requests that are sent using chunked encoding
+    #     See https://github.com/kennethreitz/httpbin/issues/340#issuecomment-330176449
     println("client transfer-encoding chunked")
     @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body="hey", chunksize=2)) == 200
     @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], chunksize=2)) == 200
@@ -152,7 +157,7 @@ for sch in ("http", "https")
         f = HTTP.FIFOBuffer()
         write(f, "hey")
         t = @async HTTP.post("$sch://httpbin.org/post"; body=f)
-        wait(f) # wait for the async call to write it's first data
+        Base.wait_readnb(f, 1) # wait for the async call to write it's first data
         write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
         write(f, "sailor")
         close(f) # setting eof on f causes the async request to send a final chunk and return the response

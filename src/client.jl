@@ -301,7 +301,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
             return true, StatusError(status(response), response)
         elseif stream && headerscomplete
             @log "processing the rest of response asynchronously"
-            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, tm, canonicalizeheaders, false)
+            @async processresponse!(client, conn, response, host, method, maintask, false, tm, canonicalizeheaders, false)
             return true, StatusError(status(response), response)
         end
     end
@@ -321,7 +321,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     p = port(u)
     conn = @retryif ClosedError 4 connectandsend(client, sch, host, ifelse(p == "", "80", p), req, opts, verbose)
     
-    response = Response(stream ? 2^24 : FIFOBuffers.DEFAULT_MAX, req)
+    response = Response(req)
     reset!(client.parser)
     success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, opts.canonicalizeheaders::Bool, verbose)
     if !success
@@ -362,7 +362,7 @@ request(client::Client, req::Request;
 # build Request
 function request(client::Client, method, uri::URI;
                  headers::Dict=Headers(),
-                 body=FIFOBuffers.EMPTYBODY,
+                 body=FIFOBuffer(),
                  stream::Bool=false,
                  verbose::Bool=false,
                  args...)

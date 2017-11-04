@@ -93,7 +93,6 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
     HTTP.@log "processing on connection i=$i..."
     try
         tsk = @async begin
-            request.body.task = current_task()
             while isopen(tcp)
                 update!(rl, server.options.ratelimit)
                 if rl.allowance > rate
