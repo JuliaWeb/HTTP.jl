@@ -159,8 +159,8 @@ function Request(m::HTTP.Method, uri::URI, userheaders::Dict, b;
     else
         body = FIFOBuffer(b)
     end
-    if iscompressed(body) && length(body) > get(opts, :chunksize, 0)
-        opts.chunksize = length(body) + 1
+    if iscompressed(body) && length(body) > get(options, :chunksize, 0)
+        options.chunksize = length(body) + 1
     end
     if !haskey(headers, "Content-Type") && length(body) > 0 && !isa(body, Form)
         sn = sniff(body)
