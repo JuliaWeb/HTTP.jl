@@ -34,7 +34,7 @@ To access and return these components as strings, use the various accessor metho
   * `HTTP.userinfo`: returns the userinfo (if any) associated with the uri
   * `HTTP.hostname`: returns the hostname only of the uri
   * `HTTP.port`: returns the port of the uri; will return "80" or "443" by default if the scheme is "http" or "https", respectively
-  * `HTTP.host`: returns the "hostname:port" combination
+  * `HTTP.host`: returns the "hostname:port" combination; if the port is not provided or is the default port for the uri scheme, it will be omitted
   * `HTTP.path`: returns the path for a uri
   * `HTTP.query`: returns the query for a uri
   * `HTTP.fragment`: returns the fragment for a uri
@@ -111,7 +111,16 @@ function port(uri::URI)
 end
 
 resource(uri::URI; isconnect::Bool=false) = isconnect ? host(uri) : path(uri) * (isempty(query(uri)) ? "" : "?$(query(uri))") * (isempty(fragment(uri)) ? "" : "#$(fragment(uri))")
-host(uri::URI) = hostname(uri) * (isempty(port(uri)) ? "" : ":$(port(uri))")
+function host(uri::URI)
+    h = hostname(uri)
+    sch = scheme(uri)
+    p = String(uri.data[uri.offsets[Int(UF_PORT)]])
+    if isempty(p) || (sch == "http" && p == "80") || (sch == "https" && p == "443")
+        return h
+    else
+        return string(h, p)
+    end
+end
 
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
 
