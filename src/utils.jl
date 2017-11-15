@@ -51,14 +51,19 @@ checking if `expr` has finished executing (short for polling interval).
 """
 macro timeout(t, expr, then, pollint=0.01)
     return quote
-        tm = Float64($(esc(t)))
-        start = time()
-        tsk = @async $(esc(expr))
-        while !istaskdone(tsk) && (time() - start < tm)
-            sleep($pollint)
+        if $(esc(t)) == Inf
+            $(esc(expr))
+        else
+            tm = Float64($(esc(t)))
+            start = time()
+            tsk = @async $(esc(expr))
+            yield()
+            while !istaskdone(tsk) && (time() - start < tm)
+                sleep($pollint)
+            end
+            istaskdone(tsk) || $(esc(then))
+            wait(tsk)
         end
-        istaskdone(tsk) || $(esc(then))
-        tsk.result
     end
 end
 
