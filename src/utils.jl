@@ -190,3 +190,16 @@ function iso8859_1_to_utf8(bytes::Vector{UInt8})
     end
     return String(take!(io))
 end
+
+macro lock(l, expr)
+    esc(quote
+        lock($l)
+        try
+            $expr
+        catch
+            rethrow()
+        finally
+            unlock($l)
+        end
+    end)
+end
