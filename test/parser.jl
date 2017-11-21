@@ -1365,7 +1365,7 @@ const responses = Message[
           @test HTTP.port(HTTP.uri(r)) in (req.port, "80", "443")
           @test string(HTTP.uri(r)) == req.request_url
           @test length(HTTP.headers(r)) == req.num_headers
-          @test HTTP.headers(r) == req.headers
+          @test HTTP.canonicalizeheaders(HTTP.headers(r)) == req.headers
           @test String(readavailable(HTTP.body(r))) == req.body
           @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == req.should_keep_alive
           @test upgrade[] == req.upgrade
@@ -1537,7 +1537,7 @@ const responses = Message[
           @test HTTP.status(r) == resp.status_code
           @test HTTP.statustext(r) == resp.response_status
           @test length(HTTP.headers(r)) == resp.num_headers
-          @test HTTP.headers(r) == resp.headers
+          @test HTTP.canonicalizeheaders(HTTP.headers(r)) == resp.headers
           @test String(readavailable(HTTP.body(r))) == resp.body
           @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == resp.should_keep_alive
       end

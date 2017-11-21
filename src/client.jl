@@ -281,13 +281,13 @@ function getbytes(socket, tm)
     end
 end
 
-function processresponse!(client, conn, response, host, method, maintask, stream, tm, canonicalizeheaders, verbose)
+function processresponse!(client, conn, response, host, method, maintask, stream, tm, verbose)
     logger = client.logger
     while true
         buffer, err = getbytes(conn.socket, tm)
         @log "received bytes from the wire, processing"
         # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
-        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, conn.parser, buffer; host=host, method=method, maintask=maintask, canonicalizeheaders=canonicalizeheaders)
+        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, conn.parser, buffer; host=host, method=method, maintask=maintask)
         @log "parsed bytes received from wire"
         if length(buffer) == 0 && !isopen(conn.socket) && !messagecomplete
             @log "socket closed before full response received"
@@ -306,7 +306,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
             return true, StatusError(status(response), response)
         elseif stream && headerscomplete
             @log "processing the rest of response asynchronously"
-            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, tm, canonicalizeheaders, false)
+            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, tm, false)
             return true, StatusError(status(response), response)
         end
     end
@@ -328,12 +328,15 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     
     response = Response(stream ? 2^24 : FIFOBuffers.DEFAULT_MAX, req)
     reset!(conn.parser)
-    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, opts.canonicalizeheaders::Bool, verbose)
+    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, verbose)
     if !success
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
     end
     @log "received response"
+    if opts.canonicalizeheaders::Bool
+        response.headers = canonicalizeheaders(response.headers)
+    end
     opts.managecookies::Bool && !isempty(response.cookies) && (@log("caching received cookies for host: " * join(map(x->x.name, response.cookies), ", ")); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
     response.history = history
     if opts.allowredirects::Bool && req.method != HEAD && (300 <= status(response) < 400)

@@ -161,8 +161,8 @@ macro strictcheck(cond)
 end
 
 # ensure the first character and subsequent characters that follow a '-' are uppercase
-function canonicalize!(s::String)
-    toUpper = UInt8('A') - UInt8('a')
+function tocameldash!(s::String)
+    const toUpper = UInt8('A') - UInt8('a')
     bytes = Vector{UInt8}(s)
     upper = true
     for i = 1:length(bytes)
@@ -176,6 +176,8 @@ function canonicalize!(s::String)
     end
     return s
 end
+
+canonicalizeheaders{T}(h::T) = T(tocameldash!(k) => v for (k,v) in h)
 
 iso8859_1_to_utf8(str::String) = iso8859_1_to_utf8(Vector{UInt8}(str))
 function iso8859_1_to_utf8(bytes::Vector{UInt8})
