@@ -89,8 +89,8 @@ Message(name= "curl get"
   , "Connection"=> "keep-alive"
 )
 ,body= ""
-), Message(name= "dumbfuck"
-,raw= "GET /dumbfuck HTTP/1.1\r\n" *
+), Message(name= "abcdefgh"
+,raw= "GET /abcdefgh HTTP/1.1\r\n" *
        "aaaaaaaaaaaaa:++++++++++\r\n" *
        "\r\n"
 ,should_keep_alive= true
@@ -99,8 +99,8 @@ Message(name= "curl get"
 ,method= HTTP.GET
 ,query_string= ""
 ,fragment= ""
-,request_path= "/dumbfuck"
-,request_url= "/dumbfuck"
+,request_path= "/abcdefgh"
+,request_url= "/abcdefgh"
 ,num_headers= 1
 ,headers=Dict{String,String}(
     "Aaaaaaaaaaaaa"=>  "++++++++++"
@@ -256,11 +256,11 @@ Message(name= "curl get"
   , "Content-Type"=> "text/plain"
 )
 ,body= "hello world"
-), Message(name= "with bullshit after the length"
-,raw= "POST /chunked_w_bullshit_after_length HTTP/1.1\r\n" *
+), Message(name= "with excessss after the length"
+,raw= "POST /chunked_w_excessss_after_length HTTP/1.1\r\n" *
        "Transfer-Encoding: chunked\r\n" *
        "\r\n" *
-       "5; ihatew3;whatthefuck=aretheseparametersfor\r\nhello\r\n" *
+       "5; ihatew3;whattheheck=aretheseparametersfor\r\nhello\r\n" *
        "6; blahblah; blah\r\n world\r\n" *
        "0\r\n" *
        "\r\n"
@@ -270,8 +270,8 @@ Message(name= "curl get"
 ,method= HTTP.POST
 ,query_string= ""
 ,fragment= ""
-,request_path= "/chunked_w_bullshit_after_length"
-,request_url= "/chunked_w_bullshit_after_length"
+,request_path= "/chunked_w_excessss_after_length"
+,request_url= "/chunked_w_excessss_after_length"
 ,num_headers= 1
 ,headers=Dict{String,String}(
     "Transfer-Encoding"=> "chunked"
@@ -1719,7 +1719,7 @@ const responses = Message[
       @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n" * "name\r\n" * " : value\r\n\r\n")
 
       reqstr = "GET / HTTP/1.1\r\n" *
-      "X-SSL-Bullshit:   -----BEGIN CERTIFICATE-----\r\n" *
+      "X-SSL-FoooBarr:   -----BEGIN CERTIFICATE-----\r\n" *
       "\tMIIFbTCCBFWgAwIBAgICH4cwDQYJKoZIhvcNAQEFBQAwcDELMAkGA1UEBhMCVUsx\r\n" *
       "\tETAPBgNVBAoTCGVTY2llbmNlMRIwEAYDVQQLEwlBdXRob3JpdHkxCzAJBgNVBAMT\r\n" *
       "\tAkNBMS0wKwYJKoZIhvcNAQkBFh5jYS1vcGVyYXRvckBncmlkLXN1cHBvcnQuYWMu\r\n" *
