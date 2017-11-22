@@ -643,7 +643,10 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
                 ch = Char(bytes[p])
                 @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
                 c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
-                c == Char(0) && break
+                if c == Char(0)
+                    @errorif(ch != ':', HPE_INVALID_HEADER_TOKEN)
+                    break
+                end
                 h = parser.header_state
                 if h == h_general
                     @debug(PARSING_DEBUG, parser.header_state)
@@ -733,10 +736,6 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
 
             @nread(p - start)
 
-            if p >= len
-                p -= 1
-                @goto breakout
-            end
             if ch == ':'
                 p_state = s_header_value_discard_ws
                 parser.state = p_state
@@ -744,7 +743,7 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
                 onheaderfield(parser, bytes, header_field_mark, p - 1)
                 header_field_mark = 0
             else
-                @err(HPE_INVALID_HEADER_TOKEN)
+                @assert tokens[Int(ch)+1] != Char(0) || !strict && ch == ' '
             end
 
         elseif p_state == s_header_value_discard_ws
@@ -972,10 +971,6 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
             parser.header_state = h
 
             @nread(p - start)
-
-            if p == len
-                p -= 1
-            end
 
         elseif p_state == s_header_almost_done
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))

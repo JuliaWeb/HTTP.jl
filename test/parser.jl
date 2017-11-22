@@ -1535,10 +1535,13 @@ const responses = Message[
               p = HTTP.DEFAULT_PARSER
               HTTP.reset!(p)
               r = HTTP.Response(body=FIFOBuffer())
-              for x in Vector{UInt8}(resp.raw)
-                  @show Char(x)
-                  err, hc, mc, ug = HTTP.parse!(r, p, [x])
-                  err != HTTP.HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
+              bytes = Vector{UInt8}(resp.raw)
+              sz = 1
+              for i in 1:sz:length(bytes)
+                  x = bytes[i:i+sz-1]
+                  #@show [Char(x[i]) for i in 1:sz]
+                  err, hc, mc, ug = HTTP.parse!(r, p, x)
+                  err != HTTP.HPE_OK && throw(HTTP.ParsingError(HTTP.ParsingErrorCodeMap[err]))
               end
           elseif t == "B"
               r = HTTP.parse(HTTP.Response, resp.raw)
