@@ -1350,10 +1350,25 @@ const responses = Message[
 @testset "HTTP.parse" begin
 
   @testset "HTTP.parse(HTTP.Request, str)" begin
-      for req in requests
-          println("TEST - parser.jl - Request: $(req.name)")
+      for req in requests, t in ["A", "B"]
+          println("TEST - parser.jl - Request $t: $(req.name)")
           upgrade = Ref{String}()
-          r = HTTP.parse(HTTP.Request, req.raw; extra=upgrade)
+          if t == "A"
+              p = HTTP.DEFAULT_PARSER
+              HTTP.reset!(p)
+              r = HTTP.Request(body=FIFOBuffer())
+              bytes = Vector{UInt8}(req.raw)
+              sz = 1
+              for i in 1:sz:length(bytes)
+                  x = bytes[i:i+sz-1]
+                  #@show [Char(x[i]) for i in 1:sz]
+                  err, hc, mc, ug = HTTP.parse!(r, p, x)
+                  err != HTTP.HPE_OK && throw(HTTP.ParsingError(HTTP.ParsingErrorCodeMap[err]))
+                  upgrade[] = ug
+              end
+          else
+              r = HTTP.parse(HTTP.Request, req.raw; extra=upgrade)
+          end
           @test HTTP.major(r) == req.http_major
           @test HTTP.minor(r) == req.http_minor
           @test HTTP.method(r) == req.method
