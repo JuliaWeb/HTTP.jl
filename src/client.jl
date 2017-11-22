@@ -288,6 +288,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
         @log "received bytes from the wire, processing"
         # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
         errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, conn.parser, buffer; host=host, method=method, maintask=maintask)
+        response.status = conn.parser.status
         if messagecomplete
             close(response.body)
         end

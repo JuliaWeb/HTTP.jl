@@ -35,9 +35,14 @@ mutable struct Parser
     fieldbuffer::Vector{UInt8}
     valuebuffer::Vector{UInt8}
     previous_field::Ref{String}
+    method::HTTP.Method
+    major::Int16
+    minor::Int16
+    url::HTTP.URI
+    status::Int32
 end
 
-Parser() = Parser(start_state, 0x00, 0, 0, 0, 0, UInt8[], UInt8[], Ref{String}())
+Parser() = Parser(start_state, 0x00, 0, 0, 0, 0, UInt8[], UInt8[], Ref{String}(), Method(0), 0, 0, HTTP.URI(), 0)
 
 const DEFAULT_PARSER = Parser()
 
@@ -51,6 +56,11 @@ function reset!(p::Parser)
     empty!(p.fieldbuffer)
     empty!(p.valuebuffer)
     p.previous_field = Ref{String}()
+    p.method = Method(0)
+    p.major = 0
+    p.minor = 0
+    p.url = HTTP.URI()
+    p.status = 0
     return
 end
 
@@ -61,14 +71,14 @@ function onurlbytes(p::Parser, bytes, i, j)
     return
 end
 
-function onurl(p::Parser, r)
+function onurl(p::Parser)
     @debug(PARSING_DEBUG, "onurl")
     @debug(PARSING_DEBUG, String(p.valuebuffer))
-    @debug(PARSING_DEBUG, r.method)
+    @debug(PARSING_DEBUG, p.method)
     url = copy(p.valuebuffer)
-    uri = URIs.http_parser_parse_url(url, 1, length(url), r.method == CONNECT)
+    uri = URIs.http_parser_parse_url(url, 1, length(url), p.method == CONNECT)
     @debug(PARSING_DEBUG, uri)
-    setfield!(r, :uri, uri)
+    p.url = uri
     empty!(p.valuebuffer)
     return
 end
@@ -102,6 +112,7 @@ function onheadervalue(p, r, bytes, i, j, issetcookie, host)
         val2 = get!(r.headers, key, val)
         val2 !== val && setindex!(r.headers, string(val2, ", ", val), key)
     end
+    @assert !issetcookie || isa(r, Response)
     issetcookie && push!(r.cookies, Cookies.readsetcookie(host, val))
     empty!(p.fieldbuffer)
     empty!(p.valuebuffer)
@@ -145,6 +156,14 @@ function parse(T::Type{<:Union{Request, Response}}, str;
     reset!(DEFAULT_PARSER)
     err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str);
         maintask=maintask)
+    if T == Request
+        r.uri = DEFAULT_PARSER.url
+        r.method = DEFAULT_PARSER.method
+    else
+        r.status = DEFAULT_PARSER.status
+    end
+    r.major = DEFAULT_PARSER.major
+    r.minor = DEFAULT_PARSER.minor
     err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
     if upgrade != nothing
         extra[] = upgrade
@@ -238,7 +257,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                 p_state = s_res_HT
             else
                 @errorif(ch != 'E', HPE_INVALID_CONSTANT)
-                r.method = HEAD
+                parser.method = HEAD
                 parser.index = 3
                 p_state = s_req_method
             end
@@ -278,7 +297,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
         elseif p_state == s_res_first_http_major
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
-            r.major = Int16(ch - '0')
+            parser.major = Int16(ch - '0')
             p_state = s_res_http_major
 
         #= major HTTP version or dot =#
@@ -289,15 +308,15 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                 @goto breakout
             end
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
-            r.major *= Int16(10)
-            r.major += Int16(ch - '0')
+            parser.major *= Int16(10)
+            parser.major += Int16(ch - '0')
             @errorif(r.major > 999, HPE_INVALID_VERSION)
 
         #= first digit of minor HTTP version =#
         elseif p_state == s_res_first_http_minor
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
-            r.minor = Int16(ch - '0')
+            parser.minor = Int16(ch - '0')
             p_state = s_res_http_minor
 
         #= minor HTTP version or end of request line =#
@@ -308,9 +327,9 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                 @goto breakout
             end
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
-            r.minor *= Int16(10)
-            r.minor += Int16(ch - '0')
-            @errorif(r.minor > 999, HPE_INVALID_VERSION)
+            parser.minor *= Int16(10)
+            parser.minor += Int16(ch - '0')
+            @errorif(parser.minor > 999, HPE_INVALID_VERSION)
 
         elseif p_state == s_res_first_status_code
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -318,7 +337,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                 ch == ' ' && @goto breakout
                 @err(HPE_INVALID_STATUS)
             end
-            r.status = Int32(ch - '0')
+            parser.status = Int32(ch - '0')
             p_state = s_res_status_code
 
         elseif p_state == s_res_status_code
@@ -334,9 +353,9 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                     @err(HPE_INVALID_STATUS)
                 end
             else
-                r.status *= Int32(10)
-                r.status += Int32(ch - '0')
-                @errorif(r.status > 999, HPE_INVALID_STATUS)
+                parser.status *= Int32(10)
+                parser.status += Int32(ch - '0')
+                @errorif(parser.status > 999, HPE_INVALID_STATUS)
             end
 
         elseif p_state == s_res_status_start
@@ -375,39 +394,39 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
             parser.content_length = ULLONG_MAX
             @errorif(!isalpha(ch), HPE_INVALID_METHOD)
 
-            r.method = Method(0)
+            parser.method = Method(0)
             parser.index = 2
 
             if ch == 'A'
-                r.method = ACL
+                parser.method = ACL
             elseif ch == 'B'
-                r.method = BIND
+                parser.method = BIND
             elseif ch == 'C'
-                r.method = CONNECT
+                parser.method = CONNECT
             elseif ch == 'D'
-                r.method = DELETE
+                parser.method = DELETE
             elseif ch == 'G'
-                r.method = GET
+                parser.method = GET
             elseif ch == 'H'
-                r.method = HEAD
+                parser.method = HEAD
             elseif ch == 'L'
-                r.method = LOCK
+                parser.method = LOCK
             elseif ch == 'M'
-                r.method = MKCOL
+                parser.method = MKCOL
             elseif ch == 'N'
-                r.method = NOTIFY
+                parser.method = NOTIFY
             elseif ch == 'O'
-                r.method = OPTIONS
+                parser.method = OPTIONS
             elseif ch == 'P'
-                r.method = POST
+                parser.method = POST
             elseif ch == 'R'
-                r.method = REPORT
+                parser.method = REPORT
             elseif ch == 'S'
-                r.method = SUBSCRIBE
+                parser.method = SUBSCRIBE
             elseif ch == 'T'
-                r.method = TRACE
+                parser.method = TRACE
             elseif ch == 'U'
-                r.method = UNLOCK
+                parser.method = UNLOCK
             else
                 @err(HPE_INVALID_METHOD)
             end
@@ -416,7 +435,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
 
         elseif p_state == s_req_method
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-            matcher = string(r.method)
+            matcher = string(parser.method)
             @debug(PARSING_DEBUG, matcher)
             @debug(PARSING_DEBUG, parser.index)
             @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
@@ -427,47 +446,47 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
             elseif ch == matcher[parser.index]
                 @debug(PARSING_DEBUG, "nada")
             elseif isalpha(ch)
-                ci = @shifted(r.method, Int(parser.index) - 1, ch)
+                ci = @shifted(parser.method, Int(parser.index) - 1, ch)
                 if ci == @shifted(POST, 1, 'U')
-                    r.method = PUT
+                    parser.method = PUT
                 elseif ci == @shifted(POST, 1, 'A')
-                    r.method =  PATCH
+                    parser.method =  PATCH
                 elseif ci == @shifted(CONNECT, 1, 'H')
-                    r.method =  CHECKOUT
+                    parser.method =  CHECKOUT
                 elseif ci == @shifted(CONNECT, 2, 'P')
-                    r.method =  COPY
+                    parser.method =  COPY
                 elseif ci == @shifted(MKCOL, 1, 'O')
-                    r.method =  MOVE
+                    parser.method =  MOVE
                 elseif ci == @shifted(MKCOL, 1, 'E')
-                    r.method =  MERGE
+                    parser.method =  MERGE
                 elseif ci == @shifted(MKCOL, 2, 'A')
-                    r.method =  MKACTIVITY
+                    parser.method =  MKACTIVITY
                 elseif ci == @shifted(MKCOL, 3, 'A')
-                    r.method =  MKCALENDAR
+                    parser.method =  MKCALENDAR
                 elseif ci == @shifted(SUBSCRIBE, 1, 'E')
-                    r.method =  SEARCH
+                    parser.method =  SEARCH
                 elseif ci == @shifted(REPORT, 2, 'B')
-                    r.method =  REBIND
+                    parser.method =  REBIND
                 elseif ci == @shifted(POST, 1, 'R')
-                    r.method =  PROPFIND
+                    parser.method =  PROPFIND
                 elseif ci == @shifted(PROPFIND, 4, 'P')
-                    r.method =  PROPPATCH
+                    parser.method =  PROPPATCH
                 elseif ci == @shifted(PUT, 2, 'R')
-                    r.method =  PURGE
+                    parser.method =  PURGE
                 elseif ci == @shifted(LOCK, 1, 'I')
-                    r.method =  LINK
+                    parser.method =  LINK
                 elseif ci == @shifted(UNLOCK, 2, 'S')
-                    r.method =  UNSUBSCRIBE
+                    parser.method =  UNSUBSCRIBE
                 elseif ci == @shifted(UNLOCK, 2, 'B')
-                    r.method =  UNBIND
+                    parser.method =  UNBIND
                 elseif ci == @shifted(UNLOCK, 3, 'I')
-                    r.method =  UNLINK
+                    parser.method =  UNLINK
                 else
                     @err(HPE_INVALID_METHOD)
                 end
-            elseif ch == '-' && parser.index == 2 && r.method == MKCOL
+            elseif ch == '-' && parser.index == 2 && parser.method == MKCOL
                 @debug(PARSING_DEBUG, "matched MSEARCH")
-                r.method = MSEARCH
+                parser.method = MSEARCH
                 parser.index -= 1
             else
                 @err(HPE_INVALID_METHOD)
@@ -479,7 +498,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             ch == ' ' && @goto breakout
             url_mark = p
-            if r.method == CONNECT
+            if parser.method == CONNECT
                 p_state = s_req_server_start
             end
             p_state = URIs.parseurlchar(p_state, ch, strict)
@@ -496,15 +515,15 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                 p_state = s_req_http_start
                 parser.state = p_state
                 onurlbytes(parser, bytes, url_mark, p-1)
-                onurl(parser, r)
+                onurl(parser)
                 url_mark = 0
             elseif ch in (CR, LF)
-                r.major = Int16(0)
-                r.minor = Int16(9)
+                parser.major = Int16(0)
+                parser.minor = Int16(9)
                 p_state = ifelse(ch == CR, s_req_line_almost_done, s_header_field_start)
                 parser.state = p_state
                 onurlbytes(parser, bytes, url_mark, p-1)
-                onurl(parser, r)
+                onurl(parser)
                 url_mark = 0
             else
                 p_state = URIs.parseurlchar(p_state, ch, strict)
@@ -544,7 +563,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
         elseif p_state == s_req_first_http_major
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(ch < '1' || ch > '9', HPE_INVALID_VERSION)
-            r.major = Int16(ch - '0')
+            parser.major = Int16(ch - '0')
             p_state = s_req_http_major
 
         #= major HTTP version or dot =#
@@ -555,16 +574,16 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
             elseif !isnum(ch)
                 @err(HPE_INVALID_VERSION)
             else
-                r.major *= Int16(10)
-                r.major += Int16(ch - '0')
-                @errorif(r.major > 999, HPE_INVALID_VERSION)
+                parser.major *= Int16(10)
+                parser.major += Int16(ch - '0')
+                @errorif(parser.major > 999, HPE_INVALID_VERSION)
             end
 
         #= first digit of minor HTTP version =#
         elseif p_state == s_req_first_http_minor
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
-            r.minor = Int16(ch - '0')
+            parser.minor = Int16(ch - '0')
             p_state = s_req_http_minor
 
         #= minor HTTP version or end of request line =#
@@ -577,9 +596,9 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
             else
                 #= XXX allow spaces after digit? =#
                 @errorif(!isnum(ch), HPE_INVALID_VERSION)
-                r.minor *= Int16(10)
-                r.minor += Int16(ch - '0')
-                @errorif(r.minor > 999, HPE_INVALID_VERSION)
+                parser.minor *= Int16(10)
+                parser.minor += Int16(ch - '0')
+                @errorif(parser.minor > 999, HPE_INVALID_VERSION)
             end
 
         #= end of request line =#
@@ -1030,7 +1049,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
             if (parser.flags & F_UPGRADE > 0) && (parser.flags & F_CONNECTION_UPGRADE > 0)
                 upgrade = typeof(r) == Request || r.status == 101
             else
-                upgrade = typeof(r) == Request && r.method == CONNECT
+                upgrade = typeof(r) == Request && parser.method == CONNECT
             end
             @debug(PARSING_DEBUG, upgrade)
             #= Here we call the headers_complete callback. This is somewhat
@@ -1059,7 +1078,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
 
             hasBody = parser.flags & F_CHUNKED > 0 ||
                 (parser.content_length > 0 && parser.content_length != ULLONG_MAX)
-            if upgrade && ((typeof(r) == Request && r.method == CONNECT) ||
+            if upgrade && ((typeof(r) == Request && parser.method == CONNECT) ||
                                   (parser.flags & F_SKIPBODY) > 0 || !hasBody)
                 #= Exit, the rest of the message is in a different protocol. =#
                 p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
@@ -1093,7 +1112,8 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                         p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                         parser.state = p_state
                         @debug(PARSING_DEBUG, "this 4")
-                        return errno, true, true, String(bytes[p+1:end])
+                        #return errno, true, true, String(bytes[p+1:end])
+                        return errno, true, true, p >= len ? nothing : String(bytes[p:end])
                     else
                         #= Read body until EOF =#
                         p_state = s_body_identity_eof

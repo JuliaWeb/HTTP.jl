@@ -106,6 +106,10 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                     length(buffer) > 0 || break
                     starttime[] = time() # reset the timeout while still receiving bytes
                     errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(request, parser, buffer)
+                    request.method = parser.method
+                    request.uri = parser.url
+                    request.major = parser.major
+                    request.minor = parser.minor
                     startedprocessingrequest = true
                     if errno != HTTP.HPE_OK
                         # error in parsing the http request
@@ -142,6 +146,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             error = true
                         end
                     elseif upgrade != nothing
+                        @show upgrade
                         HTTP.@log "received upgrade request on connection i=$i"
                         response = HTTP.Response(501, "upgrade requests are not currently supported")
                         error = true

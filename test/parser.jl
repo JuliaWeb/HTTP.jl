@@ -1365,8 +1365,12 @@ const responses = Message[
                   #@show [Char(x[i]) for i in 1:sz]
                   err, hc, mc, ug = HTTP.parse!(r, p, x)
                   err != HTTP.HPE_OK && throw(HTTP.ParsingError(HTTP.ParsingErrorCodeMap[err]))
+                  r.uri = HTTP.DEFAULT_PARSER.url
+                  r.method = HTTP.DEFAULT_PARSER.method
+                  r.major = HTTP.DEFAULT_PARSER.major
+                  r.minor = HTTP.DEFAULT_PARSER.minor
+
                   if ug != nothing
-@show ug
                       upgrade[] = ug
                       break
                   end
@@ -1565,6 +1569,10 @@ const responses = Message[
                       #@show [Char(x[i]) for i in 1:sz]
                       err, hc, mc, ug = HTTP.parse!(r, p, x)
                       err != HTTP.HPE_OK && throw(HTTP.ParsingError(HTTP.ParsingErrorCodeMap[err]))
+                      r.major = HTTP.DEFAULT_PARSER.major
+                      r.minor = HTTP.DEFAULT_PARSER.minor
+                      r.status = HTTP.DEFAULT_PARSER.status
+
                   end
               elseif t == "B"
                   r = HTTP.parse(HTTP.Response, resp.raw)
