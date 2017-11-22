@@ -22,6 +22,9 @@
 # IN THE SOFTWARE.
 #
 
+const start_state = s_start_req_or_res
+const strict = false
+
 mutable struct Parser
     state::UInt8
     header_state::UInt8
@@ -33,7 +36,9 @@ mutable struct Parser
     valuebuffer::Vector{UInt8}
 end
 
-Parser() = Parser(s_start_req_or_res, 0x00, 0, 0, 0, 0, UInt8[], UInt8[])
+Parser() = Parser(start_state, 0x00, 0, 0, 0, 0, UInt8[], UInt8[])
+
+const DEFAULT_PARSER = Parser()
 
 function reset!(p::Parser)
     p.state = start_state
@@ -47,11 +52,6 @@ function reset!(p::Parser)
     return
 end
 
-macro nread(n)
-    return esc(:(parser.nread += UInt32($n)))
-end
-
-onmessagebegin(r) = @debug(PARSING_DEBUG, "onmessagebegin")
 # should we just make a copy of the byte vector for URI here?
 function onurl(r, bytes, i, j)
     @debug(PARSING_DEBUG, "onurl")
@@ -60,20 +60,22 @@ function onurl(r, bytes, i, j)
     @debug(PARSING_DEBUG, r.method)
     uri = URIs.http_parser_parse_url(bytes, i, j - i + 1, r.method == CONNECT)
     @debug(PARSING_DEBUG, uri)
-    setfield!(r, :uri, uri)
+    r.uri = uri
     return
 end
-onstatus(r) = @debug(PARSING_DEBUG, "onstatus")
+
 function onheaderfield(p::Parser, bytes, i, j)
     @debug(PARSING_DEBUG, "onheaderfield")
     append!(p.fieldbuffer, view(bytes, i:j))
     return
 end
+
 function onheadervalue(p::Parser, bytes, i, j)
     @debug(PARSING_DEBUG, "onheadervalue")
     append!(p.valuebuffer, view(bytes, i:j))
     return
 end
+
 function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY)
     @debug(PARSING_DEBUG, "onheadervalue2")
     append!(p.valuebuffer, view(bytes, i:j))
@@ -96,7 +98,7 @@ function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY)
     empty!(p.valuebuffer)
     return
 end
-onheaderscomplete(r) = @debug(PARSING_DEBUG, "onheaderscomplete")
+
 function onbody(r, maintask, bytes, i, j)
     @debug(PARSING_DEBUG, "onbody")
     @debug(PARSING_DEBUG, String(r.body))
@@ -118,8 +120,6 @@ function onbody(r, maintask, bytes, i, j)
     @debug(PARSING_DEBUG, String(r.body))
     return
 end
-onmessagecomplete(r::Request) = @debug(PARSING_DEBUG, "onmessagecomplete")
-onmessagecomplete(r::Response) = (@debug(PARSING_DEBUG, "onmessagecomplete"); close(r.body))
 
 """
     HTTP.parse([HTTP.Request, HTTP.Response], str; kwargs...)
@@ -138,19 +138,17 @@ function parse(T::Type{<:Union{Request, Response}}, str;
         maintask=maintask)
     err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
     extra[] = upgrade
+    close(r.body)
     return r
 end
-
-const start_state = s_start_req_or_res
-const DEFAULT_PARSER = Parser()
-const strict = false
 
 function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
         host::String="", method::Method=GET,
         maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, String}
     return parse!(r, parser, bytes, len, host, method, maintask)
 end
-function parse!(r, parser, bytes, len, host, method, maintask)
+
+function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErrorCode, Bool, Bool, String}
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
     errno = HPE_OK
@@ -161,7 +159,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)
     if len == 0
         if p_state == s_body_identity_eof
             parser.state = p_state
-            onmessagecomplete(r)
             @debug(PARSING_DEBUG, "this 6")
             return HPE_OK, true, true, ""
         elseif @anyeq(p_state, s_dead, s_start_req_or_res, s_start_res, s_start_req)
@@ -192,7 +189,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)
         @debug(PARSING_DEBUG, "top of main for-loop")
         @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
         if p_state <= s_headers_done
-            @nread(1)
+            parser.nread += 1
         end
 
         @label reexecute
@@ -215,7 +212,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)
             if ch == 'H'
                 p_state = s_res_or_resp_H
                 parser.state = p_state
-                onmessagebegin(r)
             else
                 p_state = s_start_req
                 @goto reexecute
@@ -243,7 +239,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)
                 @err HPE_INVALID_CONSTANT
             end
             parser.state = p_state
-            onmessagebegin(r)
 
         elseif p_state == s_res_H
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -346,12 +341,10 @@ function parse!(r, parser, bytes, len, host, method, maintask)
             if ch == CR
                 p_state = s_res_line_almost_done
                 parser.state = p_state
-                onstatus(r)
                 status_mark = 0
             elseif ch == LF
                 p_state = s_header_field_start
                 parser.state = p_state
-                onstatus(r)
                 status_mark = 0
             end
 
@@ -405,7 +398,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)
             end
             p_state = s_req_method
             parser.state = p_state
-            onmessagebegin(r)
 
         elseif p_state == s_req_method
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -707,7 +699,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)
                 p += 1
             end
 
-            @nread(p - start)
+            parser.nread += (p - start)
 
             if p >= len
                 p -= 1
@@ -794,7 +786,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)
                     break
                 elseif ch == LF
                     p_state = s_header_almost_done
-                    @nread(p - start)
+                    parser.nread += (p - start)
                     parser.header_state = h
                     parser.state = p_state
                     @debug(PARSING_DEBUG, "onheadervalue 2")
@@ -943,8 +935,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)
                 p += 1
             end
             parser.header_state = h
-
-            @nread(p - start)
+            parser.nread += (p - start)
 
             if p == len
                 p -= 1
@@ -1037,7 +1028,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)
             * We'd like to use CALLBACK_NOTIFY_NOADVANCE() here but we cannot, so
             * we have to simulate it by handling a change in errno below.
             =#
-            onheaderscomplete(r)
+            @debug(PARSING_DEBUG, "headersdone")
             headersdone = true
             if method == HEAD
                 parser.flags |= F_SKIPBODY
@@ -1059,7 +1050,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)
                 #= Exit, the rest of the message is in a different protocol. =#
                 p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                 parser.state = p_state
-                onmessagecomplete(r)
                 @debug(PARSING_DEBUG, "this 1")
                 return errno, true, true, String(bytes[p+1:end])
             end
@@ -1067,7 +1057,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)
             if parser.flags & F_SKIPBODY > 0
                 p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                 parser.state = p_state
-                onmessagecomplete(r)
                 @debug(PARSING_DEBUG, "this 2")
                 return errno, true, true, ""
             elseif parser.flags & F_CHUNKED > 0
@@ -1078,7 +1067,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)
                     #= Content-Length header given but zero: Content-Length: 0\r\n =#
                     p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                     parser.state = p_state
-                    onmessagecomplete(r)
                     @debug(PARSING_DEBUG, "this 3")
                     return errno, true, true, ""
                 elseif parser.content_length != ULLONG_MAX
@@ -1090,7 +1078,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)
                         #= Assume content-length 0 - read the next =#
                         p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                         parser.state = p_state
-                        onmessagecomplete(r)
                         @debug(PARSING_DEBUG, "this 4")
                         return errno, true, true, String(bytes[p+1:end])
                     else
@@ -1143,7 +1130,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             # p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
             parser.state = p_state
-            onmessagecomplete(r)
             @debug(PARSING_DEBUG, "this 5")
             if upgrade
                 #= Exit, the rest of the message is in a different protocol. =#
@@ -1278,7 +1264,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)
     url_mark > 0 && onurl(r, bytes, url_mark, min(len, p))
     @debug(PARSING_DEBUG, "this onbody 3")
     body_mark > 0 && onbody(r, maintask, bytes, body_mark, min(len, p - 1))
-    status_mark > 0 && onstatus(r)
 
     parser.state = p_state
     @debug(PARSING_DEBUG, "exiting maybe unfinished...")

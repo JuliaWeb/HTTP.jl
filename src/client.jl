@@ -288,6 +288,9 @@ function processresponse!(client, conn, response, host, method, maintask, stream
         @log "received bytes from the wire, processing"
         # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
         errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, conn.parser, buffer; host=host, method=method, maintask=maintask)
+        if messagecomplete
+            close(response.body)
+        end
         @log "parsed bytes received from wire"
         if length(buffer) == 0 && !isopen(conn.socket) && !messagecomplete
             @log "socket closed before full response received"
