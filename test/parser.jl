@@ -1350,10 +1350,30 @@ const responses = Message[
 @testset "HTTP.parse" begin
 
   @testset "HTTP.parse(HTTP.Request, str)" begin
-      for req in requests
-          println("TEST - parser.jl - Request: $(req.name)")
+      for req in requests, t in ["A", "B"]
+
+          println("TEST - parser.jl - Request $t: $(req.name)")
           upgrade = Ref{String}()
-          r = HTTP.parse(HTTP.Request, req.raw; extra=upgrade)
+          if t == "A"
+              p = HTTP.DEFAULT_PARSER
+              HTTP.reset!(p)
+              r = HTTP.Request(body=FIFOBuffer())
+              bytes = Vector{UInt8}(req.raw)
+              sz = 1
+              for i in 1:sz:length(bytes)
+                  x = bytes[i:i+sz-1]
+                  #@show [Char(x[i]) for i in 1:sz]
+                  err, hc, mc, ug = HTTP.parse!(r, p, x)
+                  err != HTTP.HPE_OK && throw(HTTP.ParsingError(HTTP.ParsingErrorCodeMap[err]))
+                  if ug != nothing
+@show ug
+                      upgrade[] = ug
+                      break
+                  end
+              end
+          else
+              r = HTTP.parse(HTTP.Request, req.raw; extra=upgrade)
+          end
           @test HTTP.major(r) == req.http_major
           @test HTTP.minor(r) == req.http_minor
           @test HTTP.method(r) == req.method
@@ -1368,7 +1388,9 @@ const responses = Message[
           @test HTTP.canonicalizeheaders(HTTP.headers(r)) == req.headers
           @test String(readavailable(HTTP.body(r))) == req.body
           @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == req.should_keep_alive
-          @test upgrade[] == req.upgrade
+          @test t == "A" || 
+                req.upgrade == "" && !isassigned(upgrade) ||
+                upgrade[] == req.upgrade
       end
 
       reqstr = "GET http://www.techcrunch.com/ HTTP/1.1\r\n" *
@@ -1529,10 +1551,24 @@ const responses = Message[
   end
 
   @testset "HTTP.parse(HTTP.Response, str)" begin
-      for resp in responses
-          println("TEST - parser.jl - Response: $(resp.name)")
+      for resp in responses, t in ["A", "B"]
+          println("TEST - parser.jl - Response $t: $(resp.name)")
           try
-              r = HTTP.parse(HTTP.Response, resp.raw)
+              if t == "A"
+                  p = HTTP.DEFAULT_PARSER
+                  HTTP.reset!(p)
+                  r = HTTP.Response(body=FIFOBuffer())
+                  bytes = Vector{UInt8}(resp.raw)
+                  sz = 1
+                  for i in 1:sz:length(bytes)
+                      x = bytes[i:i+sz-1]
+                      #@show [Char(x[i]) for i in 1:sz]
+                      err, hc, mc, ug = HTTP.parse!(r, p, x)
+                      err != HTTP.HPE_OK && throw(HTTP.ParsingError(HTTP.ParsingErrorCodeMap[err]))
+                  end
+              elseif t == "B"
+                  r = HTTP.parse(HTTP.Response, resp.raw)
+              end
               @test HTTP.major(r) == resp.http_major
               @test HTTP.minor(r) == resp.http_minor
               @test HTTP.status(r) == resp.status_code
@@ -1625,7 +1661,7 @@ const responses = Message[
           @test e == HTTP.HPE_OK
           @test !h
           @test !m
-          @test ex == ""
+          @test ex == nothing
       end
 
       buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"

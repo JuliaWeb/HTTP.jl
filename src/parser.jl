@@ -34,9 +34,10 @@ mutable struct Parser
     content_length::UInt64
     fieldbuffer::Vector{UInt8}
     valuebuffer::Vector{UInt8}
+    previous_field::Ref{String}
 end
 
-Parser() = Parser(start_state, 0x00, 0, 0, 0, 0, UInt8[], UInt8[])
+Parser() = Parser(start_state, 0x00, 0, 0, 0, 0, UInt8[], UInt8[], Ref{String}())
 
 const DEFAULT_PARSER = Parser()
 
@@ -49,18 +50,26 @@ function reset!(p::Parser)
     p.content_length = 0x0000000000000000
     empty!(p.fieldbuffer)
     empty!(p.valuebuffer)
+    p.previous_field = Ref{String}()
     return
 end
 
 # should we just make a copy of the byte vector for URI here?
-function onurl(r, bytes, i, j)
+function onurlbytes(p::Parser, bytes, i, j)
+    @debug(PARSING_DEBUG, "onurlbytes")
+    append!(p.valuebuffer, view(bytes, i:j))
+    return
+end
+
+function onurl(p::Parser, r)
     @debug(PARSING_DEBUG, "onurl")
-    @debug(PARSING_DEBUG, i - j + 1)
-    @debug(PARSING_DEBUG, "'$(String(bytes[i:j]))'")
+    @debug(PARSING_DEBUG, String(p.valuebuffer))
     @debug(PARSING_DEBUG, r.method)
-    uri = URIs.http_parser_parse_url(bytes, i, j - i + 1, r.method == CONNECT)
+    url = copy(p.valuebuffer)
+    uri = URIs.http_parser_parse_url(url, 1, length(url), r.method == CONNECT)
     @debug(PARSING_DEBUG, uri)
-    r.uri = uri
+    setfield!(r, :uri, uri)
+    empty!(p.valuebuffer)
     return
 end
 
@@ -76,20 +85,20 @@ function onheadervalue(p::Parser, bytes, i, j)
     return
 end
 
-function onheadervalue(p, r, bytes, i, j, issetcookie, host, KEY)
+function onheadervalue(p, r, bytes, i, j, issetcookie, host)
     @debug(PARSING_DEBUG, "onheadervalue2")
     append!(p.valuebuffer, view(bytes, i:j))
     key = unsafe_string(pointer(p.fieldbuffer), length(p.fieldbuffer))
     val = unsafe_string(pointer(p.valuebuffer), length(p.valuebuffer))
     if key == ""
         # the header value was parsed in two parts,
-        # KEY[] holds the most recently parsed header field,
+        # p.previous_field[] holds the most recently parsed header field,
         # and we already stored the first part of the header value in r.headers
         # get the first part and concatenate it with the second part we have now
-        key = KEY[]
+        key = p.previous_field[]
         setindex!(r.headers, string(r.headers[key], val), key)
     else
-        KEY[] = key
+        p.previous_field[] = key
         val2 = get!(r.headers, key, val)
         val2 !== val && setindex!(r.headers, string(val2, ", ", val), key)
     end
@@ -137,34 +146,35 @@ function parse(T::Type{<:Union{Request, Response}}, str;
     err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str);
         maintask=maintask)
     err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
-    extra[] = upgrade
+    if upgrade != nothing
+        extra[] = upgrade
+    end
     close(r.body)
     return r
 end
 
 function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
         host::String="", method::Method=GET,
-        maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, String}
+        maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
     return parse!(r, parser, bytes, len, host, method, maintask)
 end
 
-function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErrorCode, Bool, Bool, String}
+function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
     errno = HPE_OK
     upgrade = issetcookie = headersdone = false
-    KEY = Ref{String}()
     @debug(PARSING_DEBUG, len)
     @debug(PARSING_DEBUG, ParsingStateCode(p_state))
     if len == 0
         if p_state == s_body_identity_eof
             parser.state = p_state
             @debug(PARSING_DEBUG, "this 6")
-            return HPE_OK, true, true, ""
+            return HPE_OK, true, true, nothing
         elseif @anyeq(p_state, s_dead, s_start_req_or_res, s_start_res, s_start_req)
-            return HPE_OK, false, false, ""
+            return HPE_OK, false, false, nothing
         else
-            return HPE_INVALID_EOF_STATE, false, false, ""
+            return HPE_INVALID_EOF_STATE, false, false, nothing
         end
     end
 
@@ -178,16 +188,21 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
     end
     if @anyeq(p_state, s_req_path, s_req_schema, s_req_schema_slash, s_req_schema_slash_slash,
                    s_req_server_start, s_req_server, s_req_server_with_at,
-                   s_req_query_string_start, s_req_query_string, s_req_fragment)
+                   s_req_query_string_start, s_req_query_string, s_req_fragment,
+                   s_req_fragment_start)
         url_mark = 1
     elseif p_state == s_res_status
         status_mark = 1
     end
     p = 1
+    old_p = 0
     while p <= len
+        @assert p > old_p
+        old_p = p
         @inbounds ch = Char(bytes[p])
         @debug(PARSING_DEBUG, "top of main for-loop")
         @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
+
         if p_state <= s_headers_done
             parser.nread += 1
         end
@@ -480,14 +495,16 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
             if ch == ' '
                 p_state = s_req_http_start
                 parser.state = p_state
-                onurl(r, bytes, url_mark, p-1)
+                onurlbytes(parser, bytes, url_mark, p-1)
+                onurl(parser, r)
                 url_mark = 0
             elseif ch in (CR, LF)
                 r.major = Int16(0)
                 r.minor = Int16(9)
                 p_state = ifelse(ch == CR, s_req_line_almost_done, s_header_field_start)
                 parser.state = p_state
-                onurl(r, bytes, url_mark, p-1)
+                onurlbytes(parser, bytes, url_mark, p-1)
+                onurl(parser, r)
                 url_mark = 0
             else
                 p_state = URIs.parseurlchar(p_state, ch, strict)
@@ -611,7 +628,10 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                 ch = Char(bytes[p])
                 @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
                 c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
-                c == Char(0) && break
+                if c == Char(0)
+                    @errorif(ch != ':', HPE_INVALID_HEADER_TOKEN)
+                    break
+                end
                 h = parser.header_state
                 if h == h_general
                     @debug(PARSING_DEBUG, parser.header_state)
@@ -701,18 +721,16 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
 
             parser.nread += (p - start)
 
-            if p >= len
-                p -= 1
-                @goto breakout
-            end
             if ch == ':'
                 p_state = s_header_value_discard_ws
                 parser.state = p_state
                 header_field_end_mark = p
-                onheaderfield(parser, bytes, header_field_mark, p - 1)
+                if p > header_field_mark
+                    onheaderfield(parser, bytes, header_field_mark, p - 1)
+                end
                 header_field_mark = 0
             else
-                @err(HPE_INVALID_HEADER_TOKEN)
+                @assert tokens[Int(ch)+1] != Char(0) || !strict && ch == ' '
             end
 
         elseif p_state == s_header_value_discard_ws
@@ -781,7 +799,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                     parser.header_state = h
                     parser.state = p_state
                     @debug(PARSING_DEBUG, "onheadervalue 1")
-                    onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
+                    onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host)
                     header_value_mark = 0
                     break
                 elseif ch == LF
@@ -790,7 +808,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                     parser.header_state = h
                     parser.state = p_state
                     @debug(PARSING_DEBUG, "onheadervalue 2")
-                    onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
+                    onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host)
                     header_value_mark = 0
                     @goto reexecute
                 elseif strict && !isheaderchar(ch)
@@ -937,10 +955,6 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
             parser.header_state = h
             parser.nread += (p - start)
 
-            if p == len
-                p -= 1
-            end
-
         elseif p_state == s_header_almost_done
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(ch != LF, HPE_LF_EXPECTED)
@@ -991,7 +1005,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                 p_state = s_header_field_start
                 parser.state = p_state
                 @debug(PARSING_DEBUG, "onheadervalue 3")
-                onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
+                onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host)
                 header_value_mark = 0
                 @goto reexecute
             end
@@ -1058,7 +1072,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                 p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                 parser.state = p_state
                 @debug(PARSING_DEBUG, "this 2")
-                return errno, true, true, ""
+                return errno, true, true, nothing
             elseif parser.flags & F_CHUNKED > 0
                 #= chunked encoding - ignore Content-Length header =#
                 p_state = s_chunk_size_start
@@ -1068,7 +1082,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
                     p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
                     parser.state = p_state
                     @debug(PARSING_DEBUG, "this 3")
-                    return errno, true, true, ""
+                    return errno, true, true, nothing
                 elseif parser.content_length != ULLONG_MAX
                     #= Content-Length header given and non-zero =#
                     p_state = s_body_identity
@@ -1261,7 +1275,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
     @debug(PARSING_DEBUG, len)
     @debug(PARSING_DEBUG, p)
     header_value_mark > 0 && onheadervalue(parser, bytes, header_value_mark, min(len, p))
-    url_mark > 0 && onurl(r, bytes, url_mark, min(len, p))
+    url_mark > 0 && onurlbytes(parser, bytes, url_mark, min(len, p))
     @debug(PARSING_DEBUG, "this onbody 3")
     body_mark > 0 && onbody(r, maintask, bytes, body_mark, min(len, p - 1))
 
@@ -1271,7 +1285,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
     b = p_state == start_state || p_state == s_dead
     he = b | (headersdone || p_state >= s_headers_done)
     m = b | (p_state >= s_message_done)
-    return errno, he, m, String(bytes[p:end])
+    return errno, he, m, p >= len ? nothing : String(bytes[p:end])
 
     @label error
     if errno == HPE_OK
@@ -1282,7 +1296,7 @@ function parse!(r, parser, bytes, len, host, method, maintask)::Tuple{ParsingErr
     parser.header_state = 0x00
     @debug(PARSING_DEBUG, "exiting due to error...")
     @debug(PARSING_DEBUG, errno)
-    return errno, false, false, ""
+    return errno, false, false, nothing
 end
 
 #= Does the parser need to see an EOF to find the end of the message? =#
