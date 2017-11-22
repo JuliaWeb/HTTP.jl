@@ -30,7 +30,7 @@ sleep(2.0)
 log = String(read(serverlog))
 
 print(log)
-@test contains(log, "invalid HTTP version")
+!HTTP.strict && @test contains(log, "invalid HTTP version")
 
 # bad method
 sleep(2.0)

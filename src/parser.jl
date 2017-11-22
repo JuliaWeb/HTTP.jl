@@ -128,32 +128,29 @@ Parse a `HTTP.Request` or `HTTP.Response` from a string. `str` must contain at l
 full request or response (but may include more than one). Supported keyword arguments include:
 
   * `extra`: a `Ref{String}` that will be used to store any extra bytes beyond a full request or response
-  * `lenient`: whether the request/response parsing should allow additional characters
 """
 function parse(T::Type{<:Union{Request, Response}}, str;
-                extra::Ref{String}=Ref{String}(), lenient::Bool=true,
+                extra::Ref{String}=Ref{String}(),
                 maintask::Task=current_task())
     r = T(body=FIFOBuffer())
     reset!(DEFAULT_PARSER)
     err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str);
-        lenient=lenient, maintask=maintask)
+        maintask=maintask)
     err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
     extra[] = upgrade
     return r
 end
 
 const start_state = s_start_req_or_res
-const DEFAULT_MAX_URI = Int64(8 * 1024)
-const DEFAULT_MAX_BODY = Int64(2)^32 # 4Gib
 const DEFAULT_PARSER = Parser()
+const strict = false
 
 function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
-        lenient::Bool=true, host::String="", method::Method=GET,
+        host::String="", method::Method=GET,
         maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, String}
-    return parse!(r, parser, bytes, len, lenient, host, method, maintask)
+    return parse!(r, parser, bytes, len, host, method, maintask)
 end
-function parse!(r, parser, bytes, len, lenient, host, method, maintask)
-    strict = !lenient
+function parse!(r, parser, bytes, len, host, method, maintask)
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
     errno = HPE_OK
@@ -785,7 +782,7 @@ function parse!(r, parser, bytes, len, lenient, host, method, maintask)
             while p <= len
                 @inbounds ch = Char(bytes[p])
                 @debug(PARSING_DEBUG, Base.escape_string(string('\'', ch, '\'')))
-                @debug(PARSING_DEBUG, lenient)
+                @debug(PARSING_DEBUG, strict)
                 @debug(PARSING_DEBUG, isheaderchar(ch))
                 if ch == CR
                     p_state = s_header_almost_done
@@ -804,7 +801,7 @@ function parse!(r, parser, bytes, len, lenient, host, method, maintask)
                     onheadervalue(parser, r, bytes, header_value_mark, p - 1, issetcookie, host, KEY)
                     header_value_mark = 0
                     @goto reexecute
-                elseif !lenient && !isheaderchar(ch)
+                elseif strict && !isheaderchar(ch)
                     @err(HPE_INVALID_HEADER_TOKEN)
                 end
 

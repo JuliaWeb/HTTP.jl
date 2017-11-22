@@ -1531,77 +1531,92 @@ const responses = Message[
   @testset "HTTP.parse(HTTP.Response, str)" begin
       for resp in responses
           println("TEST - parser.jl - Response: $(resp.name)")
-          r = HTTP.parse(HTTP.Response, resp.raw)
-          @test HTTP.major(r) == resp.http_major
-          @test HTTP.minor(r) == resp.http_minor
-          @test HTTP.status(r) == resp.status_code
-          @test HTTP.statustext(r) == resp.response_status
-          @test length(HTTP.headers(r)) == resp.num_headers
-          @test HTTP.canonicalizeheaders(HTTP.headers(r)) == resp.headers
-          @test String(readavailable(HTTP.body(r))) == resp.body
-          @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == resp.should_keep_alive
+          try
+              r = HTTP.parse(HTTP.Response, resp.raw)
+              @test HTTP.major(r) == resp.http_major
+              @test HTTP.minor(r) == resp.http_minor
+              @test HTTP.status(r) == resp.status_code
+              @test HTTP.statustext(r) == resp.response_status
+              @test length(HTTP.headers(r)) == resp.num_headers
+              @test HTTP.canonicalizeheaders(HTTP.headers(r)) == resp.headers
+              @test String(readavailable(HTTP.body(r))) == resp.body
+              @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == resp.should_keep_alive
+          catch e
+              if HTTP.strict && isa(e, HTTP.ParsingError)
+                  println("HTTP.strict is enabled. ParsingError ignored.")
+              else
+                  rethrow()
+              end
+          end
       end
   end
 
   @testset "HTTP.parse errors" begin
       reqstr = "GET / HTTP/1.1\r\n" * "Foo: F\01ailure"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-      r = HTTP.parse(HTTP.Request, reqstr; lenient=true)
-
-      @test HTTP.method(r) == HTTP.GET
-      @test HTTP.uri(r) == HTTP.URI("/")
-      @test length(HTTP.headers(r)) == 0
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
+      if !HTTP.strict
+        r = HTTP.parse(HTTP.Request, reqstr)
+        @test HTTP.method(r) == HTTP.GET
+        @test HTTP.uri(r) == HTTP.URI("/")
+        @test length(HTTP.headers(r)) == 0
+      end
 
       reqstr = "GET / HTTP/1.1\r\n" * "Foo: B\02ar"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-      r = HTTP.parse(HTTP.Request, reqstr; lenient=true)
-
-      @test HTTP.method(r) == HTTP.GET
-      @test HTTP.uri(r) == HTTP.URI("/")
-      @test length(HTTP.headers(r)) == 0
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
+      if !HTTP.strict
+          r = HTTP.parse(HTTP.Request, reqstr)
+          @test HTTP.method(r) == HTTP.GET
+          @test HTTP.uri(r) == HTTP.URI("/")
+          @test length(HTTP.headers(r)) == 0
+      end
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo: F\01ailure"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-      r = HTTP.parse(HTTP.Response, respstr; lenient=true)
-      @test HTTP.status(r) == 200
-      @test length(HTTP.headers(r)) == 0
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+      if !HTTP.strict
+          r = HTTP.parse(HTTP.Response, respstr)
+          @test HTTP.status(r) == 200
+          @test length(HTTP.headers(r)) == 0
+      end
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo: B\02ar"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-      r = HTTP.parse(HTTP.Response, respstr; lenient=true)
-      @test HTTP.status(r) == 200
-      @test length(HTTP.headers(r)) == 0
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+      if !HTTP.strict
+          r = HTTP.parse(HTTP.Response, respstr)
+          @test HTTP.status(r) == 200
+          @test length(HTTP.headers(r)) == 0
+      end
 
       reqstr = "GET / HTTP/1.1\r\n" * "Fo@: Failure"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=true)
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
+      !HTTP.strict && (@test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr))
 
       reqstr = "GET / HTTP/1.1\r\n" * "Foo\01\test: Bar"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=true)
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
+      !HTTP.strict && (@test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr))
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=true)
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+      !HTTP.strict && (@test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr))
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=true)
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+      !HTTP.strict && (@test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr))
 
       reqstr = "GET / HTTP/1.1\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
 
       reqstr = "GET / HTTP/1.1\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
 
       reqstr = "GET / HTTP/1.1\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr; lenient=false)
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr; lenient=false)
+      HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+
 
       for r in ((HTTP.Request, "GET / HTTP/1.1\r\n"), (HTTP.Response, "HTTP/1.0 200 OK\r\n"))
           HTTP.reset!(HTTP.DEFAULT_PARSER)
