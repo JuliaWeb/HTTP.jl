@@ -34,9 +34,6 @@ mutable struct ServerOptions
     tlsconfig::HTTP.TLS.SSLConfig
     readtimeout::Float64
     ratelimit::Rational{Int}
-    maxuri::Int64
-    maxheader::Int64
-    maxbody::Int64
     support100continue::Bool
     chunksize::Union{Void, Int}
     logbody::Bool
@@ -45,13 +42,10 @@ end
 ServerOptions(; tlsconfig::HTTP.TLS.SSLConfig=HTTP.TLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
                 ratelimit::Rational{Int64}=Int64(5)//Int64(1),
-                maxuri::Int64=HTTP.DEFAULT_MAX_URI,
-                maxheader::Int64=HTTP.DEFAULT_MAX_HEADER,
-                maxbody::Int64=HTTP.DEFAULT_MAX_BODY,
                 support100continue::Bool=true,
                 chunksize::Union{Void, Int}=nothing,
                 logbody::Bool=true) =
-    ServerOptions(tlsconfig, readtimeout, ratelimit, maxbody, maxuri, maxheader, support100continue, chunksize, logbody)
+    ServerOptions(tlsconfig, readtimeout, ratelimit, support100continue, chunksize, logbody)
 
 """
     Server(handler, logger::IO=STDOUT; kwargs...)
@@ -69,9 +63,6 @@ Supported keyword arguments include:
   * `tlsconfig`: pass in an already-constructed `HTTP.TLS.SSLConfig` instance
   * `readtimeout`: how long a client connection will be left open without receiving any bytes
   * `ratelimit`: a `Rational{Int}` of the form `5//1` indicating how many `messages//second` should be allowed per client IP address; requests exceeding the rate limit will be dropped
-  * `maxuri`: the maximum size in bytes that a request uri can be; default 8000
-  * `maxheader`: the maximum size in bytes that request headers can be; default 8kb
-  * `maxbody`: the maximum size in bytes that a request body can be; default 4gb
   * `support100continue`: a `Bool` indicating whether `Expect: 100-continue` headers should be supported for delayed request body sending; default = `true`
   * `logbody`: whether the Response body should be logged when `verbose=true` logging is enabled; default = `true`
 """

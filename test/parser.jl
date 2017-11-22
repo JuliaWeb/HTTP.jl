@@ -1611,12 +1611,6 @@ const responses = Message[
           @test !h
           @test !m
           @test ex == ""
-          buf = "header-key: header-value\r\n"
-          for i = 1:10000
-              e, h, m, ex = HTTP.parse!(R, HTTP.DEFAULT_PARSER, Vector{UInt8}(r[2]))
-              e == HTTP.HPE_HEADER_OVERFLOW && break
-          end
-          @test e == HTTP.HPE_HEADER_OVERFLOW
       end
 
       buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"
@@ -1624,7 +1618,7 @@ const responses = Message[
       @test HTTP.DEFAULT_PARSER.nread == length(buf)
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "1844674407370955160" * "\r\n\r\n"
-      r = HTTP.parse(HTTP.Response, respstr; maxbody=1844674407370955160)
+      r = HTTP.parse(HTTP.Response, respstr)
       @test HTTP.status(r) == 200
       @test HTTP.headers(r) == Dict("Content-Length"=>"1844674407370955160")
 

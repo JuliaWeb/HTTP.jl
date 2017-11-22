@@ -48,10 +48,7 @@ function reset!(p::Parser)
 end
 
 macro nread(n)
-    return esc(quote
-        parser.nread += UInt32($n)
-        @errorif(parser.nread > maxheader, HPE_HEADER_OVERFLOW)
-    end)
+    return esc(:(parser.nread += UInt32($n)))
 end
 
 onmessagebegin(r) = @debug(PARSING_DEBUG, "onmessagebegin")
@@ -132,37 +129,30 @@ full request or response (but may include more than one). Supported keyword argu
 
   * `extra`: a `Ref{String}` that will be used to store any extra bytes beyond a full request or response
   * `lenient`: whether the request/response parsing should allow additional characters
-  * `maxuri`: the maximum allowed size of a uri in a request
-  * `maxheader`: the maximum allowed size of headers
-  * `maxbody`: the maximum allowed size of a request or response body
 """
 function parse(T::Type{<:Union{Request, Response}}, str;
                 extra::Ref{String}=Ref{String}(), lenient::Bool=true,
-                maxuri::Int64=DEFAULT_MAX_URI, maxheader::Int64=DEFAULT_MAX_HEADER,
-                maxbody::Int64=DEFAULT_MAX_BODY,
                 maintask::Task=current_task())
     r = T(body=FIFOBuffer())
     reset!(DEFAULT_PARSER)
     err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str);
-        lenient=lenient, maxuri=maxuri, maxheader=maxheader, maxbody=maxbody, maintask=maintask)
+        lenient=lenient, maintask=maintask)
     err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
     extra[] = upgrade
     return r
 end
 
 const start_state = s_start_req_or_res
-const DEFAULT_MAX_HEADER = Int64(80 * 1024)
 const DEFAULT_MAX_URI = Int64(8 * 1024)
 const DEFAULT_MAX_BODY = Int64(2)^32 # 4Gib
 const DEFAULT_PARSER = Parser()
 
 function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
         lenient::Bool=true, host::String="", method::Method=GET,
-        maxuri::Int64=DEFAULT_MAX_URI, maxheader::Int64=DEFAULT_MAX_HEADER,
-        maxbody::Int64=DEFAULT_MAX_BODY, maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, String}
-    return parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader, maxbody, maintask)
+        maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, String}
+    return parse!(r, parser, bytes, len, lenient, host, method, maintask)
 end
-function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader, maxbody, maintask)
+function parse!(r, parser, bytes, len, lenient, host, method, maintask)
     strict = !lenient
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
@@ -501,7 +491,6 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
             if ch == ' '
                 p_state = s_req_http_start
                 parser.state = p_state
-                p - url_mark > maxuri && @err(HPE_URI_OVERFLOW)
                 onurl(r, bytes, url_mark, p-1)
                 url_mark = 0
             elseif ch in (CR, LF)
@@ -509,7 +498,6 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
                 r.minor = Int16(9)
                 p_state = ifelse(ch == CR, s_req_line_almost_done, s_header_field_start)
                 parser.state = p_state
-                p - url_mark > maxuri && @err(HPE_URI_OVERFLOW)
                 onurl(r, bytes, url_mark, p-1)
                 url_mark = 0
             else
@@ -825,7 +813,6 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
                 if h == h_general
                     @debug(PARSING_DEBUG, parser.header_state)
                     limit = len - p
-                    limit = min(limit, maxheader)
                     ptr = pointer(bytes, p)
                     @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[p]), '\'')))
                     p_cr = ccall(:memchr, Ptr{Void}, (Ptr{Void}, Cint, Csize_t), ptr, CR, limit)
@@ -870,8 +857,6 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
                         if div(ULLONG_MAX - 10, 10) < t
                             parser.header_state = h
                             @err(HPE_INVALID_CONTENT_LENGTH)
-                        elseif t > maxbody
-                            @err(HPE_BODY_OVERFLOW)
                         end
                         parser.content_length = t
                      end
@@ -1122,7 +1107,6 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
         elseif p_state == s_body_identity
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             to_read = UInt64(min(parser.content_length, len - p + 1))
-            to_read > maxbody && @err(HPE_BODY_OVERFLOW)
             assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
 
             #= The difference between advancing content_length and p is because
@@ -1294,7 +1278,6 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
     @debug(PARSING_DEBUG, len)
     @debug(PARSING_DEBUG, p)
     header_value_mark > 0 && onheadervalue(parser, bytes, header_value_mark, min(len, p))
-    url_mark > 0 && (min(len, p) - url_mark > maxuri) && @err(HPE_URI_OVERFLOW)
     url_mark > 0 && onurl(r, bytes, url_mark, min(len, p))
     @debug(PARSING_DEBUG, "this onbody 3")
     body_mark > 0 && onbody(r, maintask, bytes, body_mark, min(len, p - 1))
