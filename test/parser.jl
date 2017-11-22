@@ -1364,7 +1364,10 @@ const responses = Message[
                   #@show [Char(x[i]) for i in 1:sz]
                   err, hc, mc, ug = HTTP.parse!(r, p, x)
                   err != HTTP.HPE_OK && throw(HTTP.ParsingError(HTTP.ParsingErrorCodeMap[err]))
-                  upgrade[] = ug
+                  if isassigned(ug)
+                      upgrade[] = ug[]
+                      break
+                  end
               end
           else
               r = HTTP.parse(HTTP.Request, req.raw; extra=upgrade)
@@ -1383,7 +1386,10 @@ const responses = Message[
           @test HTTP.headers(r) == req.headers
           @test String(readavailable(HTTP.body(r))) == req.body
           @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == req.should_keep_alive
-          @test upgrade[] == req.upgrade
+
+          @test t == "A" ||
+                req.upgrade == "" && !isassigned(upgrade) ||
+                upgrade[] == req.upgrade
       end
 
       reqstr = "GET http://www.techcrunch.com/ HTTP/1.1\r\n" *
@@ -1639,7 +1645,7 @@ const responses = Message[
           @test e == HTTP.HPE_OK
           @test !h
           @test !m
-          @test ex == ""
+          @test !isassigned(ex)
           buf = "header-key: header-value\r\n"
           for i = 1:10000
               e, h, m, ex = HTTP.parse!(R, HTTP.DEFAULT_PARSER, Vector{UInt8}(r[2]))
@@ -1721,7 +1727,7 @@ const responses = Message[
       @test h
       @test m
       HTTP.reset!(p)
-      e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}(ex))
+      e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}(ex[]))
       @test e == HTTP.HPE_OK
       @test h
       @test m
