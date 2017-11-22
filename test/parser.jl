@@ -1529,9 +1529,20 @@ const responses = Message[
   end
 
   @testset "HTTP.parse(HTTP.Response, str)" begin
-      for resp in responses
-          println("TEST - parser.jl - Response: $(resp.name)")
-          r = HTTP.parse(HTTP.Response, resp.raw)
+      for resp in responses, t in ["A", "B"]
+          println("TEST - parser.jl - Response $t: $(resp.name)")
+          if t == "A"
+              p = HTTP.DEFAULT_PARSER
+              HTTP.reset!(p)
+              r = HTTP.Response(body=FIFOBuffer())
+              for x in Vector{UInt8}(resp.raw)
+                  @show Char(x)
+                  err, hc, mc, ug = HTTP.parse!(r, p, [x])
+                  err != HTTP.HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
+              end
+          elseif t == "B"
+              r = HTTP.parse(HTTP.Response, resp.raw)
+          end
           @test HTTP.major(r) == resp.http_major
           @test HTTP.minor(r) == resp.http_minor
           @test HTTP.status(r) == resp.status_code

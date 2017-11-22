@@ -206,7 +206,10 @@ function parse!(r, parser, bytes, len, lenient, host, method, maxuri, maxheader,
         status_mark = 1
     end
     p = 1
+    old_p = 0
     while p <= len
+        @assert p > old_p;
+        old_p = p
         @inbounds ch = Char(bytes[p])
         @debug(PARSING_DEBUG, "top of main for-loop")
         @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
