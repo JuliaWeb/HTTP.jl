@@ -35,6 +35,9 @@ export Cookie
 import Base.==
 import HTTP.isurlchar
 
+using Compat
+using Compat.Dates
+
 """
     Cookie()
     Cookie(; kwargs...)
