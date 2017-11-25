@@ -3,6 +3,8 @@ using Compat
 using Compat.Dates
 using Compat.Test
 
+import Compat.Dates: now, DateTime
+
 @testset "HTTP" begin
     include("utils.jl");
     include("fifobuffer.jl");

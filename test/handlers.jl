@@ -1,4 +1,5 @@
-using Base.Test
+using Compat
+using Compat.Test
 
 @testset "HTTP.Handler" begin
 
