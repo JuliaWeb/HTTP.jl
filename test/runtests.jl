@@ -1,4 +1,9 @@
-using HTTP, Base.Test
+using HTTP
+using Compat
+using Compat.Dates
+using Compat.Test
+
+import Compat.Dates: now, DateTime
 
 @testset "HTTP" begin
     include("utils.jl");

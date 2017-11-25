@@ -2,6 +2,9 @@ module Nitrogen
 
 using ..HTTP, ..Handlers
 
+using Compat
+using Compat.Dates
+
 export Server, ServerOptions, serve
 #TODO:
  # add in "events" handling
