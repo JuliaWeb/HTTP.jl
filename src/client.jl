@@ -11,10 +11,11 @@ mutable struct Connection{I <: IO}
     id::Int
     socket::I
     state::ConnectionState
+    parser::Parser
 end
 
-Connection(tcp::IO) = Connection(0, tcp, Busy)
-Connection(id::Int, tcp::IO) = Connection(id, tcp, Busy)
+Connection(tcp::IO) = Connection(0, tcp, Busy, Parser())
+Connection(id::Int, tcp::IO) = Connection(id, tcp, Busy, Parser())
 busy!(conn::Connection) = (conn.state == Dead || (conn.state = Busy); return nothing)
 idle!(conn::Connection) = (conn.state == Dead || (conn.state = Idle); return nothing)
 dead!(conn::Connection) = (conn.state == Dead || (conn.state = Dead; close(conn.socket)); return nothing)
@@ -42,22 +43,23 @@ Additional keyword arguments can be passed that will get transmitted with each H
 """
 mutable struct Client
     # connection pools for keep-alive; key is host
+    poollock::ReentrantLock
     httppool::Dict{String, Vector{Connection{TCPSocket}}}
     httpspool::Dict{String, Vector{Connection{TLS.SSLContext}}}
     # cookies are stored in-memory per host and automatically sent when appropriate
     cookies::Dict{String, Set{Cookie}}
     # buffer::Vector{UInt8} #TODO: create a fixed size buffer for reading bytes off the wire and having http_parser use, this should keep allocations down, need to make sure MbedTLS supports blocking readbytes!
-    parser::Parser
     logger::Option{IO}
     # global request settings
     options::RequestOptions
     connectioncount::Int
 end
 
-Client(logger::Option{IO}, options::RequestOptions) = Client(Dict{String, Vector{Connection{TCPSocket}}}(),
+Client(logger::Option{IO}, options::RequestOptions) = Client(ReentrantLock(),
+                                                     Dict{String, Vector{Connection{TCPSocket}}}(),
                                                      Dict{String, Vector{Connection{TLS.SSLContext}}}(),
                                                      Dict{String, Set{Cookie}}(),
-                                                     Parser(), logger, options, 1)
+                                                     logger, options, 1)
 
 # this is where we provide all the default request options
 const DEFAULT_OPTIONS = :((nothing, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true, false, true, true))
@@ -154,6 +156,7 @@ end
 stalebytes!(c::TLS.SSLContext) = stalebytes!(c.bio)
 
 function connect(client, sch, hostname, port, opts, verbose)
+    @lock client.poollock begin
     logger = client.logger
     if haskey(sch, client, hostname)
         @log "checking if any existing connections to '$hostname' are re-usable"
@@ -198,6 +201,7 @@ function connect(client, sch, hostname, port, opts, verbose)
         return conn
     catch e
         throw(ConnectError(e, backtrace()))
+    end
     end
 end
 
@@ -282,7 +286,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
         buffer, err = getbytes(conn.socket, tm)
         @log "received bytes from the wire, processing"
         # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
-        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, client.parser, buffer; host=host, method=method, maintask=maintask, canonicalizeheaders=canonicalizeheaders)
+        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, conn.parser, buffer; host=host, method=method, maintask=maintask, canonicalizeheaders=canonicalizeheaders)
         @log "parsed bytes received from wire"
         if length(buffer) == 0 && !isopen(conn.socket) && !messagecomplete
             @log "socket closed before full response received"
@@ -295,7 +299,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
             dead!(conn)
             throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])\nCurrent response buffer contents: $(String(buffer))"))
         elseif messagecomplete
-            http_should_keep_alive(client.parser, response) || (@log("closing connection (no keep-alive)"); dead!(conn))
+            http_should_keep_alive(conn.parser, response) || (@log("closing connection (no keep-alive)"); dead!(conn))
             # idle! on a Dead will stay Dead
             idle!(conn)
             return true, StatusError(status(response), response)
@@ -322,7 +326,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     conn = @retryif ClosedError 4 connectandsend(client, sch, host, ifelse(p == "", "80", p), req, opts, verbose)
     
     response = Response(stream ? 2^24 : FIFOBuffers.DEFAULT_MAX, req)
-    reset!(client.parser)
+    reset!(conn.parser)
     success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, opts.canonicalizeheaders::Bool, verbose)
     if !success
         retry >= opts.retries::Int && throw(err)
