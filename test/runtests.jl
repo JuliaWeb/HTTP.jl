@@ -1,9 +1,10 @@
-using HTTP
-using Compat
-using Compat.Dates
-using Compat.Test
+using HTTP, Base.Test
 
-import Compat.Dates: now, DateTime
+if VERSION < v"0.7.0-DEV.2575"
+    const Dates = Base.Dates
+else
+    import Dates
+end
 
 @testset "HTTP" begin
     include("utils.jl");

@@ -4,19 +4,22 @@ module HTTP
 export Request, Response, FIFOBuffer
 
 using MbedTLS
-using Compat
-using Compat.Dates
 
 const TLS = MbedTLS
 
 import Base.==
-import Compat.Dates: now, DateTime
 
 const DEBUG = false
 const PARSING_DEBUG = false
 
 if VERSION > v"0.7.0-DEV.2338"
     using Base64
+end
+
+if VERSION < v"0.7.0-DEV.2575"
+    const Dates = Base.Dates
+else
+    import Dates
 end
 
 struct ParsingError <: Exception

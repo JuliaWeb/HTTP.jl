@@ -1,9 +1,12 @@
 module Nitrogen
 
-using ..HTTP, ..Handlers
+if VERSION < v"0.7.0-DEV.2575"
+    const Dates = Base.Dates
+else
+    import Dates
+end
 
-using Compat
-using Compat.Dates
+using ..HTTP, ..Handlers
 
 export Server, ServerOptions, serve
 #TODO:
@@ -223,11 +226,11 @@ end
 
 mutable struct RateLimit
     allowance::Float64
-    lastcheck::DateTime
+    lastcheck::Dates.DateTime
 end
 
 function update!(rl::RateLimit, ratelimit)
-    current = now()
+    current = Dates.now()
     timepassed = float(Dates.value(current - rl.lastcheck)) / 1000.0
     rl.lastcheck = current
     rl.allowance += timepassed * ratelimit
@@ -256,7 +259,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
             # accept blocks until a new connection is detected
             tcp = accept(tcpserver)
             ip = getsockname(tcp)[1]
-            rl = get!(ratelimits, ip, RateLimit(rate, now()))
+            rl = get!(ratelimits, ip, RateLimit(rate, Dates.now()))
             update!(rl, server.options.ratelimit)
             if rl.allowance > rate
                 HTTP.@log "throttling $ip"

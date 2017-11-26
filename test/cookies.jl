@@ -18,8 +18,8 @@
 	(HTTP.Cookie("cookie-8", "eight", domain="::1"), "cookie-8=eight"),
 	(HTTP.Cookie("cookie-9", "expiring", expires=Dates.unix2datetime(1257894000)), "cookie-9=expiring; Expires=Tue, 10 Nov 2009 23:00:00 GMT"),
 	# According to IETF 6265 Section 5.1.1.5, the year cannot be less than 1601
-	(HTTP.Cookie("cookie-10", "expiring-1601", expires=DateTime(1601, 1, 1, 1, 1, 1, 1)), "cookie-10=expiring-1601; Expires=Mon, 01 Jan 1601 01:01:01 GMT"),
-	(HTTP.Cookie("cookie-11", "invalid-expiry", expires=DateTime(1600, 1, 1, 1, 1, 1, 1)), "cookie-11=invalid-expiry"),
+	(HTTP.Cookie("cookie-10", "expiring-1601", expires=Dates.DateTime(1601, 1, 1, 1, 1, 1, 1)), "cookie-10=expiring-1601; Expires=Mon, 01 Jan 1601 01:01:01 GMT"),
+	(HTTP.Cookie("cookie-11", "invalid-expiry", expires=Dates.DateTime(1600, 1, 1, 1, 1, 1, 1)), "cookie-11=invalid-expiry"),
 	# The "special" cookies have values containing commas or spaces which
 	# are disallowed by RFC 6265 but are common in the wild.
 	(HTTP.Cookie("special-1", "a z"), "special-1=a z"),
@@ -51,9 +51,9 @@ end
     cookietests = [
         (HTTP.Headers("Set-Cookie"=> "Cookie-1=v\$1"), [HTTP.Cookie("Cookie-1", "v\$1")]),
         (HTTP.Headers("Set-Cookie"=> "NID=99=YsDT5i3E-CXax-; expires=Wed, 23-Nov-2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly"),
-            [HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain="google.ch", httponly=true, expires=DateTime(2011, 11, 23, 1, 5, 3, 0))]),
+            [HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain="google.ch", httponly=true, expires=Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))]),
         (HTTP.Headers("Set-Cookie"=> ".ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly"),
-            [HTTP.Cookie(".ASPXAUTH", "7E3AA"; path="/", expires=DateTime(2012, 3, 7, 14, 25, 6, 0), httponly=true)]),
+            [HTTP.Cookie(".ASPXAUTH", "7E3AA"; path="/", expires=Dates.DateTime(2012, 3, 7, 14, 25, 6, 0), httponly=true)]),
         (HTTP.Headers("Set-Cookie"=> "ASP.NET_SessionId=foo; path=/; HttpOnly"),
             [HTTP.Cookie("ASP.NET_SessionId", "foo"; path="/", httponly=true)]),
         (HTTP.Headers("Set-Cookie"=> "special-1=a z"),  [HTTP.Cookie("special-1", "a z")]),

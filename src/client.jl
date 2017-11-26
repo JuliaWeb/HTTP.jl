@@ -210,7 +210,7 @@ function addcookies!(client, host, req, verbose)
         expired = Set{Cookie}()
         for (i, cookie) in enumerate(cookies)
             if Cookies.shouldsend(cookie, scheme(uri(req)) == "https", host, path(uri(req)))
-                cookie.expires != DateTime() && cookie.expires < now(Dates.UTC) && (push!(expired, cookie); @log("deleting expired cookie: " * cookie.name); continue)
+                cookie.expires != Dates.DateTime() && cookie.expires < Dates.now(Dates.UTC) && (push!(expired, cookie); @log("deleting expired cookie: " * cookie.name); continue)
                 push!(tosend, cookie)
             end
         end
@@ -521,7 +521,7 @@ function download(uri::AbstractString, file; threshold::Int=50000000, verbose::B
         while !eof(body)
             nbytes += write(f, readavailable(body))
             if verbose && nbytes > threshold
-                println("[$(now())]: downloaded $nbytes bytes...")
+                println("[$(Dates.now())]: downloaded $nbytes bytes...")
                 flush(STDOUT)
                 threshold += threshold_step
             end

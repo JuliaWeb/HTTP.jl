@@ -261,7 +261,7 @@ defaultheaders(::Type{Response}) = Headers(
     "Server"            => "Julia/$VERSION",
     "Content-Type"      => "text/html; charset=utf-8",
     "Content-Language"  => "en",
-    "Date"              => Dates.format(now(Dates.UTC), Dates.RFC1123Format)
+    "Date"              => Dates.format(Dates.now(Dates.UTC), Dates.RFC1123Format)
 )
 
 ==(a::Response,b::Response) = (a.status  == b.status)  &&
