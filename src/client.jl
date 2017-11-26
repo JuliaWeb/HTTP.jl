@@ -155,7 +155,6 @@ function stalebytes!(c::TCPSocket)
 end
 stalebytes!(c::TLS.SSLContext) = stalebytes!(c.bio)
 
-
 function connect(client, sch, hostname, port, opts, verbose)
     @lock client.poollock begin
     logger = client.logger
