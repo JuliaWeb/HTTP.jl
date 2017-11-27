@@ -40,9 +40,10 @@ mutable struct Parser
     url::HTTP.URI
     status::Int32
     headers::Vector{Pair{String,String}}
+    body::Ref{FIFOBuffer}
 end
 
-Parser() = Parser(start_state, 0x00, 0, 0, 0, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, Pair{String,String}[])
+Parser() = Parser(start_state, 0x00, 0, 0, 0, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, Pair{String,String}[], Ref{FIFOBuffer}())
 
 const DEFAULT_PARSER = Parser()
 
@@ -61,8 +62,11 @@ function reset!(p::Parser)
     p.url = HTTP.URI()
     p.status = 0
     empty!(p.headers)
+    p.body = Ref{FIFOBuffer}()
     return
 end
+
+isrequest(p::Parser) = p.status == 0
 
 # should we just make a copy of the byte vector for URI here?
 function onurlbytes(p::Parser, bytes, i, j)
@@ -100,25 +104,26 @@ function onheadervalue(p)
     return
 end
 
-function onbody(r, maintask, bytes, i, j)
+function onbody(p, maintask, bytes, i, j)
     @debug(PARSING_DEBUG, "onbody")
     @debug(PARSING_DEBUG, String(r.body))
     @debug(PARSING_DEBUG, String(bytes[i:j]))
     len = j - i + 1
     #TODO: avoid copying the bytes here? can we somehow write the bytes to a FIFOBuffer more efficiently?
-    nb = write(r.body, bytes, i, j)
+    body = p.body[]
+    nb = write(body, bytes, i, j)
     if nb < len # didn't write all available bytes
         if current_task() == maintask
             # main request function hasn't returned yet, so not safe to wait
-            r.body.max += len - nb
-            write(r.body, bytes, i + nb, j)
+            body.max += len - nb
+            write(body, bytes, i + nb, j)
         else
             while nb < len
-                nb += write(r.body, bytes, i + nb, j)
+                nb += write(body, bytes, i + nb, j)
             end
         end
     end
-    @debug(PARSING_DEBUG, String(r.body))
+    @debug(PARSING_DEBUG, String(body))
     return
 end
 
@@ -157,7 +162,8 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
         method::Method=GET,
         maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
 
-    err, headerscomplete, messagecomplete, upgrade = parse!(r, parser, bytes, len, method, maintask)
+    parser.body[] = r.body
+    err, headerscomplete, messagecomplete, upgrade = parse!(parser, bytes, len, method, maintask)
 
     if headerscomplete && isempty(r.headers)
         for (k, v) in parser.headers
@@ -175,7 +181,7 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
     return err, headerscomplete, messagecomplete, upgrade
 end
 
-function parse!(r, parser, bytes, len, method, maintask)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
+function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method, maintask::Task)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
     p_state = parser.state
     status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
     errno = HPE_OK
@@ -1034,9 +1040,9 @@ function parse!(r, parser, bytes, len, method, maintask)::Tuple{ParsingErrorCode
             #= Set this here so that on_headers_complete() callbacks can see it =#
             @debug(PARSING_DEBUG, "checking for upgrade...")
             if (parser.flags & F_UPGRADE > 0) && (parser.flags & F_CONNECTION_UPGRADE > 0)
-                upgrade = typeof(r) == Request || parser.status == 101
+                upgrade = isrequest(parser) || parser.status == 101
             else
-                upgrade = typeof(r) == Request && parser.method == CONNECT
+                upgrade = isrequest(parser) && parser.method == CONNECT
             end
             @debug(PARSING_DEBUG, upgrade)
             #= Here we call the headers_complete callback. This is somewhat
@@ -1065,7 +1071,7 @@ function parse!(r, parser, bytes, len, method, maintask)::Tuple{ParsingErrorCode
 
             hasBody = parser.flags & F_CHUNKED > 0 ||
                 (parser.content_length > 0 && parser.content_length != ULLONG_MAX)
-            if upgrade && ((typeof(r) == Request && parser.method == CONNECT) ||
+            if upgrade && ((isrequest(parser) && parser.method == CONNECT) ||
                                   (parser.flags & F_SKIPBODY) > 0 || !hasBody)
                 #= Exit, the rest of the message is in a different protocol. =#
                 p_state = ifelse(http_should_keep_alive(parser), start_state, s_dead)
@@ -1136,7 +1142,7 @@ function parse!(r, parser, bytes, len, method, maintask)::Tuple{ParsingErrorCode
                 * important for applications, but let's keep it for now.
                 =#
                 @debug(PARSING_DEBUG, "this onbody 1")
-                onbody(r, maintask, bytes, body_mark, p)
+                onbody(parser, maintask, bytes, body_mark, p)
                 body_mark = 0
                 @goto reexecute
             end
@@ -1244,7 +1250,7 @@ function parse!(r, parser, bytes, len, method, maintask)::Tuple{ParsingErrorCode
             @strictcheck(ch != CR)
             p_state = s_chunk_data_done
             @debug(PARSING_DEBUG, "this onbody 2")
-            body_mark > 0 && onbody(r, maintask, bytes, body_mark, p - 1)
+            body_mark > 0 && onbody(parser, maintask, bytes, body_mark, p - 1)
             body_mark = 0
 
         elseif p_state == s_chunk_data_done
@@ -1284,7 +1290,7 @@ function parse!(r, parser, bytes, len, method, maintask)::Tuple{ParsingErrorCode
     header_value_mark > 0 && onheadervaluebytes(parser, bytes, header_value_mark, min(len, p))
     url_mark > 0 && onurlbytes(parser, bytes, url_mark, min(len, p))
     @debug(PARSING_DEBUG, "this onbody 3")
-    body_mark > 0 && onbody(r, maintask, bytes, body_mark, min(len, p - 1))
+    body_mark > 0 && onbody(parser, maintask, bytes, body_mark, min(len, p - 1))
 
     parser.state = p_state
     @debug(PARSING_DEBUG, "exiting maybe unfinished...")
@@ -1309,7 +1315,7 @@ end
 #= Does the parser need to see an EOF to find the end of the message? =#
 function http_message_needs_eof(parser)
     #= See RFC 2616 section 4.4 =#
-    if (parser.status == 0 || # Request
+    if (isrequest(parser) ||
         div(parser.status, 100) == 1 || #= 1xx e.g. Continue =#
         parser.status == 204 ||     #= No Content =#
         parser.status == 304 ||     #= Not Modified =#

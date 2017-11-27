@@ -50,8 +50,10 @@ function __init__()
 end
 
 end # module
+#=
 try
     HTTP.parse(HTTP.Response, "HTTP/1.1 200 OK\r\n\r\n")
     HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n\r\n")
     HTTP.get(HTTP.Client(nothing), "www.google.com")
 end
+=#
