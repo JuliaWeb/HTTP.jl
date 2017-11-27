@@ -177,7 +177,7 @@ function tocameldash!(s::String)
     return s
 end
 
-canonicalizeheaders{T}(h::T) = T(tocameldash!(k) => v for (k,v) in h)
+canonicalizeheaders{T}(h::T) = T([tocameldash!(k) => v for (k,v) in h])
 
 iso8859_1_to_utf8(str::String) = iso8859_1_to_utf8(Vector{UInt8}(str))
 function iso8859_1_to_utf8(bytes::Vector{UInt8})

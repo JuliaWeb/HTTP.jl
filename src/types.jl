@@ -10,7 +10,7 @@ sockettype(::Type{https}) = TLS.SSLContext
 schemetype(::Type{TCPSocket}) = http
 schemetype(::Type{TLS.SSLContext}) = https
 
-const Headers = Dict{String, String}
+const Headers = Vector{Pair{String, String}}
 
 const Option{T} = Union{T, Void}
 not(::Void) = true
@@ -129,48 +129,52 @@ method(r::Request) = r.method
 major(r::Request) = r.major
 minor(r::Request) = r.minor
 uri(r::Request) = r.uri
-headers(r::Request) = r.headers
+headers(r::Request) = Dict(r.headers)
 body(r::Request) = r.body
 
-defaultheaders(::Type{Request}) = Headers(
+defaultheaders(::Type{Request}) = [
     "User-Agent" => "HTTP.jl/0.0.0",
     "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json; charset=utf-8"
-)
-makeheaders(d::Dict) = Headers((string(k), string(v)) for (k, v) in d)
+]
 
-function Request(m::HTTP.Method, uri::URI, userheaders::Dict, b;
+function Request(m::HTTP.Method, uri::URI, userheaders, b;
                     options::RequestOptions=RequestOptions(),
                     verbose::Bool=false,
                     logger::Option{IO}=STDOUT)
     if m != CONNECT
         headers = defaultheaders(Request)
-        headers["Host"] = host(uri)
+        push!(headers, "Host" => host(uri))
     else
         headers = Headers()
     end
-    if !isempty(userinfo(uri)) && !haskey(headers, "Authorization")
-        headers["Authorization"] = "Basic $(base64encode(userinfo(uri)))"
+    if !isempty(userinfo(uri)) && !any(x->x[1] == "Authorization", headers)
+        push!(headers, "Authorization" => "Basic $(base64encode(userinfo(uri)))")
         @log "adding basic authentication header"
     end
     if isa(b, Dict) || isa(b, Form)
         # form data
         body = Form(b)
-        headers["Content-Type"] = "multipart/form-data; boundary=$(body.boundary)"
+        push!(headers, "Content-Type" => "multipart/form-data; boundary=$(body.boundary)")
     else
         body = FIFOBuffer(b)
     end
     if iscompressed(body) && length(body) > get(options, :chunksize, 0)
         options.chunksize = length(body) + 1
     end
-    if !haskey(headers, "Content-Type") && length(body) > 0 && !isa(body, Form)
+    if !any(x->x[1] == "Content-Type", headers) && length(body) > 0 && !isa(body, Form)
         sn = sniff(body)
-        headers["Content-Type"] = sn
+        push!(headers, "Content-Type" => sn)
         @log "setting Content-Type header to: $sn"
     end
-    return Request(m, Int16(1), Int16(1), uri, merge!(headers, makeheaders(userheaders)), body)
+
+    userkeys = [x[1] for x in userheaders]
+    filter!(x->!(x[1] in userkeys), headers)
+    append!(headers, userheaders)
+
+    return Request(m, Int16(1), Int16(1), uri, headers, body)
 end
 
-Request(method, uri, h=Headers(), body=""; options::RequestOptions=RequestOptions(), logger::Option{IO}=STDOUT, verbose::Bool=false) =
+Request(method, uri, h=Dict(), body=""; options::RequestOptions=RequestOptions(), logger::Option{IO}=STDOUT, verbose::Bool=false) =
     Request(convert(HTTP.Method, method),
             isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
             h, body; options=options, logger=logger, verbose=verbose)
@@ -229,7 +233,7 @@ status(r::Response) = r.status
 major(r::Response) = r.major
 minor(r::Response) = r.minor
 cookies(r::Response) = r.cookies
-headers(r::Response) = r.headers
+headers(r::Response) = Dict(r.headers)
 request(r::Response) = r.request
 history(r::Response) = r.history
 statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
@@ -257,12 +261,12 @@ Response(s::Integer, msg) = Response(; status=s, body=FIFOBuffer(msg))
 Response(b::Union{Vector{UInt8}, String}) = Response(; headers=defaultheaders(Response), body=FIFOBuffer(b))
 Response(s::Integer, h::Headers, body) = Response(; status=s, headers=h, body=FIFOBuffer(body))
 
-defaultheaders(::Type{Response}) = Headers(
+defaultheaders(::Type{Response}) = [
     "Server"            => "Julia/$VERSION",
     "Content-Type"      => "text/html; charset=utf-8",
     "Content-Language"  => "en",
     "Date"              => Dates.format(now(Dates.UTC), Dates.RFC1123Format)
-)
+]
 
 ==(a::Response,b::Response) = (a.status  == b.status)  &&
                               (a.major   == b.major)   &&
@@ -291,7 +295,7 @@ end
 
 # headers
 function headers(io::IO, r::Union{Request, Response})
-    for (k, v) in headers(r)
+    for (k, v) in r.headers
         write(io, "$k: $v$CRLF")
     end
     # write(io, CRLF); we let the body write this in case of chunked transfer

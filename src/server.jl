@@ -160,12 +160,16 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             error = true
                             HTTP.@log e
                         end
-                        if HTTP.http_should_keep_alive(parser, request) && !error
-                            get!(HTTP.headers(response), "Connection", "keep-alive")
+                        if HTTP.http_should_keep_alive(parser) && !error
+                            if !any(x->x[1] == "Connection", response.headers)
+                                push!(response.headers, "Connection" => "keep-alive")
+                            end
                             HTTP.reset!(parser)
                             request = HTTP.Request()
                         else
-                            get!(HTTP.headers(response), "Connection", "close")
+                            if !any(x->x[1] == "Connection", response.headers)
+                                push!(response.headers, "Connection" => "close")
+                            end
                             shouldclose = true
                         end
                         if !error

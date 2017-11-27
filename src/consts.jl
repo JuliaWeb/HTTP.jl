@@ -312,13 +312,11 @@ const h_matching_proxy_connection = 0x05
 const h_matching_content_length = 0x06
 const h_matching_transfer_encoding = 0x07
 const h_matching_upgrade = 0x08
-const h_matching_setcookie = 0x09
 
 const h_connection = 0x0a
 const h_content_length = 0x0b
 const h_transfer_encoding = 0x0c
 const h_upgrade = 0x0d
-const h_setcookie = 0x0e
 
 const h_matching_transfer_encoding_chunked = 0x0f
 const h_matching_connection_token_start = 0x10
@@ -344,7 +342,6 @@ const CONNECTION =  "connection"
 const CONTENT_LENGTH =  "content-length"
 const TRANSFER_ENCODING =  "transfer-encoding"
 const UPGRADE =  "upgrade"
-const SETCOOKIE = "set-cookie"
 const CHUNKED =  "chunked"
 const KEEP_ALIVE =  "keep-alive"
 const CLOSE =  "close"

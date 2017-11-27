@@ -40,13 +40,14 @@ for sch in ("http", "https")
     @test (haskey(h, "Hey") ? h["Hey"] == "dude" : h["hey"] == "dude")
 
     println("cookie requests")
+    empty!(HTTP.DEFAULT_CLIENT.cookies)
     r = HTTP.get("$sch://httpbin.org/cookies")
     body = String(take!(r))
-    @test (body == "{\n  \"cookies\": {}\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n")
-    r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor")
+    @test body == "{\n  \"cookies\": {}\n}\n"
+    r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor&foo=bar")
     @test HTTP.status(r) == 200
     body = String(take!(r))
-    @test (body == "{\n  \"cookies\": {\n    \"hey\": \"sailor\"\n  }\n}\n" || body == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n")
+    @test body == "{\n  \"cookies\": {\n    \"foo\": \"bar\", \n    \"hey\": \"sailor\"\n  }\n}\n"
 
     # r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
     # @test String(take!(r)) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"

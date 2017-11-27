@@ -14,7 +14,7 @@ mutable struct Message
   userinfo::String
   port::String
   num_headers::Int
-  headers::Dict{String,String}
+  headers::HTTP.Headers
   should_keep_alive::Bool
   upgrade::String
   http_major::Int
@@ -52,11 +52,11 @@ Message(name= "curl get"
 ,request_path= "/test"
 ,request_url= "/test"
 ,num_headers= 3
-,headers=Dict{String,String}(
+,headers=[
     "User-Agent"=> "curl/7.18.0 (i486-pc-linux-gnu) libcurl/7.18.0 OpenSSL/0.9.8g zlib/1.2.3.3 libidn/1.1"
   , "Host"=> "0.0.0.0=5000"
   , "Accept"=> "*/*"
-  )
+  ]
 ,body= ""
 ), Message(name= "firefox get"
 ,raw= "GET /favicon.ico HTTP/1.1\r\n" *
@@ -78,7 +78,7 @@ Message(name= "curl get"
 ,request_path= "/favicon.ico"
 ,request_url= "/favicon.ico"
 ,num_headers= 8
-,headers=Dict{String,String}(
+,headers=[
     "Host"=> "0.0.0.0=5000"
   , "User-Agent"=> "Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9) Gecko/2008061015 Firefox/3.0"
   , "Accept"=> "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
@@ -87,7 +87,7 @@ Message(name= "curl get"
   , "Accept-Charset"=> "ISO-8859-1,utf-8;q=0.7,*;q=0.7"
   , "Keep-Alive"=> "300"
   , "Connection"=> "keep-alive"
-)
+]
 ,body= ""
 ), Message(name= "dumbfuck"
 ,raw= "GET /dumbfuck HTTP/1.1\r\n" *
@@ -102,9 +102,9 @@ Message(name= "curl get"
 ,request_path= "/dumbfuck"
 ,request_url= "/dumbfuck"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
     "Aaaaaaaaaaaaa"=>  "++++++++++"
-)
+]
 ,body= ""
 ), Message(name= "fragment in url"
 ,raw= "GET /forums/1/topics/2375?page=1#posts-17408 HTTP/1.1\r\n" *
@@ -146,9 +146,9 @@ Message(name= "curl get"
 ,request_path= "/get_one_header_no_body"
 ,request_url= "/get_one_header_no_body"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
      "Accept" => "*/*"
-)
+]
 ,body= ""
 ), Message(name= "get funky content length body hello"
 ,raw= "GET /get_funky_content_length_body_hello HTTP/1.0\r\n" *
@@ -164,9 +164,9 @@ Message(name= "curl get"
 ,request_path= "/get_funky_content_length_body_hello"
 ,request_url= "/get_funky_content_length_body_hello"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
      "Content-Length" => "5"
-)
+]
 ,body= "HELLO"
 ), Message(name= "post identity body world"
 ,raw= "POST /post_identity_body_world?q=search#hey HTTP/1.1\r\n" *
@@ -184,11 +184,11 @@ Message(name= "curl get"
 ,request_path= "/post_identity_body_world"
 ,request_url= "/post_identity_body_world?q=search#hey"
 ,num_headers= 3
-,headers=Dict{String,String}(
+,headers=[
     "Accept"=> "*/*"
   , "Transfer-Encoding"=> "identity"
   , "Content-Length"=> "5"
-)
+]
 ,body= "World"
 ), Message(name= "post - chunked body: all your base are belong to us"
 ,raw= "POST /post_chunked_all_your_base HTTP/1.1\r\n" *
@@ -206,9 +206,9 @@ Message(name= "curl get"
 ,request_path= "/post_chunked_all_your_base"
 ,request_url= "/post_chunked_all_your_base"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
     "Transfer-Encoding" => "chunked"
-)
+]
 ,body= "all your base are belong to us"
 ), Message(name= "two chunks ; triple zero ending"
 ,raw= "POST /two_chunks_mult_zero_end HTTP/1.1\r\n" *
@@ -227,9 +227,9 @@ Message(name= "curl get"
 ,request_path= "/two_chunks_mult_zero_end"
 ,request_url= "/two_chunks_mult_zero_end"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
     "Transfer-Encoding"=> "chunked"
-)
+]
 ,body= "hello world"
 ), Message(name= "chunked with trailing headers. blech."
 ,raw= "POST /chunked_w_trailing_headers HTTP/1.1\r\n" *
@@ -250,11 +250,11 @@ Message(name= "curl get"
 ,request_path= "/chunked_w_trailing_headers"
 ,request_url= "/chunked_w_trailing_headers"
 ,num_headers= 3
-,headers=Dict{String,String}(
+,headers=[
     "Transfer-Encoding"=>  "chunked"
   , "Vary"=> "*"
   , "Content-Type"=> "text/plain"
-)
+]
 ,body= "hello world"
 ), Message(name= "with bullshit after the length"
 ,raw= "POST /chunked_w_bullshit_after_length HTTP/1.1\r\n" *
@@ -273,9 +273,9 @@ Message(name= "curl get"
 ,request_path= "/chunked_w_bullshit_after_length"
 ,request_url= "/chunked_w_bullshit_after_length"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
     "Transfer-Encoding"=> "chunked"
-)
+]
 ,body= "hello world"
 ), Message(name= "with quotes"
 ,raw= "GET /with_\"stupid\"_quotes?foo=\"bar\" HTTP/1.1\r\n\r\n"
@@ -288,7 +288,7 @@ Message(name= "curl get"
 ,request_path= "/with_\"stupid\"_quotes"
 ,request_url= "/with_\"stupid\"_quotes?foo=\"bar\""
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name = "apachebench get"
 ,raw= "GET /test HTTP/1.0\r\n" *
@@ -304,10 +304,10 @@ Message(name= "curl get"
 ,request_path= "/test"
 ,request_url= "/test"
 ,num_headers= 3
-,headers=Dict{String,String}( "Host"=> "0.0.0.0:5000"
+,headers=[ "Host"=> "0.0.0.0:5000"
            , "User-Agent"=> "ApacheBench/2.3"
            , "Accept"=> "*/*"
-         )
+         ]
 ,body= ""
 ), Message(name = "query url with question mark"
 ,raw= "GET /test.cgi?foo=bar?baz HTTP/1.1\r\n\r\n"
@@ -320,7 +320,7 @@ Message(name= "curl get"
 ,request_path= "/test.cgi"
 ,request_url= "/test.cgi?foo=bar?baz"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name = "newline prefix get"
 ,raw= "\r\nGET /test HTTP/1.1\r\n\r\n"
@@ -333,7 +333,7 @@ Message(name= "curl get"
 ,request_path= "/test"
 ,request_url= "/test"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name = "upgrade request"
 ,raw= "GET /demo HTTP/1.1\r\n" *
@@ -356,14 +356,14 @@ Message(name= "curl get"
 ,request_url= "/demo"
 ,num_headers= 7
 ,upgrade="Hot diggity dogg"
-,headers=Dict{String,String}( "Host"=> "example.com"
+,headers=[ "Host"=> "example.com"
            , "Connection"=> "Upgrade"
            , "Sec-Websocket-Key2"=> "12998 5 Y3 1  .P00"
            , "Sec-Websocket-Protocol"=> "sample"
            , "Upgrade"=> "WebSocket"
            , "Sec-Websocket-Key1"=> "4 @1  46546xW%0l 1 5"
            , "Origin"=> "http://example.com"
-         )
+         ]
 ,body= ""
 ), Message(name = "connect request"
 ,raw= "CONNECT 0-home0.netscape.com:443 HTTP/1.0\r\n" *
@@ -384,9 +384,9 @@ Message(name= "curl get"
 ,request_url= "0-home0.netscape.com:443"
 ,num_headers= 2
 ,upgrade="some data\r\nand yet even more data"
-,headers=Dict{String,String}( "User-Agent"=> "Mozilla/1.1N"
+,headers=[ "User-Agent"=> "Mozilla/1.1N"
            , "Proxy-Authorization"=> "basic aGVsbG86d29ybGQ="
-         )
+         ]
 ,body= ""
 ), Message(name= "report request"
 ,raw= "REPORT /test HTTP/1.1\r\n" *
@@ -400,7 +400,7 @@ Message(name= "curl get"
 ,request_path= "/test"
 ,request_url= "/test"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name= "request with no http version"
 ,raw= "GET /\r\n" *
@@ -414,7 +414,7 @@ Message(name= "curl get"
 ,request_path= "/"
 ,request_url= "/"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name= "m-search request"
 ,raw= "M-SEARCH * HTTP/1.1\r\n" *
@@ -431,10 +431,10 @@ Message(name= "curl get"
 ,request_path= "*"
 ,request_url= "*"
 ,num_headers= 3
-,headers=Dict{String,String}( "Host"=> "239.255.255.250:1900"
+,headers=[ "Host"=> "239.255.255.250:1900"
            , "Man"=> "\"ssdp:discover\""
            , "St"=> "\"ssdp:all\""
-         )
+         ]
 ,body= ""
 ), Message(name= "host terminated by a query string"
 ,raw= "GET http://hypnotoad.org?hail=all HTTP/1.1\r\n" *
@@ -449,7 +449,7 @@ Message(name= "curl get"
 ,request_url= "http://hypnotoad.org?hail=all"
 ,host= "hypnotoad.org"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name= "host:port terminated by a query string"
 ,raw= "GET http://hypnotoad.org:1234?hail=all HTTP/1.1\r\n" *
@@ -465,7 +465,7 @@ Message(name= "curl get"
 ,host= "hypnotoad.org"
 ,port= "1234"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name= "host:port terminated by a space"
 ,raw= "GET http://hypnotoad.org:1234 HTTP/1.1\r\n" *
@@ -481,7 +481,7 @@ Message(name= "curl get"
 ,host= "hypnotoad.org"
 ,port= "1234"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name = "PATCH request"
 ,raw= "PATCH /file.txt HTTP/1.1\r\n" *
@@ -500,11 +500,11 @@ Message(name= "curl get"
 ,request_path= "/file.txt"
 ,request_url= "/file.txt"
 ,num_headers= 4
-,headers=Dict{String,String}( "Host"=> "www.example.com"
+,headers=[ "Host"=> "www.example.com"
            , "Content-Type"=> "application/example"
            , "If-Match"=> "\"e0023aa4e\""
            , "Content-Length"=> "10"
-         )
+         ]
 ,body= "cccccccccc"
 ), Message(name = "connect caps request"
 ,raw= "CONNECT HOME0.NETSCAPE.COM:443 HTTP/1.0\r\n" *
@@ -523,9 +523,9 @@ Message(name= "curl get"
 ,port="443"
 ,num_headers= 2
 ,upgrade=""
-,headers=Dict{String,String}( "User-Agent"=> "Mozilla/1.1N"
+,headers=[ "User-Agent"=> "Mozilla/1.1N"
            , "Proxy-Authorization"=> "basic aGVsbG86d29ybGQ="
-         )
+         ]
 ,body= ""
 ), Message(name= "utf-8 path request"
 ,raw= "GET /δ¶/δt/pope?q=1#narf HTTP/1.1\r\n" *
@@ -540,7 +540,7 @@ Message(name= "curl get"
 ,request_path= "/δ¶/δt/pope"
 ,request_url= "/δ¶/δt/pope?q=1#narf"
 ,num_headers= 1
-,headers=Dict{String,String}("Host" => "github.com")
+,headers=["Host" => "github.com"]
 ,body= ""
 ), Message(name = "hostname underscore"
 ,raw= "CONNECT home_0.netscape.com:443 HTTP/1.0\r\n" *
@@ -559,9 +559,9 @@ Message(name= "curl get"
 ,port="443"
 ,num_headers= 2
 ,upgrade=""
-,headers=Dict{String,String}( "User-Agent"=> "Mozilla/1.1N"
+,headers=[ "User-Agent"=> "Mozilla/1.1N"
            , "Proxy-Authorization"=> "basic aGVsbG86d29ybGQ="
-         )
+         ]
 ,body= ""
 ), Message(name = "eat CRLF between requests, no \"Connection: close\" header"
 ,raw= "POST / HTTP/1.1\r\n" *
@@ -580,10 +580,10 @@ Message(name= "curl get"
 ,request_url= "/"
 ,num_headers= 3
 ,upgrade= ""
-,headers=Dict{String,String}( "Host"=> "www.example.com"
+,headers=[ "Host"=> "www.example.com"
            , "Content-Type"=> "application/x-www-form-urlencoded"
            , "Content-Length"=> "4"
-         )
+         ]
 ,body= "q=42"
 ), Message(name = "eat CRLF between requests even if \"Connection: close\" is set"
 ,raw= "POST / HTTP/1.1\r\n" *
@@ -603,11 +603,11 @@ Message(name= "curl get"
 ,request_url= "/"
 ,num_headers= 4
 ,upgrade= ""
-,headers=Dict{String,String}( "Host"=> "www.example.com"
+,headers=[ "Host"=> "www.example.com"
            , "Content-Type"=> "application/x-www-form-urlencoded"
            , "Content-Length"=> "4"
            , "Connection"=> "close"
-         )
+         ]
 ,body= "q=42"
 ), Message(name = "PURGE request"
 ,raw= "PURGE /file.txt HTTP/1.1\r\n" *
@@ -622,7 +622,7 @@ Message(name= "curl get"
 ,request_path= "/file.txt"
 ,request_url= "/file.txt"
 ,num_headers= 1
-,headers=Dict{String,String}( "Host"=> "www.example.com" )
+,headers=[ "Host"=> "www.example.com" ]
 ,body= ""
 ), Message(name = "SEARCH request"
 ,raw= "SEARCH / HTTP/1.1\r\n" *
@@ -637,7 +637,7 @@ Message(name= "curl get"
 ,request_path= "/"
 ,request_url= "/"
 ,num_headers= 1
-,headers=Dict{String,String}( "Host"=> "www.example.com")
+,headers=[ "Host"=> "www.example.com"]
 ,body= ""
 ), Message(name= "host:port and basic_auth"
 ,raw= "GET http://a%12:b!&*\$@hypnotoad.org:1234/toto HTTP/1.1\r\n" *
@@ -653,7 +653,7 @@ Message(name= "curl get"
 ,userinfo= "a%12:b!&*\$"
 ,port= "1234"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name = "upgrade post request"
 ,raw= "POST /demo HTTP/1.1\r\n" *
@@ -672,11 +672,11 @@ Message(name= "curl get"
 ,request_url= "/demo"
 ,num_headers= 4
 ,upgrade="Hot diggity dogg"
-,headers=Dict{String,String}( "Host"=> "example.com"
+,headers=[ "Host"=> "example.com"
            , "Connection"=> "Upgrade"
            , "Upgrade"=> "HTTP/2.0"
            , "Content-Length"=> "15"
-         )
+         ]
 ,body= "sweet post body"
 ), Message(name = "connect with body request"
 ,raw= "CONNECT foo.bar.com:443 HTTP/1.0\r\n" *
@@ -694,10 +694,10 @@ Message(name= "curl get"
 ,port="443"
 ,num_headers= 3
 ,upgrade="blarfcicle"
-,headers=Dict{String,String}( "User-Agent"=> "Mozilla/1.1N"
+,headers=[ "User-Agent"=> "Mozilla/1.1N"
            , "Proxy-Authorization"=> "basic aGVsbG86d29ybGQ="
            , "Content-Length"=> "10"
-         )
+         ]
 ,body= ""
 ), Message(name = "link request"
 ,raw= "LINK /images/my_dog.jpg HTTP/1.1\r\n" *
@@ -714,9 +714,9 @@ Message(name= "curl get"
 ,query_string= ""
 ,fragment= ""
 ,num_headers= 2
-,headers=Dict{String,String}( "Host"=> "example.com"
+,headers=[ "Host"=> "example.com"
            , "Link"=> "<http://example.com/profiles/joe>; rel=\"tag\", <http://example.com/profiles/sally>; rel=\"tag\""
-         )
+         ]
 ,body= ""
 ), Message(name = "link request"
 ,raw= "UNLINK /images/my_dog.jpg HTTP/1.1\r\n" *
@@ -732,9 +732,9 @@ Message(name= "curl get"
 ,query_string= ""
 ,fragment= ""
 ,num_headers= 2
-,headers=Dict{String,String}( "Host"=> "example.com"
+,headers=[ "Host"=> "example.com"
      , "Link"=> "<http://example.com/profiles/sally>; rel=\"tag\""
-         )
+         ]
 ,body= ""
 ), Message(name = "multiple connection header values with folding"
 ,raw= "GET /demo HTTP/1.1\r\n" *
@@ -758,14 +758,14 @@ Message(name= "curl get"
 ,request_url= "/demo"
 ,num_headers= 7
 ,upgrade="Hot diggity dogg"
-,headers=Dict{String,String}( "Host"=> "example.com"
+,headers=[ "Host"=> "example.com"
            , "Connection"=> "Something, Upgrade, ,Keep-Alive"
            , "Sec-Websocket-Key2"=> "12998 5 Y3 1  .P00"
            , "Sec-Websocket-Protocol"=> "sample"
            , "Upgrade"=> "WebSocket"
            , "Sec-Websocket-Key1"=> "4 @1  46546xW%0l 1 5"
            , "Origin"=> "http://example.com"
-         )
+         ]
 ,body= ""
 ), Message(name= "line folding in header value"
 ,raw= "GET / HTTP/1.1\r\n" *
@@ -792,12 +792,12 @@ Message(name= "curl get"
 ,request_path= "/"
 ,request_url= "/"
 ,num_headers= 5
-,headers=Dict{String,String}( "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
+,headers=[ "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
            , "Line2"=> "line2\t"
            , "Line3"=> "line3"
            , "Line4"=> ""
            , "Connection"=> "close"
-         )
+         ]
 ,body= ""
 ), Message(name = "multiple connection header values with folding and lws"
 ,raw= "GET /demo HTTP/1.1\r\n" *
@@ -815,9 +815,9 @@ Message(name= "curl get"
 ,request_url= "/demo"
 ,num_headers= 2
 ,upgrade="Hot diggity dogg"
-,headers=Dict{String,String}( "Connection"=> "keep-alive, upgrade"
+,headers=[ "Connection"=> "keep-alive, upgrade"
            , "Upgrade"=> "WebSocket"
-         )
+         ]
 ,body= ""
 ), Message(name = "multiple connection header values with folding and lws"
 ,raw= "GET /demo HTTP/1.1\r\n" *
@@ -835,9 +835,9 @@ Message(name= "curl get"
 ,request_url= "/demo"
 ,num_headers= 2
 ,upgrade="Hot diggity dogg"
-,headers=Dict{String,String}( "Connection"=> "keep-alive,  upgrade"
+,headers=[ "Connection"=> "keep-alive,  upgrade"
            , "Upgrade"=> "WebSocket"
-         )
+         ]
 ,body= ""
 ), Message(name= "line folding in header value"
 ,raw= "GET / HTTP/1.1\n" *
@@ -864,12 +864,12 @@ Message(name= "curl get"
 ,request_path= "/"
 ,request_url= "/"
 ,num_headers= 5
-,headers=Dict{String,String}( "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
+,headers=[ "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
            , "Line2"=> "line2\t"
            , "Line3"=> "line3"
            , "Line4"=> ""
            , "Connection"=> "close"
-         )
+         ]
 ,body= ""
 )
 ]
@@ -899,7 +899,7 @@ const responses = Message[
 ,status_code= 301
 ,response_status= "Moved Permanently"
 ,num_headers= 8
-,headers=Dict{String,String}(
+,headers=[
     "Location"=> "http://www.google.com/"
   , "Content-Type"=> "text/html; charset=UTF-8"
   , "Date"=> "Sun, 26 Apr 2009 11:11:49 GMT"
@@ -908,7 +908,7 @@ const responses = Message[
   , "Cache-Control"=> "public, max-age=2592000"
   , "Server"=> "gws"
   , "Content-Length"=> "219  "
-)
+]
 ,body= "<HTML><HEAD><meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n" *
         "<TITLE>301 Moved</TITLE></HEAD><BODY>\n" *
         "<H1>301 Moved</H1>\n" *
@@ -938,13 +938,13 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 5
-,headers=Dict{String,String}(
+,headers=[
     "Date"=> "Tue, 04 Aug 2009 07:59:32 GMT"
   , "Server"=> "Apache"
   , "X-Powered-By"=> "Servlet/2.5 JSP/2.1"
   , "Content-Type"=> "text/xml; charset=utf-8"
   , "Connection"=> "close"
-)
+]
 ,body= "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" *
         "<SOAP-ENV:Envelope xmlns:SOAP-ENV=\"http://schemas.xmlsoap.org/soap/envelope/\">\n" *
         "  <SOAP-ENV:Body>\n" *
@@ -962,7 +962,7 @@ const responses = Message[
 ,status_code= 404
 ,response_status= "Not Found"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body_size= 0
 ,body= ""
 ), Message(name= "301 no response phrase"
@@ -973,7 +973,7 @@ const responses = Message[
 ,status_code= 301
 ,response_status= "Moved Permanently"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name="200 trailing space on chunked body"
 ,raw= "HTTP/1.1 200 OK\r\n" *
@@ -994,10 +994,10 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 2
-,headers=Dict{String,String}(
+,headers=[
     "Content-Type"=> "text/plain"
   , "Transfer-Encoding"=> "chunked"
-)
+]
 ,body_size = 37+28
 ,body =
        "This is the data in the first chunk\r\n" *
@@ -1014,10 +1014,10 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 2
-,headers=Dict{String,String}(
+,headers=[
     "Content-Type"=> "text/html; charset=utf-8"
   , "Connection"=> "close"
-)
+]
 ,body= "these headers are from http://news.ycombinator.com/"
 ), Message(name="proxy connection"
 ,raw= "HTTP/1.1 200 OK\r\n" *
@@ -1033,12 +1033,12 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 4
-,headers=Dict{String,String}(
+,headers=[
     "Content-Type"=> "text/html; charset=UTF-8"
   , "Content-Length"=> "11"
   , "Proxy-Connection"=> "close"
   , "Date"=> "Thu, 31 Dec 2009 20:55:48 +0000"
-)
+]
 ,body= "hello world"
 ), Message(name="underscore header key"
 ,raw= "HTTP/1.1 200 OK\r\n" *
@@ -1052,12 +1052,12 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 4
-,headers=Dict{String,String}(
+,headers=[
     "Server"=> "DCLK-AdSvr"
   , "Content-Type"=> "text/xml"
   , "Content-Length"=> "0"
   , "Dclk_imp"=> "v7;x;114750856;0-0;0;17820020;0/0;21603567/21621457/1;;~okv=;dcmt=text/xml;;~cs=o"
-)
+]
 ,body= ""
 ), Message(name= "bonjourmadame.fr"
 ,raw= "HTTP/1.0 301 Moved Permanently\r\n" *
@@ -1077,7 +1077,7 @@ const responses = Message[
 ,status_code= 301
 ,response_status= "Moved Permanently"
 ,num_headers= 9
-,headers=Dict{String,String}(
+,headers=[
     "Date"=> "Thu, 03 Jun 2010 09:56:32 GMT"
   , "Server"=> "Apache/2.2.3 (Red Hat)"
   , "Cache-Control"=> "public"
@@ -1087,7 +1087,7 @@ const responses = Message[
   , "Content-Length"=> "0"
   , "Content-Type"=> "text/html; charset=UTF-8"
   , "Connection"=> "keep-alive"
-)
+]
 ,body= ""
 ), Message(name= "field underscore"
 ,raw= "HTTP/1.1 200 OK\r\n" *
@@ -1110,7 +1110,7 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 11
-,headers=Dict{String,String}(
+,headers=[
     "Date"=> "Tue, 28 Sep 2010 01:14:13 GMT"
   , "Server"=> "Apache"
   , "Cache-Control"=> "no-cache, must-revalidate"
@@ -1122,7 +1122,7 @@ const responses = Message[
   , "Transfer-Encoding"=> "chunked"
   , "Content-Type"=> "text/html"
   , "Connection"=> "close"
-)
+]
 ,body= ""
 ), Message(name= "non-ASCII in status line"
 ,raw= "HTTP/1.1 500 Oriëntatieprobleem\r\n" *
@@ -1136,11 +1136,11 @@ const responses = Message[
 ,status_code= 500
 ,response_status= "Internal Server Error"
 ,num_headers= 3
-,headers=Dict{String,String}(
+,headers=[
     "Date"=> "Fri, 5 Nov 2010 23:07:12 GMT+2"
   , "Content-Length"=> "0"
   , "Connection"=> "close"
-)
+]
 ,body= ""
 ), Message(name= "http version 0.9"
 ,raw= "HTTP/0.9 200 OK\r\n" *
@@ -1151,7 +1151,7 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name= "neither content-length nor transfer-encoding response"
 ,raw= "HTTP/1.1 200 OK\r\n" *
@@ -1164,9 +1164,9 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
     "Content-Type"=> "text/plain"
-)
+]
 ,body= "hello world"
 ), Message(name= "HTTP/1.0 with keep-alive and EOF-terminated 200 status"
 ,raw= "HTTP/1.0 200 OK\r\n" *
@@ -1178,9 +1178,9 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
     "Connection"=> "keep-alive"
-)
+]
 ,body_size= 0
 ,body= ""
 ), Message(name= "HTTP/1.0 with keep-alive and a 204 status"
@@ -1193,9 +1193,9 @@ const responses = Message[
 ,status_code= 204
 ,response_status= "No Content"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
     "Connection"=> "keep-alive"
-)
+]
 ,body_size= 0
 ,body= ""
 ), Message(name= "HTTP/1.1 with an EOF-terminated 200 status"
@@ -1207,7 +1207,7 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body_size= 0
 ,body= ""
 ), Message(name= "HTTP/1.1 with a 204 status"
@@ -1219,7 +1219,7 @@ const responses = Message[
 ,status_code= 204
 ,response_status= "No Content"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body_size= 0
 ,body= ""
 ), Message(name= "HTTP/1.1 with a 204 status and keep-alive disabled"
@@ -1232,9 +1232,9 @@ const responses = Message[
 ,status_code= 204
 ,response_status= "No Content"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
     "Connection"=> "close"
-)
+]
 ,body_size= 0
 ,body= ""
 ), Message(name= "HTTP/1.1 with chunked endocing and a 200 response"
@@ -1249,9 +1249,9 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 1
-,headers=Dict{String,String}(
+,headers=[
     "Transfer-Encoding"=> "chunked"
-)
+]
 ,body_size= 0
 ,body= ""
 ), Message(name= "field space"
@@ -1271,7 +1271,7 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 7
-,headers=Dict{String,String}(
+,headers=[
     "Server"=>  "Microsoft-IIS/6.0"
   , "X-Powered-By"=> "ASP.NET"
   , "En-Us content-Type"=> "text/xml"
@@ -1279,7 +1279,7 @@ const responses = Message[
   , "Content-Length"=> "16"
   , "Date"=> "Fri, 23 Jul 2010 18:45:38 GMT"
   , "Connection"=> "keep-alive"
-)
+]
 ,body= "<xml>hello</xml>"
 ), Message(name= "amazon.com"
 ,raw= "HTTP/1.1 301 MovedPermanently\r\n" *
@@ -1303,7 +1303,7 @@ const responses = Message[
 ,status_code= 301
 ,response_status= "Moved Permanently"
 ,num_headers= 9
-,headers=Dict{String,String}( "Date"=> "Wed, 15 May 2013 17:06:33 GMT"
+,headers=[ "Date"=> "Wed, 15 May 2013 17:06:33 GMT"
            , "Server"=> "Server"
            , "X-Amz-Id-1"=> "0GPHKXSJQ826RK7GZEB2"
            , "P3p"=> "policyref=\"http://www.amazon.com/w3c/p3p.xml\",CP=\"CAO DSP LAW CUR ADM IVAo IVDo CONo OTPo OUR DELi PUBi OTRi BUS PHY ONL UNI PUR FIN COM NAV INT DEM CNT STA HEA PRE LOC GOV OTC \""
@@ -1312,7 +1312,7 @@ const responses = Message[
            , "Vary"=> "Accept-Encoding,User-Agent"
            , "Content-Type"=> "text/html; charset=ISO-8859-1"
            , "Transfer-Encoding"=> "chunked"
-         )
+         ]
 ,body= "\n"
 ), Message(name= "empty reason phrase after space"
 ,raw= "HTTP/1.1 200 \r\n" *
@@ -1323,7 +1323,7 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 0
-,headers=Dict{String,String}()
+,headers=HTTP.Headers()
 ,body= ""
 ), Message(name= "Content-Length-X"
 ,raw= "HTTP/1.1 200 OK\r\n" *
@@ -1340,9 +1340,9 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 2
-,headers=Dict{String,String}( "Content-Length-X"=> "0"
+,headers=[ "Content-Length-X"=> "0"
            , "Transfer-Encoding"=> "chunked"
-         )
+         ]
 ,body= "OK"
 )
 ]
@@ -1389,9 +1389,9 @@ const responses = Message[
           @test HTTP.port(HTTP.uri(r)) in (req.port, "80", "443")
           @test string(HTTP.uri(r)) == req.request_url
           @test length(HTTP.headers(r)) == req.num_headers
-          @test HTTP.canonicalizeheaders(HTTP.headers(r)) == req.headers
+          @test HTTP.canonicalizeheaders(HTTP.headers(r)) == Dict(req.headers)
           @test String(readavailable(HTTP.body(r))) == req.body
-          @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == req.should_keep_alive
+          @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == req.should_keep_alive
           @test t == "A" || 
                 req.upgrade == "" && !isassigned(upgrade) ||
                 upgrade[] == req.upgrade
@@ -1410,8 +1410,9 @@ const responses = Message[
 
       req = HTTP.Request()
       req.uri = HTTP.URI("http://www.techcrunch.com/")
-      req.headers = HTTP.Headers("Content-Length"=>"7","Host"=>"www.techcrunch.com","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Proxy-Connection"=>"keep-alive","Accept-Language"=>"en-us,en;q=0.5","Keep-Alive"=>"300","User-Agent"=>"Fake","Accept-Encoding"=>"gzip,deflate")
+      req.headers = ["Host"=>"www.techcrunch.com","User-Agent"=>"Fake","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language"=>"en-us,en;q=0.5","Accept-Encoding"=>"gzip,deflate","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Keep-Alive"=>"300","Content-Length"=>"7","Proxy-Connection"=>"keep-alive"]
 
+      @test HTTP.parse(HTTP.Request, reqstr).headers == req.headers
       @test HTTP.parse(HTTP.Request, reqstr) == req
 
       reqstr = "GET / HTTP/1.1\r\n" *
@@ -1419,7 +1420,7 @@ const responses = Message[
 
       req = HTTP.Request()
       req.uri = HTTP.URI("/")
-      req.headers = HTTP.Headers("Host"=>"foo.com")
+      req.headers = ["Host"=>"foo.com"]
 
       @test HTTP.parse(HTTP.Request, reqstr) == req
 
@@ -1428,7 +1429,7 @@ const responses = Message[
 
       req = HTTP.Request()
       req.uri = HTTP.URI("//user@host/is/actually/a/path/")
-      req.headers = HTTP.Headers("Host"=>"test")
+      req.headers = ["Host"=>"test"]
 
       @test HTTP.parse(HTTP.Request, reqstr) == req
 
@@ -1454,7 +1455,7 @@ const responses = Message[
       req = HTTP.Request()
       req.method = "POST"
       req.uri = HTTP.URI("/")
-      req.headers = HTTP.Headers("Transfer-Encoding"=>"chunked", "Host"=>"foo.com", "Trailer-Key"=>"Trailer-Value")
+      req.headers = ["Host"=>"foo.com", "Transfer-Encoding"=>"chunked", "Trailer-Key"=>"Trailer-Value"]
       req.body = HTTP.FIFOBuffer("foobar")
 
       @test HTTP.parse(HTTP.Request, reqstr) == req
@@ -1499,7 +1500,7 @@ const responses = Message[
       req = HTTP.Request()
       req.method = "NOTIFY"
       req.uri = HTTP.URI("*")
-      req.headers = HTTP.Headers("Server"=>"foo")
+      req.headers = ["Server"=>"foo"]
 
       @test HTTP.parse(HTTP.Request, reqstr) == req
 
@@ -1508,7 +1509,7 @@ const responses = Message[
       req = HTTP.Request()
       req.method = "OPTIONS"
       req.uri = HTTP.URI("*")
-      req.headers = HTTP.Headers("Server"=>"foo")
+      req.headers = ["Server"=>"foo"]
 
       @test HTTP.parse(HTTP.Request, reqstr) == req
 
@@ -1516,7 +1517,7 @@ const responses = Message[
 
       req = HTTP.Request()
       req.uri = HTTP.URI("/")
-      req.headers = HTTP.Headers("Host"=>"issue8261.com", "Connection"=>"close")
+      req.headers = ["Host"=>"issue8261.com", "Connection"=>"close"]
 
       @test HTTP.parse(HTTP.Request, reqstr) == req
 
@@ -1525,7 +1526,7 @@ const responses = Message[
       req = HTTP.Request()
       req.method = "HEAD"
       req.uri = HTTP.URI("/")
-      req.headers = HTTP.Headers("Host"=>"issue8261.com", "Connection"=>"close", "Content-Length"=>"0")
+      req.headers = ["Host"=>"issue8261.com", "Connection"=>"close", "Content-Length"=>"0"]
 
       @test HTTP.parse(HTTP.Request, reqstr) == req
 
@@ -1542,13 +1543,13 @@ const responses = Message[
       req = HTTP.Request()
       req.method = "POST"
       req.uri = HTTP.URI("/cgi-bin/process.cgi")
-      req.headers = HTTP.Headers("Host"=>"www.tutorialspoint.com",
-                       "Connection"=>"Keep-Alive",
-                       "Content-Length"=>"19",
-                       "User-Agent"=>"Mozilla/4.0 (compatible; MSIE5.01; Windows NT)",
-                       "Content-Type"=>"text/xml; charset=utf-8",
-                       "Accept-Language"=>"en-us",
-                       "Accept-Encoding"=>"gzip, deflate")
+      req.headers = ["User-Agent"=>"Mozilla/4.0 (compatible; MSIE5.01; Windows NT)",
+                     "Host"=>"www.tutorialspoint.com",
+                     "Content-Type"=>"text/xml; charset=utf-8",
+                     "Content-Length"=>"19",
+                     "Accept-Language"=>"en-us",
+                     "Accept-Encoding"=>"gzip, deflate",
+                     "Connection"=>"Keep-Alive"]
       req.body = HTTP.FIFOBuffer("first=Zara&last=Ali")
 
       @test HTTP.parse(HTTP.Request, reqstr) == req
@@ -1582,9 +1583,9 @@ const responses = Message[
               @test HTTP.status(r) == resp.status_code
               @test HTTP.statustext(r) == resp.response_status
               @test length(HTTP.headers(r)) == resp.num_headers
-              @test HTTP.canonicalizeheaders(HTTP.headers(r)) == resp.headers
+              @test HTTP.canonicalizeheaders(HTTP.headers(r)) == Dict(resp.headers)
               @test String(readavailable(HTTP.body(r))) == resp.body
-              @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER, r) == resp.should_keep_alive
+              @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == resp.should_keep_alive
           catch e
               if HTTP.strict && isa(e, HTTP.ParsingError)
                   println("HTTP.strict is enabled. ParsingError ignored.")
@@ -1752,7 +1753,7 @@ const responses = Message[
 
       @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, "GET / HTP/1.1\r\n\r\n")
 
-      r = HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n" * "Test: Düsseldorf\r\n")
+      r = HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n" * "Test: Düsseldorf\r\n\r\n")
       @test HTTP.headers(r) == Dict("Test" => "Düsseldorf")
 
       r = HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba")

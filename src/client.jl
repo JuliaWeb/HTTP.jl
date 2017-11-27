@@ -211,8 +211,8 @@ function addcookies!(client, host, req, verbose)
     # check if cookies should be added to outgoing request based on host
     if haskey(client.cookies, host)
         cookies = client.cookies[host]
-        tosend = Set{Cookie}()
-        expired = Set{Cookie}()
+        tosend = Vector{Cookie}()
+        expired = Vector{Cookie}()
         for (i, cookie) in enumerate(cookies)
             if Cookies.shouldsend(cookie, scheme(uri(req)) == "https", host, path(uri(req)))
                 cookie.expires != DateTime() && cookie.expires < now(Dates.UTC) && (push!(expired, cookie); @log("deleting expired cookie: " * cookie.name); continue)
@@ -222,7 +222,12 @@ function addcookies!(client, host, req, verbose)
         setdiff!(client.cookies[host], expired)
         if length(tosend) > 0
             @log "adding cached cookies for host to request header: " * join(map(x->x.name, tosend), ", ")
-            req.headers["Cookie"] = string(Base.get(req.headers, "Cookie", ""), [c for c in tosend])
+            i = findfirst(x->x[1] == "Cookie", req.headers)
+            if i > 0
+                req.headers[i] = "Cookie" => string(req.headers[i][2], tosend)
+            else
+                push!(req.headers, "Cookie" => string("", tosend))
+            end
         end
     end
 end
@@ -249,11 +254,11 @@ end
 function redirect(response, client, req, opts, stream, history, retry, verbose)
     logger = client.logger
     @log "checking for location to redirect"
-    key = haskey(response.headers, "Location") ? "Location" : ""
-    if key != ""
+    i = findfirst(x->x[1] == "Location", response.headers)
+    if i > 0
         push!(history, response)
         length(history) > opts.maxredirects::Int && throw(RedirectError(opts.maxredirects::Int))
-        newuri = URIs.URL(response.headers[key])
+        newuri = URIs.URL(response.headers[i][2])
         u = uri(req)
         newuri = !isempty(hostname(newuri)) ? newuri : URIs.URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
         if opts.forwardheaders::Bool
@@ -281,14 +286,15 @@ function getbytes(socket, tm)
     end
 end
 
-function processresponse!(client, conn, response, host, method, maintask, stream, tm, verbose)
+function processresponse!(client, conn, response, host, method, maintask, stream, opts, verbose)
     logger = client.logger
     while true
-        buffer, err = getbytes(conn.socket, tm)
+        buffer, err = getbytes(conn.socket, opts.readtimeout)
         @log "received bytes from the wire, processing"
         # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
-        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, conn.parser, buffer; host=host, method=method, maintask=maintask)
+        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, conn.parser, buffer; method=method, maintask=maintask)
         response.status = conn.parser.status
+
         if messagecomplete
             close(response.body)
         end
@@ -304,13 +310,13 @@ function processresponse!(client, conn, response, host, method, maintask, stream
             dead!(conn)
             throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])\nCurrent response buffer contents: $(String(buffer))"))
         elseif messagecomplete
-            http_should_keep_alive(conn.parser, response) || (@log("closing connection (no keep-alive)"); dead!(conn))
+            http_should_keep_alive(conn.parser) || (@log("closing connection (no keep-alive)"); dead!(conn))
             # idle! on a Dead will stay Dead
             idle!(conn)
             return true, StatusError(status(response), response)
         elseif stream && headerscomplete
             @log "processing the rest of response asynchronously"
-            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, tm, false)
+            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, opts, false)
             return true, StatusError(status(response), response)
         end
     end
@@ -329,10 +335,10 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     # maybe allow retrying for all kinds of errors?
     p = port(u)
     conn = @retryif ClosedError 4 connectandsend(client, sch, host, ifelse(p == "", "80", p), req, opts, verbose)
-    
+
     response = Response(stream ? 2^24 : FIFOBuffers.DEFAULT_MAX, req)
     reset!(conn.parser)
-    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, verbose)
+    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts, verbose)
     if !success
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
@@ -341,7 +347,13 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     if opts.canonicalizeheaders::Bool
         response.headers = canonicalizeheaders(response.headers)
     end
-    opts.managecookies::Bool && !isempty(response.cookies) && (@log("caching received cookies for host: " * join(map(x->x.name, response.cookies), ", ")); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
+    if opts.managecookies::Bool && any(x->x[1]=="Set-Cookie", response.headers)
+        cookies = get!(client.cookies, host, Set{Cookie}())
+        push!(cookies, (Cookies.readsetcookie(host, v[2])
+              for v in filter(x->x[1]=="Set-Cookie", response.headers))...)
+        @log("caching received cookie for host: " * cookies)
+    end
+
     response.history = history
     if opts.allowredirects::Bool && req.method != HEAD && (300 <= status(response) < 400)
         return redirect(response, client, req, opts, stream, history, retry, verbose)
@@ -354,7 +366,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     end
 end
 
-request(req::Request; 
+request(req::Request;
             opts::RequestOptions=RequestOptions(),
             stream::Bool=false,
             history::Vector{Response}=Response[],
@@ -373,7 +385,7 @@ request(client::Client, req::Request;
 
 # build Request
 function request(client::Client, method, uri::URI;
-                 headers::Dict=Headers(),
+                 headers::Dict=Dict(),
                  body=FIFOBuffers.EMPTYBODY,
                  stream::Bool=false,
                  verbose::Bool=false,
@@ -451,7 +463,7 @@ Access-Control-Allow-Origin: *
 Server: meinheld/0.6.1
 Content-Length: 32
 
-{ 
+{
   "origin": "50.207.241.62"
 }
 \"\"\"
