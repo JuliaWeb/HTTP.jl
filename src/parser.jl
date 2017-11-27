@@ -32,8 +32,8 @@ mutable struct Parser
     flags::UInt8
     nread::UInt32
     content_length::UInt64
-    fieldbuffer::Vector{UInt8} #FIXME IOBuffer
-    valuebuffer::Vector{UInt8}
+    fieldbuffer::IOBuffer
+    valuebuffer::IOBuffer
     method::HTTP.Method
     major::Int16
     minor::Int16
@@ -42,7 +42,7 @@ mutable struct Parser
     headers::Vector{Pair{String,String}}
 end
 
-Parser() = Parser(start_state, 0x00, 0, 0, 0, 0, UInt8[], UInt8[], Method(0), 0, 0, HTTP.URI(), 0, Pair{String,String}[])
+Parser() = Parser(start_state, 0x00, 0, 0, 0, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, Pair{String,String}[])
 
 const DEFAULT_PARSER = Parser()
 
@@ -53,8 +53,8 @@ function reset!(p::Parser)
     p.flags = 0x00
     p.nread = 0x00000000
     p.content_length = 0x0000000000000000
-    empty!(p.fieldbuffer)
-    empty!(p.valuebuffer)
+    truncate(p.fieldbuffer, 0)
+    truncate(p.valuebuffer, 0)
     p.method = Method(0)
     p.major = 0
     p.minor = 0
@@ -67,7 +67,7 @@ end
 # should we just make a copy of the byte vector for URI here?
 function onurlbytes(p::Parser, bytes, i, j)
     @debug(PARSING_DEBUG, "onurlbytes")
-    append!(p.valuebuffer, view(bytes, i:j))
+    write(p.valuebuffer, view(bytes, i:j))
     return
 end
 
@@ -75,33 +75,28 @@ function onurl(p::Parser)
     @debug(PARSING_DEBUG, "onurl")
     @debug(PARSING_DEBUG, String(p.valuebuffer))
     @debug(PARSING_DEBUG, p.method)
-    url = copy(p.valuebuffer)
+    url = take!(p.valuebuffer)
     uri = URIs.http_parser_parse_url(url, 1, length(url), p.method == CONNECT)
     @debug(PARSING_DEBUG, uri)
     p.url = uri
-    empty!(p.valuebuffer)
     return
 end
 
 function onheaderfieldbytes(p::Parser, bytes, i, j)
     @debug(PARSING_DEBUG, "onheaderfieldbytes")
-    append!(p.fieldbuffer, view(bytes, i:j))
+    write(p.fieldbuffer, view(bytes, i:j))
     return
 end
 
 function onheadervaluebytes(p::Parser, bytes, i, j)
     @debug(PARSING_DEBUG, "onheadervaluebytes")
-    append!(p.valuebuffer, view(bytes, i:j))
+    write(p.valuebuffer, view(bytes, i:j))
     return
 end
 
 function onheadervalue(p)
     @debug(PARSING_DEBUG, "onheadervalue2")
-    key = unsafe_string(pointer(p.fieldbuffer), length(p.fieldbuffer))
-    val = unsafe_string(pointer(p.valuebuffer), length(p.valuebuffer))
-    push!(p.headers, key => val)
-    empty!(p.fieldbuffer)
-    empty!(p.valuebuffer)
+    push!(p.headers, String(take!(p.fieldbuffer)) => String(take!(p.valuebuffer)))
     return
 end
 
