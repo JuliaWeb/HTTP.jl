@@ -222,12 +222,7 @@ function addcookies!(client, host, req, verbose)
         setdiff!(client.cookies[host], expired)
         if length(tosend) > 0
             @log "adding cached cookies for host to request header: " * join(map(x->x.name, tosend), ", ")
-            i = findfirst(x->x[1] == "Cookie", req.headers)
-            if i > 0
-                req.headers[i] = "Cookie" => string(req.headers[i][2], tosend)
-            else
-                push!(req.headers, "Cookie" => string("", tosend))
-            end
+            setheader(req, "Cookie" => string(header(req, "Cookie"), tosend))
         end
     end
 end
@@ -254,24 +249,25 @@ end
 function redirect(response, client, req, opts, stream, history, retry, verbose)
     logger = client.logger
     @log "checking for location to redirect"
-    i = findfirst(x->x[1] == "Location", response.headers)
-    if i > 0
-        push!(history, response)
-        length(history) > opts.maxredirects::Int && throw(RedirectError(opts.maxredirects::Int))
-        newuri = URIs.URL(response.headers[i][2])
-        u = uri(req)
-        newuri = !isempty(hostname(newuri)) ? newuri : URIs.URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
-        if opts.forwardheaders::Bool
-            h = headers(req)
-            delete!(h, "Host")
-            delete!(h, "Cookie")
-        else
-            h = Headers()
-        end
-        redirectreq = Request(req.method, newuri, h, req.body)
-        @log "redirecting to $(newuri)"
-        return request(client, redirectreq, opts, stream, history, retry, verbose)
+    location = header(response, "Location")
+    if location == ""
+        return
     end
+    push!(history, response)
+    length(history) > opts.maxredirects::Int && throw(RedirectError(opts.maxredirects::Int))
+    newuri = URIs.URL(location)
+    u = uri(req)
+    newuri = !isempty(hostname(newuri)) ? newuri : URIs.URI(scheme=scheme(u), hostname=hostname(u), port=port(u), path=path(newuri), query=query(u))
+    if opts.forwardheaders::Bool
+        h = headers(req)
+        delete!(h, "Host")
+        delete!(h, "Cookie")
+    else
+        h = Headers()
+    end
+    redirectreq = Request(req.method, newuri, h, req.body)
+    @log "redirecting to $(newuri)"
+    return request(client, redirectreq, opts, stream, history, retry, verbose)
 end
 
 const CLOSED_ERROR = ClosedError(ErrorException(""), "error receiving response; connection was closed prematurely")
@@ -286,13 +282,13 @@ function getbytes(socket, tm)
     end
 end
 
-function processresponse!(client, conn, response, host, method, maintask, stream, opts, verbose)
+function processresponse!(client, conn, response, host, method, stream, opts, verbose)
     logger = client.logger
     while true
         buffer, err = getbytes(conn.socket, opts.readtimeout)
         @log "received bytes from the wire, processing"
         # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
-        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, conn.parser, buffer; method=method, maintask=maintask)
+        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, conn.parser, buffer; method=method)
         response.status = conn.parser.status
 
         if messagecomplete
@@ -316,7 +312,7 @@ function processresponse!(client, conn, response, host, method, maintask, stream
             return true, StatusError(status(response), response)
         elseif stream && headerscomplete
             @log "processing the rest of response asynchronously"
-            response.body.task = @async processresponse!(client, conn, response, host, method, maintask, false, opts, false)
+            @async processresponse!(client, conn, response, host, method, false, opts, false)
             return true, StatusError(status(response), response)
         end
     end
@@ -336,9 +332,9 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     p = port(u)
     conn = @retryif ClosedError 4 connectandsend(client, sch, host, ifelse(p == "", "80", p), req, opts, verbose)
 
-    response = Response(stream ? 2^24 : FIFOBuffers.DEFAULT_MAX, req)
+    response = Response(req)
     reset!(conn.parser)
-    success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts, verbose)
+    success, err = processresponse!(client, conn, response, host, HTTP.method(req), stream, opts, verbose)
     if !success
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
@@ -386,7 +382,7 @@ request(client::Client, req::Request;
 # build Request
 function request(client::Client, method, uri::URI;
                  headers::Dict=Dict(),
-                 body=FIFOBuffers.EMPTYBODY,
+                 body=FIFOBuffer(),
                  stream::Bool=false,
                  verbose::Bool=false,
                  args...)

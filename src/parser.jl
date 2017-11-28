@@ -68,9 +68,7 @@ isrequest(p::Parser) = p.status == 0
 
 # should we just make a copy of the byte vector for URI here?
 function onurl(p::Parser)
-    @debug(PARSING_DEBUG, "onurl")
-    @debug(PARSING_DEBUG, String(p.valuebuffer))
-    @debug(PARSING_DEBUG, p.method)
+    @debug(PARSING_DEBUG, "onurl $p.method $(String(p.valuebuffer))")
     url = take!(p.valuebuffer)
     uri = URIs.http_parser_parse_url(url, 1, length(url), p.method == CONNECT)
     @debug(PARSING_DEBUG, uri)
@@ -78,34 +76,20 @@ function onurl(p::Parser)
     return
 end
 
-function onheadervalue(p)
-    @debug(PARSING_DEBUG, "onheadervalue")
+function onheadervalue(p::Parser)
+    @debug(PARSING_DEBUG, "onheadervalue $v")
     v = String(take!(p.fieldbuffer)) => String(take!(p.valuebuffer))
     @debug(PARSING_DEBUG, v)
     push!(p.headers, v)
     return
 end
 
-function onbody(p, maintask, bytes, i, j)
+function onbody(p::Parser, bytes::Vector{UInt8}, i::Int, j::Int)
     @debug(PARSING_DEBUG, "onbody")
-    #@debug(PARSING_DEBUG, String(p.body[]))
-    @debug(PARSING_DEBUG, String(bytes[i:j]))
-    len = j - i + 1
-    #TODO: avoid copying the bytes here? can we somehow write the bytes to a FIFOBuffer more efficiently?
-    body = p.body[]
-    nb = write(body, bytes, i, j)
-    if nb < len # didn't write all available bytes
-        if current_task() == maintask
-            # main request function hasn't returned yet, so not safe to wait
-            body.max += len - nb
-            write(body, bytes, i + nb, j)
-        else
-            while nb < len
-                nb += write(body, bytes, i + nb, j)
-            end
-        end
-    end
-    @debug(PARSING_DEBUG, String(body))
+    v = view(bytes, i:j)
+    @debug(PARSING_DEBUG, String(v))
+    nb = write(p.body[], v)
+    @assert nb == length(v)
     return
 end
 
@@ -118,12 +102,10 @@ full request or response (but may include more than one). Supported keyword argu
   * `extra`: a `Ref{String}` that will be used to store any extra bytes beyond a full request or response
 """
 function parse(T::Type{<:Union{Request, Response}}, str;
-                extra::Ref{String}=Ref{String}(),
-                maintask::Task=current_task())
+               extra::Ref{String}=Ref{String}())
     r = T(body=FIFOBuffer())
     reset!(DEFAULT_PARSER)
-    err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str);
-        maintask=maintask)
+    err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str))
     if T == Request
         r.uri = DEFAULT_PARSER.url
         r.method = DEFAULT_PARSER.method
@@ -142,11 +124,10 @@ function parse(T::Type{<:Union{Request, Response}}, str;
 end
 
 function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
-        method::Method=GET,
-        maintask::Task=current_task())::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
+        method::Method=GET)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
 
     parser.body[] = r.body
-    err, headerscomplete, messagecomplete, upgrade = parse!(parser, bytes, len, method, maintask)
+    err, headerscomplete, messagecomplete, upgrade = parse!(parser, bytes, len, method)
 
     if headerscomplete && isempty(r.headers)
         for (k, v) in parser.headers
@@ -181,7 +162,7 @@ macro strictcheck(cond)
     return esc(:(strict && @errorif($cond, HPE_STRICT)))
 end
 
-function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method, maintask::Task)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
+function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
     @debug(PARSING_DEBUG, "parse!")
     p_state = parser.state
     errno = HPE_UNKNOWN
@@ -1011,10 +992,10 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             end
 
         elseif p_state == s_body_identity
-            to_read = UInt64(min(parser.content_length, len - p + 1))
+            to_read = Int(min(parser.content_length, len - p + 1))
             assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
 
-            onbody(parser, maintask, bytes, p, p + to_read - 1)
+            onbody(parser, bytes, p, p + to_read - 1)
 
             #= The difference between advancing content_length and p is because
             * the latter will automaticaly advance on the next loop iteration.
@@ -1041,7 +1022,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
         #= read until EOF =#
         elseif p_state == s_body_identity_eof
-            onbody(parser, maintask, bytes, p, len)
+            onbody(parser, bytes, p, len)
             p = len
 
         elseif p_state == s_message_done
@@ -1107,12 +1088,12 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             end
 
         elseif p_state == s_chunk_data
-            to_read = UInt64(min(parser.content_length, len - p + 1))
+            to_read = Int(min(parser.content_length, len - p + 1))
 
             assert(parser.flags & F_CHUNKED > 0)
             assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
 
-            onbody(parser, maintask, bytes, p, p + to_read - 1)
+            onbody(parser, bytes, p, p + to_read - 1)
 
             #= See the explanation in s_body_identity for why the content
             * length and data pointers are managed this way.

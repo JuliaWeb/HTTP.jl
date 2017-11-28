@@ -130,6 +130,8 @@ major(r::Request) = r.major
 minor(r::Request) = r.minor
 uri(r::Request) = r.uri
 headers(r::Request) = Dict(r.headers)
+header(r, k::String, default::String="") = getkey(r.headers, k, k => default)[2]
+setheader(r, v::Pair{String,String}) = setkey(r.headers, v)
 body(r::Request) = r.body
 
 defaultheaders(::Type{Request}) = [
@@ -179,7 +181,7 @@ Request(method, uri, h=Dict(), body=""; options::RequestOptions=RequestOptions()
             isa(uri, String) ? URI(uri; isconnect=(method == "CONNECT" || method == CONNECT)) : uri,
             h, body; options=options, logger=logger, verbose=verbose)
 
-Request(; method::Method=GET, major::Integer=Int16(1), minor::Integer=Int16(1), uri=URI(""), headers=Headers(), body=FIFOBuffer("")) =
+Request(; method::Method=GET, major::Integer=Int16(1), minor::Integer=Int16(1), uri=URI(""), headers=Headers(), body=FIFOBuffer()) =
     Request(method, major, minor, uri, headers, body)
 
 ==(a::Request,b::Request) = (a.method    == b.method)    &&
@@ -250,12 +252,12 @@ end
 Response(; status::Int=200,
          cookies::Vector{Cookie}=Cookie[],
          headers::Headers=Headers(),
-         body::FIFOBuffer=FIFOBuffer(""),
+         body::FIFOBuffer=FIFOBuffer(),
          request::Nullable{Request}=Nullable{Request}(),
          history::Vector{Response}=Response[]) =
     Response(status, Int16(1), Int16(1), cookies, headers, body, request, history)
 
-Response(n::Integer, r::Request) = Response(; body=FIFOBuffer(n), request=Nullable(r))
+Response(r::Request) = Response(; body=FIFOBuffer(), request=Nullable(r))
 Response(s::Integer) = Response(; status=s)
 Response(s::Integer, msg) = Response(; status=s, body=FIFOBuffer(msg))
 Response(b::Union{Vector{UInt8}, String}) = Response(; headers=defaultheaders(Response), body=FIFOBuffer(b))
@@ -314,20 +316,29 @@ function hasmessagebody(r::Response)
 end
 hasmessagebody(r::Request) = length(r.body) > 0 && !(r.method in (GET, HEAD, CONNECT))
 
+
+function bodylength(r::Union{Request, Response})
+    l = header(r, "Content-Length")
+    return l == "" ?  length(r.body) : Base.parse(Int, l)
+end
+
+
 function body(io::IO, r::Union{Request, Response}, opts)
     if !hasmessagebody(r)
         write(io, "$CRLF")
         return
     end
     chksz = get(opts, :chunksize, 0)
-    pos = position(r.body)
-    @sync begin
-        @async begin
+
+    mark(r.body)
+#    @sync begin
+#        @async begin
             chunked = false
             bytes = UInt8[]
-            while !eof(r.body)
-                bytes = chksz == 0 ? read(r.body) : read(r.body, chksz)
-                eof(r.body) && !chunked && break
+            blength = bodylength(r)
+            while length(bytes) < blength && !eof(r.body)
+                bytes = chksz == 0 ? readavailable(r.body) : read(r.body, chksz)
+                (length(bytes) == blength || eof(r.body)) && !chunked && break
                 if !chunked
                     write(io, "Transfer-Encoding: chunked$CRLF$CRLF")
                 end
@@ -343,9 +354,9 @@ function body(io::IO, r::Union{Request, Response}, opts)
                 write(io, "Content-Length: $(dec(length(bytes)))$CRLF$CRLF")
                 write(io, bytes)
             end
-        end
-    end
-    seek(r.body, pos)
+#        end
+#    end
+    reset(r.body)
     return
 end
 

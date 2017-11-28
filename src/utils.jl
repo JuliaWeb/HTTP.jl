@@ -188,3 +188,18 @@ macro lock(l, expr)
         end
     end)
 end
+
+function setkey(c, v)
+    k = first(v)
+    if (i = findfirst(x->first(x) == k, c)) > 0
+        c[i] = v
+    else
+        push!(c, v)
+    end
+    return v
+end
+
+function getkey(c, k, default=nothing)
+    i = findfirst(x->first(x) == k, c)
+    return i > 0 ? c[i] : default
+end

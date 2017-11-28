@@ -12,6 +12,7 @@ mutable struct Form <: IO
     data::Vector{IO}
     index::Int
     boundary::String
+    mark::Int
 end
 
 Form(f::Form) = f
@@ -74,7 +75,7 @@ function Form(d::Dict)
     end
     seekstart(io)
     push!(data, io)
-    return Form(data, 1, boundary)
+    return Form(data, 1, boundary, 0)
 end
 
 function writemultipartheader(io::IOBuffer, i::IOStream)
