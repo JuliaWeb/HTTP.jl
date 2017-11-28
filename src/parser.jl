@@ -38,11 +38,11 @@ mutable struct Parser
     minor::Int16
     url::HTTP.URI
     status::Int32
-    headers::Vector{Pair{String,String}}
-    body::Ref{FIFOBuffer}
+    onbody::Function
+    onheader::Function
 end
 
-Parser() = Parser(start_state, 0x00, 0, 0, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, Pair{String,String}[], Ref{FIFOBuffer}())
+Parser() = Parser(start_state, 0x00, 0, 0, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, x->nothing, x->nothing)
 
 const DEFAULT_PARSER = Parser()
 
@@ -59,8 +59,8 @@ function reset!(p::Parser)
     p.minor = 0
     p.url = HTTP.URI()
     p.status = 0
-    empty!(p.headers)
-    p.body = Ref{FIFOBuffer}()
+    p.onbody = x->nothing
+    p.onheader = x->nothing
     return
 end
 
@@ -73,23 +73,6 @@ function onurl(p::Parser)
     uri = URIs.http_parser_parse_url(url, 1, length(url), p.method == CONNECT)
     @debug(PARSING_DEBUG, uri)
     p.url = uri
-    return
-end
-
-function onheadervalue(p::Parser)
-    @debug(PARSING_DEBUG, "onheadervalue $v")
-    v = String(take!(p.fieldbuffer)) => String(take!(p.valuebuffer))
-    @debug(PARSING_DEBUG, v)
-    push!(p.headers, v)
-    return
-end
-
-function onbody(p::Parser, bytes::Vector{UInt8}, i::Int, j::Int)
-    @debug(PARSING_DEBUG, "onbody")
-    v = view(bytes, i:j)
-    @debug(PARSING_DEBUG, String(v))
-    nb = write(p.body[], v)
-    @assert nb == length(v)
     return
 end
 
@@ -126,21 +109,9 @@ end
 function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
         method::Method=GET)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
 
-    parser.body[] = r.body
+    parser.onbody = x->write(r.body, x)
+    parser.onheader = x->appendheader(r, x)
     err, headerscomplete, messagecomplete, upgrade = parse!(parser, bytes, len, method)
-
-    if headerscomplete && isempty(r.headers)
-        for (k, v) in parser.headers
-            if k == ""
-                r.headers[end] = r.headers[end][1] => string(r.headers[end][2],  v)
-#FIXME move this to Headers->Dict conversino function...
-            elseif k != "Set-Cookie" && length(r.headers) > 0 && k == r.headers[end].first
-                r.headers[end] = r.headers[end][1] => string(r.headers[end][2], ", ", v)
-            else
-                push!(r.headers, k => v)
-            end
-        end
-    end
 
     return err, headerscomplete, messagecomplete, upgrade
 end
@@ -453,6 +424,14 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                                              s_req_schema_slash_slash,
                                              s_req_server_start),
                              HPE_INVALID_URL)
+                    if ch == ' '
+                        p_state = s_req_http_start
+                    else
+                        parser.major = Int16(0)
+                        parser.minor = Int16(9)
+                        p_state = ifelse(ch == CR, s_req_line_almost_done,
+                                                   s_header_field_start)
+                    end
                     break
                 end
                 p_state = URIs.parseurlchar(p_state, ch, strict)
@@ -462,14 +441,10 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
             write(parser.valuebuffer, view(bytes, start:p-1))
 
-            if ch == ' '
-                p_state = s_req_http_start
-                onurl(parser)
-            elseif ch in (CR, LF)
-                parser.major = Int16(0)
-                parser.minor = Int16(9)
-                p_state = ifelse(ch == CR, s_req_line_almost_done, s_header_field_start)
-                onurl(parser)
+            if p_state >= s_req_http_start
+                @debug(PARSING_DEBUG, "onurl $p.method $(String(p.valuebuffer))")
+                url = take!(parser.valuebuffer)
+                parser.url = URIs.http_parser_parse_url(url, 1, length(url), parser.method == CONNECT)
             end
 
         elseif p_state == s_req_http_start
@@ -860,7 +835,8 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             write(parser.valuebuffer, view(bytes, start:p-1))
 
             if p_state != s_header_value
-                onheadervalue(parser)
+                parser.onheader(String(take!(parser.fieldbuffer)) =>
+                                String(take!(parser.valuebuffer)))
             end
 
         elseif p_state == s_header_almost_done
@@ -905,7 +881,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
                 #= header value was empty =#
                 p_state = s_header_field_start
-                onheadervalue(parser)
+                parser.onheader(String(take!(parser.fieldbuffer)) => "")
                 p -= 1
             end
 
@@ -995,7 +971,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             to_read = Int(min(parser.content_length, len - p + 1))
             assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
 
-            onbody(parser, bytes, p, p + to_read - 1)
+            parser.onbody(view(bytes, p:p + to_read - 1))
 
             #= The difference between advancing content_length and p is because
             * the latter will automaticaly advance on the next loop iteration.
@@ -1022,7 +998,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
         #= read until EOF =#
         elseif p_state == s_body_identity_eof
-            onbody(parser, bytes, p, len)
+            parser.onbody(view(bytes, p:len))
             p = len
 
         elseif p_state == s_message_done
@@ -1093,7 +1069,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             assert(parser.flags & F_CHUNKED > 0)
             assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
 
-            onbody(parser, bytes, p, p + to_read - 1)
+            parser.onbody(view(bytes, p:p + to_read - 1))
 
             #= See the explanation in s_body_identity for why the content
             * length and data pointers are managed this way.

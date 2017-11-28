@@ -1355,9 +1355,11 @@ const responses = Message[
           println("TEST - parser.jl - Request $t: $(req.name)")
           upgrade = Ref{String}()
           if t == "A"
+              body=FIFOBuffer()
+              r = HTTP.Request(body=body)
               p = HTTP.DEFAULT_PARSER
               HTTP.reset!(p)
-              r = HTTP.Request(body=FIFOBuffer())
+              p.onbody = x->write(body, x)
               bytes = Vector{UInt8}(req.raw)
               sz = 1
               for i in 1:sz:length(bytes)
@@ -1560,9 +1562,11 @@ const responses = Message[
           println("TEST - parser.jl - Response $t: $(resp.name)")
           try
               if t == "A"
+                  body=FIFOBuffer()
+                  r = HTTP.Response(body=body)
                   p = HTTP.DEFAULT_PARSER
                   HTTP.reset!(p)
-                  r = HTTP.Response(body=FIFOBuffer())
+                  p.onbody = x->write(body, x)
                   bytes = Vector{UInt8}(resp.raw)
                   sz = 1
                   for i in 1:sz:length(bytes)

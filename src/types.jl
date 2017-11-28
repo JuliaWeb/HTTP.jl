@@ -130,8 +130,6 @@ major(r::Request) = r.major
 minor(r::Request) = r.minor
 uri(r::Request) = r.uri
 headers(r::Request) = Dict(r.headers)
-header(r, k::String, default::String="") = getkey(r.headers, k, k => default)[2]
-setheader(r, v::Pair{String,String}) = setkey(r.headers, v)
 body(r::Request) = r.body
 
 defaultheaders(::Type{Request}) = [
@@ -281,6 +279,21 @@ function Base.showcompact(io::IO, r::Response)
     print(io, "Response(", r.status, " ", Base.get(STATUS_CODES, r.status, "Unknown Code"), ", ",
           length(r.headers)," headers, ",
           length(r.body)," bytes in body)")
+end
+
+header(r, k::String, default::String="") = getkey(r.headers, k, k => default)[2]
+setheader(r, v::Pair{String,String}) = setkey(r.headers, v)
+
+function appendheader(r, h::Pair{String,String})
+    c = r.headers
+    k,v = h
+    if k == ""
+        c[end] = c[end][1] => string(c[end][2], v)
+    elseif k != "Set-Cookie" && length(c) > 0 && k == c[end][1]
+        c[end] = c[end][1] => string(c[end][2], ", ", v)
+    else
+        push!(r.headers, h)
+    end
 end
 
 ## Request & Response writing
