@@ -166,13 +166,12 @@ end
 
 function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method, maintask::Task)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
     p_state = parser.state
-    errno = HPE_OK
+    errno = HPE_UNKNOWN
     upgrade = headersdone = false
     @debug(PARSING_DEBUG, len)
     @debug(PARSING_DEBUG, ParsingStateCode(p_state))
     if len == 0
         if p_state == s_body_identity_eof
-            parser.state = p_state
             @debug(PARSING_DEBUG, "this 6")
             return HPE_OK, true, true, nothing
         elseif @anyeq(p_state, s_dead, s_start_req_or_res, s_start_res, s_start_req)
@@ -210,7 +209,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
             if ch == 'H'
                 p_state = s_res_or_resp_H
-                parser.state = p_state
             else
                 p_state = s_start_req
                 @goto reexecute
@@ -237,7 +235,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             else
                 @err HPE_INVALID_CONSTANT
             end
-            parser.state = p_state
 
         elseif p_state == s_res_H
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -391,7 +388,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 @err(HPE_INVALID_METHOD)
             end
             p_state = s_req_method
-            parser.state = p_state
 
         elseif p_state == s_req_method
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -701,7 +697,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
             if ch == ':'
                 p_state = s_header_value_discard_ws
-                parser.state = p_state
             else
                 @assert tokens[Int(ch)+1] != Char(0) || !strict && ch == ' '
             end
@@ -1024,14 +1019,14 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 p_state = ifelse(http_should_keep_alive(parser), start_state, s_dead)
                 parser.state = p_state
                 @debug(PARSING_DEBUG, "this 1")
-                return errno, true, true, String(bytes[p+1:end])
+                return HPE_OK, true, true, String(bytes[p+1:end])
             end
 
             if parser.flags & F_SKIPBODY > 0
                 p_state = ifelse(http_should_keep_alive(parser), start_state, s_dead)
                 parser.state = p_state
                 @debug(PARSING_DEBUG, "this 2")
-                return errno, true, true, nothing
+                return HPE_OK, true, true, nothing
             elseif parser.flags & F_CHUNKED > 0
                 #= chunked encoding - ignore Content-Length header =#
                 p_state = s_chunk_size_start
@@ -1041,7 +1036,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                     p_state = ifelse(http_should_keep_alive(parser), start_state, s_dead)
                     parser.state = p_state
                     @debug(PARSING_DEBUG, "this 3")
-                    return errno, true, true, nothing
+                    return HPE_OK, true, true, nothing
                 elseif parser.content_length != ULLONG_MAX
                     #= Content-Length header given and non-zero =#
                     p_state = s_body_identity
@@ -1052,8 +1047,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                         p_state = ifelse(http_should_keep_alive(parser), start_state, s_dead)
                         parser.state = p_state
                         @debug(PARSING_DEBUG, "this 4")
-                        #return errno, true, true, String(bytes[p+1:end])
-                        return errno, true, true, p >= len ? nothing : String(bytes[p:end])
+                        return HPE_OK, true, true, p >= len ? nothing : String(bytes[p:end])
                     else
                         #= Read body until EOF =#
                         p_state = s_body_identity_eof
@@ -1104,7 +1098,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             if upgrade
                 #= Exit, the rest of the message is in a different protocol. =#
                 parser.state = p_state
-                return errno, true, true, String(bytes[p+1:end])
+                return HPE_OK, true, true, String(bytes[p+1:end])
             end
             p = len
 
@@ -1221,13 +1215,9 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
     b = p_state == start_state || p_state == s_dead
     he = b | (headersdone || p_state >= s_headers_done)
     m = b | (p_state >= s_message_done)
-    return errno, he, m, p >= len ? nothing : String(bytes[p:end])
+    return HPE_OK, he, m, p >= len ? nothing : String(bytes[p:end])
 
     @label error
-    if errno == HPE_OK
-        errno = HPE_UNKNOWN
-    end
-
     parser.state = s_start_req_or_res
     parser.header_state = 0x00
     @debug(PARSING_DEBUG, "exiting due to error...")
