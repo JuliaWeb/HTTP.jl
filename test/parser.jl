@@ -40,7 +40,7 @@ const requests = Message[
 Message(name= "curl get"
 ,raw= "GET /test HTTP/1.1\r\n" *
        "User-Agent: curl/7.18.0 (i486-pc-linux-gnu) libcurl/7.18.0 OpenSSL/0.9.8g zlib/1.2.3.3 libidn/1.1\r\n" *
-       "Host: 0.0.0.0=5000\r\n" *
+       "Host:0.0.0.0=5000\r\n" * # missing space after colon
        "Accept: */*\r\n" *
        "\r\n"
 ,should_keep_alive= true

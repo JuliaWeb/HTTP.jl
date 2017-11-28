@@ -69,12 +69,6 @@ end
 isrequest(p::Parser) = p.status == 0
 
 # should we just make a copy of the byte vector for URI here?
-function onurlbytes(p::Parser, bytes, i, j)
-    @debug(PARSING_DEBUG, "onurlbytes")
-    write(p.valuebuffer, view(bytes, i:j))
-    return
-end
-
 function onurl(p::Parser)
     @debug(PARSING_DEBUG, "onurl")
     @debug(PARSING_DEBUG, String(p.valuebuffer))
@@ -86,27 +80,17 @@ function onurl(p::Parser)
     return
 end
 
-function onheaderfieldbytes(p::Parser, bytes, i, j)
-    @debug(PARSING_DEBUG, "onheaderfieldbytes")
-    write(p.fieldbuffer, view(bytes, i:j))
-    return
-end
-
-function onheadervaluebytes(p::Parser, bytes, i, j)
-    @debug(PARSING_DEBUG, "onheadervaluebytes")
-    write(p.valuebuffer, view(bytes, i:j))
-    return
-end
-
 function onheadervalue(p)
     @debug(PARSING_DEBUG, "onheadervalue2")
-    push!(p.headers, String(take!(p.fieldbuffer)) => String(take!(p.valuebuffer)))
+    v = String(take!(p.fieldbuffer)) => String(take!(p.valuebuffer))
+    @debug(PARSING_DEBUG, v)
+    push!(p.headers, v)
     return
 end
 
 function onbody(p, maintask, bytes, i, j)
     @debug(PARSING_DEBUG, "onbody")
-    @debug(PARSING_DEBUG, String(r.body))
+    #@debug(PARSING_DEBUG, String(p.body[]))
     @debug(PARSING_DEBUG, String(bytes[i:j]))
     len = j - i + 1
     #TODO: avoid copying the bytes here? can we somehow write the bytes to a FIFOBuffer more efficiently?
@@ -183,7 +167,6 @@ end
 
 function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method, maintask::Task)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
     p_state = parser.state
-    status_mark = url_mark = header_field_mark = header_field_end_mark = header_value_mark = body_mark = 0
     errno = HPE_OK
     upgrade = headersdone = false
     @debug(PARSING_DEBUG, len)
@@ -200,22 +183,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
         end
     end
 
-    if p_state == s_header_field
-        @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-        header_field_mark = header_field_end_mark = 1
-    end
-    if p_state == s_header_value
-        @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-        header_value_mark = 1
-    end
-    if @anyeq(p_state, s_req_path, s_req_schema, s_req_schema_slash, s_req_schema_slash_slash,
-                   s_req_server_start, s_req_server, s_req_server_with_at,
-                   s_req_query_string_start, s_req_query_string, s_req_fragment,
-                   s_req_fragment_start)
-        url_mark = 1
-    elseif p_state == s_res_status
-        status_mark = 1
-    end
     p = 1
     old_p = 0
     while p <= len
@@ -368,7 +335,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             elseif ch == LF
                 p_state = s_header_field_start
             else
-                status_mark = p
                 p_state = s_res_status
                 parser.index = 1
             end
@@ -377,12 +343,8 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == CR
                 p_state = s_res_line_almost_done
-                parser.state = p_state
-                status_mark = 0
             elseif ch == LF
                 p_state = s_header_field_start
-                parser.state = p_state
-                status_mark = 0
             end
 
         elseif p_state == s_res_line_almost_done
@@ -500,37 +462,52 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
         elseif p_state == s_req_spaces_before_url
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             ch == ' ' && @goto breakout
-            url_mark = p
             if parser.method == CONNECT
                 p_state = s_req_server_start
+            else
+                p_state = s_req_url_start
             end
-            p_state = URIs.parseurlchar(p_state, ch, strict)
-            @errorif(p_state == s_dead, HPE_INVALID_URL)
+            @goto reexecute
 
-        elseif @anyeq(p_state, s_req_schema, s_req_schema_slash, s_req_schema_slash_slash, s_req_server_start)
-            @errorif(ch in (' ', CR, LF), HPE_INVALID_URL)
-            p_state = URIs.parseurlchar(p_state, ch, strict)
-            @errorif(p_state == s_dead, HPE_INVALID_URL)
+        elseif @anyeq(p_state, s_req_url_start,
+                               s_req_server_start,
+                               s_req_server,
+                               s_req_server_with_at,
+                               s_req_path,
+                               s_req_query_string_start,
+                               s_req_query_string,
+                               s_req_fragment_start,
+                               s_req_fragment,
+                               s_req_schema,
+                               s_req_schema_slash,
+                               s_req_schema_slash_slash)
+            start = p
+            while p <= len
+                @inbounds ch = Char(bytes[p])
+                if ch in (' ', CR, LF)
+                    @errorif(@anyeq(p_state, s_req_schema, s_req_schema_slash,
+                                             s_req_schema_slash_slash,
+                                             s_req_server_start),
+                             HPE_INVALID_URL)
+                    break
+                end
+                p_state = URIs.parseurlchar(p_state, ch, strict)
+                @errorif(p_state == s_dead, HPE_INVALID_URL)
+                p += 1
+            end
 
-        elseif @anyeq(p_state, s_req_server, s_req_server_with_at, s_req_path, s_req_query_string_start,
-                           s_req_query_string, s_req_fragment_start, s_req_fragment)
+            parser.nread += (p - start)
+
+            write(parser.valuebuffer, view(bytes, start:p-1))
+
             if ch == ' '
                 p_state = s_req_http_start
-                parser.state = p_state
-                onurlbytes(parser, bytes, url_mark, p-1)
                 onurl(parser)
-                url_mark = 0
             elseif ch in (CR, LF)
                 parser.major = Int16(0)
                 parser.minor = Int16(9)
                 p_state = ifelse(ch == CR, s_req_line_almost_done, s_header_field_start)
-                parser.state = p_state
-                onurlbytes(parser, bytes, url_mark, p-1)
                 onurl(parser)
-                url_mark = 0
-            else
-                p_state = URIs.parseurlchar(p_state, ch, strict)
-                @errorif(p_state == s_dead, HPE_INVALID_URL)
             end
 
         elseif p_state == s_req_http_start
@@ -622,7 +599,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             else
                 c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
                 @errorif(c == Char(0), HPE_INVALID_HEADER_TOKEN)
-                header_field_mark = header_field_end_mark = p
                 parser.index = 1
                 p_state = s_header_field
 
@@ -637,6 +613,8 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 else
                     parser.header_state = h_general
                 end
+
+                write(parser.fieldbuffer, bytes[p])
             end
 
         elseif p_state == s_header_field
@@ -644,7 +622,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             start = p
             while p <= len
-                ch = Char(bytes[p])
+                @inbounds ch = Char(bytes[p])
                 @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
                 c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
                 if c == Char(0)
@@ -733,14 +711,10 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             if ch == ':'
                 p_state = s_header_value_discard_ws
                 parser.state = p_state
-                header_field_end_mark = p
-                if p > header_field_mark
-                    onheaderfieldbytes(parser, bytes, header_field_mark, p - 1)
-                end
-                header_field_mark = 0
             else
                 @assert tokens[Int(ch)+1] != Char(0) || !strict && ch == ' '
             end
+            write(parser.fieldbuffer, view(bytes, start:p-1))
 
         elseif p_state == s_header_value_discard_ws
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -758,7 +732,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
         elseif p_state == s_header_value_start
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @label s_header_value_start_label
-            header_value_mark = p
             p_state = s_header_value
             parser.index = 1
             c = lower(ch)
@@ -793,6 +766,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             else
               parser.header_state = h_general
             end
+            write(parser.valuebuffer, bytes[p])
 
         elseif p_state == s_header_value
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -803,25 +777,9 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 @debug(PARSING_DEBUG, Base.escape_string(string('\'', ch, '\'')))
                 @debug(PARSING_DEBUG, strict)
                 @debug(PARSING_DEBUG, isheaderchar(ch))
-                if ch == CR
-                    p_state = s_header_almost_done
-                    parser.header_state = h
-                    parser.state = p_state
-                    @debug(PARSING_DEBUG, "onheadervalue 1")
-                    onheadervaluebytes(parser, bytes, header_value_mark, p - 1)
-                    header_value_mark = 0
-                    onheadervalue(parser)
+                if ch in (CR, LF)
+                    p_state = ch == CR ? s_header_almost_done : s_header_value_lws
                     break
-                elseif ch == LF
-                    p_state = s_header_almost_done
-                    parser.nread += (p - start)
-                    parser.header_state = h
-                    parser.state = p_state
-                    @debug(PARSING_DEBUG, "onheadervalue 2")
-                    onheadervaluebytes(parser, bytes, header_value_mark, p - 1)
-                    header_value_mark = 0
-                    onheadervalue(parser)
-                    @goto reexecute
                 elseif strict && !isheaderchar(ch)
                     @err(HPE_INVALID_HEADER_TOKEN)
                 end
@@ -966,6 +924,12 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             parser.header_state = h
             parser.nread += (p - start)
 
+            write(parser.valuebuffer, view(bytes, start:p-1))
+
+            if p_state != s_header_value
+                onheadervalue(parser)
+            end
+
         elseif p_state == s_header_almost_done
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @errorif(ch != LF, HPE_LF_EXPECTED)
@@ -1012,12 +976,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 end
 
                 #= header value was empty =#
-                header_value_mark = p
                 p_state = s_header_field_start
-                parser.state = p_state
-                @debug(PARSING_DEBUG, "onheadervalue 3")
-                onheadervaluebytes(parser, bytes, header_value_mark, p - 1)
-                header_value_mark = 0
                 onheadervalue(parser)
                 @goto reexecute
             end
@@ -1120,14 +1079,15 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             to_read = UInt64(min(parser.content_length, len - p + 1))
             assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
 
+            onbody(parser, maintask, bytes, p, p + to_read - 1)
+
             #= The difference between advancing content_length and p is because
             * the latter will automaticaly advance on the next loop iteration.
             * Further, if content_length ends up at 0, we want to see the last
             * byte again for our message complete callback.
             =#
-            body_mark = p
             parser.content_length -= to_read
-            p += Int(to_read) - 1
+            p += to_read - 1
 
             if parser.content_length == 0
                 p_state = s_message_done
@@ -1141,28 +1101,24 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 * complete-on-length. It's not clear that this distinction is
                 * important for applications, but let's keep it for now.
                 =#
-                @debug(PARSING_DEBUG, "this onbody 1")
-                onbody(parser, maintask, bytes, body_mark, p)
-                body_mark = 0
                 @goto reexecute
             end
 
         #= read until EOF =#
         elseif p_state == s_body_identity_eof
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-            body_mark = p
+            onbody(parser, maintask, bytes, p, len)
             p = len
 
         elseif p_state == s_message_done
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-            # p_state = ifelse(http_should_keep_alive(parser, r), start_state, s_dead)
-            parser.state = p_state
             @debug(PARSING_DEBUG, "this 5")
             if upgrade
                 #= Exit, the rest of the message is in a different protocol. =#
                 parser.state = p_state
                 return errno, true, true, String(bytes[p+1:end])
             end
+            p = len
 
         elseif p_state == s_chunk_size_start
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -1232,10 +1188,11 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             assert(parser.flags & F_CHUNKED > 0)
             assert(parser.content_length != 0 && parser.content_length != ULLONG_MAX)
 
+            onbody(parser, maintask, bytes, p, p + to_read - 1)
+
             #= See the explanation in s_body_identity for why the content
             * length and data pointers are managed this way.
             =#
-            body_mark = p
             parser.content_length -= to_read
             p += Int(to_read) - 1
 
@@ -1249,9 +1206,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             assert(parser.content_length == 0)
             @strictcheck(ch != CR)
             p_state = s_chunk_data_done
-            @debug(PARSING_DEBUG, "this onbody 2")
-            body_mark > 0 && onbody(parser, maintask, bytes, body_mark, p - 1)
-            body_mark = 0
 
         elseif p_state == s_chunk_data_done
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -1276,21 +1230,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
      * we'd otherwise have (since CALLBACK_DATA() is meant to be run with a 'p'
      * value that's in-bounds).
      =#
-
-    assert(((header_field_mark > 0 ? 1 : 0) +
-            (header_value_mark > 0 ? 1 : 0) +
-            (url_mark > 0 ? 1 : 0)  +
-            (body_mark > 0 ? 1 : 0) +
-            (status_mark > 0 ? 1 : 0)) <= 1)
-
-    header_field_mark > 0 && onheaderfieldbytes(parser, bytes, header_field_mark, min(len, p))
-    @debug(PARSING_DEBUG, "onheadervalue 4")
-    @debug(PARSING_DEBUG, len)
-    @debug(PARSING_DEBUG, p)
-    header_value_mark > 0 && onheadervaluebytes(parser, bytes, header_value_mark, min(len, p))
-    url_mark > 0 && onurlbytes(parser, bytes, url_mark, min(len, p))
-    @debug(PARSING_DEBUG, "this onbody 3")
-    body_mark > 0 && onbody(parser, maintask, bytes, body_mark, min(len, p - 1))
 
     parser.state = p_state
     @debug(PARSING_DEBUG, "exiting maybe unfinished...")

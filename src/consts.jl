@@ -254,7 +254,8 @@ const ParsingErrorCodeMap = Dict(
     ,es_start_req=18
     ,es_req_method=19
     ,es_req_spaces_before_url=20
-    ,es_req_schema=21
+    ,es_req_url_start=21
+    ,es_req_schema=22
     ,es_req_schema_slash
     ,es_req_schema_slash_slash
     ,es_req_server_start
