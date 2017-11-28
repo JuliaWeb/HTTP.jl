@@ -30,7 +30,6 @@ mutable struct Parser
     header_state::UInt8
     index::UInt8
     flags::UInt8
-    nread::UInt32
     content_length::UInt64
     fieldbuffer::IOBuffer
     valuebuffer::IOBuffer
@@ -43,7 +42,7 @@ mutable struct Parser
     body::Ref{FIFOBuffer}
 end
 
-Parser() = Parser(start_state, 0x00, 0, 0, 0, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, Pair{String,String}[], Ref{FIFOBuffer}())
+Parser() = Parser(start_state, 0x00, 0, 0, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, Pair{String,String}[], Ref{FIFOBuffer}())
 
 const DEFAULT_PARSER = Parser()
 
@@ -52,7 +51,6 @@ function reset!(p::Parser)
     p.header_state = 0x00
     p.index = 0x00
     p.flags = 0x00
-    p.nread = 0x00000000
     p.content_length = 0x0000000000000000
     truncate(p.fieldbuffer, 0)
     truncate(p.valuebuffer, 0)
@@ -135,6 +133,7 @@ function parse(T::Type{<:Union{Request, Response}}, str;
     r.major = DEFAULT_PARSER.major
     r.minor = DEFAULT_PARSER.minor
     err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
+    !headerscomplete && throw(ParsingError("error parsing $T: headers incomplete"))
     if upgrade != nothing
         extra[] = upgrade
     end
@@ -191,10 +190,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
         @inbounds ch = Char(bytes[p])
         @debug(PARSING_DEBUG, "top of main for-loop")
         @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
-
-        if p_state <= s_headers_done
-            parser.nread += 1
-        end
 
         @label reexecute
 
@@ -496,8 +491,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 p += 1
             end
 
-            parser.nread += (p - start)
-
             write(parser.valuebuffer, view(bytes, start:p-1))
 
             if ch == ' '
@@ -705,8 +698,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 end
                 p += 1
             end
-
-            parser.nread += (p - start)
 
             if ch == ':'
                 p_state = s_header_value_discard_ws
@@ -922,7 +913,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 p += 1
             end
             parser.header_state = h
-            parser.nread += (p - start)
 
             write(parser.valuebuffer, view(bytes, start:p-1))
 
@@ -1026,8 +1016,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != LF)
 
-            parser.nread = UInt32(0)
-
             hasBody = parser.flags & F_CHUNKED > 0 ||
                 (parser.content_length > 0 && parser.content_length != ULLONG_MAX)
             if upgrade && ((isrequest(parser) && parser.method == CONNECT) ||
@@ -1122,7 +1110,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
         elseif p_state == s_chunk_size_start
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-            assert(parser.nread == 1)
             assert(parser.flags & F_CHUNKED > 0)
 
             unhex_val = unhex[Int(ch)+1]
@@ -1172,8 +1159,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             assert(parser.flags & F_CHUNKED > 0)
             @strictcheck(ch != LF)
 
-            parser.nread = 0
-
             if parser.content_length == 0
                 parser.flags |= F_TRAILING
                 p_state = s_header_field_start
@@ -1211,7 +1196,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             assert(parser.flags & F_CHUNKED > 0)
             @strictcheck(ch != LF)
-            parser.nread = 0
             p_state = s_chunk_size_start
 
         else

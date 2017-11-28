@@ -1597,38 +1597,38 @@ const responses = Message[
   end
 
   @testset "HTTP.parse errors" begin
-      reqstr = "GET / HTTP/1.1\r\n" * "Foo: F\01ailure"
+      reqstr = "GET / HTTP/1.1\r\n" * "Foo: F\01ailure\r\n\r\n"
       HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
       if !HTTP.strict
         r = HTTP.parse(HTTP.Request, reqstr)
         @test HTTP.method(r) == HTTP.GET
         @test HTTP.uri(r) == HTTP.URI("/")
-        @test length(HTTP.headers(r)) == 0
+        @test length(HTTP.headers(r)) == 1
       end
 
-      reqstr = "GET / HTTP/1.1\r\n" * "Foo: B\02ar"
+      reqstr = "GET / HTTP/1.1\r\n" * "Foo: B\02ar\r\n\r\n"
       HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, reqstr)
       if !HTTP.strict
           r = HTTP.parse(HTTP.Request, reqstr)
           @test HTTP.method(r) == HTTP.GET
           @test HTTP.uri(r) == HTTP.URI("/")
-          @test length(HTTP.headers(r)) == 0
+          @test length(HTTP.headers(r)) == 1
       end
 
-      respstr = "HTTP/1.1 200 OK\r\n" * "Foo: F\01ailure"
+      respstr = "HTTP/1.1 200 OK\r\n" * "Foo: F\01ailure\r\n\r\n"
       HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
       if !HTTP.strict
           r = HTTP.parse(HTTP.Response, respstr)
           @test HTTP.status(r) == 200
-          @test length(HTTP.headers(r)) == 0
+          @test length(HTTP.headers(r)) == 1
       end
 
-      respstr = "HTTP/1.1 200 OK\r\n" * "Foo: B\02ar"
+      respstr = "HTTP/1.1 200 OK\r\n" * "Foo: B\02ar\r\n\r\n"
       HTTP.strict && @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
       if !HTTP.strict
           r = HTTP.parse(HTTP.Response, respstr)
           @test HTTP.status(r) == 200
-          @test length(HTTP.headers(r)) == 0
+          @test length(HTTP.headers(r)) == 1
       end
 
       reqstr = "GET / HTTP/1.1\r\n" * "Fo@: Failure"
@@ -1674,8 +1674,7 @@ const responses = Message[
       end
 
       buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"
-      r = HTTP.parse(HTTP.Request, buf)
-      @test HTTP.DEFAULT_PARSER.nread == length(buf)
+      @test_throws HTTP.ParsingError r = HTTP.parse(HTTP.Request, buf)
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "1844674407370955160" * "\r\n\r\n"
       r = HTTP.parse(HTTP.Response, respstr)
