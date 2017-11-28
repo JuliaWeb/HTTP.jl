@@ -143,23 +143,6 @@ macro shifted(meth, i, char)
     return esc(:(Int($meth) << Int(16) | Int($i) << Int(8) | Int($char)))
 end
 
-macro errorif(cond, err)
-    return esc(quote
-        $cond && @err($err)
-    end)
-end
-
-macro err(e)
-    return esc(quote
-        errno = $e
-        @goto error
-    end)
-end
-
-macro strictcheck(cond)
-    return esc(:(strict && @errorif($cond, HPE_STRICT)))
-end
-
 # ensure the first character and subsequent characters that follow a '-' are uppercase
 function tocameldash!(s::String)
     const toUpper = UInt8('A') - UInt8('a')

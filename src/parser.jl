@@ -164,6 +164,23 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
     return err, headerscomplete, messagecomplete, upgrade
 end
 
+macro errorif(cond, err)
+    return esc(quote
+        $cond && @err($err)
+    end)
+end
+
+macro err(e)
+    return esc(quote
+        errno = $e
+        @goto error
+    end)
+end
+
+macro strictcheck(cond)
+    return esc(:(strict && @errorif($cond, HPE_STRICT)))
+end
+
 function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method, maintask::Task)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
     p_state = parser.state
     errno = HPE_UNKNOWN
@@ -181,29 +198,24 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
         end
     end
 
-    p = 1
-    old_p = 0
-    while p <= len
-        @assert p > old_p
-        old_p = p
+    p = 0
+    while p < len
+        p += 1
         @inbounds ch = Char(bytes[p])
         @debug(PARSING_DEBUG, "top of main for-loop")
         @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
-
-        @label reexecute
 
         if p_state == s_dead
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             #= this state is used after a 'Connection: close' message
              # the parser will error out if it reads another message
             =#
-            (ch == CR || ch == LF) && @goto breakout
-            @err HPE_CLOSED_CONNECTION
+            @errorif(ch != CR && ch != LF, HPE_CLOSED_CONNECTION)
 
         elseif p_state == s_start_req_or_res
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
 
-            (ch == CR || ch == LF) && @goto breakout
+            (ch == CR || ch == LF) && continue
             parser.flags = 0
             parser.content_length = ULLONG_MAX
 
@@ -211,7 +223,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 p_state = s_res_or_resp_H
             else
                 p_state = s_start_req
-                @goto reexecute
+                p -= 1
             end
 
         elseif p_state == s_res_or_resp_H
@@ -267,7 +279,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == '.'
                 p_state = s_res_first_http_minor
-                @goto breakout
+                continue
             end
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
             parser.major *= Int16(10)
@@ -286,7 +298,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if ch == ' '
                 p_state = s_res_first_status_code
-                @goto breakout
+                continue
             end
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
             parser.minor *= Int16(10)
@@ -296,7 +308,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
         elseif p_state == s_res_first_status_code
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             if !isnum(ch)
-                ch == ' ' && @goto breakout
+                ch == ' ' && continue
                 @err(HPE_INVALID_STATUS)
             end
             parser.status = Int32(ch - '0')
@@ -346,7 +358,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
         elseif p_state == s_start_req
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-            (ch == CR || ch == LF) && @goto breakout
+            (ch == CR || ch == LF) && continue
             parser.flags = 0
             parser.content_length = ULLONG_MAX
             @errorif(!isalpha(ch), HPE_INVALID_METHOD)
@@ -452,13 +464,13 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
         elseif p_state == s_req_spaces_before_url
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-            ch == ' ' && @goto breakout
+            ch == ' ' && continue
             if parser.method == CONNECT
                 p_state = s_req_server_start
             else
                 p_state = s_req_url_start
             end
-            @goto reexecute
+            p -= 1
 
         elseif @anyeq(p_state, s_req_url_start,
                                s_req_server_start,
@@ -584,7 +596,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 #= they might be just sending \n instead of \r\n so this would be
                  * the second \n to denote the end of headers=#
                 p_state = s_headers_almost_done
-                @goto reexecute
+                p -= 1
             else
                 c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
                 @errorif(c == Char(0), HPE_INVALID_HEADER_TOKEN)
@@ -704,20 +716,19 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
         elseif p_state == s_header_value_discard_ws
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-            (ch == ' ' || ch == '\t') && @goto breakout
+            (ch == ' ' || ch == '\t') && continue
             if ch == CR
                 p_state = s_header_value_discard_ws_almost_done
-                @goto breakout
+                continue
             end
             if ch == LF
                 p_state = s_header_value_discard_lws
-                @goto breakout
+                continue
             end
-            @goto s_header_value_start_label
-        #= FALLTHROUGH =#
+            p_state = s_header_value_start
+            p -= 1
         elseif p_state == s_header_value_start
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-            @label s_header_value_start_label
             p_state = s_header_value
             parser.index = 1
             c = lower(ch)
@@ -922,23 +933,22 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
         elseif p_state == s_header_value_lws
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
+            p -= 1
             if ch == ' ' || ch == '\t'
                 p_state = s_header_value_start
-                @goto reexecute
+            else
+                #= finished the header =#
+                if parser.header_state == h_connection_keep_alive
+                    parser.flags |= F_CONNECTION_KEEP_ALIVE
+                elseif parser.header_state == h_connection_close
+                    parser.flags |= F_CONNECTION_CLOSE
+                elseif parser.header_state == h_transfer_encoding_chunked
+                    parser.flags |= F_CHUNKED
+                elseif parser.header_state == h_connection_upgrade
+                    parser.flags |= F_CONNECTION_UPGRADE
+                end
+                p_state = s_header_field_start
             end
-            #= finished the header =#
-            if parser.header_state == h_connection_keep_alive
-                parser.flags |= F_CONNECTION_KEEP_ALIVE
-            elseif parser.header_state == h_connection_close
-                parser.flags |= F_CONNECTION_CLOSE
-            elseif parser.header_state == h_transfer_encoding_chunked
-                parser.flags |= F_CHUNKED
-            elseif parser.header_state == h_connection_upgrade
-                parser.flags |= F_CONNECTION_UPGRADE
-            end
-
-            p_state = s_header_field_start
-            @goto reexecute
 
         elseif p_state == s_header_value_discard_ws_almost_done
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -963,16 +973,17 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 #= header value was empty =#
                 p_state = s_header_field_start
                 onheadervalue(parser)
-                @goto reexecute
+                p -= 1
             end
 
         elseif p_state == s_headers_almost_done
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
             @strictcheck(ch != LF)
+            p -= 1
             if (parser.flags & F_TRAILING) > 0
                 #= End of a chunked request =#
                 p_state = s_message_done
-                @goto reexecute
+                continue
             end
 
             #= Cannot use chunked encoding and a content-length header together
@@ -1005,7 +1016,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             elseif method == CONNECT
                 upgrade = true
             end
-            @goto reexecute
 
         elseif p_state == s_headers_done
             @debug(PARSING_DEBUG, ParsingStateCode(p_state))
@@ -1083,7 +1093,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 * complete-on-length. It's not clear that this distinction is
                 * important for applications, but let's keep it for now.
                 =#
-                @goto reexecute
+                p -= 1
             end
 
         #= read until EOF =#
@@ -1123,7 +1133,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 if unhex_val == -1
                     if ch == ';' || ch == ' '
                         p_state = s_chunk_parameters
-                        @goto breakout
+                        continue
                     end
                     @err(HPE_INVALID_CHUNK_SIZE)
                 end
@@ -1195,8 +1205,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
         else
             error("unhandled state")
         end
-        @label breakout
-        p += 1
     end
 
     #= Run callbacks for any marks that we have leftover after we ran our of
