@@ -286,16 +286,26 @@ function processresponse!(client, conn, response, host, method, stream, opts, ve
     logger = client.logger
     while true
         buffer, err = getbytes(conn.socket, opts.readtimeout)
-        @log "received bytes from the wire, processing"
-        # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
-        errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(response, conn.parser, buffer; method=method)
-        response.status = conn.parser.status
-
-        if messagecomplete
-            close(response.body)
+        if length(buffer) == 0
+            dead!(conn)
+            if waitingforeof(conn.parser)
+                close(response.body)
+                return true, StatusError(status(response), response)
+            else
+                throw(ParsingError(HPE_INVALID_EOF_STATE))
+            end
+        else
+            @log "received bytes from the wire, processing"
+            # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
+            errno = HTTP.parse!(response, conn.parser, buffer; method=method)
+            response.status = conn.parser.status
+            if messagecomplete(conn.parser)
+                close(response.body)
+            end
         end
+
         @log "parsed bytes received from wire"
-        if length(buffer) == 0 && !isopen(conn.socket) && !messagecomplete
+        if length(buffer) == 0 && !isopen(conn.socket) && !messagecomplete(conn.parser)
             @log "socket closed before full response received"
             dead!(conn)
             close(response.body)
@@ -305,12 +315,12 @@ function processresponse!(client, conn, response, host, method, stream, opts, ve
         if errno != HPE_OK
             dead!(conn)
             throw(ParsingError(errno, "Current response buffer contents: $(String(buffer))"))
-        elseif messagecomplete
+        elseif messagecomplete(conn.parser)
             http_should_keep_alive(conn.parser) || (@log("closing connection (no keep-alive)"); dead!(conn))
             # idle! on a Dead will stay Dead
             idle!(conn)
             return true, StatusError(status(response), response)
-        elseif stream && headerscomplete
+        elseif stream && headerscomplete(conn.parser)
             @log "processing the rest of response asynchronously"
             @async processresponse!(client, conn, response, host, method, false, opts, false)
             return true, StatusError(status(response), response)

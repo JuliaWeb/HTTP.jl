@@ -1353,7 +1353,7 @@ const responses = Message[
       for req in requests, t in ["A", "B"]
 
           println("TEST - parser.jl - Request $t: $(req.name)")
-          upgrade = Ref{String}()
+          upgrade = Ref{SubArray{UInt8, 1}}()
           if t == "A"
               body=FIFOBuffer()
               r = HTTP.Request(body=body)
@@ -1365,20 +1365,15 @@ const responses = Message[
               for i in 1:sz:length(bytes)
                   x = bytes[i:i+sz-1]
                   #@show [Char(x[i]) for i in 1:sz]
-                  err, hc, mc, ug = HTTP.parse!(r, p, x)
+                  err = HTTP.parse!(r, p, x)
                   err != HTTP.HPE_OK && throw(HTTP.ParsingError(HTTP.ParsingErrorCodeMap[err]))
                   r.uri = HTTP.DEFAULT_PARSER.url
                   r.method = HTTP.DEFAULT_PARSER.method
                   r.major = HTTP.DEFAULT_PARSER.major
                   r.minor = HTTP.DEFAULT_PARSER.minor
-
-                  if ug != nothing
-                      upgrade[] = ug
-                      break
-                  end
               end
           else
-              r = HTTP.parse(HTTP.Request, req.raw; extra=upgrade)
+              r = HTTP.parse(HTTP.Request, req.raw; extraref=upgrade)
           end
           @test HTTP.major(r) == req.http_major
           @test HTTP.minor(r) == req.http_minor
@@ -1394,9 +1389,13 @@ const responses = Message[
           @test HTTP.canonicalizeheaders(HTTP.headers(r)) == Dict(req.headers)
           @test String(readavailable(HTTP.body(r))) == req.body
           @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == req.should_keep_alive
+
+          if isassigned(upgrade)
+              @show String(collect(upgrade[]))
+          end
           @test t == "A" || 
                 req.upgrade == "" && !isassigned(upgrade) ||
-                upgrade[] == req.upgrade
+                String(collect(upgrade[])) == req.upgrade
       end
 
       reqstr = "GET http://www.techcrunch.com/ HTTP/1.1\r\n" *
@@ -1573,7 +1572,7 @@ const responses = Message[
                   for i in 1:sz:length(bytes)
                       x = bytes[i:i+sz-1]
                       #@show [Char(x[i]) for i in 1:sz]
-                      err, hc, mc, ug = HTTP.parse!(r, p, x)
+                      err = HTTP.parse!(r, p, x)
                       err != HTTP.HPE_OK && throw(HTTP.ParsingError(HTTP.ParsingErrorCodeMap[err]))
                       r.major = HTTP.DEFAULT_PARSER.major
                       r.minor = HTTP.DEFAULT_PARSER.minor
@@ -1671,11 +1670,11 @@ const responses = Message[
       for r in ((HTTP.Request, "GET / HTTP/1.1\r\n"), (HTTP.Response, "HTTP/1.0 200 OK\r\n"))
           HTTP.reset!(HTTP.DEFAULT_PARSER)
           R = r[1]()
-          e, h, m, ex = HTTP.parse!(R, HTTP.DEFAULT_PARSER, Vector{UInt8}(r[2]))
+          e = HTTP.parse!(R, HTTP.DEFAULT_PARSER, Vector{UInt8}(r[2]))
           @test e == HTTP.HPE_OK
-          @test !h
-          @test !m
-          @test ex == nothing
+          @test !HTTP.headerscomplete(HTTP.DEFAULT_PARSER)
+          @test !HTTP.messagecomplete(HTTP.DEFAULT_PARSER)
+          @test isempty(HTTP.extra(HTTP.DEFAULT_PARSER))
       end
 
       buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"
@@ -1691,12 +1690,12 @@ const responses = Message[
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551615" * "\r\n\r\n"
       r = HTTP.Response(body=FIFOBuffer())
       HTTP.reset!(HTTP.DEFAULT_PARSER)
-      e, h, m, ex = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
+      e = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
       @test e == HTTP.HPE_INVALID_CONTENT_LENGTH
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551616" * "\r\n\r\n"
       r = HTTP.Response(body=FIFOBuffer())
       HTTP.reset!(HTTP.DEFAULT_PARSER)
-      e, h, m, ex = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
+      e = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
       @test e == HTTP.HPE_INVALID_CONTENT_LENGTH
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFE" * "\r\n..."
@@ -1709,12 +1708,12 @@ const responses = Message[
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFF" * "\r\n..."
       r = HTTP.Response(body=FIFOBuffer())
       HTTP.reset!(HTTP.DEFAULT_PARSER)
-      e, h, m, ex = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
+      e = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
       @test e == HTTP.HPE_INVALID_CONTENT_LENGTH
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "10000000000000000" * "\r\n..."
       r = HTTP.Response(body=FIFOBuffer())
       HTTP.reset!(HTTP.DEFAULT_PARSER)
-      e, h, m, ex = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
+      e = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
       @test e == HTTP.HPE_INVALID_CONTENT_LENGTH
 
       p = HTTP.Parser()
@@ -1722,54 +1721,55 @@ const responses = Message[
           HTTP.reset!(p)
           reqstr = "POST / HTTP/1.0\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
           r = HTTP.Request()
-          e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}(reqstr))
+          e = HTTP.parse!(r, p, Vector{UInt8}(reqstr))
           @test e == HTTP.HPE_OK
-          @test h
-          @test !m
+          @test HTTP.headerscomplete(p)
+          @test !HTTP.messagecomplete(p)
           for i = 1:len-1
-              e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}("a"))
+              e = HTTP.parse!(r, p, Vector{UInt8}("a"))
               @test e == HTTP.HPE_OK
-              @test h
-              @test !m
+              @test HTTP.headerscomplete(p)
+              @test !HTTP.messagecomplete(p)
           end
-          e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}("a"))
+          e = HTTP.parse!(r, p, Vector{UInt8}("a"))
           @test e == HTTP.HPE_OK
-          @test h
-          @test m
+          @test HTTP.headerscomplete(p)
+          @test HTTP.messagecomplete(p)
       end
 
       for len in (1000, 100000)
           HTTP.reset!(p)
           respstr = "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
           r = HTTP.Response()
-          e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}(respstr))
+          e = HTTP.parse!(r, p, Vector{UInt8}(respstr))
           @test e == HTTP.HPE_OK
-          @test h
-          @test !m
+          @test HTTP.headerscomplete(p)
+          @test !HTTP.messagecomplete(p)
           for i = 1:len-1
-              e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}("a"))
+              e = HTTP.parse!(r, p, Vector{UInt8}("a"))
               @test e == HTTP.HPE_OK
-              @test h
-              @test !m
+              @test HTTP.headerscomplete(p)
+              @test !HTTP.messagecomplete(p)
           end
-          e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}("a"))
+          e = HTTP.parse!(r, p, Vector{UInt8}("a"))
           @test e == HTTP.HPE_OK
-          @test h
-          @test m
+          @test HTTP.headerscomplete(p)
+          @test HTTP.messagecomplete(p)
       end
 
       reqstr = requests[1].raw * requests[2].raw
       HTTP.reset!(p)
       r = HTTP.Request()
-      e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}(reqstr))
+      e = HTTP.parse!(r, p, Vector{UInt8}(reqstr))
       @test e == HTTP.HPE_OK
-      @test h
-      @test m
+      @test HTTP.headerscomplete(p)
+      @test HTTP.messagecomplete(p)
+      ex = collect(HTTP.extra(p)
       HTTP.reset!(p)
-      e, h, m, ex = HTTP.parse!(r, p, Vector{UInt8}(ex))
+      e = HTTP.parse!(r, p, ex)
       @test e == HTTP.HPE_OK
-      @test h
-      @test m
+      @test HTTP.headerscomplete(p)
+      @test HTTP.messagecomplete(p)
 
       @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, "GET / HTP/1.1\r\n\r\n")
 

@@ -39,11 +39,12 @@ mutable struct Parser
     minor::Int16
     url::HTTP.URI
     status::Int32
-    onbody::Function
     onheader::Function
+    onbody::Function
+    extra::SubArray{UInt8,1}
 end
 
-Parser() = Parser(start_state, 0x00, 0, 0, false, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, x->nothing, x->nothing)
+Parser() = Parser(start_state, 0x00, 0, 0, false, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, x->nothing, x->nothing, view(UInt8[], 1:0))
 
 const DEFAULT_PARSER = Parser()
 
@@ -61,12 +62,17 @@ function reset!(p::Parser)
     p.minor = 0
     p.url = HTTP.URI()
     p.status = 0
-    p.onbody = x->nothing
     p.onheader = x->nothing
-    return
+    p.onbody = x->nothing
+    p.extra = view(UInt8[], 1:0)
 end
 
 isrequest(p::Parser) = p.status == 0
+headerscomplete(p::Parser) = p.state >= s_headers_done
+messagecomplete(p::Parser) = p.state >= s_message_done
+waitingforeof(p::Parser) = p.state == s_body_identity_eof
+upgrade(p::Parser) = p.upgrade
+extra(p::Parser) = p.extra
 
 struct ParsingError <: Exception
     code::ParsingErrorCode
@@ -76,20 +82,9 @@ ParsingError(code::ParsingErrorCode) = ParsingError(code, "")
 
 function Base.show(io::IO, e::ParsingError)
     println(io, string("HTTP.ParsingError: ",
-                       ParsingErrorCodeMap(e),
+                       ParsingErrorCodeMap[e.code],
                        e.msg == "" ? "" : "\n",
-                       s.msg))
-end
-
-
-# should we just make a copy of the byte vector for URI here?
-function onurl(p::Parser)
-    @debug(PARSING_DEBUG, "onurl $p.method $(String(p.valuebuffer))")
-    url = take!(p.valuebuffer)
-    uri = URIs.http_parser_parse_url(url, 1, length(url), p.method == CONNECT)
-    @debug(PARSING_DEBUG, uri)
-    p.url = uri
-    return
+                       e.msg))
 end
 
 """
@@ -101,12 +96,12 @@ full request or response (but may include more than one). Supported keyword argu
   * `extra`: a `Ref{String}` that will be used to store any extra bytes beyond a full request or response
 """
 function parse(T::Type{<:Union{Request, Response}}, str;
-               extra::Ref{String}=Ref{String}())
+               extraref::Ref{SubArray{UInt8,1}}=Ref{SubArray{UInt8,1}}())
 
     r = T(body=FIFOBuffer())
     p = DEFAULT_PARSER
     reset!(p)
-    err, headerscomplete, messagecomplete, upgrade = parse!(r, p, Vector{UInt8}(str))
+    err = parse!(r, p, Vector{UInt8}(str))
     if T == Request
         r.uri = p.url
         r.method = p.method
@@ -116,45 +111,43 @@ function parse(T::Type{<:Union{Request, Response}}, str;
     r.major = p.major
     r.minor = p.minor
     err != HPE_OK && throw(ParsingError(err))
-    !headerscomplete && throw(ParsingError(HPE_HEADERS_INCOMPLETE))
-    if p.content_length != ULLONG_MAX && !messagecomplete
+    !headerscomplete(p) && throw(ParsingError(HPE_HEADERS_INCOMPLETE))
+    if p.content_length != ULLONG_MAX && !messagecomplete(p)
         throw(ParsingError(HPE_BODY_INCOMPLETE))
     end
-    if upgrade != nothing
-        extra[] = upgrade
+    if upgrade(p)
+        extraref[] = extra(p)
     end
     close(r.body)
     return r
 end
 
 function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
-        method::Method=GET)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
+        method::Method=GET)::ParsingErrorCode
 
     parser.onbody = x->write(r.body, x)
     parser.onheader = x->appendheader(r, x)
-    err, headerscomplete, messagecomplete, upgrade = parse!(parser, bytes, len, method)
-
-    return err, headerscomplete, messagecomplete, upgrade
+    parse!(parser, bytes, len, method)
 end
 
 macro errorif(cond, err)
-    return esc(quote
+    esc(quote
         $cond && @err($err)
     end)
 end
 
 macro err(e)
-    return esc(quote
+    esc(quote
         errno = $e
         @goto error
     end)
 end
 
 macro strictcheck(cond)
-    return esc(:(strict && @errorif($cond, HPE_STRICT)))
+    esc(:(strict && @errorif($cond, HPE_STRICT)))
 end
 
-function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
+function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method)::ParsingErrorCode
     len <= 0 && throw(ArgumentError("len must be > 0"))
     @debug(PARSING_DEBUG, "parse!")
     p_state = parser.state
@@ -163,7 +156,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
     @debug(PARSING_DEBUG, ParsingStateCode(p_state))
 
     p = 0
-    while p < len
+    while p_state != s_message_done && p < len
         @debug(PARSING_DEBUG, "top of while($p < $len)")
         @debug(PARSING_DEBUG, ParsingStateCode(p_state))
         p += 1
@@ -939,43 +932,22 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
         elseif p_state == s_headers_done
             @strictcheck(ch != LF)
 
-            hasBody = parser.flags & F_CHUNKED > 0 ||
-                (parser.content_length > 0 && parser.content_length != ULLONG_MAX)
-            if parser.upgrade && ((isrequest(parser) && parser.method == CONNECT) ||
-                                  (parser.flags & F_SKIPBODY) > 0 || !hasBody)
-                #= Exit, the rest of the message is in a different protocol. =#
-                p_state = ifelse(http_should_keep_alive(parser), start_state, s_dead)
-                parser.state = p_state
-                return HPE_OK, true, true, String(bytes[p+1:end])
-            end
-
-            if parser.flags & F_SKIPBODY > 0
-                p_state = ifelse(http_should_keep_alive(parser), start_state, s_dead)
-                parser.state = p_state
-                return HPE_OK, true, true, nothing
-            elseif parser.flags & F_CHUNKED > 0
+            if parser.flags & F_CHUNKED > 0
                 #= chunked encoding - ignore Content-Length header =#
                 p_state = s_chunk_size_start
+            elseif parser.flags & F_SKIPBODY > 0 || 
+                   parser.content_length == 0 ||
+                   parser.upgrade && isrequest(parser) && parser.method == CONNECT
+                p_state = s_message_done
+            elseif parser.content_length != ULLONG_MAX
+                #= Content-Length header given and non-zero =#
+                p_state = s_body_identity
+            elseif http_message_needs_eof(parser)
+                #= Read body until EOF =#
+                p_state = s_body_identity_eof
             else
-                if parser.content_length == 0
-                    #= Content-Length header given but zero: Content-Length: 0\r\n =#
-                    p_state = ifelse(http_should_keep_alive(parser), start_state, s_dead)
-                    parser.state = p_state
-                    return HPE_OK, true, true, nothing
-                elseif parser.content_length != ULLONG_MAX
-                    #= Content-Length header given and non-zero =#
-                    p_state = s_body_identity
-                else
-                    if !http_message_needs_eof(parser)
-                        #= Assume content-length 0 - read the next =#
-                        p_state = ifelse(http_should_keep_alive(parser), start_state, s_dead)
-                        parser.state = p_state
-                        return HPE_OK, true, true, p >= len ? nothing : String(bytes[p:end])
-                    else
-                        #= Read body until EOF =#
-                        p_state = s_body_identity_eof
-                    end
-                end
+                #= Assume content-length 0 - read the next =#
+                p_state = s_message_done
             end
 
         elseif p_state == s_body_identity
@@ -994,27 +966,12 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
             if parser.content_length == 0
                 p_state = s_message_done
-
-                #= Mimic CALLBACK_DATA_NOADVANCE() but with one extra byte.
-                *
-                * The alternative to doing this is to wait for the next byte to
-                * trigger the data callback, just as in every other case. The
-                * problem with this is that this makes it difficult for the test
-                * harness to distinguish between complete-on-EOF and
-                * complete-on-length. It's not clear that this distinction is
-                * important for applications, but let's keep it for now.
-                =#
-                p -= 1
             end
 
         #= read until EOF =#
         elseif p_state == s_body_identity_eof
             parser.onbody(view(bytes, p:len))
             p = len
-
-        elseif p_state == s_message_done
-            parser.state = p_state
-            return HPE_OK, true, true, parser.upgrade ? String(bytes[p+1:end]) : nothing
 
         elseif p_state == s_chunk_size_start
             assert(parser.flags & F_CHUNKED > 0)
@@ -1103,34 +1060,20 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             error("unhandled state")
         end
     end
-    @assert p == len || p == len + 1
-
-    #= Run callbacks for any marks that we have leftover after we ran our of
-     * bytes. There should be at most one of these set, so it's OK to invoke
-     * them in series (unset marks will not result in callbacks).
-     *
-     * We use the NOADVANCE() variety of callbacks here because 'p' has already
-     * overflowed 'data' and this allows us to correct for the off-by-one that
-     * we'd otherwise have (since CALLBACK_DATA() is meant to be run with a 'p'
-     * value that's in-bounds).
-     =#
+    @assert p_state == s_message_done || p == len || p == len + 1
 
     parser.state = p_state
-    @debug(PARSING_DEBUG, "exiting maybe unfinished...")
-    @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-    he = p_state >= s_headers_done
-    m = p_state >= s_message_done
-    @assert !m || he
-    @assert !m || parser.content_length == ULLONG_MAX
+    if len > p
+        parser.extra = view(bytes, p+1:len)
+    end
 
-    return HPE_OK, he, m, nothing
+    @debug(PARSING_DEBUG, "exiting $(ParsingStateCode(p_state))")
+
+    return HPE_OK
 
     @label error
-    parser.state = s_start_req_or_res
-    parser.header_state = 0x00
-    @debug(PARSING_DEBUG, "exiting due to error...")
-    @debug(PARSING_DEBUG, errno)
-    return errno, false, false, nothing
+    @debug(PARSING_DEBUG, "exiting due to error: $errno")
+    return errno
 end
 
 #= Does the parser need to see an EOF to find the end of the message? =#

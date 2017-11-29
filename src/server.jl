@@ -104,7 +104,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                     end
                     length(buffer) > 0 || break
                     starttime[] = time() # reset the timeout while still receiving bytes
-                    errno, headerscomplete, messagecomplete, upgrade = HTTP.parse!(request, parser, buffer)
+                    errno = HTTP.parse!(request, parser, buffer)
                     request.method = parser.method
                     request.uri = parser.url
                     request.major = parser.major
@@ -127,7 +127,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             response = HTTP.Response(400)
                         end
                         error = true
-                    elseif headerscomplete && Base.get(HTTP.headers(request), "Expect", "") == "100-continue" && !alreadysent100continue
+                    elseif HTTP.headerscomplete(parser) && Base.get(HTTP.headers(request), "Expect", "") == "100-continue" && !alreadysent100continue
                         if options.support100continue
                             HTTP.@log "sending 100 Continue response to get request body"
                             # EH:
@@ -144,12 +144,12 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             response = HTTP.Response(417)
                             error = true
                         end
-                    elseif upgrade != nothing
-                        @show upgrade
+                    elseif HTTP.upgrade(parser)
+                        @show String(collect(HTTP.extra(parser)))
                         HTTP.@log "received upgrade request on connection i=$i"
                         response = HTTP.Response(501, "upgrade requests are not currently supported")
                         error = true
-                    elseif messagecomplete
+                    elseif HTTP.messagecomplete(parser)
                         HTTP.@log "received request on connection i=$i"
                         verbose && (println(logger, "HTTP.Request:\n"); println(logger, string(request)))
                         try
