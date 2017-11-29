@@ -1,5 +1,3 @@
-using Base.Test
-
 @testset "HTTP.Handler" begin
 
 f = HTTP.HandlerFunction((req, resp) -> HTTP.Response(200))

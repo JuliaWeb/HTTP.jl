@@ -27,8 +27,8 @@ A type to represent various http request options. Lives as a separate type so th
 at the `HTTP.Client` level to be applied to every request sent. Options include:
 
   * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`; default = `nothing`
-  * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
-  * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
+  * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = Inf. Note that while setting a timeout will affect the actual program control flow, there are current lower-level limitations that mean underlying resources may not actually be freed until their own timeouts occur (i.e. libuv sockets only timeout after 75 seconds, with no option to configure)
+  * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = Int
   * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection; default = `nothing`
   * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request; default = 5
   * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
@@ -265,7 +265,7 @@ defaultheaders(::Type{Response}) = [
     "Server"            => "Julia/$VERSION",
     "Content-Type"      => "text/html; charset=utf-8",
     "Content-Language"  => "en",
-    "Date"              => Dates.format(now(Dates.UTC), Dates.RFC1123Format)
+    "Date"              => Dates.format(Dates.now(Dates.UTC), Dates.RFC1123Format)
 ]
 
 ==(a::Response,b::Response) = (a.status  == b.status)  &&

@@ -12,8 +12,14 @@ import Base.==
 const DEBUG = false
 const PARSING_DEBUG = false
 
-if VERSION > v"0.7-DEV"
+if VERSION > v"0.7.0-DEV.2338"
     using Base64
+end
+
+if VERSION < v"0.7.0-DEV.2575"
+    const Dates = Base.Dates
+else
+    import Dates
 end
 
 include("consts.jl")

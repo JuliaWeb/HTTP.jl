@@ -108,7 +108,7 @@ end
 
 macro log(stmt)
     # "[HTTP]: Connecting to remote host..."
-    return esc(:(verbose && (write(logger, "[HTTP - $(rpad(now(), 23, ' '))]: $($stmt)\n"); flush(logger))))
+    return esc(:(verbose && (write(logger, "[HTTP - $(rpad(Dates.now(), 23, ' '))]: $($stmt)\n"); flush(logger))))
 end
 
 # parsing utils

@@ -30,6 +30,12 @@
 
 module Cookies
 
+if VERSION < v"0.7.0-DEV.2575"
+    const Dates = Base.Dates
+else
+    import Dates
+end
+
 export Cookie
 
 import Base.==
@@ -48,7 +54,7 @@ HTTP response or the Cookie header of an HTTP request. Supported fields
   * `value`: value of the cookie
   * `path`: applicable path for the cookie
   * `domain`: applicable domain for the cookie
-  * `expires`: a `DateTime` representing when the cookie should expire
+  * `expires`: a `Dates.DateTime` representing when the cookie should expire
   * `maxage`: `maxage == 0` means no max age, `maxage < 0` means delete cookie now, `max age > 0` means the # of seconds until expiration
   * `secure::Bool`: secure cookie attribute
   * `httponly::Bool`: httponly cookie attribute
@@ -62,7 +68,7 @@ mutable struct Cookie
 
     path::String      # optional
     domain::String    # optional
-    expires::DateTime # optional
+    expires::Dates.DateTime # optional
 
     # MaxAge=0 means no 'Max-Age' attribute specified.
     # MaxAge<0 means delete cookie now, equivalently 'Max-Age: 0'
@@ -82,7 +88,7 @@ function Cookie(cookie::Cookie; kwargs...)
 end
 Cookie(; kwargs...) = Cookie(Cookie("", ""); kwargs...)
 
-Cookie(name, value; args...) = Cookie(Cookie(name, value, "", "", DateTime(), 0, false, false, false, String[]); args...)
+Cookie(name, value; args...) = Cookie(Cookie(name, value, "", "", Dates.DateTime(), 0, false, false, false, String[]); args...)
 
 Base.isequal(a::Cookie, b::Cookie) = a.name == b.name && a.path == b.path && a.domain == b.domain
 Base.hash(x::Cookie, h::UInt) = hash(x.name, hash(x.path, hash(x.domain, h)))
@@ -182,10 +188,10 @@ function readsetcookie(host, cookie)
             c.maxage = max(Base.get(secs), -1)
         elseif lowerattr == "expires"
             try
-                c.expires = DateTime(val, Dates.RFC1123Format)
+                c.expires = Dates.DateTime(val, Dates.RFC1123Format)
             catch
                 try
-                    c.expires = DateTime(val, AlternateRFC1123Format)
+                    c.expires = Dates.DateTime(val, AlternateRFC1123Format)
                 catch
                     continue
                 end

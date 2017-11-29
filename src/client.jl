@@ -27,19 +27,19 @@ A type to facilitate connections to remote hosts, send HTTP requests, and manage
 Takes an optional `logger` IO argument where client activity is recorded (defaults to `STDOUT`).
 Additional keyword arguments can be passed that will get transmitted with each HTTP request:
 
-* `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`; default = `nothing`
-* `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
-* `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
-* `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection; default = `nothing`
-* `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request; default = 5
-* `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
-* `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
-* `retries::Int`: # of times a request will be tried before throwing an error; default = 3
-* `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules); default = `true`
-* `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
-* `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
-* `canonicalizeheaders::Bool`: whether header field names should be canonicalized in responses, e.g. `content-type` is canonicalized to `Content-Type`; default = `true`
-* `logbody::Bool`: whether the request body should be logged when `verbose=true` is passed; default = `true`
+  * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`; default = `nothing`
+  * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = Inf. Note that while setting a timeout will affect the actual program control flow, there are current lower-level limitations that mean underlying resources may not actually be freed until their own timeouts occur (i.e. libuv sockets only timeout after 75 seconds, with no option to configure)
+  * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = Int
+  * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection; default = `nothing`
+  * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request; default = 5
+  * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
+  * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
+  * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
+  * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules); default = `true`
+  * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
+  * `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
+  * `canonicalizeheaders::Bool`: whether header field names should be canonicalized in responses, e.g. `content-type` is canonicalized to `Content-Type`; default = `true`
+  * `logbody::Bool`: whether the request body should be logged when `verbose=true` is passed; default = `true`
 """
 mutable struct Client
     # connection pools for keep-alive; key is host
@@ -62,7 +62,7 @@ Client(logger::Option{IO}, options::RequestOptions) = Client(ReentrantLock(),
                                                      logger, options, 1)
 
 # this is where we provide all the default request options
-const DEFAULT_OPTIONS = :((nothing, true, 15.0, 15.0, nothing, 5, true, false, 3, true, true, false, true, true))
+const DEFAULT_OPTIONS = :((nothing, true, Inf, Inf, nothing, 5, true, false, 3, true, true, false, true, true))
 
 @eval begin
     Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
@@ -155,7 +155,6 @@ function stalebytes!(c::TCPSocket)
 end
 stalebytes!(c::TLS.SSLContext) = stalebytes!(c.bio)
 
-
 function connect(client, sch, hostname, port, opts, verbose)
     @lock client.poollock begin
     logger = client.logger
@@ -215,7 +214,7 @@ function addcookies!(client, host, req, verbose)
         expired = Vector{Cookie}()
         for (i, cookie) in enumerate(cookies)
             if Cookies.shouldsend(cookie, scheme(uri(req)) == "https", host, path(uri(req)))
-                cookie.expires != DateTime() && cookie.expires < now(Dates.UTC) && (push!(expired, cookie); @log("deleting expired cookie: " * cookie.name); continue)
+                cookie.expires != Dates.DateTime() && cookie.expires < Dates.now(Dates.UTC) && (push!(expired, cookie); @log("deleting expired cookie: " * cookie.name); continue)
                 push!(tosend, cookie)
             end
         end
@@ -434,22 +433,22 @@ an `IOBuffer` for in-memory data, or even an `HTTP.FIFOBuffer`. For complete con
 
 Additional keyword arguments supported, include:
 
-* `headers::Dict`: headers given as Dict to be sent with the request
-* `body`: a request body can be given as a `String`, `Vector{UInt8}`, `IO`, `HTTP.FIFOBuffer` or `Dict`; see example below for how to utilize `HTTP.FIFOBuffer` for "streaming" request bodies; a `Dict` argument will be converted to a multipart form upload
-* `stream::Bool=false`: enable response body streaming; depending on the response body size, the request will return before the full body has been received; as the response body is read, additional bytes will be recieved and put in the response body. Readers should read until `eof(response.body) == true`; see below for an example of response streaming
-* `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`; default = `nothing`
-* `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = 10.0 seconds
-* `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = 9.0 seconds
-* `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection; default = `nothing`
-* `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request; default = 5
-* `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
-* `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
-* `retries::Int`: # of times a request will be tried before throwing an error; default = 3
-* `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules); default = `true`
-* `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
-* `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
-* `canonicalizeheaders::Bool`: whether header field names should be canonicalized in responses, e.g. `content-type` is canonicalized to `Content-Type`; default = `true`
-* `logbody::Bool`: whether the request body should be logged when `verbose=true` is passed; default = `true`
+  * `headers::Dict`: headers given as Dict to be sent with the request
+  * `body`: a request body can be given as a `String`, `Vector{UInt8}`, `IO`, `HTTP.FIFOBuffer` or `Dict`; see example below for how to utilize `HTTP.FIFOBuffer` for "streaming" request bodies; a `Dict` argument will be converted to a multipart form upload
+  * `stream::Bool=false`: enable response body streaming; depending on the response body size, the request will return before the full body has been received; as the response body is read, additional bytes will be recieved and put in the response body. Readers should read until `eof(response.body) == true`; see below for an example of response streaming
+  * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`; default = `nothing`
+  * `connecttimeout::Float64`: sets a timeout on how long to wait when trying to connect to a remote host; default = Inf. Note that while setting a timeout will affect the actual program control flow, there are current lower-level limitations that mean underlying resources may not actually be freed until their own timeouts occur (i.e. libuv sockets only timeout after 75 seconds, with no option to configure)
+  * `readtimeout::Float64`: sets a timeout on how long to wait when receiving a response from a remote host; default = Int
+  * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection; default = `nothing`
+  * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request; default = 5
+  * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
+  * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
+  * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
+  * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules); default = `true`
+  * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`
+  * `insecure::Bool`: whether an "https" connection should allow insecure connections (no TLS verification); default = `false`
+  * `canonicalizeheaders::Bool`: whether header field names should be canonicalized in responses, e.g. `content-type` is canonicalized to `Content-Type`; default = `true`
+  * `logbody::Bool`: whether the request body should be logged when `verbose=true` is passed; default = `true`
 
 Simple request example:
 ```julia
@@ -551,7 +550,7 @@ function download(uri::AbstractString, file; threshold::Int=50000000, verbose::B
         while !eof(body)
             nbytes += write(f, readavailable(body))
             if verbose && nbytes > threshold
-                println("[$(now())]: downloaded $nbytes bytes...")
+                println("[$(Dates.now())]: downloaded $nbytes bytes...")
                 flush(STDOUT)
                 threshold += threshold_step
             end

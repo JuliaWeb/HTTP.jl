@@ -1,5 +1,11 @@
 using HTTP, Base.Test
 
+if VERSION < v"0.7.0-DEV.2575"
+    const Dates = Base.Dates
+else
+    import Dates
+end
+
 @testset "HTTP" begin
     include("utils.jl");
     include("fifobuffer.jl");
