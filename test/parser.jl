@@ -1350,27 +1350,41 @@ const responses = Message[
 @testset "HTTP.parse" begin
 
   @testset "HTTP.parse(HTTP.Request, str)" begin
-      for req in requests, t in ["A", "B"]
+      for req in requests, t in [-1, 0, 1, 2, 3, 4, 11, 13, 17, 19, 23, 29, 31, 32]
 
           println("TEST - parser.jl - Request $t: $(req.name)")
           upgrade = Ref{SubArray{UInt8, 1}}()
-          if t == "A"
+          if t > 0
               body=FIFOBuffer()
               r = HTTP.Request(body=body)
               p = HTTP.DEFAULT_PARSER
               HTTP.reset!(p)
               p.onbody = x->write(body, x)
               bytes = Vector{UInt8}(req.raw)
-              sz = 1
+              sz = t
               for i in 1:sz:length(bytes)
-                  x = bytes[i:i+sz-1]
-                  #@show [Char(x[i]) for i in 1:sz]
+                  x = bytes[i:min(i+sz-1, length(bytes))]
+                  #@show [Char(x[i]) for i in 1:length(x)]
                   HTTP.parse!(r, p, x)
                   r.uri = HTTP.DEFAULT_PARSER.url
                   r.method = HTTP.DEFAULT_PARSER.method
                   r.major = HTTP.DEFAULT_PARSER.major
                   r.minor = HTTP.DEFAULT_PARSER.minor
               end
+          elseif t < 0
+              body=FIFOBuffer()
+              r = HTTP.Request(body=body)
+              p = HTTP.DEFAULT_PARSER
+              HTTP.reset!(p)
+              p.onbody = x->write(body, x)
+              bytes = Vector{UInt8}(req.raw)
+              i = rand(2:length(bytes))
+              HTTP.parse!(r, p, bytes[1:i-1])
+              HTTP.parse!(r, p, bytes[i:end])
+              r.uri = HTTP.DEFAULT_PARSER.url
+              r.method = HTTP.DEFAULT_PARSER.method
+              r.major = HTTP.DEFAULT_PARSER.major
+              r.minor = HTTP.DEFAULT_PARSER.minor
           else
               r = HTTP.parse(HTTP.Request, req.raw; extraref=upgrade)
           end
@@ -1392,7 +1406,7 @@ const responses = Message[
           if isassigned(upgrade)
               @show String(collect(upgrade[]))
           end
-          @test t == "A" || 
+          @test t != 0 ||
                 req.upgrade == "" && !isassigned(upgrade) ||
                 String(collect(upgrade[])) == req.upgrade
       end
@@ -1557,27 +1571,27 @@ const responses = Message[
   end
 
   @testset "HTTP.parse(HTTP.Response, str)" begin
-      for resp in responses, t in ["A", "B"]
+      for resp in responses, t in [0, 1, 2, 3, 4, 11, 13, 17, 19, 23, 29, 31, 32]
           println("TEST - parser.jl - Response $t: $(resp.name)")
           try
-              if t == "A"
+              if t > 0
                   body=FIFOBuffer()
                   r = HTTP.Response(body=body)
                   p = HTTP.DEFAULT_PARSER
                   HTTP.reset!(p)
                   p.onbody = x->write(body, x)
                   bytes = Vector{UInt8}(resp.raw)
-                  sz = 1
+                  sz = t
                   for i in 1:sz:length(bytes)
-                      x = bytes[i:i+sz-1]
-                      #@show [Char(x[i]) for i in 1:sz]
+                      x = bytes[i:min(i+sz-1, length(bytes))]
+                      #@show [Char(x[i]) for i in 1:length(x)]
                       HTTP.parse!(r, p, x)
                       r.major = HTTP.DEFAULT_PARSER.major
                       r.minor = HTTP.DEFAULT_PARSER.minor
                       r.status = HTTP.DEFAULT_PARSER.status
 
                   end
-              elseif t == "B"
+              else
                   r = HTTP.parse(HTTP.Response, resp.raw)
               end
               @test HTTP.major(r) == resp.http_major
@@ -1688,7 +1702,6 @@ const responses = Message[
       r = HTTP.Response(body=FIFOBuffer())
       HTTP.reset!(HTTP.DEFAULT_PARSER)
       e = try HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr)) catch e e end
-@show e
       @test isa(e, HTTP.ParsingError) && e.code == HTTP.HPE_INVALID_CONTENT_LENGTH
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551616" * "\r\n\r\n"
       r = HTTP.Response(body=FIFOBuffer())

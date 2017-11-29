@@ -684,8 +684,11 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
                 @debug(PARSING_DEBUG, Base.escape_string(string('\'', ch, '\'')))
                 @debug(PARSING_DEBUG, strict)
                 @debug(PARSING_DEBUG, isheaderchar(ch))
-                if ch in (CR, LF)
-                    p_state = ch == CR ? s_header_almost_done : s_header_value_lws
+                if ch == CR
+                    p_state = s_header_almost_done
+                    break
+                elseif ch == LF
+                    p_state = s_header_value_lws
                     break
                 elseif strict && !isheaderchar(ch)
                     @err(HPE_INVALID_HEADER_TOKEN)
@@ -695,30 +698,8 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
                 @debug(PARSING_DEBUG, h)
                 if h == h_general
-                    limit = len - p
-                    ptr = pointer(bytes, p)
-                    @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[p]), '\'')))
-                    p_cr = ccall(:memchr, Ptr{Void}, (Ptr{Void}, Cint, Csize_t), ptr, CR, limit)
-                    p_lf = ccall(:memchr, Ptr{Void}, (Ptr{Void}, Cint, Csize_t), ptr, LF, limit)
-                    @debug(PARSING_DEBUG, limit)
-                    @debug(PARSING_DEBUG, Int(p_cr))
-                    @debug(PARSING_DEBUG, Int(p_lf))
-                    if p_cr != C_NULL
-                        if p_lf != C_NULL && p_cr >= p_lf
-                            @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[p + Int(p_lf - ptr + 1)]), '\'')))
-                            p += Int(p_lf - ptr)
-                        else
-                            @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[p + Int(p_cr - ptr + 1)]), '\'')))
-                            p += Int(p_cr - ptr)
-                        end
-                    elseif p_lf != C_NULL
-                        @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[p + Int(p_lf - ptr + 1)]), '\'')))
-                        p += Int(p_lf - ptr)
-                    else
-                        @debug(PARSING_DEBUG, Base.escape_string(string('\'', Char(bytes[len]), '\'')))
-                        p = len + 1
-                    end
-                    p -= 1
+                    crlf = findfirst(x->(x == bCR || x == bLF), view(bytes, p:len))
+                    p = crlf == 0 ? len : p + crlf - 2
 
                 elseif h == h_connection || h == h_transfer_encoding
                     error("Shouldn't get here.")
