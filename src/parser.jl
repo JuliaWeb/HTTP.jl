@@ -30,6 +30,7 @@ mutable struct Parser
     header_state::UInt8
     index::UInt8
     flags::UInt8
+    upgrade::Bool
     content_length::UInt64
     fieldbuffer::IOBuffer
     valuebuffer::IOBuffer
@@ -42,7 +43,7 @@ mutable struct Parser
     onheader::Function
 end
 
-Parser() = Parser(start_state, 0x00, 0, 0, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, x->nothing, x->nothing)
+Parser() = Parser(start_state, 0x00, 0, 0, false, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, x->nothing, x->nothing)
 
 const DEFAULT_PARSER = Parser()
 
@@ -51,6 +52,7 @@ function reset!(p::Parser)
     p.header_state = 0x00
     p.index = 0x00
     p.flags = 0x00
+    p.upgrade = false
     p.content_length = 0x0000000000000000
     truncate(p.fieldbuffer, 0)
     truncate(p.valuebuffer, 0)
@@ -140,7 +142,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
     @debug(PARSING_DEBUG, "parse!")
     p_state = parser.state
     errno = HPE_UNKNOWN
-    upgrade = headersdone = false
     @debug(PARSING_DEBUG, len)
     @debug(PARSING_DEBUG, ParsingStateCode(p_state))
     if len == 0
@@ -906,11 +907,11 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             #= Set this here so that on_headers_complete() callbacks can see it =#
             @debug(PARSING_DEBUG, "checking for upgrade...")
             if (parser.flags & F_UPGRADE > 0) && (parser.flags & F_CONNECTION_UPGRADE > 0)
-                upgrade = isrequest(parser) || parser.status == 101
+                parser.upgrade = isrequest(parser) || parser.status == 101
             else
-                upgrade = isrequest(parser) && parser.method == CONNECT
+                parser.upgrade = isrequest(parser) && parser.method == CONNECT
             end
-            @debug(PARSING_DEBUG, upgrade)
+            @debug(PARSING_DEBUG, parser.upgrade)
             #= Here we call the headers_complete callback. This is somewhat
             * different than other callbacks because if the user returns 1, we
             * will interpret that as saying that this message has no body. This
@@ -921,11 +922,10 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             * we have to simulate it by handling a change in errno below.
             =#
             @debug(PARSING_DEBUG, "headersdone")
-            headersdone = true
             if method == HEAD
                 parser.flags |= F_SKIPBODY
             elseif method == CONNECT
-                upgrade = true
+                parser.upgrade = true
             end
 
         elseif p_state == s_headers_done
@@ -933,7 +933,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
 
             hasBody = parser.flags & F_CHUNKED > 0 ||
                 (parser.content_length > 0 && parser.content_length != ULLONG_MAX)
-            if upgrade && ((isrequest(parser) && parser.method == CONNECT) ||
+            if parser.upgrade && ((isrequest(parser) && parser.method == CONNECT) ||
                                   (parser.flags & F_SKIPBODY) > 0 || !hasBody)
                 #= Exit, the rest of the message is in a different protocol. =#
                 p_state = ifelse(http_should_keep_alive(parser), start_state, s_dead)
@@ -1005,12 +1005,8 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             p = len
 
         elseif p_state == s_message_done
-            if upgrade
-                #= Exit, the rest of the message is in a different protocol. =#
-                parser.state = p_state
-                return HPE_OK, true, true, String(bytes[p+1:end])
-            end
-            p = len
+            parser.state = p_state
+            return HPE_OK, true, true, parser.upgrade ? String(bytes[p+1:end]) : nothing
 
         elseif p_state == s_chunk_size_start
             assert(parser.flags & F_CHUNKED > 0)
@@ -1099,6 +1095,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
             error("unhandled state")
         end
     end
+    @assert p == len || p == len + 1
 
     #= Run callbacks for any marks that we have leftover after we ran our of
      * bytes. There should be at most one of these set, so it's OK to invoke
@@ -1113,10 +1110,12 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
     parser.state = p_state
     @debug(PARSING_DEBUG, "exiting maybe unfinished...")
     @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-    b = p_state == start_state || p_state == s_dead
-    he = b | (headersdone || p_state >= s_headers_done)
-    m = b | (p_state >= s_message_done)
-    return HPE_OK, he, m, p >= len ? nothing : String(bytes[p:end])
+    he = p_state >= s_headers_done
+    m = p_state >= s_message_done
+    @assert !m || he
+    @assert !m || parser.content_length == ULLONG_MAX
+
+    return HPE_OK, he, m, nothing
 
     @label error
     parser.state = s_start_req_or_res
