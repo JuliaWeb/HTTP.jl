@@ -101,7 +101,7 @@ function parse(T::Type{<:Union{Request, Response}}, str;
     r = T(body=FIFOBuffer())
     p = DEFAULT_PARSER
     reset!(p)
-    err = parse!(r, p, Vector{UInt8}(str))
+    parse!(r, p, Vector{UInt8}(str))
     if T == Request
         r.uri = p.url
         r.method = p.method
@@ -110,7 +110,6 @@ function parse(T::Type{<:Union{Request, Response}}, str;
     end
     r.major = p.major
     r.minor = p.minor
-    err != HPE_OK && throw(ParsingError(err))
     !headerscomplete(p) && throw(ParsingError(HPE_HEADERS_INCOMPLETE))
     if p.content_length != ULLONG_MAX && !messagecomplete(p)
         throw(ParsingError(HPE_BODY_INCOMPLETE))
@@ -123,7 +122,7 @@ function parse(T::Type{<:Union{Request, Response}}, str;
 end
 
 function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
-        method::Method=GET)::ParsingErrorCode
+        method::Method=GET)::Void
 
     parser.onbody = x->write(r.body, x)
     parser.onheader = x->appendheader(r, x)
@@ -131,23 +130,18 @@ function parse!(r::Union{Request, Response}, parser, bytes, len=length(bytes);
 end
 
 macro errorif(cond, err)
-    esc(quote
-        $cond && @err($err)
-    end)
+    esc(:($cond && @err($err)))
 end
 
-macro err(e)
-    esc(quote
-        errno = $e
-        @goto error
-    end)
+macro err(code)
+    esc(:(throw(ParsingError($code))))
 end
 
 macro strictcheck(cond)
     esc(:(strict && @errorif($cond, HPE_STRICT)))
 end
 
-function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method)::ParsingErrorCode
+function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method)::Void
     len <= 0 && throw(ArgumentError("len must be > 0"))
     @debug(PARSING_DEBUG, "parse!")
     p_state = parser.state
@@ -1068,12 +1062,7 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
     end
 
     @debug(PARSING_DEBUG, "exiting $(ParsingStateCode(p_state))")
-
-    return HPE_OK
-
-    @label error
-    @debug(PARSING_DEBUG, "exiting due to error: $errno")
-    return errno
+    return
 end
 
 #= Does the parser need to see an EOF to find the end of the message? =#

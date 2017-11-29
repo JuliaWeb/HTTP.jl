@@ -110,24 +110,24 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                     end
                     length(buffer) > 0 || break
                     starttime[] = time() # reset the timeout while still receiving bytes
-                    errno = HTTP.parse!(request, parser, buffer)
+                    err = @HTTP.catch HTTP.ParsingError HTTP.parse!(request, parser, buffer)
                     request.method = parser.method
                     request.uri = parser.url
                     request.major = parser.major
                     request.minor = parser.minor
                     startedprocessingrequest = true
-                    if errno != HTTP.HPE_OK
+                    if err != nothing
                         # error in parsing the http request
-                        HTTP.@log "error parsing request on connection i=$i: $(HTTP.ParsingErrorCodeMap[errno])"
-                        if errno == HTTP.HPE_INVALID_VERSION
+                        HTTP.@log "error parsing request on connection i=$i: $(HTTP.ParsingErrorCodeMap[err.code])"
+                        if err.code == HTTP.HPE_INVALID_VERSION
                             response = HTTP.Response(505)
-                        elseif errno == HTTP.HPE_HEADER_OVERFLOW
+                        elseif err.code == HTTP.HPE_HEADER_OVERFLOW
                             response = HTTP.Response(431)
-                        elseif errno == HTTP.HPE_URI_OVERFLOW
+                        elseif err.code == HTTP.HPE_URI_OVERFLOW
                             response = HTTP.Response(414)
-                        elseif errno == HTTP.HPE_BODY_OVERFLOW
+                        elseif err.code == HTTP.HPE_BODY_OVERFLOW
                             response = HTTP.Response(413)
-                        elseif errno == HTTP.HPE_INVALID_METHOD
+                        elseif err.code == HTTP.HPE_INVALID_METHOD
                             response = HTTP.Response(405)
                         else
                             response = HTTP.Response(400)

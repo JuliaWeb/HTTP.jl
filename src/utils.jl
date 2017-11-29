@@ -203,3 +203,13 @@ function getkey(c, k, default=nothing)
     i = findfirst(x->first(x) == k, c)
     return i > 0 ? c[i] : default
 end
+
+macro catch(etype, expr)
+    esc(quote
+        try
+            $expr
+        catch e
+            isa(e, $etype) ? e : rethrow(e)
+        end
+    end)
+end

@@ -16,9 +16,10 @@ end
 
 Connection(tcp::IO) = Connection(0, tcp, Busy, Parser())
 Connection(id::Int, tcp::IO) = Connection(id, tcp, Busy, Parser())
-busy!(conn::Connection) = (conn.state == Dead || (conn.state = Busy); return nothing)
-idle!(conn::Connection) = (conn.state == Dead || (conn.state = Idle); return nothing)
-dead!(conn::Connection) = (conn.state == Dead || (conn.state = Dead; close(conn.socket)); return nothing)
+busy!(conn::Connection) = (conn.state == Dead || (conn.state = Busy); return)
+idle!(conn::Connection) = (conn.state == Dead || (conn.state = Idle); return)
+dead!(conn::Connection) = (conn.state == Dead || (conn.state = Dead; close(conn.socket)); return)
+#FIXME maybe should do "close" in the connection pool manager instead of here?
 
 """
     HTTP.Client([logger::IO]; args...)
@@ -289,16 +290,13 @@ function processresponse!(client, conn, response, host, method, stream, verbose)
         @assert length(bytes) > 0
         @log "received bytes from the wire, processing"
         # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
-        errno = HTTP.parse!(response, conn.parser, bytes; method=method)
+        HTTP.parse!(response, conn.parser, bytes; method=method)
         response.status = conn.parser.status
         if messagecomplete(conn.parser)
             close(response.body)
         end
 
-        if errno != HPE_OK
-            dead!(conn)
-            throw(ParsingError(errno, "Current response buffer contents: $(String(bytes))"))
-        elseif messagecomplete(conn.parser)
+        if messagecomplete(conn.parser)
             http_should_keep_alive(conn.parser) ||
                 (@log("closing connection (no keep-alive)"); dead!(conn))
             idle!(conn)
@@ -326,6 +324,9 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     verbose && not(client.logger) && (client.logger = STDOUT)
     logger = client.logger
     @log "using request options:\n\t" * join((s=>getfield(opts, s) for s in fieldnames(typeof(opts))), "\n\t")
+
+    response = Response(req)
+
     u = uri(req)
     host = hostname(u)
     sch = scheme(u) == "http" ? http : https
@@ -334,13 +335,21 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     p = port(u)
     conn = @retryif ClosedError 4 connectandsend(client, sch, host, ifelse(p == "", "80", p), req, opts, verbose)
 
-    response = Response(req)
-    reset!(conn.parser)
-    success, err = processresponse!(client, conn, response, host, HTTP.method(req), stream, verbose)
+    success, err = false, nothing
+    try
+        reset!(conn.parser)
+        success, err = processresponse!(client, conn, response, host,
+                                        HTTP.method(req), stream, verbose)
+    catch e
+        dead!(conn)
+        rethrow(e)
+    end
+
     if !success
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
     end
+
     @log "received response"
     if opts.canonicalizeheaders::Bool
         response.headers = canonicalizeheaders(response.headers)
