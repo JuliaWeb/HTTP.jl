@@ -304,7 +304,7 @@ function processresponse!(client, conn, response, host, method, stream, opts, ve
         end
         if errno != HPE_OK
             dead!(conn)
-            throw(ParsingError("error parsing response: $(ParsingErrorCodeMap[errno])\nCurrent response buffer contents: $(String(buffer))"))
+            throw(ParsingError(errno, "Current response buffer contents: $(String(buffer))"))
         elseif messagecomplete
             http_should_keep_alive(conn.parser) || (@log("closing connection (no keep-alive)"); dead!(conn))
             # idle! on a Dead will stay Dead

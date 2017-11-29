@@ -16,13 +16,6 @@ if VERSION > v"0.7-DEV"
     using Base64
 end
 
-struct ParsingError <: Exception
-    msg::String
-end
-Base.show(io::IO, p::ParsingError) = println("HTTP.ParsingError: ", p.msg)
-
-const CRLF = "\r\n"
-
 include("consts.jl")
 include("utils.jl")
 include("uri.jl")

@@ -191,6 +191,8 @@ Base.convert(::Type{Method}, s::String) = MethodMap[s]
     HPE_PAUSED,
     HPE_URI_OVERFLOW,
     HPE_BODY_OVERFLOW,
+    HPE_HEADERS_INCOMPLETE,
+    HPE_BODY_INCOMPLETE,
     HPE_UNKNOWN,
 )
 
@@ -229,6 +231,8 @@ const ParsingErrorCodeMap = Dict(
     HPE_PAUSED => "parser is paused",
     HPE_URI_OVERFLOW => "uri exceeded configured maximum uri size",
     HPE_BODY_OVERFLOW => "body exceeded configured maximum body size",
+    HPE_HEADERS_INCOMPLETE => "unexpected end of headers",
+    HPE_BODY_INCOMPLETE => "unexpected end of body",
     HPE_UNKNOWN => "an unknown error occurred",
 )
 
@@ -335,6 +339,7 @@ const CR = '\r'
 const bCR = UInt8('\r')
 const LF = '\n'
 const bLF = UInt8('\n')
+const CRLF = "\r\n"
 
 const ULLONG_MAX = typemax(UInt64)
 

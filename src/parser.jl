@@ -68,6 +68,20 @@ end
 
 isrequest(p::Parser) = p.status == 0
 
+struct ParsingError <: Exception
+    code::ParsingErrorCode
+    msg::String
+end
+ParsingError(code::ParsingErrorCode) = ParsingError(code, "")
+
+function Base.show(io::IO, e::ParsingError)
+    println(io, string("HTTP.ParsingError: ",
+                       ParsingErrorCodeMap(e),
+                       e.msg == "" ? "" : "\n",
+                       s.msg))
+end
+
+
 # should we just make a copy of the byte vector for URI here?
 function onurl(p::Parser)
     @debug(PARSING_DEBUG, "onurl $p.method $(String(p.valuebuffer))")
@@ -88,21 +102,23 @@ full request or response (but may include more than one). Supported keyword argu
 """
 function parse(T::Type{<:Union{Request, Response}}, str;
                extra::Ref{String}=Ref{String}())
+
     r = T(body=FIFOBuffer())
-    reset!(DEFAULT_PARSER)
-    err, headerscomplete, messagecomplete, upgrade = parse!(r, DEFAULT_PARSER, Vector{UInt8}(str))
+    p = DEFAULT_PARSER
+    reset!(p)
+    err, headerscomplete, messagecomplete, upgrade = parse!(r, p, Vector{UInt8}(str))
     if T == Request
-        r.uri = DEFAULT_PARSER.url
-        r.method = DEFAULT_PARSER.method
+        r.uri = p.url
+        r.method = p.method
     else
-        r.status = DEFAULT_PARSER.status
+        r.status = p.status
     end
-    r.major = DEFAULT_PARSER.major
-    r.minor = DEFAULT_PARSER.minor
-    err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
-    !headerscomplete && throw(ParsingError("error parsing $T: headers incomplete"))
-    if DEFAULT_PARSER.content_length != ULLONG_MAX && !messagecomplete
-        throw(ParsingError("error parsing $T: message incomplete"))
+    r.major = p.major
+    r.minor = p.minor
+    err != HPE_OK && throw(ParsingError(err))
+    !headerscomplete && throw(ParsingError(HPE_HEADERS_INCOMPLETE))
+    if p.content_length != ULLONG_MAX && !messagecomplete
+        throw(ParsingError(HPE_BODY_INCOMPLETE))
     end
     if upgrade != nothing
         extra[] = upgrade

@@ -4,7 +4,7 @@ include("utils.jl")
 struct URLParsingError <: Exception
     msg::String
 end
-Base.show(io::IO, p::URLParsingError) = println("HTTP.URLParsingError: ", p.msg)
+Base.show(io::IO, p::URLParsingError) = println(io, "HTTP.URLParsingError: ", p.msg)
 
 struct Offset
     off::UInt16
