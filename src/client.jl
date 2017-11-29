@@ -270,60 +270,53 @@ function redirect(response, client, req, opts, stream, history, retry, verbose)
 end
 
 const CLOSED_ERROR = ClosedError(ErrorException(""), "error receiving response; connection was closed prematurely")
-function getbytes(socket, tm)
+function getbytes(socket)
     try
         # EH: returns UInt8[] when socket is closed, error when socket is not readable, AssertionErrors, UVError;
-        buffer = @retry @timeout(tm, readavailable(socket), error("read timeout"))
-        return buffer, CLOSED_ERROR
+        return readavailable(socket)
     catch e
-        isa(e, InterruptException) && throw(e)
-        return UInt8[], ReadError(e, backtrace())
+        if !isa(e, InterruptException)
+            e = ReadError(e, "error reading response")
+        end
+        rethrow(e)
     end
 end
 
-function processresponse!(client, conn, response, host, method, stream, opts, verbose)
+function processresponse!(client, conn, response, host, method, stream, verbose)
     logger = client.logger
-    while true
-        buffer, err = getbytes(conn.socket, opts.readtimeout)
-        if length(buffer) == 0
-            dead!(conn)
-            if waitingforeof(conn.parser)
-                close(response.body)
-                return true, StatusError(status(response), response)
-            else
-                throw(ParsingError(HPE_INVALID_EOF_STATE))
-            end
-        else
-            @log "received bytes from the wire, processing"
-            # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
-            errno = HTTP.parse!(response, conn.parser, buffer; method=method)
-            response.status = conn.parser.status
-            if messagecomplete(conn.parser)
-                close(response.body)
-            end
+    while !eof(conn.socket)
+        bytes = getbytes(conn.socket)
+        @assert length(bytes) > 0
+        @log "received bytes from the wire, processing"
+        # EH: throws a couple of "shouldn't get here" errors; probably not much we can do
+        errno = HTTP.parse!(response, conn.parser, bytes; method=method)
+        response.status = conn.parser.status
+        if messagecomplete(conn.parser)
+            close(response.body)
         end
 
-        @log "parsed bytes received from wire"
-        if length(buffer) == 0 && !isopen(conn.socket) && !messagecomplete(conn.parser)
-            @log "socket closed before full response received"
-            dead!(conn)
-            close(response.body)
-            # retry the entire request
-            return false, err
-        end
         if errno != HPE_OK
             dead!(conn)
-            throw(ParsingError(errno, "Current response buffer contents: $(String(buffer))"))
+            throw(ParsingError(errno, "Current response buffer contents: $(String(bytes))"))
         elseif messagecomplete(conn.parser)
-            http_should_keep_alive(conn.parser) || (@log("closing connection (no keep-alive)"); dead!(conn))
-            # idle! on a Dead will stay Dead
+            http_should_keep_alive(conn.parser) ||
+                (@log("closing connection (no keep-alive)"); dead!(conn))
             idle!(conn)
+            # idle! on a Dead will stay Dead
             return true, StatusError(status(response), response)
         elseif stream && headerscomplete(conn.parser)
             @log "processing the rest of response asynchronously"
-            @async processresponse!(client, conn, response, host, method, false, opts, false)
+            @async processresponse!(client, conn, response, host, method, false, false)
             return true, StatusError(status(response), response)
         end
+    end
+
+    dead!(conn)
+    close(response.body)
+    if waitingforeof(conn.parser)
+        return true, StatusError(status(response), response)
+    else
+        throw(CLOSED_ERROR)
     end
 end
 
@@ -343,7 +336,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
 
     response = Response(req)
     reset!(conn.parser)
-    success, err = processresponse!(client, conn, response, host, HTTP.method(req), stream, opts, verbose)
+    success, err = processresponse!(client, conn, response, host, HTTP.method(req), stream, verbose)
     if !success
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)

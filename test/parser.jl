@@ -1764,7 +1764,7 @@ const responses = Message[
       @test e == HTTP.HPE_OK
       @test HTTP.headerscomplete(p)
       @test HTTP.messagecomplete(p)
-      ex = collect(HTTP.extra(p)
+      ex = collect(HTTP.extra(p))
       HTTP.reset!(p)
       e = HTTP.parse!(r, p, ex)
       @test e == HTTP.HPE_OK
