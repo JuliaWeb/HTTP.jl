@@ -145,7 +145,6 @@ function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method
     len <= 0 && throw(ArgumentError("len must be > 0"))
     @debug(PARSING_DEBUG, "parse!")
     p_state = parser.state
-    errno = HPE_UNKNOWN
     @debug(PARSING_DEBUG, len)
     @debug(PARSING_DEBUG, ParsingStateCode(p_state))
 

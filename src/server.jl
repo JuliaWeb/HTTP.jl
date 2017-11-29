@@ -157,7 +157,8 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                         error = true
                     elseif HTTP.messagecomplete(parser)
                         HTTP.@log "received request on connection i=$i"
-                        verbose && (println(logger, "HTTP.Request:\n"); println(logger, string(request)))
+
+                        verbose && (show(logger, request); println(logger, ""))
                         try
                             response = Handlers.handle(handler, request, HTTP.Response())
                         catch e
@@ -179,10 +180,10 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                         end
                         if !error
                             HTTP.@log "responding with response on connection i=$i"
-                            respstr = string(response, options)
-                            verbose && (println(logger, "HTTP.Response:\n"); println(logger, respstr))
+                            verbose && (show(logger, response); println(logger, ""))
+
                             try
-                                write(tcp, respstr)
+                                write(tcp, response, options)
                             catch e
                                 HTTP.@log e
                                 error = true

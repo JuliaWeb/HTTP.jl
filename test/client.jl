@@ -19,7 +19,7 @@ for sch in ("http", "https")
     println("running $sch client tests...")
 
     println("simple GET, HEAD, POST, DELETE, etc.")
-    @test HTTP.status(HTTP.get("$sch://httpbin.org/ip")) == 200
+    @test HTTP.status(HTTP.get("$sch://httpbin.org/ip"; logbody=false)) == 200
     @test HTTP.status(HTTP.head("$sch://httpbin.org/ip")) == 200
     @test HTTP.status(HTTP.options("$sch://httpbin.org/ip")) == 200
     @test HTTP.status(HTTP.post("$sch://httpbin.org/ip"; statusraise=false)) == 405
@@ -95,17 +95,17 @@ for sch in ("http", "https")
     #     message to any POST/PUT requests that are sent using chunked encoding
     #     See https://github.com/kennethreitz/httpbin/issues/340#issuecomment-330176449
     println("client transfer-encoding chunked")
-    @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body="hey", chunksize=2)) == 200
-    @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], chunksize=2)) == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body="hey", chunksize=2)) == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], chunksize=2)) == 200
     io = IOBuffer("hey"); seekstart(io)
-    @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2)) == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2)) == 200
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
     io = open(tmp)
-    @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2)) == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=io, chunksize=2)) == 200
     close(io); rm(tmp)
     f = HTTP.FIFOBuffer("hey")
-    @test_broken HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=f, chunksize=2)) == 200
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/post"; body=f, chunksize=2)) == 200
 
     # multipart
     println("client multipart body")

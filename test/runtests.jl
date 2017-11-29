@@ -8,7 +8,7 @@ end
 
 @testset "HTTP" begin
     include("utils.jl");
-    include("fifobuffer.jl");
+    #include("fifobuffer.jl");
     include("sniff.jl");
     include("uri.jl");
     include("cookies.jl");

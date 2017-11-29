@@ -18,8 +18,9 @@ Connection(tcp::IO) = Connection(0, tcp, Busy, Parser())
 Connection(id::Int, tcp::IO) = Connection(id, tcp, Busy, Parser())
 busy!(conn::Connection) = (conn.state == Dead || (conn.state = Busy); return)
 idle!(conn::Connection) = (conn.state == Dead || (conn.state = Idle); return)
-dead!(conn::Connection) = (conn.state == Dead || (conn.state = Dead; close(conn.socket)); return)
+dead!(conn::Connection) = (conn.state == Dead || (conn.state = Dead; #=close(conn.socket)=#); return)
 #FIXME maybe should do "close" in the connection pool manager instead of here?
+# Need a regular cleanup function ??
 
 """
     HTTP.Client([logger::IO]; args...)
@@ -233,10 +234,9 @@ function connectandsend(client, ::Type{sch}, hostname, port, req, opts, verbose)
     opts.managecookies::Bool && addcookies!(client, hostname, req, verbose)
     try
         @log "sending request over the wire\n"
-        reqstr = string(req, opts)
-        verbose && (println(client.logger, "HTTP.Request:\n"); println(client.logger, reqstr))
+        verbose && (show(client.logger, req); println(client.logger, ""))
         # EH: throws ArgumentError if socket is closed, UVError; retry if UVError,
-        @retryif Base.UVError write(conn.socket, reqstr)
+        @retryif Base.UVError write(conn.socket, req, opts)
         !isopen(conn.socket) && throw(CLOSED_ERROR)
     catch e
         @log backtrace()
@@ -287,6 +287,12 @@ function processresponse!(client, conn, response, host, method, stream, verbose)
     logger = client.logger
     while !eof(conn.socket)
         bytes = getbytes(conn.socket)
+        if length(bytes) == 0
+            # https://github.com/JuliaWeb/MbedTLS.jl/issues/113
+            @assert isa(conn.socket, MbedTLS.SSLContext)
+            @assert eof(conn.socket)
+            break
+        end
         @assert length(bytes) > 0
         @log "received bytes from the wire, processing"
         # EH: throws a couple of "shouldn't get here" errors; probably not much we can do

@@ -15,6 +15,9 @@ FIFOBuffer(io::IO) = FIFOBuffer(readavailable(io))
 
 FIFOBuffer(f::FIFOBuffer) = f
 
+peekbytes(f::FIFOBuffer{IOBuffer}) = f.io.data[f.io.ptr:f.io.size]
+peekbytes(f::FIFOBuffer{BufferStream}) = peekbytes(FIFOBuffer(f.io.buffer))
+
 Base.String(f::FIFOBuffer{IOBuffer}) = String(f.io.data[f.io.ptr:f.io.size])
 Base.String(f::FIFOBuffer{BufferStream}) = String(FIFOBuffer(f.io.buffer))
 
@@ -36,16 +39,18 @@ Base.read(f::FIFOBuffer, ::Type{UInt8}) = read(f.io, UInt8)
 Base.write(f::FIFOBuffer, bytes::Vector{UInt8}) = write(f.io, bytes)
 
 map(eval, :(Base.$f(f::FIFOBuffer) = $f(f.io))
-    for f in [:nb_available, :flush, :mark, :reset, :eof, :isopen, :close])
+    for f in [:nb_available, :flush, :eof, :isopen, :close])
 
 Base.length(f::FIFOBuffer) = nb_available(f)
 
+#=
 function Base.read(f::FIFOBuffer, ::Type{Tuple{UInt8,Bool}})
     if nb_available(f.io) == 0
         return 0x00, false 
     end
     return read(f.io, UInt8), true
 end
+=#
 
 Base.write(f::FIFOBuffer{BufferStream}, x::UInt8) = write(f.io, [x])
 

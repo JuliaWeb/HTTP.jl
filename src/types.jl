@@ -59,6 +59,8 @@ mutable struct RequestOptions
         new(ch, gzip, ct, rt, tls, mr, ar, fh, tr, mc, sr, i, h, lb)
 end
 
+# FIXME defaults are over in "const DEFAULT_OPTIONS" in client.jl !!
+
 const RequestOptionsFieldTypes = Dict(:chunksize      => Int,
                                       :gzip           => Bool,
                                       :connecttimeout => Float64,
@@ -338,53 +340,47 @@ end
 
 function body(io::IO, r::Union{Request, Response}, opts)
     if !hasmessagebody(r)
-        write(io, "$CRLF")
+        write(io, CRLF)
         return
     end
     chksz = get(opts, :chunksize, 0)
 
-    mark(r.body)
-#    @sync begin
-#        @async begin
-            chunked = false
-            bytes = UInt8[]
-            blength = bodylength(r)
-            while length(bytes) < blength && !eof(r.body)
-                bytes = chksz == 0 ? readavailable(r.body) : read(r.body, chksz)
-                (length(bytes) == blength || eof(r.body)) && !chunked && break
-                if !chunked
-                    write(io, "Transfer-Encoding: chunked$CRLF$CRLF")
-                end
-                chunked = true
-                chunk = length(bytes)
-                chunk == 0 && break
-                write(io, "$(hex(chunk))$CRLF")
-                write(io, bytes, CRLF)
-            end
-            if chunked
-                write(io, "$(hex(0))$CRLF$CRLF")
-            else
-                write(io, "Content-Length: $(dec(length(bytes)))$CRLF$CRLF")
-                write(io, bytes)
-            end
-#        end
-#    end
-    reset(r.body)
+#    mark(r.body)
+    chunked = false
+    bytes = UInt8[]
+    blength = bodylength(r)
+    while length(bytes) < blength && !eof(r.body)
+        bytes = chksz == 0 ? readavailable(r.body) : read(r.body, chksz)
+        (length(bytes) == blength || eof(r.body)) && !chunked && break
+        if !chunked
+            write(io, "Transfer-Encoding: chunked$CRLF$CRLF")
+        end
+        chunked = true
+        chunk = length(bytes)
+        chunk == 0 && break
+        write(io, "$(hex(chunk))$CRLF")
+        write(io, bytes, CRLF)
+    end
+    if chunked
+        write(io, "$(hex(0))$CRLF$CRLF")
+    else
+        write(io, "Content-Length: $(dec(length(bytes)))$CRLF$CRLF")
+        write(io, bytes)
+    end
+#    reset(r.body)
     return
 end
 
-Base.write(io::IO, r::Union{Request, Response}, opts) = write(io, string(r))
-function Base.string(r::Union{Request, Response}, opts=RequestOptions())
-    i = IOBuffer()
-    startline(i, r)
-    headers(i, r)
-    lb = opts.logbody
-    if lb === nothing || lb
-        body(i, r, opts)
-    else
-        println(i, "\n[request body logging disabled]\n")
-    end
-    return String(take!(i))
+function Base.write(io::IO, r::Union{Request, Response}, opts=RequestOptions())
+    startline(io, r)
+    headers(io, r)
+    body(io, r, opts)
+end
+
+function Base.string(r::Union{Request, Response})
+    io = IOBuffer()
+    write(io, r)
+    String(take!(io))
 end
 
 function Base.show(io::IO, r::Union{Request,Response}; opts=RequestOptions())
@@ -392,12 +388,17 @@ function Base.show(io::IO, r::Union{Request,Response}; opts=RequestOptions())
     println(io, "\"\"\"")
     startline(io, r)
     headers(io, r)
-    buf = IOBuffer()
-    if isopen(r.body)
-        println(io, "\n[open HTTP.FIFOBuffer with $(length(r.body)) bytes to read]")
-    else
-        body(buf, r, opts)
-        b = take!(buf)
+    lb = opts.logbody
+    if lb === nothing || lb
+    #buf = IOBuffer()
+#    if isopen(r.body)
+#        println(io, "\n[open HTTP.FIFOBuffer with $(length(r.body)) bytes to read]")
+#    else
+        #FIXME
+        #body(buf, r, opts)
+        #b = take!(buf)
+        write(io, CRLF)
+        b = FIFOBuffers.peekbytes(r.body)
         if length(b) > 2
             contenttype = sniff(b)
             if contenttype in DISPLAYABLE_TYPES
@@ -417,6 +418,8 @@ function Base.show(io::IO, r::Union{Request,Response}; opts=RequestOptions())
         else
             print(io, String(b))
         end
+    else
+        println(i, "\n[request body logging disabled]\n")
     end
     print(io, "\"\"\"")
 end
