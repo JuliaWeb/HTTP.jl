@@ -99,6 +99,9 @@ function parse(T::Type{<:Union{Request, Response}}, str;
     r.minor = DEFAULT_PARSER.minor
     err != HPE_OK && throw(ParsingError("error parsing $T: $(ParsingErrorCodeMap[err])"))
     !headerscomplete && throw(ParsingError("error parsing $T: headers incomplete"))
+    if DEFAULT_PARSER.content_length != ULLONG_MAX && !messagecomplete
+        throw(ParsingError("error parsing $T: message incomplete"))
+    end
     if upgrade != nothing
         extra[] = upgrade
     end
@@ -1126,7 +1129,7 @@ end
 #= Does the parser need to see an EOF to find the end of the message? =#
 function http_message_needs_eof(parser)
     #= See RFC 2616 section 4.4 =#
-    if (isrequest(parser) ||
+    if (isrequest(parser) || # FIXME request never needs EOF ??
         div(parser.status, 100) == 1 || #= 1xx e.g. Continue =#
         parser.status == 204 ||     #= No Content =#
         parser.status == 304 ||     #= Not Modified =#

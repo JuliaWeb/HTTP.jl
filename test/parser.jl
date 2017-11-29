@@ -1408,11 +1408,12 @@ const responses = Message[
                "Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\r\n" *
                "Keep-Alive: 300\r\n" *
                "Content-Length: 7\r\n" *
-               "Proxy-Connection: keep-alive\r\n\r\n"
+               "Proxy-Connection: keep-alive\r\n\r\n1234567"
 
       req = HTTP.Request()
       req.uri = HTTP.URI("http://www.techcrunch.com/")
       req.headers = ["Host"=>"www.techcrunch.com","User-Agent"=>"Fake","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language"=>"en-us,en;q=0.5","Accept-Encoding"=>"gzip,deflate","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Keep-Alive"=>"300","Content-Length"=>"7","Proxy-Connection"=>"keep-alive"]
+      req.body = FIFOBuffer("1234567")
 
       @test HTTP.parse(HTTP.Request, reqstr).headers == req.headers
       @test HTTP.parse(HTTP.Request, reqstr) == req
@@ -1681,24 +1682,40 @@ const responses = Message[
       @test_throws HTTP.ParsingError r = HTTP.parse(HTTP.Request, buf)
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "1844674407370955160" * "\r\n\r\n"
-      r = HTTP.parse(HTTP.Response, respstr)
+      r = HTTP.Response(body=FIFOBuffer())
+      HTTP.reset!(HTTP.DEFAULT_PARSER)
+      HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
       @test HTTP.status(r) == 200
       @test HTTP.headers(r) == Dict("Content-Length"=>"1844674407370955160")
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551615" * "\r\n\r\n"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+      r = HTTP.Response(body=FIFOBuffer())
+      HTTP.reset!(HTTP.DEFAULT_PARSER)
+      e, h, m, ex = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
+      @test e == HTTP.HPE_INVALID_CONTENT_LENGTH
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551616" * "\r\n\r\n"
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+      r = HTTP.Response(body=FIFOBuffer())
+      HTTP.reset!(HTTP.DEFAULT_PARSER)
+      e, h, m, ex = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
+      @test e == HTTP.HPE_INVALID_CONTENT_LENGTH
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFE" * "\r\n..."
-      r = HTTP.parse(HTTP.Response, respstr)
+      r = HTTP.Response(body=FIFOBuffer())
+      HTTP.reset!(HTTP.DEFAULT_PARSER)
+      HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
       @test HTTP.status(r) == 200
       @test HTTP.headers(r) == Dict("Transfer-Encoding"=>"chunked")
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFF" * "\r\n..."
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+      r = HTTP.Response(body=FIFOBuffer())
+      HTTP.reset!(HTTP.DEFAULT_PARSER)
+      e, h, m, ex = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
+      @test e == HTTP.HPE_INVALID_CONTENT_LENGTH
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "10000000000000000" * "\r\n..."
-      @test_throws HTTP.ParsingError HTTP.parse(HTTP.Response, respstr)
+      r = HTTP.Response(body=FIFOBuffer())
+      HTTP.reset!(HTTP.DEFAULT_PARSER)
+      e, h, m, ex = HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}(respstr))
+      @test e == HTTP.HPE_INVALID_CONTENT_LENGTH
 
       p = HTTP.Parser()
       for len in (1000, 100000)
@@ -1759,7 +1776,9 @@ const responses = Message[
       r = HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n" * "Test: Düsseldorf\r\n\r\n")
       @test HTTP.headers(r) == Dict("Test" => "Düsseldorf")
 
-      r = HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba")
+      r = HTTP.Response(body=FIFOBuffer())
+      HTTP.reset!(HTTP.DEFAULT_PARSER)
+      HTTP.parse!(r, HTTP.DEFAULT_PARSER, Vector{UInt8}("GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba"))
       @test String(readavailable(r.body)) == "fooba"
 
       for m in instances(HTTP.Method)
