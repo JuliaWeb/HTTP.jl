@@ -139,20 +139,12 @@ macro strictcheck(cond)
 end
 
 function parse!(parser::Parser, bytes::Vector{UInt8}, len::Int64, method::Method)::Tuple{ParsingErrorCode, Bool, Bool, Union{Void,String}}
+    len <= 0 && throw(ArgumentError("len must be > 0"))
     @debug(PARSING_DEBUG, "parse!")
     p_state = parser.state
     errno = HPE_UNKNOWN
     @debug(PARSING_DEBUG, len)
     @debug(PARSING_DEBUG, ParsingStateCode(p_state))
-    if len == 0
-        if p_state == s_body_identity_eof
-            return HPE_OK, true, true, nothing
-        elseif @anyeq(p_state, s_dead, s_start_req_or_res, s_start_res, s_start_req)
-            return HPE_OK, false, false, nothing
-        else
-            return HPE_INVALID_EOF_STATE, false, false, nothing
-        end
-    end
 
     p = 0
     while p < len
