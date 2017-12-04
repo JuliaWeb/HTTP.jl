@@ -324,7 +324,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     # maybe allow retrying for all kinds of errors?
     p = port(u)
     conn = @retryif ClosedError 4 connectandsend(client, sch, host, ifelse(p == "", "80", p), req, opts, verbose)
-    
+
     response = Response(stream ? 2^24 : FIFOBuffers.DEFAULT_MAX, req)
     reset!(conn.parser)
     success, err = processresponse!(client, conn, response, host, HTTP.method(req), current_task(), stream, opts.readtimeout::Float64, opts.canonicalizeheaders::Bool, verbose)
@@ -346,7 +346,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
     end
 end
 
-request(req::Request; 
+request(req::Request;
             opts::RequestOptions=RequestOptions(),
             stream::Bool=false,
             history::Vector{Response}=Response[],
@@ -443,7 +443,7 @@ Access-Control-Allow-Origin: *
 Server: meinheld/0.6.1
 Content-Length: 32
 
-{ 
+{
   "origin": "50.207.241.62"
 }
 \"\"\"
