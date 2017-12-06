@@ -106,6 +106,10 @@ macro debug(should, expr)
     end
 end
 
+macro debug(s)
+    DEBUG ? esc(:(println(string("DEBUG: ", $s)))) : :()
+end
+
 macro log(stmt)
     # "[HTTP]: Connecting to remote host..."
     return esc(:(verbose && (write(logger, "[HTTP - $(rpad(Dates.now(), 23, ' '))]: $($stmt)\n"); flush(logger))))
