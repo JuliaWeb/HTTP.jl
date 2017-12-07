@@ -1,9 +1,10 @@
 __precompile__(true)
 module HTTP
 
-export Request, Response, FIFOBuffer
+#export Request, Response, FIFOBuffer
 
 using MbedTLS
+using Retry
 
 const TLS = MbedTLS
 
@@ -36,16 +37,17 @@ include("types.jl")
 include("parser.jl")
 include("sniff.jl")
 
-include("client.jl")
-include("handlers.jl")
-using .Handlers
-include("server.jl")
-using .Nitrogen
+include("Messages.jl")
+#include("client.jl")
+#include("handlers.jl")
+#using .Handlers
+#include("server.jl")
+#using .Nitrogen
 
 #include("precompile.jl")
 
 function __init__()
-    global const DEFAULT_CLIENT = Client()
+#    global const DEFAULT_CLIENT = Client()
 end
 
 end # module

@@ -124,6 +124,7 @@ mutable struct Request
     uri::URI
     headers::Headers # includes cookies
     body::Union{FIFOBuffer, Form}
+    #referrer::Ref{Response}
 end
 
 # accessors
@@ -133,6 +134,16 @@ minor(r::Request) = r.minor
 uri(r::Request) = r.uri
 headers(r::Request) = Dict(r.headers)
 body(r::Request) = r.body
+
+function referrercount(r::Request)
+    if !isassigned(r.referrer)
+        return 0
+    elseif Base.isnull(request(r.referrer[]))
+        return 1
+    else
+        return 1 + referrercount(Base.get(request(r.referrer[])))
+    end
+end
 
 defaultheaders(::Type{Request}) = [
     "User-Agent" => "HTTP.jl/0.0.0",
@@ -212,7 +223,7 @@ Accessor methods include:
   * `HTTP.cookies`: cookies for a response, returned as a `Vector{HTTP.Cookie}`
   * `HTTP.headers`: headers for a response
   * `HTTP.request`: the `HTTP.Request` that resulted in this response
-  * `HTTP.history`: history for a response if redirects were followed from an original request
+  * `HTTP.referrer`: original response if redirects were followed from an original request
   * `HTTP.body`: body for a response as a `HTTP.FIFOBuffer`
 
 Two convenience methods are provided for accessing a response body:
@@ -227,7 +238,6 @@ mutable struct Response
     headers::Headers
     body::FIFOBuffer
     request::Nullable{Request}
-    history::Vector{Response}
 end
 
 # accessors
@@ -237,7 +247,6 @@ minor(r::Response) = r.minor
 cookies(r::Response) = r.cookies
 headers(r::Response) = Dict(r.headers)
 request(r::Response) = r.request
-history(r::Response) = r.history
 statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
 body(r::Union{Request, Response}) = r.body
 Base.take!(r::Union{Request, Response}) = readavailable(body(r))
@@ -253,9 +262,8 @@ Response(; status::Int=200,
          cookies::Vector{Cookie}=Cookie[],
          headers::Headers=Headers(),
          body::FIFOBuffer=FIFOBuffer(),
-         request::Nullable{Request}=Nullable{Request}(),
-         history::Vector{Response}=Response[]) =
-    Response(status, Int16(1), Int16(1), cookies, headers, body, request, history)
+         request::Nullable{Request}=Nullable{Request}()) =
+    Response(status, Int16(1), Int16(1), cookies, headers, body, request)
 
 Response(r::Request) = Response(; body=FIFOBuffer(), request=Nullable(r))
 Response(s::Integer) = Response(; status=s)
