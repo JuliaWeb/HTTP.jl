@@ -240,4 +240,22 @@ function splitpath(p::String)
     return elems
 end
 
+absuri(u::String, context::URI) = absuri(URI(u), context)
+
+function absuri(u::URI, context::URI)
+
+    @assert !isempty(hostname(context))
+
+    s = scheme(u)
+    h = hostname(u)
+    n = port(u)
+    p = hostname(u)
+    q = query(u)
+
+    return URIs.URI(scheme=isempty(s) ? scheme(context) : s,
+                    hostname=isempty(h) ? hostname(context) : h,
+                    port=isempty(n) ? port(context) : n,
+                    query=isempty(q) ? query(context) : q)
+end
+
 end # module
