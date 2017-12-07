@@ -110,11 +110,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                     end
                     length(buffer) > 0 || break
                     starttime[] = time() # reset the timeout while still receiving bytes
-                    err = @HTTP.catch HTTP.ParsingError HTTP.parse!(request, parser, buffer)
-                    request.method = parser.method
-                    request.uri = parser.url
-                    request.major = parser.major
-                    request.minor = parser.minor
+                    err = @HTTP.catch HTTP.ParsingError HTTP.parse!(parser, buffer)
                     startedprocessingrequest = true
                     if err != nothing
                         # error in parsing the http request
@@ -158,6 +154,11 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                     elseif HTTP.messagecomplete(parser)
                         HTTP.@log "received request on connection i=$i"
 
+                        request.method = parser.method
+                        request.uri = parser.url
+                        request.major = parser.major
+                        request.minor = parser.minor
+
                         verbose && (show(logger, request); println(logger, ""))
                         try
                             response = Handlers.handle(handler, request, HTTP.Response())
@@ -172,6 +173,8 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             end
                             HTTP.reset!(parser)
                             request = HTTP.Request()
+                            parser.onbody = x->write(request.body, x)
+                            parser.onheader = x->HTTP.appendheader(request, x)
                         else
                             if !any(x->x[1] == "Connection", response.headers)
                                 push!(response.headers, "Connection" => "close")
@@ -255,6 +258,9 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
     while true
         p = HTTP.Parser()
         request = HTTP.Request()
+        p.onbody = x->write(request.body, x)
+        p.onheader = x->HTTP.appendheader(request, x)
+
         try
             # accept blocks until a new connection is detected
             tcp = accept(tcpserver)
