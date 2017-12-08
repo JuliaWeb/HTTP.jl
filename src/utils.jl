@@ -106,8 +106,8 @@ macro debug(should, expr)
     end
 end
 
-macro debug(s)
-    DEBUG ? esc(:(println(string("DEBUG: ", $s)))) : :()
+macro debug(n::Int, s)
+    DEBUG_LEVEL >= n ? esc(:(println(string("DEBUG: ", $s)))) : :()
 end
 
 macro log(stmt)
@@ -185,8 +185,6 @@ macro lock(l, expr)
         lock($l)
         try
             $expr
-        catch
-            rethrow()
         finally
             unlock($l)
         end

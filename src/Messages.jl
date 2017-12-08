@@ -2,23 +2,26 @@ module Messages
 
 export Message, Request, Response, Body,
        method, header, setheader, request
-  
+
 
 include("Bodies.jl")
 using .Bodies
 
 import ..@lock
+import ..SSLContext
 import ..Parser
 import ..parse!
 import ..messagecomplete
 import ..waitingforeof
 import ..ParsingStateCode
 import ..URIs: URI, scheme, hostname, port, resource
-import ..HTTP: STATUS_CODES, getkey, setkey, @debug
+import ..HTTP: STATUS_CODES, getkey, setkey, @debug, DISABLE_CONNECTION_POOL
 
-include("Connections.jl")
-using .Connections
-import .Connections.SSLContext
+if DISABLE_CONNECTION_POOL
+    using ..Connect
+else
+    using ..Connections
+end
 
 """
     Request
@@ -114,6 +117,19 @@ header(m, k::String, default::String="") = getkey(m.headers, k, k => default)[2]
 Set header `value` for `key`.
 """
 setheader(m, v::Pair{String,String}) = setkey(m.headers, v)
+
+
+"""
+   defaultheader(message, key => value)
+
+Set header `value` for `key` if it is not already set.
+"""
+
+function defaultheader(m, v::Pair{String,String})
+    if header(m, first(v)) == ""
+        setheader(m, v)
+    end
+end
 
 
 """
@@ -227,7 +243,7 @@ function Base.read!(io::IO, p::Parser)
     while !eof(io)
         bytes = readavailable(io)
         if isempty(bytes)
-            @debug "MbedTLS https://github.com/JuliaWeb/MbedTLS.jl/issues/113 !"
+            @debug 1 "Bug https://github.com/JuliaWeb/MbedTLS.jl/issues/113 !"
             @assert isa(io, SSLContext)
             @assert eof(io)
             break
@@ -237,8 +253,7 @@ function Base.read!(io::IO, p::Parser)
         n = parse!(p, bytes)
         @assert n == length(bytes) || messagecomplete(p)
         @assert n <= length(bytes)
-
-        @debug ParsingStateCode(p.state)
+        @debug 3 ParsingStateCode(p.state)
 
         if messagecomplete(p)
             excess = view(bytes, n+1:length(bytes))
@@ -283,8 +298,8 @@ Get a `Connection` for a `URI` from the connection pool.
 
 function connecturi(uri::URI)
     getconnection(scheme(uri) == "https" ? SSLContext : TCPSocket,
-                  hostname(uri),
-                  parse(UInt, port(uri)))
+                 hostname(uri),
+                 parse(UInt, port(uri)))
 end
 
 
@@ -298,16 +313,18 @@ function request(uri::URI, req::Request, res::Response)
 
     #FIXME set Content-Length header?
 
-    host = hostname(uri)
-    if header(req, "Host") == ""
-        setheader(req, "Host" => host)
-    end
+    defaultheader(req, "Host" => hostname(uri))
 
-    c = connecturi(uri)
-    @debug "write to: $c\n$req"
-    write(c, req)
-    readresponse!(c, res)
-    @debug "read from: $c\n$req"
+    io = connecturi(uri)
+    try                                 ;@debug 1 "write to: $io\n$req"
+        write(io, req)
+        closewrite(io)
+        read!(io, res)                  ;@debug 2 "read from: $io\n$res"
+        closeread(io)
+    catch e
+        @schedule close(io)
+        rethrow(e)
+    end
 
     return res
 end

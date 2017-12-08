@@ -1,15 +1,11 @@
 module Connections
 
-export getconnection, readresponse!, unread!
+export getconnection, readresponse!, unread!, closeread, closewrite
 
-using MbedTLS: SSLContext
+import ..@lock, ..@debug, ..SSLContext
 
+import ..Connect: Connect, unread!, closeread, closewrite
 
-import ..@lock
-import ..@debug
-
-include("Connect.jl")
-import .Connect.unread!
 
 const ByteView = typeof(view(UInt8[], 1:0))
 
@@ -33,11 +29,12 @@ mutable struct Connection{T <: IO} <: IO
     port::UInt
     io::T
     excess::ByteView
+    writebusy::Bool
     readlock::ReentrantLock
 end
 
 Connection{T}() where T <: IO =
-    Connection{T}("", 0, T(), view(UInt8[], 1:0), ReentrantLock())
+    Connection{T}("", 0, T(), view(UInt8[], 1:0), false, ReentrantLock())
 
 function Connection{T}(host::String, port::UInt) where T <: IO
     c = Connection{T}()
@@ -57,28 +54,13 @@ Base.eof(c::Connection) = isempty(c.excess) && eof(c.io)
 function Base.readavailable(c::Connection)
     if !isempty(c.excess)
         bytes = c.excess
-        @debug "read $(length(bytes))-bytes from excess buffer."
+        @debug 3 "read $(length(bytes))-bytes from excess buffer."
         c.excess = view(UInt8[], 1:0)
     else
         bytes = readavailable(c.io)
-        @debug "read $(length(bytes))-bytes from $(typeof(c.io))"
+        @debug 3 "read $(length(bytes))-bytes from $(typeof(c.io))"
     end
     return bytes
-end
-
-
-"""
-    readresponse!(::Connection, response)
-
-Read from a `Connection` and store result in `response`.
-Lock the `readlock` and push the `Connection` back into the `pool` for reuse.
-"""
-
-function readresponse!(c::Connection, response)
-    @lock c.readlock begin
-        pushconnection!(c)
-        return read!(c, response)
-    end
 end
 
 
@@ -92,6 +74,30 @@ function unread!(c::Connection, bytes::ByteView)
     @assert isempty(c.excess)
     c.excess = bytes
 end
+
+
+"""
+    closewrite(::Connection)
+
+Signal end of writing (and obtain lock for reading).
+"""
+
+function closewrite(c::Connection)
+    c.writebusy = false
+    lock(c.readlock)
+    @debug 2 "Pooled: $c"
+end
+
+
+"""
+    closeread(::Connection)
+
+Signal end of read operations.
+"""
+
+closeread(c::Connection) = unlock(c.readlock)
+
+Base.close(c::Connection) = close(c.io)
 
 
 """
@@ -113,35 +119,7 @@ const poollock = ReentrantLock()
 
 
 """
-    pushconnection!(c::Connection)
-
-Place a `Connection` in the `pool` for reuse.
-"""
-
-pushconnection!(c::Connection) = @lock poollock push!(pool, c)
-
-
-"""
-    popconnection!(type, host, port [, default=noconnection])
-
-Find a `Connection` and remove it from the `pool`.
-"""
-
-function popconnection!(t::Type, host::String, port::UInt, default=noconnection)
-    @lock poollock begin
-        pattern = c->(typeof(c.io) == t && c.host == host && c.port == port)
-        if (i = findlast(pattern, pool)) > 0
-            x = pool[i]
-            deleteat!(pool, i)
-            return x
-        end
-    end
-    return default
-end
-
-
-"""
-    getconnection(type, host, port)
+    getconnection(type, host, port) -> Connection
 
 Find a reusable `Connection` and remove it from the `pool`,
 or create a new `Connection` if required.
@@ -149,17 +127,28 @@ or create a new `Connection` if required.
 
 function getconnection(::Type{T}, host::String, port::UInt) where T <: IO
 
-    while (c = popconnection!(T, host, port)) != noconnection
-        if isopen(c.io)
-            @debug "Reused: $c"
+    @lock poollock begin
+
+        pattern = x->(!x.writebusy &&
+                      typeof(x.io) == T &&
+                      x.host == host &&
+                      x.port == port)
+
+        while (i = findlast(pattern, pool)) > 0
+            c = pool[i]
+            if !isopen(c.io)
+                deleteat!(pool, i)      ;@debug 1 "Deleted: $c"
+                continue
+            end
+            c.writebusy = true;         ;@debug 2 "Reused: $c"
             return c
         end
-        @debug "Discarded: $c"
-    end
 
-    c = Connection{T}(host, port)
-    @debug "New: $c"
-    return c
+        c = Connection{T}(host, port)   ;@debug 1 "New: $c"
+        c.writebusy = true
+        push!(pool, c)
+        return c
+    end
 end
 
 

@@ -4,11 +4,16 @@ module HTTP
 #export Request, Response, FIFOBuffer
 
 using MbedTLS
+import MbedTLS.SSLContext
 using Retry
 
 const TLS = MbedTLS
 
 import Base.==
+
+const DEBUG_LEVEL = 0
+
+const DISABLE_CONNECTION_POOL = false
 
 const DEBUG = false
 const PARSING_DEBUG = false
@@ -36,6 +41,12 @@ include("types.jl")
 
 include("parser.jl")
 include("sniff.jl")
+
+include("Connect.jl")
+include("Connections.jl")
+
+#using .Connect
+#using .Connections
 
 include("Messages.jl")
 #include("client.jl")
