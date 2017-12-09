@@ -168,6 +168,8 @@ function http_parse_host(buf, host::Offset, foundat)
     return Offset(off, len), Offset(portoff, portlen), Offset(uioff, uilen)
 end
 
+ufsubstring(uri, offset) = SubString(uri, offset.off, offset.off + offset.len-1)
+
 function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::Bool=false)
     s = ifelse(isconnect, s_req_server_start, s_req_spaces_before_url)
     old_uf = UF_MAX
@@ -243,11 +245,21 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
         chk = UF_HOSTNAME_MASK | UF_PORT_MASK
         ((mask | chk) > chk) && throw(URLParsingError("connect requests must contain and can only contain both hostname and port"))
     end
-    return URI(buf, (offsets[UF_SCHEME],
+
+    uri = String(buf)
+    return URI(#=buf, (offsets[UF_SCHEME],
                      offsets[UF_HOSTNAME],
                      offsets[UF_PORT],
                      offsets[UF_PATH],
                      offsets[UF_QUERY],
                      offsets[UF_FRAGMENT],
-                     offsets[UF_USERINFO]))
+                     offsets[UF_USERINFO]),=#
+               uri,
+               ufsubstring(uri, offsets[UF_SCHEME]),
+               ufsubstring(uri, offsets[UF_HOSTNAME]),
+               ufsubstring(uri, offsets[UF_PORT]),
+               ufsubstring(uri, offsets[UF_PATH]),
+               ufsubstring(uri, offsets[UF_QUERY]),
+               ufsubstring(uri, offsets[UF_FRAGMENT]),
+               ufsubstring(uri, offsets[UF_USERINFO]))
 end

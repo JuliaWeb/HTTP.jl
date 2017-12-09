@@ -14,7 +14,8 @@ export URI, URL,
        hasport, port,
        resource, host,
        escape, unescape,
-       splitpath, queryparams
+       splitpath, queryparams,
+       absuri
 
 """
     HTTP.URL(host; userinfo="", path="", query="", fragment="", isconnect=false)
@@ -41,8 +42,16 @@ To access and return these components as strings, use the various accessor metho
   * `HTTP.resource`: returns the path-query-fragment combination
 """
 struct URI
-    data::Vector{UInt8}
-    offsets::NTuple{7, Offset}
+#=    data::Vector{UInt8}
+    offsets::NTuple{7, Offset} =#
+    uri::String
+    scheme::SubString
+    hostname::SubString
+    port::SubString
+    path::SubString
+    query::SubString
+    fragment::SubString
+    userinfo::SubString
 end
 
 function URI(;hostname::AbstractString="", path::AbstractString="",
@@ -52,7 +61,7 @@ function URI(;hostname::AbstractString="", path::AbstractString="",
     hostname != "" && scheme == "" && !isconnect && (scheme = "http")
     io = IOBuffer()
     printuri(io, scheme, userinfo, hostname, string(port), path, escape(query), fragment)
-    return Base.parse(URI, String(take!(io)); isconnect=isconnect)
+    return URI(String(take!(io)); isconnect=isconnect)
 end
 
 # we assume `str` is at least hostname & port
@@ -79,6 +88,7 @@ function URL(str::AbstractString; userinfo::AbstractString="", path::AbstractStr
     end
     return Base.parse(URI, str; isconnect=isconnect)
 end
+
 URI(str::AbstractString; isconnect::Bool=false) = Base.parse(URI, str; isconnect=isconnect)
 Base.parse(::Type{URI}, str::AbstractString; isconnect::Bool=false) = http_parser_parse_url(Vector{UInt8}(str), 1, sizeof(str), isconnect)
 
@@ -89,21 +99,21 @@ Base.parse(::Type{URI}, str::AbstractString; isconnect::Bool=false) = http_parse
                     fragment(a) == fragment(b)  &&
                     userinfo(a) == userinfo(b)  &&
                     ((!hasport(a) || !hasport(b)) || (port(a) == port(b)))
-
 # accessors
 for uf in instances(http_parser_url_fields)
     uf == UF_MAX && break
     nm = lowercase(string(uf)[4:end])
     has = Symbol(string("has", nm))
-    @eval $has(uri::URI) = uri.offsets[Int($uf)].len > 0
+    @eval $has(uri::URI) = !isempty(uri.$(Symbol(nm)))
     uf == UF_PORT && continue
-    @eval $(Symbol(nm))(uri::URI) = String(uri.data[uri.offsets[Int($uf)]])
+    #@eval $(Symbol(nm))(uri::URI) = String(uri.data[uri.offsets[Int($uf)]])
+    @eval $(Symbol(nm))(uri::URI) = uri.$(Symbol(nm))
 end
 
 # special def for port
 function port(uri::URI)
     if hasport(uri)
-        return String(uri.data[uri.offsets[Int(UF_PORT)]])
+        return uri.port
     else
         sch = scheme(uri)
         return sch == "http" ? "80" : sch == "https" ? "443" : ""
@@ -114,7 +124,7 @@ resource(uri::URI; isconnect::Bool=false) = isconnect ? host(uri) : path(uri) * 
 function host(uri::URI)
     h = hostname(uri)
     sch = scheme(uri)
-    p = String(uri.data[uri.offsets[Int(UF_PORT)]])
+    p = uri.port
     if isempty(p) || (sch == "http" && p == "80") || (sch == "https" && p == "443")
         return h
     else
@@ -125,7 +135,7 @@ end
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
 
 Base.print(io::IO, u::URI) = printuri(io, scheme(u), userinfo(u), hostname(u), port(u), path(u), query(u), fragment(u))
-function printuri(io::IO, sch::String, userinfo::String, hostname::String, port::String, path::String, query::String, fragment::String)
+function printuri(io::IO, sch::AbstractString, userinfo::AbstractString, hostname::AbstractString, port::AbstractString, path::AbstractString, query::AbstractString, fragment::AbstractString)
     if sch in uses_authority
         print(io, sch, "://")
         !isempty(userinfo) && print(io, userinfo, "@")
@@ -240,7 +250,7 @@ function splitpath(p::String)
     return elems
 end
 
-absuri(u::String, context::URI) = absuri(URI(u), context)
+absuri(u, context) = absuri(URI(u), URI(context))
 
 function absuri(u::URI, context::URI)
 
@@ -249,12 +259,13 @@ function absuri(u::URI, context::URI)
     s = scheme(u)
     h = hostname(u)
     n = port(u)
-    p = hostname(u)
+    p = path(u)
     q = query(u)
 
     return URIs.URI(scheme=isempty(s) ? scheme(context) : s,
                     hostname=isempty(h) ? hostname(context) : h,
                     port=isempty(n) ? port(context) : n,
+                    path=isempty(p) ? path(context) : p,
                     query=isempty(q) ? query(context) : q)
 end
 

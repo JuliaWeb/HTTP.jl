@@ -1,5 +1,8 @@
-
 using HTTP.Messages
+import HTTP.Messages.appendheader
+
+using HTTP.CookieRequest
+using HTTP.StatusError
 
 using JSON
 
@@ -22,14 +25,14 @@ using JSON
     setheader(req, "X" => "Y")
     @test header(req, "X") == "Y"
 
-    HTTP.Messages.appendheader(req, "" => "Z")
+    appendheader(req, "" => "Z")
     @test header(req, "X") == "YZ"
 
-    HTTP.Messages.appendheader(req, "X" => "more")
+    appendheader(req, "X" => "more")
     @test header(req, "X") == "YZ, more"
 
-    HTTP.Messages.appendheader(req, "Set-Cookie" => "A")
-    HTTP.Messages.appendheader(req, "Set-Cookie" => "B")
+    appendheader(req, "Set-Cookie" => "A")
+    appendheader(req, "Set-Cookie" => "B")
     @test filter(x->first(x) == "Set-Cookie", req.headers) == 
         ["Set-Cookie" => "A", "Set-Cookie" => "B"]
 
@@ -62,8 +65,30 @@ using JSON
         for m in ["GET", "HEAD", "OPTIONS"]
             @test request(m, "$sch://httpbin.org/ip").status == 200
         end
-        @test request("POST", "$sch://httpbin.org/ip").status == 405
+        try 
+            request("POST", "$sch://httpbin.org/ip")
+            @test false
+        catch e
+            @test isa(e, StatusError)
+            @test e.status == 405
+        end
     end
+
+#=
+    @sync begin
+        io = BufferStream()
+        @async begin
+            for i = 1:100
+                sleep(0.1)
+                write(io, "Hello!")
+            end
+            close(io)
+        end
+        yield() 
+        r = request("POST", "http://httpbin.org/post", [], io)
+        @test r.status == 200
+    end
+=#
 
     for sch in ["http", "https"]
         for m in ["POST", "PUT", "DELETE", "PATCH"]
@@ -89,6 +114,7 @@ using JSON
         end
     end
 
+
     for sch in ["http", "https"]
 
         log_buffer = Vector{String}()
@@ -110,6 +136,7 @@ using JSON
                 log("GOT $q: $(x["args"]["req"])")
             end
         end
+
 
         @sync begin
             async_get("$sch://httpbin.org/stream/100?req=1")

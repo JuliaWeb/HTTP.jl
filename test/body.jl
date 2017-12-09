@@ -1,6 +1,6 @@
-using HTTP.Messages.Bodies
+using HTTP.Bodies
 
-@testset "HTTP.Messages.Body" begin
+@testset "HTTP.Bodies" begin
 
     @test String(take!(Body("Hello!"))) == "Hello!"
     @test String(take!(Body(IOBuffer("Hello!")))) == "Hello!"
@@ -15,7 +15,7 @@ using HTTP.Messages.Bodies
         sleep(0.1)
         close(io)
     end
-    @test String(take!(Body(io))) == "Hello!"
+    @test String(take!(Body(io))) == "5\r\nHello\r\n1\r\n!\r\n0\r\n\r\n"
 
     b = Body()
     write(b, "Hello")
@@ -42,12 +42,12 @@ using HTTP.Messages.Bodies
     show(buf, b)
     @test String(take!(buf)) == "Hello!\nWorld!\n"
 
-    tmp = HTTP.Messages.Bodies.body_show_max
-    HTTP.Messages.Bodies.set_show_max(12)
+    tmp = HTTP.Bodies.body_show_max
+    HTTP.Bodies.set_show_max(12)
     b = Body("Hello World!xxx")
     #display(b); println()
     buf = IOBuffer()
     show(buf, b)
     @test String(take!(buf)) == "Hello World!\n⋮\n15-byte body\n"
-    HTTP.Messages.Bodies.set_show_max(tmp)
+    HTTP.Bodies.set_show_max(tmp)
 end

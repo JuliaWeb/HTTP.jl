@@ -22,7 +22,7 @@ If `io` is set to `notastream`, then `buffer` contains static Message Body data.
 Otherwise, `io` is a stream to/from which Message Body data is written/read.
 In streaming mode: `length` keeps track of the number of bytes that have passed
 through `io`; and `buffer` keeps a cache of the first part of the Message Body
-for display purposes. See `show` and `set_show_max`.
+(for display purposes). See `show` and `set_show_max`).
 """
 
 mutable struct Body
@@ -32,7 +32,6 @@ mutable struct Body
 end
 
 const notastream = IOBuffer("")
-isstream(b::Body) = b.io != notastream
 
 
 """
@@ -64,6 +63,15 @@ Body(::Void) = Body()
 Body(buffer::IOBuffer=IOBuffer()) = Body(notastream, buffer, 0)
 Body(io::IO) = Body(io, IOBuffer(body_show_max), 0)
 Body(data) = Body(IOBuffer(data))
+
+
+"""
+    isstream(::Body)
+
+Is this `Body` in streaming mode?
+"""
+
+isstream(b::Body) = b.io != notastream
 
 
 """
@@ -114,15 +122,21 @@ function Base.write(io::IO, body::Body)
         return write(io, view(body.buffer.data, 1:body.buffer.size))
     end
 
+    # Read from `body.io` until `eof`, 
+    # write to `io` using "chunked" encoding.
+    # https://tools.ietf.org/html/rfc7230#section-4.1
     @assert body.length == 0
     @assert position(body.buffer) == 0
     while !eof(body.io)
         v = readavailable(body.io)
+        l = length(v)
         if body.length < body_show_max
             write(body.buffer, v)
         end
-        body.length += write(io, v)
+        write(io, hex(l), "\r\n", v, "\r\n")
+        body.length += l
     end
+    write(io, "0\r\n\r\n")
     return body.length
 end
 

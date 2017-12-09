@@ -191,20 +191,58 @@ macro lock(l, expr)
     end)
 end
 
-function setkey(c, v)
-    k = first(v)
+
+"""
+    setbyfirst(collection, item) -> item
+
+Set `item` in a `collection`.
+If `first() of an exisiting matches `first(item)` it is replaced.
+Otherwise the new `item` is inserted at the end of the `collection`.
+"""
+
+function setbyfirst(c, item)
+    k = first(item)
     if (i = findfirst(x->first(x) == k, c)) > 0
-        c[i] = v
+        c[i] = item
     else
-        push!(c, v)
+        push!(c, item)
     end
-    return v
+    return item
 end
 
-function getkey(c, k, default=nothing)
+
+"""
+    getbyfirst(collection, key [, default]) -> item
+
+Get `item` from collection where `first(item)` matches `key`.
+"""
+
+function getbyfirst(c, k, default=nothing)
     i = findfirst(x->first(x) == k, c)
     return i > 0 ? c[i] : default
 end
+
+
+"""
+    setkv(collection, key, value)
+
+Set `value` for `key` in collection of key/value `Pairs`.
+"""
+
+setkv(c, k, v) = setbyfirst(c, k => v)
+
+"""
+    getkv(collection, key [, default]) -> value
+
+Get `value` for `key` in collection of key/value `Pairs`,
+where `first(item) == key` and `value = item[2]`
+"""
+
+function getkv(c, k, default=nothing)
+    i = findfirst(x->first(x) == k, c)
+    return i > 0 ? c[i][2] : default
+end
+
 
 macro catch(etype, expr)
     esc(quote

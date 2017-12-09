@@ -1,10 +1,12 @@
 module Connections
 
-export getconnection, readresponse!, unread!, closeread, closewrite
+export getconnection
+
+using ..IOExtras
 
 import ..@lock, ..@debug, ..SSLContext
 
-import ..Connect: Connect, unread!, closeread, closewrite
+import ..Connect.getconnection
 
 
 const ByteView = typeof(view(UInt8[], 1:0))
@@ -19,9 +21,11 @@ The `excess` field contains left over bytes read from the connection after
 the end of a response message. These bytes are probably the start of the
 next response message.
 
-The `readlock` is held by the `read!` function until the end of the response
-message is parsed. A second `request` task that has sent a message on this
-`Connection` must wait to obtain the lock before reading its response.
+The `readcount` and `writecount` keep track of the number of Request/Response
+Messages that have been read/written. `writecount` is allowed to be no more
+than two greater than `readcount` (see `isbusy`).
+i.e. after two Requests have been written to a `Connection`, the first
+Response must be read before another Request can be written.
 """
 
 mutable struct Connection{T <: IO} <: IO
@@ -29,18 +33,21 @@ mutable struct Connection{T <: IO} <: IO
     port::UInt
     io::T
     excess::ByteView
-    writebusy::Bool
-    readlock::ReentrantLock
+    writecount::Int
+    readcount::Int
+    readdone::Condition
 end
 
-Connection{T}() where T <: IO =
-    Connection{T}("", 0, T(), view(UInt8[], 1:0), false, ReentrantLock())
+isbusy(c::Connection) = c.writecount - c.readcount > 1
 
-function Connection{T}(host::String, port::UInt) where T <: IO
+Connection{T}() where T <: IO =
+    Connection{T}("", 0, T(), view(UInt8[], 1:0), 0, 0, Condition())
+
+function Connection{T}(host::AbstractString, port::UInt) where T <: IO
     c = Connection{T}()
     c.host = host
     c.port = port
-    c.io = Connect.getconnection(T, host, port)
+    c.io = getconnection(T, host, port)
     return c
 end
 
@@ -70,7 +77,7 @@ end
 Push bytes back into a connection (to be returned by the next read).
 """
 
-function unread!(c::Connection, bytes::ByteView)
+function IOExtras.unread!(c::Connection, bytes::ByteView)
     @assert isempty(c.excess)
     c.excess = bytes
 end
@@ -79,39 +86,46 @@ end
 """
     closewrite(::Connection)
 
-Signal end of writing (and obtain lock for reading).
+Signal that an entire Request Message has been written to the `Connection`.
+
+Increment `writecount` and wait for pending reads to complete.
 """
 
-function closewrite(c::Connection)
-    c.writebusy = false
-    lock(c.readlock)
-    @debug 2 "Pooled: $c"
+function IOExtras.closewrite(c::Connection)
+    c.writecount += 1
+    if isbusy(c)
+        @debug 3 "Waiting to read: $c"
+        wait(c.readdone)
+    end
+    @assert !isbusy(c)
 end
 
 
 """
     closeread(::Connection)
 
-Signal end of read operations.
+Signal that an entire Response Message has been read from the `Connection`.
+
+Increment `readcount` and wake up waiting `closewrite`.
 """
 
-closeread(c::Connection) = unlock(c.readlock)
+IOExtras.closeread(c::Connection) = (c.readcount += 1; notify(c.readdone))
 
-Base.close(c::Connection) = close(c.io)
+
+Base.close(c::Connection) = (close(c.io); notify(c.readdone))
+
 
 
 """
     pool
 
-The `pool` is a collection of open `Connection`s that are available
-for sending Request Messages. The `request` function calls
-`getconnection` to retrieve a connection from the `pool`.
-When the `request` function has sent a Request Message it returns the
-`Connection` to the `pool`. When a `Connection` is first returned
-to the pool, its `readlock` set to indicate that the requester has
-not finished reading the Response Message. At this point a new
-requester can use the `Connection` to send another Request Message,
-but must wait to the `readlock` before reading the Response Message.
+The `pool` is a collection of open `Connection`s.  The `request`
+function calls `getconnection` to retrieve a connection from the
+`pool`.  When the `request` function has written a Request Message
+it calls `closewrite` to signal that the `Connection` can be reused
+for writing (to send the next Request). When the `request` function
+has read the Response Message it calls `closeread` to signal that
+the `Connection` can be reused for reading.
 """
 
 const pool = Vector{Connection}()
@@ -121,15 +135,16 @@ const poollock = ReentrantLock()
 """
     getconnection(type, host, port) -> Connection
 
-Find a reusable `Connection` and remove it from the `pool`,
+Find a reusable `Connection` in the `pool`,
 or create a new `Connection` if required.
 """
 
-function getconnection(::Type{T}, host::String, port::UInt) where T <: IO
+function getconnection(::Type{Connection{T}},
+                       host::AbstractString, port::UInt)::Connection{T} where T <: IO
 
     @lock poollock begin
 
-        pattern = x->(!x.writebusy &&
+        pattern = x->(!isbusy(x) &&
                       typeof(x.io) == T &&
                       x.host == host &&
                       x.port == port)
@@ -139,24 +154,23 @@ function getconnection(::Type{T}, host::String, port::UInt) where T <: IO
             if !isopen(c.io)
                 deleteat!(pool, i)      ;@debug 1 "Deleted: $c"
                 continue
-            end
-            c.writebusy = true;         ;@debug 2 "Reused: $c"
+            end;                        ;@debug 2 "Reused: $c"
             return c
         end
 
         c = Connection{T}(host, port)   ;@debug 1 "New: $c"
-        c.writebusy = true
         push!(pool, c)
+        @assert !isbusy(c)
         return c
     end
 end
 
 
 function Base.show(io::IO, c::Connection)
-    print(io, c.host, ":", Int(c.port), ":", Int(localport(c)), ", ",
+    print(io, c.host, ":", Int(c.port), ":", #=Int(localport(c)), ", ", =#
               typeof(c.io), ", ", tcpstatus(c), ", ",
-              length(c.excess), "-byte excess",
-              islocked(c.readlock) ? ", readlock" : "")
+              length(c.excess), "-byte excess, reads/writes: ",
+              c.writecount, "/", c.readcount)
 end
 
 tcpsocket(c::Connection{SSLContext})::TCPSocket = c.io.bio

@@ -22,6 +22,10 @@
 # IN THE SOFTWARE.
 #
 
+#FIXME module Parser
+
+using .URIs
+
 const start_state = s_start_req_or_res
 const strict = true
 
@@ -38,14 +42,14 @@ mutable struct Parser
     method::HTTP.Method
     major::Int16
     minor::Int16
-    url::HTTP.URI
+    url::String
     status::Int32
     onheader::Function
     onbody::Function
     onheaderscomplete::Function
 end
 
-Parser() = Parser(start_state, 0x00, 0, 0, false, false, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, HTTP.URI(), 0, x->nothing, x->nothing, ()->nothing)
+Parser() = Parser(start_state, 0x00, 0, 0, false, false, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, "", 0, x->nothing, x->nothing, ()->nothing)
 
 const DEFAULT_PARSER = Parser()
 
@@ -62,7 +66,7 @@ function reset!(p::Parser)
     p.method = Method(0)
     p.major = 0
     p.minor = 0
-    p.url = HTTP.URI()
+    p.url = ""
     p.status = 0
     p.onheader = x->nothing
     p.onbody = x->nothing
@@ -88,45 +92,6 @@ function Base.show(io::IO, e::ParsingError)
                        e.msg))
 end
 
-"""
-    HTTP.parse([HTTP.Request, HTTP.Response], str; kwargs...)
-
-Parse a `HTTP.Request` or `HTTP.Response` from a string. `str` must contain at least one
-full request or response (but may include more than one). Supported keyword arguments include:
-
-  * `extra`: a `Ref{String}` that will be used to store any extra bytes beyond a full request or response
-"""
-function parse(T::Type{<:Union{Request, Response}}, str;
-               extraref::Ref{SubArray{UInt8,1}}=Ref{SubArray{UInt8,1}}())
-
-    r = T(body=FIFOBuffer())
-    p = DEFAULT_PARSER
-    reset!(p)
-#    p.isheadresponse = method in ("HEAD", "CONNECT")
-    p.onbody = x->write(r.body, x)
-    p.onheader = x->appendheader(r, x)
-    bytes = Vector{UInt8}(str)
-    n = parse!(p, bytes)
-    extra = view(bytes, n+1:length(bytes))
-    if T == Request
-        r.uri = p.url
-        r.method = p.method
-    else
-        r.status = p.status
-    end
-    r.major = p.major
-    r.minor = p.minor
-    !headerscomplete(p) && throw(ParsingError(HPE_HEADERS_INCOMPLETE))
-    if p.content_length != ULLONG_MAX && !messagecomplete(p)
-        throw(ParsingError(HPE_BODY_INCOMPLETE))
-    end
-    if upgrade(p)
-        extraref[] = extra
-    end
-    close(r.body)
-    return r
-end
-
 
 macro errorif(cond, err)
     esc(:($cond && @err($err)))
@@ -142,6 +107,8 @@ end
 
 
 const ByteView = typeof(view(UInt8[], 1:0))
+
+parse!(p::Parser, bytes::String)::Int = parse!(p, Vector{UInt8}(bytes))
 
 parse!(p::Parser, bytes)::Int = parse!(p, view(bytes, 1:length(bytes)))
 
@@ -447,8 +414,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
 
             if p_state >= s_req_http_start
                 @debug(PARSING_DEBUG, "onurl $parser.method $(String(parser.valuebuffer))")
-                url = take!(parser.valuebuffer)
-                parser.url = URIs.http_parser_parse_url(url, 1, length(url), parser.method == CONNECT)
+                parser.url = take!(parser.valuebuffer)
             end
 
         elseif p_state == s_req_http_start
@@ -1080,3 +1046,6 @@ function http_should_keep_alive(parser)
 
   return !http_message_needs_eof(parser)
 end
+
+
+#FIXME end # module Parser

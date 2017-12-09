@@ -1,27 +1,26 @@
 module Messages
 
 export Message, Request, Response, Body,
-       method, header, setheader, request
+       method, iserror, isredirect, parentcount,
+       header, setheader, defaultheader, setlengthheader,
+       waitforheaders
 
+import ..HTTP
 
-include("Bodies.jl")
-using .Bodies
+using ..IOExtras
+using ..Bodies
 
 import ..@lock
 import ..SSLContext
 import ..Parser
 import ..parse!
 import ..messagecomplete
+import ..headerscomplete
 import ..waitingforeof
 import ..ParsingStateCode
-import ..URIs: URI, scheme, hostname, port, resource
-import ..HTTP: STATUS_CODES, getkey, setkey, @debug, DISABLE_CONNECTION_POOL
+import ..ParsingError
+import ..HTTP: getbyfirst, setbyfirst, @debug
 
-if DISABLE_CONNECTION_POOL
-    using ..Connect
-else
-    using ..Connections
-end
 
 """
     Request
@@ -41,9 +40,12 @@ mutable struct Request
     parent
 end
 
-Request(method="", uri="", headers=[], body=Body(); parent=nothing) =
+Request() = Request("", "")
+Request(method::String, uri, headers=[], body=Body(); parent=nothing) =
     Request(method, uri == "" ? "/" : uri, v"1.1",
             mkheaders(headers), body, parent)
+
+Request(bytes) = read!(IOBuffer(bytes), Request())
 
 mkheaders(v::Vector{Pair{String,String}}) = v
 mkheaders(x) = [string(k) => string(v) for (k,v) in x]
@@ -70,10 +72,23 @@ mutable struct Response
     headerscomplete::Condition
 end
 
-Response(status=0, headers=[]; body=Body(), parent=nothing) =
+Response(status::Int=0, headers=[]; body=Body(), parent=nothing) =
     Response(v"1.1", status, headers, body, parent, Condition())
 
+Response(bytes) = read!(IOBuffer(bytes), Response())
+
+
 const Message = Union{Request,Response}
+
+"""
+    iserror(::Response)
+    isredirect(::Response)
+
+Does this `Response` have an error or redirect status?
+"""
+
+iserror(r::Response) = r.status < 200 || r.status >= 300
+isredirect(r::Response) = r.status in (301, 302, 307, 308)
 
 
 """
@@ -86,12 +101,27 @@ method(r::Response) = r.parent == nothing ? "" : r.parent.method
 
 
 """
+    parentcount(::Response)
+
+How many redirect parents does this `Response` have?
+"""
+
+function parentcount(r::Response)
+    if r.parent == nothing || r.parent.parent == nothing
+        return 0
+    else
+        return 1 + parentcount(r.parent.parent)
+    end
+end
+
+
+"""
     statustext(::Response)
 
 `String` representation of a HTTP status code. e.g. `200 => "OK"`.
 """
 
-statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
+statustext(r::Response) = Base.get(HTTP.STATUS_CODES, r.status, "Unknown Code")
 
 
 """
@@ -108,7 +138,7 @@ waitforheaders(r::Response) = while r.status == 0; wait(r.headerscomplete) end
 
 Get header value for `key`.
 """
-header(m, k::String, default::String="") = getkey(m.headers, k, k => default)[2]
+header(m, k::String, d::String="") = getbyfirst(m.headers, k, k => d)[2]
 
 
 """
@@ -116,7 +146,7 @@ header(m, k::String, default::String="") = getkey(m.headers, k, k => default)[2]
 
 Set header `value` for `key`.
 """
-setheader(m, v::Pair{String,String}) = setkey(m.headers, v)
+setheader(m, v::Pair) = setbyfirst(m.headers, Pair{String,String}(v))
 
 
 """
@@ -125,9 +155,30 @@ setheader(m, v::Pair{String,String}) = setkey(m.headers, v)
 Set header `value` for `key` if it is not already set.
 """
 
-function defaultheader(m, v::Pair{String,String})
+function defaultheader(m, v::Pair)
     if header(m, first(v)) == ""
         setheader(m, v)
+    end
+end
+
+
+
+"""
+    setlengthheader(::Response, [, length])
+
+Set the Content-Length or Transfer-Encoding header according to the
+`Response` `Body`.
+"""
+
+function setlengthheader(r::Request, l=-1)
+
+    if !isstream(r.body)
+        l = length(r.body)
+    end
+    if l >= 0
+        setheader(r, "Content-Length" => string(l))
+    else
+        setheader(r, "Transfer-Encoding" => "chunked")
     end
 end
 
@@ -220,6 +271,9 @@ Read the start-line metadata from `Parser` into a `message` struct.
 function readstartline!(r::Response, p::Parser)
     r.version = VersionNumber(p.major, p.minor)
     r.status = p.status
+    if isredirect(r)
+        r.body = Body()
+    end
     notify(r.headerscomplete)
     yield()
 end
@@ -227,7 +281,7 @@ end
 function readstartline!(r::Request, p::Parser)
     r.version = VersionNumber(p.major, p.minor)
     r.method = string(p.method)
-    r.uri = string(p.url)
+    r.uri = p.url
 end
 
 
@@ -265,8 +319,25 @@ function Base.read!(io::IO, p::Parser)
     end
 
     if eof(io) && !waitingforeof(p)
-        throw(EOFError())
+        throw(ParsingError(headerscomplete(p) ? HTTP.HPE_BODY_INCOMPLETE :
+                                                HTTP.HPE_HEADERS_INCOMPLETE))
     end
+end
+
+
+"""
+    Parser(::Message)
+
+Create a parser that stores parsed data into a `Message`.
+"""
+function Parser(m::Message)
+    p = Parser()
+    p.onbody = x->write(m.body, x)
+    p.onheader = x->appendheader(m, x)
+    p.onheaderscomplete = ()->readstartline!(m, p)
+    p.isheadresponse = (isa(m, Response) && method(m) in ("HEAD", "CONNECT"))
+                       # FIXME CONNECT??
+    return p
 end
 
 
@@ -277,111 +348,11 @@ Read data from `io` into a `Message` struct.
 """
 
 function Base.read!(io::IO, m::Message)
-
-    p = Parser()
-    p.onbody = x->write(m.body, x)
-    p.onheader = x->appendheader(m, x)
-    p.onheaderscomplete = ()->readstartline!(m, p)
-    p.isheadresponse = (isa(m, Response) && method(m) in ("HEAD", "CONNECT"))
-                       # FIXME CONNECT??
-
-    read!(io, p)
+    read!(io, Parser(m))
     close(m.body)
+    return m
 end
 
-
-"""
-    connecturi(::URI)
-
-Get a `Connection` for a `URI` from the connection pool.
-"""
-
-function connecturi(uri::URI)
-    getconnection(scheme(uri) == "https" ? SSLContext : TCPSocket,
-                 hostname(uri),
-                 parse(UInt, port(uri)))
-end
-
-
-"""
-    request(::URI, ::Request, ::Response)
-
-Get a `Connection` for a `URI`, send a `Request` and fill in a `Response`.
-"""
-
-function request(uri::URI, req::Request, res::Response)
-
-    #FIXME set Content-Length header?
-
-    defaultheader(req, "Host" => hostname(uri))
-
-    io = connecturi(uri)
-    try                                 ;@debug 1 "write to: $io\n$req"
-        write(io, req)
-        closewrite(io)
-        read!(io, res)                  ;@debug 2 "read from: $io\n$res"
-        closeread(io)
-    catch e
-        @schedule close(io)
-        rethrow(e)
-    end
-
-    return res
-end
-
-
-"""
-    request(method, uri [, headers=[] [, body="" ]; kw args...)
-
-Execute a `Request` and return a `Response`.
-
-`parent=` optionally set a parent `Response`.
-
-`response_stream=` optional `IO` stream for response body.
-
-
-e.g. use a stream as a request body:
-
-```
-io = open("request", "r")
-r = request("POST", "http://httpbin.org/post", [], io)
-```
-
-e.g. send a response body to a stream:
-
-```
-io = open("response_file", "w")
-r = request("GET", "http://httpbin.org/stream/100", response_stream=io)
-println(stat("response_file").size)
-0
-sleep(1)
-println(stat("response_file").size)
-14990
-```
-"""
-
-function request(method::String, uri, headers=[], body="";
-                 parent=nothing, response_stream=nothing)
-
-    u = URI(uri)
-
-    req = Request(method,
-                  method == "CONNECT" ? host(u) : resource(u),
-                  headers,
-                  Body(body);
-                  parent=parent)
-
-    res = Response(body=Body(response_stream), parent=req)
-
-    if isstream(res.body)
-        @schedule request(u, req, res)
-        waitforheaders(res)
-    else
-        request(u, req, res)
-    end
-
-    return res
-end
 
 
 function Base.String(m::Message)

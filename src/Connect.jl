@@ -1,6 +1,6 @@
 module Connect
 
-export getconnection, readresponse!, unread!, closeread, closewrite
+export getconnection
 
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
@@ -12,18 +12,17 @@ import ..@debug
 
 Create a new `TCPSocket` or `SSLContext` connection.
 
-Note: this `Connect` module creates simple unadorned connection objects
-and provides stubs for the `unread!` `closewrite` and `closeread` functions.
+Note: this `Connect` module creates simple unadorned connection objects.
 The `Connections` module has the same interface but supports connection
 reuse and request interleaving.
 """
 
-function getconnection(::Type{TCPSocket}, host::String, port::UInt)
+function getconnection(::Type{TCPSocket}, host::AbstractString, port::UInt)::TCPSocket
     @debug 2 "TCP connect: $host:$port..."
     connect(getaddrinfo(host), port)
 end
 
-function getconnection(::Type{SSLContext}, host::String, port::UInt)
+function getconnection(::Type{SSLContext}, host::AbstractString, port::UInt)::SSLContext
     @debug 2 "SSL connect: $host:$port..."
     io = SSLContext()
     setup!(io, SSLConfig(false))
@@ -32,30 +31,6 @@ function getconnection(::Type{SSLContext}, host::String, port::UInt)
     handshake!(io)
     return io
 end
-
-
-"""
-    unread!(::Connection, bytes)
-
-Push bytes back into a connection (to be returned by the next read).
-"""
-
-function unread!(io, bytes)
-    println("WARNING: No unread! method for $(typeof(io))!")
-    println("         Discarding $(length(bytes)) bytes!")
-end
-
-
-"""
-    closewrite(::Connection)
-    closeread(::Connection)
-
-Signal end of write or read operations.
-"""
-
-closewrite(io) = nothing
-closeread(io) = close(io)
-
 
 
 end # module Connect

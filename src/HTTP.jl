@@ -3,15 +3,18 @@ module HTTP
 
 #export Request, Response, FIFOBuffer
 
+
+
 using MbedTLS
 import MbedTLS.SSLContext
 using Retry
 
 const TLS = MbedTLS
+const Headers = Vector{Pair{String, String}}
 
 import Base.==
 
-const DEBUG_LEVEL = 0
+const DEBUG_LEVEL = 1
 
 const DISABLE_CONNECTION_POOL = false
 
@@ -31,24 +34,34 @@ end
 include("consts.jl")
 include("utils.jl")
 include("uri.jl")
-using .URIs
-include("fifobuffer.jl")
-using .FIFOBuffers
+#using .URIs
+#include("fifobuffer.jl")
+#using .FIFOBuffers
 include("cookies.jl")
-using .Cookies
-include("multipart.jl")
-include("types.jl")
+#using .Cookies
+#include("multipart.jl")
+#include("types.jl")
 
 include("parser.jl")
-include("sniff.jl")
+#include("sniff.jl")
+
+
+include("IOExtras.jl")
+using .IOExtras
+
+include("Bodies.jl")
+#using .Bodies
+include("Messages.jl")
+#using .Messages
 
 include("Connect.jl")
 include("Connections.jl")
-
-#using .Connect
 #using .Connections
 
-include("Messages.jl")
+
+
+include("SendRequest.jl")
+
 #include("client.jl")
 #include("handlers.jl")
 #using .Handlers
@@ -58,8 +71,20 @@ include("Messages.jl")
 #include("precompile.jl")
 
 function __init__()
+#    global const client_module = module_parent(current_module())
 #    global const DEFAULT_CLIENT = Client()
 end
+
+abstract type HTTPError <: Exception end
+
+struct StatusError <: HTTPError
+    status::Int16
+    response::Messages.Response
+end
+StatusError(r::Messages.Response) = StatusError(r.status, r)
+
+include("RetryRequest.jl")
+include("CookieRequest.jl")
 
 end # module
 #=
