@@ -56,7 +56,7 @@ end
     end
 
     @test parse(HTTP.URI, "hdfs://user:password@hdfshost:9000/root/folder/file.csv") == HTTP.URI(host="hdfshost", path="/root/folder/file.csv", scheme="hdfs", port=9000, userinfo="user:password")
-    @test string(parse(HTTP.URI, "http://google.com:80/some/path")) == string(HTTP.URI(host="google.com", path="/some/path"))
+    @test parse(HTTP.URI, "http://google.com/some/path") == HTTP.URI(host="google.com", path="/some/path")
 
     @test HTTP.lower(UInt8('A')) == UInt8('a')
     @test HTTP.escape(Char(1)) == "%01"
