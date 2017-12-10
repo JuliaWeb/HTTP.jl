@@ -4,7 +4,7 @@ export getconnection
 
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
-import ..@debug
+import ..@debug, ..DEBUG_LEVEL
 
 
 """

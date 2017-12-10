@@ -4,8 +4,8 @@ export getconnection
 
 using ..IOExtras
 
-import ..@lock, ..@debug, ..SSLContext
-
+import ..@debug, ..DEBUG_LEVEL
+import ..SSLContext
 import ..Connect.getconnection
 
 
@@ -143,7 +143,8 @@ function getconnection(::Type{Connection{T}},
                        host::AbstractString,
                        port::AbstractString)::Connection{T} where T <: IO
 
-    @lock poollock begin
+    lock(poollock)
+    try
 
         pattern = x->(!isbusy(x) &&
                       typeof(x.io) == T &&
@@ -163,6 +164,9 @@ function getconnection(::Type{Connection{T}},
         push!(pool, c)
         @assert !isbusy(c)
         return c
+
+    finally
+        unlock(poollock)
     end
 end
 

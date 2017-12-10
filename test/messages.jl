@@ -126,7 +126,7 @@ using JSON
 
         function async_get(url)
             io = BufferStream()
-            q = HTTP.query(HTTP.URI(url))
+            q = HTTP.URI(url).query
             log("GET $q")
             r = request("GET", url, response_stream=io)
             @async begin

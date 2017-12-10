@@ -1,12 +1,13 @@
 module RetryRequest
 
+export request
+
 using Retry
 
 import ..HTTP
 
-export request
-
-import ..SendRequest, ..@debug, ..getkv
+using ..Pairs.getkv
+import ..SendRequest, ..@debug
 
 
 isrecoverable(e::Base.UVError) = true

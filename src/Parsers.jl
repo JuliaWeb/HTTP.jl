@@ -22,12 +22,21 @@
 # IN THE SOFTWARE.
 #
 
-#FIXME module Parser
+module Parsers
 
-using .URIs
+export Parser, parse!, messagecomplete, headerscomplete, waitingforeof,
+       ParsingError, ParsingErrorCode
 
+import ..@debug, ..@debugshow, ..DEBUG_LEVEL
+
+include("consts.jl")
+include("parseutils.jl")
+
+using ..URIs.parseurlchar
+
+const PARSING_DEBUG = false
 const start_state = s_start_req_or_res
-const strict = true
+const strict = false
 
 mutable struct Parser
     state::UInt8
@@ -39,7 +48,7 @@ mutable struct Parser
     content_length::UInt64
     fieldbuffer::IOBuffer
     valuebuffer::IOBuffer
-    method::HTTP.Method
+    method::Method
     major::Int16
     minor::Int16
     url::String
@@ -50,8 +59,6 @@ mutable struct Parser
 end
 
 Parser() = Parser(start_state, 0x00, 0, 0, false, false, 0, IOBuffer(), IOBuffer(), Method(0), 0, 0, "", 0, x->nothing, x->nothing, ()->nothing)
-
-const DEFAULT_PARSER = Parser()
 
 function reset!(p::Parser)
     p.state = start_state
@@ -105,6 +112,9 @@ macro strictcheck(cond)
     esc(:(strict && @errorif($cond, HPE_STRICT)))
 end
 
+macro shifted(meth, i, char)
+    return esc(:(Int($meth) << Int(16) | Int($i) << Int(8) | Int($char)))
+end
 
 const ByteView = typeof(view(UInt8[], 1:0))
 
@@ -115,19 +125,17 @@ parse!(p::Parser, bytes)::Int = parse!(p, view(bytes, 1:length(bytes)))
 function parse!(parser::Parser, bytes::ByteView)::Int
     isempty(bytes) && throw(ArgumentError("bytes must not be empty"))
     len = length(bytes)
-    @debug(PARSING_DEBUG, "parse!")
+    @debug 3 "parse!(::Parser, $len-bytes)"
     p_state = parser.state
-    @debug(PARSING_DEBUG, len)
-    @debug(PARSING_DEBUG, ParsingStateCode(p_state))
+    @debugshow 3 ParsingStateCode(p_state)
 
     p = 0
     while p < len && p_state != s_message_done
 
-        @debug(PARSING_DEBUG, "top of while($p < $len)")
-        @debug(PARSING_DEBUG, ParsingStateCode(p_state))
+        @debug 3 "top of while($p < $len) $(ParsingStateCode(p_state))"
         p += 1
         @inbounds ch = Char(bytes[p])
-        @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
+        @debug 3 Base.escape_string(string(ch))
 
         if p_state == s_dead
             #= this state is used after a 'Connection: close' message
@@ -308,15 +316,14 @@ function parse!(parser::Parser, bytes::ByteView)::Int
 
         elseif p_state == s_req_method
             matcher = string(parser.method)
-            @debug(PARSING_DEBUG, matcher)
-            @debug(PARSING_DEBUG, parser.index)
-            @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
+            @debugshow 3 matcher
+            @debugshow 3 parser.index
             if ch == ' ' && parser.index == length(matcher) + 1
                 p_state = s_req_spaces_before_url
             elseif parser.index > length(matcher)
                 @err(HPE_INVALID_METHOD)
             elseif ch == matcher[parser.index]
-                @debug(PARSING_DEBUG, "nada")
+                @debug 3 "nada"
             elseif isalpha(ch)
                 ci = @shifted(parser.method, Int(parser.index) - 1, ch)
                 if ci == @shifted(POST, 1, 'U')
@@ -357,14 +364,14 @@ function parse!(parser::Parser, bytes::ByteView)::Int
                     @err(HPE_INVALID_METHOD)
                 end
             elseif ch == '-' && parser.index == 2 && parser.method == MKCOL
-                @debug(PARSING_DEBUG, "matched MSEARCH")
+                @debug 3 "matched MSEARCH"
                 parser.method = MSEARCH
                 parser.index -= 1
             else
                 @err(HPE_INVALID_METHOD)
             end
             parser.index += 1
-            @debug(PARSING_DEBUG, parser.index)
+            @debugshow 3 parser.index
 
         elseif p_state == s_req_spaces_before_url
             ch == ' ' && continue
@@ -405,7 +412,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
                     end
                     break
                 end
-                p_state = URIs.parseurlchar(p_state, ch, strict)
+                p_state = parseurlchar(p_state, ch, strict)
                 @errorif(p_state == s_dead, HPE_INVALID_URL)
                 p += 1
             end
@@ -413,8 +420,8 @@ function parse!(parser::Parser, bytes::ByteView)::Int
             write(parser.valuebuffer, view(bytes, start:p-1))
 
             if p_state >= s_req_http_start
-                @debug(PARSING_DEBUG, "onurl $parser.method $(String(parser.valuebuffer))")
                 parser.url = take!(parser.valuebuffer)
+                @debugshow 3 parser.url
             end
 
         elseif p_state == s_req_http_start
@@ -517,14 +524,14 @@ function parse!(parser::Parser, bytes::ByteView)::Int
             start = p
             while p <= len
                 @inbounds ch = Char(bytes[p])
-                @debug(PARSING_DEBUG, Base.escape_string(string(ch)))
+                @debug 3 Base.escape_string(string(ch))
                 c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
                 if c == Char(0)
                     @errorif(ch != ':', HPE_INVALID_HEADER_TOKEN)
                     break
                 end
+                @debugshow 3 parser.header_state
                 h = parser.header_state
-                @debug(PARSING_DEBUG, h)
                 if h == h_general
 
                 elseif h == h_C
@@ -653,9 +660,9 @@ function parse!(parser::Parser, bytes::ByteView)::Int
             h = parser.header_state
             while p <= len
                 @inbounds ch = Char(bytes[p])
-                @debug(PARSING_DEBUG, Base.escape_string(string('\'', ch, '\'')))
-                @debug(PARSING_DEBUG, strict)
-                @debug(PARSING_DEBUG, isheaderchar(ch))
+                @debug 3 Base.escape_string(string('\'', ch, '\''))
+                @debugshow 3 strict
+                @debugshow 3 isheaderchar(ch)
                 if ch == CR
                     p_state = s_header_almost_done
                     break
@@ -668,7 +675,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
 
                 c = lower(ch)
 
-                @debug(PARSING_DEBUG, h)
+                @debugshow 3 h
                 if h == h_general
                     crlf = findfirst(x->(x == bCR || x == bLF), view(bytes, p:len))
                     p = crlf == 0 ? len : p + crlf - 2
@@ -688,8 +695,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
                         t += UInt64(ch - '0')
 
                         #= Overflow? Test against a conservative limit for simplicity. =#
-                        @debug(PARSING_DEBUG, "this content_length 1")
-                        @debug(PARSING_DEBUG, Int(parser.content_length))
+                        @debugshow 3 Int(parser.content_length)
                         if div(ULLONG_MAX - 10, 10) < t
                             parser.header_state = h
                             @err(HPE_INVALID_CONTENT_LENGTH)
@@ -854,13 +860,13 @@ function parse!(parser::Parser, bytes::ByteView)::Int
             parser.onheaderscomplete()
 
             #= Set this here so that on_headers_complete() callbacks can see it =#
-            @debug(PARSING_DEBUG, "checking for upgrade...")
+            @debug 3 "checking for upgrade..."
             if (parser.flags & F_UPGRADE > 0) && (parser.flags & F_CONNECTION_UPGRADE > 0)
                 parser.upgrade = isrequest(parser) || parser.status == 101
             else
                 parser.upgrade = isrequest(parser) && parser.method == CONNECT
             end
-            @debug(PARSING_DEBUG, parser.upgrade)
+            @debugshow 3 parser.upgrade
             #= Here we call the headers_complete callback. This is somewhat
             * different than other callbacks because if the user returns 1, we
             * will interpret that as saying that this message has no body. This
@@ -870,7 +876,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
             * We'd like to use CALLBACK_NOTIFY_NOADVANCE() here but we cannot, so
             * we have to simulate it by handling a change in errno below.
             =#
-            @debug(PARSING_DEBUG, "headersdone")
+            @debug 3 "headersdone"
 
         elseif p_state == s_headers_done
             @strictcheck(ch != LF)
@@ -930,7 +936,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
                 p_state = s_chunk_size_almost_done
             else
                 unhex_val = unhex[Int(ch)+1]
-                @debug(PARSING_DEBUG, unhex_val)
+                @debugshow 3 unhex_val
                 if unhex_val == -1
                     if ch == ';' || ch == ' '
                         p_state = s_chunk_parameters
@@ -943,8 +949,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
                 t += UInt64(unhex_val)
 
                 #= Overflow? Test against a conservative limit for simplicity. =#
-                @debug(PARSING_DEBUG, "this content_length 2")
-                @debug(PARSING_DEBUG, Int(parser.content_length))
+                @debugshow 3 Int(parser.content_length)
                 if div(ULLONG_MAX - 16, 16) < t
                     @err(HPE_INVALID_CONTENT_LENGTH)
                 end
@@ -1009,7 +1014,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
 
     parser.state = p_state
 
-    @debug(PARSING_DEBUG, "exiting $(ParsingStateCode(p_state))")
+    @debug 3 "parse!() exiting $(ParsingStateCode(p_state))"
     return p
 end
 
@@ -1048,4 +1053,4 @@ function http_should_keep_alive(parser)
 end
 
 
-#FIXME end # module Parser
+end # module Parsers

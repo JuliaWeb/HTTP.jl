@@ -39,7 +39,7 @@ end
 export Cookie
 
 import Base.==
-import HTTP.isurlchar
+import HTTP.URIs.isurlchar
 
 """
     Cookie()

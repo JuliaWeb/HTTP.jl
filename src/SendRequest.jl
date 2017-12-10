@@ -2,6 +2,8 @@ module SendRequest
 
 import ..HTTP
 
+using ..Pairs.getkv
+using ..Strings.tocameldash!
 using ..URIs
 using ..Messages
 using ..Bodies
@@ -12,7 +14,7 @@ using MbedTLS.SSLContext
 
 export request
 
-import ..@debug, ..getkv
+import ..@debug, ..DEBUG_LEVEL
 
 
 """
@@ -49,7 +51,7 @@ function request(uri::URI, req::Request, res::Response; kw...)
     setlengthheader(req, getkv(kw, :body_length, -1))
 
     # Get a connection from the pool...
-    T = scheme(uri) == "https" ? SSLContext : TCPSocket
+    T = uri.scheme == "https" ? SSLContext : TCPSocket
     if getkv(kw, :use_connection_pool, true)
         T = Connections.Connection{T}
     end
@@ -104,7 +106,7 @@ function request(method::String, uri, headers=[], body="";
     u = URI(uri)
 
     req = Request(method,
-                  method == "CONNECT" ? host(u) : resource(u),
+                  method == "CONNECT" ? hostport(u) : resource(u),
                   headers,
                   Body(body);
                   parent=parent)
@@ -147,6 +149,9 @@ function redirect(method, uri, headers, body; kw...)
 
     return request(method, uri, headers, body; kw...)
 end
+
+
+canonicalizeheaders{T}(h::T) = T([tocameldash!(k) => v for (k,v) in h])
 
 
 end # module SendRequest

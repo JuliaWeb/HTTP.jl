@@ -1,6 +1,12 @@
 using HTTP.Messages
 
+using HTTP.Parsers
+
+const DEFAULT_PARSER = Parser()
+
 import Base.==
+
+const Headers = Vector{Pair{String,String}}
 
 ==(a::Request,b::Request) = (a.method         == b.method)    &&
                             (a.version        == b.version)   &&
@@ -10,7 +16,7 @@ import Base.==
 mutable struct Message
   name::String
   raw::String
-  method::HTTP.Method
+  method::String
   status_code::Int
   response_status::String
   request_path::String
@@ -23,13 +29,13 @@ mutable struct Message
   userinfo::String
   port::String
   num_headers::Int
-  headers::HTTP.Headers
+  headers::Headers
   should_keep_alive::Bool
   upgrade::String
   http_major::Int
   http_minor::Int
 
-  Message(name::String) = new(name, "", HTTP.GET, 200, "", "", "", "", "", "", 0, "", "", "", 0, HTTP.Headers(), true, "", 1, 1)
+  Message(name::String) = new(name, "", "GET", 200, "", "", "", "", "", "", 0, "", "", "", 0, Headers(), true, "", 1, 1)
 end
 
 function Message(; name::String="", kwargs...)
@@ -69,7 +75,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/test"
@@ -95,7 +101,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/favicon.ico"
@@ -119,7 +125,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/abcdefgh"
@@ -135,7 +141,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= "page=1"
 ,fragment= "posts-17408"
 ,request_path= "/forums/1/topics/2375"
@@ -149,7 +155,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/get_no_headers_no_body/world"
@@ -163,7 +169,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/get_one_header_no_body"
@@ -181,7 +187,7 @@ Message(name= "curl get"
 ,should_keep_alive= false
 ,http_major= 1
 ,http_minor= 0
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/get_funky_content_length_body_hello"
@@ -201,7 +207,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.POST
+,method= "POST"
 ,query_string= "q=search"
 ,fragment= "hey"
 ,request_path= "/post_identity_body_world"
@@ -223,7 +229,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.POST
+,method= "POST"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/post_chunked_all_your_base"
@@ -244,7 +250,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.POST
+,method= "POST"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/two_chunks_mult_zero_end"
@@ -267,7 +273,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.POST
+,method= "POST"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/chunked_w_trailing_headers"
@@ -290,7 +296,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.POST
+,method= "POST"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/chunked_w_excessss_after_length"
@@ -305,13 +311,13 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= "foo=\"bar\""
 ,fragment= ""
 ,request_path= "/with_\"stupid\"_quotes"
 ,request_url= "/with_\"stupid\"_quotes?foo=\"bar\""
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name = "apachebench get"
 ,raw= "GET /test HTTP/1.0\r\n" *
@@ -321,7 +327,7 @@ Message(name= "curl get"
 ,should_keep_alive= false
 ,http_major= 1
 ,http_minor= 0
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/test"
@@ -337,26 +343,26 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= "foo=bar?baz"
 ,fragment= ""
 ,request_path= "/test.cgi"
 ,request_url= "/test.cgi?foo=bar?baz"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name = "newline prefix get"
 ,raw= "\r\nGET /test HTTP/1.1\r\n\r\n"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/test"
 ,request_url= "/test"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name = "upgrade request"
 ,raw= "GET /demo HTTP/1.1\r\n" *
@@ -372,7 +378,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/demo"
@@ -398,7 +404,7 @@ Message(name= "curl get"
 ,should_keep_alive= false
 ,http_major= 1
 ,http_minor= 0
-,method= HTTP.CONNECT
+,method= "CONNECT"
 ,query_string= ""
 ,fragment= ""
 ,request_path= ""
@@ -417,13 +423,13 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.REPORT
+,method= "REPORT"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/test"
 ,request_url= "/test"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name= "request with no http version"
 ,raw= "GET /\r\n" *
@@ -431,13 +437,13 @@ Message(name= "curl get"
 ,should_keep_alive= false
 ,http_major= 0
 ,http_minor= 9
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/"
 ,request_url= "/"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name= "m-search request"
 ,raw= "M-SEARCH * HTTP/1.1\r\n" *
@@ -448,7 +454,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.MSEARCH
+,method= "MSEARCH"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "*"
@@ -465,14 +471,14 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= "hail=all"
 ,fragment= ""
 ,request_path= ""
 ,request_url= "http://hypnotoad.org?hail=all"
 ,host= "hypnotoad.org"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name= "host:port terminated by a query string"
 ,raw= "GET http://hypnotoad.org:1234?hail=all HTTP/1.1\r\n" *
@@ -480,7 +486,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= "hail=all"
 ,fragment= ""
 ,request_path= ""
@@ -488,7 +494,7 @@ Message(name= "curl get"
 ,host= "hypnotoad.org"
 ,port= "1234"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name= "host:port terminated by a space"
 ,raw= "GET http://hypnotoad.org:1234 HTTP/1.1\r\n" *
@@ -496,7 +502,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= ""
@@ -504,7 +510,7 @@ Message(name= "curl get"
 ,host= "hypnotoad.org"
 ,port= "1234"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name = "PATCH request"
 ,raw= "PATCH /file.txt HTTP/1.1\r\n" *
@@ -517,7 +523,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.PATCH
+,method= "PATCH"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/file.txt"
@@ -537,7 +543,7 @@ Message(name= "curl get"
 ,should_keep_alive= false
 ,http_major= 1
 ,http_minor= 0
-,method= HTTP.CONNECT
+,method= "CONNECT"
 ,query_string= ""
 ,fragment= ""
 ,request_path= ""
@@ -557,7 +563,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= "q=1"
 ,fragment= "narf"
 ,request_path= "/δ¶/δt/pope"
@@ -573,7 +579,7 @@ Message(name= "curl get"
 ,should_keep_alive= false
 ,http_major= 1
 ,http_minor= 0
-,method= HTTP.CONNECT
+,method= "CONNECT"
 ,query_string= ""
 ,fragment= ""
 ,request_path= ""
@@ -596,7 +602,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.POST
+,method= "POST"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/"
@@ -619,7 +625,7 @@ Message(name= "curl get"
 ,should_keep_alive= false
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.POST
+,method= "POST"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/"
@@ -639,7 +645,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.PURGE
+,method= "PURGE"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/file.txt"
@@ -654,7 +660,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.SEARCH
+,method= "SEARCH"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/"
@@ -668,7 +674,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,fragment= ""
 ,request_path= "/toto"
 ,request_url= "http://a%12:b!&*\$@hypnotoad.org:1234/toto"
@@ -676,7 +682,7 @@ Message(name= "curl get"
 ,userinfo= "a%12:b!&*\$"
 ,port= "1234"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name = "upgrade post request"
 ,raw= "POST /demo HTTP/1.1\r\n" *
@@ -690,7 +696,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.POST
+,method= "POST"
 ,request_path= "/demo"
 ,request_url= "/demo"
 ,num_headers= 4
@@ -711,7 +717,7 @@ Message(name= "curl get"
 ,should_keep_alive= false
 ,http_major= 1
 ,http_minor= 0
-,method= HTTP.CONNECT
+,method= "CONNECT"
 ,request_url= "foo.bar.com:443"
 ,host="foo.bar.com"
 ,port="443"
@@ -731,7 +737,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.LINK
+,method= "LINK"
 ,request_path= "/images/my_dog.jpg"
 ,request_url= "/images/my_dog.jpg"
 ,query_string= ""
@@ -749,7 +755,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.UNLINK
+,method= "UNLINK"
 ,request_path= "/images/my_dog.jpg"
 ,request_url= "/images/my_dog.jpg"
 ,query_string= ""
@@ -774,7 +780,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/demo"
@@ -809,7 +815,7 @@ Message(name= "curl get"
 ,should_keep_alive= false
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/"
@@ -831,7 +837,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/demo"
@@ -851,7 +857,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/demo"
@@ -881,7 +887,7 @@ Message(name= "curl get"
 ,should_keep_alive= false
 ,http_major= 1
 ,http_minor= 1
-,method= HTTP.GET
+,method= "GET"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "/"
@@ -985,7 +991,7 @@ const responses = Message[
 ,status_code= 404
 ,response_status= "Not Found"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body_size= 0
 ,body= ""
 ), Message(name= "301 no response phrase"
@@ -996,7 +1002,7 @@ const responses = Message[
 ,status_code= 301
 ,response_status= "Moved Permanently"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name="200 trailing space on chunked body"
 ,raw= "HTTP/1.1 200 OK\r\n" *
@@ -1174,7 +1180,7 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name= "neither content-length nor transfer-encoding response"
 ,raw= "HTTP/1.1 200 OK\r\n" *
@@ -1230,7 +1236,7 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body_size= 0
 ,body= ""
 ), Message(name= "HTTP/1.1 with a 204 status"
@@ -1242,7 +1248,7 @@ const responses = Message[
 ,status_code= 204
 ,response_status= "No Content"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body_size= 0
 ,body= ""
 ), Message(name= "HTTP/1.1 with a 204 status and keep-alive disabled"
@@ -1346,7 +1352,7 @@ const responses = Message[
 ,status_code= 200
 ,response_status= "OK"
 ,num_headers= 0
-,headers=HTTP.Headers()
+,headers=Headers()
 ,body= ""
 ), Message(name= "Content-Length-X"
 ,raw= "HTTP/1.1 200 OK\r\n" *
@@ -1384,7 +1390,7 @@ const responses = Message[
                   bytes = Vector{UInt8}(req.raw)
                   sz = t
                   for i in 1:sz:length(bytes)
-                      HTTP.parse!(p, view(bytes, i:min(i+sz-1, length(bytes))))
+                      parse!(p, view(bytes, i:min(i+sz-1, length(bytes))))
                   end
               end
           elseif t < 0
@@ -1405,7 +1411,7 @@ const responses = Message[
               r = Request(req.raw)
               #r = HTTP.parse(HTTP.Request, req.raw; extraref=upgrade)
           end
-          uri = parse(HTTP.URI, r.uri; isconnect= req.method == HTTP.CONNECT)
+          uri = parse(HTTP.URI, r.uri; isconnect= req.method == "CONNECT")
           @test r.version.major == req.http_major
           @test r.version.minor == req.http_minor
           @test r.method == string(req.method)
@@ -1417,7 +1423,7 @@ const responses = Message[
           @test uri.port in (req.port, "80", "443")
           @test string(uri) == req.request_url
           @test length(r.headers) == req.num_headers
-          @test Dict(HTTP.canonicalizeheaders(r.headers)) == Dict(req.headers)
+          @test Dict(HTTP.SendRequest.canonicalizeheaders(r.headers)) == Dict(req.headers)
           @test String(take!(r.body)) == req.body
 # FIXME          @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == req.should_keep_alive
 
@@ -1466,12 +1472,12 @@ const responses = Message[
       reqstr = "GET ../../../../etc/passwd HTTP/1.1\r\n" *
                "Host: test\r\n\r\n"
 
-      @test_throws HTTP.ParsingError Request(reqstr)
+      @test_throws ParsingError Request(reqstr)
 
       reqstr = "GET  HTTP/1.1\r\n" *
                "Host: test\r\n\r\n"
 
-      @test_throws HTTP.ParsingError Request(reqstr)
+      @test_throws ParsingError Request(reqstr)
 
       reqstr = "POST / HTTP/1.1\r\n" *
                "Host: foo.com\r\n" *
@@ -1499,7 +1505,7 @@ const responses = Message[
                "0\r\n" *
                "\r\n"
 
-      @test_throws HTTP.ParsingError Request(reqstr)
+      @test_throws ParsingError Request(reqstr)
 
       reqstr = "CONNECT www.google.com:443 HTTP/1.1\r\n\r\n"
 
@@ -1594,7 +1600,7 @@ const responses = Message[
                   bytes = Vector{UInt8}(resp.raw)
                   sz = t
                   for i in 1:sz:length(bytes)
-                      HTTP.parse!(p, view(bytes, i:min(i+sz-1, length(bytes))))
+                      parse!(p, view(bytes, i:min(i+sz-1, length(bytes))))
                   end
               else
                   r = Response(resp.raw)
@@ -1604,11 +1610,11 @@ const responses = Message[
               @test r.status == resp.status_code
               @test HTTP.Messages.statustext(r) == resp.response_status
               @test length(r.headers) == resp.num_headers
-              @test Dict(HTTP.canonicalizeheaders(r.headers)) == Dict(resp.headers)
+              @test Dict(HTTP.SendRequest.canonicalizeheaders(r.headers)) == Dict(resp.headers)
               @test String(take!(r.body)) == resp.body
 # FIXME              @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == resp.should_keep_alive
           catch e
-              if HTTP.strict && isa(e, HTTP.ParsingError)
+              if HTTP.Parsers.strict && isa(e, ParsingError)
                   println("HTTP.strict is enabled. ParsingError ignored.")
               else
                   rethrow()
@@ -1619,182 +1625,182 @@ const responses = Message[
 
   @testset "HTTP.parse errors" begin
       reqstr = "GET / HTTP/1.1\r\n" * "Foo: F\01ailure\r\n\r\n"
-      HTTP.strict && @test_throws HTTP.ParsingError Request(reqstr)
-      if !HTTP.strict
-        r = HTTP.parse(HTTP.Request, reqstr)
-        @test HTTP.method(r) == HTTP.GET
-        @test HTTP.uri(r) == HTTP.URI("/")
-        @test length(HTTP.headers(r)) == 1
+      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
+      if !HTTP.Parsers.strict
+        r = HTTP.parse(HTTP.Messages.Request, reqstr)
+        @test r.method == "GET"
+        @test r.uri == "/"
+        @test length(r.headers) == 1
       end
 
       reqstr = "GET / HTTP/1.1\r\n" * "Foo: B\02ar\r\n\r\n"
-      HTTP.strict && @test_throws HTTP.ParsingError Request(reqstr)
-      if !HTTP.strict
-          r = HTTP.parse(HTTP.Request, reqstr)
-          @test HTTP.method(r) == HTTP.GET
-          @test HTTP.uri(r) == HTTP.URI("/")
-          @test length(HTTP.headers(r)) == 1
+      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
+      if !HTTP.Parsers.strict
+          r = parse(HTTP.Messages.Request, reqstr)
+          @test r.method == "GET"
+          @test r.uri == "/"
+          @test length(r.headers) == 1
       end
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo: F\01ailure\r\n\r\n"
-      HTTP.strict && @test_throws HTTP.ParsingError Response(respstr)
-      if !HTTP.strict
-          r = HTTP.parse(HTTP.Response, respstr)
-          @test HTTP.status(r) == 200
-          @test length(HTTP.headers(r)) == 1
+      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
+      if !HTTP.Parsers.strict
+          r = parse(HTTP.Messages.Response, respstr)
+          @test r.status == 200
+          @test length(r.headers) == 1
       end
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo: B\02ar\r\n\r\n"
-      HTTP.strict && @test_throws HTTP.ParsingError Response(respstr)
-      if !HTTP.strict
-          r = HTTP.parse(HTTP.Response, respstr)
-          @test HTTP.status(r) == 200
-          @test length(HTTP.headers(r)) == 1
+      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
+      if !HTTP.Parsers.strict
+          r = parse(HTTP.Messages.Response, respstr)
+          @test r.status == 200
+          @test length(r.headers) == 1
       end
 
       reqstr = "GET / HTTP/1.1\r\n" * "Fo@: Failure"
-      HTTP.strict && @test_throws HTTP.ParsingError Request(reqstr)
-      !HTTP.strict && (@test_throws HTTP.ParsingError Request(reqstr))
+      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
+      !HTTP.Parsers.strict && (@test_throws ParsingError Request(reqstr))
 
       reqstr = "GET / HTTP/1.1\r\n" * "Foo\01\test: Bar"
-      HTTP.strict && @test_throws HTTP.ParsingError Request(reqstr)
-      !HTTP.strict && (@test_throws HTTP.ParsingError Request(reqstr))
+      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
+      !HTTP.Parsers.strict && (@test_throws ParsingError Request(reqstr))
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure"
-      HTTP.strict && @test_throws HTTP.ParsingError Response(respstr)
-      !HTTP.strict && (@test_throws HTTP.ParsingError Response(respstr))
+      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
+      !HTTP.Parsers.strict && (@test_throws ParsingError Response(respstr))
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar"
-      HTTP.strict && @test_throws HTTP.ParsingError Response(respstr)
-      !HTTP.strict && (@test_throws HTTP.ParsingError Response(respstr))
+      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
+      !HTTP.Parsers.strict && (@test_throws ParsingError Response(respstr))
 
       reqstr = "GET / HTTP/1.1\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
-      HTTP.strict && @test_throws HTTP.ParsingError Request(reqstr)
+      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
-      HTTP.strict && @test_throws HTTP.ParsingError Response(respstr)
+      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
 
       reqstr = "GET / HTTP/1.1\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
-      HTTP.strict && @test_throws HTTP.ParsingError Request(reqstr)
+      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
-      HTTP.strict && @test_throws HTTP.ParsingError Response(respstr)
+      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
 
       reqstr = "GET / HTTP/1.1\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
-      HTTP.strict && @test_throws HTTP.ParsingError Request(reqstr)
+      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
-      HTTP.strict && @test_throws HTTP.ParsingError Response(respstr)
+      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
 
 
       for r in ((Request, "GET / HTTP/1.1\r\n"), (Response, "HTTP/1.0 200 OK\r\n"))
-          HTTP.reset!(HTTP.DEFAULT_PARSER)
+          HTTP.Parsers.reset!(DEFAULT_PARSER)
           R = r[1]()
-          n = HTTP.parse!(HTTP.DEFAULT_PARSER, Vector{UInt8}(r[2]))
-          @test !HTTP.headerscomplete(HTTP.DEFAULT_PARSER)
-          @test !HTTP.messagecomplete(HTTP.DEFAULT_PARSER)
+          n = parse!(DEFAULT_PARSER, Vector{UInt8}(r[2]))
+          @test !headerscomplete(DEFAULT_PARSER)
+          @test !messagecomplete(DEFAULT_PARSER)
           @test n == length(Vector{UInt8}(r[2]))
       end
 
       buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"
-      @test_throws HTTP.ParsingError r = Request(buf)
+      @test_throws ParsingError r = Request(buf)
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "1844674407370955160" * "\r\n\r\n"
       r = Response()
       p = Messages.Parser(r)
-      HTTP.parse!(p, respstr)
+      parse!(p, respstr)
       @test r.status == 200
       @test r.headers == ["Content-Length"=>"1844674407370955160"]
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551615" * "\r\n\r\n"
       e = try Response(respstr) catch e e end
-      @test isa(e, HTTP.ParsingError) && e.code == HTTP.HPE_INVALID_CONTENT_LENGTH
+      @test isa(e, ParsingError) && e.code == Parsers.HPE_INVALID_CONTENT_LENGTH
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551616" * "\r\n\r\n"
       e = try Response(respstr) catch e e end
-      @test isa(e, HTTP.ParsingError) && e.code == HTTP.HPE_INVALID_CONTENT_LENGTH
+      @test isa(e, ParsingError) && e.code == Parsers.HPE_INVALID_CONTENT_LENGTH
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFE" * "\r\n..."
       r = Response()
       p = Messages.Parser(r)
-      HTTP.parse!(p, respstr)
+      parse!(p, respstr)
       @test r.status == 200
       @test r.headers == ["Transfer-Encoding"=>"chunked"]
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFF" * "\r\n..."
       e = try Response(respstr) catch e e end
-      @test isa(e, HTTP.ParsingError) && e.code == HTTP.HPE_INVALID_CONTENT_LENGTH
+      @test isa(e, ParsingError) && e.code == Parsers.HPE_INVALID_CONTENT_LENGTH
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "10000000000000000" * "\r\n..."
       e = try Response(respstr) catch e e end
-      @test isa(e, HTTP.ParsingError) && e.code == HTTP.HPE_INVALID_CONTENT_LENGTH
+      @test isa(e, ParsingError) && e.code == Parsers.HPE_INVALID_CONTENT_LENGTH
 
       for len in (1000, 100000)
-          HTTP.reset!(p)
+          HTTP.Parsers.reset!(p)
           reqstr = "POST / HTTP/1.0\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
           r = Request()
           p = Messages.Parser(r)
-          HTTP.parse!(p, reqstr)
-          @test HTTP.headerscomplete(p)
-          @test !HTTP.messagecomplete(p)
+          parse!(p, reqstr)
+          @test headerscomplete(p)
+          @test !messagecomplete(p)
           for i = 1:len-1
-              HTTP.parse!(p, "a")
-              @test HTTP.headerscomplete(p)
-              @test !HTTP.messagecomplete(p)
+              parse!(p, "a")
+              @test headerscomplete(p)
+              @test !messagecomplete(p)
           end
-          HTTP.parse!(p, "a")
-          @test HTTP.headerscomplete(p)
-          @test HTTP.messagecomplete(p)
+          parse!(p, "a")
+          @test headerscomplete(p)
+          @test messagecomplete(p)
       end
 
       for len in (1000, 100000)
-          HTTP.reset!(p)
+          HTTP.Parsers.reset!(p)
           respstr = "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
           r = Response()
           p = Messages.Parser(r)
-          HTTP.parse!(p, respstr)
-          @test HTTP.headerscomplete(p)
-          @test !HTTP.messagecomplete(p)
+          parse!(p, respstr)
+          @test headerscomplete(p)
+          @test !messagecomplete(p)
           for i = 1:len-1
-              HTTP.parse!(p, "a")
-              @test HTTP.headerscomplete(p)
-              @test !HTTP.messagecomplete(p)
+              parse!(p, "a")
+              @test headerscomplete(p)
+              @test !messagecomplete(p)
           end
-          HTTP.parse!(p, "a")
-          @test HTTP.headerscomplete(p)
-          @test HTTP.messagecomplete(p)
+          parse!(p, "a")
+          @test headerscomplete(p)
+          @test messagecomplete(p)
       end
 
       reqstr = requests[1].raw * requests[2].raw
       r = Request()
       p = Messages.Parser(r)
-      n = HTTP.parse!(p, reqstr)
-      @test HTTP.headerscomplete(p)
-      @test HTTP.messagecomplete(p)
+      n = parse!(p, reqstr)
+      @test headerscomplete(p)
+      @test messagecomplete(p)
       ex = Vector{UInt8}(reqstr)[n+1:end]
-      HTTP.reset!(p)
-      HTTP.parse!(p, ex)
-      @test HTTP.headerscomplete(p)
-      @test HTTP.messagecomplete(p)
+      HTTP.Parsers.reset!(p)
+      parse!(p, ex)
+      @test headerscomplete(p)
+      @test messagecomplete(p)
 
-      @test_throws HTTP.ParsingError Request("GET / HTP/1.1\r\n\r\n")
+      @test_throws ParsingError Request("GET / HTP/1.1\r\n\r\n")
 
       r = Request("GET / HTTP/1.1\r\n" * "Test: Düsseldorf\r\n\r\n")
       @test r.headers == ["Test" => "Düsseldorf"]
 
       r = Response()
       p = Messages.Parser(r)
-      HTTP.parse!(p, "GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba")
+      parse!(p, "GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba")
       @test String(take!(r.body)) == "fooba"
 
-      for m in instances(HTTP.Method)
-          m == HTTP.CONNECT && continue
-          me = m == HTTP.MSEARCH ? "M-SEARCH" : "$m"
+      for m in instances(Parsers.Method)
+          m == Parsers.CONNECT && continue
+          me = m == Parsers.MSEARCH ? "M-SEARCH" : "$m"
           r = Request("$me / HTTP/1.1\r\n\r\n")
           @test r.method == string(m)
       end
 
       for m in ("ASDF","C******","COLA","GEM","GETA","M****","MKCOLA","PROPPATCHA","PUN","PX","SA","hello world")
-          @test_throws HTTP.ParsingError Request("$m / HTTP/1.1\r\n\r\n")
+          @test_throws ParsingError Request("$m / HTTP/1.1\r\n\r\n")
       end
 
-      @test_throws HTTP.ParsingError Request("GET / HTTP/1.1\r\n" * "name\r\n" * " : value\r\n\r\n")
+      @test_throws ParsingError Request("GET / HTTP/1.1\r\n" * "name\r\n" * " : value\r\n\r\n")
 
       reqstr = "GET / HTTP/1.1\r\n" *
       "X-SSL-FoooBarr:   -----BEGIN CERTIFICATE-----\r\n" *

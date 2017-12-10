@@ -1,48 +1,50 @@
 @testset "utils.jl" begin
 
-@test HTTP.escapeHTML("&\"'<>") == "&amp;&quot;&#39;&lt;&gt;"
+import HTTP.Parsers
 
-@test HTTP.isurlchar('\u81')
-@test !HTTP.isurlchar('\0')
+@test HTTP.Strings.escapehtml("&\"'<>") == "&amp;&quot;&#39;&lt;&gt;"
+
+@test Parsers.isurlchar('\u81')
+@test !Parsers.isurlchar('\0')
 
 for c = '\0':'\x7f'
     if c in ('.', '-', '_', '~')
-        @test HTTP.ishostchar(c)
-        @test HTTP.ismark(c)
-        @test HTTP.isuserinfochar(c)
+        @test Parsers.ishostchar(c)
+        @test Parsers.ismark(c)
+        @test Parsers.isuserinfochar(c)
     elseif c in ('-', '_', '.', '!', '~', '*', '\'', '(', ')')
-        @test HTTP.ismark(c)
-        @test HTTP.isuserinfochar(c)
+        @test Parsers.ismark(c)
+        @test Parsers.isuserinfochar(c)
     else
-        @test !HTTP.ismark(c)
+        @test !Parsers.ismark(c)
     end
 end
 
-@test HTTP.isalphanum('a')
-@test HTTP.isalphanum('1')
-@test !HTTP.isalphanum(']')
+@test Parsers.isalphanum('a')
+@test Parsers.isalphanum('1')
+@test !Parsers.isalphanum(']')
 
-@test HTTP.ishex('a')
-@test HTTP.ishex('1')
-@test !HTTP.ishex(']')
+@test Parsers.ishex('a')
+@test Parsers.ishex('1')
+@test !Parsers.ishex(']')
 
-@test HTTP.tocameldash!("accept") == "Accept"
-@test HTTP.tocameldash!("Accept") == "Accept"
-@test HTTP.tocameldash!("eXcept-this") == "Except-This"
-@test HTTP.tocameldash!("exCept-This") == "Except-This"
-@test HTTP.tocameldash!("not-valid") == "Not-Valid"
-@test HTTP.tocameldash!("♇") == "♇"
-@test HTTP.tocameldash!("bλ-a") == "Bλ-A"
-@test HTTP.tocameldash!("not fixable") == "Not fixable"
-@test HTTP.tocameldash!("aaaaaaaaaaaaa") == "Aaaaaaaaaaaaa"
-@test HTTP.tocameldash!("conTENT-Length") == "Content-Length"
-@test HTTP.tocameldash!("Sec-WebSocket-Key2") == "Sec-Websocket-Key2"
-@test HTTP.tocameldash!("User-agent") == "User-Agent"
-@test HTTP.tocameldash!("Proxy-authorization") == "Proxy-Authorization"
-@test HTTP.tocameldash!("HOST") == "Host"
-@test HTTP.tocameldash!("ST") == "St"
-@test HTTP.tocameldash!("X-\$PrototypeBI-Version") == "X-\$prototypebi-Version"
-@test HTTP.tocameldash!("DCLK_imp") == "Dclk_imp"
+@test HTTP.Strings.tocameldash!("accept") == "Accept"
+@test HTTP.Strings.tocameldash!("Accept") == "Accept"
+@test HTTP.Strings.tocameldash!("eXcept-this") == "Except-This"
+@test HTTP.Strings.tocameldash!("exCept-This") == "Except-This"
+@test HTTP.Strings.tocameldash!("not-valid") == "Not-Valid"
+@test HTTP.Strings.tocameldash!("♇") == "♇"
+@test HTTP.Strings.tocameldash!("bλ-a") == "Bλ-A"
+@test HTTP.Strings.tocameldash!("not fixable") == "Not fixable"
+@test HTTP.Strings.tocameldash!("aaaaaaaaaaaaa") == "Aaaaaaaaaaaaa"
+@test HTTP.Strings.tocameldash!("conTENT-Length") == "Content-Length"
+@test HTTP.Strings.tocameldash!("Sec-WebSocket-Key2") == "Sec-Websocket-Key2"
+@test HTTP.Strings.tocameldash!("User-agent") == "User-Agent"
+@test HTTP.Strings.tocameldash!("Proxy-authorization") == "Proxy-Authorization"
+@test HTTP.Strings.tocameldash!("HOST") == "Host"
+@test HTTP.Strings.tocameldash!("ST") == "St"
+@test HTTP.Strings.tocameldash!("X-\$PrototypeBI-Version") == "X-\$prototypebi-Version"
+@test HTTP.Strings.tocameldash!("DCLK_imp") == "Dclk_imp"
 
 
 for (bytes, utf8) in (
@@ -54,7 +56,7 @@ for (bytes, utf8) in (
         # (UInt8[0x6e, 0x6f, 0xeb, 0x6c, 0x20, 0xa4], "noël €"),
         (UInt8[0xc4, 0xc6, 0xe4], "ÄÆä"),
     )
-    @test HTTP.iso8859_1_to_utf8(bytes) == utf8
+    @test HTTP.Strings.iso8859_1_to_utf8(bytes) == utf8
 end
 
 # using StringEncodings

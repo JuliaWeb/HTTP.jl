@@ -1,3 +1,4 @@
+
 mutable struct URLTest
     name::String
     url::String
@@ -52,26 +53,26 @@ end
         u = parse(HTTP.URI, url)
         @test string(u) == url
         @test isvalid(u)
-        @test HTTP.splitpath(u) == splpath
+        @test HTTP.URIs.splitpath(u.path) == splpath
     end
 
     @test parse(HTTP.URI, "hdfs://user:password@hdfshost:9000/root/folder/file.csv") == HTTP.URI(host="hdfshost", path="/root/folder/file.csv", scheme="hdfs", port=9000, userinfo="user:password")
-    @test parse(HTTP.URI, "http://google.com/some/path") == HTTP.URI(host="google.com", path="/some/path")
+    @test parse(HTTP.URI, "http://google.com:80/some/path") == HTTP.URI(host="google.com", path="/some/path")
 
-    @test HTTP.lower(UInt8('A')) == UInt8('a')
-    @test HTTP.escape(Char(1)) == "%01"
+    @test HTTP.Strings.lower(UInt8('A')) == UInt8('a')
+    @test HTTP.escapeuri(Char(1)) == "%01"
 
-    @test HTTP.escape(Dict("key1"=>"value1", "key2"=>["value2", "value3"])) == "key2=value2&key2=value3&key1=value1"
+    @test HTTP.escapeuri(Dict("key1"=>"value1", "key2"=>["value2", "value3"])) == "key2=value2&key2=value3&key1=value1"
 
-    @test HTTP.escape("abcdef αβ 1234-=~!@#\$()_+{}|[]a;") == "abcdef%20%CE%B1%CE%B2%201234-%3D%7E%21%40%23%24%28%29_%2B%7B%7D%7C%5B%5Da%3B"
-    @test HTTP.unescape(HTTP.escape("abcdef 1234-=~!@#\$()_+{}|[]a;")) == "abcdef 1234-=~!@#\$()_+{}|[]a;"
-    @test HTTP.unescape(HTTP.escape("👽")) == "👽"
+    @test HTTP.escapeuri("abcdef αβ 1234-=~!@#\$()_+{}|[]a;") == "abcdef%20%CE%B1%CE%B2%201234-%3D%7E%21%40%23%24%28%29_%2B%7B%7D%7C%5B%5Da%3B"
+    @test HTTP.unescapeuri(HTTP.escapeuri("abcdef 1234-=~!@#\$()_+{}|[]a;")) == "abcdef 1234-=~!@#\$()_+{}|[]a;"
+    @test HTTP.unescapeuri(HTTP.escapeuri("👽")) == "👽"
 
-    @test HTTP.escape([("foo", "bar"), (1, 2)]) == "foo=bar&1=2"
-    @test HTTP.escape(Dict(["foo" => "bar", 1 => 2])) in ("1=2&foo=bar", "foo=bar&1=2")
-    @test HTTP.escape(["foo" => "bar", 1 => 2]) == "foo=bar&1=2"
+    @test HTTP.escapeuri([("foo", "bar"), (1, 2)]) == "foo=bar&1=2"
+    @test HTTP.escapeuri(Dict(["foo" => "bar", 1 => 2])) in ("1=2&foo=bar", "foo=bar&1=2")
+    @test HTTP.escapeuri(["foo" => "bar", 1 => 2]) == "foo=bar&1=2"
 
-    @test "user:password" == HTTP.userinfo(parse(HTTP.URI, "https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag"))
+    @test "user:password" == parse(HTTP.URI, "https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag").userinfo
 
     @test HTTP.queryparams(HTTP.URI("https://httphost/path1/path2;paramstring?q=a&p=r#frag")) == Dict("q"=>"a","p"=>"r")
     @test HTTP.queryparams(HTTP.URI("https://foo.net/?q=a&malformed")) == Dict("q"=>"a","malformed"=>"")
@@ -93,7 +94,7 @@ end
     @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, "ht!tp://google.com")
 
     #  Issue #27
-    @test HTTP.escape("t est\n") == "t%20est%0A"
+    @test HTTP.escapeuri("t est\n") == "t%20est%0A"
 
     @testset "HTTP.parse(HTTP.URI, str)" begin
 

@@ -4,18 +4,7 @@ import Base.==
 
 include("urlparser.jl")
 
-export URI, URL,
-       hasscheme, scheme,
-       hashost, host,
-       haspath, path,
-       hasquery, query,
-       hasfragment, fragment,
-       hasuserinfo, userinfo,
-       hasport, port,
-       resource, host,
-       escape, unescape,
-       splitpath, queryparams,
-       absuri
+export URI, URL, hostport, resource, queryparams, absuri, escapeuri, unescapeuri
 
 """
     HTTP.URL(host; userinfo="", path="", query="", fragment="", isconnect=false)
@@ -58,7 +47,7 @@ function URI(;host::AbstractString="", path::AbstractString="",
             fragment::AbstractString="", isconnect::Bool=false)
     host != "" && scheme == "" && !isconnect && (scheme = "http")
     io = IOBuffer()
-    printuri(io, scheme, userinfo, host, string(port), path, escape(query), fragment)
+    printuri(io, scheme, userinfo, host, string(port), path, escapeuri(query), fragment)
     return URI(String(take!(io)); isconnect=isconnect)
 end
 
@@ -70,7 +59,7 @@ function URL(str::AbstractString; userinfo::AbstractString="", path::AbstractStr
                           isconnect::Bool=false)
     if str != ""
         if startswith(str, "http") || startswith(str, "https")
-            str = string(str, path, ifelse(query == "", "", "?" * escape(query)),
+            str = string(str, path, ifelse(query == "", "", "?" * escapeuri(query)),
                          ifelse(fragment == "", "", "#$fragment"))
         else
             if startswith(str, "/") || str == "*"
@@ -79,7 +68,7 @@ function URL(str::AbstractString; userinfo::AbstractString="", path::AbstractStr
                 isconnect = true
             else
                 str = string("http://", userinfo == "" ? "" : "$userinfo@",
-                             str, path, ifelse(query == "", "", "?" * escape(query)),
+                             str, path, ifelse(query == "", "", "?" * escapeuri(query)),
                              ifelse(fragment == "", "", "#$fragment"))
             end
         end
@@ -87,28 +76,21 @@ function URL(str::AbstractString; userinfo::AbstractString="", path::AbstractStr
     return Base.parse(URI, str; isconnect=isconnect)
 end
 
-URI(str::AbstractString; isconnect::Bool=false) = Base.parse(URI, str; isconnect=isconnect)
-Base.parse(::Type{URI}, str::AbstractString; isconnect::Bool=false) = http_parser_parse_url(str, isconnect)
+URI(str::AbstractString; isconnect::Bool=false) = 
+    Base.parse(URI, str; isconnect=isconnect)
 
-==(a::URI,b::URI) = a.scheme   == b.scheme    &&
-                    a.host     == b.host      &&
-                    a.path     == b.path      &&
-                    a.query    == b.query     &&
-                    a.fragment == b.fragment  &&
-                    a.userinfo == b.userinfo  &&
-                    port(a)    == port(b)
+Base.parse(::Type{URI}, str::AbstractString; isconnect::Bool=false) = 
+    http_parser_parse_url(str, isconnect)
 
-scheme(u) = u.scheme
-host(u) = u.host
-port(u) = u.port
-path(u) = u.path
-query(u) = u.query
-fragment(u) = u.fragment
-userinfo(u) = u.userinfo
+==(a::URI,b::URI) = a.scheme    == b.scheme    &&
+                    hostport(a) == hostport(b) &&
+                    a.path      == b.path      &&
+                    a.query     == b.query     &&
+                    a.fragment  == b.fragment  &&
+                    a.userinfo  == b.userinfo
 
-
-function resource(uri::URI; isconnect::Bool=false)
-    string(isconnect ? hostport(uri) : uri.path,
+function resource(uri::URI)
+    string(uri.path,
            isempty(uri.query) ? "" : "?$(uri.query)",
            isempty(uri.fragment) ? "" : "#$(uri.fragment)")
 end
@@ -160,7 +142,7 @@ end
 queryparams(uri::URI) = queryparams(uri.query)
 
 function queryparams(q::AbstractString)
-    Dict(unescape(k) => unescape(v)
+    Dict(unescapeuri(k) => unescapeuri(v)
         for (k,v) in ([split(e, "=")..., ""][1:2]
             for e in split(q, "&", keep=false)))
 end
@@ -179,7 +161,7 @@ function Base.isvalid(uri::URI)
     if ((sch in non_hierarchical) && (search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
        (!(sch in uses_query) && !isempty(uri.query)) ||                    # query component not allowed
        (!(sch in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
-       (!(sch in uses_authority) && (!isempty(uri.host) || ("" != port(uri)) || !isempty(uri.userinfo))) # authority component not allowed
+       (!(sch in uses_authority) && (!isempty(uri.host) || ("" != uri.port) || !isempty(uri.userinfo))) # authority component not allowed
         return false
     end
     return true
@@ -195,23 +177,23 @@ end
 utf8_chars(str::AbstractString) = (Char(c) for c in Vector{UInt8}(str))
 
 "percent-encode a string, dict, or pair for a uri"
-function escape end
+function escapeuri end
 
-escape(c::Char) = string('%', uppercase(hex(c,2)))
-escape(str::AbstractString, safe::Function=issafe) =
-    join(safe(c) ? c : escape(c) for c in utf8_chars(str))
+escapeuri(c::Char) = string('%', uppercase(hex(c,2)))
+escapeuri(str::AbstractString, safe::Function=issafe) =
+    join(safe(c) ? c : escapeuri(c) for c in utf8_chars(str))
 
-escape(bytes::Vector{UInt8}) = bytes
-escape(v::Number) = escape(string(v))
-escape(v::Symbol) = escape(string(v))
-escape(v::Nullable) = Base.isnull(v) ? "" : escape(get(v))
+escapeuri(bytes::Vector{UInt8}) = bytes
+escapeuri(v::Number) = escapeuri(string(v))
+escapeuri(v::Symbol) = escapeuri(string(v))
+escapeuri(v::Nullable) = Base.isnull(v) ? "" : escapeuri(get(v))
 
-escape(key, value) = string(escape(key), "=", escape(value))
-escape(key, values::Vector) = escape(key => v for v in values)
-escape(query) = join((escape(k, v) for (k,v) in query), "&")
+escapeuri(key, value) = string(escapeuri(key), "=", escapeuri(value))
+escapeuri(key, values::Vector) = escapeuri(key => v for v in values)
+escapeuri(query) = join((escapeuri(k, v) for (k,v) in query), "&")
 
 "unescape a percent-encoded uri/url"
-function unescape(str)
+function unescapeuri(str)
     contains(str, "%") || return str
     out = IOBuffer()
     i = 1
@@ -232,9 +214,6 @@ end
 Splits the path into components
 See: http://tools.ietf.org/html/rfc3986#section-3.3
 """
-function splitpath end
-
-splitpath(uri::URI) = splitpath(uri.path)
 function splitpath(p::AbstractString)
     elems = String[]
     len = length(p)

@@ -7,19 +7,15 @@ export Message, Request, Response, Body,
 
 import ..HTTP
 
+using ..Pairs
 using ..IOExtras
 using ..Bodies
+using ..Parsers
+import ..Parsers
 
-import ..@lock
+import ..@debug, ..DEBUG_LEVEL
+
 import ..SSLContext
-import ..Parser
-import ..parse!
-import ..messagecomplete
-import ..headerscomplete
-import ..waitingforeof
-import ..ParsingStateCode
-import ..ParsingError
-import ..HTTP: getbyfirst, setbyfirst, @debug
 
 
 """
@@ -46,6 +42,7 @@ Request(method::String, uri, headers=[], body=Body(); parent=nothing) =
             mkheaders(headers), body, parent)
 
 Request(bytes) = read!(IOBuffer(bytes), Request())
+Base.parse(::Type{Request}, str::AbstractString) = Request(str)
 
 mkheaders(v::Vector{Pair{String,String}}) = v
 mkheaders(x) = [string(k) => string(v) for (k,v) in x]
@@ -76,6 +73,7 @@ Response(status::Int=0, headers=[]; body=Body(), parent=nothing) =
     Response(v"1.1", status, headers, body, parent, Condition())
 
 Response(bytes) = read!(IOBuffer(bytes), Response())
+Base.parse(::Type{Response}, str::AbstractString) = Response(str)
 
 
 const Message = Union{Request,Response}
@@ -121,7 +119,7 @@ end
 `String` representation of a HTTP status code. e.g. `200 => "OK"`.
 """
 
-statustext(r::Response) = Base.get(HTTP.STATUS_CODES, r.status, "Unknown Code")
+statustext(r::Response) = Base.get(Parsers.STATUS_CODES, r.status, "Unknown Code")
 
 
 """
@@ -319,8 +317,8 @@ function Base.read!(io::IO, p::Parser)
     end
 
     if eof(io) && !waitingforeof(p)
-        throw(ParsingError(headerscomplete(p) ? HTTP.HPE_BODY_INCOMPLETE :
-                                                HTTP.HPE_HEADERS_INCOMPLETE))
+        throw(ParsingError(headerscomplete(p) ? Parsers.HPE_BODY_INCOMPLETE :
+                                                Parsers.HPE_HEADERS_INCOMPLETE))
     end
 end
 

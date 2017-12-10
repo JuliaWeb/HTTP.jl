@@ -3,23 +3,12 @@ module HTTP
 
 #export Request, Response, FIFOBuffer
 
-
-
 using MbedTLS
 import MbedTLS.SSLContext
-using Retry
-
-const TLS = MbedTLS
-const Headers = Vector{Pair{String, String}}
-
-import Base.==
 
 const DEBUG_LEVEL = 1
 
-const DISABLE_CONNECTION_POOL = false
-
 const DEBUG = false
-const PARSING_DEBUG = false
 
 if VERSION > v"0.7.0-DEV.2338"
     using Base64
@@ -31,10 +20,14 @@ else
     import Dates
 end
 
-include("consts.jl")
-include("utils.jl")
+include("debug.jl")
+include("Pairs.jl")
+include("Strings.jl")
+
+#include("consts.jl")
+#include("utils.jl")
 include("uri.jl")
-#using .URIs
+using .URIs
 #include("fifobuffer.jl")
 #using .FIFOBuffers
 include("cookies.jl")
@@ -42,7 +35,6 @@ include("cookies.jl")
 #include("multipart.jl")
 #include("types.jl")
 
-include("parser.jl")
 #include("sniff.jl")
 
 
@@ -51,6 +43,7 @@ using .IOExtras
 
 include("Bodies.jl")
 #using .Bodies
+include("Parsers.jl")
 include("Messages.jl")
 #using .Messages
 

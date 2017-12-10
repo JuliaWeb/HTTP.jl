@@ -2,13 +2,14 @@ module CookieRequest
 
 export request
 
-import ..HTTP
-
 using ..URIs
 using ..Cookies
 using ..Messages
+using ..Pairs: getkv, setkv
 
-import ..RetryRequest, ..@debug, ..getkv, ..setkv
+import ..@debug, ..DEBUG_LEVEL
+
+import ..RetryRequest
 
 
 const default_cookiejar = Dict{String, Set{Cookie}}()

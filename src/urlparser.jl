@@ -1,5 +1,5 @@
 include("consts.jl")
-include("utils.jl")
+include("parseutils.jl")
 
 struct URLParsingError <: Exception
     msg::String
