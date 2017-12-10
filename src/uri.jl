@@ -126,8 +126,7 @@ end
 
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
 
-Base.print(io::IO, u::URI) = printuri(io, u.scheme, u.userinfo, u.host,
-                                          port(u), u.path, u.query, u.fragment)
+Base.print(io::IO, u::URI) = print(io, u.uri)
 
 function printuri(io::IO,
                   sch::AbstractString,
