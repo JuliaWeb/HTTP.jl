@@ -6,7 +6,7 @@ include("urlparser.jl")
 
 export URI, URL,
        hasscheme, scheme,
-       hashostname, hostname,
+       hashost, host,
        haspath, path,
        hasquery, query,
        hasfragment, fragment,
@@ -19,7 +19,7 @@ export URI, URL,
 
 """
     HTTP.URL(host; userinfo="", path="", query="", fragment="", isconnect=false)
-    HTTP.URI(; scheme="", hostname="", port="", ...)
+    HTTP.URI(; scheme="", host="", port="", ...)
     HTTP.URI(str; isconnect=false)
     parse(HTTP.URI, str::String; isconnect=false)
 
@@ -33,20 +33,18 @@ For efficiency, the internal representation is stored as a set of offsets and le
 To access and return these components as strings, use the various accessor methods:
   * `HTTP.scheme`: returns the scheme (if any) associated with the uri
   * `HTTP.userinfo`: returns the userinfo (if any) associated with the uri
-  * `HTTP.hostname`: returns the hostname only of the uri
+  * `HTTP.host`: returns the host only of the uri
   * `HTTP.port`: returns the port of the uri; will return "80" or "443" by default if the scheme is "http" or "https", respectively
-  * `HTTP.host`: returns the "hostname:port" combination; if the port is not provided or is the default port for the uri scheme, it will be omitted
+  * `HTTP.hostport`: returns the "host:port" combination; if the port is not provided or is the default port for the uri scheme, it will be omitted
   * `HTTP.path`: returns the path for a uri
   * `HTTP.query`: returns the query for a uri
   * `HTTP.fragment`: returns the fragment for a uri
   * `HTTP.resource`: returns the path-query-fragment combination
 """
 struct URI
-#=    data::Vector{UInt8}
-    offsets::NTuple{7, Offset} =#
     uri::String
     scheme::SubString
-    hostname::SubString
+    host::SubString
     port::SubString
     path::SubString
     query::SubString
@@ -54,17 +52,17 @@ struct URI
     userinfo::SubString
 end
 
-function URI(;hostname::AbstractString="", path::AbstractString="",
+function URI(;host::AbstractString="", path::AbstractString="",
             scheme::AbstractString="", userinfo::AbstractString="",
             port::Union{Integer,AbstractString}="", query="",
             fragment::AbstractString="", isconnect::Bool=false)
-    hostname != "" && scheme == "" && !isconnect && (scheme = "http")
+    host != "" && scheme == "" && !isconnect && (scheme = "http")
     io = IOBuffer()
-    printuri(io, scheme, userinfo, hostname, string(port), path, escape(query), fragment)
+    printuri(io, scheme, userinfo, host, string(port), path, escape(query), fragment)
     return URI(String(take!(io)); isconnect=isconnect)
 end
 
-# we assume `str` is at least hostname & port
+# we assume `str` is at least host & port
 # if all others keywords are empty, assume CONNECT
 # can include path, userinfo, query, & fragment
 function URL(str::AbstractString; userinfo::AbstractString="", path::AbstractString="",
@@ -90,64 +88,68 @@ function URL(str::AbstractString; userinfo::AbstractString="", path::AbstractStr
 end
 
 URI(str::AbstractString; isconnect::Bool=false) = Base.parse(URI, str; isconnect=isconnect)
-Base.parse(::Type{URI}, str::AbstractString; isconnect::Bool=false) = http_parser_parse_url(Vector{UInt8}(str), 1, sizeof(str), isconnect)
+Base.parse(::Type{URI}, str::AbstractString; isconnect::Bool=false) = http_parser_parse_url(str, isconnect)
 
-==(a::URI,b::URI) = scheme(a)   == scheme(b)    &&
-                    hostname(a) == hostname(b)  &&
-                    path(a)     == path(b)      &&
-                    query(a)    == query(b)     &&
-                    fragment(a) == fragment(b)  &&
-                    userinfo(a) == userinfo(b)  &&
-                    ((!hasport(a) || !hasport(b)) || (port(a) == port(b)))
-# accessors
-for uf in instances(http_parser_url_fields)
-    uf == UF_MAX && break
-    nm = lowercase(string(uf)[4:end])
-    has = Symbol(string("has", nm))
-    @eval $has(uri::URI) = !isempty(uri.$(Symbol(nm)))
-    uf == UF_PORT && continue
-    #@eval $(Symbol(nm))(uri::URI) = String(uri.data[uri.offsets[Int($uf)]])
-    @eval $(Symbol(nm))(uri::URI) = uri.$(Symbol(nm))
+==(a::URI,b::URI) = a.scheme   == b.scheme    &&
+                    a.host     == b.host      &&
+                    a.path     == b.path      &&
+                    a.query    == b.query     &&
+                    a.fragment == b.fragment  &&
+                    a.userinfo == b.userinfo  &&
+                    port(a)    == port(b)
+
+scheme(u) = u.scheme
+host(u) = u.host
+port(u) = u.port
+path(u) = u.path
+query(u) = u.query
+fragment(u) = u.fragment
+userinfo(u) = u.userinfo
+
+
+function resource(uri::URI; isconnect::Bool=false)
+    string(isconnect ? hostport(uri) : uri.path,
+           isempty(uri.query) ? "" : "?$(uri.query)",
+           isempty(uri.fragment) ? "" : "#$(uri.fragment)")
 end
 
-# special def for port
-function port(uri::URI)
-    if hasport(uri)
-        return uri.port
-    else
-        sch = scheme(uri)
-        return sch == "http" ? "80" : sch == "https" ? "443" : ""
-    end
-end
-
-resource(uri::URI; isconnect::Bool=false) = isconnect ? host(uri) : path(uri) * (isempty(query(uri)) ? "" : "?$(query(uri))") * (isempty(fragment(uri)) ? "" : "#$(fragment(uri))")
-function host(uri::URI)
-    h = hostname(uri)
-    sch = scheme(uri)
+function hostport(uri::URI)
+    s = uri.scheme
+    h = uri.host
     p = uri.port
-    if isempty(p) || (sch == "http" && p == "80") || (sch == "https" && p == "443")
-        return h
-    else
-        return string(h, p)
+    if s == "http"  && p == "80" ||
+       s == "https" && p == "443"
+        p = ""
     end
+    return string(':' in h ? "[$h]" : h, isempty(p) ? "" : ":$p")
 end
 
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
 
-Base.print(io::IO, u::URI) = printuri(io, scheme(u), userinfo(u), hostname(u), port(u), path(u), query(u), fragment(u))
-function printuri(io::IO, sch::AbstractString, userinfo::AbstractString, hostname::AbstractString, port::AbstractString, path::AbstractString, query::AbstractString, fragment::AbstractString)
+Base.print(io::IO, u::URI) = printuri(io, u.scheme, u.userinfo, u.host,
+                                          port(u), u.path, u.query, u.fragment)
+
+function printuri(io::IO,
+                  sch::AbstractString,
+                  userinfo::AbstractString,
+                  host::AbstractString,
+                  port::AbstractString,
+                  path::AbstractString,
+                  query::AbstractString,
+                  fragment::AbstractString)
+
     if sch in uses_authority
         print(io, sch, "://")
         !isempty(userinfo) && print(io, userinfo, "@")
-        print(io, ':' in hostname ? "[$hostname]" : hostname)
+        print(io, ':' in host? "[$host]" : host)
         print(io, ((sch == "http" && port == "80") ||
                    (sch == "https" && port == "443") || isempty(port)) ? "" : ":$port")
     elseif path != "" && path != "*" && sch != ""
         print(io, sch, ":")
-    elseif hostname != "" && port != "" # CONNECT
-        print(io, hostname, ":", port)
+    elseif host != "" && port != "" # CONNECT
+        print(io, host, ":", port)
     end
-    if (isempty(hostname) || hostname[end] != '/') &&
+    if (isempty(host) || host[end] != '/') &&
        (isempty(path) || path[1] != '/') &&
        (!isempty(fragment) || !isempty(path))
         path = (!isempty(sch) && sch == "http" || sch == "https") ? string("/", path) : path
@@ -155,7 +157,9 @@ function printuri(io::IO, sch::AbstractString, userinfo::AbstractString, hostnam
     print(io, path, isempty(query) ? "" : "?$query", isempty(fragment) ? "" : "#$fragment")
 end
 
-queryparams(uri::URI) = queryparams(query(uri))
+
+queryparams(uri::URI) = queryparams(uri.query)
+
 function queryparams(q::AbstractString)
     Dict(unescape(k) => unescape(v)
         for (k,v) in ([split(e, "=")..., ""][1:2]
@@ -171,16 +175,17 @@ const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "
 
 "checks if a `HTTP.URI` is valid"
 function Base.isvalid(uri::URI)
-    sch = scheme(uri)
+    sch = uri.scheme
     isempty(sch) && throw(ArgumentError("can not validate relative URI"))
-    if ((sch in non_hierarchical) && (search(path(uri), '/') > 1)) ||       # path hierarchy not allowed
-       (!(sch in uses_query) && !isempty(query(uri))) ||                    # query component not allowed
-       (!(sch in uses_fragment) && !isempty(fragment(uri))) ||              # fragment identifier component not allowed
-       (!(sch in uses_authority) && (!isempty(hostname(uri)) || ("" != port(uri)) || !isempty(userinfo(uri)))) # authority component not allowed
+    if ((sch in non_hierarchical) && (search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
+       (!(sch in uses_query) && !isempty(uri.query)) ||                    # query component not allowed
+       (!(sch in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
+       (!(sch in uses_authority) && (!isempty(uri.host) || ("" != port(uri)) || !isempty(uri.userinfo))) # authority component not allowed
         return false
     end
     return true
 end
+
 
 # RFC3986 Unreserved Characters (and '~' Unsafe per RFC1738).
 @inline issafe(c::Char) = c == '-' ||
@@ -194,7 +199,7 @@ utf8_chars(str::AbstractString) = (Char(c) for c in Vector{UInt8}(str))
 function escape end
 
 escape(c::Char) = string('%', uppercase(hex(c,2)))
-escape(str::AbstractString, safe::Function=issafe) = 
+escape(str::AbstractString, safe::Function=issafe) =
     join(safe(c) ? c : escape(c) for c in utf8_chars(str))
 
 escape(bytes::Vector{UInt8}) = bytes
@@ -230,8 +235,8 @@ See: http://tools.ietf.org/html/rfc3986#section-3.3
 """
 function splitpath end
 
-splitpath(uri::URI) = splitpath(path(uri))
-function splitpath(p::String)
+splitpath(uri::URI) = splitpath(uri.path)
+function splitpath(p::AbstractString)
     elems = String[]
     len = length(p)
     len > 1 || return elems
@@ -254,19 +259,13 @@ absuri(u, context) = absuri(URI(u), URI(context))
 
 function absuri(u::URI, context::URI)
 
-    @assert !isempty(hostname(context))
+    @assert !isempty(context.host)
 
-    s = scheme(u)
-    h = hostname(u)
-    n = port(u)
-    p = path(u)
-    q = query(u)
-
-    return URIs.URI(scheme=isempty(s) ? scheme(context) : s,
-                    hostname=isempty(h) ? hostname(context) : h,
-                    port=isempty(n) ? port(context) : n,
-                    path=isempty(p) ? path(context) : p,
-                    query=isempty(q) ? query(context) : q)
+    return URI(scheme = isempty(u.scheme) ? context.scheme : u.scheme,
+               host   = isempty(u.host)   ? context.host   : u.host,
+               port   = isempty(u.port)   ? context.port   : u.port,
+               path   = isempty(u.path)   ? context.path   : u.path,
+               query  = isempty(u.query)  ? context.query  : u.query)
 end
 
 end # module

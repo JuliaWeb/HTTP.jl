@@ -11,7 +11,7 @@ end
     include("utils.jl");
     #include("fifobuffer.jl");
     #include("sniff.jl");
-    #include("uri.jl");
+    include("uri.jl");
     #include("cookies.jl");
     include("parser.jl");
     include("body.jl");

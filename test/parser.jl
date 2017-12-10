@@ -1412,7 +1412,7 @@ const responses = Message[
           @test uri.query == req.query_string
           @test uri.fragment == req.fragment
           @test uri.path == req.request_path
-          @test uri.hostname == req.host
+          @test uri.host == req.host
           @test uri.userinfo == req.userinfo
           @test uri.port in (req.port, "80", "443")
           @test string(uri) == req.request_url

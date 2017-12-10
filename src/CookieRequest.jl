@@ -22,7 +22,7 @@ function getcookies(cookies, uri)
     # Check if cookies should be added to outgoing request based on host...
     for cookie in cookies
         if Cookies.shouldsend(cookie, uri.scheme == "https",
-                              uri.hostname, uri.path)
+                              uri.host, uri.path)
             t = cookie.expires
             if t != Dates.DateTime() && t < Dates.now(Dates.UTC)
                 @debug 1 "Deleting expired Cookie: $cookie.name"
@@ -50,7 +50,7 @@ function request(method::String, uri, headers=[], body="";
                  cookiejar=default_cookiejar, kw...)
 
     u = URI(uri)
-    hostcookies = get!(cookiejar, u.hostname, Set{Cookie}())
+    hostcookies = get!(cookiejar, u.host, Set{Cookie}())
 
     cookies = getcookies(hostcookies, u)
     if !isempty(cookies)
@@ -59,7 +59,7 @@ function request(method::String, uri, headers=[], body="";
 
     res = RetryRequest.request(method, uri, headers, body; kw...)
 
-    setcookies(hostcookies, u.hostname, res.headers)
+    setcookies(hostcookies, u.host, res.headers)
 
     return res
 end

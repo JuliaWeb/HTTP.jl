@@ -6,19 +6,9 @@ struct URLParsingError <: Exception
 end
 Base.show(io::IO, p::URLParsingError) = println(io, "HTTP.URLParsingError: ", p.msg)
 
-struct Offset
-    off::UInt16
-    len::UInt16
-end
-Offset() = Offset(0, 0)
-Base.getindex(A::Vector{UInt8}, o::Offset) = A[o.off:(o.off + o.len - 1)]
-Base.isempty(o::Offset) = o.off == 0x0000 && o.len == 0x0000
-==(a::Offset, b::Offset) = a.off == b.off && a.len == b.len
-const EMPTYOFFSET = Offset()
-
 @enum(http_parser_url_fields,
       UF_SCHEME   = 1
-    , UF_HOSTNAME = 2
+    , UF_HOST     = 2
     , UF_PORT     = 3
     , UF_PATH     = 4
     , UF_QUERY    = 5
@@ -27,7 +17,7 @@ const EMPTYOFFSET = Offset()
     , UF_MAX      = 8
 )
 const UF_SCHEME_MASK = 0x01
-const UF_HOSTNAME_MASK = 0x02
+const UF_HOST_MASK = 0x02
 const UF_PORT_MASK = 0x04
 const UF_PATH_MASK = 0x08
 const UF_QUERY_MASK = 0x10
@@ -87,7 +77,7 @@ function parseurlchar(s, ch::Char, strict::Bool)
         (ch == '?' || ch == '#') && return s
     end
     #= We should never fall out of the switch above unless there's an error =#
-    return s_dead;
+    return s_dead
 end
 
 function http_parse_host_char(s::http_host_state, ch)
@@ -120,81 +110,97 @@ function http_parse_host_char(s::http_host_state, ch)
     return s_http_host_dead
 end
 
-function http_parse_host(buf, host::Offset, foundat)
-    portoff = portlen = uioff = uilen = UInt16(0)
-    off = len = UInt16(0)
+function http_parse_host(host::SubString, foundat)
+
+    host1 = port1 = userinfo1 = 1
+    host2 = port2 = userinfo2 = 0
     s = ifelse(foundat, s_http_userinfo_start, s_http_host_start)
 
-    for i = host.off:(host.off + host.len - 0x0001)
-        p = Char(buf[i])
+    for i in eachindex(host)
+        @inbounds p = host[i]
+
         new_s = http_parse_host_char(s, p)
-        new_s == s_http_host_dead && throw(URLParsingError("encountered invalid host character: \n$(String(buf))\n$(lpad("", i-1, "-"))^"))
+        if new_s == s_http_host_dead 
+            throw(URLParsingError("encountered invalid host character: \n" *
+                                  "$host\n$(lpad("", i-1, "-"))^"))
+        end
         if new_s == s_http_host
             if s != s_http_host
-                off = i
+                host1 = i
             end
-            len += 0x0001
+            host2 = i
 
         elseif new_s == s_http_host_v6
             if s != s_http_host_v6
-                off = i
+                host1 = i
             end
-            len += 0x0001
+            host2 = i
 
-        elseif new_s == s_http_host_v6_zone_start || new_s == s_http_host_v6_zone
-            len += 0x0001
+        elseif new_s == s_http_host_v6_zone_start ||
+               new_s == s_http_host_v6_zone
+            host2 = i
 
         elseif new_s == s_http_host_port
             if s != s_http_host_port
-                portoff = i
-                portlen = 0x0000
+                port1 = i
             end
-            portlen += 0x0001
+            port2 = i
 
         elseif new_s == s_http_userinfo
             if s != s_http_userinfo
-                uioff = i
-                uilen = 0x0000
+                userinfo1 = i
             end
-            uilen += 0x0001
+            userinfo2 = i
         end
         s = new_s
     end
-    if @anyeq(s, s_http_host_start, s_http_host_v6_start, s_http_host_v6, s_http_host_v6_zone_start,
-             s_http_host_v6_zone, s_http_host_port_start, s_http_userinfo, s_http_userinfo_start)
+    if @anyeq(s, s_http_host_start, s_http_host_v6_start, s_http_host_v6,
+                 s_http_host_v6_zone_start, s_http_host_v6_zone,
+                 s_http_host_port_start, s_http_userinfo, s_http_userinfo_start)
         throw(URLParsingError("ended in unexpected parsing state: $s"))
     end
-    # (host, port, userinfo)
-    return Offset(off, len), Offset(portoff, portlen), Offset(uioff, uilen)
+
+    return SubString(host, host1, host2),
+           SubString(host, port1, port2),
+           SubString(host, userinfo1, userinfo2)
 end
 
-ufsubstring(uri, offset) = SubString(uri, offset.off, offset.off + offset.len-1)
 
-function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::Bool=false)
+function http_parser_parse_url(url::AbstractString, isconnect::Bool=false)
+
     s = ifelse(isconnect, s_req_server_start, s_req_spaces_before_url)
     old_uf = UF_MAX
-    off = len = 0
+    off1 = off2 = 0
     foundat = false
-    offsets = Offset[Offset(), Offset(), Offset(), Offset(), Offset(), Offset(), Offset()]
+
+    empty = SubString(url, 1, 0)
+    parts = [empty, empty, empty, empty, empty, empty, empty]
+
     mask = 0x00
-    for i = startind:(startind + buflen - 1)
-        @inbounds p = Char(buf[i])
+    for i in eachindex(url)
+        @inbounds p = url[i]
         olds = s
         s = parseurlchar(s, p, false)
         if s == s_dead
-            throw(URLParsingError("encountered invalid url character for parsing state = $(ParsingStateCode(olds)): \n$(String(buf))\n$(lpad("", i-1, "-"))^"))
-        elseif @anyeq(s, s_req_schema_slash, s_req_schema_slash_slash, s_req_server_start, s_req_query_string_start, s_req_fragment_start)
+            throw(URLParsingError(
+                "encountered invalid url character for parsing state = " *
+                "$(ParsingStateCode(olds)):\n$url)\n$(lpad("", i-1, "-"))^"))
+        elseif @anyeq(s, s_req_schema_slash,
+                         s_req_schema_slash_slash,
+                         s_req_server_start,
+                         s_req_query_string_start,
+                         s_req_fragment_start)
             continue
         elseif s == s_req_schema
             uf = UF_SCHEME
             mask |= UF_SCHEME_MASK
         elseif s == s_req_server_with_at
             foundat = true
-            uf = UF_HOSTNAME
-            mask |= UF_HOSTNAME_MASK
+            uf = UF_HOST
+            mask |= UF_HOST_MASK
         elseif s == s_req_server
-            uf = UF_HOSTNAME
-            mask |= UF_HOSTNAME_MASK
+            uf = UF_HOST
+            mask |= UF_HOST_MASK
         elseif s == s_req_path
             uf = UF_PATH
             mask |= UF_PATH_MASK
@@ -208,58 +214,43 @@ function http_parser_parse_url(buf, startind=1, buflen=length(buf), isconnect::B
             throw(URLParsingError("ended in unexpected parsing state: $s"))
         end
         if uf == old_uf
-            len += 1
+            off2 = i
             continue
         end
         if old_uf != UF_MAX
-            offsets[old_uf] = Offset(off, len)
+            parts[old_uf] = SubString(url, off1, off2)
         end
-        off = i
-        len = 1
+        off1 = i
+        off2 = i
         old_uf = uf
     end
     if old_uf != UF_MAX
-        offsets[old_uf] = Offset(off, len)
+        parts[old_uf] = SubString(url, off1, off2)
     end
-    check = ~(UF_HOSTNAME_MASK | UF_PATH_MASK)
+    check = ~(UF_HOST_MASK | UF_PATH_MASK)
     if (mask & UF_SCHEME_MASK > 0) && (mask | check == check)
         throw(URLParsingError("URI must include host or path with scheme"))
     end
-    if mask & UF_HOSTNAME_MASK > 0
-        host, port, userinfo = http_parse_host(buf, offsets[UF_HOSTNAME], foundat)
+    if mask & UF_HOST_MASK > 0
+        host, port, userinfo = http_parse_host(parts[UF_HOST], foundat)
         if !isempty(host)
-            offsets[UF_HOSTNAME] = host
-            mask |= UF_HOSTNAME_MASK
+            parts[UF_HOST] = host
+            mask |= UF_HOST_MASK
         end
         if !isempty(port)
-            offsets[UF_PORT] = port
+            parts[UF_PORT] = port
             mask |= UF_PORT_MASK
         end
         if !isempty(userinfo)
-            offsets[UF_USERINFO] = userinfo
+            parts[UF_USERINFO] = userinfo
             mask |= UF_USERINFO_MASK
         end
     end
     # CONNECT requests can only contain "hostname:port"
     if isconnect
-        chk = UF_HOSTNAME_MASK | UF_PORT_MASK
+        chk = UF_HOST_MASK | UF_PORT_MASK
         ((mask | chk) > chk) && throw(URLParsingError("connect requests must contain and can only contain both hostname and port"))
     end
 
-    uri = String(buf)
-    return URI(#=buf, (offsets[UF_SCHEME],
-                     offsets[UF_HOSTNAME],
-                     offsets[UF_PORT],
-                     offsets[UF_PATH],
-                     offsets[UF_QUERY],
-                     offsets[UF_FRAGMENT],
-                     offsets[UF_USERINFO]),=#
-               uri,
-               ufsubstring(uri, offsets[UF_SCHEME]),
-               ufsubstring(uri, offsets[UF_HOSTNAME]),
-               ufsubstring(uri, offsets[UF_PORT]),
-               ufsubstring(uri, offsets[UF_PATH]),
-               ufsubstring(uri, offsets[UF_QUERY]),
-               ufsubstring(uri, offsets[UF_FRAGMENT]),
-               ufsubstring(uri, offsets[UF_USERINFO]))
+    return URI(url, parts...)
 end

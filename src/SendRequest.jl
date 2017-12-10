@@ -45,7 +45,7 @@ Get a `Connection` for a `URI`, send a `Request` and fill in a `Response`.
 
 function request(uri::URI, req::Request, res::Response; kw...)
 
-    defaultheader(req, "Host" => hostname(uri))
+    defaultheader(req, "Host" => uri.host)
     setlengthheader(req, getkv(kw, :body_length, -1))
 
     # Get a connection from the pool...
@@ -53,7 +53,7 @@ function request(uri::URI, req::Request, res::Response; kw...)
     if getkv(kw, :use_connection_pool, true)
         T = Connections.Connection{T}
     end
-    io = getconnection(T, hostname(uri), parse(UInt, port(uri)))
+    io = getconnection(T, uri.host, uri.port)
 
     # Run request in a background task if response body is a stream...
     if isstream(res.body)

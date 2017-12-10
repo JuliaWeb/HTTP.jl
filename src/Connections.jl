@@ -30,7 +30,7 @@ Response must be read before another Request can be written.
 
 mutable struct Connection{T <: IO} <: IO
     host::String
-    port::UInt
+    port::String
     io::T
     excess::ByteView
     writecount::Int
@@ -41,9 +41,9 @@ end
 isbusy(c::Connection) = c.writecount - c.readcount > 1
 
 Connection{T}() where T <: IO =
-    Connection{T}("", 0, T(), view(UInt8[], 1:0), 0, 0, Condition())
+    Connection{T}("", "", T(), view(UInt8[], 1:0), 0, 0, Condition())
 
-function Connection{T}(host::AbstractString, port::UInt) where T <: IO
+function Connection{T}(host::AbstractString, port::AbstractString) where T <: IO
     c = Connection{T}()
     c.host = host
     c.port = port
@@ -140,7 +140,8 @@ or create a new `Connection` if required.
 """
 
 function getconnection(::Type{Connection{T}},
-                       host::AbstractString, port::UInt)::Connection{T} where T <: IO
+                       host::AbstractString,
+                       port::AbstractString)::Connection{T} where T <: IO
 
     @lock poollock begin
 
@@ -167,7 +168,7 @@ end
 
 
 function Base.show(io::IO, c::Connection)
-    print(io, c.host, ":", Int(c.port), ":", #=Int(localport(c)), ", ", =#
+    print(io, c.host, ":", c.port, ":", Int(localport(c)), ", ",
               typeof(c.io), ", ", tcpstatus(c), ", ",
               length(c.excess), "-byte excess, reads/writes: ",
               c.writecount, "/", c.readcount)
@@ -176,7 +177,8 @@ end
 tcpsocket(c::Connection{SSLContext})::TCPSocket = c.io.bio
 tcpsocket(c::Connection{TCPSocket})::TCPSocket = c.io
 
-localport(c::Connection) = VERSION > v"0.7.0-DEV" ?
+localport(c::Connection) = !isopen(c.io) ? "?" :
+                           VERSION > v"0.7.0-DEV" ?
                            getsockname(tcpsocket(c))[2] :
                            Base._sockname(tcpsocket(c), true)[2]
 

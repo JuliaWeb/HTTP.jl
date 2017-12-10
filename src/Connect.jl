@@ -17,12 +17,16 @@ The `Connections` module has the same interface but supports connection
 reuse and request interleaving.
 """
 
-function getconnection(::Type{TCPSocket}, host::AbstractString, port::UInt)::TCPSocket
-    @debug 2 "TCP connect: $host:$port..."
-    connect(getaddrinfo(host), port)
+function getconnection(::Type{TCPSocket}, host::AbstractString,
+                                          port::AbstractString)::TCPSocket
+    p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
+    @debug 2 "TCP connect: $host:$p..."
+    connect(getaddrinfo(host), p)
 end
 
-function getconnection(::Type{SSLContext}, host::AbstractString, port::UInt)::SSLContext
+function getconnection(::Type{SSLContext}, host::AbstractString,
+                                           port::AbstractString)::SSLContext
+    port = isempty(port) ? "443" : port
     @debug 2 "SSL connect: $host:$port..."
     io = SSLContext()
     setup!(io, SSLConfig(false))
