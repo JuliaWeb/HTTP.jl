@@ -28,7 +28,10 @@ export Parser, parse!,
        messagecomplete, headerscomplete, waitingforeof,
        ParsingError, ParsingErrorCode
 
+using ..IOExtras
 using ..URIs.parseurlchar
+
+import MbedTLS.SSLContext
 
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL
 
@@ -72,6 +75,30 @@ The `Parser` must be configured with output processing callbacks:
   in multiple fragments, then `obbody` will be called multiple times.
 
 - `onheaderscomplete = f(::Message)` is called at the end of the Header.
+
+Message data can be passed to the `parse!(::Parser, data)` function
+or read from a stream by `read!(::IO, ::Parser)`.
+
+e.g.
+
+```
+p = Parser()
+p.onheaderscomplete = m -> (@show string(m.method); @show m.url)
+p.onheader = h -> @show h
+end
+
+parse!(p, \"\"\"
+GET /foo HTTP/1.1
+Content-Length: 0
+Foo: Bar
+
+\"\"\")
+
+h = "Content-Length"=>"0"
+h = "Foo"=>"Bar"
+string(m.method) = "GET"
+m.url = "/foo"
+```
 """
 
 mutable struct Parser
@@ -105,6 +132,46 @@ Create an unconfigured `Parser`.
 Parser() = Parser(false, x->nothing, x->nothing, ()->nothing,
                   s_start_req_or_res, 0, 0, 0, 0,
                   IOBuffer(), IOBuffer(), Message())
+
+
+"""
+    read!(io, ::Parser)
+
+Read data from `io` into the `Parser` until `eof`
+or until the parser finds the end of the message.
+
+If `readavailable(io)` reads past the end of the Message the excess bytes
+are passed to `unread`. This is handled transparently if there is a suitable
+`IOExtras.unread!(::IO, SubArray{UInt8, 1})` method defined.
+"""
+
+function Base.read!(io::IO, p::Parser; unread=IOExtras.unread!)
+
+    while !eof(io)
+        bytes = readavailable(io)
+        if isempty(bytes)
+            @debug 1 "Bug https://github.com/JuliaWeb/MbedTLS.jl/issues/113 !"
+            @assert isa(io, SSLContext)
+            @assert eof(io)
+            break
+        end
+
+        n = parse!(p, bytes)
+
+        if messagecomplete(p)
+            if n < length(bytes)
+                unread(io, view(bytes, n+1:length(bytes)))
+            end
+            return
+        end
+    end
+
+    if !waitingforeof(p)
+        throw(ParsingError(headerscomplete(p) ? HPE_BODY_INCOMPLETE :
+                                                HPE_HEADERS_INCOMPLETE))
+    end
+    return
+end
 
 
 """
