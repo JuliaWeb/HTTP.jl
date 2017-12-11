@@ -1795,7 +1795,7 @@ const responses = Message[
       @test String(take!(r.body)) == "fooba"
 
       for m in instances(Parsers.Method)
-          m == Parsers.CONNECT && continue
+          m in (Parsers.NOMETHOD, Parsers.CONNECT) && continue
           me = m == Parsers.MSEARCH ? "M-SEARCH" : "$m"
           r = Request("$me / HTTP/1.1\r\n\r\n")
           @test r.method == string(m)

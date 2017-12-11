@@ -272,9 +272,9 @@ end
 Read the start-line metadata from `Parser` into a `message` struct.
 """
 
-function readstartline!(r::Response, p::Parser)
-    r.version = VersionNumber(p.major, p.minor)
-    r.status = p.status
+function readstartline!(r::Response, m::Parsers.Message)
+    r.version = VersionNumber(m.major, m.minor)
+    r.status = m.status
     if isredirect(r)
         r.body = Body()
     end
@@ -283,10 +283,10 @@ function readstartline!(r::Response, p::Parser)
     return
 end
 
-function readstartline!(r::Request, p::Parser)
-    r.version = VersionNumber(p.major, p.minor)
-    r.method = string(p.method)
-    r.uri = p.url
+function readstartline!(r::Request, m::Parsers.Message)
+    r.version = VersionNumber(m.major, m.minor)
+    r.method = string(m.method)
+    r.uri = m.url
     return
 end
 
@@ -341,7 +341,7 @@ function Parser(m::Message)
     p = Parser()
     p.onbody = x->write(m.body, x)
     p.onheader = x->appendheader(m, x)
-    p.onheaderscomplete = ()->readstartline!(m, p)
+    p.onheaderscomplete = x->readstartline!(m, x)
     p.isheadresponse = (isa(m, Response) && method(m) in ("HEAD", "CONNECT"))
                        # FIXME CONNECT??
     return p

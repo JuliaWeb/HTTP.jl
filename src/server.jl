@@ -350,4 +350,39 @@ serve(; host::IPAddr=IPv4(127,0,0,1),
         args...) =
     serve(host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
 
+#= Does the parser need to see an EOF to find the end of the message? =#
+function http_message_needs_eof(parser)
+    #= See RFC 2616 section 4.4 =#
+    if (isrequest(parser) || # FIXME request never needs EOF ??
+        div(parser.status, 100) == 1 || #= 1xx e.g. Continue =#
+        parser.status == 204 ||     #= No Content =#
+        parser.status == 304 ||     #= Not Modified =#
+        parser.isheadresponse)       #= response to a HEAD request =#
+        return false
+    end
+
+    if (parser.flags & F_CHUNKED > 0) || parser.content_length != ULLONG_MAX
+        return false
+    end
+
+    return true
+end
+
+function http_should_keep_alive(parser)
+    if parser.major > 0 && parser.minor > 0
+        #= HTTP/1.1 =#
+        if parser.flags & F_CONNECTION_CLOSE > 0
+            return false
+        end
+    else
+        #= HTTP/1.0 or earlier =#
+        if !(parser.flags & F_CONNECTION_KEEP_ALIVE > 0)
+            return false
+        end
+    end
+
+  return !http_message_needs_eof(parser)
+end
+
+
 end # module

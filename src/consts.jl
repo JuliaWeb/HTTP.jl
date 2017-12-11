@@ -113,6 +113,7 @@ const STATUS_CODES = Dict(
     # RFC-2068, section 19.6.1.2
     LINK=31,
     UNLINK=32,
+    NOMETHOD
 )
 
 const MethodMap = Dict(
