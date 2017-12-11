@@ -32,6 +32,7 @@ mutable struct Body
 end
 
 const notastream = IOBuffer("")
+const unknownlength = -1
 
 
 """
@@ -59,10 +60,11 @@ the `body`'s stream and writes it to the `io` target. `write(body, data)` writes
 data to the `body`'s stream.
 """
 
+Body() = Body(notastream, IOBuffer(), unknownlength)
+Body(buffer::IOBuffer, l=unknownlength) = Body(notastream, buffer, l)
+Body(io::IO, l=unknownlength) = Body(io, IOBuffer(body_show_max), l)
 Body(::Void) = Body()
-Body(buffer::IOBuffer=IOBuffer()) = Body(notastream, buffer, 0)
-Body(io::IO) = Body(io, IOBuffer(body_show_max), 0)
-Body(data) = Body(IOBuffer(data))
+Body(data, l=unknownlength) = Body(notastream, IOBuffer(data), l)
 
 
 """
@@ -119,26 +121,48 @@ end
 function Base.write(io::IO, body::Body)
 
     if !isstream(body)
-        return write(io, view(body.buffer.data, 1:body.buffer.size))
+        if VERSION > v"0.7.0-DEV.2338"
+            bytes = view(body.buffer.data, 1:body.buffer.size)
+        else
+            bytes = body.buffer.data[1:body.buffer.size]
+        end
+        write(io, bytes)
+        return
     end
 
-    # Read from `body.io` until `eof`, 
-    # write to `io` using "chunked" encoding.
-    # https://tools.ietf.org/html/rfc7230#section-4.1
-    @assert body.length == 0
     @assert position(body.buffer) == 0
+
+    # Use "chunked" encoding if length is unknown.
+    # https://tools.ietf.org/html/rfc7230#section-4.1
+    if body.length == unknownlength
+        writechunked(io, body)
+        return
+    end
+
+    # Read from `body.io` until `eof`, write to `io`.
     while !eof(body.io)
         v = readavailable(body.io)
-        l = length(v)
-        if body.length < body_show_max
+        if body.buffer.size < body_show_max
             write(body.buffer, v)
         end
-        write(io, hex(l), "\r\n", v, "\r\n")
-        body.length += l
+        write(io, v)
+    end
+    return
+end
+
+
+function writechunked(io::IO, body::Body)
+    while !eof(body.io)
+        v = readavailable(body.io)
+        if body.buffer.size < body_show_max
+            write(body.buffer, v)
+        end
+        write(io, hex(length(v)), "\r\n", v, "\r\n")
     end
     write(io, "0\r\n\r\n")
-    return body.length
+    return
 end
+
 
 function Base.write(body::Body, v)
 
@@ -172,6 +196,8 @@ function Base.show(io::IO, body::Body)
         println(io, "⋮\nWaiting for $(typeof(body.io))...")
     elseif length(body) > length(bytes)
         println(io, "⋮\n$(length(body))-byte body")
+    elseif length(body) == unknownlength
+        println(io, "⋮\nlength unknown (chunked)")
     end
 end
 

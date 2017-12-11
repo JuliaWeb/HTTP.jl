@@ -235,15 +235,21 @@ end
 
 absuri(u, context) = absuri(URI(u), URI(context))
 
-function absuri(u::URI, context::URI)
+function absuri(uri::URI, context::URI)
 
+    if !isempty(uri.host)
+        return uri
+    end
+
+    @assert !isempty(context.scheme)
     @assert !isempty(context.host)
+    @assert isempty(uri.port)
 
-    return URI(scheme = isempty(u.scheme) ? context.scheme : u.scheme,
-               host   = isempty(u.host)   ? context.host   : u.host,
-               port   = isempty(u.port)   ? context.port   : u.port,
-               path   = isempty(u.path)   ? context.path   : u.path,
-               query  = isempty(u.query)  ? context.query  : u.query)
+    return URI(scheme = context.scheme,
+               host   = context.host,
+               port   = context.port,
+               path   = uri.path,
+               query  = uri.query)
 end
 
 end # module

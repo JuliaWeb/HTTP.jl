@@ -9,15 +9,15 @@ end
 
 @testset "HTTP" begin
     include("utils.jl");
-    #include("fifobuffer.jl");
-    #include("sniff.jl");
+    include("fifobuffer.jl");
+    include("sniff.jl");
     include("uri.jl");
-    #include("cookies.jl");
+    include("cookies.jl");
     include("parser.jl");
     include("body.jl");
     include("messages.jl");
-    #include("types.jl");
-    #include("handlers.jl")
-    #include("client.jl");
-    #include("server.jl")
+#    include("types.jl");
+#    include("handlers.jl")
+    include("client.jl");
+#    include("server.jl")
 end;

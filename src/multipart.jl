@@ -12,12 +12,12 @@ mutable struct Form <: IO
     data::Vector{IO}
     index::Int
     boundary::String
-    mark::Int
 end
 
 Form(f::Form) = f
 Base.eof(f::Form) = f.index > length(f.data)
 Base.isopen(f::Form) = false
+Base.close(f::Form) = nothing
 Base.length(f::Form) = sum(x->isa(x, IOStream) ? filesize(x) - position(x) : nb_available(x), f.data)
 function Base.position(f::Form)
     index = f.index
@@ -69,13 +69,13 @@ function Form(d::Dict)
             io = IOBuffer()
         else
             write(io, "$CRLF$CRLF")
-            write(io, escape(v))
+            write(io, escapeuri(v))
         end
         i == len && write(io, "$CRLF--" * boundary * "--" * "$CRLF")
     end
     seekstart(io)
     push!(data, io)
-    return Form(data, 1, boundary, 0)
+    return Form(data, 1, boundary)
 end
 
 function writemultipartheader(io::IOBuffer, i::IOStream)

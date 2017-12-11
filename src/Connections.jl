@@ -181,7 +181,7 @@ end
 tcpsocket(c::Connection{SSLContext})::TCPSocket = c.io.bio
 tcpsocket(c::Connection{TCPSocket})::TCPSocket = c.io
 
-localport(c::Connection) = !isopen(c.io) ? "?" :
+localport(c::Connection) = !isopen(c.io) ? 0 :
                            VERSION > v"0.7.0-DEV" ?
                            getsockname(tcpsocket(c))[2] :
                            Base._sockname(tcpsocket(c), true)[2]

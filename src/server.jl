@@ -110,7 +110,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                     end
                     length(buffer) > 0 || break
                     starttime[] = time() # reset the timeout while still receiving bytes
-                    err = @HTTP.catch HTTP.ParsingError HTTP.parse!(parser, buffer)
+                    err = HTTP.@catch HTTP.ParsingError HTTP.parse!(parser, buffer)
                     startedprocessingrequest = true
                     if err != nothing
                         # error in parsing the http request

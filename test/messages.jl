@@ -1,5 +1,10 @@
+module MessagesTest
+
+using Base.Test
+
 using HTTP.Messages
 import HTTP.Messages.appendheader
+import HTTP.URI
 
 using HTTP.CookieRequest
 using HTTP.StatusError
@@ -36,8 +41,8 @@ using JSON
     @test filter(x->first(x) == "Set-Cookie", req.headers) == 
         ["Set-Cookie" => "A", "Set-Cookie" => "B"]
 
-    @test HTTP.Messages.httpversion(req) == "HTTP/1.1"
-    @test HTTP.Messages.httpversion(res) == "HTTP/1.1"
+    @test Messages.httpversion(req) == "HTTP/1.1"
+    @test Messages.httpversion(res) == "HTTP/1.1"
 
     raw = String(req)
     #@show raw
@@ -126,7 +131,7 @@ using JSON
 
         function async_get(url)
             io = BufferStream()
-            q = HTTP.URI(url).query
+            q = URI(url).query
             log("GET $q")
             r = request("GET", url, response_stream=io)
             @async begin
@@ -182,3 +187,5 @@ using JSON
         end
     end
 end
+
+end # module MessagesTest

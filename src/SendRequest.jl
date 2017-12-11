@@ -1,9 +1,10 @@
 module SendRequest
 
+export request, StatusError
+
 import ..HTTP
 
 using ..Pairs.getkv
-using ..Strings.tocameldash!
 using ..URIs
 using ..Messages
 using ..Bodies
@@ -12,7 +13,6 @@ using ..Connections
 using ..IOExtras
 using MbedTLS.SSLContext
 
-export request
 
 import ..@debug, ..DEBUG_LEVEL
 
@@ -45,10 +45,11 @@ end
 Get a `Connection` for a `URI`, send a `Request` and fill in a `Response`.
 """
 
+
 function request(uri::URI, req::Request, res::Response; kw...)
 
     defaultheader(req, "Host" => uri.host)
-    setlengthheader(req, getkv(kw, :body_length, -1))
+    setlengthheader(req)
 
     # Get a connection from the pool...
     T = uri.scheme == "https" ? SSLContext : TCPSocket
@@ -99,6 +100,7 @@ println(stat("response_file").size)
 """
 
 function request(method::String, uri, headers=[], body="";
+                 bodylength=Bodies.unknownlength,
                  parent=nothing,
                  response_stream=nothing,
                  kw...)
@@ -108,50 +110,28 @@ function request(method::String, uri, headers=[], body="";
     req = Request(method,
                   method == "CONNECT" ? hostport(u) : resource(u),
                   headers,
-                  Body(body);
+                  Body(body, bodylength),
                   parent=parent)
 
     res = Response(body=Body(response_stream), parent=req)
 
     request(u, req, res; kw...)
 
-    if getkv(kw, :canonicalizeheaders, false)
-        res.headers = canonicalizeheaders(res.headers)
-    end
-
-    # Redirect request to new location for: 301 Moved Permanently, 302 Found,
-    # 307 Temporary Redirect, and 308 Permanent Redirect...
-    if (isredirect(res)
-    &&  parentcount(res) < getkv(kw, :maxredirects, 3)
-    &&  header(res, "Location") != ""
-    &&  method != "HEAD") #FIXME why not redirect HEAD?
-
-        return redirect(method, absuri(header(res, "Location"), uri), headers, body;
-                        parent=res, response_stream=response_stream, kw...)
-    end
-
     # Throw StatusError for non Status-2xx Response Messages...
-    if iserror(res) && getkv(kw, :throw_status_errors, true)
-        throw(HTTP.StatusError(res))
+    if iserror(res) && getkv(kw, :statusraise, true)
+        throw(StatusError(res))
     end
 
     return res
 end
 
 
-function redirect(method, uri, headers, body; kw...)
-
-    if getkv(kw, :forwardheaders, true)
-        headers = filter((k,v)->!(k in ("Host", "Cookie")), headers)
-    else
-        headers = []
-    end
-
-    return request(method, uri, headers, body; kw...)
+struct StatusError <: Exception
+    status::Int16
+    response::Messages.Response
 end
 
-
-canonicalizeheaders{T}(h::T) = T([tocameldash!(k) => v for (k,v) in h])
+StatusError(r::Messages.Response) = StatusError(r.status, r)
 
 
 end # module SendRequest

@@ -103,11 +103,11 @@ function register!(r::Router, method::String, url, handler)
     m = isempty(method) ? Any : typeof(METHODS[method])
     # get scheme, host, split path into strings & vals
     uri = url isa String ? HTTP.URI(url) : url
-    s = HTTP.scheme(uri)
-    sch = HTTP.hasscheme(uri) ? typeof(get!(SCHEMES, s, val(s))) : Any
-    h = HTTP.hashostname(uri) ? Val{Symbol(HTTP.hostname(uri))} : Any
+    s = uri.scheme
+    sch = !isempty(s) ? typeof(get!(SCHEMES, s, val(s))) : Any
+    h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
     hand = handler isa Function ? HandleFunction(handler) : handler
-    register!(r, m, sch, h, HTTP.path(uri), hand)
+    register!(r, m, sch, h, uri.path, hand)
 end
 
 function splitsegments(r::Router, h::Handler, segments)
@@ -140,9 +140,9 @@ function handle(r::Router, req, resp)
     m = val(Symbol(HTTP.method(req)))
     uri = HTTP.uri(req)
     # get scheme, host, split path into strings and get Vals
-    s = get(SCHEMES, HTTP.scheme(uri), EMPTYVAL)
-    h = val(Symbol(HTTP.hostname(uri)))
-    p = HTTP.path(uri)
+    s = get(SCHEMES, uri.scheme, EMPTYVAL)
+    h = val(Symbol(uri.host))
+    p = uri.path
     segments = split(p, '/'; keep=false)
     # dispatch to the most specific handler, given the path
     vals = (get(r.segments, s, EMPTYVAL) for s in segments)

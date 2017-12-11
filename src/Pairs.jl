@@ -11,9 +11,9 @@ If `first() of an exisiting matches `first(item)` it is replaced.
 Otherwise the new `item` is inserted at the end of the `collection`.
 """
 
-function setbyfirst(c, item)
+function setbyfirst(c, item, eq = ==)
     k = first(item)
-    if (i = findfirst(x->first(x) == k, c)) > 0
+    if (i = findfirst(x->eq(first(x), k), c)) > 0
         c[i] = item
     else
         push!(c, item)
@@ -28,8 +28,8 @@ end
 Get `item` from collection where `first(item)` matches `key`.
 """
 
-function getbyfirst(c, k, default=nothing)
-    i = findfirst(x->first(x) == k, c)
+function getbyfirst(c, k, default=nothing, eq = ==)
+    i = findfirst(x->eq(first(x), k), c)
     return i > 0 ? c[i] : default
 end
 

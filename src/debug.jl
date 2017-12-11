@@ -6,6 +6,7 @@ macro debugshow(n::Int, s)
     DEBUG_LEVEL >= n ? esc(:(print("DEBUG: "); @show $s)) : :()
 end
 
+#=
 macro src()
     @static if VERSION >= v"0.7-" && length(:(@test).args) == 2
         esc(quote
@@ -21,3 +22,4 @@ macro src()
         end)
     end
 end
+=#

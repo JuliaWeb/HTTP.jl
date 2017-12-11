@@ -136,7 +136,8 @@ waitforheaders(r::Response) = while r.status == 0; wait(r.headerscomplete) end
 
 Get header value for `key`.
 """
-header(m, k::String, d::String="") = getbyfirst(m.headers, k, k => d)[2]
+header(m, k::String, d::String="") = getbyfirst(m.headers, k, k => d, lceq)[2]
+lceq(a,b) = lowercase(a) == lowercase(b)
 
 
 """
@@ -144,7 +145,7 @@ header(m, k::String, d::String="") = getbyfirst(m.headers, k, k => d)[2]
 
 Set header `value` for `key`.
 """
-setheader(m, v::Pair) = setbyfirst(m.headers, Pair{String,String}(v))
+setheader(m, v::Pair) = setbyfirst(m.headers, Pair{String,String}(v), lceq)
 
 
 """
@@ -157,27 +158,27 @@ function defaultheader(m, v::Pair)
     if header(m, first(v)) == ""
         setheader(m, v)
     end
+    return
 end
 
 
 
 """
-    setlengthheader(::Response, [, length])
+    setlengthheader(::Response)
 
 Set the Content-Length or Transfer-Encoding header according to the
 `Response` `Body`.
 """
 
-function setlengthheader(r::Request, l=-1)
+function setlengthheader(r::Request)
 
-    if !isstream(r.body)
-        l = length(r.body)
-    end
-    if l >= 0
-        setheader(r, "Content-Length" => string(l))
-    else
+    l = length(r.body)
+    if l == Bodies.unknownlength
         setheader(r, "Transfer-Encoding" => "chunked")
+    else
+        setheader(r, "Content-Length" => string(l))
     end
+    return
 end
 
 
@@ -206,6 +207,7 @@ function appendheader(m::Message, header::Pair{String,String})
     else
         push!(m.headers, header)
     end
+    return
 end
 
 
@@ -226,10 +228,12 @@ e.g. `"GET /path HTTP/1.1\\r\\n"` or `"HTTP/1.1 200 OK\\r\\n"`
 
 function writestartline(io::IO, r::Request)
     write(io, "$(r.method) $(r.uri) $(httpversion(r))\r\n")
+    return
 end
 
 function writestartline(io::IO, r::Response)
     write(io, "$(httpversion(r)) $(r.status) $(statustext(r))\r\n")
+    return
 end
 
 
@@ -244,6 +248,7 @@ function writeheaders(io::IO, m::Message)
         write(io, "$name: $value\r\n")
     end
     write(io, "\r\n")
+    return
 end
 
 
@@ -257,6 +262,7 @@ function Base.write(io::IO, m::Message)
     writestartline(io, m)
     writeheaders(io, m)
     write(io, m.body)
+    return
 end
 
 
@@ -274,12 +280,14 @@ function readstartline!(r::Response, p::Parser)
     end
     notify(r.headerscomplete)
     yield()
+    return
 end
 
 function readstartline!(r::Request, p::Parser)
     r.version = VersionNumber(p.major, p.minor)
     r.method = string(p.method)
     r.uri = p.url
+    return
 end
 
 
@@ -320,6 +328,7 @@ function Base.read!(io::IO, p::Parser)
         throw(ParsingError(headerscomplete(p) ? Parsers.HPE_BODY_INCOMPLETE :
                                                 Parsers.HPE_HEADERS_INCOMPLETE))
     end
+    return
 end
 
 
@@ -352,6 +361,8 @@ function Base.read!(io::IO, m::Message)
 end
 
 
+Base.take!(m::Message) = take!(m.body)
+
 
 function Base.String(m::Message)
     io = IOBuffer()
@@ -367,6 +378,7 @@ function Base.show(io::IO, m::Message)
     writeheaders(io, m)
     show(io, m.body)
     print(io, "\"\"\"")
+    return
 end
 
 
