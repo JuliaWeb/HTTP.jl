@@ -172,7 +172,9 @@ end
 
 
 function Base.show(io::IO, c::Connection)
-    print(io, c.host, ":", c.port, ":", Int(localport(c)), ", ",
+    print(io, c.host, ":",
+              c.port != "" ? c.port : Int(peerport(c)), ":",
+              Int(localport(c)), ", ",
               typeof(c.io), ", ", tcpstatus(c), ", ",
               length(c.excess), "-byte excess, reads/writes: ",
               c.writecount, "/", c.readcount)
@@ -185,6 +187,11 @@ localport(c::Connection) = !isopen(c.io) ? 0 :
                            VERSION > v"0.7.0-DEV" ?
                            getsockname(tcpsocket(c))[2] :
                            Base._sockname(tcpsocket(c), true)[2]
+
+peerport(c::Connection) = !isopen(c.io) ? 0 :
+                          VERSION > v"0.7.0-DEV" ?
+                          getpeername(tcpsocket(c))[2] :
+                          Base._sockname(tcpsocket(c), false)[2]
 
 tcpstatus(c::Connection) = Base.uv_status_string(tcpsocket(c))
 
