@@ -305,7 +305,7 @@ function Base.read!(io::IO, p::Parser)
         n = parse!(p, bytes)
         @assert n == length(bytes) || messagecomplete(p)
         @assert n <= length(bytes)
-        @debug 3 ParsingStateCode(p.state)
+        @debug 3 "p.state = $(Parsers.ParsingStateCode(p.state))"
 
         if messagecomplete(p)
             excess = view(bytes, n+1:length(bytes))

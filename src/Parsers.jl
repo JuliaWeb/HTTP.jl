@@ -118,24 +118,26 @@ end
 
 const ByteView = typeof(view(UInt8[], 1:0))
 
+
 parse!(p::Parser, bytes::String)::Int = parse!(p, Vector{UInt8}(bytes))
 
 parse!(p::Parser, bytes)::Int = parse!(p, view(bytes, 1:length(bytes)))
 
 function parse!(parser::Parser, bytes::ByteView)::Int
+
     isempty(bytes) && throw(ArgumentError("bytes must not be empty"))
     len = length(bytes)
-    @debug 3 "parse!(::Parser, $len-bytes)"
     p_state = parser.state
-    @debugshow 3 ParsingStateCode(p_state)
+    @debug 3 "parse!(parser.state=$(ParsingStateCode(p_state))), $len-bytes)"
 
     p = 0
     while p < len && p_state != s_message_done
 
-        @debug 3 "top of while($p < $len) $(ParsingStateCode(p_state))"
+        @debug 3 string("top of while($p < $len) \"",
+                        Base.escape_string(string(Char(bytes[p+1]))), "\" ",
+                        ParsingStateCode(p_state))
         p += 1
         @inbounds ch = Char(bytes[p])
-        @debug 3 Base.escape_string(string(ch))
 
         if p_state == s_dead
             #= this state is used after a 'Connection: close' message

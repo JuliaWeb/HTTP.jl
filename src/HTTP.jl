@@ -8,8 +8,6 @@ import MbedTLS.SSLContext
 
 const DEBUG_LEVEL = 1
 
-const DEBUG = false
-
 if VERSION > v"0.7.0-DEV.2338"
     using Base64
 end
@@ -23,13 +21,9 @@ end
 include("debug.jl")
 include("Pairs.jl")
 include("Strings.jl")
+include("IOExtras.jl")
 
-#include("consts.jl")
-#include("utils.jl")
 include("uri.jl")
-using .URIs
-#include("fifobuffer.jl")
-#using .FIFOBuffers
 include("cookies.jl")
 #using .Cookies
 #include("multipart.jl")
@@ -38,18 +32,13 @@ include("cookies.jl")
 #include("sniff.jl")
 
 
-include("IOExtras.jl")
-using .IOExtras
 
 include("Bodies.jl")
-#using .Bodies
 include("Parsers.jl")
 include("Messages.jl")
-#using .Messages
 
 include("Connect.jl")
 include("Connections.jl")
-#using .Connections
 
 
 
