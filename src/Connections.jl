@@ -5,7 +5,7 @@ export getconnection
 using ..IOExtras
 
 import ..@debug, ..DEBUG_LEVEL
-import ..SSLContext
+import MbedTLS.SSLContext
 import ..Connect.getconnection
 
 

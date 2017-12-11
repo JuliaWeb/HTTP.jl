@@ -3,8 +3,8 @@ module HTTP
 
 #export Request, Response, FIFOBuffer
 
-using MbedTLS
-import MbedTLS.SSLContext
+#using MbedTLS
+#import MbedTLS.SSLContext
 
 const DEBUG_LEVEL = 1
 
@@ -24,6 +24,7 @@ include("Strings.jl")
 include("IOExtras.jl")
 
 include("uri.jl")
+using .URIs
 include("cookies.jl")
 #using .Cookies
 #include("multipart.jl")

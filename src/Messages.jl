@@ -15,7 +15,7 @@ import ..Parsers
 
 import ..@debug, ..DEBUG_LEVEL
 
-import ..SSLContext
+import MbedTLS.SSLContext
 
 
 """
