@@ -156,7 +156,7 @@ for sch in ("http", "https")
     r = HTTP.get("$sch://httpbin.org/redirect/1")
     @test HTTP.status(r) == 200
     #@test length(HTTP.history(r)) == 1
-    @test_throws HTTP.StatusError HTTP.get("$sch://httpbin.org/redirect/6")
+    @test HTTP.status(HTTP.get("$sch://httpbin.org/redirect/6")) == 302
     @test HTTP.status(HTTP.get("$sch://httpbin.org/relative-redirect/1")) == 200
     @test HTTP.status(HTTP.get("$sch://httpbin.org/absolute-redirect/1")) == 200
     @test HTTP.status(HTTP.get("$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fexample.com")) == 200

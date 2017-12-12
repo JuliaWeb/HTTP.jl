@@ -5,8 +5,8 @@ using Base.Test
 using HTTP.Messages
 import HTTP.Messages.appendheader
 import HTTP.URI
+import HTTP.RequestStack.request
 
-using HTTP.CookieRequest
 using HTTP.StatusError
 
 using JSON

@@ -112,6 +112,7 @@ Method of the `Request` that yielded this `Response`.
 method(r::Response) = r.parent == nothing ? "" : r.parent.method
 
 
+#= FIXME obsolete ?
 """
     parentcount(::Response)
 
@@ -125,6 +126,7 @@ function parentcount(r::Response)
         return 1 + parentcount(r.parent.parent)
     end
 end
+=#
 
 
 """

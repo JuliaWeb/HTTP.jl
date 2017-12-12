@@ -2,6 +2,9 @@ module Connect
 
 export getconnection
 
+const Connection = Union
+
+
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
 import ..@debug, ..DEBUG_LEVEL
@@ -18,14 +21,16 @@ reuse and request interleaving.
 """
 
 function getconnection(::Type{TCPSocket}, host::AbstractString,
-                                          port::AbstractString)::TCPSocket
+                                          port::AbstractString;
+                                          kw...)::TCPSocket
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
     @debug 2 "TCP connect: $host:$p..."
     connect(getaddrinfo(host), p)
 end
 
 function getconnection(::Type{SSLContext}, host::AbstractString,
-                                           port::AbstractString)::SSLContext
+                                           port::AbstractString;
+                                           kw...)::SSLContext
     port = isempty(port) ? "443" : port
     @debug 2 "SSL connect: $host:$port..."
     io = SSLContext()

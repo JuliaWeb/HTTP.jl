@@ -1,13 +1,10 @@
 module RetryRequest
 
-export request
+struct RetryLayer{T} end
+export RetryLayer
 
-using Retry
-
+import ..HTTP.RequestStack.request
 import ..HTTP
-
-using ..Pairs.getkv
-import ..SendRequest, ..@debug
 
 
 isrecoverable(e::Base.UVError) = true
@@ -17,19 +14,12 @@ isrecoverable(e::HTTP.StatusError) = e.status < 200 || e.status >= 500
 isrecoverable(e::Exception) = false
 
 
-function request(a...; kw...)
+function request(::Type{RetryLayer{Next}}, a...; maxretries=2, kw...) where Next
 
-    n = getkv(kw, :maxretries, 2) + 1
-
-    @repeat n try
-        return SendRequest.request(a...; kw...)
-    catch e
-        @delay_retry if isrecoverable(e)
-            @debug 1 "Retrying after $e"
-        end
-    end
-
-    @assert false "Unreachable"
+    retry(request,
+          delays=ExponentialBackOff(n = maxretries),
+          check=(s,ex)->(s,isrecoverable(ex)))(Next, a...; kw...)
 end
+
 
 end # module RetryRequest

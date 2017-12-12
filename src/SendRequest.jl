@@ -1,14 +1,17 @@
 module SendRequest
 
-export request, StatusError
+struct MessageLayer{T} end
+export MessageLayer
 
-import ..HTTP
+struct ConnectLayer{T} end
+export ConnectLayer
 
-using ..Pairs.getkv
+import ..HTTP.RequestStack.request
+
 using ..URIs
 using ..Messages
 
-using ..Connections
+using ..Connect
 using ..IOExtras
 using MbedTLS.SSLContext
 
@@ -17,12 +20,12 @@ import ..@debug, ..DEBUG_LEVEL
 
 
 """
-    request(::IO, ::Request, ::Response)
+    writeandread(::IO, ::Request, ::Response)
 
-Send a `Request` and fill in a `Response`.
+Send a `Request` and receive a `Response`.
 """
 
-function request(io::IO, req::Request, res::Response)
+function writeandread(io::IO, req::Request, res::Response)
 
     try                                 ;@debug 1 "write to: $io\n$req"
         write(io, req)
@@ -39,31 +42,38 @@ end
 
 
 """
+    request(::IO, ::Request, ::Response)
+
+Send a `Request` and receive a `Response`.
+"""
+
+function request(io::IO, req::Request, res::Response)
+
+    # Run request in a background task if response body is a stream...
+    if isstream(res.body)
+        @schedule writeandread(io, req, res)
+        waitforheaders(res)
+        return res
+    end
+        
+    return writeandread(io, req, res)
+end
+
+
+"""
     request(::URI, ::Request, ::Response)
 
 Get a `Connection` for a `URI`, send a `Request` and fill in a `Response`.
 """
 
 
-function request(uri::URI, req::Request, res::Response; kw...)
-
-    defaultheader(req, "Host" => uri.host)
-    setlengthheader(req)
+function request(::Type{ConnectLayer{Connection}},
+                 uri::URI, req::Request, res::Response; kw...) where Connection
 
     # Get a connection from the pool...
     T = uri.scheme == "https" ? SSLContext : TCPSocket
-    if getkv(kw, :use_connection_pool, true)
-        T = Connections.Connection{T}
-    end
-    io = getconnection(T, uri.host, uri.port)
+    io = getconnection(Connection{T}, uri.host, uri.port; kw...)
 
-    # Run request in a background task if response body is a stream...
-    if isstream(res.body)
-        @schedule request(io, req, res)
-        waitforheaders(res)
-        return res
-    end
-        
     return request(io, req, res)
 end
 
@@ -100,39 +110,26 @@ println(stat("response_file").size)
 ```
 """
 
-function request(method::String, uri, headers=[], body="";
+function request(::Type{MessageLayer{Next}},
+                 method::String, uri, headers=[], body="";
                  bodylength=Messages.Bodies.unknownlength,
                  parent=nothing,
                  response_stream=nothing,
-                 kw...)
+                 kw...) where Next
 
     u = URI(uri)
+    url = method == "CONNECT" ? hostport(u) : resource(u)
 
-    req = Request(method,
-                  method == "CONNECT" ? hostport(u) : resource(u),
-                  headers,
-                  Body(body, bodylength),
+    req = Request(method, url, headers, Body(body, bodylength);
                   parent=parent)
+
+    defaultheader(req, "Host" => u.host)
+    setlengthheader(req)
 
     res = Response(body=Body(response_stream), parent=req)
 
-    request(u, req, res; kw...)
-
-    # Throw StatusError for non Status-2xx Response Messages...
-    if iserror(res) && getkv(kw, :statusraise, true)
-        throw(StatusError(res))
-    end
-
-    return res
+    return request(Next, u, req, res; kw...)
 end
-
-
-struct StatusError <: Exception
-    status::Int16
-    response::Messages.Response
-end
-
-StatusError(r::Messages.Response) = StatusError(r.status, r)
 
 
 end # module SendRequest

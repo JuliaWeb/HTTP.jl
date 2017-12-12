@@ -5,7 +5,8 @@ using MbedTLS
 import MbedTLS.SSLContext
 const TLS = MbedTLS
 
-import Base.==
+
+import Base.== # FIXME rm
 
 const DEBUG = false # FIXME rm
 const PARSING_DEBUG = false # FIXME rm
@@ -19,6 +20,13 @@ if VERSION < v"0.7.0-DEV.2575"
     const Dates = Base.Dates
 else
     import Dates
+end
+
+#abstract type RequestLayer{Next} end
+
+module RequestStack
+    import ..HTTP
+    request(m::String, a...; kw...) = request(HTTP.DefaultStack, m, a...; kw...)
 end
 
 #FIXME
@@ -49,7 +57,7 @@ include("Connect.jl")
 include("Connections.jl")
 
 include("SendRequest.jl")
-import .SendRequest.StatusError
+using .SendRequest
 
 include("types.jl")
 include("client.jl")
@@ -67,8 +75,36 @@ function __init__()
 end
 
 
+include("ExceptionRequest.jl")
+using .ExceptionRequest
+import .ExceptionRequest.StatusError
 include("RetryRequest.jl")
+using .RetryRequest
 include("CookieRequest.jl")
+using .CookieRequest
+include("BasicAuthRequest.jl")
+using .BasicAuthRequest
+include("CanonicalizeRequest.jl")
+using .CanonicalizeRequest
+include("RedirectRequest.jl")
+using .RedirectRequest
+
+
+const DefaultStack =
+    RedirectLayer{
+    CanonicalizeLayer{
+    BasicAuthLayer{
+    CookieLayer{
+    RetryLayer{
+    ExceptionLayer{
+    MessageLayer{
+    ConnectLayer{
+    #Connect.Connection
+    Connections.Connection
+    }}}}}}}}
+
+
+
 
 end # module
 #=

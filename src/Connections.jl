@@ -43,18 +43,10 @@ end
 
 isbusy(c::Connection) = c.writecount - c.readcount > 1
 
-Connection{T}() where T <: IO =
-    Connection{T}("", "", T(), view(UInt8[], 1:0), 0, 0, Condition())
+Connection{T}(host::AbstractString, port::AbstractString, io::T) where T <: IO =
+    Connection{T}(host, port, io, view(UInt8[], 1:0), 0, 0, Condition())
 
-function Connection{T}(host::AbstractString, port::AbstractString) where T <: IO
-    c = Connection{T}()
-    c.host = host
-    c.port = port
-    c.io = getconnection(T, host, port)
-    return c
-end
-
-const noconnection = Connection{TCPSocket}()
+const noconnection = Connection{TCPSocket}("","",TCPSocket())
 
 Base.unsafe_write(c::Connection, p::Ptr{UInt8}, n::UInt) =
     unsafe_write(c.io, p, n)
@@ -144,7 +136,8 @@ or create a new `Connection` if required.
 
 function getconnection(::Type{Connection{T}},
                        host::AbstractString,
-                       port::AbstractString)::Connection{T} where T <: IO
+                       port::AbstractString;
+                       kw...)::Connection{T} where T <: IO
 
     lock(poollock)
     try
@@ -157,13 +150,14 @@ function getconnection(::Type{Connection{T}},
         while (i = findlast(pattern, pool)) > 0
             c = pool[i]
             if !isopen(c.io)
-                deleteat!(pool, i)      ;@debug 1 "Deleted: $c"
+                deleteat!(pool, i)                ;@debug 1 "Deleted: $c"
                 continue
-            end;                        ;@debug 2 "Reused: $c"
+            end;                                  ;@debug 2 "Reused: $c"
             return c
         end
 
-        c = Connection{T}(host, port)   ;@debug 1 "New: $c"
+        io = getconnection(T, host, port; kw...)
+        c = Connection{T}(host, port, io)         ;@debug 1 "New: $c"
         push!(pool, c)
         @assert !isbusy(c)
         return c

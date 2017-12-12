@@ -1428,7 +1428,7 @@ const responses = Message[
           @test uri.port in (req.port, "80", "443")
           @test string(uri) == req.request_url
           @test length(r.headers) == req.num_headers
-          @test Dict(HTTP.CookieRequest.canonicalizeheaders(r.headers)) == Dict(req.headers)
+          @test Dict(HTTP.CanonicalizeRequest.canonicalizeheaders(r.headers)) == Dict(req.headers)
           @test String(take!(r.body)) == req.body
 # FIXME          @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == req.should_keep_alive
 
@@ -1615,7 +1615,7 @@ const responses = Message[
               @test r.status == resp.status_code
               @test HTTP.Messages.statustext(r) == resp.response_status
               @test length(r.headers) == resp.num_headers
-              @test Dict(HTTP.CookieRequest.canonicalizeheaders(r.headers)) == Dict(resp.headers)
+              @test Dict(HTTP.CanonicalizeRequest.canonicalizeheaders(r.headers)) == Dict(resp.headers)
               @test String(take!(r.body)) == resp.body
 # FIXME              @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == resp.should_keep_alive
           catch e

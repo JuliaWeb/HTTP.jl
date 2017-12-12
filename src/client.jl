@@ -78,7 +78,7 @@ function request(client::Client, method, uri::URI;
         body = read(body)
     end
 
-    return CookieRequest.request(m, uri, h, body; args...)
+    return RequestStack.request(m, uri, h, body; args...)
 end
 request(uri::AbstractString; verbose::Bool=false, query="", args...) = request(DEFAULT_CLIENT, GET, URIs.URL(uri; query=query); verbose=verbose, args...)
 request(uri::URI; verbose::Bool=false, args...) = request(DEFAULT_CLIENT, GET, uri; verbose=verbose, args...)

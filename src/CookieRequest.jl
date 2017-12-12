@@ -1,18 +1,15 @@
 module CookieRequest
 
-export request
+struct CookieLayer{T} end
+export CookieLayer
 
-import ..HTTP
+import ..HTTP.RequestStack.request
 
 using ..URIs
 using ..Cookies
-using ..Messages
 using ..Pairs: getkv, setkv
-using ..Strings.tocameldash!
 
 import ..@debug, ..DEBUG_LEVEL
-
-import ..RetryRequest
 
 
 const default_cookiejar = Dict{String, Set{Cookie}}()
@@ -50,19 +47,9 @@ function setcookies(cookies, host, headers)
 end
 
 
-canonicalizeheaders{T}(h::T) = T([tocameldash!(k) => v for (k,v) in h])
-
-
-function setbasicauthorization(headers, uri)
-    if !isempty(uri.userinfo) && getkv(headers, "Authorization", "") == ""
-        @debug 1 "Adding Authorization: Basic header."
-        setkv(headers, "Authorization", "Basic $(base64encode(uri.userinfo))")
-    end
-end
-
-
-function request(method::String, uri, headers=[], body="";
-                 cookiejar=default_cookiejar, kw...)
+function request(::Type{CookieLayer{Next}},
+                 method::String, uri, headers=[], body="";
+                 cookiejar=default_cookiejar, kw...) where Next
 
     u = URI(uri)
     hostcookies = get!(cookiejar, u.host, Set{Cookie}())
@@ -72,54 +59,11 @@ function request(method::String, uri, headers=[], body="";
         setkv(headers, "Cookie", string(getkv(headers, "Cookie", ""), cookies))
     end
 
-    if getkv(kw, :basicauthorization, false)
-        setbasicauthorization(headers, uri)
-    end
+    res = request(Next, method, uri, headers, body; kw...)
 
-    try
-        res = RetryRequest.request(method, uri, headers, body; kw...)
+    setcookies(hostcookies, u.host, res.headers)
 
-        if getkv(kw, :canonicalizeheaders, false)
-            res.headers = canonicalizeheaders(res.headers)
-        end
-
-        setcookies(hostcookies, u.host, res.headers)
-
-        return res
-
-    catch e
-        # Redirect request to new location...
-        if (isa(e, HTTP.StatusError)
-        &&  isredirect(e.response)
-        &&  parentcount(e.response) < getkv(kw, :maxredirects, 3)
-        &&  header(e.response, "Location") != ""
-        &&  method != "HEAD") #FIXME why not redirect HEAD?
-
-            setcookies(hostcookies, u.host, e.response.headers)
-
-            return redirect(e.response, method, uri, headers, body; kw...)
-        else
-            rethrow(e)
-        end
-    end
-    @assert false "Unreachable!"
-end
-
-
-function redirect(res, method, uri, headers, body; kw...)
-
-    uri = absuri(header(res, "Location"), uri)
-    @debug 1 "Redirect: $uri"
-
-    if getkv(kw, :forwardheaders, true)
-        headers = filter(h->!(h[1] in ("Host", "Cookie")), headers)
-    else
-        headers = []
-    end
-
-    setkv(kw, :parent, res)
-
-    return request(method, uri, headers, body; kw...)
+    return res
 end
 
 
