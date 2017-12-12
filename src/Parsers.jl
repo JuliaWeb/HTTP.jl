@@ -47,6 +47,12 @@ const enable_passert = false # See macro @passert
     Message
 
 HTTP Message metadata.
+- `method::Method`
+- `major::Int16`
+- `minor::Int16`
+- `url::String`
+- `status::Int32`
+- `upgrade::Bool`
 """
 
 mutable struct Message
@@ -70,9 +76,9 @@ The `Parser` must be configured with output processing callbacks:
 
 - `onheader = f(::Pair{String,String})` is called for each Header Line.
 
-- Body data is passed to `onbody = f(::SubArray{UInt8,1})`.
+- Body data is passed to `onbodyfragment = f(::SubArray{UInt8,1})`.
   If the Message is chunked or if the Message is passed to `parse!`
-  in multiple fragments, then `obbody` will be called multiple times.
+  in multiple fragments, then `onbodyfragment` will be called multiple times.
 
 - `onheaderscomplete = f(::Message)` is called at the end of the Header.
 
@@ -85,7 +91,6 @@ e.g.
 p = Parser()
 p.onheaderscomplete = m -> (@show string(m.method); @show m.url)
 p.onheader = h -> @show h
-end
 
 parse!(p, \"\"\"
 GET /foo HTTP/1.1
@@ -106,7 +111,7 @@ mutable struct Parser
     # config
     isheadresponse::Bool # Are we parsing a HEAD Response Message?
     onheader::Function#(::Pair{String,String}
-    onbody::Function#(::SubArray{UInt8,1})
+    onbodyfragment::Function#(::SubArray{UInt8,1})
     onheaderscomplete::Function#(::Message)
 
     # state
@@ -135,7 +140,7 @@ Parser() = Parser(false, x->nothing, x->nothing, ()->nothing,
 
 
 """
-    read!(io, ::Parser)
+    read!(io, ::Parser [, unread=IOExtras.unread!])
 
 Read data from `io` into the `Parser` until `eof`
 or until the parser finds the end of the message.
@@ -143,6 +148,8 @@ or until the parser finds the end of the message.
 If `readavailable(io)` reads past the end of the Message the excess bytes
 are passed to `unread`. This is handled transparently if there is a suitable
 `IOExtras.unread!(::IO, SubArray{UInt8, 1})` method defined.
+
+Throws `ParsingError` if input is invalid.
 """
 
 function Base.read!(io::IO, p::Parser; unread=IOExtras.unread!)
@@ -185,7 +192,7 @@ function reset!(p::Parser)
     # config
     p.isheadresponse = false
     p.onheader = x->nothing
-    p.onbody = x->nothing
+    p.onbodyfragment = x->nothing
     p.onheaderscomplete = x->nothing
 
     # state
@@ -1098,7 +1105,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
             @passert parser.content_length != 0 &&
                      parser.content_length != ULLONG_MAX
 
-            parser.onbody(view(bytes, p:p + to_read - 1))
+            parser.onbodyfragment(view(bytes, p:p + to_read - 1))
 
             # The difference between advancing content_length and p is because
             # the latter will automaticaly advance on the next loop iteration.
@@ -1113,7 +1120,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
 
         # read until EOF
         elseif p_state == s_body_identity_eof
-            parser.onbody(view(bytes, p:len))
+            parser.onbodyfragment(view(bytes, p:len))
             p = len
 
         elseif p_state == s_chunk_size_start
@@ -1176,7 +1183,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
             @passert parser.content_length != 0 &&
                      parser.content_length != ULLONG_MAX
 
-            parser.onbody(view(bytes, p:p + to_read - 1))
+            parser.onbodyfragment(view(bytes, p:p + to_read - 1))
 
             # See the explanation in s_body_identity for why the content
             # length and data pointers are managed this way.

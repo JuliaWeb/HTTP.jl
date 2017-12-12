@@ -1,4 +1,4 @@
-using HTTP.Bodies
+using HTTP.Messages
 
 @testset "HTTP.Bodies" begin
 
@@ -42,12 +42,12 @@ using HTTP.Bodies
     show(buf, b)
     @test String(take!(buf)) == "Hello!\nWorld!\n"
 
-    tmp = HTTP.Bodies.body_show_max
-    HTTP.Bodies.set_show_max(12)
+    tmp = HTTP.Messages.Bodies.body_show_max
+    HTTP.Messages.Bodies.set_show_max(12)
     b = Body("Hello World!xxx")
     #display(b); println()
     buf = IOBuffer()
     show(buf, b)
     @test String(take!(buf)) == "Hello World!\n⋮\n15-byte body\n"
-    HTTP.Bodies.set_show_max(tmp)
+    HTTP.Messages.Bodies.set_show_max(tmp)
 end

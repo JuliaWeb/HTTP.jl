@@ -13,19 +13,22 @@ const ByteView = typeof(view(UInt8[], 1:0))
 
 
 """
-    Connection
+    Connection{T <: IO}
 
 A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 
-The `excess` field contains left over bytes read from the connection after
-the end of a response message. These bytes are probably the start of the
-next response message.
-
-The `readcount` and `writecount` keep track of the number of Request/Response
-Messages that have been read/written. `writecount` is allowed to be no more
-than two greater than `readcount` (see `isbusy`).
-i.e. after two Requests have been written to a `Connection`, the first
-Response must be read before another Request can be written.
+- `host::String`
+- `port::String`
+- `io::T`
+- `excess::ByteView`, left over bytes read from the connection after
+   the end of a response message. These bytes are probably the start of the
+   next response message.
+- `writecount::Int` number of Request Messages that have been written.
+  `writecount` is allowed to be no more than two greater than `readcount`
+   (see `isbusy`). i.e. after two Requests have been written to a `Connection`,
+   the first Response must be read before another Request can be written.
+- `readcount::Int`, number of Response Messages that have been read.
+- `readdone::Condition`, signals that an entire Response Messages has been read.
 """
 
 mutable struct Connection{T <: IO} <: IO
@@ -74,7 +77,7 @@ end
 """
     unread!(::Connection, bytes)
 
-Push bytes back into a connection (to be returned by the next read).
+Push bytes back into a connection's `excess` buffer (to be returned by the next read).
 """
 
 function IOExtras.unread!(c::Connection, bytes::ByteView)

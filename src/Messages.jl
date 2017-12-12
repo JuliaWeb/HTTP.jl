@@ -1,21 +1,20 @@
 module Messages
 
 export Message, Request, Response, Body,
-       method, iserror, isredirect, parentcount,
+       method, iserror, isredirect, parentcount, isstream,
        header, setheader, defaultheader, setlengthheader,
        waitforheaders
 
 import ..HTTP
 
+include("Bodies.jl")
+using .Bodies
+
 using ..Pairs
-using ..IOExtras
-using ..Bodies
 using ..Parsers
 import ..Parsers
 
 import ..@debug, ..DEBUG_LEVEL
-
-import MbedTLS.SSLContext
 
 
 """
@@ -23,8 +22,13 @@ import MbedTLS.SSLContext
 
 Represents a HTTP Request Message.
 
-The `parent` field refers to the `Response` (if any) that led to this request
-(e.g. in the case of a redirect).
+- `method::String`
+- `uri::String`
+- `version::VersionNumber`
+- `headers::Vector{Pair{String,String}}`
+- `body::`[`HTTP.Body`](@ref)
+- `parent::Response`, the `Response` (if any) that led to this request
+  (e.g. in the case of a redirect).
 """
 
 mutable struct Request
@@ -53,11 +57,15 @@ mkheaders(x) = [string(k) => string(v) for (k,v) in x]
 
 Represents a HTTP Response Message.
 
-The `parent` field refers to the `Request` that yielded this `Response`.
-
-The `headerscomplete` `Condition` is raised when the `Parser` has finished
-reading the response headers. This allows the `status` and `header` fields to
-be read used asynchronously without waiting for the entire body to be parsed.
+- `version::VersionNumber`
+- `status::Int16`
+- `headers::Vector{Pair{String,String}}`
+- `body::`[`HTTP.Body`](@ref)
+- `parent::Request`, the `Request` that yielded this `Response`.
+- `headerscomplete::Condition`, raised when the `Parser` has finished
+   reading the response headers. This allows the `status` and `header` fields
+   to be read used asynchronously without waiting for the entire body to be
+   parsed.
 """
 
 mutable struct Response
@@ -80,12 +88,18 @@ const Message = Union{Request,Response}
 
 """
     iserror(::Response)
-    isredirect(::Response)
 
-Does this `Response` have an error or redirect status?
+Does this `Response` have an error status?
 """
 
 iserror(r::Response) = r.status < 200 || r.status >= 300
+
+
+"""
+    isredirect(::Response)
+
+Does this `Response` have a redirect status?
+"""
 isredirect(r::Response) = r.status in (301, 302, 307, 308)
 
 
@@ -114,7 +128,7 @@ end
 
 
 """
-    statustext(::Response)
+    statustext(::Response) -> String
 
 `String` representation of a HTTP status code. e.g. `200 => "OK"`.
 """
@@ -123,7 +137,7 @@ statustext(r::Response) = Base.get(Parsers.STATUS_CODES, r.status, "Unknown Code
 
 
 """
-   waitforheaders(::Response)
+    waitforheaders(::Response)
 
 Wait for the `Parser` (in a different task) to finish parsing the headers.
 """
@@ -132,7 +146,7 @@ waitforheaders(r::Response) = while r.status == 0; wait(r.headerscomplete) end
 
 
 """
-   header(message, key [, default=""])
+    header(::Message, key [, default=""]) -> String
 
 Get header value for `key`.
 """
@@ -141,7 +155,7 @@ lceq(a,b) = lowercase(a) == lowercase(b)
 
 
 """
-   setheader(message, key => value)
+    setheader(::Message, key => value)
 
 Set header `value` for `key`.
 """
@@ -149,7 +163,7 @@ setheader(m, v::Pair) = setbyfirst(m.headers, Pair{String,String}(v), lceq)
 
 
 """
-   defaultheader(message, key => value)
+    defaultheader(::Message, key => value)
 
 Set header `value` for `key` if it is not already set.
 """
@@ -183,18 +197,18 @@ end
 
 
 """
-   appendheader(message, key => value)
+    appendheader(::Message, key => value)
 
 Append a header value to `message.headers`.
 
 If `key` is `""` the `value` is appended to the value of the previous header.
 
-If `key` is the same as the previous header, the `vale` is appended to the
-value of the previous header with a comma delimiter.
-https://stackoverflow.com/a/24502264
+If `key` is the same as the previous header, the `vale` is [appended to the
+value of the previous header with a comma
+delimiter](https://stackoverflow.com/a/24502264)
 
-`Set-Cookie` headers are not comma-combined because cookies often contain
-internal commas. https://tools.ietf.org/html/rfc6265#section-3
+`Set-Cookie` headers are not comma-combined because cookies [often contain
+internal commas](https://tools.ietf.org/html/rfc6265#section-3).
 """
 
 function appendheader(m::Message, header::Pair{String,String})
@@ -212,7 +226,7 @@ end
 
 
 """
-    httpversion(Message)
+    httpversion(::Message)
 
 e.g. `"HTTP/1.1"`
 """
@@ -221,7 +235,7 @@ httpversion(m::Message) = "HTTP/$(m.version.major).$(m.version.minor)"
 
 
 """
-    writestartline(::IO, message)
+    writestartline(::IO, ::Message)
 
 e.g. `"GET /path HTTP/1.1\\r\\n"` or `"HTTP/1.1 200 OK\\r\\n"`
 """
@@ -238,7 +252,7 @@ end
 
 
 """
-    writeheaders(::IO, message)
+    writeheaders(::IO, ::Message)
 
 Write a line for each "name: value" pair and a trailing blank line.
 """
@@ -253,7 +267,7 @@ end
 
 
 """
-    write(::IO, message)
+    write(::IO, ::Message)
 
 Write start line, headers and body of HTTP Message.
 """
@@ -267,9 +281,9 @@ end
 
 
 """
-    readstartline(message, p::Parser)
+    readstartline!(::Message, p::Parsers.Message)
 
-Read the start-line metadata from `Parser` into a `message` struct.
+Read the start-line metadata from Parser into a `::Message` struct.
 """
 
 function readstartline!(r::Response, m::Parsers.Message)
@@ -292,54 +306,13 @@ end
 
 
 """
-    read!(io, parser)
-
-Read data from `io` into `parser` until `eof`
-or the parser finds the end of the message.
-"""
-
-function Base.read!(io::IO, p::Parser)
-
-    while !eof(io)
-        bytes = readavailable(io)
-        if isempty(bytes)
-            @debug 1 "Bug https://github.com/JuliaWeb/MbedTLS.jl/issues/113 !"
-            @assert isa(io, SSLContext)
-            @assert eof(io)
-            break
-        end
-        @assert length(bytes) > 0
-
-        n = parse!(p, bytes)
-        @assert n == length(bytes) || messagecomplete(p)
-        @assert n <= length(bytes)
-        @debug 3 "p.state = $(Parsers.ParsingStateCode(p.state))"
-
-        if messagecomplete(p)
-            excess = view(bytes, n+1:length(bytes))
-            if !isempty(excess)
-                unread!(io, excess)
-            end
-            return
-        end
-    end
-
-    if eof(io) && !waitingforeof(p)
-        throw(ParsingError(headerscomplete(p) ? Parsers.HPE_BODY_INCOMPLETE :
-                                                Parsers.HPE_HEADERS_INCOMPLETE))
-    end
-    return
-end
-
-
-"""
     Parser(::Message)
 
 Create a parser that stores parsed data into a `Message`.
 """
-function Parser(m::Message)
+function Parsers.Parser(m::Message)
     p = Parser()
-    p.onbody = x->write(m.body, x)
+    p.onbodyfragment = x->write(m.body, x)
     p.onheader = x->appendheader(m, x)
     p.onheaderscomplete = x->readstartline!(m, x)
     p.isheadresponse = (isa(m, Response) && method(m) in ("HEAD", "CONNECT"))
@@ -349,7 +322,7 @@ end
 
 
 """
-    read!(io, message)
+    read!(::IO, ::Message)
 
 Read data from `io` into a `Message` struct.
 """

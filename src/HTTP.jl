@@ -1,8 +1,6 @@
 __precompile__(true)
 module HTTP
 
-export Request, Response, FIFOBuffer
-
 using MbedTLS
 import MbedTLS.SSLContext
 const TLS = MbedTLS
@@ -11,7 +9,7 @@ import Base.==
 
 const DEBUG = false # FIXME rm
 const PARSING_DEBUG = false # FIXME rm
-const DEBUG_LEVEL = 2
+const DEBUG_LEVEL = 1
 
 if VERSION > v"0.7.0-DEV.2338"
     using Base64
@@ -43,7 +41,6 @@ include("cookies.jl")
 using .Cookies
 include("multipart.jl")
 
-include("Bodies.jl")
 include("Parsers.jl")
 import .Parsers.ParsingError
 include("Messages.jl")

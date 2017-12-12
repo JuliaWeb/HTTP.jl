@@ -7,7 +7,6 @@ import ..HTTP
 using ..Pairs.getkv
 using ..URIs
 using ..Messages
-using ..Bodies
 
 using ..Connections
 using ..IOExtras
@@ -74,9 +73,11 @@ end
 
 Execute a `Request` and return a `Response`.
 
-`parent=` optionally set a parent `Response`.
+kw args:
 
-`response_stream=` optional `IO` stream for response body.
+- `parent=` optionally set a parent `Response`.
+
+- `response_stream=` optional `IO` stream for response body.
 
 
 e.g. use a stream as a request body:
@@ -100,7 +101,7 @@ println(stat("response_file").size)
 """
 
 function request(method::String, uri, headers=[], body="";
-                 bodylength=Bodies.unknownlength,
+                 bodylength=Messages.Bodies.unknownlength,
                  parent=nothing,
                  response_stream=nothing,
                  kw...)

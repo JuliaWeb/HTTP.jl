@@ -16,7 +16,7 @@ const Headers = Vector{Pair{String,String}}
 ==(a::Request,b::Request) = (a.method         == b.method)    &&
                             (a.version        == b.version)   &&
                             (a.headers        == b.headers)   &&
-                            (HTTP.Bodies.collect!(a.body) == HTTP.Bodies.collect!(b.body))
+                            (HTTP.Messages.Bodies.collect!(a.body) == HTTP.Messages.Bodies.collect!(b.body))
 
 mutable struct Message
   name::String

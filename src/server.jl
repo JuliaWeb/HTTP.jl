@@ -173,7 +173,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             end
                             HTTP.reset!(parser)
                             request = HTTP.Request()
-                            parser.onbody = x->write(request.body, x)
+                            parser.onbodyfragment = x->write(request.body, x)
                             parser.onheader = x->HTTP.appendheader(request, x)
                         else
                             if !any(x->x[1] == "Connection", response.headers)
@@ -258,7 +258,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
     while true
         p = HTTP.Parser()
         request = HTTP.Request()
-        p.onbody = x->write(request.body, x)
+        p.onbodyfragment = x->write(request.body, x)
         p.onheader = x->HTTP.appendheader(request, x)
 
         try

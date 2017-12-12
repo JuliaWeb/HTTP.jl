@@ -4,29 +4,23 @@ export Body, isstream
 
 
 """
-    set_show_max(x)
-
-Set the maximum number of bytes to be displayed by `show(::IO, ::Body)`
-"""
-
-set_show_max(x) = global body_show_max = x
-body_show_max = 1000
-
-
-"""
     Body
 
 Represents a HTTP Message Body.
 
-If `io` is set to `notastream`, then `buffer` contains static Message Body data.
-Otherwise, `io` is a stream to/from which Message Body data is written/read.
+- `stream::IO`
+- `buffer::IOBuffer`
+- `length::Int`
+
+If `stream` is set to `notastream`, then `buffer` contains static Message Body data.
+Otherwise, `stream` is a stream to/from which Message Body data is written/read.
 In streaming mode: `length` keeps track of the number of bytes that have passed
-through `io`; and `buffer` keeps a cache of the first part of the Message Body
+through `stream`; and `buffer` keeps a cache of the first part of the Message Body
 (for display purposes). See `show` and `set_show_max`).
 """
 
 mutable struct Body
-    io::IO
+    stream::IO
     buffer::IOBuffer
     length::Int
 end
@@ -37,8 +31,8 @@ const unknownlength = -1
 
 """
     Body()
-    Body(data)
-    Body(::IO)
+    Body(data [, length])
+    Body(::IO, [, length])
 
 `Body()` creates an empty HTTP Message `Body` buffer.
 The `write(::Body)` function can be used to append data to the empty `Body`.
@@ -55,14 +49,40 @@ write(socket, b)
 `Body(data)` creates a `Body` with fixed content.
 
 `Body(::IO)` creates a streaming mode `Body`. This can be used to stream either
-Request Messages or Response Messages. `write(io, body)` reads data from
-the `body`'s stream and writes it to the `io` target. `write(body, data)` writes
-data to the `body`'s stream.
+Request Messages or Response Messages. `write(io, ::Body)` reads data from
+the `Body`'s stream and writes it to `io`. `write(::Body, data)` writes
+data from to the `Body`'s stream.
+
+If `length` is unknown, `write(io, body)` uses chunked Transfer-Encoding.
+
+e.g. Send a Request Body using chunked Transfer-Encoding:
+
+```
+io = open("bigfile.dat", "r")
+write(socket, Body(io))
+```
+
+e.g. Send a Request Body with known length:
+
+```
+io = open("bigfile.dat", "r")
+write(socket, Body(io, filesize("bigfile.dat")))
+```
+
+e.g. Send a Response Body to a stream:
+
+```
+io = open("response_file", "w")
+b = Body(io)
+while !eof(socket)
+    write(b, readavailable(socket))
+end
+```
 """
 
 Body() = Body(notastream, IOBuffer(), unknownlength)
 Body(buffer::IOBuffer, l=unknownlength) = Body(notastream, buffer, l)
-Body(io::IO, l=unknownlength) = Body(io, IOBuffer(body_show_max), l)
+Body(stream::IO, l=unknownlength) = Body(stream, IOBuffer(body_show_max), l)
 Body(::Void) = Body()
 Body(data, l=unknownlength) = Body(notastream, IOBuffer(data), l)
 
@@ -73,7 +93,7 @@ Body(data, l=unknownlength) = Body(notastream, IOBuffer(data), l)
 Is this `Body` in streaming mode?
 """
 
-isstream(b::Body) = b.io != notastream
+isstream(b::Body) = b.stream != notastream
 
 
 """
@@ -99,8 +119,8 @@ function collect!(body::Body)
         io = IOBuffer()
         write(io, body)
         body.buffer = io
-        close(body.io)
-        body.io = notastream
+        close(body.stream)
+        body.stream = notastream
     end
     @assert !isstream(body)
     return view(body.buffer.data, 1:body.buffer.size)
@@ -117,6 +137,13 @@ function Base.take!(body::Body)
     collect!(body)
     take!(body.buffer)
 end
+
+
+"""
+    write(::IO, ::Body)
+    
+Write data from `Body`'s `buffer` or `stream` to an `IO` stream,
+"""
 
 function Base.write(io::IO, body::Body)
 
@@ -140,8 +167,8 @@ function Base.write(io::IO, body::Body)
     end
 
     # Read from `body.io` until `eof`, write to `io`.
-    while !eof(body.io)
-        v = readavailable(body.io)
+    while !eof(body.stream)
+        v = readavailable(body.stream)
         if body.buffer.size < body_show_max
             write(body.buffer, v)
         end
@@ -152,8 +179,8 @@ end
 
 
 function writechunked(io::IO, body::Body)
-    while !eof(body.io)
-        v = readavailable(body.io)
+    while !eof(body.stream)
+        v = readavailable(body.stream)
         if body.buffer.size < body_show_max
             write(body.buffer, v)
         end
@@ -164,6 +191,13 @@ function writechunked(io::IO, body::Body)
 end
 
 
+"""
+    write(::Body, data)
+    
+Write data to the `Body`'s `stream`,
+or append it to the `Body`'s `buffer`.
+"""
+
 function Base.write(body::Body, v)
 
     if !isstream(body)
@@ -173,12 +207,22 @@ function Base.write(body::Body, v)
     if body.length < body_show_max
         write(body.buffer, v)
     end
-    n = write(body.io, v)
+    n = write(body.stream, v)
     body.length += n 
     return n
 end
 
-Base.close(body::Body) = if isstream(body); close(body.io) end
+Base.close(body::Body) = if isstream(body); close(body.stream) end
+
+
+"""
+    set_show_max(x)
+
+Set the maximum number of bytes to be displayed by `show(::IO, ::Body)`
+"""
+
+set_show_max(x) = global body_show_max = x
+body_show_max = 1000
 
 
 """
@@ -192,13 +236,14 @@ function Base.show(io::IO, body::Body)
     bytes = head(body)
     write(io, bytes)
     println(io, "")
-    if isstream(body) && isopen(body.io)
-        println(io, "⋮\nWaiting for $(typeof(body.io))...")
+    if isstream(body) && isopen(body.stream)
+        println(io, "⋮\nWaiting for $(typeof(body.stream))...")
     elseif length(body) > length(bytes)
         println(io, "⋮\n$(length(body))-byte body")
     elseif length(body) == unknownlength
         println(io, "⋮\nlength unknown (chunked)")
     end
 end
+
 
 end #module Bodies
