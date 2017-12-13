@@ -1,10 +1,10 @@
 module RetryRequest
 
-struct RetryLayer{T} end
-export RetryLayer
-
-import ..HTTP.RequestStack.request
 import ..HTTP
+import ..Layer, ..RequestStack.request
+
+abstract type RetryLayer{Next <: Layer} <: Layer end
+export RetryLayer
 
 
 isrecoverable(e::Base.UVError) = true

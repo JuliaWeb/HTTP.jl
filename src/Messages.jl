@@ -3,13 +3,15 @@ module Messages
 export Message, Request, Response, Body,
        method, iserror, isredirect, parentcount, isstream,
        header, setheader, defaultheader, setlengthheader,
-       waitforheaders
+       waitforheaders, wait,
+       writeandread
 
 import ..HTTP
 
 include("Bodies.jl")
 using .Bodies
 
+using ..IOExtras
 using ..Pairs
 using ..Parsers
 import ..Parsers
@@ -62,10 +64,11 @@ Represents a HTTP Response Message.
 - `headers::Vector{Pair{String,String}}`
 - `body::`[`HTTP.Body`](@ref)
 - `parent::Request`, the `Request` that yielded this `Response`.
-- `headerscomplete::Condition`, raised when the `Parser` has finished
-   reading the response headers. This allows the `status` and `header` fields
+- `complete::Condition`, raised when the `Parser` has finished
+   reading the Response Headers. This allows the `status` and `header` fields
    to be read used asynchronously without waiting for the entire body to be
    parsed.
+   `complete` is also raised when the entire Response Body has been read.
 """
 
 mutable struct Response
@@ -74,7 +77,7 @@ mutable struct Response
     headers::Vector{Pair{String,String}}
     body::Body
     parent
-    headerscomplete::Condition
+    complete::Condition
 end
 
 Response(status::Int=0, headers=[]; body=Body(), parent=nothing) =
@@ -92,7 +95,7 @@ const Message = Union{Request,Response}
 Does this `Response` have an error status?
 """
 
-iserror(r::Response) = r.status < 200 || r.status >= 300
+iserror(r::Response) = (r.status < 200 || r.status >= 300) && !isredirect(r)
 
 
 """
@@ -144,7 +147,16 @@ statustext(r::Response) = Base.get(Parsers.STATUS_CODES, r.status, "Unknown Code
 Wait for the `Parser` (in a different task) to finish parsing the headers.
 """
 
-waitforheaders(r::Response) = while r.status == 0; wait(r.headerscomplete) end
+waitforheaders(r::Response) = while r.status == 0; wait(r.complete) end
+
+
+"""
+    wait(::Response)
+
+Wait for the `Parser` (in a different task) to finish parsing the `Response`.
+"""
+
+Base.wait(r::Response) = while isopen(r.body); wait(r.complete) end
 
 
 """
@@ -294,7 +306,7 @@ function readstartline!(r::Response, m::Parsers.Message)
     if isredirect(r)
         r.body = Body()
     end
-    notify(r.headerscomplete)
+    notify(r.complete)
     yield()
     return
 end
@@ -333,6 +345,28 @@ function Base.read!(io::IO, m::Message)
     read!(io, Parser(m))
     close(m.body)
     return m
+end
+
+
+"""
+    writeandread(::IO, ::Request, ::Response)
+
+Send a `Request` and receive a `Response`.
+"""
+
+function writeandread(io::IO, req::Request, res::Response)
+
+    try                                 ;@debug 1 "write to: $io\n$req"
+        write(io, req)
+        closewrite(io)
+        read!(io, res)
+        closeread(io)                   ;@debug 2 "read from: $io\n$res"
+    catch e
+        @schedule close(io)
+        rethrow(e)
+    end
+
+    return res
 end
 
 

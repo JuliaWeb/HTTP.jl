@@ -1,15 +1,13 @@
 module CookieRequest
 
-struct CookieLayer{T} end
-export CookieLayer
-
-import ..HTTP.RequestStack.request
-
+import ..Layer, ..RequestStack.request
 using ..URIs
 using ..Cookies
 using ..Pairs: getkv, setkv
-
 import ..@debug, ..DEBUG_LEVEL
+
+abstract type CookieLayer{Next <: Layer} <: Layer end
+export CookieLayer
 
 
 const default_cookiejar = Dict{String, Set{Cookie}}()

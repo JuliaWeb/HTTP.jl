@@ -1,12 +1,12 @@
 module CanonicalizeRequest
 
-struct CanonicalizeLayer{T} end
-export CanonicalizeLayer
-
-import ..HTTP.RequestStack.request
-
+import ..Layer, ..RequestStack.request
 using ..Messages
 using ..Strings.tocameldash!
+
+abstract type CanonicalizeLayer{Next <: Layer} <: Layer end
+export CanonicalizeLayer
+
 
 canonicalizeheaders{T}(h::T) = T([tocameldash!(k) => v for (k,v) in h])
 

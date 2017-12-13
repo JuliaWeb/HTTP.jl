@@ -58,7 +58,7 @@ HTTP.escapeHTML
 
 ## Parser
 
-Source: [`Parsers.jl`](https://github.com/JuliaWeb/HTTP.jl/blob/master/src/Parsers.jl)
+Source: `Parsers.jl`
 
 The [`HTTP.Parser`](@ref) separates HTTP Message data (from a `String`,
 an `IO` stream or raw bytes) into its component parts. The parts are passed to
@@ -89,7 +89,7 @@ Messages.
 
 ## Messages
 
-Source: [`Messages.jl`](https://github.com/JuliaWeb/HTTP.jl/blob/master/src/Messages.jl)
+Source: `Messages.jl`
 
 The `Messages` module defines structs that represent [`HTTP.Messages.Request`](@ref)
 and [`HTTP.Messages.Response`](@ref) Messages.
@@ -126,8 +126,7 @@ callbacks are called to fill in the `Message` struct.
 
 The `Response` struct has a `parent` field that points to the corresponding
 `Request`. The `Request` struct as a `parent` field that points to a `Response`
-in the case of HTTP Redirect. The [`HTTP.Messages.parentcount`](@ref) function is
-used to place a limit on nested redirects.
+in the case of HTTP Redirect.
 
 
 ### Headers
@@ -160,7 +159,7 @@ known at the time the headers are sent.
 
 ### Basic Connections
 
-Source: [`Connect.jl`](https://github.com/JuliaWeb/HTTP.jl/blob/master/src/Connect.jl)
+Source: `Connect.jl`
 
 [`HTTP.Connect.getconnection`](@ref) creates a new `TCPSocket` or `SSLContext`
 for a specified `host` and `port.
@@ -173,21 +172,21 @@ not required.
 
 ### Pooled Connections
 
-Source: [`Connections.jl`](https://github.com/JuliaWeb/HTTP.jl/blob/master/src/Connections.jl)
+Source: `ConnectionPool.jl`
 
-This module wrapps the Basic Connections module above and adds support for:
+This module wrapps the Basic Connect module above and adds support for:
 - Reusing connections for multiple Request/Response Messages,
 - Interleaving Request/Response Messages. i.e. allowing a new Request to be
   sent before while the previous Response is being read.
 
-This module defines a [`HTTP.Connections.Connection`](@ref)` <: IO`
+This module defines a [`HTTP.ConnectionPool.Connection`](@ref)` <: IO`
 struct to manage Message streaming and connection reuse. Methods
 are provided for `eof`, `readavailable`, `unsafe_write` and `close`.
 This allows the `Connection` object to act as a proxy for the
 `TCPSocket` or `SSLContext` that it wraps.
 
 
-The [`HTTP.Connections.pool`](@ref) is a collection of open
+The [`HTTP.ConnectionPool.pool`](@ref) is a collection of open
 `Connection`s.  The `request` function calls `getconnection` to
 retrieve a connection from the `pool`.  When the `request` function
 has written a Request Message it calls `closewrite` to signal that
@@ -209,61 +208,164 @@ request(uri::URI, req::Request, res::Response)
 end
 ```
 
-## Request Execution
+## Request Execution Stack
 
-There are three seperate Request Execution layers, all with the same interface.
-Clients can choose which layer to import according to the features they require.
+The Request Execution Stack is separated into composable layers.
 
-### Basic Request Execution
+Each layer is defined by a nested type `Layer{Next}` where the `Next`
+parameter defines the next layer in the stack.
+The `request` method for each layer takes a `Layer{Next}` type as
+its first argument and dispatches the request to the next layer
+using `request(Next, ...)`.
 
-Source: [`SendRequest.jl`](https://github.com/JuliaWeb/HTTP.jl/blob/master/src/SendRequest.jl)
-
-The `SendRequest` module implements basic HTTP Request execution.
-
-The `request` function is split into three methods:
-- [`HTTP.SendRequest.request(method::String, uri, headers, body)`](@ref))
-- [`HTTP.SendRequest.request(::HTTP.URIs.URI,request,response)`](@ref)
-- [`HTTP.SendRequest.request(::IO, request, response)`](@ref)).
-
-These methods implement:
-- Creating a [`HTTP.Messages.Request`](@ref) for a specified method, URI,
-  headers and body,
-- Setting the mandatory `Host` and `Content-Length` (or `Transfer-Encoding`)
-  headers.
-- Getting a connection from the pool for a specified URI.
-- Writing a `Request` to the connection and reading a `Response`.
-- Raising a `StatusError` of the Response Status is not in the `2xx` range.
-
-If the `Body` of the `Request` is connected to an `IO` stream, the `request`
-function waits for the Response Headers to be recieved and schedules reading of
-the the Response Body to happen as a background task.
+The example below defines three layers and three stacks each with
+a different combination of layers.
 
 
-### Request Execution With Retry
+```julia
+abstract type Layer end
+abstract type Layer1{Next <: Layer} <: Layer end
+abstract type Layer2{Next <: Layer} <: Layer end
+abstract type Layer3 <: Layer end
 
-Source: [`RetryRequest.jl`](https://github.com/JuliaWeb/HTTP.jl/blob/master/src/RetryRequest.jl)
+request(::Type{Layer1{Next}}, data) where Next = "L1", request(Next, data)
+request(::Type{Layer2{Next}}, data) where Next = "L2", request(Next, data)
+request(::Type{Layer3}, data) = "L3", data
 
-The `RetryRequest` module implements a `request` function that accepts the
-same arguments as, and wraps,
-[`HTTP.SendRequest.request(method::String, uri, headers, body)`](@ref)).
+const stack1 = Layer1{Layer2{Layer3}}
+const stack2 = Layer2{Layer1{Layer3}}
+const stack3 = Layer1{Layer3}
+```
 
-This layer adds a retry loop that repeats the `request` in the event of a
-recoverable network error. A randomised exponentially increasing delay is
-introduced between attempts to avoid making network congestion  worse.
+```julia
+julia> request(stack1, "foo")
+("L1", ("L2", ("L3", "foo")))
 
-Methods of `isrecoverable(e)` define which exception types lead to a retry:
-`Base.UVError`, `Base.DNSError`, `Base.EOFError` and `HTTP.StatusError`
+julia> request(stack2, "bar")
+("L2", ("L1", ("L3", "bar")))
+
+julia> request(stack3, "boo")
+("L1", ("L3", "boo"))
+```
+
+This stack definition pattern gives the user flexibility in how layers are
+combined but still allows Julia to do whole-stack comiple time optimistations.
+
+e.g. the `request(stack1, "foo")` call above is optimised down to a single
+function:
+```julia
+julia> code_typed(request, (Type{stack1}, String))[1].first
+CodeInfo(:(begin
+    return (Core.tuple)("L1", (Core.tuple)("L2", (Core.tuple)("L3", data)))
+end))
+```
+
+In `HTTP.jl` the `const DefaultStack` type defines the default HTTP Request
+processing stack. This is used as the default first parameter of the `request`
+function.
+
+```julia
+const DefaultStack =
+    RedirectLayer{
+    CanonicalizeLayer{
+    BasicAuthLayer{
+    CookieLayer{
+    RetryLayer{
+    ExceptionLayer{
+    MessageLayer{
+    ConnectionLayer{ConnectionPool.Connection,
+    SocketLayer
+    }}}}}}}}
+
+request(method::String, uri, headers=[], body=""; kw...) =
+    request(HTTP.DefaultStack, method, uri, headers, body; kw...)
+```
+
+Note that the `ConnectLayer`'s optional first parameter is a connection wrapper
+type.  If it was omitted then `ConnectionLayer` would use raw socket types from
+the `Connect` module directly.
+
+
+## Redirect Layer
+
+Source: `RedirectRequest.jl`
+
+This layer adds a loop to process `3xx` redirects.
+
+
+## Canonicalize Layer
+
+Source: `CanonicalizeRequest.jl`
+
+This layer rewrites header field names to canonical Camel-Dash form.
+
+
+## Basic Authentication Layer
+
+Source: `BasicAuthRequest.jl`
+
+This layer adds an `Authorization: Basic` header using `URI.userinfo`.
+
+
+## Cookie Layer
+
+Source: `CookieRequest.jl`
+
+This layer stores cookies sent by the server and sends them back to the
+server with subsequent requests.
+
+
+## Retry Layer
+
+Source: `RetryRequest.jl`
+
+The `RetryRequest` module implements a `request` method with a retry loop that
+repeats the request in the event of a recoverable network error.
+A randomised exponentially increasing delay is introduced between attempts to
+avoid exacerbating making network congestion.
+
+Methods of `isrecoverable(e)` define which exception types lead to a retry.
+e.g. `Base.UVError`, `Base.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 (if status is `1xx` or `5xx`).
 
-### Request Execution With State
 
-Source: [`CookieRequest.jl`](https://github.com/JuliaWeb/HTTP.jl/blob/master/src/CookieRequest.jl)
+## ExceptionLayer
 
-The `CookieRequest` module implements a `request` function that accepts the
-same arguments as, and wraps the `RetryRequest.request` function.
+Source: `ExceptionRequest.jl`
 
-This layer adds processing of client-side cookies, basic authorization headers
-and `3xx` redirects.
+This layer throws a `StatusError` if the Response Status indicates an error.
+
+
+## Message Layer
+
+Source: `MessageRequest.jl`
+
+This layer:
+- Creates a [`HTTP.Messages.Request`](@ref) object for the specified
+  method, URI, headers and body,
+- Sets the mandatory `Host` and `Content-Length` (or `Transfer-Encoding`)
+  headers.
+- Creates a [`HTTP.Messages.Response`](@ref) object to hold the response. 
+
+
+## Connection Layer
+
+Source: `ConnectionRequest.jl`
+
+This layer calls [`HTTP.Connect.getconnection`](@ref)
+to get a socket from connection pool.
+
+
+## Socket Layer
+
+Source: `SocketRequest.jl`
+
+This layer calls [`HTTP.Messages.writeandread`](@ref) to send the Request
+to the socket and receive the Response.
+
+If the `Body` of the `Request` is connected to an `IO` stream, the `request`
+function waits for the Response Headers to be received, but schedules reading of
+the Response Body to happen in a background task.
 
 
 # Internal Interfaces
@@ -293,7 +395,9 @@ HTTP.Messages.defaultheader
 HTTP.Messages.setlengthheader
 HTTP.Messages.appendheader
 HTTP.Messages.waitforheaders
+Base.wait(::HTTP.Messages.Response)
 Base.write(::IO,::Union{HTTP.Messages.Request, HTTP.Messages.Response})
+HTTP.Messages.writeandread
 HTTP.Messages.readstartline!
 ```
 
@@ -310,7 +414,6 @@ HTTP.Messages.Response
 HTTP.Messages.iserror
 HTTP.Messages.isredirect
 HTTP.Messages.method
-HTTP.Messages.parentcount
 ```
 
 ### Body
@@ -338,19 +441,17 @@ HTTP.Connect.getconnection(::Type{TCPSocket},::AbstractString,::AbstractString)
 ### Connection Pooling Interface
 
 ```@docs
-HTTP.Connections.Connection
-HTTP.Connections.pool
-HTTP.Connect.getconnection(::Type{HTTP.Connections.Connection{T}},::AbstractString,::AbstractString) where T <: IO
-HTTP.IOExtras.unread!(::HTTP.Connections.Connection,::SubArray{UInt8, 1})
-HTTP.IOExtras.closewrite(::HTTP.Connections.Connection)
-HTTP.IOExtras.closeread(::HTTP.Connections.Connection)
+HTTP.ConnectionPool.Connection
+HTTP.ConnectionPool.pool
+HTTP.Connect.getconnection(::Type{HTTP.ConnectionPool.Connection{T}},::AbstractString,::AbstractString) where T <: IO
+HTTP.IOExtras.unread!(::HTTP.ConnectionPool.Connection,::SubArray{UInt8, 1})
+HTTP.IOExtras.closewrite(::HTTP.ConnectionPool.Connection)
+HTTP.IOExtras.closeread(::HTTP.ConnectionPool.Connection)
 ```
 
 
 ## Low Level Request Interface
 
 ```@docs
-HTTP.SendRequest.request(::String,::Any,::Any,::Any)
-HTTP.SendRequest.request(::HTTP.URIs.URI,::HTTP.Messages.Request,::HTTP.Messages.Response)
-HTTP.SendRequest.request(::IO,::HTTP.Messages.Request,::HTTP.Messages.Response)
+HTTP.RequestStack.request
 ```

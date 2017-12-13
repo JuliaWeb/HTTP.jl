@@ -1,12 +1,11 @@
 module ExceptionRequest
 
-struct ExceptionLayer{T} end
+import ..Layer, ..RequestStack.request
+using ..Messages
+
+abstract type ExceptionLayer{Next <: Layer} <: Layer end
 export ExceptionLayer
 export StatusError
-
-import ..HTTP.RequestStack.request
-
-using ..Messages
 
 
 struct StatusError <: Exception
@@ -19,7 +18,7 @@ function request(::Type{ExceptionLayer{Next}}, a...; kw...) where Next
 
     res = request(Next, a...; kw...)
 
-    if iserror(res) && !isredirect(res)
+    if iserror(res)
         throw(StatusError(res.status, res))
     end
 

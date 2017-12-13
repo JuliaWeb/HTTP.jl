@@ -22,7 +22,8 @@ else
     import Dates
 end
 
-#abstract type RequestLayer{Next} end
+
+abstract type Layer end
 
 module RequestStack
     import ..HTTP
@@ -54,10 +55,8 @@ import .Parsers.ParsingError
 include("Messages.jl")
 
 include("Connect.jl")
-include("Connections.jl")
+include("ConnectionPool.jl")
 
-include("SendRequest.jl")
-using .SendRequest
 
 include("types.jl")
 include("client.jl")
@@ -75,6 +74,12 @@ function __init__()
 end
 
 
+include("SocketRequest.jl")
+using .SocketRequest
+include("ConnectionRequest.jl")
+using .ConnectionRequest
+include("MessageRequest.jl")
+using .MessageRequest
 include("ExceptionRequest.jl")
 using .ExceptionRequest
 import .ExceptionRequest.StatusError
@@ -92,16 +97,15 @@ using .RedirectRequest
 
 const DefaultStack =
     RedirectLayer{
-    CanonicalizeLayer{
+    #CanonicalizeLayer{
     BasicAuthLayer{
     CookieLayer{
     RetryLayer{
     ExceptionLayer{
     MessageLayer{
-    ConnectLayer{
-    #Connect.Connection
-    Connections.Connection
-    }}}}}}}}
+    ConnectionLayer{ConnectionPool.Connection,
+    SocketLayer
+    }}}}}}}#}
 
 
 

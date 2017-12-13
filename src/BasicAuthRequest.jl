@@ -1,14 +1,12 @@
 module BasicAuthRequest
 
-struct BasicAuthLayer{T} end
-export BasicAuthLayer
-
-import ..HTTP.RequestStack.request
-
+import ..Layer, ..RequestStack.request
 using ..URIs
 using ..Pairs: getkv, setkv
-
 import ..@debug, ..DEBUG_LEVEL
+
+abstract type BasicAuthLayer{Next <: Layer} <: Layer end
+export BasicAuthLayer
 
 
 function request(::Type{BasicAuthLayer{Next}},

@@ -84,7 +84,7 @@ Body() = Body(notastream, IOBuffer(), unknownlength)
 Body(buffer::IOBuffer, l=unknownlength) = Body(notastream, buffer, l)
 Body(stream::IO, l=unknownlength) = Body(stream, IOBuffer(body_show_max), l)
 Body(::Void) = Body()
-Body(data, l=unknownlength) = Body(notastream, IOBuffer(data), l)
+Body(data, l=unknownlength) = Body(IOBuffer(data), l)
 
 
 """
@@ -212,7 +212,17 @@ function Base.write(body::Body, v)
     return n
 end
 
-Base.close(body::Body) = if isstream(body); close(body.stream) end
+
+function Base.close(body::Body) 
+    if isstream(body)
+        close(body.stream)
+    else
+        body.buffer.writable = false
+    end
+end
+
+Base.isopen(body::Body) =
+    isstream(body) ? isopen(body.stream) : iswriteable(body.buffer)
 
 
 """

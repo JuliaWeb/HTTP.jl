@@ -2,9 +2,6 @@ module Connect
 
 export getconnection
 
-const Connection = Union
-
-
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
 import ..@debug, ..DEBUG_LEVEL

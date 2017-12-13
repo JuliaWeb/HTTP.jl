@@ -1,16 +1,14 @@
 module RedirectRequest
 
-struct RedirectLayer{T} end
-export RedirectLayer
-
-import ..HTTP.RequestStack.request
-
+import ..Layer, ..RequestStack.request
 using ..URIs
 using ..Messages
 using ..Pairs: setkv
 using ..Strings.tocameldash!
-
 import ..@debug, ..DEBUG_LEVEL
+
+abstract type RedirectLayer{Next <: Layer} <: Layer end
+export RedirectLayer
 
 
 function request(::Type{RedirectLayer{Next}},

@@ -1,4 +1,4 @@
-module Connections
+module ConnectionPool
 
 export getconnection
 
@@ -193,4 +193,4 @@ peerport(c::Connection) = !isopen(c.io) ? 0 :
 tcpstatus(c::Connection) = Base.uv_status_string(tcpsocket(c))
 
 
-end # module Connections
+end # module ConnectionPool
