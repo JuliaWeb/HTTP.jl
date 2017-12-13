@@ -1,12 +1,13 @@
 module ConnectionPool
 
-export getconnection
+export getconnection, getparser
 
 using ..IOExtras
 
 import ..@debug, ..DEBUG_LEVEL
 import MbedTLS.SSLContext
-import ..Connect.getconnection
+import ..Connect: getconnection, getparser
+import ..Parsers.Parser
 
 
 const ByteView = typeof(view(UInt8[], 1:0))
@@ -19,7 +20,7 @@ A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 
 - `host::String`
 - `port::String`
-- `io::T`
+- `io::T`, the `TCPSocket` or `SSLContext.
 - `excess::ByteView`, left over bytes read from the connection after
    the end of a response message. These bytes are probably the start of the
    next response message.
@@ -29,6 +30,7 @@ A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
    the first Response must be read before another Request can be written.
 - `readcount::Int`, number of Response Messages that have been read.
 - `readdone::Condition`, signals that an entire Response Messages has been read.
+- -`parser::Parser`, reuse a `Parser` when this `Connection` is reused.
 """
 
 mutable struct Connection{T <: IO} <: IO
@@ -39,12 +41,13 @@ mutable struct Connection{T <: IO} <: IO
     writecount::Int
     readcount::Int
     readdone::Condition
+    parser::Parser
 end
 
 isbusy(c::Connection) = c.writecount - c.readcount > 1
 
 Connection{T}(host::AbstractString, port::AbstractString, io::T) where T <: IO =
-    Connection{T}(host, port, io, view(UInt8[], 1:0), 0, 0, Condition())
+    Connection{T}(host, port, io, view(UInt8[], 1:0), 0, 0, Condition(), Parser())
 
 const noconnection = Connection{TCPSocket}("","",TCPSocket())
 
@@ -166,6 +169,9 @@ function getconnection(::Type{Connection{T}},
         unlock(poollock)
     end
 end
+
+
+getparser(c::Connection) = c.parser
 
 
 function Base.show(io::IO, c::Connection)

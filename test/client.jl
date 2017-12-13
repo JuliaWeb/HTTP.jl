@@ -10,7 +10,7 @@ for sch in ("http", "https")
     @test HTTP.status(HTTP.get("$sch://httpbin.org/ip")) == 200
     @test HTTP.status(HTTP.head("$sch://httpbin.org/ip")) == 200
     @test HTTP.status(HTTP.options("$sch://httpbin.org/ip")) == 200
-    @test HTTP.status(HTTP.post("$sch://httpbin.org/ip"; statusraise=false)) == 405
+    @test HTTP.status(HTTP.post("$sch://httpbin.org/ip"; statusexception=false)) == 405
     @test HTTP.status(HTTP.post("$sch://httpbin.org/post")) == 200
     @test HTTP.status(HTTP.put("$sch://httpbin.org/put")) == 200
     @test HTTP.status(HTTP.delete("$sch://httpbin.org/delete")) == 200
@@ -29,10 +29,10 @@ for sch in ("http", "https")
 
     println("cookie requests")
     empty!(HTTP.CookieRequest.default_cookiejar)
-    r = HTTP.get("$sch://httpbin.org/cookies")
+    r = HTTP.get("$sch://httpbin.org/cookies", cookies=true)
     body = String(take!(r))
     @test body == "{\n  \"cookies\": {}\n}\n"
-    r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor&foo=bar")
+    r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor&foo=bar", cookies=true)
     @test HTTP.status(r) == 200
     body = String(take!(r))
     @test body == "{\n  \"cookies\": {\n    \"foo\": \"bar\", \n    \"hey\": \"sailor\"\n  }\n}\n"

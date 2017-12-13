@@ -1391,7 +1391,7 @@ const responses = Message[
           if t > 0
               @sync begin 
                   r = Request()
-                  p = Messages.Parser(r)
+                  p = Messages.connectparser(r, Parser())
                   bytes = Vector{UInt8}(req.raw)
                   sz = t
                   for i in 1:sz:length(bytes)
@@ -1601,7 +1601,7 @@ const responses = Message[
           try
               if t > 0
                   r = Response()
-                  p = Messages.Parser(r)
+                  p = Messages.connectparser(r, Parser())
                   bytes = Vector{UInt8}(resp.raw)
                   sz = t
                   for i in 1:sz:length(bytes)
@@ -1709,7 +1709,7 @@ const responses = Message[
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "1844674407370955160" * "\r\n\r\n"
       r = Response()
-      p = Messages.Parser(r)
+      p = Messages.connectparser(r, Parser())
       parse!(p, respstr)
       @test r.status == 200
       @test r.headers == ["Content-Length"=>"1844674407370955160"]
@@ -1724,7 +1724,7 @@ const responses = Message[
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFE" * "\r\n..."
       r = Response()
-      p = Messages.Parser(r)
+      p = Messages.connectparser(r, Parser())
       parse!(p, respstr)
       @test r.status == 200
       @test r.headers == ["Transfer-Encoding"=>"chunked"]
@@ -1740,7 +1740,7 @@ const responses = Message[
           HTTP.Parsers.reset!(p)
           reqstr = "POST / HTTP/1.0\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
           r = Request()
-          p = Messages.Parser(r)
+          p = Messages.connectparser(r, Parser())
           parse!(p, reqstr)
           @test headerscomplete(p)
           @test !messagecomplete(p)
@@ -1758,7 +1758,7 @@ const responses = Message[
           HTTP.Parsers.reset!(p)
           respstr = "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
           r = Response()
-          p = Messages.Parser(r)
+          p = Messages.connectparser(r, Parser())
           parse!(p, respstr)
           @test headerscomplete(p)
           @test !messagecomplete(p)
@@ -1774,7 +1774,7 @@ const responses = Message[
 
       reqstr = requests[1].raw * requests[2].raw
       r = Request()
-      p = Messages.Parser(r)
+      p = Messages.connectparser(r, Parser())
       n = parse!(p, reqstr)
       @test headerscomplete(p)
       @test messagecomplete(p)
@@ -1790,7 +1790,7 @@ const responses = Message[
       @test r.headers == ["Test" => "Düsseldorf"]
 
       r = Response()
-      p = Messages.Parser(r)
+      p = Messages.connectparser(r, Parser())
       parse!(p, "GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba")
       @test String(take!(r.body)) == "fooba"
 

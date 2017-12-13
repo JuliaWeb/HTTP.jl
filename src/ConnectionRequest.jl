@@ -3,12 +3,15 @@ module ConnectionRequest
 import ..Layer, ..RequestStack.request
 using ..URIs
 using ..Messages
-using ..Connect
+using ..ConnectionPool
 using MbedTLS.SSLContext
 
 
-abstract type ConnectionLayer{Connection, Next <: Layer} <: Layer end
-export ConnectionLayer
+abstract type ConnectionPoolLayer{Next <: Layer} <: Layer end
+export ConnectionPoolLayer
+
+
+sockettype(uri::URI) = uri.scheme == "https" ? SSLContext : TCPSocket
 
 
 """
@@ -17,20 +20,26 @@ export ConnectionLayer
 Get a `Connection` for a `URI`, send a `Request` and fill in a `Response`.
 """
 
-function request(::Type{ConnectionLayer{Connection, Next}},
-                 uri::URI, req::Request, res::Response;
-                 kw...) where Next where Connection
+function request(::Type{ConnectionPoolLayer{Next}},
+                 uri::URI, req::Request, res::Response; kw...) where Next
 
-    Socket = uri.scheme == "https" ? SSLContext : TCPSocket
-
-    io = getconnection(Connection{Socket}, uri.host, uri.port; kw...)
+    Connection = ConnectionPool.Connection{sockettype(uri)}
+    io = getconnection(Connection, uri.host, uri.port; kw...)
 
     return request(Next, io, req, res)
 end
 
-# If no `Connection` wrapper type is provided, `Union` acts as a no-op.
-request(::Type{ConnectionLayer{Next}}, a...; kw...) where Next <: Layer = 
-    request(ConnectionLayer{Union, Next}, a...; kw...)
+
+abstract type ConnectLayer{Next <: Layer} <: Layer end
+export ConnectLayer
+
+function request(::Type{ConnectLayer{Next}},
+                 uri::URI, req::Request, res::Response; kw...) where Next
+
+    io = getconnection(sockettype(uri), uri.host, uri.port; kw...)
+
+    return request(Next, io, req, res)
+end
 
 
 end # module ConnectionRequest

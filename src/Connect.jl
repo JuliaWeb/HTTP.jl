@@ -1,9 +1,10 @@
 module Connect
 
-export getconnection
+export getconnection, getparser
 
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
+import ..Parsers.Parser
 import ..@debug, ..DEBUG_LEVEL
 
 
@@ -37,6 +38,8 @@ function getconnection(::Type{SSLContext}, host::AbstractString,
     handshake!(io)
     return io
 end
+
+getparser(::IO) = Parser()
 
 
 end # module Connect

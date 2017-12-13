@@ -24,7 +24,7 @@
 
 module Parsers
 
-export Parser, parse!,
+export Parser, parse!, reset!,
        messagecomplete, headerscomplete, waitingforeof,
        ParsingError, ParsingErrorCode
 
@@ -134,7 +134,7 @@ end
 Create an unconfigured `Parser`.
 """
 
-Parser() = Parser(false, x->nothing, x->nothing, ()->nothing,
+Parser() = Parser(false, x->nothing, x->nothing, x->nothing,
                   s_start_req_or_res, 0, 0, 0, 0,
                   IOBuffer(), IOBuffer(), Message())
 
@@ -271,7 +271,7 @@ macro errorifstrict(cond)
 end
 
 macro passert(cond)
-    enable_passert ? esc(:(@assert($cond))) : :()
+    enable_passert ? esc(:(@assert $cond)) : :()
 end
 
 macro methodstate(meth, i, char)
@@ -781,7 +781,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
                         parser.header_state = h_general
                     end
                 else
-                    error("Unknown header_state")
+                    @err HPE_INVALID_INTERNAL_STATE
                 end
                 p += 1
             end
@@ -874,7 +874,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
                     p = crlf == 0 ? len : p + crlf - 2
 
                 elseif h == h_connection || h == h_transfer_encoding
-                    error("Shouldn't get here.")
+                    @err HPE_INVALID_INTERNAL_STATE
                 elseif h == h_content_length
                     t = UInt64(0)
                     if ch == ' '

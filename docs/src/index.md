@@ -273,17 +273,14 @@ const DefaultStack =
     RetryLayer{
     ExceptionLayer{
     MessageLayer{
-    ConnectionLayer{ConnectionPool.Connection,
+    #ConnectLayer{
+    ConnectionPoolLayer{
     SocketLayer
     }}}}}}}}
 
 request(method::String, uri, headers=[], body=""; kw...) =
     request(HTTP.DefaultStack, method, uri, headers, body; kw...)
 ```
-
-Note that the `ConnectLayer`'s optional first parameter is a connection wrapper
-type.  If it was omitted then `ConnectionLayer` would use raw socket types from
-the `Connect` module directly.
 
 
 ## Redirect Layer
@@ -348,7 +345,17 @@ This layer:
 - Creates a [`HTTP.Messages.Response`](@ref) object to hold the response. 
 
 
-## Connection Layer
+## Connect Layer
+
+Source: `ConnectionRequest.jl`
+
+Alternative to Connection Pool Layer below.
+
+This layer calls [`HTTP.Connect.getconnection`](@ref)
+to get a non-pooled socket.
+
+
+## Connection Pool Layer
 
 Source: `ConnectionRequest.jl`
 

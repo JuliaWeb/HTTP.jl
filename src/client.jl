@@ -64,7 +64,7 @@ function request(client::Client, method, uri::URI;
     h = [k => v for (k,v) in headers]
 
     if stream
-        push!(args, :response_stream => BufferStream())
+        push!(args, (:response_stream, BufferStream()))
     end
 
     if isa(body, Dict)

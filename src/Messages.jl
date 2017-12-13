@@ -15,6 +15,7 @@ using ..IOExtras
 using ..Pairs
 using ..Parsers
 import ..Parsers
+import ..ConnectionPool
 
 import ..@debug, ..DEBUG_LEVEL
 
@@ -76,12 +77,12 @@ mutable struct Response
     status::Int16
     headers::Vector{Pair{String,String}}
     body::Body
-    parent
     complete::Condition
+    parent
 end
 
 Response(status::Int=0, headers=[]; body=Body(), parent=nothing) =
-    Response(v"1.1", status, headers, body, parent, Condition())
+    Response(v"1.1", status, headers, body, Condition(), parent)
 
 Response(bytes) = read!(IOBuffer(bytes), Response())
 Base.parse(::Type{Response}, str::AbstractString) = Response(str)
@@ -320,12 +321,12 @@ end
 
 
 """
-    Parser(::Message)
+    connectparser(::Message, ::Parser)
 
-Create a parser that stores parsed data into a `Message`.
+Configure a `Parser` to store parsed data into this `Message`.
 """
-function Parsers.Parser(m::Message)
-    p = Parser()
+function connectparser(m::Message, p::Parser)
+    reset!(p) 
     p.onbodyfragment = x->write(m.body, x)
     p.onheader = x->appendheader(m, x)
     p.onheaderscomplete = x->readstartline!(m, x)
@@ -342,7 +343,9 @@ Read data from `io` into a `Message` struct.
 """
 
 function Base.read!(io::IO, m::Message)
-    read!(io, Parser(m))
+    parser = ConnectionPool.getparser(io)
+    connectparser(m, parser)
+    read!(io, parser)
     close(m.body)
     return m
 end

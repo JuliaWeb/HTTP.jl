@@ -26,8 +26,11 @@ end
 abstract type Layer end
 
 module RequestStack
+
     import ..HTTP
-    request(m::String, a...; kw...) = request(HTTP.DefaultStack, m, a...; kw...)
+    #request(m::String, a...; kw...) = request(HTTP.DefaultStack, m, a...; kw...)
+    request(m::String, a...; kw...) = request(HTTP.stack(;kw...), m, a...; kw...)
+
 end
 
 #FIXME
@@ -52,11 +55,9 @@ include("multipart.jl")
 
 include("Parsers.jl")
 import .Parsers.ParsingError
-include("Messages.jl")
-
 include("Connect.jl")
 include("ConnectionPool.jl")
-
+include("Messages.jl")
 
 include("types.jl")
 include("client.jl")
@@ -68,6 +69,8 @@ include("server.jl")
 using .Nitrogen
 
 #include("precompile.jl")
+
+
 
 function __init__()
     global const DEFAULT_CLIENT = Client()
@@ -94,21 +97,37 @@ using .CanonicalizeRequest
 include("RedirectRequest.jl")
 using .RedirectRequest
 
+const NoLayer = Union
 
-const DefaultStack =
-    RedirectLayer{
-    #CanonicalizeLayer{
-    BasicAuthLayer{
-    CookieLayer{
-    RetryLayer{
-    ExceptionLayer{
-    MessageLayer{
-    ConnectionLayer{ConnectionPool.Connection,
-    SocketLayer
-    }}}}}}}#}
+function stack(;redirect=true,
+                basicauthorization=false,
+                cookies=false,
+                retry=true,
+                statusexception=true,
+                connectionpool=true,
+                kw...)
 
+    (redirect           ? RedirectLayer       : NoLayer){
+    (basicauthorization ? BasicAuthLayer      : NoLayer){
+    (cookies            ? CookieLayer         : NoLayer){
+    (retry              ? RetryLayer          : NoLayer){
+    (statusexception    ? ExceptionLayer      : NoLayer){
+                          MessageLayer{
+    (connectionpool     ? ConnectionPoolLayer : ConnectLayer){
+                          SocketLayer
+    }}}}}}}
+end
 
+const MinimalStack = MessageLayer{ConnectLayer{SocketLayer}}
+const DefaultStack = stack()
 
+function _precompile_()
+    ccall(:jl_generating_output, Cint, ()) == 1 || return nothing
+
+    @assert precompile(HTTP.RequestStack.request,
+        (Type{DefaultStack}, String, String, Vector{Pair{String,String}}, String))
+end
+_precompile_()
 
 end # module
 #=
