@@ -162,7 +162,7 @@ known at the time the headers are sent.
 Source: `Connect.jl`
 
 [`HTTP.Connect.getconnection`](@ref) creates a new `TCPSocket` or `SSLContext`
-for a specified `host` and `port.
+for a specified `host` and `port`.
 
 No connection streaming, pooling or reuse is implemented in this module.
 However, the `getconnection` interface is the same as the one used by the
@@ -322,7 +322,7 @@ Source: `RetryRequest.jl`
 The `RetryRequest` module implements a `request` method with a retry loop that
 repeats the request in the event of a recoverable network error.
 A randomised exponentially increasing delay is introduced between attempts to
-avoid exacerbating making network congestion.
+avoid exacerbating network congestion.
 
 Methods of `isrecoverable(e)` define which exception types lead to a retry.
 e.g. `Base.UVError`, `Base.DNSError`, `Base.EOFError` and `HTTP.StatusError`
