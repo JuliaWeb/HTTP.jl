@@ -162,7 +162,7 @@ Base.wait(r::Response) = while isopen(r.body); wait(r.complete) end
 """
     header(::Message, key [, default=""]) -> String
 
-Get header value for `key`.
+Get header value for `key` (case-insensitive).
 """
 header(m, k::String, d::String="") = getbyfirst(m.headers, k, k => d, lceq)[2]
 lceq(a,b) = lowercase(a) == lowercase(b)
@@ -171,7 +171,7 @@ lceq(a,b) = lowercase(a) == lowercase(b)
 """
     setheader(::Message, key => value)
 
-Set header `value` for `key`.
+Set header `value` for `key` (case-insensitive).
 """
 setheader(m, v::Pair) = setbyfirst(m.headers, Pair{String,String}(v), lceq)
 

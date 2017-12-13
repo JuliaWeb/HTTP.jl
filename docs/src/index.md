@@ -125,7 +125,7 @@ with data from the `IO` stream. As the Parser processes the data the
 callbacks are called to fill in the `Message` struct.
 
 The `Response` struct has a `parent` field that points to the corresponding
-`Request`. The `Request` struct as a `parent` field that points to a `Response`
+`Request`. The `Request` struct has a `parent` field that points to a `Response`
 in the case of HTTP Redirect.
 
 
@@ -137,7 +137,7 @@ order.
 
 Header values can be accessed by name using 
 [`HTTP.Messages.header`](@ref) and
-[`HTTP.Messages.setheader`](@ref).
+[`HTTP.Messages.setheader`](@ref) (case-insensitive).
 
 The [`HTTP.Messages.appendheader`](@ref) function handles combining
 multi-line values, repeated header fields and special handling of
