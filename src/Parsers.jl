@@ -154,15 +154,18 @@ Throws `ParsingError` if input is invalid.
 
 function Base.read!(io::IO, p::Parser; unread=IOExtras.unread!)
 
-    while !messagecomplete(p) && !eof(io)
+    while !eof(io)
         bytes = readavailable(io)
         n = parse!(p, bytes)
         if n < length(bytes)
             unread(io, view(bytes, n+1:length(bytes)))
         end
+        if messagecomplete(p)
+            return
+        end
     end
 
-    if eof(io) && !waitingforeof(p)
+    if !waitingforeof(p)
         throw(ParsingError(headerscomplete(p) ? HPE_BODY_INCOMPLETE :
                                                 HPE_HEADERS_INCOMPLETE))
     end
