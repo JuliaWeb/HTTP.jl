@@ -20,7 +20,7 @@ macro log(stmt)
     return esc(:(verbose && (write(logger, "[HTTP - $(rpad(Dates.now(), 23, ' '))]: $($stmt)\n"); flush(logger))))
 end
 
-macro catch(etype, expr)
+macro catcherr(etype, expr)
     esc(quote
         try
             $expr
