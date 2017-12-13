@@ -154,26 +154,15 @@ Throws `ParsingError` if input is invalid.
 
 function Base.read!(io::IO, p::Parser; unread=IOExtras.unread!)
 
-    while !eof(io)
+    while !messagecomplete(p) && !eof(io)
         bytes = readavailable(io)
-        if isempty(bytes)
-            @debug 1 "Bug https://github.com/JuliaWeb/MbedTLS.jl/issues/113 !"
-            @assert isa(io, SSLContext)
-            @assert eof(io)
-            break
-        end
-
         n = parse!(p, bytes)
-
-        if messagecomplete(p)
-            if n < length(bytes)
-                unread(io, view(bytes, n+1:length(bytes)))
-            end
-            return
+        if n < length(bytes)
+            unread(io, view(bytes, n+1:length(bytes)))
         end
     end
 
-    if !waitingforeof(p)
+    if eof(io) && !waitingforeof(p)
         throw(ParsingError(headerscomplete(p) ? HPE_BODY_INCOMPLETE :
                                                 HPE_HEADERS_INCOMPLETE))
     end
