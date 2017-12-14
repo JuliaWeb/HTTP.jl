@@ -29,6 +29,7 @@ for sch in ("http", "https")
 
     println("cookie requests")
     empty!(HTTP.CookieRequest.default_cookiejar)
+    empty!(HTTP.DEFAULT_CLIENT.cookies)
     r = HTTP.get("$sch://httpbin.org/cookies", cookies=true)
     body = String(take!(r))
     @test body == "{\n  \"cookies\": {}\n}\n"
@@ -168,9 +169,10 @@ for sch in ("http", "https")
 
     # custom client & other high-level entries
     println("high-level client request methods")
+    cli = HTTP.Client()
+#=
     buf = IOBuffer()
     cli = HTTP.Client(buf)
-#= FIXME
     HTTP.get(cli, "$sch://httpbin.org/ip")
     seekstart(buf)
     @test length(String(take!(buf))) > 0

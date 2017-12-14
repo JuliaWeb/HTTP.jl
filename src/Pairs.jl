@@ -7,7 +7,7 @@ export setbyfirst, getbyfirst, setkv, getkv
     setbyfirst(collection, item) -> item
 
 Set `item` in a `collection`.
-If `first() of an exisiting matches `first(item)` it is replaced.
+If `first() of an exisiting item matches `first(item)` it is replaced.
 Otherwise the new `item` is inserted at the end of the `collection`.
 """
 
@@ -31,6 +31,22 @@ Get `item` from collection where `first(item)` matches `key`.
 function getbyfirst(c, k, default=nothing, eq = ==)
     i = findfirst(x->eq(first(x), k), c)
     return i > 0 ? c[i] : default
+end
+
+
+"""
+    defaultbyfirst(collection, item)
+
+If `first(item)` does not match match `first()` of any existing items,
+insert the new `item` at the end of the `collection`.
+"""
+
+function defaultbyfirst(c, item, eq = ==)
+    k = first(item)
+    if (i = findfirst(x->eq(first(x), k), c)) == 0
+        push!(c, item)
+    end
+    return
 end
 
 

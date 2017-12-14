@@ -37,7 +37,7 @@ export Server, ServerOptions, serve
  # buffer re-use for server/client wire-reading
  # easter egg (response 418)
 mutable struct ServerOptions
-    tlsconfig::HTTP.TLS.SSLConfig
+    tlsconfig::HTTP.MbedTLS.SSLConfig
     readtimeout::Float64
     ratelimit::Rational{Int}
     support100continue::Bool
@@ -45,7 +45,7 @@ mutable struct ServerOptions
     logbody::Bool
 end
 
-ServerOptions(; tlsconfig::HTTP.TLS.SSLConfig=HTTP.TLS.SSLConfig(true),
+ServerOptions(; tlsconfig::HTTP.MbedTLS.SSLConfig=HTTP.MbedTLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
                 ratelimit::Rational{Int64}=Int64(5)//Int64(1),
                 support100continue::Bool=true,
@@ -64,9 +64,9 @@ kill the julia process, interrupt (ctrl/cmd+c) if main task, or send the kill si
 `put!(server.in, HTTP.KILL)`.
 
 Supported keyword arguments include:
-  * `cert`: if https, the cert file to use, as passed to `HTTP.TLS.SSLConfig(cert, key)`
-  * `key`: if https, the key file to use, as passed to `HTTP.TLS.SSLConfig(cert, key)`
-  * `tlsconfig`: pass in an already-constructed `HTTP.TLS.SSLConfig` instance
+  * `cert`: if https, the cert file to use, as passed to `HTTP.MbedTLS.SSLConfig(cert, key)`
+  * `key`: if https, the key file to use, as passed to `HTTP.MbedTLS.SSLConfig(cert, key)`
+  * `tlsconfig`: pass in an already-constructed `HTTP.MbedTLS.SSLConfig` instance
   * `readtimeout`: how long a client connection will be left open without receiving any bytes
   * `ratelimit`: a `Rational{Int}` of the form `5//1` indicating how many `messages//second` should be allowed per client IP address; requests exceeding the rate limit will be dropped
   * `support100continue`: a `Bool` indicating whether `Expect: 100-continue` headers should be supported for delayed request body sending; default = `true`
@@ -216,10 +216,10 @@ end
 initTLS!(::Type{HTTP.http}, tcp, tlsconfig) = return tcp
 function initTLS!(::Type{HTTP.https}, tcp, tlsconfig)
     try
-        tls = HTTP.TLS.SSLContext()
-        HTTP.TLS.setup!(tls, tlsconfig)
-        HTTP.TLS.associate!(tls, tcp)
-        HTTP.TLS.handshake!(tls)
+        tls = HTTP.MbedTLS.SSLContext()
+        HTTP.MbedTLS.setup!(tls, tlsconfig)
+        HTTP.MbedTLS.associate!(tls, tcp)
+        HTTP.MbedTLS.handshake!(tls)
         return tls
     catch e
         close(tcp)
@@ -278,7 +278,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
                 rl.allowance -= 1.0
                 HTTP.@log "new tcp connection accepted, reading request..."
                 let server=server, p=p, request=request, i=i, tcp=tcp, rl=rl
-                    @async process!(server, p, request, i, initTLS!(T, tcp, server.options.tlsconfig::HTTP.TLS.SSLConfig), rl, Ref{Float64}(time()), verbose)
+                    @async process!(server, p, request, i, initTLS!(T, tcp, server.options.tlsconfig::HTTP.MbedTLS.SSLConfig), rl, Ref{Float64}(time()), verbose)
                 end
                 i += 1
             end
@@ -310,7 +310,7 @@ function Server(handler::H=HTTP.HandlerFunction((req, rep) -> HTTP.Response("Hel
                key::String="",
                args...) where {H <: HTTP.Handler}
     if cert != "" && key != ""
-        server = Server{HTTP.https, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; tlsconfig=HTTP.TLS.SSLConfig(cert, key), args...))
+        server = Server{HTTP.https, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; tlsconfig=HTTP.MbedTLS.SSLConfig(cert, key), args...))
     else
         server = Server{HTTP.http, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; args...))
     end

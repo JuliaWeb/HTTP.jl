@@ -1,5 +1,6 @@
 function _precompile_()
     ccall(:jl_generating_output, Cint, ()) == 1 || return nothing
+#=
     @assert precompile(HTTP.URIs.parseurlchar, (UInt8, Char, Bool,))
     @assert precompile(HTTP.status, (HTTP.Response,))
     @assert precompile(HTTP.Cookies.pathmatch, (HTTP.Cookies.Cookie, String,))
@@ -198,5 +199,6 @@ function _precompile_()
         @assert precompile(HTTP.body, (Base.GenericIOBuffer{Array{UInt8, 1}}, HTTP.Request, HTTP.RequestOptions,))
         @assert precompile(HTTP.startline, (Base.GenericIOBuffer{Array{UInt8, 1}}, HTTP.Request,))
     end
+=#
 end
 _precompile_()

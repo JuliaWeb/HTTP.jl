@@ -1,10 +1,10 @@
-using .Parsers
+using .Pairs
+
 
 """
-    HTTP.Client([logger::IO]; args...)
+    HTTP.Client(;args...)
 
 A type to facilitate connections to remote hosts, send HTTP requests, and manage state between requests.
-Takes an optional `logger` IO argument where client activity is recorded (defaults to `STDOUT`).
 Additional keyword arguments can be passed that will get transmitted with each HTTP request:
 
   * `chunksize::Int`: if a request body is larger than `chunksize`, the "chunked-transfer" http mechanism will be used and chunks will be sent no larger than `chunksize`; default = `nothing`
@@ -24,29 +24,12 @@ Additional keyword arguments can be passed that will get transmitted with each H
 mutable struct Client
     # cookies are stored in-memory per host and automatically sent when appropriate
     cookies::Dict{String, Set{Cookie}}
-    # buffer::Vector{UInt8} #TODO: create a fixed size buffer for reading bytes off the wire and having http_parser use, this should keep allocations down, need to make sure MbedTLS supports blocking readbytes!
-    logger::Option{IO}
     # global request settings
-    options::RequestOptions
-    connectioncount::Int
+    options::Vector{Tuple{Symbol,Any}}
 end
 
-Client(logger::Option{IO}, options::RequestOptions) = Client(
-                                                     Dict{String, Set{Cookie}}(),
-                                                     logger, options, 1)
-
-# this is where we provide all the default request options
-const DEFAULT_OPTIONS = :((nothing, true, Inf, Inf, nothing, 5, true, false, 3, true, true, false, true, true))
-
-@eval begin
-    Client(logger::Option{IO}; args...) = Client(logger, RequestOptions($(DEFAULT_OPTIONS)...; args...))
-    Client(; args...) = Client(nothing, RequestOptions($(DEFAULT_OPTIONS)...; args...))
-end
-
-function setclient!(client::Client)
-    global const DEFAULT_CLIENT = client
-end
-
+Client(;options...) = Client(Dict{String, Set{Cookie}}(), options)
+global const DEFAULT_CLIENT = Client()
 
 # build Request
 function request(client::Client, method, uri::URI;
@@ -56,22 +39,79 @@ function request(client::Client, method, uri::URI;
                  stream::Bool=false,
                  verbose::Bool=false,
                  args...)
-    #opts = RequestOptions(; args...)
-    #not(client.logger) && (client.logger = STDOUT)
-    #client.logger != STDOUT && (verbose = true)
+
+    # Add default values from client options to args...
+    for option in client.options
+        defaultbyfirst(args, option)
+    end
+
+    if getkv(args, :chunksize, nothing) != nothing
+        Base.depwarn(
+        "The chunksize= option is deprecated and has no effect.\n" *
+        "Use a BufferStream and pass chunks of the desired size to `write`:\n" *
+        "   io=BufferStream()\n" *
+        "   request(\"PUT\", \"http://foo.bar/file\", body=io)\n" *
+        "   write(io, \"chunk1\")\n" *
+        "   write(io, \"chunk2\")\n",
+        :chunksize)
+    end
+
+    if getkv(args, :connecttimeout, Inf) != Inf ||
+       getkv(args, :readtimeout, Inf) != Inf
+        Base.depwarn(
+        "The connecttimeout= and readtimeout= options are deprecated " *
+        "and have no effect.\n" *
+        "See https://github.com/JuliaWeb/HTTP.jl/issues/114\n",
+        :connecttimeout)
+    end
+
+    if getkv(args, :tlsconfig, nothing) != nothing
+        Base.depwarn(
+        "The tlsconfig= option is deprecated. Use sslconfig=::MbedTLS.SSLConfig",
+        :tlsconfig)
+        setkv(args, :sslconfig, getkv(args, :tlsconfig))
+    end
+
+    if getkv(args, :allowredirects, nothing) != nothing
+        Base.depwarn(
+        "The allowredirects= option is deprecated. Use redirect=::Bool",
+        :allowredirects)
+        setkv(args, :redirect, getkv(args, :allowredirects))
+    end
+
+    if getkv(args, :managecookies, nothing) != nothing
+        Base.depwarn(
+        "The managecookies= option is deprecated. Use cookies=::Bool",
+        :managecookies)
+        setkv(args, :cookies, getkv(args, :managecookies))
+    end
+    setkv(args, :cookiejar, client.cookies)
+
+    if getkv(args, :statusraise, nothing) != nothing
+        Base.depwarn(
+        "The statusraise= options is deprecated. Use statusexception=::Bool",
+        :statusraise)
+        setkv(args, :statusexception, getkv(args, :statusraise))
+    end
+
+    if getkv(args, :insecure, nothing) != nothing
+        Base.depwarn(
+        "The insecure= option is deprecated. Use require_ssl_verification=::Bool",
+        :insecure)
+        setkv(args, :require_ssl_verification, !getkv(args, :insecure))
+    end
 
     m = string(method)
     h = [k => v for (k,v) in headers]
-
     if stream
         push!(args, (:response_stream, BufferStream()))
     end
 
     if isa(body, Dict)
         body = HTTP.Form(body)
-        Pairs.setbyfirst(h, "Content-Type" =>
+        setbyfirst(h, "Content-Type" =>
                             "multipart/form-data; boundary=$(body.boundary)")
-        Pairs.setkv(args, :bodylength, length(body))
+        setkv(args, :bodylength, length(body))
     end
 
     if !enablechunked && isa(body, IO)
