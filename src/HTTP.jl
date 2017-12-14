@@ -40,7 +40,7 @@ include("fifobuffer.jl");               using .FIFOBuffers
 include("cookies.jl");                  using .Cookies
 include("multipart.jl")
                                                                              end
-include("Parsers.jl");                  import .Parsers.ParsingError
+include("parser.jl");                   import .Parsers.ParsingError
 include("Connect.jl")
 include("ConnectionPool.jl")
 include("Messages.jl")
