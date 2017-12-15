@@ -106,7 +106,7 @@ function register!(r::Router, method::String, url, handler)
     s = HTTP.scheme(uri)
     sch = HTTP.hasscheme(uri) ? typeof(get!(SCHEMES, s, val(s))) : Any
     h = HTTP.hashostname(uri) ? Val{Symbol(HTTP.hostname(uri))} : Any
-    hand = handler isa Function ? HandleFunction(handler) : handler
+    hand = handler isa Function ? HandlerFunction(handler) : handler
     register!(r, m, sch, h, HTTP.path(uri), hand)
 end
 
