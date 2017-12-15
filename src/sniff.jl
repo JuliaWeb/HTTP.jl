@@ -306,13 +306,19 @@ function isjson(bytes, i=0, maxlen=min(length(bytes), MAXSNIFFLENGTH))
         end
     elseif b == OPEN_SQUARE_BRACE
         # '[' start of array
-        # recursively check `isjson`, then potential whitespace, then ',' or ']'
-        while true
-            ret, i = isjson(bytes, i, maxlen)
-            ret || return false, i
-            eof, b, i = ignorewhitespace(bytes, i, maxlen)
-            (eof || b == CLOSE_SQUARE_BRACE) && return true, i
-            b != COMMA && return false, i
+        # peek at next byte to check for empty array
+        ia = i
+        eof, b, i = nextbyte(bytes, i, maxlen)
+        if b != CLOSE_SQUARE_BRACE
+            i = ia
+            # recursively check `isjson`, then potential whitespace, then ',' or ']'
+            while true
+                ret, i = isjson(bytes, i, maxlen)
+                ret || return false, i
+                eof, b, i = ignorewhitespace(bytes, i, maxlen)
+                (eof || b == CLOSE_SQUARE_BRACE) && return true, i
+                b != COMMA && return false, i
+            end
         end
     elseif b == DOUBLE_QUOTE
         # '"' start of string
