@@ -91,6 +91,8 @@ mutable struct Server{T <: HTTP.Scheme, H <: HTTP.Handler}
     Server{T, H}(handler::H, logger::IO=STDOUT, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) where {T, H} = new{T, H}(handler, logger, ch, ch2, options)
 end
 
+backtrace() = sprint(Base.show_backtrace, catch_backtrace())
+
 function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, verbose) where {T, H}
     handler, logger, options = server.handler, server.logger, server.options
     startedprocessingrequest = error = shouldclose = alreadysent100continue = false
@@ -168,7 +170,8 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                         catch e
                             response = HTTP.Response(500)
                             error = true
-                            HTTP.@log e
+                            showerror(logger, e)
+                            println(logger, backtrace())
                         end
                         if HTTP.http_should_keep_alive(parser, request) && !error
                             get!(HTTP.headers(response), "Connection", "keep-alive")
