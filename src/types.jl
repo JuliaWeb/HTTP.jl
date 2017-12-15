@@ -75,7 +75,7 @@ const RequestOptionsFieldTypes = Dict(:chunksize      => Int,
                                       :logbody => Bool)
 
 function RequestOptions(options::RequestOptions; kwargs...)
-    for (k, v) in kwargs
+    for (k, v) in pairs(kwargs)
         setfield!(options, k, convert(RequestOptionsFieldTypes[k], v))
     end
     return options

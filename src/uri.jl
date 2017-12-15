@@ -1,5 +1,9 @@
 module URIs
 
+if VERSION >= v"0.7.0-DEV.2915"
+    using Unicode
+end
+
 import Base.==
 
 include("urlparser.jl")
