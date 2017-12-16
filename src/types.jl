@@ -220,7 +220,7 @@ mutable struct Response
     cookies::Vector{Cookie}
     headers::Headers
     body::FIFOBuffer
-    request::Nullable{Request}
+    request::Union{Void,Request}
     history::Vector{Response}
 end
 
@@ -247,11 +247,11 @@ Response(; status::Int=200,
          cookies::Vector{Cookie}=Cookie[],
          headers::Headers=Headers(),
          body::FIFOBuffer=FIFOBuffer(""),
-         request::Nullable{Request}=Nullable{Request}(),
+         request::Union{Void,Request}=nothing,
          history::Vector{Response}=Response[]) =
     Response(status, Int16(1), Int16(1), cookies, headers, body, request, history)
 
-Response(n::Integer, r::Request) = Response(; body=FIFOBuffer(n), request=Nullable(r))
+Response(n::Integer, r::Request) = Response(; body=FIFOBuffer(n), request=r)
 Response(s::Integer) = Response(; status=s)
 Response(s::Integer, msg) = Response(; status=s, body=FIFOBuffer(msg))
 Response(b::Union{Vector{UInt8}, String}) = Response(; headers=defaultheaders(Response), body=FIFOBuffer(b))
@@ -302,8 +302,8 @@ end
 function hasmessagebody(r::Response)
     if 100 <= status(r) < 200 || status(r) == 204 || status(r) == 304
         return false
-    elseif !Base.isnull(request(r))
-        req = Base.get(request(r))
+    elseif request(r) !== nothing
+        req = request(r)
         method(req) in (HEAD, CONNECT) && return false
     end
     return true

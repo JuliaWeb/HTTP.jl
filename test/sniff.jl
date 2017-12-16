@@ -1,32 +1,32 @@
 const test_cases = [
-("Empty", UInt8[], "text/plain; charset=utf-8"),
-("Binary", UInt8[1, 2, 3], "application/octet-stream"),
+    ("Empty", UInt8[], "text/plain; charset=utf-8"),
+    ("Binary", UInt8[1, 2, 3], "application/octet-stream"),
 
-("HTML document #1", Vector{UInt8}("<HtMl><bOdY>blah blah blah</body></html>"), "text/html; charset=utf-8"),
-("HTML document #2", Vector{UInt8}("<HTML></HTML>"), "text/html; charset=utf-8"),
-("HTML document #3 (leading whitespace)", Vector{UInt8}("   <!DOCTYPE HTML>..."), "text/html; charset=utf-8"),
-("HTML document #4 (leading CRLF)", Vector{UInt8}("\r\n<html>..."), "text/html; charset=utf-8"),
+    ("HTML document #1", b"<HtMl><bOdY>blah blah blah</body></html>", "text/html; charset=utf-8"),
+    ("HTML document #2", b"<HTML></HTML>", "text/html; charset=utf-8"),
+    ("HTML document #3 (leading whitespace)", b"   <!DOCTYPE HTML>...", "text/html; charset=utf-8"),
+    ("HTML document #4 (leading CRLF)", b"\r\n<html>...", "text/html; charset=utf-8"),
 
-("Plain text", Vector{UInt8}("This is not HTML. It has ☃ though."), "text/plain; charset=utf-8"),
+    ("Plain text", b"This is not HTML. It has ☃ though.", "text/plain; charset=utf-8"),
 
-("XML", Vector{UInt8}("\n<?xml!"), "text/xml; charset=utf-8"),
+    ("XML", b"\n<?xml!", "text/xml; charset=utf-8"),
 
-# Image types.
-("GIF 87a", Vector{UInt8}("GIF87a"), "image/gif"),
-("GIF 89a", Vector{UInt8}("GIF89a..."), "image/gif"),
+    # Image types.
+    ("GIF 87a", b"GIF87a", "image/gif"),
+    ("GIF 89a", b"GIF89a...", "image/gif"),
 
-# Audio types.
-("MIDI audio", UInt8['M','T','h','d',0x00,0x00,0x00,0x06,0x00,0x01], "audio/midi"),
-("MP3 audio/MPEG audio", UInt8['I','D','3',0x03,0x00,0x00,0x00,0x00,0x0f], "audio/mpeg"),
-("WAV audio #1", UInt8['R','I','F','F','b',0xb8,0x00,0x00,'W','A','V','E','f','m','t',' ',0x12,0x00,0x00,0x00,0x06], "audio/wave"),
-("WAV audio #2", UInt8['R','I','F','F',',',0x00,0x00,0x00,'W','A','V','E','f','m','t',' ',0x12,0x00,0x00,0x00,0x06], "audio/wave"),
-("AIFF audio #1", UInt8['F','O','R','M',0x00,0x00,0x00,0x00,'A','I','F','F','C','O','M','M',0x00,0x00,0x00,0x12,0x00,0x01,0x00,0x00,0x57,0x55,0x00,0x10,0x40,0x0d,0xf3,0x34], "audio/aiff"),
-("OGG audio", UInt8['O','g','g','S',0x00,0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x7e,0x46,0x00,0x00,0x00,0x00,0x00,0x00,0x1f,0xf6,0xb4,0xfc,0x01,0x1e,0x01,0x76,0x6f,0x72], "application/ogg"),
+    # Audio types.
+    ("MIDI audio", UInt8['M','T','h','d',0x00,0x00,0x00,0x06,0x00,0x01], "audio/midi"),
+    ("MP3 audio/MPEG audio", UInt8['I','D','3',0x03,0x00,0x00,0x00,0x00,0x0f], "audio/mpeg"),
+    ("WAV audio #1", UInt8['R','I','F','F','b',0xb8,0x00,0x00,'W','A','V','E','f','m','t',' ',0x12,0x00,0x00,0x00,0x06], "audio/wave"),
+    ("WAV audio #2", UInt8['R','I','F','F',',',0x00,0x00,0x00,'W','A','V','E','f','m','t',' ',0x12,0x00,0x00,0x00,0x06], "audio/wave"),
+    ("AIFF audio #1", UInt8['F','O','R','M',0x00,0x00,0x00,0x00,'A','I','F','F','C','O','M','M',0x00,0x00,0x00,0x12,0x00,0x01,0x00,0x00,0x57,0x55,0x00,0x10,0x40,0x0d,0xf3,0x34], "audio/aiff"),
+    ("OGG audio", UInt8['O','g','g','S',0x00,0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x7e,0x46,0x00,0x00,0x00,0x00,0x00,0x00,0x1f,0xf6,0xb4,0xfc,0x01,0x1e,0x01,0x76,0x6f,0x72], "application/ogg"),
 
-# Video types.
-("MP4 video", UInt8[0x00,0x00,0x00,0x18,'f','t','y','p','m','p','4','2',0x00,0x00,0x00,0x00,'m','p','4','2','i','s','o','m','<',0x06,'t',0xbf,'m','d','a','t'], "video/mp4"),
-("AVI video #1", UInt8['R','I','F','F',',','O','\n',0x00,'A','V','I',' ','L','I','S','T','À'], "video/avi"),
-("AVI video #2", UInt8['R','I','F','F',',','\n',0x00,0x00,'A','V','I',' ','L','I','S','T','À'], "video/avi"),
+    # Video types.
+    ("MP4 video", UInt8[0x00,0x00,0x00,0x18,'f','t','y','p','m','p','4','2',0x00,0x00,0x00,0x00,'m','p','4','2','i','s','o','m','<',0x06,'t',0xbf,'m','d','a','t'], "video/mp4"),
+    ("AVI video #1", UInt8['R','I','F','F',',','O','\n',0x00,'A','V','I',' ','L','I','S','T','À'], "video/avi"),
+    ("AVI video #2", UInt8['R','I','F','F',',','\n',0x00,0x00,'A','V','I',' ','L','I','S','T','À'], "video/avi"),
 ]
 
 @testset "HTTP.sniff" begin

@@ -40,6 +40,11 @@ if VERSION >= v"0.7.0-DEV.2915"
     using Unicode
 end
 
+if !isdefined(Base, :pairs)
+    pairs(x) = x
+end
+
+
 export Cookie
 
 import Base.==
@@ -85,7 +90,7 @@ mutable struct Cookie
 end
 
 function Cookie(cookie::Cookie; kwargs...)
-    for (k, v) in kwargs
+    for (k, v) in pairs(kwargs)
         setfield!(cookie, k, convert(fieldtype(Cookie, k), v))
     end
     return cookie
@@ -187,9 +192,13 @@ function readsetcookie(host, cookie)
         elseif lowerattr == "domain"
             c.domain = val
         elseif lowerattr == "max-age"
-            secs = tryparse(Int, val)
-            (isnull(secs) || val[1] == '0') && continue
-            c.maxage = max(Base.get(secs), -1)
+            try
+                secs = parse(Int, val)
+                val[1] == '0' && continue
+                c.maxage = max(secs, -1)
+            catch
+                continue
+            end
         elseif lowerattr == "expires"
             try
                 c.expires = Dates.DateTime(val, Dates.RFC1123Format)

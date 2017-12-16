@@ -5,6 +5,9 @@ if VERSION < v"0.7.0-DEV.2575"
 else
     import Dates
 end
+@static if !isdefined(Base, :Distributed)
+    using Distributed
+end
 
 using ..HTTP, ..Handlers
 

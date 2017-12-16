@@ -203,7 +203,7 @@ for sch in ("http", "https")
     req = HTTP.Request(HTTP.GET, uri, HTTP.Headers(), HTTP.FIFOBuffer())
     r = HTTP.request(req)
     @test HTTP.status(r) == 200
-    @test !HTTP.isnull(HTTP.request(r))
+    @test HTTP.request(r) !== nothing
     @test length(take!(r)) > 0
 
     for c in HTTP.DEFAULT_CLIENT.httppool["httpbin.org"]

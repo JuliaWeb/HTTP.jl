@@ -332,7 +332,7 @@ function request(client::Client, req::Request, opts::RequestOptions, stream::Boo
         retry >= opts.retries::Int && throw(err)
         return request(client, req, opts, stream, history, retry + 1, verbose)
     end
-    @log "received response"
+    @log "received response: $response"
     opts.managecookies::Bool && !isempty(response.cookies) && (@log("caching received cookies for host: " * join(map(x->x.name, response.cookies), ", ")); union!(get!(client.cookies, host, Set{Cookie}()), response.cookies))
     response.history = history
     if opts.allowredirects::Bool && req.method != HEAD && (300 <= status(response) < 400)

@@ -194,7 +194,9 @@ escape(str::AbstractString, safe::Function=issafe) =
 escape(bytes::Vector{UInt8}) = bytes
 escape(v::Number) = escape(string(v))
 escape(v::Symbol) = escape(string(v))
+@static if VERSION < v"0.7.0-DEV.3017"
 escape(v::Nullable) = Base.isnull(v) ? "" : escape(get(v))
+end
 
 escape(key, value) = string(escape(key), "=", escape(value))
 escape(key, values::Vector) = escape(key => v for v in values)
