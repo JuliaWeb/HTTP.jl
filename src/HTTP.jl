@@ -93,7 +93,7 @@ stack(;kw...) = ExceptionLayer{
                 SocketLayer}}}
                                                                              end
 
-if !minimal
+                                                                     if !minimal
 status(r) = r.status #FIXME
 headers(r) = Dict(r.headers) #FIXME
 include("types.jl")
@@ -102,7 +102,7 @@ include("sniff.jl")
 include("handlers.jl");                  using .Handlers
 include("server.jl");                    using .Nitrogen
 include("precompile.jl")
-end
+                                                                             end
 
 
 end # module
