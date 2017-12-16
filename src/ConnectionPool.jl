@@ -24,13 +24,11 @@ A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 - `excess::ByteView`, left over bytes read from the connection after
    the end of a response message. These bytes are probably the start of the
    next response message.
-- `writecount::Int` number of Request Messages that have been written.
-  `writecount` is allowed to be no more than two greater than `readcount`
-   (see `isbusy`). i.e. after two Requests have been written to a `Connection`,
-   the first Response must be read before another Request can be written.
-- `readcount::Int`, number of Response Messages that have been read.
-- `readdone::Condition`, signals that an entire Response Messages has been read.
-- -`parser::Parser`, reuse a `Parser` when this `Connection` is reused.
+- `writecount`, number of Request Messages that have been written.
+- `readcount`, number of Response Messages that have been read.
+- `writelock`, busy writing a Request to `io`.
+- `readlock`, busy reading a Response from `io`.
+- `parser::Parser`, reuse a `Parser` when this `Connection` is reused.
 """
 
 mutable struct Connection{T <: IO} <: IO
@@ -40,14 +38,15 @@ mutable struct Connection{T <: IO} <: IO
     excess::ByteView
     writecount::Int
     readcount::Int
-    readdone::Condition
+    writelock::ReentrantLock
+    readlock::ReentrantLock
     parser::Parser
 end
 
-isbusy(c::Connection) = c.writecount - c.readcount > 1
 
 Connection{T}(host::AbstractString, port::AbstractString, io::T) where T <: IO =
-    Connection{T}(host, port, io, view(UInt8[], 1:0), 0, 0, Condition(), Parser())
+    Connection{T}(host, port, io, view(UInt8[], 1:0), 0, 0,
+                  ReentrantLock(), ReentrantLock(), Parser())
 
 const noconnection = Connection{TCPSocket}("","",TCPSocket())
 
@@ -72,7 +71,8 @@ end
 """
     unread!(::Connection, bytes)
 
-Push bytes back into a connection's `excess` buffer (to be returned by the next read).
+Push bytes back into a connection's `excess` buffer
+(to be returned by the next read).
 """
 
 function IOExtras.unread!(c::Connection, bytes::ByteView)
@@ -91,11 +91,17 @@ Increment `writecount` and wait for pending reads to complete.
 
 function IOExtras.closewrite(c::Connection)
     c.writecount += 1
-    if isbusy(c)
+    if islocked(c.readlock)
         @debug 3 "Waiting to read: $c"
-        wait(c.readdone)
     end
-    @assert !isbusy(c)
+    if isopen(c.io)
+        lock(c.readlock)
+        if !isopen(c.io)
+            unlock(c.readlock)
+        end
+        unlock(c.writelock)
+    end
+    @assert isopen(c.io) == islocked(c.readlock)
 end
 
 
@@ -107,11 +113,23 @@ Signal that an entire Response Message has been read from the `Connection`.
 Increment `readcount` and wake up waiting `closewrite`.
 """
 
-IOExtras.closeread(c::Connection) = (c.readcount += 1; notify(c.readdone))
+function IOExtras.closeread(c::Connection)
+    c.readcount += 1
+    if isopen(c.io)
+        unlock(c.readlock)
+    end
+end
 
 
-Base.close(c::Connection) = (close(c.io); notify(c.readdone))
-
+function Base.close(c::Connection)
+    close(c.io)
+    if islocked(c.readlock)
+        unlock(c.readlock)
+    end
+    if islocked(c.writelock)
+        unlock(c.writelock)
+    end
+end
 
 
 """
@@ -145,7 +163,7 @@ function getconnection(::Type{Connection{T}},
     lock(poollock)
     try
 
-        pattern = x->(!isbusy(x) &&
+        pattern = x->(!islocked(x.writelock) &&
                       typeof(x.io) == T &&
                       x.host == host &&
                       x.port == port)
@@ -156,13 +174,14 @@ function getconnection(::Type{Connection{T}},
                 deleteat!(pool, i)                ;@debug 1 "Deleted: $c"
                 continue
             end;                                  ;@debug 2 "Reused: $c"
+            lock(c.writelock)
             return c
         end
 
         io = getconnection(T, host, port; kw...)
         c = Connection{T}(host, port, io)         ;@debug 1 "New: $c"
         push!(pool, c)
-        @assert !isbusy(c)
+        lock(c.writelock)
         return c
 
     finally
