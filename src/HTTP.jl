@@ -7,7 +7,7 @@ import MbedTLS.SSLContext
 
 import Base.== # FIXME rm
 
-const DEBUG_LEVEL = 1
+const DEBUG_LEVEL = 0
 
 if VERSION > v"0.7.0-DEV.2338"
     using Base64
@@ -27,6 +27,9 @@ module RequestStack
     request(m::String, a...; kw...) = request(HTTP.stack(;kw...), m, a...; kw...)
 
 end
+                                                                      if minimal
+import .RequestStack.request
+                                                                             end
 
 include("debug.jl")
 include("Pairs.jl")
@@ -43,23 +46,23 @@ include("multipart.jl")
 include("parser.jl");                   import .Parsers.ParsingError
 include("Connect.jl")
 include("ConnectionPool.jl")
-include("Messages.jl")
+include("Messages.jl");                 using .Messages
 
 
 abstract type Layer end
 const NoLayer = Union
 
-include("SocketRequest.jl");             using .SocketRequest
-include("ConnectionRequest.jl");         using .ConnectionRequest
-include("MessageRequest.jl");            using .MessageRequest
+include("SocketRequest.jl");            using .SocketRequest
+include("ConnectionRequest.jl");        using .ConnectionRequest
+include("MessageRequest.jl");           using .MessageRequest
+include("ExceptionRequest.jl");         using .ExceptionRequest
+                                        import .ExceptionRequest.StatusError
                                                                      if !minimal
-include("ExceptionRequest.jl");          using .ExceptionRequest
-                                         import .ExceptionRequest.StatusError
-include("RetryRequest.jl");              using .RetryRequest
-include("CookieRequest.jl");             using .CookieRequest
-include("BasicAuthRequest.jl");          using .BasicAuthRequest
-include("CanonicalizeRequest.jl");       using .CanonicalizeRequest
-include("RedirectRequest.jl");           using .RedirectRequest
+include("RetryRequest.jl");             using .RetryRequest
+include("CookieRequest.jl");            using .CookieRequest
+include("BasicAuthRequest.jl");         using .BasicAuthRequest
+include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
+include("RedirectRequest.jl");          using .RedirectRequest
 
 function stack(;redirect=true,
                 basicauthorization=false,
@@ -83,7 +86,11 @@ function stack(;redirect=true,
 end
 
                                                                             else
-stack(;kw...) = MessageLayer{ConnectLayer{SocketLayer}}
+stack(;kw...) = ExceptionLayer{
+                MessageLayer{
+                ConnectionPoolLayer{
+                #ConnectLayer{
+                SocketLayer}}}
                                                                              end
 
 if !minimal
@@ -94,8 +101,8 @@ include("client.jl")
 include("sniff.jl")
 include("handlers.jl");                  using .Handlers
 include("server.jl");                    using .Nitrogen
+include("precompile.jl")
 end
 
-include("precompile.jl")
 
 end # module
