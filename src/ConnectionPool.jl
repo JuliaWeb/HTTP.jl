@@ -94,14 +94,10 @@ function IOExtras.closewrite(c::Connection)
     if islocked(c.readlock)
         @debug 3 "Waiting to read: $c"
     end
-    if isopen(c.io)
-        lock(c.readlock)
-        if !isopen(c.io)
-            unlock(c.readlock)
-        end
+    lock(c.readlock)
+    if islocked(c.writelock)
         unlock(c.writelock)
     end
-    @assert isopen(c.io) == islocked(c.readlock)
 end
 
 
@@ -115,7 +111,7 @@ Increment `readcount` and wake up waiting `closewrite`.
 
 function IOExtras.closeread(c::Connection)
     c.readcount += 1
-    if isopen(c.io)
+    if islocked(c.readlock)
         unlock(c.readlock)
     end
 end
@@ -180,8 +176,8 @@ function getconnection(::Type{Connection{T}},
 
         io = getconnection(T, host, port; kw...)
         c = Connection{T}(host, port, io)         ;@debug 1 "New: $c"
-        push!(pool, c)
         lock(c.writelock)
+        push!(pool, c)
         return c
 
     finally
@@ -198,7 +194,7 @@ function Base.show(io::IO, c::Connection)
               c.port != "" ? c.port : Int(peerport(c)), ":",
               Int(localport(c)), ", ",
               typeof(c.io), ", ", tcpstatus(c), ", ",
-              length(c.excess), "-byte excess, reads/writes: ",
+              length(c.excess), "-byte excess, writes/reads: ",
               c.writecount, "/", c.readcount)
 end
 
