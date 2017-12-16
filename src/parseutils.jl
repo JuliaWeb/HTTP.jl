@@ -22,3 +22,15 @@ end
 @inline ishex(c) =  isnum(c) || ('a' <= lower(c) <= 'f')
 @inline ishostchar(c) = isalphanum(c) || @anyeq(c, '.', '-', '_', '~')
 @inline isheaderchar(c) = c == CR || c == LF || c == Char(9) || (c > Char(31) && c != Char(127))
+
+"""
+    escapelines(string)
+
+Escape `string` and insert '\n' after escaped newline characters.
+"""
+
+function escapelines(s)
+    s = Base.escape_string(s)
+    s = replace(s, "\\n", "\\n\n    ")
+    return string("    ", strip(s))
+end

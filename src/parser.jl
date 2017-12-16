@@ -164,6 +164,7 @@ function Base.read!(io::IO, p::Parser; unread=IOExtras.unread!)
             return
         end
     end
+    @debug 2 "read!(::$(typeof(io)), Parser($(ParsingStateCode(p.state)))) eof!"
 
     if !waitingforeof(p)
         throw(ParsingError(headerscomplete(p) ? HPE_BODY_INCOMPLETE :
@@ -230,7 +231,8 @@ messagecomplete(p::Parser) = p.state >= s_message_done
 Is the `Parser` waiting for the peer to close the connection
 to signal the end of the Message Body?
 """
-waitingforeof(p::Parser) = p.state == s_body_identity_eof
+waitingforeof(p::Parser) = p.state == s_body_identity_eof ||
+                           p.state == s_start_req_or_res
 
 
 isrequest(p::Parser) = p.message.status == 0
@@ -294,7 +296,8 @@ function parse!(parser::Parser, bytes::ByteView)::Int
     isempty(bytes) && throw(ArgumentError("bytes must not be empty"))
     len = length(bytes)
     p_state = parser.state
-    @debug 3 "parse!(parser.state=$(ParsingStateCode(p_state))), $len-bytes)"
+    @debug 2 "parse!(parser.state=$(ParsingStateCode(p_state))), $len-bytes:\n" *
+             escapelines(String(collect(bytes))) * ")"
 
     p = 0
     while p < len && p_state != s_message_done
@@ -1070,14 +1073,14 @@ function parse!(parser::Parser, bytes::ByteView)::Int
 
         elseif p_state == s_headers_done
             @errorifstrict(ch != LF)
-            if parser.flags & F_CHUNKED > 0
-                # chunked encoding - ignore Content-Length header
-                p_state = s_chunk_size_start
-            elseif parser.isheadresponse ||
+            if parser.isheadresponse ||
                    parser.content_length == 0 ||
                    (parser.message.upgrade && isrequest(parser) &&
                     parser.message.method == CONNECT)
                 p_state = s_message_done
+            elseif parser.flags & F_CHUNKED > 0
+                # chunked encoding - ignore Content-Length header
+                p_state = s_chunk_size_start
             elseif parser.content_length != ULLONG_MAX
                 # Content-Length header given and non-zero
                 p_state = s_body_identity
@@ -1202,8 +1205,19 @@ function parse!(parser::Parser, bytes::ByteView)::Int
         end
     end
     @assert p_state == s_message_done || p == len
-    @assert p <= len
 
+    # Consume trailing end of line after message.
+    if p_state == s_message_done
+        while p < len
+            ch = Char(bytes[p + 1])
+            if ch != CR && ch != LF
+                break
+            end
+            p += 1
+        end
+    end
+
+    @assert p <= len
     @debug 3 "parse!() exiting $(ParsingStateCode(p_state))"
 
     parser.state = p_state
