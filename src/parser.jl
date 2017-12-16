@@ -25,7 +25,8 @@
 module Parsers
 
 export Parser, parse!, reset!,
-       messagecomplete, headerscomplete, waitingforeof,
+       messagestarted, messagecomplete, headerscomplete, waitingforeof,
+       connectionclosed,
        ParsingError, ParsingErrorCode
 
 using ..IOExtras
@@ -166,9 +167,12 @@ function Base.read!(io::IO, p::Parser; unread=IOExtras.unread!)
     end
     @debug 2 "read!(::$(typeof(io)), Parser($(ParsingStateCode(p.state)))) eof!"
 
+    if !messagestarted(p)
+        throw(EOFError())
+    end
     if !waitingforeof(p)
-        throw(ParsingError(headerscomplete(p) ? HPE_BODY_INCOMPLETE :
-                                                HPE_HEADERS_INCOMPLETE))
+        throw(ParsingError(p, headerscomplete(p) ? HPE_BODY_INCOMPLETE :
+                                                   HPE_HEADERS_INCOMPLETE))
     end
     return
 end
@@ -208,6 +212,15 @@ end
 
 
 """
+    messagestarted(::Parser)
+
+Has the `Parser` begun processng a Message?
+"""
+
+messagestarted(p::Parser) = p.state != s_start_req_or_res
+
+
+"""
     headerscomplete(::Parser)
 
 Has the `Parser` processed the entire Message Header?
@@ -231,8 +244,16 @@ messagecomplete(p::Parser) = p.state >= s_message_done
 Is the `Parser` waiting for the peer to close the connection
 to signal the end of the Message Body?
 """
-waitingforeof(p::Parser) = p.state == s_body_identity_eof ||
-                           p.state == s_start_req_or_res
+waitingforeof(p::Parser) = p.state == s_body_identity_eof
+
+
+"""
+    connectionclosed(::Parser)
+
+Was "Connection: close" parsed?
+"""
+
+connectionclosed(p::Parser) = p.flags & F_CONNECTION_CLOSE > 0
 
 
 isrequest(p::Parser) = p.message.status == 0
@@ -240,20 +261,27 @@ isrequest(p::Parser) = p.message.status == 0
 
 struct ParsingError <: Exception
     code::ParsingErrorCode
+    state::UInt8
+    status::Int32
     msg::String
 end
-ParsingError(code::ParsingErrorCode) = ParsingError(code, "")
+
+function ParsingError(p::Parser, code::ParsingErrorCode)
+    ParsingError(code, p.state, p.message.status, "")
+end
 
 function Base.show(io::IO, e::ParsingError)
     println(io, string("HTTP.ParsingError: ",
-                       ParsingErrorCodeMap[e.code],
+                       ParsingErrorCodeMap[e.code], ", ",
+                       ParsingStateCode(e.state), ", ",
+                       e.status,
                        e.msg == "" ? "" : "\n",
                        e.msg))
 end
 
 
 macro err(code)
-    esc(:(throw(ParsingError($code))))
+    esc(:(throw(ParsingError(p, $code))))
 end
 
 macro errorif(cond, err)
