@@ -281,7 +281,7 @@ end
 
 
 macro err(code)
-    esc(:(throw(ParsingError(p, $code))))
+    esc(:(throw(ParsingError(parser, $code))))
 end
 
 macro errorif(cond, err)
