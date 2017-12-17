@@ -9,6 +9,7 @@ import MbedTLS.SSLContext
 import ..Connect: getconnection, getparser
 import ..Parsers.Parser
 
+const max_duplicates = 4
 
 const ByteView = typeof(view(UInt8[], 1:0))
 
@@ -90,14 +91,17 @@ Increment `writecount` and wait for pending reads to complete.
 """
 
 function IOExtras.closewrite(c::Connection)
-    c.writecount += 1
-    if islocked(c.readlock)
-        @debug 3 "Waiting to read: $c"
-    end
-    lock(c.readlock)
+    c.writecount += 1;                            @debug 1 "write done: $c"
     if islocked(c.writelock)
         unlock(c.writelock)
     end
+    lock(c.readlock)
+    # Note, we rely on the readlock's conditon queue to ensure that readers
+    # wake up in the correct order (i.e. such that Responses match Requests).
+    # The documentation's description of a "queue" implies that the first
+    # `wait`-er will be the first to be woken up on `notify`:
+    #     "When a task calls wait() on a Condition, the task is
+    #      [...] added to the condition's queue."
 end
 
 
@@ -144,6 +148,52 @@ const pool = Vector{Connection}()
 const poollock = ReentrantLock()
 
 
+
+"""
+    findidle(type, host, port) -> Connection
+
+Find a `Connection` in the `pool` that is ready for writing.
+"""
+
+function findidle(T::Type,
+                  host::AbstractString,
+                  port::AbstractString)
+
+    pattern = x->(!islocked(x.writelock) &&
+                  typeof(x.io) == T &&
+                  x.host == host &&
+                  x.port == port)
+
+    while (i = findlast(pattern, pool)) > 0
+        c = pool[i]
+        if !isopen(c.io)
+            deleteat!(pool, i)                           ;@debug 1 "Deleted: $c"
+            continue
+        end
+        return c                                         ;@debug 2 "Reused: $c"
+    end
+    return nothing
+end
+
+
+"""
+    findall(type, host, port) -> Connection
+
+Find all `Connections` in the `pool` for `host` and `port`.
+"""
+
+function findall(T::Type,
+                 host::AbstractString,
+                 port::AbstractString)
+
+    pattern = x->(typeof(x.io) == T &&
+                  x.host == host &&
+                  x.port == port)
+
+    return filter(pattern, pool)
+end
+
+
 """
     getconnection(type, host, port) -> Connection
 
@@ -156,33 +206,32 @@ function getconnection(::Type{Connection{T}},
                        port::AbstractString;
                        kw...)::Connection{T} where T <: IO
 
+    c = nothing
+
     lock(poollock)
     try
 
-        pattern = x->(!islocked(x.writelock) &&
-                      typeof(x.io) == T &&
-                      x.host == host &&
-                      x.port == port)
+        # Try to find a connection that is ready for writing...
+        c = findidle(T, host, port)
 
-        while (i = findlast(pattern, pool)) > 0
-            c = pool[i]
-            if !isopen(c.io)
-                deleteat!(pool, i)                ;@debug 1 "Deleted: $c"
-                continue
-            end;                                  ;@debug 2 "Reused: $c"
-            lock(c.writelock)
-            return c
+        if c == nothing
+            # If there are not too many duplicates for this host,
+            # create a new connection, otherwise return a busy one...
+            l = findall(T, host, port)
+            if length(l) < max_duplicates
+                io = getconnection(T, host, port; kw...)
+                c = Connection{T}(host, port, io)         ;@debug 1 "New: $c"
+                push!(pool, c)
+            else
+                c = rand(l)                               ;@debug 1 "Busy: $c"
+            end
         end
-
-        io = getconnection(T, host, port; kw...)
-        c = Connection{T}(host, port, io)         ;@debug 1 "New: $c"
-        lock(c.writelock)
-        push!(pool, c)
-        return c
 
     finally
         unlock(poollock)
     end
+    lock(c.writelock)
+    return c
 end
 
 
