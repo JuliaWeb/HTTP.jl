@@ -288,8 +288,8 @@ Write start line, headers and body of HTTP Message.
 """
 
 function Base.write(io::IO, m::Message)
-    writestartline(io, m)
-    writeheaders(io, m)
+    writestartline(io, m)               # FIXME To avoid fragmentation, maybe
+    writeheaders(io, m)                 # buffer header before sending to `io`
     write(io, m.body)
     return
 end
