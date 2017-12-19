@@ -5,6 +5,9 @@ if VERSION < v"0.7.0-DEV.2575"
 else
     import Dates
 end
+@static if !isdefined(Base, :Distributed)
+    using Distributed
+end
 
 using ..HTTP, ..Handlers
 
@@ -81,6 +84,8 @@ mutable struct Server{T <: HTTP.Scheme, H <: HTTP.Handler}
 
     Server{T, H}(handler::H, logger::IO=STDOUT, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) where {T, H} = new{T, H}(handler, logger, ch, ch2, options)
 end
+
+backtrace() = sprint(Base.show_backtrace, catch_backtrace())
 
 function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, verbose) where {T, H}
     handler, logger, options = server.handler, server.logger, server.options
@@ -165,7 +170,8 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                         catch e
                             response = HTTP.Response(500)
                             error = true
-                            HTTP.@log e
+                            showerror(logger, e)
+                            println(logger, backtrace())
                         end
                         if HTTP.http_should_keep_alive(parser) && !error
                             if !any(x->x[1] == "Connection", response.headers)

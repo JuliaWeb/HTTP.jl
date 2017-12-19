@@ -106,7 +106,7 @@ function register!(r::Router, method::String, url, handler)
     s = uri.scheme
     sch = !isempty(s) ? typeof(get!(SCHEMES, s, val(s))) : Any
     h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
-    hand = handler isa Function ? HandleFunction(handler) : handler
+    hand = handler isa Function ? HandlerFunction(handler) : handler
     register!(r, m, sch, h, uri.path, hand)
 end
 

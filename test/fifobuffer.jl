@@ -183,7 +183,7 @@
     # ensure that `read(..., ::Type{UInt8})` returns a `UInt8`
     # https://github.com/JuliaWeb/HTTP.jl/issues/41
     f = HTTP.FIFOBuffer(5)
-    b = Array{UInt8}(3)
+    b = fill(0x00, 3)
     @test write(f, [0x01, 0x02, 0x03, 0x04]) == 4
     @test readbytes!(f, b) == 3
     @test b == [0x01, 0x02, 0x03]

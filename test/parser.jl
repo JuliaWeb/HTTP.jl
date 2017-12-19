@@ -45,7 +45,7 @@ end
 
 function Message(; name::String="", kwargs...)
   m = Message(name)
-  for (k, v) in kwargs
+  for (k, v) in pairs(kwargs)
       try
           setfield!(m, k, v)
       catch e
