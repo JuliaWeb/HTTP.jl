@@ -3,6 +3,7 @@ module ParserTest
 using Base.Test
 
 import ..HTTP
+import ..HTTP.pairs
 
 using HTTP.Messages
 using HTTP.Parsers
