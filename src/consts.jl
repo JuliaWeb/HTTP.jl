@@ -281,6 +281,7 @@ const ParsingErrorCodeMap = Dict(
     ,es_req_first_http_minor
     ,es_req_http_minor
     ,es_req_line_almost_done
+    ,es_trailer_start
     ,es_header_field_start
     ,es_header_field
     ,es_header_value_discard_ws
@@ -290,12 +291,13 @@ const ParsingErrorCodeMap = Dict(
     ,es_header_value
     ,es_header_value_lws
     ,es_header_almost_done
+    ,es_headers_almost_done
+    ,es_headers_done
+    ,es_body_start
     ,es_chunk_size_start
     ,es_chunk_size
     ,es_chunk_parameters
     ,es_chunk_size_almost_done
-    ,es_headers_almost_done
-    ,es_headers_done
     ,es_chunk_data
     ,es_chunk_data_almost_done
     ,es_chunk_data_done
