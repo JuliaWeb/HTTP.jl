@@ -1,5 +1,9 @@
 module BasicAuthRequest
 
+if VERSION > v"0.7.0-DEV.2338"
+using Base64
+end
+
 import ..Layer, ..RequestStack.request
 using ..URIs
 using ..Pairs: getkv, setkv

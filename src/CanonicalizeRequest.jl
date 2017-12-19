@@ -8,7 +8,7 @@ abstract type CanonicalizeLayer{Next <: Layer} <: Layer end
 export CanonicalizeLayer
 
 
-canonicalizeheaders{T}(h::T) = T([tocameldash!(k) => v for (k,v) in h])
+canonicalizeheaders(h::T) where T = T([tocameldash!(k) => v for (k,v) in h])
 
 function request(::Type{CanonicalizeLayer{Next}},
                  method::String, uri, headers, body, response_body;

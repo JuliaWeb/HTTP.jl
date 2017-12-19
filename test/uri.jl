@@ -12,7 +12,13 @@ struct Offset
     len::UInt16
 end
     
-offsetss(uri, offset) = SubString(uri, offset.off, offset.off + offset.len-1)
+function offsetss(uri, offset)
+    if offset == Offset(0,0)
+        return SubString(uri, 1, 0)
+    else
+        return SubString(uri, offset.off, offset.off + offset.len-1)
+    end
+end
 
 function URLTest(nm::String, url::String, isconnect::Bool, shouldthrow::Bool)
     URLTest(nm, url, isconnect, HTTP.URI(""), shouldthrow)

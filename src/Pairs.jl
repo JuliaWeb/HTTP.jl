@@ -1,6 +1,6 @@
 module Pairs
 
-export setbyfirst, getbyfirst, setkv, getkv
+export defaultbyfirst, setbyfirst, getbyfirst, setkv, getkv
 
 
 """

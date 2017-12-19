@@ -26,7 +26,7 @@ Ensure the first character and characters that follow a '-' are uppercase.
 """
 
 function tocameldash!(s::String)
-    const toUpper = UInt8('A') - UInt8('a')
+    toUpper = UInt8('A') - UInt8('a')
     bytes = Vector{UInt8}(s)
     upper = true
     for i = 1:length(bytes)

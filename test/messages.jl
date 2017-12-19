@@ -1,6 +1,9 @@
 module MessagesTest
 
 using Base.Test
+if VERSION > v"0.7.0-DEV.2338"
+using Unicode
+end
 
 using HTTP.Messages
 import HTTP.Messages.appendheader

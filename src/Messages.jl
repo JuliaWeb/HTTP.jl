@@ -6,6 +6,10 @@ export Message, Request, Response, Body,
        waitforheaders, wait,
        writeandread
 
+if VERSION > v"0.7.0-DEV.2338"
+using Unicode
+end
+
 import ..HTTP
 
 include("Bodies.jl")

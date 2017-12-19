@@ -25,7 +25,7 @@ mutable struct Client
     # cookies are stored in-memory per host and automatically sent when appropriate
     cookies::Dict{String, Set{Cookie}}
     # global request settings
-    options::Vector{Tuple{Symbol,Any}}
+    options::(VERSION > v"0.7.0-DEV.2338" ? NamedTuple : Vector{Tuple{Symbol,Any}})
 end
 
 Client(;options...) = Client(Dict{String, Set{Cookie}}(), options)
@@ -41,11 +41,18 @@ function request(client::Client, method, uri::URI;
                  args...)
 
     # Add default values from client options to args...
+    if VERSION > v"0.7.0-DEV.2338"
+    args = merge(client.options, args)
+    getarg = Base.get
+    else
     for option in client.options
         defaultbyfirst(args, option)
     end
+    getarg = getkv
+    end
+    newargs = Pair{Symbol,Any}[]
 
-    if getkv(args, :chunksize, nothing) != nothing
+    if getarg(args, :chunksize, nothing) != nothing
         Base.depwarn(
         "The chunksize= option is deprecated and has no effect.\n" *
         "Use a BufferStream and pass chunks of the desired size to `write`:\n" *
@@ -56,8 +63,8 @@ function request(client::Client, method, uri::URI;
         :chunksize)
     end
 
-    if getkv(args, :connecttimeout, Inf) != Inf ||
-       getkv(args, :readtimeout, Inf) != Inf
+    if getarg(args, :connecttimeout, Inf) != Inf ||
+       getarg(args, :readtimeout, Inf) != Inf
         Base.depwarn(
         "The connecttimeout= and readtimeout= options are deprecated " *
         "and have no effect.\n" *
@@ -65,57 +72,65 @@ function request(client::Client, method, uri::URI;
         :connecttimeout)
     end
 
-    if getkv(args, :tlsconfig, nothing) != nothing
+    if getarg(args, :tlsconfig, nothing) != nothing
         Base.depwarn(
         "The tlsconfig= option is deprecated. Use sslconfig=::MbedTLS.SSLConfig",
         :tlsconfig)
-        setkv(args, :sslconfig, getkv(args, :tlsconfig))
+        setkv(newargs, :sslconfig, getarg(args, :tlsconfig))
     end
 
-    if getkv(args, :allowredirects, nothing) != nothing
+    if getarg(args, :allowredirects, nothing) != nothing
         Base.depwarn(
         "The allowredirects= option is deprecated. Use redirect=::Bool",
         :allowredirects)
-        setkv(args, :redirect, getkv(args, :allowredirects))
+        setkv(newargs, :redirect, getarg(args, :allowredirects))
     end
 
-    if getkv(args, :managecookies, nothing) != nothing
+    if getarg(args, :managecookies, nothing) != nothing
         Base.depwarn(
         "The managecookies= option is deprecated. Use cookies=::Bool",
         :managecookies)
-        setkv(args, :cookies, getkv(args, :managecookies))
+        setkv(newargs, :cookies, getarg(args, :managecookies))
     end
-    setkv(args, :cookiejar, client.cookies)
+    setkv(newargs, :cookiejar, client.cookies)
 
-    if getkv(args, :statusraise, nothing) != nothing
+    if getarg(args, :statusraise, nothing) != nothing
         Base.depwarn(
         "The statusraise= options is deprecated. Use statusexception=::Bool",
         :statusraise)
-        setkv(args, :statusexception, getkv(args, :statusraise))
+        setkv(newargs, :statusexception, getarg(args, :statusraise))
     end
 
-    if getkv(args, :insecure, nothing) != nothing
+    if getarg(args, :insecure, nothing) != nothing
         Base.depwarn(
         "The insecure= option is deprecated. Use require_ssl_verification=::Bool",
         :insecure)
-        setkv(args, :require_ssl_verification, !getkv(args, :insecure))
+        setkv(newargs, :require_ssl_verification, !getarg(args, :insecure))
     end
 
     m = string(method)
     h = [k => v for (k,v) in headers]
     if stream
-        push!(args, (:response_stream, BufferStream()))
+        setkv(newargs, :response_stream, BufferStream())
     end
 
     if isa(body, Dict)
         body = HTTP.Form(body)
         setbyfirst(h, "Content-Type" =>
                             "multipart/form-data; boundary=$(body.boundary)")
-        setkv(args, :bodylength, length(body))
+        setkv(newargs, :bodylength, length(body))
     end
 
     if !enablechunked && isa(body, IO)
         body = read(body)
+    end
+
+    if VERSION > v"0.7.0-DEV.2338"
+    args = merge(args, newargs)
+    else
+    for newarg in newargs
+        defaultbyfirst(args, newarg)
+    end
     end
 
     return RequestStack.request(m, uri, h, body; args...)

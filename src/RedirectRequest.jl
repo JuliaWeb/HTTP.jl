@@ -26,7 +26,12 @@ function request(::Type{RedirectLayer{Next}},
             return res
         end
             
+
+        if VERSION > v"0.7.0-DEV.2338"
+        kw = merge(kw, [:parent => res])
+        else
         setkv(kw, :parent, res)
+        end
         uri = absuri(location, uri)
         if forwardheaders 
             headers = filter(h->!(h[1] in ("Host", "Cookie")), headers)

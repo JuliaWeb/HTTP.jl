@@ -126,7 +126,7 @@ function printuri(io::IO,
     if sch in uses_authority
         print(io, sch, "://")
         !isempty(userinfo) && print(io, userinfo, "@")
-        print(io, ':' in host? "[$host]" : host)
+        print(io, ':' in host ? "[$host]" : host)
         print(io, ((sch == "http" && port == "80") ||
                    (sch == "https" && port == "443") || isempty(port)) ? "" : ":$port")
     elseif path != "" && path != "*" && sch != ""
