@@ -120,51 +120,6 @@ using JSON
     end
 
 
-    for sch in ["http", "https"]
-
-        log_buffer = Vector{String}()
-
-        function log(s::String)
-            println(s)
-            push!(log_buffer, s)
-        end
-
-        function async_get(url)
-            io = BufferStream()
-            q = URI(url).query
-            log("GET $q")
-            r = request("GET", url, response_stream=io)
-            @async begin
-                s = String(read(io))
-                s = split(s, "\n")[end-1]
-                x = JSON.parse(s)
-                log("GOT $q: $(x["args"]["req"])")
-            end
-        end
-
-
-        @sync begin
-            async_get("$sch://httpbin.org/stream/100?req=1")
-            async_get("$sch://httpbin.org/stream/100?req=2")
-            async_get("$sch://httpbin.org/stream/100?req=3")
-            async_get("$sch://httpbin.org/stream/100?req=4")
-            async_get("$sch://httpbin.org/stream/100?req=5")
-        end
-
-        @test log_buffer == ["GET req=1",
-                             "GET req=2",
-                             "GOT req=1: 1",
-                             "GET req=3",
-                             "GOT req=2: 2",
-                             "GET req=4",
-                             "GOT req=3: 3",
-                             "GET req=5",
-                             "GOT req=4: 4",
-                             "GOT req=5: 5"]
-
-    end
-
-
     mktempdir() do d
         cd(d) do
 
