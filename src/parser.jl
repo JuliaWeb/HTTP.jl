@@ -336,12 +336,7 @@ function parse!(parser::Parser, bytes::ByteView)::Int
         p += 1
         @inbounds ch = Char(bytes[p])
 
-        if p_state == s_dead
-            # This state is used after a 'Connection: close' message
-            # the parser will error out if it reads another message
-            @errorif(ch != CR && ch != LF, HPE_CLOSED_CONNECTION)
-
-        elseif p_state == s_start_req_or_res
+        if p_state == s_start_req_or_res
             (ch == CR || ch == LF) && continue
             parser.flags = 0
             parser.content_length = ULLONG_MAX
