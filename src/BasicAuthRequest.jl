@@ -10,7 +10,8 @@ export BasicAuthLayer
 
 
 function request(::Type{BasicAuthLayer{Next}},
-                 method::String, uri, headers=[], body=""; kw...) where Next
+                 method::String, uri, headers, body, response_body;
+                 kw...) where Next
 
     userinfo = URI(uri).userinfo
     
@@ -19,7 +20,7 @@ function request(::Type{BasicAuthLayer{Next}},
         setkv(headers, "Authorization", "Basic $(base64encode(userinfo))")
     end
     
-    return request(Next, method, uri, headers, body; kw...)
+    return request(Next, method, uri, headers, body, response_body,; kw...)
 end
 
 

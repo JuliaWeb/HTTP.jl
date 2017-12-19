@@ -26,7 +26,7 @@ function request(::Type{ConnectionPoolLayer{Next}},
     Connection = ConnectionPool.Connection{sockettype(uri)}
     io = getconnection(Connection, uri.host, uri.port; kw...)
 
-    return request(Next, io, req, res)
+    return request(Next, io, req, res; kw...)
 end
 
 
@@ -38,7 +38,7 @@ function request(::Type{ConnectLayer{Next}},
 
     io = getconnection(sockettype(uri), uri.host, uri.port; kw...)
 
-    return request(Next, io, req, res)
+    return request(Next, io, req, res; kw...)
 end
 
 

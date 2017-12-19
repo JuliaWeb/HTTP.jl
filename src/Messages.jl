@@ -1,7 +1,7 @@
 module Messages
 
 export Message, Request, Response, Body,
-       method, iserror, isredirect, parentcount, isstream,
+       method, iserror, isredirect, parentcount, isstream, isstreamfresh,
        header, setheader, defaultheader, setlengthheader,
        waitforheaders, wait,
        writeandread
@@ -64,12 +64,13 @@ Represents a HTTP Response Message.
 - `status::Int16`
 - `headers::Vector{Pair{String,String}}`
 - `body::`[`HTTP.Body`](@ref)
-- `parent::Request`, the `Request` that yielded this `Response`.
 - `complete::Condition`, raised when the `Parser` has finished
    reading the Response Headers. This allows the `status` and `header` fields
    to be read used asynchronously without waiting for the entire body to be
    parsed.
    `complete` is also raised when the entire Response Body has been read.
+- `exception`, set if `writeandread` fails.
+- `parent::Request`, the `Request` that yielded this `Response`.
 """
 
 mutable struct Response
@@ -78,11 +79,12 @@ mutable struct Response
     headers::Vector{Pair{String,String}}
     body::Body
     complete::Condition
+    exception
     parent
 end
 
 Response(status::Int=0, headers=[]; body=Body(), parent=nothing) =
-    Response(v"1.1", status, headers, body, Condition(), parent)
+    Response(v"1.1", status, headers, body, Condition(), nothing, parent)
 
 Response(bytes) = read!(IOBuffer(bytes), Response())
 Base.parse(::Type{Response}, str::AbstractString) = Response(str)
@@ -116,23 +118,6 @@ Method of the `Request` that yielded this `Response`.
 method(r::Response) = r.parent == nothing ? "" : r.parent.method
 
 
-#= FIXME obsolete ?
-"""
-    parentcount(::Response)
-
-How many redirect parents does this `Response` have?
-"""
-
-function parentcount(r::Response)
-    if r.parent == nothing || r.parent.parent == nothing
-        return 0
-    else
-        return 1 + parentcount(r.parent.parent)
-    end
-end
-=#
-
-
 """
     statustext(::Response) -> String
 
@@ -148,7 +133,14 @@ statustext(r::Response) = Base.get(Parsers.STATUS_CODES, r.status, "Unknown Code
 Wait for the `Parser` (in a different task) to finish parsing the headers.
 """
 
-waitforheaders(r::Response) = while r.status == 0; wait(r.complete) end
+function waitforheaders(r::Response)
+    while r.status == 0 && r.exception == nothing
+        wait(r.complete)
+    end
+    if r.exception != nothing
+        rethrow(r.exception)
+    end
+end
 
 
 """
@@ -157,7 +149,14 @@ waitforheaders(r::Response) = while r.status == 0; wait(r.complete) end
 Wait for the `Parser` (in a different task) to finish parsing the `Response`.
 """
 
-Base.wait(r::Response) = while isopen(r.body); wait(r.complete) end
+function Base.wait(r::Response)
+    while isopen(r.body) && r.exception == nothing
+        wait(r.complete)
+    end
+    if r.exception != nothing
+        rethrow(r.exception)
+    end
+end
 
 
 """
@@ -326,7 +325,7 @@ end
 Configure a `Parser` to store parsed data into this `Message`.
 """
 function connectparser(m::Message, p::Parser)
-    reset!(p) 
+    reset!(p)
     p.onbodyfragment = x->write(m.body, x)
     p.onheader = x->appendheader(m, x)
     p.onheaderscomplete = x->readstartline!(m, x)
@@ -366,7 +365,10 @@ function writeandread(io::IO, req::Request, res::Response)
         closeread(io)                   ;@debug 2 "read from: $io\n$res"
     catch e
         @schedule close(io)
+        res.exception = e
         rethrow(e)
+    finally
+        notify(res.complete)
     end
 
     return res

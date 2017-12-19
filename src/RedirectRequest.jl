@@ -12,12 +12,12 @@ export RedirectLayer
 
 
 function request(::Type{RedirectLayer{Next}},
-                 method::String, uri, headers=[], body="";
+                 method::String, uri, headers, body, response_body;
                  maxredirects=3, forwardheaders=false, kw...) where Next
     count = 0
     while true
     
-        res = request(Next, method, uri, headers, body; kw...)
+        res = request(Next, method, uri, headers, body, response_body; kw...)
 
         if (count == maxredirects
         ||  !isredirect(res)

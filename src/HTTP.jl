@@ -21,16 +21,6 @@ end
 
 const minimal = false
 
-module RequestStack
-
-    import ..HTTP
-    request(m::String, a...; kw...) = request(HTTP.stack(;kw...), m, a...; kw...)
-
-end
-                                                                      if minimal
-import .RequestStack.request
-                                                                             end
-
 include("debug.jl")
 include("Pairs.jl")
 include("Strings.jl")
@@ -47,6 +37,30 @@ include("parser.jl");                   import .Parsers.ParsingError
 include("Connect.jl")
 include("ConnectionPool.jl")
 include("Messages.jl");                 using .Messages
+
+module RequestStack
+
+    import ..HTTP
+    import ..Body
+
+    function request(method::String, uri, headers, body::Body,
+                     response_body::Body; kw...)
+
+        request(HTTP.stack(;kw...),
+                method, uri, headers, body, response_body; kw...)
+    end
+
+    function request(method::String, uri, headers=[], body="";
+                     bodylength=HTTP.Messages.Bodies.unknownlength,
+                     response_stream=nothing, kw...)
+
+        request(method, uri, headers, Body(body, bodylength),
+                Body(response_stream); kw...)
+    end
+end
+                                                                      if minimal
+import .RequestStack.request
+                                                                             end
 
 
 abstract type Layer end

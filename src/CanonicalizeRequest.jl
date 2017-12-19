@@ -11,11 +11,12 @@ export CanonicalizeLayer
 canonicalizeheaders{T}(h::T) = T([tocameldash!(k) => v for (k,v) in h])
 
 function request(::Type{CanonicalizeLayer{Next}},
-                 method::String, uri, headers=[], body=""; kw...) where Next
+                 method::String, uri, headers, body, response_body;
+                 kw...) where Next
 
     headers = canonicalizeheaders(headers)
     
-    res = request(Next, method, uri, headers, body; kw...)
+    res = request(Next, method, uri, headers, body, response_body; kw...)
 
     res.headers = canonicalizeheaders(res.headers)
 

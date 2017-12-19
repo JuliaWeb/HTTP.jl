@@ -228,16 +228,6 @@ for sch in ("http", "https")
     # body = UInt8[0x1f,0x8b,0x08,0x00,0x00,0x00,0x00,0x00,0x00,0x03,0xcb,0x48,0xad,0x04,0x00,0xf0,0x15,0xd6,0x88,0x03,0x00,0x00,0x00]
     # r = HTTP.post("$sch://httpbin.org/post"; body=body, chunksize=1)
 
-    @sync begin
-        for i = 1:100
-            @async begin
-                r = HTTP.RequestStack.request("GET", "http://httpbin.org/headers", ["i" => i])
-                r = JSON.parse(String(take!(r)))
-                @test r["headers"]["I"] == string(i)
-            end
-        end
-    end
-
 end
 
 end # @testset "HTTP.Client"

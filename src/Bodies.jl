@@ -1,6 +1,6 @@
 module Bodies
 
-export Body, isstream
+export Body, isstream, isstreamfresh
 
 
 """
@@ -97,6 +97,16 @@ isstream(b::Body) = b.stream != notastream
 
 
 """
+    isstreamfresh(::Body)
+
+False if there have been any reads/writes from/to the `Body`'s stream.
+"""
+
+isstreamfresh(b::Body) = !isstream(b) || position(b.buffer) == 0
+
+
+
+"""
     length(::Body)
 
 Number of bytes in the body.
@@ -157,7 +167,7 @@ function Base.write(io::IO, body::Body)
         return
     end
 
-    @assert position(body.buffer) == 0
+    @assert isstreamfresh(body)
 
     # Use "chunked" encoding if length is unknown.
     # https://tools.ietf.org/html/rfc7230#section-4.1

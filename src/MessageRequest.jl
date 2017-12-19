@@ -41,22 +41,18 @@ println(stat("response_file").size)
 """
 
 function request(::Type{MessageLayer{Next}},
-                 method::String, uri, headers=[], body="";
-                 bodylength=Messages.Bodies.unknownlength,
-                 parent=nothing,
-                 response_stream=nothing,
-                 kw...) where Next
+                 method::String, uri, headers, body::Body, response_body::Body;
+                 parent=nothing, kw...) where Next
 
     u = URI(uri)
     url = method == "CONNECT" ? hostport(u) : resource(u)
 
-    req = Request(method, url, headers, Body(body, bodylength);
-                  parent=parent)
+    req = Request(method, url, headers, body; parent=parent)
 
     defaultheader(req, "Host" => u.host)
     setlengthheader(req)
 
-    res = Response(body=Body(response_stream), parent=req)
+    res = Response(body=response_body, parent=req)
 
     return request(Next, u, req, res; kw...)
 end
