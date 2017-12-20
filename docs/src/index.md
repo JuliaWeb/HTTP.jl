@@ -131,9 +131,9 @@ r = request("POST", "http://httpbin.org/post", [], chunks)
 
 ```
 io = HTTP.open("POST", "http://httpbin.org/post")
-write(io, preamble)
-write(io, data)
-write(io, checksum(data))
+write(io, preamble_chunk)
+write(io, data_chunk)
+write(io, checksum(data_chunk))
 r = close(io)
 @show r.status
 ```
