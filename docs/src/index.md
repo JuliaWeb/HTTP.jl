@@ -56,6 +56,158 @@ HTTP.escapeHTML
 
 # HTTP.jl Architecture
 
+
+## User Interface
+
+The basic API function is:
+
+    `HTTP.request(method, url [, headers [, body [, response_body]]]) -> HTTP.Response`
+
+`headers` can be any collection where
+`[string(k) => string(v) for (k,v) in headers]` yields `Vector{Pair}`.
+
+
+`body` can take a number of forms:
+
+ - a `String` or `AbstractVector{UInt8}`, or
+ - a collection where `eltype` is `String` or `AbstractVector{UInt8}`, or
+ - an readable `IO` stream or any `IO`-like type `T` for which
+   `eof(T)` and `readavailable(T)` are defined.
+
+`response_body` can be a writeable `IO` stream or any `IO`-like type `T`
+for which `write(T, AbstractVector{UInt8})` is defined.
+
+
+The `HTTP.Response` struct contains:
+
+ - `status::Int16` e.g. `200`
+ - `headers::Vector{Pair{String,String}}`
+    e.g. ["Server" => "Apache", "Content-Type" => "text/html"]
+ - `body::IO`, the `response_body` or, by default, an `IOBuffer()`.
+
+
+The `HTTP.open` API allows the Request Body to be streamed to an `IO` channel:
+
+    `HTTP.open(method, url, [,headers]) -> HTTP.BodyStream`
+    `write(::HTTP.BodyStream, bytes)`
+    `close(::HTTP.BodyStream) -> HTTP.Response`
+
+
+The `HTTP.open` API also allows the Response Body to be streamed:
+
+    `HTTP.open(method, url, [,headers]) -> HTTP.BodyStream`
+    `write(::HTTP.BodyStream, bytes)`
+    `closewrite(::HTTP.BodyStream) -> HTTP.Response`
+    `read(::HTTP.BodyStream) -> AbstractVector{UInt8}`
+    `close(::HTTP.BodyStream) -> HTTP.Response`
+
+
+## User Interface Examples
+
+## Request Body Examples
+
+```
+r = request("POST", "http://httpbin.org/post", [], "post body data")
+@show r.status
+```
+
+```
+io = open("post_data.txt", "r")
+r = request("POST", "http://httpbin.org/post", [], io)
+@show r.status
+```
+
+```
+chunks = ("chunk$i" for i in 1:1000)
+r = request("POST", "http://httpbin.org/post", [], chunks)
+@show r.status
+```
+
+```
+chunks = [preamble_chunk, data_chunk, checksum(data_chunk)]
+r = request("POST", "http://httpbin.org/post", [], chunks)
+@show r.status
+```
+
+```
+io = HTTP.open("POST", "http://httpbin.org/post")
+write(io, preamble)
+write(io, data)
+write(io, checksum(data))
+r = close(io)
+@show r.status
+```
+
+
+## Response Body Examples
+
+```
+r = request("GET", "http://httpbin.org/get")
+@show r.status
+println(read(r.body))
+```
+
+```
+io = open("get_data.txt", "r")
+r = request("GET", "http://httpbin.org/get", [], "", io)
+@show r.status
+println(read("get_data.txt"))
+```
+
+```
+io = BufferStream()
+@async while !eof(io)
+    bytes = readavailable(io))
+    println("GET data: $bytes")
+end
+r = request("GET", "http://httpbin.org/get", [], "", io)
+@show r.status
+```
+
+```
+io = HTTP.open("GET", "http://httpbin.org/get")
+r = closewrite(io)
+@show r.status
+while !eof(io)
+    bytes = readavailable(io))
+    println("GET data: $bytes")
+end
+close(io)
+```
+
+
+## Request and Response Body Examples
+
+
+```
+r = request("POST", "http://httpbin.org/post", [], "post body data")
+@show r.status
+println(read(r.body))
+```
+
+```
+in = open("foo.png", "r")
+out = open("foo.jpg", "w")
+r = request("POST", "http://convert.com/png2jpg", [], in, out)
+@show r.status
+```
+
+```
+io = HTTP.open("POST", "http://music.com/play")
+write(io, JSON.json([
+    "auth" => "12345XXXX",
+    "song_id" => 7,
+]))
+r = closewrite(io)
+@show r.status
+while !eof(io)
+    bytes = readavailable(io))
+    play_audio(bytes)
+end
+close(io)
+```
+
+
 ## Parser
 
 Source: `Parsers.jl`
