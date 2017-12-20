@@ -24,7 +24,8 @@
 
 module Parsers
 
-export Parser, parse!, reset!,
+export Parser, parse!, parseheaders!, parsebody!, reset!,
+       readheaders!, readbody!,
        messagestarted, messagecomplete, headerscomplete, waitingforeof,
        connectionclosed,
        ParsingError, ParsingErrorCode
@@ -173,6 +174,77 @@ function Base.read!(io::IO, p::Parser; unread=IOExtras.unread!)
     if !waitingforeof(p)
         throw(ParsingError(p, headerscomplete(p) ? HPE_BODY_INCOMPLETE :
                                                    HPE_HEADERS_INCOMPLETE))
+    end
+    return
+end
+
+
+"""
+    readheaders!(io, ::Parser [, unread=IOExtras.unread!])
+
+Read data from `io` into the `Parser` until `eof`
+or until the parser finds the end of the Headers.
+
+If `readavailable(io)` reads past the end of the Headers the excess bytes
+are passed to `unread`.
+
+Throws `ParsingError` if input is invalid.
+"""
+
+function readheaders!(io::IO, p::Parser; unread=IOExtras.unread!)
+
+    while !eof(io)
+        bytes = readavailable(io)
+        n = parse!(p, bytes)
+        if n < length(bytes)
+            unread(io, view(bytes, n+1:length(bytes)))
+        end
+        if headerscomplete(p)
+            return
+        end
+    end
+    @debug 2 "readheaders!(::$(typeof(io)), " *
+             "Parser($(ParsingStateCode(p.state)))) eof!"
+
+    if !messagestarted(p)
+        throw(EOFError())
+    end
+    if !waitingforeof(p)
+        throw(ParsingError(p, HPE_HEADERS_INCOMPLETE))
+    end
+    return
+end
+
+
+"""
+    readbody!(io, ::Parser [, unread=IOExtras.unread!])
+
+Read data from `io` into the `Parser` until `eof`
+or until the parser finds the end of the Message Body.
+
+If `readavailable(io)` reads past the end of the Message the excess bytes
+are passed to `unread`.
+
+Throws `ParsingError` if input is invalid.
+"""
+
+function readbody!(io::IO, p::Parser; unread=IOExtras.unread!)
+
+    while !eof(io)
+        bytes = readavailable(io)
+        n = parsebody!(p, bytes)
+        if n < length(bytes)
+            unread(io, view(bytes, n+1:length(bytes)))
+        end
+        if messagecomplete(p)
+            return
+        end
+    end
+    @debug 2 "readbody!(::$(typeof(io)), " *
+             "Parser($(ParsingStateCode(p.state)))) eof!"
+
+    if !waitingforeof(p)
+        throw(ParsingError(p, HPE_BODY_INCOMPLETE))
     end
     return
 end
@@ -340,10 +412,14 @@ function parse!(parser::Parser, bytes::ByteView)::Int
     return c
 end
 
+
+parseheaders!(p::Parser, bytes) = parseheaders!(p, view(bytes, 1:length(bytes)))
+
 function parseheaders!(parser::Parser, bytes::ByteView)::Int
 
     isempty(bytes) && throw(ArgumentError("bytes must not be empty"))
     headerscomplete(parser) && throw(ArgumentError("headers already complete"))
+
     len = length(bytes)
     p_state = parser.state
     @debug 2 "parseheaders!(parser.state=$(ParsingStateCode(p_state))), " *
@@ -1162,10 +1238,13 @@ function parseheaders!(parser::Parser, bytes::ByteView)::Int
 end
 
 
+parsebody!(p::Parser, bytes) = parsebody!(p, view(bytes, 1:length(bytes)))
+
 function parsebody!(parser::Parser, bytes::ByteView)::Int
 
     isempty(bytes) && throw(ArgumentError("bytes must not be empty"))
     !headerscomplete(parser) && throw(ArgumentError("headers not complete"))
+
     len = length(bytes)
     p_state = parser.state
     @debug 2 "parsebody!(parser.state=$(ParsingStateCode(p_state))), " *
