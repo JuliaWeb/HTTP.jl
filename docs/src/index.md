@@ -83,7 +83,8 @@ The `HTTP.Response` struct contains:
  - `status::Int16` e.g. `200`
  - `headers::Vector{Pair{String,String}}`
     e.g. ["Server" => "Apache", "Content-Type" => "text/html"]
- - `body::IO`, the `response_body` or, by default, an `IOBuffer()`.
+ - `body::Vector{UInt8}`, the Response Body bytes.
+    Empty if a `response_body` `IO` stream was specified in the `request`.
 
 
 The `HTTP.open` API allows the Request Body to be streamed to an `IO` channel:
@@ -144,7 +145,7 @@ r = close(io)
 ```
 r = request("GET", "http://httpbin.org/get")
 @show r.status
-println(read(r.body))
+println(String(r.body))
 ```
 
 ```
@@ -182,7 +183,7 @@ close(io)
 ```
 r = request("POST", "http://httpbin.org/post", [], "post body data")
 @show r.status
-println(read(r.body))
+println(String(r.body))
 ```
 
 ```
