@@ -1,5 +1,10 @@
 module Nitrogen
 
+if !isdefined(Base, :Nothing)
+    const Nothing = Void
+    const Cvoid = Void
+end
+
 if VERSION < v"0.7.0-DEV.2575"
     const Dates = Base.Dates
 else
@@ -47,7 +52,7 @@ mutable struct ServerOptions
     maxheader::Int64
     maxbody::Int64
     support100continue::Bool
-    chunksize::Union{Void, Int}
+    chunksize::Union{Nothing, Int}
     logbody::Bool
 end
 
@@ -58,7 +63,7 @@ ServerOptions(; tlsconfig::HTTP.TLS.SSLConfig=HTTP.TLS.SSLConfig(true),
                 maxheader::Int64=HTTP.DEFAULT_MAX_HEADER,
                 maxbody::Int64=HTTP.DEFAULT_MAX_BODY,
                 support100continue::Bool=true,
-                chunksize::Union{Void, Int}=nothing,
+                chunksize::Union{Nothing, Int}=nothing,
                 logbody::Bool=true) =
     ServerOptions(tlsconfig, readtimeout, ratelimit, maxbody, maxuri, maxheader, support100continue, chunksize, logbody)
 

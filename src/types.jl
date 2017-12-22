@@ -12,8 +12,8 @@ schemetype(::Type{TLS.SSLContext}) = https
 
 const Headers = Dict{String, String}
 
-const Option{T} = Union{T, Void}
-not(::Void) = true
+const Option{T} = Union{T, Nothing}
+not(::Nothing) = true
 not(x) = false
 function get(value::T, name::Symbol, default::R)::R where {T, R}
     val = getfield(value, name)::Option{R}
@@ -220,7 +220,7 @@ mutable struct Response
     cookies::Vector{Cookie}
     headers::Headers
     body::FIFOBuffer
-    request::Union{Void,Request}
+    request::Union{Nothing,Request}
     history::Vector{Response}
 end
 
@@ -247,7 +247,7 @@ Response(; status::Int=200,
          cookies::Vector{Cookie}=Cookie[],
          headers::Headers=Headers(),
          body::FIFOBuffer=FIFOBuffer(""),
-         request::Union{Void,Request}=nothing,
+         request::Union{Nothing,Request}=nothing,
          history::Vector{Response}=Response[]) =
     Response(status, Int16(1), Int16(1), cookies, headers, body, request, history)
 

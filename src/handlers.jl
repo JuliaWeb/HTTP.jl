@@ -1,5 +1,10 @@
 module Handlers
 
+if !isdefined(Base, :Nothing)
+    const Nothing = Void
+    const Cvoid = Void
+end
+
 function val(v)
     @static if VERSION < v"0.7.0-DEV.1395"
         Val{v}()
@@ -59,7 +64,7 @@ struct Router <: Handler
     segments::Dict{String, Val}
     sym::Symbol
     func::Function
-    function Router(ff::Union{Handler, Function, Void}=nothing)
+    function Router(ff::Union{Handler, Function, Nothing}=nothing)
         sym = gensym()
         if ff == nothing
             f = @eval $sym(args...) = FourOhFour
