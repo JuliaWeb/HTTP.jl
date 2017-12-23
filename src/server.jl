@@ -166,7 +166,7 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
                             response = HTTP.Response(417)
                             error = true
                         end
-                    elseif length(upgrade) > 0
+                    elseif isassigned(upgrade)
                         HTTP.@log "received upgrade request on connection i=$i"
                         response = HTTP.Response(501, "upgrade requests are not currently supported")
                         error = true
