@@ -1,6 +1,6 @@
 module Pairs
 
-export defaultbyfirst, setbyfirst, getbyfirst, setkv, getkv
+export defaultbyfirst, setbyfirst, getbyfirst, setkv, getkv, rmkv
 
 
 """
@@ -71,5 +71,19 @@ function getkv(c, k, default=nothing)
     return i > 0 ? c[i][2] : default
 end
 
+
+"""
+    rmkv(collection, key)
+
+Remove `key` from `collection` of key/value `Pairs`.
+"""
+
+function rmkv(c, k, default=nothing)
+    i = findfirst(x->first(x) == k, c)
+    if i > 0
+        deleteat!(c, i)
+    end
+    return
+end
 
 end # module Pairs

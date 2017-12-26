@@ -1,6 +1,6 @@
 module ExceptionRequest
 
-import ..Layer, ..RequestStack.request
+import ..Layer, ..request
 using ..Messages
 
 abstract type ExceptionLayer{Next <: Layer} <: Layer end

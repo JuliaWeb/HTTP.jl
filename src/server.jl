@@ -53,6 +53,10 @@ mutable struct ServerOptions
     logbody::Bool
 end
 
+abstract type Scheme end
+struct http <: Scheme end
+struct https <: Scheme end
+
 ServerOptions(; tlsconfig::HTTP.MbedTLS.SSLConfig=HTTP.MbedTLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
                 ratelimit::Rational{Int64}=Int64(5)//Int64(1),
@@ -80,7 +84,7 @@ Supported keyword arguments include:
   * `support100continue`: a `Bool` indicating whether `Expect: 100-continue` headers should be supported for delayed request body sending; default = `true`
   * `logbody`: whether the Response body should be logged when `verbose=true` logging is enabled; default = `true`
 """
-mutable struct Server{T <: HTTP.Scheme, H <: HTTP.Handler}
+mutable struct Server{T <: Scheme, H <: HTTP.Handler}
     handler::H
     logger::IO
     in::Channel{Any}
@@ -224,8 +228,8 @@ function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, 
     return nothing
 end
 
-initTLS!(::Type{HTTP.http}, tcp, tlsconfig) = return tcp
-function initTLS!(::Type{HTTP.https}, tcp, tlsconfig)
+initTLS!(::Type{http}, tcp, tlsconfig) = return tcp
+function initTLS!(::Type{https}, tcp, tlsconfig)
     try
         tls = HTTP.MbedTLS.SSLContext()
         HTTP.MbedTLS.setup!(tls, tlsconfig)
@@ -321,9 +325,9 @@ function Server(handler::H=HTTP.HandlerFunction((req, rep) -> HTTP.Response("Hel
                key::String="",
                args...) where {H <: HTTP.Handler}
     if cert != "" && key != ""
-        server = Server{HTTP.https, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; tlsconfig=HTTP.MbedTLS.SSLConfig(cert, key), args...))
+        server = Server{https, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; tlsconfig=HTTP.MbedTLS.SSLConfig(cert, key), args...))
     else
-        server = Server{HTTP.http, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; args...))
+        server = Server{http, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; args...))
     end
     return server
 end

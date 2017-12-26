@@ -1,7 +1,7 @@
 module RetryRequest
 
 import ..HTTP
-import ..Layer, ..RequestStack.request
+import ..Layer, ..request
 using ..MessageRequest
 using ..Messages
 import ..@debug, ..DEBUG_LEVEL

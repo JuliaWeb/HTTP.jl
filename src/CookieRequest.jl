@@ -1,6 +1,6 @@
 module CookieRequest
 
-import ..Layer, ..RequestStack.request
+import ..Layer, ..request
 using ..URIs
 using ..Cookies
 using ..Pairs: getkv, setkv

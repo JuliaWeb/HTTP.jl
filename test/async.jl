@@ -1,6 +1,70 @@
 using JSON
-using HTTP.IOExtras
+using MbedTLS: digest, MD_MD5, MD_SHA256
+using Base64
 
+using HTTP.IOExtras
+using HTTP.request
+
+# Tiny S3 interface...
+const s3region = "ap-southeast-2"
+const s3url = "https://s3.$s3region.amazonaws.com"
+s3(method, path, body=UInt8[]; kw...) =
+    request(method, "$s3url/$path", [], body; awsauthorization=true, kw...)
+s3get(path; kw...) = s3("GET", path; kw...)
+s3put(path, data; kw...) = s3("PUT", path, data; kw...)
+
+function create_bucket(bucket)
+    s3put(bucket, """
+        <CreateBucketConfiguration
+                     xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+            <LocationConstraint>$s3region</LocationConstraint>
+        </CreateBucketConfiguration>""",
+        statusexception=false)
+end
+
+create_bucket("http.jl.test")
+
+put_data_sums = Dict()
+@sync for i = 1:100
+    data = rand(UInt8, 100000)
+    md5 = bytes2hex(digest(MD_MD5, data))
+    put_data_sums[i] = md5
+    @async begin
+        url = "$s3url/http.jl.test/file$i"
+        r = HTTP.open("PUT", url, ["Content-Length" => 100000];
+                body_sha256=digest(MD_SHA256, data),
+                body_md5=digest(MD_MD5, data),
+                awsauthorization=true) do http
+            for n = 1:1000:100000
+                write(http, data[n:n+999])
+                sleep(rand(10:100)/1000)
+            end
+        end
+        println("S3 put file$i")
+        @assert strip(HTTP.header(r, "ETag"), '"') == md5
+    end
+end
+
+get_data_sums = Dict()
+@sync for i = 1:100
+    @async begin
+        url = "$s3url/http.jl.test/file$i"
+        buf = IOBuffer()
+        r = HTTP.open("GET", url; awsauthorization=true) do http
+            write(buf, http)
+        end
+        println("S3 get file$i")
+        md5 = bytes2hex(digest(MD_MD5, take!(buf)))
+        @assert strip(HTTP.header(r, "ETag"), '"') == md5
+        get_data_sums[i] = md5
+    end
+end
+
+for i = 1:100
+    @test put_data_sums[i] == get_data_sums[i]
+end
+
+#=
 configs = [
     [],
     [:reuse_limit => 200],
@@ -21,7 +85,7 @@ println("running async $count, 1:$num, $config, $http")
     @sync begin
         for i = 1:min(num,100)
             @async begin
-                r = HTTP.RequestStack.request("GET",
+                r = HTTP.request("GET",
                  "$http://httpbin.org/headers", ["i" => i]; config...)
                 r = JSON.parse(String(r.body))
                 push!(result, r["headers"]["I"] => string(i))
@@ -40,7 +104,7 @@ println("running async $count, 1:$num, $config, $http")
     @sync begin
         for i = 1:min(num,100)
             @async begin
-                r = HTTP.RequestStack.request("GET",
+                r = HTTP.request("GET",
                      "$http://httpbin.org/stream/$i"; config...)
                 r = String(r.body)
                 r = split(strip(r), "\n")
@@ -91,7 +155,7 @@ println("running async $count, 1:$num, $config, $http")
                             try
                                 #println("GET $i $n BufferStream $attempt")
                                 s = BufferStream()
-                                r = HTTP.RequestStack.request(
+                                r = HTTP.request(
                                     "GET", url; response_stream=s, config...)
                                 @assert r.status == 200
                                 close(s)
@@ -112,7 +176,7 @@ println("running async $count, 1:$num, $config, $http")
                         end
                     else
                         #println("GET $i $n Plain")
-                        r = HTTP.RequestStack.request("GET", url; config...)
+                        r = HTTP.request("GET", url; config...)
                         @assert r.status == 200
                         str = String(r.body)
                     end
@@ -150,3 +214,4 @@ println("running async $count, 1:$num, $config, $http")
     HTTP.ConnectionPool.closeall()
 
 end # testset
+=#

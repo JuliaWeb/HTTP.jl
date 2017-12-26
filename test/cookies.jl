@@ -49,21 +49,21 @@ end
 
 @testset "readsetcookies" begin
     cookietests = [
-        (HTTP.Headers(["Set-Cookie"=> "Cookie-1=v\$1"]), [HTTP.Cookie("Cookie-1", "v\$1")]),
-        (HTTP.Headers(["Set-Cookie"=> "NID=99=YsDT5i3E-CXax-; expires=Wed, 23-Nov-2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly"]),
+        (Dict(["Set-Cookie"=> "Cookie-1=v\$1"]), [HTTP.Cookie("Cookie-1", "v\$1")]),
+        (Dict(["Set-Cookie"=> "NID=99=YsDT5i3E-CXax-; expires=Wed, 23-Nov-2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly"]),
             [HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain="google.ch", httponly=true, expires=Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))]),
-        (HTTP.Headers(["Set-Cookie"=> ".ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly"]),
+        (Dict(["Set-Cookie"=> ".ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly"]),
             [HTTP.Cookie(".ASPXAUTH", "7E3AA"; path="/", expires=Dates.DateTime(2012, 3, 7, 14, 25, 6, 0), httponly=true)]),
-        (HTTP.Headers(["Set-Cookie"=> "ASP.NET_SessionId=foo; path=/; HttpOnly"]),
+        (Dict(["Set-Cookie"=> "ASP.NET_SessionId=foo; path=/; HttpOnly"]),
             [HTTP.Cookie("ASP.NET_SessionId", "foo"; path="/", httponly=true)]),
-        (HTTP.Headers(["Set-Cookie"=> "special-1=a z"]),  [HTTP.Cookie("special-1", "a z")]),
-        (HTTP.Headers(["Set-Cookie"=> "special-2=\" z\""]), [HTTP.Cookie("special-2", " z")]),
-        (HTTP.Headers(["Set-Cookie"=> "special-3=\"a \""]), [HTTP.Cookie("special-3", "a ")]),
-        (HTTP.Headers(["Set-Cookie"=> "special-4=\" \""]),  [HTTP.Cookie("special-4", " ")]),
-        (HTTP.Headers(["Set-Cookie"=> "special-5=a,z"]),  [HTTP.Cookie("special-5", "a,z")]),
-        (HTTP.Headers(["Set-Cookie"=> "special-6=\",z\""]), [HTTP.Cookie("special-6", ",z")]),
-        (HTTP.Headers(["Set-Cookie"=> "special-7=a,"]),   [HTTP.Cookie("special-7", "a,")]),
-        (HTTP.Headers(["Set-Cookie"=> "special-8=\",\""]),  [HTTP.Cookie("special-8", ",")]),
+        (Dict(["Set-Cookie"=> "special-1=a z"]),  [HTTP.Cookie("special-1", "a z")]),
+        (Dict(["Set-Cookie"=> "special-2=\" z\""]), [HTTP.Cookie("special-2", " z")]),
+        (Dict(["Set-Cookie"=> "special-3=\"a \""]), [HTTP.Cookie("special-3", "a ")]),
+        (Dict(["Set-Cookie"=> "special-4=\" \""]),  [HTTP.Cookie("special-4", " ")]),
+        (Dict(["Set-Cookie"=> "special-5=a,z"]),  [HTTP.Cookie("special-5", "a,z")]),
+        (Dict(["Set-Cookie"=> "special-6=\",z\""]), [HTTP.Cookie("special-6", ",z")]),
+        (Dict(["Set-Cookie"=> "special-7=a,"]),   [HTTP.Cookie("special-7", "a,")]),
+        (Dict(["Set-Cookie"=> "special-8=\",\""]),  [HTTP.Cookie("special-8", ",")]),
     ]
 
     for (h, c) in cookietests

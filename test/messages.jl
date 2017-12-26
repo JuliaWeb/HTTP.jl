@@ -8,7 +8,7 @@ end
 using HTTP.Messages
 import HTTP.Messages.appendheader
 import HTTP.URI
-import HTTP.RequestStack.request
+import HTTP.request
 
 using HTTP.StatusError
 

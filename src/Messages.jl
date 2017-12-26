@@ -3,7 +3,7 @@ module Messages
 export Message, Request, Response,
        iserror, isredirect, ischunked,
        header, hasheader, setheader, defaultheader, appendheader,
-       readheaders, readtrailers, writeheaders,
+       mkheaders, readheaders, readtrailers, writeheaders,
        readstartline!
 
 if VERSION > v"0.7.0-DEV.2338"
@@ -320,7 +320,7 @@ function Base.parse(::Type{T}, str::AbstractString) where T <: Message
     readheaders(bytes, p, m)
     m.body = readbody(bytes, p)
     readtrailers(bytes, p, m)
-    setoef(p)
+    seteof(p)
     if !messagecomplete(p)
         throw(EOFError())
     end

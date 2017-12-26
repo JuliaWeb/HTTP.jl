@@ -22,7 +22,7 @@ end
     include("uri.jl");
     include("cookies.jl");
     include("parser.jl");
-    include("body.jl");
+#    include("body.jl");
     include("messages.jl");
 #    include("types.jl");
 #    include("handlers.jl")

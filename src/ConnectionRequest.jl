@@ -1,6 +1,6 @@
 module ConnectionRequest
 
-import ..Layer, ..RequestStack.request
+import ..Layer, ..request
 using ..URIs
 using ..Messages
 using ..ConnectionPool

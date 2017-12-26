@@ -1,6 +1,6 @@
 module StreamRequest
 
-import ..Layer, ..RequestStack.request
+import ..Layer, ..request
 using ..IOExtras
 using ..Parsers
 using ..Messages

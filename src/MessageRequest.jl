@@ -1,6 +1,6 @@
 module MessageRequest
 
-import ..Layer, ..RequestStack.request
+import ..Layer, ..request
 using ..URIs
 using ..Messages
 using ..Parsers.Headers

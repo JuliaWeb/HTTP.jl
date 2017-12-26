@@ -4,7 +4,7 @@ if VERSION > v"0.7.0-DEV.2338"
 using Base64
 end
 
-import ..Layer, ..RequestStack.request
+import ..Layer, ..request
 using ..URIs
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL

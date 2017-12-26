@@ -1,6 +1,6 @@
 module CanonicalizeRequest
 
-import ..Layer, ..RequestStack.request
+import ..Layer, ..request
 using ..Messages
 using ..Strings.tocameldash!
 

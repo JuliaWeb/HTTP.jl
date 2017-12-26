@@ -1,6 +1,6 @@
 module RedirectRequest
 
-import ..Layer, ..RequestStack.request
+import ..Layer, ..request
 using ..URIs
 using ..Messages
 using ..Pairs: setkv
