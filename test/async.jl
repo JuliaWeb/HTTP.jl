@@ -64,7 +64,6 @@ for i = 1:100
     @test put_data_sums[i] == get_data_sums[i]
 end
 
-#=
 configs = [
     [],
     [:reuse_limit => 200],
@@ -214,4 +213,4 @@ println("running async $count, 1:$num, $config, $http")
     HTTP.ConnectionPool.closeall()
 
 end # testset
-=#
+
