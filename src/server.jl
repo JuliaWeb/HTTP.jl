@@ -1,5 +1,10 @@
 module Nitrogen
 
+if !isdefined(Base, :Nothing)
+    const Nothing = Void
+    const Cvoid = Void
+end
+
 if VERSION < v"0.7.0-DEV.2575"
     const Dates = Base.Dates
 else
@@ -44,7 +49,7 @@ mutable struct ServerOptions
     readtimeout::Float64
     ratelimit::Rational{Int}
     support100continue::Bool
-    chunksize::Union{Void, Int}
+    chunksize::Union{Nothing, Int}
     logbody::Bool
 end
 
@@ -52,7 +57,7 @@ ServerOptions(; tlsconfig::HTTP.MbedTLS.SSLConfig=HTTP.MbedTLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
                 ratelimit::Rational{Int64}=Int64(5)//Int64(1),
                 support100continue::Bool=true,
-                chunksize::Union{Void, Int}=nothing,
+                chunksize::Union{Nothing, Int}=nothing,
                 logbody::Bool=true) =
     ServerOptions(tlsconfig, readtimeout, ratelimit, support100continue, chunksize, logbody)
 

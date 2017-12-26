@@ -17,6 +17,11 @@ if !isdefined(Base, :pairs)
     pairs(x) = x
 end
 
+if !isdefined(Base, :Nothing)
+    const Nothing = Void
+    const Cvoid = Void
+end
+
 if VERSION < v"0.7.0-DEV.2575"
     const Dates = Base.Dates
 else
