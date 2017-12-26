@@ -24,13 +24,15 @@
 
 module Parsers
 
-export Parser, parse!, parseheaders!, parsebody!, reset!,
-       readheaders!, readbody!,
-       messagestarted, messagecomplete, headerscomplete, waitingforeof,
-       connectionclosed,
+export Parser, Header, Headers, ByteView, nobytes,
+       reset!,
+       parseheaders, parsebody,
+       messagestarted, headerscomplete, bodycomplete, messagecomplete,
+       messagehastrailing,
+       waitingforeof, seteof,
+       connectionclosed, setheadresponse,
        ParsingError, ParsingErrorCode
 
-using ..IOExtras
 using ..URIs.parseurlchar
 
 import MbedTLS.SSLContext
@@ -45,17 +47,11 @@ const strict = false # See macro @errifstrict
 const enable_passert = false # See macro @passert
 
 
-"""
-    Message
+const nobytes = view(UInt8[], 1:0)
+const ByteView = typeof(nobytes)
+const Header = Pair{String,String}
+const Headers = Vector{Header}
 
-HTTP Message metadata.
-- `method::Method`
-- `major::Int16`
-- `minor::Int16`
-- `url::String`
-- `status::Int32`
-- `upgrade::Bool`
-"""
 
 mutable struct Message
     method::Method
@@ -69,52 +65,10 @@ end
 Message() =  Message(NOMETHOD, 0, 0, "", 0, false)
 
 
-"""
-    Parser
-
-HTTP Message Parser.
-
-The `Parser` must be configured with output processing callbacks:
-
-- `onheader = f(::Pair{String,String})` is called for each Header Line.
-
-- Body data is passed to `onbodyfragment = f(::SubArray{UInt8,1})`.
-  If the Message is chunked or if the Message is passed to `parse!`
-  in multiple fragments, then `onbodyfragment` will be called multiple times.
-
-- `onheaderscomplete = f(::Message)` is called at the end of the Header.
-
-Message data can be passed to the `parse!(::Parser, data)` function
-or read from a stream by `read!(::IO, ::Parser)`.
-
-e.g.
-
-```
-p = Parser()
-p.onheaderscomplete = m -> (@show string(m.method); @show m.url)
-p.onheader = h -> @show h
-
-parse!(p, \"\"\"
-GET /foo HTTP/1.1
-Content-Length: 0
-Foo: Bar
-
-\"\"\")
-
-h = "Content-Length"=>"0"
-h = "Foo"=>"Bar"
-string(m.method) = "GET"
-m.url = "/foo"
-```
-"""
-
 mutable struct Parser
 
     # config
     isheadresponse::Bool # Are we parsing a HEAD Response Message?
-    onheader::Function#(::Pair{String,String}
-    onbodyfragment::Function#(::SubArray{UInt8,1})
-    onheaderscomplete::Function#(::Message)
 
     # state
     state::UInt8
@@ -136,118 +90,9 @@ end
 Create an unconfigured `Parser`.
 """
 
-Parser() = Parser(false, x->nothing, x->nothing, x->nothing,
+Parser() = Parser(false,
                   s_start_req_or_res, 0, 0, 0, 0,
                   IOBuffer(), IOBuffer(), Message())
-
-
-"""
-    read!(io, ::Parser [, unread=IOExtras.unread!])
-
-Read data from `io` into the `Parser` until `eof`
-or until the parser finds the end of the message.
-
-If `readavailable(io)` reads past the end of the Message the excess bytes
-are passed to `unread`. This is handled transparently if there is a suitable
-`IOExtras.unread!(::IO, SubArray{UInt8, 1})` method defined.
-
-Throws `ParsingError` if input is invalid.
-"""
-
-function Base.read!(io::IO, p::Parser; unread=IOExtras.unread!)
-
-    while !eof(io)
-        bytes = readavailable(io)
-        n = parse!(p, bytes)
-        if n < length(bytes)
-            unread(io, view(bytes, n+1:length(bytes)))
-        end
-        if messagecomplete(p)
-            return
-        end
-    end
-    @debug 2 "read!(::$(typeof(io)), Parser($(ParsingStateCode(p.state)))) eof!"
-
-    if !messagestarted(p)
-        throw(EOFError())
-    end
-    if !waitingforeof(p)
-        throw(ParsingError(p, headerscomplete(p) ? HPE_BODY_INCOMPLETE :
-                                                   HPE_HEADERS_INCOMPLETE))
-    end
-    return
-end
-
-
-"""
-    readheaders!(io, ::Parser [, unread=IOExtras.unread!])
-
-Read data from `io` into the `Parser` until `eof`
-or until the parser finds the end of the Headers.
-
-If `readavailable(io)` reads past the end of the Headers the excess bytes
-are passed to `unread`.
-
-Throws `ParsingError` if input is invalid.
-"""
-
-function readheaders!(io::IO, p::Parser; unread=IOExtras.unread!)
-
-    while !eof(io)
-        bytes = readavailable(io)
-        n = parse!(p, bytes)
-        if n < length(bytes)
-            unread(io, view(bytes, n+1:length(bytes)))
-        end
-        if headerscomplete(p)
-            return
-        end
-    end
-    @debug 2 "readheaders!(::$(typeof(io)), " *
-             "Parser($(ParsingStateCode(p.state)))) eof!"
-
-    if !messagestarted(p)
-        throw(EOFError())
-    end
-    if !waitingforeof(p)
-        throw(ParsingError(p, HPE_HEADERS_INCOMPLETE))
-    end
-    return
-end
-
-
-"""
-    readbody!(io, ::Parser [, unread=IOExtras.unread!])
-
-Read data from `io` into the `Parser` until `eof`
-or until the parser finds the end of the Message Body.
-
-If `readavailable(io)` reads past the end of the Message the excess bytes
-are passed to `unread`.
-
-Throws `ParsingError` if input is invalid.
-"""
-
-function readbody!(io::IO, p::Parser; unread=IOExtras.unread!)
-
-    while !eof(io)
-        bytes = readavailable(io)
-        n = parsebody!(p, bytes)
-        if n < length(bytes)
-            unread(io, view(bytes, n+1:length(bytes)))
-        end
-        if messagecomplete(p)
-            return
-        end
-    end
-    @debug 2 "readbody!(::$(typeof(io)), " *
-             "Parser($(ParsingStateCode(p.state)))) eof!"
-
-    if !waitingforeof(p)
-        throw(ParsingError(p, HPE_BODY_INCOMPLETE))
-    end
-    return
-end
 
 
 """
@@ -260,9 +105,6 @@ function reset!(p::Parser)
 
     # config
     p.isheadresponse = false
-    p.onheader = x->nothing
-    p.onbodyfragment = x->nothing
-    p.onheaderscomplete = x->nothing
 
     # state
     p.state = s_start_req_or_res
@@ -284,6 +126,15 @@ end
 
 
 """
+    setheadresponse(::Parser)
+
+Mark the Message as being the Response to a HEAD Request.
+"""
+
+setheadresponse(p::Parser) = p.isheadresponse = true
+
+
+"""
     messagestarted(::Parser)
 
 Has the `Parser` begun processng a Message?
@@ -302,6 +153,16 @@ headerscomplete(p::Parser) = p.state > s_headers_done
 
 
 """
+    bodycomplete(::Parser)
+
+Has the `Parser` processed the Message Body?
+"""
+
+bodycomplete(p::Parser) = p.state == s_message_done ||
+                          p.state == s_trailer_start
+
+
+"""
     messagecomplete(::Parser)
 
 Has the `Parser` processed the entire Message?
@@ -317,6 +178,26 @@ Is the `Parser` waiting for the peer to close the connection
 to signal the end of the Message Body?
 """
 waitingforeof(p::Parser) = p.state == s_body_identity_eof
+
+
+"""
+    seteof(::Parser)
+
+Signal that the peer has closed the connection.
+"""
+function seteof(p::Parser)
+    if p.state == s_body_identity_eof
+        p.state = s_message_done
+    end
+end
+
+
+"""
+    messagehastrailing(::Parser)
+
+Is the `Parser` ready to process trailing headers?
+"""
+messagehastrailing(p::Parser) = p.flags & F_TRAILING > 0
 
 
 """
@@ -374,55 +255,27 @@ end
 
 
 """
-    parse!(::Parser, bytes) -> count
+    parseheaders(f(::Pair{String,String}), ::Parser, bytes) -> excess
 
-Parse `bytes` and update the `Parser`.
-
-Returns number of bytes consumed.
-If `bytes` contains the end of one Message and the start of the next
-Message, `parse!` will stop at the end of the first Message.
-
-Throws `ParsingError` if input is invalid.
+Read headers from `bytes`, passing each field/value pair to `f`.
+Returns a `SubArray` containing bytes not parsed.
 """
 
-parse!(p::Parser, bytes::String)::Int = parse!(p, Vector{UInt8}(bytes))
-
-parse!(p::Parser, bytes)::Int = parse!(p, view(bytes, 1:length(bytes)))
-
-const ByteView = typeof(view(UInt8[], 1:0))
-
-function parse!(parser::Parser, bytes::ByteView)::Int
-
-    l = length(bytes)
-    c = 0
-    while c < l
-        if !headerscomplete(parser)
-            n = parseheaders!(parser, bytes)
-        else
-            n = parsebody!(parser, bytes)
-        end
-        c += n
-        if messagecomplete(parser)
-            break
-        end
-        if c < l
-            bytes = view(bytes, n+1:length(bytes))
-        end
-    end
-    return c
+function parseheaders(f, p, bytes)
+    v = Vector{UInt8}(bytes)
+    parseheaders(f, p, view(v, 1:length(v)))
 end
 
-
-parseheaders!(p::Parser, bytes) = parseheaders!(p, view(bytes, 1:length(bytes)))
-
-function parseheaders!(parser::Parser, bytes::ByteView)::Int
+function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
+                      parser::Parser, bytes::ByteView)::ByteView
 
     isempty(bytes) && throw(ArgumentError("bytes must not be empty"))
-    headerscomplete(parser) && throw(ArgumentError("headers already complete"))
+    !messagehastrailing(parser) &&
+    headerscomplete(parser) && (ArgumentError("headers already complete"))
 
     len = length(bytes)
     p_state = parser.state
-    @debug 2 "parseheaders!(parser.state=$(ParsingStateCode(p_state))), " *
+    @debug 2 "parseheaders(parser.state=$(ParsingStateCode(p_state))), " *
              "$len-bytes:\n" * escapelines(String(collect(bytes))) * ")"
 
     p = 0
@@ -1110,8 +963,8 @@ function parseheaders!(parser::Parser, bytes::ByteView)::Int
             write(parser.valuebuffer, view(bytes, start:p-1))
 
             if p_state != s_header_value
-                parser.onheader(String(take!(parser.fieldbuffer)) =>
-                                String(take!(parser.valuebuffer)))
+                onheader(String(take!(parser.fieldbuffer)) =>
+                         String(take!(parser.valuebuffer)))
             end
 
             p = min(p, len)
@@ -1158,7 +1011,7 @@ function parseheaders!(parser::Parser, bytes::ByteView)::Int
 
                 # header value was empty
                 p_state = s_header_field_start
-                parser.onheader(String(take!(parser.fieldbuffer)) => "")
+                onheader(String(take!(parser.fieldbuffer)) => "")
                 p -= 1
             end
 
@@ -1192,10 +1045,6 @@ function parseheaders!(parser::Parser, bytes::ByteView)::Int
 
         elseif p_state == s_headers_done
             @errorifstrict(ch != LF)
-
-            @debug 3 "headersdone"
-            parser.state = p_state
-            parser.onheaderscomplete(parser.message)
 
             if parser.isheadresponse ||
                    parser.content_length == 0 ||
@@ -1231,27 +1080,40 @@ function parseheaders!(parser::Parser, bytes::ByteView)::Int
             p_state == s_body_identity ||
             p_state == s_body_identity_eof
 
-    @debug 3 "parseheaders!() exiting $(ParsingStateCode(p_state))"
+    @debug 2 "parseheaders() exiting $(ParsingStateCode(p_state))"
 
     parser.state = p_state
-    return p
+    return view(bytes, p+1:len)
 end
 
 
-parsebody!(p::Parser, bytes) = parsebody!(p, view(bytes, 1:length(bytes)))
+"""
+    parsebody(::Parser, bytes) -> data, excess
 
-function parsebody!(parser::Parser, bytes::ByteView)::Int
+Parse body data from `bytes`.
+Returns decoded `data` and `excess` bytes not parsed.
+"""
+
+function parsebody(p, bytes)
+    v = Vector{UInt8}(bytes)
+    parsebody(p, view(v, 1:length(v)))
+end
+
+function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
 
     isempty(bytes) && throw(ArgumentError("bytes must not be empty"))
     !headerscomplete(parser) && throw(ArgumentError("headers not complete"))
 
     len = length(bytes)
     p_state = parser.state
-    @debug 2 "parsebody!(parser.state=$(ParsingStateCode(p_state))), " *
+    @debug 2 "parsebody(parser.state=$(ParsingStateCode(p_state))), " *
              "$len-bytes:\n" * escapelines(String(collect(bytes))) * ")"
 
+    result = nobytes
+
     p = 0
-    while p < len && p_state < s_message_done && p_state != s_trailer_start
+    while p < len && result == nobytes && p_state < s_message_done &&
+                                          p_state != s_trailer_start
 
         @debug 3 string("top of while($p < $len) \"",
                         Base.escape_string(string(Char(bytes[p+1]))), "\" ",
@@ -1264,12 +1126,8 @@ function parsebody!(parser::Parser, bytes::ByteView)::Int
             @passert parser.content_length != 0 &&
                      parser.content_length != ULLONG_MAX
 
-            parser.onbodyfragment(view(bytes, p:p + to_read - 1))
-
-            # The difference between advancing content_length and p is because
-            # the latter will automaticaly advance on the next loop iteration.
-            # Further, if content_length ends up at 0, we want to see the last
-            # byte again for our message complete callback.
+            @passert result == nobytes
+            result = view(bytes, p:p + to_read - 1)
             parser.content_length -= to_read
             p += to_read - 1
 
@@ -1279,7 +1137,8 @@ function parsebody!(parser::Parser, bytes::ByteView)::Int
 
         # read until EOF
         elseif p_state == s_body_identity_eof
-            parser.onbodyfragment(view(bytes, p:len))
+            @passert result == nobytes
+            result = bytes
             p = len
 
         elseif p_state == s_chunk_size_start
@@ -1342,12 +1201,10 @@ function parsebody!(parser::Parser, bytes::ByteView)::Int
             @passert parser.content_length != 0 &&
                      parser.content_length != ULLONG_MAX
 
-            parser.onbodyfragment(view(bytes, p:p + to_read - 1))
-
-            # See the explanation in s_body_identity for why the content
-            # length and data pointers are managed this way.
+            @passert result == nobytes
+            result = view(bytes, p:p + to_read - 1)
             parser.content_length -= to_read
-            p += Int(to_read) - 1
+            p += to_read - 1
 
             if parser.content_length == 0
                 p_state = s_chunk_data_almost_done
@@ -1382,14 +1239,27 @@ function parsebody!(parser::Parser, bytes::ByteView)::Int
 
     @assert p <= len
     @assert p == len ||
+            result != nobytes ||
             p_state == s_message_done ||
             p_state == s_trailer_start
 
-    @debug 3 "parsebody!() exiting $(ParsingStateCode(p_state))"
+    @debug 2 "parsebody() exiting $(ParsingStateCode(p_state))"
 
     parser.state = p_state
-    return p
+    return result, view(bytes, p+1:len)
 end
 
+
+Base.show(io::IO, p::Parser) = print(io, "Parser(",
+    "state=", ParsingStateCode(p.state),", ",
+    p.flags & F_CHUNKED > 0 ? "F_CHUNKED, " : "",
+    p.flags & F_CONNECTION_KEEP_ALIVE > 0 ? "F_CONNECTION_KEEP_ALIVE, " : "",
+    p.flags & F_CONNECTION_CLOSE > 0 ? "F_CONNECTION_CLOSE, " : "",
+    p.flags & F_CONNECTION_UPGRADE > 0 ? "F_CONNECTION_UPGRADE, " : "",
+    p.flags & F_TRAILING > 0 ? "F_TRAILING, " : "",
+    p.flags & F_UPGRADE > 0 ? "F_UPGRADE, " : "",
+    p.flags & F_CONTENTLENGTH > 0 ? "F_CONTENTLENGTH, " : "",
+    "content_length=", p.content_length, ", ",
+    "message=", p.message, ")")
 
 end # module Parsers

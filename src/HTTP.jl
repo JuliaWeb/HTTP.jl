@@ -5,36 +5,10 @@ using MbedTLS
 import MbedTLS.SSLContext
 
 
-import Base.== # FIXME rm
-
 const DEBUG_LEVEL = 0
-
-if VERSION > v"0.7.0-DEV.2338"
-    using Base64
-end
-
-@static if VERSION >= v"0.7.0-DEV.2915"
-    using Unicode
-end
-
-macro uninit(expr)
-    if !isdefined(Base, :uninitialized)
-        splice!(expr.args, 2)
-    end
-    return esc(expr)
-end
-
-if !isdefined(Base, :pairs)
-    pairs(x) = x
-end
-
-if VERSION < v"0.7.0-DEV.2575"
-    const Dates = Base.Dates
-else
-    import Dates
-end
-
 const minimal = false
+
+include("compat.jl")
 
 include("debug.jl")
 include("Pairs.jl")
@@ -52,46 +26,47 @@ include("parser.jl");                   import .Parsers.ParsingError
 include("Connect.jl")
 include("ConnectionPool.jl")
 include("Messages.jl");                 using .Messages
+include("HTTPStreams.jl");              using .HTTPStreams
 
 module RequestStack
 
     import ..HTTP
-    import ..Body
+    using ..URIs
+    import ..Messages.mkheaders
+    import ..Messages.Response
+    import ..Parsers.Headers
 
-    function request(method::String, uri, headers, body::Body,
-                     response_body::Body; kw...)
+    request(method, uri, headers=[], body=UInt8[]; kw...) =
+        request(string(method), URI(uri), mkheaders(headers), body; kw...)
 
-        request(HTTP.stack(;kw...),
-                method, uri, headers, body, response_body; kw...)
-    end
-
-    function request(method::String, uri, headers=[], body="";
-                     bodylength=HTTP.Messages.Bodies.unknownlength,
-                     response_stream=nothing, kw...)
-
-        request(method, uri, headers, Body(body, bodylength),
-                Body(response_stream); kw...)
-    end
+    request(method::String, uri::URI, headers::Headers, body; kw...)::Response =
+        request(HTTP.stack(;kw...), method, uri, headers, body; kw...)
 end
-                                                                      if minimal
-import .RequestStack.request
-                                                                             end
+
+open(f::Function, method::String, uri, headers=[]; kw...) =
+    RequestStack.request(method, uri, headers; iofunction=f, kw...)
+
+httpget(a...; kw...) = RequestStack.request("GET", a..., kw...)
+httpput(a...; kw...) = RequestStack.request("PUT", a..., kw...)
+httppost(a...; kw...) = RequestStack.request("POST", a..., kw...)
+httphead(a...; kw...) = RequestStack.request("HEAD", a..., kw...)
 
 
 abstract type Layer end
 const NoLayer = Union
-
-include("SocketRequest.jl");            using .SocketRequest
-include("ConnectionRequest.jl");        using .ConnectionRequest
+                                                                     if !minimal
+include("RedirectRequest.jl");          using .RedirectRequest
+include("BasicAuthRequest.jl");         using .BasicAuthRequest
+include("CookieRequest.jl");            using .CookieRequest
+include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
+                                                                             end
 include("MessageRequest.jl");           using .MessageRequest
 include("ExceptionRequest.jl");         using .ExceptionRequest
                                         import .ExceptionRequest.StatusError
-                                                                     if !minimal
 include("RetryRequest.jl");             using .RetryRequest
-include("CookieRequest.jl");            using .CookieRequest
-include("BasicAuthRequest.jl");         using .BasicAuthRequest
-include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
-include("RedirectRequest.jl");          using .RedirectRequest
+include("ConnectionRequest.jl");        using .ConnectionRequest
+include("StreamRequest.jl");            using .StreamRequest
+                                                                     if !minimal
 
 function stack(;redirect=true,
                 basicauthorization=false,
@@ -106,11 +81,11 @@ function stack(;redirect=true,
     (basicauthorization  ? BasicAuthLayer      : NoLayer){
     (cookies             ? CookieLayer         : NoLayer){
     (canonicalizeheaders ? CanonicalizeLayer   : NoLayer){
+                           MessageLayer{
     (retry               ? RetryLayer          : NoLayer){
     (statusexception     ? ExceptionLayer      : NoLayer){
-                           MessageLayer{
     (connectionpool      ? ConnectionPoolLayer : ConnectLayer){
-                           SocketLayer
+                           StreamLayer
     }}}}}}}}
 end
 
@@ -119,12 +94,14 @@ stack(;kw...) = ExceptionLayer{
                 MessageLayer{
                 ConnectionPoolLayer{
                 #ConnectLayer{
-                SocketLayer}}}
+                StreamLayer}}}
+import .RequestStack.request
                                                                              end
 
                                                                      if !minimal
 status(r) = r.status #FIXME
 headers(r) = Dict(r.headers) #FIXME
+import Base.== # FIXME rm
 include("types.jl")
 include("client.jl")
 include("sniff.jl")
@@ -132,6 +109,5 @@ include("handlers.jl");                  using .Handlers
 include("server.jl");                    using .Nitrogen
 include("precompile.jl")
                                                                              end
-
 
 end # module

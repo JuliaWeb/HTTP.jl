@@ -46,20 +46,19 @@ end
 
 
 function request(::Type{CookieLayer{Next}},
-                 method::String, uri, headers, body, response_body;
+                 method::String, uri::URI, headers, body;
                  cookiejar=default_cookiejar, kw...) where Next
 
-    u = URI(uri)
-    hostcookies = get!(cookiejar, u.host, Set{Cookie}())
+    hostcookies = get!(cookiejar, uri.host, Set{Cookie}())
 
-    cookies = getcookies(hostcookies, u)
+    cookies = getcookies(hostcookies, uri)
     if !isempty(cookies)
         setkv(headers, "Cookie", string(getkv(headers, "Cookie", ""), cookies))
     end
 
-    res = request(Next, method, uri, headers, body, response_body; kw...)
+    res = request(Next, method, uri, headers, body; kw...)
 
-    setcookies(hostcookies, u.host, res.headers)
+    setcookies(hostcookies, uri.host, res.headers)
 
     return res
 end

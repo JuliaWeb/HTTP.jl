@@ -31,11 +31,11 @@ for sch in ("http", "https")
     empty!(HTTP.CookieRequest.default_cookiejar)
     empty!(HTTP.DEFAULT_CLIENT.cookies)
     r = HTTP.get("$sch://httpbin.org/cookies", cookies=true)
-    body = String(take!(r))
+    body = String(r.body)
     @test body == "{\n  \"cookies\": {}\n}\n"
     r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor&foo=bar", cookies=true)
     @test HTTP.status(r) == 200
-    body = String(take!(r))
+    body = String(r.body)
     @test body == "{\n  \"cookies\": {\n    \"foo\": \"bar\", \n    \"hey\": \"sailor\"\n  }\n}\n"
 
     # r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
@@ -50,14 +50,16 @@ for sch in ("http", "https")
     @test HTTP.status(r) == 200
     r = HTTP.get("$sch://httpbin.org/stream/100")
     @test HTTP.status(r) == 200
-    bytes = take!(r)
+    bytes = r.body
     a = [JSON.parse(l) for l in split(chomp(String(bytes)), "\n")]
     totallen = length(bytes) # number of bytes to expect
     begin
-        r = HTTP.get("$sch://httpbin.org/stream/100"; stream=true)
+        io = BufferStream()
+        r = HTTP.get("$sch://httpbin.org/stream/100"; response_stream=io)
+        close(io)
         @test HTTP.status(r) == 200
 
-        b = [JSON.parse(l) for l in eachline(r.body.stream)]
+        b = [JSON.parse(l) for l in eachline(io)]
         @test a == b
     end
 
@@ -98,11 +100,11 @@ for sch in ("http", "https")
     println("client multipart body")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
     @test HTTP.status(r) == 200
-    @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(String(r.body), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
     @test HTTP.status(r) == 200
-    @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(String(r.body), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -110,7 +112,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
-    str = String(take!(r))
+    str = String(r.body)
     @test startswith(str, "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()
@@ -119,7 +121,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
-    @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(String(r.body), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -128,7 +130,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m))
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
-    @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(String(r.body), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -137,7 +139,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m), chunksize=1000)
     close(io); rm(tmp)
     @test HTTP.status(r) == 200
-    @test startswith(String(take!(r)), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(String(r.body), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
 
     # asynchronous
     println("asynchronous client request body")

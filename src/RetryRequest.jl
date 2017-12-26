@@ -2,7 +2,9 @@ module RetryRequest
 
 import ..HTTP
 import ..Layer, ..RequestStack.request
+using ..MessageRequest
 using ..Messages
+import ..@debug, ..DEBUG_LEVEL
 
 abstract type RetryLayer{Next <: Layer} <: Layer end
 export RetryLayer
@@ -16,19 +18,18 @@ isrecoverable(e::Base.ArgumentError) = e.msg == "stream is closed or unusable"
 
 isrecoverable(e::Exception) = false
 
-isrecoverable(e, request_body, response_body) = isrecoverable(e) &&
-                                                isstreamfresh(request_body) &&
-                                                isstreamfresh(response_body)
+isrecoverable(e, req) = isrecoverable(e) &&
+                        !(req.body === body_was_streamed) &&
+                        !(req.response.body === body_was_streamed)
 
-function request(::Type{RetryLayer{Next}},
-                 method::String, uri, headers, body::Body, response_body::Body;
+
+function request(::Type{RetryLayer{Next}}, uri, req, body;
                  retries=3, kw...) where Next
 
-    retry_request = retry(request,
-          delays=ExponentialBackOff(n = retries),
-          check=(s,ex)->(s,isrecoverable(ex, body, response_body)))
+    retry_request = retry(request, delays=ExponentialBackOff(n = retries),
+                                   check=(s,ex)->(s,isrecoverable(ex, req)))
 
-    retry_request(Next, method, uri, headers, body, response_body; kw...)
+    retry_request(Next, uri, req, body; kw...)
 end
 
 

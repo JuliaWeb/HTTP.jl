@@ -4,6 +4,7 @@ import ..Layer, ..RequestStack.request
 using ..URIs
 using ..Messages
 using ..Pairs: setkv
+using ..Parsers.Header
 using ..Strings.tocameldash!
 import ..@debug, ..DEBUG_LEVEL
 
@@ -12,12 +13,12 @@ export RedirectLayer
 
 
 function request(::Type{RedirectLayer{Next}},
-                 method::String, uri, headers, body, response_body;
+                 method::String, uri::URI, headers, body;
                  maxredirects=3, forwardheaders=false, kw...) where Next
     count = 0
     while true
     
-        res = request(Next, method, uri, headers, body, response_body; kw...)
+        res = request(Next, method, uri, headers, body; kw...)
 
         if (count == maxredirects
         ||  !isredirect(res)
@@ -36,7 +37,7 @@ function request(::Type{RedirectLayer{Next}},
         if forwardheaders 
             headers = filter(h->!(h[1] in ("Host", "Cookie")), headers)
         else
-            headers = []
+            headers = Header[]
         end
 
         count += 1

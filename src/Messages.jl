@@ -1,10 +1,10 @@
 module Messages
 
-export Message, Request, Response, Body,
-       method, iserror, isredirect, parentcount, isstream, isstreamfresh,
-       header, setheader, defaultheader, setlengthheader,
-       waitforheaders, wait,
-       writeandread
+export Message, Request, Response,
+       iserror, isredirect, ischunked,
+       header, hasheader, setheader, defaultheader, appendheader,
+       readheaders, readtrailers, writeheaders,
+       readstartline!
 
 if VERSION > v"0.7.0-DEV.2338"
 using Unicode
@@ -12,16 +12,37 @@ end
 
 import ..HTTP
 
-include("Bodies.jl")
-using .Bodies
-
-using ..IOExtras
 using ..Pairs
+using ..IOExtras
 using ..Parsers
 import ..Parsers
-import ..ConnectionPool
 
-import ..@debug, ..DEBUG_LEVEL
+abstract type Message end
+
+"""
+    Response
+
+Represents a HTTP Response Message.
+
+- `version::VersionNumber`
+- `status::Int16`
+- `headers::Vector{Pair{String,String}}`
+- `body::`[`HTTP.Body`](@ref)
+- `request`, the `Request` that yielded this `Response`.
+"""
+
+mutable struct Response <: Message
+    version::VersionNumber
+    status::Int16
+    headers::Headers
+    body::Vector{UInt8}
+    request
+end
+
+Response(status::Int=0, headers=[]; body=UInt8[], request=nothing) =
+    Response(v"1.1", status, mkheaders(headers), body, request)
+
+Response(bytes) = parse(Response, bytes)
 
 
 """
@@ -33,68 +54,41 @@ Represents a HTTP Request Message.
 - `uri::String`
 - `version::VersionNumber`
 - `headers::Vector{Pair{String,String}}`
-- `body::`[`HTTP.Body`](@ref)
-- `parent::Response`, the `Response` (if any) that led to this request
+- `body::Vector{UInt8}`
+- `response`, the `Response` to this `Request`
+- `parent`, the `Response` (if any) that led to this request
   (e.g. in the case of a redirect).
 """
 
-mutable struct Request
+mutable struct Request <: Message
     method::String
     uri::String
     version::VersionNumber
-    headers::Vector{Pair{String,String}}
-    body::Body
+    headers::Headers
+    body::Vector{UInt8}
+    response::Response
     parent
 end
 
 Request() = Request("", "")
-Request(method::String, uri, headers=[], body=Body(); parent=nothing) =
-    Request(method, uri == "" ? "/" : uri, v"1.1",
-            mkheaders(headers), body, parent)
 
-Request(bytes) = read!(IOBuffer(bytes), Request())
-Base.parse(::Type{Request}, str::AbstractString) = Request(str)
-
-mkheaders(v::Vector{Pair{String,String}}) = v
-mkheaders(x) = [string(k) => string(v) for (k,v) in x]
-
-
-"""
-    Response
-
-Represents a HTTP Response Message.
-
-- `version::VersionNumber`
-- `status::Int16`
-- `headers::Vector{Pair{String,String}}`
-- `body::`[`HTTP.Body`](@ref)
-- `complete::Condition`, raised when the `Parser` has finished
-   reading the Response Headers. This allows the `status` and `header` fields
-   to be read used asynchronously without waiting for the entire body to be
-   parsed.
-   `complete` is also raised when the entire Response Body has been read.
-- `exception`, set if `writeandread` fails.
-- `parent::Request`, the `Request` that yielded this `Response`.
-"""
-
-mutable struct Response
-    version::VersionNumber
-    status::Int16
-    headers::Vector{Pair{String,String}}
-    body::Body
-    complete::Condition
-    exception
-    parent
+function Request(method::String, uri, headers=[], body=UInt8[]; parent=nothing)
+    r = Request(method,
+                uri == "" ? "/" : uri,
+                v"1.1",
+                mkheaders(headers),
+                body,
+                Response(),
+                parent)
+    r.response.request = r
+    return r
 end
 
-Response(status::Int=0, headers=[]; body=Body(), parent=nothing) =
-    Response(v"1.1", status, headers, body, Condition(), nothing, parent)
+Request(bytes) = parse(Request, bytes)
 
-Response(bytes) = read!(IOBuffer(bytes), Response())
-Base.parse(::Type{Response}, str::AbstractString) = Response(str)
+mkheaders(h::Headers) = h
+mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
 
-
-const Message = Union{Request,Response}
 
 """
     iserror(::Response)
@@ -114,15 +108,6 @@ isredirect(r::Response) = r.status in (301, 302, 307, 308)
 
 
 """
-    method(::Response)
-
-Method of the `Request` that yielded this `Response`.
-"""
-
-method(r::Response) = r.parent == nothing ? "" : r.parent.method
-
-
-"""
     statustext(::Response) -> String
 
 `String` representation of a HTTP status code. e.g. `200 => "OK"`.
@@ -132,44 +117,21 @@ statustext(r::Response) = Base.get(Parsers.STATUS_CODES, r.status, "Unknown Code
 
 
 """
-    waitforheaders(::Response)
-
-Wait for the `Parser` (in a different task) to finish parsing the headers.
-"""
-
-function waitforheaders(r::Response)
-    while r.status == 0 && r.exception == nothing
-        wait(r.complete)
-    end
-    if r.exception != nothing
-        rethrow(r.exception)
-    end
-end
-
-
-"""
-    wait(::Response)
-
-Wait for the `Parser` (in a different task) to finish parsing the `Response`.
-"""
-
-function Base.wait(r::Response)
-    while isopen(r.body) && r.exception == nothing
-        wait(r.complete)
-    end
-    if r.exception != nothing
-        rethrow(r.exception)
-    end
-end
-
-
-"""
     header(::Message, key [, default=""]) -> String
 
 Get header value for `key` (case-insensitive).
 """
-header(m, k::String, d::String="") = getbyfirst(m.headers, k, k => d, lceq)[2]
+header(m, k, d="") = header(m.headers, k, d)
+header(h::Headers, k::String, d::String="") = getbyfirst(h, k, k => d, lceq)[2]
 lceq(a,b) = lowercase(a) == lowercase(b)
+
+
+"""
+    hasheader(::Message, key) -> Bool
+
+Does header value for `key` exist (case-insensitive)?
+"""
+hasheader(m, k::String) = header(m, k) != ""
 
 
 """
@@ -177,7 +139,8 @@ lceq(a,b) = lowercase(a) == lowercase(b)
 
 Set header `value` for `key` (case-insensitive).
 """
-setheader(m, v::Pair) = setbyfirst(m.headers, Pair{String,String}(v), lceq)
+setheader(m, v) = setheader(m.headers, v)
+setheader(h::Headers, v::Pair) = setbyfirst(h, Pair{String,String}(v), lceq)
 
 
 """
@@ -194,24 +157,13 @@ function defaultheader(m, v::Pair)
 end
 
 
-
 """
-    setlengthheader(::Response)
+    ischunked(::Message)
 
-Set the Content-Length or Transfer-Encoding header according to the
-`Response` `Body`.
+Does the `Message` have a "Transfer-Encoding: chunked" header?
 """
 
-function setlengthheader(r::Request)
-
-    l = length(r.body)
-    if l == Bodies.unknownlength
-        setheader(r, "Transfer-Encoding" => "chunked")
-    else
-        setheader(r, "Content-Length" => string(l))
-    end
-    return
-end
+ischunked(m) = header(m, "Transfer-Encoding") == "chunked"
 
 
 """
@@ -225,7 +177,7 @@ If `key` is the same as the previous header, the `vale` is [appended to the
 value of the previous header with a comma
 delimiter](https://stackoverflow.com/a/24502264)
 
-`Set-Cookie` headers are not comma-combined because cookies [often contain
+`Set-Cookie` headers are not comma-combined because [cookies often contain
 internal commas](https://tools.ietf.org/html/rfc6265#section-3).
 """
 
@@ -272,11 +224,13 @@ end
 """
     writeheaders(::IO, ::Message)
 
-Write a line for each "name: value" pair and a trailing blank line.
+Write `Message` start line and
+a line for each "name: value" pair and a trailing blank line.
 """
 
 function writeheaders(io::IO, m::Message)
-    for (name, value) in m.headers
+    writestartline(io, m)                 # FIXME To avoid fragmentation, maybe
+    for (name, value) in m.headers        # buffer header before sending to `io`
         write(io, "$name: $value\r\n")
     end
     write(io, "\r\n")
@@ -291,95 +245,10 @@ Write start line, headers and body of HTTP Message.
 """
 
 function Base.write(io::IO, m::Message)
-    writestartline(io, m)               # FIXME To avoid fragmentation, maybe
-    writeheaders(io, m)                 # buffer header before sending to `io`
+    writeheaders(io, m)
     write(io, m.body)
     return
 end
-
-
-"""
-    readstartline!(::Message, p::Parsers.Message)
-
-Read the start-line metadata from Parser into a `::Message` struct.
-"""
-
-function readstartline!(r::Response, m::Parsers.Message)
-    r.version = VersionNumber(m.major, m.minor)
-    r.status = m.status
-    if isredirect(r)
-        r.body = Body()
-    end
-    notify(r.complete)
-    yield()
-    return
-end
-
-function readstartline!(r::Request, m::Parsers.Message)
-    r.version = VersionNumber(m.major, m.minor)
-    r.method = string(m.method)
-    r.uri = m.url
-    return
-end
-
-
-"""
-    connectparser(::Message, ::Parser)
-
-Configure a `Parser` to store parsed data into this `Message`.
-"""
-function connectparser(m::Message, p::Parser)
-    reset!(p)
-    p.onbodyfragment = x->write(m.body, x)
-    p.onheader = x->appendheader(m, x)
-    p.onheaderscomplete = x->readstartline!(m, x)
-    p.isheadresponse = (isa(m, Response) && method(m) in ("HEAD", "CONNECT"))
-                       # FIXME CONNECT??
-    return p
-end
-
-
-"""
-    read!(::IO, ::Message)
-
-Read data from `io` into a `Message` struct.
-"""
-
-function Base.read!(io::IO, m::Message)
-    parser = ConnectionPool.getparser(io)
-    connectparser(m, parser)
-    read!(io, parser)
-    close(m.body)
-    return m
-end
-
-
-"""
-    writeandread(::IO, ::Request, ::Response)
-
-Send a `Request` and receive a `Response`.
-"""
-
-function writeandread(io::IO, req::Request, res::Response)
-
-    try                                 ;@debug 1 "write to: $io\n$req"
-        write(io, req)
-        closewrite(io)
-        read!(io, res)
-        closeread(io)                   ;@debug 2 "read from: $io\n$res"
-    catch e
-        @schedule close(io)
-        res.exception = e
-        rethrow(e)
-    finally
-        notify(res.complete)
-    end
-
-    return res
-end
-
-
-Base.take!(m::Message) = take!(m.body)
 
 
 function Base.String(m::Message)
@@ -389,12 +258,103 @@ function Base.String(m::Message)
 end
 
 
+"""
+    readstartline!(::Parsers.Message, ::Message)
+
+Read the start-line metadata from Parser into a `::Message` struct.
+"""
+
+function readstartline!(m::Parsers.Message, r::Response)
+    r.version = VersionNumber(m.major, m.minor)
+    r.status = m.status
+    return
+end
+
+function readstartline!(m::Parsers.Message, r::Request)
+    r.version = VersionNumber(m.major, m.minor)
+    r.method = string(m.method)
+    r.uri = m.url
+    return
+end
+
+
+function readheaders(io::IO, parser::Parser, message::Message)
+
+    while !headerscomplete(parser) && !eof(io)
+        excess = parseheaders(parser, readavailable(io)) do h
+            appendheader(message, h)
+        end
+        unread!(io, excess)
+    end
+    if !headerscomplete(parser)
+        throw(EOFError())
+    end
+    readstartline!(parser.message, message)
+    return message
+end
+
+
+function readtrailers(io::IO, parser::Parser, message::Message)
+    if messagehastrailing(parser)
+        readheaders(io, parser, message)
+    end
+    return message
+end
+
+
+function readbody(io::IO, parser::Parser)
+    body = IOBuffer()
+    while !bodycomplete(parser) && !eof(io)
+        data, excess = parsebody(parser, readavailable(io))
+        write(body, data)
+        unread!(io, excess)
+    end
+    return take!(body)
+end
+
+
+function Base.parse(::Type{T}, str::AbstractString) where T <: Message
+    bytes = IOBuffer(str)
+    p = Parser()
+    m = T()
+    readheaders(bytes, p, m)
+    m.body = readbody(bytes, p)
+    readtrailers(bytes, p, m)
+    setoef(p)
+    if !messagecomplete(p)
+        throw(EOFError())
+    end
+    return m
+end
+
+
+"""
+    set_show_max(x)
+
+Set the maximum number of body bytes to be displayed by `show(::IO, ::Message)`
+"""
+
+set_show_max(x) = global body_show_max = x
+body_show_max = 1000
+
+
+"""
+    bodysummary(bytes)
+
+The first chunk of the Message Body (for display purposes).
+"""
+bodysummary(bytes) = view(bytes, 1:min(length(bytes), body_show_max))
+
+
 function Base.show(io::IO, m::Message)
     println(io, typeof(m), ":")
     println(io, "\"\"\"")
-    writestartline(io, m)
     writeheaders(io, m)
-    show(io, m.body)
+    summary = bodysummary(m.body)
+    write(io, summary)
+    if length(m.body) > length(summary)
+        println(io, "\n⋮\n$(length(m.body))-byte body")
+    end
     print(io, "\"\"\"")
     return
 end

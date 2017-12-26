@@ -10,8 +10,12 @@ import ..Connect: getconnection, getparser
 import ..Parsers.Parser
 
 const max_duplicates = 8
+const nolimit = typemax(Int)
 
-const ByteView = typeof(view(UInt8[], 1:0))
+const nobytes = view(UInt8[], 1:0)
+const ByteView = typeof(nobytes)
+byteview(bytes::ByteView) = bytes
+byteview(bytes)::ByteView = view(bytes, 1:length(bytes))
 
 
 """
@@ -59,13 +63,14 @@ Base.unsafe_write(c::Connection, p::Ptr{UInt8}, n::UInt) =
 
 Base.eof(c::Connection) = isempty(c.excess) && eof(c.io)
 
-function Base.readavailable(c::Connection)
+
+function Base.readavailable(c::Connection)::ByteView
     if !isempty(c.excess)
         bytes = c.excess
         @debug 3 "read $(length(bytes))-bytes from excess buffer."
-        c.excess = view(UInt8[], 1:0)
+        c.excess = nobytes
     else
-        bytes = readavailable(c.io)
+        bytes = byteview(readavailable(c.io))
         @debug 3 "read $(length(bytes))-bytes from $(typeof(c.io))"
     end
     return bytes
@@ -79,10 +84,7 @@ Push bytes back into a connection's `excess` buffer
 (to be returned by the next read).
 """
 
-function IOExtras.unread!(c::Connection, bytes::ByteView)
-    @assert isempty(c.excess)
-    c.excess = bytes
-end
+IOExtras.unread!(c::Connection, bytes::ByteView) = c.excess = bytes
 
 
 """
@@ -131,6 +133,7 @@ function IOExtras.closeread(c::Connection)
     if islocked(c.readlock)
         unlock(c.readlock)
     end
+    notify(poolcondition)
     return
 end
 
@@ -190,12 +193,35 @@ Find `Connections` in the `pool` that are ready for writing.
 
 function findwriteable(T::Type,
                        host::AbstractString,
-                       port::AbstractString)
+                       port::AbstractString,
+                       reuse_limit::Int=nolimit)
 
     filter(c->(typeof(c.io) == T &&
                c.host == host &&
                c.port == port &&
+               c.writecount < reuse_limit &&
                !islocked(c.writelock) &&
+               isopen(c.io)), pool)
+end
+
+
+"""
+    findoverused(type, host, port, reuse_limit) -> Vector{Connection}
+
+Find `Connections` in the `pool` that are over the reuse limit
+and have no more active readers.
+"""
+
+function findoverused(T::Type,
+                      host::AbstractString,
+                      port::AbstractString,
+                      reuse_limit::Int)
+
+    filter(c->(typeof(c.io) == T &&
+               c.host == host &&
+               c.port == port &&
+               c.readcount >= reuse_limit &&
+               !islocked(c.readlock) &&
                isopen(c.io)), pool)
 end
 
@@ -246,16 +272,26 @@ or create a new `Connection` if required.
 function getconnection(::Type{Connection{T}},
                        host::AbstractString,
                        port::AbstractString;
+                       reuse_limit::Int = nolimit,
                        kw...)::Connection{T} where T <: IO
 
     while true
 
         lock(poollock)
         try
+
+            # Close connections that have reached the reuse limit...
+            if reuse_limit != nolimit
+                for c in findoverused(T, host, port, reuse_limit)
+                    close(c)
+                end
+            end
+
+            # Remove closed connections from `pool`...
             purge()
 
             # Try to find a connection with no active readers or writers...
-            writeable = findwriteable(T, host, port)
+            writeable = findwriteable(T, host, port, reuse_limit)
             idle = filter(c->!islocked(c.readlock), writeable)
             if !isempty(idle)
                 c = rand(idle)                            ;@debug 2 "Idle: $c"

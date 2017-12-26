@@ -155,32 +155,12 @@ Base.convert(::Type{Method}, s::String) = MethodMap[s]
 
 # parsing codes
 @enum(ParsingErrorCode,
-    # No error
     HPE_OK,
-    # Callback-related errors
-    HPE_CB_message_begin,
-    HPE_CB_url,
-    HPE_CB_header_field,
-    HPE_CB_header_value,
-    HPE_CB_headers_complete,
-    HPE_CB_body,
-    HPE_CB_message_complete,
-    HPE_CB_status,
-    HPE_CB_chunk_header,
-    HPE_CB_chunk_complete,
-    # Parsing-related errors
-    HPE_INVALID_EOF_STATE,
     HPE_HEADER_OVERFLOW,
-    HPE_CLOSED_CONNECTION,
     HPE_INVALID_VERSION,
     HPE_INVALID_STATUS,
     HPE_INVALID_METHOD,
     HPE_INVALID_URL,
-    HPE_INVALID_HOST,
-    HPE_INVALID_PORT,
-    HPE_INVALID_PATH,
-    HPE_INVALID_QUERY_STRING,
-    HPE_INVALID_FRAGMENT,
     HPE_LF_EXPECTED,
     HPE_INVALID_HEADER_TOKEN,
     HPE_INVALID_CONTENT_LENGTH,
@@ -189,38 +169,16 @@ Base.convert(::Type{Method}, s::String) = MethodMap[s]
     HPE_INVALID_CONSTANT,
     HPE_INVALID_INTERNAL_STATE,
     HPE_STRICT,
-    HPE_PAUSED,
-    HPE_URI_OVERFLOW,
-    HPE_BODY_OVERFLOW,
-    HPE_HEADERS_INCOMPLETE,
-    HPE_BODY_INCOMPLETE,
     HPE_UNKNOWN,
 )
 
 const ParsingErrorCodeMap = Dict(
     HPE_OK => "success",
-    HPE_CB_message_begin => "the on_message_begin callback failed",
-    HPE_CB_url => "the on_url callback failed",
-    HPE_CB_header_field => "the on_header_field callback failed",
-    HPE_CB_header_value => "the on_header_value callback failed",
-    HPE_CB_headers_complete => "the on_headers_complete callback failed",
-    HPE_CB_body => "the on_body callback failed",
-    HPE_CB_message_complete => "the on_message_complete callback failed",
-    HPE_CB_status => "the on_status callback failed",
-    HPE_CB_chunk_header => "the on_chunk_header callback failed",
-    HPE_CB_chunk_complete => "the on_chunk_complete callback failed",
-    HPE_INVALID_EOF_STATE => "stream ended at an unexpected time",
     HPE_HEADER_OVERFLOW => "too many header bytes seen; overflow detected",
-    HPE_CLOSED_CONNECTION => "data received after completed connection: close message",
     HPE_INVALID_VERSION => "invalid HTTP version",
     HPE_INVALID_STATUS => "invalid HTTP status code",
     HPE_INVALID_METHOD => "invalid HTTP method",
     HPE_INVALID_URL => "invalid URL",
-    HPE_INVALID_HOST => "invalid host",
-    HPE_INVALID_PORT => "invalid port",
-    HPE_INVALID_PATH => "invalid path",
-    HPE_INVALID_QUERY_STRING => "invalid query string",
-    HPE_INVALID_FRAGMENT => "invalid fragment",
     HPE_LF_EXPECTED => "LF character expected",
     HPE_INVALID_HEADER_TOKEN => "invalid character in header",
     HPE_INVALID_CONTENT_LENGTH => "invalid character in content-length header",
@@ -229,11 +187,6 @@ const ParsingErrorCodeMap = Dict(
     HPE_INVALID_CONSTANT => "invalid constant string",
     HPE_INVALID_INTERNAL_STATE => "encountered unexpected internal state",
     HPE_STRICT => "strict mode assertion failed",
-    HPE_PAUSED => "parser is paused",
-    HPE_URI_OVERFLOW => "uri exceeded configured maximum uri size",
-    HPE_BODY_OVERFLOW => "body exceeded configured maximum body size",
-    HPE_HEADERS_INCOMPLETE => "unexpected end of headers",
-    HPE_BODY_INCOMPLETE => "unexpected end of body",
     HPE_UNKNOWN => "an unknown error occurred",
 )
 
@@ -414,8 +367,7 @@ const F_CONNECTION_CLOSE      = UInt8(1 << 2)
 const F_CONNECTION_UPGRADE    = UInt8(1 << 3)
 const F_TRAILING              = UInt8(1 << 4)
 const F_UPGRADE               = UInt8(1 << 5)
-const F_SKIPBODY              = UInt8(1 << 6)
-const F_CONTENTLENGTH         = UInt8(1 << 7)
+const F_CONTENTLENGTH         = UInt8(1 << 6)
 
 # url parsing
 const normal_url_char = Bool[

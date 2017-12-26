@@ -61,7 +61,7 @@ HTTP.escapeHTML
 
 The basic API function is:
 
-    `HTTP.request(method, url [, headers [, body [, response_body]]]) -> HTTP.Response`
+    `HTTP.request(method, url [, headers [, body]] [, response_stream=]) -> HTTP.Response`
 
 `headers` can be any collection where
 `[string(k) => string(v) for (k,v) in headers]` yields `Vector{Pair}`.
@@ -69,12 +69,14 @@ The basic API function is:
 
 `body` can take a number of forms:
 
- - a `String` or `AbstractVector{UInt8}`, or
- - a collection where `eltype` is `String` or `AbstractVector{UInt8}`, or
+ - a `String`, a `Vector{UInt8}` or a readable `IO`
+   or any `T` accetped by `write(::IO, ::T)`
+ - a collection of `String` or `AbstractVector{UInt8}` or `IO`
+   or any `T` accetped by `write(::IO, ::T...)`
  - an readable `IO` stream or any `IO`-like type `T` for which
    `eof(T)` and `readavailable(T)` are defined.
 
-`response_body` can be a writeable `IO` stream or any `IO`-like type `T`
+`response_stream` can be a writeable `IO` stream or any `IO`-like type `T`
 for which `write(T, AbstractVector{UInt8})` is defined.
 
 
@@ -84,23 +86,27 @@ The `HTTP.Response` struct contains:
  - `headers::Vector{Pair{String,String}}`
     e.g. ["Server" => "Apache", "Content-Type" => "text/html"]
  - `body::Vector{UInt8}`, the Response Body bytes.
-    Empty if a `response_body` `IO` stream was specified in the `request`.
+    Empty if a `response_stream` was specified in the `request`.
 
 
 The `HTTP.open` API allows the Request Body to be streamed to an `IO` channel:
 
-    `HTTP.open(method, url, [,headers]) -> HTTP.BodyStream`
-    `write(::HTTP.BodyStream, bytes)`
-    `close(::HTTP.BodyStream) -> HTTP.Response`
+```
+    HTTP.open(method, url, [,headers]) do io
+        write(io, bytes)
+    end -> HTTP.Response
+```
 
 
 The `HTTP.open` API also allows the Response Body to be streamed:
 
-    `HTTP.open(method, url, [,headers]) -> HTTP.BodyStream`
-    `write(::HTTP.BodyStream, bytes)`
-    `closewrite(::HTTP.BodyStream) -> HTTP.Response`
-    `read(::HTTP.BodyStream) -> AbstractVector{UInt8}`
-    `close(::HTTP.BodyStream) -> HTTP.Response`
+```
+    HTTP.open(method, url, [,headers]) do io
+        write(io, bytes)
+        readresponse(io)
+        read(io) -> AbstractVector{UInt8}
+    end -> HTTP.Response
+```
 
 
 ## User Interface Examples
@@ -131,11 +137,11 @@ r = request("POST", "http://httpbin.org/post", [], chunks)
 ```
 
 ```
-io = HTTP.open("POST", "http://httpbin.org/post")
-write(io, preamble_chunk)
-write(io, data_chunk)
-write(io, checksum(data_chunk))
-r = close(io)
+r = HTTP.open("POST", "http://httpbin.org/post") do io
+    write(io, preamble_chunk)
+    write(io, data_chunk)
+    write(io, checksum(data_chunk))
+end
 @show r.status
 ```
 
@@ -150,7 +156,7 @@ println(String(r.body))
 
 ```
 io = open("get_data.txt", "r")
-r = request("GET", "http://httpbin.org/get", [], "", io)
+r = request("GET", "http://httpbin.org/get", response_stream=io)
 @show r.status
 println(read("get_data.txt"))
 ```
@@ -161,19 +167,19 @@ io = BufferStream()
     bytes = readavailable(io))
     println("GET data: $bytes")
 end
-r = request("GET", "http://httpbin.org/get", [], "", io)
+r = request("GET", "http://httpbin.org/get", response_stream=io)
 @show r.status
 ```
 
 ```
-io = HTTP.open("GET", "http://httpbin.org/get")
-r = closewrite(io)
-@show r.status
-while !eof(io)
-    bytes = readavailable(io))
-    println("GET data: $bytes")
+r = HTTP.open("GET", "http://httpbin.org/get") do io
+    r = readresponse(io)
+    @show r.status
+    while !eof(io)
+        bytes = readavailable(io))
+        println("GET data: $bytes")
+    end
 end
-close(io)
 ```
 
 
@@ -194,18 +200,18 @@ r = request("POST", "http://convert.com/png2jpg", [], in, out)
 ```
 
 ```
-io = HTTP.open("POST", "http://music.com/play")
-write(io, JSON.json([
-    "auth" => "12345XXXX",
-    "song_id" => 7,
-]))
-r = closewrite(io)
-@show r.status
-while !eof(io)
-    bytes = readavailable(io))
-    play_audio(bytes)
+HTTP.open("POST", "http://music.com/play") do io
+    write(io, JSON.json([
+        "auth" => "12345XXXX",
+        "song_id" => 7,
+    ]))
+    r = readresponse(io)
+    @show r.status
+    while !eof(io)
+        bytes = readavailable(io))
+        play_audio(bytes)
+    end
 end
-close(io)
 ```
 
 

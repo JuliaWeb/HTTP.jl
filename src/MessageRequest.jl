@@ -3,58 +3,54 @@ module MessageRequest
 import ..Layer, ..RequestStack.request
 using ..URIs
 using ..Messages
+using ..Parsers.Headers
+using ..Form
 
 struct MessageLayer{Next <: Layer} <: Layer end
-export MessageLayer
+export MessageLayer, body_is_a_stream, body_was_streamed
+
+const ByteVector = Union{AbstractVector{UInt8}, AbstractString}
 
 
-"""
-    request(MessageLayer, method, uri [, headers=[] [, body="" ]; kw args...)
-
-Execute a `Request` and return a `Response`.
-
-kw args:
-
-- `parent=` optionally set a parent `Response`.
-
-- `response_stream=` optional `IO` stream for response body.
+const unknownlength = -1
+bodylength(body) = unknownlength
+bodylength(body::ByteVector) = sizeof(body)
+bodylength(body::Form) = length(body)
+bodylength(body::Vector{ByteVector}) = sum(sizeof, body)
+bodylength(body::IOBuffer) = nb_available(body)
+bodylength(body::Vector{IOBuffer}) = sum(nb_available, body)
 
 
-e.g. use a stream as a request body:
+const body_is_a_stream = UInt8[]
+const body_was_streamed = Vector{UInt8}("[Message Body was streamed]")
+bodybytes(body) = body_is_a_stream
+bodybytes(body::Vector{UInt8}) = body
+bodybytes(body::IOBuffer) = read(body)
+bodybytes(body::ByteVector) = Vector{UInt8}(body)
+bodybytes(body::Vector) = length(body) == 1 ? bodybytes(body[1]) : UInt8[]
 
-```
-io = open("request", "r")
-r = request("POST", "http://httpbin.org/post", [], io)
-```
-
-e.g. send a response body to a stream:
-
-```
-io = open("response_file", "w")
-r = request("GET", "http://httpbin.org/stream/100", response_stream=io)
-println(stat("response_file").size)
-0
-sleep(1)
-println(stat("response_file").size)
-14990
-```
-"""
 
 function request(::Type{MessageLayer{Next}},
-                 method::String, uri, headers, body::Body, response_body::Body;
+                 method::String, uri::URI, headers::Headers, body;
                  parent=nothing, kw...) where Next
 
-    u = URI(uri)
-    url = method == "CONNECT" ? hostport(u) : resource(u)
+    path = method == "CONNECT" ? hostport(uri) : resource(uri)
 
-    req = Request(method, url, headers, body; parent=parent)
+    defaultheader(headers, "Host" => uri.host)
 
-    defaultheader(req, "Host" => u.host)
-    setlengthheader(req)
+    if !hasheader(headers, "Content-Length") &&
+       !hasheader(headers, "Transfer-Encoding")
+        l = bodylength(body)
+        if l != unknownlength
+            setheader(headers, "Content-Length" => string(l))
+        else
+            setheader(headers, "Transfer-Encoding" => "chunked")
+        end
+    end
 
-    res = Response(body=response_body, parent=req)
+    req = Request(method, path, headers, bodybytes(body); parent=parent)
 
-    return request(Next, u, req, res; kw...)
+    return request(Next, uri, req, body; kw...)
 end
 
 

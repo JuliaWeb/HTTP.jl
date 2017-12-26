@@ -17,10 +17,10 @@ using JSON
 @testset "HTTP.Messages" begin
 
     req = Request("GET", "/foo", ["Foo" => "Bar"])
-    res = Response(200, ["Content-Length" => "5"]; body=Body("Hello"), parent=req)
+    res = Response(200, ["Content-Length" => "5"]; body="Hello", request=req)
 
     @test req.method == "GET"
-    @test method(res) == "GET"
+    @test res.request.method == "GET"
 
     #display(req); println()
     #display(res); println()
@@ -49,24 +49,20 @@ using JSON
 
     raw = String(req)
     #@show raw
-    req = Request()
-    read!(IOBuffer(raw), req) 
+    req = Request(raw)
     #display(req); println()
     @test String(req) == raw
 
-    req = Request()
-    read!(IOBuffer(raw * "xxx"), req) 
+    req = Request(raw * "xxx")
     @test String(req) == raw
 
     raw = String(res)
     #@show raw
-    res = Response()
-    read!(IOBuffer(raw), res) 
+    res = Response(raw)
     #display(res); println()
     @test String(res) == raw
 
-    res = Response()
-    read!(IOBuffer(raw * "xxx"), res) 
+    res = Response(raw * "xxx")
     @test String(res) == raw
 
     for sch in ["http", "https"]
@@ -104,24 +100,26 @@ using JSON
             uri = "$sch://httpbin.org/$(lowercase(m))"
             r = request(m, uri)
             @test r.status == 200
-            body = take!(r.body)
+            body = r.body
 
             io = BufferStream()
             r = request(m, uri, response_stream=io)
+            close(io)
             @test r.status == 200
             @test read(io) == body
         end
     end
+
     for sch in ["http", "https"]
         for m in ["POST", "PUT", "DELETE", "PATCH"]
 
             uri = "$sch://httpbin.org/$(lowercase(m))"
             io = BufferStream()
             r = request(m, uri, response_stream=io)
+            close(io)
             @test r.status == 200
         end
     end
-
 
     mktempdir() do d
         cd(d) do
@@ -130,11 +128,8 @@ using JSON
             io = open("result_file", "w")
             r = request("GET", "http://httpbin.org/stream/$n",
                         response_stream=io)
-            @test stat("result_file").size == 0
-            while stat("result_file").size <= 1000
-                sleep(0.1)
-            end
-            @test stat("result_file").size > 1000
+            close(io)
+            @show filesize("result_file")
             i = 0
             for l in readlines("result_file")
                 x = JSON.parse(l)
