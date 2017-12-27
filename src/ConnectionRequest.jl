@@ -24,7 +24,7 @@ Get a `Connection` for a `URI`, send a `Request` and fill in a `Response`.
 function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
                  connectionpool::Bool=true, kw...) where Next
 
-    Conncetion = sockettype(uri)
+    Connection = sockettype(uri)
     if connectionpool
         Connection = ConnectionPool.Connection{Connection}
     end
