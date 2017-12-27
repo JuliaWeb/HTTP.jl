@@ -15,8 +15,8 @@ end
 
 
 # Tiny S3 interface...
-const s3region = "ap-southeast-2"
-const s3url = "https://s3.$s3region.amazonaws.com"
+s3region = "ap-southeast-2"
+s3url = "https://s3.$s3region.amazonaws.com"
 s3(method, path, body=UInt8[]; kw...) =
     request(method, "$s3url/$path", [], body; awsauthorization=true, kw...)
 s3get(path; kw...) = s3("GET", path; kw...)
@@ -45,6 +45,7 @@ end
 @testset "async s3 $count, $http" for count in [10, 100, 1000, 2000],
                                        http in ["http", "https"]
 
+s3url = "$http://s3.$s3region.amazonaws.com"
 println("running async s3 $count $http")
 
 put_data_sums = Dict()
