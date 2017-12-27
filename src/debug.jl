@@ -1,9 +1,23 @@
+taskid() = hex(hash(current_task()) & 0xffff, 4)
+
 macro debug(n::Int, s)
-    DEBUG_LEVEL >= n ? esc(:(println(string("DEBUG: ", $s)))) : :()
+    DEBUG_LEVEL >= n ? :(println("DEBUG: ", taskid(), " ", $(esc(s)))) :
+                       :()
 end
 
 macro debugshow(n::Int, s)
-    DEBUG_LEVEL >= n ? esc(:(print("DEBUG: "); @show $s)) : :()
+    DEBUG_LEVEL >= n ? :(println("DEBUG: ", taskid(), " ",
+                                 $(sprint(show_unquoted, s)), " = ",
+                                 sprint(io->show(io, "text/plain",
+                                                 begin value=$(esc(s)) end)))) :
+                       :()
+
+end
+
+macro debugshort(n::Int, s)
+    DEBUG_LEVEL >= n ? :(println("DEBUG: ", taskid(), " ",
+                                 sprint(showcompact, $(esc(s))))) :
+                       :()
 end
 
 #=

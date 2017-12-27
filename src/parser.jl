@@ -30,7 +30,7 @@ export Parser, Header, Headers, ByteView, nobytes,
        messagestarted, headerscomplete, bodycomplete, messagecomplete,
        messagehastrailing,
        waitingforeof, seteof,
-       connectionclosed, setheadresponse,
+       connectionclosed, setnobody,
        ParsingError, ParsingErrorCode
 
 using ..URIs.parseurlchar
@@ -44,7 +44,6 @@ include("parseutils.jl")
 
 
 const strict = false # See macro @errifstrict
-const enable_passert = false # See macro @passert
 
 
 const nobytes = view(UInt8[], 1:0)
@@ -68,7 +67,7 @@ Message() =  Message(NOMETHOD, 0, 0, "", 0, false)
 mutable struct Parser
 
     # config
-    isheadresponse::Bool # Are we parsing a HEAD Response Message?
+    message_has_no_body::Bool # Are we parsing a HEAD Response Message?
 
     # state
     state::UInt8
@@ -104,7 +103,7 @@ Revert `Parser` to unconfigured state.
 function reset!(p::Parser)
 
     # config
-    p.isheadresponse = false
+    p.message_has_no_body = false
 
     # state
     p.state = s_start_req_or_res
@@ -126,12 +125,13 @@ end
 
 
 """
-    setheadresponse(::Parser)
+    setnobody(::Parser)
 
-Mark the Message as being the Response to a HEAD Request.
+Tell the `Parser` not to look for a Message Body.
+e.g. for the Response to a HEAD Request.
 """
 
-setheadresponse(p::Parser) = p.isheadresponse = true
+setnobody(p::Parser) = p.message_has_no_body = true
 
 
 """
@@ -246,7 +246,7 @@ macro errorifstrict(cond)
 end
 
 macro passert(cond)
-    enable_passert ? esc(:(@assert $cond)) : :()
+    DEBUG_LEVEL > 1 ? esc(:(@assert $cond)) : :()
 end
 
 macro methodstate(meth, i, char)
@@ -275,13 +275,13 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
     len = length(bytes)
     p_state = parser.state
-    @debug 2 "parseheaders(parser.state=$(ParsingStateCode(p_state))), " *
+    @debug 3 "parseheaders(parser.state=$(ParsingStateCode(p_state))), " *
              "$len-bytes:\n" * escapelines(String(collect(bytes))) * ")"
 
     p = 0
     while p < len && p_state <= s_headers_done
 
-        @debug 3 string("top of while($p < $len) \"",
+        @debug 4 string("top of while($p < $len) \"",
                         Base.escape_string(string(Char(bytes[p+1]))), "\" ",
                         ParsingStateCode(p_state))
         p += 1
@@ -460,14 +460,14 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
         elseif p_state == s_req_method
             matcher = string(parser.message.method)
-            @debugshow 3 matcher
-            @debugshow 3 parser.index
+            @debugshow 4 matcher
+            @debugshow 4 parser.index
             if ch == ' ' && parser.index == length(matcher) + 1
                 p_state = s_req_spaces_before_url
             elseif parser.index > length(matcher)
                 @err(HPE_INVALID_METHOD)
             elseif ch == matcher[parser.index]
-                @debug 3 "nada"
+                @debug 4 "nada"
             elseif isalpha(ch)
                 ci = @methodstate(parser.message.method,
                                   Int(parser.index) - 1, ch)
@@ -511,14 +511,14 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             elseif ch == '-' &&
                    parser.index == 2 &&
                    parser.message.method == MKCOL
-                @debug 3 "matched MSEARCH"
+                @debug 4 "matched MSEARCH"
                 parser.message.method = MSEARCH
                 parser.index -= 1
             else
                 @err(HPE_INVALID_METHOD)
             end
             parser.index += 1
-            @debugshow 3 parser.index
+            @debugshow 4 parser.index
 
         elseif p_state == s_req_spaces_before_url
             ch == ' ' && continue
@@ -569,7 +569,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
             if p_state >= s_req_http_start
                 parser.message.url = take!(parser.valuebuffer)
-                @debugshow 3 parser.message.url
+                @debugshow 4 parser.message.url
             end
 
             p = min(p, len)
@@ -675,13 +675,13 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             start = p
             while p <= len
                 @inbounds ch = Char(bytes[p])
-                @debug 3 Base.escape_string(string(ch))
+                @debug 4 Base.escape_string(string(ch))
                 c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
                 if c == Char(0)
                     @errorif(ch != ':', HPE_INVALID_HEADER_TOKEN)
                     break
                 end
-                @debugshow 3 parser.header_state
+                @debugshow 4 parser.header_state
                 h = parser.header_state
                 if h == h_general
 
@@ -822,9 +822,9 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             h = parser.header_state
             while p <= len
                 @inbounds ch = Char(bytes[p])
-                @debug 3 Base.escape_string(string('\'', ch, '\''))
-                @debugshow 3 strict
-                @debugshow 3 isheaderchar(ch)
+                @debug 4 Base.escape_string(string('\'', ch, '\''))
+                @debugshow 4 strict
+                @debugshow 4 isheaderchar(ch)
                 if ch == CR
                     p_state = s_header_almost_done
                     break
@@ -837,7 +837,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
                 c = lower(ch)
 
-                @debugshow 3 h
+                @debugshow 4 h
                 if h == h_general
                     crlf = findfirst(x->(x == bCR || x == bLF),
                            view(bytes, p:len))
@@ -859,7 +859,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
                         # Overflow?
                         # Test against a conservative limit for simplicity.
-                        @debugshow 3 Int(parser.content_length)
+                        @debugshow 4 Int(parser.content_length)
                         if div(ULLONG_MAX - 10, 10) < t
                             parser.header_state = h
                             @err(HPE_INVALID_CONTENT_LENGTH)
@@ -1040,13 +1040,13 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     parser.message.upgrade = isrequest(parser) &&
                                              parser.message.method == CONNECT
                 end
-                @debugshow 3 parser.message.upgrade
+                @debugshow 4 parser.message.upgrade
             end
 
         elseif p_state == s_headers_done
             @errorifstrict(ch != LF)
 
-            if parser.isheadresponse ||
+            if parser.message_has_no_body ||
                    parser.content_length == 0 ||
                    (parser.message.upgrade && isrequest(parser) &&
                     parser.message.method == CONNECT)
@@ -1080,7 +1080,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             p_state == s_body_identity ||
             p_state == s_body_identity_eof
 
-    @debug 2 "parseheaders() exiting $(ParsingStateCode(p_state))"
+    @debug 3 "parseheaders() exiting $(ParsingStateCode(p_state))"
 
     parser.state = p_state
     return view(bytes, p+1:len)
@@ -1106,7 +1106,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
 
     len = length(bytes)
     p_state = parser.state
-    @debug 2 "parsebody(parser.state=$(ParsingStateCode(p_state))), " *
+    @debug 3 "parsebody(parser.state=$(ParsingStateCode(p_state))), " *
              "$len-bytes:\n" * escapelines(String(collect(bytes))) * ")"
 
     result = nobytes
@@ -1115,7 +1115,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
     while p < len && result == nobytes && p_state < s_message_done &&
                                           p_state != s_trailer_start
 
-        @debug 3 string("top of while($p < $len) \"",
+        @debug 4 string("top of while($p < $len) \"",
                         Base.escape_string(string(Char(bytes[p+1]))), "\" ",
                         ParsingStateCode(p_state))
         p += 1
@@ -1156,7 +1156,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
                 p_state = s_chunk_size_almost_done
             else
                 unhex_val = unhex[Int(ch)+1]
-                @debugshow 3 unhex_val
+                @debugshow 4 unhex_val
                 if unhex_val == -1
                     if ch == ';' || ch == ' '
                         p_state = s_chunk_parameters
@@ -1169,7 +1169,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
                 t += UInt64(unhex_val)
 
                 # Overflow? Test against a conservative limit for simplicity.
-                @debugshow 3 Int(parser.content_length)
+                @debugshow 4 Int(parser.content_length)
                 if div(ULLONG_MAX - 16, 16) < t
                     @err(HPE_INVALID_CONTENT_LENGTH)
                 end
@@ -1243,7 +1243,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
             p_state == s_message_done ||
             p_state == s_trailer_start
 
-    @debug 2 "parsebody() exiting $(ParsingStateCode(p_state))"
+    @debug 3 "parsebody() exiting $(ParsingStateCode(p_state))"
 
     parser.state = p_state
     return result, view(bytes, p+1:len)

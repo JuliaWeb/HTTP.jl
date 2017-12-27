@@ -5,6 +5,7 @@ using ..URIs
 using ..Messages
 using ..ConnectionPool
 using MbedTLS.SSLContext
+import ..@debug, ..DEBUG_LEVEL
 
 
 abstract type ConnectionPoolLayer{Next <: Layer} <: Layer end
@@ -20,33 +21,20 @@ sockettype(uri::URI) = uri.scheme == "https" ? SSLContext : TCPSocket
 Get a `Connection` for a `URI`, send a `Request` and fill in a `Response`.
 """
 
-function request(::Type{ConnectionPoolLayer{Next}},
-                 uri::URI, req, body; kw...) where Next
+function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
+                 connectionpool::Bool=true, kw...) where Next
 
-    Connection = ConnectionPool.Connection{sockettype(uri)}
+    Conncetion = sockettype(uri)
+    if connectionpool
+        Connection = ConnectionPool.Connection{Connection}
+    end
     io = getconnection(Connection, uri.host, uri.port; kw...)
 
     try
         return request(Next, io, req, body; kw...)
     catch e
-        @schedule close(io)
-        rethrow(e)
-    end
-end
-
-
-abstract type ConnectLayer{Next <: Layer} <: Layer end
-export ConnectLayer
-
-function request(::Type{ConnectLayer{Next}},
-                 uri::URI, req, body; kw...) where Next
-
-    io = getconnection(sockettype(uri), uri.host, uri.port; kw...)
-
-    try
-        return request(Next, io, req, body; kw...)
-    catch e
-        @schedule close(io)
+        @debug 1 "ConnectionLayer $e. Closing: $io"
+        close(io)
         rethrow(e)
     end
 end

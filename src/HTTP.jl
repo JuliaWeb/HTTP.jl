@@ -5,7 +5,7 @@ using MbedTLS
 import MbedTLS.SSLContext
 
 
-const DEBUG_LEVEL = 0
+const DEBUG_LEVEL = 1
 const minimal = false
 
 include("compat.jl")
@@ -66,8 +66,7 @@ function stack(;redirect=true,
                 cookies=false,
                 canonicalizeheaders=false,
                 retry=true,
-                statusexception=true,
-                connectionpool=true,
+                statusexception=true
                 kw...)
 
     NoLayer = Union
@@ -80,16 +79,15 @@ function stack(;redirect=true,
     (awsauthorization    ? AWS4AuthLayer       : NoLayer){
     (retry               ? RetryLayer          : NoLayer){
     (statusexception     ? ExceptionLayer      : NoLayer){
-    (connectionpool      ? ConnectionPoolLayer : ConnectLayer){
+                           ConnectionPoolLayer{
                            StreamLayer
     }}}}}}}}}
 end
 
                                                                             else
-stack(;kw...) = ExceptionLayer{
-                MessageLayer{
+stack(;kw...) = MessageLayer{
+                ExceptionLayer{
                 ConnectionPoolLayer{
-                #ConnectLayer{
                 StreamLayer}}}
                                                                              end
 

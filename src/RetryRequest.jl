@@ -20,14 +20,17 @@ isrecoverable(e::Exception) = false
 
 isrecoverable(e, req) = isrecoverable(e) &&
                         !(req.body === body_was_streamed) &&
-                        !(req.response.body === body_was_streamed)
+                        !(req.response.body === body_was_streamed) &&
+                        (@debug 1 "Retring on $e: $(sprint(showcompact, req))";
+                         true)
 
 
 function request(::Type{RetryLayer{Next}}, uri, req, body;
-                 retries=3, kw...) where Next
+                 retries=4, kw...) where Next
 
     retry_request = retry(request, delays=ExponentialBackOff(n = retries),
-                                   check=(s,ex)->(s,isrecoverable(ex, req)))
+                                   check=(s,ex)->(s,isrecoverable(ex, req) &&
+                                                  (reset!(req.response); true)))
 
     retry_request(Next, uri, req, body; kw...)
 end

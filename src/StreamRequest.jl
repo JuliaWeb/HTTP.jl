@@ -5,9 +5,9 @@ using ..IOExtras
 using ..Parsers
 using ..Messages
 using ..HTTPStreams
-using ..ConnectionPool.getparser
+import ..ConnectionPool
 using ..MessageRequest
-import ..@debug, ..DEBUG_LEVEL
+import ..@debugshort, ..DEBUG_LEVEL
 
 abstract type StreamLayer <: Layer end
 export StreamLayer
@@ -35,9 +35,10 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
 
     write(io, req)
 
-    @debug 1 req
+    @debugshort 2 req
+    @debug 3 req
 
-    http = HTTPStream(io, req, getparser(io))
+    http = HTTPStream(io, req, ConnectionPool.getparser(io))
 
     if iofunction != nothing
         iofunction(http)
@@ -48,18 +49,19 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
 
         readheaders(http)
         if response_stream == nothing
-            http.message.body = read(http)
+            req.response.body = read(http)
         else
-            http.message.body = body_was_streamed
+            req.response.body = body_was_streamed
             write(response_stream, http)
         end
     end
 
     close(http)
 
-    @debug 1 http.message
+    @debugshort 2 req.response
+    @debug 3 req.response
 
-    return http.message
+    return req.response
 end
 
 

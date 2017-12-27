@@ -1,6 +1,6 @@
 module HTTPStreams
 
-export HTTPStream, readheaders, readtrailers
+export HTTPStream, readheaders
 
 using ..IOExtras
 using ..Parsers
@@ -11,17 +11,17 @@ struct HTTPStream{T <: Message} <: IO
     stream::IO
     message::T
     parser::Parser
-    chunked::Bool
+    writechunked::Bool
 end
 
 function HTTPStream(io::IO, request::Request, parser::Parser)
-    chunked = header(request, "Transfer-Encoding") == "chunked"
-    HTTPStream{Response}(io, request.response, parser, chunked)
+    writechunked = header(request, "Transfer-Encoding") == "chunked"
+    HTTPStream{Response}(io, request.response, parser, writechunked)
 end
 
 
 function Base.unsafe_write(http::HTTPStream, p::Ptr{UInt8}, n::UInt)
-    if !http.chunked
+    if !http.writechunked
         return unsafe_write(http.stream, p, n) 
     end
     return write(http.stream, hex(n), "\r\n") +
@@ -30,7 +30,7 @@ function Base.unsafe_write(http::HTTPStream, p::Ptr{UInt8}, n::UInt)
 end
 
 
-writeend(http) = http.chunked ? write(http.stream, "0\r\n\r\n") : 0
+writeend(http) = http.writechunked ? write(http.stream, "0\r\n\r\n") : 0
 
 
 function Messages.readheaders(http::HTTPStream)
@@ -43,21 +43,17 @@ end
 
 function configure_parser(http::HTTPStream{Response})
     reset!(http.parser)
-    if http.message.request.method in ("HEAD", "CONNECT") # FIXME Why CONNECT?
-        setheadresponse(http.parser)
+    if http.message.request.method in ("HEAD", "CONNECT")
+        setnobody(http.parser)
     end
 end
 
 configure_parser(http::HTTPStream{Request}) = reset!(http.parser)
 
 
-readheadersdone(http::HTTPStream) = http.message.status != 0
-
-
 function Base.eof(http::HTTPStream)
-    if !readheadersdone(http)
+    if !headerscomplete(http.message)
         readheaders(http)
-        @assert readheadersdone(http)
     end
     if bodycomplete(http.parser)
         return true
@@ -71,11 +67,14 @@ end
 
 
 function Base.readavailable(http::HTTPStream)::ByteView
-    if !headerscomplete(http.parser)
+    if !headerscomplete(http.message)
         throw(ArgumentError("headers must be read before body\n$http\n"))
     end
+    if bodycomplete(http.parser)
+        throw(ArgumentError("message body already complete\n$http\n"))
+    end
     bytes = readavailable(http.stream)
-    if isempty(bytes) 
+    if isempty(bytes)
         return nobytes
     end
     bytes, excess = parsebody(http.parser, bytes)
@@ -98,10 +97,13 @@ function Base.close(http::HTTPStream{Response})
     while !eof(http)
         readavailable(http)
     end
-    readtrailers(http.stream, http.parser, http.message)
+
+    if bodycomplete(http.parser) && !messagecomplete(http.parser)
+        readtrailers(http.stream, http.parser, http.message)
+    end
 
     if !messagecomplete(http.parser)
-        @show http.parser
+        close(http.stream)
         throw(EOFError())
     end
 

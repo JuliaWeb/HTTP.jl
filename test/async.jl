@@ -5,6 +5,15 @@ using Base64
 using HTTP.IOExtras
 using HTTP.request
 
+println("async tests")
+
+@async while true
+    sleep(10)
+    HTTP.ConnectionPool.showpool(STDOUT)
+end
+
+
+
 # Tiny S3 interface...
 const s3region = "ap-southeast-2"
 const s3url = "https://s3.$s3region.amazonaws.com"
@@ -24,44 +33,71 @@ end
 
 create_bucket("http.jl.test")
 
+function dump_async_exception(e, st)
+    buf = IOBuffer()
+    write(buf, "==========\n@async exception:\n==========\n")
+    show(buf, "text/plain", e)
+    show(buf, "text/plain", st)
+    write(buf, "==========\n\n")
+    print(String(take!(buf)))
+end
+
+@testset "async s3 $count, $http" for count in [10, 100, 1000, 2000],
+                                       http in ["http", "https"]
+
+println("running async s3 $count $http")
+
 put_data_sums = Dict()
-@sync for i = 1:100
-    data = rand(UInt8, 100000)
+sz = 10000
+ch = 100
+@sync for i = 1:count
+    data = rand(UInt8, sz)
     md5 = bytes2hex(digest(MD_MD5, data))
     put_data_sums[i] = md5
-    @async begin
+    @async try
         url = "$s3url/http.jl.test/file$i"
-        r = HTTP.open("PUT", url, ["Content-Length" => 100000];
+        r = HTTP.open("PUT", url, ["Content-Length" => sz];
                 body_sha256=digest(MD_SHA256, data),
                 body_md5=digest(MD_MD5, data),
                 awsauthorization=true) do http
-            for n = 1:1000:100000
-                write(http, data[n:n+999])
-                sleep(rand(10:100)/1000)
+            for n = 1:ch:sz
+                write(http, data[n:n+(ch-1)])
+                sleep(rand(1:10)/1000)
             end
         end
-        println("S3 put file$i")
+        #println("S3 put file$i")
         @assert strip(HTTP.header(r, "ETag"), '"') == md5
+    catch e
+        dump_async_exception(e, catch_stacktrace())
     end
 end
 
 get_data_sums = Dict()
-@sync for i = 1:100
-    @async begin
+@sync for i = 1:count
+    @async try
         url = "$s3url/http.jl.test/file$i"
         buf = IOBuffer()
-        r = HTTP.open("GET", url; awsauthorization=true) do http
-            write(buf, http)
+        r = HTTP.open("GET", url;
+                      awsauthorization=true,
+                      reuse_limit = 120) do http
+            while !eof(http)
+                write(buf, readavailable(http))
+                sleep(rand(1:10)/1000)
+            end
         end
-        println("S3 get file$i")
+        #println("S3 get file$i")
         md5 = bytes2hex(digest(MD_MD5, take!(buf)))
         @assert strip(HTTP.header(r, "ETag"), '"') == md5
         get_data_sums[i] = md5
+    catch e
+        dump_async_exception(e, catch_stacktrace())
     end
 end
 
-for i = 1:100
+for i = 1:count
     @test put_data_sums[i] == get_data_sums[i]
+end
+
 end
 
 configs = [
@@ -83,11 +119,13 @@ println("running async $count, 1:$num, $config, $http")
     result = []
     @sync begin
         for i = 1:min(num,100)
-            @async begin
+            @async try
                 r = HTTP.request("GET",
                  "$http://httpbin.org/headers", ["i" => i]; config...)
                 r = JSON.parse(String(r.body))
                 push!(result, r["headers"]["I"] => string(i))
+            catch e
+                dump_async_exception(e, catch_stacktrace())
             end
         end
     end
@@ -102,12 +140,14 @@ println("running async $count, 1:$num, $config, $http")
 
     @sync begin
         for i = 1:min(num,100)
-            @async begin
+            @async try
                 r = HTTP.request("GET",
                      "$http://httpbin.org/stream/$i"; config...)
                 r = String(r.body)
                 r = split(strip(r), "\n")
                 push!(result, length(r) => i)
+            catch e
+                dump_async_exception(e, catch_stacktrace())
             end
         end
     end
@@ -121,6 +161,7 @@ println("running async $count, 1:$num, $config, $http")
 
     result = []
 
+#=
     asyncmap(i->begin
         n = i % 20 + 1
         str = ""
@@ -140,11 +181,12 @@ println("running async $count, 1:$num, $config, $http")
     end
 
     result = []
+=#
 
     @sync begin
         for i = 1:num
             n = i % 20 + 1
-            @async begin try
+            @async try
                 r = nothing
                 str = nothing
                 url = "$http://httpbin.org/stream/$n"
@@ -196,12 +238,8 @@ println("running async $count, 1:$num, $config, $http")
                 push!(result, length(l) => n)
             catch e
                 push!(result, e => n)
-                buf = IOBuffer()
-                write(buf, "==========\nAsync exception:\n==========\n$e\n")
-                show(buf, "text/plain", catch_stacktrace())
-                write(buf, "==========\n\n")
-                write(STDOUT, take!(buf))
-            end end
+                dump_async_exception(e, catch_stacktrace())
+            end
         end
     end
 
@@ -214,3 +252,4 @@ println("running async $count, 1:$num, $config, $http")
 
 end # testset
 
+sleep(12)

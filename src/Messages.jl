@@ -1,9 +1,10 @@
 module Messages
 
 export Message, Request, Response,
+       reset!,
        iserror, isredirect, ischunked,
        header, hasheader, setheader, defaultheader, appendheader,
-       mkheaders, readheaders, readtrailers, writeheaders,
+       mkheaders, readheaders, headerscomplete, readtrailers, writeheaders,
        readstartline!
 
 if VERSION > v"0.7.0-DEV.2338"
@@ -16,6 +17,7 @@ using ..Pairs
 using ..IOExtras
 using ..Parsers
 import ..Parsers
+import ..Parsers: headerscomplete, reset!
 
 abstract type Message end
 
@@ -43,6 +45,17 @@ Response(status::Int=0, headers=[]; body=UInt8[], request=nothing) =
     Response(v"1.1", status, mkheaders(headers), body, request)
 
 Response(bytes) = parse(Response, bytes)
+
+function reset!(r::Response)
+    r.version = v"1.1"
+    r.status = 0
+    if !isempty(r.headers)
+        empty!(r.headers)
+    end
+    if !isempty(r.body)
+        empty!(r.body)
+    end
+end
 
 
 """
@@ -294,6 +307,10 @@ function readheaders(io::IO, parser::Parser, message::Message)
 end
 
 
+headerscomplete(r::Request) = r.method != ""
+headerscomplete(r::Response) = r.status != 0
+
+
 function readtrailers(io::IO, parser::Parser, message::Message)
     if messagehastrailing(parser)
         readheaders(io, parser, message)
@@ -345,8 +362,20 @@ The first chunk of the Message Body (for display purposes).
 """
 bodysummary(bytes) = view(bytes, 1:min(length(bytes), body_show_max))
 
+function compactstartline(m::Message)
+    b = IOBuffer()
+    writestartline(b, m)
+    strip(String(take!(b)))
+end
 
 function Base.show(io::IO, m::Message)
+    if get(io, :compact, false)
+        print(io, compactstartline(m))
+        if m isa Response
+            print(io, " <= (", compactstartline(m.request), ")")
+        end
+        return
+    end
     println(io, typeof(m), ":")
     println(io, "\"\"\"")
     writeheaders(io, m)
