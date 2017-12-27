@@ -66,7 +66,7 @@ function stack(;redirect=true,
                 cookies=false,
                 canonicalizeheaders=false,
                 retry=true,
-                statusexception=true
+                statusexception=true,
                 kw...)
 
     NoLayer = Union
