@@ -43,7 +43,8 @@ end
 
 function configure_parser(http::HTTPStream{Response})
     reset!(http.parser)
-    if http.message.request.method in ("HEAD", "CONNECT")
+    req = http.message.request::Request
+    if req.method in ("HEAD", "CONNECT")
         setnobody(http.parser)
     end
 end
