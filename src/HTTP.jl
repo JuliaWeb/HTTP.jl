@@ -5,7 +5,7 @@ using MbedTLS
 import MbedTLS.SSLContext
 
 
-const DEBUG_LEVEL = 1
+const DEBUG_LEVEL = 0
 const minimal = false
 
 include("compat.jl")
