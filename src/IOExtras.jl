@@ -1,6 +1,6 @@
 module IOExtras
 
-export unread!, closeread, closewrite
+export unread!, closeread, closewrite, tcpsocket, localport, peerport
 
 """
     unread!(::IO, bytes)
@@ -61,5 +61,25 @@ Signal end of write or read operations.
 closewrite(io) = nothing
 closeread(io) = close(io)
 
+
+using MbedTLS.SSLContext
+tcpsocket(io::SSLContext)::TCPSocket = io.bio
+tcpsocket(io::TCPSocket)::TCPSocket = io
+
+localport(io) = try !isopen(tcpsocket(io)) ? 0 :
+                    VERSION > v"0.7.0-DEV" ?
+                    getsockname(tcpsocket(io))[2] :
+                    Base._sockname(tcpsocket(io), true)[2]
+                catch
+                    0
+                end
+
+peerport(io) = try !isopen(tcpsocket(io)) ? 0 :
+                  VERSION > v"0.7.0-DEV" ?
+                  getpeername(tcpsocket(io))[2] :
+                  Base._sockname(tcpsocket(io), false)[2]
+               catch
+                   0
+               end
 
 end
