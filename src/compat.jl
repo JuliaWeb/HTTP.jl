@@ -27,3 +27,9 @@ if VERSION < v"0.7.0-DEV.2575"
 else
     import Dates
 end
+
+@static if VERSION >= v"0.7.0-DEV.2915"
+    lockedby(l) = l.locked_by
+else
+    lockedby(l) = get(l.locked_by)
+end
