@@ -7,7 +7,7 @@ using ..Messages
 using ..HTTPStreams
 import ..ConnectionPool
 using ..MessageRequest
-import ..@debugshort, ..DEBUG_LEVEL
+import ..@debugshort, ..DEBUG_LEVEL, ..printlncompact
 
 abstract type StreamLayer <: Layer end
 export StreamLayer
@@ -31,21 +31,33 @@ Run the `Request` in a background task if response body is a stream.
 function request(::Type{StreamLayer}, io::IO, req::Request, body;
                  response_stream=nothing,
                  iofunction=nothing,
+                 verbose::Int=0,
                  kw...)::Response
 
-    write(io, req)
-
-    @debugshort 2 req
-    @debug 3 req
+    verbose == 1 && printlncompact(req)
+    verbose >= 2 && println(req)
 
     http = HTTPStream(io, req, ConnectionPool.getparser(io))
 
     if iofunction != nothing
+        write(io, req)
         iofunction(http)
     else
+        write(io, req)
         if req.body === body_is_a_stream
             writebody(http, req, body)
         end
+#= FIXME
+        @async begin
+            write(io, req)
+            if req.body === body_is_a_stream
+                writebody(http, req, body)
+            end
+            writeend(http)
+            closewrite(http.stream)
+        end
+=#
+
 
         readheaders(http)
         if response_stream == nothing
@@ -58,8 +70,8 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
 
     close(http)
 
-    @debugshort 2 req.response
-    @debug 3 req.response
+    verbose == 1 && printlncompact(req.response)
+    verbose >= 2 && println(req.response)
 
     return req.response
 end
