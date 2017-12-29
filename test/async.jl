@@ -11,7 +11,7 @@ stop_pool_dump = false
 
 @async while !stop_pool_dump
     HTTP.ConnectionPool.showpool(STDOUT)
-    sleep(3)
+    sleep(20)
 end
 
 # Tiny S3 interface...
@@ -45,12 +45,17 @@ end
 @testset "async s3 $count, $http" for count in [10, 100, 1000, 2000],
                                        http in ["http", "https"]
 
+global s3url
 s3url = "$http://s3.$s3region.amazonaws.com"
 println("running async s3 $count $http")
 
 put_data_sums = Dict()
-sz = 10000
+sz = 1000
 ch = 100
+conf = [:reuse_limit => 90,
+        :verbose => 0,
+        :pipeline_limit => 32,
+        :timeout => 20]
 
 @sync for i = 1:count
     data = rand(UInt8(65):UInt8(75), sz)
@@ -61,7 +66,8 @@ ch = 100
         r = HTTP.open("PUT", url, ["Content-Length" => sz];
                 body_sha256=digest(MD_SHA256, data),
                 body_md5=digest(MD_MD5, data),
-                awsauthorization=true) do http
+                awsauthorization=true,
+                conf...) do http
             for n = 1:ch:sz
                 write(http, data[n:n+(ch-1)])
                 sleep(rand(1:10)/1000)
@@ -71,6 +77,7 @@ ch = 100
         @assert strip(HTTP.header(r, "ETag"), '"') == md5
     catch e
         dump_async_exception(e, catch_stacktrace())
+        rethrow(e)
     end
 end
 
@@ -82,10 +89,8 @@ get_data_sums = Dict()
             url = "$s3url/http.jl.test/file$i"
             buf = IOBuffer()
             r = HTTP.open("GET", url;
-                          verbose=1,
-                          #pipeline_limit=8,
-                          reuse_limit = 90,
-                          awsauthorization=true) do http
+                          awsauthorization=true,
+                          conf...) do http
                 truncate(buf, 0) # in case of retry!
                 while !eof(http)
                     write(buf, readavailable(http))
@@ -213,14 +218,12 @@ println("running async $count, 1:$num, $config, $http")
                                 str = String(read(s))
                                 break
                             catch e
-#                                st = catch_stacktrace()
                                 if attempt == 10 ||
                                    !HTTP.RetryRequest.isrecoverable(e)
                                     rethrow(e)
                                 end
                                 buf = IOBuffer()
                                 println(buf, "$i retry $e $attempt...")
-                                #show(buf, "text/plain", st)
                                 write(STDOUT, take!(buf))
                                 sleep(0.1)
                             end
@@ -249,6 +252,7 @@ println("running async $count, 1:$num, $config, $http")
             catch e
                 push!(result, e => n)
                 dump_async_exception(e, catch_stacktrace())
+                rethrow(e)
             end
         end
     end

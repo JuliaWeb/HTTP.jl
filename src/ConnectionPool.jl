@@ -1,12 +1,12 @@
 module ConnectionPool
 
-export getconnection, getparser
+export getconnection, getparser, inactiveseconds
 
 using ..IOExtras
 
 import ..@debug, ..DEBUG_LEVEL, ..taskid
 import MbedTLS.SSLContext
-import ..Connect: getconnection, getparser
+import ..Connect: getconnection, getparser, inactiveseconds
 import ..Parsers.Parser
 
 
@@ -52,6 +52,7 @@ mutable struct Connection{T <: IO} <: IO
     readcount::Int
     writelock::ReentrantLock
     readlock::ReentrantLock
+    timestamp::Float64
     parser::Parser
 end
 
@@ -60,7 +61,7 @@ Connection{T}(host::AbstractString, port::AbstractString,
               pipeline_limit::Int, io::T) where T <: IO =
     Connection{T}(host, port, pipeline_limit,
                   peerport(io), localport(io), io, view(UInt8[], 1:0), 0, 0,
-                  ReentrantLock(), ReentrantLock(), Parser())
+                  ReentrantLock(), ReentrantLock(), 0, Parser())
 
 
 getparser(c::Connection) = c.parser
@@ -85,6 +86,14 @@ Base.isreadable(c::Connection) = havelock(c.readlock)
 Base.iswritable(c::Connection) = havelock(c.writelock)
 
 
+function inactiveseconds(c::Connection)::Float64
+    if !islocked(c.readlock)
+        return Float64(0)
+    end
+    return time() - c.timestamp
+end
+
+
 macro lockassert(cond)
     DEBUG_LEVEL > 0 || force_lock_assert ? esc(:(@assert $cond)) : :()
 end
@@ -105,6 +114,7 @@ function Base.readavailable(c::Connection)::ByteView
         bytes = byteview(readavailable(c.io))
         @debug 3 "⬅️  read $(length(bytes))-bytes from $(typeof(c.io))"
     end
+    c.timestamp = time()
     return bytes
 end
 
@@ -160,6 +170,7 @@ end
 function startread(c::Connection, seq::Int)
     @lockassert !isreadable(c)
 
+    c.timestamp = time()
     lock(c.readlock)
     while c.readcount != seq
         if !isopen(c) && nb_available(c) == 0
@@ -409,6 +420,8 @@ function Base.show(io::IO, c::Connection)
         c.port != "" ? c.port : Int(c.peerport), ":", Int(c.localport),
         ", ≣", c.pipeline_limit,
         length(c.excess) > 0 ? ", $(length(c.excess))-byte excess" : "",
+        inactiveseconds(c) > 5 ?
+            ", inactive $(round(inactiveseconds(c),1))s" : "",
         nwaiting > 0 ? ", $nwaiting bytes waiting" : "",
         DEBUG_LEVEL > 0 ? ", $(Base._fd(tcpsocket(c.io)))" : "",
         DEBUG_LEVEL > 0 &&

@@ -51,6 +51,7 @@ include("BasicAuthRequest.jl");         using .BasicAuthRequest
 include("AWS4AuthRequest.jl");          using .AWS4AuthRequest
 include("CookieRequest.jl");            using .CookieRequest
 include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
+include("TimeoutRequest.jl");           using .TimeoutRequest
                                                                              end
 include("MessageRequest.jl");           using .MessageRequest
 include("ExceptionRequest.jl");         using .ExceptionRequest
@@ -67,6 +68,7 @@ function stack(;redirect=true,
                 canonicalizeheaders=false,
                 retry=true,
                 statusexception=true,
+                timeout=0,
                 kw...)
 
     NoLayer = Union
@@ -80,8 +82,9 @@ function stack(;redirect=true,
     (retry               ? RetryLayer          : NoLayer){
     (statusexception     ? ExceptionLayer      : NoLayer){
                            ConnectionPoolLayer{
+    (timeout > 0         ? TimeoutLayer        : NoLayer){
                            StreamLayer
-    }}}}}}}}}
+    }}}}}}}}}}
 end
 
                                                                             else

@@ -1,6 +1,6 @@
 module Connect
 
-export getconnection, getparser
+export getconnection, getparser, inactiveseconds
 
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
@@ -47,5 +47,6 @@ end
 
 getparser(::IO) = Parser()
 
+inactiveseconds(::IO)= Float64(0)
 
 end # module Connect
