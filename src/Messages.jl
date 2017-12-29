@@ -372,7 +372,7 @@ function Base.show(io::IO, m::Message)
     if get(io, :compact, false)
         print(io, compactstartline(m))
         if m isa Response
-            print(io, " <= (", compactstartline(m.request), ")")
+            print(io, " <= (", compactstartline(m.request::Request), ")")
         end
         return
     end
