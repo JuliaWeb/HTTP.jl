@@ -7,12 +7,12 @@ using HTTP.request
 
 println("async tests")
 
-@async while true
-    sleep(10)
+stop_pool_dump = false
+
+@async while !stop_pool_dump
     HTTP.ConnectionPool.showpool(STDOUT)
+    sleep(3)
 end
-
-
 
 # Tiny S3 interface...
 s3region = "ap-southeast-2"
@@ -51,8 +51,9 @@ println("running async s3 $count $http")
 put_data_sums = Dict()
 sz = 10000
 ch = 100
+
 @sync for i = 1:count
-    data = rand(UInt8, sz)
+    data = rand(UInt8(65):UInt8(75), sz)
     md5 = bytes2hex(digest(MD_MD5, data))
     put_data_sums[i] = md5
     @async try
@@ -73,30 +74,39 @@ ch = 100
     end
 end
 
+
 get_data_sums = Dict()
-@sync for i = 1:count
-    @async try
-        url = "$s3url/http.jl.test/file$i"
-        buf = IOBuffer()
-        r = HTTP.open("GET", url;
-                      awsauthorization=true,
-                      reuse_limit = 120) do http
-            while !eof(http)
-                write(buf, readavailable(http))
-                sleep(rand(1:10)/1000)
+@sync begin
+    for i = 1:count
+        @async try
+            url = "$s3url/http.jl.test/file$i"
+            buf = IOBuffer()
+            r = HTTP.open("GET", url;
+                          verbose=1,
+                          #pipeline_limit=8,
+                          reuse_limit = 90,
+                          awsauthorization=true) do http
+                truncate(buf, 0) # in case of retry!
+                while !eof(http)
+                    write(buf, readavailable(http))
+                    sleep(rand(1:10)/1000)
+                end
             end
+            #println("S3 get file$i")
+            bytes = take!(buf)
+            md5 = bytes2hex(digest(MD_MD5, bytes))
+            get_data_sums[i] = (md5, strip(HTTP.header(r, "ETag"), '"'))
+        catch e
+            dump_async_exception(e, catch_stacktrace())
+            rethrow(e)
         end
-        #println("S3 get file$i")
-        md5 = bytes2hex(digest(MD_MD5, take!(buf)))
-        @assert strip(HTTP.header(r, "ETag"), '"') == md5
-        get_data_sums[i] = md5
-    catch e
-        dump_async_exception(e, catch_stacktrace())
     end
 end
 
 for i = 1:count
-    @test put_data_sums[i] == get_data_sums[i]
+    a, b = get_data_sums[i]
+    @test a == b
+    @test a == put_data_sums[i]
 end
 
 end
@@ -104,12 +114,11 @@ end
 configs = [
     [],
     [:reuse_limit => 200],
-    [:reuse_limit => 100],
-    [:reuse_limit => 10]
+    [:reuse_limit => 50]
 ]
 
-@testset "async $count, $num, $config, $http" for count in 1:3,
-                                            num in [10, 100, 1000, 2000],
+@testset "async $count, $num, $config, $http" for count in 1:1,
+                                            num in [100, 1000, 2000],
                                             config in configs,
                                             http in ["http", "https"]
 
@@ -254,3 +263,8 @@ println("running async $count, 1:$num, $config, $http")
 end # testset
 
 sleep(12)
+stop_pool_dump=true
+
+HTTP.ConnectionPool.showpool(STDOUT)
+
+println("async tests done")
