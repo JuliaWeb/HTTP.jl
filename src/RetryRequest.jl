@@ -21,7 +21,7 @@ isrecoverable(e::Exception) = false
 isrecoverable(e, req) = isrecoverable(e) &&
                         !(req.body === body_was_streamed) &&
                         !(req.response.body === body_was_streamed) &&
-                        (@debug 1 "Retring on $e: $(sprint(showcompact, req))";
+                        (@debug 1 "🔄  Retry $e: $(sprint(showcompact, req))";
                          true)
 
 

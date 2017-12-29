@@ -40,7 +40,7 @@ function request(::Type{RedirectLayer{Next}},
             headers = Header[]
         end
 
-        @debug 1 "Redirecting to: $uri"
+        @debug 1 "➡️  Redirect: $uri"
 
         count += 1
     end
