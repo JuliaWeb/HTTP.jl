@@ -109,7 +109,8 @@ mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
 Does this `Response` have an error status?
 """
 
-iserror(r::Response) = (r.status < 200 || r.status >= 300) && !isredirect(r)
+iserror(r::Response) = r.status != 0 &&
+                       (r.status < 200 || r.status >= 300) && !isredirect(r)
 
 
 """

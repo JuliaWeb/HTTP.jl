@@ -1,6 +1,7 @@
 module IOExtras
 
-export unread!, closeread, closewrite, tcpsocket, localport, peerport
+export unread!, startwrite, closewrite, startread, closeread,
+       tcpsocket, localport, peerport
 
 """
     unread!(::IO, bytes)
@@ -52,14 +53,18 @@ end
 
 
 """
+    startwrite(::IO)
     closewrite(::IO)
+    startread(::IO)
     closeread(::IO)
 
-Signal end of write or read operations.
+Signal start/end of write or read operations.
 """
 
+startwrite(io) = nothing
 closewrite(io) = nothing
-closeread(io) = close(io)
+startread(io) = nothing
+closeread(io) = nothing
 
 
 using MbedTLS.SSLContext

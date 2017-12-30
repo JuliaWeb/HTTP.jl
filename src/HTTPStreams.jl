@@ -1,10 +1,12 @@
 module HTTPStreams
 
-export HTTPStream, readheaders
+export HTTPStream
 
 using ..IOExtras
 using ..Parsers
 using ..Messages
+import ..ConnectionPool
+import ..@require, ..precondition_error
 
 
 struct HTTPStream{T <: Message} <: IO
@@ -15,27 +17,52 @@ struct HTTPStream{T <: Message} <: IO
 end
 
 function HTTPStream(io::IO, request::Request, parser::Parser)
+    @require iswritable(io)
     writechunked = header(request, "Transfer-Encoding") == "chunked"
-    HTTPStream{Response}(io, request.response, parser, writechunked)
+    http = HTTPStream{Response}(io, request.response, parser, writechunked)
+    startwrite(http)
+    return http
+end
+
+
+# Writing HTTP Messages
+
+IOExtras.iswritable(http::HTTPStream) = iswritable(http.stream)
+
+function IOExtras.startwrite(http::HTTPStream)
+    @require iswritable(http.stream)
+    writeheaders(http.stream, http.message.request)
 end
 
 
 function Base.unsafe_write(http::HTTPStream, p::Ptr{UInt8}, n::UInt)
     if !http.writechunked
-        return unsafe_write(http.stream, p, n) 
+        return unsafe_write(http.stream, p, n)
     end
     return write(http.stream, hex(n), "\r\n") +
-           unsafe_write(http.stream, p, n) + 
+           unsafe_write(http.stream, p, n) +
            write(http.stream, "\r\n")
 end
 
 
-writeend(http) = http.writechunked ? write(http.stream, "0\r\n\r\n") : 0
-
-
-function Messages.readheaders(http::HTTPStream)
-    writeend(http)
+function IOExtras.closewrite(http::HTTPStream)
+    if !iswritable(http)
+        return
+    end
+    if http.writechunked
+        write(http.stream, "0\r\n\r\n")
+    end
     closewrite(http.stream)
+end
+
+
+# Reading HTTP Messages
+
+IOExtras.isreadable(http::HTTPStream) = isreadable(http.stream)
+
+function IOExtras.startread(http::HTTPStream)
+    @require !isreadable(http.stream)
+    startread(http.stream)
     configure_parser(http)
     return readheaders(http.stream, http.parser, http.message)
 end
@@ -54,7 +81,7 @@ configure_parser(http::HTTPStream{Request}) = reset!(http.parser)
 
 function Base.eof(http::HTTPStream)
     if !headerscomplete(http.message)
-        readheaders(http)
+        startread(http)
     end
     if bodycomplete(http.parser)
         return true
@@ -68,12 +95,9 @@ end
 
 
 function Base.readavailable(http::HTTPStream)::ByteView
-    if !headerscomplete(http.message)
-        throw(ArgumentError("headers must be read before body\n$http\n"))
-    end
-    if bodycomplete(http.parser)
-        throw(ArgumentError("message body already complete\n$http\n"))
-    end
+    @require headerscomplete(http.message)
+    @require !bodycomplete(http.parser)
+
     bytes = readavailable(http.stream)
     if isempty(bytes)
         return nobytes
@@ -94,25 +118,42 @@ function Base.read(http::HTTPStream)
 end
 
 
-function Base.close(http::HTTPStream{Response})
+function IOExtras.closeread(http::HTTPStream{Response})
+
+    # "If [the response] indicates the server does not wish to receive the
+    #  message body and is closing the connection, the client SHOULD immediately
+    #  cease transmitting the body and close its side of the connection."
+    # https://tools.ietf.org/html/rfc7230#section-6.5
+    if iswritable(http.stream) &&
+       iserror(http.message) &&
+       connectionclosed(http.parser)
+        close(http.stream)
+        return http.message
+    end
+
+    # Discard unread body bytes...
     while !eof(http)
         readavailable(http)
     end
 
+    # Read trailers...
     if bodycomplete(http.parser) && !messagecomplete(http.parser)
         readtrailers(http.stream, http.parser, http.message)
     end
 
+    closeread(http.stream)
+
+    # Error if Message is not complete...
     if !messagecomplete(http.parser)
         close(http.stream)
         throw(EOFError())
     end
 
+    # Close conncetion if server sent "Connection: close"...
     if connectionclosed(http.parser)
         close(http.stream)
-    else
-        closeread(http.stream)
     end
+
     return http.message
 end
 

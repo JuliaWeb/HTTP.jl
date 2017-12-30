@@ -22,10 +22,13 @@ end
 
 
 """
-    request(StreamLayer, ::IO, ::Request, ::Response)
+    request(StreamLayer, ::IO, ::Request, body) -> ::Response
 
-Send a `Request` and receive a `Response`.
-Run the `Request` in a background task if response body is a stream.
+Send a `Request` and return a `Response`.
+Send the `Request` body in a background task and begin reading the response
+immediately so that the transmission can be aborted if the `Response` status
+indicates that the server does wish to receive the message body
+[https://tools.ietf.org/html/rfc7230#section-6.5](RFC7230 6.5).
 """
 
 function request(::Type{StreamLayer}, io::IO, req::Request, body;
@@ -40,35 +43,33 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
     http = HTTPStream(io, req, ConnectionPool.getparser(io))
 
     if iofunction != nothing
-        write(io, req)
         iofunction(http)
+        closewrite(http)
+        closeread(http)
     else
-        write(io, req)
-        if req.body === body_is_a_stream
-            writebody(http, req, body)
-        end
-#= FIXME
-        @async begin
-            write(io, req)
+
+        write_body_task = @async begin
             if req.body === body_is_a_stream
                 writebody(http, req, body)
+            else
+                write(http, req.body)
             end
-            writeend(http)
-            closewrite(http.stream)
+            closewrite(http)
         end
-=#
+        yield()
 
-
-        readheaders(http)
+        startread(http)
         if response_stream == nothing
             req.response.body = read(http)
         else
             req.response.body = body_was_streamed
             write(response_stream, http)
         end
+
+        closeread(http)
+        wait(write_body_task)
     end
 
-    close(http)
 
     verbose == 1 && printlncompact(req.response)
     verbose >= 2 && println(req.response)

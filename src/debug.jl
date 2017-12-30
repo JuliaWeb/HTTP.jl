@@ -23,6 +23,28 @@ end
 
 printlncompact(x) = println(sprint(showcompact, x))
 
+
+@noinline function precondition_error(msg, frame)
+    msg = string(sprint(StackTraces.show_spec_linfo,
+                        StackTraces.lookup(frame)[2]),
+                 " requires ", msg)
+    return ArgumentError(msg)
+end
+
+
+"""
+    @require precondition [message]
+Throw `ArgumentError` if `precondition` is false.
+"""
+macro require(precondition, msg = string(precondition))
+    esc(:(if ! $precondition throw(precondition_error($msg, backtrace()[1])) end))
+end
+
+
+# FIXME
+# Should this have a branch-prediction hint? (same for @assert?)
+# http://llvm.org/docs/BranchWeightMetadata.html#built-in-expect-instructions
+
 #=
 macro src()
     @static if VERSION >= v"0.7-" && length(:(@test).args) == 2

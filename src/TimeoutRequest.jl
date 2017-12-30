@@ -22,14 +22,12 @@ function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
     request_task = current_task()
 
     @async while wait_for_timeout[]
-        if islocked(io.readlock) &&
-           lockedby(io.readlock) == request_task &&
-           inactiveseconds(io) > timeout
+        if isreadable(io) && inactiveseconds(io) > timeout
             close(io)
             @debug 0 "💥  Read inactive > $(timeout)s: $io"
             break
         end
-        sleep(10)
+        sleep(8 + rand() * 4)
     end
 
     try

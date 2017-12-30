@@ -4,7 +4,7 @@ export getconnection, getparser, inactiveseconds
 
 using ..IOExtras
 
-import ..@debug, ..DEBUG_LEVEL, ..taskid
+import ..@debug, ..DEBUG_LEVEL, ..taskid, ..@require, ..precondition_error
 import MbedTLS.SSLContext
 import ..Connect: getconnection, getparser, inactiveseconds
 import ..Parsers.Parser
@@ -14,12 +14,16 @@ const duplicate_connection_limit = 8
 const default_pipeline_limit = 16
 const nolimit = typemax(Int)
 
-const force_lock_assert = true
-
 const nobytes = view(UInt8[], 1:0)
 const ByteView = typeof(nobytes)
 byteview(bytes::ByteView) = bytes
 byteview(bytes)::ByteView = view(bytes, 1:length(bytes))
+
+
+function havelock(l)
+    @assert l.reentrancy_cnt <= 1
+    islocked(l) && l.locked_by == current_task()
+end
 
 
 """
@@ -40,7 +44,7 @@ A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 - `parser::Parser`, reuse a `Parser` when this `Connection` is reused.
 """
 
-mutable struct Connection{T <: IO} <: IO
+mutable struct Connection{T <: IO}
     host::String
     port::String
     pipeline_limit::Int
@@ -48,43 +52,35 @@ mutable struct Connection{T <: IO} <: IO
     localport::UInt16
     io::T
     excess::ByteView
+    writebusy::Bool
     writecount::Int
     readcount::Int
-    writelock::ReentrantLock
     readlock::ReentrantLock
     timestamp::Float64
     parser::Parser
+end
+
+struct Transaction{T <: IO} <: IO
+    c::Connection{T}
+    sequence::Int
 end
 
 
 Connection{T}(host::AbstractString, port::AbstractString,
               pipeline_limit::Int, io::T) where T <: IO =
     Connection{T}(host, port, pipeline_limit,
-                  peerport(io), localport(io), io, view(UInt8[], 1:0), 0, 0,
-                  ReentrantLock(), ReentrantLock(), 0, Parser())
+                  peerport(io), localport(io), io, view(UInt8[], 1:0),
+                  0, 0, 0, ReentrantLock(), 0, Parser())
 
-
-getparser(c::Connection) = c.parser
-
-
-Base.unsafe_write(c::Connection, p::Ptr{UInt8}, n::UInt) =
-    unsafe_write(c.io, p, n)
-
-Base.isopen(c::Connection) = isopen(c.io)
-
-function Base.eof(c::Connection)
-    if nb_available(c) > 0
-        return false
-    end
-                     @debug 3 "eof(::Connection) calling eof($typeof(c.io)): $c"
-    return eof(c.io)
+function Transaction{T}(c::Connection{T}) where T <: IO
+    r = Transaction{T}(c, c.writecount)
+    startwrite(r)
+    return r
 end
 
-Base.nb_available(c::Connection) = !isempty(c.excess) ? length(c.excess) :
-                                                        nb_available(c.io)
-Base.isreadable(c::Connection) = havelock(c.readlock)
-Base.iswritable(c::Connection) = havelock(c.writelock)
+getparser(t::Transaction) = t.c.parser
 
+inactiveseconds(t::Transaction) = inactiveseconds(t.c)
 
 function inactiveseconds(c::Connection)::Float64
     if !islocked(c.readlock)
@@ -94,134 +90,147 @@ function inactiveseconds(c::Connection)::Float64
 end
 
 
-macro lockassert(cond)
-    DEBUG_LEVEL > 0 || force_lock_assert ? esc(:(@assert $cond)) : :()
+Base.unsafe_write(t::Transaction, p::Ptr{UInt8}, n::UInt) =
+    unsafe_write(t.c.io, p, n)
+
+Base.isopen(t::Transaction) = isopen(t.c.io)
+
+function Base.eof(t::Transaction)
+    @require isreadable(t)
+    if nb_available(t) > 0
+        return false
+    end                 ;@debug 3 "eof(::Transaction) -> eof($typeof(c.io)): $t"
+    return eof(t.c.io)
 end
 
-function havelock(l)
-    @lockassert l.reentrancy_cnt <= 1
-    islocked(l) && l.locked_by == current_task()
-end
+Base.nb_available(t::Transaction) = nb_available(t.c)
+Base.nb_available(c::Connection) =
+    !isempty(c.excess) ? length(c.excess) : nb_available(c.io)
+
+Base.isreadable(t::Transaction) = islocked(t.c.readlock) &&
+                                  t.c.readcount == t.sequence
+
+Base.iswritable(t::Transaction) = t.c.writebusy &&
+                                  t.c.writecount == t.sequence
 
 
-function Base.readavailable(c::Connection)::ByteView
-    @lockassert isreadable(c)
-    if !isempty(c.excess)
-        bytes = c.excess
+function Base.readavailable(t::Transaction)::ByteView
+    @require isreadable(t)
+    if !isempty(t.c.excess)
+        bytes = t.c.excess
         @debug 3 "↩️  read $(length(bytes))-bytes from excess buffer."
-        c.excess = nobytes
+        t.c.excess = nobytes
     else
-        bytes = byteview(readavailable(c.io))
-        @debug 3 "⬅️  read $(length(bytes))-bytes from $(typeof(c.io))"
+        bytes = byteview(readavailable(t.c.io))
+        @debug 3 "⬅️  read $(length(bytes))-bytes from $(typeof(t.c.io))"
     end
-    c.timestamp = time()
+    t.c.timestamp = time()
     return bytes
 end
 
 
 """
-    unread!(::Connection, bytes)
+    unread!(::Transaction, bytes)
 
 Push bytes back into a connection's `excess` buffer
 (to be returned by the next read).
 """
 
-function IOExtras.unread!(c::Connection, bytes::ByteView)
-    @lockassert isreadable(c)
-    c.excess = bytes
+function IOExtras.unread!(t::Transaction, bytes::ByteView)
+    @require isreadable(t)
+    t.c.excess = bytes
+end
+
+
+function IOExtras.startwrite(t::Transaction)
+    @require !t.c.writebusy
+    t.c.writebusy = true
 end
 
 
 """
-    closewrite(::Connection)
+    closewrite(::Transaction)
 
-Signal that an entire Request Message has been written to the `Connection`.
+Signal that an entire Request Message has been written to the `Transaction`.
 
 Increment `writecount` and wait for pending reads to complete.
 """
 
-function IOExtras.closewrite(c::Connection)
-    @lockassert iswritable(c)
+function IOExtras.closewrite(t::Transaction)
+    @require iswritable(t)
 
-    seq = c.writecount
-    c.writecount += 1                             ;@debug 2 "🗣  Write done: $c"
-    unlock(c.writelock)
+    t.c.writecount += 1                           ;@debug 2 "🗣  Write done: $t"
+    t.c.writebusy = false
     notify(poolcondition)
 
-    if !isreadable(c)
-        startread(c, seq)
-    end
-    @lockassert isreadable(c)
+    @assert !iswritable(t)
 end
 
 
 """
-    startread(::Connection)
+    startread(::Transaction)
 
 Wait for prior pending reads to complete, then lock the readlock.
 """
 
-function startread(c::Connection)
-    @lockassert iswritable(c)
+function IOExtras.startread(t::Transaction)
+    @require !isreadable(t)
 
-    startread(c, c.writecount)
-end
-
-function startread(c::Connection, seq::Int)
-    @lockassert !isreadable(c)
-
-    c.timestamp = time()
-    lock(c.readlock)
-    while c.readcount != seq
-        if !isopen(c) && nb_available(c) == 0
-            # If there is nothing left to read,
-            # then unlocking sequence is irrelevant.
-            break
-        end
-        unlock(c.readlock)
-        yield()                        ;@debug 1 "⏳  seq=$(lpad(seq,3)):    $c"
-        lock(c.readlock)
-    end
-    @lockassert isreadable(c)
+    t.c.timestamp = time()
+    lock(t.c.readlock)
+    while t.c.readcount != t.sequence
+#        if !isopen(t) && nb_available(t) == 0
+#            # If there is nothing left to read,
+#            # then unlocking sequence is irrelevant.
+# FIXME            break
+#        end
+        unlock(t.c.readlock)
+        yield()                        ;@debug 1 "⏳  seq=$(lpad(seq,3)):    $t"
+        lock(t.c.readlock)
+    end                                           ;@debug 1 "👁  Start read: $t"
+    @assert isreadable(t)
     return
 end
 
+ensurereadable(t::Transaction) = if !isreadable(t) startread(t) end
+
 
 """
-    closeread(::Connection)
+    closeread(::Transaction)
 
-Signal that an entire Response Message has been read from the `Connection`.
+Signal that an entire Response Message has been read from the `Transaction`.
 
 Increment `readcount` and wake up tasks waiting in `closewrite`.
 """
 
-function IOExtras.closeread(c::Connection)
-    @lockassert isreadable(c)
-    c.readcount += 1
-    unlock(c.readlock)                            ;@debug 2 "✉️  Read done:  $c"
+function IOExtras.closeread(t::Transaction)
+    @require isreadable(t)
+    t.c.readcount += 1
+    unlock(t.c.readlock)                          ;@debug 2 "✉️  Read done:  $t"
     notify(poolcondition)
+    @assert !isreadable(t)
     return
 end
 
 
-function Base.close(c::Connection)
-    close(c.io)                                   ;@debug 2 "🚫      Closed: $c"
-    if isreadable(c)
-        purge(c)
-        closeread(c)
+function Base.close(t::Transaction)
+    close(t.c.io)                                 ;@debug 2 "🚫      Closed: $t"
+    if isreadable(t)
+        purge(t.c)
+        closeread(t)
     end
     return
 end
 
 
 """
-    purge(::Connection)
+    purge(::Transaction)
 
-Remove unread data from a `Connection`.
+Remove unread data from a `Transaction`.
 """
 
 function purge(c::Connection)
-    @assert !isopen(c)
+    @require !isopen(c.io)
     while !eof(c.io)
         readavailable(c.io)
     end
@@ -276,13 +285,13 @@ function findwritable(T::Type,
                       pipeline_limit::Int,
                       reuse_limit::Int)
 
-    filter(c->(typeof(c.io) == T &&
+    filter(c->(!c.writebusy &&
+               typeof(c.io) == T &&
                c.host == host &&
                c.port == port &&
                c.pipeline_limit == pipeline_limit &&
                c.writecount < reuse_limit &&
                c.writecount - c.readcount < pipeline_limit &&
-               !islocked(c.writelock) &&
                isopen(c.io)), pool)
 end
 
@@ -334,7 +343,7 @@ Remove closed connections from `pool`.
 """
 function purge()
     while (i = findfirst(x->!isopen(x.io) &&
-           x.readcount == x.writecount, pool)) > 0
+           x.readcount >= x.writecount, pool)) > 0
         c = pool[i]
         purge(c)
         deleteat!(pool, i)                        ;@debug 1 "🗑  Deleted:    $c"
@@ -349,17 +358,17 @@ Find a reusable `Connection` in the `pool`,
 or create a new `Connection` if required.
 """
 
-function getconnection(::Type{Connection{T}},
+function getconnection(::Type{Transaction{T}},
                        host::AbstractString,
                        port::AbstractString;
                        pipeline_limit::Int = default_pipeline_limit,
                        reuse_limit::Int = nolimit,
-                       kw...)::Connection{T} where T <: IO
+                       kw...)::Transaction{T} where T <: IO
 
     while true
 
         lock(poollock)
-        @lockassert poollock.reentrancy_cnt == 1
+        @assert poollock.reentrancy_cnt == 1
         try
 
             # Close connections that have reached the reuse limit...
@@ -377,8 +386,7 @@ function getconnection(::Type{Connection{T}},
             idle = filter(c->!islocked(c.readlock), writable)
             if !isempty(idle)
                 c = rand(idle)                     ;@debug 1 "♻️  Idle:       $c"
-                lock(c.writelock)
-                return c
+                return Transaction{T}(c)
             end
 
             # If there are not too many duplicates for this host,
@@ -387,16 +395,14 @@ function getconnection(::Type{Connection{T}},
             if length(busy) < duplicate_connection_limit
                 io = getconnection(T, host, port; kw...)
                 c = Connection{T}(host, port, pipeline_limit, io)
-                lock(c.writelock)
                 push!(pool, c)                    ;@debug 1 "🔗  New:        $c"
-                return c
+                return Transaction{T}(c)
             end
 
             # Share a connection that has active readers...
             if !isempty(writable)
                 c = rand(writable)                 ;@debug 1 "⇆  Shared:     $c"
-                lock(c.writelock)
-                return c
+                return Transaction{T}(c)
             end
 
         finally
@@ -414,7 +420,7 @@ function Base.show(io::IO, c::Connection)
     print(
         io,
         tcpstatus(c), " ",
-        lpad(c.writecount,3),"↑", islocked(c.writelock) ? "🔒  " : "   ",
+        lpad(c.writecount,3),"↑", c.writebusy ? "🔒  " : "   ",
         lpad(c.readcount,3), "↓", islocked(c.readlock) ? "🔒   " : "    ",
         c.host, ":",
         c.port != "" ? c.port : Int(c.peerport), ":", Int(c.localport),
@@ -425,10 +431,10 @@ function Base.show(io::IO, c::Connection)
         nwaiting > 0 ? ", $nwaiting bytes waiting" : "",
         DEBUG_LEVEL > 0 ? ", $(Base._fd(tcpsocket(c.io)))" : "",
         DEBUG_LEVEL > 0 &&
-        islocked(c.writelock) ?  ", write task: $(taskid(c.writelock))" : "",
-        DEBUG_LEVEL > 0 &&
         islocked(c.readlock) ?  ", read task: $(taskid(c.readlock))" : "")
 end
+
+Base.show(io::IO, t::Transaction) = show(io, t.c)
 
 
 function tcpstatus(c::Connection)

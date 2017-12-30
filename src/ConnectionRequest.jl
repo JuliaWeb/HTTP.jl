@@ -24,14 +24,18 @@ Get a `Connection` for a `URI`, send a `Request` and fill in a `Response`.
 function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
                  connectionpool::Bool=true, kw...) where Next
 
-    Connection = sockettype(uri)
+    SocketType = sockettype(uri)
     if connectionpool
-        Connection = ConnectionPool.Connection{Connection}
+        SocketType = ConnectionPool.Transaction{SocketType}
     end
-    io = getconnection(Connection, uri.host, uri.port; kw...)
+    io = getconnection(SocketType, uri.host, uri.port; kw...)
 
     try
-        return request(Next, io, req, body; kw...)
+        r = request(Next, io, req, body; kw...)
+        if !connectionpool
+            close(io)
+        end
+        return r
     catch e
         @debug 1 "❗️  ConnectionLayer $e. Closing: $io"
         close(io)
