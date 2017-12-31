@@ -19,9 +19,7 @@ end
 function HTTPStream(io::IO, request::Request, parser::Parser)
     @require iswritable(io)
     writechunked = header(request, "Transfer-Encoding") == "chunked"
-    http = HTTPStream{Response}(io, request.response, parser, writechunked)
-    startwrite(http)
-    return http
+    HTTPStream{Response}(io, request.response, parser, writechunked)
 end
 
 
@@ -127,6 +125,9 @@ function IOExtras.closeread(http::HTTPStream{Response})
     if iswritable(http.stream) &&
        iserror(http.message) &&
        connectionclosed(http.parser)
+        @debug 0 "✋  Abort on $(sprint(writestartline, http.message)): " *
+                      http.stream
+        @debug 1 "✋  $(http.message)"
         close(http.stream)
         return http.message
     end
@@ -141,7 +142,9 @@ function IOExtras.closeread(http::HTTPStream{Response})
         readtrailers(http.stream, http.parser, http.message)
     end
 
-    closeread(http.stream)
+    if isreadable(http.stream)
+        closeread(http.stream)
+    end
 
     # Error if Message is not complete...
     if !messagecomplete(http.parser)
@@ -151,6 +154,7 @@ function IOExtras.closeread(http::HTTPStream{Response})
 
     # Close conncetion if server sent "Connection: close"...
     if connectionclosed(http.parser)
+        @debug 0 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
     end
 

@@ -41,14 +41,27 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
     verbose >= 2 && println(req)
 
     http = HTTPStream(io, req, ConnectionPool.getparser(io))
+    startwrite(http)
 
-    if iofunction != nothing
-        iofunction(http)
-        closewrite(http)
-        closeread(http)
+    if iofunction == nothing
+        default_iofunction(http, req, body, response_stream)
     else
+        iofunction(http)
+    end
 
-        write_body_task = @async begin
+    closewrite(http)
+    closeread(http)
+
+    verbose == 1 && printlncompact(req.response)
+    verbose >= 2 && println(req.response)
+
+    return req.response
+end
+
+
+function default_iofunction(http::HTTPStream, req::Request, body, response_stream)
+    @sync begin
+        @async try
             if req.body === body_is_a_stream
                 writebody(http, req, body)
             else
@@ -65,17 +78,8 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
             req.response.body = body_was_streamed
             write(response_stream, http)
         end
-
         closeread(http)
-        wait(write_body_task)
     end
-
-
-    verbose == 1 && printlncompact(req.response)
-    verbose >= 2 && println(req.response)
-
-    return req.response
 end
-
 
 end # module StreamRequest

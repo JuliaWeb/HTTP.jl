@@ -37,7 +37,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
         end
         return r
     catch e
-        @debug 1 "❗️  ConnectionLayer $e. Closing: $io"
+        @debug 0 "❗️  ConnectionLayer $e. Closing: $io"
         close(io)
         rethrow(e)
     end

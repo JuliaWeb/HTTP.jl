@@ -96,7 +96,7 @@ Base.unsafe_write(t::Transaction, p::Ptr{UInt8}, n::UInt) =
 Base.isopen(t::Transaction) = isopen(t.c.io)
 
 function Base.eof(t::Transaction)
-    @require isreadable(t)
+    @require isreadable(t) || !isopen(t)
     if nb_available(t) > 0
         return false
     end                 ;@debug 3 "eof(::Transaction) -> eof($typeof(c.io)): $t"
@@ -185,7 +185,7 @@ function IOExtras.startread(t::Transaction)
 # FIXME            break
 #        end
         unlock(t.c.readlock)
-        yield()                        ;@debug 1 "⏳  seq=$(lpad(seq,3)):    $t"
+        yield()                           ;@debug 0 "⏳  Waiting to read:    $t"
         lock(t.c.readlock)
     end                                           ;@debug 1 "👁  Start read: $t"
     @assert isreadable(t)
@@ -434,7 +434,7 @@ function Base.show(io::IO, c::Connection)
         islocked(c.readlock) ?  ", read task: $(taskid(c.readlock))" : "")
 end
 
-Base.show(io::IO, t::Transaction) = show(io, t.c)
+Base.show(io::IO, t::Transaction) = print(io, "T$(t.sequence)", t.c)
 
 
 function tcpstatus(c::Connection)
