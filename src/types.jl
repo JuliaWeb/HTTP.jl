@@ -136,9 +136,9 @@ defaultheaders(::Type{Request}) = Headers(
     "User-Agent" => "HTTP.jl/0.0.0",
     "Accept" => "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/json; charset=utf-8"
 )
-makeheaders(d::Dict) = Headers((string(k), string(v)) for (k, v) in d)
+makeheaders(d::Associative) = Headers((string(k), string(v)) for (k, v) in d)
 
-function Request(m::HTTP.Method, uri::URI, userheaders::Dict, b;
+function Request(m::HTTP.Method, uri::URI, userheaders::Associative, b;
                     options::RequestOptions=RequestOptions(),
                     verbose::Bool=false,
                     logger::Option{IO}=STDOUT)
