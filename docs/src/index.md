@@ -70,9 +70,9 @@ The basic API function is:
 `body` can take a number of forms:
 
  - a `String`, a `Vector{UInt8}` or a readable `IO`
-   or any `T` accetped by `write(::IO, ::T)`
+   or any `T` accepted by `write(::IO, ::T)`
  - a collection of `String` or `AbstractVector{UInt8}` or `IO`
-   or any `T` accetped by `write(::IO, ::T...)`
+   or any `T` accepted by `write(::IO, ::T...)`
  - an readable `IO` stream or any `IO`-like type `T` for which
    `eof(T)` and `readavailable(T)` are defined.
 
