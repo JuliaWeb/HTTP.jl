@@ -10,7 +10,7 @@ import ..Connect: getconnection, getparser, inactiveseconds
 import ..Parsers.Parser
 
 
-const duplicate_connection_limit = 8
+const default_duplicate_limit = 8
 const default_pipeline_limit = 16
 const nolimit = typemax(Int)
 
@@ -179,11 +179,6 @@ function IOExtras.startread(t::Transaction)
     t.c.timestamp = time()
     lock(t.c.readlock)
     while t.c.readcount != t.sequence
-#        if !isopen(t) && nb_available(t) == 0
-#            # If there is nothing left to read,
-#            # then unlocking sequence is irrelevant.
-# FIXME            break
-#        end
         unlock(t.c.readlock)
         yield()                           ;@debug 0 "⏳  Waiting to read:    $t"
         lock(t.c.readlock)
@@ -212,7 +207,6 @@ function IOExtras.closeread(t::Transaction)
     return
 end
 
-
 function Base.close(t::Transaction)
     close(t.c.io)                                 ;@debug 2 "🚫      Closed: $t"
     if isreadable(t)
@@ -221,6 +215,8 @@ function Base.close(t::Transaction)
     end
     return
 end
+
+Base.close(c::Connection) = Base.close(c.io)
 
 
 """
@@ -291,7 +287,7 @@ function findwritable(T::Type,
                c.port == port &&
                c.pipeline_limit == pipeline_limit &&
                c.writecount < reuse_limit &&
-               c.writecount - c.readcount < pipeline_limit &&
+               c.writecount - c.readcount < pipeline_limit + 1 &&
                isopen(c.io)), pool)
 end
 
@@ -361,6 +357,7 @@ or create a new `Connection` if required.
 function getconnection(::Type{Transaction{T}},
                        host::AbstractString,
                        port::AbstractString;
+                       duplicate_limit=default_duplicate_limit,
                        pipeline_limit::Int = default_pipeline_limit,
                        reuse_limit::Int = nolimit,
                        kw...)::Transaction{T} where T <: IO
@@ -392,7 +389,7 @@ function getconnection(::Type{Transaction{T}},
             # If there are not too many duplicates for this host,
             # create a new connection...
             busy = findall(T, host, port, pipeline_limit)
-            if length(busy) < duplicate_connection_limit
+            if length(busy) < duplicate_limit
                 io = getconnection(T, host, port; kw...)
                 c = Connection{T}(host, port, pipeline_limit, io)
                 push!(pool, c)                    ;@debug 1 "🔗  New:        $c"
