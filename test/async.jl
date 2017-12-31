@@ -11,7 +11,7 @@ stop_pool_dump = false
 
 @async while !stop_pool_dump
     HTTP.ConnectionPool.showpool(STDOUT)
-    sleep(20)
+    sleep(1)
 end
 
 # Tiny S3 interface...
@@ -22,6 +22,7 @@ s3(method, path, body=UInt8[]; kw...) =
 s3get(path; kw...) = s3("GET", path; kw...)
 s3put(path, data; kw...) = s3("PUT", path, data; kw...)
 
+#=
 function create_bucket(bucket)
     s3put(bucket, """
         <CreateBucketConfiguration
@@ -32,6 +33,7 @@ function create_bucket(bucket)
 end
 
 create_bucket("http.jl.test")
+=#
 
 function dump_async_exception(e, st)
     buf = IOBuffer()
@@ -42,20 +44,25 @@ function dump_async_exception(e, st)
     print(String(take!(buf)))
 end
 
-@testset "async s3 $count, $http" for count in [10, 100, 1000, 2000],
-                                       http in ["http", "https"]
+@testset "async s3 dup$dup, count$count, sz$sz, pipw$pipe, $http, $mode" for
+    count in [10, 100, 1000, 2000],
+    dup in [1, 8, 16],
+    http in ["http", "https"],
+    sz in [100, 1000, 10000],
+    mode in [:request, :open],
+    pipe in [0, 32]
 
 global s3url
 s3url = "$http://s3.$s3region.amazonaws.com"
-println("running async s3 $count $http")
+println("running async s3 dup$dup, count$count, sz$sz, pipe$pipe, $http, $mode")
 
 put_data_sums = Dict()
-sz = 1000
 ch = 100
 conf = [:reuse_limit => 90,
         :verbose => 0,
-        :pipeline_limit => 32,
-        :timeout => 20]
+        :pipeline_limit => pipe,
+        :duplicate_limit => dup,
+        :timeout => 120]
 
 @sync for i = 1:count
     data = rand(UInt8(65):UInt8(75), sz)
@@ -63,15 +70,22 @@ conf = [:reuse_limit => 90,
     put_data_sums[i] = md5
     @async try
         url = "$s3url/http.jl.test/file$i"
-        r = HTTP.open("PUT", url, ["Content-Length" => sz];
-                body_sha256=digest(MD_SHA256, data),
-                body_md5=digest(MD_MD5, data),
-                awsauthorization=true,
-                conf...) do http
-            for n = 1:ch:sz
-                write(http, data[n:n+(ch-1)])
-                sleep(rand(1:10)/1000)
+        r = nothing
+        if mode == :open
+            r = HTTP.open("PUT", url, ["Content-Length" => sz];
+                    body_sha256=digest(MD_SHA256, data),
+                    body_md5=digest(MD_MD5, data),
+                    awsauthorization=true,
+                    conf...) do http
+                for n = 1:ch:sz
+                    write(http, data[n:n+(ch-1)])
+                    sleep(rand(1:10)/1000)
+                end
             end
+        end
+        if mode == :request
+            r = HTTP.request("PUT", url, [], data;
+                    awsauthorization=true, conf...)
         end
         #println("S3 put file$i")
         @assert strip(HTTP.header(r, "ETag"), '"') == md5
@@ -88,14 +102,21 @@ get_data_sums = Dict()
         @async try
             url = "$s3url/http.jl.test/file$i"
             buf = IOBuffer()
-            r = HTTP.open("GET", url;
-                          awsauthorization=true,
-                          conf...) do http
-                truncate(buf, 0) # in case of retry!
-                while !eof(http)
-                    write(buf, readavailable(http))
-                    sleep(rand(1:10)/1000)
+            r = nothing
+            if mode == :open
+                r = HTTP.open("GET", url;
+                              awsauthorization=true,
+                              conf...) do http
+                    truncate(buf, 0) # in case of retry!
+                    while !eof(http)
+                        write(buf, readavailable(http))
+                        sleep(rand(1:10)/1000)
+                    end
                 end
+            end
+            if mode == :request
+                r = HTTP.request("GET", url; response_stream=buf,
+                                             awsauthorization=true, conf...)
             end
             #println("S3 get file$i")
             bytes = take!(buf)
@@ -116,11 +137,13 @@ end
 
 end
 
+#=
 configs = [
     [],
     [:reuse_limit => 200],
     [:reuse_limit => 50]
 ]
+
 
 @testset "async $count, $num, $config, $http" for count in 1:1,
                                             num in [100, 1000, 2000],
@@ -267,6 +290,7 @@ println("running async $count, 1:$num, $config, $http")
 end # testset
 
 sleep(12)
+=#
 stop_pool_dump=true
 
 HTTP.ConnectionPool.showpool(STDOUT)
