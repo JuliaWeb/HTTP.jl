@@ -46,11 +46,19 @@ end
 
 @testset "async s3 dup$dup, count$count, sz$sz, pipw$pipe, $http, $mode" for
     count in [10, 100, 1000, 2000],
-    dup in [1, 8, 16],
+    dup in [1, 8],
     http in ["http", "https"],
     sz in [100, 1000, 10000],
     mode in [:request, :open],
     pipe in [0, 32]
+
+if dup == 1 && count > 100
+    continue
+end
+
+if count == 2000 && (sz != 1000 || pipe != 32)
+    continue
+end
 
 global s3url
 s3url = "$http://s3.$s3region.amazonaws.com"
@@ -137,7 +145,6 @@ end
 
 end
 
-#=
 configs = [
     [],
     [:reuse_limit => 200],
@@ -290,7 +297,7 @@ println("running async $count, 1:$num, $config, $http")
 end # testset
 
 sleep(12)
-=#
+
 stop_pool_dump=true
 
 HTTP.ConnectionPool.showpool(STDOUT)

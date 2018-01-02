@@ -16,7 +16,7 @@ end
 
 
 @testset "HTTP" begin
-#=
+
     include("utils.jl");
     include("fifobuffer.jl");
     include("sniff.jl");
@@ -28,8 +28,8 @@ end
 #    include("types.jl");
 #    include("handlers.jl")
     include("client.jl");
-    include("async.jl");
-=#
     include("WebSockets.jl");
+
+    include("async.jl");
 #    include("server.jl")
 end;

@@ -8,6 +8,7 @@ using ..Messages
 import ..Messages: header, hasheader
 import ..ConnectionPool.getrawstream
 import ..@require, ..precondition_error
+import ..@debug, ..DEBUG_LEVEL
 
 
 struct HTTPStream{T <: Message} <: IO
@@ -67,7 +68,17 @@ function IOExtras.startread(http::HTTPStream)
     @require !isreadable(http.stream)
     startread(http.stream)
     configure_parser(http)
-    return readheaders(http.stream, http.parser, http.message)
+    h = readheaders(http.stream, http.parser, http.message)
+    if http.message isa Response && http.message.status == 100
+        # 100 Continue
+        # https://tools.ietf.org/html/rfc7230#section-5.6
+        # https://tools.ietf.org/html/rfc7231#section-6.2.1
+        @debug 1 "✅  Continue:   $(http.stream)"
+        configure_parser(http)
+        h = readheaders(http.stream, http.parser, http.message)
+    end
+    return h
+
 end
 
 

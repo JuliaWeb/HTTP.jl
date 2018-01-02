@@ -1057,7 +1057,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             elseif parser.content_length != ULLONG_MAX
                 # Content-Length header given and non-zero
                 p_state = s_body_identity
-            elseif isrequest(parser) || # FIXME never need eof() for request?
+            elseif isrequest(parser) || # RFC 7230, 3.3.3, 6.
                    div(parser.message.status, 100) == 1 || # 1xx e.g. Continue
                    parser.message.status == 204 ||         # No Content
                    parser.message.status == 304            # Not Modified
