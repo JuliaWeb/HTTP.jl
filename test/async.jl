@@ -52,7 +52,7 @@ end
     mode in [:request, :open],
     pipe in [0, 32]
 
-if dup == 1 && count > 100
+if (dup == 1 || pipe == 0) && count > 100
     continue
 end
 

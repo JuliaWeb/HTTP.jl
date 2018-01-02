@@ -67,7 +67,7 @@ function open(f::Function, url; binary=false, kw...)
         "Sec-WebSocket-Version" => "13"
     ]
 
-    HTTP.open("GET", url, headers; kw...) do http
+    HTTP.open("GET", url, headers; reuse_limit=0, kw...) do http
 
         startread(http)
 

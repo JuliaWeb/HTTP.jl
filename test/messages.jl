@@ -119,6 +119,12 @@ using JSON
             close(io)
             @test r.status == 200
         end
+
+        r = request("POST", "$sch://httpbin.org/post",
+                   ["Expect" => "100-continue"], "Hello")
+        @test r.status == 200
+        r = JSON.parse(String(r.body))
+        @test r["data"] == "Hello"
     end
 
     mktempdir() do d
