@@ -5,7 +5,7 @@ using MbedTLS
 import MbedTLS.SSLContext
 
 
-const DEBUG_LEVEL = 0
+const DEBUG_LEVEL = 2
 const minimal = false
 
 include("compat.jl")
@@ -26,7 +26,9 @@ include("parser.jl");                   import .Parsers: ParsingError, Headers
 include("Connect.jl")
 include("ConnectionPool.jl")
 include("Messages.jl");                 using .Messages
+                                        import .Messages: header, hasheader
 include("HTTPStreams.jl");              using .HTTPStreams
+include("WebSockets.jl");               using .WebSockets
 
 
 request(method, uri, headers=[], body=UInt8[]; kw...)::Response =

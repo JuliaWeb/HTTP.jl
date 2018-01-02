@@ -1,12 +1,12 @@
 module ConnectionPool
 
-export getconnection, getparser, inactiveseconds
+export getconnection, getparser, getrawstream, inactiveseconds
 
 using ..IOExtras
 
 import ..@debug, ..DEBUG_LEVEL, ..taskid, ..@require, ..precondition_error
 import MbedTLS.SSLContext
-import ..Connect: getconnection, getparser, inactiveseconds
+import ..Connect: getconnection, getparser, getrawstream, inactiveseconds
 import ..Parsers.Parser
 
 
@@ -80,7 +80,12 @@ end
 
 getparser(t::Transaction) = t.c.parser
 
+
+getrawstream(t::Transaction) = t.c.io
+
+
 inactiveseconds(t::Transaction) = inactiveseconds(t.c)
+
 
 function inactiveseconds(c::Connection)::Float64
     if !islocked(c.readlock)

@@ -5,7 +5,8 @@ export HTTPStream
 using ..IOExtras
 using ..Parsers
 using ..Messages
-import ..ConnectionPool
+import ..Messages: header, hasheader
+import ..ConnectionPool.getrawstream
 import ..@require, ..precondition_error
 
 
@@ -21,6 +22,10 @@ function HTTPStream(io::IO, request::Request, parser::Parser)
     writechunked = header(request, "Transfer-Encoding") == "chunked"
     HTTPStream{Response}(io, request.response, parser, writechunked)
 end
+
+header(http::HTTPStream, a...) = header(http.message, a...)
+hasheader(http::HTTPStream, a) = header(http.message, a)
+getrawstream(http::HTTPStream) = getrawstream(http.stream)
 
 
 # Writing HTTP Messages

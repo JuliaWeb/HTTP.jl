@@ -51,8 +51,10 @@ function URI(;host::AbstractString="", path::AbstractString="",
             fragment::AbstractString="", isconnect::Bool=false)
     host != "" && scheme == "" && !isconnect && (scheme = "http")
     io = IOBuffer()
-    printuri(io, scheme, userinfo, host, string(port), path, escapeuri(query), fragment)
-    return URI(String(take!(io)); isconnect=isconnect)
+    printuri(io, scheme, userinfo, host, string(port),
+             path, escapeuri(query), fragment)
+    uri = String(take!(io))
+    return URI(uri, isconnect=isconnect)
 end
 
 # we assume `str` is at least host & port
@@ -152,7 +154,7 @@ function queryparams(q::AbstractString)
 end
 
 # Validate known URI formats
-const uses_authority = ["hdfs", "ftp", "http", "gopher", "nntp", "telnet", "imap", "wais", "file", "mms", "https", "shttp", "snews", "prospero", "rtsp", "rtspu", "rsync", "svn", "svn+ssh", "sftp" ,"nfs", "git", "git+ssh", "ldap", "s3"]
+const uses_authority = ["hdfs", "ftp", "http", "gopher", "nntp", "telnet", "imap", "wais", "file", "mms", "https", "shttp", "snews", "prospero", "rtsp", "rtspu", "rsync", "svn", "svn+ssh", "sftp" ,"nfs", "git", "git+ssh", "ldap", "s3", "ws"]
 const uses_params = ["ftp", "hdl", "prospero", "http", "imap", "https", "shttp", "rtsp", "rtspu", "sip", "sips", "mms", "sftp", "tel"]
 const non_hierarchical = ["gopher", "hdl", "mailto", "news", "telnet", "wais", "imap", "snews", "sip", "sips"]
 const uses_query = ["http", "wais", "imap", "https", "shttp", "mms", "gopher", "rtsp", "rtspu", "sip", "sips", "ldap"]

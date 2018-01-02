@@ -12,7 +12,7 @@ abstract type ConnectionPoolLayer{Next <: Layer} <: Layer end
 export ConnectionPoolLayer
 
 
-sockettype(uri::URI) = uri.scheme == "https" ? SSLContext : TCPSocket
+sockettype(uri::URI) = uri.scheme in ("https", "wss") ? SSLContext : TCPSocket
 
 
 """
