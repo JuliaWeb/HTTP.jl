@@ -7,7 +7,7 @@ using ..Messages
 using ..HTTPStreams
 import ..ConnectionPool
 using ..MessageRequest
-import ..@debugshort, ..DEBUG_LEVEL, ..printlncompact
+import ..@debug, ..DEBUG_LEVEL, ..printlncompact
 
 abstract type StreamLayer <: Layer end
 export StreamLayer
@@ -64,10 +64,20 @@ function default_iofunction(http::HTTPStream, req::Request, body, response_strea
         @async try
             if req.body === body_is_a_stream
                 writebody(http, req, body)
+                closebody(http)
             else
                 write(http, req.body)
             end
-            closewrite(http)
+
+            if isidempotent(req)
+                closewrite(http)
+            else
+                # "A user agent SHOULD NOT pipeline requests after a
+                #  non-idempotent method, until the final response
+                #  status code for that method has been received"
+                # https://tools.ietf.org/html/rfc7230#section-6.3.2
+                @debug 1 "🔒  non-idempotent, hold write lock: $(http.stream)"
+            end
         end
         yield()
 

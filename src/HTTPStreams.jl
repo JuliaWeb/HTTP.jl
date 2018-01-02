@@ -1,17 +1,17 @@
 module HTTPStreams
 
-export HTTPStream
+export HTTPStream, closebody
 
 using ..IOExtras
 using ..Parsers
 using ..Messages
-import ..Messages: header, hasheader
+import ..Messages: header, hasheader, writestartline
 import ..ConnectionPool.getrawstream
 import ..@require, ..precondition_error
 import ..@debug, ..DEBUG_LEVEL
 
 
-struct HTTPStream{T <: Message} <: IO
+mutable struct HTTPStream{T <: Message} <: IO
     stream::IO
     message::T
     parser::Parser
@@ -49,13 +49,19 @@ function Base.unsafe_write(http::HTTPStream, p::Ptr{UInt8}, n::UInt)
 end
 
 
+function closebody(http::HTTPStream)
+    if http.writechunked
+        write(http.stream, "0\r\n\r\n")
+        http.writechunked = false
+    end
+end
+
+
 function IOExtras.closewrite(http::HTTPStream)
     if !iswritable(http)
         return
     end
-    if http.writechunked
-        write(http.stream, "0\r\n\r\n")
-    end
+    closebody(http)
     closewrite(http.stream)
 end
 
@@ -142,7 +148,7 @@ function IOExtras.closeread(http::HTTPStream{Response})
        iserror(http.message) &&
        connectionclosed(http.parser)
         @debug 0 "✋  Abort on $(sprint(writestartline, http.message)): " *
-                      http.stream
+                      "$(http.stream)"
         @debug 1 "✋  $(http.message)"
         close(http.stream)
         return http.message

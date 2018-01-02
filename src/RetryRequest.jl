@@ -23,7 +23,7 @@ isrecoverable(e, req, retry_non_idempotent) =
     !(req.body === body_was_streamed) &&
     !(req.response.body === body_was_streamed) &&
     (retry_non_idempotent || !isidempotent(req))
-    # MUST NOT automatically retry a request with a non-idempotent method
+    # "MUST NOT automatically retry a request with a non-idempotent method"
     # https://tools.ietf.org/html/rfc7230#section-6.3.1
 
 function request(::Type{RetryLayer{Next}}, uri, req, body;

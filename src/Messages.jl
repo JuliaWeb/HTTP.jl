@@ -5,7 +5,7 @@ export Message, Request, Response,
        iserror, isredirect, ischunked, issafe, isidempotent,
        header, hasheader, setheader, defaultheader, appendheader,
        mkheaders, readheaders, headerscomplete, readtrailers, writeheaders,
-       readstartline!
+       readstartline!, writestartline
 
 if VERSION > v"0.7.0-DEV.2338"
 using Unicode
