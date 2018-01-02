@@ -76,7 +76,8 @@ function default_iofunction(http::HTTPStream, req::Request, body, response_strea
                 #  non-idempotent method, until the final response
                 #  status code for that method has been received"
                 # https://tools.ietf.org/html/rfc7230#section-6.3.2
-                @debug 1 "🔒  non-idempotent, hold write lock: $(http.stream)"
+                @debug 1 "🔒  $(req.method) non-idempotent, " *
+                         "holding write lock: $(http.stream)"
             end
         end
         yield()
