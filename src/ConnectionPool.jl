@@ -218,6 +218,7 @@ function Base.close(t::Transaction)
         purge(t.c)
         closeread(t)
     end
+    notify(poolcondition)
     return
 end
 
@@ -436,7 +437,7 @@ function Base.show(io::IO, c::Connection)
         islocked(c.readlock) ?  ", read task: $(taskid(c.readlock))" : "")
 end
 
-Base.show(io::IO, t::Transaction) = print(io, "T$(t.sequence)", t.c)
+Base.show(io::IO, t::Transaction) = print(io, "T$(t.sequence) ", t.c)
 
 
 function tcpstatus(c::Connection)
