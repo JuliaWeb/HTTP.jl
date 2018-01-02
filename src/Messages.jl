@@ -2,7 +2,7 @@ module Messages
 
 export Message, Request, Response,
        reset!,
-       iserror, isredirect, ischunked,
+       iserror, isredirect, ischunked, issafe, isidempotent,
        header, hasheader, setheader, defaultheader, appendheader,
        mkheaders, readheaders, headerscomplete, readtrailers, writeheaders,
        readstartline!
@@ -101,6 +101,23 @@ Request(bytes) = parse(Request, bytes)
 
 mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
+
+"""
+    issafe(::Request)
+
+https://tools.ietf.org/html/rfc7231#section-4.2.1
+"""
+
+issafe(r::Request) = r.method in ["GET", "HEAD", "OPTIONS", "TRACE"]
+
+
+"""
+    isidempotent(::Request)
+
+https://tools.ietf.org/html/rfc7231#section-4.2.2
+"""
+
+isidempotent(r::Request) = issafe(r) || r.method in ["PUT", "DELETE"]
 
 
 """
