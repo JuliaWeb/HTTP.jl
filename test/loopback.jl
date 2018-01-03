@@ -122,7 +122,7 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
             push!(server_events, "Response: $(sprint(showcompact, response))")
             write(lb.io, response)
         elseif ismatch(r"^/delay", req.uri)
-            sleep(1)
+            sleep(0.5)
             push!(server_events, "Response: $(sprint(showcompact, response))")
             write(lb.io, response)
         else
@@ -262,15 +262,26 @@ lbopen(f, req, headers) =
         r5 = nothing
         t1 = time()
         @sync begin
-            @async r1 = lbreq("delay1", [], "Hello World! 1"; method=m[1], kw...)
+            @async r1 = lbreq("delay1", [],
+                              FunctionIO(()->(sleep(0.01); "Hello World! 1"));
+                              method=m[1], kw...)
             sleep(0.01)
-            @async r2 = lbreq("delay2", [], "Hello World! 2"; method=m[2], kw...)
+            @async r2 = lbreq("delay2", [],
+                              FunctionIO(()->(sleep(0.02); "Hello World! 2"));
+                              method=m[2], kw...)
             sleep(0.01)
-            @async r3 = lbreq("delay3", [], "Hello World! 3"; method=m[3], kw...)
+            @async r3 = lbreq("delay3", [],
+                              FunctionIO(()->(sleep(0.03); "Hello World! 3"));
+                              method=m[3], kw...)
             sleep(0.01)
-            @async r4 = lbreq("delay4", [], "Hello World! 4"; method=m[4], kw...)
+            @async r4 = lbreq("delay4", [],
+                              FunctionIO(()->(sleep(0.04); "Hello World! 4"));
+                              method=m[4], kw...)
             sleep(0.01)
-            @async r5 = lbreq("delay5", [], "Hello World! 5"; method=m[5], kw...)
+            @async r5 = lbreq("delay5", [],
+                              FunctionIO(()->(sleep(0.05); "Hello World! 5"));
+                              method=m[5], kw...)
+            sleep(0.01)
         end
         t2 = time()
 
@@ -286,7 +297,8 @@ lbopen(f, req, headers) =
 
     server_events = []
     t = async_test(;pipeline_limit=0)
-    @test 4 < t < 6
+    @show t
+    @test 2.8 < t < 3.3
     @test server_events == [
         "Request: GET /delay1 HTTP/1.1",
         "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
@@ -301,7 +313,8 @@ lbopen(f, req, headers) =
 
     server_events = []
     t = async_test(;pipeline_limit=1)
-    @test 2 < t < 4
+    @show t
+    @test 1.4 < t < 1.8
     @test server_events == [
         "Request: GET /delay1 HTTP/1.1",
         "Request: GET /delay2 HTTP/1.1",
@@ -316,7 +329,8 @@ lbopen(f, req, headers) =
 
     server_events = []
     t = async_test(;pipeline_limit=2)
-    @test 1 < t < 3
+    @show t
+    @test 1 < t < 1.4
     @test server_events == [
         "Request: GET /delay1 HTTP/1.1",
         "Request: GET /delay2 HTTP/1.1",
@@ -331,7 +345,8 @@ lbopen(f, req, headers) =
 
     server_events = []
     t = async_test(;pipeline_limit=3)
-    @test 1 < t < 3
+    @show t
+    @test 0.8 < t < 1.2
     @test server_events == [
         "Request: GET /delay1 HTTP/1.1",
         "Request: GET /delay2 HTTP/1.1",
@@ -346,7 +361,8 @@ lbopen(f, req, headers) =
 
     server_events = []
     t = async_test()
-    @test 1 < t < 2
+    @show t
+    @test 0.6 < t < 1
     @test server_events == [
         "Request: GET /delay1 HTTP/1.1",
         "Request: GET /delay2 HTTP/1.1",
