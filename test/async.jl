@@ -45,19 +45,16 @@ function dump_async_exception(e, st)
     print(String(take!(buf)))
 end
 
+if haskey(ENV, "AWS_ACCESS_KEY_ID")
 @testset "async s3 dup$dup, count$count, sz$sz, pipw$pipe, $http, $mode" for
-    count in [10, 100, 1000, 2000],
+    count in [10, 100, 1000],
     dup in [0, 7],
     http in ["http", "https"],
-    sz in [100, 1000, 10000],
+    sz in [100, 10000],
     mode in [:request, :open],
     pipe in [0, 32]
 
-if (dup == 1 || pipe == 0) && count > 100
-    continue
-end
-
-if count == 2000 && (sz != 1000 || pipe != 32)
+if (dup == 0 || pipe == 0) && count > 100
     continue
 end
 
@@ -144,12 +141,13 @@ for i = 1:count
     @test a == put_data_sums[i]
 end
 
-end
+end # testset
+end # if haskey(ENV, "AWS_ACCESS_KEY_ID")
 
 configs = [
-    [],
-    [:reuse_limit => 200],
-    [:reuse_limit => 50]
+    [:verbose => 0],
+    [:verbose => 0, :reuse_limit => 200],
+    [:verbose => 0, :reuse_limit => 50]
 ]
 
 
@@ -158,9 +156,7 @@ configs = [
                                             config in configs,
                                             http in ["http", "https"]
 
-println("running async $count, 1:$num, $config, $http")
-
-
+println("running async $count, 1:$num, $config, $http A")
 
     result = []
     @sync begin
@@ -184,6 +180,8 @@ println("running async $count, 1:$num, $config, $http")
     HTTP.ConnectionPool.closeall()
 
     result = []
+
+println("running async $count, 1:$num, $config, $http B")
 
     @sync begin
         for i = 1:min(num,100)
@@ -230,6 +228,8 @@ println("running async $count, 1:$num, $config, $http")
 
     result = []
 =#
+
+println("running async $count, 1:$num, $config, $http C")
 
     @sync begin
         for i = 1:num
