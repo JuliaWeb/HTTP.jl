@@ -1,3 +1,4 @@
+using HTTP
 using JSON
 using MbedTLS: digest, MD_MD5, MD_SHA256
 using Base64
@@ -46,7 +47,7 @@ end
 
 @testset "async s3 dup$dup, count$count, sz$sz, pipw$pipe, $http, $mode" for
     count in [10, 100, 1000, 2000],
-    dup in [1, 8],
+    dup in [0, 7],
     http in ["http", "https"],
     sz in [100, 1000, 10000],
     mode in [:request, :open],
@@ -67,7 +68,7 @@ println("running async s3 dup$dup, count$count, sz$sz, pipe$pipe, $http, $mode")
 put_data_sums = Dict()
 ch = 100
 conf = [:reuse_limit => 90,
-        :verbose => 0,
+        :verbose => 1,
         :pipeline_limit => pipe,
         :duplicate_limit => dup,
         :timeout => 120]
@@ -112,7 +113,7 @@ get_data_sums = Dict()
             buf = IOBuffer()
             r = nothing
             if mode == :open
-                r = HTTP.open("GET", url;
+                r = HTTP.open("GET", url, ["Content-Length" => 0];
                               awsauthorization=true,
                               conf...) do http
                     truncate(buf, 0) # in case of retry!

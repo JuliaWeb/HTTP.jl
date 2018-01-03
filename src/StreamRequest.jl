@@ -86,7 +86,7 @@ function writebody(http::HTTPStream, req::Request, body)
     if isidempotent(req)
         closewrite(http)
     else
-        @debug 1 "🔒  $(req.method) non-idempotent, " *
+        @debug 2 "🔒  $(req.method) non-idempotent, " *
                  "holding write lock: $(http.stream)"
         # "A user agent SHOULD NOT pipeline requests after a
         #  non-idempotent method, until the final response

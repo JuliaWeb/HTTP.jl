@@ -148,9 +148,9 @@ function isaborted(http::HTTPStream{Response})
     if iswritable(http.stream) &&
        iserror(http.message) &&
        connectionclosed(http.parser)
-        @debug 0 "✋  Abort on $(sprint(writestartline, http.message)): " *
+        @debug 1 "✋  Abort on $(sprint(writestartline, http.message)): " *
                  "$(http.stream)"
-        @debug 1 "✋  $(http.message)"
+        @debug 2 "✋  $(http.message)"
         return true
     end
     return false
@@ -169,20 +169,16 @@ function IOExtras.closeread(http::HTTPStream{Response})
         readtrailers(http.stream, http.parser, http.message)
     end
 
-    if isreadable(http.stream)
-        closeread(http.stream)
-    end
-
-    # Error if Message is not complete...
     if !messagecomplete(http.parser)
+        # Error if Message is not complete...
         close(http.stream)
         throw(EOFError())
-    end
-
-    # Close conncetion if server sent "Connection: close"...
-    if connectionclosed(http.parser)
-        @debug 0 "✋  \"Connection: close\": $(http.stream)"
+    elseif connectionclosed(http.parser)
+        # Close conncetion if server sent "Connection: close"...
+        @debug 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
+    elseif isreadable(http.stream)
+        closeread(http.stream)
     end
 
     return http.message

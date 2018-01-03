@@ -35,10 +35,10 @@ function request(::Type{RetryLayer{Next}}, uri, req, body;
         check=(s,ex)->begin
             retry = isrecoverable(ex, req, retry_non_idempotent)
             if retry
-                @debug 0 "🔄  Retry $ex: $(sprint(showcompact, req))"
+                @debug 1 "🔄  Retry $ex: $(sprint(showcompact, req))"
                 reset!(req.response)
             else
-                @debug 0 "🚷  No Retry: $(no_retry_reason(ex, req))"
+                @debug 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
             end
             return s, retry
         end)

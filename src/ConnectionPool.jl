@@ -10,7 +10,7 @@ import ..Connect: getconnection, getparser, getrawstream, inactiveseconds
 import ..Parsers.Parser
 
 
-const default_duplicate_limit = 8
+const default_duplicate_limit = 7
 const default_pipeline_limit = 16
 const nolimit = typemax(Int)
 
@@ -104,7 +104,7 @@ function Base.eof(t::Transaction)
     @require isreadable(t) || !isopen(t)
     if nb_available(t) > 0
         return false
-    end                 ;@debug 3 "eof(::Transaction) -> eof($typeof(c.io)): $t"
+    end                 ;@debug 4 "eof(::Transaction) -> eof($typeof(c.io)): $t"
     return eof(t.c.io)
 end
 
@@ -123,11 +123,11 @@ function Base.readavailable(t::Transaction)::ByteView
     @require isreadable(t)
     if !isempty(t.c.excess)
         bytes = t.c.excess
-        @debug 3 "↩️  read $(length(bytes))-bytes from excess buffer."
+        @debug 4 "↩️  read $(length(bytes))-bytes from excess buffer."
         t.c.excess = nobytes
     else
         bytes = byteview(readavailable(t.c.io))
-        @debug 3 "⬅️  read $(length(bytes))-bytes from $(typeof(t.c.io))"
+        @debug 4 "⬅️  read $(length(bytes))-bytes from $(typeof(t.c.io))"
     end
     t.c.timestamp = time()
     return bytes
@@ -164,7 +164,7 @@ Increment `writecount` and wait for pending reads to complete.
 function IOExtras.closewrite(t::Transaction)
     @require iswritable(t)
 
-    t.c.writecount += 1                           ;@debug 2 "🗣  Write done: $t"
+    t.c.writecount += 1                           ;@debug 3 "🗣  Write done: $t"
     t.c.writebusy = false
     notify(poolcondition)
 
@@ -185,9 +185,9 @@ function IOExtras.startread(t::Transaction)
     lock(t.c.readlock)
     while t.c.readcount != t.sequence
         unlock(t.c.readlock)
-        yield()                           ;@debug 0 "⏳  Waiting to read:    $t"
+        yield()                           ;@debug 1 "⏳  Waiting to read:    $t"
         lock(t.c.readlock)
-    end                                           ;@debug 1 "👁  Start read: $t"
+    end                                           ;@debug 2 "👁  Start read: $t"
     @assert isreadable(t)
     return
 end
@@ -206,14 +206,14 @@ Increment `readcount` and wake up tasks waiting in `closewrite`.
 function IOExtras.closeread(t::Transaction)
     @require isreadable(t)
     t.c.readcount += 1
-    unlock(t.c.readlock)                          ;@debug 2 "✉️  Read done:  $t"
+    unlock(t.c.readlock)                          ;@debug 3 "✉️  Read done:  $t"
     notify(poolcondition)
     @assert !isreadable(t)
     return
 end
 
 function Base.close(t::Transaction)
-    close(t.c.io)                                 ;@debug 2 "🚫      Closed: $t"
+    close(t.c.io)                                 ;@debug 3 "🚫      Closed: $t"
     if iswritable(t)
         closewrite(t)
     end
@@ -391,7 +391,7 @@ function getconnection(::Type{Transaction{T}},
             writable = findwritable(T, host, port, pipeline_limit, reuse_limit)
             idle = filter(c->!islocked(c.readlock), writable)
             if !isempty(idle)
-                c = rand(idle)                     ;@debug 1 "♻️  Idle:       $c"
+                c = rand(idle)                     ;@debug 2 "♻️  Idle:       $c"
                 return Transaction{T}(c)
             end
 
@@ -407,7 +407,7 @@ function getconnection(::Type{Transaction{T}},
 
             # Share a connection that has active readers...
             if !isempty(writable)
-                c = rand(writable)                 ;@debug 1 "⇆  Shared:     $c"
+                c = rand(writable)                 ;@debug 2 "⇆  Shared:     $c"
                 return Transaction{T}(c)
             end
 

@@ -24,7 +24,7 @@ function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
     @async while wait_for_timeout[]
         if isreadable(io) && inactiveseconds(io) > timeout
             close(io)
-            @debug 0 "💥  Read inactive > $(timeout)s: $io"
+            @debug 1 "💥  Read inactive > $(timeout)s: $io"
             break
         end
         sleep(8 + rand() * 4)
