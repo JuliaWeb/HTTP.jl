@@ -173,13 +173,6 @@ using JSON
         end
     end
 
-#= FIXME
-Pipelineing tests
- - Test pipeline_limit option
- - Test early body send abort
- - Test no pipelinging after non-idempotent
-=#
-
 end
 
 end # module MessagesTest

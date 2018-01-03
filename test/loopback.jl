@@ -150,8 +150,8 @@ config = [
     :duplicate_limit => 0
 ]
 
-lbget(req, headers, body; kw...) =
-      HTTP.request("GET", "http://test/$req", headers, body; config..., kw...)
+lbreq(req, headers, body; method="GET", kw...) =
+      HTTP.request(method, "http://test/$req", headers, body; config..., kw...)
 
 lbopen(f, req, headers) =
     HTTP.open(f, "GET", "http://test/$req", headers; config...)
@@ -160,24 +160,24 @@ lbopen(f, req, headers) =
 
     global server_events
 
-    r = lbget("echo", [], ["Hello", IOBuffer(" "), "World!"]);
+    r = lbreq("echo", [], ["Hello", IOBuffer(" "), "World!"]);
     @test String(r.body) == "Hello World!"
 
     io = FunctionIO(()->"Hello World!")
     @test String(read(io)) == "Hello World!"
 
-    r = lbget("echo", [], FunctionIO(()->"Hello World!"))
+    r = lbreq("echo", [], FunctionIO(()->"Hello World!"))
     @test String(r.body) == "Hello World!"
 
-    r = lbget("echo", [], ["Hello", " ", "World!"]);
+    r = lbreq("echo", [], ["Hello", " ", "World!"]);
     @test String(r.body) == "Hello World!"
 
-    r = lbget("echo", [], [Vector{UInt8}("Hello"),
+    r = lbreq("echo", [], [Vector{UInt8}("Hello"),
                          Vector{UInt8}(" "),
                          Vector{UInt8}("World!")]);
     @test String(r.body) == "Hello World!"
 
-    r = lbget("delay", [], [Vector{UInt8}("Hello"),
+    r = lbreq("delay", [], [Vector{UInt8}("Hello"),
                          Vector{UInt8}(" "),
                          Vector{UInt8}("World!")]);
     @test String(r.body) == "Hello World!"
@@ -199,6 +199,13 @@ lbopen(f, req, headers) =
         end
     end
     @test String(body) == "Hello World!"
+
+
+
+    # "If [the response] indicates the server does not wish to receive the
+    #  message body and is closing the connection, the client SHOULD
+    #  immediately cease transmitting the body and close the connection."
+    # https://tools.ietf.org/html/rfc7230#section-6.5
 
     body = nothing
     body_aborted = false
@@ -228,7 +235,7 @@ lbopen(f, req, headers) =
     @test body_aborted == true
     @test body_sent == false
 
-    r = lbget("echo", [], [
+    r = lbreq("echo", [], [
         FunctionIO(()->(sleep(0.1); "Hello")),
         FunctionIO(()->(sleep(0.1); " World!"))])
     @test String(r.body) == "Hello World!"
@@ -236,7 +243,7 @@ lbopen(f, req, headers) =
     hello_sent = false
     world_sent = false
     @test_throws HTTP.StatusError begin
-        r = lbget("abort", [], [
+        r = lbreq("abort", [], [
             FunctionIO(()->(hello_sent = true; sleep(0.1); "Hello")),
             FunctionIO(()->(world_sent = true; " World!"))])
     end
@@ -245,7 +252,7 @@ lbopen(f, req, headers) =
 
     HTTP.ConnectionPool.showpool(STDOUT)
 
-    function async_test(;kw...)
+    function async_test(m=["GET","GET","GET","GET","GET"];kw...)
         r1 = nothing
         r2 = nothing
         r3 = nothing
@@ -253,15 +260,15 @@ lbopen(f, req, headers) =
         r5 = nothing
         t1 = time()
         @sync begin
-            @async r1 = lbget("delay1", [], "Hello World! 1"; kw...)
+            @async r1 = lbreq("delay1", [], "Hello World! 1"; method=m[1], kw...)
             sleep(0.01)
-            @async r2 = lbget("delay2", [], "Hello World! 2"; kw...)
+            @async r2 = lbreq("delay2", [], "Hello World! 2"; method=m[2], kw...)
             sleep(0.01)
-            @async r3 = lbget("delay3", [], "Hello World! 3"; kw...)
+            @async r3 = lbreq("delay3", [], "Hello World! 3"; method=m[3], kw...)
             sleep(0.01)
-            @async r4 = lbget("delay4", [], "Hello World! 4"; kw...)
+            @async r4 = lbreq("delay4", [], "Hello World! 4"; method=m[4], kw...)
             sleep(0.01)
-            @async r5 = lbget("delay5", [], "Hello World! 5"; kw...)
+            @async r5 = lbreq("delay5", [], "Hello World! 5"; method=m[5], kw...)
         end
         t2 = time()
 
@@ -349,6 +356,38 @@ lbopen(f, req, headers) =
         "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
         "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
         "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+
+
+    # "A user agent SHOULD NOT pipeline requests after a
+    #  non-idempotent method, until the final response
+    #  status code for that method has been received"
+    # https://tools.ietf.org/html/rfc7230#section-6.3.2
+
+    server_events = []
+    t = async_test(["POST","GET","GET","GET","GET"])
+    @test server_events == [
+        "Request: POST /delay1 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (POST /delay1 HTTP/1.1)",
+        "Request: GET /delay2 HTTP/1.1",
+        "Request: GET /delay3 HTTP/1.1",
+        "Request: GET /delay4 HTTP/1.1",
+        "Request: GET /delay5 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+
+    server_events = []
+    t = async_test(["GET","GET","POST", "GET","GET"])
+    @test server_events == [
+        "Request: GET /delay1 HTTP/1.1",
+        "Request: GET /delay2 HTTP/1.1",
+        "Request: POST /delay3 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (POST /delay3 HTTP/1.1)",
+        "Request: GET /delay4 HTTP/1.1",
+        "Request: GET /delay5 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
 end
-
-
