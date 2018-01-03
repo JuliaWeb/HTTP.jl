@@ -145,6 +145,7 @@ for f in [:get, :post, :put, :delete, :head,
     f_str = uppercase(string(f))
     meth = convert(Method, f_str)
     @eval begin
+#=
         @doc """
     $($f)(uri; kwargs...) -> Response
     $($f)(client::HTTP.Client, uri; kwargs...) -> Response
@@ -266,7 +267,8 @@ close(f) # setting eof on f causes the async request to send a final chunk and r
 
 resp = wait(t) # get our response by getting the result of our asynchronous task
 ```
-        """ function $(f) end
+        """ =# function $(f) end
+
         ($f)(uri::AbstractString; verbose::Bool=false, query="", args...) = request(DEFAULT_CLIENT, $meth, URIs.URL(uri; query=query, isconnect=$(f_str == "CONNECT")); verbose=verbose, args...)
         ($f)(uri::URI; verbose::Bool=false, args...) = request(DEFAULT_CLIENT, $meth, uri; verbose=verbose, args...)
         ($f)(client::Client, uri::AbstractString; query="", args...) = request(client, $meth, URIs.URL(uri; query=query, isconnect=$(f_str == "CONNECT")); args...)

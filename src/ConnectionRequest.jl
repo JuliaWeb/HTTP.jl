@@ -8,19 +8,17 @@ using MbedTLS.SSLContext
 import ..@debug, ..DEBUG_LEVEL
 
 
+"""
+    request(ConnectionPoolLayer, ::URI, ::Request, body) -> HTTP.Response
+
+Retrieve an `IO` connection from the [`ConnectionPool`](@ref).
+
+Close the connection if the request throws an exception.
+Otherwise leave it open so that it can be reused.
+"""
+
 abstract type ConnectionPoolLayer{Next <: Layer} <: Layer end
 export ConnectionPoolLayer
-
-
-sockettype(uri::URI, default) = uri.scheme in ("wss", "https") ? SSLContext :
-                                                                 default
-
-
-"""
-    request(ConnectionLayer{Connection, Next}, ::URI, ::Request, ::Response)
-
-Get a `Connection` for a `URI`, send a `Request` and fill in a `Response`.
-"""
 
 function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
                  connectionpool::Bool=true, socket_type::Type=TCPSocket,
@@ -44,6 +42,10 @@ function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
         rethrow(e)
     end
 end
+
+
+sockettype(uri::URI, default) = uri.scheme in ("wss", "https") ? SSLContext :
+                                                                 default
 
 
 end # module ConnectionRequest

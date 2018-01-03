@@ -6,6 +6,34 @@
 ```
 
 ## Requests
+
+
+```@docs
+HTTP.request(::String,::HTTP.URIs.URI,::Array{Pair{String,String},1},::Any)
+HTTP.get
+HTTP.put
+HTTP.post
+HTTP.head
+```
+
+## Layers
+
+```@docs
+HTTP.RedirectLayer
+HTTP.BasicAuthLayer
+HTTP.CookieLayer
+HTTP.CanonicalizeLayer
+HTTP.MessageLayer
+HTTP.AWS4AuthLayer
+HTTP.RetryLayer
+HTTP.ExceptionLayer
+HTTP.ConnectionPoolLayer
+HTTP.TimeoutLayer
+HTTP.StreamLayer
+```
+
+
+## Requests
 Note that the HTTP methods of POST, DELETE, PUT, etc. all follow the same format as `HTTP.get`, documented below.
 ```@docs
 HTTP.get
@@ -542,7 +570,7 @@ the Response Body to happen in a background task.
 HTTP.Parser
 HTTP.Parsers.Message
 HTTP.Parsers.parse!
-Base.read!(::IO, ::HTTP.Parser)
+Base.read!(::IO, ::HTTP.Parsers.Parser)
 HTTP.Parsers.messagecomplete
 HTTP.Parsers.headerscomplete
 HTTP.Parsers.waitingforeof
@@ -584,7 +612,7 @@ HTTP.Messages.method
 
 ### Body
 
-```@docs
+```
 HTTP.Messages.Bodies.Body
 HTTP.Messages.Bodies.isstream
 Base.write(::HTTP.Messages.Bodies.Body, ::Any)

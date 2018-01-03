@@ -1,37 +1,22 @@
 module MessageRequest
 
+export body_is_a_stream, body_was_streamed
+
 import ..Layer, ..request
 using ..URIs
 using ..Messages
 using ..Parsers.Headers
 using ..Form
 
+
+"""
+    request(MessageLayer, method, ::URI, headers, body) -> HTTP.Response
+
+Construct a [`HTTP.Request`](@ref) and set mandatory headers.
+"""
+
 struct MessageLayer{Next <: Layer} <: Layer end
-export MessageLayer, body_is_a_stream, body_was_streamed
-
-const ByteVector = Union{AbstractVector{UInt8}, AbstractString}
-
-
-const unknownlength = -1
-bodylength(body) = unknownlength
-bodylength(body::AbstractVector{UInt8}) = length(body)
-bodylength(body::AbstractString) = sizeof(body)
-bodylength(body::Form) = length(body)
-bodylength(body::Vector{T}) where T <: AbstractString = sum(sizeof, body)
-bodylength(body::Vector{T}) where T <: AbstractArray{UInt8,1} = sum(length, body)
-bodylength(body::IOBuffer) = nb_available(body)
-bodylength(body::Vector{IOBuffer}) = sum(nb_available, body)
-
-
-const body_is_a_stream = UInt8[]
-const body_was_streamed = Vector{UInt8}("[Message Body was streamed]")
-bodybytes(body) = body_is_a_stream
-bodybytes(body::Vector{UInt8}) = body
-bodybytes(body::IOBuffer) = read(body)
-bodybytes(body::ByteVector) = Vector{UInt8}(body)
-bodybytes(body::Vector) = length(body) == 1 ? bodybytes(body[1]) :
-                                              body_is_a_stream
-
+export MessageLayer
 
 function request(::Type{MessageLayer{Next}},
                  method::String, uri::URI, headers::Headers, body;
@@ -58,6 +43,28 @@ function request(::Type{MessageLayer{Next}},
 
     return request(Next, uri, req, body; iofunction=iofunction, kw...)
 end
+
+
+const unknownlength = -1
+bodylength(body) = unknownlength
+bodylength(body::AbstractVector{UInt8}) = length(body)
+bodylength(body::AbstractString) = sizeof(body)
+bodylength(body::Form) = length(body)
+bodylength(body::Vector{T}) where T <: AbstractString = sum(sizeof, body)
+bodylength(body::Vector{T}) where T <: AbstractArray{UInt8,1} = sum(length, body)
+bodylength(body::IOBuffer) = nb_available(body)
+bodylength(body::Vector{IOBuffer}) = sum(nb_available, body)
+
+
+const body_is_a_stream = UInt8[]
+const body_was_streamed = Vector{UInt8}("[Message Body was streamed]")
+bodybytes(body) = body_is_a_stream
+bodybytes(body::Vector{UInt8}) = body
+bodybytes(body::IOBuffer) = read(body)
+bodybytes(body::AbstractVector{UInt8}) = Vector{UInt8}(body)
+bodybytes(body::AbstractString) = Vector{UInt8}(body)
+bodybytes(body::Vector) = length(body) == 1 ? bodybytes(body[1]) :
+                                              body_is_a_stream
 
 
 end # module MessageRequest

@@ -12,28 +12,46 @@ using ..URIs
 using ..Pairs: getkv, setkv, rmkv
 import ..@debug, ..DEBUG_LEVEL
 
+
+"""
+    request(AWS4AuthLayer, ::URI, ::Request, body) -> HTTP.Response
+
+Add a AWS Signature Version 4 `Authorization` header to a `Request`.
+
+Credentials are read from environment variables `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`.
+
+See [http://docs.aws.amazon.com/general/latest/gr/signature-version-4.html](@ref)
+"""
+
 abstract type AWS4AuthLayer{Next <: Layer} <: Layer end
 export AWS4AuthLayer
+
+function request(::Type{AWS4AuthLayer{Next}},
+                 uri::URI, req, body; kw...) where Next
+
+    sign_aws4!(req.method, uri, req.headers, req.body; kw...)
+
+    return request(Next, uri, req, body; kw...)
+end
+
 
 ispathsafe(c::Char) = c == '/' || URIs.issafe(c)
 escape_path(path) = escapeuri(path, ispathsafe)
 
 
-# Create AWS Signature Version 4 Authentication Headers.
-# http://docs.aws.amazon.com/general/latest/gr/signature-version-4.html
-
 function sign_aws4!(method::String,
                     uri::URI,
                     headers::Headers,
                     body::Vector{UInt8};
-                    body_sha256=digest(MD_SHA256, body),
-                    body_md5=digest(MD_MD5, body),
-                    t=now(Dates.UTC),
-                    aws_service=split(uri.host, ".")[1],
-                    aws_region=split(uri.host, ".")[2],
-                    aws_access_key_id=ENV["AWS_ACCESS_KEY_ID"],
-                    aws_secret_access_key=ENV["AWS_SECRET_ACCESS_KEY"],
-                    aws_session_token=get(ENV, "AWS_SESSION_TOKEN", ""),
+                    body_sha256::Vector{UInt8}=digest(MD_SHA256, body),
+                    body_md5::Vector{UInt8}=digest(MD_MD5, body),
+                    t::DateTime=now(Dates.UTC),
+                    aws_service::String=String(split(uri.host, ".")[1]),
+                    aws_region::String=String(split(uri.host, ".")[2]),
+                    aws_access_key_id::String=ENV["AWS_ACCESS_KEY_ID"],
+                    aws_secret_access_key::String=ENV["AWS_SECRET_ACCESS_KEY"],
+                    aws_session_token::String=get(ENV, "AWS_SESSION_TOKEN", ""),
                     kw...)
 
 
@@ -99,15 +117,6 @@ function sign_aws4!(method::String,
         "SignedHeaders=$signed_headers, ",
         "Signature=$signature"
     ))
-end
-
-
-function request(::Type{AWS4AuthLayer{Next}},
-                 uri::URI, req, body; kw...) where Next
-
-    sign_aws4!(req.method, uri, req.headers, req.body; kw...)
-
-    return request(Next, uri, req, body; kw...)
 end
 
 

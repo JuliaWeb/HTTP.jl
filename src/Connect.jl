@@ -31,8 +31,8 @@ end
 function getconnection(::Type{SSLContext},
                        host::AbstractString,
                        port::AbstractString;
-                       require_ssl_verification=false,
-                       sslconfig=SSLConfig(require_ssl_verification),
+                       require_ssl_verification::Bool=false,
+                       sslconfig::SSLConfig=SSLConfig(require_ssl_verification),
                        kw...)::SSLContext
 
     port = isempty(port) ? "443" : port

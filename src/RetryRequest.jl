@@ -7,30 +7,21 @@ using ..MessageRequest
 using ..Messages
 import ..@debug, ..DEBUG_LEVEL
 
+
+"""
+    request(RetryLayer, ::URI, ::Request, body) -> HTTP.Response
+
+Retry the request if it throws a recoverable exception.
+"""
+
 abstract type RetryLayer{Next <: Layer} <: Layer end
 export RetryLayer
-
-
-isrecoverable(e::Exception) = isioerror(e)
-isrecoverable(e::Base.DNSError) = true
-isrecoverable(e::HTTP.StatusError) = e.status == 403 || # Forbidden
-                                     e.status == 408 || # Timeout
-                                     e.status >= 500    # Server Error
-
-
-isrecoverable(e, req, retry_non_idempotent) =
-    isrecoverable(e) &&
-    !(req.body === body_was_streamed) &&
-    !(req.response.body === body_was_streamed) &&
-    (retry_non_idempotent || isidempotent(req))
-    # "MUST NOT automatically retry a request with a non-idempotent method"
-    # https://tools.ietf.org/html/rfc7230#section-6.3.1
 
 function request(::Type{RetryLayer{Next}}, uri, req, body;
                  retries::Int=4, retry_non_idempotent::Bool=false,
                  kw...) where Next
 
-    retry_request = retry(request,
+    retry_request = Base.retry(request,
         delays=ExponentialBackOff(n = retries),
         check=(s,ex)->begin
             retry = isrecoverable(ex, req, retry_non_idempotent)
@@ -45,6 +36,21 @@ function request(::Type{RetryLayer{Next}}, uri, req, body;
 
     retry_request(Next, uri, req, body; kw...)
 end
+
+
+isrecoverable(e::Exception) = isioerror(e)
+isrecoverable(e::Base.DNSError) = true
+isrecoverable(e::HTTP.StatusError) = e.status == 403 || # Forbidden
+                                     e.status == 408 || # Timeout
+                                     e.status >= 500    # Server Error
+
+isrecoverable(e, req, retry_non_idempotent) =
+    isrecoverable(e) &&
+    !(req.body === body_was_streamed) &&
+    !(req.response.body === body_was_streamed) &&
+    (retry_non_idempotent || isidempotent(req))
+    # "MUST NOT automatically retry a request with a non-idempotent method"
+    # https://tools.ietf.org/html/rfc7230#section-6.3.1
 
 
 function no_retry_reason(ex, req)

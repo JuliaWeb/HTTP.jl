@@ -156,7 +156,7 @@ lbreq(req, headers, body; method="GET", kw...) =
       HTTP.request(method, "http://test/$req", headers, body; config..., kw...)
 
 lbopen(f, req, headers) =
-    HTTP.open(f, "GET", "http://test/$req", headers; config...)
+    HTTP.open(f, "PUT", "http://test/$req", headers; config...)
 
 @testset "loopback" begin
 

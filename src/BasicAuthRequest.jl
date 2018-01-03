@@ -9,9 +9,15 @@ using ..URIs
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL
 
+
+"""
+    request(BasicAuthLayer, method, ::URI, headers, body) -> HTTP.Response
+
+Add `Authorization: Basic` header using credentials from url userinfo.
+"""
+
 abstract type BasicAuthLayer{Next <: Layer} <: Layer end
 export BasicAuthLayer
-
 
 function request(::Type{BasicAuthLayer{Next}},
                  method::String, uri::URI, headers, body; kw...) where Next

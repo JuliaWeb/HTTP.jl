@@ -9,19 +9,18 @@ import ..ConnectionPool
 using ..MessageRequest
 import ..@debug, ..DEBUG_LEVEL, ..printlncompact
 
+
+"""
+    request(StreamLayer, ::IO, ::Request, body) -> HTTP.Response
+
+Send a `Request` body in a background task and begin reading the response
+immediately so that the transmission can be aborted if the `Response` status
+indicates that the server does not wish to receive the message body
+[RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
+"""
+
 abstract type StreamLayer <: Layer end
 export StreamLayer
-
-
-"""
-    request(StreamLayer, ::IO, ::Request, body) -> ::Response
-
-Send a `Request` and return a `Response`.
-Send the `Request` body in a background task and begin reading the response
-immediately so that the transmission can be aborted if the `Response` status
-indicates that the server does wish to receive the message body
-[https://tools.ietf.org/html/rfc7230#section-6.5](RFC7230 6.5).
-"""
 
 function request(::Type{StreamLayer}, io::IO, req::Request, body;
                  response_stream=nothing,

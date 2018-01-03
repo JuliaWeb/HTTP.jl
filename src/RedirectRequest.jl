@@ -8,19 +8,25 @@ using ..Parsers.Header
 using ..Strings.tocameldash!
 import ..@debug, ..DEBUG_LEVEL
 
+
+"""
+    request(RedirectLayer, method, ::URI, headers, body) -> HTTP.Response
+
+Redirect request in the case of 3xx response status.
+"""
+
 abstract type RedirectLayer{Next <: Layer} <: Layer end
 export RedirectLayer
 
-
 function request(::Type{RedirectLayer{Next}},
                  method::String, uri::URI, headers, body;
-                 maxredirects=3, forwardheaders=false, kw...) where Next
+                 redirect_limit=3, forwardheaders=false, kw...) where Next
     count = 0
     while true
     
         res = request(Next, method, uri, headers, body; kw...)
 
-        if (count == maxredirects
+        if (count == redirect_limit
         ||  !isredirect(res)
         ||  (location = header(res, "Location")) == ""
         ||  method == "HEAD") #FIXME why not redirect HEAD?

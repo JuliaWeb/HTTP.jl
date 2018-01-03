@@ -375,9 +375,9 @@ or create a new `Connection` if required.
 function getconnection(::Type{Transaction{T}},
                        host::AbstractString,
                        port::AbstractString;
-                       duplicate_limit=default_duplicate_limit,
-                       pipeline_limit::Int = default_pipeline_limit,
-                       reuse_limit::Int = nolimit,
+                       duplicate_limit::Int=default_duplicate_limit,
+                       pipeline_limit::Int=default_pipeline_limit,
+                       reuse_limit::Int=nolimit,
                        kw...)::Transaction{T} where T <: IO
 
     while true
