@@ -68,7 +68,7 @@ println("running async s3 dup$dup, count$count, sz$sz, pipe$pipe, $http, $mode")
 put_data_sums = Dict()
 ch = 100
 conf = [:reuse_limit => 90,
-        :verbose => 1,
+        :verbose => 0,
         :pipeline_limit => pipe,
         :duplicate_limit => dup,
         :timeout => 120]

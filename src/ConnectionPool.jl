@@ -144,12 +144,14 @@ Push bytes back into a connection's `excess` buffer
 function IOExtras.unread!(t::Transaction, bytes::ByteView)
     @require isreadable(t)
     t.c.excess = bytes
+    return
 end
 
 
 function IOExtras.startwrite(t::Transaction)
     @require !t.c.writebusy
     t.c.writebusy = true
+    return
 end
 
 
@@ -169,6 +171,7 @@ function IOExtras.closewrite(t::Transaction)
     notify(poolcondition)
 
     @assert !iswritable(t)
+    return
 end
 
 
@@ -205,33 +208,40 @@ Increment `readcount` and wake up tasks waiting in `closewrite`.
 
 function IOExtras.closeread(t::Transaction)
     @require isreadable(t)
+
     t.c.readcount += 1
     unlock(t.c.readlock)                          ;@debug 3 "✉️  Read done:  $t"
     notify(poolcondition)
+
     @assert !isreadable(t)
     return
 end
 
 function Base.close(t::Transaction)
-    close(t.c.io)                                 ;@debug 3 "🚫      Closed: $t"
+    close(t.c)
     if iswritable(t)
         closewrite(t)
     end
     if isreadable(t)
-        purge(t.c)
         closeread(t)
     end
+    return
+end
+
+function Base.close(c::Connection)
+    if nb_available(c) > 0
+        purge(c)
+    end
+    close(c.io)
     notify(poolcondition)
     return
 end
 
-Base.close(c::Connection) = Base.close(c.io)
-
 
 """
-    purge(::Transaction)
+    purge(::Connection)
 
-Remove unread data from a `Transaction`.
+Remove unread data from a `Connection`.
 """
 
 function purge(c::Connection)
@@ -274,6 +284,7 @@ function closeall()
     end
     empty!(pool)
     unlock(poollock)
+    notify(poolcondition)
     return
 end
 
@@ -347,10 +358,8 @@ end
 Remove closed connections from `pool`.
 """
 function purge()
-    while (i = findfirst(x->!isopen(x.io) &&
-           x.readcount >= x.writecount, pool)) > 0
+    while (i = findfirst(x->!isopen(x.io), pool)) > 0
         c = pool[i]
-        purge(c)
         deleteat!(pool, i)                        ;@debug 1 "🗑  Deleted:    $c"
     end
 end

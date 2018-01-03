@@ -54,6 +54,7 @@ function unread!(io, bytes)
     end
     println("WARNING: No unread! method for $(typeof(io))!")
     println("         Discarding $(length(bytes)) bytes!")
+    return
 end
 
 
