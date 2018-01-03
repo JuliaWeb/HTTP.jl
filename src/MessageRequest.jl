@@ -35,7 +35,7 @@ bodybytes(body::Vector) = length(body) == 1 ? bodybytes(body[1]) :
 
 function request(::Type{MessageLayer{Next}},
                  method::String, uri::URI, headers::Headers, body;
-                 parent=nothing, kw...) where Next
+                 parent=nothing, iofunction=nothing, kw...) where Next
 
     path = method == "CONNECT" ? hostport(uri) : resource(uri)
 
@@ -47,6 +47,8 @@ function request(::Type{MessageLayer{Next}},
         l = bodylength(body)
         if l != unknownlength
             setheader(headers, "Content-Length" => string(l))
+        elseif method == "GET" && iofunction isa Function
+            setheader(headers, "Content-Length" => 0)
         else
             setheader(headers, "Transfer-Encoding" => "chunked")
         end
@@ -54,7 +56,7 @@ function request(::Type{MessageLayer{Next}},
 
     req = Request(method, path, headers, bodybytes(body); parent=parent)
 
-    return request(Next, uri, req, body; kw...)
+    return request(Next, uri, req, body; iofunction=iofunction, kw...)
 end
 
 
