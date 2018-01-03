@@ -1,7 +1,13 @@
 module IOExtras
 
-export unread!, startwrite, closewrite, startread, closeread,
+export isioerror, unread!, startwrite, closewrite, startread, closeread,
        tcpsocket, localport, peerport
+
+isioerror(e) = false
+isioerror(::Base.EOFError) = true
+isioerror(::Base.UVError) = true
+isioerror(e::ArgumentError) = e.msg == "stream is closed or unusable"
+
 
 """
     unread!(::IO, bytes)

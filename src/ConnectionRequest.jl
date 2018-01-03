@@ -12,7 +12,8 @@ abstract type ConnectionPoolLayer{Next <: Layer} <: Layer end
 export ConnectionPoolLayer
 
 
-sockettype(uri::URI) = uri.scheme in ("https", "wss") ? SSLContext : TCPSocket
+sockettype(uri::URI, default) = uri.scheme in ("wss", "https") ? SSLContext :
+                                                                 default
 
 
 """
@@ -22,9 +23,10 @@ Get a `Connection` for a `URI`, send a `Request` and fill in a `Response`.
 """
 
 function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
-                 connectionpool::Bool=true, kw...) where Next
+                 connectionpool::Bool=true, socket_type::Type=TCPSocket,
+                 kw...) where Next
 
-    SocketType = sockettype(uri)
+    SocketType = sockettype(uri, socket_type)
     if connectionpool
         SocketType = ConnectionPool.Transaction{SocketType}
     end

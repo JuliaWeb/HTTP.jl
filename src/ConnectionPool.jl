@@ -214,6 +214,9 @@ end
 
 function Base.close(t::Transaction)
     close(t.c.io)                                 ;@debug 2 "🚫      Closed: $t"
+    if iswritable(t)
+        closewrite(t)
+    end
     if isreadable(t)
         purge(t.c)
         closeread(t)

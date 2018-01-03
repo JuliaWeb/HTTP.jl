@@ -1,6 +1,6 @@
 module HTTPStreams
 
-export HTTPStream, closebody
+export HTTPStream, closebody, isaborted
 
 using ..IOExtras
 using ..Parsers
@@ -138,21 +138,26 @@ function Base.read(http::HTTPStream)
 end
 
 
-function IOExtras.closeread(http::HTTPStream{Response})
+function isaborted(http::HTTPStream{Response})
 
     # "If [the response] indicates the server does not wish to receive the
-    #  message body and is closing the connection, the client SHOULD immediately
-    #  cease transmitting the body and close its side of the connection."
+    #  message body and is closing the connection, the client SHOULD
+    #  immediately cease transmitting the body and close the connection."
     # https://tools.ietf.org/html/rfc7230#section-6.5
+
     if iswritable(http.stream) &&
        iserror(http.message) &&
        connectionclosed(http.parser)
         @debug 0 "✋  Abort on $(sprint(writestartline, http.message)): " *
-                      "$(http.stream)"
+                 "$(http.stream)"
         @debug 1 "✋  $(http.message)"
-        close(http.stream)
-        return http.message
+        return true
     end
+    return false
+end
+
+
+function IOExtras.closeread(http::HTTPStream{Response})
 
     # Discard unread body bytes...
     while !eof(http)

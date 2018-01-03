@@ -2,6 +2,7 @@ module RetryRequest
 
 import ..HTTP
 import ..Layer, ..request
+using ..IOExtras.isioerror
 using ..MessageRequest
 using ..Messages
 import ..@debug, ..DEBUG_LEVEL
@@ -10,15 +11,12 @@ abstract type RetryLayer{Next <: Layer} <: Layer end
 export RetryLayer
 
 
-isrecoverable(e::Base.UVError) = true
+isrecoverable(e::Exception) = isioerror(e)
 isrecoverable(e::Base.DNSError) = true
-isrecoverable(e::Base.EOFError) = true
-isrecoverable(e::Base.ArgumentError) = e.msg == "stream is closed or unusable"
 isrecoverable(e::HTTP.StatusError) = e.status == 403 || # Forbidden
                                      e.status == 408 || # Timeout
                                      e.status >= 500    # Server Error
 
-isrecoverable(e::Exception) = false
 
 isrecoverable(e, req, retry_non_idempotent) =
     isrecoverable(e) &&
@@ -40,7 +38,7 @@ function request(::Type{RetryLayer{Next}}, uri, req, body;
                 @debug 0 "🔄  Retry $ex: $(sprint(showcompact, req))"
                 reset!(req.response)
             else
-                @debug 0 "🚷  No Retry $(no_retry_reason(ex, req))"
+                @debug 0 "🚷  No Retry: $(no_retry_reason(ex, req))"
             end
             return s, retry
         end)
@@ -52,7 +50,7 @@ end
 function no_retry_reason(ex, req)
     buf = IOBuffer()
     showcompact(buf, req)
-    print(buf, ": ",
+    print(buf, ", ",
         ex isa HTTP.StatusError ? "HTTP $(ex.status): " :
         !isrecoverable(ex) ?  "$ex not recoverable, " : "",
         (req.body === body_was_streamed) ? "request streamed, " : "",

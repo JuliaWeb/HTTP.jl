@@ -14,9 +14,11 @@ const ByteVector = Union{AbstractVector{UInt8}, AbstractString}
 
 const unknownlength = -1
 bodylength(body) = unknownlength
-bodylength(body::ByteVector) = sizeof(body)
+bodylength(body::AbstractVector{UInt8}) = length(body)
+bodylength(body::AbstractString) = sizeof(body)
 bodylength(body::Form) = length(body)
-bodylength(body::Vector{ByteVector}) = sum(sizeof, body)
+bodylength(body::Vector{T}) where T <: AbstractString = sum(sizeof, body)
+bodylength(body::Vector{T}) where T <: AbstractArray{UInt8,1} = sum(length, body)
 bodylength(body::IOBuffer) = nb_available(body)
 bodylength(body::Vector{IOBuffer}) = sum(nb_available, body)
 
@@ -27,7 +29,8 @@ bodybytes(body) = body_is_a_stream
 bodybytes(body::Vector{UInt8}) = body
 bodybytes(body::IOBuffer) = read(body)
 bodybytes(body::ByteVector) = Vector{UInt8}(body)
-bodybytes(body::Vector) = length(body) == 1 ? bodybytes(body[1]) : UInt8[]
+bodybytes(body::Vector) = length(body) == 1 ? bodybytes(body[1]) :
+                                              body_is_a_stream
 
 
 function request(::Type{MessageLayer{Next}},

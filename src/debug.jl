@@ -8,7 +8,7 @@ end
 
 macro debugshow(n::Int, s)
     DEBUG_LEVEL >= n ? :(println("DEBUG: ", taskid(), " ",
-                                 $(sprint(show_unquoted, s)), " = ",
+                                 $(sprint(Base.show_unquoted, s)), " = ",
                                  sprint(io->show(io, "text/plain",
                                                  begin value=$(esc(s)) end)))) :
                        :()

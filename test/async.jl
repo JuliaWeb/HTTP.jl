@@ -171,6 +171,7 @@ println("running async $count, 1:$num, $config, $http")
                 push!(result, r["headers"]["I"] => string(i))
             catch e
                 dump_async_exception(e, catch_stacktrace())
+                rethrow(e)
             end
         end
     end
@@ -193,6 +194,7 @@ println("running async $count, 1:$num, $config, $http")
                 push!(result, length(r) => i)
             catch e
                 dump_async_exception(e, catch_stacktrace())
+                rethrow(e)
             end
         end
     end

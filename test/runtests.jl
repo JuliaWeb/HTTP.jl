@@ -16,6 +16,7 @@ end
 
 
 @testset "HTTP" begin
+    include("loopback.jl");
 
     include("utils.jl");
     include("fifobuffer.jl");
@@ -29,7 +30,6 @@ end
 #    include("handlers.jl")
     include("client.jl");
     include("WebSockets.jl");
-
     include("async.jl");
 #    include("server.jl")
 end;

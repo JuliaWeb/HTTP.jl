@@ -5,7 +5,7 @@ using MbedTLS
 import MbedTLS.SSLContext
 
 
-const DEBUG_LEVEL = 0
+const DEBUG_LEVEL = 1
 const minimal = false
 
 include("compat.jl")
@@ -38,7 +38,7 @@ request(method::String, uri::URI, headers::Headers, body; kw...)::Response =
     request(HTTP.stack(;kw...), method, uri, headers, body; kw...)
 
 open(f::Function, method::String, uri, headers=[]; kw...)::Response =
-    request(method, uri, headers; iofunction=f, kw...)
+    request(method, uri, headers, nothing; iofunction=f, kw...)
 
 get(a...; kw...) = request("GET", a..., kw...)
 put(a...; kw...) = request("PUT", a..., kw...)
