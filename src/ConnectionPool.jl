@@ -166,7 +166,7 @@ Increment `writecount` and wait for pending reads to complete.
 function IOExtras.closewrite(t::Transaction)
     @require iswritable(t)
 
-    t.c.writecount += 1                           ;@debug 3 "🗣  Write done: $t"
+    t.c.writecount += 1                           ;@debug 2 "🗣  Write done: $t"
     t.c.writebusy = false
     notify(poolcondition)
 
@@ -210,7 +210,7 @@ function IOExtras.closeread(t::Transaction)
     @require isreadable(t)
 
     t.c.readcount += 1
-    unlock(t.c.readlock)                          ;@debug 3 "✉️  Read done:  $t"
+    unlock(t.c.readlock)                          ;@debug 2 "✉️  Read done:  $t"
     notify(poolcondition)
 
     @assert !isreadable(t)
@@ -229,10 +229,10 @@ function Base.close(t::Transaction)
 end
 
 function Base.close(c::Connection)
+    close(c.io)
     if nb_available(c) > 0
         purge(c)
     end
-    close(c.io)
     notify(poolcondition)
     return
 end
