@@ -40,6 +40,8 @@ Base.readavailable(lb::Loopback) = readavailable(lb.io)
 Base.close(lb::Loopback) = (close(lb.io); close(lb.buf))
 Base.isopen(lb::Loopback) = isopen(lb.io)
 
+HTTP.ConnectionPool.tcpstatus(c::HTTP.ConnectionPool.Connection{Loopback}) = "🤖 "
+
 
 server_events = []
 
@@ -390,4 +392,6 @@ lbopen(f, req, headers) =
         "Request: GET /delay5 HTTP/1.1",
         "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
         "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+
+    HTTP.ConnectionPool.closeall()
 end
