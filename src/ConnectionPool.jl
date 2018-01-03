@@ -435,8 +435,8 @@ function Base.show(io::IO, c::Connection)
         inactiveseconds(c) > 5 ?
             ", inactive $(round(inactiveseconds(c),1))s" : "",
         nwaiting > 0 ? ", $nwaiting bytes waiting" : "",
-        DEBUG_LEVEL > 0 ? ", $(Base._fd(tcpsocket(c.io)))" : "",
-        DEBUG_LEVEL > 0 &&
+        DEBUG_LEVEL > 1 ? ", $(Base._fd(tcpsocket(c.io)))" : "",
+        DEBUG_LEVEL > 1 &&
         islocked(c.readlock) ?  ", read task: $(taskid(c.readlock))" : "")
 end
 

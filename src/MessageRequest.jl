@@ -42,7 +42,8 @@ function request(::Type{MessageLayer{Next}},
     defaultheader(headers, "Host" => uri.host)
 
     if !hasheader(headers, "Content-Length") &&
-       !hasheader(headers, "Transfer-Encoding")
+       !hasheader(headers, "Transfer-Encoding") &&
+       !hasheader(headers, "Upgrade")
         l = bodylength(body)
         if l != unknownlength
             setheader(headers, "Content-Length" => string(l))
