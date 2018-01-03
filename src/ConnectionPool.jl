@@ -398,7 +398,7 @@ function getconnection(::Type{Transaction{T}},
             # If there are not too many duplicates for this host,
             # create a new connection...
             busy = findall(T, host, port, pipeline_limit)
-            if length(busy) < duplicate_limit
+            if length(busy) < duplicate_limit + 1
                 io = getconnection(T, host, port; kw...)
                 c = Connection{T}(host, port, pipeline_limit, io)
                 push!(pool, c)                    ;@debug 1 "🔗  New:        $c"

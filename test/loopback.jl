@@ -41,6 +41,8 @@ Base.close(lb::Loopback) = (close(lb.io); close(lb.buf))
 Base.isopen(lb::Loopback) = isopen(lb.io)
 
 
+server_events = []
+
 function on_headers(f, lb)
     if lb.got_headers
         return
@@ -87,20 +89,24 @@ end
 
 function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
 
+    global server_events
+
     if !isopen(lb.buf)
         throw(ArgumentError("stream is closed or unusable"))
     end
 
     n = unsafe_write(lb.buf, p, n)
-    
+
     on_headers(lb) do req
 
         println("📡  $(sprint(showcompact, req))")
+        push!(server_events, "Request: $(sprint(showcompact, req))")
 
         if req.uri == "/abort"
             reset(lb)
             response = HTTP.Response(403, ["Connection" => "close",
-                                          "Content-Length" => 0])
+                                          "Content-Length" => 0]; request=req)
+            push!(server_events, "Response: $(sprint(showcompact, response))")
             write(lb.io, response)
         end
     end
@@ -109,16 +115,19 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
 
         l = length(req.body)
         response = HTTP.Response(200, ["Content-Length" => l],
-                                      body = req.body)
+                                      body = req.body; request=req)
         if req.uri == "/echo"
+            push!(server_events, "Response: $(sprint(showcompact, response))")
             write(lb.io, response)
-        elseif req.uri == "/delay"
-            sleep(0.1)
+        elseif ismatch(r"^/delay", req.uri)
+            sleep(1)
+            push!(server_events, "Response: $(sprint(showcompact, response))")
             write(lb.io, response)
         else
             response = HTTP.Response(403,
                                      ["Connection" => "close",
-                                      "Content-Length" => 0])
+                                      "Content-Length" => 0]; request=req)
+            push!(server_events, "Response: $(sprint(showcompact, response))")
             write(lb.io, response)
         end
     end
@@ -137,16 +146,19 @@ end
 
 config = [
     :socket_type => Loopback,
-    :retry => false
+    :retry => false,
+    :duplicate_limit => 0
 ]
 
-lbget(req, headers, body) =
-      HTTP.request("GET", "http://test/$req", headers, body; config...)
+lbget(req, headers, body; kw...) =
+      HTTP.request("GET", "http://test/$req", headers, body; config..., kw...)
 
 lbopen(f, req, headers) =
     HTTP.open(f, "GET", "http://test/$req", headers; config...)
 
 @testset "loopback" begin
+
+    global server_events
 
     r = lbget("echo", [], ["Hello", IOBuffer(" "), "World!"]);
     @test String(r.body) == "Hello World!"
@@ -156,7 +168,6 @@ lbopen(f, req, headers) =
 
     r = lbget("echo", [], FunctionIO(()->"Hello World!"))
     @test String(r.body) == "Hello World!"
-    
 
     r = lbget("echo", [], ["Hello", " ", "World!"]);
     @test String(r.body) == "Hello World!"
@@ -171,6 +182,7 @@ lbopen(f, req, headers) =
                          Vector{UInt8}("World!")]);
     @test String(r.body) == "Hello World!"
 
+    HTTP.ConnectionPool.showpool(STDOUT)
 
     body = nothing
     body_sent = false
@@ -230,6 +242,113 @@ lbopen(f, req, headers) =
     end
     @test hello_sent
     @test !world_sent
+
+    HTTP.ConnectionPool.showpool(STDOUT)
+
+    function async_test(;kw...)
+        r1 = nothing
+        r2 = nothing
+        r3 = nothing
+        r4 = nothing
+        r5 = nothing
+        t1 = time()
+        @sync begin
+            @async r1 = lbget("delay1", [], "Hello World! 1"; kw...)
+            sleep(0.01)
+            @async r2 = lbget("delay2", [], "Hello World! 2"; kw...)
+            sleep(0.01)
+            @async r3 = lbget("delay3", [], "Hello World! 3"; kw...)
+            sleep(0.01)
+            @async r4 = lbget("delay4", [], "Hello World! 4"; kw...)
+            sleep(0.01)
+            @async r5 = lbget("delay5", [], "Hello World! 5"; kw...)
+        end
+        t2 = time()
+
+        @test String(r1.body) == "Hello World! 1"
+        @test String(r2.body) == "Hello World! 2"
+        @test String(r3.body) == "Hello World! 3"
+        @test String(r4.body) == "Hello World! 4"
+        @test String(r5.body) == "Hello World! 5"
+
+        return t2 - t1
+    end
+
+
+    server_events = []
+    t = async_test(;pipeline_limit=0)
+    @test 4 < t < 6
+    @test server_events == [
+        "Request: GET /delay1 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+        "Request: GET /delay2 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+        "Request: GET /delay3 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
+        "Request: GET /delay4 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+        "Request: GET /delay5 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+
+    server_events = []
+    t = async_test(;pipeline_limit=1)
+    @test 2 < t < 4
+    @test server_events == [
+        "Request: GET /delay1 HTTP/1.1",
+        "Request: GET /delay2 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+        "Request: GET /delay3 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+        "Request: GET /delay4 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
+        "Request: GET /delay5 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+
+    server_events = []
+    t = async_test(;pipeline_limit=2)
+    @test 1 < t < 3
+    @test server_events == [
+        "Request: GET /delay1 HTTP/1.1",
+        "Request: GET /delay2 HTTP/1.1",
+        "Request: GET /delay3 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+        "Request: GET /delay4 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+        "Request: GET /delay5 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+
+    server_events = []
+    t = async_test(;pipeline_limit=3)
+    @test 1 < t < 3
+    @test server_events == [
+        "Request: GET /delay1 HTTP/1.1",
+        "Request: GET /delay2 HTTP/1.1",
+        "Request: GET /delay3 HTTP/1.1",
+        "Request: GET /delay4 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+        "Request: GET /delay5 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+
+    server_events = []
+    t = async_test()
+    @test 1 < t < 2
+    @test server_events == [
+        "Request: GET /delay1 HTTP/1.1",
+        "Request: GET /delay2 HTTP/1.1",
+        "Request: GET /delay3 HTTP/1.1",
+        "Request: GET /delay4 HTTP/1.1",
+        "Request: GET /delay5 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
 end
 
 
