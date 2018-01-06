@@ -559,7 +559,7 @@ function stack(;redirect=true,
                 statusexception=true,
                 timeout=0,
                 kw...)
-                                                                     if !minimal
+                                                                      if minimal
     MessageLayer{ExceptionLayer{ConnectionPoolLayer{StreamLayer}}}
                                                                             else
     NoLayer = Union
