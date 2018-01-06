@@ -27,7 +27,7 @@ include("Connect.jl")
 include("ConnectionPool.jl")
 include("Messages.jl");                 using .Messages
                                         import .Messages: header, hasheader
-include("HTTPStreams.jl");              using .HTTPStreams
+include("Streams.jl");                  using .Streams
 include("WebSockets.jl");               using .WebSockets
 
 
@@ -36,6 +36,12 @@ include("WebSockets.jl");               using .WebSockets
     HTTP.request(method, url [, headers [, body]]; <keyword arguments>]) -> HTTP.Response
 
 Send a HTTP Request Message and recieve a HTTP Response Message.
+
+```
+r = HTTP.request("GET", "http://httpbin.org/ip")
+println(r.status)
+println(String(r.body))
+```
 
 `headers` can be any collection where
 `[string(k) => string(v) for (k,v) in headers]` yields `Vector{Pair}`.
@@ -142,6 +148,121 @@ Cananoincalization options (See [`HTTP.CanonicalizeLayer`](@ref)])
 
  - `canonicalizeheaders = false`, rewrite request and response headers in
    Canonical-Camel-Dash-Format.
+
+
+## Request Body Examples
+
+String body:
+```
+r = request("POST", "http://httpbin.org/post", [], "post body data")
+@show r.status
+```
+
+Stream body from file:
+```
+io = open("post_data.txt", "r")
+r = request("POST", "http://httpbin.org/post", [], io)
+@show r.status
+```
+
+Generator body:
+```
+chunks = ("chunk\$i" for i in 1:1000)
+r = request("POST", "http://httpbin.org/post", [], chunks)
+@show r.status
+```
+
+Collection body:
+```
+chunks = [preamble_chunk, data_chunk, checksum(data_chunk)]
+r = request("POST", "http://httpbin.org/post", [], chunks)
+@show r.status
+```
+
+`open() do io` body:
+```
+r = HTTP.open("POST", "http://httpbin.org/post") do io
+    write(io, preamble_chunk)
+    write(io, data_chunk)
+    write(io, checksum(data_chunk))
+end
+@show r.status
+```
+
+
+## Response Body Examples
+
+String body:
+```
+r = request("GET", "http://httpbin.org/get")
+@show r.status
+println(String(r.body))
+```
+
+Stream body to file:
+```
+io = open("get_data.txt", "w")
+r = request("GET", "http://httpbin.org/get", response_stream=io)
+@show r.status
+println(read("get_data.txt"))
+```
+
+Stream body through buffer:
+```
+io = BufferStream()
+@async while !eof(io)
+    bytes = readavailable(io))
+    println("GET data: \$bytes")
+end
+r = request("GET", "http://httpbin.org/get", response_stream=io)
+@show r.status
+```
+
+Stream body through `open() do io`:
+```
+r = HTTP.open("GET", "http://httpbin.org/get") do io
+    r = startread(io)
+    @show r.status
+    while !eof(io)
+        bytes = readavailable(io))
+        println("GET data: \$bytes")
+    end
+end
+```
+
+
+## Request and Response Body Examples
+
+String bodies:
+```
+r = request("POST", "http://httpbin.org/post", [], "post body data")
+@show r.status
+println(String(r.body))
+```
+
+Stream bodies from and to files:
+```
+in = open("foo.png", "r")
+out = open("foo.jpg", "w")
+r = request("POST", "http://convert.com/png2jpg", [], in, response_stream=out)
+@show r.status
+```
+
+Stream bodies through: `open() do io`:
+```
+HTTP.open("POST", "http://music.com/play") do io
+    write(io, JSON.json([
+        "auth" => "12345XXXX",
+        "song_id" => 7,
+    ]))
+    r = readresponse(io)
+    @show r.status
+    while !eof(io)
+        bytes = readavailable(io))
+        play_audio(bytes)
+    end
+end
+```
 """
 
 request(method::String, uri::URI, headers::Headers, body; kw...)::Response =
@@ -210,6 +331,61 @@ head(a...; kw...) = request("HEAD", a..., kw...)
 
 
 
+"""
+
+## Request Execution Stack
+
+The Request Execution Stack is separated into composable layers.
+
+Each layer is defined by a nested type `Layer{Next}` where the `Next`
+parameter defines the next layer in the stack.
+The `request` method for each layer takes a `Layer{Next}` type as
+its first argument and dispatches the request to the next layer
+using `request(Next, ...)`.
+
+The example below defines three layers and three stacks each with
+a different combination of layers.
+
+
+```julia
+abstract type Layer end
+abstract type Layer1{Next <: Layer} <: Layer end
+abstract type Layer2{Next <: Layer} <: Layer end
+abstract type Layer3 <: Layer end
+
+request(::Type{Layer1{Next}}, data) where Next = "L1", request(Next, data)
+request(::Type{Layer2{Next}}, data) where Next = "L2", request(Next, data)
+request(::Type{Layer3}, data) = "L3", data
+
+const stack1 = Layer1{Layer2{Layer3}}
+const stack2 = Layer2{Layer1{Layer3}}
+const stack3 = Layer1{Layer3}
+```
+
+```julia
+julia> request(stack1, "foo")
+("L1", ("L2", ("L3", "foo")))
+
+julia> request(stack2, "bar")
+("L2", ("L1", ("L3", "bar")))
+
+julia> request(stack3, "boo")
+("L1", ("L3", "boo"))
+```
+
+This stack definition pattern gives the user flexibility in how layers are
+combined but still allows Julia to do whole-stack comiple time optimistations.
+
+e.g. the `request(stack1, "foo")` call above is optimised down to a single
+function:
+```julia
+julia> code_typed(request, (Type{stack1}, String))[1].first
+CodeInfo(:(begin
+    return (Core.tuple)("L1", (Core.tuple)("L2", (Core.tuple)("L3", data)))
+end))
+```
+"""
+
 abstract type Layer end
                                                                      if !minimal
 include("RedirectRequest.jl");          using .RedirectRequest
@@ -225,7 +401,154 @@ include("ExceptionRequest.jl");         using .ExceptionRequest
 include("RetryRequest.jl");             using .RetryRequest
 include("ConnectionRequest.jl");        using .ConnectionRequest
 include("StreamRequest.jl");            using .StreamRequest
-                                                                     if !minimal
+
+"""
+The `stack()` function returns the default HTTP Layer-stack type.
+This type is passed as the first parameter to the [`HTTP.request`](@ref) function.
+
+`stack()` accepts optional keyword arguments to enable/disable specific layers
+in the stack:
+`request(method, args...; kw...) request(stack(;kw...), args...; kw...)`
+
+
+The minimal request execution stack is:
+
+```
+stack = MessageLayer{ConnectionPoolLayer{StreamLayer}}
+```
+
+The figure below illustrates a minimal Layer-stack with the
+`connectionpool=false` option that causes the `ConnectionPoolLayer` to call
+HTTP.Connect.getconnection() directly rather reusing pooled connections.
+
+```
+ ┌────────────────────────────────────────────────────────────────────────────┐
+ │                                            ┌───────────────────┐           │
+ │     request(method, uri, headers, body) -> │ HTTP.Response     │           │
+ │             ──────────────────────────     └─────────▲─────────┘           │
+ │                           ║                          ║                     │
+ │   ┌────────────────────────────────────────────────────────────┐           │
+ │   │ request(MessageLayer,      method, ::URI, ::Headers, body) │           │
+ │   ├────────────────────────────────────────────────────────────┤           │
+┌┼───┤ request(ConnectionPoolLayer,       ::URI, ::Request, body) │           │
+││   ├────────────────────────────────────────────────────────────┤           │
+││   │ request(StreamLayer,               ::IO,  ::Request, body) │           │
+││   └──────────────┬───────────────────┬─────────────────────────┘           │
+│└──────────────────┼────────║──────────┼───────────────║─────────────────────┘
+│                   │        ║          │               ║                      
+│┌──────────────────▼───────────────┐   │  ┌──────────────────────────────────┐
+││ HTTP.Request                     │   │  │ HTTP.Response                    │
+│└──────────────────▲───────────────┘   │  └───────────────▲──────────────────┘
+│┌──────────────────┴────────║──────────▼───────────────║──┴──────────────────┐
+││ HTTP.Stream <:IO          ║           ╔══════╗       ║                     │
+│└───────────────────────────║───────────║──────║───────║──┬──────────────────┘
+│┌──────────────────────────────────┐    ║ ┌────▼───────║──▼──────────────────┐
+││ HTTP.Messages                    │    ║ │ HTTP.Parser                      │
+│└──────────────────────────────────┘    ║ └──────────────────────────────────┘
+│┌───────────────────────────║───────────║────────────────────────────────────┐
+└▶ HTTP.Connect              ║           ║                                    │
+ └───────────────────────────║───────────║────────────────────────────────────┘
+                             ║           ║                                     
+ ┌───────────────────────────║───────────║──────────────┐  ┏━━━━━━━━━━━━━━━━━━┓
+ │ HTTP Server               ▼           ║              │  ┃ data flow: ════▶ ┃
+ │                        Request     Response          │  ┃ reference: ────▶ ┃
+ └──────────────────────────────────────────────────────┘  ┗━━━━━━━━━━━━━━━━━━┛
+```
+
+The next figure illustrates the full Layer-stack and its relationship with
+the [`HTTP.Response`](@ref), the [`HTTP.Parser`](@ref),
+the [`HTTP.Stream`](@ref) and the [`HTTP.ConnectionPool`](@ref).
+
+```
+ ┌────────────────────────────────────────────────────────────────────────────┐
+ │                                                       ┌──────────────────┐ │
+ │  HTTP.jl Request Stack                                │ HTTP.StatusError │ │
+ │                                                       └───────────┬──────┘ │
+ │                                            ┌───────────────────┐           │
+ │     request(method, uri, headers, body) -> │ HTTP.Response     │  │        │
+ │             ──────────────────────────     └─────────▲─────────┘           │
+ │                           ║                          ║            │        │
+ │   ┌────────────────────────────────────────────────────────────┐           │
+ │   │ request(RedirectLayer,     method, ::URI, ::Headers, body) │  │        │
+ │   ├────────────────────────────────────────────────────────────┤           │
+ │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │  │        │
+ │   ├────────────────────────────────────────────────────────────┤           │
+ │   │ request(CookieLayer,       method, ::URI, ::Headers, body) │  │        │
+ │   ├────────────────────────────────────────────────────────────┤           │
+ │   │ request(CanonicalizeLayer, method, ::URI, ::Headers, body) │  │        │
+ │   ├────────────────────────────────────────────────────────────┤           │
+ │   │ request(MessageLayer,      method, ::URI, ::Headers, body) │  │        │
+ │   ├────────────────────────────────────────────────────────────┤           │
+ │   │ request(AWS4AuthLayer,             ::URI, ::Request, body) │  │        │
+ │   ├────────────────────────────────────────────────────────────┤           │
+ │   │ request(RetryLayer,                ::URI, ::Request, body) │  │        │
+ │   ├────────────────────────────────────────────────────────────┤           │
+ │   │ request(ExceptionLayer,            ::URI, ::Request, body) │─ ┘        │
+ │   ├────────────────────────────────────────────────────────────┤           │
+┌┼───┤ request(ConnectionPoolLayer,       ::URI, ::Request, body) │           │
+││   ├────────────────────────────────────────────────────────────┤           │
+││   │ request(TimeoutLayer,              ::IO,  ::Request, body) │           │
+││   ├────────────────────────────────────────────────────────────┤           │
+││   │ request(StreamLayer,               ::IO,  ::Request, body) │           │
+││   └──────────────┬───────────────────┬─────────────────────────┘           │
+│└──────────────────┼────────║──────────┼───────────────║─────────────────────┘
+│                   │        ║          │               ║                      
+│┌──────────────────▼───────────────┐   │  ┌──────────────────────────────────┐
+││ HTTP.Request                     │   │  │ HTTP.Response                    │
+││                                  │   │  │                                  │
+││ method::String                   ◀───┼──▶ status::Int                      │
+││ uri::String                      │   │  │ headers::Vector{Pair}            │
+││ headers::Vector{Pair}            │   │  │ body::Vector{UInt8}              │
+││ body::Vector{UInt8}              │   │  │                                  │
+│└──────────────────▲───────────────┘   │  └───────────────▲──────────────────┘
+│┌──────────────────┴────────║──────────▼───────────────║──┴──────────────────┐
+││ HTTP.Stream <:IO          ║           ╔══════╗       ║                     │
+││   ┌───────────────────────────┐       ║   ┌──▼─────────────────────────┐   │
+││   │ startwrite(::Stream)      │       ║   │ startread(::Stream)        │   │
+││   │ write(::Stream, body)     │       ║   │ read(::Stream) -> body     │   │
+││   │ ...                       │       ║   │ ...                        │   │
+││   │ closewrite(::Stream)      │       ║   │ closeread(::Stream)        │   │
+││   └───────────────────────────┘       ║   └────────────────────────────┘   │
+││ EOFError <:Exception      ║           ║      ║       ║                     │
+│└───────────────────────────║────────┬──║──────║───────║──┬──────────────────┘
+│┌──────────────────────────────────┐ │  ║ ┌────▼───────║──▼──────────────────┐
+││ HTTP.Messages                    │ │  ║ │ HTTP.Parser                      │
+││                                  │ │  ║ │                                  │
+││ writestartline(::IO, ::Request)  │ │  ║ │ parseheaders(bytes) do h::Pair   │
+││ writeheaders(::IO, ::Request)    │ │  ║ │ parsebody(bytes) -> bytes        │
+││                                  │ │  ║ │                                  │
+││                                  │ │  ║ │ ParsingError <:Exception         │
+│└──────────────────────────────────┘ │  ║ └──────────────────────────────────┘
+│                            ║        │  ║                                     
+│┌───────────────────────────║────────┼──║────────────────────────────────────┐
+└▶ HTTP.ConnectionPool       ║        │  ║                                    │
+ │                     ┌──────────────▼────────┐ ┌───────────────────────┐    │
+ │ getconnection() ->  │ HTTP.Transaction <:IO │ │ HTTP.Transaction <:IO │    │
+ │       │             └───────────────────────┘ └───────────────────────┘    │
+ │       │                   ║    ╲│╱    ║                  ╲│╱               │
+ │       │                   ║     │     ║                   │                │
+ │       │             ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
+ │       │      pool: [│ HTTP.Connection       │,│ HTTP.Connection       │...]│
+ │       │             └───────────┬───────────┘ └───────────┬───────────┘    │
+ └───────┼───────────────────║─────┼─────║───────────────────┼────────────────┘
+ ┌───────▼───────────────────║─────┼─────║───────────────────┼────────────────┐
+ │ HTTP.Connect              ║     │     ║                   │                │
+ │                     ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
+ │ getconnection() ->  │ Base.TCPSocket <:IO   │ │MbedTLS.SSLContext <:IO│    │
+ │                     └───────────────────────┘ └───────────┬───────────┘    │
+ │                           ║           ║                   │                │
+ │ EOFError <:Exception      ║           ║       ┌───────────▼───────────┐    │
+ │ UVError <:Exception       ║           ║       │ Base.TCPSocket <:IO   │    │
+ │ DNSError <:Exception      ║           ║       └───────────────────────┘    │
+ └───────────────────────────║───────────║────────────────────────────────────┘
+                             ║           ║                                     
+ ┌───────────────────────────║───────────║──────────────┐  ┏━━━━━━━━━━━━━━━━━━┓
+ │ HTTP Server               ▼           ║              │  ┃ data flow: ════▶ ┃
+ │                        Request     Response          │  ┃ reference: ────▶ ┃
+ └──────────────────────────────────────────────────────┘  ┗━━━━━━━━━━━━━━━━━━┛
+```
+*See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
+"""
 
 function stack(;redirect=true,
                 basicauthorization=false,
@@ -236,7 +559,9 @@ function stack(;redirect=true,
                 statusexception=true,
                 timeout=0,
                 kw...)
-
+                                                                     if !minimal
+    MessageLayer{ExceptionLayer{ConnectionPoolLayer{StreamLayer}}}
+                                                                            else
     NoLayer = Union
 
     (redirect            ? RedirectLayer       : NoLayer){
@@ -251,14 +576,9 @@ function stack(;redirect=true,
     (timeout > 0         ? TimeoutLayer        : NoLayer){
                            StreamLayer
     }}}}}}}}}}
+                                                                             end
 end
 
-                                                                            else
-stack(;kw...) = MessageLayer{
-                ExceptionLayer{
-                ConnectionPoolLayer{
-                StreamLayer}}}
-                                                                             end
 
                                                                      if !minimal
 include("client.jl")
@@ -267,5 +587,6 @@ include("handlers.jl");                  using .Handlers
 include("server.jl");                    using .Nitrogen
 include("precompile.jl")
                                                                              end
+
 
 end # module

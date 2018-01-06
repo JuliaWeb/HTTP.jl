@@ -12,7 +12,7 @@ import ..@debug, ..DEBUG_LEVEL
 """
     request(RedirectLayer, method, ::URI, headers, body) -> HTTP.Response
 
-Redirect request in the case of 3xx response status.
+Redirects the request in the case of 3xx response status.
 """
 
 abstract type RedirectLayer{Next <: Layer} <: Layer end

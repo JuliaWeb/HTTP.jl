@@ -1,3 +1,28 @@
+"""
+This module wrapps the basic Connect module above and adds support for:
+- Reusing connections for multiple Request/Response Messages,
+- Pipelining Request/Response Messages. i.e. allowing a new Request to be
+  sent before previous Responses have been read.
+
+This module defines a [`HTTP.ConnectionPool.Connection`](@ref)
+struct to manage pipelining and connection reuse and a
+[`HTTP.ConnectionPool.Transaction`](@ref)`<: IO` struct to manage a single
+pipelined request. Methods are provided for `eof`, `readavailable`,
+`unsafe_write` and `close`.
+This allows the `Transaction` object to act as a proxy for the
+`TCPSocket` or `SSLContext` that it wraps.
+
+The [`HTTP.ConnectionPool.pool`](@ref) is a collection of open
+`Connection`s.  The `request` function calls `getconnection` to
+retrieve a connection from the `pool`.  When the `request` function
+has written a Request Message it calls `closewrite` to signal that
+the `Connection` can be reused for writing (to send the next Request).
+When the `request` function has read the Response Message it calls
+`closeread` to signal that the `Connection` can be reused for
+reading.
+```
+
+"""
 module ConnectionPool
 
 export getconnection, getparser, getrawstream, inactiveseconds
@@ -32,15 +57,20 @@ end
 A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 
 - `host::String`
-- `port::String`
+- `port::String`, exactly as specified in the URI (i.e. may be empty).
+- `pipeline_linit`, number of requests to send before waiting for responses.
+- `peerport`, remote TCP port number (used for debug messages).
+- `localport`, local TCP port number (used for debug messages). 
 - `io::T`, the `TCPSocket` or `SSLContext.
 - `excess::ByteView`, left over bytes read from the connection after
    the end of a response message. These bytes are probably the start of the
    next response message.
+- `writebusy`, is a `Transaction` busy writing to this `Connection` ?
 - `writecount`, number of Request Messages that have been written.
 - `readcount`, number of Response Messages that have been read.
 - `writelock`, busy writing a Request to `io`.
 - `readlock`, busy reading a Response from `io`.
+- `timestamp, time data was last recieved.
 - `parser::Parser`, reuse a `Parser` when this `Connection` is reused.
 """
 
@@ -148,6 +178,15 @@ function IOExtras.unread!(t::Transaction, bytes::ByteView)
 end
 
 
+"""
+    startwrite(::Transaction)
+
+Set `writebusy`.
+Should only be called by the `Transaction` constructor because
+`getconnection` only creates new `Transaction`s when a `Connection` is
+available for writing.
+"""
+
 function IOExtras.startwrite(t::Transaction)
     @require !t.c.writebusy
     t.c.writebusy = true
@@ -159,8 +198,6 @@ end
     closewrite(::Transaction)
 
 Signal that an entire Request Message has been written to the `Transaction`.
-
-Increment `writecount` and wait for pending reads to complete.
 """
 
 function IOExtras.closewrite(t::Transaction)
@@ -195,15 +232,14 @@ function IOExtras.startread(t::Transaction)
     return
 end
 
-ensurereadable(t::Transaction) = if !isreadable(t) startread(t) end
-
 
 """
     closeread(::Transaction)
 
 Signal that an entire Response Message has been read from the `Transaction`.
 
-Increment `readcount` and wake up tasks waiting in `closewrite`.
+Increment `readcount` and wake up tasks waiting in `startread` by unlocking
+`readlock`.
 """
 
 function IOExtras.closeread(t::Transaction)

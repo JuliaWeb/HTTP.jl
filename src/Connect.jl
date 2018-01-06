@@ -1,3 +1,13 @@
+"""
+[`HTTP.Connect.getconnection`](@ref) creates a new `TCPSocket` or `SSLContext`
+for a specified `host` and `port`.
+
+No connection streaming, pooling or reuse is implemented in this module.
+However, the `getconnection` interface is the same as the one used by the
+connection pool so the `Connect` module can be used directly when reuse is
+not required.
+"""
+
 module Connect
 
 export getconnection, getparser, inactiveseconds, getrawstream

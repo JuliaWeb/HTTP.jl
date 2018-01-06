@@ -12,6 +12,14 @@ import ..@debug, ..DEBUG_LEVEL
     request(RetryLayer, ::URI, ::Request, body) -> HTTP.Response
 
 Retry the request if it throws a recoverable exception.
+
+`Base.retry` and `Base.ExponentialBackOff` implement a randomised exponentially
+increasing delay is introduced between attempts to avoid exacerbating network
+congestion.
+
+Methods of `isrecoverable(e)` define which exception types lead to a retry.
+e.g. `Base.UVError`, `Base.DNSError`, `Base.EOFError` and `HTTP.StatusError`
+(if status is ``5xx`).
 """
 
 abstract type RetryLayer{Next <: Layer} <: Layer end

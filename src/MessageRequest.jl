@@ -12,7 +12,7 @@ using ..Form
 """
     request(MessageLayer, method, ::URI, headers, body) -> HTTP.Response
 
-Construct a [`HTTP.Request`](@ref) and set mandatory headers.
+Construct a [`HTTP.Request`](@ref) object and set mandatory headers.
 """
 
 struct MessageLayer{Next <: Layer} <: Layer end

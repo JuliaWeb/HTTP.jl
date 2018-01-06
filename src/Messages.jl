@@ -1,3 +1,63 @@
+"""
+The `Messages` module defines structs that represent [`HTTP.Messages.Request`](@ref)
+and [`HTTP.Messages.Response`](@ref) Messages.
+
+The `Response` struct has a `request` field that points to the corresponding
+`Request`; and the `Request` struct has a `response` field.
+The `Request` struct also has a `parent` field that points to a `Response`
+in the case of HTTP Redirect.
+
+
+The Messages module defines `IO` `read` and `write` methods for Messages
+but it does not deal with URIs, creating connections, or executing requests.
+The 
+
+The `read` methods throw `EOFError` exceptions if input data is incomplete.
+and call parser functions that may throw `HTTP.ParsingError` exceptions.
+The `read` and `write` methods may also result in low level `IO` exceptions.
+
+
+### Sending Messages
+
+Messages are formatted and written to an `IO` stream by
+[`Base.write(::IO,::HTTP.Messages.Message)`](@ref) and or
+[`HTTP.Messages.writeheaders`](@ref).
+
+
+### Receiving Messages
+
+Messages are parsed from `IO` stream data by
+[`HTTP.Messages.readheaders`](@ref).
+This function calls [`HTTP.Messages.appendheader`](@ref) and
+[`HTTP.Messages.readstartline!`](@ref).
+
+The `read` methods rely on [`HTTP.IOExtras.unread!`](@ref) to push excess
+data back to the input stream.
+
+
+### Headers
+
+Headers are represented by `Vector{Pair{String,String}}`. As compared to
+`Dict{String,String}` this allows [repeated header fields and preservation of
+order](https://tools.ietf.org/html/rfc7230#section-3.2.2).
+
+Header values can be accessed by name using 
+[`HTTP.Messages.header`](@ref) and
+[`HTTP.Messages.setheader`](@ref) (case-insensitive).
+
+The [`HTTP.Messages.appendheader`](@ref) function handles combining
+multi-line values, repeated header fields and special handling of
+multiple `Set-Cookie` headers.
+
+### Bodies
+
+The [`HTTP.Message`](@ref) structs represent the Message Body as `Vector{UInt8}`.
+
+Streaming of request and response bodies is handled by the
+[`HTTP.StreamLayer`](@ref) and the [`HTTP.Stream`](@ref) `<: IO` stream.
+"""
+
+
 module Messages
 
 export Message, Request, Response,
@@ -22,14 +82,14 @@ import ..Parsers: headerscomplete, reset!
 abstract type Message end
 
 """
-    Response
+    Response <: Message
 
 Represents a HTTP Response Message.
 
 - `version::VersionNumber`
 - `status::Int16`
 - `headers::Vector{Pair{String,String}}`
-- `body::`[`HTTP.Body`](@ref)
+- `body::Vector{UInt8}`
 - `request`, the `Request` that yielded this `Response`.
 """
 
@@ -59,7 +119,7 @@ end
 
 
 """
-    Request
+    Request <: Message
 
 Represents a HTTP Request Message.
 
@@ -309,6 +369,13 @@ function readstartline!(m::Parsers.Message, r::Request)
 end
 
 
+"""
+    readheaders(::IO, ::Parser, ::Message)
+
+Read headers (and startline) from an `IO` stream into a `Message` struct.
+Throw `EOFError` if input is incomplete.
+"""
+
 function readheaders(io::IO, parser::Parser, message::Message)
 
     while !headerscomplete(parser) && !eof(io)
@@ -325,9 +392,21 @@ function readheaders(io::IO, parser::Parser, message::Message)
 end
 
 
-headerscomplete(r::Request) = r.method != ""
-headerscomplete(r::Response) = r.status != 0 && r.status != 100
+"""
+    headerscomplete(::Message)
 
+Have the headers been read into this `Message`?
+"""
+
+headerscomplete(r::Response) = r.status != 0 && r.status != 100
+headerscomplete(r::Request) = r.method != ""
+
+
+"""
+    readtrailers(::IO, ::Parser, ::Message)
+
+Read trailers from an `IO` stream into a `Message` struct.
+"""
 
 function readtrailers(io::IO, parser::Parser, message::Message)
     if messagehastrailing(parser)
@@ -336,6 +415,12 @@ function readtrailers(io::IO, parser::Parser, message::Message)
     return message
 end
 
+
+"""
+    readbody(::IO, ::Parser) -> Vector{UInt8}
+
+Read message body from an `IO` stream.
+"""
 
 function readbody(io::IO, parser::Parser)
     body = IOBuffer()

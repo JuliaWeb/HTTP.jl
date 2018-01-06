@@ -4,7 +4,7 @@ import ..Layer, ..request
 using ..IOExtras
 using ..Parsers
 using ..Messages
-using ..HTTPStreams
+using ..Streams
 import ..ConnectionPool
 using ..MessageRequest
 import ..@debug, ..DEBUG_LEVEL, ..printlncompact
@@ -13,7 +13,10 @@ import ..@debug, ..DEBUG_LEVEL, ..printlncompact
 """
     request(StreamLayer, ::IO, ::Request, body) -> HTTP.Response
 
-Send a `Request` body in a background task and begin reading the response
+Create a [`HTTP.Stream`](@ref) to send a `Request` and `body` to an `IO`
+stream and read the response.
+
+Sens the `Request` body in a background task and begins reading the response
 immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
@@ -31,7 +34,7 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
     verbose == 1 && printlncompact(req)
     verbose >= 2 && println(req)
 
-    http = HTTPStream(io, req, ConnectionPool.getparser(io))
+    http = Stream(io, req, ConnectionPool.getparser(io))
     startwrite(http)
 
     aborted = false
@@ -73,7 +76,7 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
 end
 
 
-function writebody(http::HTTPStream, req::Request, body)
+function writebody(http::Stream, req::Request, body)
 
     if req.body === body_is_a_stream
         writebodystream(http, req, body)
@@ -109,7 +112,7 @@ writechunk(http, req, body::IO) = writebodystream(http, req, body)
 writechunk(http, req, body) = write(http, body)
 
 
-function readbody(http::HTTPStream, res::Response, response_stream)
+function readbody(http::Stream, res::Response, response_stream)
     if response_stream == nothing
         res.body = read(http)
     else

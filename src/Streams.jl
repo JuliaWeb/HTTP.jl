@@ -1,6 +1,6 @@
-module HTTPStreams
+module Streams
 
-export HTTPStream, closebody, isaborted
+export Stream, closebody, isaborted
 
 using ..IOExtras
 using ..Parsers
@@ -11,35 +11,35 @@ import ..@require, ..precondition_error
 import ..@debug, ..DEBUG_LEVEL
 
 
-mutable struct HTTPStream{T <: Message} <: IO
+mutable struct Stream{T <: Message} <: IO
     stream::IO
     message::T
     parser::Parser
     writechunked::Bool
 end
 
-function HTTPStream(io::IO, request::Request, parser::Parser)
+function Stream(io::IO, request::Request, parser::Parser)
     @require iswritable(io)
     writechunked = header(request, "Transfer-Encoding") == "chunked"
-    HTTPStream{Response}(io, request.response, parser, writechunked)
+    Stream{Response}(io, request.response, parser, writechunked)
 end
 
-header(http::HTTPStream, a...) = header(http.message, a...)
-hasheader(http::HTTPStream, a) = header(http.message, a)
-getrawstream(http::HTTPStream) = getrawstream(http.stream)
+header(http::Stream, a...) = header(http.message, a...)
+hasheader(http::Stream, a) = header(http.message, a)
+getrawstream(http::Stream) = getrawstream(http.stream)
 
 
 # Writing HTTP Messages
 
-IOExtras.iswritable(http::HTTPStream) = iswritable(http.stream)
+IOExtras.iswritable(http::Stream) = iswritable(http.stream)
 
-function IOExtras.startwrite(http::HTTPStream)
+function IOExtras.startwrite(http::Stream)
     @require iswritable(http.stream)
     writeheaders(http.stream, http.message.request)
 end
 
 
-function Base.unsafe_write(http::HTTPStream, p::Ptr{UInt8}, n::UInt)
+function Base.unsafe_write(http::Stream, p::Ptr{UInt8}, n::UInt)
     if !http.writechunked
         return unsafe_write(http.stream, p, n)
     end
@@ -49,7 +49,7 @@ function Base.unsafe_write(http::HTTPStream, p::Ptr{UInt8}, n::UInt)
 end
 
 
-function closebody(http::HTTPStream)
+function closebody(http::Stream)
     if http.writechunked
         write(http.stream, "0\r\n\r\n")
         http.writechunked = false
@@ -57,7 +57,7 @@ function closebody(http::HTTPStream)
 end
 
 
-function IOExtras.closewrite(http::HTTPStream)
+function IOExtras.closewrite(http::Stream)
     if !iswritable(http)
         return
     end
@@ -68,9 +68,9 @@ end
 
 # Reading HTTP Messages
 
-IOExtras.isreadable(http::HTTPStream) = isreadable(http.stream)
+IOExtras.isreadable(http::Stream) = isreadable(http.stream)
 
-function IOExtras.startread(http::HTTPStream)
+function IOExtras.startread(http::Stream)
     @require !isreadable(http.stream)
     startread(http.stream)
     configure_parser(http)
@@ -88,7 +88,7 @@ function IOExtras.startread(http::HTTPStream)
 end
 
 
-function configure_parser(http::HTTPStream{Response})
+function configure_parser(http::Stream{Response})
     reset!(http.parser)
     req = http.message.request::Request
     if req.method in ("HEAD", "CONNECT")
@@ -96,10 +96,10 @@ function configure_parser(http::HTTPStream{Response})
     end
 end
 
-configure_parser(http::HTTPStream{Request}) = reset!(http.parser)
+configure_parser(http::Stream{Request}) = reset!(http.parser)
 
 
-function Base.eof(http::HTTPStream)
+function Base.eof(http::Stream)
     if !headerscomplete(http.message)
         startread(http)
     end
@@ -114,7 +114,7 @@ function Base.eof(http::HTTPStream)
 end
 
 
-function Base.readavailable(http::HTTPStream)::ByteView
+function Base.readavailable(http::Stream)::ByteView
     @require headerscomplete(http.message)
     @require !bodycomplete(http.parser)
 
@@ -128,17 +128,17 @@ function Base.readavailable(http::HTTPStream)::ByteView
 end
 
 
-IOExtras.unread!(http::HTTPStream, excess) = unread!(http.stream, excess)
+IOExtras.unread!(http::Stream, excess) = unread!(http.stream, excess)
 
 
-function Base.read(http::HTTPStream)
+function Base.read(http::Stream)
     buf = IOBuffer()
     write(buf, http)
     return take!(buf)
 end
 
 
-function isaborted(http::HTTPStream{Response})
+function isaborted(http::Stream{Response})
 
     # "If [the response] indicates the server does not wish to receive the
     #  message body and is closing the connection, the client SHOULD
@@ -157,7 +157,7 @@ function isaborted(http::HTTPStream{Response})
 end
 
 
-function IOExtras.closeread(http::HTTPStream{Response})
+function IOExtras.closeread(http::Stream{Response})
 
     # Discard unread body bytes...
     while !eof(http)
@@ -185,4 +185,4 @@ function IOExtras.closeread(http::HTTPStream{Response})
 end
 
 
-end #module HTTPStreams
+end #module Streams

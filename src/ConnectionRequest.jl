@@ -11,7 +11,7 @@ import ..@debug, ..DEBUG_LEVEL
 """
     request(ConnectionPoolLayer, ::URI, ::Request, body) -> HTTP.Response
 
-Retrieve an `IO` connection from the [`ConnectionPool`](@ref).
+Retrieve an `IO` connection from the [`HTTP.ConnectionPool`](@ref).
 
 Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.

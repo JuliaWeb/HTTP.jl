@@ -22,6 +22,28 @@
 # IN THE SOFTWARE.
 #
 
+
+"""
+The parser separates a raw HTTP Message into its component parts.
+
+If the input data is invalid the Parser throws a [`HTTP.ParsingError`](@ref).
+
+The parser processes a single HTTP Message. If the input stream contains
+multiple Messages the Parser stops at the end of the first Message.
+The `parseheaders` and `parsebody` functions return a `SubArray` containing the
+unuses portion of the input.
+
+The Parser does not interpret the Message Headers except as needed
+to parse the Message Body. It is beyond the scope of the Parser to deal
+with repeated header fields, multi-line values, cookies or case normalization
+(see [`HTTP.Messages.appendheader`](@ref)).
+
+The Parser has no knowledge of the high-level `Request` and `Response` structs
+defined in `Messages.jl`. The Parser has it's own low level
+[`HTTP.Parsers.Message`](@ref) struct that represents both Request and Response
+Messages.
+"""
+
 module Parsers
 
 export Parser, Header, Headers, ByteView, nobytes,
@@ -255,10 +277,17 @@ end
 
 
 """
-    parseheaders(f(::Pair{String,String}), ::Parser, bytes) -> excess
+    parseheaders(::Parser, bytes) do h::Pair{String,String} ... -> excess
 
 Read headers from `bytes`, passing each field/value pair to `f`.
 Returns a `SubArray` containing bytes not parsed.
+
+e.g.
+```
+excess = parseheaders(p, bytes) do (k,v)
+    println("\$k: \$v")
+end
+```
 """
 
 function parseheaders(f, p, bytes)
