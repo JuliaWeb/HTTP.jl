@@ -1,6 +1,6 @@
 """
-The `Messages` module defines structs that represent [`HTTP.Messages.Request`](@ref)
-and [`HTTP.Messages.Response`](@ref) Messages.
+The `Messages` module defines structs that represent [`HTTP.Request`](@ref)
+and [`HTTP.Response`](@ref) Messages.
 
 The `Response` struct has a `request` field that points to the corresponding
 `Request`; and the `Request` struct has a `response` field.
@@ -51,7 +51,7 @@ multiple `Set-Cookie` headers.
 
 ### Bodies
 
-The [`HTTP.Message`](@ref) structs represent the Message Body as `Vector{UInt8}`.
+The `HTTP.Message` structs represent the Message Body as `Vector{UInt8}`.
 
 Streaming of request and response bodies is handled by the
 [`HTTP.StreamLayer`](@ref) and the [`HTTP.Stream`](@ref) `<: IO` stream.

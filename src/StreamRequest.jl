@@ -13,12 +13,12 @@ import ..@debug, ..DEBUG_LEVEL, ..printlncompact
 """
     request(StreamLayer, ::IO, ::Request, body) -> HTTP.Response
 
-Create a [`HTTP.Stream`](@ref) to send a `Request` and `body` to an `IO`
+Create a [`Stream`](@ref) to send a `Request` and `body` to an `IO`
 stream and read the response.
 
 Sens the `Request` body in a background task and begins reading the response
 immediately so that the transmission can be aborted if the `Response` status
-indicates that the server does not wish to receive the message body
+indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
 

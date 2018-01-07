@@ -5,14 +5,14 @@ export body_is_a_stream, body_was_streamed
 import ..Layer, ..request
 using ..URIs
 using ..Messages
-using ..Parsers.Headers
+using ..Headers
 using ..Form
 
 
 """
     request(MessageLayer, method, ::URI, headers, body) -> HTTP.Response
 
-Construct a [`HTTP.Request`](@ref) object and set mandatory headers.
+Construct a [`Request`](@ref) object and set mandatory headers.
 """
 
 struct MessageLayer{Next <: Layer} <: Layer end

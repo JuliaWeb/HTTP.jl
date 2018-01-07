@@ -4,8 +4,7 @@ import ..Layer, ..request
 using ..URIs
 using ..Messages
 using ..Pairs: setkv
-using ..Parsers.Header
-using ..Strings.tocameldash!
+using ..Header
 import ..@debug, ..DEBUG_LEVEL
 
 

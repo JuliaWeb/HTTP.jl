@@ -1,6 +1,27 @@
 # HTTP.jl Documentation
 
-`HTTP.jl` a Julia library for HTTP Messages.
+`HTTP.jl` is a Julia library for HTTP Messages.
+
+[`HTTP.request`](@ref) sends a HTTP Request Message and
+returns a Response Message.
+
+```julia
+r = HTTP.request("GET", "http://httpbin.org/ip")
+println(r.status)
+println(String(r.body))
+```
+
+[`HTTP.open`](@ref) sends a HTTP Request Message and
+opens an `IO` stream from which the Response can be read.
+
+```julia
+HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
+    open(`vlc -q --play-and-exit --intf dummy -`, "w") do vlc
+        write(vlc, http)
+    end
+end
+```
+
 
 ```@contents
 ```
@@ -10,34 +31,22 @@
 
 ```@docs
 HTTP.request(::String,::HTTP.URIs.URI,::Array{Pair{String,String},1},::Any)
+HTTP.open
 HTTP.get
 HTTP.put
 HTTP.post
 HTTP.head
 ```
 
+Request functions may throw the following exceptions:
 
-## Requests
-Note that the HTTP methods of POST, DELETE, PUT, etc. all follow the same format as `HTTP.get`, documented below.
-
-```
-@docs
-HTTP.get
-HTTP.Client
-HTTP.Connection
-```
-
-
-### HTTP request errors
-
-```
-@docs
-HTTP.ConnectError
-HTTP.SendError
-HTTP.ClosedError
-HTTP.ReadError
-HTTP.RedirectError
+```@docs
 HTTP.StatusError
+HTTP.ParsingError
+HTTP.IOError
+```
+```
+Base.DNSError
 ```
 
 
@@ -53,21 +62,27 @@ HTTP.register!
 ```
 
 
-## HTTP Types
+## URIs
 
 ```@docs
 HTTP.URI
-HTTP.Cookie
-```
-
-
-## HTTP Utilities
-
-```@docs
 HTTP.URIs.escapeuri
 HTTP.URIs.unescapeuri
 HTTP.URIs.splitpath
 Base.isvalid(::HTTP.URIs.URI)
+```
+
+
+## Cookies
+
+```@docs
+HTTP.Cookie
+```
+
+
+## Utilities
+
+```@docs
 HTTP.sniff
 HTTP.Strings.escapehtml
 ```
@@ -101,7 +116,7 @@ HTTP.StreamLayer
 *Source: `Parsers.jl`*
 
 ```@docs
-HTTP.Parsers
+HTTP.Parsers.Parser
 ```
 
 
@@ -110,6 +125,14 @@ HTTP.Parsers
 
 ```@docs
 HTTP.Messages
+```
+
+
+## Streams
+*Source: `Streams.jl`*
+
+```@docs
+HTTP.Streams.Stream
 ```
 
 
@@ -138,7 +161,8 @@ HTTP.ConnectionPool
 ## Parser Interface
 
 ```@docs
-HTTP.Parsers.Parser
+HTTP.Parsers.Message
+HTTP.Parsers.Parser()
 HTTP.Parsers.parseheaders
 HTTP.Parsers.parsebody
 HTTP.Parsers.reset!
@@ -177,6 +201,23 @@ HTTP.Messages.writeheaders
 Base.write(::IO,::HTTP.Messages.Message)
 ```
 
+## IOExtras Interface
+
+```@docs
+HTTP.IOExtras
+HTTP.IOExtras.unread!
+HTTP.IOExtras.startwrite(::IO)
+HTTP.IOExtras.isioerror
+```
+
+
+## Streams Interface
+
+```@docs
+HTTP.Streams.closebody
+HTTP.Streams.isaborted
+```
+
 
 ## Connections Interface
 
@@ -190,6 +231,7 @@ HTTP.Connect.getconnection(::Type{TCPSocket},::AbstractString,::AbstractString)
 
 ```@docs
 HTTP.ConnectionPool.Connection
+HTTP.ConnectionPool.Transaction
 HTTP.ConnectionPool.pool
 HTTP.Connect.getconnection(::Type{HTTP.ConnectionPool.Transaction{T}},::AbstractString,::AbstractString) where T <: IO
 HTTP.IOExtras.unread!(::HTTP.ConnectionPool.Transaction,::SubArray{UInt8,1,Array{UInt8,1},Tuple{UnitRange{Int64}},true})

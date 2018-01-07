@@ -3,7 +3,8 @@ module ExceptionRequest
 export StatusError
 
 import ..Layer, ..request
-using ..Messages
+import ..HTTP
+using ..Messages.iserror
 
 
 """
@@ -27,9 +28,17 @@ function request(::Type{ExceptionLayer{Next}}, a...; kw...) where Next
 end
 
 
+"""
+The `Response` has a `4xx`, `5xx` or unrecognised status code.
+
+Fields:
+ - `status::Int16`, the response status code.
+ - `response` the [`HTTP.Response`](@ref)
+"""
+
 struct StatusError <: Exception
     status::Int16
-    response::Messages.Response
+    response::HTTP.Response
 end
 
 

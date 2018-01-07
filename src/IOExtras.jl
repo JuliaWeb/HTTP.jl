@@ -1,12 +1,41 @@
+"""
+This module defines extensions to the `Base.IO` interface to support:
+ - an `unread!` function for pushing excess bytes back into a stream,
+ - `startwrite`, `closewrite`, `startread` and `closeread` for streams
+    with transactional semantics.
+"""
+
 module IOExtras
 
-export isioerror, unread!, startwrite, closewrite, startread, closeread,
+export IOError, isioerror,
+       unread!,
+       startwrite, closewrite, startread, closeread,
        tcpsocket, localport, peerport
+
+"""
+    isioerror(exception)
+
+Is `exception` caused by a possibly recoverable IO error.
+"""
 
 isioerror(e) = false
 isioerror(::Base.EOFError) = true
 isioerror(::Base.UVError) = true
 isioerror(e::ArgumentError) = e.msg == "stream is closed or unusable"
+
+
+"""
+The request terminated with due to an IO-related error.
+
+Fields:
+ - `e`, the error.
+"""
+
+struct IOError
+    e
+end
+
+Base.show(io::IO, e::IOError) = show(io, e.e)
 
 
 """

@@ -2,7 +2,7 @@ module RetryRequest
 
 import ..HTTP
 import ..Layer, ..request
-using ..IOExtras.isioerror
+using ..IOExtras
 using ..MessageRequest
 using ..Messages
 import ..@debug, ..DEBUG_LEVEL
@@ -18,7 +18,7 @@ increasing delay is introduced between attempts to avoid exacerbating network
 congestion.
 
 Methods of `isrecoverable(e)` define which exception types lead to a retry.
-e.g. `Base.UVError`, `Base.DNSError`, `Base.EOFError` and `HTTP.StatusError`
+e.g. `HTTP.IOError`, `Base.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 (if status is ``5xx`).
 """
 
@@ -46,7 +46,8 @@ function request(::Type{RetryLayer{Next}}, uri, req, body;
 end
 
 
-isrecoverable(e::Exception) = isioerror(e)
+isrecoverable(e) = false
+isrecoverable(e::IOError) = true
 isrecoverable(e::Base.DNSError) = true
 isrecoverable(e::HTTP.StatusError) = e.status == 403 || # Forbidden
                                      e.status == 408 || # Timeout

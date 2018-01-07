@@ -23,27 +23,6 @@
 #
 
 
-"""
-The parser separates a raw HTTP Message into its component parts.
-
-If the input data is invalid the Parser throws a [`HTTP.ParsingError`](@ref).
-
-The parser processes a single HTTP Message. If the input stream contains
-multiple Messages the Parser stops at the end of the first Message.
-The `parseheaders` and `parsebody` functions return a `SubArray` containing the
-unuses portion of the input.
-
-The Parser does not interpret the Message Headers except as needed
-to parse the Message Body. It is beyond the scope of the Parser to deal
-with repeated header fields, multi-line values, cookies or case normalization
-(see [`HTTP.Messages.appendheader`](@ref)).
-
-The Parser has no knowledge of the high-level `Request` and `Response` structs
-defined in `Messages.jl`. The Parser has it's own low level
-[`HTTP.Parsers.Message`](@ref) struct that represents both Request and Response
-Messages.
-"""
-
 module Parsers
 
 export Parser, Header, Headers, ByteView, nobytes,
@@ -73,6 +52,14 @@ const ByteView = typeof(nobytes)
 const Header = Pair{String,String}
 const Headers = Vector{Header}
 
+"""
+ - `method::Method`: internal parser `@enum` for HTTP method.
+ - `major` and `minor`: HTTP version
+ - `url::String`: request URL
+ - `status::Int`: response status
+ - `upgrade::Bool`: Connection should be upgraded to a different protocol.
+                    e.g. `CONNECT` or `Connection: upgrade`.
+"""
 
 mutable struct Message
     method::Method
@@ -85,6 +72,26 @@ end
 
 Message() =  Message(NOMETHOD, 0, 0, "", 0, false)
 
+
+"""
+The parser separates a raw HTTP Message into its component parts.
+
+If the input data is invalid the Parser throws a `ParsingError`.
+
+The parser processes a single HTTP Message. If the input stream contains
+multiple Messages the Parser stops at the end of the first Message.
+The `parseheaders` and `parsebody` functions return a `SubArray` containing the
+unuses portion of the input.
+
+The Parser does not interpret the Message Headers except as needed
+to parse the Message Body. It is beyond the scope of the Parser to deal
+with repeated header fields, multi-line values, cookies or case normalization.
+
+The Parser has no knowledge of the high-level `Request` and `Response` structs
+defined in `Messages.jl`. The Parser has it's own low level
+[`Message`](@ref) struct that represents both Request and Response
+Messages.
+"""
 
 mutable struct Parser
 
@@ -233,6 +240,16 @@ connectionclosed(p::Parser) = p.flags & F_CONNECTION_CLOSE > 0
 
 isrequest(p::Parser) = p.message.status == 0
 
+
+"""
+The [`Parser`] input was invalid.
+
+Fields:
+ - `code`, internal `@enum ParsingErrorCode`.
+ - `state`, internal parsing state.
+ - `status::Int32`, HTTP response status.
+ - `msg::String`, error message.
+"""
 
 struct ParsingError <: Exception
     code::ParsingErrorCode

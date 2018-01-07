@@ -18,6 +18,24 @@ mutable struct Stream{T <: Message} <: IO
     writechunked::Bool
 end
 
+
+"""
+    Stream(::IO, ::Request, ::Parser)
+
+Creates a `HTTP.Stream` that wraps an existing `IO` stream.
+
+ - `startwrite(::Stream)` sends the `Request` headers to the `IO` stream.
+ - `write(::Stream, body)` sends the `body` (or a chunk of the bocdy).
+ - `closewrite(::Stream)` sends the final `0` chunk (if needed) and calls
+   `closewrite` on the `IO` stream.
+
+ - `startread(::Stream)` parses the `Response` headers from the `IO` stream.
+ - `eof(::Stream)` and `readavailable(::Stream)` parse the body from the `IO`
+    stream.
+ - `closeread(::Stream)` reads the trailers and calls `closeread` on the `IO`
+    stream.
+"""
+
 function Stream(io::IO, request::Request, parser::Parser)
     @require iswritable(io)
     writechunked = header(request, "Transfer-Encoding") == "chunked"
@@ -48,6 +66,11 @@ function Base.unsafe_write(http::Stream, p::Ptr{UInt8}, n::UInt)
            write(http.stream, "\r\n")
 end
 
+"""
+    closebody(::Stream)
+
+Write the final `0` chunk if needed.
+"""
 
 function closebody(http::Stream)
     if http.writechunked
@@ -138,12 +161,18 @@ function Base.read(http::Stream)
 end
 
 
-function isaborted(http::Stream{Response})
+"""
+    isaborted(::Stream{Response}) 
 
-    # "If [the response] indicates the server does not wish to receive the
-    #  message body and is closing the connection, the client SHOULD
-    #  immediately cease transmitting the body and close the connection."
-    # https://tools.ietf.org/html/rfc7230#section-6.5
+Has the server signalled that it does not wish to receive the message body?
+
+"If [the response] indicates the server does not wish to receive the
+ message body and is closing the connection, the client SHOULD
+ immediately cease transmitting the body and close the connection."
+[RFC7230, 6.5](https://tools.ietf.org/html/rfc7230#section-6.5)
+"""
+
+function isaborted(http::Stream{Response})
 
     if iswritable(http.stream) &&
        iserror(http.message) &&

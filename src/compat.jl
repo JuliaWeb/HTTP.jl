@@ -33,3 +33,5 @@ end
 else
     lockedby(l) = get(l.locked_by)
 end
+
+Base.String(x::SubArray{UInt8,1}) = String(Vector{UInt8}(x))

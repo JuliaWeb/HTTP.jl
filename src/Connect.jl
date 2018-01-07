@@ -1,5 +1,5 @@
 """
-[`HTTP.Connect.getconnection`](@ref) creates a new `TCPSocket` or `SSLContext`
+[`getconnection`](@ref) creates a new `TCPSocket` or `SSLContext`
 for a specified `host` and `port`.
 
 No connection streaming, pooling or reuse is implemented in this module.
@@ -14,7 +14,7 @@ export getconnection, getparser, inactiveseconds, getrawstream
 
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
-import ..Parsers.Parser
+import ..Parser
 import ..@debug, ..DEBUG_LEVEL
 
 

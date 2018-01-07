@@ -4,15 +4,15 @@ This module wrapps the basic Connect module above and adds support for:
 - Pipelining Request/Response Messages. i.e. allowing a new Request to be
   sent before previous Responses have been read.
 
-This module defines a [`HTTP.ConnectionPool.Connection`](@ref)
+This module defines a [`Connection`](@ref)
 struct to manage pipelining and connection reuse and a
-[`HTTP.ConnectionPool.Transaction`](@ref)`<: IO` struct to manage a single
+[`Transaction`](@ref)`<: IO` struct to manage a single
 pipelined request. Methods are provided for `eof`, `readavailable`,
 `unsafe_write` and `close`.
 This allows the `Transaction` object to act as a proxy for the
 `TCPSocket` or `SSLContext` that it wraps.
 
-The [`HTTP.ConnectionPool.pool`](@ref) is a collection of open
+The [`pool`](@ref) is a collection of open
 `Connection`s.  The `request` function calls `getconnection` to
 retrieve a connection from the `pool`.  When the `request` function
 has written a Request Message it calls `closewrite` to signal that
@@ -32,7 +32,7 @@ using ..IOExtras
 import ..@debug, ..DEBUG_LEVEL, ..taskid, ..@require, ..precondition_error
 import MbedTLS.SSLContext
 import ..Connect: getconnection, getparser, getrawstream, inactiveseconds
-import ..Parsers.Parser
+import ..Parser
 
 
 const default_duplicate_limit = 7
@@ -56,6 +56,7 @@ end
 
 A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 
+Fields:
 - `host::String`
 - `port::String`, exactly as specified in the URI (i.e. may be empty).
 - `pipeline_linit`, number of requests to send before waiting for responses.
@@ -89,6 +90,15 @@ mutable struct Connection{T <: IO}
     timestamp::Float64
     parser::Parser
 end
+
+
+"""
+A single pipelined HTTP Request/Response transaction`.
+
+Fields:
+ - `c`, the shared [`Connection`](@ref) used for this `Transaction`.
+ - `sequence::Int`, identifies this `Transaction` among the others that share `c`. 
+"""
 
 struct Transaction{T <: IO} <: IO
     c::Connection{T}
@@ -291,8 +301,6 @@ end
 
 
 """
-    pool
-
 The `pool` is a collection of open `Connection`s.  The `request`
 function calls `getconnection` to retrieve a connection from the
 `pool`.  When the `request` function has written a Request Message

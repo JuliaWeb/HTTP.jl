@@ -16,12 +16,12 @@ import ..@debug, ..DEBUG_LEVEL
 """
     request(AWS4AuthLayer, ::URI, ::Request, body) -> HTTP.Response
 
-Add a AWS Signature Version 4 `Authorization` header to a `Request`.
+Add a [AWS Signature Version 4](http://docs.aws.amazon.com/general/latest/gr/signature-version-4.html)
+`Authorization` header to a `Request`.
+
 
 Credentials are read from environment variables `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`.
-
-See [http://docs.aws.amazon.com/general/latest/gr/signature-version-4.html](@ref)
 """
 
 abstract type AWS4AuthLayer{Next <: Layer} <: Layer end
@@ -29,6 +29,11 @@ export AWS4AuthLayer
 
 function request(::Type{AWS4AuthLayer{Next}},
                  uri::URI, req, body; kw...) where Next
+
+    if !haskey(kw, :aws_access_key_id) &&
+       !haskey(ENV, "AWS_ACCESS_KEY_ID")
+        kw = merge(dot_aws_credentials(), kw)
+    end
 
     sign_aws4!(req.method, uri, req.headers, req.body; kw...)
 
@@ -117,6 +122,37 @@ function sign_aws4!(method::String,
         "SignedHeaders=$signed_headers, ",
         "Signature=$signature"
     ))
+end
+
+
+using IniFile
+
+credentials = NamedTuple()
+
+"""
+Load Credentials from [AWS CLI ~/.aws/credentials file]
+(http://docs.aws.amazon.com/cli/latest/userguide/cli-config-files.html).
+"""
+
+function dot_aws_credentials()::NamedTuple
+
+    global credentials
+    if !isempty(credentials)
+        return credentials
+    end
+
+    f = get(ENV, "AWS_CONFIG_FILE", joinpath(homedir(), ".aws", "credentials"))
+    p = get(ENV, "AWS_DEFAULT_PROFILE", get(ENV, "AWS_PROFILE", "default"))
+
+    if !isfile(f)
+        return NamedTuple()
+    end
+
+    ini = read(Inifile(), f)
+
+    credentials = (
+        aws_access_key_id = String(get(ini, p, "aws_access_key_id")),
+        aws_secret_access_key = String(get(ini, p, "aws_secret_access_key")))
 end
 
 

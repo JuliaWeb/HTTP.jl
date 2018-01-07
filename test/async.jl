@@ -299,8 +299,6 @@ println("running async $count, 1:$num, $config, $http C")
 
 end # testset
 
-sleep(12)
-
 stop_pool_dump=true
 
 HTTP.ConnectionPool.showpool(STDOUT)

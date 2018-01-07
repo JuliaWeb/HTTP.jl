@@ -167,8 +167,8 @@ for sch in ("http", "https")
 
     @test status(HTTP.post("$sch://httpbin.org/post"; body="√")) == 200
     println("client basic auth")
-    @test status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd"; basicauthorization=true)) == 200
-    @test status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd"; basicauthorization=true)) == 200
+    @test status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd"; basic_authorization=true)) == 200
+    @test status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd"; basic_authorization=true)) == 200
 
     # custom client & other high-level entries
     println("high-level client request methods")
