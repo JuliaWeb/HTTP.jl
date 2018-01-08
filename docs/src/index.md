@@ -138,17 +138,6 @@ HTTP.Streams.Stream
 
 ## Connections
 
-### Basic Connections
-
-*Source: `Connect.jl`*
-
-```@docs
-HTTP.Connect
-```
-
-
-### Pooled Connections
-
 *Source: `ConnectionPool.jl`*
 
 ```@docs
@@ -219,21 +208,13 @@ HTTP.Streams.isaborted
 ```
 
 
-## Connections Interface
-
-### Low Level Connect Interface
-
-```@docs
-HTTP.Connect.getconnection(::Type{TCPSocket},::AbstractString,::AbstractString)
-```
-
-### Connection Pooling Interface
+## Connection Pooling Interface
 
 ```@docs
 HTTP.ConnectionPool.Connection
 HTTP.ConnectionPool.Transaction
 HTTP.ConnectionPool.pool
-HTTP.Connect.getconnection(::Type{HTTP.ConnectionPool.Transaction{T}},::AbstractString,::AbstractString) where T <: IO
+HTTP.ConnectionPool.getconnection
 HTTP.IOExtras.unread!(::HTTP.ConnectionPool.Transaction,::SubArray{UInt8,1,Array{UInt8,1},Tuple{UnitRange{Int64}},true})
 HTTP.IOExtras.startwrite(::HTTP.ConnectionPool.Transaction)
 HTTP.IOExtras.closewrite(::HTTP.ConnectionPool.Transaction)
