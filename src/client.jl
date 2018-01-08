@@ -59,7 +59,7 @@ function request(client::Client, method, uri::URI;
         :chunksize)
     end
 
-    if getarg(args, :connecttimeout, Inf) != Inf ||
+    if getarg(args, :connecttimeout, Inf) != Inf
         Base.depwarn(
         "The connecttimeout= is deprecated and has no effect.\n" *
         "See https://github.com/JuliaWeb/HTTP.jl/issues/114\n",

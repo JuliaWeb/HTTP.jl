@@ -415,7 +415,9 @@ abstract type Layer end
                                                                      if !minimal
 include("RedirectRequest.jl");          using .RedirectRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
+                                                  if VERSION > v"0.7.0-DEV.2338"
 include("AWS4AuthRequest.jl");          using .AWS4AuthRequest
+                                                                             end
 include("CookieRequest.jl");            using .CookieRequest
 include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
 include("TimeoutRequest.jl");           using .TimeoutRequest
@@ -569,7 +571,9 @@ end
 
 
                                                                      if !minimal
+                                                  if VERSION > v"0.7.0-DEV.2338"
 include("WebSockets.jl")               ;using .WebSockets
+                                                                             end
 include("client.jl")
 include("sniff.jl")
 include("handlers.jl");                  using .Handlers

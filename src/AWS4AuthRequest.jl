@@ -1,9 +1,6 @@
 module AWS4AuthRequest
 
-if VERSION > v"0.7.0-DEV.2338"
 using Base64
-end
-
 using Dates
 using Unicode
 using MbedTLS: digest, MD_SHA256, MD_MD5
