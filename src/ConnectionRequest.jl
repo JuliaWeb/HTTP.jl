@@ -25,20 +25,13 @@ abstract type ConnectionPoolLayer{Next <: Layer} <: Layer end
 export ConnectionPoolLayer
 
 function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
-                 connectionpool::Bool=true, socket_type::Type=TCPSocket,
-                 kw...) where Next
+                 socket_type::Type=TCPSocket, kw...) where Next
 
-    SocketType = sockettype(uri, socket_type)
-    if connectionpool
-        SocketType = ConnectionPool.Transaction{SocketType}
-    end
-    io = getconnection(SocketType, uri.host, uri.port; kw...)
+    IOType = ConnectionPool.Transaction{sockettype(uri, socket_type)}
+    io = getconnection(IOType, uri.host, uri.port; kw...)
 
     try
         r = request(Next, io, req, body; kw...)
-        if !connectionpool
-            close(io)
-        end
         return r
     catch e
         @debug 1 "❗️  ConnectionLayer $e. Closing: $io"

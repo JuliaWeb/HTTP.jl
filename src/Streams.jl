@@ -2,6 +2,7 @@ module Streams
 
 export Stream, closebody, isaborted
 
+import ..HTTP
 using ..IOExtras
 using ..Parsers
 using ..Messages
@@ -27,13 +28,23 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
  - `startwrite(::Stream)` sends the `Request` headers to the `IO` stream.
  - `write(::Stream, body)` sends the `body` (or a chunk of the bocdy).
  - `closewrite(::Stream)` sends the final `0` chunk (if needed) and calls
-   `closewrite` on the `IO` stream.
+   `closewrite` on the `IO` stream. When the `IO` stream is a
+   [`HTTP.ConnectionPool.Transaction`](@ref), calling `closewrite` releases
+   the [`HTTP.ConnectionPool.Connection`](@ref) back into the pool for use by the
+   next pipelined request.
 
- - `startread(::Stream)` parses the `Response` headers from the `IO` stream.
+ - `startread(::Stream)` calls `startread` on the `IO` stream then
+    reads and parses the `Response` headers.  When the `IO` stream is a
+   [`HTTP.ConnectionPool.Transaction`](@ref), calling `startread` waits for other
+   pipelined responses to be read from the [`HTTP.ConnectionPool.Connection`](@ref).
  - `eof(::Stream)` and `readavailable(::Stream)` parse the body from the `IO`
     stream.
  - `closeread(::Stream)` reads the trailers and calls `closeread` on the `IO`
-    stream.
+    stream.  When the `IO` stream is a [`HTTP.ConnectionPool.Transaction`](@ref),
+    calling `closeread` releases the readlock and allows the next pipelined
+    response to be read by another `Stream` that is waiting in `startread`.
+    If the `Parser` has not recieved a complete response, `closeread` throws
+    an `EOFError`.
 """
 
 function Stream(io::IO, request::Request, parser::Parser)
@@ -94,7 +105,6 @@ end
 IOExtras.isreadable(http::Stream) = isreadable(http.stream)
 
 function IOExtras.startread(http::Stream)
-    @require !isreadable(http.stream)
     startread(http.stream)
     configure_parser(http)
     h = readheaders(http.stream, http.parser, http.message)
@@ -188,7 +198,7 @@ end
 
 function IOExtras.closeread(http::Stream{Response})
 
-    # Discard unread body bytes...
+    # Discard body bytes that were not read...
     while !eof(http)
         readavailable(http)
     end

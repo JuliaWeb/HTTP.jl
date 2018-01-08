@@ -45,6 +45,8 @@ struct URI
     userinfo::SubString
 end
 
+URI(uri::URI) = uri
+
 function URI(;host::AbstractString="", path::AbstractString="",
             scheme::AbstractString="", userinfo::AbstractString="",
             port::Union{Integer,AbstractString}="", query="",
@@ -95,7 +97,7 @@ Base.parse(::Type{URI}, str::AbstractString; isconnect::Bool=false) =
                     a.fragment  == b.fragment  &&
                     a.userinfo  == b.userinfo
 
-function resource(uri::URI)
+@inline function resource(uri::URI)
     string(uri.path,
            isempty(uri.query) ? "" : "?$(uri.query)",
            isempty(uri.fragment) ? "" : "#$(uri.fragment)")

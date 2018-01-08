@@ -15,14 +15,14 @@ abstract type TimeoutLayer{Next <: Layer} <: Layer end
 export TimeoutLayer
 
 function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
-                 timeout::Int=60, kw...) where Next
+                 readtimeout::Int=60, kw...) where Next
 
     wait_for_timeout = Ref{Bool}(true)
 
     @async while wait_for_timeout[]
-        if isreadable(io) && inactiveseconds(io) > timeout
+        if isreadable(io) && inactiveseconds(io) > readtimeout
             close(io)
-            @debug 1 "💥  Read inactive > $(timeout)s: $io"
+            @debug 1 "💥  Read inactive > $(readtimeout)s: $io"
             break
         end
         sleep(8 + rand() * 4)

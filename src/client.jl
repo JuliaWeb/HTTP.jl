@@ -55,19 +55,13 @@ function request(client::Client, method, uri::URI;
     if getarg(args, :chunksize, nothing) != nothing
         Base.depwarn(
         "The chunksize= option is deprecated and has no effect.\n" *
-        "Use a BufferStream and pass chunks of the desired size to `write`:\n" *
-        "   io=BufferStream()\n" *
-        "   request(\"PUT\", \"http://foo.bar/file\", body=io)\n" *
-        "   write(io, \"chunk1\")\n" *
-        "   write(io, \"chunk2\")\n",
+        "Use a HTTP.open and pass chunks of the desired size to `write`.",
         :chunksize)
     end
 
     if getarg(args, :connecttimeout, Inf) != Inf ||
-       getarg(args, :readtimeout, Inf) != Inf
         Base.depwarn(
-        "The connecttimeout= and readtimeout= options are deprecated " *
-        "and have no effect.\n" *
+        "The connecttimeout= is deprecated and has no effect.\n" *
         "See https://github.com/JuliaWeb/HTTP.jl/issues/114\n",
         :connecttimeout)
     end
@@ -96,9 +90,9 @@ function request(client::Client, method, uri::URI;
 
     if getarg(args, :statusraise, nothing) != nothing
         Base.depwarn(
-        "The statusraise= options is deprecated. Use statusexception=::Bool",
+        "The statusraise= options is deprecated. Use status_exception=::Bool",
         :statusraise)
-        setkv(newargs, :statusexception, getarg(args, :statusraise))
+        setkv(newargs, :status_exception, getarg(args, :statusraise))
     end
 
     if getarg(args, :insecure, nothing) != nothing

@@ -141,17 +141,17 @@ end
 
 HTTP.IOExtras.tcpsocket(::Loopback) = TCPSocket()
 
-function HTTP.Connect.getconnection(::Type{Loopback},
-                                    host::AbstractString,
-                                    port::AbstractString;
-                                    kw...)::Loopback
+function HTTP.ConnectionPool.getconnection(::Type{Loopback},
+                                           host::AbstractString,
+                                           port::AbstractString;
+                                           kw...)::Loopback
     return Loopback()
 end
 
 config = [
     :socket_type => Loopback,
     :retry => false,
-    :duplicate_limit => 0
+    :connection_limit => 1
 ]
 
 lbreq(req, headers, body; method="GET", kw...) =

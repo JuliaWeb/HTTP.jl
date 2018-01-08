@@ -1,5 +1,9 @@
 function _precompile_()
     ccall(:jl_generating_output, Cint, ()) == 1 || return nothing
+
+    println("Precompiling...")
+#    @assert precompile(HTTP.request, (String, String,))
+#    @assert precompile(HTTP.request, (String, URI, Headers, Vector{UInt8},))
 #=
     @assert precompile(HTTP.URIs.parseurlchar, (UInt8, Char, Bool,))
     @assert precompile(HTTP.status, (HTTP.Response,))

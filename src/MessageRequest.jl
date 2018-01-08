@@ -6,7 +6,10 @@ import ..Layer, ..request
 using ..URIs
 using ..Messages
 using ..Headers
+using ..minimal
+if !minimal
 using ..Form
+end
 
 
 """
@@ -49,7 +52,9 @@ const unknownlength = -1
 bodylength(body) = unknownlength
 bodylength(body::AbstractVector{UInt8}) = length(body)
 bodylength(body::AbstractString) = sizeof(body)
+if !minimal
 bodylength(body::Form) = length(body)
+end
 bodylength(body::Vector{T}) where T <: AbstractString = sum(sizeof, body)
 bodylength(body::Vector{T}) where T <: AbstractArray{UInt8,1} = sum(length, body)
 bodylength(body::IOBuffer) = nb_available(body)

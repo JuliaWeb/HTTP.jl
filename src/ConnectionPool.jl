@@ -1,5 +1,6 @@
 """
-This module wrapps the basic Connect module above and adds support for:
+This module provides the [`getconnection`](@ref) function with support for:
+- Opening TCP and SSL connections.
 - Reusing connections for multiple Request/Response Messages,
 - Pipelining Request/Response Messages. i.e. allowing a new Request to be
   sent before previous Responses have been read.
@@ -20,9 +21,8 @@ the `Connection` can be reused for writing (to send the next Request).
 When the `request` function has read the Response Message it calls
 `closeread` to signal that the `Connection` can be reused for
 reading.
-```
-
 """
+
 module ConnectionPool
 
 export getconnection, getparser, getrawstream, inactiveseconds
@@ -30,12 +30,12 @@ export getconnection, getparser, getrawstream, inactiveseconds
 using ..IOExtras
 
 import ..@debug, ..DEBUG_LEVEL, ..taskid, ..@require, ..precondition_error
-import MbedTLS.SSLContext
-import ..Connect: getconnection, getparser, getrawstream, inactiveseconds
+using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
+
 import ..Parser
 
 
-const default_duplicate_limit = 7
+const default_connection_limit = 8
 const default_pipeline_limit = 16
 const nolimit = typemax(Int)
 
@@ -419,7 +419,7 @@ or create a new `Connection` if required.
 function getconnection(::Type{Transaction{T}},
                        host::AbstractString,
                        port::AbstractString;
-                       duplicate_limit::Int=default_duplicate_limit,
+                       connection_limit::Int=default_connection_limit,
                        pipeline_limit::Int=default_pipeline_limit,
                        reuse_limit::Int=nolimit,
                        kw...)::Transaction{T} where T <: IO
@@ -448,10 +448,10 @@ function getconnection(::Type{Transaction{T}},
                 return Transaction{T}(c)
             end
 
-            # If there are not too many duplicates for this host,
+            # If there are not too many connections to this host:port,
             # create a new connection...
             busy = findall(T, host, port, pipeline_limit)
-            if length(busy) < duplicate_limit + 1
+            if length(busy) < connection_limit
                 io = getconnection(T, host, port; kw...)
                 c = Connection{T}(host, port, pipeline_limit, io)
                 push!(pool, c)                    ;@debug 1 "🔗  New:        $c"
@@ -471,6 +471,35 @@ function getconnection(::Type{Transaction{T}},
         # Wait for `closewrite` or `close` to signal that a connection is ready.
         wait(poolcondition)
     end
+end
+
+
+function getconnection(::Type{TCPSocket},
+                       host::AbstractString,
+                       port::AbstractString;
+                       kw...)::TCPSocket
+
+    p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
+    @debug 2 "TCP connect: $host:$p..."
+    connect(getaddrinfo(host), p)
+end
+
+
+function getconnection(::Type{SSLContext},
+                       host::AbstractString,
+                       port::AbstractString;
+                       require_ssl_verification::Bool=false,
+                       sslconfig::SSLConfig=SSLConfig(require_ssl_verification),
+                       kw...)::SSLContext
+
+    port = isempty(port) ? "443" : port
+    @debug 2 "SSL connect: $host:$port..."
+    io = SSLContext()
+    setup!(io, sslconfig)
+    associate!(io, getconnection(TCPSocket, host, port))
+    hostname!(io, host)
+    handshake!(io)
+    return io
 end
 
 

@@ -5,7 +5,7 @@ using MbedTLS
 import MbedTLS.SSLContext
 
 
-const DEBUG_LEVEL = 1
+const DEBUG_LEVEL = 0
 const minimal = false
 
 include("compat.jl")
@@ -24,12 +24,10 @@ include("multipart.jl")
                                                                              end
 include("parser.jl")                   ;import .Parsers: Parser, Headers, Header,
                                                          ParsingError, ByteView
-include("Connect.jl")
 include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
                                         import .Messages: header, hasheader
 include("Streams.jl")                  ;using .Streams
-include("WebSockets.jl")               ;using .WebSockets
 
 
 """
@@ -76,7 +74,7 @@ HTTP.request("GET", "http://httpbin.org/ip"; retries=4, cookies=true)
 
 HTTP.get("http://s3.us-east-1.amazonaws.com/"; aws_authorization=true)
 
-conf = (timeout = 10,
+conf = (readtimeout = 10,
         pipeline_limit = 4,
         retry = false,
         redirect = false)
@@ -95,17 +93,17 @@ Streaming options
 
 Connection Pool options
 
- - `connectionpool = true`, enable the `ConnectionPool`.
- - `duplicate_limit = 7`, number of duplicate connections to each host:port.
- - `pipeline_limit = 16`, number of simultaneous requests per connection.
- - `reuse_limit = nolimit`, each connection is closed after this many requests.
+ - `connection_limit = 8`, number of concurrent connections to each host:port.
+ - `pipeline_limit = 16`, number of concurrent requests per connection.
+ - `reuse_limit = nolimit`, number of times a connection is reused after the
+                            first request.
  - `socket_type = TCPSocket`
 
 
 Timeout options
 
- - `timeout = 60`, close the connection if no data is recieved for this many
-   seconds. Use `timeout = 0` to disable.
+ - `readtimeout = 60`, close the connection if no data is recieved for this many
+   seconds. Use `readtimeout = 0` to disable.
 
 
 Retry options
@@ -287,7 +285,9 @@ end
 request(method::String, uri::URI, headers::Headers, body; kw...)::Response =
     request(HTTP.stack(;kw...), method, uri, headers, body; kw...)
 
-request(method, uri, headers=[], body=UInt8[]; kw...)::Response =
+const nobody = UInt8[]
+
+request(method, uri, headers=Header[], body=nobody; kw...)::Response =
     request(string(method), URI(uri), mkheaders(headers), body; kw...)
 
 
@@ -314,7 +314,7 @@ end
 ```
 """
 
-open(f::Function, method::String, uri, headers=[]; kw...)::Response =
+open(f::Function, method::String, uri, headers=Header[]; kw...)::Response =
     request(method, uri, headers, nothing; iofunction=f, kw...)
 
 
@@ -325,8 +325,8 @@ open(f::Function, method::String, uri, headers=[]; kw...)::Response =
 Shorthand for `HTTP.request("GET", ...)`. See [`HTTP.request`](@ref).
 """
 
-
 get(a...; kw...) = request("GET", a..., kw...)
+
 
 """
     HTTP.put(url, headers, body; <keyword arguments>) -> HTTP.Response
@@ -334,8 +334,8 @@ get(a...; kw...) = request("GET", a..., kw...)
 Shorthand for `HTTP.request("PUT", ...)`. See [`HTTP.request`](@ref).
 """
 
-
 put(a...; kw...) = request("PUT", a..., kw...)
+
 
 """
     HTTP.post(url, headers, body; <keyword arguments>) -> HTTP.Response
@@ -343,8 +343,8 @@ put(a...; kw...) = request("PUT", a..., kw...)
 Shorthand for `HTTP.request("POST", ...)`. See [`HTTP.request`](@ref).
 """
 
-
 post(a...; kw...) = request("POST", a..., kw...)
+
 
 """
     HTTP.head(url; <keyword arguments>) -> HTTP.Response
@@ -442,52 +442,14 @@ The minimal request execution stack is:
 stack = MessageLayer{ConnectionPoolLayer{StreamLayer}}
 ```
 
-The figure below illustrates a minimal Layer-stack with the
-`connectionpool=false` option that causes the `ConnectionPoolLayer` to call
-HTTP.Connect.getconnection() directly rather reusing pooled connections.
-
-```
- ┌────────────────────────────────────────────────────────────────────────────┐
- │                                            ┌───────────────────┐           │
- │     request(method, uri, headers, body) -> │ HTTP.Response     │           │
- │             ──────────────────────────     └─────────▲─────────┘           │
- │                           ║                          ║                     │
- │   ┌────────────────────────────────────────────────────────────┐           │
- │   │ request(MessageLayer,      method, ::URI, ::Headers, body) │           │
- │   ├────────────────────────────────────────────────────────────┤           │
-┌┼───┤ request(ConnectionPoolLayer,       ::URI, ::Request, body) │           │
-││   ├────────────────────────────────────────────────────────────┤           │
-││   │ request(StreamLayer,               ::IO,  ::Request, body) │           │
-││   └──────────────┬───────────────────┬─────────────────────────┘           │
-│└──────────────────┼────────║──────────┼───────────────║─────────────────────┘
-│                   │        ║          │               ║                      
-│┌──────────────────▼───────────────┐   │  ┌──────────────────────────────────┐
-││ HTTP.Request                     │   │  │ HTTP.Response                    │
-│└──────────────────▲───────────────┘   │  └───────────────▲──────────────────┘
-│┌──────────────────┴────────║──────────▼───────────────║──┴──────────────────┐
-││ HTTP.Stream <:IO          ║           ╔══════╗       ║                     │
-│└───────────────────────────║───────────║──────║───────║──┬──────────────────┘
-│┌──────────────────────────────────┐    ║ ┌────▼───────║──▼──────────────────┐
-││ HTTP.Messages                    │    ║ │ HTTP.Parser                      │
-│└──────────────────────────────────┘    ║ └──────────────────────────────────┘
-│┌───────────────────────────║───────────║────────────────────────────────────┐
-└▶ HTTP.Connect              ║           ║                                    │
- └───────────────────────────║───────────║────────────────────────────────────┘
-                             ║           ║                                     
- ┌───────────────────────────║───────────║──────────────┐  ┏━━━━━━━━━━━━━━━━━━┓
- │ HTTP Server               ▼           ║              │  ┃ data flow: ════▶ ┃
- │                        Request     Response          │  ┃ reference: ────▶ ┃
- └──────────────────────────────────────────────────────┘  ┗━━━━━━━━━━━━━━━━━━┛
-```
-
-The next figure illustrates the full Layer-stack and its relationship with
-[`HTTP.Response`](@ref), [`HTTP.Parser`](@ref),
+The figure below illustrates the full request exection stack and its
+relationship with [`HTTP.Response`](@ref), [`HTTP.Parser`](@ref),
 [`HTTP.Stream`](@ref) and the [`HTTP.ConnectionPool`](@ref).
 
 ```
  ┌────────────────────────────────────────────────────────────────────────────┐
  │                                            ┌───────────────────┐           │
- │  HTTP.jl Request Stack                     │ HTTP.ParsingError ├ ─ ─ ─ ─ ┐ │
+ │  HTTP.jl Request Execution Stack           │ HTTP.ParsingError ├ ─ ─ ─ ─ ┐ │
  │                                            └───────────────────┘           │
  │                                            ┌───────────────────┐         │ │
  │                                            │ HTTP.IOError      ├ ─ ─ ─     │
@@ -552,17 +514,15 @@ The next figure illustrates the full Layer-stack and its relationship with
 └▶ HTTP.ConnectionPool       ║        │  ║                                    │
  │                     ┌──────────────▼────────┐ ┌───────────────────────┐    │
  │ getconnection() ->  │ HTTP.Transaction <:IO │ │ HTTP.Transaction <:IO │    │
- │       │             └───────────────────────┘ └───────────────────────┘    │
- │       │                   ║    ╲│╱    ║                  ╲│╱               │
- │       │                   ║     │     ║                   │                │
- │       │             ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
- │       │      pool: [│ HTTP.Connection       │,│ HTTP.Connection       │...]│
- │       │             └───────────┬───────────┘ └───────────┬───────────┘    │
- └───────┼───────────────────║─────┼─────║───────────────────┼────────────────┘
- ┌───────▼───────────────────║─────┼─────║───────────────────┼────────────────┐
- │ HTTP.Connect              ║     │     ║                   │                │
+ │                     └───────────────────────┘ └───────────────────────┘    │
+ │                           ║    ╲│╱    ║                  ╲│╱               │
+ │                           ║     │     ║                   │                │
  │                     ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
- │ getconnection() ->  │ Base.TCPSocket <:IO   │ │MbedTLS.SSLContext <:IO│    │
+ │              pool: [│ HTTP.Connection       │,│ HTTP.Connection       │...]│
+ │                     └───────────┬───────────┘ └───────────┬───────────┘    │
+ │                           ║     │     ║                   │                │
+ │                     ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
+ │                     │ Base.TCPSocket <:IO   │ │MbedTLS.SSLContext <:IO│    │
  │                     └───────────────────────┘ └───────────┬───────────┘    │
  │                           ║           ║                   │                │
  │                           ║           ║       ┌───────────▼───────────┐    │
@@ -585,7 +545,7 @@ function stack(;redirect=true,
                 canonicalize_headers=false,
                 retry=true,
                 status_exception=true,
-                timeout=0,
+                readtimeout=0,
                 kw...)
                                                                       if minimal
     MessageLayer{ExceptionLayer{ConnectionPoolLayer{StreamLayer}}}
@@ -601,7 +561,7 @@ function stack(;redirect=true,
     (retry                ? RetryLayer          : NoLayer){
     (status_exception     ? ExceptionLayer      : NoLayer){
                             ConnectionPoolLayer{
-    (timeout > 0          ? TimeoutLayer        : NoLayer){
+    (readtimeout > 0      ? TimeoutLayer        : NoLayer){
                             StreamLayer
     }}}}}}}}}}
                                                                              end
@@ -609,12 +569,12 @@ end
 
 
                                                                      if !minimal
+include("WebSockets.jl")               ;using .WebSockets
 include("client.jl")
 include("sniff.jl")
 include("handlers.jl");                  using .Handlers
 include("server.jl");                    using .Nitrogen
-include("precompile.jl")
                                                                              end
-
+include("precompile.jl")
 
 end # module

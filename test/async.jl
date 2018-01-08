@@ -67,7 +67,7 @@ ch = 100
 conf = [:reuse_limit => 90,
         :verbose => 0,
         :pipeline_limit => pipe,
-        :duplicate_limit => dup,
+        :connection_limit => dup + 1,
         :timeout => 120]
 
 @sync for i = 1:count
