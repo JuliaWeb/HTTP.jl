@@ -57,7 +57,6 @@ for sch in ("http", "https")
     begin
         io = BufferStream()
         r = HTTP.get("$sch://httpbin.org/stream/100"; response_stream=io)
-        close(io)
         @test status(r) == 200
 
         b = [JSON.parse(l) for l in eachline(io)]

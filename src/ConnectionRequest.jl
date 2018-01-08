@@ -31,8 +31,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
     io = getconnection(IOType, uri.host, uri.port; kw...)
 
     try
-        r = request(Next, io, req, body; kw...)
-        return r
+        return request(Next, io, req, body; kw...)
     catch e
         @debug 1 "❗️  ConnectionLayer $e. Closing: $io"
         close(io)

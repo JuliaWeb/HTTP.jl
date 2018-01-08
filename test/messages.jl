@@ -131,7 +131,6 @@ using JSON
 
             io = BufferStream()
             r = request(m, uri, response_stream=io)
-            close(io)
             @test r.status == 200
             @test read(io) == body
         end
@@ -143,7 +142,6 @@ using JSON
             uri = "$sch://httpbin.org/$(lowercase(m))"
             io = BufferStream()
             r = request(m, uri, response_stream=io)
-            close(io)
             @test r.status == 200
         end
 
@@ -161,7 +159,6 @@ using JSON
             io = open("result_file", "w")
             r = request("GET", "http://httpbin.org/stream/$n",
                         response_stream=io)
-            close(io)
             @show filesize("result_file")
             i = 0
             for l in readlines("result_file")

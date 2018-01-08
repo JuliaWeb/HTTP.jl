@@ -118,6 +118,7 @@ function readbody(http::Stream, res::Response, response_stream)
     else
         res.body = body_was_streamed
         write(response_stream, http)
+        close(response_stream)
     end
 end
 

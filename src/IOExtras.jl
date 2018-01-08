@@ -31,11 +31,11 @@ Fields:
  - `e`, the error.
 """
 
-struct IOError
+struct IOError <: Exception
     e
 end
 
-Base.show(io::IO, e::IOError) = show(io, e.e)
+Base.show(io::IO, e::IOError) = print(io, "IOError(", e.e, ")")
 
 
 """

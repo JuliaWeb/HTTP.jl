@@ -425,7 +425,9 @@ include("TimeoutRequest.jl");           using .TimeoutRequest
 include("MessageRequest.jl");           using .MessageRequest
 include("ExceptionRequest.jl");         using .ExceptionRequest
                                         import .ExceptionRequest.StatusError
+                                                                     if !minimal
 include("RetryRequest.jl");             using .RetryRequest
+                                                                             end
 include("ConnectionRequest.jl");        using .ConnectionRequest
 include("StreamRequest.jl");            using .StreamRequest
 

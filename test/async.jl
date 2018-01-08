@@ -1,3 +1,4 @@
+using Test
 using HTTP
 using JSON
 using MbedTLS: digest, MD_MD5, MD_SHA256
@@ -19,7 +20,7 @@ end
 s3region = "ap-southeast-2"
 s3url = "https://s3.$s3region.amazonaws.com"
 s3(method, path, body=UInt8[]; kw...) =
-    request(method, "$s3url/$path", [], body; awsauthorization=true, kw...)
+    request(method, "$s3url/$path", [], body; aws_authorization=true, kw...)
 s3get(path; kw...) = s3("GET", path; kw...)
 s3put(path, data; kw...) = s3("PUT", path, data; kw...)
 
@@ -45,7 +46,8 @@ function dump_async_exception(e, st)
     print(String(take!(buf)))
 end
 
-if haskey(ENV, "AWS_ACCESS_KEY_ID")
+if haskey(ENV, "AWS_ACCESS_KEY_ID") ||
+   haskey(ENV, "AWS_DEFAULT_PROFILE")
 @testset "async s3 dup$dup, count$count, sz$sz, pipw$pipe, $http, $mode" for
     count in [10, 100, 1000],
     dup in [0, 7],
@@ -68,7 +70,7 @@ conf = [:reuse_limit => 90,
         :verbose => 0,
         :pipeline_limit => pipe,
         :connection_limit => dup + 1,
-        :timeout => 120]
+        :readtimeout => 120]
 
 @sync for i = 1:count
     data = rand(UInt8(65):UInt8(75), sz)
@@ -81,7 +83,7 @@ conf = [:reuse_limit => 90,
             r = HTTP.open("PUT", url, ["Content-Length" => sz];
                     body_sha256=digest(MD_SHA256, data),
                     body_md5=digest(MD_MD5, data),
-                    awsauthorization=true,
+                    aws_authorization=true,
                     conf...) do http
                 for n = 1:ch:sz
                     write(http, data[n:n+(ch-1)])
@@ -91,7 +93,7 @@ conf = [:reuse_limit => 90,
         end
         if mode == :request
             r = HTTP.request("PUT", url, [], data;
-                    awsauthorization=true, conf...)
+                    aws_authorization=true, conf...)
         end
         #println("S3 put file$i")
         @assert strip(HTTP.header(r, "ETag"), '"') == md5
@@ -107,25 +109,26 @@ get_data_sums = Dict()
     for i = 1:count
         @async try
             url = "$s3url/http.jl.test/file$i"
-            buf = IOBuffer()
+            buf = BufferStream()
             r = nothing
             if mode == :open
                 r = HTTP.open("GET", url, ["Content-Length" => 0];
-                              awsauthorization=true,
+                              aws_authorization=true,
                               conf...) do http
-                    truncate(buf, 0) # in case of retry!
+                    buf = BufferStream() # in case of retry!
                     while !eof(http)
                         write(buf, readavailable(http))
                         sleep(rand(1:10)/1000)
                     end
+                    close(buf)
                 end
             end
             if mode == :request
                 r = HTTP.request("GET", url; response_stream=buf,
-                                             awsauthorization=true, conf...)
+                                             aws_authorization=true, conf...)
             end
             #println("S3 get file$i")
-            bytes = take!(buf)
+            bytes = read(buf)
             md5 = bytes2hex(digest(MD_MD5, bytes))
             get_data_sums[i] = (md5, strip(HTTP.header(r, "ETag"), '"'))
         catch e
@@ -247,7 +250,6 @@ println("running async $count, 1:$num, $config, $http C")
                                 r = HTTP.request(
                                     "GET", url; response_stream=s, config...)
                                 @assert r.status == 200
-                                close(s)
                                 str = String(read(s))
                                 break
                             catch e
