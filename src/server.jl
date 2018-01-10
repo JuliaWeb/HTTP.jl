@@ -1,5 +1,12 @@
 module Nitrogen
 
+using ..IOExtras
+using ..Streams
+using ..Messages
+using ..Parsers
+using ..ConnectionPool
+import ..@debug, ..@debugshow, ..DEBUG_LEVEL
+
 if !isdefined(Base, :Nothing)
     const Nothing = Void
     const Cvoid = Void
@@ -70,7 +77,7 @@ ServerOptions(; tlsconfig::HTTP.MbedTLS.SSLConfig=HTTP.MbedTLS.SSLConfig(true),
 
 An http/https server. Supports listening on a `host` and `port` via the `HTTP.serve(server, host, port)` function.
 `handler` is a function of the form `f(::Request, ::Response) -> HTTP.Response`, i.e. it takes both a `Request` and pre-built `Response`
-objects as inputs and returns the, potentially modified, `Response`. `logger` indicates where logging output should be directed.
+objects as inputs and returns the, potentially modified, `Respose`. `logger` indicates where logging output should be directed.
 When `HTTP.serve` is called, it aims to "never die", catching and recovering from all internal errors. To forcefully stop, one can obviously
 kill the julia process, interrupt (ctrl/cmd+c) if main task, or send the kill signal over a server in channel like:
 `put!(server.in, HTTP.KILL)`.
@@ -91,154 +98,129 @@ mutable struct Server{T <: Scheme, H <: HTTP.Handler}
     out::Channel{Any}
     options::ServerOptions
 
-    Server{T, H}(handler::H, logger::IO=STDOUT, ch=Channel(1), ch2=Channel(1), options=ServerOptions()) where {T, H} = new{T, H}(handler, logger, ch, ch2, options)
+    Server{T, H}(handler::H, logger::IO=STDOUT, ch=Channel(1), ch2=Channel(1),
+                 options=ServerOptions()) where {T, H} =
+        new{T, H}(handler, logger, ch, ch2, options)
 end
 
 backtrace() = sprint(Base.show_backtrace, catch_backtrace())
 
-function process!(server::Server{T, H}, parser, request, i, tcp, rl, starttime, verbose) where {T, H}
-    handler, logger, options = server.handler, server.logger, server.options
-    startedprocessingrequest = error = shouldclose = alreadysent100continue = false
+
+function handle_request(f, server, io, i, verbose=true)
+
+    logger = server.logger
+
+    request = HTTP.Request()
+    http = Streams.Stream(request, ConnectionPool.getparser(io), io)
+    response = request.response
+    response.status = 200
+
+    try
+        startread(http)
+
+        if header(request, "Expect") == "100-continue"
+            if server.options.support100continue
+                response.status = 100
+                startwrite(http)
+                response.status = 200
+            else
+                response.status = 417
+            end
+        end
+
+        if http.parser.message.upgrade
+            HTTP.@log "received upgrade request on connection i=$i"
+            response.status = 501
+            response.body =
+                Vector{UInt8}("upgrade requests are not currently supported")
+        end
+
+    catch e
+        if e isa HTTP.ParsingError
+            HTTP.@log "error parsing request on connection i=$i: " *
+                      HTTP.ParsingErrorCodeMap[err.code]
+            response.status = e.code == Parsers.HPE_INVALID_VERSION ? 505 :
+                              e.code == Parsers.HPE_INVALID_METHOD ? 405 : 400
+            response.body = HTTP.ParsingErrorCodeMap[err.code]
+        else
+            close(io)
+            rethrow(e)
+        end
+    end
+
+    if iserror(response)
+        startwrite(http)
+        write(http, response.body)
+        close(io)
+        return
+    end
+
+    HTTP.@log "received request on connection i=$i"
+    verbose && (show(logger, request); println(logger, ""))
+
+    @async try
+
+        try
+            f(http)
+        catch e
+            if !iswritable(io)
+                showerror(logger, e)
+                println(logger, backtrace())
+                response.status = 500
+                startwrite(http)
+                write(http, sprint(showerror, e))
+            else
+                rethrow(e)
+            end
+        end
+
+        closeread(http)
+        closewrite(http)
+
+    catch e
+        close(io)
+        rethrow(e)
+    end
+end
+
+
+
+function handle_connection(f, server::Server{T, H}, i, io::Connection{ST}, rl, verbose) where {T, H, ST}
+    logger = server.logger
     rate = Float64(server.options.ratelimit.num)
     rl.allowance += 1.0 # because it was just decremented right before we got here
     HTTP.@log "processing on connection i=$i..."
-    try
-        tsk = @async begin
-            while isopen(tcp)
-                update!(rl, server.options.ratelimit)
-                if rl.allowance > rate
-                    HTTP.@log "throttling on connection i=$i"
-                    rl.allowance = rate
-                end
-                if rl.allowance < 1.0
-                    HTTP.@log "sleeping on connection i=$i due to rate limiting"
-                    sleep(1.0)
-                else
-                    rl.allowance -= 1.0
-                    HTTP.@log "reading request bytes with readtimeout=$(options.readtimeout)"
-                    # EH:
-                    buffer = try
-                        readavailable(tcp)
-                    catch e
-                        UInt8[]
-                    end
-                    length(buffer) > 0 || break
-                    starttime[] = time() # reset the timeout while still receiving bytes
-                    err = HTTP.@catcherr HTTP.ParsingError HTTP.parse!(parser, buffer)
-                    startedprocessingrequest = true
-                    if err != nothing
-                        # error in parsing the http request
-                        HTTP.@log "error parsing request on connection i=$i: $(HTTP.ParsingErrorCodeMap[err.code])"
-                        if err.code == HTTP.HPE_INVALID_VERSION
-                            response = HTTP.Response(505)
-                        elseif err.code == HTTP.HPE_HEADER_OVERFLOW
-                            response = HTTP.Response(431)
-                        elseif err.code == HTTP.HPE_URI_OVERFLOW
-                            response = HTTP.Response(414)
-                        elseif err.code == HTTP.HPE_BODY_OVERFLOW
-                            response = HTTP.Response(413)
-                        elseif err.code == HTTP.HPE_INVALID_METHOD
-                            response = HTTP.Response(405)
-                        else
-                            response = HTTP.Response(400)
-                        end
-                        error = true
-                    elseif HTTP.headerscomplete(parser) && Base.get(HTTP.headers(request), "Expect", "") == "100-continue" && !alreadysent100continue
-                        if options.support100continue
-                            HTTP.@log "sending 100 Continue response to get request body"
-                            # EH:
-                            try
-                                write(tcp, HTTP.Response(100), options)
-                            catch e
-                                HTTP.@log e
-                                error = true
-                            end
-                            parser.state = HTTP.s_body_identity
-                            alreadysent100continue = true
-                            continue
-                        else
-                            response = HTTP.Response(417)
-                            error = true
-                        end
-                    elseif HTTP.upgrade(parser)
-                        @show String(collect(HTTP.extra(parser)))
-                        HTTP.@log "received upgrade request on connection i=$i"
-                        response = HTTP.Response(501, "upgrade requests are not currently supported")
-                        error = true
-                    elseif HTTP.messagecomplete(parser)
-                        HTTP.@log "received request on connection i=$i"
-
-                        request.method = parser.method
-                        request.uri = parser.url
-                        request.major = parser.major
-                        request.minor = parser.minor
-
-                        verbose && (show(logger, request); println(logger, ""))
-                        try
-                            response = Handlers.handle(handler, request, HTTP.Response())
-                        catch e
-                            response = HTTP.Response(500)
-                            error = true
-                            showerror(logger, e)
-                            println(logger, backtrace())
-                        end
-                        if HTTP.http_should_keep_alive(parser) && !error
-                            if !any(x->x[1] == "Connection", response.headers)
-                                push!(response.headers, "Connection" => "keep-alive")
-                            end
-                            HTTP.reset!(parser)
-                            request = HTTP.Request()
-                            parser.onbodyfragment = x->write(request.body, x)
-                            parser.onheader = x->HTTP.appendheader(request, x)
-                        else
-                            if !any(x->x[1] == "Connection", response.headers)
-                                push!(response.headers, "Connection" => "close")
-                            end
-                            shouldclose = true
-                        end
-                        if !error
-                            HTTP.@log "responding with response on connection i=$i"
-                            verbose && (show(logger, response); println(logger, ""))
-
-                            try
-                                write(tcp, response, options)
-                            catch e
-                                HTTP.@log e
-                                error = true
-                            end
-                        end
-                        (error || shouldclose) && break
-                        startedprocessingrequest = alreadysent100continue = false
-                    end
-                end
-            end
+    while isopen(io)
+        update!(rl, server.options.ratelimit)
+        if rl.allowance > rate
+            HTTP.@log "throttling on connection i=$i"
+            rl.allowance = rate
         end
-        timeout = options.readtimeout
-        while !istaskdone(tsk) && (time() - starttime[] < timeout)
-            sleep(0.001)
+        if rl.allowance < 1.0
+            HTTP.@log "sleeping on connection i=$i due to rate limiting"
+            sleep(1.0)
+        else
+            rl.allowance -= 1.0
         end
-        if !istaskdone(tsk)
-            HTTP.@log "connection i=$i timed out waiting for request bytes"
-            startedprocessingrequest && write(tcp, HTTP.Response(408), options)
-        end
-    finally
-        close(tcp)
+        handle_request(f, server, ConnectionPool.Transaction{ST}(io), i)
     end
-    HTTP.@log "finished processing on connection i=$i"
-    return nothing
 end
 
-initTLS!(::Type{http}, tcp, tlsconfig) = return tcp
-function initTLS!(::Type{https}, tcp, tlsconfig)
+
+init_connection(::Server{http}, tcp) = tcp
+
+function init_connection(server::Server{https}, tcp)
+    tls_config = server.options.tlsconfig::HTTP.MbedTLS.SSLConfig
     try
         tls = HTTP.MbedTLS.SSLContext()
-        HTTP.MbedTLS.setup!(tls, tlsconfig)
+        HTTP.MbedTLS.setup!(tls, tls_config)
         HTTP.MbedTLS.associate!(tls, tcp)
         HTTP.MbedTLS.handshake!(tls)
         return tls
     catch e
         close(tcp)
         error("Error establishing SSL connection: $e")
+        rethrow(e)
     end
 end
 
@@ -257,10 +239,10 @@ end
 
 @enum Signals KILL
 
-function serve(server::Server{T, H}, host, port, verbose) where {T, H}
+function serve(f, server::Server{T, H}, host, port, verbose) where {T, H}
     logger = server.logger
     HTTP.@log "starting server to listen on: $(host):$(port)"
-    tcpserver = listen(host, port)
+    tcpserver = Base.listen(host, port)
     ratelimits = Dict{IPAddr, RateLimit}()
     rate = Float64(server.options.ratelimit.num)
     i = 0
@@ -271,11 +253,6 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
         end
     end
     while true
-        p = HTTP.Parser()
-        request = HTTP.Request()
-        p.onbodyfragment = x->write(request.body, x)
-        p.onheader = x->HTTP.appendheader(request, x)
-
         try
             # accept blocks until a new connection is detected
             tcp = accept(tcpserver)
@@ -292,8 +269,36 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
             else
                 rl.allowance -= 1.0
                 HTTP.@log "new tcp connection accepted, reading request..."
-                let server=server, p=p, request=request, i=i, tcp=tcp, rl=rl
-                    @async process!(server, p, request, i, initTLS!(T, tcp, server.options.tlsconfig::HTTP.MbedTLS.SSLConfig), rl, Ref{Float64}(time()), verbose)
+                tcp = init_connection(server, tcp)
+                SocketType = T == https ? HTTP.MbedTLS.SSLContext : TCPSocket
+                c = Connection{SocketType}(tcp)
+                let server=server, i=i, c=c, rl=rl
+                    wait_for_timeout = Ref{Bool}(true)
+                    readtimeout = server.options.readtimeout
+                    @async while wait_for_timeout[]
+                        if inactiveseconds(c) > readtimeout
+
+                            # FIXME send a 408 ?
+
+                            close(io)
+                            HTTP.@log "Connection timeout i=$i"
+                            break
+                        end
+                        sleep(8 + rand() * 4)
+                    end
+                    @async try
+                        handle_connection(f, server, i, c, rl, verbose)
+                    catch e
+                        if e isa EOFError
+                            HTTP.@log "connection i=$i: $e"
+                        else
+                            rethrow(e)
+                        end
+                    finally
+                        HTTP.@log "finished processing on connection i=$i"
+                        wait_for_timeout[] = false
+                        close(c)
+                    end
                 end
                 i += 1
             end
@@ -344,8 +349,8 @@ By default, `HTTP.serve` aims to "never die", catching and recovering from all i
 """
 function serve end
 
-serve(server::Server, host=IPv4(127,0,0,1), port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
-function serve(host::IPAddr, port::Int,
+serve(f, server::Server, host=IPv4(127,0,0,1), port=8081; verbose::Bool=true) = serve(f, server, host, port, verbose)
+function serve(f, host::IPAddr, port::Int,
                    handler=(req, rep) -> HTTP.Response("Hello World!"),
                    logger::I=STDOUT;
                    cert::String="",
@@ -353,9 +358,9 @@ function serve(host::IPAddr, port::Int,
                    verbose::Bool=true,
                    args...) where {I}
     server = Server(handler, logger; cert=cert, key=key, args...)
-    return serve(server, host, port, verbose)
+    return serve(f, server, host, port, verbose)
 end
-serve(; host::IPAddr=IPv4(127,0,0,1),
+serve(f, ; host::IPAddr=IPv4(127,0,0,1),
         port::Int=8081,
         handler=(req, rep) -> HTTP.Response("Hello World!"),
         logger::IO=STDOUT,
@@ -363,41 +368,10 @@ serve(; host::IPAddr=IPv4(127,0,0,1),
         key::String="",
         verbose::Bool=true,
         args...) =
-    serve(host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
+    serve(f, host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
 
-#= Does the parser need to see an EOF to find the end of the message? =#
-function http_message_needs_eof(parser)
-    #= See RFC 2616 section 4.4 =#
-    if (isrequest(parser) || # FIXME request never needs EOF ??
-        div(parser.status, 100) == 1 || #= 1xx e.g. Continue =#
-        parser.status == 204 ||     #= No Content =#
-        parser.status == 304 ||     #= Not Modified =#
-        parser.isheadresponse)       #= response to a HEAD request =#
-        return false
-    end
-
-    if (parser.flags & F_CHUNKED > 0) || parser.content_length != ULLONG_MAX
-        return false
-    end
-
-    return true
+function listen(f)
+    HTTP.serve(f, HTTP.Server((x,y)->()))
 end
-
-function http_should_keep_alive(parser)
-    if parser.major > 0 && parser.minor > 0
-        #= HTTP/1.1 =#
-        if parser.flags & F_CONNECTION_CLOSE > 0
-            return false
-        end
-    else
-        #= HTTP/1.0 or earlier =#
-        if !(parser.flags & F_CONNECTION_KEEP_ALIVE > 0)
-            return false
-        end
-    end
-
-  return !http_message_needs_eof(parser)
-end
-
 
 end # module
