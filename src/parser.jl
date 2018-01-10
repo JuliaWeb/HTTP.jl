@@ -31,7 +31,7 @@ export Parser, Header, Headers, ByteView, nobytes,
        messagestarted, headerscomplete, bodycomplete, messagecomplete,
        messagehastrailing,
        waitingforeof, seteof,
-       connectionclosed, setnobody,
+       setnobody,
        ParsingError, ParsingErrorCode
 
 using ..URIs.parseurlchar
@@ -227,15 +227,6 @@ end
 Is the `Parser` ready to process trailing headers?
 """
 messagehastrailing(p::Parser) = p.flags & F_TRAILING > 0
-
-
-"""
-    connectionclosed(::Parser)
-
-Was "Connection: close" parsed?
-"""
-
-connectionclosed(p::Parser) = p.flags & F_CONNECTION_CLOSE > 0
 
 
 isrequest(p::Parser) = p.message.status == 0
