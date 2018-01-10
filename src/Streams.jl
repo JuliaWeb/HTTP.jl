@@ -6,16 +6,16 @@ import ..HTTP
 using ..IOExtras
 using ..Parsers
 using ..Messages
-import ..Messages: header, hasheader, writestartline
+import ..Messages: header, hasheader, setheader, writeheaders, writestartline
 import ..ConnectionPool.getrawstream
 import ..@require, ..precondition_error
 import ..@debug, ..DEBUG_LEVEL
 
 
-mutable struct Stream{T <: Message} <: IO
-    stream::IO
-    message::T
+mutable struct Stream{M <: Message, S <: IO} <: IO
+    message::M
     parser::Parser
+    stream::S
     writechunked::Bool
 end
 
@@ -47,28 +47,42 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
     an `EOFError`.
 """
 
-function Stream(io::IO, request::Request, parser::Parser)
-    @require iswritable(io)
-    writechunked = header(request, "Transfer-Encoding") == "chunked"
-    Stream{Response}(io, request.response, parser, writechunked)
-end
+Stream(r::M, p::Parser, io::S) where {M, S} = Stream{M,S}(r, p, io, false)
 
 header(http::Stream, a...) = header(http.message, a...)
-hasheader(http::Stream, a) = header(http.message, a)
+setheader(http::Stream, a...) = setheader(http.message.response, a...)
+hasheader(http::Stream, a...) = hasheader(http.message, a...)
 getrawstream(http::Stream) = getrawstream(http.stream)
 
 
 # Writing HTTP Messages
 
+messagetowrite(http::Stream{Response}) = http.message.request
+messagetowrite(http::Stream{Request}) = http.message.response
+
 IOExtras.iswritable(http::Stream) = iswritable(http.stream)
 
 function IOExtras.startwrite(http::Stream)
-    @require iswritable(http.stream)
-    writeheaders(http.stream, http.message.request)
+    if !iswritable(http.stream)
+        startwrite(http.stream)
+    end
+    m = messagetowrite(http)
+    if !hasheader(m, "Content-Length") &&
+       !hasheader(m, "Transfer-Encoding") &&
+       !hasheader(m, "Upgrade")
+        http.writechunked = true
+        setheader(m, "Transfer-Encoding" => "chunked")
+    else
+        http.writechunked = hasheader(m, "Transfer-Encoding", "chunked")
+    end
+    writeheaders(http.stream, m)
 end
 
 
 function Base.unsafe_write(http::Stream, p::Ptr{UInt8}, n::UInt)
+    if !iswritable(http) && isopen(http.stream)
+        startwrite(http)
+    end
     if !http.writechunked
         return unsafe_write(http.stream, p, n)
     end
@@ -76,6 +90,7 @@ function Base.unsafe_write(http::Stream, p::Ptr{UInt8}, n::UInt)
            unsafe_write(http.stream, p, n) +
            write(http.stream, "\r\n")
 end
+
 
 """
     closebody(::Stream)
@@ -91,12 +106,25 @@ function closebody(http::Stream)
 end
 
 
-function IOExtras.closewrite(http::Stream)
+function IOExtras.closewrite(http::Stream{Response})
     if !iswritable(http)
         return
     end
     closebody(http)
     closewrite(http.stream)
+end
+
+function IOExtras.closewrite(http::Stream{Request})
+    @require iswritable(http)
+
+    closebody(http)
+    closewrite(http.stream)
+
+    if hasheader(http.message, "Connection", "close")
+        # Close conncetion if client sent "Connection: close"...
+        @debug 1 "✋  \"Connection: close\": $(http.stream)"
+        close(http.stream)
+    end
 end
 
 
@@ -107,17 +135,16 @@ IOExtras.isreadable(http::Stream) = isreadable(http.stream)
 function IOExtras.startread(http::Stream)
     startread(http.stream)
     configure_parser(http)
-    h = readheaders(http.stream, http.parser, http.message)
+    message = readheaders(http.stream, http.parser, http.message)
     if http.message isa Response && http.message.status == 100
         # 100 Continue
         # https://tools.ietf.org/html/rfc7230#section-5.6
         # https://tools.ietf.org/html/rfc7231#section-6.2.1
         @debug 1 "✅  Continue:   $(http.stream)"
         configure_parser(http)
-        h = readheaders(http.stream, http.parser, http.message)
+        message = readheaders(http.stream, http.parser, http.message)
     end
-    return h
-
+    return message
 end
 
 
@@ -172,7 +199,7 @@ end
 
 
 """
-    isaborted(::Stream{Response}) 
+    isaborted(::Stream{Response})
 
 Has the server signalled that it does not wish to receive the message body?
 
@@ -186,7 +213,7 @@ function isaborted(http::Stream{Response})
 
     if iswritable(http.stream) &&
        iserror(http.message) &&
-       connectionclosed(http.parser)
+       hasheader(http.message, "Connection", "close")
         @debug 1 "✋  Abort on $(sprint(writestartline, http.message)): " *
                  "$(http.stream)"
         @debug 2 "✋  $(http.message)"
@@ -212,7 +239,7 @@ function IOExtras.closeread(http::Stream{Response})
         # Error if Message is not complete...
         close(http.stream)
         throw(EOFError())
-    elseif connectionclosed(http.parser)
+    elseif hasheader(http.message, "Connection", "close")
         # Close conncetion if server sent "Connection: close"...
         @debug 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
@@ -221,6 +248,18 @@ function IOExtras.closeread(http::Stream{Response})
     end
 
     return http.message
+end
+
+
+function IOExtras.closeread(http::Stream{Request})
+    if !messagecomplete(http.parser)
+        # Error if Message is not complete...
+        close(http.stream)
+        throw(EOFError())
+    end
+    if isreadable(http)
+        closeread(http.stream)
+    end
 end
 
 
