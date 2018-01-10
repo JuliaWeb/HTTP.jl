@@ -25,16 +25,17 @@ indicates that the server does not wish to receive the message body.
 abstract type StreamLayer <: Layer end
 export StreamLayer
 
-function request(::Type{StreamLayer}, io::IO, req::Request, body;
+function request(::Type{StreamLayer}, io::IO, request::Request, body;
                  response_stream=nothing,
                  iofunction=nothing,
                  verbose::Int=0,
                  kw...)::Response
 
-    verbose == 1 && printlncompact(req)
-    verbose >= 2 && println(req)
+    verbose == 1 && printlncompact(request)
+    verbose >= 2 && println(request)
 
-    http = Stream(io, req, ConnectionPool.getparser(io))
+    response = request.response
+    http = Stream(response, ConnectionPool.getparser(io), io)
     startwrite(http)
 
     aborted = false
@@ -42,10 +43,10 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
 
         @sync begin
             if iofunction == nothing
-                @async writebody(http, req, body)
+                @async writebody(http, request, body)
                 yield()
                 startread(http)
-                readbody(http, req.response, response_stream)
+                readbody(http, response, response_stream)
             else
                 iofunction(http)
             end
@@ -60,7 +61,7 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
         if aborted &&
            e isa CompositeException &&
            (ex = first(e.exceptions).ex; isioerror(ex))
-            @debug 1 "⚠️  $(req.response.status) abort exception excpeted: $ex"
+            @debug 1 "⚠️  $(response.status) abort exception excpeted: $ex"
         else
             rethrow(e)
         end
@@ -69,10 +70,10 @@ function request(::Type{StreamLayer}, io::IO, req::Request, body;
     closewrite(http)
     closeread(http)
 
-    verbose == 1 && printlncompact(req.response)
-    verbose >= 2 && println(req.response)
+    verbose == 1 && printlncompact(response)
+    verbose >= 2 && println(response)
 
-    return req.response
+    return response
 end
 
 
