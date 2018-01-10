@@ -41,6 +41,24 @@ macro require(precondition, msg = string(precondition))
 end
 
 
+@noinline function postcondition_error(msg, frame)
+    msg = string(sprint(StackTraces.show_spec_linfo,
+                        StackTraces.lookup(frame)[2]),
+                 " failed to ensure ", msg)
+    return AssertionError(msg)
+end
+
+
+
+"""
+    @ensure postcondition [message]
+Throw `ArgumentError` if `postcondition` is false.
+"""
+macro ensure(postcondition, msg = string(postcondition))
+    esc(:(if ! $postcondition throw(postcondition_error($msg, backtrace()[1])) end))
+end
+
+
 # FIXME
 # Should this have a branch-prediction hint? (same for @assert?)
 # http://llvm.org/docs/BranchWeightMetadata.html#built-in-expect-instructions
