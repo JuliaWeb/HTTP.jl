@@ -245,7 +245,7 @@ function IOExtras.startread(t::Transaction)
     @require !isreadable(t)                      ;t.c.readcount != t.sequence &&
                                                    @debug 1 "⏳  Wait read:  $t"
     t.c.timestamp = time()
-    while t.c.readcount != t.sequence        
+    while t.c.readcount != t.sequence
         wait(t.c.readdone)
     end                                           ;@debug 2 "👁  Start read: $t"
     t.c.readbusy = true

@@ -37,8 +37,6 @@ function request(::Type{MessageLayer{Next}},
             setheader(headers, "Content-Length" => string(l))
         elseif method == "GET" && iofunction isa Function
             setheader(headers, "Content-Length" => "0")
-# FIXME        else
-#            setheader(headers, "Transfer-Encoding" => "chunked")
         end
     end
 
