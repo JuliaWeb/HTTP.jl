@@ -48,7 +48,7 @@ end
 handle(h::HandlerFunction, req, resp) = h.func(req, resp)
 
 "A default 404 Handler"
-const FourOhFour = HandlerFunction((req, resp) -> Response(404))
+const FourOhFour = HandlerFunction((req, resp) -> HTTP.Response(404))
 
 """
 Router(h::Handler)
@@ -142,9 +142,9 @@ end
 
 function handle(r::Router, req, resp)
     # get the url/path of the request
-    m = val(Symbol(HTTP.method(req)))
-    uri = HTTP.uri(req)
+    m = val(Symbol(req.method))
     # get scheme, host, split path into strings and get Vals
+    uri = HTTP.URI(req.uri)
     s = get(SCHEMES, uri.scheme, EMPTYVAL)
     h = val(Symbol(uri.host))
     p = uri.path
