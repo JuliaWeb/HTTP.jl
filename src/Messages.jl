@@ -226,6 +226,14 @@ hasheader(m, k::String) = header(m, k) != ""
 
 
 """
+    hasheader(::Message, key, value) -> Bool
+
+Does header for `key` match `value` (both case-insensitive)?
+"""
+hasheader(m, k::String, v::String) = lowercase(header(m, k)) == v
+
+
+"""
     setheader(::Message, key => value)
 
 Set header `value` for `key` (case-insensitive).
