@@ -182,6 +182,24 @@ function Base.readavailable(t::Transaction)::ByteView
 end
 
 
+function Base.readbytes!(t::Transaction, a::Vector{UInt8}, nb::Int)
+
+    if !isempty(t.c.excess)
+        l = length(t.c.excess)
+        copyto!(a, 1, t.c.excess, 1, min(l, nb))
+        if l > nb
+            t.c.excess = view(t.c.excess, nb+1:l)
+            return nb
+        else
+            t.c.excess = nobytes
+            return l + readbytes!(t.c.io, view(a, l+1:nb))
+        end
+    end
+
+    return readbytes!(t.c.io, a, nb)
+end
+
+
 """
     unread!(::Transaction, bytes)
 
@@ -469,7 +487,7 @@ function getconnection(::Type{Transaction{T}},
             # Share a connection that has active readers...
             if !isempty(writable)
                 c = rand(writable)             ;@debug 2 "⇆  Shared:         $c"
-                return client_transaction(T, c)
+                return client_transaction(c)
             end
 
         finally
