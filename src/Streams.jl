@@ -12,6 +12,7 @@ import ..Messages: header, hasheader, setheader,
                    writeheaders, writestartline
 import ..ConnectionPool.getrawstream
 import ..@require, ..precondition_error
+import ..@ensure, ..postcondition_error
 import ..@debug, ..DEBUG_LEVEL
 
 
@@ -20,6 +21,8 @@ mutable struct Stream{M <: Message, S <: IO} <: IO
     parser::Parser
     stream::S
     writechunked::Bool
+    readchunked::Bool
+    ntoread::Int
 end
 
 
@@ -50,7 +53,8 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
     an `EOFError`.
 """
 
-Stream(r::M, p::Parser, io::S) where {M, S} = Stream{M,S}(r, p, io, false)
+Stream(r::M, p::Parser, io::S) where {M, S} =
+    Stream{M,S}(r, p, io, false, false, 0)
 
 header(http::Stream, a...) = header(http.message, a...)
 setstatus(http::Stream, status) = (http.message.response.status = status)
@@ -63,6 +67,7 @@ IOExtras.isopen(http::Stream) = isopen(http.stream)
 
 messagetowrite(http::Stream{Response}) = http.message.request
 messagetowrite(http::Stream{Request}) = http.message.response
+
 
 IOExtras.iswritable(http::Stream) = iswritable(http.stream)
 
@@ -77,7 +82,7 @@ function IOExtras.startwrite(http::Stream)
         http.writechunked = true
         setheader(m, "Transfer-Encoding" => "chunked")
     else
-        http.writechunked = hasheader(m, "Transfer-Encoding", "chunked")
+        http.writechunked = ischunked(m)
     end
     writeheaders(http.stream, m)
 end
@@ -137,10 +142,16 @@ end
 IOExtras.isreadable(http::Stream) = isreadable(http.stream)
 
 function IOExtras.startread(http::Stream)
+
     startread(http.stream)
-    configure_parser(http)
+
+    reset!(http.parser)
     readheaders(http.stream, http.parser, http.message)
     handle_continue(http)
+
+    http.readchunked = ischunked(http.message)
+    http.ntoread = bodylength(http.message)
+
     return http.message
 end
 
@@ -171,26 +182,14 @@ function handle_continue(http::Stream{Request})
 end
 
 
-function configure_parser(http::Stream{Response})
-    reset!(http.parser)
-    req = http.message.request::Request
-    if req.method in ("HEAD", "CONNECT")
-        setnobody(http.parser)
-    end
-end
-
-configure_parser(http::Stream{Request}) = reset!(http.parser)
-
-
 function Base.eof(http::Stream)
     if !headerscomplete(http.message)
         startread(http)
     end
-    if bodycomplete(http.parser)
+    if http.ntoread == 0
         return true
     end
     if eof(http.stream)
-        seteof(http.parser)
         return true
     end
     return false
@@ -199,14 +198,31 @@ end
 
 function Base.readavailable(http::Stream)::ByteView
     @require headerscomplete(http.message)
-    @require !bodycomplete(http.parser)
 
-    bytes = readavailable(http.stream)
-    if isempty(bytes)
+    if http.ntoread == 0
         return nobytes
     end
-    bytes, excess = parsebody(http.parser, bytes)
-    unread!(http, excess)
+    if nb_available(http.stream) > http.ntoread
+        raw = read(http.stream, http.ntoread)
+        bytes = view(raw, 1:length(raw))
+    else
+        bytes = readavailable(http.stream)
+    end
+    l = length(bytes)
+    if l == 0
+        return nobytes
+    end
+    if http.readchunked
+        bytes, excess = parsebody(http.parser, bytes)
+        unread!(http, excess)
+        if bodycomplete(http.parser)
+            http.ntoread = 0
+        end
+    end
+    if http.ntoread != unknown_length
+        http.ntoread -= length(bytes)
+    end
+    @ensure http.ntoread >= 0
     return bytes
 end
 
@@ -258,7 +274,7 @@ function IOExtras.closeread(http::Stream{Response})
         readtrailers(http.stream, http.parser, http.message)
     end
 
-    if !messagecomplete(http.parser)
+    if http.ntoread != unknown_length && http.ntoread > 0
         # Error if Message is not complete...
         close(http.stream)
         throw(EOFError())

@@ -5,6 +5,7 @@ export body_is_a_stream, body_was_streamed
 import ..Layer, ..request
 using ..URIs
 using ..Messages
+import ..Messages.bodylength
 using ..Headers
 using ..minimal
 if !minimal
@@ -46,7 +47,6 @@ function request(::Type{MessageLayer{Next}},
 end
 
 
-const unknown_length = -1
 bodylength(body) = unknown_length
 bodylength(body::AbstractVector{UInt8}) = length(body)
 bodylength(body::AbstractString) = sizeof(body)
