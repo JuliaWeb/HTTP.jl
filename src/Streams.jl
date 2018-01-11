@@ -10,7 +10,7 @@ using ..Parsers
 using ..Messages
 import ..Messages: header, hasheader, setheader,
                    writeheaders, writestartline
-import ..ConnectionPool.getrawstream
+import ..ConnectionPool: getrawstream, byteview
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
 import ..@debug, ..DEBUG_LEVEL
@@ -203,8 +203,7 @@ function Base.readavailable(http::Stream)::ByteView
         return nobytes
     end
     if nb_available(http.stream) > http.ntoread
-        raw = read(http.stream, http.ntoread)
-        bytes = view(raw, 1:length(raw))
+        bytes = byteview(read(http.stream, http.ntoread))
     else
         bytes = readavailable(http.stream)
     end
