@@ -104,11 +104,9 @@ struct Transaction{T <: IO} <: IO
     sequence::Int
 end
 
-Connection{T}(io::T) where T <: IO =
-    Connection{T}("", "", default_pipeline_limit, io)
 
-Connection{T}(host::AbstractString, port::AbstractString,
-              pipeline_limit::Int, io::T) where T <: IO =
+Connection(host::AbstractString, port::AbstractString,
+           pipeline_limit::Int, io::T) where T <: IO =
     Connection{T}(host, port, pipeline_limit,
                   peerport(io), localport(io),
                   io, view(UInt8[], 1:0),
@@ -117,11 +115,11 @@ Connection{T}(host::AbstractString, port::AbstractString,
                   0, false, Condition(),
                   0, Parser())
 
-Transaction{T}(c::Connection{T}) where T <: IO =
+Transaction(c::Connection{T}) where T <: IO =
     Transaction{T}(c, (c.sequence += 1))
 
-function client_transaction(T, c)
-    t = Transaction{T}(c)
+function client_transaction(c)
+    t = Transaction(c)
     startwrite(t)
     return t
 end
@@ -135,7 +133,7 @@ getrawstream(t::Transaction) = t.c.io
 inactiveseconds(t::Transaction) = inactiveseconds(t.c)
 
 function inactiveseconds(c::Connection)::Float64
-    if !c.readbusy || c.writebusy
+    if !c.readbusy && !c.writebusy
         return Float64(0)
     end
     return time() - c.timestamp
@@ -455,7 +453,7 @@ function getconnection(::Type{Transaction{T}},
             idle = filter(c->!c.readbusy, writable)
             if !isempty(idle)
                 c = rand(idle)                 ;@debug 2 "♻️  Idle:           $c"
-                return client_transaction(T, c)
+                return client_transaction(c)
             end
 
             # If there are not too many connections to this host:port,
@@ -463,9 +461,9 @@ function getconnection(::Type{Transaction{T}},
             busy = findall(T, host, port, pipeline_limit)
             if length(busy) < connection_limit
                 io = getconnection(T, host, port; kw...)
-                c = Connection{T}(host, port, pipeline_limit, io)
+                c = Connection(host, port, pipeline_limit, io)
                 push!(pool, c)                ;@debug 1 "🔗  New:            $c"
-                return client_transaction(T, c)
+                return client_transaction(c)
             end
 
             # Share a connection that has active readers...

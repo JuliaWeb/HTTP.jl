@@ -212,7 +212,7 @@ statustext(r::Response) = Base.get(Parsers.STATUS_CODES, r.status, "Unknown Code
 
 Get header value for `key` (case-insensitive).
 """
-header(m, k, d="") = header(m.headers, k, d)
+header(m::Message, k, d="") = header(m.headers, k, d)
 header(h::Headers, k::String, d::String="") = getbyfirst(h, k, k => d, lceq)[2]
 lceq(a,b) = lowercase(a) == lowercase(b)
 
@@ -238,7 +238,7 @@ hasheader(m, k::String, v::String) = lowercase(header(m, k)) == v
 
 Set header `value` for `key` (case-insensitive).
 """
-setheader(m, v) = setheader(m.headers, v)
+setheader(m::Message, v) = setheader(m.headers, v)
 setheader(h::Headers, v::Pair) = setbyfirst(h, Pair{String,String}(v), lceq)
 
 
@@ -371,7 +371,7 @@ end
 
 function readstartline!(m::Parsers.Message, r::Request)
     r.version = VersionNumber(m.major, m.minor)
-    r.method = string(m.method)
+    r.method = m.method
     r.uri = m.url
     return
 end

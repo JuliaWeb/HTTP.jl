@@ -4,7 +4,8 @@ using Base64
 using Unicode
 using MbedTLS: digest, MD_SHA1, SSLContext
 import ..HTTP
-using ..HTTP.IOExtras
+using ..IOExtras
+using ..Streams
 import ..ConnectionPool
 using HTTP.header
 import ..@debug, ..DEBUG_LEVEL, ..@require, ..precondition_error
@@ -40,14 +41,15 @@ end
 mutable struct WebSocket{T <: IO} <: IO
     io::T
     frame_type::UInt8
+    server::Bool
     rxpayload::Vector{UInt8}
     txpayload::Vector{UInt8}
     txclosed::Bool
     rxclosed::Bool
 end
 
-function WebSocket(io::T; binary=false) where T <: IO
-   WebSocket{T}(io, binary ? WS_BINARY : WS_TEXT,
+function WebSocket(io::T; server=false, binary=false) where T <: IO
+   WebSocket{T}(io, binary ? WS_BINARY : WS_TEXT, server,
                 UInt8[], UInt8[], false, false)
 end
 
@@ -56,7 +58,27 @@ end
 # Handshake
 
 
-function open(f::Function, url; binary=false, kw...)
+function check_upgrade(http)
+
+    if !hasheader(http, "Upgrade", "websocket")
+        throw(WebSocketError(0, "Expected \"Upgrade: websocket\"!\n" *
+                                "$(http.message)"))
+    end
+
+    if !hasheader(http, "Connection", "upgrade")
+        throw(WebSocketError(0, "Expected \"Connection: upgrade\"!\n" *
+                                "$(http.message)"))
+    end
+end
+
+
+function accept_hash(key)
+    hashkey = "$(key)258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    return base64encode(digest(MD_SHA1, hashkey))
+end
+
+
+function open(f::Function, url; binary=false, verbose=false, kw...)
 
     key = base64encode(rand(UInt8, 16))
 
@@ -67,7 +89,8 @@ function open(f::Function, url; binary=false, kw...)
         "Sec-WebSocket-Version" => "13"
     ]
 
-    HTTP.open("GET", url, headers; reuse_limit=0, kw...) do http
+    HTTP.open("GET", url, headers;
+              reuse_limit=0, verbose=verbose ? 2 : 0, kw...) do http
 
         startread(http)
 
@@ -76,22 +99,9 @@ function open(f::Function, url; binary=false, kw...)
             return
         end
 
-        upgrade = header(http, "Upgrade")
-        if lowercase(upgrade) != "websocket"
-            throw(WebSocketError(0, "Expected \"Upgrade: websocket\"!\n" *
-                                    "$(http.message)"))
-        end
+        check_upgrade(http)
 
-        connection = header(http, "Connection")
-        if lowercase(connection) != "upgrade"
-            throw(WebSocketError(0, "Expected \"Connection: upgrade\"!\n" *
-                                    "$(http.message)"))
-        end
-
-        hashkey = "$(key)258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-        accepthash = base64encode(digest(MD_SHA1, hashkey))
-        accept = header(http, "Sec-WebSocket-Accept") 
-        if accept != accepthash
+        if header(http, "Sec-WebSocket-Accept") != accept_hash(key)
             throw(WebSocketError(0, "Invalid Sec-WebSocket-Accept\n" *
                                     "$(http.message)"))
         end
@@ -101,6 +111,31 @@ function open(f::Function, url; binary=false, kw...)
     end
 end
 
+
+function listen(f::Function,
+                host::String="localhost", port::UInt16=UInt16(8081);
+                binary=false, verbose=false, kw...)
+
+    HTTP.listen(host, port; verbose=verbose) do http
+
+        check_upgrade(http)
+        if !hasheader(http, "Sec-WebSocket-Version", "13")
+            throw(WebSocketError(0, "Expected \"Sec-WebSocket-Version: 13\"!\n" *
+                                    "$(http.message)"))
+        end
+
+        setstatus(http, 101)
+        setheader(http, "Upgrade" => "websocket")
+        setheader(http, "Connection" => "Upgrade")
+        key = header(http, "Sec-WebSocket-Key")
+        setheader(http, "Sec-WebSocket-Accept" => accept_hash(key))
+
+        startwrite(http)
+
+        io = ConnectionPool.getrawstream(http)
+        f(WebSocket(io; binary=binary, server=true))
+    end
+end
 
 
 # Sending Frames
@@ -132,9 +167,9 @@ function IOExtras.closewrite(ws::WebSocket)
 end
 
 
-wslength(l) = l < 0x7E ? (UInt8(l), UInt8[]) : 
-              l <= 0xFFFF ? (0x7E, reinterpret(UInt8, [UInt16(l)])) :
-                            (0x7F, reinterpret(UInt8, [UInt64(l)]))
+wslength(l) = l < 0x7E ? (UInt8(l), UInt8[]) :
+              l <= 0xFFFF ? (0x7E, reinterpret(UInt8, [hton(UInt16(l))])) :
+                            (0x7F, reinterpret(UInt8, [hton(UInt64(l))]))
 
 
 wswrite(ws::WebSocket, x) = wswrite(ws, WS_FINAL | ws.frame_type, x)
@@ -146,24 +181,22 @@ function wswrite(ws::WebSocket, opcode::UInt8, bytes::Vector{UInt8})
     n = length(bytes)
     len, extended_len = wslength(n)
     len |= WS_MASK
-    mask = mask!(ws, bytes)
+    mask = mask!(ws.txpayload, bytes, n)
 
     @debug 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, len, extended_len, mask))"
     write(ws.io, opcode, len, extended_len, mask)
-  
+
     @debug 2 "          ⬅️  $(ws.txpayload[1:n])"
     unsafe_write(ws.io, pointer(ws.txpayload), n)
 end
 
 
-function mask!(ws::WebSocket, bytes::Vector{UInt8})
-    mask = rand(UInt8, 4)
-    l = length(bytes)
-    if length(ws.txpayload) < l
-        resize!(ws.txpayload, l)
+function mask!(out, in, l, mask=rand(UInt8, 4))
+    if length(out) < l
+        resize!(out, l)
     end
     for i in 1:l
-        ws.txpayload[i] = bytes[i] ⊻ mask[((i-1) % 4)+1]
+        out[i] = in[i] ⊻ mask[((i-1) % 4)+1]
     end
     return mask
 end
@@ -200,7 +233,7 @@ function readheader(io::IO)
         len == 0x7F ? UInt(ntoh(read(io, UInt64))) :
         len == 0x7E ? UInt(ntoh(read(io, UInt16))) : UInt(len),
         b[2] & WS_MASK > 0,
-        b[2] & WS_MASK > 0 ? ntoh(read(io, UInt32)) : UInt32(0))
+        b[2] & WS_MASK > 0 ? read(io, UInt32) : UInt32(0))
 end
 
 
@@ -231,10 +264,14 @@ function readframe(ws::WebSocket)
         wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload)
         return readframe(ws)
     else
-        return view(ws.rxpayload, 1:Int(h.length))
+        l = Int(h.length)
+        if h.hasmask
+            mask!(ws.rxpayload, ws.rxpayload, l, reinterpret(UInt8, [h.mask]))
+        end
+        return view(ws.rxpayload, 1:l)
     end
 end
-                    
+
 function WebSocketHeader(bytes...)
     io = IOBuffer()
     write(io, bytes...)
@@ -243,7 +280,7 @@ function WebSocketHeader(bytes...)
 end
 
 function Base.show(io::IO, h::WebSocketHeader)
-    print(io, "WebSocketHeader(", 
+    print(io, "WebSocketHeader(",
           h.opcode == WS_CONTINUATION ? "CONTINUATION" :
           h.opcode == WS_TEXT ? "TEXT" :
           h.opcode == WS_BINARY ? "BINARY" :

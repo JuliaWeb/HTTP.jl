@@ -1,12 +1,15 @@
 module Streams
 
-export Stream, closebody, isaborted
+export Stream, closebody, isaborted,
+       header, hasheader,
+       setstatus, setheader
 
 import ..HTTP
 using ..IOExtras
 using ..Parsers
 using ..Messages
-import ..Messages: header, hasheader, setheader, writeheaders, writestartline
+import ..Messages: header, hasheader, setheader,
+                   writeheaders, writestartline
 import ..ConnectionPool.getrawstream
 import ..@require, ..precondition_error
 import ..@debug, ..DEBUG_LEVEL
@@ -50,10 +53,11 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
 Stream(r::M, p::Parser, io::S) where {M, S} = Stream{M,S}(r, p, io, false)
 
 header(http::Stream, a...) = header(http.message, a...)
+setstatus(http::Stream, status) = (http.message.response.status = status)
 setheader(http::Stream, a...) = setheader(http.message.response, a...)
-hasheader(http::Stream, a...) = hasheader(http.message, a...)
 getrawstream(http::Stream) = getrawstream(http.stream)
 
+IOExtras.isopen(http::Stream) = isopen(http.stream)
 
 # Writing HTTP Messages
 
@@ -135,16 +139,35 @@ IOExtras.isreadable(http::Stream) = isreadable(http.stream)
 function IOExtras.startread(http::Stream)
     startread(http.stream)
     configure_parser(http)
-    message = readheaders(http.stream, http.parser, http.message)
-    if http.message isa Response && http.message.status == 100
-        # 100 Continue
-        # https://tools.ietf.org/html/rfc7230#section-5.6
-        # https://tools.ietf.org/html/rfc7231#section-6.2.1
+    readheaders(http.stream, http.parser, http.message)
+    handle_continue(http)
+    return http.message
+end
+
+
+"""
+100 Continue
+https://tools.ietf.org/html/rfc7230#section-5.6
+https://tools.ietf.org/html/rfc7231#section-6.2.1
+"""
+
+function handle_continue(http::Stream{Response})
+    if http.message.status == 100
         @debug 1 "✅  Continue:   $(http.stream)"
         configure_parser(http)
-        message = readheaders(http.stream, http.parser, http.message)
+        readheaders(http.stream, http.parser, http.message)
     end
-    return message
+
+end
+
+function handle_continue(http::Stream{Request})
+    if hasheader(http.message, "Expect", "100-continue")
+        if !iswritable(http.stream)
+            startwrite(http.stream)
+        end
+        @debug 1 "✅  Continue:   $(http.stream)"
+        writeheaders(http.stream, Response(100))
+    end
 end
 
 

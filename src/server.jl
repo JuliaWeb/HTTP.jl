@@ -6,6 +6,8 @@ using ..Messages
 using ..Parsers
 using ..ConnectionPool
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL
+using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
+
 
 if !isdefined(Base, :Nothing)
     const Nothing = Void
@@ -370,8 +372,151 @@ serve(f, ; host::IPAddr=IPv4(127,0,0,1),
         args...) =
     serve(f, host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
 
-function listen(f)
-    HTTP.serve(f, HTTP.Server((x,y)->()))
+
+
+
+function getsslcontext(tcp, sslconfig)
+    ssl = SSLContext()
+    setup!(ssl, sslconfig)
+    associate!(ssl, tcp)
+    handshake!(ssl)
+    return ssl
 end
+
+
+function listen(f::Function,
+                host::String="127.0.0.1", port::UInt16=UInt16(8081);
+                ssl::Bool=false,
+                require_ssl_verification::Bool=false,
+                sslconfig::SSLConfig=SSLConfig(require_ssl_verification),
+                pipeline_limit::Int=ConnectionPool.default_pipeline_limit,
+                kw...)
+
+    @info "Listening on: $(host):$(port)"
+    tcpserver = Base.listen(getaddrinfo(host), port)
+
+    try
+        while isopen(tcpserver)
+            try
+                io = accept(tcpserver)
+                io = ssl ? getsslcontext(io, sslconfig) : io
+                let io = Connection(host, string(port), pipeline_limit, io)
+                    @info "Accept:  $io"
+                    @async try
+                        handle_connection(f, io; kw...)
+                    catch e
+                        @error "Error:   $io" e catch_stacktrace()
+                    finally
+                        close(io)
+                        @info "Closed:  $io"
+                    end
+                end
+            catch e
+                if typeof(e) <: InterruptException
+                    @warn "Interrupted: listen($host,$port)"
+                    close(tcpserver)
+                else
+                    rethrow(e)
+                end
+            end
+        end
+    finally
+        close(tcpserver)
+    end
+
+    return
+end
+
+
+function handle_connection(f::Function, c::Connection;
+                           readtimeout::Int=0, kw...)
+
+    wait_for_timeout = Ref{Bool}(true)
+    if readtimeout > 0
+        @async while wait_for_timeout[]
+            @show inactiveseconds(c)
+            if inactiveseconds(c) > readtimeout
+                @warn "Timeout: $c"
+                writeheaders(c.io, Response(408, ["Connection" => "close"]))
+                close(c)
+                break
+            end
+            sleep(8 + rand() * 4)
+        end
+    end
+
+    try
+        while isopen(c)
+            io = Transaction(c)
+            handle_transaction(f, io; kw...)
+        end
+    finally
+        wait_for_timeout[] = false
+    end
+    return
+end
+
+
+function handle_transaction(f::Function, t; verbose=false, kw...)
+
+    request = HTTP.Request()
+    http = Streams.Stream(request, ConnectionPool.getparser(t), t)
+    response = request.response
+    response.status = 200
+
+    try
+        startread(http)
+    catch e
+        if e isa EOFError && !messagestarted(http.parser)
+            return
+        elseif e isa HTTP.ParsingError
+            @error e
+            status = e.code == Parsers.HPE_INVALID_VERSION ? 505 :
+                     e.code == Parsers.HPE_INVALID_METHOD  ? 405 : 400
+            write(http.stream,
+                  Response(status, body = HTTP.ParsingErrorCodeMap[err.code]))
+        else
+            rethrow(e)
+        end
+    end
+
+    if verbose
+        @info http.message
+    end
+
+    @async try
+        handle_stream(f, http)
+    catch e
+        if isioerror(e)
+            @warn e
+        else
+            @error e catch_stacktrace()
+        end
+        close(t)
+    end
+    return
+end
+
+
+function handle_stream(f::Function, http)
+
+    try
+        f(http)
+    catch e
+        if isopen(http) && !iswritable(http)
+            @error e catch_stacktrace()
+            http.message.response.status = 500
+            startwrite(http)
+            write(http, sprint(showerror, e))
+        else
+            rethrow(e)
+        end
+    end
+
+    closeread(http)
+    closewrite(http)
+    return
+end
+
 
 end # module

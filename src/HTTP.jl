@@ -579,7 +579,7 @@ include("WebSockets.jl")               ;using .WebSockets
 include("client.jl")
 include("sniff.jl")
 include("handlers.jl");                  using .Handlers
-include("server.jl");                    using .Nitrogen
+include("server.jl");                    using .Nitrogen.listen
                                                                              end
 include("precompile.jl")
 
