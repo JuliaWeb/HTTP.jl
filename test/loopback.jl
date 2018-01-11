@@ -84,7 +84,7 @@ function on_body(f, lb)
         @schedule try
             f(req)
         catch e
-            println("⚠️ on_body exception: $e")
+            println("⚠️ on_body exception: $(sprint(showerror, e))\n$(catch_stacktrace())")
         end
     end
 end

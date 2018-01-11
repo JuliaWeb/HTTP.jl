@@ -29,6 +29,6 @@ end
     include("messages.jl");
     include("client.jl");
 
-#    include("handlers.jl")
+    include("handlers.jl")
 #    include("server.jl")
 end;

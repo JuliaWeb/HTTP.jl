@@ -1,3 +1,6 @@
+using HTTP
+using Test
+
 @testset "HTTP.serve" begin
 
 # test kill switch

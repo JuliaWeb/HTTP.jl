@@ -257,27 +257,11 @@ for i in instances(ParsingStateCode)
     @eval const $(Symbol(string(i)[2:end])) = UInt8($i)
 end
 
-# header states
-const h_general = 0x00
-
-const h_matching_content_length = 0x06
-const h_matching_transfer_encoding = 0x07
-const h_content_length = 0x0b
-const h_transfer_encoding = 0x0c
-const h_matching_transfer_encoding_chunked = 0x0f
-const h_transfer_encoding_chunked = 0x15
-
 const CR = '\r'
 const bCR = UInt8('\r')
 const LF = '\n'
 const bLF = UInt8('\n')
 const CRLF = "\r\n"
-
-const unknown_length = typemax(UInt64)
-
-const CONTENT_LENGTH =  "content-length"
-const TRANSFER_ENCODING =  "transfer-encoding"
-const CHUNKED =  "chunked"
 
 #= Tokens as defined by rfc 2616. Also lowercases them.
  #        token       = 1*<any CHAR except CTLs or separators>
