@@ -61,7 +61,6 @@ const Headers = Vector{Header}
 
 mutable struct Message
     method::String
-#UNUSED    methodc::Method
     major::Int16
     minor::Int16
     url::String
@@ -72,7 +71,6 @@ end
 
 function reset!(m::Message)
     m.method = ""
-#UNUSED    m.methodc = NOMETHOD
     m.major = 0
     m.minor = 0
     m.url = ""
@@ -273,6 +271,26 @@ macro methodstate(meth, i, char)
     return esc(:(Int($meth) << Int(16) | Int($i) << Int(8) | Int($char)))
 end
 
+function parse_token(bytes, len, p, buffer)
+    start = p
+    while p <= len
+        @inbounds ch = Char(bytes[p])
+        if !istoken(ch)
+            break
+        end
+        p += 1
+    end
+    @passert p <= len + 1
+
+    write(buffer, view(bytes, start:p-1))
+
+    if p > len
+        return len, false
+    else
+        return p, true
+    end
+end
+
 
 """
     parseheaders(::Parser, bytes) do h::Pair{String,String} ... -> excess
@@ -325,49 +343,8 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             truncate(parser.fieldbuffer, 0)
             truncate(parser.valuebuffer, 0)
 
-#UNUSED            if ch == 'H'
-#UNUSED                p_state = s_res_or_resp_H
-#UNUSED            else
-                p_state = s_start_req
-                p -= 1
-#UNUSED            end
-
-#UNUSED        elseif p_state == s_res_or_resp_H
-#UNUSED            if ch == 'T'
-#UNUSED                p_state = s_res_HT
-#UNUSED            else
-#UNUSED                @errorif(ch != 'E', HPE_INVALID_CONSTANT)
-#UNUSED                parser.message.methodc = HEAD
-#UNUSED                write(parser.valuebuffer, "HE")
-#UNUSED                parser.index = 3
-#UNUSED                p_state = s_req_method
-#UNUSED            end
-
-#UNUSED        elseif p_state == s_start_res
-#UNUSED            parser.flags = 0
-#UNUSED            parser.content_length = unknown_length
-#UNUSED            if ch == 'H'
-#UNUSED                p_state = s_res_H
-#UNUSED            elseif ch == CR || ch == LF
-#UNUSED            else
-#UNUSED                @err HPE_INVALID_CONSTANT
-#UNUSED            end
-
-#UNUSED        elseif p_state == s_res_H
-#UNUSED            @errorifstrict(ch != 'T')
-#UNUSED            p_state = s_res_HT
-
-#UNUSED        elseif p_state == s_res_HT
-#UNUSED            @errorifstrict(ch != 'T')
-#UNUSED            p_state = s_res_HTT
-
-#UNUSED        elseif p_state == s_res_HTT
-#UNUSED            @errorifstrict(ch != 'P')
-#UNUSED            p_state = s_res_HTTP
-
-        elseif p_state == s_res_HTTP
-            @errorifstrict(ch != '/')
-            p_state = s_res_first_http_major
+            p_state = s_start_req
+            p -= 1
 
         elseif p_state == s_res_first_http_major
             @errorif(!isnum(ch), HPE_INVALID_VERSION)
@@ -450,130 +427,27 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
         elseif p_state == s_start_req
             (ch == CR || ch == LF) && continue
-#REDUNDANT            parser.flags = 0
-#REDUNDANT            parser.content_length = unknown_length
-            @errorif(!isalpha(ch), HPE_INVALID_METHOD)
 
-#= UNUSED
-            parser.message.methodc = Method(0)
-            parser.index = 2
+            @errorif(!istoken(ch), HPE_INVALID_METHOD)
 
-            if ch == 'A'
-                parser.message.methodc = ACL
-            elseif ch == 'B'
-                parser.message.methodc = BIND
-            elseif ch == 'C'
-                parser.message.methodc = CONNECT
-            elseif ch == 'D'
-                parser.message.methodc = DELETE
-            elseif ch == 'G'
-                parser.message.methodc = GET
-            elseif ch == 'H'
-                parser.message.methodc = HEAD
-            elseif ch == 'L'
-                parser.message.methodc = LOCK
-            elseif ch == 'M'
-                parser.message.methodc = MKCOL
-            elseif ch == 'N'
-                parser.message.methodc = NOTIFY
-            elseif ch == 'O'
-                parser.message.methodc = OPTIONS
-            elseif ch == 'P'
-                parser.message.methodc = POST
-            elseif ch == 'R'
-                parser.message.methodc = REPORT
-            elseif ch == 'S'
-                parser.message.methodc = SUBSCRIBE
-            elseif ch == 'T'
-                parser.message.methodc = TRACE
-            elseif ch == 'U'
-                parser.message.methodc = UNLOCK
-            else
-                @err(HPE_INVALID_METHOD)
-            end
-=#
             p_state = s_req_method
-
-            write(parser.valuebuffer, ch)
+            p -= 1
 
         elseif p_state == s_req_method
-#UNUSED            matcher = string(parser.message.methodc == xHTTP ? "HTTP" : parser.message.methodc)
-#UNUSED            @debugshow 4 matcher
-#UNUSED            @debugshow 4 parser.index
-            if tokens[Int(ch)+1] == Char(0)
+
+            p, complete = parse_token(bytes, len, p, parser.valuebuffer)
+
+            if complete
                 parser.message.method = take!(parser.valuebuffer)
-                if parser.message.method == "HTTP"
+                @inbounds ch = Char(bytes[p])
+                if parser.message.method == "HTTP" && ch == '/'
                     p_state = s_res_first_http_major
-                else
+                elseif ch == ' '
                     p_state = s_req_spaces_before_url
-                end
-            else
-                write(parser.valuebuffer, ch)
-            end
-#= UNUSED            if ch == '/' && parser.index == length(matcher) + 1 &&
-                parser.message.methodc == xHTTP
-                p_state = s_res_first_http_major
-                truncate(parser.valuebuffer, 0)
-            elseif ch == ' ' && parser.index == length(matcher) + 1
-                p_state = s_req_spaces_before_url
-            elseif parser.index > length(matcher)
-                @err(HPE_INVALID_METHOD)
-            elseif ch == matcher[parser.index]
-                @debug 4 "nada"
-            elseif isalpha(ch)
-                ci = @methodstate(parser.message.methodc,
-                                  Int(parser.index) - 1, ch)
-                if ci == @methodstate(POST, 1, 'U')
-                    parser.message.methodc = PUT
-                elseif ci == @methodstate(HEAD, 1, 'T')
-                    parser.message.methodc = xHTTP
-                elseif ci == @methodstate(POST, 1, 'A')
-                    parser.message.methodc =  PATCH
-                elseif ci == @methodstate(CONNECT, 1, 'H')
-                    parser.message.methodc =  CHECKOUT
-                elseif ci == @methodstate(CONNECT, 2, 'P')
-                    parser.message.methodc =  COPY
-                elseif ci == @methodstate(MKCOL, 1, 'O')
-                    parser.message.methodc =  MOVE
-                elseif ci == @methodstate(MKCOL, 1, 'E')
-                    parser.message.methodc =  MERGE
-                elseif ci == @methodstate(MKCOL, 2, 'A')
-                    parser.message.methodc =  MKACTIVITY
-                elseif ci == @methodstate(MKCOL, 3, 'A')
-                    parser.message.methodc =  MKCALENDAR
-                elseif ci == @methodstate(SUBSCRIBE, 1, 'E')
-                    parser.message.methodc =  SEARCH
-                elseif ci == @methodstate(REPORT, 2, 'B')
-                    parser.message.methodc =  REBIND
-                elseif ci == @methodstate(POST, 1, 'R')
-                    parser.message.methodc =  PROPFIND
-                elseif ci == @methodstate(PROPFIND, 4, 'P')
-                    parser.message.methodc =  PROPPATCH
-                elseif ci == @methodstate(PUT, 2, 'R')
-                    parser.message.methodc =  PURGE
-                elseif ci == @methodstate(LOCK, 1, 'I')
-                    parser.message.methodc =  LINK
-                elseif ci == @methodstate(UNLOCK, 2, 'S')
-                    parser.message.methodc =  UNSUBSCRIBE
-                elseif ci == @methodstate(UNLOCK, 2, 'B')
-                    parser.message.methodc =  UNBIND
-                elseif ci == @methodstate(UNLOCK, 3, 'I')
-                    parser.message.methodc =  UNLINK
                 else
                     @err(HPE_INVALID_METHOD)
                 end
-            elseif ch == '-' &&
-                   parser.index == 2 &&
-                   parser.message.methodc == MKCOL
-                @debug 4 "matched MSEARCH"
-                parser.message.methodc = MSEARCH
-                parser.index -= 1
-            else
-                @err(HPE_INVALID_METHOD)
             end
-            parser.index += 1
-            @debugshow 4 parser.index
-=#
 
         elseif p_state == s_req_spaces_before_url
             ch == ' ' && continue
@@ -713,12 +587,8 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
                 if c == 'c'
                     parser.header_state = h_matching_content_length
-#UNUSED                elseif c == 'p'
-#UNUSED                    parser.header_state = h_matching_proxy_connection
                 elseif c == 't'
                     parser.header_state = h_matching_transfer_encoding
-#UNUSED                elseif c == 'u'
-#UNUSED                    parser.header_state = h_matching_upgrade
                 else
                     parser.header_state = h_general
                 end
@@ -740,39 +610,6 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 h = parser.header_state
                 if h == h_general
 
-#UNUSED                elseif h == h_C
-#UNUSED                    parser.index += 1
-#UNUSED                    parser.header_state = c == 'o' ? h_CO : h_general
-#UNUSED                elseif h == h_CO
-#UNUSED                    parser.index += 1
-#UNUSED                    parser.header_state = c == 'n' ? h_CON : h_general
-#UNUSED                elseif h == h_CON
-#UNUSED                    parser.index += 1
-#UNUSED                    if c == 'n'
-#UNUSED                        parser.header_state = h_matching_connection
-#UNUSED                    if c == 't'
-#UNUSED                        parser.header_state = h_matching_content_length
-#UNUSED                    else
-#UNUSED                        parser.header_state = h_general
-#UNUSED                    end
-#UNUSED                # connection
-#UNUSED                elseif h == h_matching_connection
-#UNUSED                    parser.index += 1
-#UNUSED                    if parser.index > length(CONNECTION) ||
-#UNUSED                       c != CONNECTION[parser.index]
-#UNUSED                        parser.header_state = h_general
-#UNUSED                    elseif parser.index == length(CONNECTION)
-#UNUSED                        parser.header_state = h_connection
-#UNUSED                    end
-#UNUSED                # proxy-connection
-#UNUSED                elseif h == h_matching_proxy_connection
-#UNUSED                    parser.index += 1
-#UNUSED                    if parser.index > length(PROXY_CONNECTION) ||
-#UNUSED                       c != PROXY_CONNECTION[parser.index]
-#UNUSED                        parser.header_state = h_general
-#UNUSED                    elseif parser.index == length(PROXY_CONNECTION)
-#UNUSED                        parser.header_state = h_connection
-#UNUSED                    end
                 # content-length
                 elseif h == h_matching_content_length
                     parser.index += 1
@@ -782,6 +619,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     elseif parser.index == length(CONTENT_LENGTH)
                         parser.header_state = h_content_length
                     end
+
                 # transfer-encoding
                 elseif h == h_matching_transfer_encoding
                     parser.index += 1
@@ -791,15 +629,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     elseif parser.index == length(TRANSFER_ENCODING)
                         parser.header_state = h_transfer_encoding
                     end
-#UNUSED                # upgrade
-#UNUSED                elseif h == h_matching_upgrade
-#UNUSED                    parser.index += 1
-#UNUSED                    if parser.index > length(UPGRADE) ||
-#UNUSED                       c != UPGRADE[parser.index]
-#UNUSED                        parser.header_state = h_general
-#UNUSED                    elseif parser.index == length(UPGRADE)
-#UNUSED                        parser.header_state = h_upgrade
-#UNUSED                    end
+
                 elseif @anyeq(h, #=h_connection,=# h_content_length,
                               h_transfer_encoding#=, h_upgrade=#)
                     if ch != ' '
@@ -815,7 +645,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             if ch == ':'
                 p_state = s_header_value_discard_ws
             else
-                @passert tokens[Int(ch)+1] != Char(0) || !strict && ch == ' '
+                @passert !strict && ch == ' ' || istoken(ch)
             end
             write(parser.fieldbuffer, view(bytes, start:p-1))
 
@@ -838,9 +668,6 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             parser.index = 1
             c = lower(ch)
 
-#UNUSED            if parser.header_state == h_upgrade
-#UNUSED                parser.flags |= F_UPGRADE
-#UNUSED                parser.header_state = h_general
             if parser.header_state == h_transfer_encoding
                 # looking for 'Transfer-Encoding: chunked'
                 parser.header_state = ifelse(
@@ -852,20 +679,6 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                          HPE_UNEXPECTED_CONTENT_LENGTH)
                 parser.content_length = UInt64(ch - '0')
 
-#UNUSED            elseif parser.header_state == h_connection
-#UNUSED                # looking for 'Connection: keep-alive'
-#UNUSED                if c == 'k'
-#UNUSED                    parser.header_state = h_matching_connection_keep_alive
-#UNUSED                # looking for 'Connection: close'
-#UNUSED                elseif c == 'c'
-#UNUSED                    parser.header_state = h_matching_connection_close
-#UNUSED                if c == 'u'
-#UNUSED                    parser.header_state = h_matching_connection_upgrade
-#UNUSED                else
-#UNUSED                    parser.header_state = h_matching_connection_token
-#UNUSED                end
-#UNUSED            # Multi-value `Connection` header
-#UNUSED            elseif parser.header_state == h_matching_connection_token_start
             else
               parser.header_state = h_general
             end
@@ -931,80 +744,10 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                         h = h_transfer_encoding_chunked
                     end
 
-#UNUSED                elseif h == h_matching_connection_token_start
-#UNUSED                    # looking for 'Connection: keep-alive'
-#UNUSED                    if c == 'k'
-#UNUSED                        h = h_matching_connection_keep_alive
-#UNUSED                    # looking for 'Connection: close'
-#UNUSED                    elseif c == 'c'
-#UNUSED                        h = h_matching_connection_close
-#UNUSED                    if c == 'u'
-#UNUSED                        h = h_matching_connection_upgrade
-#UNUSED                    elseif tokens[Int(c)+1] > '\0'
-#UNUSED                        h = h_matching_connection_token
-#UNUSED                    elseif c == ' ' || c == '\t'
-#UNUSED                    # Skip lws
-#UNUSED                    else
-#UNUSED                        h = h_general
-#UNUSED                    end
-                # looking for 'Connection: keep-alive'
-#UNUSED                elseif h == h_matching_connection_keep_alive
-#UNUSED                    parser.index += 1
-#UNUSED                    if parser.index > length(KEEP_ALIVE) ||
-#UNUSED                       c != KEEP_ALIVE[parser.index]
-#UNUSED                        h = h_matching_connection_token
-#UNUSED                    elseif parser.index == length(KEEP_ALIVE)
-#UNUSED                        h = h_connection_keep_alive
-#UNUSED                    end
-
-#UNUSED                # looking for 'Connection: close'
-#UNUSED                elseif h == h_matching_connection_close
-#UNUSED                    parser.index += 1
-#UNUSED                    if parser.index > length(CLOSE) ||
-#UNUSED                       c != CLOSE[parser.index]
-#UNUSED                        h = h_matching_connection_token
-#UNUSED                    elseif parser.index == length(CLOSE)
-#UNUSED                        h = h_connection_close
-#UNUSED                    end
-
-#UNUSED                # looking for 'Connection: upgrade'
-#UNUSED                elseif h == h_matching_connection_upgrade
-#UNUSED                    parser.index += 1
-#UNUSED                    if parser.index > length(UPGRADE) ||
-#UNUSED                       c != UPGRADE[parser.index]
-#UNUSED                        h = h_matching_connection_token
-#UNUSED                    elseif parser.index == length(UPGRADE)
-#UNUSED                        h = h_connection_upgrade
-#UNUSED                    end
-
-#UNUSED                elseif h == h_matching_connection_token
-#UNUSED                    if ch == ','
-#UNUSED                        h = h_matching_connection_token_start
-#UNUSED                        parser.index = 1
-#UNUSED                    end
-
                 elseif h == h_transfer_encoding_chunked
                     if ch != ' '
                         h = h_general
                     end
-
-
-#UNUSED                elseif @anyeq(h, h_connection_keep_alive, h_connection_close,
-#UNUSED                              h_connection_upgrade)
-#UNUSED                    if ch == ','
-#UNUSED                        if h == h_connection_keep_alive
-#UNUSED                            parser.flags |= F_CONNECTION_KEEP_ALIVE
-#UNUSED                        elseif h == h_connection_close
-#UNUSED                            parser.flags |= F_CONNECTION_CLOSE
-#UNUSED                        elseif h == h_connection_upgrade
-#UNUSED                            parser.flags |= F_CONNECTION_UPGRADE
-#UNUSED                        end
-#UNUSED                        h = h_matching_connection_token_start
-#UNUSED                        parser.index = 1
-#UNUSED                    elseif ch != ' '
-#UNUSED                        h = h_matching_connection_token
-#UNUSED                    end
-
                 else
                     p_state = s_header_value
                     h = h_general
@@ -1034,14 +777,8 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 p_state = s_header_value_start
             else
                 # finished the header
-#UNUSED                if parser.header_state == h_connection_keep_alive
-#UNUSED                    parser.flags |= F_CONNECTION_KEEP_ALIVE
-#UNUSED                elseif parser.header_state == h_connection_close
-#UNUSED                    parser.flags |= F_CONNECTION_CLOSE
                 if parser.header_state == h_transfer_encoding_chunked
                     parser.chunked = true
-#UNUSED                elseif parser.header_state == h_connection_upgrade
-#UNUSED                    parser.flags |= F_CONNECTION_UPGRADE
                 end
                 p_state = s_header_field_start
             end
@@ -1054,12 +791,6 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             if ch == ' ' || ch == '\t'
                 p_state = s_header_value_discard_ws
             else
-#UNUSED                if parser.header_state == h_connection_keep_alive
-#UNUSED                    parser.flags |= F_CONNECTION_KEEP_ALIVE
-#UNUSED                elseif parser.header_state == h_connection_close
-#UNUSED                    parser.flags |= F_CONNECTION_CLOSE
-#UNUSED                if parser.header_state == h_connection_upgrade
-#UNUSED                    parser.flags |= F_CONNECTION_UPGRADE
                 if parser.header_state == h_transfer_encoding_chunked
                     parser.chunked = true
                 end

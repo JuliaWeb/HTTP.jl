@@ -195,11 +195,6 @@ const ParsingErrorCodeMap = Dict(
     ,es_dead=1
     ,es_start_req_or_res=2
     ,es_res_or_resp_H=3
-    ,es_start_res=4
-    ,es_res_H=5
-    ,es_res_HT=6
-    ,es_res_HTT=7
-    ,es_res_HTTP=8
     ,es_res_first_http_major=9
     ,es_res_http_major=10
     ,es_res_first_http_minor=11
@@ -264,32 +259,13 @@ end
 
 # header states
 const h_general = 0x00
-#UNUSED const h_C = 0x01
-#UNUSED const h_CO = 0x02
-#UNUSED const h_CON = 0x03
 
-#UNUSED const h_matching_connection = 0x04
-#UNUSED const h_matching_proxy_connection = 0x05
 const h_matching_content_length = 0x06
 const h_matching_transfer_encoding = 0x07
-#UNUSED const h_matching_upgrade = 0x08
-
-#UNUSED const h_connection = 0x0a
 const h_content_length = 0x0b
 const h_transfer_encoding = 0x0c
-#UNUSED const h_upgrade = 0x0d
-
 const h_matching_transfer_encoding_chunked = 0x0f
-#UNUSED const h_matching_connection_token_start = 0x10
-#UNUSED const h_matching_connection_keep_alive = 0x11
-#UNUSED const h_matching_connection_close = 0x12
-#UNUSED const h_matching_connection_upgrade = 0x13
-#UNUSED const h_matching_connection_token = 0x14
-
 const h_transfer_encoding_chunked = 0x15
-#UNUSED const h_connection_keep_alive = 0x16
-#UNUSED const h_connection_close = 0x17
-#UNUSED const h_connection_upgrade = 0x18
 
 const CR = '\r'
 const bCR = UInt8('\r')
@@ -299,14 +275,9 @@ const CRLF = "\r\n"
 
 const unknown_length = typemax(UInt64)
 
-#UNUSED const PROXY_CONNECTION =  "proxy-connection"
-#UNUSED const CONNECTION =  "connection"
 const CONTENT_LENGTH =  "content-length"
 const TRANSFER_ENCODING =  "transfer-encoding"
-#UNUSED const UPGRADE =  "upgrade"
 const CHUNKED =  "chunked"
-#UNUSED const KEEP_ALIVE =  "keep-alive"
-#UNUSED const CLOSE =  "close"
 
 #= Tokens as defined by rfc 2616. Also lowercases them.
  #        token       = 1*<any CHAR except CTLs or separators>
@@ -349,6 +320,8 @@ const tokens = Char[
 #= 120  x   121  y   122  z   123  {   124  |   125  }   126  ~   127 del =#
        'x',     'y',     'z',      0,      '|',      0,      '~',       0 ]
 
+istoken(c) = tokens[UInt8(c)+1] != Char(0)
+
 const unhex = Int8[
      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
     ,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
@@ -359,15 +332,6 @@ const unhex = Int8[
     ,-1,10,11,12,13,14,15,-1,-1,-1,-1,-1,-1,-1,-1,-1
     ,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
 ]
-
-# flags
-#UNUSED const F_CHUNKED               = UInt8(1 << 0)
-#UNUSED const F_CONNECTION_KEEP_ALIVE = UInt8(1 << 1)
-#UNUSED const F_CONNECTION_CLOSE      = UInt8(1 << 2)
-#UNUSED const F_CONNECTION_UPGRADE    = UInt8(1 << 3)
-#UNUSED const F_TRAILING              = UInt8(1 << 4)
-#UNUSED const F_UPGRADE               = UInt8(1 << 5)
-#UNUSED const F_CONTENTLENGTH         = UInt8(1 << 6)
 
 # url parsing
 const normal_url_char = Bool[
