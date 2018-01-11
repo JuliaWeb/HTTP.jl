@@ -10,7 +10,6 @@ in the case of HTTP Redirect.
 
 The Messages module defines `IO` `read` and `write` methods for Messages
 but it does not deal with URIs, creating connections, or executing requests.
-The 
 
 The `read` methods throw `EOFError` exceptions if input data is incomplete.
 and call parser functions that may throw `HTTP.ParsingError` exceptions.
@@ -41,7 +40,7 @@ Headers are represented by `Vector{Pair{String,String}}`. As compared to
 `Dict{String,String}` this allows [repeated header fields and preservation of
 order](https://tools.ietf.org/html/rfc7230#section-3.2.2).
 
-Header values can be accessed by name using 
+Header values can be accessed by name using
 [`HTTP.Messages.header`](@ref) and
 [`HTTP.Messages.setheader`](@ref) (case-insensitive).
 
@@ -65,7 +64,8 @@ export Message, Request, Response,
        iserror, isredirect, ischunked, issafe, isidempotent,
        header, hasheader, setheader, defaultheader, appendheader,
        mkheaders, readheaders, headerscomplete, readtrailers, writeheaders,
-       readstartline!, writestartline
+       readstartline!, writestartline,
+       bodylength, unknown_length
 
 if VERSION > v"0.7.0-DEV.2338"
 using Unicode
@@ -78,6 +78,9 @@ using ..IOExtras
 using ..Parsers
 import ..Parsers
 import ..Parsers: headerscomplete, reset!
+
+const unknown_length = typemax(Int64)
+
 
 abstract type Message end
 
@@ -98,11 +101,20 @@ mutable struct Response <: Message
     status::Int16
     headers::Headers
     body::Vector{UInt8}
-    request
-end
+    request::Message
 
-Response(status::Int=0, headers=[]; body=UInt8[], request=nothing) =
-    Response(v"1.1", status, mkheaders(headers), body, request)
+    function Response(status::Int=0, headers=[]; body=UInt8[], request=nothing)
+        r = new()
+        r.version = v"1.1"
+        r.status = status
+        r.headers = mkheaders(headers)
+        r.body = body
+        if request != nothing
+            r.request = request
+        end
+        return r
+    end
+end
 
 Response(bytes) = parse(Response, bytes)
 
@@ -230,7 +242,7 @@ hasheader(m, k::String) = header(m, k) != ""
 
 Does header for `key` match `value` (both case-insensitive)?
 """
-hasheader(m, k::String, v::String) = lowercase(header(m, k)) == v
+hasheader(m, k::String, v::String) = lowercase(header(m, k)) == lowercase(v)
 
 
 """
@@ -262,7 +274,7 @@ end
 Does the `Message` have a "Transfer-Encoding: chunked" header?
 """
 
-ischunked(m) = header(m, "Transfer-Encoding") == "chunked"
+ischunked(m) = hasheader(m, "Transfer-Encoding", "chunked")
 
 
 """
@@ -425,31 +437,71 @@ end
 
 
 """
+"The presence of a message body in a response depends on both the
+ request method to which it is responding and the response status code.
+ Responses to the HEAD request method never include a message body [].
+ 2xx (Successful) responses to a CONNECT request method (Section 4.3.6 of
+ [RFC7231]) switch to tunnel mode instead of having a message body.
+ All 1xx (Informational), 204 (No Content), and 304 (Not Modified)
+ responses do not include a message body.  All other responses do
+ include a message body, although the body might be of zero length."
+[RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
+"""
+
+bodylength(r::Response)::Int =
+                 r.request.method == "HEAD" ? 0 :
+                     r.status in [204, 304] ? 0 :
+    (l = header(r, "Content-Length")) != "" ? parse(Int, l) :
+                                              unknown_length
+
+
+"""
+"The presence of a message body in a request is signaled by a
+ Content-Length or Transfer-Encoding header field.  Request message
+ framing is independent of method semantics, even if the method does
+ not define any use for a message body."
+[RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
+"""
+
+bodylength(r::Request)::Int =
+    ischunked(r) ? unknown_length :
+                   parse(Int, header(r, "Content-Length", "0"))
+
+
+"""
     readbody(::IO, ::Parser) -> Vector{UInt8}
 
 Read message body from an `IO` stream.
 """
 
-function readbody(io::IO, parser::Parser)
-    body = IOBuffer()
-    while !bodycomplete(parser) && !eof(io)
-        data, excess = parsebody(parser, readavailable(io))
-        write(body, data)
-        unread!(io, excess)
+function readbody(io::IO, parser::Parser, m::Message)
+    if ischunked(m)
+        body = IOBuffer()
+        while !bodycomplete(parser) && !eof(io)
+            data, excess = parsebody(parser, readavailable(io))
+            write(body, data)
+            unread!(io, excess)
+        end
+        m.body = take!(body)
+    else
+        l = bodylength(m)
+        m.body = read(io, l)
+        if l != unknown_length && length(m.body) < l
+            throw(EOFError())
+        end
     end
-    return take!(body)
 end
 
 
 function Base.parse(::Type{T}, str::AbstractString) where T <: Message
     bytes = IOBuffer(str)
     p = Parser()
-    m = T()
+    r = Request()
+    m::T = T == Request ? r : r.response
     readheaders(bytes, p, m)
-    m.body = readbody(bytes, p)
+    readbody(bytes, p, m)
     readtrailers(bytes, p, m)
-    seteof(p)
-    if !messagecomplete(p)
+    if ischunked(m) && !messagecomplete(p)
         throw(EOFError())
     end
     return m
