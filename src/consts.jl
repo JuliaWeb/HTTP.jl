@@ -113,10 +113,12 @@ const STATUS_CODES = Dict(
     # RFC-2068, section 19.6.1.2
     LINK=31,
     UNLINK=32,
+    xHTTP,
     NOMETHOD
 )
 
 const MethodMap = Dict(
+    "HTTP" => xHTTP,
     "DELETE" => DELETE,
     "GET" => GET,
     "HEAD" => HEAD,
@@ -156,7 +158,6 @@ Base.convert(::Type{Method}, s::String) = MethodMap[s]
 # parsing codes
 @enum(ParsingErrorCode,
     HPE_OK,
-    HPE_HEADER_OVERFLOW,
     HPE_INVALID_VERSION,
     HPE_INVALID_STATUS,
     HPE_INVALID_METHOD,
@@ -174,7 +175,6 @@ Base.convert(::Type{Method}, s::String) = MethodMap[s]
 
 const ParsingErrorCodeMap = Dict(
     HPE_OK => "success",
-    HPE_HEADER_OVERFLOW => "too many header bytes seen; overflow detected",
     HPE_INVALID_VERSION => "invalid HTTP version",
     HPE_INVALID_STATUS => "invalid HTTP status code",
     HPE_INVALID_METHOD => "invalid HTTP method",
@@ -264,32 +264,32 @@ end
 
 # header states
 const h_general = 0x00
-const h_C = 0x01
-const h_CO = 0x02
-const h_CON = 0x03
+#UNUSED const h_C = 0x01
+#UNUSED const h_CO = 0x02
+#UNUSED const h_CON = 0x03
 
-const h_matching_connection = 0x04
-const h_matching_proxy_connection = 0x05
+#UNUSED const h_matching_connection = 0x04
+#UNUSED const h_matching_proxy_connection = 0x05
 const h_matching_content_length = 0x06
 const h_matching_transfer_encoding = 0x07
-const h_matching_upgrade = 0x08
+#UNUSED const h_matching_upgrade = 0x08
 
-const h_connection = 0x0a
+#UNUSED const h_connection = 0x0a
 const h_content_length = 0x0b
 const h_transfer_encoding = 0x0c
-const h_upgrade = 0x0d
+#UNUSED const h_upgrade = 0x0d
 
 const h_matching_transfer_encoding_chunked = 0x0f
-const h_matching_connection_token_start = 0x10
-const h_matching_connection_keep_alive = 0x11
-const h_matching_connection_close = 0x12
-const h_matching_connection_upgrade = 0x13
-const h_matching_connection_token = 0x14
+#UNUSED const h_matching_connection_token_start = 0x10
+#UNUSED const h_matching_connection_keep_alive = 0x11
+#UNUSED const h_matching_connection_close = 0x12
+#UNUSED const h_matching_connection_upgrade = 0x13
+#UNUSED const h_matching_connection_token = 0x14
 
 const h_transfer_encoding_chunked = 0x15
-const h_connection_keep_alive = 0x16
-const h_connection_close = 0x17
-const h_connection_upgrade = 0x18
+#UNUSED const h_connection_keep_alive = 0x16
+#UNUSED const h_connection_close = 0x17
+#UNUSED const h_connection_upgrade = 0x18
 
 const CR = '\r'
 const bCR = UInt8('\r')
@@ -297,16 +297,16 @@ const LF = '\n'
 const bLF = UInt8('\n')
 const CRLF = "\r\n"
 
-const ULLONG_MAX = typemax(UInt64)
+const unknown_length = typemax(UInt64)
 
-const PROXY_CONNECTION =  "proxy-connection"
-const CONNECTION =  "connection"
+#UNUSED const PROXY_CONNECTION =  "proxy-connection"
+#UNUSED const CONNECTION =  "connection"
 const CONTENT_LENGTH =  "content-length"
 const TRANSFER_ENCODING =  "transfer-encoding"
-const UPGRADE =  "upgrade"
+#UNUSED const UPGRADE =  "upgrade"
 const CHUNKED =  "chunked"
-const KEEP_ALIVE =  "keep-alive"
-const CLOSE =  "close"
+#UNUSED const KEEP_ALIVE =  "keep-alive"
+#UNUSED const CLOSE =  "close"
 
 #= Tokens as defined by rfc 2616. Also lowercases them.
  #        token       = 1*<any CHAR except CTLs or separators>
@@ -361,13 +361,13 @@ const unhex = Int8[
 ]
 
 # flags
-const F_CHUNKED               = UInt8(1 << 0)
-const F_CONNECTION_KEEP_ALIVE = UInt8(1 << 1)
-const F_CONNECTION_CLOSE      = UInt8(1 << 2)
-const F_CONNECTION_UPGRADE    = UInt8(1 << 3)
-const F_TRAILING              = UInt8(1 << 4)
-const F_UPGRADE               = UInt8(1 << 5)
-const F_CONTENTLENGTH         = UInt8(1 << 6)
+#UNUSED const F_CHUNKED               = UInt8(1 << 0)
+#UNUSED const F_CONNECTION_KEEP_ALIVE = UInt8(1 << 1)
+#UNUSED const F_CONNECTION_CLOSE      = UInt8(1 << 2)
+#UNUSED const F_CONNECTION_UPGRADE    = UInt8(1 << 3)
+#UNUSED const F_TRAILING              = UInt8(1 << 4)
+#UNUSED const F_UPGRADE               = UInt8(1 << 5)
+#UNUSED const F_CONTENTLENGTH         = UInt8(1 << 6)
 
 # url parsing
 const normal_url_char = Bool[

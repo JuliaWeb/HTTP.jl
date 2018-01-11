@@ -519,7 +519,7 @@ Message(name= "curl get"
 ,should_keep_alive= true
 ,http_major= 1
 ,http_minor= 1
-,method= "MSEARCH"
+,method= "M-SEARCH"
 ,query_string= ""
 ,fragment= ""
 ,request_path= "*"
@@ -1851,14 +1851,17 @@ const responses = Message[
       @test String(take!(b)) == "fooba"
 
       for m in instances(Parsers.Method)
-          m in (Parsers.NOMETHOD, Parsers.CONNECT) && continue
+          m in (Parsers.xHTTP, Parsers.NOMETHOD, Parsers.CONNECT) && continue
           me = m == Parsers.MSEARCH ? "M-SEARCH" : "$m"
           r = Request("$me / HTTP/1.1\r\n\r\n")
-          @test r.method == string(m)
+          @test r.method == string(me)
       end
 
-      for m in ("ASDF","C******","COLA","GEM","GETA","M****","MKCOLA","PROPPATCHA","PUN","PX","SA","hello world")
+      for m in ("HTTP/1.1", "hello world")
           @test_throws ParsingError Request("$m / HTTP/1.1\r\n\r\n")
+      end
+      for m in ("ASDF","C******","COLA","GEM","GETA","M****","MKCOLA","PROPPATCHA","PUN","PX","SA")
+          @test Request("$m / HTTP/1.1\r\n\r\n").method == m
       end
 
       @test_throws ParsingError Request("GET / HTTP/1.1\r\n" * "name\r\n" * " : value\r\n\r\n")

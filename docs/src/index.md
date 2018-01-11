@@ -151,7 +151,6 @@ HTTP.ConnectionPool
 
 ```@docs
 HTTP.Parsers.Message
-HTTP.Parsers.Parser()
 HTTP.Parsers.parseheaders
 HTTP.Parsers.parsebody
 HTTP.Parsers.reset!

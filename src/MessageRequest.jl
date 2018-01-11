@@ -33,7 +33,7 @@ function request(::Type{MessageLayer{Next}},
        !hasheader(headers, "Transfer-Encoding") &&
        !hasheader(headers, "Upgrade")
         l = bodylength(body)
-        if l != unknownlength
+        if l != unknown_length
             setheader(headers, "Content-Length" => string(l))
         elseif method == "GET" && iofunction isa Function
             setheader(headers, "Content-Length" => "0")
@@ -46,8 +46,8 @@ function request(::Type{MessageLayer{Next}},
 end
 
 
-const unknownlength = -1
-bodylength(body) = unknownlength
+const unknown_length = -1
+bodylength(body) = unknown_length
 bodylength(body::AbstractVector{UInt8}) = length(body)
 bodylength(body::AbstractString) = sizeof(body)
 if !minimal
