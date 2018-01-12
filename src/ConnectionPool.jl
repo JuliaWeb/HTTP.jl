@@ -55,7 +55,7 @@ A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 Fields:
 - `host::String`
 - `port::String`, exactly as specified in the URI (i.e. may be empty).
-- `pipeline_linit`, number of requests to send before waiting for responses.
+- `pipeline_limit`, number of requests to send before waiting for responses.
 - `peerport`, remote TCP port number (used for debug messages).
 - `localport`, local TCP port number (used for debug messages).
 - `io::T`, the `TCPSocket` or `SSLContext.
