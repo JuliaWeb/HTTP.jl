@@ -76,7 +76,6 @@ import ..HTTP
 using ..Pairs
 using ..IOExtras
 using ..Parsers
-import ..Parsers
 import ..Parsers: headerscomplete, reset!
 
 const unknown_length = typemax(Int64)
