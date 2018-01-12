@@ -235,6 +235,7 @@ r = HTTP.open("GET", "http://httpbin.org/stream/10") do io
 end
 
 using HTTP.IOExtras
+
 HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
     n = 0
     r = startread(http)
@@ -268,12 +269,14 @@ HTTP.request("POST", "http://convert.com/png2jpg", [], in, response_stream=out)
 
 Stream bodies through: `open() do io`:
 ```julia
+using HTTP.IOExtras
+
 HTTP.open("POST", "http://music.com/play") do io
     write(io, JSON.json([
         "auth" => "12345XXXX",
         "song_id" => 7,
     ]))
-    r = readresponse(io)
+    r = startread(io)
     @show r.status
     while !eof(io)
         bytes = readavailable(io))
