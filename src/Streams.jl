@@ -32,7 +32,7 @@ end
 Creates a `HTTP.Stream` that wraps an existing `IO` stream.
 
  - `startwrite(::Stream)` sends the `Request` headers to the `IO` stream.
- - `write(::Stream, body)` sends the `body` (or a chunk of the bocdy).
+ - `write(::Stream, body)` sends the `body` (or a chunk of the body).
  - `closewrite(::Stream)` sends the final `0` chunk (if needed) and calls
    `closewrite` on the `IO` stream. When the `IO` stream is a
    [`HTTP.ConnectionPool.Transaction`](@ref), calling `closewrite` releases
@@ -239,7 +239,7 @@ end
 """
     isaborted(::Stream{Response})
 
-Has the server signalled that it does not wish to receive the message body?
+Has the server signaled that it does not wish to receive the message body?
 
 "If [the response] indicates the server does not wish to receive the
  message body and is closing the connection, the client SHOULD

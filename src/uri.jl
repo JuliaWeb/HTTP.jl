@@ -8,7 +8,8 @@ import Base.==
 
 include("urlparser.jl")
 
-export URI, URL, hostport, resource, queryparams, absuri, escapeuri, unescapeuri
+export URI, URL, hostport, resource, queryparams, absuri,
+       escapeuri, unescapeuri, escapepath
 
 """
     HTTP.URL(host; userinfo="", path="", query="", fragment="", isconnect=false)
@@ -219,6 +220,10 @@ function unescapeuri(str)
     end
     return String(take!(out))
 end
+
+ispathsafe(c::Char) = c == '/' || issafe(c)
+escapepath(path) = escapeuri(path, ispathsafe)
+
 
 """
 Splits the path into components

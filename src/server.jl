@@ -79,7 +79,7 @@ ServerOptions(; tlsconfig::HTTP.MbedTLS.SSLConfig=HTTP.MbedTLS.SSLConfig(true),
 
 An http/https server. Supports listening on a `host` and `port` via the `HTTP.serve(server, host, port)` function.
 `handler` is a function of the form `f(::Request, ::Response) -> HTTP.Response`, i.e. it takes both a `Request` and pre-built `Response`
-objects as inputs and returns the, potentially modified, `Respose`. `logger` indicates where logging output should be directed.
+objects as inputs and returns the, potentially modified, `Response`. `logger` indicates where logging output should be directed.
 When `HTTP.serve` is called, it aims to "never die", catching and recovering from all internal errors. To forcefully stop, one can obviously
 kill the julia process, interrupt (ctrl/cmd+c) if main task, or send the kill signal over a server in channel like:
 `put!(server.in, HTTP.KILL)`.

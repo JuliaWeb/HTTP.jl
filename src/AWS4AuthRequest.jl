@@ -38,10 +38,6 @@ function request(::Type{AWS4AuthLayer{Next}},
 end
 
 
-ispathsafe(c::Char) = c == '/' || URIs.issafe(c)
-escape_path(path) = escapeuri(path, ispathsafe)
-
-
 function sign_aws4!(method::String,
                     uri::URI,
                     headers::Headers,
@@ -96,7 +92,7 @@ function sign_aws4!(method::String,
     # Create hash of canonical request...
     canonical_form = string(method, "\n",
                             aws_service == "s3" ? uri.path
-                                                : escape_path(uri.path), "\n",
+                                                : escapepath(uri.path), "\n",
                             escapeuri(query), "\n",
                             join(sort(canonical_headers), "\n"), "\n\n",
                             signed_headers, "\n",

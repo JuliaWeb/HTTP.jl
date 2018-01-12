@@ -14,13 +14,13 @@ using HTTP.StatusError
 
 using HTTP.MessageRequest.bodylength
 using HTTP.MessageRequest.bodybytes
-using HTTP.MessageRequest.unknownlength
+using HTTP.MessageRequest.unknown_length
 
 using JSON
 
 @testset "HTTP.Messages" begin
 
-    @test bodylength(7) == unknownlength
+    @test bodylength(7) == unknown_length
     @test bodylength(UInt8[1,2,3]) == 3
     @test bodylength(view(UInt8[1,2,3], 1:2)) == 2
     @test bodylength("Hello") == 5

@@ -283,7 +283,7 @@ Append a header value to `message.headers`.
 
 If `key` is `""` the `value` is appended to the value of the previous header.
 
-If `key` is the same as the previous header, the `vale` is [appended to the
+If `key` is the same as the previous header, the `value` is [appended to the
 value of the previous header with a comma
 delimiter](https://stackoverflow.com/a/24502264)
 
