@@ -153,4 +153,4 @@ function dot_aws_credentials()::NamedTuple
 end
 
 
-end # module BasicAuthRequest
+end # module AWS4AuthRequest
