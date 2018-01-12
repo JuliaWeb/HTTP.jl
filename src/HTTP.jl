@@ -234,6 +234,7 @@ r = HTTP.open("GET", "http://httpbin.org/stream/10") do io
    end
 end
 
+using HTTP.IOExtras
 HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
     n = 0
     r = startread(http)
