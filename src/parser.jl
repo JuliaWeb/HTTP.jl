@@ -52,7 +52,7 @@ const Header = Pair{String,String}
 const Headers = Vector{Header}
 
 """
- - `method::Method`: internal parser `@enum` for HTTP method.
+ - `method::String`: the HTTP method
  - `major` and `minor`: HTTP version
  - `url::String`: request URL
  - `status::Int`: response status
