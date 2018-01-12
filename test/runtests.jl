@@ -24,11 +24,14 @@ end
     include("parser.jl");
 
     include("loopback.jl");
+@static if VERSION > v"0.7.0-DEV.2005"
     include("WebSockets.jl");
-    include("async.jl");
+end
     include("messages.jl");
     include("client.jl");
 
     include("handlers.jl")
 #    include("server.jl")
+
+    include("async.jl");
 end;

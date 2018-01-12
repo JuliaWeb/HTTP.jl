@@ -1,6 +1,10 @@
 module ParserTest
 
+@static if VERSION > v"0.7.0-DEV.2338"
+using Test
+else
 using Base.Test
+end
 
 import ..HTTP
 import ..HTTP.pairs

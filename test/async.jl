@@ -1,8 +1,10 @@
-using Test
+@static if VERSION > v"0.7.0-DEV.2005"
+    using Test
+    using Base64
+end
 using HTTP
 using JSON
 using MbedTLS: digest, MD_MD5, MD_SHA256
-using Base64
 
 using HTTP.IOExtras
 using HTTP.request
@@ -46,8 +48,9 @@ function dump_async_exception(e, st)
     print(String(take!(buf)))
 end
 
-if haskey(ENV, "AWS_ACCESS_KEY_ID") ||
-   haskey(ENV, "AWS_DEFAULT_PROFILE")
+if VERSION > v"0.7.0-DEV.2338" &&
+   (haskey(ENV, "AWS_ACCESS_KEY_ID") ||
+    haskey(ENV, "AWS_DEFAULT_PROFILE"))
 @testset "async s3 dup$dup, count$count, sz$sz, pipw$pipe, $http, $mode" for
     count in [10, 100, 1000],
     dup in [0, 7],
@@ -142,6 +145,10 @@ for i = 1:count
     a, b = get_data_sums[i]
     @test a == b
     @test a == put_data_sums[i]
+end
+
+if haskey(ENV, "HTTP_JL_TEST_QUICK_ASYNC")
+    break
 end
 
 end # testset
@@ -298,6 +305,11 @@ println("running async $count, 1:$num, $config, $http C")
 
     HTTP.ConnectionPool.showpool(STDOUT)
     HTTP.ConnectionPool.closeall()
+
+
+    if haskey(ENV, "HTTP_JL_TEST_QUICK_ASYNC")
+        break
+    end
 
 end # testset
 

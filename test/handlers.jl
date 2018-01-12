@@ -1,4 +1,7 @@
+if VERSION > v"0.7.0-DEV.2338"
 using Test
+end
+
 using HTTP
 
 import Base.==

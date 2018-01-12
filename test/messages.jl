@@ -1,8 +1,10 @@
 module MessagesTest
 
-using Base.Test
-if VERSION > v"0.7.0-DEV.2338"
+@static if VERSION > v"0.7.0-DEV.2338"
+using Test
 using Unicode
+else
+using Base.Test
 end
 
 using HTTP.Messages

@@ -11,7 +11,7 @@ for sch in ("http", "https")
     @test status(HTTP.get("$sch://httpbin.org/ip")) == 200
     @test status(HTTP.head("$sch://httpbin.org/ip")) == 200
     @test status(HTTP.options("$sch://httpbin.org/ip")) == 200
-    @test status(HTTP.post("$sch://httpbin.org/ip"; statusexception=false)) == 405
+    @test status(HTTP.post("$sch://httpbin.org/ip"; status_exception=false)) == 405
     @test status(HTTP.post("$sch://httpbin.org/post")) == 200
     @test status(HTTP.put("$sch://httpbin.org/put")) == 200
     @test status(HTTP.delete("$sch://httpbin.org/delete")) == 200

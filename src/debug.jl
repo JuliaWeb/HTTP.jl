@@ -1,5 +1,4 @@
 taskid(t=current_task()) = hex(hash(t) & 0xffff, 4)
-taskid(l::ReentrantLock) = islocked(l) ? taskid(lockedby(l)) : ""
 
 macro debug(n::Int, s)
     DEBUG_LEVEL >= n ? :(println("DEBUG: ", taskid(), " ", $(esc(s)))) :

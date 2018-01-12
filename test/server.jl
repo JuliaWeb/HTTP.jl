@@ -7,7 +7,7 @@ using Test
 server = HTTP.Server()
 tsk = @async HTTP.serve(server)
 sleep(1.0)
-put!(server.in, HTTP.Nitrogen.KILL)
+put!(server.in, HTTP.Servers.KILL)
 sleep(0.1)
 @test istaskdone(tsk)
 
@@ -73,7 +73,7 @@ println(client)
 @test contains(client, "Content-Length: 15\r\n")
 @test contains(client, "\r\n\r\nBody of Request")
 
-put!(server.in, HTTP.Nitrogen.KILL)
+put!(server.in, HTTP.Servers.KILL)
 
 # serverlog = HTTP.FIFOBuffer()
 # server = HTTP.Server((req, rep) -> begin

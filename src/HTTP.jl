@@ -9,12 +9,12 @@ const DEBUG_LEVEL = 0
 const minimal = false
 
 include("compat.jl")
-
 include("debug.jl")
+
 include("Pairs.jl")
 include("Strings.jl")
 include("IOExtras.jl")                 ;import .IOExtras.IOError
-include("uri.jl")                      ;using .URIs
+include("URIs.jl")                     ;using .URIs
                                                                      if !minimal
 include("consts.jl")
 include("utils.jl")
@@ -22,7 +22,7 @@ include("fifobuffer.jl")               ;using .FIFOBuffers
 include("cookies.jl")                  ;using .Cookies
 include("multipart.jl")
                                                                              end
-include("parser.jl")                   ;import .Parsers: Parser, Headers, Header,
+include("Parsers.jl")                  ;import .Parsers: Parser, Headers, Header,
                                                          ParsingError, ByteView
 include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
@@ -582,8 +582,8 @@ include("WebSockets.jl")               ;using .WebSockets
                                                                              end
 include("client.jl")
 include("sniff.jl")
-include("handlers.jl");                  using .Handlers
-include("server.jl");                    using .Servers.listen
+include("Handlers.jl");                  using .Handlers
+include("Servers.jl");                   using .Servers.listen
                                                                              end
 include("precompile.jl")
 

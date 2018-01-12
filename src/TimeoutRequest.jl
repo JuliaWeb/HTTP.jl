@@ -1,6 +1,6 @@
 module TimeoutRequest
 
-import ..Layer, ..request, ..lockedby
+import ..Layer, ..request
 using ..ConnectionPool
 import ..@debug, ..DEBUG_LEVEL
 
