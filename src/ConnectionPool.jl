@@ -67,7 +67,7 @@ Fields:
 - `writedone`, signal that `writecount` was incremented.
 - `readcount`, number of Messages that have been read.
 - `readdone`, signal that `readcount` was incremented.
-- `timestamp, time data was last recieved.
+- `timestamp`, time data was last recieved.
 - `parser::Parser`, reuse a `Parser` when this `Connection` is reused.
 """
 
@@ -109,7 +109,7 @@ Connection(host::AbstractString, port::AbstractString,
            pipeline_limit::Int, io::T) where T <: IO =
     Connection{T}(host, port, pipeline_limit,
                   peerport(io), localport(io),
-                  io, view(UInt8[], 1:0),
+                  io, nobytes,
                   -1,
                   0, false, Condition(),
                   0, false, Condition(),
@@ -429,10 +429,8 @@ end
 Remove closed connections from `pool`.
 """
 function purge()
-    while (i = findfirst(x->!isopen(x.io), pool)) > 0
-        c = pool[i]
-        deleteat!(pool, i)                    ;@debug 1 "🗑  Deleted:        $c"
-    end
+    isdeletable(c) = !isopen(c.io) && (@debug 1 "🗑  Deleted:        $c"; true)
+    deleteat!(pool, map(isdeletable, pool))
 end
 
 
@@ -510,13 +508,18 @@ function getconnection(::Type{TCPSocket},
     connect(getaddrinfo(host), p)
 end
 
+const nosslconfig = SSLConfig()
 
 function getconnection(::Type{SSLContext},
                        host::AbstractString,
                        port::AbstractString;
-                       require_ssl_verification::Bool=false,
-                       sslconfig::SSLConfig=SSLConfig(require_ssl_verification),
+                       require_ssl_verification::Bool=true,
+                       sslconfig::SSLConfig=nosslconfig,
                        kw...)::SSLContext
+
+    if sslconfig === nosslconfig
+        sslconfig = SSLConfig(require_ssl_verification)
+    end
 
     port = isempty(port) ? "443" : port
     @debug 2 "SSL connect: $host:$port..."
