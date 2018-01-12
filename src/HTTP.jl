@@ -168,25 +168,25 @@ Cananoincalization options
 
 String body:
 ```julia
-request("POST", "http://httpbin.org/post", [], "post body data")
+HTTP.request("POST", "http://httpbin.org/post", [], "post body data")
 ```
 
 Stream body from file:
 ```julia
 io = open("post_data.txt", "r")
-request("POST", "http://httpbin.org/post", [], io)
+HTTP.request("POST", "http://httpbin.org/post", [], io)
 ```
 
 Generator body:
 ```julia
 chunks = ("chunk\$i" for i in 1:1000)
-request("POST", "http://httpbin.org/post", [], chunks)
+HTTP.request("POST", "http://httpbin.org/post", [], chunks)
 ```
 
 Collection body:
 ```julia
 chunks = [preamble_chunk, data_chunk, checksum(data_chunk)]
-request("POST", "http://httpbin.org/post", [], chunks)
+HTTP.request("POST", "http://httpbin.org/post", [], chunks)
 ```
 
 `open() do io` body:
@@ -203,14 +203,14 @@ end
 
 String body:
 ```julia
-r = request("GET", "http://httpbin.org/get")
+r = HTTP.request("GET", "http://httpbin.org/get")
 println(String(r.body))
 ```
 
 Stream body to file:
 ```julia
 io = open("get_data.txt", "w")
-r = request("GET", "http://httpbin.org/get", response_stream=io)
+r = HTTP.request("GET", "http://httpbin.org/get", response_stream=io)
 close(io)
 println(read("get_data.txt"))
 ```
@@ -222,7 +222,7 @@ io = BufferStream()
     bytes = readavailable(io))
     println("GET data: \$bytes")
 end
-r = request("GET", "http://httpbin.org/get", response_stream=io)
+r = HTTP.request("GET", "http://httpbin.org/get", response_stream=io)
 close(io)
 ```
 
@@ -255,7 +255,7 @@ end
 
 String bodies:
 ```julia
-r = request("POST", "http://httpbin.org/post", [], "post body data")
+r = HTTP.request("POST", "http://httpbin.org/post", [], "post body data")
 println(String(r.body))
 ```
 
@@ -263,7 +263,7 @@ Stream bodies from and to files:
 ```julia
 in = open("foo.png", "r")
 out = open("foo.jpg", "w")
-request("POST", "http://convert.com/png2jpg", [], in, response_stream=out)
+HTTP.request("POST", "http://convert.com/png2jpg", [], in, response_stream=out)
 ```
 
 Stream bodies through: `open() do io`:
