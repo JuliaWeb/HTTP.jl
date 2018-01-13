@@ -574,8 +574,6 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             while p <= len
                 @inbounds ch = Char(bytes[p])
                 @debug 4 Base.escape_string(string('\'', ch, '\''))
-                @debugshow 4 strict
-                @debugshow 4 isheaderchar(ch)
                 if ch == CR
                     p_state = s_header_almost_done
                     break
@@ -589,8 +587,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 c = lower(ch)
 
                 @debugshow 4 h
-                crlf = findfirst(x->(x == bCR || x == bLF),
-                       view(bytes, p:len))
+                crlf = findfirst(x->(x == bCR || x == bLF), view(bytes, p:len))
                 p = crlf == 0 ? len : p + crlf - 2
 
                 p += 1
@@ -726,7 +723,6 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
                 p_state = s_chunk_size_almost_done
             else
                 unhex_val = unhex[Int(ch)+1]
-                @debugshow 4 unhex_val
                 if unhex_val == -1
                     if ch == ';' || ch == ' '
                         p_state = s_chunk_parameters
