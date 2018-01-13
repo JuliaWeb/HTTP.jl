@@ -33,7 +33,6 @@ module Cookies
 export Cookie
 
 import ..Dates
-using ..Unicode
 
 import Base.==
 import ..URIs.isurlchar

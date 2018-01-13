@@ -546,12 +546,12 @@ function Base.show(io::IO, c::Connection)
         lpad(c.readcount,3), "↓", c.readbusy ? "🔒   " : "    ",
         c.host, ":",
         c.port != "" ? c.port : Int(c.peerport), ":", Int(c.localport),
-        ", ≣", c.pipeline_limit,
-        length(c.excess) > 0 ? ", $(length(c.excess))-byte excess" : "",
+        " ≣", c.pipeline_limit,
+        length(c.excess) > 0 ? " $(length(c.excess))-byte excess" : "",
         inactiveseconds(c) > 5 ?
-            ", inactive $(round(inactiveseconds(c),1))s" : "",
-        nwaiting > 0 ? ", $nwaiting bytes waiting" : "",
-        DEBUG_LEVEL > 1 ? ", $(Base._fd(tcpsocket(c.io)))" : "")
+            " inactive $(round(inactiveseconds(c),1))s" : "",
+        nwaiting > 0 ? " $nwaiting bytes waiting" : "",
+        DEBUG_LEVEL > 1 ? " $(Base._fd(tcpsocket(c.io)))" : "")
 end
 
 Base.show(io::IO, t::Transaction) = print(io, "T$(rpad(t.sequence,2)) ", t.c)
@@ -577,6 +577,20 @@ function showpool(io::IO)
         println(io, "   $c")
     end
     println(io, "]\n")
+    unlock(poollock)
+end
+
+function showpoolhtml(io::IO)
+    lock(poollock)
+    println(io, "<table>")
+    for c in pool
+        print(io, "<tr>")
+        for x in split("$c")
+            print(io, "<td>$x</td>")
+        end
+        println(io, "<tr>")
+    end
+    println(io, "</table>")
     unlock(poollock)
 end
 

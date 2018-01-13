@@ -2,7 +2,6 @@ module AWS4AuthRequest
 
 using ..Base64
 using ..Dates
-using ..Unicode
 using MbedTLS: digest, MD_SHA256, MD_MD5
 import ..Layer, ..request, ..Headers
 using ..URIs

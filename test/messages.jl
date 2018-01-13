@@ -1,7 +1,6 @@
 module MessagesTest
 
 using ..Test
-using ..Unicode
 
 using HTTP.Messages
 import HTTP.Messages.appendheader

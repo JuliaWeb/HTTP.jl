@@ -17,18 +17,21 @@ stop_pool_dump = false
         <html><head>
             <title>HTTP.jl Connection Pool</title>
             <meta http-equiv="refresh" content="1">
+            <style type="text/css" media="screen">
+                td { padding-left: 5px; padding-right: 5px }
+            </style>
         </head>
         <body><pre>
     """)
     write(http, "<body><pre>")
     buf = IOBuffer()
-    HTTP.ConnectionPool.showpool(buf)
+    HTTP.ConnectionPool.showpoolhtml(buf)
     write(http, take!(buf))
     write(http, "</pre></body>")
 end
 
 @async begin
-    sleep(1)
+    sleep(5)
     try
         run(`open http://localhost:8081`)
     catch e

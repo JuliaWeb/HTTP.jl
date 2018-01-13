@@ -67,8 +67,6 @@ export Message, Request, Response,
        readstartline!, writestartline,
        bodylength, unknown_length
 
-using ..Unicode
-
 import ..HTTP
 
 using ..Pairs

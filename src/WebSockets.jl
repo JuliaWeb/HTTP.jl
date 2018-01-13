@@ -1,7 +1,6 @@
 module WebSockets
 
 using ..Base64
-using ..Unicode
 using MbedTLS: digest, MD_SHA1, SSLContext
 import ..HTTP
 using ..IOExtras

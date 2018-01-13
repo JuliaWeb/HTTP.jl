@@ -1,7 +1,5 @@
 module URIs
 
-using ..Unicode
-
 import Base.==
 
 include("urlparser.jl")

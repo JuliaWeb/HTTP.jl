@@ -1,6 +1,5 @@
 using HTTP
 using HTTP.Dates
-using HTTP.Unicode
 using HTTP.Test
 
 @testset "HTTP" begin

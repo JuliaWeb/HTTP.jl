@@ -1,13 +1,11 @@
 @static if VERSION >= v"0.7.0-DEV.2915"
 
     using Base64
-    using Unicode
     import Dates
 
 else # Julia v0.6
 
     eval(:(module Base64 end))
-    eval(:(module Unicode end))
     const Dates = Base.Dates
 
     pairs(x) = [k => v for (k,v) in x]
