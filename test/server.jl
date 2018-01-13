@@ -1,11 +1,11 @@
 using HTTP
-using Test
+using HTTP.Test
 
-@testset "HTTP.serve" begin
+@testset "HTTP.Servers.serve" begin
 
 # test kill switch
-server = HTTP.Server()
-tsk = @async HTTP.serve(server)
+server = HTTP.Servers.Server()
+tsk = @async HTTP.Servers.serve(server)
 sleep(1.0)
 put!(server.in, HTTP.Servers.KILL)
 sleep(0.1)
@@ -15,8 +15,8 @@ sleep(0.1)
 
 # echo response
 serverlog = HTTP.FIFOBuffer()
-server = HTTP.Server((req, rep) -> HTTP.Response(String(req)), serverlog)
-tsk = @async HTTP.serve(server)
+server = HTTP.Servers.Server((req, rep) -> HTTP.Response(String(req)), serverlog)
+tsk = @async HTTP.Servers.serve(server)
 sleep(1.0)
 r = HTTP.get("http://127.0.0.1:8081/"; readtimeout=30)
 
@@ -94,7 +94,7 @@ put!(server.in, HTTP.Servers.KILL)
 #         "Connection" => "keep-alive"), io)
 # end, serverlog)
 
-# tsk = @async HTTP.serve(server, IPv4(0,0,0,0), 8082)
+# tsk = @async HTTP.Servers.serve(server, IPv4(0,0,0,0), 8082)
 # sleep(5.0)
 # r = HTTP.get("http://localhost:8082/"; readtimeout=30, verbose=true)
 # log = String(read(serverlog))
@@ -110,7 +110,7 @@ put!(server.in, HTTP.Servers.KILL)
 # handler throw error
 
 # keep-alive vs. close: issue #81
-tsk = @async HTTP.serve(HTTP.Server((req, res) -> Response("Hello\n"), STDOUT), ip"127.0.0.1", 8083)
+tsk = @async HTTP.Servers.serve(HTTP.Server((req, res) -> Response("Hello\n"), STDOUT), ip"127.0.0.1", 8083)
 sleep(2.0)
 r = HTTP.request(HTTP.Request(major=1, minor=0, uri=HTTP.URI("http://127.0.0.1:8083/"), headers=["Host"=>"127.0.0.1:8083"]))
 @test HTTP.status(r) == 200

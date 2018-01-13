@@ -1,7 +1,7 @@
 module WebSockets
 
-using Base64
-using Unicode
+using ..Base64
+using ..Unicode
 using MbedTLS: digest, MD_SHA1, SSLContext
 import ..HTTP
 using ..IOExtras
@@ -191,12 +191,12 @@ function wswrite(ws::WebSocket, opcode::UInt8, bytes::Vector{UInt8})
 end
 
 
-function mask!(out, in, l, mask=rand(UInt8, 4))
-    if length(out) < l
-        resize!(out, l)
+function mask!(to, from, l, mask=rand(UInt8, 4))
+    if length(to) < l
+        resize!(to, l)
     end
     for i in 1:l
-        out[i] = in[i] ⊻ mask[((i-1) % 4)+1]
+        to[i] = from[i] ⊻ mask[((i-1) % 4)+1]
     end
     return mask
 end

@@ -1,8 +1,8 @@
 module AWS4AuthRequest
 
-using Base64
-using Dates
-using Unicode
+using ..Base64
+using ..Dates
+using ..Unicode
 using MbedTLS: digest, MD_SHA256, MD_MD5
 import ..Layer, ..request, ..Headers
 using ..URIs
@@ -27,9 +27,11 @@ export AWS4AuthLayer
 function request(::Type{AWS4AuthLayer{Next}},
                  uri::URI, req, body; kw...) where Next
 
+    @static if VERSION > v"0.7.0-DEV.2915"
     if !haskey(kw, :aws_access_key_id) &&
        !haskey(ENV, "AWS_ACCESS_KEY_ID")
         kw = merge(dot_aws_credentials(), kw)
+    end
     end
 
     sign_aws4!(req.method, uri, req.headers, req.body; kw...)
@@ -117,6 +119,7 @@ function sign_aws4!(method::String,
     ))
 end
 
+@static if VERSION > v"0.7.0-DEV.2915"
 
 using IniFile
 
@@ -148,5 +151,6 @@ function dot_aws_credentials()::NamedTuple
         aws_secret_access_key = String(get(ini, p, "aws_secret_access_key")))
 end
 
+end
 
 end # module AWS4AuthRequest

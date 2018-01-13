@@ -182,7 +182,10 @@ function Base.readavailable(t::Transaction)::ByteView
 end
 
 
-@static if VERSION < v"0.7.0-DEV.2915" const copyto! = copy!  end
+
+@static if !isdefined(Base, :copyto!)
+    const copyto! = copy!
+end
 
 function Base.readbytes!(t::Transaction, a::Vector{UInt8}, nb::Int)
 

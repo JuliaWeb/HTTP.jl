@@ -1,4 +1,5 @@
 using HTTP
+using HTTP.Test
 using HTTP.IOExtras
 
 for s in ["ws", "wss"]

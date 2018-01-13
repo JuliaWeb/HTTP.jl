@@ -6,7 +6,10 @@
 
 else # Julia v0.6
 
+    eval(:(module Base64 end))
+    eval(:(module Unicode end))
     const Dates = Base.Dates
+
     pairs(x) = [k => v for (k,v) in x]
 
     macro debug(s) DEBUG_LEVEL > 0 ? :(("D- ", $(esc(s)))) : :() end
@@ -28,4 +31,5 @@ if !isdefined(Base, :Nothing)
     const Cvoid = Void
 end
 
+# https://github.com/JuliaLang/julia/pull/25535
 Base.String(x::SubArray{UInt8,1}) = String(Vector{UInt8}(x))

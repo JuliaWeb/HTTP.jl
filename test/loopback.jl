@@ -1,8 +1,5 @@
-@static if VERSION > v"0.7.0-DEV.2005"
-using Test
 using HTTP
-end
-
+using HTTP.Test
 using HTTP.IOExtras
 using HTTP.Parsers
 using HTTP.Messages
@@ -355,7 +352,19 @@ lbopen(f, req, headers) =
         "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
         "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
         "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"] ||
+    server_events == [
+        "Request: GET /delay1 HTTP/1.1",
+        "Request: GET /delay2 HTTP/1.1",
+        "Request: GET /delay3 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+        "Request: GET /delay4 HTTP/1.1",
+        "Request: GET /delay5 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
         "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+    # https://github.com/JuliaWeb/HTTP.jl/pull/135#issuecomment-357376222
 
     server_events = []
     t = async_test()
@@ -371,7 +380,19 @@ lbopen(f, req, headers) =
         "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
         "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
         "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"] ||
+    server_events == [
+        "Request: GET /delay1 HTTP/1.1",
+        "Request: GET /delay2 HTTP/1.1",
+        "Request: GET /delay3 HTTP/1.1",
+        "Request: GET /delay4 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+        "Request: GET /delay5 HTTP/1.1",
+        "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
+        "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
         "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+    # https://github.com/JuliaWeb/HTTP.jl/pull/135#issuecomment-357376222
 
 
     # "A user agent SHOULD NOT pipeline requests after a

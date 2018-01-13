@@ -30,25 +30,14 @@
 
 module Cookies
 
-if VERSION < v"0.7.0-DEV.2575"
-    const Dates = Base.Dates
-else
-    import Dates
-end
-
-if VERSION >= v"0.7.0-DEV.2915"
-    using Unicode
-end
-
-if !isdefined(Base, :pairs)
-    pairs(x) = x
-end
-
-
 export Cookie
 
+import ..Dates
+using ..Unicode
+
 import Base.==
-import HTTP.URIs.isurlchar
+import ..URIs.isurlchar
+using ..pairs
 
 """
     Cookie()

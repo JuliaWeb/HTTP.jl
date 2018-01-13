@@ -18,11 +18,8 @@ if !isdefined(Base, :Nothing)
     const Cvoid = Void
 end
 
-if VERSION < v"0.7.0-DEV.2575"
-    const Dates = Base.Dates
-else
-    import Dates
-end
+import ..Dates
+
 @static if !isdefined(Base, :Distributed)
     using Distributed
 end

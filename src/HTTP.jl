@@ -6,7 +6,6 @@ import MbedTLS.SSLContext
 
 
 const DEBUG_LEVEL = 0
-const minimal = false
 
 include("compat.jl")
 include("debug.jl")
@@ -15,18 +14,15 @@ include("Pairs.jl")
 include("Strings.jl")
 include("IOExtras.jl")                 ;import .IOExtras.IOError
 include("URIs.jl")                     ;using .URIs
-                                                                     if !minimal
 include("consts.jl")
 include("utils.jl")
 include("fifobuffer.jl")               ;using .FIFOBuffers
 include("cookies.jl")                  ;using .Cookies
 include("multipart.jl")
-                                                                             end
 include("Parsers.jl")                  ;import .Parsers: Parser, Headers, Header,
                                                          ParsingError, ByteView
 include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
-                                        import .Messages: header, hasheader
 include("Streams.jl")                  ;using .Streams
 
 
@@ -416,22 +412,16 @@ end))
 """
 
 abstract type Layer end
-                                                                     if !minimal
 include("RedirectRequest.jl");          using .RedirectRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
-                                                  if VERSION > v"0.7.0-DEV.2338"
 include("AWS4AuthRequest.jl");          using .AWS4AuthRequest
-                                                                             end
 include("CookieRequest.jl");            using .CookieRequest
 include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
 include("TimeoutRequest.jl");           using .TimeoutRequest
-                                                                             end
 include("MessageRequest.jl");           using .MessageRequest
 include("ExceptionRequest.jl");         using .ExceptionRequest
                                         import .ExceptionRequest.StatusError
-                                                                     if !minimal
 include("RetryRequest.jl");             using .RetryRequest
-                                                                             end
 include("ConnectionRequest.jl");        using .ConnectionRequest
 include("StreamRequest.jl");            using .StreamRequest
 
@@ -555,9 +545,7 @@ function stack(;redirect=true,
                 status_exception=true,
                 readtimeout=0,
                 kw...)
-                                                                      if minimal
-    MessageLayer{ExceptionLayer{ConnectionPoolLayer{StreamLayer}}}
-                                                                            else
+
     NoLayer = Union
 
     (redirect             ? RedirectLayer       : NoLayer){
@@ -572,19 +560,16 @@ function stack(;redirect=true,
     (readtimeout > 0      ? TimeoutLayer        : NoLayer){
                             StreamLayer
     }}}}}}}}}}
-                                                                             end
 end
 
 
-                                                                     if !minimal
-                                                  if VERSION > v"0.7.0-DEV.2338"
-include("WebSockets.jl")               ;using .WebSockets
-                                                                             end
 include("client.jl")
 include("sniff.jl")
-include("Handlers.jl");                  using .Handlers
-include("Servers.jl");                   using .Servers.listen
-                                                                             end
+include("Handlers.jl")                 ;using .Handlers
+include("Servers.jl")                  ;using .Servers.listen
+
+include("WebSockets.jl")               ;using .WebSockets
+
 include("precompile.jl")
 
 end # module

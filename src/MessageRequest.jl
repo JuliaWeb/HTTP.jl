@@ -7,10 +7,7 @@ using ..URIs
 using ..Messages
 import ..Messages.bodylength
 using ..Headers
-using ..minimal
-if !minimal
 using ..Form
-end
 
 
 """
@@ -50,9 +47,7 @@ end
 bodylength(body) = unknown_length
 bodylength(body::AbstractVector{UInt8}) = length(body)
 bodylength(body::AbstractString) = sizeof(body)
-if !minimal
 bodylength(body::Form) = length(body)
-end
 bodylength(body::Vector{T}) where T <: AbstractString = sum(sizeof, body)
 bodylength(body::Vector{T}) where T <: AbstractArray{UInt8,1} = sum(length, body)
 bodylength(body::IOBuffer) = nb_available(body)

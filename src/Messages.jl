@@ -67,9 +67,7 @@ export Message, Request, Response,
        readstartline!, writestartline,
        bodylength, unknown_length
 
-if VERSION > v"0.7.0-DEV.2338"
-using Unicode
-end
+using ..Unicode
 
 import ..HTTP
 

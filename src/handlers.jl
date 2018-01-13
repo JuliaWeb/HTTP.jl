@@ -1,19 +1,8 @@
 module Handlers
 
-if !isdefined(Base, :Nothing)
-    const Nothing = Void
-    const Cvoid = Void
-end
-
-function val(v)
-    @static if VERSION < v"0.7.0-DEV.1395"
-        Val{v}()
-    else
-        Val(v)
-    end
-end
-
 export handle, Handler, HandlerFunction, Router, register!
+
+import ..Nothing, ..Cvoid, ..Val
 
 using HTTP
 
@@ -76,12 +65,12 @@ struct Router <: Handler
     end
 end
 
-const SCHEMES = Dict{String, Val}("http" => val(:http), "https" => val(:https))
+const SCHEMES = Dict{String, Val}("http" => Val(:http), "https" => Val(:https))
 const METHODS = Dict{String, Val}()
 for m in instances(HTTP.Method)
-    METHODS[string(m)] = val(Symbol(m))
+    METHODS[string(m)] = Val(Symbol(m))
 end
-const EMPTYVAL = val(())
+const EMPTYVAL = Val(())
 
 """
 HTTP.register!(r::Router, url, handler)
@@ -109,7 +98,7 @@ function register!(r::Router, method::String, url, handler)
     # get scheme, host, split path into strings & vals
     uri = url isa String ? HTTP.URI(url) : url
     s = uri.scheme
-    sch = !isempty(s) ? typeof(get!(SCHEMES, s, val(s))) : Any
+    sch = !isempty(s) ? typeof(get!(SCHEMES, s, Val(s))) : Any
     h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
     hand = handler isa Function ? HandlerFunction(handler) : handler
     register!(r, m, sch, h, uri.path, hand)
@@ -121,7 +110,7 @@ function splitsegments(r::Router, h::Handler, segments)
         if s == "*" #TODO: or variable, keep track of variable types and store in handler
             T = Any
         else
-            v = val(Symbol(s))
+            v = Val(Symbol(s))
             r.segments[s] = v
             T = typeof(v)
         end
@@ -142,11 +131,11 @@ end
 
 function handle(r::Router, req, resp)
     # get the url/path of the request
-    m = val(Symbol(req.method))
+    m = Val(Symbol(req.method))
     # get scheme, host, split path into strings and get Vals
     uri = HTTP.URI(req.uri)
     s = get(SCHEMES, uri.scheme, EMPTYVAL)
-    h = val(Symbol(uri.host))
+    h = Val(Symbol(uri.host))
     p = uri.path
     segments = split(p, '/'; keep=false)
     # dispatch to the most specific handler, given the path
