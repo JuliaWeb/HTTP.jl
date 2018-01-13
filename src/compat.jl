@@ -11,10 +11,6 @@ else # Julia v0.6
     pairs(x) = [k => v for (k,v) in x]
 
     using MicroLogging
-
-    # https://github.com/JuliaLang/Compat.jl/blob/master/src/Compat.jl#L551
-    import Base: Val
-    (::Type{Val})(x) = (Base.@_pure_meta; Val{x}())
 end
 
 macro uninit(expr)

@@ -141,16 +141,17 @@ end
 
 function serve(server::Server{T, H}, host, port, verbose) where {T, H}
 
-#= FIXME
+    tcpserver = Ref{Base.TCPServer}()
+
     @async begin
         while true
             val = take!(server.in)
-            val == KILL && close(tcpserver)
+            val == KILL && close(tcpserver[])
         end
     end
-=#
 
     listen(host, port;
+           tcpref=tcpserver,
            ssl=(T == https),
            sslconfig=server.options.tlsconfig,
            verbose=verbose,
@@ -158,8 +159,15 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
            rate_limits=Dict{IPAddr, RateLimit}(),
            rate_limit=server.options.ratelimit) do http
 
-        #FIXME run server.handler using http
+        request = http.message
+        request.body = read(http)
 
+        response = request.response
+
+        handle(server.handler, request, response)
+
+        startwrite(http)
+        write(http, response.body)
     end
 
     return
@@ -248,6 +256,8 @@ Optional keyword arguments:
  - `isvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
     processing requests. e.g. to implement source IP filtering, rate-limiting,
     etc.
+ - `tcpref::Ref{Base.TCPServer}`, this reference is set to the underlying
+                                  `TCPServer`. e.g. to allow closing the server.
 
 e.g.
 ```
@@ -272,7 +282,8 @@ function listen(f::Function,
                 require_ssl_verification::Bool=true,
                 sslconfig::SSLConfig=nosslconfig,
                 pipeline_limit::Int=ConnectionPool.default_pipeline_limit,
-                isvalid::Function = (tcp; kw...)->true,
+                isvalid::Function=(tcp; kw...)->true,
+                tcpref::Ref{Base.TCPServer}=Ref{Base.TCPServer}(),
                 kw...)
 
     if sslconfig === nosslconfig
@@ -281,6 +292,8 @@ function listen(f::Function,
 
     @info "Listening on: $(host):$(port)"
     tcpserver = Base.listen(getaddrinfo(host), port)
+
+    tcpref[] = tcpserver
 
     try
         while isopen(tcpserver)
@@ -346,7 +359,8 @@ function handle_connection(f::Function, c::Connection;
         count = 0
         while isopen(c)
             io = Transaction(c)
-            handle_transaction(f, io; close=(count == reuse_limit), kw...)
+            handle_transaction(f, io; final_transaction=(count == reuse_limit),
+                                      kw...)
             if count == reuse_limit
                 close(c)
             end
@@ -366,14 +380,14 @@ Otherwise, execute stream processing function `f`.
 """
 
 function handle_transaction(f::Function, t::Transaction;
-                            close=false,
-                            verbose=false, kw...)
+                            final_transaction::Bool=false,
+                            verbose::Bool=false, kw...)
 
     request = HTTP.Request()
     http = Streams.Stream(request, ConnectionPool.getparser(t), t)
     response = request.response
     response.status = 200
-    if close
+    if final_transaction
         setheader(response, "Connection" => "close")
     end
 
