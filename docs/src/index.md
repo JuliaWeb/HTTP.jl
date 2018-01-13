@@ -53,8 +53,9 @@ Base.DNSError
 ## Server / Handlers
 
 ```@docs
-HTTP.serve
-HTTP.Server
+HTTP.listen
+HTTP.Servers.serve
+HTTP.Servers.Server
 HTTP.Handler
 HTTP.HandlerFunction
 HTTP.Router
@@ -159,10 +160,6 @@ HTTP.Parsers.headerscomplete
 HTTP.Parsers.bodycomplete
 HTTP.Parsers.messagecomplete
 HTTP.Parsers.messagehastrailing
-HTTP.Parsers.waitingforeof
-HTTP.Parsers.seteof
-HTTP.Parsers.connectionclosed
-HTTP.Parsers.setnobody
 ```
 
 ## Messages Interface

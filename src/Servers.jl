@@ -141,10 +141,10 @@ function handle_request(f, server, io, i, verbose=true)
     catch e
         if e isa HTTP.ParsingError
             HTTP.@log "error parsing request on connection i=$i: " *
-                      HTTP.ParsingErrorCodeMap[err.code]
-            response.status = e.code == Parsers.HPE_INVALID_VERSION ? 505 :
-                              e.code == Parsers.HPE_INVALID_METHOD ? 405 : 400
-            response.body = HTTP.ParsingErrorCodeMap[err.code]
+                      HTTP.Parsers.ERROR_MESSAGES[err.code]
+            response.status = e.code == :HPE_INVALID_VERSION ? 505 :
+                              e.code == :HPE_INVALID_METHOD ? 405 : 400
+            response.body = HTTP.Parsers.ERROR_MESSAGES[err.code]
         else
             close(io)
             rethrow(e)
@@ -384,14 +384,53 @@ function getsslcontext(tcp, sslconfig)
     return ssl
 end
 
+const nosslconfig = SSLConfig()
+
+
+"""
+    HTTP.listen(host="localhost", port=8081; <keyword arguments>) do http::HTTP.Stream
+        ...
+    end
+
+Listen for HTTP connections and execute the `do` function for each request.
+
+Optional keyword arguments:
+ - `ssl::Bool = false`, use https.
+ - `require_ssl_verification = true`, pass `MBEDTLS_SSL_VERIFY_REQUIRED` to
+   the mbed TLS library.
+   ["... peer must present a valid certificate, handshake is aborted if
+     verification failed."](https://tls.mbed.org/api/ssl_8h.html#a5695285c9dbfefec295012b566290f37)
+ - `sslconfig = SSLConfig(require_ssl_verification)`
+ - `pipeline_limit = 16`, number of concurrent requests per connection.
+
+e.g.
+```
+    HTTP.listen() do http
+        @show http.message
+        @show header(http, "Content-Type")
+        while !eof(http)
+            println("body data: ", String(readavailable(http)))
+        end
+        setstatus(http, 404)
+        setheader(http, "Foo-Header" => "bar")
+        startwrite(http)
+        write(http, "response body")
+        write(http, "more response body")
+    end
+```
+"""
 
 function listen(f::Function,
                 host::String="127.0.0.1", port::UInt16=UInt16(8081);
                 ssl::Bool=false,
-                require_ssl_verification::Bool=false,
-                sslconfig::SSLConfig=SSLConfig(require_ssl_verification),
+                require_ssl_verification::Bool=true,
+                sslconfig::SSLConfig=nosslconfig,
                 pipeline_limit::Int=ConnectionPool.default_pipeline_limit,
                 kw...)
+
+    if sslconfig === nosslconfig
+        sslconfig = SSLConfig(require_ssl_verification)
+    end
 
     @info "Listening on: $(host):$(port)"
     tcpserver = Base.listen(getaddrinfo(host), port)
@@ -429,6 +468,11 @@ function listen(f::Function,
 end
 
 
+"""
+Start a timeout monitor task to close the `Connection` if it is inactive.
+Create a `Transaction` object for each HTTP Request received.
+"""
+
 function handle_connection(f::Function, c::Connection;
                            readtimeout::Int=0, kw...)
 
@@ -458,7 +502,14 @@ function handle_connection(f::Function, c::Connection;
 end
 
 
-function handle_transaction(f::Function, t; verbose=false, kw...)
+"""
+Create a `HTTP.Stream` and parse the Request headers from a `HTTP.Transaction`.
+If there is a parse error, send an error Response.
+Otherwise, execute stream processing function `f`.
+"""
+
+function handle_transaction(f::Function, t::Transaction;
+                            verbose=false, kw...)
 
     request = HTTP.Request()
     http = Streams.Stream(request, ConnectionPool.getparser(t), t)
@@ -472,10 +523,10 @@ function handle_transaction(f::Function, t; verbose=false, kw...)
             return
         elseif e isa HTTP.ParsingError
             @error e
-            status = e.code == Parsers.HPE_INVALID_VERSION ? 505 :
-                     e.code == Parsers.HPE_INVALID_METHOD  ? 405 : 400
+            status = e.code == :HPE_INVALID_VERSION ? 505 :
+                     e.code == :HPE_INVALID_METHOD  ? 405 : 400
             write(http.stream,
-                  Response(status, body = HTTP.ParsingErrorCodeMap[err.code]))
+                  Response(status, body = HTTP.Parsers.ERROR_MESSAGES[e.code]))
         else
             rethrow(e)
         end
@@ -499,7 +550,15 @@ function handle_transaction(f::Function, t; verbose=false, kw...)
 end
 
 
-function handle_stream(f::Function, http)
+"""
+Execute stream processing function `f`.
+If there is an error and the stream is still open,
+send a 500 response with the error message.
+
+Close the `Stream` for read and write (in case `f` has not already done so).
+"""
+
+function handle_stream(f::Function, http::Stream)
 
     try
         f(http)

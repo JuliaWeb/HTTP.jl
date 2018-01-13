@@ -126,7 +126,7 @@ SSLContext options
    the mbed TLS library.
    ["... peer must present a valid certificate, handshake is aborted if
      verification failed."](https://tls.mbed.org/api/ssl_8h.html#a5695285c9dbfefec295012b566290f37)
- - sslconfig = SSLConfig(require_ssl_verification)`
+ - `sslconfig = SSLConfig(require_ssl_verification)`
 
 
 Basic Authenticaiton options
