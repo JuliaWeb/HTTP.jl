@@ -18,8 +18,8 @@ else # Julia v0.6
     macro error(s, a...) DEBUG_LEVEL > 0 ? :(println("E- ", $(esc((s, a...))))) : :() end
 
     # https://github.com/JuliaLang/Compat.jl/blob/master/src/Compat.jl#L551
-#    import Base: Val
-#    (::Type{Val})(x) = (Base.@_pure_meta; Val{x}())
+    import Base: Val
+    (::Type{Val})(x) = (Base.@_pure_meta; Val{x}())
 end
 
 macro uninit(expr)
