@@ -40,7 +40,7 @@ end
 sniff(str::String) = sniff(Vector{UInt8}(str)[1:min(length(Vector{UInt8}(str)), MAXSNIFFLENGTH)])
 sniff(f::FIFOBuffer) = sniff(String(f))
 
-function sniff(data::Vector{UInt8})
+function sniff(data::AbstractVector{UInt8})
     firstnonws = 1
     while firstnonws < length(data) && data[firstnonws] in WHITESPACE
         firstnonws += 1
@@ -58,7 +58,7 @@ struct Exact
 end
 contenttype(e::Exact) = e.contenttype
 
-function ismatch(e::Exact, data::Vector{UInt8}, firstnonws)
+function ismatch(e::Exact, data::AbstractVector{UInt8}, firstnonws)
     length(data) < length(e.sig) && return false
     for i = 1:length(e.sig)
         e.sig[i] == data[i] || return false
@@ -76,7 +76,7 @@ Masked(mask::Vector{UInt8}, pat::Vector{UInt8}, contenttype::String) = Masked(ma
 
 contenttype(m::Masked) = m.contenttype
 
-function ismatch(m::Masked, data::Vector{UInt8}, firstnonws)
+function ismatch(m::Masked, data::AbstractVector{UInt8}, firstnonws)
     # pattern matching algorithm section 6
     # https://mimesniff.spec.whatwg.org/#pattern-matching-algorithm
     sk = (m.skipws ? firstnonws : 1) - 1
@@ -95,7 +95,7 @@ end
 
 contenttype(h::HTMLSig) = "text/html; charset=utf-8"
 
-function ismatch(h::HTMLSig, data::Vector{UInt8}, firstnonws)
+function ismatch(h::HTMLSig, data::AbstractVector{UInt8}, firstnonws)
     length(data) < length(h.html)+1 && return false
     for (i, b) in enumerate(h.html)
         db = data[i+firstnonws-1]
@@ -122,7 +122,7 @@ const mp4 = Vector{UInt8}("mp4")
 # Byte swap int
 bigend(b) = UInt32(b[4]) | UInt32(b[3])<<8 | UInt32(b[2])<<16 | UInt32(b[1])<<24
 
-function ismatch(::Type{MP4Sig}, data::Vector{UInt8}, firstnonws)
+function ismatch(::Type{MP4Sig}, data::AbstractVector{UInt8}, firstnonws)
     # https://mimesniff.spec.whatwg.org/#signature-for-mp4
     # c.f. section 6.2.1
     length(data) < 12 && return false
@@ -139,7 +139,7 @@ end
 struct TextSig end
 contenttype(::Type{TextSig}) = "text/plain; charset=utf-8"
 
-function ismatch(::Type{TextSig}, data::Vector{UInt8}, firstnonws)
+function ismatch(::Type{TextSig}, data::AbstractVector{UInt8}, firstnonws)
     # c.f. section 5, step 4.
     for i = firstnonws:min(length(data),MAXSNIFFLENGTH)
         b = data[i]
@@ -153,7 +153,7 @@ end
 struct JSONSig end
 contenttype(::Type{JSONSig}) = "application/json; charset=utf-8"
 
-ismatch(::Type{JSONSig}, data::Vector{UInt8}, firstnonws) = isjson(data)[1]
+ismatch(::Type{JSONSig}, data::AbstractVector{UInt8}, firstnonws) = isjson(data)[1]
 
 const DISPLAYABLE_TYPES = ["text/html; charset=utf-8",
                     "text/plain; charset=utf-8",

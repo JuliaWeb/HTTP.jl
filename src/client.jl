@@ -25,10 +25,14 @@ mutable struct Client
     # cookies are stored in-memory per host and automatically sent when appropriate
     cookies::Dict{String, Set{Cookie}}
     # global request settings
-    options::Vector{Tuple{Symbol,Any}}
+    options::(VERSION > v"0.7.0-DEV.2338" ? NamedTuple : Vector{Pair{Symbol,Any}})
 end
 
-Client(;options...) = Client(Dict{String, Set{Cookie}}(), collect(options))
+if VERSION > v"0.7.0-DEV.2338"
+Client(;options...) = Client(Dict{String, Set{Cookie}}(), merge(NamedTuple(), options))
+else
+Client(;options...) = Client(Dict{String, Set{Cookie}}(), options)
+end
 global const DEFAULT_CLIENT = Client()
 
 # build Request
@@ -136,8 +140,7 @@ end
 
 for f in [:get, :post, :put, :delete, :head,
           :trace, :options, :patch, :connect]
-    f_str = uppercase(string(f))
-    meth = convert(Method, f_str)
+    meth = f_str = uppercase(string(f))
     @eval begin
 #=
         @doc """

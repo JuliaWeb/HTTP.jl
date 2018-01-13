@@ -33,8 +33,8 @@ function request(::Type{RedirectLayer{Next}},
         end
             
 
-        if VERSION > v"0.7.0-DEV.2338"
-        kw = merge(kw, [:parent => res])
+        @static if VERSION > v"0.7.0-DEV.2338"
+        kw = merge(merge(NamedTuple(), kw), (parent = res,))
         else
         setkv(kw, :parent, res)
         end
