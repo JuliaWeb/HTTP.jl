@@ -290,7 +290,7 @@ end
 
 
 function IOExtras.closeread(http::Stream{Request})
-    if !messagecomplete(http.parser)
+    if http.ntoread != unknown_length && http.ntoread > 0
         # Error if Message is not complete...
         close(http.stream)
         throw(EOFError())
