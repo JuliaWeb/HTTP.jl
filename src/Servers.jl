@@ -160,7 +160,11 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
            verbose=verbose,
            isvalid=check_rate_limit,
            rate_limits=Dict{IPAddr, RateLimit}(),
-           rate_limit=server.options.ratelimit)
+           rate_limit=server.options.ratelimit) do http
+
+        #FIXME run server.handler using http
+
+    end
 
     return
 end
