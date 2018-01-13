@@ -14,7 +14,6 @@ include("Pairs.jl")
 include("Strings.jl")
 include("IOExtras.jl")                 ;import .IOExtras.IOError
 include("URIs.jl")                     ;using .URIs
-include("consts.jl")
 include("utils.jl")
 include("fifobuffer.jl")               ;using .FIFOBuffers
 include("cookies.jl")                  ;using .Cookies

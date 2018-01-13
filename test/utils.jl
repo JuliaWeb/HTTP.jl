@@ -1,11 +1,12 @@
 @testset "utils.jl" begin
 
 import HTTP.Parsers
+import HTTP.URIs
 
 @test HTTP.Strings.escapehtml("&\"'<>") == "&amp;&quot;&#39;&lt;&gt;"
 
-@test Parsers.isurlchar('\u81')
-@test !Parsers.isurlchar('\0')
+@test URIs.isurlchar('\u81')
+@test !URIs.isurlchar('\0')
 
 for c = '\0':'\x7f'
     if c in ('.', '-', '_', '~')

@@ -30,7 +30,7 @@ export Parser, Header, Headers, ByteView, nobytes,
        parseheaders, parsebody,
        messagestarted, headerscomplete, bodycomplete, messagecomplete,
        messagehastrailing,
-       ParsingError, ParsingErrorCode
+       ParsingError
 
 using ..URIs.parseurlchar
 
@@ -189,26 +189,26 @@ isrequest(p::Parser) = p.message.status == 0
 The [`Parser`] input was invalid.
 
 Fields:
- - `code`, internal `@enum ParsingErrorCode`.
+ - `code`, internal error code
  - `state`, internal parsing state.
  - `status::Int32`, HTTP response status.
  - `msg::String`, error message.
 """
 
 struct ParsingError <: Exception
-    code::ParsingErrorCode
+    code::Symbol
     state::UInt8
     status::Int32
     msg::String
 end
 
-function ParsingError(p::Parser, code::ParsingErrorCode)
+function ParsingError(p::Parser, code::Symbol)
     ParsingError(code, p.state, p.message.status, "")
 end
 
 function Base.show(io::IO, e::ParsingError)
     println(io, string("HTTP.ParsingError: ",
-                       ParsingErrorCodeMap[e.code], ", ",
+                       get(ERROR_MESSAGES, e.code, "?"), ", ",
                        ParsingStateCode(e.state), ", ",
                        e.status,
                        e.msg == "" ? "" : "\n",
@@ -225,7 +225,7 @@ macro errorif(cond, err)
 end
 
 macro errorifstrict(cond)
-    strict ? esc(:(@errorif($cond, HPE_STRICT))) : :()
+    strict ? esc(:(@errorif($cond, :HPE_STRICT))) : :()
 end
 
 macro passert(cond)
@@ -303,7 +303,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             p -= 1
 
         elseif p_state == s_res_first_http_major
-            @errorif(!isnum(ch), HPE_INVALID_VERSION)
+            @errorif(!isnum(ch), :HPE_INVALID_VERSION)
             parser.message.major = Int16(ch - '0')
             p_state = s_res_http_major
 
@@ -313,14 +313,14 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 p_state = s_res_first_http_minor
                 continue
             end
-            @errorif(!isnum(ch), HPE_INVALID_VERSION)
+            @errorif(!isnum(ch), :HPE_INVALID_VERSION)
             parser.message.major *= Int16(10)
             parser.message.major += Int16(ch - '0')
-            @errorif(parser.message.major > 999, HPE_INVALID_VERSION)
+            @errorif(parser.message.major > 999, :HPE_INVALID_VERSION)
 
         # first digit of minor HTTP version
         elseif p_state == s_res_first_http_minor
-            @errorif(!isnum(ch), HPE_INVALID_VERSION)
+            @errorif(!isnum(ch), :HPE_INVALID_VERSION)
             parser.message.minor = Int16(ch - '0')
             p_state = s_res_http_minor
 
@@ -330,15 +330,15 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 p_state = s_res_first_status_code
                 continue
             end
-            @errorif(!isnum(ch), HPE_INVALID_VERSION)
+            @errorif(!isnum(ch), :HPE_INVALID_VERSION)
             parser.message.minor *= Int16(10)
             parser.message.minor += Int16(ch - '0')
-            @errorif(parser.message.minor > 999, HPE_INVALID_VERSION)
+            @errorif(parser.message.minor > 999, :HPE_INVALID_VERSION)
 
         elseif p_state == s_res_first_status_code
             if !isnum(ch)
                 ch == ' ' && continue
-                @err(HPE_INVALID_STATUS)
+                @err(:HPE_INVALID_STATUS)
             end
             parser.message.status = Int32(ch - '0')
             p_state = s_res_status_code
@@ -352,12 +352,12 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 elseif ch == LF
                     p_state = s_header_field_start
                 else
-                    @err(HPE_INVALID_STATUS)
+                    @err(:HPE_INVALID_STATUS)
                 end
             else
                 parser.message.status *= Int32(10)
                 parser.message.status += Int32(ch - '0')
-                @errorif(parser.message.status > 999, HPE_INVALID_STATUS)
+                @errorif(parser.message.status > 999, :HPE_INVALID_STATUS)
             end
 
         elseif p_state == s_res_status_start
@@ -383,7 +383,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
         elseif p_state == s_start_req
             (ch == CR || ch == LF) && continue
 
-            @errorif(!istoken(ch), HPE_INVALID_METHOD)
+            @errorif(!istoken(ch), :HPE_INVALID_METHOD)
 
             p_state = s_req_method
             p -= 1
@@ -400,7 +400,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 elseif ch == ' '
                     p_state = s_req_spaces_before_url
                 else
-                    @err(HPE_INVALID_METHOD)
+                    @err(:HPE_INVALID_METHOD)
                 end
             end
 
@@ -432,7 +432,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     @errorif(@anyeq(p_state, s_req_schema, s_req_schema_slash,
                                              s_req_schema_slash_slash,
                                              s_req_server_start),
-                             HPE_INVALID_URL)
+                             :HPE_INVALID_URL)
                     if ch == ' '
                         p_state = s_req_http_start
                     else
@@ -444,7 +444,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     break
                 end
                 p_state = parseurlchar(p_state, ch, strict)
-                @errorif(p_state == s_dead, HPE_INVALID_URL)
+                @errorif(p_state == s_dead, :HPE_INVALID_URL)
                 p += 1
             end
             @passert p <= len + 1
@@ -463,7 +463,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 p_state = s_req_http_H
             elseif ch == ' '
             else
-                @err(HPE_INVALID_CONSTANT)
+                @err(:HPE_INVALID_CONSTANT)
             end
 
         elseif p_state == s_req_http_H
@@ -484,7 +484,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
         # first digit of major HTTP version
         elseif p_state == s_req_first_http_major
-            @errorif(ch < '1' || ch > '9', HPE_INVALID_VERSION)
+            @errorif(ch < '1' || ch > '9', :HPE_INVALID_VERSION)
             parser.message.major = Int16(ch - '0')
             p_state = s_req_http_major
 
@@ -493,16 +493,16 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             if ch == '.'
                 p_state = s_req_first_http_minor
             elseif !isnum(ch)
-                @err(HPE_INVALID_VERSION)
+                @err(:HPE_INVALID_VERSION)
             else
                 parser.message.major *= Int16(10)
                 parser.message.major += Int16(ch - '0')
-                @errorif(parser.message.major > 999, HPE_INVALID_VERSION)
+                @errorif(parser.message.major > 999, :HPE_INVALID_VERSION)
             end
 
         # first digit of minor HTTP version
         elseif p_state == s_req_first_http_minor
-            @errorif(!isnum(ch), HPE_INVALID_VERSION)
+            @errorif(!isnum(ch), :HPE_INVALID_VERSION)
             parser.message.minor = Int16(ch - '0')
             p_state = s_req_http_minor
 
@@ -514,15 +514,15 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 p_state = s_header_field_start
             else
                 # FIXME allow spaces after digit?
-                @errorif(!isnum(ch), HPE_INVALID_VERSION)
+                @errorif(!isnum(ch), :HPE_INVALID_VERSION)
                 parser.message.minor *= Int16(10)
                 parser.message.minor += Int16(ch - '0')
-                @errorif(parser.message.minor > 999, HPE_INVALID_VERSION)
+                @errorif(parser.message.minor > 999, :HPE_INVALID_VERSION)
             end
 
         # end of request line
         elseif p_state == s_req_line_almost_done
-            @errorif(ch != LF, HPE_LF_EXPECTED)
+            @errorif(ch != LF, :HPE_LF_EXPECTED)
             p_state = s_header_field_start
 
         elseif p_state == s_header_field_start ||
@@ -536,7 +536,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 p -= 1
             else
                 c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
-                @errorif(c == Char(0), HPE_INVALID_HEADER_TOKEN)
+                @errorif(c == Char(0), :HPE_INVALID_HEADER_TOKEN)
                 p_state = s_header_field
                 p -= 1
             end
@@ -547,7 +547,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                                       allowed = ' ')
             if complete
                 @inbounds ch = Char(bytes[p])
-                @errorif(ch != ':', HPE_INVALID_HEADER_TOKEN)
+                @errorif(ch != ':', :HPE_INVALID_HEADER_TOKEN)
                 p_state = s_header_value_discard_ws
             end
 
@@ -581,7 +581,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     p_state = s_header_value_lws
                     break
                 elseif strict && !isheaderchar(ch)
-                    @err(HPE_INVALID_HEADER_TOKEN)
+                    @err(:HPE_INVALID_HEADER_TOKEN)
                 end
 
                 c = lower(ch)
@@ -604,7 +604,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             p = min(p, len)
 
         elseif p_state == s_header_almost_done
-            @errorif(ch != LF, HPE_LF_EXPECTED)
+            @errorif(ch != LF, :HPE_LF_EXPECTED)
             p_state = s_header_value_lws
 
         elseif p_state == s_header_value_lws
@@ -645,7 +645,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
             p_state = s_body_start
         else
-            @err HPE_INVALID_INTERNAL_STATE
+            @err :HPE_INVALID_INTERNAL_STATE
         end
     end
 
@@ -713,7 +713,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
         if p_state == s_chunk_size_start
 
             unhex_val = unhex[Int(ch)+1]
-            @errorif(unhex_val == -1, HPE_INVALID_CHUNK_SIZE)
+            @errorif(unhex_val == -1, :HPE_INVALID_CHUNK_SIZE)
 
             parser.chunk_length = unhex_val
             p_state = s_chunk_size
@@ -728,7 +728,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
                         p_state = s_chunk_parameters
                         continue
                     end
-                    @err(HPE_INVALID_CHUNK_SIZE)
+                    @err(:HPE_INVALID_CHUNK_SIZE)
                 end
                 t = parser.chunk_length
                 t *= UInt64(16)
@@ -737,7 +737,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
                 # Overflow? Test against a conservative limit for simplicity.
                 @debugshow 4 Int(parser.chunk_length)
                 if div(typemax(UInt64) - 16, 16) < t
-                    @err(HPE_INVALID_CONTENT_LENGTH)
+                    @err(:HPE_INVALID_CONTENT_LENGTH)
                 end
                 parser.chunk_length = t
             end
@@ -782,7 +782,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
             p_state = s_chunk_size_start
 
         else
-            @err HPE_INVALID_INTERNAL_STATE
+            @err :HPE_INVALID_INTERNAL_STATE
         end
     end
 
@@ -798,9 +798,83 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
 end
 
 
+const ERROR_MESSAGES = Dict(
+    :HPE_INVALID_VERSION => "invalid HTTP version",
+    :HPE_INVALID_STATUS => "invalid HTTP status code",
+    :HPE_INVALID_METHOD => "invalid HTTP method",
+    :HPE_INVALID_URL => "invalid URL",
+    :HPE_LF_EXPECTED => "LF character expected",
+    :HPE_INVALID_HEADER_TOKEN => "invalid character in header",
+    :HPE_INVALID_CONTENT_LENGTH => "invalid character in content-length header",
+    :HPE_INVALID_CHUNK_SIZE => "invalid character in chunk size header",
+    :HPE_INVALID_CONSTANT => "invalid constant string",
+    :HPE_INVALID_INTERNAL_STATE => "encountered unexpected internal state",
+    :HPE_STRICT => "strict mode assertion failed",
+)
+
+
+"""
+Tokens as defined by rfc 2616. Also lowercases them.
+        token       = 1*<any CHAR except CTLs or separators>
+     separators     = "(" | ")" | "<" | ">" | "@"
+                    | "," | ";" | ":" | "\" | <">
+                    | "/" | "[" | "]" | "?" | "="
+                    | "{" | "}" | SP | HT
+"""
+
+const tokens = Char[
+#=   0 nul    1 soh    2 stx    3 etx    4 eot    5 enq    6 ack    7 bel  =#
+        0,       0,       0,       0,       0,       0,       0,       0,
+#=   8 bs     9 ht    10 nl    11 vt    12 np    13 cr    14 so    15 si   =#
+        0,       0,       0,       0,       0,       0,       0,       0,
+#=  16 dle   17 dc1   18 dc2   19 dc3   20 dc4   21 nak   22 syn   23 etb =#
+        0,       0,       0,       0,       0,       0,       0,       0,
+#=  24 can   25 em    26 sub   27 esc   28 fs    29 gs    30 rs    31 us  =#
+        0,       0,       0,       0,       0,       0,       0,       0,
+#=  32 sp    33  !    34  "    35  #    36  $    37  %    38  &    39  '  =#
+        0,      '!',      0,      '#',     '$',     '%',     '&',    '\'',
+#=  40  (    41  )    42  *    43  +    44  ,    45  -    46  .    47  /  =#
+        0,       0,      '*',     '+',      0,      '-',     '.',      0,
+#=  48  0    49  1    50  2    51  3    52  4    53  5    54  6    55  7  =#
+       '0',     '1',     '2',     '3',     '4',     '5',     '6',     '7',
+#=  56  8    57  9    58  :    59  ;    60  <    61  =    62  >    63  ?  =#
+       '8',     '9',      0,       0,       0,       0,       0,       0,
+#=  64  @    65  A    66  B    67  C    68  D    69  E    70  F    71  G  =#
+        0,      'a',     'b',     'c',     'd',     'e',     'f',     'g',
+#=  72  H    73  I    74  J    75  K    76  L    77  M    78  N    79  O  =#
+       'h',     'i',     'j',     'k',     'l',     'm',     'n',     'o',
+#=  80  P    81  Q    82  R    83  S    84  T    85  U    86  V    87  W  =#
+       'p',     'q',     'r',     's',     't',     'u',     'v',     'w',
+#=  88  X    89  Y    90  Z    91  [    92  \    93  ]    94  ^    95  _  =#
+       'x',     'y',     'z',      0,       0,       0,      '^',     '_',
+#=  96  `    97  a    98  b    99  c   100  d   101  e   102  f   103  g  =#
+       '`',     'a',     'b',     'c',     'd',     'e',     'f',     'g',
+#= 104  h   105  i   106  j   107  k   108  l   109  m   110  n   111  o  =#
+       'h',     'i',     'j',     'k',     'l',     'm',     'n',     'o',
+#= 112  p   113  q   114  r   115  s   116  t   117  u   118  v   119  w  =#
+       'p',     'q',     'r',     's',     't',     'u',     'v',     'w',
+#= 120  x   121  y   122  z   123  {   124  |   125  }   126  ~   127 del =#
+       'x',     'y',     'z',      0,      '|',      0,      '~',       0 ]
+
+istoken(c) = tokens[UInt8(c)+1] != Char(0)
+
+
+const unhex = Int8[
+     -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+    ,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+    ,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+    , 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,-1,-1,-1,-1,-1,-1
+    ,-1,10,11,12,13,14,15,-1,-1,-1,-1,-1,-1,-1,-1,-1
+    ,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+    ,-1,10,11,12,13,14,15,-1,-1,-1,-1,-1,-1,-1,-1,-1
+    ,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+]
+
+
 Base.show(io::IO, p::Parser) = print(io, "Parser(",
     "state=", ParsingStateCode(p.state), ", ",
     "trailing=", p.trailing, ", ",
     "message=", p.message, ")")
+
 
 end # module Parsers

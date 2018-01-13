@@ -66,19 +66,14 @@ struct Router <: Handler
 end
 
 const SCHEMES = Dict{String, Val}("http" => Val(:http), "https" => Val(:https))
-const METHODS = Dict{String, Val}()
-for m in instances(HTTP.Method)
-    METHODS[string(m)] = Val(Symbol(m))
-end
 const EMPTYVAL = Val(())
 
 """
 HTTP.register!(r::Router, url, handler)
-HTTP.register!(r::Router, m::Union{HTTP.Method, String}, url, handler)
+HTTP.register!(r::Router, m::String, url, handler)
 
 Function to map request urls matching `url` and an optional method `m` to another `handler::HTTP.Handler`.
 URLs are registered one at a time, and multiple urls can map to the same handler.
-Methods can be passed as a string `"GET"` or enum object directly `HTTP.GET`.
 The URL can be passed as a String or `HTTP.URI` object directly. Requests can be routed based on: method, scheme,
 hostname, or path.
 The following examples show how various urls will direct how a request is routed by a server:
@@ -91,10 +86,9 @@ The following examples show how various urls will direct how a request is routed
 - `"/gmail/userId/*/inbox`: match any request matching the path pattern, "*" is used as a wildcard that matches any value between the two "/"
 """
 register!(r::Router, url, handler) = register!(r, "", url, handler)
-register!(r::Router, m::HTTP.Method, url, handler) = register!(r, string(m), url, handler)
 
 function register!(r::Router, method::String, url, handler)
-    m = isempty(method) ? Any : typeof(METHODS[method])
+    m = isempty(method) ? Any : typeof(Val(Symbol(method)))
     # get scheme, host, split path into strings & vals
     uri = url isa String ? HTTP.URI(url) : url
     s = uri.scheme

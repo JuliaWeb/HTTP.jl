@@ -1776,10 +1776,10 @@ const responses = Message[
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFF" * "\r\n..."
       e = try Response(respstr) catch e e end
-      @test isa(e, ParsingError) && e.code == Parsers.HPE_INVALID_CONTENT_LENGTH
+      @test isa(e, ParsingError) && e.code == :HPE_INVALID_CONTENT_LENGTH
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "10000000000000000" * "\r\n..."
       e = try Response(respstr) catch e e end
-      @test isa(e, ParsingError) && e.code == Parsers.HPE_INVALID_CONTENT_LENGTH
+      @test isa(e, ParsingError) && e.code == :HPE_INVALID_CONTENT_LENGTH
 
       for len in (1000, 100000)
           b = IOBuffer()
@@ -1848,11 +1848,9 @@ const responses = Message[
       parse!(p, r, b, "GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba")
       @test String(take!(b)) == "fooba"
 
-      for m in instances(Parsers.Method)
-          m in (Parsers.xHTTP, Parsers.NOMETHOD, Parsers.CONNECT) && continue
-          me = m == Parsers.MSEARCH ? "M-SEARCH" : "$m"
-          r = Request("$me / HTTP/1.1\r\n\r\n")
-          @test r.method == string(me)
+      for m in ["GET", "PUT", "M-SEARCH", "FOOMETHOD"]
+          r = Request("$m / HTTP/1.1\r\n\r\n")
+          @test r.method == string(m)
       end
 
       for m in ("HTTP/1.1", "hello world")

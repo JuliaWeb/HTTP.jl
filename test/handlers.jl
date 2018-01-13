@@ -34,7 +34,7 @@ req.uri = "/next/path/to/greatness"
 r = HTTP.Router()
 HTTP.register!(r, "GET", "/sget", f)
 HTTP.register!(r, "POST", "/spost", f)
-HTTP.register!(r, HTTP.POST, "/tpost", f)
+HTTP.register!(r, "POST", "/tpost", f)
 req = HTTP.Request("GET", "/sget")
 @test HTTP.handle(r, req, HTTP.Response()) == HTTP.Response(200)
 req = HTTP.Request("POST", "/sget")

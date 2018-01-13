@@ -191,7 +191,7 @@ for sch in ("http", "https")
     r = HTTP.get(cli, uri)
     @test status(r) == 200
 
-    r = HTTP.request(HTTP.GET, "$sch://httpbin.org/ip")
+    r = HTTP.request("GET", "$sch://httpbin.org/ip")
     @test status(r) == 200
 
     uri = HTTP.URI("$sch://httpbin.org/ip")

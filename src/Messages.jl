@@ -211,7 +211,7 @@ isredirect(r::Response) = r.status in (301, 302, 307, 308)
 `String` representation of a HTTP status code. e.g. `200 => "OK"`.
 """
 
-statustext(r::Response) = Base.get(STATUS_CODES, r.status, "Unknown Code")
+statustext(r::Response) = Base.get(STATUS_MESSAGES, r.status, "Unknown Code")
 
 
 """
@@ -547,7 +547,7 @@ function Base.show(io::IO, m::Message)
 end
 
 
-const STATUS_CODES = (()->begin
+const STATUS_MESSAGES = (()->begin
     @assert ccall(:jl_generating_output, Cint, ()) == 1
     v = fill("Unknown Code", 530)
     v[100] = "Continue"

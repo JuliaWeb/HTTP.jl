@@ -13,7 +13,6 @@ macro anyeq(var, vals...)
 end
 
 @inline lower(c) = Char(UInt32(c) | 0x20)
-@inline isurlchar(c) =  c > '\u80' ? true : normal_url_char[Int(c) + 1]
 @inline ismark(c) = @anyeq(c, '-', '_', '.', '!', '~', '*', '\'', '(', ')')
 @inline isalpha(c) = 'a' <= lower(c) <= 'z'
 @inline isnum(c) = '0' <= c <= '9'
