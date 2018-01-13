@@ -576,7 +576,7 @@ function showpool(io::IO)
     for c in pool
         println(io, "   $c")
     end
-    println("]\n")
+    println(io, "]\n")
     unlock(poollock)
 end
 

@@ -11,18 +11,41 @@ println("async tests")
 
 stop_pool_dump = false
 
-@async while !stop_pool_dump
-    HTTP.ConnectionPool.showpool(STDOUT)
+@async HTTP.listen() do http
+    startwrite(http)
+    write(http, """
+        <html><head>
+            <title>HTTP.jl Connection Pool</title>
+            <meta http-equiv="refresh" content="1">
+        </head>
+        <body><pre>
+    """)
+    write(http, "<body><pre>")
+    buf = IOBuffer()
+    HTTP.ConnectionPool.showpool(buf)
+    write(http, take!(buf))
+    write(http, "</pre></body>")
+end
+
+@async begin
     sleep(1)
+    try
+        run(`open http://localhost:8081`)
+    catch e
+        while !stop_pool_dump
+            HTTP.ConnectionPool.showpool(STDOUT)
+            sleep(1)
+        end
+    end
 end
 
 # Tiny S3 interface...
 s3region = "ap-southeast-2"
 s3url = "https://s3.$s3region.amazonaws.com"
-s3(method, path, body=UInt8[]; kw...) =
-    request(method, "$s3url/$path", [], body; aws_authorization=true, kw...)
-s3get(path; kw...) = s3("GET", path; kw...)
-s3put(path, data; kw...) = s3("PUT", path, data; kw...)
+#s3(method, path, body=UInt8[]; kw...) =
+#    request(method, "$s3url/$path", [], body; aws_authorization=true, kw...)
+#s3get(path; kw...) = s3("GET", path; kw...)
+#s3put(path, data; kw...) = s3("PUT", path, data; kw...)
 
 #=
 function create_bucket(bucket)
