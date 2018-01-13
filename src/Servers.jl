@@ -5,12 +5,8 @@ using ..Streams
 using ..Messages
 using ..Parsers
 using ..ConnectionPool
-import ..@debug, ..@debugshow, ..DEBUG_LEVEL
+import ..@info, ..@warn, ..@error, ..@debug, ..@debugshow, ..DEBUG_LEVEL
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
-
-if VERSION < v"0.7.0-DEV.2575"
-import ..@info, ..@warn, ..@error
-end
 
 
 if !isdefined(Base, :Nothing)
