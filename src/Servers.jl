@@ -106,126 +106,6 @@ mutable struct Server{T <: Scheme, H <: HTTP.Handler}
         new{T, H}(handler, logger, ch, ch2, options)
 end
 
-backtrace() = sprint(Base.show_backtrace, catch_backtrace())
-
-
-function handle_request(f, server, io, i, verbose=true)
-
-    logger = server.logger
-
-    request = HTTP.Request()
-    http = Streams.Stream(request, ConnectionPool.getparser(io), io)
-    response = request.response
-    response.status = 200
-
-    try
-        startread(http)
-
-        if header(request, "Expect") == "100-continue"
-            if server.options.support100continue
-                response.status = 100
-                startwrite(http)
-                response.status = 200
-            else
-                response.status = 417
-            end
-        end
-
-        if http.parser.message.upgrade
-            HTTP.@log "received upgrade request on connection i=$i"
-            response.status = 501
-            response.body =
-                Vector{UInt8}("upgrade requests are not currently supported")
-        end
-
-    catch e
-        if e isa HTTP.ParsingError
-            HTTP.@log "error parsing request on connection i=$i: " *
-                      HTTP.Parsers.ERROR_MESSAGES[err.code]
-            response.status = e.code == :HPE_INVALID_VERSION ? 505 :
-                              e.code == :HPE_INVALID_METHOD ? 405 : 400
-            response.body = HTTP.Parsers.ERROR_MESSAGES[err.code]
-        else
-            close(io)
-            rethrow(e)
-        end
-    end
-
-    if iserror(response)
-        startwrite(http)
-        write(http, response.body)
-        close(io)
-        return
-    end
-
-    HTTP.@log "received request on connection i=$i"
-    verbose && (show(logger, request); println(logger, ""))
-
-    @async try
-
-        try
-            f(http)
-        catch e
-            if !iswritable(io)
-                showerror(logger, e)
-                println(logger, backtrace())
-                response.status = 500
-                startwrite(http)
-                write(http, sprint(showerror, e))
-            else
-                rethrow(e)
-            end
-        end
-
-        closeread(http)
-        closewrite(http)
-
-    catch e
-        close(io)
-        rethrow(e)
-    end
-end
-
-
-
-function handle_connection(f, server::Server{T, H}, i, io::Connection{ST}, rl, verbose) where {T, H, ST}
-    logger = server.logger
-    rate = Float64(server.options.ratelimit.num)
-    rl.allowance += 1.0 # because it was just decremented right before we got here
-    HTTP.@log "processing on connection i=$i..."
-    while isopen(io)
-        update!(rl, server.options.ratelimit)
-        if rl.allowance > rate
-            HTTP.@log "throttling on connection i=$i"
-            rl.allowance = rate
-        end
-        if rl.allowance < 1.0
-            HTTP.@log "sleeping on connection i=$i due to rate limiting"
-            sleep(1.0)
-        else
-            rl.allowance -= 1.0
-        end
-        handle_request(f, server, ConnectionPool.Transaction{ST}(io), i)
-    end
-end
-
-
-init_connection(::Server{http}, tcp) = tcp
-
-function init_connection(server::Server{https}, tcp)
-    tls_config = server.options.tlsconfig::HTTP.MbedTLS.SSLConfig
-    try
-        tls = HTTP.MbedTLS.SSLContext()
-        HTTP.MbedTLS.setup!(tls, tls_config)
-        HTTP.MbedTLS.associate!(tls, tcp)
-        HTTP.MbedTLS.handshake!(tls)
-        return tls
-    catch e
-        close(tcp)
-        error("Error establishing SSL connection: $e")
-        rethrow(e)
-    end
-end
 
 mutable struct RateLimit
     allowance::Float64
@@ -240,89 +120,48 @@ function update!(rl::RateLimit, ratelimit)
     return nothing
 end
 
+function check_rate_limit(tcp;
+                          rate_limits=nothing,
+                          rate_limit=Rational{Int64}=Int64(5)//Int64(1), kw...)
+    ip = getsockname(tcp)[1]
+    rate = Float64(rate_limit.num)
+    rl = get!(ratelimits, ip, RateLimit(rate, Dates.now()))
+    update!(rl, rate_limit)
+    if rl.allowance > rate
+        @warn "throttling $ip"
+        rl.allowance = rate
+    end
+    if rl.allowance < 1.0
+        @warn "discarding connection from $ip due to rate limiting"
+        return false
+    else
+        rl.allowance -= 1.0
+    end
+    return true
+end
+
+
 @enum Signals KILL
 
-function serve(f, server::Server{T, H}, host, port, verbose) where {T, H}
-    logger = server.logger
-    HTTP.@log "starting server to listen on: $(host):$(port)"
-    tcpserver = Base.listen(host, port)
-    ratelimits = Dict{IPAddr, RateLimit}()
-    rate = Float64(server.options.ratelimit.num)
-    i = 0
+function serve(server::Server{T, H}, host, port, verbose) where {T, H}
+
+#= FIXME
     @async begin
         while true
             val = take!(server.in)
             val == KILL && close(tcpserver)
         end
     end
-    while true
-        try
-            # accept blocks until a new connection is detected
-            tcp = accept(tcpserver)
-            ip = getsockname(tcp)[1]
-            rl = get!(ratelimits, ip, RateLimit(rate, Dates.now()))
-            update!(rl, server.options.ratelimit)
-            if rl.allowance > rate
-                HTTP.@log "throttling $ip"
-                rl.allowance = rate
-            end
-            if rl.allowance < 1.0
-                HTTP.@log "discarding connection from $ip due to rate limiting"
-                close(tcp)
-            else
-                rl.allowance -= 1.0
-                HTTP.@log "new tcp connection accepted, reading request..."
-                tcp = init_connection(server, tcp)
-                SocketType = T == https ? HTTP.MbedTLS.SSLContext : TCPSocket
-                c = Connection{SocketType}(tcp)
-                let server=server, i=i, c=c, rl=rl
-                    wait_for_timeout = Ref{Bool}(true)
-                    readtimeout = server.options.readtimeout
-                    @async while wait_for_timeout[]
-                        if inactiveseconds(c) > readtimeout
+=#
 
-                            # FIXME send a 408 ?
+    listen(host, port;
+           ssl=(T == https),
+           sslconfig=server.options.tlsconfig,
+           verbose=verbose,
+           isvalid=check_rate_limit,
+           rate_limits=Dict{IPAddr, RateLimit}(),
+           rate_limit=server.options.ratelimit)
 
-                            close(io)
-                            HTTP.@log "Connection timeout i=$i"
-                            break
-                        end
-                        sleep(8 + rand() * 4)
-                    end
-                    @async try
-                        handle_connection(f, server, i, c, rl, verbose)
-                    catch e
-                        if e isa EOFError
-                            HTTP.@log "connection i=$i: $e"
-                        else
-                            rethrow(e)
-                        end
-                    finally
-                        HTTP.@log "finished processing on connection i=$i"
-                        wait_for_timeout[] = false
-                        close(c)
-                    end
-                end
-                i += 1
-            end
-        catch e
-            if typeof(e) <: InterruptException
-                HTTP.@log "interrupt detected, shutting down..."
-                interrupt()
-                break
-            else
-                if !isopen(tcpserver)
-                    HTTP.@log "server TCPServer is closed, shutting down..."
-                    # Server was closed while waiting to accept client. Exit gracefully.
-                    interrupt()
-                    break
-                end
-                HTTP.@log "error encountered: $e"
-                HTTP.@log "resuming serving..."
-            end
-        end
-    end
-    close(tcpserver)
     return
 end
 
@@ -352,8 +191,8 @@ By default, `HTTP.serve` aims to "never die", catching and recovering from all i
 """
 function serve end
 
-serve(f, server::Server, host=IPv4(127,0,0,1), port=8081; verbose::Bool=true) = serve(f, server, host, port, verbose)
-function serve(f, host::IPAddr, port::Int,
+serve(server::Server, host=IPv4(127,0,0,1), port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
+function serve(host::IPAddr, port::Int,
                    handler=(req, rep) -> HTTP.Response("Hello World!"),
                    logger::I=STDOUT;
                    cert::String="",
@@ -361,9 +200,9 @@ function serve(f, host::IPAddr, port::Int,
                    verbose::Bool=true,
                    args...) where {I}
     server = Server(handler, logger; cert=cert, key=key, args...)
-    return serve(f, server, host, port, verbose)
+    return serve(server, host, port, verbose)
 end
-serve(f, ; host::IPAddr=IPv4(127,0,0,1),
+serve(; host::IPAddr=IPv4(127,0,0,1),
         port::Int=8081,
         handler=(req, rep) -> HTTP.Response("Hello World!"),
         logger::IO=STDOUT,
@@ -371,7 +210,7 @@ serve(f, ; host::IPAddr=IPv4(127,0,0,1),
         key::String="",
         verbose::Bool=true,
         args...) =
-    serve(f, host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
+    serve(host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
 
 
 
@@ -385,6 +224,8 @@ function getsslcontext(tcp, sslconfig)
 end
 
 const nosslconfig = SSLConfig()
+
+const nolimit = typemax(Int)
 
 
 """
@@ -402,6 +243,11 @@ Optional keyword arguments:
      verification failed."](https://tls.mbed.org/api/ssl_8h.html#a5695285c9dbfefec295012b566290f37)
  - `sslconfig = SSLConfig(require_ssl_verification)`
  - `pipeline_limit = 16`, number of concurrent requests per connection.
+ - `reuse_limit = nolimit`, number of times a connection is allowed to be reused
+                            after the first request.
+ - `isvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
+    processing requests. e.g. to implement source IP filtering, rate-limiting,
+    etc.
 
 e.g.
 ```
@@ -426,6 +272,7 @@ function listen(f::Function,
                 require_ssl_verification::Bool=true,
                 sslconfig::SSLConfig=nosslconfig,
                 pipeline_limit::Int=ConnectionPool.default_pipeline_limit,
+                isvalid::Function = (tcp; kw...)->true,
                 kw...)
 
     if sslconfig === nosslconfig
@@ -439,6 +286,10 @@ function listen(f::Function,
         while isopen(tcpserver)
             try
                 io = accept(tcpserver)
+                if !isvalid(io; kw...)
+                    close(io)
+                    continue
+                end
                 io = ssl ? getsslcontext(io, sslconfig) : io
                 let io = Connection(host, string(port), pipeline_limit, io)
                     @info "Accept:  $io"
@@ -474,6 +325,7 @@ Create a `Transaction` object for each HTTP Request received.
 """
 
 function handle_connection(f::Function, c::Connection;
+                           reuse_limit::Int=nolimit,
                            readtimeout::Int=0, kw...)
 
     wait_for_timeout = Ref{Bool}(true)
@@ -491,9 +343,14 @@ function handle_connection(f::Function, c::Connection;
     end
 
     try
+        count = 0
         while isopen(c)
             io = Transaction(c)
-            handle_transaction(f, io; kw...)
+            handle_transaction(f, io; close=(count == reuse_limit), kw...)
+            if count == reuse_limit
+                close(c)
+            end
+            count += 1
         end
     finally
         wait_for_timeout[] = false
@@ -509,12 +366,16 @@ Otherwise, execute stream processing function `f`.
 """
 
 function handle_transaction(f::Function, t::Transaction;
+                            close=false,
                             verbose=false, kw...)
 
     request = HTTP.Request()
     http = Streams.Stream(request, ConnectionPool.getparser(t), t)
     response = request.response
     response.status = 200
+    if close
+        setheader(response, "Connection" => "close")
+    end
 
     try
         startread(http)
@@ -525,8 +386,9 @@ function handle_transaction(f::Function, t::Transaction;
             @error e
             status = e.code == :HPE_INVALID_VERSION ? 505 :
                      e.code == :HPE_INVALID_METHOD  ? 405 : 400
-            write(http.stream,
-                  Response(status, body = HTTP.Parsers.ERROR_MESSAGES[e.code]))
+            write(t, Response(status, body = HTTP.Parsers.ERROR_MESSAGES[e.code]))
+            close(t)
+            return
         else
             rethrow(e)
         end
