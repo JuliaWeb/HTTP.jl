@@ -129,8 +129,10 @@ function IOExtras.closewrite(http::Stream{Request})
     closebody(http)
     closewrite(http.stream)
 
-    if hasheader(http.message, "Connection", "close")
-        # Close conncetion if client sent "Connection: close"...
+    if hasheader(http.message, "Connection", "close") ||
+       http.message.version < v"1.1" &&
+      !hasheader(http.message, "Connection", "keep-alive")
+
         @debug 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
     end

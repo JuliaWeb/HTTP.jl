@@ -117,12 +117,12 @@ function update!(rl::RateLimit, ratelimit)
 end
 
 function check_rate_limit(tcp;
-                          rate_limits=nothing,
-                          rate_limit=Rational{Int64}=Int64(5)//Int64(1), kw...)
+                          ratelimits=nothing,
+                          ratelimit::Rational{Int64}=Int64(5)//Int64(1), kw...)
     ip = getsockname(tcp)[1]
-    rate = Float64(rate_limit.num)
+    rate = Float64(ratelimit.num)
     rl = get!(ratelimits, ip, RateLimit(rate, Dates.now()))
-    update!(rl, rate_limit)
+    update!(rl, ratelimit)
     if rl.allowance > rate
         @warn "throttling $ip"
         rl.allowance = rate
@@ -144,6 +144,9 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
     tcpserver = Ref{Base.TCPServer}()
 
     @async begin
+        while !isassigned(tcpserver)
+            sleep(1)
+        end
         while true
             val = take!(server.in)
             val == KILL && close(tcpserver[])
@@ -155,9 +158,10 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
            ssl=(T == https),
            sslconfig=server.options.tlsconfig,
            verbose=verbose,
-           isvalid=check_rate_limit,
-           rate_limits=Dict{IPAddr, RateLimit}(),
-           rate_limit=server.options.ratelimit) do http
+           tcpisvalid=server.options.ratelimit > 0 ? check_rate_limit :
+                                                     (tcp; kw...) -> true,
+           ratelimits=Dict{IPAddr, RateLimit}(),
+           ratelimit=server.options.ratelimit) do http
 
         request = http.message
         request.body = read(http)
@@ -199,7 +203,7 @@ By default, `HTTP.serve` aims to "never die", catching and recovering from all i
 """
 function serve end
 
-serve(server::Server, host=IPv4(127,0,0,1), port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
+serve(server::Server, host=ip"127.0.0.1", port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
 function serve(host::IPAddr, port::Int,
                    handler=(req, rep) -> HTTP.Response("Hello World!"),
                    logger::I=STDOUT;
@@ -210,7 +214,7 @@ function serve(host::IPAddr, port::Int,
     server = Server(handler, logger; cert=cert, key=key, args...)
     return serve(server, host, port, verbose)
 end
-serve(; host::IPAddr=IPv4(127,0,0,1),
+serve(; host::IPAddr=ip"127.0.0.1",
         port::Int=8081,
         handler=(req, rep) -> HTTP.Response("Hello World!"),
         logger::IO=STDOUT,
@@ -253,7 +257,7 @@ Optional keyword arguments:
  - `pipeline_limit = 16`, number of concurrent requests per connection.
  - `reuse_limit = nolimit`, number of times a connection is allowed to be reused
                             after the first request.
- - `isvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
+ - `tcpisvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
     processing requests. e.g. to implement source IP filtering, rate-limiting,
     etc.
  - `tcpref::Ref{Base.TCPServer}`, this reference is set to the underlying
@@ -276,13 +280,15 @@ e.g.
 ```
 """
 
+listen(f, host, port; kw...) = listen(f, string(host), Int(port); kw...)
+
 function listen(f::Function,
-                host::String="127.0.0.1", port::UInt16=UInt16(8081);
+                host::String="127.0.0.1", port::Int=8081;
                 ssl::Bool=false,
                 require_ssl_verification::Bool=true,
                 sslconfig::SSLConfig=nosslconfig,
                 pipeline_limit::Int=ConnectionPool.default_pipeline_limit,
-                isvalid::Function=(tcp; kw...)->true,
+                tcpisvalid::Function=(tcp; kw...)->true,
                 tcpref::Ref{Base.TCPServer}=Ref{Base.TCPServer}(),
                 kw...)
 
@@ -290,7 +296,7 @@ function listen(f::Function,
         sslconfig = SSLConfig(require_ssl_verification)
     end
 
-    @info "Listening on: $(host):$(port)"
+    @info "Listening on: $host:$port"
     tcpserver = Base.listen(getaddrinfo(host), port)
 
     tcpref[] = tcpserver
@@ -299,30 +305,36 @@ function listen(f::Function,
         while isopen(tcpserver)
             try
                 io = accept(tcpserver)
-                if !isvalid(io; kw...)
-                    close(io)
-                    continue
-                end
-                io = ssl ? getsslcontext(io, sslconfig) : io
-                let io = Connection(host, string(port), pipeline_limit, io)
-                    @info "Accept:  $io"
-                    @async try
-                        handle_connection(f, io; kw...)
-                    catch e
-                        @error "Error:   $io" e catch_stacktrace()
-                    finally
-                        close(io)
-                        @info "Closed:  $io"
-                    end
-                end
             catch e
-                if typeof(e) <: InterruptException
-                    @warn "Interrupted: listen($host,$port)"
-                    close(tcpserver)
+                if e isa Base.UVError
+                    @warn "$e"
+                    break
                 else
                     rethrow(e)
                 end
             end
+            if !tcpisvalid(io; kw...)
+                close(io)
+                continue
+            end
+            io = ssl ? getsslcontext(io, sslconfig) : io
+            let io = Connection(host, string(port), pipeline_limit, io)
+                @info "Accept:  $io"
+                @async try
+                    handle_connection(f, io; kw...)
+                catch e
+                    @error "Error:   $io" e
+                finally
+                    close(io)
+                    @info "Closed:  $io"
+                end
+            end
+        end
+    catch e
+        if typeof(e) <: InterruptException
+            @warn "Interrupted: listen($host,$port)"
+        else
+            rethrow(e)
         end
     finally
         close(tcpserver)
@@ -385,11 +397,6 @@ function handle_transaction(f::Function, t::Transaction;
 
     request = HTTP.Request()
     http = Streams.Stream(request, ConnectionPool.getparser(t), t)
-    response = request.response
-    response.status = 200
-    if final_transaction
-        setheader(response, "Connection" => "close")
-    end
 
     try
         startread(http)
@@ -412,13 +419,19 @@ function handle_transaction(f::Function, t::Transaction;
         @info http.message
     end
 
+    response = request.response
+    response.status = 200
+    if final_transaction || hasheader(request, "Connection", "close")
+        setheader(response, "Connection" => "close")
+    end
+
     @async try
         handle_stream(f, http)
     catch e
         if isioerror(e)
             @warn e
         else
-            @error e catch_stacktrace()
+            @error e
         end
         close(t)
     end
@@ -440,7 +453,7 @@ function handle_stream(f::Function, http::Stream)
         f(http)
     catch e
         if isopen(http) && !iswritable(http)
-            @error e catch_stacktrace()
+            @error e
             http.message.response.status = 500
             startwrite(http)
             write(http, sprint(showerror, e))

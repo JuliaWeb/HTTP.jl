@@ -16,7 +16,7 @@ using HTTP.Test
     include("client.jl");
 
     include("handlers.jl")
-#    include("server.jl")
+    include("server.jl")
 
     include("async.jl");
 end;

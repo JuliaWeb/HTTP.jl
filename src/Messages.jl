@@ -152,10 +152,11 @@ end
 
 Request() = Request("", "")
 
-function Request(method::String, uri, headers=[], body=UInt8[]; parent=nothing)
+function Request(method::String, uri, headers=[], body=UInt8[];
+                 version=v"1.1", parent=nothing)
     r = Request(method,
                 uri == "" ? "/" : uri,
-                v"1.1",
+                version,
                 mkheaders(headers),
                 body,
                 Response(),

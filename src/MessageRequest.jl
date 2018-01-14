@@ -21,6 +21,7 @@ export MessageLayer
 
 function request(::Type{MessageLayer{Next}},
                  method::String, uri::URI, headers::Headers, body;
+                 http_version=v"1.1",
                  parent=nothing, iofunction=nothing, kw...) where Next
 
     path = method == "CONNECT" ? hostport(uri) : resource(uri)
@@ -38,7 +39,8 @@ function request(::Type{MessageLayer{Next}},
         end
     end
 
-    req = Request(method, path, headers, bodybytes(body); parent=parent)
+    req = Request(method, path, headers, bodybytes(body);
+                  parent=parent, version=http_version)
 
     return request(Next, uri, req, body; iofunction=iofunction, kw...)
 end
