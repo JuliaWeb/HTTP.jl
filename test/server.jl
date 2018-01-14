@@ -6,7 +6,7 @@ function testget(url)
         cd(d) do
             cmd = `"curl -v -s $url > tmpout 2>&1"`
             cmd = `bash -c $cmd`
-            println(cmd)
+            #println(cmd)
             run(cmd)
             return String(read(joinpath(d, "tmpout")))
         end
