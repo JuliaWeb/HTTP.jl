@@ -410,6 +410,10 @@ function handle_transaction(f::Function, t::Transaction;
             write(t, Response(status, body = HTTP.Parsers.ERROR_MESSAGES[e.code]))
             close(t)
             return
+        elseif e isa HeaderSizeError
+            write(t, Response(413))
+            close(t)
+            return
         else
             rethrow(e)
         end

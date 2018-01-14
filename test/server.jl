@@ -26,6 +26,7 @@ sleep(2)
 
 # test http vs. https
 
+
 # echo response
 serverlog = HTTP.FIFOBuffer()
 server = HTTP.Servers.Server((req, rep) -> begin
@@ -60,6 +61,12 @@ r = HTTP.get("http://127.0.0.1:8081/"; readtimeout=30)
 @test r.status == 200
 @test String(r.body) == ""
 
+
+# large headers
+sleep(2.0)
+tcp = connect(ip"127.0.0.1", 8081)
+write(tcp, "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n")
+@test ismatch(r"HTTP/1.1 413 Request Entity Too Large", String(read(tcp)))
 
 # invalid HTTP
 sleep(2.0)

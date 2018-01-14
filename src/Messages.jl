@@ -59,7 +59,7 @@ Streaming of request and response bodies is handled by the
 
 module Messages
 
-export Message, Request, Response,
+export Message, Request, Response, HeaderSizeError,
        reset!,
        iserror, isredirect, ischunked, issafe, isidempotent,
        header, hasheader, setheader, defaultheader, appendheader,
@@ -386,6 +386,13 @@ end
 
 
 """
+Arbitrary limit to protect against denial of service attacks.
+"""
+const header_size_limit = 0x10000
+
+struct HeaderSizeError <: Exception end
+
+"""
     readheaders(::IO, ::Parser, ::Message)
 
 Read headers (and startline) from an `IO` stream into a `Message` struct.
@@ -394,11 +401,18 @@ Throw `EOFError` if input is incomplete.
 
 function readheaders(io::IO, parser::Parser, message::Message)
 
+    n = 0
     while !headerscomplete(parser) && !eof(io)
-        excess = parseheaders(parser, readavailable(io)) do h
+        bytes = readavailable(io)
+        n += length(bytes)
+        excess = parseheaders(parser, bytes) do h
             appendheader(message, h)
         end
         unread!(io, excess)
+        n -= length(excess)
+        if n > header_size_limit
+            throw(HeaderSizeError())
+        end
     end
     if !headerscomplete(parser)
         throw(EOFError())
