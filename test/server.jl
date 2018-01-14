@@ -1,6 +1,8 @@
 using HTTP
 using HTTP.Test
 
+port = rand(8000:8999)
+
 function testget(url)
     mktempdir() do d
         cd(d) do
@@ -17,7 +19,7 @@ end
 
 # test kill switch
 server = HTTP.Servers.Server()
-tsk = @async HTTP.Servers.serve(server)
+tsk = @async HTTP.Servers.serve(server, "localhost", port)
 sleep(1.0)
 put!(server.in, HTTP.Servers.KILL)
 sleep(2)
@@ -35,18 +37,18 @@ server = HTTP.Servers.Server((req, rep) -> begin
 end, serverlog)
 
 server.options.ratelimit=0
-tsk = @async HTTP.Servers.serve(server)
+tsk = @async HTTP.Servers.serve(server, "localhost", port)
 sleep(1.0)
 
 
-r = testget("http://127.0.0.1:8081/")
+r = testget("http://127.0.0.1:$port/")
 @test ismatch(r"HTTP/1.1 200 OK", r)
 
 rv = []
 n = 3
 @sync for i = 1:n
     @async begin
-        r = testget(repeat("http://127.0.0.1:8081/$i ", n))
+        r = testget(repeat("http://127.0.0.1:$port/$i ", n))
         #println(r)
         push!(rv, r)
     end
@@ -57,20 +59,20 @@ for i = 1:n
                         split(rv[i], "\n"))) == n
 end
 
-r = HTTP.get("http://127.0.0.1:8081/"; readtimeout=30)
+r = HTTP.get("http://127.0.0.1:$port/"; readtimeout=30)
 @test r.status == 200
 @test String(r.body) == ""
 
 
 # large headers
 sleep(2.0)
-tcp = connect(ip"127.0.0.1", 8081)
+tcp = connect(ip"127.0.0.1", port)
 write(tcp, "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n")
 @test ismatch(r"HTTP/1.1 413 Request Entity Too Large", String(read(tcp)))
 
 # invalid HTTP
 sleep(2.0)
-tcp = connect(ip"127.0.0.1", 8081)
+tcp = connect(ip"127.0.0.1", port)
 write(tcp, "GET / HTP/1.1\r\n\r\n")
 !HTTP.Parsers.strict &&
 @test ismatch(r"HTTP/1.1 505 HTTP Version Not Supported", String(read(tcp)))
@@ -79,7 +81,7 @@ sleep(2.0)
 
 # no URL
 sleep(2.0)
-tcp = connect(ip"127.0.0.1", 8081)
+tcp = connect(ip"127.0.0.1", port)
 write(tcp, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
 r = String(read(tcp))
 !HTTP.Parsers.strict && @test ismatch(r"HTTP/1.1 400 Bad Request", r)
@@ -89,7 +91,7 @@ sleep(2.0)
 
 # Expect: 100-continue
 sleep(2.0)
-tcp = connect(ip"127.0.0.1", 8081)
+tcp = connect(ip"127.0.0.1", port)
 write(tcp, "POST / HTTP/1.1\r\nContent-Length: 15\r\nExpect: 100-continue\r\n\r\n")
 sleep(2.0)
 
@@ -151,9 +153,10 @@ put!(server.in, HTTP.Servers.KILL)
 # handler throw error
 
 # keep-alive vs. close: issue #81
-tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req, res) -> (res.body = "Hello\n"; res), STDOUT), ip"127.0.0.1", 8083)
+port += 1
+tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req, res) -> (res.body = "Hello\n"; res), STDOUT), ip"127.0.0.1", port)
 sleep(2.0)
-r = HTTP.request("GET", "http://127.0.0.1:8083/", ["Host"=>"127.0.0.1:8083"]; http_version=v"1.0")
+r = HTTP.request("GET", "http://127.0.0.1:$port/", ["Host"=>"127.0.0.1:$port"]; http_version=v"1.0")
 @test r.status == 200
 #@test HTTP.header(r, "Connection") == "close"
 
