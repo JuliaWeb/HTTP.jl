@@ -147,7 +147,6 @@ put!(server.in, HTTP.Servers.KILL)
 tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req, res) -> (res.body = "Hello\n"; res), STDOUT), ip"127.0.0.1", 8083)
 sleep(2.0)
 r = HTTP.request("GET", "http://127.0.0.1:8083/", ["Host"=>"127.0.0.1:8083"]; http_version=v"1.0")
-@info r
 @test r.status == 200
 #@test HTTP.header(r, "Connection") == "close"
 
