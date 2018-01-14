@@ -52,7 +52,6 @@ end
 Convert from ISO8859_1 to UTF8.
 """
 
-iso8859_1_to_utf8(str::String) = iso8859_1_to_utf8(Vector{UInt8}(str))
 function iso8859_1_to_utf8(bytes::Vector{UInt8})
     io = IOBuffer()
     for b in bytes

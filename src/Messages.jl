@@ -65,7 +65,8 @@ export Message, Request, Response, HeaderSizeError,
        header, hasheader, setheader, defaultheader, appendheader,
        mkheaders, readheaders, headerscomplete, readtrailers, writeheaders,
        readstartline!, writestartline,
-       bodylength, unknown_length
+       bodylength, unknown_length,
+       load
 
 import ..HTTP
 
@@ -362,6 +363,16 @@ function Base.String(m::Message)
     io = IOBuffer()
     write(io, m)
     String(take!(io))
+end
+
+
+#Like https://github.com/JuliaIO/FileIO.jl/blob/v0.6.1/src/FileIO.jl#L19 ?
+function load(m::Message)
+    if hasheader(m, "Content-Type", "ISO-8859-1")
+        return iso8859_1_to_utf8(m.body)
+    else
+        String(m.body)
+    end
 end
 
 
