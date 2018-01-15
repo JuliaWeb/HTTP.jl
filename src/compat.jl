@@ -10,6 +10,8 @@ else # Julia v0.6
 
     pairs(x) = [k => v for (k,v) in x]
 
+    Base.SubString(s) = SubString(s, 1)
+
     using MicroLogging
 end
 

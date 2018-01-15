@@ -1,3 +1,6 @@
+using HTTP
+using HTTP.Test
+
 @testset "HTTP.Client" begin
 
 using JSON
@@ -24,7 +27,7 @@ for sch in ("http", "https")
     @test status(HTTP.get("$sch://httpbin.org/encoding/utf8")) == 200
 
     println("pass query to uri")
-    r = HTTP.get("$sch://httpbin.org/response-headers"; query=Dict("hey"=>"dude"))
+    r = HTTP.get(merge(HTTP.URI("$sch://httpbin.org/response-headers"); query=Dict("hey"=>"dude")))
     h = Dict(r.headers)
     @test (haskey(h, "Hey") ? h["Hey"] == "dude" : h["hey"] == "dude")
 

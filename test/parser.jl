@@ -1,3 +1,6 @@
+using HTTP
+using HTTP.Test
+
 module ParserTest
 
 using ..Test
@@ -1453,17 +1456,23 @@ const responses = Message[
               r = Request(req.raw)
               #r = HTTP.parse(HTTP.Request, req.raw; extraref=upgrade)
           end
-          uri = parse(HTTP.URI, r.uri; isconnect= req.method == "CONNECT")
+          if r.method == "CONNECT"
+              host, port, userinfo = HTTP.URIs.http_parse_host(SubString(r.target))
+              @test host == req.host
+              @test port == req.port
+          else
+              target = parse(HTTP.URI, r.target)
+              @test target.query == req.query_string
+              @test target.fragment == req.fragment
+              @test target.path == req.request_path
+              @test target.host == req.host
+              @test target.userinfo == req.userinfo
+              @test target.port in (req.port, "80", "443")
+              @test string(target) == req.request_url
+          end
           @test r.version.major == req.http_major
           @test r.version.minor == req.http_minor
           @test r.method == string(req.method)
-          @test uri.query == req.query_string
-          @test uri.fragment == req.fragment
-          @test uri.path == req.request_path
-          @test uri.host == req.host
-          @test uri.userinfo == req.userinfo
-          @test uri.port in (req.port, "80", "443")
-          @test string(uri) == req.request_url
           @test length(r.headers) == req.num_headers
           @test Dict(HTTP.CanonicalizeRequest.canonicalizeheaders(r.headers)) == Dict(req.headers)
           @test String(r.body) == req.body
@@ -1532,7 +1541,7 @@ const responses = Message[
 
       req = Request()
       req.method = "POST"
-      req.uri = "/"
+      req.target = "/"
       req.headers = ["Host"=>"foo.com", "Transfer-Encoding"=>"chunked", "Trailer-Key"=>"Trailer-Value"]
       req.body = Vector{UInt8}("foobar")
 
@@ -1555,7 +1564,7 @@ const responses = Message[
 
       req = Request()
       req.method = "CONNECT"
-      req.uri = "www.google.com:443" # FIXME; isconnect=true)
+      req.target = "www.google.com:443"
 
       @test Request(reqstr) == req
 
@@ -1563,7 +1572,7 @@ const responses = Message[
 
       req = Request()
       req.method = "CONNECT"
-      req.uri = "127.0.0.1:6060" #FIXME; isconnect=true)
+      req.target = "127.0.0.1:6060"
 
       @test Request(reqstr) == req
 
@@ -1571,7 +1580,7 @@ const responses = Message[
       #
       # req = HTTP.Request()
       # req.method = "CONNECT"
-      # req.uri = HTTP.URI("/_goRPC_"; isconnect=true)
+      # req.target = HTTP.URI("/_goRPC_"; isconnect=true)
 
       # @test HTTP.parse(HTTP.Request, reqstr) == req
 
@@ -1579,7 +1588,7 @@ const responses = Message[
 
       req = Request()
       req.method = "NOTIFY"
-      req.uri = "*"
+      req.target = "*"
       req.headers = ["Server"=>"foo"]
 
       @test Request(reqstr) == req
@@ -1588,7 +1597,7 @@ const responses = Message[
 
       req = Request()
       req.method = "OPTIONS"
-      req.uri = "*"
+      req.target = "*"
       req.headers = ["Server"=>"foo"]
 
       @test Request(reqstr) == req
@@ -1604,7 +1613,7 @@ const responses = Message[
 
       req = Request()
       req.method = "HEAD"
-      req.uri = "/"
+      req.target = "/"
       req.headers = ["Host"=>"issue8261.com", "Connection"=>"close", "Content-Length"=>"0"]
 
       @test Request(reqstr) == req
@@ -1621,7 +1630,7 @@ const responses = Message[
 
       req = Request()
       req.method = "POST"
-      req.uri = "/cgi-bin/process.cgi"
+      req.target = "/cgi-bin/process.cgi"
       req.headers = ["User-Agent"=>"Mozilla/4.0 (compatible; MSIE5.01; Windows NT)",
                      "Host"=>"www.tutorialspoint.com",
                      "Content-Type"=>"text/xml; charset=utf-8",
@@ -1675,7 +1684,7 @@ const responses = Message[
       if !HTTP.Parsers.strict
         r = HTTP.parse(HTTP.Messages.Request, reqstr)
         @test r.method == "GET"
-        @test r.uri == "/"
+        @test r.target == "/"
         @test length(r.headers) == 1
       end
 
@@ -1684,7 +1693,7 @@ const responses = Message[
       if !HTTP.Parsers.strict
           r = parse(HTTP.Messages.Request, reqstr)
           @test r.method == "GET"
-          @test r.uri == "/"
+          @test r.target == "/"
           @test length(r.headers) == 1
       end
 

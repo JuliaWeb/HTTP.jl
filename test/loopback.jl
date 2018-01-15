@@ -104,7 +104,7 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
         println("📡  $(sprint(showcompact, req))")
         push!(server_events, "Request: $(sprint(showcompact, req))")
 
-        if req.uri == "/abort"
+        if req.target == "/abort"
             reset(lb)
             response = HTTP.Response(403, ["Connection" => "close",
                                           "Content-Length" => 0]; request=req)
@@ -118,10 +118,10 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
         l = length(req.body)
         response = HTTP.Response(200, ["Content-Length" => l],
                                       body = req.body; request=req)
-        if req.uri == "/echo"
+        if req.target == "/echo"
             push!(server_events, "Response: $(sprint(showcompact, response))")
             write(lb.io, response)
-        elseif (m = match(r"^/delay([0-9]*)$", req.uri)) != nothing
+        elseif (m = match(r"^/delay([0-9]*)$", req.target)) != nothing
             t = parse(Int, first(m.captures))
             sleep(t/10)
             push!(server_events, "Response: $(sprint(showcompact, response))")

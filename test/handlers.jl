@@ -20,7 +20,7 @@ r = HTTP.Router()
 HTTP.register!(r, "/path/to/greatness", f)
 @test length(methods(r.func)) == 2
 req = HTTP.Request()
-req.uri = "/path/to/greatness"
+req.target = "/path/to/greatness"
 @test HTTP.handle(r, req, HTTP.Response()) == HTTP.Response(200)
 
 p = "/next/path/to/greatness"
@@ -28,7 +28,7 @@ f2 = HTTP.HandlerFunction((req, resp) -> HTTP.Response(201))
 HTTP.register!(r, p, f2)
 @test length(methods(r.func)) == 3
 req = HTTP.Request()
-req.uri = "/next/path/to/greatness"
+req.target = "/next/path/to/greatness"
 @test HTTP.handle(r, req, HTTP.Response()) == HTTP.Response(201)
 
 r = HTTP.Router()
@@ -57,16 +57,16 @@ f4 = HTTP.HandlerFunction((req, resp) -> HTTP.Response(203))
 HTTP.register!(r, "/test/*/ghotra/seven", f4)
 
 req = HTTP.Request()
-req.uri = "/test"
+req.target = "/test"
 @test HTTP.handle(r, req, HTTP.Response()) == HTTP.Response(200)
 
-req.uri = "/test/sarv"
+req.target = "/test/sarv"
 @test HTTP.handle(r, req, HTTP.Response()) == HTTP.Response(201)
 
-req.uri = "/test/sarv/ghotra"
+req.target = "/test/sarv/ghotra"
 @test HTTP.handle(r, req, HTTP.Response()) == HTTP.Response(202)
 
-req.uri = "/test/sar/ghotra/seven"
+req.target = "/test/sar/ghotra/seven"
 @test HTTP.handle(r, req, HTTP.Response()) == HTTP.Response(203)
 
 end
