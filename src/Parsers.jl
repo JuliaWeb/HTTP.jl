@@ -761,7 +761,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
         elseif p_state == s_chunk_data
             to_read = Int(min(parser.chunk_length, len - p + 1))
 
-            @passert parser.chunk_length != 0 &&
+            @passert parser.chunk_length != 0
 
             @passert result == nobytes
             result = view(bytes, p:p + to_read - 1)
