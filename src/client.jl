@@ -121,7 +121,7 @@ function request(client::Client, method, url::URI;
 
     if body != ""
         Base.depwarn(
-        "The body= option is deprecated. Use request(method, uri,headers, body)",
+        "The body= option is deprecated. Use request(method, uri, headers, body)",
         :body)
     end
 
