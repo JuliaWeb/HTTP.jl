@@ -20,13 +20,12 @@ struct MessageLayer{Next <: Layer} <: Layer end
 export MessageLayer
 
 function request(::Type{MessageLayer{Next}},
-                 method::String, uri::URI, headers::Headers, body;
+                 method::String, url::URI, headers::Headers, body;
                  http_version=v"1.1",
+                 target=resource(url),
                  parent=nothing, iofunction=nothing, kw...) where Next
 
-    path = method == "CONNECT" ? hostport(uri) : resource(uri)
-
-    defaultheader(headers, "Host" => uri.host)
+    defaultheader(headers, "Host" => url.host)
 
     if !hasheader(headers, "Content-Length") &&
        !hasheader(headers, "Transfer-Encoding") &&
@@ -39,10 +38,10 @@ function request(::Type{MessageLayer{Next}},
         end
     end
 
-    req = Request(method, path, headers, bodybytes(body);
+    req = Request(method, target, headers, bodybytes(body);
                   parent=parent, version=http_version)
 
-    return request(Next, uri, req, body; iofunction=iofunction, kw...)
+    return request(Next, url, req, body; iofunction=iofunction, kw...)
 end
 
 

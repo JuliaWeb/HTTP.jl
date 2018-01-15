@@ -86,9 +86,18 @@ abstract type Message end
 Represents a HTTP Response Message.
 
 - `version::VersionNumber`
+   [RFC7230 2.6](https://tools.ietf.org/html/rfc7230#section-2.6)
+
 - `status::Int16`
+   [RFC7230 3.1.2](https://tools.ietf.org/html/rfc7230#section-3.1.2)
+   [RFC7231 6](https://tools.ietf.org/html/rfc7231#section-6)
+
 - `headers::Vector{Pair{String,String}}`
+   [RFC7230 3.2](https://tools.ietf.org/html/rfc7230#section-3.2)
+
 - `body::Vector{UInt8}`
+   [RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
+
 - `request`, the `Request` that yielded this `Response`.
 """
 
@@ -132,18 +141,30 @@ end
 Represents a HTTP Request Message.
 
 - `method::String`
-- `uri::String`
+   [RFC7230 3.1.1](https://tools.ietf.org/html/rfc7230#section-3.1.1)
+
+- `target::String`
+   [RFC7230 5.3](https://tools.ietf.org/html/rfc7230#section-5.3)
+
 - `version::VersionNumber`
+   [RFC7230 2.6](https://tools.ietf.org/html/rfc7230#section-2.6)
+
 - `headers::Vector{Pair{String,String}}`
+   [RFC7230 3.2](https://tools.ietf.org/html/rfc7230#section-3.2)
+
 - `body::Vector{UInt8}`
+   [RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
+
 - `response`, the `Response` to this `Request`
+
 - `parent`, the `Response` (if any) that led to this request
   (e.g. in the case of a redirect).
+   [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
 """
 
 mutable struct Request <: Message
     method::String
-    uri::String
+    target::String
     version::VersionNumber
     headers::Headers
     body::Vector{UInt8}
@@ -153,10 +174,10 @@ end
 
 Request() = Request("", "")
 
-function Request(method::String, uri, headers=[], body=UInt8[];
+function Request(method::String, target, headers=[], body=UInt8[];
                  version=v"1.1", parent=nothing)
     r = Request(method,
-                uri == "" ? "/" : uri,
+                target == "" ? "/" : target,
                 version,
                 mkheaders(headers),
                 body,
@@ -319,7 +340,7 @@ e.g. `"GET /path HTTP/1.1\\r\\n"` or `"HTTP/1.1 200 OK\\r\\n"`
 """
 
 function writestartline(io::IO, r::Request)
-    write(io, "$(r.method) $(r.uri) $(httpversion(r))\r\n")
+    write(io, "$(r.method) $(r.target) $(httpversion(r))\r\n")
     return
 end
 
@@ -391,7 +412,7 @@ end
 function readstartline!(m::Parsers.Message, r::Request)
     r.version = VersionNumber(m.major, m.minor)
     r.method = m.method
-    r.uri = m.url
+    r.target = m.target
     return
 end
 

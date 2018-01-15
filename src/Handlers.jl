@@ -127,7 +127,7 @@ function handle(r::Router, req, resp)
     # get the url/path of the request
     m = Val(Symbol(req.method))
     # get scheme, host, split path into strings and get Vals
-    uri = HTTP.URI(req.uri)
+    uri = HTTP.URI(req.target)
     s = get(SCHEMES, uri.scheme, EMPTYVAL)
     h = Val(Symbol(uri.host))
     p = uri.path

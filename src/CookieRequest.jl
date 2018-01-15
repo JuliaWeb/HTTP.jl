@@ -21,40 +21,40 @@ abstract type CookieLayer{Next <: Layer} <: Layer end
 export CookieLayer
 
 function request(::Type{CookieLayer{Next}},
-                 method::String, uri::URI, headers, body;
+                 method::String, url::URI, headers, body;
                  cookiejar::Dict{String, Set{Cookie}}=default_cookiejar,
                  kw...) where Next
 
-    hostcookies = get!(cookiejar, uri.host, Set{Cookie}())
+    hostcookies = get!(cookiejar, url.host, Set{Cookie}())
 
-    cookies = getcookies(hostcookies, uri)
+    cookies = getcookies(hostcookies, url)
     if !isempty(cookies)
         setkv(headers, "Cookie", string(getkv(headers, "Cookie", ""), cookies))
     end
 
-    res = request(Next, method, uri, headers, body; kw...)
+    res = request(Next, method, url, headers, body; kw...)
 
-    setcookies(hostcookies, uri.host, res.headers)
+    setcookies(hostcookies, url.host, res.headers)
 
     return res
 end
 
 
-function getcookies(cookies, uri)
+function getcookies(cookies, url)
 
     tosend = Vector{Cookie}()
     expired = Vector{Cookie}()
 
     # Check if cookies should be added to outgoing request based on host...
     for cookie in cookies
-        if Cookies.shouldsend(cookie, uri.scheme == "https",
-                              uri.host, uri.path)
+        if Cookies.shouldsend(cookie, url.scheme == "https",
+                              url.host, url.path)
             t = cookie.expires
             if t != Dates.DateTime() && t < Dates.now(Dates.UTC)
                 @debug 1 "Deleting expired Cookie: $cookie.name"
                 push!(expired, cookie)
             else
-                @debug 1 "Sending Cookie: $cookie.name to $uri.host"
+                @debug 1 "Sending Cookie: $cookie.name to $url.host"
                 push!(tosend, cookie)
             end
         end

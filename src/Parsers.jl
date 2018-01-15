@@ -53,16 +53,20 @@ const Headers = Vector{Header}
 
 """
  - `method::String`: the HTTP method
+   [RFC7230 3.1.1](https://tools.ietf.org/html/rfc7230#section-3.1.1)
  - `major` and `minor`: HTTP version
- - `url::String`: request URL
+   [RFC7230 2.6](https://tools.ietf.org/html/rfc7230#section-2.6)
+ - `target::String`: request target
+   [RFC7230 5.3](https://tools.ietf.org/html/rfc7230#section-5.3)
  - `status::Int`: response status
+   [RFC7230 3.1.2](https://tools.ietf.org/html/rfc7230#section-3.1.2)
 """
 
 mutable struct Message
     method::String
     major::Int16
     minor::Int16
-    url::String
+    target::String
     status::Int32
 
     Message() = reset!(new())
@@ -72,7 +76,7 @@ function reset!(m::Message)
     m.method = ""
     m.major = 0
     m.minor = 0
-    m.url = ""
+    m.target = ""
     m.status = 0
     return m
 end
@@ -452,8 +456,8 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             write(parser.valuebuffer, view(bytes, start:p-1))
 
             if p_state >= s_req_http_start
-                parser.message.url = take!(parser.valuebuffer)
-                @debugshow 4 parser.message.url
+                parser.message.target = take!(parser.valuebuffer)
+                @debugshow 4 parser.message.target
             end
 
             p = min(p, len)

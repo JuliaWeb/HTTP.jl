@@ -15,11 +15,11 @@ abstract type CanonicalizeLayer{Next <: Layer} <: Layer end
 export CanonicalizeLayer
 
 function request(::Type{CanonicalizeLayer{Next}},
-                 method::String, uri, headers, body; kw...) where Next
+                 method::String, url, headers, body; kw...) where Next
 
     headers = canonicalizeheaders(headers)
     
-    res = request(Next, method, uri, headers, body; kw...)
+    res = request(Next, method, url, headers, body; kw...)
 
     res.headers = canonicalizeheaders(res.headers)
 

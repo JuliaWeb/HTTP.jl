@@ -138,8 +138,8 @@ Basic Authenticaiton options
 AWS Authenticaiton options
 
  - `awsauthorization = false`, enable AWS4 Authentication.
- - `aws_service = split(uri.host, ".")[1]`
- - `aws_region = split(uri.host, ".")[2]`
+ - `aws_service = split(url.host, ".")[1]`
+ - `aws_region = split(url.host, ".")[2]`
  - `aws_access_key_id = ENV["AWS_ACCESS_KEY_ID"]`
  - `aws_secret_access_key = ENV["AWS_SECRET_ACCESS_KEY"]`
  - `aws_session_token = get(ENV, "AWS_SESSION_TOKEN", "")`
@@ -281,13 +281,13 @@ end
 ```
 """
 
-request(method::String, uri::URI, headers::Headers, body; kw...)::Response =
-    request(HTTP.stack(;kw...), method, uri, headers, body; kw...)
+request(method::String, url::URI, headers::Headers, body; kw...)::Response =
+    request(HTTP.stack(;kw...), method, url, headers, body; kw...)
 
 const nobody = UInt8[]
 
-request(method, uri, headers=Header[], body=nobody; kw...)::Response =
-    request(string(method), URI(uri), mkheaders(headers), body; kw...)
+request(method, url, headers=Header[], body=nobody; kw...)::Response =
+    request(string(method), URI(url), mkheaders(headers), body; kw...)
 
 
 """
@@ -313,8 +313,8 @@ end
 ```
 """
 
-open(f::Function, method::String, uri, headers=Header[]; kw...)::Response =
-    request(method, uri, headers, nothing; iofunction=f, kw...)
+open(f::Function, method::String, url, headers=Header[]; kw...)::Response =
+    request(method, url, headers, nothing; iofunction=f, kw...)
 
 
 """
@@ -324,7 +324,7 @@ open(f::Function, method::String, uri, headers=Header[]; kw...)::Response =
 Shorthand for `HTTP.request("GET", ...)`. See [`HTTP.request`](@ref).
 """
 
-get(a...; kw...) = request("GET", a..., kw...)
+get(u, a...; kw...) = request("GET", u, a...; kw...)
 
 
 """
@@ -333,7 +333,7 @@ get(a...; kw...) = request("GET", a..., kw...)
 Shorthand for `HTTP.request("PUT", ...)`. See [`HTTP.request`](@ref).
 """
 
-put(a...; kw...) = request("PUT", a..., kw...)
+put(u, h, b; kw...) = request("PUT", u, h, b; kw...)
 
 
 """
@@ -342,7 +342,7 @@ put(a...; kw...) = request("PUT", a..., kw...)
 Shorthand for `HTTP.request("POST", ...)`. See [`HTTP.request`](@ref).
 """
 
-post(a...; kw...) = request("POST", a..., kw...)
+post(u, h, b; kw...) = request("POST", u, h, b; kw...)
 
 
 """
@@ -351,7 +351,7 @@ post(a...; kw...) = request("POST", a..., kw...)
 Shorthand for `HTTP.request("HEAD", ...)`. See [`HTTP.request`](@ref).
 """
 
-head(a...; kw...) = request("HEAD", a..., kw...)
+head(u; kw...) = request("HEAD", u; kw...)
 
 
 
@@ -455,7 +455,7 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parser`](@ref),
  │                                            │ HTTP.StatusError  │─ ─   │  │ │
  │                                            └───────────────────┘   │       │
  │                                            ┌───────────────────┐      │  │ │
- │     request(method, uri, headers, body) -> │ HTTP.Response     │   │       │
+ │     request(method, url, headers, body) -> │ HTTP.Response     │   │       │
  │             ──────────────────────────     └─────────▲─────────┘      │  │ │
  │                           ║                          ║             │       │
  │   ┌────────────────────────────────────────────────────────────┐      │  │ │
@@ -487,7 +487,7 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parser`](@ref),
 ││ HTTP.Request                     │   │  │ HTTP.Response                  │ │
 ││                                  │   │  │                                  │
 ││ method::String                   ◀───┼──▶ status::Int                    │ │
-││ uri::String                      │   │  │ headers::Vector{Pair}            │
+││ target::String                   │   │  │ headers::Vector{Pair}            │
 ││ headers::Vector{Pair}            │   │  │ body::Vector{UInt8}            │ │
 ││ body::Vector{UInt8}              │   │  │                                  │
 │└──────────────────▲───────────────┘   │  └───────────────▲────────────────┼─┘

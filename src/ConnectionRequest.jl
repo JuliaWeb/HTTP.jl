@@ -24,11 +24,11 @@ See [`isioerror`](@ref).
 abstract type ConnectionPoolLayer{Next <: Layer} <: Layer end
 export ConnectionPoolLayer
 
-function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
+function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
                  socket_type::Type=TCPSocket, kw...) where Next
 
-    IOType = ConnectionPool.Transaction{sockettype(uri, socket_type)}
-    io = getconnection(IOType, uri.host, uri.port; kw...)
+    IOType = ConnectionPool.Transaction{sockettype(url, socket_type)}
+    io = getconnection(IOType, url.host, url.port; kw...)
 
     try
         return request(Next, io, req, body; kw...)
@@ -40,7 +40,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, uri::URI, req, body;
 end
 
 
-sockettype(uri::URI, default) = uri.scheme in ("wss", "https") ? SSLContext :
+sockettype(url::URI, default) = url.scheme in ("wss", "https") ? SSLContext :
                                                                  default
 
 

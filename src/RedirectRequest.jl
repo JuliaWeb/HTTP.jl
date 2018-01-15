@@ -18,12 +18,12 @@ abstract type RedirectLayer{Next <: Layer} <: Layer end
 export RedirectLayer
 
 function request(::Type{RedirectLayer{Next}},
-                 method::String, uri::URI, headers, body;
+                 method::String, url::URI, headers, body;
                  redirect_limit=3, forwardheaders=false, kw...) where Next
     count = 0
     while true
     
-        res = request(Next, method, uri, headers, body; kw...)
+        res = request(Next, method, url, headers, body; kw...)
 
         if (count == redirect_limit
         ||  !isredirect(res)
@@ -38,14 +38,14 @@ function request(::Type{RedirectLayer{Next}},
         else
         setkv(kw, :parent, res)
         end
-        uri = absuri(location, uri)
+        url = absuri(location, url)
         if forwardheaders 
             headers = filter(h->!(h[1] in ("Host", "Cookie")), headers)
         else
             headers = Header[]
         end
 
-        @debug 1 "➡️  Redirect: $uri"
+        @debug 1 "➡️  Redirect: $url"
 
         count += 1
     end

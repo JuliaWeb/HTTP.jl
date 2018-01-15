@@ -24,7 +24,7 @@ abstract type AWS4AuthLayer{Next <: Layer} <: Layer end
 export AWS4AuthLayer
 
 function request(::Type{AWS4AuthLayer{Next}},
-                 uri::URI, req, body; kw...) where Next
+                 url::URI, req, body; kw...) where Next
 
     @static if VERSION > v"0.7.0-DEV.2915"
     if !haskey(kw, :aws_access_key_id) &&
@@ -33,21 +33,21 @@ function request(::Type{AWS4AuthLayer{Next}},
     end
     end
 
-    sign_aws4!(req.method, uri, req.headers, req.body; kw...)
+    sign_aws4!(req.method, url, req.headers, req.body; kw...)
 
-    return request(Next, uri, req, body; kw...)
+    return request(Next, url, req, body; kw...)
 end
 
 
 function sign_aws4!(method::String,
-                    uri::URI,
+                    url::URI,
                     headers::Headers,
                     body::Vector{UInt8};
                     body_sha256::Vector{UInt8}=digest(MD_SHA256, body),
                     body_md5::Vector{UInt8}=digest(MD_MD5, body),
                     t::DateTime=now(Dates.UTC),
-                    aws_service::String=String(split(uri.host, ".")[1]),
-                    aws_region::String=String(split(uri.host, ".")[2]),
+                    aws_service::String=String(split(url.host, ".")[1]),
+                    aws_region::String=String(split(url.host, ".")[2]),
                     aws_access_key_id::String=ENV["AWS_ACCESS_KEY_ID"],
                     aws_secret_access_key::String=ENV["AWS_SECRET_ACCESS_KEY"],
                     aws_session_token::String=get(ENV, "AWS_SESSION_TOKEN", ""),
@@ -87,13 +87,13 @@ function sign_aws4!(method::String,
     signed_headers = join(sort([lowercase(k) for (k,v) in headers]), ";")
 
     # Sort Query String...
-    query = queryparams(uri.query)
+    query = queryparams(url.query)
     query = Pair[k => query[k] for k in sort(collect(keys(query)))]
 
     # Create hash of canonical request...
     canonical_form = string(method, "\n",
-                            aws_service == "s3" ? uri.path
-                                                : escapepath(uri.path), "\n",
+                            aws_service == "s3" ? url.path
+                                                : escapepath(url.path), "\n",
                             escapeuri(query), "\n",
                             join(sort(canonical_headers), "\n"), "\n\n",
                             signed_headers, "\n",

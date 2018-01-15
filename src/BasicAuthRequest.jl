@@ -18,16 +18,16 @@ abstract type BasicAuthLayer{Next <: Layer} <: Layer end
 export BasicAuthLayer
 
 function request(::Type{BasicAuthLayer{Next}},
-                 method::String, uri::URI, headers, body; kw...) where Next
+                 method::String, url::URI, headers, body; kw...) where Next
 
-    userinfo = uri.userinfo
+    userinfo = url.userinfo
     
     if !isempty(userinfo) && getkv(headers, "Authorization", "") == ""
         @debug 1 "Adding Authorization: Basic header."
         setkv(headers, "Authorization", "Basic $(base64encode(userinfo))")
     end
     
-    return request(Next, method, uri, headers, body; kw...)
+    return request(Next, method, url, headers, body; kw...)
 end
 
 

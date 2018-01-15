@@ -23,12 +23,12 @@ Base.show(io::IO, p::URLParsingError) = println(io, "HTTP.URLParsingError: ", p.
 
 @enum(http_parser_url_fields,
       UF_SCHEME   = 1
-    , UF_HOST     = 2
-    , UF_PORT     = 3
-    , UF_PATH     = 4
-    , UF_QUERY    = 5
-    , UF_FRAGMENT = 6
-    , UF_USERINFO = 7
+    , UF_USERINFO = 2
+    , UF_HOST     = 3
+    , UF_PORT     = 4
+    , UF_PATH     = 5
+    , UF_QUERY    = 6
+    , UF_FRAGMENT = 7
     , UF_MAX      = 8
 )
 const UF_SCHEME_MASK = 0x01
@@ -125,7 +125,7 @@ function http_parse_host_char(s::http_host_state, ch)
     return s_http_host_dead
 end
 
-function http_parse_host(host::SubString, foundat)
+function http_parse_host(host::SubString, foundat=false)
 
     host1 = port1 = userinfo1 = 1
     host2 = port2 = userinfo2 = 0
@@ -135,7 +135,7 @@ function http_parse_host(host::SubString, foundat)
         @inbounds p = host[i]
 
         new_s = http_parse_host_char(s, p)
-        if new_s == s_http_host_dead 
+        if new_s == s_http_host_dead
             throw(URLParsingError("encountered invalid host character: \n" *
                                   "$host\n$(lpad("", i-1, "-"))^"))
         end
@@ -181,9 +181,10 @@ function http_parse_host(host::SubString, foundat)
 end
 
 
-function http_parser_parse_url(url::AbstractString, isconnect::Bool=false)
+function http_parser_parse_url(url::AbstractString)
 
-    s = ifelse(isconnect, s_req_server_start, s_req_spaces_before_url)
+    s = s_req_spaces_before_url
+
     old_uf = UF_MAX
     off1 = off2 = 0
     foundat = false
@@ -226,7 +227,7 @@ function http_parser_parse_url(url::AbstractString, isconnect::Bool=false)
             uf = UF_FRAGMENT
             mask |= UF_FRAGMENT_MASK
         else
-            throw(URLParsingError("ended in unexpected parsing state: $s"))
+            throw(URLParsingError("ended in unexpected parsing state: $s\n$url"))
         end
         if uf == old_uf
             off2 = i
@@ -244,7 +245,7 @@ function http_parser_parse_url(url::AbstractString, isconnect::Bool=false)
     end
     check = ~(UF_HOST_MASK | UF_PATH_MASK)
     if (mask & UF_SCHEME_MASK > 0) && (mask | check == check)
-        throw(URLParsingError("URI must include host or path with scheme"))
+        throw(URLParsingError("URI must include host or path with scheme\n$url"))
     end
     if mask & UF_HOST_MASK > 0
         host, port, userinfo = http_parse_host(parts[UF_HOST], foundat)
@@ -261,12 +262,6 @@ function http_parser_parse_url(url::AbstractString, isconnect::Bool=false)
             mask |= UF_USERINFO_MASK
         end
     end
-    # CONNECT requests can only contain "hostname:port"
-    if isconnect
-        chk = UF_HOST_MASK | UF_PORT_MASK
-        ((mask | chk) > chk) && throw(URLParsingError("connect requests must contain and can only contain both hostname and port"))
-    end
-
     return URI(url, parts...)
 end
 
