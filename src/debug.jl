@@ -35,26 +35,57 @@ end
     @require precondition [message]
 Throw `ArgumentError` if `precondition` is false.
 """
-macro require(precondition, msg = string(precondition))
-    esc(:(if ! $precondition throw(precondition_error($msg, backtrace()[1])) end))
+macro require(condition, msg = string(condition))
+    esc(:(if ! $condition throw(precondition_error($msg, backtrace()[1])) end))
 end
 
 
-@noinline function postcondition_error(msg, frame)
+@noinline function postcondition_error(msg, frame, ls="", l="", rs="", r="")
     msg = string(sprint(StackTraces.show_spec_linfo,
                         StackTraces.lookup(frame)[2]),
                  " failed to ensure ", msg)
+    if ls != ""
+        msg = string(msg, "\n", ls, " = ", sprint(show, l),
+                          "\n", rs, " = ", sprint(show, r))
+    end
     return AssertionError(msg)
 end
 
+
+# Copied from stdlib/Test/src/Test.jl:get_test_result()
+iscondition(ex) = isa(ex, Expr) &&
+                  ex.head == :call &&
+                  length(ex.args) == 3 &&
+                  first(string(ex.args[1])) != '.' &&
+                  (!isa(ex.args[2], Expr) || ex.args[2].head != :...) &&
+                  (!isa(ex.args[3], Expr) || ex.args[3].head != :...) &&
+                  (ex.args[1] === :(==) ||
+                       Base.operator_precedence(ex.args[1]) ==
+                           Base.operator_precedence(:(==)))
 
 
 """
     @ensure postcondition [message]
 Throw `ArgumentError` if `postcondition` is false.
 """
-macro ensure(postcondition, msg = string(postcondition))
-    esc(:(if ! $postcondition throw(postcondition_error($msg, backtrace()[1])) end))
+macro ensure(condition, msg = string(condition))
+
+    if DEBUG_LEVEL < 0
+        return :()
+    end
+
+    if iscondition(condition)
+        l,r = condition.args[2], condition.args[3]
+        ls, rs = string(l), string(r)
+        return esc(quote
+            if ! $condition
+                throw(postcondition_error($msg, backtrace()[1],
+                                          $ls, $l, $rs, $r))
+            end
+        end)
+    end
+
+    esc(:(if ! $condition throw(postcondition_error($msg, backtrace()[1])) end))
 end
 
 
