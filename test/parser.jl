@@ -1461,14 +1461,18 @@ const responses = Message[
               @test host == req.host
               @test port == req.port
           else
-              target = parse(HTTP.URI, r.target)
-              @test target.query == req.query_string
-              @test target.fragment == req.fragment
-              @test target.path == req.request_path
-              @test target.host == req.host
-              @test target.userinfo == req.userinfo
-              @test target.port in (req.port, "80", "443")
-              @test string(target) == req.request_url
+              if r.target == "*"
+                  @test r.target == req.request_path
+              else
+                  target = parse(HTTP.URI, r.target)
+                  @test target.query == req.query_string
+                  @test target.fragment == req.fragment
+                  @test target.path == req.request_path
+                  @test target.host == req.host
+                  @test target.userinfo == req.userinfo
+                  @test target.port in (req.port, "80", "443")
+                  @test string(target) == req.request_url
+              end
           end
           @test r.version.major == req.http_major
           @test r.version.minor == req.http_minor

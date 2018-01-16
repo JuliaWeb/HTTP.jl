@@ -402,22 +402,34 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 if parser.message.method == "HTTP" && ch == '/'
                     p_state = s_res_first_http_major
                 elseif ch == ' '
-                    p_state = s_req_spaces_before_url
+                    p_state = s_req_spaces_before_target
                 else
                     @err(:HPE_INVALID_METHOD)
                 end
             end
 
-        elseif p_state == s_req_spaces_before_url
+        elseif p_state == s_req_spaces_before_target
             ch == ' ' && continue
             if parser.message.method == "CONNECT"
                 p_state = s_req_server_start
+                p -= 1
+            elseif ch == '*'
+                p_state = s_req_target_wildcard
             else
-                p_state = s_req_url_start
+                p_state = s_req_target_start
+                p -= 1
             end
-            p -= 1
 
-        elseif @anyeq(p_state, s_req_url_start,
+        elseif p_state == s_req_target_wildcard
+
+            if @anyeq(ch, ' ', CR, LF)
+                parser.message.target = "*"
+                p_state = s_req_http_start
+            else
+                @err(:HPE_INVALID_TARGET)
+            end
+
+        elseif @anyeq(p_state, s_req_target_start,
                                s_req_server_start,
                                s_req_server,
                                s_req_server_with_at,
@@ -436,7 +448,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     @errorif(@anyeq(p_state, s_req_schema, s_req_schema_slash,
                                              s_req_schema_slash_slash,
                                              s_req_server_start),
-                             :HPE_INVALID_URL)
+                             :HPE_INVALID_TARGET)
                     if ch == ' '
                         p_state = s_req_http_start
                     else
@@ -448,7 +460,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     break
                 end
                 p_state = parseurlchar(p_state, ch, strict)
-                @errorif(p_state == s_dead, :HPE_INVALID_URL)
+                @errorif(p_state == s_dead, :HPE_INVALID_TARGET)
                 p += 1
             end
             @passert p <= len + 1
@@ -806,7 +818,7 @@ const ERROR_MESSAGES = Dict(
     :HPE_INVALID_VERSION => "invalid HTTP version",
     :HPE_INVALID_STATUS => "invalid HTTP status code",
     :HPE_INVALID_METHOD => "invalid HTTP method",
-    :HPE_INVALID_URL => "invalid URL",
+    :HPE_INVALID_TARGET => "invalid HTTP Request Target",
     :HPE_LF_EXPECTED => "LF character expected",
     :HPE_INVALID_HEADER_TOKEN => "invalid character in header",
     :HPE_INVALID_CONTENT_LENGTH => "invalid character in content-length header",

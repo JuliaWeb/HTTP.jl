@@ -14,8 +14,9 @@
     ,es_res_line_almost_done
     ,es_start_req
     ,es_req_method
-    ,es_req_spaces_before_url
-    ,es_req_url_start
+    ,es_req_spaces_before_target
+    ,es_req_target_start
+    ,es_req_target_wildcard
     ,es_req_schema
     ,es_req_schema_slash
     ,es_req_schema_slash_slash

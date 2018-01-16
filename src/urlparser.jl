@@ -28,7 +28,7 @@ function parseurlchar(s, ch::Char, strict::Bool)
     @anyeq(ch, ' ', '\r', '\n') && return s_dead
     strict && (ch == '\t' || ch == '\f') && return s_dead
 
-    if s == s_req_spaces_before_url || s == s_req_url_start
+    if s == s_req_spaces_before_target || s == s_req_target_start
         (ch == '/') && return s_req_path
         isalpha(ch) && return s_req_schema
     elseif s == s_req_schema
@@ -160,7 +160,7 @@ http_parser_parse_url(url::AbstractString) = http_parser_parse_url(String(url))
 
 function http_parser_parse_url(url::String)
 
-    s = s_req_spaces_before_url
+    s = s_req_spaces_before_target
 
     old_uf = -1
     off1 = off2 = 0
