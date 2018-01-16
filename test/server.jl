@@ -1,72 +1,122 @@
-@testset "HTTP.serve" begin
+using HTTP
+using HTTP.Test
+
+port = rand(8000:8999)
+
+function testget(url)
+    mktempdir() do d
+        cd(d) do
+            cmd = `"curl -v -s $url > tmpout 2>&1"`
+            cmd = `bash -c $cmd`
+            #println(cmd)
+            run(cmd)
+            return String(read(joinpath(d, "tmpout")))
+        end
+    end
+end
+
+@testset "HTTP.Servers.serve" begin
 
 # test kill switch
-server = HTTP.Server()
-tsk = @async HTTP.serve(server)
+server = HTTP.Servers.Server()
+tsk = @async HTTP.Servers.serve(server, "localhost", port)
 sleep(1.0)
-put!(server.in, HTTP.Nitrogen.KILL)
-sleep(0.1)
+put!(server.in, HTTP.Servers.KILL)
+sleep(2)
 @test istaskdone(tsk)
+
 
 # test http vs. https
 
+
 # echo response
 serverlog = HTTP.FIFOBuffer()
-server = HTTP.Server((req, rep) -> HTTP.Response(String(req)), serverlog)
-tsk = @async HTTP.serve(server)
+server = HTTP.Servers.Server((req, rep) -> begin
+    rep.body = req.body
+    return rep
+end, serverlog)
+
+server.options.ratelimit=0
+tsk = @async HTTP.Servers.serve(server, "localhost", port)
 sleep(1.0)
-r = HTTP.get("http://127.0.0.1:8081/"; readtimeout=30)
 
-@test HTTP.status(r) == 200
-@test String(take!(r)) == ""
 
-print(String(read(serverlog)))
+r = testget("http://127.0.0.1:$port/")
+@test ismatch(r"HTTP/1.1 200 OK", r)
+
+rv = []
+n = 3
+@sync for i = 1:n
+    @async begin
+        r = testget(repeat("http://127.0.0.1:$port/$i ", n))
+        #println(r)
+        push!(rv, r)
+    end
+    sleep(0.01)
+end
+for i = 1:n
+    @test length(filter(l->ismatch(r"HTTP/1.1 200 OK", l),
+                        split(rv[i], "\n"))) == n
+end
+
+r = HTTP.get("http://127.0.0.1:$port/"; readtimeout=30)
+@test r.status == 200
+@test String(r.body) == ""
+
+
+# large headers
+sleep(2.0)
+tcp = connect(ip"127.0.0.1", port)
+write(tcp, "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n")
+@test ismatch(r"HTTP/1.1 413 Request Entity Too Large", String(read(tcp)))
 
 # invalid HTTP
 sleep(2.0)
-tcp = connect(ip"127.0.0.1", 8081)
+tcp = connect(ip"127.0.0.1", port)
 write(tcp, "GET / HTP/1.1\r\n\r\n")
-sleep(2.0)
-log = String(read(serverlog))
-
-print(log)
-@test contains(log, "invalid HTTP version")
-
-# bad method
-sleep(2.0)
-tcp = connect(ip"127.0.0.1", 8081)
-write(tcp, "BADMETHOD / HTTP/1.1\r\n\r\n")
+!HTTP.Parsers.strict &&
+@test ismatch(r"HTTP/1.1 505 HTTP Version Not Supported", String(read(tcp)))
 sleep(2.0)
 
-log = String(read(serverlog))
 
-print(log)
-@test contains(log, "invalid HTTP method")
+# no URL
+sleep(2.0)
+tcp = connect(ip"127.0.0.1", port)
+write(tcp, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
+r = String(read(tcp))
+!HTTP.Parsers.strict && @test ismatch(r"HTTP/1.1 400 Bad Request", r)
+!HTTP.Parsers.strict && @test ismatch(r"invalid URL", r)
+sleep(2.0)
+
 
 # Expect: 100-continue
 sleep(2.0)
-tcp = connect(ip"127.0.0.1", 8081)
+tcp = connect(ip"127.0.0.1", port)
 write(tcp, "POST / HTTP/1.1\r\nContent-Length: 15\r\nExpect: 100-continue\r\n\r\n")
 sleep(2.0)
 
-log = String(read(serverlog))
+log = String(readavailable(serverlog))
 
-@test contains(log, "sending 100 Continue response to get request body")
+#@test contains(log, "sending 100 Continue response to get request body")
 client = String(readavailable(tcp))
 @test client == "HTTP/1.1 100 Continue\r\n\r\n"
 
+
 write(tcp, "Body of Request")
 sleep(2.0)
-log = String(read(serverlog))
+#log = String(readavailable(serverlog))
 client = String(readavailable(tcp))
 
-print(client)
+#println("log:")
+#println(log)
+#println()
+println("client:")
+println(client)
 @test contains(client, "HTTP/1.1 200 OK\r\n")
-@test contains(client, "Connection: keep-alive\r\n")
-@test contains(client, "Content-Length: 15\r\n")
-@test contains(client, "\r\n\r\nBody of Request")
+@test contains(client, "Transfer-Encoding: chunked\r\n")
+@test contains(client, "Body of Request")
 
-put!(server.in, HTTP.Nitrogen.KILL)
+put!(server.in, HTTP.Servers.KILL)
 
 # serverlog = HTTP.FIFOBuffer()
 # server = HTTP.Server((req, rep) -> begin
@@ -87,7 +137,7 @@ put!(server.in, HTTP.Nitrogen.KILL)
 #         "Connection" => "keep-alive"), io)
 # end, serverlog)
 
-# tsk = @async HTTP.serve(server, IPv4(0,0,0,0), 8082)
+# tsk = @async HTTP.Servers.serve(server, IPv4(0,0,0,0), 8082)
 # sleep(5.0)
 # r = HTTP.get("http://localhost:8082/"; readtimeout=30, verbose=true)
 # log = String(read(serverlog))
@@ -103,11 +153,12 @@ put!(server.in, HTTP.Nitrogen.KILL)
 # handler throw error
 
 # keep-alive vs. close: issue #81
-tsk = @async HTTP.serve(HTTP.Server((req, res) -> Response("Hello\n"), STDOUT), ip"127.0.0.1", 8083)
+port += 1
+tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req, res) -> (res.body = "Hello\n"; res), STDOUT), ip"127.0.0.1", port)
 sleep(2.0)
-r = HTTP.request(HTTP.Request(major=1, minor=0, uri=HTTP.URI("http://127.0.0.1:8083/"), headers=Dict("Host"=>"127.0.0.1:8083")))
-@test HTTP.status(r) == 200
-@test HTTP.headers(r)["Connection"] == "close"
+r = HTTP.request("GET", "http://127.0.0.1:$port/", ["Host"=>"127.0.0.1:$port"]; http_version=v"1.0")
+@test r.status == 200
+#@test HTTP.header(r, "Connection") == "close"
 
 # body too big
 

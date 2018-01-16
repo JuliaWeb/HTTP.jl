@@ -1,19 +1,6 @@
 using HTTP
-@static if VERSION < v"0.7.0-DEV.2005"
-    using Base.Test
-else
-    using Test
-end
-
-if VERSION < v"0.7.0-DEV.2575"
-    const Dates = Base.Dates
-else
-    import Dates
-end
-if !isdefined(Base, :pairs)
-    pairs(x) = x
-end
-
+using HTTP.Dates
+using HTTP.Test
 
 @testset "HTTP" begin
     include("utils.jl");
@@ -22,8 +9,14 @@ end
     include("uri.jl");
     include("cookies.jl");
     include("parser.jl");
-    include("types.jl");
-    include("handlers.jl")
+
+    include("loopback.jl");
+    include("WebSockets.jl");
+    include("messages.jl");
     include("client.jl");
+
+    include("handlers.jl")
     include("server.jl")
+
+    include("async.jl");
 end;

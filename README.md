@@ -1,7 +1,7 @@
 
 # HTTP
 
-*Performant, robust HTTP client and server functionality for Julia*
+*HTTP client and server functionality for Julia*
 
 | **Documentation**                                                               | **PackageEvaluator**                                            | **Build Status**                                                                                |
 |:-------------------------------------------------------------------------------:|:---------------------------------------------------------------:|:-----------------------------------------------------------------------------------------------:|
@@ -21,6 +21,9 @@ julia> Pkg.add("HTTP")
 - [**LATEST**][docs-latest-url] &mdash; *in-development version of the documentation.* -->
 
 ## Project Status
+
+The package is new and not yet tested in production systems.
+Please try it out and report your experiance.
 
 The package is tested against Julia 0.6 & current master on Linux, OS X, and Windows.
 

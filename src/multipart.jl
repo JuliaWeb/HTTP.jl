@@ -17,6 +17,7 @@ end
 Form(f::Form) = f
 Base.eof(f::Form) = f.index > length(f.data)
 Base.isopen(f::Form) = false
+Base.close(f::Form) = nothing
 Base.length(f::Form) = sum(x->isa(x, IOStream) ? filesize(x) - position(x) : nb_available(x), f.data)
 function Base.position(f::Form)
     index = f.index
@@ -58,7 +59,7 @@ function Form(d::Dict)
     io = IOBuffer()
     len = length(d)
     for (i, (k, v)) in enumerate(d)
-        write(io, (i == 1 ? "" : "$CRLF") * "--" * boundary * "$CRLF")
+        write(io, (i == 1 ? "" : "\r\n") * "--" * boundary * "\r\n")
         write(io, "Content-Disposition: form-data; name=\"$k\"")
         if isa(v, IO)
             writemultipartheader(io, v)
@@ -67,10 +68,10 @@ function Form(d::Dict)
             push!(data, v)
             io = IOBuffer()
         else
-            write(io, "$CRLF$CRLF")
-            write(io, escape(v))
+            write(io, "\r\n\r\n")
+            write(io, escapeuri(v))
         end
-        i == len && write(io, "$CRLF--" * boundary * "--" * "$CRLF")
+        i == len && write(io, "\r\n--" * boundary * "--" * "\r\n")
     end
     seekstart(io)
     push!(data, io)
@@ -78,12 +79,12 @@ function Form(d::Dict)
 end
 
 function writemultipartheader(io::IOBuffer, i::IOStream)
-    write(io, "; filename=\"$(i.name[7:end-1])\"$CRLF")
-    write(io, "Content-Type: $(HTTP.sniff(i))$CRLF$CRLF")
+    write(io, "; filename=\"$(i.name[7:end-1])\"\r\n")
+    write(io, "Content-Type: $(HTTP.sniff(i))\r\n\r\n")
     return
     end
     function writemultipartheader(io::IOBuffer, i::IO)
-    write(io, "$CRLF$CRLF")
+    write(io, "\r\n\r\n")
     return
 end
 
@@ -113,9 +114,9 @@ Base.mark(m::Multipart{T}) where {T} = mark(m.data)
 Base.reset(m::Multipart{T}) where {T} = reset(m.data)
 
 function writemultipartheader(io::IOBuffer, i::Multipart)
-    write(io, "; filename=\"$(i.filename)\"$CRLF")
+    write(io, "; filename=\"$(i.filename)\"\r\n")
     contenttype = i.contenttype == "" ? HTTP.sniff(i.data) : i.contenttype
-    write(io, "Content-Type: $(contenttype)$CRLF")
-    write(io, i.contenttransferencoding == "" ? "$CRLF" : "Content-Transfer-Encoding: $(i.contenttransferencoding)$CRLF$CRLF")
+    write(io, "Content-Type: $(contenttype)\r\n")
+    write(io, i.contenttransferencoding == "" ? "\r\n" : "Content-Transfer-Encoding: $(i.contenttransferencoding)\r\n\r\n")
     return
 end

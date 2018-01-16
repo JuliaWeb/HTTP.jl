@@ -4,5 +4,6 @@
 .DS_Store
 *.key
 *.crt
+*.swp
 docs/build/
 docs/site/

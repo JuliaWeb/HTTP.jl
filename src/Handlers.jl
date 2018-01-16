@@ -1,19 +1,8 @@
 module Handlers
 
-if !isdefined(Base, :Nothing)
-    const Nothing = Void
-    const Cvoid = Void
-end
-
-function val(v)
-    @static if VERSION < v"0.7.0-DEV.1395"
-        Val{v}()
-    else
-        Val(v)
-    end
-end
-
 export handle, Handler, HandlerFunction, Router, register!
+
+import ..Nothing, ..Cvoid, ..Val
 
 using HTTP
 
@@ -48,7 +37,7 @@ end
 handle(h::HandlerFunction, req, resp) = h.func(req, resp)
 
 "A default 404 Handler"
-const FourOhFour = HandlerFunction((req, resp) -> Response(404))
+const FourOhFour = HandlerFunction((req, resp) -> HTTP.Response(404))
 
 """
 Router(h::Handler)
@@ -76,20 +65,15 @@ struct Router <: Handler
     end
 end
 
-const SCHEMES = Dict{String, Val}("http" => val(:http), "https" => val(:https))
-const METHODS = Dict{String, Val}()
-for m in instances(HTTP.Method)
-    METHODS[string(m)] = val(Symbol(m))
-end
-const EMPTYVAL = val(())
+const SCHEMES = Dict{String, Val}("http" => Val(:http), "https" => Val(:https))
+const EMPTYVAL = Val(())
 
 """
 HTTP.register!(r::Router, url, handler)
-HTTP.register!(r::Router, m::Union{HTTP.Method, String}, url, handler)
+HTTP.register!(r::Router, m::String, url, handler)
 
 Function to map request urls matching `url` and an optional method `m` to another `handler::HTTP.Handler`.
 URLs are registered one at a time, and multiple urls can map to the same handler.
-Methods can be passed as a string `"GET"` or enum object directly `HTTP.GET`.
 The URL can be passed as a String or `HTTP.URI` object directly. Requests can be routed based on: method, scheme,
 hostname, or path.
 The following examples show how various urls will direct how a request is routed by a server:
@@ -102,17 +86,16 @@ The following examples show how various urls will direct how a request is routed
 - `"/gmail/userId/*/inbox`: match any request matching the path pattern, "*" is used as a wildcard that matches any value between the two "/"
 """
 register!(r::Router, url, handler) = register!(r, "", url, handler)
-register!(r::Router, m::HTTP.Method, url, handler) = register!(r, string(m), url, handler)
 
 function register!(r::Router, method::String, url, handler)
-    m = isempty(method) ? Any : typeof(METHODS[method])
+    m = isempty(method) ? Any : typeof(Val(Symbol(method)))
     # get scheme, host, split path into strings & vals
     uri = url isa String ? HTTP.URI(url) : url
-    s = HTTP.scheme(uri)
-    sch = HTTP.hasscheme(uri) ? typeof(get!(SCHEMES, s, val(s))) : Any
-    h = HTTP.hashostname(uri) ? Val{Symbol(HTTP.hostname(uri))} : Any
+    s = uri.scheme
+    sch = !isempty(s) ? typeof(get!(SCHEMES, s, Val(s))) : Any
+    h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
     hand = handler isa Function ? HandlerFunction(handler) : handler
-    register!(r, m, sch, h, HTTP.path(uri), hand)
+    register!(r, m, sch, h, uri.path, hand)
 end
 
 function splitsegments(r::Router, h::Handler, segments)
@@ -121,7 +104,7 @@ function splitsegments(r::Router, h::Handler, segments)
         if s == "*" #TODO: or variable, keep track of variable types and store in handler
             T = Any
         else
-            v = val(Symbol(s))
+            v = Val(Symbol(s))
             r.segments[s] = v
             T = typeof(v)
         end
@@ -142,12 +125,12 @@ end
 
 function handle(r::Router, req, resp)
     # get the url/path of the request
-    m = val(Symbol(HTTP.method(req)))
-    uri = HTTP.uri(req)
+    m = Val(Symbol(req.method))
     # get scheme, host, split path into strings and get Vals
-    s = get(SCHEMES, HTTP.scheme(uri), EMPTYVAL)
-    h = val(Symbol(HTTP.hostname(uri)))
-    p = HTTP.path(uri)
+    uri = HTTP.URI(req.target)
+    s = get(SCHEMES, uri.scheme, EMPTYVAL)
+    h = Val(Symbol(uri.host))
+    p = uri.path
     segments = split(p, '/'; keep=false)
     # dispatch to the most specific handler, given the path
     vals = (get(r.segments, s, EMPTYVAL) for s in segments)
