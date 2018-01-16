@@ -3,6 +3,8 @@ module URIs
 import Base.==
 
 import ..@require, ..precondition_error
+import ..@ensure, ..postcondition_error
+
 
 include("urlparser.jl")
 
@@ -52,7 +54,6 @@ end
 
 URI(uri::URI) = uri
 
-
 const emptyuri = (()->begin
     uri = ""
     empty = SubString(uri)
@@ -69,31 +70,40 @@ function Base.merge(uri::URI; scheme::AbstractString=uri.scheme,
                               query=uri.query,
                               fragment::AbstractString=uri.fragment)
 
-    @require isempty(scheme) || path != "*"
     @require isempty(host) || host[end] != '/'
     @require scheme in uses_authority || isempty(host)
     @require !isempty(host) || isempty(port)
     @require !(scheme in ["http", "https"]) || isempty(path) || path[1] == '/'
     @require !isempty(path) || !isempty(query) || isempty(fragment)
 
-    io = IOBuffer()
+    ports = string(port)
+    querys = query isa String ? query : escapeuri(query)
 
-    isempty(scheme)   || print(io, scheme, scheme in uses_authority ?
-                                           "://" : ":")
-    isempty(userinfo) || print(io, userinfo, "@")
-    isempty(host)     || print(io, hoststring(host))
-    isempty(port)     || print(io, ":", port)
-    isempty(path)     || print(io, path)
-    isempty(query)    || print(io, "?", escapeuri(query))
-    isempty(fragment) || print(io, "#", fragment)
+    str = uristring(scheme, userinfo, host, ports, path, querys, fragment)
+    result = parse(URI, str)
 
-    return URI(String(take!(io)))
+    if uri === emptyuri
+        @ensure result.scheme == scheme
+        @ensure result.userinfo == userinfo
+        @ensure result.host == host
+        @ensure result.port == ports
+        @ensure result.path == path
+        @ensure result.query == querys
+    end
+
+    return result
 end
 
 
 URI(str::AbstractString) = Base.parse(URI, str)
 
-Base.parse(::Type{URI}, str::AbstractString) = http_parser_parse_url(str)
+function Base.parse(::Type{URI}, str::AbstractString)
+
+    uri = http_parser_parse_url(str)
+
+    @ensure uristring(uri) == str
+    return uri
+end
 
 
 ==(a::URI,b::URI) = a.scheme      == b.scheme      &&
@@ -121,6 +131,34 @@ Base.print(io::IO, u::URI) = print(io, u.uri)
 
 Base.string(u::URI) = u.uri
 
+nouserinfo(ui) = isempty(ui) && !(ui === blank_userinfo)
+
+function formaturi(io::IO,
+                   scheme::AbstractString,
+                   userinfo::AbstractString,
+                   host::AbstractString,
+                   port::AbstractString,
+                   path::AbstractString,
+                   query::AbstractString,
+                   fragment::AbstractString)
+
+    isempty(scheme)      || print(io, scheme, scheme in uses_authority ?
+                                           "://" : ":")
+    nouserinfo(userinfo) || print(io, userinfo, "@")
+    isempty(host)        || print(io, hoststring(host))
+    isempty(port)        || print(io, ":", port)
+    isempty(path)        || print(io, path)
+    isempty(query)       || print(io, "?", query)
+    isempty(fragment)    || print(io, "#", fragment)
+
+    return io
+end
+
+uristring(a...) = String(take!(formaturi(IOBuffer(), a...)))
+
+uristring(u::URI) = uristring(u.scheme, u.userinfo, u.host, u.port,
+                              u.path, u.query, u.fragment)
+
 queryparams(uri::URI) = queryparams(uri.query)
 
 function queryparams(q::AbstractString)
@@ -131,7 +169,7 @@ end
 
 
 # Validate known URI formats
-const uses_authority = ["https", "http", "hdfs", "ftp", "gopher", "nntp", "telnet", "imap", "wais", "file", "mms", "shttp", "snews", "prospero", "rtsp", "rtspu", "rsync", "svn", "svn+ssh", "sftp" ,"nfs", "git", "git+ssh", "ldap", "s3", "ws"]
+const uses_authority = ["https", "http", "ws", "wss", "hdfs", "ftp", "gopher", "nntp", "telnet", "imap", "wais", "file", "mms", "shttp", "snews", "prospero", "rtsp", "rtspu", "rsync", "svn", "svn+ssh", "sftp" ,"nfs", "git", "git+ssh", "ldap", "s3"]
 const non_hierarchical = ["gopher", "hdl", "mailto", "news", "telnet", "wais", "imap", "snews", "sip", "sips"]
 const uses_query = ["http", "wais", "imap", "https", "shttp", "mms", "gopher", "rtsp", "rtspu", "sip", "sips", "ldap"]
 const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "wais", "https", "shttp", "snews", "file", "prospero"]

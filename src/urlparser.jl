@@ -21,32 +21,7 @@ Base.show(io::IO, p::URLParsingError) = println(io, "HTTP.URLParsingError: ", p.
     s_http_host_port,
 )
 
-@enum(http_parser_url_fields,
-      UF_SCHEME   = 1
-    , UF_USERINFO = 2
-    , UF_HOST     = 3
-    , UF_PORT     = 4
-    , UF_PATH     = 5
-    , UF_QUERY    = 6
-    , UF_FRAGMENT = 7
-    , UF_MAX      = 8
-)
-const UF_SCHEME_MASK = 0x01
-const UF_HOST_MASK = 0x02
-const UF_PORT_MASK = 0x04
-const UF_PATH_MASK = 0x08
-const UF_QUERY_MASK = 0x10
-const UF_FRAGMENT_MASK = 0x20
-const UF_USERINFO_MASK = 0x40
-
-@inline function Base.getindex(A::Vector{T}, i::http_parser_url_fields) where {T}
-    @inbounds v = A[Int(i)]
-    return v
-end
-@inline function Base.setindex!(A::Vector{T}, v::T, i::http_parser_url_fields) where {T}
-    @inbounds v = setindex!(A, v, Int(i))
-    return v
-end
+const blank_userinfo = SubString("blank_userinfo", 1, 0)
 
 # url parsing
 function parseurlchar(s, ch::Char, strict::Bool)
@@ -54,7 +29,7 @@ function parseurlchar(s, ch::Char, strict::Bool)
     strict && (ch == '\t' || ch == '\f') && return s_dead
 
     if s == s_req_spaces_before_url || s == s_req_url_start
-        (ch == '/' || ch == '*') && return s_req_path
+        (ch == '/') && return s_req_path
         isalpha(ch) && return s_req_schema
     elseif s == s_req_schema
         isalphanum(ch) && return s
@@ -181,18 +156,21 @@ function http_parse_host(host::SubString, foundat=false)
 end
 
 
-function http_parser_parse_url(url::AbstractString)
+http_parser_parse_url(url::AbstractString) = http_parser_parse_url(String(url))
+
+function http_parser_parse_url(url::String)
 
     s = s_req_spaces_before_url
 
-    old_uf = UF_MAX
+    old_uf = -1
     off1 = off2 = 0
     foundat = false
 
     empty = SubString(url, 1, 0)
-    parts = [empty, empty, empty, empty, empty, empty, empty]
+    scheme = userinfo = host = port = path = query = fragment = empty
 
     mask = 0x00
+    end_i = endof(url)
     for i in eachindex(url)
         @inbounds p = url[i]
         olds = s
@@ -207,62 +185,55 @@ function http_parser_parse_url(url::AbstractString)
                          s_req_query_string_start,
                          s_req_fragment_start)
             continue
-        elseif s == s_req_schema
-            uf = UF_SCHEME
-            mask |= UF_SCHEME_MASK
         elseif s == s_req_server_with_at
             foundat = true
-            uf = UF_HOST
-            mask |= UF_HOST_MASK
-        elseif s == s_req_server
-            uf = UF_HOST
-            mask |= UF_HOST_MASK
-        elseif s == s_req_path
-            uf = UF_PATH
-            mask |= UF_PATH_MASK
-        elseif s == s_req_query_string
-            uf = UF_QUERY
-            mask |= UF_QUERY_MASK
-        elseif s == s_req_fragment
-            uf = UF_FRAGMENT
-            mask |= UF_FRAGMENT_MASK
+            uf = s_req_server
+        elseif @anyeq(s, s_req_schema,
+                         s_req_server_with_at,
+                         s_req_server,
+                         s_req_path,
+                         s_req_query_string,
+                         s_req_fragment)
+            uf = s
         else
             throw(URLParsingError("ended in unexpected parsing state: $s\n$url"))
         end
         if uf == old_uf
             off2 = i
-            continue
+            if i != end_i
+                continue
+            end
         end
-        if old_uf != UF_MAX
-            parts[old_uf] = SubString(url, off1, off2)
+
+
+        @label save_part
+        if old_uf != -1
+            part = SubString(url, off1, off2)
+            old_uf == s_req_schema       && (scheme = part)
+            old_uf == s_req_server       && (host = part)
+            old_uf == s_req_path         && (path = part)
+            old_uf == s_req_query_string && (query = part)
+            old_uf == s_req_fragment     && (fragment = part)
         end
+
         off1 = i
         off2 = i
+        if i == end_i && uf != old_uf
+            old_uf = uf
+            @goto save_part
+        end
         old_uf = uf
     end
-    if old_uf != UF_MAX
-        parts[old_uf] = SubString(url, off1, off2)
-    end
-    check = ~(UF_HOST_MASK | UF_PATH_MASK)
-    if (mask & UF_SCHEME_MASK > 0) && (mask | check == check)
+    if !isempty(scheme) && isempty(host) && isempty(path)
         throw(URLParsingError("URI must include host or path with scheme\n$url"))
     end
-    if mask & UF_HOST_MASK > 0
-        host, port, userinfo = http_parse_host(parts[UF_HOST], foundat)
-        if !isempty(host)
-            parts[UF_HOST] = host
-            mask |= UF_HOST_MASK
-        end
-        if !isempty(port)
-            parts[UF_PORT] = port
-            mask |= UF_PORT_MASK
-        end
-        if !isempty(userinfo)
-            parts[UF_USERINFO] = userinfo
-            mask |= UF_USERINFO_MASK
+    if !isempty(host)
+        host, port, userinfo = http_parse_host(host, foundat)
+        if foundat && isempty(userinfo)
+            userinfo = blank_userinfo
         end
     end
-    return URI(url, parts...)
+    return URI(url, scheme, userinfo, host, port, path, query, fragment)
 end
 
 const normal_url_char = Bool[
