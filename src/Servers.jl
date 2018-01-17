@@ -446,7 +446,7 @@ Close the `Stream` for read and write (in case `f` has not already done so).
 function handle_stream(f::Function, http::Stream)
 
     try
-        if any(m -> m.sig <: Tuple{Any, HTTP.Request}, methods(f))
+        if applicable(f, http.message::HTTP.Request)
             handle_request(f, http)
         else
             f(http)
