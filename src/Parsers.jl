@@ -107,7 +107,7 @@ mutable struct Parser
 
     # state
     state::UInt8
-    chunk_length::UInt
+    chunk_length::UInt64
     trailing::Bool
     fieldbuffer::IOBuffer
     valuebuffer::IOBuffer
@@ -748,12 +748,12 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
                     @err(:HPE_INVALID_CHUNK_SIZE)
                 end
                 t = parser.chunk_length
-                t *= UInt(16)
-                t += UInt(unhex_val)
+                t *= UInt64(16)
+                t += UInt64(unhex_val)
 
                 # Overflow? Test against a conservative limit for simplicity.
                 @debugshow 4 Int(parser.chunk_length)
-                if div(typemax(UInt) - 16, 16) < t
+                if div(typemax(UInt64) - 16, 16) < t
                     @err(:HPE_INVALID_CONTENT_LENGTH)
                 end
                 parser.chunk_length = t
