@@ -121,6 +121,9 @@ mutable struct Response <: Message
     end
 end
 
+Response(s::Int, body::AbstractVector{UInt8}) = Response(s; body=body)
+Response(s::Int, body::AbstractString) = Response(s, Vector{UInt8}(body))
+
 Response(bytes) = parse(Response, bytes)
 
 function reset!(r::Response)
