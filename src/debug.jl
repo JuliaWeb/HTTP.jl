@@ -24,8 +24,8 @@ printlncompact(x) = println(sprint(showcompact, x))
 
 
 @noinline function precondition_error(msg, frame)
-    msg = string(sprint(StackTraces.show_spec_linfo,
-                        StackTraces.lookup(frame)[2]),
+    msg = string(#=sprint(StackTraces.show_spec_linfo,
+                        StackTrace0.lookup(frame)[2])=# "function",
                  " requires ", msg)
     return ArgumentError(msg)
 end
@@ -41,8 +41,8 @@ end
 
 
 @noinline function postcondition_error(msg, frame, ls="", l="", rs="", r="")
-    msg = string(sprint(StackTraces.show_spec_linfo,
-                        StackTraces.lookup(frame)[2]),
+    msg = string(#= sprint(StackTraces.show_spec_linfo,
+                        StackTraces.lookup(frame)[2]) =# "function",
                  " failed to ensure ", msg)
     if ls != ""
         msg = string(msg, "\n", ls, " = ", sprint(show, l),
