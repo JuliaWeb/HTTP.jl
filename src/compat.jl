@@ -23,7 +23,10 @@ else # Julia v0.6
     macro debug(s) DEBUG_LEVEL > 0 ? :(("D- ", $(esc(s)))) : :() end
     macro info(s)  DEBUG_LEVEL >= 0 ? :(println("I- ", $(esc(s)))) : :() end
     macro warn(s)  DEBUG_LEVEL >= 0 ? :(println("W- ", $(esc(s)))) : :() end
-    macro error(s, a...) DEBUG_LEVEL >= 0 ? :(println("E- ", $(esc((s, a...))))) : :() end
+    macro error(m, args...)
+        args = [:(print("|  "); @show $a) for a in args]
+        esc(:(println("E- ", $m); $(args...); nothing))
+    end
 end
 
 macro uninit(expr)
