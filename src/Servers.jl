@@ -65,7 +65,7 @@ struct https <: Scheme end
 
 ServerOptions(; tlsconfig::HTTP.MbedTLS.SSLConfig=HTTP.MbedTLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
-                ratelimit::Rational{Int64}=Int64(5)//Int64(1),
+                ratelimit::Rational{Int}=Int(5)//Int(1),
                 support100continue::Bool=true,
                 chunksize::Union{Nothing, Int}=nothing,
                 logbody::Bool=true) =
@@ -118,7 +118,7 @@ end
 
 function check_rate_limit(tcp;
                           ratelimits=nothing,
-                          ratelimit::Rational{Int64}=Int64(5)//Int64(1), kw...)
+                          ratelimit::Rational{Int}=Int(5)//Int(1), kw...)
     ip = getsockname(tcp)[1]
     rate = Float64(ratelimit.num)
     rl = get!(ratelimits, ip, RateLimit(rate, Dates.now()))

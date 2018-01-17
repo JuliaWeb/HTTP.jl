@@ -65,10 +65,10 @@ const Headers = Vector{Header}
 
 mutable struct Message
     method::String
-    major::Int16
-    minor::Int16
+    major::Int
+    minor::Int
     target::String
-    status::Int32
+    status::Int
 
     Message() = reset!(new())
 end
@@ -107,7 +107,7 @@ mutable struct Parser
 
     # state
     state::UInt8
-    chunk_length::UInt64
+    chunk_length::UInt
     trailing::Bool
     fieldbuffer::IOBuffer
     valuebuffer::IOBuffer
@@ -196,14 +196,14 @@ The [`Parser`] input was invalid.
 Fields:
  - `code`, internal error code
  - `state`, internal parsing state.
- - `status::Int32`, HTTP response status.
+ - `status::Int`, HTTP response status.
  - `msg::String`, error message.
 """
 
 struct ParsingError <: Exception
     code::Symbol
     state::UInt8
-    status::Int32
+    status::Int
     msg::String
 end
 
@@ -309,7 +309,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
         elseif p_state == s_res_first_http_major
             @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-            parser.message.major = Int16(ch - '0')
+            parser.message.major = Int(ch - '0')
             p_state = s_res_http_major
 
         # major HTTP version or dot
@@ -319,14 +319,14 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 continue
             end
             @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-            parser.message.major *= Int16(10)
-            parser.message.major += Int16(ch - '0')
+            parser.message.major *= Int(10)
+            parser.message.major += Int(ch - '0')
             @errorif(parser.message.major > 999, :HPE_INVALID_VERSION)
 
         # first digit of minor HTTP version
         elseif p_state == s_res_first_http_minor
             @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-            parser.message.minor = Int16(ch - '0')
+            parser.message.minor = Int(ch - '0')
             p_state = s_res_http_minor
 
         # minor HTTP version or end of request line
@@ -336,8 +336,8 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 continue
             end
             @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-            parser.message.minor *= Int16(10)
-            parser.message.minor += Int16(ch - '0')
+            parser.message.minor *= Int(10)
+            parser.message.minor += Int(ch - '0')
             @errorif(parser.message.minor > 999, :HPE_INVALID_VERSION)
 
         elseif p_state == s_res_first_status_code
@@ -345,7 +345,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 ch == ' ' && continue
                 @err(:HPE_INVALID_STATUS)
             end
-            parser.message.status = Int32(ch - '0')
+            parser.message.status = Int(ch - '0')
             p_state = s_res_status_code
 
         elseif p_state == s_res_status_code
@@ -360,8 +360,8 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     @err(:HPE_INVALID_STATUS)
                 end
             else
-                parser.message.status *= Int32(10)
-                parser.message.status += Int32(ch - '0')
+                parser.message.status *= Int(10)
+                parser.message.status += Int(ch - '0')
                 @errorif(parser.message.status > 999, :HPE_INVALID_STATUS)
             end
 
@@ -453,8 +453,8 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     if ch == ' '
                         p_state = s_req_http_start
                     else
-                        parser.message.major = Int16(0)
-                        parser.message.minor = Int16(9)
+                        parser.message.major = Int(0)
+                        parser.message.minor = Int(9)
                         p_state = ifelse(ch == CR, s_req_line_almost_done,
                                                    s_header_field_start)
                     end
@@ -502,7 +502,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
         # first digit of major HTTP version
         elseif p_state == s_req_first_http_major
             @errorif(ch < '1' || ch > '9', :HPE_INVALID_VERSION)
-            parser.message.major = Int16(ch - '0')
+            parser.message.major = Int(ch - '0')
             p_state = s_req_http_major
 
         # major HTTP version or dot
@@ -512,15 +512,15 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             elseif !isnum(ch)
                 @err(:HPE_INVALID_VERSION)
             else
-                parser.message.major *= Int16(10)
-                parser.message.major += Int16(ch - '0')
+                parser.message.major *= Int(10)
+                parser.message.major += Int(ch - '0')
                 @errorif(parser.message.major > 999, :HPE_INVALID_VERSION)
             end
 
         # first digit of minor HTTP version
         elseif p_state == s_req_first_http_minor
             @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-            parser.message.minor = Int16(ch - '0')
+            parser.message.minor = Int(ch - '0')
             p_state = s_req_http_minor
 
         # minor HTTP version or end of request line
@@ -532,8 +532,8 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             else
                 # FIXME allow spaces after digit?
                 @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-                parser.message.minor *= Int16(10)
-                parser.message.minor += Int16(ch - '0')
+                parser.message.minor *= Int(10)
+                parser.message.minor += Int(ch - '0')
                 @errorif(parser.message.minor > 999, :HPE_INVALID_VERSION)
             end
 
@@ -748,12 +748,12 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
                     @err(:HPE_INVALID_CHUNK_SIZE)
                 end
                 t = parser.chunk_length
-                t *= UInt64(16)
-                t += UInt64(unhex_val)
+                t *= UInt(16)
+                t += UInt(unhex_val)
 
                 # Overflow? Test against a conservative limit for simplicity.
                 @debugshow 4 Int(parser.chunk_length)
-                if div(typemax(UInt64) - 16, 16) < t
+                if div(typemax(UInt) - 16, 16) < t
                     @err(:HPE_INVALID_CONTENT_LENGTH)
                 end
                 parser.chunk_length = t
