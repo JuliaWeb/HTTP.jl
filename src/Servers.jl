@@ -458,7 +458,7 @@ function handle_stream(f::Function, http::Stream)
     try
         f(http)
     catch e
-        if isopen(http) && iswritable(http)
+        if isopen(http) && !iswritable(http)
             @error e
             http.message.response.status = 500
             startwrite(http)
