@@ -161,19 +161,9 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
            tcpisvalid=server.options.ratelimit > 0 ? check_rate_limit :
                                                      (tcp; kw...) -> true,
            ratelimits=Dict{IPAddr, RateLimit}(),
-           ratelimit=server.options.ratelimit) do http
+           ratelimit=server.options.ratelimit) do request::HTTP.Request
 
-        request = http.message
-        request.body = read(http)
-
-        response = request.response
-
-        response = handle(server.handler, request, response)
-
-        request.response = response
-
-        startwrite(http)
-        write(http, response.body)
+        handle(server.handler, request, request.response)
     end
 
     return
@@ -456,7 +446,11 @@ Close the `Stream` for read and write (in case `f` has not already done so).
 function handle_stream(f::Function, http::Stream)
 
     try
-        f(http)
+        if any(m -> m.sig <: Tuple{Any, HTTP.Request}, methods(f))
+            handle_request(f, http)
+        else
+            f(http)
+        end
     catch e
         if isopen(http) && !iswritable(http)
             @error e
@@ -470,6 +464,20 @@ function handle_stream(f::Function, http::Stream)
 
     closeread(http)
     closewrite(http)
+    return
+end
+
+
+"""
+Execute Request processing function `f(::HTTP.Request) -> HTTP.Response`.
+"""
+
+function handle_request(f::Function, http::Stream)
+    request::HTTP.Request = http.message
+    request.body = read(http)
+    request.response::HTTP.Response = f(request)
+    startwrite(http)
+    write(http, request.response.body)
     return
 end
 
