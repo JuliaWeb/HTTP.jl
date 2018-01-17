@@ -1,18 +1,36 @@
+@static if VERSION >= v"0.7.0-DEV.2915"
+using Distributed
+end
+while nworkers() < 5
+    addprocs(1)
+end
+
 using HTTP
 using HTTP.Test
 
+
+using HTTP
+
 port = rand(8000:8999)
 
-function testget(url)
-    mktempdir() do d
-        cd(d) do
-            cmd = `"curl -v -s $url > tmpout 2>&1"`
-            cmd = `bash -c $cmd`
-            #println(cmd)
-            run(cmd)
-            return String(read(joinpath(d, "tmpout")))
-        end
+"""
+    n: number of remotes
+    m: number of async requests per remote
+"""
+function testget(url, n=1, m=1)
+    r = []
+    @sync for i in 1:n
+        @async push!(r, remote((url, mm) -> begin
+            rr = []
+            @sync for ii in 1:mm
+                l = rand([0,0,10,1000,10000])
+                body = Vector{UInt8}(rand('A':'Z', l))
+                @async push!(rr, HTTP.request("GET", "$url/$ii", [], body))
+            end
+            return rr
+        end)("$url/$i", m))
     end
+    return join([String(x) for x in vcat(r...)], "\n")
 end
 
 @testset "HTTP.Servers.serve" begin
@@ -45,10 +63,11 @@ r = testget("http://127.0.0.1:$port/")
 @test ismatch(r"HTTP/1.1 200 OK", r)
 
 rv = []
-n = 3
+n = 5
+m = 20
 @sync for i = 1:n
     @async begin
-        r = testget(repeat("http://127.0.0.1:$port/$i ", n))
+        r = testget("http://127.0.0.1:$port/$i", n, m)
         #println(r)
         push!(rv, r)
     end
@@ -56,7 +75,7 @@ n = 3
 end
 for i = 1:n
     @test length(filter(l->ismatch(r"HTTP/1.1 200 OK", l),
-                        split(rv[i], "\n"))) == n
+                        split(rv[i], "\n"))) == n * m
 end
 
 r = HTTP.get("http://127.0.0.1:$port/"; readtimeout=30)
@@ -85,7 +104,7 @@ tcp = connect(ip"127.0.0.1", port)
 write(tcp, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
 r = String(read(tcp))
 !HTTP.Parsers.strict && @test ismatch(r"HTTP/1.1 400 Bad Request", r)
-!HTTP.Parsers.strict && @test ismatch(r"invalid URL", r)
+!HTTP.Parsers.strict && @test ismatch(r"invalid HTTP request target", r)
 sleep(2.0)
 
 
