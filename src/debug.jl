@@ -79,6 +79,7 @@ macro ensure(condition, msg = string(condition))
         ls, rs = string(l), string(r)
         return esc(quote
             if ! $condition
+                # FIXME double-execution of condition l and r!
                 throw(postcondition_error($msg, backtrace()[1],
                                           $ls, $l, $rs, $r))
             end
