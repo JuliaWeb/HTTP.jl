@@ -1,5 +1,7 @@
 using Unitful
 
+include("http_parser_benchmark.jl")
+
 using HTTP
 using HTTP.IOExtras
 using HTTP.ConnectionPool
@@ -165,7 +167,7 @@ const tunit = u"μs"
 const tmul = Int(1u"s"/1tunit)
 delta_t(a, b) = round((b - a) * tmul, 0)tunit
 
-fields = [:setup, :head, :body, :close]
+fields = [:setup, :head, :body, :close, :joyent_head]
 
 function go(count::Int)
 
@@ -184,6 +186,7 @@ function go(count::Int)
                                                             t_init_done = time()
     for rep in 1:count
     for (name, bytes) in responses
+
 
         write(io, bytes)
 
@@ -216,26 +219,51 @@ function go(count::Int)
         push!(times[name][:head],  delta_t(t_setup, t_headers_done))
         push!(times[name][:body],  delta_t(t_headers_done, t_body_done))
         push!(times[name][:close], delta_t(t_body_done, t_done))
+
+                                                                t_start = time()
+        r = HttpParserTest.parse(bytes)
+                                                                 t_done = time()
+        push!(times[name][:joyent_head], delta_t(t_start, t_done))
     end
+    end
+
+    if count <= 10
+        return
     end
 
     w = 12
-    print(lpad("",w))
+    print("| ")
+    print(lpad("Response",w))
     for f in fields
+        print(" | ")
         print(lpad(f,w))
     end
-    println()
+    print(" | ")
+    print(lpad("jl slower",w))
+    println(" |")
+
+    print("| ")
+    print(repeat("-",w))
+    for f in [fields..., ""]
+        print(":| ")
+        print(repeat("-",w))
+    end
+    println(":|")
 
     for (name, bytes) in responses
+        print("| ")
         print(lpad("$name: ",w))
         for f in fields
+            print(" | ")
             print(lpad(mean(times[name][f]), w))
         end
-        println()
+        slower =  mean(times[name][:head]) / mean(times[name][:joyent_head])
+        print(" | ")
+        print(lpad("x $(round(slower, 1))", w))
+        println(" |")
     end
 end
 
 for r in [10, 1000]
-    println("$r:")
     go(r)
 end
