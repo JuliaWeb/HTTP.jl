@@ -168,7 +168,9 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
 
         response = request.response
 
-        handle(server.handler, request, response)
+        response = handle(server.handler, request, response)
+
+        request.response = response
 
         startwrite(http)
         write(http, response.body)
@@ -456,7 +458,7 @@ function handle_stream(f::Function, http::Stream)
     try
         f(http)
     catch e
-        if isopen(http) && !iswritable(http)
+        if isopen(http) && iswritable(http)
             @error e
             http.message.response.status = 500
             startwrite(http)
