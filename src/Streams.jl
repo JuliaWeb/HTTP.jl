@@ -89,6 +89,9 @@ end
 
 
 function Base.unsafe_write(http::Stream, p::Ptr{UInt8}, n::UInt)
+    if n == 0
+        return 0
+    end
     if !iswritable(http) && isopen(http.stream)
         startwrite(http)
     end
@@ -109,8 +112,8 @@ Write the final `0` chunk if needed.
 
 function closebody(http::Stream)
     if http.writechunked
-        write(http.stream, "0\r\n\r\n")
         http.writechunked = false
+        write(http.stream, "0\r\n\r\n")
     end
 end
 
