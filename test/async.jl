@@ -170,7 +170,7 @@ for i = 1:count
     @test a == put_data_sums[i]
 end
 
-if haskey(ENV, "HTTP_JL_TEST_QUICK_ASYNC")
+if !haskey(ENV, "HTTP_JL_TEST_LONG_ASYNC")
     break
 end
 
@@ -330,7 +330,7 @@ println("running async $count, 1:$num, $config, $http C")
     HTTP.ConnectionPool.closeall()
 
 
-    if haskey(ENV, "HTTP_JL_TEST_QUICK_ASYNC")
+    if !haskey(ENV, "HTTP_JL_TEST_LONG_ASYNC")
         break
     end
 
