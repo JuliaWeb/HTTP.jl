@@ -2,6 +2,11 @@ using HTTP
 using HTTP.Dates
 using HTTP.Test
 
+@static if VERSION >= v"0.7.0-DEV.2915"
+using Distributed
+end
+addprocs(5)
+
 @testset "HTTP" begin
     include("utils.jl");
     include("fifobuffer.jl");
