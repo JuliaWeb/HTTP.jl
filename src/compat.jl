@@ -4,11 +4,17 @@
     using Distributed
     import Dates
 
+    compat_search(a...) = (r = search(a...); r === nothing ? 0 : r)
+    compat_findfirst(a...) = (r = findfirst(a...); r === nothing ? 0 : r)
+
 else # Julia v0.6
 
     eval(:(module Base64 end))
     const Dates = Base.Dates
     const Distributed = Base.Distributed
+
+    const compat_search = search
+    const compat_findfirst = findfirst
 
     pairs(x) = [k => v for (k,v) in x]
 

@@ -38,6 +38,7 @@ import MbedTLS.SSLContext
 
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL
 import ..@require, ..precondition_error
+import ..compat_findfirst
 
 include("consts.jl")
 include("parseutils.jl")
@@ -465,7 +466,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             end
             @passert p <= len + 1
 
-            write(parser.valuebuffer, view(bytes, start:p-1))
+            write(parser.valuebuffer, collect(view(bytes, start:p-1)))
 
             if p_state >= s_req_http_start
                 parser.message.target = take!(parser.valuebuffer)
@@ -603,7 +604,7 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                 c = lower(ch)
 
                 @debugshow 4 h
-                crlf = findfirst(x->(x == bCR || x == bLF), view(bytes, p:len))
+                crlf = compat_findfirst(x->(x == bCR || x == bLF), view(bytes, p:len))
                 p = crlf == 0 ? len : p + crlf - 2
 
                 p += 1

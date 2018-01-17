@@ -4,6 +4,7 @@ import Base.==
 
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
+import ..compat_search
 
 
 include("urlparser.jl")
@@ -175,10 +176,11 @@ const uses_query = ["http", "wais", "imap", "https", "shttp", "mms", "gopher", "
 const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "wais", "https", "shttp", "snews", "file", "prospero"]
 
 "checks if a `HTTP.URI` is valid"
+
 function Base.isvalid(uri::URI)
     sch = uri.scheme
     isempty(sch) && throw(ArgumentError("can not validate relative URI"))
-    if ((sch in non_hierarchical) && (search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
+    if ((sch in non_hierarchical) && (compat_search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
        (!(sch in uses_query) && !isempty(uri.query)) ||                    # query component not allowed
        (!(sch in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
        (!(sch in uses_authority) && (!isempty(uri.host) || ("" != uri.port) || !isempty(uri.userinfo))) # authority component not allowed

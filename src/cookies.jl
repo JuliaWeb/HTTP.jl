@@ -37,6 +37,8 @@ import ..Dates
 import Base.==
 import ..URIs.isurlchar
 using ..pairs
+import ..compat_search
+
 
 """
     Cookie()
@@ -163,7 +165,7 @@ function readsetcookie(host, cookie)
         parts[x] = strip(parts[x])
         length(parts[x]) == 0 && continue
         attr, val = parts[x], ""
-        j = search(parts[x], '=')
+        j = compat_search(parts[x], '=')
         if j > 0
             attr, val = attr[1:j-1], attr[j+1:end]
         end
