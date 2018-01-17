@@ -3,16 +3,20 @@ using HTTP.Test
 
 port = rand(8000:8999)
 
-function testget(url)
-    mktempdir() do d
-        cd(d) do
-            cmd = `"curl -v -s $url > tmpout 2>&1"`
-            cmd = `bash -c $cmd`
-            #println(cmd)
-            run(cmd)
-            return String(read(joinpath(d, "tmpout")))
-        end
+function testget(url,n=1)
+    p = Pipe()
+    if Sys.is_windows()
+        null = "NUL"
+    else
+        null = "/dev/null"
     end
+    cmd = `curl $(repeat(["-s","-o",null],outer=n)) -w '%{http_code}' $(repeat([url],outer=n))`
+    println(cmd)
+
+    run(pipeline(cmd,stdout=p))
+    p_txt = String(readavailable(p))
+    close(p)
+    p_txt
 end
 
 @testset "HTTP.Servers.serve" begin
@@ -42,21 +46,20 @@ sleep(1.0)
 
 
 r = testget("http://127.0.0.1:$port/")
-@test ismatch(r"HTTP/1.1 200 OK", r)
+@test isequal(r,"200")
 
 rv = []
 n = 3
 @sync for i = 1:n
     @async begin
-        r = testget(repeat("http://127.0.0.1:$port/$i ", n))
+        r = testget("http://127.0.0.1:$port/$i", n)
         #println(r)
         push!(rv, r)
     end
     sleep(0.01)
 end
 for i = 1:n
-    @test length(filter(l->ismatch(r"HTTP/1.1 200 OK", l),
-                        split(rv[i], "\n"))) == n
+    @test isequal(rv[i],repeat("200",n))
 end
 
 r = HTTP.get("http://127.0.0.1:$port/"; readtimeout=30)
