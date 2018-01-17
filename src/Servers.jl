@@ -5,7 +5,6 @@ using ..Streams
 using ..Messages
 using ..Parsers
 using ..ConnectionPool
-import ..@info, ..@warn, ..@error, ..@debug, ..@debugshow, ..DEBUG_LEVEL
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
 
@@ -124,11 +123,11 @@ function check_rate_limit(tcp;
     rl = get!(ratelimits, ip, RateLimit(rate, Dates.now()))
     update!(rl, ratelimit)
     if rl.allowance > rate
-        @warn "throttling $ip"
+        warn("throttling $ip")
         rl.allowance = rate
     end
     if rl.allowance < 1.0
-        @warn "discarding connection from $ip due to rate limiting"
+        warn("discarding connection from $ip due to rate limiting")
         return false
     else
         rl.allowance -= 1.0
@@ -296,7 +295,7 @@ function listen(f::Function,
         sslconfig = SSLConfig(require_ssl_verification)
     end
 
-    @info "Listening on: $host:$port"
+    info("Listening on: $host:$port")
     tcpserver = Base.listen(getaddrinfo(host), port)
 
     tcpref[] = tcpserver
@@ -307,7 +306,7 @@ function listen(f::Function,
                 io = accept(tcpserver)
             catch e
                 if e isa Base.UVError
-                    @warn "$e"
+                    warn("$e")
                     break
                 else
                     rethrow(e)
@@ -319,20 +318,20 @@ function listen(f::Function,
             end
             io = ssl ? getsslcontext(io, sslconfig) : io
             let io = Connection(host, string(port), pipeline_limit, io)
-                @info "Accept:  $io"
+                info("Accept:  $io")
                 @async try
                     handle_connection(f, io; kw...)
                 catch e
-                    @error "Error:   $io" e
+                    error("Error:   $io",e)
                 finally
                     close(io)
-                    @info "Closed:  $io"
+                    info("Closed:  $io")
                 end
             end
         end
     catch e
         if typeof(e) <: InterruptException
-            @warn "Interrupted: listen($host,$port)"
+            warn("Interrupted: listen($host,$port)")
         else
             rethrow(e)
         end
@@ -358,7 +357,7 @@ function handle_connection(f::Function, c::Connection;
         @async while wait_for_timeout[]
             @show inactiveseconds(c)
             if inactiveseconds(c) > readtimeout
-                @warn "Timeout: $c"
+                warn("Timeout: $c")
                 writeheaders(c.io, Response(408, ["Connection" => "close"]))
                 close(c)
                 break
@@ -404,7 +403,7 @@ function handle_transaction(f::Function, t::Transaction;
         if e isa EOFError && !messagestarted(http.parser)
             return
         elseif e isa HTTP.ParsingError
-            @error e
+            error(e)
             status = e.code == :HPE_INVALID_VERSION ? 505 :
                      e.code == :HPE_INVALID_METHOD  ? 405 : 400
             write(t, Response(status, body = HTTP.Parsers.ERROR_MESSAGES[e.code]))
@@ -420,7 +419,7 @@ function handle_transaction(f::Function, t::Transaction;
     end
 
     if verbose
-        @info http.message
+        info(http.message)
     end
 
     response = request.response
@@ -433,9 +432,9 @@ function handle_transaction(f::Function, t::Transaction;
         handle_stream(f, http)
     catch e
         if isioerror(e)
-            @warn e
+            warn(e)
         else
-            @error e
+            error(e)
         end
         close(t)
     end
@@ -457,7 +456,7 @@ function handle_stream(f::Function, http::Stream)
         f(http)
     catch e
         if isopen(http) && !iswritable(http)
-            @error e
+            error(e)
             http.message.response.status = 500
             startwrite(http)
             write(http, sprint(showerror, e))
