@@ -45,6 +45,17 @@ function Base.length(io::IOBuffer)
     return n
 end
 
+macro errmsg(expr)
+    esc(quote
+        try
+            $expr
+        catch e
+            sprint(show, e)
+        end
+    end)
+end
+
+
 parse!(parser::Parser, message::Messages.Message, body, bytes)::Int =
     parse!(parser, message, body, Vector{UInt8}(bytes))
 
@@ -1728,6 +1739,11 @@ const responses = Message[
       respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure"
       HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
       !HTTP.Parsers.strict && (@test_throws ParsingError Response(respstr))
+      @test @errmsg(Response(respstr)) == """
+        HTTP.ParsingError: invalid character in header, es_header_field, 200
+        "Fo@: Failure"
+           ^
+        """
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar"
       HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)

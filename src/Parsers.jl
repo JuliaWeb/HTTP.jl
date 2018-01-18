@@ -38,7 +38,7 @@ import MbedTLS.SSLContext
 
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL
 import ..@require, ..precondition_error
-import ..compat_findfirst
+import ..compat_findfirst, ..compat_findprev, ..compat_findnext
 
 include("consts.jl")
 include("parseutils.jl")
@@ -205,10 +205,12 @@ struct ParsingError <: Exception
     state::UInt8
     status::Int
     msg::String
+    bytes::ByteView
+    p::Int
 end
 
-function ParsingError(p::Parser, code::Symbol)
-    ParsingError(code, p.state, p.message.status, "")
+function ParsingError(parser::Parser, code::Symbol, bytes, p)
+    ParsingError(code, parser.state, parser.message.status, "", bytes, p)
 end
 
 function Base.show(io::IO, e::ParsingError)
@@ -218,11 +220,17 @@ function Base.show(io::IO, e::ParsingError)
                        e.status,
                        e.msg == "" ? "" : "\n",
                        e.msg))
+    s = String(e.bytes)
+    l = compat_findprev(s, '\n', e.p)
+    r = compat_findnext(s, '\n', e.p-1)
+    error_line = SubString(s, l == 0 ? 1 : l+1, r == 0 ? length(e.bytes) : r)
+    println(io, "\"", chomp(error_line), "\"\n",
+                lpad("", e.p - l, " "), "^")
 end
 
 
 macro err(code)
-    esc(:(parser.state = p_state; throw(ParsingError(parser, $code))))
+    esc(:(parser.state = p_state; throw(ParsingError(parser, $code, bytes, p))))
 end
 
 macro errorif(cond, err)

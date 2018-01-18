@@ -6,6 +6,8 @@
 
     compat_search(a...) = (r = search(a...); r === nothing ? 0 : r)
     compat_findfirst(a...) = (r = findfirst(a...); r === nothing ? 0 : r)
+    compat_findprev(a...) = (r = findprev(a...); r === nothing ? 0 : r)
+    compat_findnext(a...) = (r = findnext(a...); r === nothing ? 0 : r)
 
 else # Julia v0.6
 
@@ -15,6 +17,8 @@ else # Julia v0.6
 
     const compat_search = search
     const compat_findfirst = findfirst
+    const compat_findprev = findprev
+    const compat_findnext = findnext
 
     pairs(x) = [k => v for (k,v) in x]
 
