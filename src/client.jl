@@ -37,7 +37,7 @@ global const DEFAULT_CLIENT = Client()
 
 # build Request
 function request(client::Client, method, url::URI;
-                 headers::Dict=Dict(),
+                 headers=Header[],
                  body="",
                  enablechunked::Bool=true,
                  stream::Bool=false,
@@ -107,7 +107,7 @@ function request(client::Client, method, url::URI;
     end
 
     m = string(method)
-    h = [k => v for (k,v) in headers]
+    h = mkheaders(headers)
     if stream
         setkv(newargs, :response_stream, BufferStream())
     end
