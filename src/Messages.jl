@@ -66,11 +66,12 @@ export Message, Request, Response, HeaderSizeError,
        mkheaders, readheaders, headerscomplete, readtrailers, writeheaders,
        readstartline!, writestartline,
        bodylength, unknown_length,
-       load
+       load, payload
 
 import ..HTTP
 
 using ..Pairs
+using ..@warn
 using ..IOExtras
 using ..Parsers
 import ..Parsers: headerscomplete, reset!
@@ -391,12 +392,19 @@ end
 
 
 #Like https://github.com/JuliaIO/FileIO.jl/blob/v0.6.1/src/FileIO.jl#L19 ?
-function load(m::Message)
-    if hasheader(m, "Content-Type", "ISO-8859-1")
-        return iso8859_1_to_utf8(m.body)
-    else
-        String(m.body)
-    end
+load(m::Message) = payload(m, String)
+
+payload(m::Message)::Vector{UInt8} =
+    (enc = hasheader(m, "Transfer-Encoding")) != "" ? decode(m, enc) : m.body
+
+payload(m::Message, ::Type{String}) =
+    hasheader(m, "Content-Type", "ISO-8859-1") ?
+    iso8859_1_to_utf8(payload(m)) :
+    String(payload(m))
+
+function decode(m::Message, encoding::String)::Vector{UInt8}
+    @warn "Decoding of HTTP Transfer-Encoding is not implemented yet!"
+    return m.body
 end
 
 
