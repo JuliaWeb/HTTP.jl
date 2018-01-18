@@ -170,7 +170,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
 end
 
 Server(h::Function, l::IO=STDOUT; cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
-function Server(handler::H=HTTP.HandlerFunction((req, rep) -> HTTP.Response("Hello World!")),
+function Server(handler::H=HTTP.HandlerFunction((req, rep) -> HTTP.Response(200, "Hello World!")),
                logger::IO=STDOUT;
                cert::String="",
                key::String="",
@@ -197,7 +197,7 @@ function serve end
 
 serve(server::Server, host=ip"127.0.0.1", port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
 function serve(host::IPAddr, port::Int,
-                   handler=(req, rep) -> HTTP.Response("Hello World!"),
+                   handler=(req, rep) -> HTTP.Response(200, "Hello World!"),
                    logger::I=STDOUT;
                    cert::String="",
                    key::String="",
@@ -208,7 +208,7 @@ function serve(host::IPAddr, port::Int,
 end
 serve(; host::IPAddr=ip"127.0.0.1",
         port::Int=8081,
-        handler=(req, rep) -> HTTP.Response("Hello World!"),
+        handler=(req, rep) -> HTTP.Response(200, "Hello World!"),
         logger::IO=STDOUT,
         cert::String="",
         key::String="",
