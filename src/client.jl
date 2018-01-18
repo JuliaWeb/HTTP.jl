@@ -119,12 +119,6 @@ function request(client::Client, method, url::URI;
         setkv(newargs, :bodylength, length(body))
     end
 
-    if body != ""
-        Base.depwarn(
-        "The body= option is deprecated. Use request(method, uri, headers, body)",
-        :body)
-    end
-
     if !enablechunked && isa(body, IO)
         body = read(body)
     end
