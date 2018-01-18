@@ -79,6 +79,10 @@ HTTP.put("http://httpbin.org/put", [], "Hello"; conf..)
 ```
 
 
+URL options
+
+ - `query = nothing`, replaces the query part of `url`.
+
 Streaming options
 
  - `response_stream = nothing`, a writeable `IO` stream or any `IO`-like
@@ -286,8 +290,15 @@ request(method::String, url::URI, headers::Headers, body; kw...)::Response =
 
 const nobody = UInt8[]
 
-request(method, url, h=Header[], b=nobody; headers=h, body=b, kw...)::Response =
-    request(string(method), URI(url), mkheaders(headers), body; kw...)
+function request(method, url, h=Header[], b=nobody;
+                 headers=h, body=b, query=nothing, kw...)::Response
+
+    uri = URI(url)
+    if query != nothing
+        uri = merge(uri, query=query)
+    end
+    return request(string(method), uri, mkheaders(headers), body; kw...)
+end
 
 
 """
