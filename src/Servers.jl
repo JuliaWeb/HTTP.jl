@@ -233,7 +233,7 @@ const nolimit = typemax(Int)
 
 
 """
-    HTTP.listen(host="localhost", port=8081; <keyword arguments>) do http::HTTP.Stream
+    HTTP.listen(host="localhost", port=8081; <keyword arguments>) do http
         ...
     end
 
@@ -257,7 +257,7 @@ Optional keyword arguments:
 
 e.g.
 ```
-    HTTP.listen() do http
+    HTTP.listen() do http::HTTP.Stream
         @show http.message
         @show header(http, "Content-Type")
         while !eof(http)
@@ -268,6 +268,12 @@ e.g.
         startwrite(http)
         write(http, "response body")
         write(http, "more response body")
+    end
+
+    HTTP.listen() do request::HTTP.Request
+        @show header(request, "Content-Type")
+        @show payload(request)
+        return HTTP.Response(404)
     end
 ```
 """
