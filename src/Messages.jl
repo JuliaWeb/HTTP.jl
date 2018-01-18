@@ -296,7 +296,9 @@ end
 Does the `Message` have a "Transfer-Encoding: chunked" header?
 """
 
-ischunked(m) = hasheader(m, "Transfer-Encoding", "chunked")
+ischunked(m) = any(h->(lowercase(h[1]) == "transfer-encoding" &&
+                       endswith(lowercase(h[2]), "chunked")),
+                   m.headers)
 
 
 """
@@ -394,14 +396,19 @@ end
 #Like https://github.com/JuliaIO/FileIO.jl/blob/v0.6.1/src/FileIO.jl#L19 ?
 load(m::Message) = payload(m, String)
 
-payload(m::Message)::Vector{UInt8} =
-    (enc = header(m, "Transfer-Encoding")) != "" ? decode(m, enc) : m.body
+function payload(m::Message)::Vector{UInt8}
+    enc = lowercase(first(split(header(m, "Transfer-Encoding"), ", ")))
+    return enc in ["", "identity", "chunked"] ? m.body : decode(m, enc)
+end
 
 payload(m::Message, ::Type{String}) =
     hasheader(m, "Content-Type", "ISO-8859-1") ? iso8859_1_to_utf8(payload(m)) :
                                                  String(payload(m))
 
 function decode(m::Message, encoding::String)::Vector{UInt8}
+    if enc == "gzip"
+        # Use https://github.com/bicycle1885/TranscodingStreams.jl ?
+    end
     @warn "Decoding of HTTP Transfer-Encoding is not implemented yet!"
     return m.body
 end
