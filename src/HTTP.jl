@@ -286,7 +286,7 @@ request(method::String, url::URI, headers::Headers, body; kw...)::Response =
 
 const nobody = UInt8[]
 
-request(method, url, headers=Header[], body=nobody; kw...)::Response =
+request(method, url, h=Header[], b=nobody; headers=h, body=b, kw...)::Response =
     request(string(method), URI(url), mkheaders(headers), body; kw...)
 
 
