@@ -395,12 +395,11 @@ end
 load(m::Message) = payload(m, String)
 
 payload(m::Message)::Vector{UInt8} =
-    (enc = hasheader(m, "Transfer-Encoding")) != "" ? decode(m, enc) : m.body
+    (enc = header(m, "Transfer-Encoding")) != "" ? decode(m, enc) : m.body
 
 payload(m::Message, ::Type{String}) =
-    hasheader(m, "Content-Type", "ISO-8859-1") ?
-    iso8859_1_to_utf8(payload(m)) :
-    String(payload(m))
+    hasheader(m, "Content-Type", "ISO-8859-1") ? iso8859_1_to_utf8(payload(m)) :
+                                                 String(payload(m))
 
 function decode(m::Message, encoding::String)::Vector{UInt8}
     @warn "Decoding of HTTP Transfer-Encoding is not implemented yet!"
