@@ -76,7 +76,7 @@ end
 
 
 
-"""
+start_close_read_write_doc = """
     startwrite(::IO)
     closewrite(::IO)
     startread(::IO)
@@ -85,10 +85,10 @@ end
 Signal start/end of write or read operations.
 """
 
-startwrite(io) = nothing
-closewrite(io) = nothing
-startread(io) = nothing
-closeread(io) = nothing
+@doc start_close_read_write_doc -> startwrite(io) = nothing
+@doc start_close_read_write_doc -> closewrite(io) = nothing
+@doc start_close_read_write_doc -> startread(io) = nothing
+@doc start_close_read_write_doc -> closeread(io) = nothing
 
 
 using MbedTLS.SSLContext
