@@ -43,13 +43,13 @@ The `HTTP.queryparams(::URI)` function returns a `Dict` containing the `query`.
 
 struct URI
     uri::String
-    scheme::SubString
-    userinfo::SubString
-    host::SubString
-    port::SubString
-    path::SubString
-    query::SubString
-    fragment::SubString
+    scheme::SubString{String}
+    userinfo::SubString{String}
+    host::SubString{String}
+    port::SubString{String}
+    path::SubString{String}
+    query::SubString{String}
+    fragment::SubString{String}
 end
 
 
@@ -96,12 +96,46 @@ function Base.merge(uri::URI; scheme::AbstractString=uri.scheme,
 end
 
 
+# Based on regex from RFC 3986:
+# https://tools.ietf.org/html/rfc3986#appendix-B
+const uri_reference_regex =
+    r"""^
+    (?: ([^:/?#]+) :) ?                 # 1. sheme
+    (?: // (?: ([^/?#@]*) @) ?          # 2. userinfo
+           (?| (?: \[ ([^\]]+) \] )     # 3. host (ipv6)
+             | ([^:/?#\[]*) )           # 3. host
+           (?: : ([^/?#]+) ) ? ) ?      # 4. port
+    ([^?#]*)                            # 5. path
+    (?: \?([^#]*) ) ?                   # 6. query
+    (?: [#](.*) ) ?                     # 7. fragment
+    $"""x
+
+const empty = SubString("", 1, 0)
+
+function regex_parse(::Type{URI}, str::AbstractString)
+
+    m = match(uri_reference_regex, str)
+    if m == nothing
+        return emptyuri
+    end
+    return URI(str, (c = m[1]) == nothing ? empty : c,
+                    (c = m[2]) == nothing ? empty : c,
+                    (c = m[3]) == nothing ? empty : c,
+                    (c = m[4]) == nothing ? empty : c,
+                    (c = m[5]) == nothing ? empty : c,
+                    (c = m[6]) == nothing ? empty : c,
+                    (c = m[7]) == nothing ? empty : c)
+end
+
 URI(str::AbstractString) = Base.parse(URI, str)
 
 function Base.parse(::Type{URI}, str::AbstractString)
 
     uri = http_parser_parse_url(str)
 
+    #showparts(STDOUT, regex_parse(URI, str))
+    #showparts(STDOUT, uri)
+    @ensure regex_parse(URI, str) == uri
     @ensure uristring(uri) == str
     return uri
 end
@@ -128,11 +162,21 @@ hoststring(h) = ':' in h ? "[$h]" : h
 
 Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
 
+showparts(io::IO, uri::URI) =
+    print(io, "HTTP.URI(\"", uri.uri, "\"\n",
+              "    scheme = \"", uri.scheme, "\",\n",
+              "    userinfo = \"", uri.userinfo, "\",\n",
+              "    host = \"", uri.host, "\",\n",
+              "    port = \"", uri.port, "\",\n",
+              "    path = \"", uri.path, "\",\n",
+              "    query = \"", uri.query, "\",\n",
+              "    fragment = \"", uri.fragment, "\")\n")
+
 Base.print(io::IO, u::URI) = print(io, u.uri)
 
 Base.string(u::URI) = u.uri
 
-nouserinfo(ui) = isempty(ui) && !(ui === blank_userinfo)
+isabsent(ui) = isempty(ui) && !(ui === blank)
 
 function formaturi(io::IO,
                    scheme::AbstractString,
@@ -143,14 +187,14 @@ function formaturi(io::IO,
                    query::AbstractString,
                    fragment::AbstractString)
 
-    isempty(scheme)      || print(io, scheme, scheme in uses_authority ?
-                                           "://" : ":")
-    nouserinfo(userinfo) || print(io, userinfo, "@")
+    isempty(scheme)      || print(io, scheme, isabsent(host) ?
+                                           ":" : "://")
+    isabsent(userinfo) || print(io, userinfo, "@")
     isempty(host)        || print(io, hoststring(host))
     isempty(port)        || print(io, ":", port)
     isempty(path)        || print(io, path)
-    isempty(query)       || print(io, "?", query)
-    isempty(fragment)    || print(io, "#", fragment)
+    isabsent(query)      || print(io, "?", query)
+    isabsent(fragment)   || print(io, "#", fragment)
 
     return io
 end

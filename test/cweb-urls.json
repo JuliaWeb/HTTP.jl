@@ -1,0 +1,4771 @@
+{
+  "tests": {
+    "origin": "https://github.com/cweb/url-testing, Copyright © 2017 Chris Weber, http://www.lookout.net <chrisweber@live.com>, MIT Licence",
+    "desc": "A collection of URL test cases, compiled from Webkit's /fast/url tests, Julian Reschke, and other sources.",
+    "group": [
+    {
+      "name": "anchor",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/anchor.js",
+      "desc": "Test cases from Webkit's fast/url/anchor.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "A U+0020 space in the fragment",
+        "url": "http://www.example.com/#hello, world",
+        "expect_url": "http://www.example.com/#hello, world"
+      },
+      {
+        "id": "2",
+        "name": "Percent-encoding in the fragment",
+        "url": "http://www.example.com/#%c2%a9",
+        "expect_url": "http://www.example.com/#%c2%a9"
+      },
+      {
+        "id": "3",
+        "name": "Unicode surrogates",
+        "url": "http://www.example.com/#\ud800\udf00ss",
+        "expect_url": "http://www.example.com/#\ud800\udf00ss"
+      },
+      {
+        "id": "4",
+        "name": "illegal percent-encoding",
+        "url": "http://www.example.com/#%41%a",
+        "expect_url": "http://www.example.com/#%41%a"
+      },
+      {
+        "id": "5",
+        "name": "Illegal Unicode half-surrogate U+D800",
+        "url": "http://www.example.com/#\ud800\u597D",
+        "expect_url": "http://www.example.com/#\uFFFD\u597D"
+      },
+      {
+        "id": "6",
+        "name": "Illegal Unicode U+FDD0 in the fragment",
+        "url": "http://www.example.com/#a\uFDD0",
+        "expect_url": "http://www.example.com/#a\uFFFD"
+      },
+      {
+        "id": "7",
+        "name": "An extra U+0023 NUMBER SIGN in middle of the fragment",
+        "url": "http://www.example.com/#asdf#qwer",
+        "expect_url": "http://www.example.com/#asdf#qwer"
+      },
+      {
+        "id": "8",
+        "name": "An extra U+0023 NUMBER SIGN at the start of fragment",
+        "url": "http://www.example.com/##asdf",
+        "expect_url": "http://www.example.com/##asdf"
+      },
+      {
+        "id": "9",
+        "name": "Extra white space characters",
+        "url": "http://www.example.com/#a\u000Ab\u000Dc\u0009d",
+        "expect_url": "http://www.example.com/#abcd"
+      }
+      ]
+    },
+    {
+      "name": "file-http-base",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/file-http-base.js",
+      "desc": "Test cases from Webkit's fast/url/file-http-base.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:c:\\\\foo\\\\bar.html",
+        "expect_rel": "file:///C:/foo/bar.html"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "  File:c|////foo\\\\bar.html",
+        "expect_rel": "file:///C:////foo/bar.html"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:",
+        "expect_rel": "file:///"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:UNChost/path",
+        "expect_rel": "file://unchost/path"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "c:\\\\foo\\\\bar",
+        "expect_rel": "file:///C:/foo/bar"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "C|/foo/bar",
+        "expect_rel": "file:///C:/foo/bar"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "/C|\\\\foo\\\\bar",
+        "expect_rel": "file:///C:/foo/bar"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "//C|/foo/bar",
+        "expect_rel": "file:///C:/foo/bar"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "\\\\\\\\server\\\\file",
+        "expect_rel": "file://server/file"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "/\\\\server/file",
+        "expect_rel": "file://server/file"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:c:foo/bar.html",
+        "expect_rel": "file:///C:/foo/bar.html"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:/\\\\/\\\\C:\\\\\\\\//foo\\\\bar.html",
+        "expect_rel": "file:///C:////foo/bar.html"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:///foo/bar.txt",
+        "expect_rel": "file:///foo/bar.txt"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "FILE:/\\\\/\\\\7:\\\\\\\\//foo\\\\bar.html",
+        "expect_rel": "file://7:////foo/bar.html"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:filer/home\\\\me",
+        "expect_rel": "file://filer/home/me"
+      },
+      {
+        "id": "17",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:///C:/foo/../../../bar.html",
+        "expect_rel": "file:///C:/bar.html"
+      },
+      {
+        "id": "18",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:///C:/asdf#\\%c2",
+        "expect_rel": "file:///C:/asdf#\\%ef\\%bf\\%bd"
+      },
+      {
+        "id": "19",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:///home/me",
+        "expect_rel": "file:///home/me"
+      },
+      {
+        "id": "20",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:c:\\\\foo\\\\bar.html",
+        "expect_rel": "file:///c:/foo/bar.html"
+      },
+      {
+        "id": "21",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file:c|//foo\\\\bar.html",
+        "expect_rel": "file:///c%7C//foo/bar.html"
+      },
+      {
+        "id": "25",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file://test",
+        "expect_rel": "file://test/"
+      },
+      {
+        "id": "26",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file://localhost/",
+        "expect_rel": "file://localhost/"
+      },
+      {
+        "id": "27",
+        "name": "",
+        "base": "http://www.example.com/foo/bar",
+        "rel": "file://localhost/test",
+        "expect_rel": "file://localhost/test"
+      }
+      ]
+    },
+    {
+      "name": "file",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/file.js",
+      "desc": "Test cases from Webkit's fast/url/file.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:c:\\\\foo\\\\bar.html",
+        "expect_rel": "file:///C:/foo/bar.html"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "  File:c|////foo\\\\bar.html",
+        "expect_rel": "file:///C:////foo/bar.html"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:",
+        "expect_rel": "file:///"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:UNChost/path",
+        "expect_rel": "file://unchost/path"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "c:\\\\foo\\\\bar",
+        "expect_rel": "file:///C:/foo/bar"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "C|/foo/bar",
+        "expect_rel": "file:///C:/foo/bar"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "/C|\\\\foo\\\\bar",
+        "expect_rel": "file:///C:/foo/bar"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "//C|/foo/bar",
+        "expect_rel": "file:///C:/foo/bar"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "//server/file",
+        "expect_rel": "file://server/file"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "\\\\\\\\server\\\\file",
+        "expect_rel": "file://server/file"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "/\\\\server/file",
+        "expect_rel": "file://server/file"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:c:foo/bar.html",
+        "expect_rel": "file:///C:/foo/bar.html"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:/\\\\/\\\\C:\\\\\\\\//foo\\\\bar.html",
+        "expect_rel": "file:///C:////foo/bar.html"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:///foo/bar.txt",
+        "expect_rel": "file:///foo/bar.txt"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "FILE:/\\\\/\\\\7:\\\\\\\\//foo\\\\bar.html",
+        "expect_rel": "file://7:////foo/bar.html"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:filer/home\\\\me",
+        "expect_rel": "file://filer/home/me"
+      },
+      {
+        "id": "17",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:///C:/foo/../../../bar.html",
+        "expect_rel": "file:///C:/bar.html"
+      },
+      {
+        "id": "18",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:///C:/asdf#\\%c2",
+        "expect_rel": "file:///C:/asdf#\\%ef\\%bf\\%bd"
+      },
+      {
+        "id": "19",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:///home/me",
+        "expect_rel": "file:///home/me"
+      },
+      {
+        "id": "20",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:c:\\\\foo\\\\bar.html",
+        "expect_rel": "file:///c:/foo/bar.html"
+      },
+      {
+        "id": "21",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file:c|//foo\\\\bar.html",
+        "expect_rel": "file:///c%7C//foo/bar.html"
+      },
+      {
+        "id": "22",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "//",
+        "expect_rel": "file:///"
+      },
+      {
+        "id": "23",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "///",
+        "expect_rel": "file:///"
+      },
+      {
+        "id": "24",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "///test",
+        "expect_rel": "file:///test"
+      },
+      {
+        "id": "25",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file://test",
+        "expect_rel": "file://test/"
+      },
+      {
+        "id": "26",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file://localhost/",
+        "expect_rel": "file://localhost/"
+      },
+      {
+        "id": "27",
+        "name": "",
+        "base": "file:///tmp/mock/path",
+        "rel": "file://localhost/test",
+        "expect_rel": "file://localhost/test"
+      }
+      ]
+    },
+    {
+      "name": "host",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/host.js",
+      "desc": "Test cases from Webkit's fast/url/host.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "A pathless URL",
+        "url": "http://google.com",
+        "expect_url": "http://google.com/"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://GoOgLe.CoM/",
+        "expect_url": "http://google.com/"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "http://Goo%20 goo%7C|.com/",
+        "expect_url": "http://goo%20%20goo%7C%7C.com/"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "http://GOO\u00a0\u3000goo.com/",
+        "expect_url": "http://goo%20%20goo.com/"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "url": "http://GOO\u200b\u2060\ufeffgoo.com/",
+        "expect_url": "http://googoo.com/"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "url": "http://www.foo\u3002bar.com/",
+        "expect_url": "http://www.foo.bar.com/"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "url": "http://\ufdd0zyx.com/",
+        "expect_url": "http://%EF%BF%BDzyx.com/"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "url": "http://%ef%b7%90zyx.com/",
+        "expect_url": "http://%EF%BF%BDzyx.com/"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "url": "http://\uff27\uff4f.com/",
+        "expect_url": "http://go.com/"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "url": "http://\uff05\uff14\uff11.com/",
+        "expect_url": "http://a.com/"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "url": "http://%ef%bc%85%ef%bc%94%ef%bc%91.com/",
+        "expect_url": "http://a.com/"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "url": "http://\uff05\uff10\uff10.com/",
+        "expect_url": "http://%00.com/"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "url": "http://%ef%bc%85%ef%bc%90%ef%bc%90.com/",
+        "expect_url": "http://%00.com/"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "url": "http://\u4f60\u597d\u4f60\u597d/",
+        "expect_url": "http://xn--6qqa088eba/"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "url": "http://%E4%BD%A0%E5%A5%BD\u4f60\u597d/",
+        "expect_url": "http://xn--6qqa088eba/"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "url": "http://%zz%66%a/",
+        "expect_url": "http://%25zzf%25a/"
+      },
+      {
+        "id": "17",
+        "name": "",
+        "url": "http://%25/",
+        "expect_url": "http://%25/"
+      },
+      {
+        "id": "18",
+        "name": "",
+        "url": "http://hello%00/",
+        "expect_url": "http://hello%00/"
+      },
+      {
+        "id": "19",
+        "name": "",
+        "url": "http://%30%78%63%30%2e%30%32%35%30.01/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "20",
+        "name": "",
+        "url": "http://%30%78%63%30%2e%30%32%35%30.01%2e/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "21",
+        "name": "",
+        "url": "http://%3g%78%63%30%2e%30%32%35%30%2E.01/",
+        "expect_url": "http://%253gxc0.0250..01/"
+      },
+      {
+        "id": "22",
+        "name": "",
+        "url": "http://192.168.0.1 hello/",
+        "expect_url": "http://192.168.0.1%20hello/"
+      },
+      {
+        "id": "23",
+        "name": "",
+        "url": "http://\uff10\uff38\uff43\uff10\uff0e\uff10\uff12\uff15\uff10\uff0e\uff10\uff11/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "24",
+        "name": "",
+        "url": "http://192.168.0.257/",
+        "expect_url": "http://192.168.0.257/"
+      },
+      {
+        "id": "25",
+        "name": "",
+        "url": "http://[google.com.]/",
+        "expect_url": "http://[google.com]/"
+      },
+      {
+        "id": "26",
+        "name": "",
+        "url": "http://\u0442(",
+        "expect_url": "http://xn--%28-7ed/"
+      },
+      {
+        "id": "27",
+        "name": "",
+        "url": "http://go\\@ogle.com/",
+        "expect_url": "http://go@ogle.com/"
+      },
+      {
+        "id": "28",
+        "name": "",
+        "url": "http://go/@ogle.com/",
+        "expect_url": "http://go@ogle.com/"
+      },
+      {
+        "id": "29",
+        "name": "",
+        "url": "http://www.lookout.net::==80::==443::/",
+        "expect_url": "http://lookout.net/"
+      },
+      {
+        "id": "30",
+        "name": "",
+        "url": "http://www.lookout.net::80::443/",
+        "expect_url": "http://lookout.net/"
+      },
+      {
+        "id": "31",
+        "name": "",
+        "url": "http://\\",
+        "expect_url": "http://\\"
+      },
+      {
+        "id": "32",
+        "name": "",
+        "url": "http://\\\\/",
+        "expect_url": "http://."
+      },
+      {
+        "id": "33",
+        "name": "",
+        "url": "http://\\./",
+        "expect_url": "http://."
+      },
+      {
+        "id": "34",
+        "name": "",
+        "url": "http:////:@/",
+        "expect_url": "http://."
+      },
+      {
+        "id": "35",
+        "name": "",
+        "url": "http://\\google.com/foo",
+        "expect_url": "http://google.com/foo"
+      },
+      {
+        "id": "36",
+        "name": "",
+        "url": "http://\\\\google.com/foo",
+        "expect_url": "http://google.com/foo"
+      },
+      {
+        "id": "37",
+        "name": "",
+        "url": "http:////asdf@/",
+        "expect_url": "http://."
+      },
+      {
+        "id": "38",
+        "name": "",
+        "url": "http:////:81/",
+        "expect_url": "http://."
+      },
+      {
+        "id": "39",
+        "name": "",
+        "url": "http://://",
+        "expect_url": "http://."
+      },
+      {
+        "id": "40",
+        "name": "",
+        "url": "http://c:/",
+        "expect_url": "http://."
+      },
+      {
+        "id": "41",
+        "name": "",
+        "url": "http://xxxx:/",
+        "expect_url": "http://."
+      },
+      {
+        "id": "42",
+        "name": "",
+        "url": "http://.:./",
+        "expect_url": "http://."
+      },
+      {
+        "id": "43",
+        "name": "",
+        "url": "http://////@google.com/",
+        "expect_url": "http://."
+      },
+      {
+        "id": "44",
+        "name": "",
+        "url": "http://@google.com/",
+        "expect_url": "http://google.com/"
+      },
+      {
+        "id": "45",
+        "name": "A URL with a pipe character in the hostname.",
+        "url": "http://c|/",
+        "expect_url": "http://c|/"
+      }
+      ]
+    },
+    {
+      "name": "idna2003",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/idna2003.js",
+      "desc": "Test cases from Webkit's fast/url/idna2003.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://fa\u00DF.de/",
+        "expect_url": "http://fass.de/"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://\u03B2\u03CC\u03BB\u03BF\u03C2.com/",
+        "expect_url": "http://xn--nxasmq6b.com/"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "http://\u0DC1\u0DCA\u200D\u0DBB\u0DD3.com/",
+        "expect_url": "http://xn--10cl1a0b.com/"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "http://\u0646\u0627\u0645\u0647\u200C\u0627\u06CC.com/",
+        "expect_url": "http://xn--mgba3gch31f.com/"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "url": "http://www.loo\u0138out.net/",
+        "expect_url": "http://www.xn--looout-5bb.net/"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "url": "http://\u15EF\u15EF\u15EF.lookout.net/",
+        "expect_url": "http://xn--1qeaa.lookout.net/"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "url": "http://www.lookout.\u0441\u043E\u043C/",
+        "expect_url": "http://www.lookout.xn--l1adi/"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "url": "http://www.lookout.net\uFF1A80/",
+        "expect_url": "http://www.lookout.net:80/"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "url": "http://www\u2025lookout.net/",
+        "expect_url": "http://www..lookout.net/"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "url": "http://www.lookout\u2027net/",
+        "expect_url": "http://www.xn--lookoutnet-406e/"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "url": "http://www.loo\u0138out.net/",
+        "expect_url": "http://www.xn--looout-5bb.net/"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "url": "http://www.lookout.net\u2A7480/",
+        "expect_url": "http://www.lookout.net::%3D80/"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "url": "http://www\u00A0.lookout.net/",
+        "expect_url": "http://www%20.lookout.net/"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "url": "http://\u1680lookout.net/",
+        "expect_url": "http://%E1%9A%80lookout.net/"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "url": "http://\u001Flookout.net/",
+        "expect_url": "http://%1Flookout.net/"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "url": "http://look\u06DDout.net/",
+        "expect_url": "http://look%DB%9Dout.net/"
+      },
+      {
+        "id": "17",
+        "name": "",
+        "url": "http://look\u180Eout.net/",
+        "expect_url": "http://look%E1%A0%8Eout.net/"
+      },
+      {
+        "id": "18",
+        "name": "",
+        "url": "http://look\u2060out.net/",
+        "expect_url": "http://look%E2%81%A0out.net/"
+      },
+      {
+        "id": "19",
+        "name": "",
+        "url": "http://look\uFEFFout.net/",
+        "expect_url": "http://look%EF%BB%BFout.net/"
+      },
+      {
+        "id": "20",
+        "name": "",
+        "url": "http://look\uD83F\uDFFEout.net/",
+        "expect_url": "http://look%F0%9F%BF%BEout.net/"
+      },
+      {
+        "id": "21",
+        "name": "",
+        "url": "http://lookDEADout.net/",
+        "expect_url": "http://look%ED%BA%ADout.net/"
+      },
+      {
+        "id": "22",
+        "name": "",
+        "url": "http://look\uFFFAout.net/",
+        "expect_url": "http://look%EF%BF%BAout.net/"
+      },
+      {
+        "id": "23",
+        "name": "",
+        "url": "http://look\u2FF0out.net/",
+        "expect_url": "http://look%E2%BF%B0out.net/"
+      },
+      {
+        "id": "24",
+        "name": "",
+        "url": "http://look\u0341out.net/",
+        "expect_url": "http://look%CD%81out.net/"
+      },
+      {
+        "id": "25",
+        "name": "",
+        "url": "http://look\u202Eout.net/",
+        "expect_url": "http://look%E2%80%AEout.net/"
+      },
+      {
+        "id": "26",
+        "name": "",
+        "url": "http://look\u206Bout.net/",
+        "expect_url": "http://look%E2%81%ABout.net/"
+      },
+      {
+        "id": "27",
+        "name": "",
+        "url": "http://look\uDB40\uDC01out.net/",
+        "expect_url": "http://look%F3%A0%80%81out.net/"
+      },
+      {
+        "id": "28",
+        "name": "",
+        "url": "http://look\uDB40\uDC20out.net/",
+        "expect_url": "http://look%F3%A0%80%A0out.net/"
+      },
+      {
+        "id": "29",
+        "name": "",
+        "url": "http://look\u05BEout.net/",
+        "expect_url": "http://look%D6%BEout.net/"
+      }
+      ]
+    },
+    {
+      "name": "idna2008",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/idna2008.js",
+      "desc": "Test cases from Webkit's fast/url/idna2008.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://B\u00FCcher.de/",
+        "expect_url": "http://xn--bcher-kva.de/"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://fa\u00DF.de/",
+        "expect_url": "http://xn--fa-hia.de/"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "http://\u03B2\u03CC\u03BB\u03BF\u03C2.com/",
+        "expect_url": "http://xn--nxasmm1c.com/"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "http://\u0DC1\u0DCA\u200D\u0DBB\u0DD3.com/",
+        "expect_url": "http://xn--10cl1a0b660p.com/"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "url": "http://\u0646\u0627\u0645\u0647\u200C\u0627\u06CC.com/",
+        "expect_url": "http://xn--mgba3gch31f060k.com/"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "url": "http://\u2665.net/",
+        "expect_url": "http://\uFFFD.net/"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "url": "http://\u0378.net/",
+        "expect_url": "http://\uFFFD.net/"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "url": "http://\u04C0.com/",
+        "expect_url": "http://\uFFFD.com/"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "url": "http://\uD87E\uDC68.com/",
+        "expect_url": "http://\uFFFD.com/"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "url": "http://\u2183.com/",
+        "expect_url": "http://\uFFFD.com/"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "url": "http://look\u034Fout.net/",
+        "expect_url": "http://lookout.net/"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "url": "http://gOoGle.com/",
+        "expect_url": "http://google.com/"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "url": "http://\u09dc.com/",
+        "expect_url": "http://\u09A1\u09BC.com/"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "url": "http://\u1E9E.com/",
+        "expect_url": "http://ss.com/"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "url": "http://\u1E9E.foo.com/",
+        "expect_url": "http://ss.foo.com/"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "url": "http://-foo.bar.com",
+        "expect_url": "http://"
+      },
+      {
+        "id": "17",
+        "name": "",
+        "url": "http://foo-.bar.com",
+        "expect_url": "http://"
+      },
+      {
+        "id": "18",
+        "name": "",
+        "url": "http://ab--cd.com",
+        "expect_url": "http://"
+      },
+      {
+        "id": "19",
+        "name": "",
+        "url": "http://xn--0.com",
+        "expect_url": "http://"
+      },
+      {
+        "id": "20",
+        "name": "",
+        "url": "http://foo\u0300.bar.com/",
+        "expect_url": "http://foo%CC%80.bar.com/"
+      }
+      ]
+    },
+    {
+      "name": "ipv4",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/ipv4.js",
+      "desc": "Test cases from Webkit's fast/url/ipv4.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://./",
+        "expect_url": "http://"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://192.168.0.1/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "http://0300.0250.00.01/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "http://0xC0.0Xa8.0x0.0x1/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "url": "http://192.168.9.com/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "url": "http://19a.168.0.1/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "url": "http://0308.0250.00.01/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "url": "http://0xCG.0xA8.0x0.0x1/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "url": "http://192/",
+        "expect_url": "http://0.0.0.192/"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "url": "http://0xC0a80001/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "url": "http://030052000001/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "url": "http://000030052000001/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "url": "http://192.168/",
+        "expect_url": "http://192.0.0.168/"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "url": "http://192.0x00A80001/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "url": "http://0xc0.052000001/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "url": "http://192.168.1/",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "17",
+        "name": "",
+        "url": "http://192.168.0.0.1/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "18",
+        "name": "",
+        "url": "http://192.168.0.1./",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "19",
+        "name": "",
+        "url": "http://192.168.0.1. hello/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "20",
+        "name": "",
+        "url": "http://192.168.0.1../",
+        "expect_url": "http://"
+      },
+      {
+        "id": "21",
+        "name": "",
+        "url": "http://192.168..1/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "22",
+        "name": "",
+        "url": "http://0x100.0/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "23",
+        "name": "",
+        "url": "http://0x100.0.0/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "24",
+        "name": "",
+        "url": "http://0x100.0.0.0/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "25",
+        "name": "",
+        "url": "http://0.0x100.0.0/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "26",
+        "name": "",
+        "url": "http://0.0.0x100.0/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "27",
+        "name": "",
+        "url": "http://0.0.0.0x100/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "28",
+        "name": "",
+        "url": "http://0.0.0x10000/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "29",
+        "name": "",
+        "url": "http://0.0x1000000/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "30",
+        "name": "",
+        "url": "http://0x100000000/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "31",
+        "name": "",
+        "url": "http://0xFF.0/",
+        "expect_url": "http://255.0.0.0/",
+        "expect_rel": ""
+      },
+      {
+        "id": "32",
+        "name": "",
+        "url": "http://0xFF.0.0/",
+        "expect_url": "http://255.0.0.0/"
+      },
+      {
+        "id": "33",
+        "name": "",
+        "url": "http://0xFF.0.0.0/",
+        "expect_url": "http://255.0.0.0/"
+      },
+      {
+        "id": "34",
+        "name": "",
+        "url": "http://0.0xFF.0.0/",
+        "expect_url": "http://0.255.0.0/"
+      },
+      {
+        "id": "35",
+        "name": "",
+        "url": "http://0.0.0xFF.0/",
+        "expect_url": "http://0.0.255.0/"
+      },
+      {
+        "id": "36",
+        "name": "",
+        "url": "http://0.0.0.0xFF/",
+        "expect_url": "http://0.0.0.255/"
+      },
+      {
+        "id": "37",
+        "name": "",
+        "url": "http://0.0.0xFFFF/",
+        "expect_url": "http://0.0.255.255/"
+      },
+      {
+        "id": "38",
+        "name": "",
+        "url": "http://0.0xFFFFFF/",
+        "expect_url": "http://0.255.255.255/"
+      },
+      {
+        "id": "39",
+        "name": "",
+        "url": "http://0xFFFFFFFF/",
+        "expect_url": "http://255.255.255.255/"
+      },
+      {
+        "id": "40",
+        "name": "",
+        "url": "http://276.256.0xf1a2.077777/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "41",
+        "name": "",
+        "url": "http://192.168.0.257/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "42",
+        "name": "",
+        "url": "http://192.168.0xa20001/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "43",
+        "name": "",
+        "url": "http://192.015052000001/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "44",
+        "name": "",
+        "url": "http://0X12C0a80001/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "45",
+        "name": "",
+        "url": "http://276.1.2/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "46",
+        "name": "",
+        "url": "http://192.168.0.1 hello/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "47",
+        "name": "",
+        "url": "http://0000000000000300.0x00000000000000fF.00000000000000001/",
+        "expect_url": "http://192.255.0.1/"
+      },
+      {
+        "id": "48",
+        "name": "",
+        "url": "http://0000000000000300.0xffffffffFFFFFFFF.3022415481470977/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "49",
+        "name": "",
+        "url": "http://00000000000000000001/",
+        "expect_url": "http://0.0.0.1/"
+      },
+      {
+        "id": "50",
+        "name": "",
+        "url": "http://0000000000000000100000000000000001/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "51",
+        "name": "",
+        "url": "http://0.0.0.000000000000000000z/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "52",
+        "name": "",
+        "url": "http://0.0.0.100000000000000000z/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "53",
+        "name": "",
+        "url": "http://0.00.0x.0x0/",
+        "expect_url": "http://0.0.0.0/"
+      }
+      ]
+    },
+    {
+      "name": "ipv6",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/ipv6.js",
+      "desc": "Test cases from Webkit's fast/url/ipv6.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://[/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://[:/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "http://]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "http://:]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "url": "http://[]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "url": "http://[:]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "url": "http://2001:db8::1/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "url": "http://[2001:db8::1/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "url": "http://2001:db8::1]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "url": "http://[::]/",
+        "expect_url": "http://[::]/"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "url": "http://[::1]/",
+        "expect_url": "http://[::1]/"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "url": "http://[1::.]/",
+        "expect_url": "http://[1::.]/"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "url": "http://[::192.168.0.1.]/",
+        "expect_url": "http://[::c0a8:1.]/"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "url": "http://[::ffff:192.168.0.1.]/",
+        "expect_url": "http://[::ffff:c0a8:1.]/"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "url": "http://[000:01:02:003:004:5:6:007.]/",
+        "expect_url": "http://[0:1:2:3:4:5:6:7.]/"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "url": "http://[A:b:c:DE:fF:0:1:aC.]/",
+        "expect_url": "http://[a:b:c:de:ff:0:1:ac.]/"
+      },
+      {
+        "id": "17",
+        "name": "",
+        "url": "http://[1:0:0:2::3:0.]/",
+        "expect_url": "http://[1::2:0:0:3:0.]/"
+      },
+      {
+        "id": "18",
+        "name": "",
+        "url": "http://[1::2:0:0:3:0.]/",
+        "expect_url": "http://[1::2:0:0:3:0.]/"
+      },
+      {
+        "id": "19",
+        "name": "",
+        "url": "http://[::eeee:192.168.0.1.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "20",
+        "name": "",
+        "url": "http://[2001::192.168.0.1.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "21",
+        "name": "",
+        "url": "http://[1:2:192.168.0.1:5:6.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "22",
+        "name": "",
+        "url": "http://[::ffff:192.1.2.]/",
+        "expect_url": "http://[::ffff:c001:2.]/"
+      },
+      {
+        "id": "23",
+        "name": "",
+        "url": "http://[::ffff:0xC0.0Xa8.0x0.0x1.]/",
+        "expect_url": "http://[::ffff:c0a8:1.]/"
+      },
+      {
+        "id": "24",
+        "name": "",
+        "url": "http://[0:0::0:0:8.]/",
+        "expect_url": "http://[::8.]/"
+      },
+      {
+        "id": "25",
+        "name": "",
+        "url": "http://[2001:db8::1.]/",
+        "expect_url": "http://[2001:db8::1.]/"
+      },
+      {
+        "id": "26",
+        "name": "",
+        "url": "http://[2001::db8::1.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "27",
+        "name": "",
+        "url": "http://[2001:db8:::1.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "28",
+        "name": "",
+        "url": "http://[:::.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "29",
+        "name": "",
+        "url": "http://[2001::.com.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "30",
+        "name": "",
+        "url": "http://[::192.168.0.0.1.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "31",
+        "name": "",
+        "url": "http://[::ffff:192.168.0.0.1.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "32",
+        "name": "",
+        "url": "http://[1:2:3:4:5:6:7:8:9.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "33",
+        "name": "",
+        "url": "http://[0:0:0:0:0:0:0:192.168.0.1.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "34",
+        "name": "",
+        "url": "http://[1:2:3:4:5:6::192.168.0.1.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "35",
+        "name": "",
+        "url": "http://[1:2:3:4:5:6::8.]/",
+        "expect_url": "http://[1:2:3:4:5:6:0:8.]/"
+      },
+      {
+        "id": "36",
+        "name": "",
+        "url": "http://[1:2:3:4:5:6:7:8:.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "37",
+        "name": "",
+        "url": "http://[1:2:3:4:5:6:192.168.0.1:.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "38",
+        "name": "",
+        "url": "http://[-1:2:3:4:5:6:7:8.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "39",
+        "name": "",
+        "url": "http://[1::%1.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "40",
+        "name": "",
+        "url": "http://[1::%eth0.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "41",
+        "name": "",
+        "url": "http://[1::%.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "42",
+        "name": "",
+        "url": "http://[%.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "43",
+        "name": "",
+        "url": "http://[::%:.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "44",
+        "name": "",
+        "url": "http://[:0:0::0:0:8.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "45",
+        "name": "",
+        "url": "http://[0:0::0:0:8:.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "46",
+        "name": "",
+        "url": "http://[:0:0::0:0:8:.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "47",
+        "name": "",
+        "url": "http://[::192.168..1.]/",
+        "expect_url": "http://"
+      },
+      {
+        "id": "48",
+        "name": "",
+        "url": "http://[::1 hello.]/",
+        "expect_url": "http://"
+      }
+      ]
+    },
+    {
+      "name": "mailto",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/mailto.js",
+      "desc": "Test cases from Webkit's fast/url/mailto.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "mailto:addr1",
+        "expect_url": "mailto:addr1"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "mailto:addr1@foo.com",
+        "expect_url": "mailto:addr1@foo.com"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "mailto:addr1 \\t ",
+        "expect_url": "mailto:addr1"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "mailto:addr1?to=jon",
+        "expect_url": "mailto:addr1?to=jon"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "url": "mailto:addr1,addr2",
+        "expect_url": "mailto:addr1,addr2"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "url": "mailto:addr1, addr2",
+        "expect_url": "mailto:addr1, addr2"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "url": "mailto:addr1%2caddr2",
+        "expect_url": "mailto:addr1%2caddr2"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "url": "mailto:\uD800\uDF00",
+        "expect_url": "mailto:%F0%90%8C%80"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "url": "mailto:addr1?",
+        "expect_url": "mailto:addr1?"
+      }
+      ]
+    },
+    {
+      "name": "path-url",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/path-url.js",
+      "desc": "Test cases from Webkit's fast/url/path-url.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "javascript:",
+        "expect_url": "javascript:"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "JavaScript:Foo",
+        "expect_url": "javascript:Foo"
+      }
+      ]
+    },
+    {
+      "name": "path",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/path.js",
+      "desc": "Test cases from Webkit's fast/url/path.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://www.example.com/././foo",
+        "expect_url": "http://www.example.com/foo"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://www.example.com/./.foo",
+        "expect_url": "http://www.example.com/.foo"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "http://www.example.com/foo/.",
+        "expect_url": "http://www.example.com/foo/"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "http://www.example.com/foo/./",
+        "expect_url": "http://www.example.com/foo/"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "url": "http://www.example.com/foo/bar/..",
+        "expect_url": "http://www.example.com/foo/"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "url": "http://www.example.com/foo/bar/../",
+        "expect_url": "http://www.example.com/foo/"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "url": "http://www.example.com/foo/..bar",
+        "expect_url": "http://www.example.com/foo/..bar"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "url": "http://www.example.com/foo/bar/../ton",
+        "expect_url": "http://www.example.com/foo/ton"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "url": "http://www.example.com/foo/bar/../ton/../../a",
+        "expect_url": "http://www.example.com/a"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "url": "http://www.example.com/foo/../../..",
+        "expect_url": "http://www.example.com/"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "url": "http://www.example.com/foo/../../../ton",
+        "expect_url": "http://www.example.com/ton"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "url": "http://www.example.com/foo/%2e",
+        "expect_url": "http://www.example.com/foo/"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "url": "http://www.example.com/foo/%2e%2",
+        "expect_url": "http://www.example.com/foo/.%2"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "url": "http://www.example.com/foo/%2e./%2e%2e/.%2e/%2e.bar",
+        "expect_url": "http://www.example.com/..bar"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "url": "http://www.example.com////../..",
+        "expect_url": "http://www.example.com//"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "url": "http://www.example.com/foo/bar//../..",
+        "expect_url": "http://www.example.com/foo/"
+      },
+      {
+        "id": "17",
+        "name": "",
+        "url": "http://www.example.com/foo/bar//..",
+        "expect_url": "http://www.example.com/foo/bar/"
+      },
+      {
+        "id": "18",
+        "name": "",
+        "url": "http://www.example.com/foo/bar/..",
+        "expect_url": "http://www.example.com/foo/"
+      },
+      {
+        "id": "19",
+        "name": "",
+        "url": "http://www.example.com/foo",
+        "expect_url": "http://www.example.com/foo"
+      },
+      {
+        "id": "20",
+        "name": "",
+        "url": "http://www.example.com/%20foo",
+        "expect_url": "http://www.example.com/%20foo"
+      },
+      {
+        "id": "21",
+        "name": "",
+        "url": "http://www.example.com/foo%",
+        "expect_url": "http://www.example.com/foo%"
+      },
+      {
+        "id": "22",
+        "name": "",
+        "url": "http://www.example.com/foo%2",
+        "expect_url": "http://www.example.com/foo%2"
+      },
+      {
+        "id": "23",
+        "name": "",
+        "url": "http://www.example.com/foo%2zbar",
+        "expect_url": "http://www.example.com/foo%2zbar"
+      },
+      {
+        "id": "24",
+        "name": "",
+        "url": "http://www.example.com/foo%2\u00c2\u00a9zbar",
+        "expect_url": "http://www.example.com/foo%2%C3%82%C2%A9zbar"
+      },
+      {
+        "id": "25",
+        "name": "",
+        "url": "http://www.example.com/foo%41%7a",
+        "expect_url": "http://www.example.com/fooAz"
+      },
+      {
+        "id": "26",
+        "name": "",
+        "url": "http://www.example.com/foo\u0009\u0091%91",
+        "expect_url": "http://www.example.com/foo%09%C2%91%91"
+      },
+      {
+        "id": "27",
+        "name": "",
+        "url": "http://www.example.com/foo%00%51",
+        "expect_url": "http://www.example.com/foo%00Q"
+      },
+      {
+        "id": "28",
+        "name": "",
+        "url": "http://www.example.com/(%28:%3A%29)",
+        "expect_url": "http://www.example.com/(%28:%3A%29)"
+      },
+      {
+        "id": "29",
+        "name": "",
+        "url": "http://www.example.com/%3A%3a%3C%3c",
+        "expect_url": "http://www.example.com/%3A%3a%3C%3c"
+      },
+      {
+        "id": "30",
+        "name": "",
+        "url": "http://www.example.com/foo\\tbar",
+        "expect_url": "http://www.example.com/foo%09bar"
+      },
+      {
+        "id": "31",
+        "name": "",
+        "url": "http://www.example.com\\\\foo\\\\bar",
+        "expect_url": "http://www.example.com/foo/bar"
+      },
+      {
+        "id": "32",
+        "name": "",
+        "url": "http://www.example.com/%7Ffp3%3Eju%3Dduvgw%3Dd",
+        "expect_url": "http://www.example.com/%7Ffp3%3Eju%3Dduvgw%3Dd"
+      },
+      {
+        "id": "33",
+        "name": "",
+        "url": "http://www.example.com/@asdf%40",
+        "expect_url": "http://www.example.com/@asdf%40"
+      },
+      {
+        "id": "34",
+        "name": "",
+        "url": "http://www.example.com/\u4f60\u597d\u4f60\u597d",
+        "expect_url": "http://www.example.com/%E4%BD%A0%E5%A5%BD%E4%BD%A0%E5%A5%BD"
+      },
+      {
+        "id": "35",
+        "name": "",
+        "url": "http://www.example.com/\ufdd0zyx",
+        "expect_url": "http://www.example.com/%EF%BF%BDzyx"
+      },
+      {
+        "id": "36",
+        "name": "",
+        "url": "http://www.example.com/\u2025/foo",
+        "expect_url": "http://www.example.com/%E2%80%A5/foo"
+      },
+      {
+        "id": "37",
+        "name": "",
+        "url": "http://www.example.com/DEAD/foo",
+        "expect_url": "http://www.example.com/\uFFFD/foo"
+      },
+      {
+        "id": "38",
+        "name": "",
+        "url": "http://www.example.com/\uFEFF/foo",
+        "expect_url": "http://www.example.com/%EF%BB%BF/foo"
+      },
+      {
+        "id": "39",
+        "name": "",
+        "url": "http://www.example.com/\u202E/foo/\u202D/bar",
+        "expect_url": "http://www.example.com/%E2%80%AE/foo/%E2%80%AD/bar"
+      },
+      {
+        "id": "40",
+        "name": "",
+        "url": "http://www.example.com\uFF0Ffoo/",
+        "expect_url": "http://www.example.com/foo/"
+      }
+      ]
+    },
+    {
+      "name": "port",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/port.js",
+      "desc": "Test cases from Webkit's fast/url/port.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://www.example.com:as df/",
+        "expect_url": "http://www.example.com:as%20df/"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://www.example.com:-2/",
+        "expect_url": "http://www.example.com:-2/"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "http://www.example.com:80/",
+        "expect_url": "http://www.example.com/"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "http://www.example.com:8080/",
+        "expect_url": "http://www.example.com:8080/"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "url": "http://www.example.com:/",
+        "expect_url": "http://www.example.com/"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "url": "http://www.example.com:\u1369/",
+        "expect_url": "http://www.example.com:%E1%8D%A9/"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "url": "http://www.example.com:\uD835\uDFD6/",
+        "expect_url": "http://www.example.com:%F0%9D%9F%96/"
+      }
+      ]
+    },
+    {
+      "name": "query",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/query.js",
+      "desc": "Test cases from Webkit's fast/url/query.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://www.example.com/?foo=bar",
+        "expect_url": "http://www.example.com/?foo=bar"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://www.example.com/?as?df",
+        "expect_url": "http://www.example.com/?as?df"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "http://www.example.com/?%02hello%7f bye",
+        "expect_url": "http://www.example.com/?%02hello%7F%20bye"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "http://www.example.com/?%40%41123",
+        "expect_url": "http://www.example.com/?%40%41123"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "url": "http://www.example.com/?q=\u4F60\u597D",
+        "expect_url": "http://www.example.com/?q=%26%2320320%3B%26%2322909%3B"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "url": "http://www.example.com/?q=\ud800\ud800",
+        "expect_url": "http://www.example.com/?q=%26%2355296%3B%26%2355296%3B"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "url": "http://www.example.com/?q=&lt;asdf&gt;",
+        "expect_url": "http://www.example.com/?q=%3Casdf%3E"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "url": "http://www.example.com/?q=\"asdf\"",
+        "expect_url": "http://www.example.com/?q=%22asdf%22"
+      }
+      ]
+    },
+    {
+      "name": "relative-unix",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/relative-unix.js",
+      "desc": "Test cases from Webkit's fast/url/relative-unix.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "\\\\\\\\Another\\\\path",
+        "expect_rel": "http://another/path"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "/c:\\\\foo",
+        "expect_rel": "http://host/c:/foo"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "//c:\\\\foo",
+        "expect_rel": "http://c/foo"
+      }
+      ]
+    },
+    {
+      "name": "relative-win",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/relative-win.js",
+      "desc": "Test cases from Webkit's fast/url/relative-win.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "base": "file:///C:/foo",
+        "rel": "http://host/",
+        "expect_rel": "http://host/"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "base": "file:///C:/foo",
+        "rel": "bar",
+        "expect_rel": "file:///C:/bar"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "base": "file:///C:/foo",
+        "rel": "../../../bar.html",
+        "expect_rel": "file:///C:/bar.html"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "base": "file:///C:/foo",
+        "rel": "/../bar.html",
+        "expect_rel": "file:///C:/bar.html"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "\\\\\\\\another\\\\path",
+        "expect_rel": ""
+      },
+      {
+        "id": "6",
+        "name": "",
+        "base": "file:///C:/something",
+        "rel": "//c:/foo",
+        "expect_rel": "file:///C:/foo"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "base": "file:///C:/something",
+        "rel": "//localhost/c:/foo",
+        "expect_rel": "file:///C:/foo"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "base": "file:///C:/foo",
+        "rel": "c:",
+        "expect_rel": ""
+      },
+      {
+        "id": "9",
+        "name": "",
+        "base": "file:///C:/foo",
+        "rel": "c:/foo",
+        "expect_rel": ""
+      },
+      {
+        "id": "10",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "c:\\\\foo",
+        "expect_rel": ""
+      },
+      {
+        "id": "11",
+        "name": "",
+        "base": "file:///C:/foo",
+        "rel": "/z:/bar",
+        "expect_rel": "file:///Z:/bar"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "base": "file:///C:/foo",
+        "rel": "/bar",
+        "expect_rel": "file:///C:/bar"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "base": "file://localhost/C:/foo",
+        "rel": "/bar",
+        "expect_rel": "file://localhost/C:/bar"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "base": "file:///C:/foo/com/",
+        "rel": "/bar",
+        "expect_rel": "file:///C:/bar"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "base": "file:///C:/something",
+        "rel": "//somehost/path",
+        "expect_rel": "file://somehost/path"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "base": "file:///C:/something",
+        "rel": "/\\\\//somehost/path",
+        "expect_rel": "file://somehost/path"
+      }
+      ]
+    },
+    {
+      "name": "relative",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/relative.js",
+      "desc": "Test cases from Webkit's fast/url/relative.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "http://another/",
+        "expect_rel": "http://another/"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "http:////another/",
+        "expect_rel": "http://another/"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "base": "http://foo/bar",
+        "rel": "",
+        "expect_rel": "http://foo/bar"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "base": "http://foo/bar#ref",
+        "rel": "",
+        "expect_rel": "http://foo/bar"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "base": "http://foo/bar#",
+        "rel": "",
+        "expect_rel": "http://foo/bar"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "base": "http://foo/bar",
+        "rel": "  another  ",
+        "expect_rel": "http://foo/another"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "base": "http://foo/bar",
+        "rel": "  .  ",
+        "expect_rel": "http://foo/"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "base": "http://foo/bar",
+        "rel": " \\t ",
+        "expect_rel": "http://foo/bar"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "http:path",
+        "expect_rel": "http://host/path"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "base": "http://host/a/",
+        "rel": "http:path",
+        "expect_rel": "http://host/a/path"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "http:/path",
+        "expect_rel": "http://host/path"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "HTTP:/path",
+        "expect_rel": "http://host/path"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "https:host2",
+        "expect_rel": "https://host2/"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "htto:/host2",
+        "expect_rel": "htto:/host2"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "/b/c/d",
+        "expect_rel": "http://host/b/c/d"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "\\\\b\\\\c\\\\d",
+        "expect_rel": "http://host/b/c/d"
+      },
+      {
+        "id": "17",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "/b/../c",
+        "expect_rel": "http://host/c"
+      },
+      {
+        "id": "18",
+        "name": "",
+        "base": "http://host/a?b#c",
+        "rel": "/b/../c",
+        "expect_rel": "http://host/c"
+      },
+      {
+        "id": "19",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "\\\\b/../c?x#y",
+        "expect_rel": "http://host/c?x#y"
+      },
+      {
+        "id": "20",
+        "name": "",
+        "base": "http://host/a?b#c",
+        "rel": "/b/../c?x#y",
+        "expect_rel": "http://host/c?x#y"
+      },
+      {
+        "id": "21",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "b",
+        "expect_rel": "http://host/b"
+      },
+      {
+        "id": "22",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "bc/de",
+        "expect_rel": "http://host/bc/de"
+      },
+      {
+        "id": "23",
+        "name": "",
+        "base": "http://host/a/",
+        "rel": "bc/de?query#ref",
+        "expect_rel": "http://host/a/bc/de?query#ref"
+      },
+      {
+        "id": "24",
+        "name": "",
+        "base": "http://host/a/",
+        "rel": ".",
+        "expect_rel": "http://host/a/"
+      },
+      {
+        "id": "25",
+        "name": "",
+        "base": "http://host/a/",
+        "rel": "..",
+        "expect_rel": "http://host/"
+      },
+      {
+        "id": "26",
+        "name": "",
+        "base": "http://host/a/",
+        "rel": "./..",
+        "expect_rel": "http://host/"
+      },
+      {
+        "id": "27",
+        "name": "",
+        "base": "http://host/a/",
+        "rel": "../.",
+        "expect_rel": "http://host/"
+      },
+      {
+        "id": "28",
+        "name": "",
+        "base": "http://host/a/",
+        "rel": "././.",
+        "expect_rel": "http://host/a/"
+      },
+      {
+        "id": "29",
+        "name": "",
+        "base": "http://host/a?query#ref",
+        "rel": "../../../foo",
+        "expect_rel": "http://host/foo"
+      },
+      {
+        "id": "30",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "?foo=bar",
+        "expect_rel": "http://host/a?foo=bar"
+      },
+      {
+        "id": "31",
+        "name": "",
+        "base": "http://host/a?x=y#z",
+        "rel": "?",
+        "expect_rel": "http://host/a?"
+      },
+      {
+        "id": "32",
+        "name": "",
+        "base": "http://host/a?x=y#z",
+        "rel": "?foo=bar#com",
+        "expect_rel": "http://host/a?foo=bar#com"
+      },
+      {
+        "id": "33",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "#ref",
+        "expect_rel": "http://host/a#ref"
+      },
+      {
+        "id": "34",
+        "name": "",
+        "base": "http://host/a#b",
+        "rel": "#",
+        "expect_rel": "http://host/a#"
+      },
+      {
+        "id": "35",
+        "name": "",
+        "base": "http://host/a?foo=bar#hello",
+        "rel": "#bye",
+        "expect_rel": "http://host/a?foo=bar#bye"
+      },
+      {
+        "id": "36",
+        "name": "",
+        "base": "data:foobar",
+        "rel": "baz.html",
+        "expect_rel": ""
+      },
+      {
+        "id": "37",
+        "name": "",
+        "base": "data:foobar",
+        "rel": "data:baz",
+        "expect_rel": "data:baz"
+      },
+      {
+        "id": "38",
+        "name": "",
+        "base": "data:foobar",
+        "rel": "data:/base",
+        "expect_rel": "data:/base"
+      },
+      {
+        "id": "39",
+        "name": "",
+        "base": "data:foobar",
+        "rel": "http://host/",
+        "expect_rel": "http://host/"
+      },
+      {
+        "id": "40",
+        "name": "",
+        "base": "data:foobar",
+        "rel": "http:host",
+        "expect_rel": "http://host/"
+      },
+      {
+        "id": "41",
+        "name": "",
+        "base": "http://foo/bar",
+        "rel": "./asd:fgh",
+        "expect_rel": "http://foo/asd:fgh"
+      },
+      {
+        "id": "42",
+        "name": "",
+        "base": "http://foo/bar",
+        "rel": ":foo",
+        "expect_rel": "http://foo/:foo"
+      },
+      {
+        "id": "43",
+        "name": "",
+        "base": "http://foo/bar",
+        "rel": " hello world",
+        "expect_rel": "http://foo/hello%20world"
+      },
+      {
+        "id": "44",
+        "name": "",
+        "base": "data:asdf",
+        "rel": ":foo",
+        "expect_rel": ""
+      },
+      {
+        "id": "45",
+        "name": "",
+        "base": "http://host/a",
+        "rel": ";foo",
+        "expect_rel": "http://host/;foo"
+      },
+      {
+        "id": "46",
+        "name": "",
+        "base": "http://host/a;",
+        "rel": ";foo",
+        "expect_rel": "http://host/;foo"
+      },
+      {
+        "id": "47",
+        "name": "",
+        "base": "http://host/a",
+        "rel": ";/../bar",
+        "expect_rel": "http://host/bar"
+      },
+      {
+        "id": "48",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "//another",
+        "expect_rel": "http://another/"
+      },
+      {
+        "id": "49",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "//another/path?query#ref",
+        "expect_rel": "http://another/path?query#ref"
+      },
+      {
+        "id": "50",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "///another/path",
+        "expect_rel": "http://another/path"
+      },
+      {
+        "id": "51",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "//Another\\\\path",
+        "expect_rel": "http://another/path"
+      },
+      {
+        "id": "52",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "//",
+        "expect_rel": "http:"
+      },
+      {
+        "id": "53",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "\\\\/another/path",
+        "expect_rel": "http://another/path"
+      },
+      {
+        "id": "54",
+        "name": "",
+        "base": "http://host/a",
+        "rel": "/\\\\Another\\\\path",
+        "expect_rel": "http://another/path"
+      }
+      ]
+    },
+    {
+      "name": "scheme",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/scheme.js",
+      "desc": "Test cases from Webkit's fast/url/scheme.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://example.com/",
+        "expect_url": "http://example.com/"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "HTTP://example.com/",
+        "expect_url": "http://example.com/"
+      }
+      ]
+    },
+    {
+      "name": "segments-from-data-url",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/segments-from-data-url.js",
+      "desc": "Test cases from Webkit's fast/url/segments-from-data-url.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "rel": "http://user:pass@foo:21/bar;par?b#c",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo",
+        "expect_port": "21",
+        "expect_pathname": "/bar;par",
+        "expect_search": "?b",
+        "expect_hash": "#c"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "rel": "http:foo.com",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo.com",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "3",
+        "name": "",
+        "rel": "\u0009   :foo.com   \u000A",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "4",
+        "name": "",
+        "rel": " foo.com  ",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "5",
+        "name": "",
+        "rel": "a:\u0009 foo.com",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "a:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": " foo.com",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "6",
+        "name": "",
+        "rel": "http://f:21/ b ? d # e ",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "f",
+        "expect_port": "21",
+        "expect_pathname": "/%20b%20",
+        "expect_search": "?%20d%20",
+        "expect_hash": "# e"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "rel": "http://f:/c",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "f",
+        "expect_port": "",
+        "expect_pathname": "/c",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "8",
+        "name": "",
+        "rel": "http://f:0/c",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "f",
+        "expect_port": "0",
+        "expect_pathname": "/c",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "9",
+        "name": "",
+        "rel": "http://f:00000000000000/c",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "f",
+        "expect_port": "0",
+        "expect_pathname": "/c",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "10",
+        "name": "",
+        "rel": "http://f:00000000000000000000080/c",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "f",
+        "expect_port": "",
+        "expect_pathname": "/c",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "11",
+        "name": "",
+        "rel": "http://f:b/c",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "12",
+        "name": "",
+        "rel": "http://f: /c",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "13",
+        "name": "",
+        "rel": "http://f:\u000A/c",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "14",
+        "name": "",
+        "rel": "http://f:fifty-two/c",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "15",
+        "name": "",
+        "rel": "http://f:999999/c",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "16",
+        "name": "",
+        "rel": "http://f: 21 / b ? d # e ",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "17",
+        "name": "",
+        "rel": "",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "data:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "text/plain,baseURL",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "18",
+        "name": "",
+        "rel": "  \u0009",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "data:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "text/plain,baseURL",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "19",
+        "name": "",
+        "rel": ":foo.com/",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "20",
+        "name": "",
+        "rel": ":foo.com\\\\",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "21",
+        "name": "",
+        "rel": ":",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "22",
+        "name": "",
+        "rel": ":a",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "23",
+        "name": "",
+        "rel": ":/",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "24",
+        "name": "",
+        "rel": ":\\\\",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "25",
+        "name": "",
+        "rel": ":#",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "26",
+        "name": "",
+        "rel": "#",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "27",
+        "name": "",
+        "rel": "#/",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "28",
+        "name": "",
+        "rel": "#\\\\",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "29",
+        "name": "",
+        "rel": "#;?",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "30",
+        "name": "",
+        "rel": "?",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "31",
+        "name": "",
+        "rel": "/",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "32",
+        "name": "",
+        "rel": ":23",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "33",
+        "name": "",
+        "rel": "/:23",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "data:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/:23",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "34",
+        "name": "",
+        "rel": "//",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "35",
+        "name": "",
+        "rel": "::",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "36",
+        "name": "",
+        "rel": "::23",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "37",
+        "name": "",
+        "rel": "foo://",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "//",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "38",
+        "name": "",
+        "rel": "http://a:b@c:29/d",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "c",
+        "expect_port": "29",
+        "expect_pathname": "/d",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "39",
+        "name": "",
+        "rel": "http::@c:29",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "c",
+        "expect_port": "29",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "40",
+        "name": "",
+        "rel": "http://&amp;a:foo(b]c@d:2/",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "d",
+        "expect_port": "2",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "41",
+        "name": "",
+        "rel": "http://::@c@d:2",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "d",
+        "expect_port": "2",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "42",
+        "name": "",
+        "rel": "http://foo.com:b@d/",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "d",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "43",
+        "name": "",
+        "rel": "http://foo.com/\\\\@",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo.com",
+        "expect_port": "",
+        "expect_pathname": "//@",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "44",
+        "name": "",
+        "rel": "http:\\\\\\\\foo.com\\\\",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo.com",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "45",
+        "name": "",
+        "rel": "http:\\\\\\\\a\\\\b:c\\\\d@foo.com\\\\",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "a",
+        "expect_port": "",
+        "expect_pathname": "/b:c/d@foo.com/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "46",
+        "name": "",
+        "rel": "foo:/",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "47",
+        "name": "",
+        "rel": "foo:/bar.com/",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/bar.com/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "48",
+        "name": "",
+        "rel": "foo://///////",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/////////",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "49",
+        "name": "",
+        "rel": "foo://///////bar.com/",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/////////bar.com/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "50",
+        "name": "",
+        "rel": "foo:////://///",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "////://///",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "51",
+        "name": "",
+        "rel": "c:/foo",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "c:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/foo",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "52",
+        "name": "",
+        "rel": "//foo/bar",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "53",
+        "name": "",
+        "rel": "http://foo/path;a??e#f#g",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo",
+        "expect_port": "",
+        "expect_pathname": "/path;a",
+        "expect_search": "??e",
+        "expect_hash": "#f#g"
+      },
+      {
+        "id": "54",
+        "name": "",
+        "rel": "http://foo/abcd?efgh?ijkl",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo",
+        "expect_port": "",
+        "expect_pathname": "/abcd",
+        "expect_search": "?efgh?ijkl",
+        "expect_hash": ""
+      },
+      {
+        "id": "55",
+        "name": "",
+        "rel": "http://foo/abcd#foo?bar",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo",
+        "expect_port": "",
+        "expect_pathname": "/abcd",
+        "expect_search": "",
+        "expect_hash": "#foo?bar"
+      },
+      {
+        "id": "56",
+        "name": "",
+        "rel": "[61:24:74]:98",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "data:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "text/[61:24:74]:98",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "57",
+        "name": "",
+        "rel": "http://[61:27]:98",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "58",
+        "name": "",
+        "rel": "http:[61:27]/:foo",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "59",
+        "name": "",
+        "rel": "http://[1::2]:3:4",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "60",
+        "name": "",
+        "rel": "http://2001::1",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "61",
+        "name": "",
+        "rel": "http://[2001::1",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "62",
+        "name": "",
+        "rel": "http://2001::1]",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "63",
+        "name": "",
+        "rel": "http://2001::1]:80",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "64",
+        "name": "",
+        "rel": "http://[2001::1]",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "[2001::1]",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "65",
+        "name": "",
+        "rel": "http://[2001::1]:80",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": "http:",
+        "expect_hostname": "[2001::1]",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "66",
+        "name": "",
+        "rel": "http://[[::]]",
+        "base": "data:text/plain,baseURL",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      }
+      ]
+    },
+    {
+      "name": "segments",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/segments.js",
+      "desc": "Test cases from Webkit's fast/url/segments.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "rel": "http://user:pass@foo:21/bar;par?b#c",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo",
+        "expect_port": "21",
+        "expect_pathname": "/bar;par",
+        "expect_search": "?b",
+        "expect_hash": "#c"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "rel": "http:foo.com",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/foo.com",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "3",
+        "name": "",
+        "rel": "\u0009   :foo.com   \u000A",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/:foo.com",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "4",
+        "name": "",
+        "rel": " foo.com  ",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/foo.com",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "5",
+        "name": "",
+        "rel": "a:\u0009 foo.com",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "a:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": " foo.com",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "6",
+        "name": "",
+        "rel": "http://f:21/ b ? d # e ",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "f",
+        "expect_port": "21",
+        "expect_pathname": "/%20b%20",
+        "expect_search": "?%20d%20",
+        "expect_hash": "# e"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "rel": "http://f:/c",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "f",
+        "expect_port": "",
+        "expect_pathname": "/c",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "8",
+        "name": "",
+        "rel": "http://f:0/c",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "f",
+        "expect_port": "0",
+        "expect_pathname": "/c",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "9",
+        "name": "",
+        "rel": "http://f:00000000000000/c",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "f",
+        "expect_port": "0",
+        "expect_pathname": "/c",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "10",
+        "name": "",
+        "rel": "http://f:00000000000000000000080/c",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "f",
+        "expect_port": "",
+        "expect_pathname": "/c",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "11",
+        "name": "",
+        "rel": "http://f:b/c",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "12",
+        "name": "",
+        "rel": "http://f: /c",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "13",
+        "name": "",
+        "rel": "http://f:\u000A/c",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "14",
+        "name": "",
+        "rel": "http://f:fifty-two/c",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "15",
+        "name": "",
+        "rel": "http://f:999999/c",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "16",
+        "name": "",
+        "rel": "http://f: 21 / b ? d # e ",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "17",
+        "name": "",
+        "rel": "",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/bar",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "18",
+        "name": "",
+        "rel": "  \u0009",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/bar",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "19",
+        "name": "",
+        "rel": ":foo.com/",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/:foo.com/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "20",
+        "name": "",
+        "rel": ":foo.com\\\\",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/:foo.com/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "21",
+        "name": "",
+        "rel": ":",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/:",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "22",
+        "name": "",
+        "rel": ":a",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/:a",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "23",
+        "name": "",
+        "rel": ":/",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/:/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "24",
+        "name": "",
+        "rel": ":\\\\",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/:/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "25",
+        "name": "",
+        "rel": ":#",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/:",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "26",
+        "name": "",
+        "rel": "#",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/bar",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "27",
+        "name": "",
+        "rel": "#/",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/bar",
+        "expect_search": "",
+        "expect_hash": "#/"
+      },
+      {
+        "id": "28",
+        "name": "",
+        "rel": "#\\\\",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/bar",
+        "expect_search": "",
+        "expect_hash": "#\\\\"
+      },
+      {
+        "id": "29",
+        "name": "",
+        "rel": "#;?",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/bar",
+        "expect_search": "",
+        "expect_hash": "#;?"
+      },
+      {
+        "id": "30",
+        "name": "",
+        "rel": "?",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/bar",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "31",
+        "name": "",
+        "rel": "/",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "32",
+        "name": "",
+        "rel": ":23",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/:23",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "33",
+        "name": "",
+        "rel": "/:23",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/:23",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "34",
+        "name": "",
+        "rel": "//",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "35",
+        "name": "",
+        "rel": "::",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/::",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "36",
+        "name": "",
+        "rel": "::23",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/::23",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "37",
+        "name": "",
+        "rel": "foo://",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "//",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "38",
+        "name": "",
+        "rel": "http://a:b@c:29/d",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "c",
+        "expect_port": "29",
+        "expect_pathname": "/d",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "39",
+        "name": "",
+        "rel": "http::@c:29",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/:@c:29",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "40",
+        "name": "",
+        "rel": "http://&amp;a:foo(b]c@d:2/",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "d",
+        "expect_port": "2",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "41",
+        "name": "",
+        "rel": "http://::@c@d:2",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "d",
+        "expect_port": "2",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "42",
+        "name": "",
+        "rel": "http://foo.com:b@d/",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "d",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "43",
+        "name": "",
+        "rel": "http://foo.com/\\\\@",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo.com",
+        "expect_port": "",
+        "expect_pathname": "//@",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "44",
+        "name": "",
+        "rel": "http:\\\\\\\\foo.com\\\\",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo.com",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "45",
+        "name": "",
+        "rel": "http:\\\\\\\\a\\\\b:c\\\\d@foo.com\\\\",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "a",
+        "expect_port": "",
+        "expect_pathname": "/b:c/d@foo.com/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "46",
+        "name": "",
+        "rel": "foo:/",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "47",
+        "name": "",
+        "rel": "foo:/bar.com/",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/bar.com/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "48",
+        "name": "",
+        "rel": "foo://///////",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/////////",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "49",
+        "name": "",
+        "rel": "foo://///////bar.com/",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/////////bar.com/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "50",
+        "name": "",
+        "rel": "foo:////://///",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "foo:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "////://///",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "51",
+        "name": "",
+        "rel": "c:/foo",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "c:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/foo",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "52",
+        "name": "",
+        "rel": "//foo/bar",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo",
+        "expect_port": "",
+        "expect_pathname": "/bar",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "53",
+        "name": "",
+        "rel": "http://foo/path;a??e#f#g",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo",
+        "expect_port": "",
+        "expect_pathname": "/path;a",
+        "expect_search": "??e",
+        "expect_hash": "#f#g"
+      },
+      {
+        "id": "54",
+        "name": "",
+        "rel": "http://foo/abcd?efgh?ijkl",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo",
+        "expect_port": "",
+        "expect_pathname": "/abcd",
+        "expect_search": "?efgh?ijkl",
+        "expect_hash": ""
+      },
+      {
+        "id": "55",
+        "name": "",
+        "rel": "http://foo/abcd#foo?bar",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "foo",
+        "expect_port": "",
+        "expect_pathname": "/abcd",
+        "expect_search": "",
+        "expect_hash": "#foo?bar"
+      },
+      {
+        "id": "56",
+        "name": "",
+        "rel": "[61:24:74]:98",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/[61:24:74]:98",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "57",
+        "name": "",
+        "rel": "http://[61:27]:98",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "58",
+        "name": "",
+        "rel": "http:[61:27]/:foo",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.org",
+        "expect_port": "",
+        "expect_pathname": "/foo/[61:27]/:foo",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "59",
+        "name": "",
+        "rel": "http://[1::2]:3:4",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "60",
+        "name": "",
+        "rel": "http://2001::1",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "61",
+        "name": "",
+        "rel": "http://[2001::1",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "62",
+        "name": "",
+        "rel": "http://2001::1]",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "63",
+        "name": "",
+        "rel": "http://2001::1]:80",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "64",
+        "name": "",
+        "rel": "http://[2001::1]",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "[2001::1]",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "65",
+        "name": "",
+        "rel": "http://[2001::1]:80",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "[2001::1]",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "66",
+        "name": "",
+        "rel": "http://[[::]]",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": ":",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "",
+        "expect_search": "",
+        "expect_hash": ""
+      }
+      ]
+    },
+    {
+      "name": "standard-url",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/standard-url.js",
+      "desc": "Test cases from Webkit's fast/url/standard-url.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://www.google.com/foo?bar=baz#",
+        "expect_url": "http://www.google.com/foo?bar=baz#"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://[www.google.com]/",
+        "expect_url": "http://[www.google.com]/"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "http:////////user:@google.com:99?foo",
+        "expect_url": "http://user@google.com:99/?foo"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "http://192.0x00A80001",
+        "expect_url": "http://192.168.0.1/"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "url": "http://www/foo%2Ehtml",
+        "expect_url": "http://www/foo.html"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "url": "http://user:pass@/",
+        "expect_url": "http://user:pass@/"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "url": "http://%25DOMAIN:foobar@foodomain.com/",
+        "expect_url": "http://%25DOMAIN:foobar@foodomain.com/"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "url": "http:\\\\\\\\www.google.com\\\\foo",
+        "expect_url": "http://www.google.com/foo"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "url": "http://www.google.com/asdf#\uFFFD",
+        "expect_url": "http://www.google.com/asdf#\uFFFD"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "url": "http://foo:80/",
+        "expect_url": "http://foo/"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "url": "http://foo:81/",
+        "expect_url": "http://foo:81/"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "url": "httpa://foo:80/",
+        "expect_url": "httpa://foo:80/"
+      },
+      {
+        "id": "13",
+        "name": "",
+        "url": "http://foo:-80/",
+        "expect_url": "http://foo:-80/"
+      },
+      {
+        "id": "14",
+        "name": "",
+        "url": "https://foo:443/",
+        "expect_url": "https://foo/"
+      },
+      {
+        "id": "15",
+        "name": "",
+        "url": "https://foo:80/",
+        "expect_url": "https://foo:80/"
+      },
+      {
+        "id": "16",
+        "name": "",
+        "url": "ftp://foo:21/",
+        "expect_url": "ftp://foo/"
+      },
+      {
+        "id": "17",
+        "name": "",
+        "url": "ftp://foo:80/",
+        "expect_url": "ftp://foo:80/"
+      },
+      {
+        "id": "18",
+        "name": "",
+        "url": "gopher://foo:70/",
+        "expect_url": "gopher://foo/"
+      },
+      {
+        "id": "19",
+        "name": "",
+        "url": "gopher://foo:443/",
+        "expect_url": "gopher://foo:443/"
+      },
+      {
+        "id": "20",
+        "name": "",
+        "url": "ws://foo:80/",
+        "expect_url": "ws://foo/"
+      },
+      {
+        "id": "21",
+        "name": "",
+        "url": "ws://foo:81/",
+        "expect_url": "ws://foo:81/"
+      },
+      {
+        "id": "22",
+        "name": "",
+        "url": "ws://foo:443/",
+        "expect_url": "ws://foo:443/"
+      },
+      {
+        "id": "23",
+        "name": "",
+        "url": "ws://foo:815/",
+        "expect_url": "ws://foo:815/"
+      },
+      {
+        "id": "24",
+        "name": "",
+        "url": "wss://foo:80/",
+        "expect_url": "wss://foo:80/"
+      },
+      {
+        "id": "25",
+        "name": "",
+        "url": "wss://foo:81/",
+        "expect_url": "wss://foo:81/"
+      },
+      {
+        "id": "26",
+        "name": "",
+        "url": "wss://foo:443/",
+        "expect_url": "wss://foo/"
+      },
+      {
+        "id": "27",
+        "name": "",
+        "url": "wss://foo:815/",
+        "expect_url": "wss://foo:815/"
+      }
+      ]
+    },
+    {
+      "name": "trivial-segments",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/trivial-segments.js",
+      "desc": "Test cases from Webkit's fast/url/trivial-segments.js",
+      "test": [ {
+        "id": "1",
+        "name": "",
+        "rel": "http://example.com/",
+        "base": "http://example.org/foo/bar",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.com",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      } ]
+    },
+    {
+      "name": "trivial",
+      "link": "http://trac.webkit.org/browser/trunk/LayoutTests/fast/url/script-tests/trivial.js",
+      "desc": "Test cases from Webkit's fast/url/trivial.js",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "base": "http://example.org/foo/bar",
+        "rel": "http://example.com/",
+        "expect_rel": "http://example.com/"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "base": "http://example.org/foo/bar",
+        "rel": "/",
+        "expect_rel": "http://example.org/"
+      }
+      ]
+    },
+    {
+      "name": "normalization",
+      "link": "#",
+      "desc": "Test cases for normalization behaviors - see http://www.unicode.org/reports/tr15/ Figure 6 and RFC3987",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "charset": "utf-8",
+        "base": "http://www.example.com/",
+        "rel": "re&#x301;sume&#x301;/re&#x301;sume&#x301;.html",
+        "expect_rel": "re&#x301;sume&#x301;/re&#x301;sume&#x301;.html"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "charset": "utf-8",
+        "base": "http://www.example.com/",
+        "rel": "r&#xE9;sum&#xE9;.html",
+        "expect_rel": "r&#xE9;sum&#xE9;.html"
+      },
+      {
+        "id": "3",
+        "name": "",
+        "charset": "windows-1258",
+        "base": "http://www.example.com/",
+        "rel": "Vi&#xEA;&#x323;tNam.html",
+        "expect_rel": "Vi&#xEA;&#x323;tNam.html"
+      },
+      {
+        "id": "4",
+        "name": "",
+        "charset": "utf-8",
+        "base": "http://www.example.com/",
+        "rel": "\uFB01?\uFB01#\uFB01",
+        "expect_rel": "\uFB01?\uFB01#\uFB01"
+      },
+      {
+        "id": "5",
+        "name": "",
+        "charset": "utf-8",
+        "base": "http://www.example.com/",
+        "rel": "?re&#x301;sume&#x301;#re&#x301;sume&#x301;",
+        "expect_rel": "?re&#x301;sume&#x301;#re&#x301;sume&#x301;"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "charset": "utf-8",
+        "base": "http://www.example.com/",
+        "rel": "2\u2075?2\u2075#2\u2075",
+        "expect_rel": "2\u2075?2\u2075#2\u2075"
+      },
+      {
+        "id": "7",
+        "name": "",
+        "charset": "windows-1258",
+        "base": "http://www.example.com/",
+        "rel": "?Vi&#xEA;&#x323;tNam#Vi&#xEA;&#x323;tNam",
+        "expect_rel": "?Vi&#xEA;&#x323;tNam#Vi&#xEA;&#x323;tNam"
+      },
+      {
+        "id": "8",
+        "name": "",
+        "charset": "windows-1258",
+        "base": "http://www.example.com/",
+        "rel": "foo?q=\u2665",
+        "expect_rel": "foo?q=\u2665"
+      },
+      {
+        "id": "9",
+        "name": "",
+        "charset": "utf-8",
+        "base": "http://www.example.com/",
+        "rel": "\u1E9B\u0323/?\u1E9B\u0323#\u1E9B\u0323",
+        "expect_rel": "\u1E9B\u0323/?\u1E9B\u0323#\u1E9B\u0323"
+      },
+      {
+        "id": "10",
+        "name": "",
+        "charset": "utf-8",
+        "base": "http://www.example.com/",
+        "rel": "\u212B/?\u212B#\u212B",
+        "expect_rel": "\u1E9B\u0323/?\u1E9B\u0323#\u1E9B\u0323"
+      },
+      {
+        "id": "11",
+        "name": "",
+        "charset": "utf-8",
+        "base": "http://www.example.com/",
+        "rel": "\u1E9B\u0323/?\u1E9B\u0323#\u1E9B\u0323",
+        "expect_rel": "\u1E9B\u0323/?\u1E9B\u0323#\u1E9B\u0323"
+      },
+      {
+        "id": "12",
+        "name": "",
+        "charset": "utf-8",
+        "base": "http://www.example.com/",
+        "rel": "\u1E0B\u0323/?\u1E0B\u0323#\u1E0B\u0323",
+        "expect_rel": "\u1E0B\u0323/?\u1E0B\u0323#\u1E0B\u0323"
+      }
+      ]
+    },
+    {
+      "name": "whitespace",
+      "link": "#",
+      "desc": "Various references with white space",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://www.example.com/foo    bar/?   foo   =   bar     #    foo",
+        "expect_url": "http://www.example.com/foo    bar/?   foo   =   bar     #    foo"
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://www.example.com/ ",
+        "expect_url": "http://www.example.com/ "
+      }
+      ]
+    },
+    {
+      "name": "percent-encoding",
+      "link": "#",
+      "desc": "Test how percent-encoding is handled",
+      "test": [
+      {
+        "id": "1",
+        "name": "Test if delimeters such as \"?\" are unencoded",
+        "charset": "utf-8",
+        "url": "http://www.example.com/foo%3fbar",
+        "expect_url": "http://www.example.com/foo?bar"
+      },
+      {
+        "id": "2",
+        "name": "Test if delimeters such as \"/\" are unencoded",
+        "charset": "utf-8",
+        "url": "http://www.example.com/foo%2fbar",
+        "expect_url": "http://www.example.com/foo/bar"
+      },
+      {
+        "id": "3",
+        "name": "Test if entire string is unencoded",
+        "charset": "utf-8",
+        "url": "%68%74%74%70%3a%2f%2f%77%77%77%2e%65%78%61%6d%70%6c%65%2e%63%6f%6d%2f",
+        "expect_url": "http://www.example.com/"
+      },
+      {
+        "id": "4",
+        "name": "Test if scheme gets unencoded",
+        "charset": "utf-8",
+        "url": "http%3a%2f%2f%77%77%77%2e%65%78%61%6d%70%6c%65%2e%63%6f%6d%2f",
+        "expect_url": "http://www.example.com/"
+      },
+      {
+        "id": "5",
+        "name": "Test if authority and port gets unencoded",
+        "charset": "utf-8",
+        "url": "http://%77%77%77%2e%65%78%61%6d%70%6c%65%2e%63%6f%6d%3a%38%30",
+        "expect_url": "http://www.example.com:80/"
+      },
+      {
+        "id": "6",
+        "name": "",
+        "charset": "iso-8859-1",
+        "url": "http://%A1%C1.com",
+        "expect_url": "http://¡À.com"
+      },
+      {
+        "id": "7",
+        "name": "Test mixed encodings",
+        "charset": "iso-8859-1",
+        "url": "http://www.example.com/%A1%C1/?foo=%EF%BD%81",
+        "expect_url": "http://www.example.com/%A1%C1/?foo=%EF%BD%81"
+      },
+      {
+        "id": "8",
+        "name": "Test mixed encodings",
+        "charset": "iso-8859-1",
+        "url": "http://www.example.com/%EF%BD%81/?foo=%A1%C1",
+        "expect_url": "http://www.example.com/%EF%BD%81/?foo=%A1%C1",
+        "comment": "."
+      },
+      {
+        "id": "9",
+        "name": "Test mixed encodings",
+        "charset": "iso-8859-1",
+        "url": "http://www.example.com/ＦＯＯ/?foo=%A1%C1",
+        "expect_url": "http://www.example.com/ＦＯＯ/?foo=%A1%C1"
+      },
+      {
+        "id": "10",
+        "name": "Test mixed encodings",
+        "charset": "iso-8859-1",
+        "url": "http://www.example.com/%A1%C1/?foo=ＦＯＯ",
+        "expect_url": "http://www.example.com/%A1%C1/?foo=ＦＯＯ"
+      },
+      {
+        "id": "11",
+        "name": "Test mixed encodings",
+        "charset": "utf-8",
+        "url": "http://www.example.com/ＦＯＯ/?foo=%A1%C1",
+        "expect_url": "http://www.example.com/ＦＯＯ/?foo=%A1%C1"
+      },
+      {
+        "id": "12",
+        "name": "The Martin Dürst test",
+        "charset": "iso-8859-1",
+        "url": "http://www.example.com/D%FCrst",
+        "expect_url": "http://www.example.com/D%FCrst"
+      },
+      {
+        "id": "13",
+        "name": "The Martin Dürst test",
+        "charset": "iso-8859-1",
+        "url": "http://www.example.com/D%C3%BCrst",
+        "expect_url": "http://www.example.com/D%C3%BCrst"
+      },
+      {
+        "id": "14",
+        "name": "The Martin Dürst test",
+        "charset": "iso-8859-1",
+        "url": "http://www.example.com/?D%FCrst",
+        "expect_url": "http://www.example.com/?D%FCrst"
+      },
+      {
+        "id": "15",
+        "name": "The Martin Dürst test",
+        "charset": "iso-8859-1",
+        "url": "http://www.example.com/?D%C3%BCrst",
+        "expect_url": "http://www.example.com/?D%C3%BCrst"
+      }
+      ]
+    },
+    {
+      "name": "miscellaneous",
+      "link": "#",
+      "desc": "Misc test cases",
+      "test": [
+      {
+        "id": "1",
+        "name": "",
+        "url": "http://user%40example.com/",
+        "expect_url": "http://user@example.com/",
+        "expect_protocol": "http:",
+        "expect_hostname": "example.com",
+        "expect_port": "80",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "2",
+        "name": "",
+        "url": "http://user%3Ainfo%40/",
+        "expect_url": "http://user:info@/",
+        "expect_protocol": "http:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "3",
+        "name": "",
+        "url": "http://user@/",
+        "expect_url": "http://user@/",
+        "expect_protocol": "http:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "/",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "4",
+        "name": "",
+        "url": "$:foo/bar",
+        "expect_url": "$:",
+        "expect_protocol": "$:",
+        "expect_hostname": "foo",
+        "expect_port": "",
+        "expect_pathname": "bar",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "5",
+        "name": "Two colons after mailto scheme",
+        "url": "mailto::foo@bar.com",
+        "expect_url": "mailto::foo@bar.com",
+        "expect_protocol": "mailto:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": ":foo@bar.com",
+        "expect_search": "",
+        "expect_hash": ""
+      }
+      ]
+    },
+    {
+      "name": "data-scheme",
+      "link": "#",
+      "desc": "Test cases using the data scheme",
+      "test": [
+      {
+        "id": "1",
+        "name": "A good test that should pass.",
+        "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOCAYAAAAmL5yKAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGlSURBVDhPnZDfS1NhGMfff8oLEUE0FBfqmrigi/DKrvKqiNDEKYjCUJdH3I/Q5WoLdYmlU1FP0LQoEclYOCcoMbJuDAUVA/v0vK8/QssL98AH3u97zud7Ho4ajr8i2P8sJ2JDcVSwf5BcR7sqEHpqQpF/60ro0e5Zwb1FiPyAoW14tAIVE5fjGDPKaUHYhOQhTO1DYu+Y/4mn/C0Io3oDAyasCYtHsPALRmUL5+R56j9AdwbsA4jJpnq0q6y+JyboO11ibUBt8jxpuV8VPgn6I5M7cpDRrhSETKiXf3BXuPP+X8Zlo3V5JyUs/4aZXaNIQQj12AqY0CBPL9KW+kIwbWF/b2MqW8d09iZzW27mf0aNo13lOynwpPZpTHpotstpfVOK9105oeUKnqeqiK06iWduMLbhIvG1Gvub2zjaVV09fhPqRgq5nyimYaaEptlrtCfL6Fu6TvhzJREpeZF28nLdxevNamazNcbRrvJ2WiY4/Hm4w/ncihRwO1pwVqjLWuxS2t+W0SVbWR8dDK5UGke7qsPrMyGX0a7y9fSaQy48eNjIH2VPyHZqSIx2AAAAAElFTkSuQmCC",
+        "expect_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOCAYAAAAmL5yKAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGlSURBVDhPnZDfS1NhGMfff8oLEUE0FBfqmrigi/DKrvKqiNDEKYjCUJdH3I/Q5WoLdYmlU1FP0LQoEclYOCcoMbJuDAUVA/v0vK8/QssL98AH3u97zud7Ho4ajr8i2P8sJ2JDcVSwf5BcR7sqEHpqQpF/60ro0e5Zwb1FiPyAoW14tAIVE5fjGDPKaUHYhOQhTO1DYu+Y/4mn/C0Io3oDAyasCYtHsPALRmUL5+R56j9AdwbsA4jJpnq0q6y+JyboO11ibUBt8jxpuV8VPgn6I5M7cpDRrhSETKiXf3BXuPP+X8Zlo3V5JyUs/4aZXaNIQQj12AqY0CBPL9KW+kIwbWF/b2MqW8d09iZzW27mf0aNo13lOynwpPZpTHpotstpfVOK9105oeUKnqeqiK06iWduMLbhIvG1Gvub2zjaVV09fhPqRgq5nyimYaaEptlrtCfL6Fu6TvhzJREpeZF28nLdxevNamazNcbRrvJ2WiY4/Hm4w/ncihRwO1pwVqjLWuxS2t+W0SVbWR8dDK5UGke7qsPrMyGX0a7y9fSaQy48eNjIH2VPyHZqSIx2AAAAAElFTkSuQmCC",
+        "expect_protocol": "data:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOCAYAAAAmL5yKAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGlSURBVDhPnZDfS1NhGMfff8oLEUE0FBfqmrigi/DKrvKqiNDEKYjCUJdH3I/Q5WoLdYmlU1FP0LQoEclYOCcoMbJuDAUVA/v0vK8/QssL98AH3u97zud7Ho4ajr8i2P8sJ2JDcVSwf5BcR7sqEHpqQpF/60ro0e5Zwb1FiPyAoW14tAIVE5fjGDPKaUHYhOQhTO1DYu+Y/4mn/C0Io3oDAyasCYtHsPALRmUL5+R56j9AdwbsA4jJpnq0q6y+JyboO11ibUBt8jxpuV8VPgn6I5M7cpDRrhSETKiXf3BXuPP+X8Zlo3V5JyUs/4aZXaNIQQj12AqY0CBPL9KW+kIwbWF/b2MqW8d09iZzW27mf0aNo13lOynwpPZpTHpotstpfVOK9105oeUKnqeqiK06iWduMLbhIvG1Gvub2zjaVV09fhPqRgq5nyimYaaEptlrtCfL6Fu6TvhzJREpeZF28nLdxevNamazNcbRrvJ2WiY4/Hm4w/ncihRwO1pwVqjLWuxS2t+W0SVbWR8dDK5UGke7qsPrMyGX0a7y9fSaQy48eNjIH2VPyHZqSIx2AAAAAElFTkSuQmCC",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "2",
+        "name": "A test using two colons after scheme",
+        "url": "data::image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOCAYAAAAmL5yKAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGlSURBVDhPnZDfS1NhGMfff8oLEUE0FBfqmrigi/DKrvKqiNDEKYjCUJdH3I/Q5WoLdYmlU1FP0LQoEclYOCcoMbJuDAUVA/v0vK8/QssL98AH3u97zud7Ho4ajr8i2P8sJ2JDcVSwf5BcR7sqEHpqQpF/60ro0e5Zwb1FiPyAoW14tAIVE5fjGDPKaUHYhOQhTO1DYu+Y/4mn/C0Io3oDAyasCYtHsPALRmUL5+R56j9AdwbsA4jJpnq0q6y+JyboO11ibUBt8jxpuV8VPgn6I5M7cpDRrhSETKiXf3BXuPP+X8Zlo3V5JyUs/4aZXaNIQQj12AqY0CBPL9KW+kIwbWF/b2MqW8d09iZzW27mf0aNo13lOynwpPZpTHpotstpfVOK9105oeUKnqeqiK06iWduMLbhIvG1Gvub2zjaVV09fhPqRgq5nyimYaaEptlrtCfL6Fu6TvhzJREpeZF28nLdxevNamazNcbRrvJ2WiY4/Hm4w/ncihRwO1pwVqjLWuxS2t+W0SVbWR8dDK5UGke7qsPrMyGX0a7y9fSaQy48eNjIH2VPyHZqSIx2AAAAAElFTkSuQmCC",
+        "expect_url": "data::image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOCAYAAAAmL5yKAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGlSURBVDhPnZDfS1NhGMfff8oLEUE0FBfqmrigi/DKrvKqiNDEKYjCUJdH3I/Q5WoLdYmlU1FP0LQoEclYOCcoMbJuDAUVA/v0vK8/QssL98AH3u97zud7Ho4ajr8i2P8sJ2JDcVSwf5BcR7sqEHpqQpF/60ro0e5Zwb1FiPyAoW14tAIVE5fjGDPKaUHYhOQhTO1DYu+Y/4mn/C0Io3oDAyasCYtHsPALRmUL5+R56j9AdwbsA4jJpnq0q6y+JyboO11ibUBt8jxpuV8VPgn6I5M7cpDRrhSETKiXf3BXuPP+X8Zlo3V5JyUs/4aZXaNIQQj12AqY0CBPL9KW+kIwbWF/b2MqW8d09iZzW27mf0aNo13lOynwpPZpTHpotstpfVOK9105oeUKnqeqiK06iWduMLbhIvG1Gvub2zjaVV09fhPqRgq5nyimYaaEptlrtCfL6Fu6TvhzJREpeZF28nLdxevNamazNcbRrvJ2WiY4/Hm4w/ncihRwO1pwVqjLWuxS2t+W0SVbWR8dDK5UGke7qsPrMyGX0a7y9fSaQy48eNjIH2VPyHZqSIx2AAAAAElFTkSuQmCC",
+        "expect_protocol": "data:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": ":image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOCAYAAAAmL5yKAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGlSURBVDhPnZDfS1NhGMfff8oLEUE0FBfqmrigi/DKrvKqiNDEKYjCUJdH3I/Q5WoLdYmlU1FP0LQoEclYOCcoMbJuDAUVA/v0vK8/QssL98AH3u97zud7Ho4ajr8i2P8sJ2JDcVSwf5BcR7sqEHpqQpF/60ro0e5Zwb1FiPyAoW14tAIVE5fjGDPKaUHYhOQhTO1DYu+Y/4mn/C0Io3oDAyasCYtHsPALRmUL5+R56j9AdwbsA4jJpnq0q6y+JyboO11ibUBt8jxpuV8VPgn6I5M7cpDRrhSETKiXf3BXuPP+X8Zlo3V5JyUs/4aZXaNIQQj12AqY0CBPL9KW+kIwbWF/b2MqW8d09iZzW27mf0aNo13lOynwpPZpTHpotstpfVOK9105oeUKnqeqiK06iWduMLbhIvG1Gvub2zjaVV09fhPqRgq5nyimYaaEptlrtCfL6Fu6TvhzJREpeZF28nLdxevNamazNcbRrvJ2WiY4/Hm4w/ncihRwO1pwVqjLWuxS2t+W0SVbWR8dDK5UGke7qsPrMyGX0a7y9fSaQy48eNjIH2VPyHZqSIx2AAAAAElFTkSuQmCC",
+        "expect_search": "",
+        "expect_hash": ""
+      },
+      {
+        "id": "3",
+        "name": "A test using three colons after scheme",
+        "url": "data:::image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOCAYAAAAmL5yKAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGlSURBVDhPnZDfS1NhGMfff8oLEUE0FBfqmrigi/DKrvKqiNDEKYjCUJdH3I/Q5WoLdYmlU1FP0LQoEclYOCcoMbJuDAUVA/v0vK8/QssL98AH3u97zud7Ho4ajr8i2P8sJ2JDcVSwf5BcR7sqEHpqQpF/60ro0e5Zwb1FiPyAoW14tAIVE5fjGDPKaUHYhOQhTO1DYu+Y/4mn/C0Io3oDAyasCYtHsPALRmUL5+R56j9AdwbsA4jJpnq0q6y+JyboO11ibUBt8jxpuV8VPgn6I5M7cpDRrhSETKiXf3BXuPP+X8Zlo3V5JyUs/4aZXaNIQQj12AqY0CBPL9KW+kIwbWF/b2MqW8d09iZzW27mf0aNo13lOynwpPZpTHpotstpfVOK9105oeUKnqeqiK06iWduMLbhIvG1Gvub2zjaVV09fhPqRgq5nyimYaaEptlrtCfL6Fu6TvhzJREpeZF28nLdxevNamazNcbRrvJ2WiY4/Hm4w/ncihRwO1pwVqjLWuxS2t+W0SVbWR8dDK5UGke7qsPrMyGX0a7y9fSaQy48eNjIH2VPyHZqSIx2AAAAAElFTkSuQmCC",
+        "expect_url": "data:::image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOCAYAAAAmL5yKAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGlSURBVDhPnZDfS1NhGMfff8oLEUE0FBfqmrigi/DKrvKqiNDEKYjCUJdH3I/Q5WoLdYmlU1FP0LQoEclYOCcoMbJuDAUVA/v0vK8/QssL98AH3u97zud7Ho4ajr8i2P8sJ2JDcVSwf5BcR7sqEHpqQpF/60ro0e5Zwb1FiPyAoW14tAIVE5fjGDPKaUHYhOQhTO1DYu+Y/4mn/C0Io3oDAyasCYtHsPALRmUL5+R56j9AdwbsA4jJpnq0q6y+JyboO11ibUBt8jxpuV8VPgn6I5M7cpDRrhSETKiXf3BXuPP+X8Zlo3V5JyUs/4aZXaNIQQj12AqY0CBPL9KW+kIwbWF/b2MqW8d09iZzW27mf0aNo13lOynwpPZpTHpotstpfVOK9105oeUKnqeqiK06iWduMLbhIvG1Gvub2zjaVV09fhPqRgq5nyimYaaEptlrtCfL6Fu6TvhzJREpeZF28nLdxevNamazNcbRrvJ2WiY4/Hm4w/ncihRwO1pwVqjLWuxS2t+W0SVbWR8dDK5UGke7qsPrMyGX0a7y9fSaQy48eNjIH2VPyHZqSIx2AAAAAElFTkSuQmCC",
+        "expect_protocol": "data:",
+        "expect_hostname": "",
+        "expect_port": "",
+        "expect_pathname": "::image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOCAYAAAAmL5yKAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAGlSURBVDhPnZDfS1NhGMfff8oLEUE0FBfqmrigi/DKrvKqiNDEKYjCUJdH3I/Q5WoLdYmlU1FP0LQoEclYOCcoMbJuDAUVA/v0vK8/QssL98AH3u97zud7Ho4ajr8i2P8sJ2JDcVSwf5BcR7sqEHpqQpF/60ro0e5Zwb1FiPyAoW14tAIVE5fjGDPKaUHYhOQhTO1DYu+Y/4mn/C0Io3oDAyasCYtHsPALRmUL5+R56j9AdwbsA4jJpnq0q6y+JyboO11ibUBt8jxpuV8VPgn6I5M7cpDRrhSETKiXf3BXuPP+X8Zlo3V5JyUs/4aZXaNIQQj12AqY0CBPL9KW+kIwbWF/b2MqW8d09iZzW27mf0aNo13lOynwpPZpTHpotstpfVOK9105oeUKnqeqiK06iWduMLbhIvG1Gvub2zjaVV09fhPqRgq5nyimYaaEptlrtCfL6Fu6TvhzJREpeZF28nLdxevNamazNcbRrvJ2WiY4/Hm4w/ncihRwO1pwVqjLWuxS2t+W0SVbWR8dDK5UGke7qsPrMyGX0a7y9fSaQy48eNjIH2VPyHZqSIx2AAAAAElFTkSuQmCC",
+        "expect_search": "",
+        "expect_hash": ""
+      }
+      ]
+    }
+    ]
+  }
+}

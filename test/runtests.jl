@@ -13,6 +13,7 @@ using HTTP.Test
     include("fifobuffer.jl");
     include("sniff.jl");
     include("uri.jl");
+    include("url.jl");
     include("cookies.jl");
     include("parser.jl");
 

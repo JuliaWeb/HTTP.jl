@@ -21,7 +21,7 @@ Base.show(io::IO, p::URLParsingError) = println(io, "HTTP.URLParsingError: ", p.
     s_http_host_port,
 )
 
-const blank_userinfo = SubString("blank_userinfo", 1, 0)
+const blank = SubString("blank", 1, 0)
 
 # url parsing
 function parseurlchar(s, ch::Char, strict::Bool)
@@ -61,7 +61,7 @@ function parseurlchar(s, ch::Char, strict::Bool)
     elseif s == s_req_fragment_start
         isurlchar(ch) && return s_req_fragment
         ch == '?' && return s_req_fragment
-        ch == '#' && return s
+        ch == '#' && return s_req_fragment
     elseif s == s_req_fragment
         isurlchar(ch) && return s
         (ch == '?' || ch == '#') && return s
@@ -162,6 +162,7 @@ function http_parser_parse_url(url::String)
 
     s = s_req_spaces_before_target
 
+    uf = -1
     old_uf = -1
     off1 = off2 = 0
     foundat = false
@@ -184,7 +185,14 @@ function http_parser_parse_url(url::String)
                          s_req_server_start,
                          s_req_query_string_start,
                          s_req_fragment_start)
-            continue
+            if s == s_req_server_start
+                host = blank
+            end
+            if i != end_i
+                continue
+            else
+                uf = s
+            end
         elseif s == s_req_server_with_at
             foundat = true
             uf = s_req_server
@@ -209,11 +217,13 @@ function http_parser_parse_url(url::String)
         @label save_part
         if old_uf != -1
             part = SubString(url, off1, off2)
-            old_uf == s_req_schema       && (scheme = part)
-            old_uf == s_req_server       && (host = part)
-            old_uf == s_req_path         && (path = part)
-            old_uf == s_req_query_string && (query = part)
-            old_uf == s_req_fragment     && (fragment = part)
+            old_uf == s_req_schema             && (scheme = part)
+            old_uf == s_req_server             && (host = part)
+            old_uf == s_req_path               && (path = part)
+            old_uf == s_req_query_string       && (query = part)
+            old_uf == s_req_fragment           && (fragment = part)
+            old_uf == s_req_query_string_start && (query = blank)
+            old_uf == s_req_fragment_start     && (fragment = blank)
         end
 
         off1 = i
@@ -230,7 +240,7 @@ function http_parser_parse_url(url::String)
     if !isempty(host)
         host, port, userinfo = http_parse_host(host, foundat)
         if foundat && isempty(userinfo)
-            userinfo = blank_userinfo
+            userinfo = blank
         end
     end
     return URI(url, scheme, userinfo, host, port, path, query, fragment)
