@@ -1,10 +1,10 @@
 __precompile__()
 module HTTP
 
+export startwrite, startread, closewrite, closeread
+
 using MbedTLS
 import MbedTLS.SSLContext
-
-export startwrite, startread, closewrite, closeread
 
 const DEBUG_LEVEL = 0
 
@@ -13,7 +13,7 @@ include("debug.jl")
 
 include("Pairs.jl")
 include("Strings.jl")
-include("IOExtras.jl")                 ;import .IOExtras: IOError, startwrite, startread, closewrite, closeread
+include("IOExtras.jl")                 ;using .IOExtras
 include("URIs.jl")                     ;using .URIs
 include("utils.jl")
 include("fifobuffer.jl")               ;using .FIFOBuffers
