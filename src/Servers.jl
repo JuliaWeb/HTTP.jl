@@ -233,7 +233,7 @@ const nolimit = typemax(Int)
 
 
 """
-    HTTP.listen(host="localhost", port=8081; <keyword arguments>) do http
+    HTTP.listen("localhost", 8081; <keyword arguments>) do http
         ...
     end
 
