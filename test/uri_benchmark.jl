@@ -1,12 +1,11 @@
-#using Unitful
+using Unitful
 
 using HTTP
 
 
-#const tunit = u"ms"
-#const tmul = Int(1u"s"/1tunit)
-#delta_t(a, b) = round((b - a) * tmul, 0)tunit
-delta_t(a, b) = round((b - a), 3)
+const tunit = u"ms"
+const tmul = Int(1u"s"/1tunit)
+delta_t(a, b) = round((b - a) * tmul, 0)tunit
 
 function go(count::Int)
 
@@ -23,7 +22,7 @@ function go(count::Int)
     t1 = delta_t(t_start, t_done)
 
     if count > 10
-        println("http_parser_parse_url parsed $(length(urls)) urls $count times in $t1\n")
+        println("http_parser_parse_url parsed $(length(urls)) urls $count times in $t1")
     end
                                                                 t_start = time()
     @time for rep in 1:count
@@ -35,7 +34,7 @@ function go(count::Int)
     t2 = delta_t(t_start, t_done)
 
     if count > 10
-        println("regex_parse parsed $(length(urls)) urls $count times in $t2 ($(round(100*t2/t1, 1))%)\n")
+        println("regex_parse parsed $(length(urls)) urls $count times in $t2 ($(round(100*t2/t1, 1))%)")
     end
 end
 
