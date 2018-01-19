@@ -4,6 +4,7 @@ module HTTP
 using MbedTLS
 import MbedTLS.SSLContext
 
+export startwrite, startread, closewrite, closeread
 
 const DEBUG_LEVEL = 0
 
@@ -12,7 +13,7 @@ include("debug.jl")
 
 include("Pairs.jl")
 include("Strings.jl")
-include("IOExtras.jl")                 ;import .IOExtras.IOError
+include("IOExtras.jl")                 ;import .IOExtras: IOError, startwrite, startread, closewrite, closeread
 include("URIs.jl")                     ;using .URIs
 include("utils.jl")
 include("fifobuffer.jl")               ;using .FIFOBuffers

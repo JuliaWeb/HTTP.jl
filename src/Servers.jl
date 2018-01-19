@@ -79,7 +79,7 @@ An http/https server. Supports listening on a `host` and `port` via the `HTTP.se
 objects as inputs and returns the, potentially modified, `Response`. `logger` indicates where logging output should be directed.
 When `HTTP.serve` is called, it aims to "never die", catching and recovering from all internal errors. To forcefully stop, one can obviously
 kill the julia process, interrupt (ctrl/cmd+c) if main task, or send the kill signal over a server in channel like:
-`put!(server.in, HTTP.KILL)`.
+`put!(server.in, HTTP.Servers.KILL)`.
 
 Supported keyword arguments include:
   * `cert`: if https, the cert file to use, as passed to `HTTP.MbedTLS.SSLConfig(cert, key)`
@@ -191,7 +191,7 @@ Optional keyword arguments allow construction of `Server` on the fly if the `ser
 See `?HTTP.Server` for more details on server construction and supported keyword arguments.
 By default, `HTTP.serve` aims to "never die", catching and recovering from all internal errors. Two methods for stopping
 `HTTP.serve` include interrupting (ctrl/cmd+c) if blocking on the main task, or sending the kill signal via the server's in channel
-(`put!(server.in, HTTP.KILL)`).
+(`put!(server.in, HTTP.Servers.KILL)`).
 """
 function serve end
 
@@ -259,7 +259,7 @@ e.g.
 ```
     HTTP.listen() do http::HTTP.Stream
         @show http.message
-        @show header(http, "Content-Type")
+        @show HTTP.header(http, "Content-Type")
         while !eof(http)
             println("body data: ", String(readavailable(http)))
         end
@@ -271,8 +271,8 @@ e.g.
     end
 
     HTTP.listen() do request::HTTP.Request
-        @show header(request, "Content-Type")
-        @show payload(request)
+        @show HTTP.header(request, "Content-Type")
+        @show HTTP.payload(request)
         return HTTP.Response(404)
     end
 ```
