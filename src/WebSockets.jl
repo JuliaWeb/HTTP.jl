@@ -113,28 +113,34 @@ end
 
 function listen(f::Function,
                 host::String="localhost", port::UInt16=UInt16(8081);
-                binary=false, verbose=false, kw...)
+                binary=false, verbose=false)
 
     HTTP.listen(host, port; verbose=verbose) do http
-
-        check_upgrade(http)
-        if !hasheader(http, "Sec-WebSocket-Version", "13")
-            throw(WebSocketError(0, "Expected \"Sec-WebSocket-Version: 13\"!\n" *
-                                    "$(http.message)"))
-        end
-
-        setstatus(http, 101)
-        setheader(http, "Upgrade" => "websocket")
-        setheader(http, "Connection" => "Upgrade")
-        key = header(http, "Sec-WebSocket-Key")
-        setheader(http, "Sec-WebSocket-Accept" => accept_hash(key))
-
-        startwrite(http)
-
-        io = ConnectionPool.getrawstream(http)
-        f(WebSocket(io; binary=binary, server=true))
+        upgrade(f, http; binary=binary)
     end
 end
+
+
+function upgrade(f::Function, http::HTTP.Stream; binary=false)
+
+    check_upgrade(http)
+    if !hasheader(http, "Sec-WebSocket-Version", "13")
+        throw(WebSocketError(0, "Expected \"Sec-WebSocket-Version: 13\"!\n" *
+                                "$(http.message)"))
+    end
+
+    setstatus(http, 101)
+    setheader(http, "Upgrade" => "websocket")
+    setheader(http, "Connection" => "Upgrade")
+    key = header(http, "Sec-WebSocket-Key")
+    setheader(http, "Sec-WebSocket-Accept" => accept_hash(key))
+
+    startwrite(http)
+
+    io = ConnectionPool.getrawstream(http)
+    f(WebSocket(io; binary=binary, server=true))
+end
+
 
 
 # Sending Frames
