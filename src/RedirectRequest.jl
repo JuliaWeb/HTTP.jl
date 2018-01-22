@@ -27,8 +27,7 @@ function request(::Type{RedirectLayer{Next}},
 
         if (count == redirect_limit
         ||  !isredirect(res)
-        ||  (location = header(res, "Location")) == ""
-        ||  method == "HEAD") #FIXME why not redirect HEAD?
+        ||  (location = header(res, "Location")) == "")
             return res
         end
             
