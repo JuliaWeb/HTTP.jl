@@ -31,7 +31,7 @@ function sniff end
 function sniff(body::IO)
     alreadymarked = ismarked(body)
     mark(body)
-    data = read(body, MAXSNIFFLENGTH)
+    data = codeunits(read(body, MAXSNIFFLENGTH))
     reset(body)
     alreadymarked && mark(body)
     return sniff(data)
