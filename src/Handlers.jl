@@ -1,24 +1,23 @@
 module Handlers
 
-export handle, Handler, HandlerFunction, Router, register!
+export handle, gethandler, Handler, HandlerFunction, Router, register!
 
 import ..Nothing, ..Cvoid, ..Val
 
 using HTTP
 
 """
-handle(handler::Handler, request, response) => Response
+handle(handler::Handler, request) => Response
 
 Function used to dispatch to a Handler. Called from the core HTTP.serve method with the
 initial Handler passed to `HTTP.serve(handler=handler)`.
 """
 function handle end
-handle(handler, req, resp, vals...) = handle(handler, req, resp)
 
 """
 Abstract type representing an object that knows how to "handle" a server request.
 
-Types of handlers include `HandlerFunction` (a julia function of the form `f(request, response`) and
+Types of handlers include `HandlerFunction` (a julia function of the form `f(request)` and
 `Router` (which pattern matches request url paths to other specific `Handler` types).
 """
 abstract type Handler end
@@ -27,17 +26,16 @@ abstract type Handler end
 HandlerFunction(f::Function)
 
 A Function-wrapper type that is a subtype of `Handler`. Takes a single Function as an argument.
-The provided argument should be of the form `f(request, response) => Response`, i.e. it accepts
-both a `Request` and `Response` and returns a `Response`.
+The provided argument should be of the form `f(request) => Response`, i.e. it accepts a `Request` returns a `Response`.
 """
 struct HandlerFunction{F <: Function} <: Handler
-    func::F # func(req, resp)
+    func::F # func(req)
 end
 
-handle(h::HandlerFunction, req, resp) = h.func(req, resp)
+handle(h::HandlerFunction, req) = h.func(req)
 
 "A default 404 Handler"
-const FourOhFour = HandlerFunction((req, resp) -> HTTP.Response(404))
+const FourOhFour = HandlerFunction(req -> HTTP.Response(404))
 
 """
 Router(h::Handler)
@@ -123,7 +121,7 @@ function register!(r::Router, method::DataType, scheme, host, path, handler)
     return
 end
 
-function handle(r::Router, req, resp)
+function gethandler(r::Router, req)
     # get the url/path of the request
     m = Val(Symbol(req.method))
     # get scheme, host, split path into strings and get Vals
@@ -134,9 +132,13 @@ function handle(r::Router, req, resp)
     segments = split(p, '/'; keep=false)
     # dispatch to the most specific handler, given the path
     vals = (get(r.segments, s, EMPTYVAL) for s in segments)
-    handler = r.func(m, s, h, vals...)
-    # pass the request & response to the handler and return
-    return handle(handler, req, resp, vals...)
+    return r.func(m, s, h, vals...)
+end
+
+function handle(r::Router, req)
+    handler = gethandler(r,req)
+    # pass the request to the handler and return
+    return handle(handler, req)
 end
 
 end # module

@@ -163,7 +163,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
            ratelimits=Dict{IPAddr, RateLimit}(),
            ratelimit=server.options.ratelimit) do request::HTTP.Request
 
-        handle(server.handler, request, request.response)
+        handle(server.handler, request)
     end
 
     return
@@ -455,7 +455,7 @@ function handle_stream(f::Function, http::Stream)
         if applicable(f, http)
             f(http)
         else
-            handle_request(f, http)
+            HTTP.handle(f, http)
         end
     catch e
         if isopen(http) && !iswritable(http)
@@ -478,7 +478,7 @@ end
 Execute Request processing function `f(::HTTP.Request) -> HTTP.Response`.
 """
 
-function handle_request(f::Function, http::Stream)
+function HTTP.handle(f::Function, http::Stream)
     request::HTTP.Request = http.message
     request.body = read(http)
     request.response::HTTP.Response = f(request)
@@ -487,5 +487,6 @@ function handle_request(f::Function, http::Stream)
     return
 end
 
+HTTP.handle(hf::HandlerFunction, http::Stream) = HTTP.handle(hf.func,http)
 
 end # module

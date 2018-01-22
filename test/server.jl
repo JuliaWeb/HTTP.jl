@@ -49,9 +49,8 @@ sleep(2)
 
 # echo response
 serverlog = HTTP.FIFOBuffer()
-server = HTTP.Servers.Server((req, rep) -> begin
-    rep.body = req.body
-    return rep
+server = HTTP.Servers.Server((req) -> begin
+    return HTTP.Response(200,req.body)
 end, serverlog)
 
 server.options.ratelimit=0
@@ -173,7 +172,7 @@ put!(server.in, HTTP.Servers.KILL)
 
 # keep-alive vs. close: issue #81
 port += 1
-tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req, res) -> (res.body = "Hello\n"; res), STDOUT), ip"127.0.0.1", port)
+tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req) -> (HTTP.Response(200,"Hello\n")), STDOUT), ip"127.0.0.1", port)
 sleep(2.0)
 r = HTTP.request("GET", "http://127.0.0.1:$port/", ["Host"=>"127.0.0.1:$port"]; http_version=v"1.0")
 @test r.status == 200
