@@ -159,18 +159,22 @@ for sch in ("http", "https")
 
     # redirects
     println("client redirect following")
-    r = HTTP.get("$sch://httpbin.org/redirect/1")
-    @test status(r) == 200
-    #@test length(HTTP.history(r)) == 1
-    @test status(HTTP.get("$sch://httpbin.org/redirect/6")) == 302
-    @test status(HTTP.get("$sch://httpbin.org/relative-redirect/1")) == 200
-    @test status(HTTP.get("$sch://httpbin.org/absolute-redirect/1")) == 200
-    @test status(HTTP.get("$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fexample.com")) == 200
+    for meth in ("GET","HEAD")
+        @test status(HTTP.request(meth, "$sch://httpbin.org/redirect/1")) ==200
+        @test status(HTTP.request(meth, "$sch://httpbin.org/redirect/1", redirect=false)) == 302
+        @test status(HTTP.request(meth, "$sch://httpbin.org/redirect/6")) == 302 #over max number of redirects
+        @test status(HTTP.request(meth, "$sch://httpbin.org/relative-redirect/1")) == 200
+        @test status(HTTP.request(meth, "$sch://httpbin.org/absolute-redirect/1")) == 200
+        @test status(HTTP.request(meth, "$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fexample.com")) == 200
+    end
+
 
     @test status(HTTP.post("$sch://httpbin.org/post"; body="√")) == 200
     println("client basic auth")
     @test status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd"; basic_authorization=true)) == 200
     @test status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd"; basic_authorization=true)) == 200
+
+
 
     # custom client & other high-level entries
     println("high-level client request methods")
