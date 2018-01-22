@@ -19,7 +19,7 @@ export RedirectLayer
 
 function request(::Type{RedirectLayer{Next}},
                  method::String, url::URI, headers, body;
-                 redirect_limit=3, forwardheaders=false, kw...) where Next
+                 redirect_limit=method=="HEAD" ? 0 : 3, forwardheaders=false, kw...) where Next
     count = 0
     while true
     
