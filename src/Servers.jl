@@ -163,7 +163,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
            ratelimits=Dict{IPAddr, RateLimit}(),
            ratelimit=server.options.ratelimit) do request::HTTP.Request
 
-        handle(server.handler, request, request.response)
+        handle(server.handler, request)
     end
 
     return
