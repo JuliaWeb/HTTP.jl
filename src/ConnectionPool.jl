@@ -518,7 +518,7 @@ const nosslconfig = SSLConfig()
 default_sslconfig = nothing
 noverify_sslconfig = nothing
 
-function global_ssl_config(require_ssl_verification::Bool)::SSLConfig
+function global_sslconfig(require_ssl_verification::Bool)::SSLConfig
     global default_sslconfig
     global noverify_sslconfig
     if default_sslconfig == nothing
@@ -536,7 +536,7 @@ function getconnection(::Type{SSLContext},
                        kw...)::SSLContext
 
     if sslconfig === nosslconfig
-        sslconfig = global_ssl_config(require_ssl_verification)
+        sslconfig = global_sslconfig(require_ssl_verification)
     end
 
     port = isempty(port) ? "443" : port
