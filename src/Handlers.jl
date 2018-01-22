@@ -1,6 +1,6 @@
 module Handlers
 
-export handle, Handler, HandlerFunction, Router, register!
+export handle, gethandler, Handler, HandlerFunction, Router, register!
 
 import ..Nothing, ..Cvoid, ..Val
 
@@ -122,7 +122,7 @@ function register!(r::Router, method::DataType, scheme, host, path, handler)
     return
 end
 
-function handle(r::Router, req)
+function gethandler(r::Router, req)
     # get the url/path of the request
     m = Val(Symbol(req.method))
     # get scheme, host, split path into strings and get Vals
@@ -133,8 +133,12 @@ function handle(r::Router, req)
     segments = split(p, '/'; keep=false)
     # dispatch to the most specific handler, given the path
     vals = (get(r.segments, s, EMPTYVAL) for s in segments)
-    handler = r.func(m, s, h, vals...)
-    # pass the request & response to the handler and return
+    return r.func(m, s, h, vals...).func
+end
+
+function handle(r::Router, req)
+    handler = gethandler(r,req)
+    # pass the request to the handler and return
     return handle(handler, req, vals...)
 end
 
