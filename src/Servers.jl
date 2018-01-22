@@ -455,7 +455,7 @@ function handle_stream(f::Function, http::Stream)
         if applicable(f, http)
             f(http)
         else
-            HTTP.handle(f, http)
+            handle_request(f, http)
         end
     catch e
         if isopen(http) && !iswritable(http)
@@ -478,7 +478,7 @@ end
 Execute Request processing function `f(::HTTP.Request) -> HTTP.Response`.
 """
 
-function HTTP.handle(f::Function, http::Stream)
+function handle_request(f::Function, http::Stream)
     request::HTTP.Request = http.message
     request.body = read(http)
     request.response::HTTP.Response = f(request)
@@ -487,6 +487,5 @@ function HTTP.handle(f::Function, http::Stream)
     return
 end
 
-HTTP.handle(hf::HandlerFunction, http::Stream) = HTTP.handle(hf.func,http)
 
 end # module

@@ -141,4 +141,6 @@ function handle(r::Router, req)
     return handle(handler, req)
 end
 
+handle(hf::HandlerFunction, http::HTTP.Stream) = HTTP.handle_request(hf.func,http)
+
 end # module
