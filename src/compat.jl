@@ -52,5 +52,6 @@ if !isdefined(Base, :codeunits)
     const codeunits = Vector{UInt8}
     const CodeUnits = Vector{UInt8}
 else
+    const CodeUnits = Base.CodeUnits
     codeunits(x::Vector{UInt8}) = codeunits(String(x))
 end
