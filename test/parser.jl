@@ -1538,7 +1538,7 @@ const responses = Message[
       reqstr = "GET ../../../../etc/passwd HTTP/1.1\r\n" *
                "Host: test\r\n\r\n"
 
-      @test_throws ParsingError Request(reqstr)
+      @test_throws ParsingError HTTP.URI(Request(reqstr).target)
 
       reqstr = "GET  HTTP/1.1\r\n" *
                "Host: test\r\n\r\n"
