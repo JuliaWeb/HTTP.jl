@@ -47,3 +47,10 @@ end
 
 # https://github.com/JuliaLang/julia/pull/25535
 Base.String(x::SubArray{UInt8,1}) = String(Vector{UInt8}(x))
+
+if !isdefined(Base, :codeunits)
+    const codeunits = Vector{UInt8}
+    const CodeUnits = Vector{UInt8}
+else
+    codeunits(x::Vector{UInt8}) = codeunits(String(x))
+end

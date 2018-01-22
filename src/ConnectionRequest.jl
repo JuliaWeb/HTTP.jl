@@ -5,7 +5,7 @@ using ..URIs
 using ..Messages
 using ..IOExtras
 using ..ConnectionPool
-using MbedTLS.SSLContext
+using MbedTLS: SSLContext
 import ..@debug, ..DEBUG_LEVEL
 
 

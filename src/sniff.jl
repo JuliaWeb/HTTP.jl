@@ -2,8 +2,8 @@
 const ZIP = UInt8[0x50, 0x4b, 0x03, 0x04]
 const GZIP = UInt8[0x1f, 0x8b, 0x08]
 
-iscompressed(bytes::Vector{UInt8}) = length(bytes) > 3 && (all(bytes[1:4] .== ZIP) || all(bytes[1:3] .== GZIP))
-iscompressed(str::String) = iscompressed(Vector{UInt8}(str))
+iscompressed(bytes::CodeUnits) = length(bytes) > 3 && (all(bytes[1:4] .== ZIP) || all(bytes[1:3] .== GZIP))
+iscompressed(str::String) = iscompressed(codeunits(str))
 iscompressed(f::FIFOBuffer) = iscompressed(String(f))
 iscompressed(d::Dict) = false
 iscompressed(d) = false
@@ -19,7 +19,7 @@ const MAXSNIFFLENGTH = 512
 const WHITESPACE = Set{UInt8}([UInt8('\t'),UInt8('\n'),UInt8('\u0c'),UInt8('\r'),UInt8(' ')])
 
 """
-`HTTP.sniff(content::Union{Vector{UInt8}, String, IO})` => `String` (mimetype)
+`HTTP.sniff(content::Union{CodeUnits, String, IO})` => `String` (mimetype)
 
 `HTTP.sniff` will look at the first 512 bytes of `content` to try and determine a valid mimetype.
 If a mimetype can't be determined appropriately, `"application/octet-stream"` is returned.
@@ -37,10 +37,10 @@ function sniff(body::IO)
     return sniff(data)
 end
 
-sniff(str::String) = sniff(Vector{UInt8}(str)[1:min(length(Vector{UInt8}(str)), MAXSNIFFLENGTH)])
+sniff(str::String) = sniff(codeunits(str)[1:min(length(codeunits(str)), MAXSNIFFLENGTH)])
 sniff(f::FIFOBuffer) = sniff(String(f))
 
-function sniff(data::AbstractVector{UInt8})
+function sniff(data::CodeUnits)
     firstnonws = 1
     while firstnonws < length(data) && data[firstnonws] in WHITESPACE
         firstnonws += 1
@@ -53,12 +53,12 @@ function sniff(data::AbstractVector{UInt8})
 end
 
 struct Exact
-    sig::Vector{UInt8}
+    sig::CodeUnits
     contenttype::String
 end
 contenttype(e::Exact) = e.contenttype
 
-function ismatch(e::Exact, data::AbstractVector{UInt8}, firstnonws)
+function ismatch(e::Exact, data::CodeUnits, firstnonws)
     length(data) < length(e.sig) && return false
     for i = 1:length(e.sig)
         e.sig[i] == data[i] || return false
@@ -67,16 +67,16 @@ function ismatch(e::Exact, data::AbstractVector{UInt8}, firstnonws)
 end
 
 struct Masked
-    mask::Vector{UInt8}
-    pat::Vector{UInt8}
+    mask::CodeUnits
+    pat::CodeUnits
     skipws::Bool
     contenttype::String
 end
-Masked(mask::Vector{UInt8}, pat::Vector{UInt8}, contenttype::String) = Masked(mask, pat, false, contenttype)
+Masked(mask::CodeUnits, pat::CodeUnits, contenttype::String) = Masked(mask, pat, false, contenttype)
 
 contenttype(m::Masked) = m.contenttype
 
-function ismatch(m::Masked, data::AbstractVector{UInt8}, firstnonws)
+function ismatch(m::Masked, data::CodeUnits, firstnonws)
     # pattern matching algorithm section 6
     # https://mimesniff.spec.whatwg.org/#pattern-matching-algorithm
     sk = (m.skipws ? firstnonws : 1) - 1
@@ -89,13 +89,13 @@ function ismatch(m::Masked, data::AbstractVector{UInt8}, firstnonws)
 end
 
 struct HTMLSig
-    html::Vector{UInt8}
-    HTMLSig(str::String) = new(Vector{UInt8}(str))
+    html::CodeUnits
+    HTMLSig(str::String) = new(CodeUnits(str))
 end
 
 contenttype(h::HTMLSig) = "text/html; charset=utf-8"
 
-function ismatch(h::HTMLSig, data::AbstractVector{UInt8}, firstnonws)
+function ismatch(h::HTMLSig, data::CodeUnits, firstnonws)
     length(data) < length(h.html)+1 && return false
     for (i, b) in enumerate(h.html)
         db = data[i+firstnonws-1]
@@ -109,29 +109,29 @@ end
 struct MP4Sig end
 contenttype(::Type{MP4Sig}) = "video/mp4"
 
-function byteequal(data1, data2, len)
-    for i = 1:len
-        data1[i] == data2[i] || return false
+function byteequal(data1, ind, data2)
+    for i = 1:length(data2)
+        @inbounds data1[ind+i-1] == data2[i] || return false
     end
     return true
 end
 
-const mp4ftype = Vector{UInt8}("ftyp")
-const mp4 = Vector{UInt8}("mp4")
+const mp4ftype = b"ftyp"
+const mp4 = b"mp4"
 
 # Byte swap int
 bigend(b) = UInt32(b[4]) | UInt32(b[3])<<8 | UInt32(b[2])<<16 | UInt32(b[1])<<24
 
-function ismatch(::Type{MP4Sig}, data::AbstractVector{UInt8}, firstnonws)
+function ismatch(::Type{MP4Sig}, data::CodeUnits, firstnonws)
     # https://mimesniff.spec.whatwg.org/#signature-for-mp4
     # c.f. section 6.2.1
     length(data) < 12 && return false
     boxsize = Int(bigend(data))
     (boxsize % 4 != 0 || length(data) < boxsize) && return false
-    byteequal(view(data, 5:9), mp4ftype, 4) || return false
+    byteequal(data, 5, mp4ftype) || return false
     for st = 9:4:boxsize+1
         st == 13 && continue
-        byteequal(view(data, st:st+3), mp4, 3) && return true
+        byteequal(data, st, mp4) && return true
     end
     return false
 end
@@ -139,7 +139,7 @@ end
 struct TextSig end
 contenttype(::Type{TextSig}) = "text/plain; charset=utf-8"
 
-function ismatch(::Type{TextSig}, data::AbstractVector{UInt8}, firstnonws)
+function ismatch(::Type{TextSig}, data::CodeUnits, firstnonws)
     # c.f. section 5, step 4.
     for i = firstnonws:min(length(data),MAXSNIFFLENGTH)
         b = data[i]
@@ -153,7 +153,7 @@ end
 struct JSONSig end
 contenttype(::Type{JSONSig}) = "application/json; charset=utf-8"
 
-ismatch(::Type{JSONSig}, data::AbstractVector{UInt8}, firstnonws) = isjson(data)[1]
+ismatch(::Type{JSONSig}, data::CodeUnits, firstnonws) = isjson(data)[1]
 
 const DISPLAYABLE_TYPES = ["text/html; charset=utf-8",
                     "text/plain; charset=utf-8",
@@ -181,49 +181,49 @@ const SNIFF_SIGNATURES = [
     HTMLSig("<BR"),
     HTMLSig("<P"),
     HTMLSig("<!--"),
-    Masked([0xff,0xff,0xff,0xff,0xff], Vector{UInt8}("<?xml"), true, "text/xml; charset=utf-8"),
-    Exact(Vector{UInt8}("%PDF-"), "application/pdf"),
-    Exact(Vector{UInt8}("%!PS-Adobe-"), "application/postscript"),
+    Masked(codeunits([0xff,0xff,0xff,0xff,0xff]), b"<?xml", true, "text/xml; charset=utf-8"),
+    Exact(b"%PDF-", "application/pdf"),
+    Exact(b"%!PS-Adobe-", "application/postscript"),
 
     # UTF BOMs.
-    Masked([0xFF,0xFF,0x00,0x00], [0xFE,0xFF,0x00,0x00], "text/plain; charset=utf-16be"),
-    Masked([0xFF,0xFF,0x00,0x00], [0xFF,0xFE,0x00,0x00], "text/plain; charset=utf-16le"),
-    Masked([0xFF,0xFF,0xFF,0x00], [0xEF,0xBB,0xBF,0x00], "text/plain; charset=utf-8"),
+    Masked(codeunits([0xFF,0xFF,0x00,0x00]), codeunits([0xFE,0xFF,0x00,0x00]), "text/plain; charset=utf-16be"),
+    Masked(codeunits([0xFF,0xFF,0x00,0x00]), codeunits([0xFF,0xFE,0x00,0x00]), "text/plain; charset=utf-16le"),
+    Masked(codeunits([0xFF,0xFF,0xFF,0x00]), codeunits([0xEF,0xBB,0xBF,0x00]), "text/plain; charset=utf-8"),
 
-    Exact(Vector{UInt8}("GIF87a"), "image/gif"),
-    Exact(Vector{UInt8}("GIF89a"), "image/gif"),
-    Exact([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A], "image/png"),
-    Exact([0xFF,0xD8,0xFF], "image/jpeg"),
-    Exact(Vector{UInt8}("BM"), "image/bmp"),
-    Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF],
-           UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'W','E','B','P','V','P'],
+    Exact(b"GIF87a", "image/gif"),
+    Exact(b"GIF89a", "image/gif"),
+    Exact(codeunits([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]), "image/png"),
+    Exact(codeunits([0xFF,0xD8,0xFF]), "image/jpeg"),
+    Exact(b"BM", "image/bmp"),
+    Masked(codeunits([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF]),
+           codeunits(UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'W','E','B','P','V','P']),
            "image/webp"),
-    Exact([0x00,0x00,0x01,0x00], "image/vnd.microsoft.icon"),
-    Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
-           UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'W','A','V','E'],
+    Exact(codeunits([0x00,0x00,0x01,0x00]), "image/vnd.microsoft.icon"),
+    Masked(codeunits([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF]),
+           codeunits(UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'W','A','V','E']),
            "audio/wave"),
-    Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
-           UInt8['F','O','R','M',0x00,0x00,0x00,0x00,'A','I','F','F'],
+    Masked(codeunits([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF]),
+           codeunits(UInt8['F','O','R','M',0x00,0x00,0x00,0x00,'A','I','F','F']),
            "audio/aiff"),
-    Masked([0xFF,0xFF,0xFF,0xFF],
-           Vector{UInt8}(".snd"),
+    Masked(codeunits([0xFF,0xFF,0xFF,0xFF]),
+           b".snd",
            "audio/basic"),
-    Masked(UInt8['O','g','g','S',0x00],
-           UInt8[0x4F,0x67,0x67,0x53,0x00],
+    Masked(codeunits(UInt8['O','g','g','S',0x00]),
+           codeunits(UInt8[0x4F,0x67,0x67,0x53,0x00]),
            "application/ogg"),
-    Masked([0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF],
-           UInt8['M','T','h','d',0x00,0x00,0x00,0x06],
+    Masked(codeunits([0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF]),
+           codeunits(UInt8['M','T','h','d',0x00,0x00,0x00,0x06]),
            "audio/midi"),
-    Masked([0xFF,0xFF,0xFF],
-           Vector{UInt8}("ID3"),
+    Masked(codeunits([0xFF,0xFF,0xFF]),
+           b"ID3",
            "audio/mpeg"),
-    Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
-           UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'A','V','I',' '],
+    Masked(codeunits([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF]),
+           codeunits(UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'A','V','I',' ']),
         "video/avi"),
-    Exact([0x1A,0x45,0xDF,0xA3], "video/webm"),
-    Exact([0x52,0x61,0x72,0x20,0x1A,0x07,0x00], "application/x-rar-compressed"),
-    Exact([0x50,0x4B,0x03,0x04], "application/zip"),
-    Exact([0x1F,0x8B,0x08], "application/x-gzip"),
+    Exact(codeunits([0x1A,0x45,0xDF,0xA3]), "video/webm"),
+    Exact(codeunits([0x52,0x61,0x72,0x20,0x1A,0x07,0x00]), "application/x-rar-compressed"),
+    Exact(codeunits([0x50,0x4B,0x03,0x04]), "application/zip"),
+    Exact(codeunits([0x1F,0x8B,0x08]), "application/x-gzip"),
     MP4Sig,
     JSONSig,
     TextSig, # should be last
