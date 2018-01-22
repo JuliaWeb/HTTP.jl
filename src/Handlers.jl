@@ -13,7 +13,6 @@ Function used to dispatch to a Handler. Called from the core HTTP.serve method w
 initial Handler passed to `HTTP.serve(handler=handler)`.
 """
 function handle end
-handle(handler, req, vals...) = handle(handler, req)
 
 """
 Abstract type representing an object that knows how to "handle" a server request.
@@ -133,13 +132,13 @@ function gethandler(r::Router, req)
     segments = split(p, '/'; keep=false)
     # dispatch to the most specific handler, given the path
     vals = (get(r.segments, s, EMPTYVAL) for s in segments)
-    return r.func(m, s, h, vals...).func
+    return r.func(m, s, h, vals...)
 end
 
 function handle(r::Router, req)
     handler = gethandler(r,req)
     # pass the request to the handler and return
-    return handle(handler, req, vals...)
+    return handle(handler, req)
 end
 
 end # module

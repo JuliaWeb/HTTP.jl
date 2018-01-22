@@ -487,5 +487,14 @@ function HTTP.handle(f::Function, http::Stream)
     return
 end
 
+function HTTP.handle(hf::HandlerFunction, http::Stream)
+    request::HTTP.Request = http.message
+    request.body = read(http)
+    request.response::HTTP.Response = hf.func(request)
+    startwrite(http)
+    write(http, request.response.body)
+    return
+end
+
 
 end # module
