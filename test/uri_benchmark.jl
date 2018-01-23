@@ -27,7 +27,7 @@ function go(count::Int)
                                                                 t_start = time()
     @time for rep in 1:count
         for url in urls
-            uri = HTTP.URIs.regex_parse(HTTP.URI, url)
+            uri = HTTP.URIs.parse_uri_reference(url)
         end
     end
                                                                  t_done = time()

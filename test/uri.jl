@@ -95,11 +95,11 @@ end
 
     # Error paths
     # Non-ASCII characters
-    @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, "http://🍕.com")
+    @test_throws HTTP.URIs.URLParsingError HTTP.URIs.parse_uri("http://🍕.com", strict=true)
     # Unexpected start of URL
-    @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, ".google.com")
+    @test_throws HTTP.URIs.URLParsingError HTTP.URIs.parse_uri(".google.com", strict=true)
     # Unexpected character after scheme
-    @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, "ht!tp://google.com")
+    @test_throws HTTP.URIs.URLParsingError HTTP.URIs.parse_uri("ht!tp://google.com", strict=true)
 
     #  Issue #27
     @test HTTP.escapeuri("t est\n") == "t%20est%0A"
@@ -453,7 +453,7 @@ end
                     @test port == u.expecteduri.port
                 end
             elseif u.shouldthrow
-                @test_throws HTTP.URIs.URLParsingError parse(HTTP.URI, u.url)
+                @test_throws HTTP.URIs.URLParsingError HTTP.URIs.parse_uri_reference(u.url, strict=true)
             else
                 url = parse(HTTP.URI, u.url)
                 @test u.expecteduri == url
