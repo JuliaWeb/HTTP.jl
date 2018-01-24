@@ -612,7 +612,6 @@ end
 
 
 const STATUS_MESSAGES = (()->begin
-    @assert ccall(:jl_generating_output, Cint, ()) == 1
     v = fill("Unknown Code", 530)
     v[100] = "Continue"
     v[101] = "Switching Protocols"
