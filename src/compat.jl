@@ -55,3 +55,7 @@ else
     const CodeUnits = Base.CodeUnits
     Base.codeunits(x::Vector{UInt8}) = codeunits(String(x))
 end
+
+if !isdefined(Base, :bytesavailable)
+    const bytesavailable = nb_available
+end
