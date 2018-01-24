@@ -55,8 +55,8 @@ function sign_aws4!(method::String,
 
 
     # ISO8601 date/time strings for time of request...
-    date = Dates.format(t,"yyyymmdd")
-    datetime = Dates.format(t,"yyyymmddTHHMMSSZ")
+    date = Dates.format(t, dateformat"yyyymmdd")
+    datetime = Dates.format(t, dateformat"yyyymmddTHHMMSS\Z")
 
     # Authentication scope...
     scope = [date, aws_region, aws_service, "aws4_request"]
