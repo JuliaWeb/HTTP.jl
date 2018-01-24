@@ -274,7 +274,9 @@ function IOExtras.closeread(http::Stream{Response})
     end
 
     # Read trailers...
-    if bodycomplete(http.parser) && !messagecomplete(http.parser)
+    if http.readchunked &&
+       bodycomplete(http.parser) &&
+      !messagecomplete(http.parser)
         readtrailers(http.stream, http.parser, http.message)
     end
 
