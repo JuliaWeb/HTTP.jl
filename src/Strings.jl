@@ -2,6 +2,8 @@ module Strings
 
 export escapehtml, tocameldash!, iso8859_1_to_utf8
 
+using ..IOExtras
+
 """
 escapeHTML(i::String)
 
@@ -27,7 +29,7 @@ Ensure the first character and characters that follow a '-' are uppercase.
 
 function tocameldash!(s::String)
     toUpper = UInt8('A') - UInt8('a')
-    bytes = Vector{UInt8}(s)
+    bytes = IOExtras.bytes(s)
     upper = true
     for i = 1:length(bytes)
         @inbounds b = bytes[i]

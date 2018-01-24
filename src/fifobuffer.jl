@@ -1,5 +1,7 @@
 module FIFOBuffers
 
+import ..bytesavailable
+using ..IOExtras
 import Base.==
 
 export FIFOBuffer
@@ -74,7 +76,7 @@ FIFOBuffer() = FIFOBuffer(DEFAULT_MAX)
 
 const EMPTYBODY = FIFOBuffer()
 
-FIFOBuffer(str::String) = FIFOBuffer(Vector{UInt8}(str))
+FIFOBuffer(str::String) = FIFOBuffer(IOExtras.bytes(str))
 function FIFOBuffer(bytes::Vector{UInt8})
     len = length(bytes)
     return FIFOBuffer(len, len, len, 1, 1, bytes, Condition(), current_task(), true)
@@ -84,7 +86,7 @@ FIFOBuffer(io::IO) = FIFOBuffer(readavailable(io))
 
 ==(a::FIFOBuffer, b::FIFOBuffer) = String(a) == String(b)
 Base.length(f::FIFOBuffer) = f.nb
-Base.nb_available(f::FIFOBuffer) = f.nb
+bytesavailable(f::FIFOBuffer) = f.nb
 Base.wait(f::FIFOBuffer) = wait(f.cond)
 Base.read(f::FIFOBuffer) = readavailable(f)
 Base.flush(f::FIFOBuffer) = nothing
@@ -289,6 +291,6 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8}, i, j)
 end
 
 Base.write(f::FIFOBuffer, bytes::Vector{UInt8}) = write(f, bytes, 1, length(bytes))
-Base.write(f::FIFOBuffer, str::String) = write(f, Vector{UInt8}(str))
+Base.write(f::FIFOBuffer, str::String) = write(f, IOExtras.bytes(str))
 
 end # module

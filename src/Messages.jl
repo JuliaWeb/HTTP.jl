@@ -75,6 +75,7 @@ using ..@warn
 using ..IOExtras
 using ..Parsers
 import ..Parsers: headerscomplete, reset!
+import ..bytes
 
 const unknown_length = typemax(Int)
 
@@ -114,7 +115,7 @@ mutable struct Response <: Message
         r.version = v"1.1"
         r.status = status
         r.headers = mkheaders(headers)
-        r.body = body
+        r.body = bytes(body)
         if request != nothing
             r.request = request
         end
@@ -123,7 +124,7 @@ mutable struct Response <: Message
 end
 
 Response(s::Int, body::AbstractVector{UInt8}) = Response(s; body=body)
-Response(s::Int, body::AbstractString) = Response(s, Vector{UInt8}(body))
+Response(s::Int, body::AbstractString) = Response(s, bytes(body))
 
 Response(bytes) = parse(Response, bytes)
 
@@ -184,7 +185,7 @@ function Request(method::String, target, headers=[], body=UInt8[];
                 target == "" ? "/" : target,
                 version,
                 mkheaders(headers),
-                body,
+                bytes(body),
                 Response(),
                 parent)
     r.response.request = r
@@ -273,7 +274,7 @@ hasheader(m, k::String, v::String) = lowercase(header(m, k)) == lowercase(v)
 Set header `value` for `key` (case-insensitive).
 """
 setheader(m::Message, v) = setheader(m.headers, v)
-setheader(h::Headers, v::Pair) = setbyfirst(h, Pair{String,String}(v), lceq)
+setheader(h::Headers, v::Pair) = setbyfirst(h, Pair{String,String}(String(v.first), String(v.second)), lceq)
 
 
 """

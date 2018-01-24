@@ -6,7 +6,7 @@ import ..HTTP
 using ..IOExtras
 using ..Streams
 import ..ConnectionPool
-using HTTP.header
+using HTTP: header
 import ..@debug, ..DEBUG_LEVEL, ..@require, ..precondition_error
 
 
@@ -179,7 +179,7 @@ wslength(l) = l < 0x7E ? (UInt8(l), UInt8[]) :
 
 wswrite(ws::WebSocket, x) = wswrite(ws, WS_FINAL | ws.frame_type, x)
 
-wswrite(ws::WebSocket, opcode::UInt8, x) = wswrite(ws, opcode, Vector{UInt8}(x))
+wswrite(ws::WebSocket, opcode::UInt8, x) = wswrite(ws, opcode, IOExtras.bytes(x))
 
 function wswrite(ws::WebSocket, opcode::UInt8, bytes::Vector{UInt8})
 

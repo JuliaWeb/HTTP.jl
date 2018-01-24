@@ -2,10 +2,12 @@ module MessageRequest
 
 export body_is_a_stream, body_was_streamed
 
+import ..bytesavailable
 import ..Layer, ..request
+using ..IOExtras
 using ..URIs
 using ..Messages
-import ..Messages.bodylength
+import ..Messages: bodylength
 using ..Headers
 using ..Form
 
@@ -51,17 +53,17 @@ bodylength(body::AbstractString) = sizeof(body)
 bodylength(body::Form) = length(body)
 bodylength(body::Vector{T}) where T <: AbstractString = sum(sizeof, body)
 bodylength(body::Vector{T}) where T <: AbstractArray{UInt8,1} = sum(length, body)
-bodylength(body::IOBuffer) = nb_available(body)
-bodylength(body::Vector{IOBuffer}) = sum(nb_available, body)
+bodylength(body::IOBuffer) = bytesavailable(body)
+bodylength(body::Vector{IOBuffer}) = sum(bytesavailable, body)
 
 
 const body_is_a_stream = UInt8[]
-const body_was_streamed = Vector{UInt8}("[Message Body was streamed]")
+const body_was_streamed = bytes("[Message Body was streamed]")
 bodybytes(body) = body_is_a_stream
 bodybytes(body::Vector{UInt8}) = body
 bodybytes(body::IOBuffer) = read(body)
 bodybytes(body::AbstractVector{UInt8}) = Vector{UInt8}(body)
-bodybytes(body::AbstractString) = Vector{UInt8}(body)
+bodybytes(body::AbstractString) = bytes(body)
 bodybytes(body::Vector) = length(body) == 1 ? bodybytes(body[1]) :
                                               body_is_a_stream
 

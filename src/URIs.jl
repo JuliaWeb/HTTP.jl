@@ -6,10 +6,12 @@ export URI,
 
 import Base.==
 
+using ..IOExtras
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
 import ..compat_search
-
+import ..isnumeric
+import ..compat_parse
 
 include("urlparser.jl")
 
@@ -307,9 +309,9 @@ end
 @inline issafe(c::Char) = c == '-' ||
                           c == '.' ||
                           c == '_' ||
-                          (isascii(c) && isalnum(c))
+                          (isascii(c) && (isalpha(c) || isnumeric(c)))
 
-utf8_chars(str::AbstractString) = (Char(c) for c in Vector{UInt8}(str))
+utf8_chars(str::AbstractString) = (Char(c) for c in IOExtras.bytes(str))
 
 "percent-encode a string, dict, or pair for a uri"
 function escapeuri end
@@ -339,7 +341,7 @@ function unescapeuri(str)
         if c == '%'
             c1, i = next(str, i)
             c, i = next(str, i)
-            write(out, Base.parse(UInt8, string(c1, c), 16))
+            write(out, compat_parse(UInt8, string(c1, c), base=16))
         else
             write(out, c)
         end

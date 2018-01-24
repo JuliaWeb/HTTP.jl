@@ -453,7 +453,7 @@ end
                     @test port == u.expecteduri.port
                 end
             elseif u.shouldthrow
-                @test_throws HTTP.URIs.URLParsingError HTTP.URIs.parse_uri_reference(u.url, strict=true)
+                @test_throws Union{AssertionError, HTTP.URIs.URLParsingError} HTTP.URIs.parse_uri_reference(u.url, strict=true)
             else
                 url = parse(HTTP.URI, u.url)
                 @test u.expecteduri == url

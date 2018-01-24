@@ -2,7 +2,7 @@ module CanonicalizeRequest
 
 import ..Layer, ..request
 using ..Messages
-using ..Strings.tocameldash!
+using ..Strings: tocameldash!
 
 
 """

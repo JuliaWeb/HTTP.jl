@@ -3,8 +3,8 @@ using HTTP.Test
 using HTTP.IOExtras
 using HTTP.Parsers
 using HTTP.Messages
-using HTTP.MessageRequest.bodylength
-using HTTP.Parsers.escapelines
+using HTTP.MessageRequest: bodylength
+using HTTP.Parsers: escapelines
 
 
 mutable struct FunctionIO <: IO
@@ -17,7 +17,7 @@ FunctionIO(f::Function) = FunctionIO(f, IOBuffer(), false)
 call(fio::FunctionIO) = !fio.done &&
                         (fio.buf = IOBuffer(fio.f()) ; fio.done = true)
 Base.eof(fio::FunctionIO) = (call(fio); eof(fio.buf))
-Base.nb_available(fio::FunctionIO) = (call(fio); nb_available(fio.buf))
+HTTP.bytesavailable(fio::FunctionIO) = (call(fio); HTTP.bytesavailable(fio.buf))
 Base.readavailable(fio::FunctionIO) = (call(fio); readavailable(fio.buf))
 Base.read(fio::FunctionIO, a...) = (call(fio); read(fio.buf, a...))
 
@@ -35,7 +35,7 @@ function reset(lb::Loopback)
 end
 
 Base.eof(lb::Loopback) = eof(lb.io)
-Base.nb_available(lb::Loopback) = nb_available(lb.io)
+HTTP.bytesavailable(lb::Loopback) = HTTP.bytesavailable(lb.io)
 Base.readavailable(lb::Loopback) = readavailable(lb.io)
 Base.close(lb::Loopback) = (close(lb.io); close(lb.buf))
 Base.isopen(lb::Loopback) = isopen(lb.io)
@@ -175,14 +175,14 @@ lbopen(f, req, headers) =
     r = lbreq("echo", [], ["Hello", " ", "World!"]);
     @test String(r.body) == "Hello World!"
 
-    r = lbreq("echo", [], [Vector{UInt8}("Hello"),
-                         Vector{UInt8}(" "),
-                         Vector{UInt8}("World!")]);
+    r = lbreq("echo", [], [HTTP.bytes("Hello"),
+                         HTTP.bytes(" "),
+                         HTTP.bytes("World!")]);
     @test String(r.body) == "Hello World!"
 
-    r = lbreq("delay10", [], [Vector{UInt8}("Hello"),
-                              Vector{UInt8}(" "),
-                              Vector{UInt8}("World!")]);
+    r = lbreq("delay10", [], [HTTP.bytes("Hello"),
+                              HTTP.bytes(" "),
+                              HTTP.bytes("World!")]);
     @test String(r.body) == "Hello World!"
 
     HTTP.ConnectionPool.showpool(STDOUT)

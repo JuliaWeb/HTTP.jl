@@ -4,10 +4,14 @@
     using Distributed
     import Dates
 
+    compat_search(s::AbstractString, c::Char) = compat_findfirst(equalto(c), s)
     compat_search(a...) = (r = search(a...); r === nothing ? 0 : r)
     compat_findfirst(a...) = (r = findfirst(a...); r === nothing ? 0 : r)
+    compat_findprev(A::String, v, i::Integer) = compat_findprev(equalto(v), A, i)
     compat_findprev(a...) = (r = findprev(a...); r === nothing ? 0 : r)
+    compat_findnext(A::String, v, i::Integer) = compat_findnext(equalto(v), A, i)
     compat_findnext(a...) = (r = findnext(a...); r === nothing ? 0 : r)
+    compat_parse(s, T; base::Int=10) = Base.parse(s, T; base=base)
 
 else # Julia v0.6
 
@@ -19,6 +23,7 @@ else # Julia v0.6
     const compat_findfirst = findfirst
     const compat_findprev = findprev
     const compat_findnext = findnext
+    compat_parse(s, T; base::Int=10) = Base.parse(s, T, base)
 
     pairs(x) = [k => v for (k,v) in x]
 
@@ -48,14 +53,19 @@ end
 # https://github.com/JuliaLang/julia/pull/25535
 Base.String(x::SubArray{UInt8,1}) = String(Vector{UInt8}(x))
 
-if !isdefined(Base, :codeunits)
-    const codeunits = Vector{UInt8}
-    const CodeUnits = Vector{UInt8}
+@static if !isdefined(Base, :bytesavailable)
+    const bytesavailable = nb_available
 else
-    const CodeUnits = Base.CodeUnits
-    Base.codeunits(x::Vector{UInt8}) = codeunits(String(x))
+    import Base: bytesavailable
+    bytesavailable(ssl::MbedTLS.SSLContext) = nb_available(ssl)
 end
 
-if !isdefined(Base, :bytesavailable)
-    const bytesavailable = nb_available
+@static if VERSION < v"0.7.0-DEV.2005"
+    using Base.Test
+else
+    using Test
+end
+
+if !isdefined(Base, :isnumeric)
+    const isnumeric = isnumber
 end
