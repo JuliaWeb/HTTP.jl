@@ -163,7 +163,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
            ratelimits=Dict{IPAddr, RateLimit}(),
            ratelimit=server.options.ratelimit) do request::HTTP.Request
 
-        handle(server.handler, request, request.response)
+        handle(server.handler, request)
     end
 
     return
@@ -321,7 +321,7 @@ function listen(f::Function,
                 @async try
                     handle_connection(f, io; kw...)
                 catch e
-                    @error "Error:   $io" e
+                    @error "Error:   $io" e catch_stacktrace()
                 finally
                     close(io)
                     @info "Closed:  $io"
@@ -433,7 +433,7 @@ function handle_transaction(f::Function, t::Transaction;
         if isioerror(e)
             @warn e
         else
-            @error e
+            @error e catch_stacktrace()
         end
         close(t)
     end
@@ -459,7 +459,7 @@ function handle_stream(f::Function, http::Stream)
         end
     catch e
         if isopen(http) && !iswritable(http)
-            @error e
+            @error e catch_stacktrace()
             http.message.response.status = 500
             startwrite(http)
             write(http, sprint(showerror, e))

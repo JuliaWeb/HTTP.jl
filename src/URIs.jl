@@ -1,5 +1,9 @@
 module URIs
 
+export URI,
+       resource, queryparams, absuri,
+       escapeuri, unescapeuri, escapepath
+
 import Base.==
 
 import ..@require, ..precondition_error
@@ -8,10 +12,6 @@ import ..compat_search
 
 
 include("urlparser.jl")
-
-export URI,
-       resource, queryparams, absuri,
-       escapeuri, unescapeuri, escapepath
 
 
 """
@@ -63,6 +63,8 @@ end)()
 
 URI(;kw...) = merge(emptyuri; kw...)
 
+const nostring = ""
+
 function Base.merge(uri::URI; scheme::AbstractString=uri.scheme,
                               userinfo::AbstractString=uri.userinfo,
                               host::AbstractString=uri.host,
@@ -80,19 +82,7 @@ function Base.merge(uri::URI; scheme::AbstractString=uri.scheme,
     ports = string(port)
     querys = query isa String ? query : escapeuri(query)
 
-    str = uristring(scheme, userinfo, host, ports, path, querys, fragment)
-    result = parse(URI, str)
-
-    if uri === emptyuri
-        @ensure result.scheme == scheme
-        @ensure result.userinfo == userinfo
-        @ensure result.host == host
-        @ensure result.port == ports
-        @ensure result.path == path
-        @ensure result.query == querys
-    end
-
-    return result
+    return URI(nostring, scheme, userinfo, host, ports, path, querys, fragment)
 end
 
 
@@ -100,45 +90,117 @@ end
 # https://tools.ietf.org/html/rfc3986#appendix-B
 const uri_reference_regex =
     r"""^
-    (?: ([^:/?#]+) :) ?                 # 1. sheme
-    (?: // (?: ([^/?#@]*) @) ?          # 2. userinfo
-           (?| (?: \[ ([^\]]+) \] )     # 3. host (ipv6)
-             | ([^:/?#\[]*) )           # 3. host
-           (?: : ([^/?#]+) ) ? ) ?      # 4. port
-    ([^?#]*)                            # 5. path
-    (?: \?([^#]*) ) ?                   # 6. query
-    (?: [#](.*) ) ?                     # 7. fragment
+    (?: ([^:/?#]+) :) ?                     # 1. scheme
+    (?: // (?: ([^/?#@]*) @) ?              # 2. userinfo
+           (?| (?: \[ ([^:\]]*:[^\]]*) \] ) # 3. host (ipv6)
+             | ([^:/?#\[]*) )               # 3. host
+           (?: : ([^/?#]*) ) ? ) ?          # 4. port
+    ([^?#]*)                                # 5. path
+    (?: \?([^#]*) ) ?                       # 6. query
+    (?: [#](.*) ) ?                         # 7. fragment
     $"""x
 
-const empty = SubString("", 1, 0)
+const absent = SubString("", 1, 0)
 
-function regex_parse(::Type{URI}, str::AbstractString)
+
+"""
+https://tools.ietf.org/html/rfc3986#section-3
+"""
+
+function parse_uri(str::AbstractString; kw...)
+    uri = parse_uri_reference(str; kw...)
+    if isempty(uri.scheme)
+        throw(URLParsingError("URI without scheme: $str"))
+    end
+    return uri
+end
+
+
+"""
+https://tools.ietf.org/html/rfc3986#section-4.1
+"""
+
+function parse_uri_reference(str::AbstractString; strict = false)
 
     m = match(uri_reference_regex, str)
     if m == nothing
-        return emptyuri
+        throw(URLParsingError("URI contains invalid character"))
     end
-    return URI(str, (c = m[1]) == nothing ? empty : c,
-                    (c = m[2]) == nothing ? empty : c,
-                    (c = m[3]) == nothing ? empty : c,
-                    (c = m[4]) == nothing ? empty : c,
-                    (c = m[5]) == nothing ? empty : c,
-                    (c = m[6]) == nothing ? empty : c,
-                    (c = m[7]) == nothing ? empty : c)
-end
+    uri = URI(str, (c = m[1]) == nothing ? absent : c,
+                   (c = m[2]) == nothing ? absent : c,
+                   (c = m[3]) == nothing ? absent : c,
+                   (c = m[4]) == nothing ? absent : c,
+                   (c = m[5]) == nothing ? absent : c,
+                   (c = m[6]) == nothing ? absent : c,
+                   (c = m[7]) == nothing ? absent : c)
 
-URI(str::AbstractString) = Base.parse(URI, str)
-
-function Base.parse(::Type{URI}, str::AbstractString)
-
-    uri = http_parser_parse_url(str)
-
-    #showparts(STDOUT, regex_parse(URI, str))
-    #showparts(STDOUT, uri)
-    @ensure regex_parse(URI, str) == uri
-    @ensure uristring(uri) == str
+    if strict
+        ensurevalid(uri)
+        @ensure uristring(uri) == str
+    end
     return uri
 end
+
+
+URI(str::AbstractString) = parse_uri_reference(str)
+
+Base.parse(::Type{URI}, str::AbstractString) = parse_uri_reference(str)
+
+
+function ensurevalid(uri::URI)
+
+    # https://tools.ietf.org/html/rfc3986#section-3.1
+    # ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+    if !(uri.scheme === absent ||
+         ismatch(r"^[[:alpha:]][[:alnum:]+-.]*$", uri.scheme))
+        throw(URLParsingError("Invalid URI scheme: $(uri.scheme)"))
+    end
+    # https://tools.ietf.org/html/rfc3986#section-3.2.2
+    # unreserved / pct-encoded / sub-delims
+    if !(uri.host === absent ||
+         ismatch(r"^[:[:alnum:]\-._~%!$&'()*+,;=]+$", uri.host))
+        throw(URLParsingError("Invalid URI host: $(uri.host) $uri"))
+    end
+    # https://tools.ietf.org/html/rfc3986#section-3.2.3
+    # "port number in decimal"
+    if !(uri.port === absent || ismatch(r"^\d+$", uri.port))
+        throw(URLParsingError("Invalid URI port: $(uri.port)"))
+    end
+
+    # https://tools.ietf.org/html/rfc3986#section-3.3
+    # unreserved / pct-encoded / sub-delims / ":" / "@"
+    if !(uri.path === absent ||
+         ismatch(r"^[/[:alnum:]\-._~%!$&'()*+,;=:@]*$", uri.path))
+        throw(URLParsingError("Invalid URI path: $(uri.path)"))
+    end
+
+    # FIXME
+    # For compatibility with existing test/uri.jl
+    if !(uri.host === absent) &&
+        (contains(uri.host, "=") ||
+         contains(uri.host, ";") ||
+         contains(uri.host, "%"))
+        throw(URLParsingError("Invalid URI host: $(uri.host)"))
+    end
+end
+
+
+"""
+https://tools.ietf.org/html/rfc3986#section-4.3
+"""
+
+isabsolute(uri::URI) =
+    !isempty(uri.scheme) &&
+     isempty(uri.fragment) &&
+    (isempty(uri.host) || isempty(uri.path) || pathissabsolute(uri))
+
+
+"""
+https://tools.ietf.org/html/rfc7230#section-5.3.1
+https://tools.ietf.org/html/rfc3986#section-3.3
+"""
+
+pathissabsolute(uri::URI) = startwith(uri.path, "/")
 
 
 ==(a::URI,b::URI) = a.scheme      == b.scheme      &&
@@ -149,7 +211,11 @@ end
                     a.fragment    == b.fragment    &&
                     a.userinfo    == b.userinfo
 
-# "request-target" per https://tools.ietf.org/html/rfc7230#section-5.3
+
+"""
+"request-target" per https://tools.ietf.org/html/rfc7230#section-5.3
+"""
+
 resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
                             !isempty(uri.query)    ? "?" : "", uri.query,
                             !isempty(uri.fragment) ? "#" : "", uri.fragment)
@@ -172,11 +238,14 @@ showparts(io::IO, uri::URI) =
               "    query = \"", uri.query, "\",\n",
               "    fragment = \"", uri.fragment, "\")\n")
 
+showparts(uri::URI) = showparts(STDOUT, uri)
+
 Base.print(io::IO, u::URI) = print(io, u.uri)
 
-Base.string(u::URI) = u.uri
+Base.string(u::URI) = u.uri === nostring ? uristring(u) : u.uri
 
-isabsent(ui) = isempty(ui) && !(ui === blank)
+#isabsent(ui) = isempty(ui) && !(ui === blank)
+isabsent(ui) = ui === absent
 
 function formaturi(io::IO,
                    scheme::AbstractString,
@@ -191,7 +260,7 @@ function formaturi(io::IO,
                                            ":" : "://")
     isabsent(userinfo) || print(io, userinfo, "@")
     isempty(host)        || print(io, hoststring(host))
-    isempty(port)        || print(io, ":", port)
+    isabsent(port)       || print(io, ":", port)
     isempty(path)        || print(io, path)
     isabsent(query)      || print(io, "?", query)
     isabsent(fragment)   || print(io, "#", fragment)

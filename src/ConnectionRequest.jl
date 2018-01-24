@@ -35,7 +35,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     catch e
         @debug 1 "❗️  ConnectionLayer $e. Closing: $io"
         close(io)
-        rethrow(isioerror(e) ? IOError(e) : e)
+        rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
     end
 end
 

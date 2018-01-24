@@ -24,7 +24,7 @@ for group in tests
             url = test["url"]
             uri = nothing
             try
-                uri = parse(HTTP.URI, url)
+                uri = HTTP.URIs.parse_uri_reference(url; strict=true)
             catch e
                 if e isa HTTP.URIs.URLParsingError
                     println(e)

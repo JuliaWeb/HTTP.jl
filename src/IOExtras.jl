@@ -33,9 +33,10 @@ Fields:
 
 struct IOError <: Exception
     e
+    message
 end
 
-Base.show(io::IO, e::IOError) = print(io, "IOError(", e.e, ")")
+Base.show(io::IO, e::IOError) = print(io, "IOError(", e.e, " ", e.message, ")\n")
 
 
 """

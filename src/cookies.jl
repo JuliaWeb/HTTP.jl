@@ -154,7 +154,7 @@ function readsetcookie(host, cookie)
     parts = split(strip(cookie), ';')
     length(parts) == 1 && parts[1] == "" && return Cookie()
     parts[1] = strip(parts[1])
-    j = search(parts[1], '=')
+    j = compat_search(parts[1], '=')
     j < 1 && return Cookie()
     name, value = parts[1][1:j-1], parts[1][j+1:end]
     iscookienamevalid(name) || return Cookie()
@@ -324,7 +324,7 @@ function readcookies(h::Dict{String,String}, filter::String)
     for part in split(lines, ';')
         part = strip(part)
         length(part) <= 1 && continue
-        j = search(part, '=')
+        j = compat_search(part, '=')
         if j >= 0
             name, val = part[1:j-1], part[j+1:end]
         else

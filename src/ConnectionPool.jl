@@ -513,7 +513,20 @@ function getconnection(::Type{TCPSocket},
     connect(getaddrinfo(host), p)
 end
 
+
 const nosslconfig = SSLConfig()
+default_sslconfig = nothing
+noverify_sslconfig = nothing
+
+function global_sslconfig(require_ssl_verification::Bool)::SSLConfig
+    global default_sslconfig
+    global noverify_sslconfig
+    if default_sslconfig == nothing
+        default_sslconfig = SSLConfig(true)
+        noverify_sslconfig = SSLConfig(false)
+    end
+    return require_ssl_verification ? default_sslconfig : noverify_sslconfig
+end
 
 function getconnection(::Type{SSLContext},
                        host::AbstractString,
@@ -523,7 +536,7 @@ function getconnection(::Type{SSLContext},
                        kw...)::SSLContext
 
     if sslconfig === nosslconfig
-        sslconfig = SSLConfig(require_ssl_verification)
+        sslconfig = global_sslconfig(require_ssl_verification)
     end
 
     port = isempty(port) ? "443" : port

@@ -32,8 +32,6 @@ export Parser, Header, Headers, ByteView, nobytes,
        messagehastrailing,
        ParsingError
 
-using ..URIs.parseurlchar
-
 import MbedTLS.SSLContext
 
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL
@@ -419,45 +417,14 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
 
         elseif p_state == s_req_spaces_before_target
             ch == ' ' && continue
-            if parser.message.method == "CONNECT"
-                p_state = s_req_server_start
-                p -= 1
-            elseif ch == '*'
-                p_state = s_req_target_wildcard
-            else
-                p_state = s_req_target_start
-                p -= 1
-            end
+            p_state = s_req_target
+            p -= 1
 
-        elseif p_state == s_req_target_wildcard
-
-            if @anyeq(ch, ' ', CR, LF)
-                parser.message.target = "*"
-                p_state = s_req_http_start
-            else
-                @err(:HPE_INVALID_TARGET)
-            end
-
-        elseif @anyeq(p_state, s_req_target_start,
-                               s_req_server_start,
-                               s_req_server,
-                               s_req_server_with_at,
-                               s_req_path,
-                               s_req_query_string_start,
-                               s_req_query_string,
-                               s_req_fragment_start,
-                               s_req_fragment,
-                               s_req_schema,
-                               s_req_schema_slash,
-                               s_req_schema_slash_slash)
+        elseif (p_state ==  s_req_target)
             start = p
             while p <= len
                 @inbounds ch = Char(bytes[p])
                 if @anyeq(ch, ' ', CR, LF)
-                    @errorif(@anyeq(p_state, s_req_schema, s_req_schema_slash,
-                                             s_req_schema_slash_slash,
-                                             s_req_server_start),
-                             :HPE_INVALID_TARGET)
                     if ch == ' '
                         p_state = s_req_http_start
                     else
@@ -468,8 +435,6 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
                     end
                     break
                 end
-                p_state = parseurlchar(p_state, ch, strict)
-                @errorif(p_state == s_dead, :HPE_INVALID_TARGET)
                 p += 1
             end
             @passert p <= len + 1
@@ -477,8 +442,14 @@ function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
             write(parser.valuebuffer, collect(view(bytes, start:p-1)))
 
             if p_state >= s_req_http_start
-                parser.message.target = take!(parser.valuebuffer)
-                @debugshow 4 parser.message.target
+                target = String(take!(parser.valuebuffer))
+                @debugshow 4 target
+                parser.message.target = target
+                @errorif(isempty(target) ||
+                         target[1] == '.' ||
+                         startswith(target, "HTTP/"),
+                         :HPE_INVALID_TARGET)
+                parser.message.target = target
             end
 
             p = min(p, len)
@@ -715,7 +686,7 @@ function parsebody(parser::Parser, bytes::ByteView)::Tuple{ByteView,ByteView}
     @require !isempty(bytes)
     @require headerscomplete(parser)
 
-    if parser.state == s_body_start 
+    if parser.state == s_body_start
         parser.state = s_chunk_size_start
     end
 
