@@ -161,7 +161,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
            tcpisvalid=server.options.ratelimit > 0 ? check_rate_limit :
                                                      (tcp; kw...) -> true,
            ratelimits=Dict{IPAddr, RateLimit}(),
-           ratelimit=server.options.ratelimit) do request::HTTP.Request
+           ratelimit=server.options.ratelimit) do request
 
         handle(server.handler, request)
     end

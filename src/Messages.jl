@@ -60,7 +60,7 @@ Streaming of request and response bodies is handled by the
 module Messages
 
 export Message, Request, Response, HeaderSizeError,
-       reset!,
+       reset!, status, method, headers, uri, body,
        iserror, isredirect, ischunked, issafe, isidempotent,
        header, hasheader, setheader, defaultheader, appendheader,
        mkheaders, readheaders, headerscomplete, readtrailers, writeheaders,
@@ -139,6 +139,9 @@ function reset!(r::Response)
     end
 end
 
+status(r::Response) = r.status
+headers(r::Response) = r.headers
+body(r::Response) = r.body
 
 """
     Request <: Message
@@ -177,8 +180,6 @@ mutable struct Request <: Message
     parent
 end
 
-Request() = Request("", "")
-
 function Request(method::String, target, headers=[], body=UInt8[];
                  version=v"1.1", parent=nothing)
     r = Request(method,
@@ -193,9 +194,15 @@ function Request(method::String, target, headers=[], body=UInt8[];
 end
 
 Request(bytes) = parse(Request, bytes)
+Request(; method="GET", major=1, minor=1, uri="", headers=[], body=UInt8[]) = Request(method, uri, headers, body; version=VersionNumber(major, minor))
 
 mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
+
+method(r::Request) = r.method
+uri(r::Request) = r.target
+headers(r::Request) = r.headers
+body(r::Request) = r.body
 
 """
     issafe(::Request)
