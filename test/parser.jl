@@ -57,7 +57,7 @@ end
 
 
 parse!(parser::Parser, message::Messages.Message, body, bytes)::Int =
-    parse!(parser, message, body, HTTP.bytes(bytes))
+    parse!(parser, message, body, Vector{UInt8}(bytes))
 
 function parse!(parser::Parser, message::Messages.Message, body, bytes::Vector{UInt8})::Int
 

@@ -76,7 +76,7 @@ FIFOBuffer() = FIFOBuffer(DEFAULT_MAX)
 
 const EMPTYBODY = FIFOBuffer()
 
-FIFOBuffer(str::String) = FIFOBuffer(IOExtras.bytes(str))
+FIFOBuffer(str::String) = FIFOBuffer(Vector{UInt8}(str))
 function FIFOBuffer(bytes::Vector{UInt8})
     len = length(bytes)
     return FIFOBuffer(len, len, len, 1, 1, bytes, Condition(), current_task(), true)
@@ -290,6 +290,9 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8}, i, j)
     return len
 end
 
+if isdefined(Base, :CodeUnits)
+Base.write(f::FIFOBuffer, bytes::Base.CodeUnits) = write(f, Vector{UInt8}(String(bytes)))
+end
 Base.write(f::FIFOBuffer, bytes::Vector{UInt8}) = write(f, bytes, 1, length(bytes))
 Base.write(f::FIFOBuffer, str::String) = write(f, IOExtras.bytes(str))
 

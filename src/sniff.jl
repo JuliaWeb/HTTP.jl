@@ -2,7 +2,7 @@
 const ZIP = UInt8[0x50, 0x4b, 0x03, 0x04]
 const GZIP = UInt8[0x1f, 0x8b, 0x08]
 
-iscompressed(bytes::Vector{UInt8}) = length(bytes) > 3 && (all(bytes[1:4] .== ZIP) || all(bytes[1:3] .== GZIP))
+iscompressed(bytes::CodeUnits) = length(bytes) > 3 && (all(bytes[1:4] .== ZIP) || all(bytes[1:3] .== GZIP))
 iscompressed(str::String) = iscompressed(bytes(str))
 iscompressed(f::FIFOBuffer) = iscompressed(String(f))
 iscompressed(d::Dict) = false
@@ -40,7 +40,7 @@ end
 sniff(str::String) = sniff(bytes(str)[1:min(length(bytes(str)), MAXSNIFFLENGTH)])
 sniff(f::FIFOBuffer) = sniff(String(f))
 
-function sniff(data::Vector{UInt8})
+function sniff(data::CodeUnits)
     firstnonws = 1
     while firstnonws < length(data) && data[firstnonws] in WHITESPACE
         firstnonws += 1
@@ -53,12 +53,12 @@ function sniff(data::Vector{UInt8})
 end
 
 struct Exact
-    sig::Vector{UInt8}
+    sig::CodeUnits
     contenttype::String
 end
 contenttype(e::Exact) = e.contenttype
 
-function ismatch(e::Exact, data::Vector{UInt8}, firstnonws)
+function ismatch(e::Exact, data::CodeUnits, firstnonws)
     length(data) < length(e.sig) && return false
     for i = 1:length(e.sig)
         e.sig[i] == data[i] || return false
@@ -67,16 +67,16 @@ function ismatch(e::Exact, data::Vector{UInt8}, firstnonws)
 end
 
 struct Masked
-    mask::Vector{UInt8}
-    pat::Vector{UInt8}
+    mask::CodeUnits
+    pat::CodeUnits
     skipws::Bool
     contenttype::String
 end
-Masked(mask::Vector{UInt8}, pat::Vector{UInt8}, contenttype::String) = Masked(mask, pat, false, contenttype)
+Masked(mask::CodeUnits, pat::CodeUnits, contenttype::String) = Masked(mask, pat, false, contenttype)
 
 contenttype(m::Masked) = m.contenttype
 
-function ismatch(m::Masked, data::Vector{UInt8}, firstnonws)
+function ismatch(m::Masked, data::CodeUnits, firstnonws)
     # pattern matching algorithm section 6
     # https://mimesniff.spec.whatwg.org/#pattern-matching-algorithm
     sk = (m.skipws ? firstnonws : 1) - 1
@@ -89,13 +89,13 @@ function ismatch(m::Masked, data::Vector{UInt8}, firstnonws)
 end
 
 struct HTMLSig
-    html::Vector{UInt8}
+    html::CodeUnits
     HTMLSig(str::String) = new(bytes(str))
 end
 
 contenttype(h::HTMLSig) = "text/html; charset=utf-8"
 
-function ismatch(h::HTMLSig, data::Vector{UInt8}, firstnonws)
+function ismatch(h::HTMLSig, data::CodeUnits, firstnonws)
     length(data) < length(h.html)+1 && return false
     for (i, b) in enumerate(h.html)
         db = data[i+firstnonws-1]
@@ -122,7 +122,7 @@ const mp4 = bytes("mp4")
 # Byte swap int
 bigend(b) = UInt32(b[4]) | UInt32(b[3])<<8 | UInt32(b[2])<<16 | UInt32(b[1])<<24
 
-function ismatch(::Type{MP4Sig}, data::Vector{UInt8}, firstnonws)
+function ismatch(::Type{MP4Sig}, data::CodeUnits, firstnonws)
     # https://mimesniff.spec.whatwg.org/#signature-for-mp4
     # c.f. section 6.2.1
     length(data) < 12 && return false
@@ -139,7 +139,7 @@ end
 struct TextSig end
 contenttype(::Type{TextSig}) = "text/plain; charset=utf-8"
 
-function ismatch(::Type{TextSig}, data::Vector{UInt8}, firstnonws)
+function ismatch(::Type{TextSig}, data::CodeUnits, firstnonws)
     # c.f. section 5, step 4.
     for i = firstnonws:min(length(data),MAXSNIFFLENGTH)
         b = data[i]
@@ -153,7 +153,7 @@ end
 struct JSONSig end
 contenttype(::Type{JSONSig}) = "application/json; charset=utf-8"
 
-ismatch(::Type{JSONSig}, data::Vector{UInt8}, firstnonws) = isjson(data)[1]
+ismatch(::Type{JSONSig}, data::CodeUnits, firstnonws) = isjson(data)[1]
 
 const DISPLAYABLE_TYPES = ["text/html; charset=utf-8",
                     "text/plain; charset=utf-8",

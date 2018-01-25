@@ -7,7 +7,7 @@ This module defines extensions to the `Base.IO` interface to support:
 
 module IOExtras
 
-export bytes, IOError, isioerror,
+export bytes, CodeUnits, IOError, isioerror,
        unread!,
        startwrite, closewrite, startread, closeread,
        tcpsocket, localport, peerport
@@ -19,14 +19,16 @@ export bytes, IOError, isioerror,
 Get a `Vector{UInt8}`, a vector of bytes of a string.
 """
 function bytes end
-bytes(s::SubString{String}) = unsafe_wrap(Array, pointer(s), length(s))
 bytes(s::SubArray{UInt8}) = unsafe_wrap(Array, pointer(s), length(s))
 if !isdefined(Base, :CodeUnits)
+    const CodeUnits = Vector{UInt8}
     bytes(s::String) = Vector{UInt8}(s)
+    bytes(s::SubString{String}) = unsafe_wrap(Array, pointer(s), length(s))
 else
-    const CodeUnits = Base.CodeUnits
+    const CodeUnits = Union{Vector{UInt8}, Base.CodeUnits}
     bytes(s::Base.CodeUnits) = bytes(String(s))
-    bytes(s::String) = unsafe_wrap(Array, pointer(s), sizeof(s))
+    bytes(s::String) = codeunits(s)
+    bytes(s::SubString{String}) = codeunits(s)
 end
 bytes(s::Vector{UInt8}) = s
 

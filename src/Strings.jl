@@ -29,7 +29,7 @@ Ensure the first character and characters that follow a '-' are uppercase.
 
 function tocameldash!(s::String)
     toUpper = UInt8('A') - UInt8('a')
-    bytes = IOExtras.bytes(s)
+    bytes = Vector{UInt8}(s)
     upper = true
     for i = 1:length(bytes)
         @inbounds b = bytes[i]
@@ -40,7 +40,7 @@ function tocameldash!(s::String)
         end
         upper = b == UInt8('-')
     end
-    return s
+    return String(bytes)
 end
 
 @inline islower(b::UInt8) = UInt8('a') <= b <= UInt8('z')
