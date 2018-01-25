@@ -4,7 +4,7 @@ module HTTP
 export startwrite, startread, closewrite, closeread
 
 using MbedTLS
-import MbedTLS.SSLContext
+import MbedTLS: SSLContext
 
 const DEBUG_LEVEL = 0
 
@@ -12,8 +12,8 @@ include("compat.jl")
 include("debug.jl")
 
 include("Pairs.jl")
-include("Strings.jl")
 include("IOExtras.jl")                 ;using .IOExtras
+include("Strings.jl")
 include("URIs.jl")                     ;using .URIs
 include("utils.jl")
 include("fifobuffer.jl")               ;using .FIFOBuffers
@@ -577,7 +577,7 @@ end
 include("client.jl")
 include("sniff.jl")
 include("Handlers.jl")                 ;using .Handlers
-include("Servers.jl")                  ;using .Servers.listen
+include("Servers.jl")                  ;using .Servers; using .Servers: listen
 
 include("WebSockets.jl")               ;using .WebSockets
 

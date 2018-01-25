@@ -27,7 +27,7 @@ function HTTP.IOExtras.unread!(io::BufferStream, bytes)
     if length(bytes) == 0
         return
     end
-    if nb_available(io) > 0
+    if HTTP.bytesavailable(io) > 0
         buf = readavailable(io)
         write(io, bytes)
         write(io, buf)
@@ -40,7 +40,7 @@ end
 function Base.length(io::IOBuffer)
     mark(io)
     seek(io, 0)
-    n = nb_available(io)
+    n = HTTP.bytesavailable(io)
     reset(io)
     return n
 end
@@ -1451,7 +1451,7 @@ const responses = Message[
           r = Request()
           p = Parser()
           b = IOBuffer()
-          bytes = Vector{UInt8}(req.raw)
+          bytes = HTTP.bytes(req.raw)
           sz = t
           if t > 0
               for i in 1:sz:length(bytes)
@@ -1514,7 +1514,7 @@ const responses = Message[
 
       req = Request("GET", "http://www.techcrunch.com/")
       req.headers = ["Host"=>"www.techcrunch.com","User-Agent"=>"Fake","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language"=>"en-us,en;q=0.5","Accept-Encoding"=>"gzip,deflate","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Keep-Alive"=>"300","Content-Length"=>"7","Proxy-Connection"=>"keep-alive"]
-      req.body = Vector{UInt8}("1234567")
+      req.body = HTTP.bytes("1234567")
 
       @test Request(reqstr).headers == req.headers
       @test Request(reqstr) == req
@@ -1558,7 +1558,7 @@ const responses = Message[
       req.method = "POST"
       req.target = "/"
       req.headers = ["Host"=>"foo.com", "Transfer-Encoding"=>"chunked", "Trailer-Key"=>"Trailer-Value"]
-      req.body = Vector{UInt8}("foobar")
+      req.body = HTTP.bytes("foobar")
 
       @test Request(reqstr) == req
 
@@ -1653,7 +1653,7 @@ const responses = Message[
                      "Accept-Language"=>"en-us",
                      "Accept-Encoding"=>"gzip, deflate",
                      "Connection"=>"Keep-Alive"]
-      req.body = Vector{UInt8}("first=Zara&last=Ali")
+      req.body = HTTP.bytes("first=Zara&last=Ali")
 
       @test Request(reqstr) == req
   end
@@ -1666,7 +1666,7 @@ const responses = Message[
                   r = Request().response
                   p = Parser()
                   b = IOBuffer()
-                  bytes = Vector{UInt8}(resp.raw)
+                  bytes = HTTP.bytes(resp.raw)
                   sz = t
                   for i in 1:sz:length(bytes)
                       parse!(p, r, b, view(bytes, i:min(i+sz-1, length(bytes))))
@@ -1772,7 +1772,7 @@ const responses = Message[
           n = parse!(Parser(), R, b, r[2])
           @test !headerscomplete(p)
           @test !messagecomplete(p)
-          @test n == length(Vector{UInt8}(r[2]))
+          @test n == length(HTTP.bytes(r[2]))
       end
 
       buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"
@@ -1859,7 +1859,7 @@ const responses = Message[
       #@test messagecomplete(p)
       @test String(take!(b)) == requests[1].body
       b = IOBuffer()
-      ex = Vector{UInt8}(reqstr)[n+1:end]
+      ex = HTTP.bytes(reqstr)[n+1:end]
       HTTP.Parsers.reset!(p)
       parse!(p, r, b, ex)
       @test headerscomplete(p)

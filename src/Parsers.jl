@@ -32,7 +32,8 @@ export Parser, Header, Headers, ByteView, nobytes,
        messagehastrailing,
        ParsingError
 
-import MbedTLS.SSLContext
+import MbedTLS: SSLContext
+using ..IOExtras
 
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL
 import ..@require, ..precondition_error
@@ -283,7 +284,7 @@ end
 """
 
 function parseheaders(f, p, bytes)
-    v = Vector{UInt8}(bytes)
+    v = IOExtras.bytes(bytes)
     parseheaders(f, p, view(v, 1:length(v)))
 end
 
@@ -677,7 +678,7 @@ Returns decoded `data` and `excess` bytes not parsed.
 """
 
 function parsebody(p, bytes)
-    v = Vector{UInt8}(bytes)
+    v = IOExtras.bytes(bytes)
     parsebody(p, view(v, 1:length(v)))
 end
 

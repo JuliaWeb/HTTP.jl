@@ -4,7 +4,7 @@ export StatusError
 
 import ..Layer, ..request
 import ..HTTP
-using ..Messages.iserror
+using ..Messages: iserror
 
 
 """

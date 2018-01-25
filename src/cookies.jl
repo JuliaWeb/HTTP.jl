@@ -34,10 +34,11 @@ export Cookie
 
 import ..Dates
 
-import Base.==
-import ..URIs.isurlchar
+import Base: ==
+import ..URIs: isurlchar
 using ..pairs
 import ..compat_search
+using ..IOExtras: bytes
 
 
 """
@@ -87,7 +88,7 @@ function Cookie(cookie::Cookie; kwargs...)
 end
 Cookie(; kwargs...) = Cookie(Cookie("", ""); kwargs...)
 
-Cookie(name, value; args...) = Cookie(Cookie(name, value, "", "", Dates.DateTime(), 0, false, false, false, String[]); args...)
+Cookie(name, value; args...) = Cookie(Cookie(name, value, "", "", Dates.DateTime(1), 0, false, false, false, String[]); args...)
 
 Base.isequal(a::Cookie, b::Cookie) = a.name == b.name && a.path == b.path && a.domain == b.domain
 Base.hash(x::Cookie, h::UInt) = hash(x.name, hash(x.path, hash(x.domain, h)))
@@ -154,7 +155,7 @@ function readsetcookie(host, cookie)
     parts = split(strip(cookie), ';')
     length(parts) == 1 && parts[1] == "" && return Cookie()
     parts[1] = strip(parts[1])
-    j = search(parts[1], '=')
+    j = compat_search(parts[1], '=')
     j < 1 && return Cookie()
     name, value = parts[1][1:j-1], parts[1][j+1:end]
     iscookienamevalid(name) || return Cookie()
@@ -324,7 +325,7 @@ function readcookies(h::Dict{String,String}, filter::String)
     for part in split(lines, ';')
         part = strip(part)
         length(part) <= 1 && continue
-        j = search(part, '=')
+        j = compat_search(part, '=')
         if j >= 0
             name, val = part[1:j-1], part[j+1:end]
         else
@@ -398,7 +399,7 @@ sanitizeCookieName(n) = sanitizeCookieName(String(n))
 # with a comma or space.
 # See https:#golang.org/issue/7243 for the discussion.
 function sanitizeCookieValue(v::String)
-    v = String(filter(validcookievaluebyte, [Char(b) for b in Vector{UInt8}(v)]))
+    v = String(filter(validcookievaluebyte, [Char(b) for b in bytes(v)]))
     length(v) == 0 && return v
     if v[1] == ' ' || v[1] == ',' || v[end] == ' ' || v[end] == ','
         return string('"', v, '"')

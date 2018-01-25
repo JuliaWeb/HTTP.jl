@@ -1,5 +1,6 @@
 module CookieRequest
 
+import ..Dates
 import ..Layer, ..request
 using ..URIs
 using ..Cookies
@@ -50,7 +51,7 @@ function getcookies(cookies, url)
         if Cookies.shouldsend(cookie, url.scheme == "https",
                               url.host, url.path)
             t = cookie.expires
-            if t != Dates.DateTime() && t < Dates.now(Dates.UTC)
+            if t != Dates.DateTime(1) && t < Dates.now(Dates.UTC)
                 @debug 1 "Deleting expired Cookie: $cookie.name"
                 push!(expired, cookie)
             else

@@ -6,12 +6,13 @@ using HTTP.Messages
 import HTTP.Messages.appendheader
 import HTTP.URI
 import HTTP.request
+import HTTP: bytes
 
 using HTTP.StatusError
 
-using HTTP.MessageRequest.bodylength
-using HTTP.MessageRequest.bodybytes
-using HTTP.MessageRequest.unknown_length
+using HTTP.MessageRequest: bodylength
+using HTTP.MessageRequest: bodybytes
+using HTTP.MessageRequest: unknown_length
 
 using JSON
 
@@ -34,8 +35,8 @@ using JSON
     @test bodybytes(7) == UInt8[]
     @test bodybytes(UInt8[1,2,3]) == UInt8[1,2,3]
     @test bodybytes(view(UInt8[1,2,3], 1:2)) == UInt8[1,2]
-    @test bodybytes("Hello") == Vector{UInt8}("Hello")
-    @test bodybytes(SubString("World!",1,5)) == Vector{UInt8}("World")
+    @test bodybytes("Hello") == bytes("Hello")
+    @test bodybytes(SubString("World!",1,5)) == bytes("World")
     @test bodybytes(["Hello", " ", "World!"]) == UInt8[]
     @test bodybytes([UInt8[1,2,3], UInt8[4,5,6]]) == UInt8[]
 

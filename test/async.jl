@@ -5,7 +5,7 @@ using JSON
 using MbedTLS: digest, MD_MD5, MD_SHA256
 
 using HTTP.IOExtras
-using HTTP.request
+using HTTP: request
 
 println("async tests")
 
