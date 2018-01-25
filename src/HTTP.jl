@@ -8,6 +8,9 @@ import MbedTLS: SSLContext
 
 const DEBUG_LEVEL = 0
 
+Base.@deprecate escape escapeuri
+Base.@deprecate URL URI
+
 include("compat.jl")
 include("debug.jl")
 
@@ -23,6 +26,7 @@ include("Parsers.jl")                  ;import .Parsers: Parser, Headers, Header
                                                          ParsingError, ByteView
 include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
+
 include("Streams.jl")                  ;using .Streams
 
 
@@ -578,6 +582,7 @@ include("client.jl")
 include("sniff.jl")
 include("Handlers.jl")                 ;using .Handlers
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
+Base.@deprecate_binding(Nitrogen, Servers, false)
 
 include("WebSockets.jl")               ;using .WebSockets
 
