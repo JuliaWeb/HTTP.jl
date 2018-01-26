@@ -41,7 +41,7 @@ function request(client::Client, method, url::URI;
                  body="",
                  enablechunked::Bool=true,
                  stream::Bool=false,
-                 verbose=1,
+                 verbose=false,
                  args...)
 
     # Add default values from client options to args...
