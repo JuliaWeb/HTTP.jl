@@ -55,10 +55,11 @@ end
 
 URI(uri::URI) = uri
 
+const absent = SubString("absent", 1, 0)
+
 const emptyuri = (()->begin
     uri = ""
-    empty = SubString(uri)
-    return URI(uri, empty, empty, empty, empty, empty, empty, empty)
+    return URI(uri, absent, absent, absent, absent, absent, absent, absent)
 end)()
 
 URI(;kw...) = merge(emptyuri; kw...)
@@ -99,8 +100,6 @@ const uri_reference_regex =
     (?: \?([^#]*) ) ?                       # 6. query
     (?: [#](.*) ) ?                         # 7. fragment
     $"""x
-
-const absent = SubString("", 1, 0)
 
 
 """
@@ -230,13 +229,20 @@ Base.show(io::IO, uri::URI) = print(io, "HTTP.URI(\"", uri, "\")")
 
 showparts(io::IO, uri::URI) =
     print(io, "HTTP.URI(\"", uri.uri, "\"\n",
-              "    scheme = \"", uri.scheme, "\",\n",
-              "    userinfo = \"", uri.userinfo, "\",\n",
-              "    host = \"", uri.host, "\",\n",
-              "    port = \"", uri.port, "\",\n",
-              "    path = \"", uri.path, "\",\n",
-              "    query = \"", uri.query, "\",\n",
-              "    fragment = \"", uri.fragment, "\")\n")
+              "    scheme = \"", uri.scheme, "\"",
+                       uri.scheme === absent ? " (absent)" : "", ",\n",
+              "    userinfo = \"", uri.userinfo, "\"",
+                       uri.userinfo === absent ? " (absent)" : "", ",\n",
+              "    host = \"", uri.host, "\"",
+                       uri.host === absent ? " (absent)" : "", ",\n",
+              "    port = \"", uri.port, "\"",
+                       uri.port === absent ? " (absent)" : "", ",\n",
+              "    path = \"", uri.path, "\"",
+                       uri.path === absent ? " (absent)" : "", ",\n",
+              "    query = \"", uri.query, "\"",
+                       uri.query === absent ? " (absent)" : "", ",\n",
+              "    fragment = \"", uri.fragment, "\"",
+                       uri.fragment === absent ? " (absent)" : "", ")\n")
 
 showparts(uri::URI) = showparts(STDOUT, uri)
 
@@ -258,7 +264,7 @@ function formaturi(io::IO,
 
     isempty(scheme)      || print(io, scheme, isabsent(host) ?
                                            ":" : "://")
-    isabsent(userinfo) || print(io, userinfo, "@")
+    isabsent(userinfo)   || print(io, userinfo, "@")
     isempty(host)        || print(io, hoststring(host))
     isabsent(port)       || print(io, ":", port)
     isempty(path)        || print(io, path)

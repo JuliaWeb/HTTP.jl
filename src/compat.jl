@@ -1,3 +1,4 @@
+
 @static if VERSION >= v"0.7.0-DEV.2915"
 
     using Base64
@@ -8,6 +9,8 @@
     compat_findfirst(a...) = (r = findfirst(a...); r === nothing ? 0 : r)
     compat_findprev(a...) = (r = findprev(a...); r === nothing ? 0 : r)
     compat_findnext(a...) = (r = findnext(a...); r === nothing ? 0 : r)
+
+    Base.convert(::Type{SubString{S}}, s::SubString{S}) where {S<:AbstractString} = s
 
 else # Julia v0.6
 
