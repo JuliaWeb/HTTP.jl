@@ -206,9 +206,25 @@ function go(count::Int)
         t = Transaction(c)
         r = Request()
         s = Stream(r.response, getparser(t), t)
+        #startread(s)
+        #function IOExtras.startread(http::Stream)
+
+            http = s
+            startread(http.stream)
+
+            HTTP.Parsers.reset!(http.parser)
                                                                 t_setup = time()
-        startread(s)
+            HTTP.Streams.readheaders(http.stream, http.parser, http.message)
                                                          t_headers_done = time()
+            HTTP.Streams.handle_continue(http)
+
+            http.readchunked = HTTP.Messages.ischunked(http.message)
+            http.ntoread = HTTP.Messages.bodylength(http.message)
+
+        #    return http.message
+        #end
+
+
         while !eof(s)
             readavailable(s)
         end
@@ -264,6 +280,6 @@ function go(count::Int)
     end
 end
 
-for r in [10, 1000]
+for r in [10, 100]
     go(r)
 end

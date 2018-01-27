@@ -65,7 +65,7 @@ function parse!(parser::Parser, message::Messages.Message, body, bytes::Vector{U
     count = 0
     while count < l
         if !headerscomplete(parser)
-            excess = parseheaders(parser, bytes) do h
+            excess = parseheaders(parser, String(bytes)) do h
                 appendheader(message, h)
             end
             readstartline!(parser.message, message)
@@ -80,7 +80,7 @@ function parse!(parser::Parser, message::Messages.Message, body, bytes::Vector{U
                 break
             end
         end
-        count += length(bytes) - length(excess)
+        count += length(bytes) - (excess == nothing ? 0 : length(excess))
         bytes = excess
         if ischunked(message) && messagecomplete(parser)
             break
@@ -1444,29 +1444,16 @@ const responses = Message[
 @testset "HTTP.parse" begin
 
   @testset "HTTP.parse(HTTP.Request, str)" begin
-      for req in requests, t in [-1, 0, 1, 2, 3, 4, 11, 13, 17, 19, 23, 29, 31, 32]
+      for req in requests
 
-          println("TEST - parser.jl - Request $t: $(req.name)")
+          println("TEST - parser.jl - Request $(req.name)")
           upgrade = Ref{SubArray{UInt8, 1}}()
           r = Request()
           p = Parser()
           b = IOBuffer()
           bytes = Vector{UInt8}(req.raw)
-          sz = t
-          if t > 0
-              for i in 1:sz:length(bytes)
-                  parse!(p, r, b, view(bytes, i:min(i+sz-1, length(bytes))))
-              end
-              r.body = take!(b)
-          elseif t < 0
-              i = rand(2:length(bytes))
-              parse!(p, r, b, bytes[1:i-1])
-              parse!(p, r, b, bytes[i:end])
-              r.body = take!(b)
-          else
-              r = Request(req.raw)
+          r = Request(req.raw)
               #r = HTTP.parse(HTTP.Request, req.raw; extraref=upgrade)
-          end
           if r.method == "CONNECT"
               host, port, userinfo = HTTP.URIs.http_parse_host(SubString(r.target))
               @test host == req.host
@@ -1659,22 +1646,10 @@ const responses = Message[
   end
 
   @testset "Response(str)" begin
-      for resp in responses, t in [0, 1, 2, 3, 4, 11, 13, 17, 19, 23, 29, 31, 32]
-          println("TEST - parser.jl - Response $t: $(resp.name)")
+      for resp in responses
+          println("TEST - parser.jl - Response $(resp.name)")
           try
-              if t > 0
-                  r = Request().response
-                  p = Parser()
-                  b = IOBuffer()
-                  bytes = Vector{UInt8}(resp.raw)
-                  sz = t
-                  for i in 1:sz:length(bytes)
-                      parse!(p, r, b, view(bytes, i:min(i+sz-1, length(bytes))))
-                  end
-                  r.body = take!(b)
-              else
-                  r = Response(resp.raw)
-              end
+              r = Response(resp.raw)
               @test r.version.major == resp.http_major
               @test r.version.minor == resp.http_minor
               @test r.status == resp.status_code
@@ -1728,15 +1703,15 @@ const responses = Message[
           @test length(r.headers) == 1
       end
 
-      reqstr = "GET / HTTP/1.1\r\n" * "Fo@: Failure"
+      reqstr = "GET / HTTP/1.1\r\n" * "Fo@: Failure\r\n\r\n"
       HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
       !HTTP.Parsers.strict && (@test_throws ParsingError Request(reqstr))
 
-      reqstr = "GET / HTTP/1.1\r\n" * "Foo\01\test: Bar"
+      reqstr = "GET / HTTP/1.1\r\n" * "Foo\01\test: Bar\r\n\r\n"
       HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
       !HTTP.Parsers.strict && (@test_throws ParsingError Request(reqstr))
 
-      respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure"
+      respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure\r\n\r\n"
       HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
       !HTTP.Parsers.strict && (@test_throws ParsingError Response(respstr))
       @test @errmsg(Response(respstr)) == """
@@ -1745,7 +1720,7 @@ const responses = Message[
            ^
         """
 
-      respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar"
+      respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar\r\n\r\n"
       HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
       !HTTP.Parsers.strict && (@test_throws ParsingError Response(respstr))
 
@@ -1871,7 +1846,7 @@ const responses = Message[
       r = Request("GET / HTTP/1.1\r\n" * "Test: Düsseldorf\r\n\r\n")
       @test r.headers == ["Test" => "Düsseldorf"]
 
-      r = Request().response
+      r = Request()
       p = Parser()
       b = IOBuffer()
       parse!(p, r, b, "GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba")

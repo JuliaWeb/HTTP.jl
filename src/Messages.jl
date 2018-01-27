@@ -75,6 +75,7 @@ using ..@warn
 using ..IOExtras
 using ..Parsers
 import ..Parsers: headerscomplete, reset!
+import ..@require, ..precondition_error
 
 const unknown_length = typemax(Int)
 
@@ -316,7 +317,7 @@ delimiter](https://stackoverflow.com/a/24502264)
 internal commas](https://tools.ietf.org/html/rfc6265#section-3).
 """
 
-function appendheader(m::Message, header::Pair{String,String})
+function appendheader(m::Message, header::Header)
     c = m.headers
     k,v = header
     if k == ""
@@ -328,6 +329,9 @@ function appendheader(m::Message, header::Pair{String,String})
     end
     return
 end
+
+#FIXME needed?
+appendheader(m::Message, h) = appendheader(m, SubString(h[1]) => SubString(h[2]))
 
 
 """
@@ -406,7 +410,7 @@ payload(m::Message, ::Type{String}) =
                                                  String(payload(m))
 
 function decode(m::Message, encoding::String)::Vector{UInt8}
-    if enc == "gzip"
+    if encoding == "gzip"
         # Use https://github.com/bicycle1885/TranscodingStreams.jl ?
     end
     @warn "Decoding of HTTP Transfer-Encoding is not implemented yet!"
@@ -421,16 +425,48 @@ Read the start-line metadata from Parser into a `::Message` struct.
 """
 
 function readstartline!(m::Parsers.Message, r::Response)
-    r.version = VersionNumber(m.major, m.minor)
-    r.status = m.status
+    r.version = VersionNumber(m.version)
+    r.status = parse(Int16, m.status)
     return
 end
 
 function readstartline!(m::Parsers.Message, r::Request)
-    r.version = VersionNumber(m.major, m.minor)
+    r.version = VersionNumber(m.version)
     r.method = m.method
     r.target = m.target
     return
+end
+
+
+parse_start_line!(bytes::String, r::Response) = parse_status_line(bytes, r)
+
+parse_start_line!(bytes::String, r::Request) = parse_request_line(bytes, r)
+
+
+"""
+    length_of_header(bytes, start_i) -> length or 0
+
+Find length header delimited by `\r\n\r\n` or `\n\n`.
+"""
+
+function length_of_header(bytes::AbstractVector{UInt8}, start_i::Int)
+    buf = 0xFFFFFFFF
+    l = length(bytes)
+    i = max(1, start_i - 4)
+    while i <= l
+        @inbounds x = bytes[i]
+        if x == 0x0D || x == 0x0A
+            buf = (buf << 8) | UInt32(x)
+            if buf == 0x0D0A0D0A || (buf & 0xFFFF) == 0x0A0A
+                return i
+            end
+        else
+            buf = 0xFFFFFFFF
+        end
+        i += 1
+    end
+
+    return 0
 end
 
 
@@ -450,22 +486,36 @@ Throw `EOFError` if input is incomplete.
 
 function readheaders(io::IO, parser::Parser, message::Message)
 
-    n = 0
-    while !headerscomplete(parser) && !eof(io)
+    # Fast path, buffer already contains entire header...
+    if !eof(io)
         bytes = readavailable(io)
-        n += length(bytes)
-        excess = parseheaders(parser, bytes) do h
-            appendheader(message, h)
+        if (l = length_of_header(bytes, 1)) > 0
+            return readcompleteheaders(io, bytes, l, parser, message)
         end
-        unread!(io, excess)
-        n -= length(excess)
-        if n > header_size_limit
+    end
+
+    # Otherwise, wait for end of header...
+    buf = Vector{UInt8}(bytes)
+    while !eof(io)
+        i = length(buf)
+        append!(buf, readavailable(io))
+        if (l = length_of_header(buf, i)) > 0
+            return readcompleteheaders(io, buf, l, parser, message)
+        end
+        if i > header_size_limit
             throw(HeaderSizeError())
         end
     end
-    if !headerscomplete(parser)
-        throw(EOFError())
+    throw(EOFError())
+end
+
+
+function readcompleteheaders(io::IO, bytes, i, parser::Parser, message::Message)
+    #Parsers.re_parseheaders(parser, String(view(bytes, 1:i))) do h
+    Parsers.parseheaders(parser, String(view(bytes, 1:i))) do h
+        appendheader(message, h)
     end
+    unread!(io, view(bytes, i+1:length(bytes)))
     readstartline!(parser.message, message)
     return message
 end
@@ -488,10 +538,20 @@ Read trailers from an `IO` stream into a `Message` struct.
 """
 
 function readtrailers(io::IO, parser::Parser, message::Message)
-    if messagehastrailing(parser)
-        readheaders(io, parser, message)
+    @require messagehastrailing(parser)
+    if !eof(io)
+        bytes = readavailable(io)
+        l = length(bytes)
+        i = l < 1 ? 0 : bytes[1] == 0x0A  ? 1 :
+            l < 2 ? 0 : bytes[1] == 0x0D && bytes[2] == 0x0A  ? 2 : 0
+        if i < l
+            unread!(io, view(bytes, i+1:l))
+        end
+        if i == 0
+            readheaders(io, parser, message)
+        end
     end
-    return message
+    return
 end
 
 
@@ -559,7 +619,9 @@ function Base.parse(::Type{T}, str::AbstractString) where T <: Message
     m::T = T == Request ? r : r.response
     readheaders(bytes, p, m)
     readbody(bytes, p, m)
-    readtrailers(bytes, p, m)
+    if messagehastrailing(p)
+        readtrailers(bytes, p, m)
+    end
     if ischunked(m) && !messagecomplete(p)
         throw(EOFError())
     end
