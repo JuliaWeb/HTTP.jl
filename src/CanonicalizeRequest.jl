@@ -2,7 +2,7 @@ module CanonicalizeRequest
 
 import ..Layer, ..request
 using ..Messages
-using ..Strings.tocameldash!
+using ..Strings.tocameldash
 
 
 """
@@ -27,7 +27,7 @@ function request(::Type{CanonicalizeLayer{Next}},
 end
 
 
-canonicalizeheaders(h::T) where T = T([tocameldash!(k) => v for (k,v) in h])
+canonicalizeheaders(h::T) where T = T([tocameldash(k) => v for (k,v) in h])
 
 
 end # module CanonicalizeRequest
