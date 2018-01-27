@@ -8,6 +8,7 @@ import ..HTTP
 using ..IOExtras
 using ..Parsers
 using ..Messages
+import ..bytesavailable
 import ..Messages: header, hasheader, setheader,
                    writeheaders, writestartline
 import ..ConnectionPool: getrawstream, byteview
@@ -207,7 +208,7 @@ function Base.readavailable(http::Stream)::ByteView
     if http.ntoread == 0
         return nobytes
     end
-    if nb_available(http.stream) > http.ntoread
+    if bytesavailable(http.stream) > http.ntoread
         bytes = byteview(read(http.stream, http.ntoread))
     else
         bytes = readavailable(http.stream)

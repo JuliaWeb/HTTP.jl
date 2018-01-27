@@ -30,6 +30,7 @@ export Connection, Transaction,
 
 using ..IOExtras
 
+import ..bytesavailable
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
@@ -151,15 +152,15 @@ Base.isopen(t::Transaction) = isopen(t.c) &&
 
 function Base.eof(t::Transaction)
     @require isreadable(t) || !isopen(t)
-    if nb_available(t) > 0
+    if bytesavailable(t) > 0
         return false
     end                 ;@debug 4 "eof(::Transaction) -> eof($typeof(c.io)): $t"
     return eof(t.c.io)
 end
 
-Base.nb_available(t::Transaction) = nb_available(t.c)
-Base.nb_available(c::Connection) =
-    !isempty(c.excess) ? length(c.excess) : nb_available(c.io)
+bytesavailable(t::Transaction) = bytesavailable(t.c)
+bytesavailable(c::Connection) =
+    !isempty(c.excess) ? length(c.excess) : bytesavailable(c.io)
 
 
 Base.isreadable(t::Transaction) = t.c.readbusy && t.c.readcount == t.sequence
@@ -308,7 +309,7 @@ end
 
 function Base.close(c::Connection)
     close(c.io)
-    if nb_available(c) > 0
+    if bytesavailable(c) > 0
         purge(c)
     end
     notify(poolcondition)
@@ -328,7 +329,7 @@ function purge(c::Connection)
         readavailable(c.io)
     end
     c.excess = nobytes
-    @ensure nb_available(c) == 0
+    @ensure bytesavailable(c) == 0
 end
 
 
@@ -551,7 +552,7 @@ end
 
 
 function Base.show(io::IO, c::Connection)
-    nwaiting = nb_available(tcpsocket(c.io))
+    nwaiting = bytesavailable(tcpsocket(c.io))
     print(
         io,
         tcpstatus(c), " ",

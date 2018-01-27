@@ -60,7 +60,7 @@ Streaming of request and response bodies is handled by the
 module Messages
 
 export Message, Request, Response, HeaderSizeError,
-       reset!,
+       reset!, status, method, headers, uri, body,
        iserror, isredirect, ischunked, issafe, isidempotent,
        header, hasheader, setheader, defaultheader, appendheader,
        mkheaders, readheaders, headerscomplete, readtrailers, writeheaders,
@@ -76,6 +76,7 @@ using ..IOExtras
 using ..Parsers
 import ..Parsers: headerscomplete, reset!
 import ..@require, ..precondition_error
+import ..bytes
 
 const unknown_length = typemax(Int)
 
@@ -115,7 +116,7 @@ mutable struct Response <: Message
         r.version = v"1.1"
         r.status = status
         r.headers = mkheaders(headers)
-        r.body = body
+        r.body = bytes(body)
         if request != nothing
             r.request = request
         end
@@ -124,7 +125,7 @@ mutable struct Response <: Message
 end
 
 Response(s::Int, body::AbstractVector{UInt8}) = Response(s; body=body)
-Response(s::Int, body::AbstractString) = Response(s, Vector{UInt8}(body))
+Response(s::Int, body::AbstractString) = Response(s, bytes(body))
 
 Response(bytes) = parse(Response, bytes)
 
@@ -139,6 +140,9 @@ function reset!(r::Response)
     end
 end
 
+status(r::Response) = r.status
+headers(r::Response) = r.headers
+body(r::Response) = r.body
 
 """
     Request <: Message
@@ -185,7 +189,7 @@ function Request(method::String, target, headers=[], body=UInt8[];
                 target == "" ? "/" : target,
                 version,
                 mkheaders(headers),
-                body,
+                bytes(body),
                 Response(),
                 parent)
     r.response.request = r
@@ -196,6 +200,11 @@ Request(bytes) = parse(Request, bytes)
 
 mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
+
+method(r::Request) = r.method
+uri(r::Request) = r.target
+headers(r::Request) = r.headers
+body(r::Request) = r.body
 
 """
     issafe(::Request)
@@ -274,7 +283,7 @@ hasheader(m, k::String, v::String) = lowercase(header(m, k)) == lowercase(v)
 Set header `value` for `key` (case-insensitive).
 """
 setheader(m::Message, v) = setheader(m.headers, v)
-setheader(h::Headers, v::Pair) = setbyfirst(h, Pair{String,String}(v), lceq)
+setheader(h::Headers, v::Pair) = setbyfirst(h, Pair{String,String}(String(v.first), String(v.second)), lceq)
 
 
 """
@@ -674,7 +683,6 @@ end
 
 
 const STATUS_MESSAGES = (()->begin
-    @assert ccall(:jl_generating_output, Cint, ()) == 1
     v = fill("Unknown Code", 530)
     v[100] = "Continue"
     v[101] = "Switching Protocols"

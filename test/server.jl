@@ -5,13 +5,8 @@ while nworkers() < 5
     addprocs(1)
 end
 
-using HTTP
-using HTTP.Test
-
-
-using HTTP
-
-port = rand(8000:8999)
+@everywhere using HTTP
+@everywhere using HTTP.Test
 
 """
     n: number of remotes
@@ -35,6 +30,8 @@ end
 
 @testset "HTTP.Servers.serve" begin
 
+port = rand(8000:8999)
+
 # test kill switch
 server = HTTP.Servers.Server()
 tsk = @async HTTP.Servers.serve(server, "localhost", port)
@@ -45,7 +42,6 @@ sleep(2)
 
 
 # test http vs. https
-
 
 # echo response
 serverlog = HTTP.FIFOBuffer()

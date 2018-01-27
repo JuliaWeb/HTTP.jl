@@ -29,6 +29,9 @@ for group in tests
                 if e isa HTTP.URIs.URLParsingError
                     println(e)
                     continue
+                elseif e isa AssertionError
+                    println(e)
+                    continue
                 else
                     rethrow(e)
                 end

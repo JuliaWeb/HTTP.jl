@@ -2,14 +2,16 @@ using HTTP
 using HTTP.Test
 using HTTP.IOExtras
 
+@testset "WebSockets" begin
+
 for s in ["ws", "wss"]
 
     HTTP.WebSockets.open("$s://echo.websocket.org") do io
-        write(io, Vector{UInt8}("Foo"))
+        write(io, HTTP.bytes("Foo"))
         @test !eof(io)
         @test String(readavailable(io)) == "Foo"
 
-        write(io, Vector{UInt8}("Hello"))
+        write(io, HTTP.bytes("Hello"))
         write(io, " There")
         write(io, " World", "!")
         closewrite(io)
@@ -22,3 +24,5 @@ for s in ["ws", "wss"]
     end
 
 end
+
+end # testset

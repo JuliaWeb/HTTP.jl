@@ -2,6 +2,8 @@ module Strings
 
 export escapehtml, tocameldash, iso8859_1_to_utf8
 
+using ..IOExtras
+
 """
 escapeHTML(i::String)
 
@@ -38,7 +40,7 @@ function tocameldash!(s::String)
         end
         upper = b == UInt8('-')
     end
-    return s
+    return String(bytes)
 end
 
 tocameldash(s::AbstractString) = tocameldash!(String(s))

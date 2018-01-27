@@ -1,5 +1,8 @@
 module FIFOBuffers
 
+import ..bytesavailable
+import ..bytes
+using ..IOExtras
 import Base.==
 
 export FIFOBuffer
@@ -84,7 +87,8 @@ FIFOBuffer(io::IO) = FIFOBuffer(readavailable(io))
 
 ==(a::FIFOBuffer, b::FIFOBuffer) = String(a) == String(b)
 Base.length(f::FIFOBuffer) = f.nb
-Base.nb_available(f::FIFOBuffer) = f.nb
+bytesavailable(f::FIFOBuffer) = f.nb
+bytes(f::FIFOBuffer) = readavailable(f)
 Base.wait(f::FIFOBuffer) = wait(f.cond)
 Base.read(f::FIFOBuffer) = readavailable(f)
 Base.flush(f::FIFOBuffer) = nothing
@@ -288,7 +292,10 @@ function Base.write(f::FIFOBuffer, bytes::Vector{UInt8}, i, j)
     return len
 end
 
+if isdefined(Base, :CodeUnits)
+Base.write(f::FIFOBuffer, bytes::Base.CodeUnits) = write(f, Vector{UInt8}(String(bytes)))
+end
 Base.write(f::FIFOBuffer, bytes::Vector{UInt8}) = write(f, bytes, 1, length(bytes))
-Base.write(f::FIFOBuffer, str::String) = write(f, Vector{UInt8}(str))
+Base.write(f::FIFOBuffer, str::String) = write(f, IOExtras.bytes(str))
 
 end # module

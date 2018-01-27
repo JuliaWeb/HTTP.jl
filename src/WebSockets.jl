@@ -6,7 +6,7 @@ import ..HTTP
 using ..IOExtras
 using ..Streams
 import ..ConnectionPool
-using HTTP.header
+using HTTP: header
 import ..@debug, ..DEBUG_LEVEL, ..@require, ..precondition_error
 
 

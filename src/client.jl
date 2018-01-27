@@ -41,7 +41,7 @@ function request(client::Client, method, url::URI;
                  body="",
                  enablechunked::Bool=true,
                  stream::Bool=false,
-                 verbose::Bool=false,
+                 verbose=false,
                  args...)
 
     # Add default values from client options to args...
@@ -131,7 +131,7 @@ function request(client::Client, method, url::URI;
     end
     end
 
-    return request(m, url, h, body; args...)
+    return request(m, url, h, body; verbose=Int(verbose), args...)
 end
 
 for f in [:get, :post, :put, :delete, :head,

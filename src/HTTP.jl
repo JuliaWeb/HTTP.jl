@@ -4,25 +4,30 @@ module HTTP
 export startwrite, startread, closewrite, closeread
 
 using MbedTLS
-import MbedTLS.SSLContext
+import MbedTLS: SSLContext
 
 const DEBUG_LEVEL = 0
+
+Base.@deprecate escape escapeuri
+Base.@deprecate URL URI
 
 include("compat.jl")
 include("debug.jl")
 
 include("Pairs.jl")
-include("Strings.jl")
 include("IOExtras.jl")                 ;using .IOExtras
+include("Strings.jl")
 include("URIs.jl")                     ;using .URIs
 include("utils.jl")
 include("fifobuffer.jl")               ;using .FIFOBuffers
+include("sniff.jl")
 include("cookies.jl")                  ;using .Cookies
 include("multipart.jl")
 include("Parsers.jl")                  ;import .Parsers: Parser, Headers, Header,
                                                          ParsingError, ByteView
 include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
+
 include("Streams.jl")                  ;using .Streams
 
 
@@ -435,6 +440,7 @@ include("ExceptionRequest.jl");         using .ExceptionRequest
 include("RetryRequest.jl");             using .RetryRequest
 include("ConnectionRequest.jl");        using .ConnectionRequest
 include("StreamRequest.jl");            using .StreamRequest
+include("ContentTypeRequest.jl");       using .ContentTypeDetection
 
 """
 The `stack()` function returns the default HTTP Layer-stack type.
@@ -555,12 +561,14 @@ function stack(;redirect=true,
                 retry=true,
                 status_exception=true,
                 readtimeout=0,
+                detect_content_type=true,
                 kw...)
 
     NoLayer = Union
 
     (redirect             ? RedirectLayer       : NoLayer){
     (basic_authorization  ? BasicAuthLayer      : NoLayer){
+    (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
     (cookies              ? CookieLayer         : NoLayer){
     (canonicalize_headers ? CanonicalizeLayer   : NoLayer){
                             MessageLayer{
@@ -570,14 +578,14 @@ function stack(;redirect=true,
                             ConnectionPoolLayer{
     (readtimeout > 0      ? TimeoutLayer        : NoLayer){
                             StreamLayer
-    }}}}}}}}}}
+    }}}}}}}}}}}
 end
 
 
 include("client.jl")
-include("sniff.jl")
 include("Handlers.jl")                 ;using .Handlers
-include("Servers.jl")                  ;using .Servers.listen
+include("Servers.jl")                  ;using .Servers; using .Servers: listen
+Base.@deprecate_binding(Nitrogen, Servers, false)
 
 include("WebSockets.jl")               ;using .WebSockets
 
