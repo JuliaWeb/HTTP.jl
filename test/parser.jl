@@ -56,40 +56,6 @@ macro errmsg(expr)
 end
 
 
-parse!(parser::Parser, message::Messages.Message, body, bytes)::Int =
-    parse!(parser, message, body, Vector{UInt8}(bytes))
-
-function parse!(parser::Parser, message::Messages.Message, body, bytes::Vector{UInt8})::Int
-
-    l = length(bytes)
-    count = 0
-    while count < l
-        if !headerscomplete(parser)
-            excess = parseheaders(parser, String(bytes)) do h
-                appendheader(message, h)
-            end
-            readstartline!(parser.message, message)
-        else
-            if ischunked(message)
-                fragment, excess = parsebody(parser, bytes)
-                write(body, fragment)
-            else
-                n = min(length(bytes), bodylength(message) - length(body))
-                write(body, view(bytes, 1:n))
-                count += n
-                break
-            end
-        end
-        count += length(bytes) - (excess == nothing ? 0 : length(excess))
-        bytes = excess
-        if ischunked(message) && messagecomplete(parser)
-            break
-        end
-    end
-    return count
-end
-
-
 mutable struct Message
   name::String
   raw::String
@@ -1719,11 +1685,7 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure\r\n\r\n"
       HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
       !HTTP.Parsers.strict && (@test_throws ParsingError Response(respstr))
-      @test @errmsg(Response(respstr)) == """
-        HTTP.ParsingError: invalid character in header, es_header_field, 200
-        "Fo@: Failure"
-           ^
-        """
+      @test ismatch(r"INVALID_HEADER_FIELD", @errmsg(Response(respstr)))
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar\r\n\r\n"
       HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
@@ -1745,16 +1707,6 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
 
 
-      for r in ((Request, "GET / HTTP/1.1\r\n"), (Response, "HTTP/1.0 200 OK\r\n"))
-          R = r[1]()
-          b = IOBuffer()
-          p = Parser()
-          n = parse!(Parser(), R, b, r[2])
-          @test !headerscomplete(p)
-          @test !messagecomplete(p)
-          @test n == length(HTTP.bytes(r[2]))
-      end
-
       buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"
       @test_throws EOFError r = Request(buf)
 
@@ -1762,7 +1714,7 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       r = Response()
       b = IOBuffer()
       p = Parser()
-      parse!(p, r, b, respstr)
+      readheaders(IOBuffer(respstr), p, r)
       @test r.status == 200
       @test r.headers == ["Content-Length"=>"1844674407370955160"]
 
@@ -1779,7 +1731,7 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFE" * "\r\n..."
       r = Response()
       p = Parser()
-      parse!(p, r, b, respstr)
+      readheaders(IOBuffer(respstr), p, r)
       @test r.status == 200
       @test r.headers == ["Transfer-Encoding"=>"chunked"]
 
@@ -1790,72 +1742,10 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       e = try Response(respstr) catch e e end
       @test isa(e, ParsingError) && e.code == :HPE_INVALID_CONTENT_LENGTH
 
-      for len in (1000, 100000)
-          b = IOBuffer()
-          HTTP.Parsers.reset!(p)
-          reqstr = "POST / HTTP/1.0\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
-          r = Request()
-          p = Parser()
-          parse!(p, r, b, reqstr)
-          @test headerscomplete(p)
-          @test !messagecomplete(p)
-          for i = 1:len-1
-              parse!(p, r, b, "a")
-              @test headerscomplete(p)
-              @test !messagecomplete(p)
-          end
-          parse!(p, r, b, "a")
-          @test headerscomplete(p)
-#          @test messagecomplete(p)
-          @test length(take!(b)) == len
-      end
-
-      for len in (1000, 100000)
-          b = IOBuffer()
-          HTTP.Parsers.reset!(p)
-          respstr = "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
-          r = Request().response
-          p = Parser()
-          parse!(p, r, b, respstr)
-          @test headerscomplete(p)
-          @test !messagecomplete(p)
-          for i = 1:len-1
-              parse!(p, r, b, "a")
-              @test headerscomplete(p)
-              @test !messagecomplete(p)
-          end
-          parse!(p, r, b, "a")
-          @test headerscomplete(p)
-#          @test messagecomplete(p)
-          @test length(take!(b)) == len
-      end
-
-      b = IOBuffer()
-      reqstr = requests[1].raw * requests[2].raw
-      r = Request()
-      p = Parser()
-      n = parse!(p, r, b, reqstr)
-      @test headerscomplete(p)
-      #@test messagecomplete(p)
-      @test String(take!(b)) == requests[1].body
-      b = IOBuffer()
-      ex = HTTP.bytes(reqstr)[n+1:end]
-      HTTP.Parsers.reset!(p)
-      parse!(p, r, b, ex)
-      @test headerscomplete(p)
-      #@test messagecomplete(p)
-      @test String(take!(b)) == requests[2].body
-
       @test_throws ParsingError Request("GET / HTP/1.1\r\n\r\n")
 
       r = Request("GET / HTTP/1.1\r\n" * "Test: Düsseldorf\r\n\r\n")
       @test r.headers == ["Test" => "Düsseldorf"]
-
-      r = Request()
-      p = Parser()
-      b = IOBuffer()
-      parse!(p, r, b, "GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba")
-      @test String(take!(b)) == "fooba"
 
       for m in ["GET", "PUT", "M-SEARCH", "FOOMETHOD"]
           r = Request("$m / HTTP/1.1\r\n\r\n")

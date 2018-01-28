@@ -505,7 +505,8 @@ function readheaders(io::IO, parser::Parser, message::Message)
             bytes = readavailable(io)
         end
         if (l = length_of_header(bytes, 1)) > 0
-            return readcompleteheaders(io, bytes, l, parser, message)
+            unread!(io, view(bytes, l+1:length(bytes)))
+            return readcompleteheaders(io, String(view(bytes, 1:l)), parser, message)
         end
     end
 
@@ -515,7 +516,8 @@ function readheaders(io::IO, parser::Parser, message::Message)
         i = length(buf)
         append!(buf, readavailable(io))
         if (l = length_of_header(buf, i)) > 0
-            return readcompleteheaders(io, buf, l, parser, message)
+            unread!(io, view(buf, l+1:length(buf)))
+            return readcompleteheaders(io, String(view(buf, 1:l)), parser, message)
         end
         if i > header_size_limit
             throw(HeaderSizeError())
@@ -525,27 +527,17 @@ function readheaders(io::IO, parser::Parser, message::Message)
 end
 
 
-function readcompleteheaders(io::IO, bytes, l, parser::Parser, message::Message)
-    str = String(view(bytes, 1:l))
-    if true
-        i = 1
-        if parser.state != Parsers.s_trailer_start
-            i = parse_start_line!(str, message)
-        end
-        h, i = parse_header_field(str, i)
-        while !(h === Parsers.emptyheader)
-            appendheader(message, h)
-            h, i = parse_header_field(str, i)
-        end
-        @assert i == l + 1
-        parser.state = Parsers.s_body_start
-    else
-        Parsers.parseheaders(parser, str) do h
-            appendheader(message, h)
-        end
-        readstartline!(parser.message, message)
+function readcompleteheaders(io::IO, bytes, parser::Parser, message::Message)
+    i = 1
+    if parser.state != Parsers.s_trailer_start
+        i = parse_start_line!(bytes, message)
     end
-    unread!(io, view(bytes, l+1:length(bytes)))
+    h, i = parse_header_field(bytes, i)
+    while !(h === Parsers.emptyheader)
+        appendheader(message, h)
+        h, i = parse_header_field(bytes, i)
+    end
+    parser.state = Parsers.s_body_start
     return message
 end
 

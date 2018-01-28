@@ -55,6 +55,7 @@ end
 
 # https://github.com/JuliaLang/julia/pull/25535
 Base.String(x::SubArray{UInt8,1}) = String(Vector{UInt8}(x))
+Base.SubString(x::SubArray{UInt8,1}) = SubString(String(x))
 
 @static if !isdefined(Base, :bytesavailable)
     const bytesavailable = nb_available

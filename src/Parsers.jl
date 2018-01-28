@@ -243,30 +243,6 @@ macro passert(cond)
     DEBUG_LEVEL > 1 ? esc(:(@assert $cond)) : :()
 end
 
-macro methodstate(meth, i, char)
-    return esc(:(Int($meth) << Int(16) | Int($i) << Int(8) | Int($char)))
-end
-
-function parse_token(bytes, len, p; allowed='a')
-    start = p
-    while p <= len
-        @inbounds ch = bytes[p]
-        if !istoken(ch) && ch != allowed
-            break
-        end
-        p = nextind(bytes, p)
-    end
-    @passert p <= len + 1
-
-    ss = SubString(bytes, start, p-1)
-
-    if p > len
-        return ss, len, false
-    else
-        return ss, p, true
-    end
-end
-
 
 rawmatch(re::Regex, str::AbstractString, idx::Int=1) =
     Base.PCRE.exec(re.regex, str, idx-1, re.match_options, re.match_data)
@@ -289,11 +265,11 @@ request-line   = method SP request-target SP HTTP-version CRLF
 """
 
 const request_line = r"""^
-    (?: \r? \n) ?
-    ([^ \r\n]+) [ ]+                    # 1. method
-    ([^ \r\n]+) [ ]+                    # 2. target
+    (?: \r? \n) ?                       #    ignore leading blank line
+    ([!#$%&'*+\-.^_`|~[:alnum:]]+) [ ]+ # 1. method = token (RFC7230 3.2.6)
+    ([^.][^ \r\n]*) [ ]+                # 2. target
     HTTP/(\d\.\d)                       # 3. version
-    \r? \n
+    \r? \n                              #    CRLF
 """x
 
 
@@ -323,7 +299,7 @@ status-line = HTTP-version SP status-code SP reason-phrase CRLF
 const status_line = r"""^
     HTTP/(\d\.\d) [ ]+                  # 1. version
     (\d\d\d) .*                         # 2. status
-    \r? \n
+    \r? \n                              #    CRLF
 """x
 
 
@@ -350,11 +326,12 @@ header-field   = field-name ":" OWS field-value OWS
 """
 
 const header_field = r"""^
-    ([^: \t\r\n]+) [ ]* :
-    [ \t]*
-    ([^\r\n]*)
-    \r? \n
-    (?= [^ \t])
+    ([!#$%&'*+\-.^_`|~[:alnum:]]+) :    # 1. field-name = token (RFC7230 3.2.6)
+    [ \t]*                              #    OWS
+    ([^\r\n]*?)                         # 2. field-value
+    [ \t]*                              #    OWS
+    \r? \n                              #    CRLF
+    (?= [^ \t])                         #    no WS on next line
 """x
 
 
@@ -364,10 +341,12 @@ obs-fold       = CRLF 1*( SP / HTAB )
 """
 
 const obs_fold_header_field = r"""^
-    ([^: \t\r\n]+) [ ]* :
-    [ \t]*
-    ([^\r\n]* (?: \r? \n [ \t] [^\r\n]*)* )
-    \r? \n
+    ([!#$%&'*+\-.^_`|~[:alnum:]]+) :    # 1. field-name = token (RFC7230 3.2.6)
+    [ \t]*                              #    OWS
+    ([^\r\n]*                           # 2. field-value
+        (?: \r? \n [ \t] [^\r\n]*)*)    #    obs-fold
+    [ \t]*                              #    OWS
+    \r? \n                              #    CRLF
 """x
 
 const empty_header_field = r"^ \r? \n"x
@@ -392,462 +371,17 @@ function parse_header_field(bytes::AbstractString, i::Int = 1)::Tuple{Header, In
     if rawmatch(re, s)
         return emptyheader, i + nextindex(re) - 1
     end
-#=
+
     re = obs_fold_header_field
     if rawmatch(re, s)
         unfold = SubString(strip(replace(rawgroup(re, s, 2), r"\r?\n", "")))
         return (rawgroup(re, s, 1) => unfold),
                i + nextindex(re) - 1
     end
-=#
 
     throw(ParsingError(:INVALID_HEADER_FIELD, s))
 end
 
-
-
-#FIXME separate response / request parsing
-
-function re_parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
-                         parser::Parser, bytes::String)
-
-    @require !isempty(bytes)
-    @require messagehastrailing(parser) || !headerscomplete(parser)
-
-    p_state = parser.state
-
-    p = 1
-
-    if p_state == s_start_req_or_res
-        if rawmatch(status_line, bytes, p)
-            parser.message.version = rawgroup(status_line, bytes, 1)
-            parser.message.status = rawgroup(status_line, bytes, 2)
-            p = nextindex(status_line)
-        elseif rawmatch(request_line, bytes, p)
-            ovec = request_line.ovec
-            parser.message.method = rawgroup(request_line, bytes, 1)
-            parser.message.target = rawgroup(request_line, bytes, 2)
-            parser.message.version = rawgroup(request_line, bytes, 3)
-            p = nextindex(request_line)
-        else
-            throw(ParsingError(parser, :INVALID_START_LINE, bytes, p))
-        end
-        p_state = s_header_field_start
-    end
-
-    while rawmatch(header_field, bytes, p)
-        onheader(rawgroup(header_field, bytes, 1) =>
-                 rawgroup(header_field, bytes, 2))
-        p = nextindex(header_field)
-    end
-    p_state = s_body_start
-    parser.state = p_state
-    return
-end
-
-
-"""
-    parseheaders(::Parser, bytes) do h::Pair{String,String} ... -> excess
-
-Read headers from `bytes`, passing each field/value pair to `f`.
-Returns a `SubArray` containing bytes not parsed.
-
-e.g.
-```
-excess = parseheaders(p, bytes) do (k,v)
-    println("\$k: \$v")
-end
-```
-"""
-
-#parseheaders(f, p, bytes) = parseheaders(f, p, String(bytes))
-
-function parseheaders(onheader::Function #=f(::Pair{String,String}) =#,
-                      parser::Parser, bytes::String)
-
-    @require !isempty(bytes)
-    @require messagehastrailing(parser) || !headerscomplete(parser)
-
-    field = SubString("")
-    len = length(bytes)
-    p_state = parser.state
-    @debug 3 "parseheaders(parser.state=$(ParsingStateCode(p_state))), " *
-             "$len-bytes:\n" * escapelines(String(collect(bytes))) * ")"
-
-    trailing = p_state == s_trailer_start
-
-    p = 0
-    while p < len && p_state <= s_headers_done
-
-        @debug 4 string("top of while($p < $len) \"",
-                        Base.escape_string(string(bytes[p+1])), "\" ",
-                        ParsingStateCode(p_state))
-        p = nextind(bytes, p)
-        @inbounds ch = bytes[p]
-
-        if p_state == s_start_req_or_res
-            (ch == CR || ch == LF) && continue
-
-            p_state = s_start_req
-            p = prevind(bytes, p)
-
-        elseif p_state == s_res_first_http_major
-            @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-            start = p
-#            parser.message.major = Int(ch - '0')
-            p_state = s_res_http_major
-
-        # major HTTP version or dot
-        elseif p_state == s_res_http_major
-            if ch == '.'
-                p_state = s_res_first_http_minor
-                continue
-            end
-            @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-#            parser.message.major *= Int(10)
-#            parser.message.major += Int(ch - '0')
-            @errorif(parser.message.major > 999, :HPE_INVALID_VERSION)
-
-        # first digit of minor HTTP version
-        elseif p_state == s_res_first_http_minor
-            @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-#            parser.message.minor = Int(ch - '0')
-            p_state = s_res_http_minor
-
-        # minor HTTP version or end of request line
-        elseif p_state == s_res_http_minor
-            if ch == ' '
-                parser.message.version = SubString(bytes, start, p-1)
-                p_state = s_res_first_status_code
-                continue
-            end
-            @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-#            parser.message.minor *= Int(10)
-#            parser.message.minor += Int(ch - '0')
-#            @errorif(parser.message.minor > 999, :HPE_INVALID_VERSION)
-
-        elseif p_state == s_res_first_status_code
-            if !isnum(ch)
-                ch == ' ' && continue
-                @err(:HPE_INVALID_STATUS)
-            end
-            start = p
-#            parser.message.status = Int(ch - '0')
-            p_state = s_res_status_code
-
-        elseif p_state == s_res_status_code
-            if !isnum(ch)
-                parser.message.status = SubString(bytes, start, p-1)
-                if ch == ' '
-                    p_state = s_res_status_start
-                elseif ch == CR
-                    p_state = s_res_line_almost_done
-                elseif ch == LF
-                    p_state = s_header_field_start
-                else
-                    @err(:HPE_INVALID_STATUS)
-                end
-            else
-#                parser.message.status *= Int(10)
-#                parser.message.status += Int(ch - '0')
-#                @errorif(parser.message.status > 999, :HPE_INVALID_STATUS)
-            end
-
-        elseif p_state == s_res_status_start
-            if ch == CR
-                p_state = s_res_line_almost_done
-            elseif ch == LF
-                p_state = s_header_field_start
-            else
-                p_state = s_res_status
-            end
-
-        elseif p_state == s_res_status
-            if ch == CR
-                p_state = s_res_line_almost_done
-            elseif ch == LF
-                p_state = s_header_field_start
-            end
-
-        elseif p_state == s_res_line_almost_done
-            @errorifstrict(ch != LF)
-            p_state = s_header_field_start
-
-        elseif p_state == s_start_req
-            (ch == CR || ch == LF) && continue
-
-            @errorif(!istoken(ch), :HPE_INVALID_METHOD)
-
-            p_state = s_req_method
-            p = prevind(bytes, p)
-
-        elseif p_state == s_req_method
-
-            parser.message.method, p, complete = parse_token(bytes, len, p)
-            @assert complete
-
-            if complete
-                @inbounds ch = bytes[p]
-                if parser.message.method == "HTTP" && ch == '/'
-                    p_state = s_res_first_http_major
-                elseif ch == ' '
-                    p_state = s_req_spaces_before_target
-                else
-                    @err(:HPE_INVALID_METHOD)
-                end
-            end
-
-        elseif p_state == s_req_spaces_before_target
-            ch == ' ' && continue
-            p_state = s_req_target
-            p = prevind(bytes, p)
-
-        elseif (p_state ==  s_req_target)
-            start = p
-            while p <= len
-                @inbounds ch = bytes[p]
-                if @anyeq(ch, ' ', CR, LF)
-                    if ch == ' '
-                        p_state = s_req_http_start
-                    else
-                        parser.message.version = SubString("0.9")
-                        p_state = ifelse(ch == CR, s_req_line_almost_done,
-                                                   s_header_field_start)
-                    end
-                    break
-                end
-                p = nextind(bytes, p)
-            end
-            @passert p <= len + 1
-
-            target = SubString(bytes, start, p-1)
-
-            @assert p_state >= s_req_http_start
-            if p_state >= s_req_http_start
-                @debugshow 4 target
-                @errorif(isempty(target) ||
-                         target[1] == '.' ||
-                         startswith(target, "HTTP/"),
-                         :HPE_INVALID_TARGET)
-                parser.message.target = target
-            end
-
-            p = min(p, len)
-
-        elseif p_state == s_req_http_start
-            if ch == 'H'
-                p_state = s_req_http_H
-            elseif ch == ' '
-            else
-                @err(:HPE_INVALID_CONSTANT)
-            end
-
-        elseif p_state == s_req_http_H
-            @errorifstrict(ch != 'T')
-            p_state = s_req_http_HT
-
-        elseif p_state == s_req_http_HT
-            @errorifstrict(ch != 'T')
-            p_state = s_req_http_HTT
-
-        elseif p_state == s_req_http_HTT
-            @errorifstrict(ch != 'P')
-            p_state = s_req_http_HTTP
-
-        elseif p_state == s_req_http_HTTP
-            @errorifstrict(ch != '/')
-            p_state = s_req_first_http_major
-
-        # first digit of major HTTP version
-        elseif p_state == s_req_first_http_major
-            @errorif(ch < '1' || ch > '9', :HPE_INVALID_VERSION)
-            start = p
-#            parser.message.major = Int(ch - '0')
-            p_state = s_req_http_major
-
-        # major HTTP version or dot
-        elseif p_state == s_req_http_major
-            if ch == '.'
-                p_state = s_req_first_http_minor
-            elseif !isnum(ch)
-                @err(:HPE_INVALID_VERSION)
-            else
-#                parser.message.major *= Int(10)
-#                parser.message.major += Int(ch - '0')
-#                @errorif(parser.message.major > 999, :HPE_INVALID_VERSION)
-            end
-
-        # first digit of minor HTTP version
-        elseif p_state == s_req_first_http_minor
-            @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-#            parser.message.minor = Int(ch - '0')
-            p_state = s_req_http_minor
-
-        # minor HTTP version or end of request line
-        elseif p_state == s_req_http_minor
-            parser.message.version = SubString(bytes, start, p-1)
-            if ch == CR
-                p_state = s_req_line_almost_done
-            elseif ch == LF
-                p_state = s_header_field_start
-            else
-                # FIXME allow spaces after digit?
-                @errorif(!isnum(ch), :HPE_INVALID_VERSION)
-#                parser.message.minor *= Int(10)
-#                parser.message.minor += Int(ch - '0')
-#                @errorif(parser.message.minor > 999, :HPE_INVALID_VERSION)
-            end
-
-        # end of request line
-        elseif p_state == s_req_line_almost_done
-            @errorif(ch != LF, :HPE_LF_EXPECTED)
-            p_state = s_header_field_start
-
-        elseif p_state == s_header_field_start ||
-               p_state == s_trailer_start
-            if ch == CR
-                p_state = s_headers_almost_done
-            elseif ch == LF
-                # they might be just sending \n instead of \r\n so this would be
-                # the second \n to denote the end of headers
-                p_state = s_headers_almost_done
-                p = prevind(bytes, p)
-            else
-                c = (!strict && ch == ' ') ? ' ' : tokens[Int(ch)+1]
-                @errorif(c == Char(0), :HPE_INVALID_HEADER_TOKEN)
-                p_state = s_header_field
-                p = prevind(bytes, p)
-            end
-
-        elseif p_state == s_header_field
-
-            field, p, complete = parse_token(bytes, len, p, allowed = ' ')
-            @assert complete
-            if complete
-                @inbounds ch = bytes[p]
-                @errorif(ch != ':', :HPE_INVALID_HEADER_TOKEN)
-                p_state = s_header_value_discard_ws
-            end
-
-        elseif p_state == s_header_value_discard_ws
-            (ch == ' ' || ch == '\t') && continue
-            if ch == CR
-                p_state = s_header_value_discard_ws_almost_done
-                continue
-            end
-            if ch == LF
-                p_state = s_header_value_discard_lws
-                continue
-            end
-            p_state = s_header_value_start
-            p = prevind(bytes, p)
-        elseif p_state == s_header_value_start
-            p_state = s_header_value
-            #c = lower(ch)
-
-            p = prevind(bytes, p)
-
-        elseif p_state == s_header_value
-            start = p
-            while p <= len
-                @inbounds ch = bytes[p]
-                @debug 4 Base.escape_string(string('\'', ch, '\''))
-                if ch == CR
-                    p_state = s_header_almost_done
-                    break
-                elseif ch == LF
-                    p_state = s_header_value_lws
-                    break
-                elseif strict && !isheaderchar(ch)
-                    @err(:HPE_INVALID_HEADER_TOKEN)
-                end
-
-                #c = lower(ch)
-
-                crlf = compat_findfirst(x->(x == bCR || x == bLF), Vector{UInt8}(SubString(bytes, p, len)))
-                p = crlf == 0 ? len : p + crlf - 2
-
-                p = nextind(bytes, p)
-            end
-            @passert p <= len + 1
-
-            @assert p_state != s_header_value
-            if p_state != s_header_value
-                onheader(field => SubString(bytes, start, p-1))
-                field = SubString("")
-            end
-
-            p = min(p, len)
-
-        elseif p_state == s_header_almost_done
-            @errorif(ch != LF, :HPE_LF_EXPECTED)
-            p_state = s_header_value_lws
-
-        elseif p_state == s_header_value_lws
-            p = prevind(bytes, p)
-            if ch == ' ' || ch == '\t'
-                p_state = s_header_value_start
-            else
-                # finished the header
-                p_state = s_header_field_start
-            end
-
-        elseif p_state == s_header_value_discard_ws_almost_done
-            @errorifstrict(ch != LF)
-            p_state = s_header_value_discard_lws
-
-        elseif p_state == s_header_value_discard_lws
-            if ch == ' ' || ch == '\t'
-                p_state = s_header_value_discard_ws
-            else
-                # header value was empty
-                p_state = s_header_field_start
-                onheader(field => "")
-                field = SubString("")
-                p = prevind(bytes, p)
-            end
-
-        elseif p_state == s_headers_almost_done
-            @errorifstrict(ch != LF)
-            p = prevind(bytes, p)
-            if trailing
-                # End of a chunked request
-                p_state = s_message_done
-            else
-                p_state = s_headers_done
-            end
-
-        elseif p_state == s_headers_done
-            @errorifstrict(ch != LF)
-
-            p_state = s_body_start
-        else
-            @err :HPE_INVALID_INTERNAL_STATE
-        end
-    end
-
-    @assert p <= len
-    @assert p == len ||
-            p_state == s_message_done ||
-            p_state == s_body_start
-
-
-    # Consume trailing end of line after message.
-    if p_state == s_message_done
-        while p < len
-            ch = bytes[p + 1]
-            if ch != CR && ch != LF
-                break
-            end
-            p = nextind(bytes, p)
-        end
-    end
-
-    @debug 3 "parseheaders() exiting $(ParsingStateCode(p_state))"
-
-    parser.state = p_state
-    return view(Vector{UInt8}(bytes), p+1:len)
-end
 
 
 """
@@ -999,6 +533,7 @@ const ERROR_MESSAGES = Dict(
     :HPE_STRICT => "strict mode assertion failed",
 )
 
+#=
 
 """
 Tokens as defined by rfc 2616. Also lowercases them.
@@ -1046,6 +581,7 @@ const tokens = Char[
 istoken(c) = tokens[UInt8(c)+1] != Char(0)
 
 
+=#
 const unhex = Int8[
      -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
     ,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
