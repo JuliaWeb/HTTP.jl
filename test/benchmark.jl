@@ -185,7 +185,8 @@ function go(count::Int)
 
                                                             t_init_done = time()
     for rep in 1:count
-    for (name, bytes) in responses
+    gc()
+    for (name, bytes) in shuffle(responses)
 
 
         write(io, bytes)

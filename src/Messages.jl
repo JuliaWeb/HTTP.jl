@@ -76,7 +76,7 @@ using ..IOExtras
 using ..Parsers
 import ..Parsers: headerscomplete, reset!
 import ..@require, ..precondition_error
-import ..bytes
+import ..bytes, ..bytesavailable
 
 const unknown_length = typemax(Int)
 
@@ -486,6 +486,8 @@ const header_size_limit = 0x10000
 
 struct HeaderSizeError <: Exception end
 
+const typical_header_size = 0x1000
+
 """
     readheaders(::IO, ::Parser, ::Message)
 
@@ -497,7 +499,11 @@ function readheaders(io::IO, parser::Parser, message::Message)
 
     # Fast path, buffer already contains entire header...
     if !eof(io)
-        bytes = readavailable(io)
+        if bytesavailable(io) > typical_header_size
+            bytes = read(io, typical_header_size)
+        else
+            bytes = readavailable(io)
+        end
         if (l = length_of_header(bytes, 1)) > 0
             return readcompleteheaders(io, bytes, l, parser, message)
         end
@@ -520,7 +526,7 @@ end
 
 
 function readcompleteheaders(io::IO, bytes, l, parser::Parser, message::Message)
-    str = String(bytes)
+    str = String(view(bytes, 1:l))
     if true
         i = 1
         if parser.state != Parsers.s_trailer_start

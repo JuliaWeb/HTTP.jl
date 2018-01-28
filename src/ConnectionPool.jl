@@ -188,7 +188,7 @@ end
     const copyto! = copy!
 end
 
-function Base.readbytes!(t::Transaction, a::Vector{UInt8}, nb::Int)
+function Base.readbytes!(t::Transaction, a::Vector{UInt8}, nb)
 
     if !isempty(t.c.excess)
         l = length(t.c.excess)
