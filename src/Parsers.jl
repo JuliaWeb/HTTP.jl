@@ -28,7 +28,7 @@ module Parsers
 export Parser, Header, Headers, ByteView, nobytes,
        reset!,
        parseheaders, parsebody,
-       parse_status_line, parse_request_line,
+       parse_status_line!, parse_request_line!, parse_header_field,
        messagestarted, headerscomplete, bodycomplete, messagecomplete,
        messagehastrailing,
        ParsingError
@@ -48,6 +48,7 @@ const strict = false # See macro @errifstrict
 
 const emptyss = SubString("",1,0)
 const nobytes = view(UInt8[], 1:0)
+const emptyheader = emptyss => emptyss
 const ByteView = typeof(nobytes)
 const Header = Pair{SubString{String},SubString{String}}
 const Headers = Vector{Header}
@@ -199,10 +200,16 @@ struct ParsingError <: Exception
     p::Int
 end
 
+
+function ParsingError(code::Symbol, bytes)
+    ParsingError(code, 0, "", "", bytes, 0)
+end
+
 function ParsingError(parser::Parser, code::Symbol, bytes, p)
     ParsingError(code, parser.state, parser.message.status, "", bytes, p)
 end
 
+#=
 function Base.show(io::IO, e::ParsingError)
     println(io, string("HTTP.ParsingError: ",
                        get(ERROR_MESSAGES, e.code, "?"), ", ",
@@ -217,6 +224,7 @@ function Base.show(io::IO, e::ParsingError)
     println(io, "\"", chomp(error_line), "\"\n",
                 lpad("", e.p - l, " "), "^")
 end
+=#
 
 
 macro err(code)
@@ -260,9 +268,9 @@ function parse_token(bytes, len, p; allowed='a')
 end
 
 
-rawmatch(re::Regex, str::String, idx::Integer) =
+rawmatch(re::Regex, str::AbstractString, idx::Int=1) =
     Base.PCRE.exec(re.regex, str, idx-1, re.match_options, re.match_data)
-nextindex(re::Regex) = re.ovec[2]+1
+nextindex(re::Regex)::Int = re.ovec[2]+1
 rawgroup(re::Regex, str, i) = SubString(str, re.ovec[2i+1]+1, re.ovec[2i+2])
 
 
@@ -270,6 +278,8 @@ function __init__()
     Base.compile(status_line)
     Base.compile(request_line)
     Base.compile(header_field)
+    Base.compile(empty_header_field)
+    Base.compile(obs_fold_header_field)
 end
 
 
@@ -279,7 +289,7 @@ request-line   = method SP request-target SP HTTP-version CRLF
 """
 
 const request_line = r"""^
-     \r? \n [ ]*
+    (?: \r? \n) ?
     ([^ \r\n]+) [ ]+                    # 1. method
     ([^ \r\n]+) [ ]+                    # 2. target
     HTTP/(\d\.\d)                       # 3. version
@@ -293,10 +303,10 @@ Parse HTTP request-line `bytes` and set the
 Return the index of the first header-field line.
 """
 
-function parse_request_line!(bytes::AbstractString, request)
+function parse_request_line!(bytes::AbstractString, request)::Int
     re = request_line
     if !rawmatch(re, bytes)
-        throw(ParsingError(parser, :INVALID_REQUEST_LINE, bytes, 0))
+        throw(ParsingError(:INVALID_REQUEST_LINE, bytes))
     end
     request.method = rawgroup(re, bytes, 1)
     request.target = rawgroup(re, bytes, 2)
@@ -323,13 +333,13 @@ Parse HTTP response-line `bytes` and set the
 Return the index of the first header-field line.
 """
 
-function parse_status_line!(bytes::AbstractString, response)
+function parse_status_line!(bytes::AbstractString, response)::Int
     re = status_line
     if !rawmatch(re, bytes)
-        throw(ParsingError(parser, :INVALID_STATUS_LINE, bytes, 0))
+        throw(ParsingError(:INVALID_STATUS_LINE, bytes))
     end
-    request.version = rawgroup(re, bytes, 1)
-    request.status = rawgroup(re, bytes, 2)
+    response.version = rawgroup(re, bytes, 1)
+    response.status = parse(Int, rawgroup(re, bytes, 2))
     return nextindex(re)
 end
 
@@ -340,10 +350,27 @@ header-field   = field-name ":" OWS field-value OWS
 """
 
 const header_field = r"""^
-    [ ]* ([^: \t\r\n]+) [ ]* :
-    [ \t]* ([^\r\n]+)
+    ([^: \t\r\n]+) [ ]* :
+    [ \t]*
+    ([^\r\n]*)
     \r? \n
-"""xm
+    (?= [^ \t])
+"""x
+
+
+"""
+https://tools.ietf.org/html/rfc7230#section-3.2.4
+obs-fold       = CRLF 1*( SP / HTAB )
+"""
+
+const obs_fold_header_field = r"""^
+    ([^: \t\r\n]+) [ ]* :
+    [ \t]*
+    ([^\r\n]* (?: \r? \n [ \t] [^\r\n]*)* )
+    \r? \n
+"""x
+
+const empty_header_field = r"^ \r? \n"x
 
 
 """
@@ -352,15 +379,31 @@ Return `Pair(field-name => field-value)` and
 the index of the next header-field line.
 """
 
-function parse_header_field(bytes::AbstractString, i::Int = 1)
-    re = header_field 
-    if !rawmatch(re, bytes, i)
-        throw(ParsingError(parser, :INVALID_HEADER_FIELD, bytes, 0))
+function parse_header_field(bytes::AbstractString, i::Int = 1)::Tuple{Header, Int}
+
+    re = header_field
+    s = SubString(bytes, i)
+    if rawmatch(re, s)
+        return (rawgroup(re, s, 1) => rawgroup(re, s, 2)),
+               i + nextindex(re) - 1
     end
-    return rawgroup(re, bytes, 1) =>
-           rawgroup(re, bytes, 2),
-           nextindex(re)
+
+    re = empty_header_field
+    if rawmatch(re, s)
+        return emptyheader, i + nextindex(re) - 1
+    end
+#=
+    re = obs_fold_header_field
+    if rawmatch(re, s)
+        unfold = SubString(strip(replace(rawgroup(re, s, 2), r"\r?\n", "")))
+        return (rawgroup(re, s, 1) => unfold),
+               i + nextindex(re) - 1
+    end
+=#
+
+    throw(ParsingError(:INVALID_HEADER_FIELD, s))
 end
+
 
 
 #FIXME separate response / request parsing

@@ -447,9 +447,9 @@ function readstartline!(m::Parsers.Message, r::Request)
 end
 
 
-parse_start_line!(bytes::String, r::Response) = parse_status_line(bytes, r)
+parse_start_line!(bytes::String, r::Response) = parse_status_line!(bytes, r)
 
-parse_start_line!(bytes::String, r::Request) = parse_request_line(bytes, r)
+parse_start_line!(bytes::String, r::Request) = parse_request_line!(bytes, r)
 
 
 """
@@ -519,13 +519,27 @@ function readheaders(io::IO, parser::Parser, message::Message)
 end
 
 
-function readcompleteheaders(io::IO, bytes, i, parser::Parser, message::Message)
-    #Parsers.re_parseheaders(parser, String(view(bytes, 1:i))) do h
-    Parsers.parseheaders(parser, String(view(bytes, 1:i))) do h
-        appendheader(message, h)
+function readcompleteheaders(io::IO, bytes, l, parser::Parser, message::Message)
+    str = String(bytes)
+    if true
+        i = 1
+        if parser.state != Parsers.s_trailer_start
+            i = parse_start_line!(str, message)
+        end
+        h, i = parse_header_field(str, i)
+        while !(h === Parsers.emptyheader)
+            appendheader(message, h)
+            h, i = parse_header_field(str, i)
+        end
+        @assert i == l + 1
+        parser.state = Parsers.s_body_start
+    else
+        Parsers.parseheaders(parser, str) do h
+            appendheader(message, h)
+        end
+        readstartline!(parser.message, message)
     end
-    unread!(io, view(bytes, i+1:length(bytes)))
-    readstartline!(parser.message, message)
+    unread!(io, view(bytes, l+1:length(bytes)))
     return message
 end
 
@@ -559,6 +573,7 @@ function readtrailers(io::IO, parser::Parser, message::Message)
         if i == 0
             readheaders(io, parser, message)
         end
+        parser.state = Parsers.s_message_done # FIXME
     end
     return
 end

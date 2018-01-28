@@ -190,7 +190,7 @@ function go(count::Int)
 
         write(io, bytes)
 
-        r = readheaders(IOBuffer(bytes), Parser(), Request())
+        r = readheaders(IOBuffer(bytes), Parser(), Request().response)
         l = bodylength(r)
         if l == unknown_length
             for i = 1:10
