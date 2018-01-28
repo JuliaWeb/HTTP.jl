@@ -56,17 +56,27 @@ end
 
 # Handshake
 
+function is_upgrade(req::HTTP.Request)
+    is_get = req.method == "GET"
+    # "upgrade" for Chrome and "keep-alive, upgrade" for Firefox.
+    is_upgrade = HTTP.hasheader(req, "Connection", "upgrade")
+    is_websockets = HTTP.hasheader(req, "Upgrade", "websocket")
+    return is_get && is_upgrade && is_websockets
+end
+
+
+function is_upgrade(res::HTTP.Response)
+    is_101 = res.status == 101
+    # "upgrade" for Chrome and "keep-alive, upgrade" for Firefox.
+    is_upgrade = HTTP.hasheader(res, "Connection", "upgrade")
+    is_websockets = HTTP.hasheader(res, "Upgrade", "websocket")
+    return is_101 && is_upgrade && is_websockets
+end
+
 
 function check_upgrade(http)
-
-    if !hasheader(http, "Upgrade", "websocket")
-        throw(WebSocketError(0, "Expected \"Upgrade: websocket\"!\n" *
-                                "$(http.message)"))
-    end
-
-    if !hasheader(http, "Connection", "upgrade")
-        throw(WebSocketError(0, "Expected \"Connection: upgrade\"!\n" *
-                                "$(http.message)"))
+    if !is_upgrade(http.message)
+        throw(WebSocketError(0, "Invalid WebSocket upgrade:\n $(http.message)"))
     end
 end
 
@@ -93,23 +103,16 @@ function open(f::Function, url; binary=false, verbose=false, kw...)
 
         startread(http)
 
-        status = http.message.status
-        if status != 101
-            return
-        end
-
         check_upgrade(http)
 
         if header(http, "Sec-WebSocket-Accept") != accept_hash(key)
-            throw(WebSocketError(0, "Invalid Sec-WebSocket-Accept\n" *
-                                    "$(http.message)"))
+            throw(WebSocketError(0, "Invalid Sec-WebSocket-Accept:\n $(http.message)"))
         end
 
         io = ConnectionPool.getrawstream(http)
         f(WebSocket(io; binary=binary))
     end
 end
-
 
 function listen(f::Function,
                 host::String="localhost", port::UInt16=UInt16(8081);
@@ -124,6 +127,7 @@ end
 function upgrade(f::Function, http::HTTP.Stream; binary=false)
 
     check_upgrade(http)
+
     if !hasheader(http, "Sec-WebSocket-Version", "13")
         throw(WebSocketError(0, "Expected \"Sec-WebSocket-Version: 13\"!\n" *
                                 "$(http.message)"))
@@ -145,54 +149,68 @@ end
 
 # Sending Frames
 
-
-function Base.unsafe_write(ws::WebSocket, p::Ptr{UInt8}, n::UInt)
-    return wswrite(ws, unsafe_wrap(Array, p, n))
-end
-
-
-function Base.write(ws::WebSocket, x1, x2, xs...)
-    local n::Int = 0
-    n += wswrite(ws, ws.frame_type, x1)
-    xs = (x2, xs...)
-    l = length(xs)
-    for i in 1:l
-        n += wswrite(ws, i == l ? WS_FINAL : WS_CONTINUATION, xs[i])
+function Base.write(ws::WebSocket, opcode::UInt8, data::Vector{UInt8})
+    lock(ws.io)
+    n = length(data)
+    try
+        #  0 1 2 3 4 5 6 7 
+        # +-+-+-+-+-------+
+        # |F|R|R|R| opcode|
+        # |I|S|S|S|  (4)  |
+        # |N|V|V|V|       |
+        # | |1|2|3|       |
+        # +-+-+-+-+-------+
+        write(ws.io, opcode)
+        #  0                   1                   2                   3                   4                   5                   6     
+        #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3
+        # +-+-------------+-------------------------------+------------------------------------------------------------------------------+
+        # |M| Payload len |    Extended payload length    |    Extended payload length continued                                         |
+        # |A|     (7)     |             (16/64)           |          if payload len == 127                                               |
+        # |S|             |   (if payload len==126/127)   |                                                                              |
+        # |K|             |                               |                                                                              |
+        # +-+-------------+-------------------------------+------------------------------------------------------------------------------+
+        mask = ws.server ? 0x00 : 0x80
+        if n <= 125
+            write(ws.io, mask | UInt8(n))
+        elseif n <= typemax(UInt16)
+            write(ws.io, mask | UInt8(126))
+            write(ws.io, UInt16(n))
+        elseif n <= typemax(UInt64)
+            write(ws.io, mask | UInt8(127))
+            write(ws.io, UInt64(n))
+        else
+            error("Attempted to send too much data for one websocket fragment\n")
+        end
+        #  0                   1           
+        #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 
+        # +-------------------------------+
+        # |Masking-key, if MASK set to 1  |
+        # +-------------------------------+
+        ws.txpayload = data
+        if mask > 0
+            masking_key = mask!(ws.txpayload, data, n)
+            write(ws.io,masking_key)
+        end
+        # +--------------+
+        # | Payload Data |
+        # +--------------+
+        n > 0 && write(ws.io,ws.txpayload)
+    finally
+        flush(ws.io)
+        unlock(ws.io)
     end
     return n
 end
+Base.write(ws::WebSocket,opcode::UInt8,x::String) = write(ws,opcode,convert(Vector{UInt8},x))
+Base.write(ws::WebSocket,data::Vector{UInt8}) = write(ws,WS_FINAL | ws.frame_type,data)
+Base.write(ws::WebSocket,x::String) = write(ws,convert(Vector{UInt8},x))
 
 
 function IOExtras.closewrite(ws::WebSocket)
     @require !ws.txclosed
     opcode = WS_FINAL | WS_CLOSE
-    @debug 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, 0x00))"
-    write(ws.io, opcode, 0x00)
+    write(ws, opcode, UInt8[])
     ws.txclosed = true
-end
-
-
-wslength(l) = l < 0x7E ? (UInt8(l), UInt8[]) :
-              l <= 0xFFFF ? (0x7E, reinterpret(UInt8, [hton(UInt16(l))])) :
-                            (0x7F, reinterpret(UInt8, [hton(UInt64(l))]))
-
-
-wswrite(ws::WebSocket, x) = wswrite(ws, WS_FINAL | ws.frame_type, x)
-
-wswrite(ws::WebSocket, opcode::UInt8, x) = wswrite(ws, opcode, Vector{UInt8}(x))
-
-function wswrite(ws::WebSocket, opcode::UInt8, bytes::Vector{UInt8})
-
-    n = length(bytes)
-    len, extended_len = wslength(n)
-    len |= WS_MASK
-    mask = mask!(ws.txpayload, bytes, n)
-
-    @debug 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, len, extended_len, mask))"
-    write(ws.io, opcode, len, extended_len, mask)
-
-    @debug 2 "          ⬅️  $(ws.txpayload[1:n])"
-    unsafe_write(ws.io, pointer(ws.txpayload), n)
 end
 
 
@@ -212,7 +230,7 @@ function Base.close(ws::WebSocket)
         closewrite(ws)
     end
     while !ws.rxclosed
-        readframe(ws)
+        readavailable(ws)
     end
 end
 
@@ -220,13 +238,9 @@ end
 Base.isopen(ws::WebSocket) = !ws.rxclosed
 
 
-
 # Receiving Frames
 
 Base.eof(ws::WebSocket) = eof(ws.io)
-
-Base.readavailable(ws::WebSocket) = collect(readframe(ws))
-
 
 function readheader(io::IO)
     b = UInt8[0,0]
@@ -242,16 +256,19 @@ function readheader(io::IO)
 end
 
 
-function readframe(ws::WebSocket)
+function Base.readavailable(ws::WebSocket)
     h = readheader(ws.io)
-    @debug 1 "WebSocket ➡️  $h"
+
+    is_ssl = typeof(ws.io) == SSLContext
+
+    is_ssl && println("**************************************")
+    is_ssl && println("Starting readavailable for SSLContext:")
+    is_ssl && println("**************************************")
+
+    is_ssl && println(h)
 
     if h.length > 0
-        if length(ws.rxpayload) < h.length
-            resize!(ws.rxpayload, h.length)
-        end
-        unsafe_read(ws.io, pointer(ws.rxpayload), h.length)
-        @debug 2 "          ➡️  \"$(String(ws.rxpayload[1:h.length]))\""
+        readbytes!(ws.io, ws.rxpayload, h.length)
     end
 
     if h.opcode == WS_CLOSE
@@ -266,14 +283,14 @@ function readframe(ws::WebSocket)
         return UInt8[]
     elseif h.opcode == WS_PING
         write(ws.io, [WS_PONG, 0x00])
-        wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload)
-        return readframe(ws)
+        write(ws, WS_FINAL | WS_PONG, ws.rxpayload)
+        return readavailable(ws)
     else
         l = Int(h.length)
         if h.hasmask
             mask!(ws.rxpayload, ws.rxpayload, l, reinterpret(UInt8, [h.mask]))
         end
-        return view(ws.rxpayload, 1:l)
+        return resize!(ws.rxpayload,l)
     end
 end
 
