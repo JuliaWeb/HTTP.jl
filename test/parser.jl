@@ -889,7 +889,7 @@ Message(name= "curl get"
 ,request_url= "/"
 ,num_headers= 5
 ,headers=[ "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
-           , "Line2"=> "line2\t"
+           , "Line2"=> "line2"
            , "Line3"=> "line3"
            , "Line4"=> ""
            , "Connection"=> "close"
@@ -961,7 +961,7 @@ Message(name= "curl get"
 ,request_url= "/"
 ,num_headers= 5
 ,headers=[ "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
-           , "Line2"=> "line2\t"
+           , "Line2"=> "line2"
            , "Line3"=> "line3"
            , "Line4"=> ""
            , "Connection"=> "close"
@@ -1003,7 +1003,7 @@ const responses = Message[
   , "X-\$prototypebi-Version"=> "1.6.0.3"
   , "Cache-Control"=> "public, max-age=2592000"
   , "Server"=> "gws"
-  , "Content-Length"=> "219  "
+  , "Content-Length"=> "219"
 ]
 ,body= "<HTML><HEAD><meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n" *
         "<TITLE>301 Moved</TITLE></HEAD><BODY>\n" *
