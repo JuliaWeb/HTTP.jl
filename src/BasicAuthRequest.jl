@@ -20,7 +20,7 @@ export BasicAuthLayer
 function request(::Type{BasicAuthLayer{Next}},
                  method::String, url::URI, headers, body; kw...) where Next
 
-    userinfo = url.userinfo
+    userinfo = unescapeuri(url.userinfo)
     
     if !isempty(userinfo) && getkv(headers, "Authorization", "") == ""
         @debug 1 "Adding Authorization: Basic header."
