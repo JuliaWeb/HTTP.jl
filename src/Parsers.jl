@@ -266,19 +266,19 @@ Return number of bytes of chunk-data.
 
 function parse_chunk_size(bytes::AbstractVector{UInt8})::Int
 
-    chunk_size = 0
+    chunk_size = Int64(0)
     i = 1
-    x = unhex[bytes[i]]
+    x = Int64(unhex[bytes[i]])
     while x != -1
-        chunk_size = chunk_size * 16 + x
+        chunk_size = chunk_size * Int64(16) + x
         if chunk_size > chunk_size_limit
             throw(ParseError(:CHUNK_SIZE_EXCEEDS_LIMIT, bytes))
         end
         i += 1
-        x = unhex[bytes[i]]
+        x = Int64(unhex[bytes[i]])
     end
     if i > 1
-        return chunk_size
+        return Int(chunk_size)
     end
 
     throw(ParseError(:INVALID_CHUNK_SIZE, bytes))
