@@ -39,7 +39,7 @@ using ..pairs
 import ..compat_search
 using ..IOExtras: bytes
 using ..Parsers: Headers
-using ..Messages: hasheader, header
+using ..Messages: Request, mkheaders, hasheader, header
 
 """
     Cookie()
@@ -318,13 +318,10 @@ cookies(r::Request) = readcookies(r.headers, "")
 # returns the successfully parsed Cookies.
 # if filter isn't empty, only cookies of that name are returned
 function readcookies(h::Headers, filter::String)
-    if hasheader(h, "Cookie", "") == ""
-        return Cookie[]
-    end
-    line = header(h, "Cookie", "")
 
-    cookies = Cookie[]
-    for part in split(lines, ';')
+    result = Cookie[]
+
+    for part in split(header(h, "Cookie", ""), ';')
         part = strip(part)
         length(part) <= 1 && continue
         j = compat_search(part, '=')
@@ -337,10 +334,13 @@ function readcookies(h::Headers, filter::String)
         filter != "" && filter != name && continue
         val, ok = parsecookievalue(val, true)
         !ok && continue
-        push!(cookies, Cookie(name, val))
+        push!(result, Cookie(name, val))
     end
-    return cookies
+    return result
 end
+
+readcookies(h, f) = readcookies(mkheaders(h), f)
+
 
 # validCookieExpires returns whether v is a valid cookie expires-value.
 function validCookieExpires(dt)
