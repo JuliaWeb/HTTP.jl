@@ -19,12 +19,12 @@ include("IOExtras.jl")                 ;using .IOExtras
 include("Strings.jl")
 include("URIs.jl")                     ;using .URIs
 include("sniff.jl")
-include("cookies.jl")                  ;using .Cookies
 include("multipart.jl")
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,
                                                          ParseError
 include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
+include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
 
 
