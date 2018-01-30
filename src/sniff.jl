@@ -4,7 +4,7 @@ const GZIP = UInt8[0x1f, 0x8b, 0x08]
 
 iscompressed(bytes::CodeUnits) = length(bytes) > 3 && (all(bytes[1:4] .== ZIP) || all(bytes[1:3] .== GZIP))
 iscompressed(str::String) = iscompressed(bytes(str))
-iscompressed(f::FIFOBuffer) = iscompressed(String(f))
+#FIXME needed? iscompressed(f::FIFOBuffer) = iscompressed(String(f))
 iscompressed(d::Dict) = false
 iscompressed(d) = false
 
@@ -38,7 +38,7 @@ function sniff(body::IO)
 end
 
 sniff(str::String) = sniff(bytes(str)[1:min(length(bytes(str)), MAXSNIFFLENGTH)])
-sniff(f::FIFOBuffer) = sniff(String(f))
+#FIXME needed? sniff(f::FIFOBuffer) = sniff(String(f))
 
 function sniff(data::CodeUnits)
     firstnonws = 1

@@ -26,7 +26,7 @@ for group in tests
             try
                 uri = HTTP.URIs.parse_uri_reference(url; strict=true)
             catch e
-                if e isa HTTP.URIs.URLParsingError
+                if e isa HTTP.URIs.ParseError
                     println(e)
                     continue
                 elseif e isa AssertionError

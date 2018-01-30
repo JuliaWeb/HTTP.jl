@@ -30,7 +30,7 @@ end
 
 
 ```@docs
-HTTP.request(::String,::HTTP.URIs.URI,::Array{Pair{String,String},1},::Any)
+HTTP.request(::String,::HTTP.URIs.URI,::Array{Pair{SubString{String},SubString{String}},1},::Any)
 HTTP.open
 HTTP.get
 HTTP.put
@@ -42,7 +42,7 @@ Request functions may throw the following exceptions:
 
 ```@docs
 HTTP.StatusError
-HTTP.ParsingError
+HTTP.ParseError
 HTTP.IOError
 ```
 ```
@@ -117,7 +117,7 @@ HTTP.StreamLayer
 *Source: `Parsers.jl`*
 
 ```@docs
-HTTP.Parsers.Parser
+HTTP.Parsers
 ```
 
 
@@ -151,15 +151,13 @@ HTTP.ConnectionPool
 ## Parser Interface
 
 ```@docs
-HTTP.Parsers.Message
-HTTP.Parsers.parseheaders
-HTTP.Parsers.parsebody
-HTTP.Parsers.reset!
-HTTP.Parsers.messagestarted
-HTTP.Parsers.headerscomplete
-HTTP.Parsers.bodycomplete
-HTTP.Parsers.messagecomplete
-HTTP.Parsers.messagehastrailing
+HTTP.Parsers.find_end_of_header
+HTTP.Parsers.find_end_of_line
+HTTP.Parsers.find_end_of_trailer
+HTTP.Parsers.parse_status_line!
+HTTP.Parsers.parse_request_line!
+HTTP.Parsers.parse_header_field
+HTTP.Parsers.parse_chunk_size
 ```
 
 ## Messages Interface
@@ -178,9 +176,8 @@ HTTP.Messages.setheader
 HTTP.Messages.defaultheader
 HTTP.Messages.appendheader
 HTTP.Messages.readheaders
-HTTP.Messages.readstartline!
+HTTP.Messages.readchunksize
 HTTP.Messages.headerscomplete(::HTTP.Messages.Response)
-HTTP.Messages.readtrailers
 HTTP.Messages.writestartline
 HTTP.Messages.writeheaders
 Base.write(::IO,::HTTP.Messages.Message)

@@ -394,22 +394,17 @@ function handle_transaction(f::Function, t::Transaction;
                             verbose::Bool=false, kw...)
 
     request = HTTP.Request()
-    http = Streams.Stream(request, ConnectionPool.getparser(t), t)
+    http = Streams.Stream(request, t)
 
     try
         startread(http)
     catch e
-        if e isa EOFError && !messagestarted(http.parser)
+        if e isa EOFError && isempty(request.method)
             return
-        elseif e isa HTTP.ParsingError
+        elseif e isa HTTP.ParseError
             @error e
-            status = e.code == :HPE_INVALID_VERSION ? 505 :
-                     e.code == :HPE_INVALID_METHOD  ? 405 : 400
-            write(t, Response(status, body = HTTP.Parsers.ERROR_MESSAGES[e.code]))
-            close(t)
-            return
-        elseif e isa HeaderSizeError
-            write(t, Response(413))
+            status = e.code == :HEADER_SIZE_EXCEEDS_LIMIT  ? 413 : 400
+            write(t, Response(status, body = string(e.code)))
             close(t)
             return
         else

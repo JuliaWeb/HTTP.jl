@@ -1,5 +1,28 @@
 include("consts.jl")
-include("parseutils.jl")
+#include("parseutils.jl")
+
+macro anyeq(var, vals...)
+    ret = e = Expr(:||)
+    for (i, v) in enumerate(vals)
+        x = :($var == $v)
+        push!(e.args, x)
+        i >= length(vals) - 1 && continue
+        ne = Expr(:||)
+        push!(e.args, ne)
+        e = ne
+    end
+    return esc(ret)
+end
+
+@inline lower(c) = Char(UInt32(c) | 0x20)
+@inline ismark(c) = @anyeq(c, '-', '_', '.', '!', '~', '*', '\'', '(', ')')
+@inline isalpha(c) = 'a' <= lower(c) <= 'z'
+@inline isnum(c) = '0' <= c <= '9'
+@inline isalphanum(c) = isalpha(c) || isnum(c)
+@inline isuserinfochar(c) = isalphanum(c) || ismark(c) || @anyeq(c, '%', ';', ':', '&', '=', '+', '$', ',')
+@inline ishex(c) =  isnum(c) || ('a' <= lower(c) <= 'f')
+@inline ishostchar(c) = isalphanum(c) || @anyeq(c, '.', '-', '_', '~')
+@inline isheaderchar(c) = c == CR || c == LF || c == Char(9) || (c > Char(31) && c != Char(127))
 
 struct URLParsingError <: Exception
     msg::String
@@ -243,7 +266,7 @@ function http_parser_parse_url(url::String)
             userinfo = blank
         end
     end
-    return URI(url, scheme, userinfo, host, port, path, query, fragment)
+    return HTTP.URI(url, scheme, userinfo, host, port, path, query, fragment)
 end
 
 const normal_url_char = Bool[

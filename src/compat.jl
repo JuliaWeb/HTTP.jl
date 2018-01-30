@@ -1,3 +1,4 @@
+
 @static if VERSION >= v"0.7.0-DEV.2915"
 
     using Base64
@@ -12,6 +13,8 @@
     compat_findnext(A::String, v, i::Integer) = compat_findnext(equalto(v), A, i)
     compat_findnext(a...) = (r = findnext(a...); r === nothing ? 0 : r)
     compat_parse(s, T; base::Int=10) = Base.parse(s, T; base=base)
+
+    Base.convert(::Type{SubString{S}}, s::SubString{S}) where {S<:AbstractString} = s
 
 else # Julia v0.6
 
@@ -52,6 +55,7 @@ end
 
 # https://github.com/JuliaLang/julia/pull/25535
 Base.String(x::SubArray{UInt8,1}) = String(Vector{UInt8}(x))
+Base.SubString(x::SubArray{UInt8,1}) = SubString(String(x))
 
 @static if !isdefined(Base, :bytesavailable)
     const bytesavailable = nb_available

@@ -4,7 +4,6 @@ using HTTP.IOExtras
 using HTTP.Parsers
 using HTTP.Messages
 using HTTP.MessageRequest: bodylength
-using HTTP.Parsers: escapelines
 
 
 mutable struct FunctionIO <: IO
@@ -43,6 +42,19 @@ Base.isopen(lb::Loopback) = isopen(lb.io)
 HTTP.ConnectionPool.tcpstatus(c::HTTP.ConnectionPool.Connection{Loopback}) = "🤖 "
 
 
+"""
+    escapelines(string)
+
+Escape `string` and insert '\n' after escaped newline characters.
+"""
+
+function escapelines(s)
+    s = Base.escape_string(s)
+    s = replace(s, "\\n", "\\n\n    ")
+    return string("    ", strip(s))
+end
+
+
 server_events = []
 
 function on_headers(f, lb)
@@ -53,10 +65,10 @@ function on_headers(f, lb)
     seek(buf, 0)
     req = Request()
     try
-        readheaders(buf, Parser(), req)
+        readheaders(buf, req)
         lb.got_headers = true
     catch e
-        if !(e isa EOFError || e isa HTTP.ParsingError)
+        if !(e isa EOFError || e isa HTTP.ParseError)
             rethrow(e)
         end
     end
@@ -67,14 +79,14 @@ end
 
 function on_body(f, lb)
     s = String(take!(copy(lb.buf)))
-#    println("Request: \"\"\"")
-#    println(escapelines(s))
-#    println("\"\"\"")
+    #println("Request: \"\"\"")
+    #println(escapelines(s))
+    #println("\"\"\"")
     req = nothing
     try
         req = parse(HTTP.Request, s)
     catch e
-        if !(e isa EOFError || e isa HTTP.ParsingError)
+        if !(e isa EOFError || e isa HTTP.ParseError)
             rethrow(e)
         end
     end

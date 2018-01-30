@@ -1,6 +1,6 @@
 module Strings
 
-export escapehtml, tocameldash!, iso8859_1_to_utf8
+export escapehtml, tocameldash, iso8859_1_to_utf8
 
 using ..IOExtras
 
@@ -42,6 +42,8 @@ function tocameldash!(s::String)
     end
     return String(bytes)
 end
+
+tocameldash(s::AbstractString) = tocameldash!(String(s))
 
 @inline islower(b::UInt8) = UInt8('a') <= b <= UInt8('z')
 @inline isupper(b::UInt8) = UInt8('A') <= b <= UInt8('Z')
