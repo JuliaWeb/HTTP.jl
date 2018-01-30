@@ -1,5 +1,6 @@
 using HTTP
 using HTTP: hasheader
+using MbedTLS
 
 @static if is_apple()
     launch(x) = run(`open $x`)
@@ -11,11 +12,12 @@ end
 
 @async begin
     sleep(2)
-    launch("http://127.0.0.1:8000/examples/mwe")
+    launch("https://127.0.0.1:8000/examples/mwe")
 end
 
-HTTP.listen(ip"127.0.0.1",8000) do http
-@show http
+HTTP.listen(ip"127.0.0.1", 8000,;
+            ssl = true,
+            sslconfig = MbedTLS.SSLConfig("cert.pem", "key.pem")) do http
     if http.message.method == "GET" &&
        hasheader(http, "Connection", "upgrade") &&
        hasheader(http, "Upgrade", "websocket")
