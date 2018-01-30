@@ -2,6 +2,7 @@ using Unitful
 
 using HTTP
 
+include("urlparser.jl")
 
 const tunit = u"ms"
 const tmul = Int(1u"s"/1tunit)
@@ -15,7 +16,7 @@ function go(count::Int)
                                                                 t_start = time()
     @time for rep in 1:count
         for url in urls
-            uri = HTTP.URIs.http_parser_parse_url(url)
+            uri = http_parser_parse_url(url)
         end
     end
                                                                  t_done = time()

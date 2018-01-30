@@ -13,7 +13,12 @@ import ..compat_search
 import ..isnumeric
 import ..compat_parse
 
-include("urlparser.jl")
+include("parseutils.jl")
+
+
+struct ParseError <: Exception
+    msg::String
+end
 
 
 """
@@ -111,7 +116,7 @@ https://tools.ietf.org/html/rfc3986#section-3
 function parse_uri(str::AbstractString; kw...)
     uri = parse_uri_reference(str; kw...)
     if isempty(uri.scheme)
-        throw(URLParsingError("URI without scheme: $str"))
+        throw(URIs.ParseError("URI without scheme: $str"))
     end
     return uri
 end
@@ -123,18 +128,16 @@ https://tools.ietf.org/html/rfc3986#section-4.1
 
 function parse_uri_reference(str::AbstractString; strict = false)
 
-    m = match(uri_reference_regex, str)
-    if m == nothing
-        throw(URLParsingError("URI contains invalid character"))
+    if !exec(uri_reference_regex, str)
+        throw(ParseError("URI contains invalid character"))
     end
-    uri = URI(str, (c = m[1]) == nothing ? absent : c,
-                   (c = m[2]) == nothing ? absent : c,
-                   (c = m[3]) == nothing ? absent : c,
-                   (c = m[4]) == nothing ? absent : c,
-                   (c = m[5]) == nothing ? absent : c,
-                   (c = m[6]) == nothing ? absent : c,
-                   (c = m[7]) == nothing ? absent : c)
-
+    uri = URI(str, group(1, uri_reference_regex, str, absent),
+                   group(2, uri_reference_regex, str, absent),
+                   group(3, uri_reference_regex, str, absent),
+                   group(4, uri_reference_regex, str, absent),
+                   group(5, uri_reference_regex, str, absent),
+                   group(6, uri_reference_regex, str, absent),
+                   group(7, uri_reference_regex, str, absent))
     if strict
         ensurevalid(uri)
         @ensure uristring(uri) == str
@@ -154,25 +157,25 @@ function ensurevalid(uri::URI)
     # ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
     if !(uri.scheme === absent ||
          ismatch(r"^[[:alpha:]][[:alnum:]+-.]*$", uri.scheme))
-        throw(URLParsingError("Invalid URI scheme: $(uri.scheme)"))
+        throw(ParseError("Invalid URI scheme: $(uri.scheme)"))
     end
     # https://tools.ietf.org/html/rfc3986#section-3.2.2
     # unreserved / pct-encoded / sub-delims
     if !(uri.host === absent ||
          ismatch(r"^[:[:alnum:]\-._~%!$&'()*+,;=]+$", uri.host))
-        throw(URLParsingError("Invalid URI host: $(uri.host) $uri"))
+        throw(ParseError("Invalid URI host: $(uri.host) $uri"))
     end
     # https://tools.ietf.org/html/rfc3986#section-3.2.3
     # "port number in decimal"
     if !(uri.port === absent || ismatch(r"^\d+$", uri.port))
-        throw(URLParsingError("Invalid URI port: $(uri.port)"))
+        throw(ParseError("Invalid URI port: $(uri.port)"))
     end
 
     # https://tools.ietf.org/html/rfc3986#section-3.3
     # unreserved / pct-encoded / sub-delims / ":" / "@"
     if !(uri.path === absent ||
          ismatch(r"^[/[:alnum:]\-._~%!$&'()*+,;=:@]*$", uri.path))
-        throw(URLParsingError("Invalid URI path: $(uri.path)"))
+        throw(ParseError("Invalid URI path: $(uri.path)"))
     end
 
     # FIXME
@@ -181,7 +184,7 @@ function ensurevalid(uri::URI)
         (contains(uri.host, "=") ||
          contains(uri.host, ";") ||
          contains(uri.host, "%"))
-        throw(URLParsingError("Invalid URI host: $(uri.host)"))
+        throw(ParseError("Invalid URI host: $(uri.host)"))
     end
 end
 
@@ -396,5 +399,11 @@ function absuri(uri::URI, context::URI)
 
     return merge(context; path=uri.path, query=uri.query)
 end
+
+
+function __init__()
+    Base.compile(uri_reference_regex)
+end
+
 
 end # module

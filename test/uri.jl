@@ -13,6 +13,19 @@ struct Offset
     off::UInt16
     len::UInt16
 end
+
+function parse_connect_target(target)
+    t = parse(HTTP.URI, "dummy://$target")
+    if !isempty(t.userinfo) ||
+       !isempty(t.path) ||
+        isempty(t.host) ||
+        isempty(t.port)
+
+        throw(HTTP.URIs.ParseError(""))
+    end
+    return t.host, t.port
+end
+
     
 function offsetss(uri, offset)
     if offset == Offset(0,0)
@@ -95,11 +108,11 @@ end
 
     # Error paths
     # Non-ASCII characters
-    @test_throws HTTP.URIs.URLParsingError HTTP.URIs.parse_uri("http://🍕.com", strict=true)
+    @test_throws HTTP.URIs.ParseError HTTP.URIs.parse_uri("http://🍕.com", strict=true)
     # Unexpected start of URL
-    @test_throws HTTP.URIs.URLParsingError HTTP.URIs.parse_uri(".google.com", strict=true)
+    @test_throws HTTP.URIs.ParseError HTTP.URIs.parse_uri(".google.com", strict=true)
     # Unexpected character after scheme
-    @test_throws HTTP.URIs.URLParsingError HTTP.URIs.parse_uri("ht!tp://google.com", strict=true)
+    @test_throws HTTP.URIs.ParseError HTTP.URIs.parse_uri("ht!tp://google.com", strict=true)
 
     #  Issue #27
     @test HTTP.escapeuri("t est\n") == "t%20est%0A"
@@ -446,14 +459,14 @@ end
             println("TEST - uri.jl: $(u.name)")
             if u.isconnect
                 if u.shouldthrow
-                    @test_throws HTTP.URIs.URLParsingError HTTP.URIs.http_parse_host(SubString(u.url))
+                    @test_throws HTTP.URIs.ParseError parse_connect_target(u.url)
                 else
-                  host, port, userinfo = HTTP.URIs.http_parse_host(SubString(u.url))
-                    @test host == u.expecteduri.host
-                    @test port == u.expecteduri.port
+                    h, p = parse_connect_target(u.url)
+                    @test h == u.expecteduri.host
+                    @test p == u.expecteduri.port
                 end
             elseif u.shouldthrow
-                @test_throws Union{AssertionError, HTTP.URIs.URLParsingError} HTTP.URIs.parse_uri_reference(u.url, strict=true)
+                @test_throws HTTP.URIs.ParseError HTTP.URIs.parse_uri_reference(u.url, strict=true)
             else
                 url = parse(HTTP.URI, u.url)
                 @test u.expecteduri == url

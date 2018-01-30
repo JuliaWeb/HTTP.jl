@@ -1,35 +1,25 @@
-# parsing utils
-macro anyeq(var, vals...)
-    ret = e = Expr(:||)
-    for (i, v) in enumerate(vals)
-        x = :($var == $v)
-        push!(e.args, x)
-        i >= length(vals) - 1 && continue
-        ne = Expr(:||)
-        push!(e.args, ne)
-        e = ne
-    end
-    return esc(ret)
-end
-
-@inline lower(c) = Char(UInt32(c) | 0x20)
-@inline ismark(c) = @anyeq(c, '-', '_', '.', '!', '~', '*', '\'', '(', ')')
-@inline isalpha(c) = 'a' <= lower(c) <= 'z'
-@inline isnum(c) = '0' <= c <= '9'
-@inline isalphanum(c) = isalpha(c) || isnum(c)
-@inline isuserinfochar(c) = isalphanum(c) || ismark(c) || @anyeq(c, '%', ';', ':', '&', '=', '+', '$', ',')
-@inline ishex(c) =  isnum(c) || ('a' <= lower(c) <= 'f')
-@inline ishostchar(c) = isalphanum(c) || @anyeq(c, '.', '-', '_', '~')
-@inline isheaderchar(c) = c == CR || c == LF || c == Char(9) || (c > Char(31) && c != Char(127))
-
 """
-    escapelines(string)
-
-Escape `string` and insert '\n' after escaped newline characters.
+Execute a regular expression without the overhead of `Base.Regex` 
 """
 
-function escapelines(s)
-    s = Base.escape_string(s)
-    s = replace(s, "\\n", "\\n\n    ")
-    return string("    ", strip(s))
-end
+exec(re::Regex, bytes, offset::Int=1) =
+    Base.PCRE.exec(re.regex, bytes, offset-1, re.match_options, re.match_data)
+
+
+"""
+`SubString` containing the bytes following the matched regular expression.
+"""
+
+nextbytes(re::Regex, bytes) = SubString(bytes, re.ovec[2]+1)
+
+
+"""
+`SubString` containing a regular expression match group.
+"""
+
+group(i, re::Regex, bytes) = SubString(bytes, re.ovec[2i+1]+1, re.ovec[2i+2])
+
+group(i, re::Regex, bytes, default) =
+    re.ovec[2i+1] == Base.PCRE.UNSET ?
+    default :
+    SubString(bytes, re.ovec[2i+1]+1, re.ovec[2i+2])
