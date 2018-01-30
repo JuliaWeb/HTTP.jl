@@ -5,29 +5,8 @@ import HTTP.URIs
 
 @test HTTP.Strings.escapehtml("&\"'<>") == "&amp;&quot;&#39;&lt;&gt;"
 
-@test URIs.isurlchar('\u81')
-@test !URIs.isurlchar('\0')
-
-for c = '\0':'\x7f'
-    if c in ('.', '-', '_', '~')
-        @test Parsers.ishostchar(c)
-        @test Parsers.ismark(c)
-        @test Parsers.isuserinfochar(c)
-    elseif c in ('-', '_', '.', '!', '~', '*', '\'', '(', ')')
-        @test Parsers.ismark(c)
-        @test Parsers.isuserinfochar(c)
-    else
-        @test !Parsers.ismark(c)
-    end
-end
-
-@test Parsers.isalphanum('a')
-@test Parsers.isalphanum('1')
-@test !Parsers.isalphanum(']')
-
-@test Parsers.ishex('a')
-@test Parsers.ishex('1')
-@test !Parsers.ishex(']')
+@test HTTP.Cookies.isurlchar('\u81')
+@test !HTTP.Cookies.isurlchar('\0')
 
 @test HTTP.Strings.tocameldash!("accept") == "Accept"
 @test HTTP.Strings.tocameldash!("Accept") == "Accept"

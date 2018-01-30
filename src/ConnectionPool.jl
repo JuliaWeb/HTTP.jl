@@ -26,16 +26,14 @@ reading.
 module ConnectionPool
 
 export Connection, Transaction,
-       getconnection, getparser, getrawstream, inactiveseconds
+       getconnection, getrawstream, inactiveseconds
 
 using ..IOExtras
 
-import ..bytesavailable
+import ..ByteView, ..bytesavailable
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
-
-import ..Parser
 
 
 const default_connection_limit = 8
@@ -43,7 +41,6 @@ const default_pipeline_limit = 16
 const nolimit = typemax(Int)
 
 const nobytes = view(UInt8[], 1:0)
-const ByteView = typeof(nobytes)
 byteview(bytes::ByteView) = bytes
 byteview(bytes)::ByteView = view(bytes, 1:length(bytes))
 
@@ -69,7 +66,6 @@ Fields:
 - `readcount`, number of Messages that have been read.
 - `readdone`, signal that `readcount` was incremented.
 - `timestamp`, time data was last recieved.
-- `parser::Parser`, reuse a `Parser` when this `Connection` is reused.
 """
 
 mutable struct Connection{T <: IO}
@@ -88,7 +84,6 @@ mutable struct Connection{T <: IO}
     readbusy::Bool
     readdone::Condition
     timestamp::Float64
-    parser::Parser
 end
 
 
@@ -114,7 +109,9 @@ Connection(host::AbstractString, port::AbstractString,
                   -1,
                   0, false, Condition(),
                   0, false, Condition(),
-                  0, Parser())
+                  0)
+
+Connection(io) = Connection("", "", default_pipeline_limit, io)
 
 Transaction(c::Connection{T}) where T <: IO =
     Transaction{T}(c, (c.sequence += 1))
@@ -125,8 +122,6 @@ function client_transaction(c)
     return t
 end
 
-
-getparser(t::Transaction) = t.c.parser
 
 getrawstream(t::Transaction) = t.c.io
 
@@ -168,6 +163,17 @@ Base.isreadable(t::Transaction) = t.c.readbusy && t.c.readcount == t.sequence
 Base.iswritable(t::Transaction) = t.c.writebusy && t.c.writecount == t.sequence
 
 
+function Base.read(t::Transaction, nb::Integer)::ByteView
+    bytes = readavailable(t)
+    l = length(bytes)
+    if l > nb
+        unread!(t, view(bytes, nb+1:l))
+        bytes = view(bytes, 1:nb)
+    end
+    return bytes
+end
+
+
 function Base.readavailable(t::Transaction)::ByteView
     @require isreadable(t)
     if !isempty(t.c.excess)
@@ -183,29 +189,6 @@ function Base.readavailable(t::Transaction)::ByteView
 end
 
 
-
-@static if !isdefined(Base, :copyto!)
-    const copyto! = copy!
-end
-
-function Base.readbytes!(t::Transaction, a::Vector{UInt8}, nb)
-
-    if !isempty(t.c.excess)
-        l = length(t.c.excess)
-        copyto!(a, 1, t.c.excess, 1, min(l, nb))
-        if l > nb
-            t.c.excess = view(t.c.excess, nb+1:l)
-            return nb
-        else
-            t.c.excess = nobytes
-            return l + readbytes!(t.c.io, view(a, l+1:nb))
-        end
-    end
-
-    return readbytes!(t.c.io, a, nb)
-end
-
-
 """
     unread!(::Transaction, bytes)
 
@@ -215,6 +198,8 @@ Push bytes back into a connection's `excess` buffer
 
 function IOExtras.unread!(t::Transaction, bytes::ByteView)
     @require isreadable(t)
+    @require !isempty(bytes)
+    @require t.c.excess === nobytes
     t.c.excess = bytes
     return
 end

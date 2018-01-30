@@ -2,7 +2,6 @@ module StreamRequest
 
 import ..Layer, ..request
 using ..IOExtras
-using ..Parsers
 using ..Messages
 using ..Streams
 import ..ConnectionPool
@@ -16,7 +15,7 @@ import ..@debug, ..DEBUG_LEVEL, ..printlncompact
 Create a [`Stream`](@ref) to send a `Request` and `body` to an `IO`
 stream and read the response.
 
-Sens the `Request` body in a background task and begins reading the response
+Send the `Request` body in a background task and begins reading the response
 immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
@@ -35,7 +34,7 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
     verbose >= 2 && println(request)
 
     response = request.response
-    http = Stream(response, ConnectionPool.getparser(io), io)
+    http = Stream(response, io)
     startwrite(http)
 
     aborted = false

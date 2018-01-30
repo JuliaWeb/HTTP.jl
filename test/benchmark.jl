@@ -7,7 +7,6 @@ using HTTP.IOExtras
 using HTTP.ConnectionPool
 using HTTP.Streams
 using HTTP.Messages
-using HTTP.Parsers
 
 responses = [
 "github" => """
@@ -191,12 +190,14 @@ function go(count::Int)
 
         write(io, bytes)
 
-        r = readheaders(IOBuffer(bytes), Parser(), Request().response)
+        r = Request().response
+        readheaders(IOBuffer(bytes), r)
         l = bodylength(r)
         if l == unknown_length
-            for i = 1:10
+            for i = 1:100
                 l = 10000
-                write(io, hex(l), "\r\n\r\n", randbody(l))
+                chunk = randbody(l)
+                write(io, hex(l), "\r\n", chunk, "\r\n")
             end
             write(io, "0\r\n\r\n")
         else
@@ -206,16 +207,21 @@ function go(count::Int)
                                                                 t_start = time()
         t = Transaction(c)
         r = Request()
-        s = Stream(r.response, getparser(t), t)
+        s = Stream(r.response, t)
         #startread(s)
         #function IOExtras.startread(http::Stream)
 
             http = s
             startread(http.stream)
 
-            HTTP.Parsers.reset!(http.parser)
+            # Ensure that the header and body are buffered in the Connection
+            # object. Otherwise, the time spent in readheaders below is
+            # dominated by readavailable() copying huge body data from the
+            # BufferStream. We want to measure the parsing performance.
+            unread!(http.stream, readavailable(http.stream))
+
                                                                 t_setup = time()
-            HTTP.Streams.readheaders(http.stream, http.parser, http.message)
+            HTTP.Streams.readheaders(http.stream, http.message)
                                                          t_headers_done = time()
             HTTP.Streams.handle_continue(http)
 
@@ -256,7 +262,7 @@ function go(count::Int)
         print(lpad(f,w))
     end
     print(" | ")
-    print(lpad("jl slower",w))
+    print(lpad("jl faster",w))
     println(" |")
 
     print("| ")
@@ -274,9 +280,9 @@ function go(count::Int)
             print(" | ")
             print(lpad(mean(times[name][f]), w))
         end
-        slower =  mean(times[name][:head]) / mean(times[name][:joyent_head])
+        faster = mean(times[name][:joyent_head]) / mean(times[name][:head])
         print(" | ")
-        print(lpad("x $(round(slower, 1))", w))
+        print(lpad("x $(round(faster, 1))", w))
         println(" |")
     end
 end

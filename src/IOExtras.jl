@@ -7,7 +7,7 @@ This module defines extensions to the `Base.IO` interface to support:
 
 module IOExtras
 
-export bytes, CodeUnits, IOError, isioerror,
+export bytes, ByteView, CodeUnits, IOError, isioerror,
        unread!,
        startwrite, closewrite, startread, closeread,
        tcpsocket, localport, peerport
@@ -132,4 +132,43 @@ peerport(io) = try !isopen(tcpsocket(io)) ? 0 :
                    0
                end
 
+end
+
+
+const ByteView = typeof(view(UInt8[], 1:0))
+
+
+"""
+Read from an `IO` stream until `find_delimiter(bytes)` returns non-zero.
+Return view of bytes up to the delimiter.
+"""
+
+function Base.readuntil(io::IO,
+                        find_delimiter::Function #= Vector{UInt8} -> Int =#
+                       )::ByteView
+
+    # Fast path, buffer already contains delimiter...
+    if !eof(io)
+        bytes = readavailable(io)
+        if (l = find_delimiter(bytes)) > 0
+            if l < length(bytes)
+                unread!(io, view(bytes, l+1:length(bytes)))
+            end
+            return view(bytes, 1:l)
+        end
+
+        # Otherwise, wait for delimiter...
+        buf = Vector{UInt8}(bytes)
+        while !eof(io)
+            append!(buf, readavailable(io))
+            if (l = find_delimiter(buf)) > 0
+                if l < length(buf)
+                    unread!(io, view(buf, l+1:length(buf)))
+                end
+                return view(buf, 1:l)
+            end
+        end
+    end
+
+    throw(EOFError())
 end
