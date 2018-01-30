@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<body>
+
+<p id="status">?</p>
+
+<button type="button" onclick="sayhello()">Say "Hello" to Julia</button>
+
+<script>
+
+var href = window.location.href;
+var sock = new WebSocket("ws"+href.substr(4,href.length));
+sock.onmessage = function( message ){
+    var msg = message.data;
+    document.getElementById("status").innerHTML = msg
+    console.log(msg);
+}
+
+sock.onopen = function () {
+    sock.send("Hello Julia! From JavaScript")
+};
+
+window.onbeforeunload = function() {
+    sock.onclose = function () {};
+    sock.close()
+};
+
+var count = 1
+
+function sayhello() {
+    sock.send("Hello Julia! From JavaScript " + count)
+    count = count + 1
+}
+
+</script>
+
+</body>
+</html>

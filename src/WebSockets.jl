@@ -185,8 +185,13 @@ function wswrite(ws::WebSocket, opcode::UInt8, bytes::Vector{UInt8})
 
     n = length(bytes)
     len, extended_len = wslength(n)
-    len |= WS_MASK
-    mask = mask!(ws.txpayload, bytes, n)
+    if ws.server
+        mask = UInt8[]
+        ws.txpayload = bytes
+    else
+        len |= WS_MASK
+        mask = mask!(ws.txpayload, bytes, n)
+    end
 
     @debug 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, len, extended_len, mask))"
     write(ws.io, opcode, len, extended_len, mask)
