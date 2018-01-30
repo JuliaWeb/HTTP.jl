@@ -30,7 +30,7 @@
 
 module Cookies
 
-export Cookie
+export Cookie, cookies
 
 import ..Dates
 
@@ -38,7 +38,8 @@ import Base: ==
 using ..pairs
 import ..compat_search
 using ..IOExtras: bytes
-
+using ..Parsers: Headers
+using ..Messages: hasheader, header
 
 """
     Cookie()
@@ -311,14 +312,16 @@ function domainandtype(host, domain)
     return domain, false
 end
 
+cookies(r::Request) = readcookies(r.headers, "")
+
 # readCookies parses all "Cookie" values from the header h and
 # returns the successfully parsed Cookies.
 # if filter isn't empty, only cookies of that name are returned
-function readcookies(h::Dict{String,String}, filter::String)
-    if !haskey(h, "Cookie") && !haskey(h, "cookie")
+function readcookies(h::Headers, filter::String)
+    if hasheader(h, "Cookie", "") == ""
         return Cookie[]
     end
-    lines = Base.get(h, "Cookie", Base.get(h, "cookie", ""))
+    line = header(h, "Cookie", "")
 
     cookies = Cookie[]
     for part in split(lines, ';')
