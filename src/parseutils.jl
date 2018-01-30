@@ -1,5 +1,5 @@
 """
-Execute a regular expression without the overhead of `Base.Regex` 
+Execute a regular expression without the overhead of `Base.Regex`
 """
 
 exec(re::Regex, bytes, offset::Int=1) =
@@ -17,9 +17,10 @@ nextbytes(re::Regex, bytes) = SubString(bytes, re.ovec[2]+1)
 `SubString` containing a regular expression match group.
 """
 
-group(i, re::Regex, bytes) = SubString(bytes, re.ovec[2i+1]+1, re.ovec[2i+2])
+group(i, re::Regex, bytes) = SubString(bytes, re.ovec[2i+1]+1,
+                                              prevind(bytes, re.ovec[2i+2]+1))
 
 group(i, re::Regex, bytes, default) =
     re.ovec[2i+1] == Base.PCRE.UNSET ?
     default :
-    SubString(bytes, re.ovec[2i+1]+1, re.ovec[2i+2])
+    SubString(bytes, re.ovec[2i+1]+1, prevind(bytes, re.ovec[2i+2]+1))
