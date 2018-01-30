@@ -51,7 +51,7 @@ export Server, ServerOptions, serve
  # buffer re-use for server/client wire-reading
  # easter egg (response 418)
 mutable struct ServerOptions
-    tlsconfig::HTTP.MbedTLS.SSLConfig
+    sslconfig::HTTP.MbedTLS.SSLConfig
     readtimeout::Float64
     ratelimit::Rational{Int}
     support100continue::Bool
@@ -63,13 +63,13 @@ abstract type Scheme end
 struct http <: Scheme end
 struct https <: Scheme end
 
-ServerOptions(; tlsconfig::HTTP.MbedTLS.SSLConfig=HTTP.MbedTLS.SSLConfig(true),
+ServerOptions(; sslconfig::HTTP.MbedTLS.SSLConfig=HTTP.MbedTLS.SSLConfig(true),
                 readtimeout::Float64=180.0,
                 ratelimit::Rational{Int}=Int(5)//Int(1),
                 support100continue::Bool=true,
                 chunksize::Union{Nothing, Int}=nothing,
                 logbody::Bool=true) =
-    ServerOptions(tlsconfig, readtimeout, ratelimit, support100continue, chunksize, logbody)
+    ServerOptions(sslconfig, readtimeout, ratelimit, support100continue, chunksize, logbody)
 
 """
     Server(handler, logger::IO=STDOUT; kwargs...)
@@ -84,7 +84,7 @@ kill the julia process, interrupt (ctrl/cmd+c) if main task, or send the kill si
 Supported keyword arguments include:
   * `cert`: if https, the cert file to use, as passed to `HTTP.MbedTLS.SSLConfig(cert, key)`
   * `key`: if https, the key file to use, as passed to `HTTP.MbedTLS.SSLConfig(cert, key)`
-  * `tlsconfig`: pass in an already-constructed `HTTP.MbedTLS.SSLConfig` instance
+  * `sslconfig`: pass in an already-constructed `HTTP.MbedTLS.SSLConfig` instance
   * `readtimeout`: how long a client connection will be left open without receiving any bytes
   * `ratelimit`: a `Rational{Int}` of the form `5//1` indicating how many `messages//second` should be allowed per client IP address; requests exceeding the rate limit will be dropped
   * `support100continue`: a `Bool` indicating whether `Expect: 100-continue` headers should be supported for delayed request body sending; default = `true`
@@ -118,7 +118,7 @@ end
 
 function check_rate_limit(tcp;
                           ratelimits=nothing,
-                          ratelimit::Rational{Int}=Int(5)//Int(1), kw...)
+                          ratelimit::Rational{Int}=Int(10)//Int(1), kw...)
     ip = getsockname(tcp)[1]
     rate = Float64(ratelimit.num)
     rl = get!(ratelimits, ip, RateLimit(rate, Dates.now()))
@@ -156,7 +156,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
     listen(host, port;
            tcpref=tcpserver,
            ssl=(T == https),
-           sslconfig=server.options.tlsconfig,
+           sslconfig=server.options.sslconfig,
            verbose=verbose,
            tcpisvalid=server.options.ratelimit > 0 ? check_rate_limit :
                                                      (tcp; kw...) -> true,
@@ -170,13 +170,13 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
 end
 
 Server(h::Function, l::IO=STDOUT; cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
-function Server(handler::H=HTTP.HandlerFunction((req, rep) -> HTTP.Response(200, "Hello World!")),
+function Server(handler::H=HTTP.HandlerFunction(req -> HTTP.Response(200, "Hello World!")),
                logger::IO=STDOUT;
                cert::String="",
                key::String="",
                args...) where {H <: HTTP.Handler}
     if cert != "" && key != ""
-        server = Server{https, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; tlsconfig=HTTP.MbedTLS.SSLConfig(cert, key), args...))
+        server = Server{https, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; sslconfig=HTTP.MbedTLS.SSLConfig(cert, key), args...))
     else
         server = Server{http, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; args...))
     end
@@ -197,7 +197,7 @@ function serve end
 
 serve(server::Server, host=ip"127.0.0.1", port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
 function serve(host::IPAddr, port::Int,
-                   handler=(req, rep) -> HTTP.Response(200, "Hello World!"),
+                   handler=req -> HTTP.Response(200, "Hello World!"),
                    logger::I=STDOUT;
                    cert::String="",
                    key::String="",
@@ -208,16 +208,13 @@ function serve(host::IPAddr, port::Int,
 end
 serve(; host::IPAddr=ip"127.0.0.1",
         port::Int=8081,
-        handler=(req, rep) -> HTTP.Response(200, "Hello World!"),
+        handler=req -> HTTP.Response(200, "Hello World!"),
         logger::IO=STDOUT,
         cert::String="",
         key::String="",
         verbose::Bool=true,
         args...) =
     serve(host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
-
-
-
 
 function getsslcontext(tcp, sslconfig)
     ssl = SSLContext()
@@ -228,9 +225,7 @@ function getsslcontext(tcp, sslconfig)
 end
 
 const nosslconfig = SSLConfig()
-
 const nolimit = typemax(Int)
-
 
 """
     HTTP.listen([host="localhost" [, port=8081]]; <keyword arguments>) do http
@@ -401,6 +396,10 @@ function handle_transaction(f::Function, t::Transaction;
     catch e
         if e isa EOFError && isempty(request.method)
             return
+# FIXME https://github.com/JuliaWeb/HTTP.jl/pull/178#pullrequestreview-92547066
+#        elseif !isopen(http)
+#            @warn "Connection closed"
+#            return
         elseif e isa HTTP.ParseError
             @error e
             status = e.code == :HEADER_SIZE_EXCEEDS_LIMIT  ? 413 : 400
