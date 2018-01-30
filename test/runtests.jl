@@ -10,7 +10,6 @@ using HTTP.Test
 
 @testset "HTTP" begin
     include("utils.jl");
-    include("fifobuffer.jl");
     include("sniff.jl");
     include("uri.jl");
     include("url.jl");

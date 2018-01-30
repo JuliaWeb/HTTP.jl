@@ -6,12 +6,13 @@ export Stream, closebody, isaborted,
 
 import ..HTTP
 using ..IOExtras
-using ..Parsers
 using ..Messages
 import ..bytesavailable
+import ..Cvoid
+import ..ByteView
 import ..Messages: header, hasheader, setheader,
                    writeheaders, writestartline
-import ..ConnectionPool: getrawstream, byteview
+import ..ConnectionPool: getrawstream, nobytes, ByteView
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
 import ..@debug, ..DEBUG_LEVEL
@@ -19,7 +20,6 @@ import ..@debug, ..DEBUG_LEVEL
 
 mutable struct Stream{M <: Message, S <: IO} <: IO
     message::M
-    parser::Parser
     stream::S
     writechunked::Bool
     readchunked::Bool
@@ -28,7 +28,7 @@ end
 
 
 """
-    Stream(::IO, ::Request, ::Parser)
+    Stream(::IO, ::Request)
 
 Creates a `HTTP.Stream` that wraps an existing `IO` stream.
 
@@ -50,12 +50,10 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
     stream.  When the `IO` stream is a [`HTTP.ConnectionPool.Transaction`](@ref),
     calling `closeread` releases the readlock and allows the next pipelined
     response to be read by another `Stream` that is waiting in `startread`.
-    If the `Parser` has not recieved a complete response, `closeread` throws
-    an `EOFError`.
+    If a complete response has not been recieved, `closeread` throws `EOFError`.
 """
 
-Stream(r::M, p::Parser, io::S) where {M, S} =
-    Stream{M,S}(r, p, io, false, false, 0)
+Stream(r::M, io::S) where {M, S} = Stream{M,S}(r, io, false, false, 0)
 
 header(http::Stream, a...) = header(http.message, a...)
 setstatus(http::Stream, status) = (http.message.response.status = status)
@@ -64,7 +62,10 @@ getrawstream(http::Stream) = getrawstream(http.stream)
 
 IOExtras.isopen(http::Stream) = isopen(http.stream)
 
+
+
 # Writing HTTP Messages
+
 
 messagetowrite(http::Stream{Response}) = http.message.request
 messagetowrite(http::Stream{Request}) = http.message.response
@@ -143,7 +144,9 @@ function IOExtras.closewrite(http::Stream{Request})
 end
 
 
+
 # Reading HTTP Messages
+
 
 IOExtras.isreadable(http::Stream) = isreadable(http.stream)
 
@@ -151,8 +154,7 @@ function IOExtras.startread(http::Stream)
 
     startread(http.stream)
 
-    reset!(http.parser)
-    readheaders(http.stream, http.parser, http.message)
+    readheaders(http.stream, http.message)
     handle_continue(http)
 
     http.readchunked = ischunked(http.message)
@@ -171,8 +173,7 @@ https://tools.ietf.org/html/rfc7231#section-6.2.1
 function handle_continue(http::Stream{Response})
     if http.message.status == 100
         @debug 1 "✅  Continue:   $(http.stream)"
-        reset!(http.parser)
-        readheaders(http.stream, http.parser, http.message)
+        readheaders(http.stream, http.message)
     end
 
 end
@@ -205,28 +206,35 @@ end
 function Base.readavailable(http::Stream)::ByteView
     @require headerscomplete(http.message)
 
+    # Find length of next chunk
+    if http.ntoread == unknown_length && http.readchunked
+        http.ntoread = readchunksize(http.stream, http.message)
+        if http.ntoread > 0
+            http.ntoread += 2 # expect CRLF after chunk-data
+        end
+    end
+
     if http.ntoread == 0
         return nobytes
     end
-    if bytesavailable(http.stream) > http.ntoread
-        bytes = byteview(read(http.stream, http.ntoread))
-    else
-        bytes = readavailable(http.stream)
-    end
-    l = length(bytes)
-    if l == 0
-        return nobytes
-    end
-    if http.readchunked
-        bytes, excess = parsebody(http.parser, bytes)
-        unread!(http, excess)
-        if bodycomplete(http.parser)
-            http.ntoread = 0
-        end
-    end
+
+    # Read bytes from stream and update ntoread
+    bytes = read(http.stream, http.ntoread)
     if http.ntoread != unknown_length
         http.ntoread -= length(bytes)
     end
+
+    # Ignore CRLF at end of chunk-data
+    if http.readchunked
+        if http.ntoread < 2
+            l = length(bytes) + http.ntoread - 2
+            bytes = view(bytes, 1:l)
+        end
+        if http.ntoread == 0
+            http.ntoread = unknown_length
+        end
+    end
+
     @ensure http.ntoread >= 0
     return bytes
 end
@@ -266,6 +274,8 @@ function isaborted(http::Stream{Response})
     return false
 end
 
+incomplete(http::Stream) =
+    http.ntoread > 0 && (http.readchunked || http.ntoread != unknown_length)
 
 function IOExtras.closeread(http::Stream{Response})
 
@@ -274,12 +284,7 @@ function IOExtras.closeread(http::Stream{Response})
         readavailable(http)
     end
 
-    # Read trailers...
-    if bodycomplete(http.parser) && !messagecomplete(http.parser)
-        readtrailers(http.stream, http.parser, http.message)
-    end
-
-    if http.ntoread != unknown_length && http.ntoread > 0
+    if incomplete(http)
         # Error if Message is not complete...
         close(http.stream)
         throw(EOFError())
@@ -296,7 +301,7 @@ end
 
 
 function IOExtras.closeread(http::Stream{Request})
-    if http.ntoread != unknown_length && http.ntoread > 0
+    if incomplete(http)
         # Error if Message is not complete...
         close(http.stream)
         throw(EOFError())

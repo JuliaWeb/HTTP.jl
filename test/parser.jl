@@ -3,6 +3,8 @@ using HTTP.Test
 
 module ParserTest
 
+const strict = false
+
 using ..Test
 
 import ..HTTP
@@ -10,8 +12,6 @@ import ..HTTP.pairs
 
 using HTTP.Messages
 using HTTP.Parsers
-
-const DEFAULT_PARSER = Parser()
 
 import Base.==
 
@@ -23,28 +23,6 @@ const Headers = Vector{Pair{String,String}}
                             (a.body           == b.body)
 
 
-function HTTP.IOExtras.unread!(io::BufferStream, bytes)
-    if length(bytes) == 0
-        return
-    end
-    if HTTP.bytesavailable(io) > 0
-        buf = readavailable(io)
-        write(io, bytes)
-        write(io, buf)
-    else
-        write(io, bytes)
-    end
-    return
-end
-
-function Base.length(io::IOBuffer)
-    mark(io)
-    seek(io, 0)
-    n = HTTP.bytesavailable(io)
-    reset(io)
-    return n
-end
-
 macro errmsg(expr)
     esc(quote
         try
@@ -53,40 +31,6 @@ macro errmsg(expr)
             sprint(show, e)
         end
     end)
-end
-
-
-parse!(parser::Parser, message::Messages.Message, body, bytes)::Int =
-    parse!(parser, message, body, Vector{UInt8}(bytes))
-
-function parse!(parser::Parser, message::Messages.Message, body, bytes::Vector{UInt8})::Int
-
-    l = length(bytes)
-    count = 0
-    while count < l
-        if !headerscomplete(parser)
-            excess = parseheaders(parser, bytes) do h
-                appendheader(message, h)
-            end
-            readstartline!(parser.message, message)
-        else
-            if ischunked(message)
-                fragment, excess = parsebody(parser, bytes)
-                write(body, fragment)
-            else
-                n = min(length(bytes), bodylength(message) - length(body))
-                write(body, view(bytes, 1:n))
-                count += n
-                break
-            end
-        end
-        count += length(bytes) - length(excess)
-        bytes = excess
-        if ischunked(message) && messagecomplete(parser)
-            break
-        end
-    end
-    return count
 end
 
 
@@ -496,6 +440,7 @@ Message(name= "curl get"
 ,num_headers= 0
 ,headers=Headers()
 ,body= ""
+#=
 ), Message(name= "request with no http version"
 ,raw= "GET /\r\n" *
        "\r\n"
@@ -510,6 +455,7 @@ Message(name= "curl get"
 ,num_headers= 0
 ,headers=Headers()
 ,body= ""
+=#
 ), Message(name= "m-search request"
 ,raw= "M-SEARCH * HTTP/1.1\r\n" *
        "HOST: 239.255.255.250:1900\r\n" *
@@ -887,7 +833,7 @@ Message(name= "curl get"
 ,request_url= "/"
 ,num_headers= 5
 ,headers=[ "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
-           , "Line2"=> "line2\t"
+           , "Line2"=> "line2"
            , "Line3"=> "line3"
            , "Line4"=> ""
            , "Connection"=> "close"
@@ -959,7 +905,7 @@ Message(name= "curl get"
 ,request_url= "/"
 ,num_headers= 5
 ,headers=[ "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
-           , "Line2"=> "line2\t"
+           , "Line2"=> "line2"
            , "Line3"=> "line3"
            , "Line4"=> ""
            , "Connection"=> "close"
@@ -1001,7 +947,7 @@ const responses = Message[
   , "X-\$prototypebi-Version"=> "1.6.0.3"
   , "Cache-Control"=> "public, max-age=2592000"
   , "Server"=> "gws"
-  , "Content-Length"=> "219  "
+  , "Content-Length"=> "219"
 ]
 ,body= "<HTML><HEAD><meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n" *
         "<TITLE>301 Moved</TITLE></HEAD><BODY>\n" *
@@ -1348,6 +1294,9 @@ const responses = Message[
 ]
 ,body_size= 0
 ,body= ""
+#=
+No reference to source of this was provided when requested here:
+https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
 ), Message(name= "field space"
 ,raw= "HTTP/1.1 200 OK\r\n" *
        "Server: Microsoft-IIS/6.0\r\n" *
@@ -1375,6 +1324,7 @@ const responses = Message[
   , "Connection"=> "keep-alive"
 ]
 ,body= "<xml>hello</xml>"
+=#
 ), Message(name= "amazon.com"
 ,raw= "HTTP/1.1 301 MovedPermanently\r\n" *
        "Date: Wed, 15 May 2013 17:06:33 GMT\r\n" *
@@ -1444,31 +1394,12 @@ const responses = Message[
 @testset "HTTP.parse" begin
 
   @testset "HTTP.parse(HTTP.Request, str)" begin
-      for req in requests, t in [-1, 0, 1, 2, 3, 4, 11, 13, 17, 19, 23, 29, 31, 32]
+      for req in requests
 
-          println("TEST - parser.jl - Request $t: $(req.name)")
-          upgrade = Ref{SubArray{UInt8, 1}}()
-          r = Request()
-          p = Parser()
-          b = IOBuffer()
-          bytes = HTTP.bytes(req.raw)
-          sz = t
-          if t > 0
-              for i in 1:sz:length(bytes)
-                  parse!(p, r, b, view(bytes, i:min(i+sz-1, length(bytes))))
-              end
-              r.body = take!(b)
-          elseif t < 0
-              i = rand(2:length(bytes))
-              parse!(p, r, b, bytes[1:i-1])
-              parse!(p, r, b, bytes[i:end])
-              r.body = take!(b)
-          else
-              r = Request(req.raw)
-              #r = HTTP.parse(HTTP.Request, req.raw; extraref=upgrade)
-          end
+          println("TEST - parser.jl - Request $(req.name)")
+          r = parse(Request, req.raw)
           if r.method == "CONNECT"
-              host, port, userinfo = HTTP.URIs.http_parse_host(SubString(r.target))
+              host, port = split(r.target, ":")
               @test host == req.host
               @test port == req.port
           else
@@ -1492,13 +1423,7 @@ const responses = Message[
           @test Dict(HTTP.CanonicalizeRequest.canonicalizeheaders(r.headers)) == Dict(req.headers)
           @test String(r.body) == req.body
 # FIXME          @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == req.should_keep_alive
-
-          if isassigned(upgrade)
-              @show String(collect(upgrade[]))
-          end
-# FIXME          @test t != 0 ||
-#                req.upgrade == "" && !isassigned(upgrade) ||
-#                String(collect(upgrade[])) == req.upgrade
+# FIXME          @test String(collect(upgrade[])) == req.upgrade
       end
 
       reqstr = "GET http://www.techcrunch.com/ HTTP/1.1\r\n" *
@@ -1516,8 +1441,8 @@ const responses = Message[
       req.headers = ["Host"=>"www.techcrunch.com","User-Agent"=>"Fake","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language"=>"en-us,en;q=0.5","Accept-Encoding"=>"gzip,deflate","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Keep-Alive"=>"300","Content-Length"=>"7","Proxy-Connection"=>"keep-alive"]
       req.body = HTTP.bytes("1234567")
 
-      @test Request(reqstr).headers == req.headers
-      @test Request(reqstr) == req
+      @test parse(Request,reqstr).headers == req.headers
+      @test parse(Request,reqstr) == req
 
       reqstr = "GET / HTTP/1.1\r\n" *
                "Host: foo.com\r\n\r\n"
@@ -1525,7 +1450,7 @@ const responses = Message[
       req = Request("GET", "/")
       req.headers = ["Host"=>"foo.com"]
 
-      @test Request(reqstr) == req
+      @test parse(Request, reqstr) == req
 
       reqstr = "GET //user@host/is/actually/a/path/ HTTP/1.1\r\n" *
                "Host: test\r\n\r\n"
@@ -1533,17 +1458,17 @@ const responses = Message[
       req = Request("GET", "//user@host/is/actually/a/path/")
       req.headers = ["Host"=>"test"]
 
-      @test Request(reqstr) == req
+      @test parse(Request, reqstr) == req
 
       reqstr = "GET ../../../../etc/passwd HTTP/1.1\r\n" *
                "Host: test\r\n\r\n"
 
-      @test_throws ParsingError HTTP.URI(Request(reqstr).target)
+      @test_throws HTTP.ParseError HTTP.URI(parse(Request, reqstr).target)
 
       reqstr = "GET  HTTP/1.1\r\n" *
                "Host: test\r\n\r\n"
 
-      @test_throws ParsingError Request(reqstr)
+      @test_throws HTTP.ParseError parse(Request, reqstr)
 
       reqstr = "POST / HTTP/1.1\r\n" *
                "Host: foo.com\r\n" *
@@ -1560,7 +1485,7 @@ const responses = Message[
       req.headers = ["Host"=>"foo.com", "Transfer-Encoding"=>"chunked", "Trailer-Key"=>"Trailer-Value"]
       req.body = HTTP.bytes("foobar")
 
-      @test Request(reqstr) == req
+      @test parse(Request, reqstr) == req
 
 #= FIXME
       reqstr = "POST / HTTP/1.1\r\n" *
@@ -1572,7 +1497,7 @@ const responses = Message[
                "0\r\n" *
                "\r\n"
 
-      @test_throws ParsingError Request(reqstr)
+      @test_throws HTTP.ParseError parse(Request, reqstr)
 =#
 
       reqstr = "CONNECT www.google.com:443 HTTP/1.1\r\n\r\n"
@@ -1581,7 +1506,7 @@ const responses = Message[
       req.method = "CONNECT"
       req.target = "www.google.com:443"
 
-      @test Request(reqstr) == req
+      @test parse(Request, reqstr) == req
 
       reqstr = "CONNECT 127.0.0.1:6060 HTTP/1.1\r\n\r\n"
 
@@ -1589,15 +1514,14 @@ const responses = Message[
       req.method = "CONNECT"
       req.target = "127.0.0.1:6060"
 
-      @test Request(reqstr) == req
+      @test parse(Request, reqstr) == req
 
-      # reqstr = "CONNECT /_goRPC_ HTTP/1.1\r\n\r\n"
-      #
-      # req = HTTP.Request()
-      # req.method = "CONNECT"
-      # req.target = HTTP.URI("/_goRPC_"; isconnect=true)
+      reqstr = "CONNECT /_goRPC_ HTTP/1.1\r\n\r\n"
+      req = HTTP.Request()
+      req.method = "CONNECT"
+      req.target = "/_goRPC_"
 
-      # @test HTTP.parse(HTTP.Request, reqstr) == req
+      @test HTTP.parse(HTTP.Request, reqstr) == req
 
       reqstr = "NOTIFY * HTTP/1.1\r\nServer: foo\r\n\r\n"
 
@@ -1606,7 +1530,7 @@ const responses = Message[
       req.target = "*"
       req.headers = ["Server"=>"foo"]
 
-      @test Request(reqstr) == req
+      @test parse(Request, reqstr) == req
 
       reqstr = "OPTIONS * HTTP/1.1\r\nServer: foo\r\n\r\n"
 
@@ -1615,14 +1539,14 @@ const responses = Message[
       req.target = "*"
       req.headers = ["Server"=>"foo"]
 
-      @test Request(reqstr) == req
+      @test parse(Request, reqstr) == req
 
       reqstr = "GET / HTTP/1.1\r\nHost: issue8261.com\r\nConnection: close\r\n\r\n"
 
       req = Request("GET", "/")
       req.headers = ["Host"=>"issue8261.com", "Connection"=>"close"]
 
-      @test Request(reqstr) == req
+      @test parse(Request, reqstr) == req
 
       reqstr = "HEAD / HTTP/1.1\r\nHost: issue8261.com\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
 
@@ -1631,7 +1555,7 @@ const responses = Message[
       req.target = "/"
       req.headers = ["Host"=>"issue8261.com", "Connection"=>"close", "Content-Length"=>"0"]
 
-      @test Request(reqstr) == req
+      @test parse(Request, reqstr) == req
 
       reqstr = "POST /cgi-bin/process.cgi HTTP/1.1\r\n" *
                "User-Agent: Mozilla/4.0 (compatible; MSIE5.01; Windows NT)\r\n" *
@@ -1655,48 +1579,28 @@ const responses = Message[
                      "Connection"=>"Keep-Alive"]
       req.body = HTTP.bytes("first=Zara&last=Ali")
 
-      @test Request(reqstr) == req
+      @test parse(Request, reqstr) == req
   end
 
   @testset "Response(str)" begin
-      for resp in responses, t in [0, 1, 2, 3, 4, 11, 13, 17, 19, 23, 29, 31, 32]
-          println("TEST - parser.jl - Response $t: $(resp.name)")
-          try
-              if t > 0
-                  r = Request().response
-                  p = Parser()
-                  b = IOBuffer()
-                  bytes = HTTP.bytes(resp.raw)
-                  sz = t
-                  for i in 1:sz:length(bytes)
-                      parse!(p, r, b, view(bytes, i:min(i+sz-1, length(bytes))))
-                  end
-                  r.body = take!(b)
-              else
-                  r = Response(resp.raw)
-              end
-              @test r.version.major == resp.http_major
-              @test r.version.minor == resp.http_minor
-              @test r.status == resp.status_code
-              @test HTTP.Messages.statustext(r) == resp.response_status
-              @test length(r.headers) == resp.num_headers
-              @test Dict(HTTP.CanonicalizeRequest.canonicalizeheaders(r.headers)) == Dict(resp.headers)
-              @test String(r.body) == resp.body
+      for resp in responses
+          println("TEST - parser.jl - Response $(resp.name)")
+          r = parse(Response, resp.raw)
+          @test r.version.major == resp.http_major
+          @test r.version.minor == resp.http_minor
+          @test r.status == resp.status_code
+          @test HTTP.Messages.statustext(r) == resp.response_status
+          @test length(r.headers) == resp.num_headers
+          @test Dict(HTTP.CanonicalizeRequest.canonicalizeheaders(r.headers)) == Dict(resp.headers)
+          @test String(r.body) == resp.body
 # FIXME              @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == resp.should_keep_alive
-          catch e
-              if HTTP.Parsers.strict && isa(e, ParsingError)
-                  println("HTTP.strict is enabled. ParsingError ignored.")
-              else
-                  rethrow()
-              end
-          end
       end
   end
 
   @testset "HTTP.parse errors" begin
       reqstr = "GET / HTTP/1.1\r\n" * "Foo: F\01ailure\r\n\r\n"
-      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
-      if !HTTP.Parsers.strict
+      strict && @test_throws HTTP.ParseError parse(Request,reqstr)
+      if !strict
         r = HTTP.parse(HTTP.Messages.Request, reqstr)
         @test r.method == "GET"
         @test r.target == "/"
@@ -1704,8 +1608,8 @@ const responses = Message[
       end
 
       reqstr = "GET / HTTP/1.1\r\n" * "Foo: B\02ar\r\n\r\n"
-      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
-      if !HTTP.Parsers.strict
+      strict && @test_throws HTTP.ParseError parse(Request, reqstr)
+      if !strict
           r = parse(HTTP.Messages.Request, reqstr)
           @test r.method == "GET"
           @test r.target == "/"
@@ -1713,183 +1617,100 @@ const responses = Message[
       end
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo: F\01ailure\r\n\r\n"
-      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
-      if !HTTP.Parsers.strict
+      strict && @test_throws HTTP.ParseError parse(Response,respstr)
+      if !strict
           r = parse(HTTP.Messages.Response, respstr)
           @test r.status == 200
           @test length(r.headers) == 1
       end
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo: B\02ar\r\n\r\n"
-      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
-      if !HTTP.Parsers.strict
+      strict && @test_throws HTTP.ParseError parse(Response,respstr)
+      if !strict
           r = parse(HTTP.Messages.Response, respstr)
           @test r.status == 200
           @test length(r.headers) == 1
       end
 
-      reqstr = "GET / HTTP/1.1\r\n" * "Fo@: Failure"
-      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
-      !HTTP.Parsers.strict && (@test_throws ParsingError Request(reqstr))
+      reqstr = "GET / HTTP/1.1\r\n" * "Fo@: Failure\r\n\r\n"
+      @test_throws HTTP.ParseError parse(Request, reqstr)
 
-      reqstr = "GET / HTTP/1.1\r\n" * "Foo\01\test: Bar"
-      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
-      !HTTP.Parsers.strict && (@test_throws ParsingError Request(reqstr))
+      reqstr = "GET / HTTP/1.1\r\n" * "Foo\01\test: Bar\r\n\r\n"
+      @test_throws HTTP.ParseError parse(Request, reqstr)
 
-      respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure"
-      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
-      !HTTP.Parsers.strict && (@test_throws ParsingError Response(respstr))
-      @test @errmsg(Response(respstr)) == """
-        HTTP.ParsingError: invalid character in header, es_header_field, 200
-        "Fo@: Failure"
-           ^
-        """
+      respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure\r\n\r\n"
+      @test_throws HTTP.ParseError parse(Response,respstr)
+      @test ismatch(r"INVALID_HEADER_FIELD", @errmsg(parse(Response,respstr)))
 
-      respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar"
-      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
-      !HTTP.Parsers.strict && (@test_throws ParsingError Response(respstr))
+      respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar\r\n\r\n"
+      @test_throws HTTP.ParseError parse(Response,respstr)
 
       reqstr = "GET / HTTP/1.1\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
-      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
+      strict && @test_throws HTTP.ParseError parse(Request, reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
-      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
+      strict && @test_throws HTTP.ParseError parse(Response,respstr)
 
       reqstr = "GET / HTTP/1.1\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
-      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
+      strict && @test_throws HTTP.ParseError parse(Request, reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
-      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
+      strict && @test_throws HTTP.ParseError parse(Response,respstr)
 
       reqstr = "GET / HTTP/1.1\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
-      HTTP.Parsers.strict && @test_throws ParsingError Request(reqstr)
+      @test_throws HTTP.ParseError parse(Request, reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
-      HTTP.Parsers.strict && @test_throws ParsingError Response(respstr)
+      @test_throws HTTP.ParseError parse(Response,respstr)
 
-
-      for r in ((Request, "GET / HTTP/1.1\r\n"), (Response, "HTTP/1.0 200 OK\r\n"))
-          R = r[1]()
-          b = IOBuffer()
-          p = Parser()
-          n = parse!(Parser(), R, b, r[2])
-          @test !headerscomplete(p)
-          @test !messagecomplete(p)
-          @test n == length(HTTP.bytes(r[2]))
-      end
 
       buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"
-      @test_throws EOFError r = Request(buf)
+      @test_throws EOFError r = parse(Request,buf)
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "1844674407370955160" * "\r\n\r\n"
       r = Response()
-      b = IOBuffer()
-      p = Parser()
-      parse!(p, r, b, respstr)
+      readheaders(IOBuffer(respstr), r)
       @test r.status == 200
       @test r.headers == ["Content-Length"=>"1844674407370955160"]
 
 #=
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551615" * "\r\n\r\n"
-      e = try Response(respstr) catch e e end
-      @test isa(e, ParsingError) && e.code == Parsers.HPE_INVALID_CONTENT_LENGTH
+      e = try parse(Response,respstr) catch e e end
+      @test isa(e, HTTP.ParseError) && e.code == Parsers.HPE_INVALID_CONTENT_LENGTH
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551616" * "\r\n\r\n"
-      e = try Response(respstr) catch e e end
-      @test isa(e, ParsingError) && e.code == Parsers.HPE_INVALID_CONTENT_LENGTH
+      e = try parse(Response,respstr) catch e e end
+      @test isa(e, HTTP.ParseError) && e.code == Parsers.HPE_INVALID_CONTENT_LENGTH
 =#
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFE" * "\r\n..."
       r = Response()
-      p = Parser()
-      parse!(p, r, b, respstr)
+      readheaders(IOBuffer(respstr), r)
       @test r.status == 200
       @test r.headers == ["Transfer-Encoding"=>"chunked"]
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFF" * "\r\n..."
-      e = try Response(respstr) catch e e end
-      @test isa(e, ParsingError) && e.code == :HPE_INVALID_CONTENT_LENGTH
+      e = try parse(Response,respstr) catch e e end
+      @test isa(e, HTTP.ParseError) && e.code == :CHUNK_SIZE_EXCEEDS_LIMIT
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "10000000000000000" * "\r\n..."
-      e = try Response(respstr) catch e e end
-      @test isa(e, ParsingError) && e.code == :HPE_INVALID_CONTENT_LENGTH
+      e = try parse(Response,respstr) catch e e end
+      @test isa(e, HTTP.ParseError) && e.code == :CHUNK_SIZE_EXCEEDS_LIMIT
 
-      for len in (1000, 100000)
-          b = IOBuffer()
-          HTTP.Parsers.reset!(p)
-          reqstr = "POST / HTTP/1.0\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
-          r = Request()
-          p = Parser()
-          parse!(p, r, b, reqstr)
-          @test headerscomplete(p)
-          @test !messagecomplete(p)
-          for i = 1:len-1
-              parse!(p, r, b, "a")
-              @test headerscomplete(p)
-              @test !messagecomplete(p)
-          end
-          parse!(p, r, b, "a")
-          @test headerscomplete(p)
-#          @test messagecomplete(p)
-          @test length(take!(b)) == len
-      end
+      @test_throws HTTP.ParseError parse(Request,"GET / HTP/1.1\r\n\r\n")
 
-      for len in (1000, 100000)
-          b = IOBuffer()
-          HTTP.Parsers.reset!(p)
-          respstr = "HTTP/1.0 200 OK\r\nConnection: Keep-Alive\r\nContent-Length: $len\r\n\r\n"
-          r = Request().response
-          p = Parser()
-          parse!(p, r, b, respstr)
-          @test headerscomplete(p)
-          @test !messagecomplete(p)
-          for i = 1:len-1
-              parse!(p, r, b, "a")
-              @test headerscomplete(p)
-              @test !messagecomplete(p)
-          end
-          parse!(p, r, b, "a")
-          @test headerscomplete(p)
-#          @test messagecomplete(p)
-          @test length(take!(b)) == len
-      end
-
-      b = IOBuffer()
-      reqstr = requests[1].raw * requests[2].raw
-      r = Request()
-      p = Parser()
-      n = parse!(p, r, b, reqstr)
-      @test headerscomplete(p)
-      #@test messagecomplete(p)
-      @test String(take!(b)) == requests[1].body
-      b = IOBuffer()
-      ex = HTTP.bytes(reqstr)[n+1:end]
-      HTTP.Parsers.reset!(p)
-      parse!(p, r, b, ex)
-      @test headerscomplete(p)
-      #@test messagecomplete(p)
-      @test String(take!(b)) == requests[2].body
-
-      @test_throws ParsingError Request("GET / HTP/1.1\r\n\r\n")
-
-      r = Request("GET / HTTP/1.1\r\n" * "Test: Düsseldorf\r\n\r\n")
+      r = parse(Request,"GET / HTTP/1.1\r\n" * "Test: Düsseldorf\r\n\r\n")
       @test r.headers == ["Test" => "Düsseldorf"]
 
-      r = Request().response
-      p = Parser()
-      b = IOBuffer()
-      parse!(p, r, b, "GET / HTTP/1.1\r\n" * "Content-Type: text/plain\r\n" * "Content-Length: 6\r\n\r\n" * "fooba")
-      @test String(take!(b)) == "fooba"
-
       for m in ["GET", "PUT", "M-SEARCH", "FOOMETHOD"]
-          r = Request("$m / HTTP/1.1\r\n\r\n")
+          r = parse(Request,"$m / HTTP/1.1\r\n\r\n")
           @test r.method == string(m)
       end
 
       for m in ("HTTP/1.1", "hello world")
-          @test_throws ParsingError Request("$m / HTTP/1.1\r\n\r\n")
+          @test_throws HTTP.ParseError parse(Request,"$m / HTTP/1.1\r\n\r\n")
       end
       for m in ("ASDF","C******","COLA","GEM","GETA","M****","MKCOLA","PROPPATCHA","PUN","PX","SA")
-          @test Request("$m / HTTP/1.1\r\n\r\n").method == m
+          @test parse(Request,"$m / HTTP/1.1\r\n\r\n").method == m
       end
 
-      @test_throws ParsingError Request("GET / HTTP/1.1\r\n" * "name\r\n" * " : value\r\n\r\n")
+      @test_throws HTTP.ParseError parse(Request,"GET / HTTP/1.1\r\n" * "name\r\n" * " : value\r\n\r\n")
 
       reqstr = "GET / HTTP/1.1\r\n" *
       "X-SSL-FoooBarr:   -----BEGIN CERTIFICATE-----\r\n" *
@@ -1926,14 +1747,14 @@ const responses = Message[
       "\t-----END CERTIFICATE-----\r\n" *
       "\r\n"
 
-      r = Request(reqstr)
+      r = parse(Request, reqstr)
       @test r.method == "GET"
 
       @test "GET / HTTP/1.1X-SSL-FoooBarr:   $(header(r, "X-SSL-FoooBarr"))" == replace(reqstr, "\r\n", "")
 
-      # @test_throws HTTP.ParsingError HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\nHost: www.example.com\r\nConnection\r\033\065\325eep-Alive\r\nAccept-Encoding: gzip\r\n\r\n")
+      # @test_throws HTTP.HTTP.ParseError HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\nHost: www.example.com\r\nConnection\r\033\065\325eep-Alive\r\nAccept-Encoding: gzip\r\n\r\n")
 
-      r = Request("GET /bad_get_no_headers_no_body/world HTTP/1.1\r\nAccept: */*\r\n\r\nHELLO")
+      r = parse(Request,"GET /bad_get_no_headers_no_body/world HTTP/1.1\r\nAccept: */*\r\n\r\nHELLO")
       @test String(r.body) == ""
   end
 end # @testset HTTP.parse

@@ -44,11 +44,10 @@ sleep(2)
 # test http vs. https
 
 # echo response
-serverlog = HTTP.FIFOBuffer()
 server = HTTP.Servers.Server((req) -> begin
     req.response.body = req.body
     return req.response
-end, serverlog)
+end, STDOUT)
 
 server.options.ratelimit=0
 tsk = @async HTTP.Servers.serve(server, "localhost", port)
@@ -80,46 +79,38 @@ r = HTTP.get("http://127.0.0.1:$port/"; readtimeout=30)
 
 
 # large headers
-sleep(2.0)
 tcp = connect(ip"127.0.0.1", port)
+x = "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n"
+@show length(x)
 write(tcp, "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n")
+sleep(0.1)
 @test ismatch(r"HTTP/1.1 413 Request Entity Too Large", String(read(tcp)))
 
 # invalid HTTP
-sleep(2.0)
 tcp = connect(ip"127.0.0.1", port)
+sleep(0.1)
 write(tcp, "GET / HTP/1.1\r\n\r\n")
-!HTTP.Parsers.strict &&
-@test ismatch(r"HTTP/1.1 505 HTTP Version Not Supported", String(read(tcp)))
-sleep(2.0)
+@test ismatch(r"HTTP/1.1 400 Bad Request", String(read(tcp)))
 
 
 # no URL
-sleep(2.0)
 tcp = connect(ip"127.0.0.1", port)
 write(tcp, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
+sleep(0.1)
 r = String(read(tcp))
-!HTTP.Parsers.strict && @test ismatch(r"HTTP/1.1 400 Bad Request", r)
-!HTTP.Parsers.strict && @test ismatch(r"invalid HTTP request target", r)
-sleep(2.0)
+@test ismatch(r"HTTP/1.1 400 Bad Request", r)
 
 
 # Expect: 100-continue
-sleep(2.0)
 tcp = connect(ip"127.0.0.1", port)
 write(tcp, "POST / HTTP/1.1\r\nContent-Length: 15\r\nExpect: 100-continue\r\n\r\n")
-sleep(2.0)
-
-log = String(readavailable(serverlog))
-
-#@test contains(log, "sending 100 Continue response to get request body")
+sleep(0.1)
 client = String(readavailable(tcp))
 @test client == "HTTP/1.1 100 Continue\r\n\r\n"
 
 
 write(tcp, "Body of Request")
-sleep(2.0)
-#log = String(readavailable(serverlog))
+sleep(0.1)
 client = String(readavailable(tcp))
 
 #println("log:")

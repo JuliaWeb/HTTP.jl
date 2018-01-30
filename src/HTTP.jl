@@ -18,16 +18,13 @@ include("Pairs.jl")
 include("IOExtras.jl")                 ;using .IOExtras
 include("Strings.jl")
 include("URIs.jl")                     ;using .URIs
-include("utils.jl")
-include("fifobuffer.jl")               ;using .FIFOBuffers
 include("sniff.jl")
 include("cookies.jl")                  ;using .Cookies
 include("multipart.jl")
-include("Parsers.jl")                  ;import .Parsers: Parser, Headers, Header,
-                                                         ParsingError, ByteView
+include("Parsers.jl")                  ;import .Parsers: Headers, Header,
+                                                         ParseError
 include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
-
 include("Streams.jl")                  ;using .Streams
 
 
@@ -458,7 +455,7 @@ stack = MessageLayer{ConnectionPoolLayer{StreamLayer}}
 ```
 
 The figure below illustrates the full request exection stack and its
-relationship with [`HTTP.Response`](@ref), [`HTTP.Parser`](@ref),
+relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 [`HTTP.Stream`](@ref) and the [`HTTP.ConnectionPool`](@ref).
 
 ```
@@ -519,10 +516,10 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parser`](@ref),
 ││   └───────────────────────────┘       ║   └────────────────────────────┘ │ │
 │└───────────────────────────║────────┬──║──────║───────║──┬──────────────────┘
 │┌──────────────────────────────────┐ │  ║ ┌────▼───────║──▼────────────────┴─┐
-││ HTTP.Messages                    │ │  ║ │ HTTP.Parser                      │
+││ HTTP.Messages                    │ │  ║ │ HTTP.Parsers                     │
 ││                                  │ │  ║ │                                  │
-││ writestartline(::IO, ::Request)  │ │  ║ │ parseheaders(bytes) do h::Pair   │
-││ writeheaders(::IO, ::Request)    │ │  ║ │ parsebody(bytes) -> bytes        │
+││ writestartline(::IO, ::Request)  │ │  ║ │ parse_status_line(bytes, ::Req') │
+││ writeheaders(::IO, ::Request)    │ │  ║ │ parse_header_field(bytes, ::Req')│
 │└──────────────────────────────────┘ │  ║ └──────────────────────────────────┘
 │                            ║        │  ║                                     
 │┌───────────────────────────║────────┼──║────────────────────────────────────┐
@@ -561,22 +558,22 @@ function stack(;redirect=true,
                 retry=true,
                 status_exception=true,
                 readtimeout=0,
-                detect_content_type=true,
+                detect_content_type=false,
                 kw...)
 
     NoLayer = Union
 
-    (redirect             ? RedirectLayer       : NoLayer){
-    (basic_authorization  ? BasicAuthLayer      : NoLayer){
+    (redirect             ? RedirectLayer             : NoLayer){
+    (basic_authorization  ? BasicAuthLayer            : NoLayer){
     (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
-    (cookies              ? CookieLayer         : NoLayer){
-    (canonicalize_headers ? CanonicalizeLayer   : NoLayer){
+    (cookies              ? CookieLayer               : NoLayer){
+    (canonicalize_headers ? CanonicalizeLayer         : NoLayer){
                             MessageLayer{
-    (aws_authorization    ? AWS4AuthLayer       : NoLayer){
-    (retry                ? RetryLayer          : NoLayer){
-    (status_exception     ? ExceptionLayer      : NoLayer){
+    (aws_authorization    ? AWS4AuthLayer             : NoLayer){
+    (retry                ? RetryLayer                : NoLayer){
+    (status_exception     ? ExceptionLayer            : NoLayer){
                             ConnectionPoolLayer{
-    (readtimeout > 0      ? TimeoutLayer        : NoLayer){
+    (readtimeout > 0      ? TimeoutLayer              : NoLayer){
                             StreamLayer
     }}}}}}}}}}}
 end
@@ -590,5 +587,20 @@ Base.@deprecate_binding(Nitrogen, Servers, false)
 include("WebSockets.jl")               ;using .WebSockets
 
 include("precompile.jl")
+
+
+import .ConnectionPool: Transaction, Connection
+
+function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
+    buffer = BufferStream()
+    write(buffer, str)
+    close(buffer)
+    m = T()
+    http = Stream(m, Transaction(Connection(buffer)))
+    m.body = read(http)
+    closeread(http)
+    return m
+end
+
 
 end # module

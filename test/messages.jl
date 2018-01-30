@@ -58,14 +58,16 @@ using JSON
     setheader(req, "X" => "Y")
     @test header(req, "X") == "Y"
 
-    appendheader(req, "" => "Z")
+    ah(m::Message, h) = appendheader(m, SubString(h[1]) => SubString(h[2]))
+
+    ah(req, "" => "Z")
     @test header(req, "X") == "YZ"
 
-    appendheader(req, "X" => "more")
+    ah(req, "X" => "more")
     @test header(req, "X") == "YZ, more"
 
-    appendheader(req, "Set-Cookie" => "A")
-    appendheader(req, "Set-Cookie" => "B")
+    ah(req, "Set-Cookie" => "A")
+    ah(req, "Set-Cookie" => "B")
     @test filter(x->first(x) == "Set-Cookie", req.headers) ==
         ["Set-Cookie" => "A", "Set-Cookie" => "B"]
 
@@ -74,20 +76,20 @@ using JSON
 
     raw = String(req)
     #@show raw
-    req = Request(raw)
+    req = parse(Request,raw)
     #display(req); println()
     @test String(req) == raw
 
-    req = Request(raw * "xxx")
+    req = parse(Request, raw * "xxx")
     @test String(req) == raw
 
     raw = String(res)
     #@show raw
-    res = Response(raw)
+    res = parse(Response,raw)
     #display(res); println()
     @test String(res) == raw
 
-    res = Response(raw * "xxx")
+    res = parse(Response,raw * "xxx")
     @test String(res) == raw
 
     for sch in ["http", "https"]

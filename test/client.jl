@@ -66,7 +66,7 @@ for sch in ("http", "https")
         @test a == b
     end
 
-    # body posting: Vector{UInt8}, String, IOStream, IOBuffer, FIFOBuffer
+    # body posting: Vector{UInt8}, String, IOStream, IOBuffer, BufferStream
     println("client body posting of various types")
     @test status(HTTP.post("$sch://httpbin.org/post"; body="hey")) == 200
     @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'])) == 200
@@ -77,7 +77,9 @@ for sch in ("http", "https")
     io = open(tmp)
     @test status(HTTP.post("$sch://httpbin.org/post"; body=io, enablechunked=false)) == 200
     close(io); rm(tmp)
-    f = HTTP.FIFOBuffer("hey")
+    f = BufferStream()
+    write(f, "hey")
+    close(f)
     @test status(HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false)) == 200
 
     # chunksize
@@ -96,7 +98,9 @@ for sch in ("http", "https")
     io = open(tmp)
     @test_broken status(HTTP.post("$sch://httpbin.org/post"; body=io, #=chunksize=2=#)) == 200
     close(io); rm(tmp)
-    f = HTTP.FIFOBuffer("hey")
+    f = BufferStream()
+    write(f, "hey")
+    close(f)
     @test_broken status(HTTP.post("$sch://httpbin.org/post"; body=f, #=chunksize=2=#)) == 200
 
     # multipart
@@ -147,10 +151,10 @@ for sch in ("http", "https")
     # asynchronous
     println("asynchronous client request body")
     begin
-        f = HTTP.FIFOBuffer()
+        f = BufferStream()
         write(f, "hey")
         t = @async HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false)
-        wait(f) # wait for the async call to write it's first data
+        #wait(f) # wait for the async call to write it's first data
         write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
         write(f, "sailor")
         close(f) # setting eof on f causes the async request to send a final chunk and return the response
