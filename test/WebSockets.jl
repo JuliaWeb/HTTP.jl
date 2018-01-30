@@ -6,21 +6,21 @@ using HTTP.IOExtras
 
 for s in ["ws", "wss"]
 
-    HTTP.WebSockets.open("$s://echo.websocket.org") do io
-        write(io, HTTP.bytes("Foo"))
-        @test !eof(io)
-        @test String(readavailable(io)) == "Foo"
+    HTTP.WebSockets.open("$s://echo.websocket.org") do ws
+        write(ws, HTTP.bytes("Foo"))
+        @test !eof(ws)
+        @test String(readavailable(ws)) == "Foo"
 
-        write(io, HTTP.bytes("Hello"))
-        write(io, " There")
-        write(io, " World", "!")
-        closewrite(io)
+        write(ws, HTTP.bytes("Hello"))
+        write(ws, " There")
+        write(ws, " World", "!")
+        closewrite(ws)
 
-        buf = IOBuffer()
-        write(buf, io)
-        @test String(take!(buf)) == "Hello There World!"
+        io = IOBuffer()
+        write(io, ws)
+        @test String(take!(io)) == "Hello There World!"
 
-        close(io)
+        close(ws)
     end
 
 end
