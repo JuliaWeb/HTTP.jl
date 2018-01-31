@@ -1,6 +1,6 @@
 module Handlers
 
-export handle, gethandler, Handler, HandlerFunction, Router, register!
+export handle, gethandler, handle_request, Handler, HandlerFunction, Router, register!
 
 import ..Nothing, ..Cvoid, ..Val
 
@@ -141,6 +141,6 @@ function handle(r::Router, req)
     return handle(handler, req)
 end
 
-handle(hf::HandlerFunction, http::HTTP.Stream) = HTTP.handle_request(hf.func,http)
+handle_request(f::Function, http::HTTP.Stream) = HTTP.Servers.handle_request(f, http)
 
 end # module
