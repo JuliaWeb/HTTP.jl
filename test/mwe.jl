@@ -17,10 +17,8 @@ end
 
 HTTP.listen(ip"127.0.0.1", 8000,;
             ssl = true,
-            sslconfig = MbedTLS.SSLConfig("cert.pem", "key.pem")) do http
-    if http.message.method == "GET" &&
-       hasheader(http, "Connection", "upgrade") &&
-       hasheader(http, "Upgrade", "websocket")
+            sslconfig = MbedTLS.SSLConfig(joinpath(dirname(@__FILE__),"cert.pem"), joinpath(dirname(@__FILE__),"key.pem"))) do http
+    if HTTP.WebSockets.is_upgrade(http.message)
 
         HTTP.WebSockets.upgrade(http) do client
             count = 1
