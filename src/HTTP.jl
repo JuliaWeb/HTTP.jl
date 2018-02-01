@@ -124,7 +124,7 @@ Redirect options
 
 Status Exception options
 
- - `statusexception = true`, throw `HTTP.StatusError` for response status >= 300.
+ - `status_exception = true`, throw `HTTP.StatusError` for response status >= 300.
 
 
 SSLContext options
@@ -138,13 +138,13 @@ SSLContext options
 
 Basic Authenticaiton options
 
- - basicauthorization=false, add `Authorization: Basic` header using credentials
+ - basic_authorization=false, add `Authorization: Basic` header using credentials
    from url userinfo.
 
 
 AWS Authenticaiton options
 
- - `awsauthorization = false`, enable AWS4 Authentication.
+ - `aws_authorization = false`, enable AWS4 Authentication.
  - `aws_service = split(url.host, ".")[1]`
  - `aws_region = split(url.host, ".")[2]`
  - `aws_access_key_id = ENV["AWS_ACCESS_KEY_ID"]`
@@ -162,7 +162,7 @@ Cookie options
 
 Cananoincalization options
 
- - `canonicalizeheaders = false`, rewrite request and response headers in
+ - `canonicalize_headers = false`, rewrite request and response headers in
    Canonical-Camel-Dash-Format.
 
 
