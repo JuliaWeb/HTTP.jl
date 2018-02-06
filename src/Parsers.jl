@@ -71,9 +71,13 @@ const request_line_regex = r"""^
 """
 https://tools.ietf.org/html/rfc7230#section-3.1.2
 status-line = HTTP-version SP status-code SP reason-phrase CRLF
+
+See:
+[#190](https://github.com/JuliaWeb/HTTP.jl/issues/190#issuecomment-363314009)
 """
 
 const status_line_regex = r"""^
+    [ ]?                                # Issue #190
     HTTP/(\d\.\d) [ ]+                  # 1. version
     (\d\d\d) .*                         # 2. status
     \r? \n                              #    CRLF
