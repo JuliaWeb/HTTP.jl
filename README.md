@@ -23,9 +23,9 @@ julia> Pkg.add("HTTP")
 ## Project Status
 
 The package is new and not yet tested in production systems.
-Please try it out and report your experiance.
+Please try it out and report your experience.
 
-The package is tested against Julia 0.6 & current master on Linux, OS X, and Windows.
+The package is tested against Julia 0.6 & current master on Linux, macOS, and Windows.
 
 ## Contributing and Questions
 
