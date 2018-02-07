@@ -18,7 +18,7 @@ end
 HTTP.listen(ip"127.0.0.1", 8000,;
             ssl = true,
             sslconfig = MbedTLS.SSLConfig(joinpath(dirname(@__FILE__),"cert.pem"), joinpath(dirname(@__FILE__),"key.pem"))) do http
-    if HTTP.WebSockets.is_upgrade(http.message)
+    if HTTP.WebSockets.is_websocket_upgrade(http.message)
 
         HTTP.WebSockets.upgrade(http) do client
             count = 1
