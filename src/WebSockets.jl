@@ -56,23 +56,10 @@ end
 
 # Handshake
 
-
-function is_upgrade(req::HTTP.Request)
-    is_get = req.method == "GET"
-    # "upgrade" for Chrome and "keep-alive, upgrade" for Firefox.
-    is_upgrade = HTTP.hasheader(req, "Connection", "upgrade")
-    is_websockets = HTTP.hasheader(req, "Upgrade", "websocket")
-    return is_get && is_upgrade && is_websockets
-end
-
-
-function is_upgrade(res::HTTP.Response)
-    is_101 = res.status == 101
-    # "upgrade" for Chrome and "keep-alive, upgrade" for Firefox.
-    is_upgrade = HTTP.hasheader(res, "Connection", "upgrade")
-    is_websockets = HTTP.hasheader(res, "Upgrade", "websocket")
-    return is_101 && is_upgrade && is_websockets
-end
+is_websocket_upgrade(r::HTTP.Message) =
+    (r isa HTTP.Request && r.method == "GET" || r.status == 101) &&
+    HTTP.hasheader(r, "Connection", "upgrade") &&
+    HTTP.hasheader(r, "Upgrade", "webscoket")
 
 
 function check_upgrade(http)
