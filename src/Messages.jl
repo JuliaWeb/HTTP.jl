@@ -136,6 +136,8 @@ Response(s::Int, body::AbstractString) = Response(s, bytes(body))
 
 Response(body) = Response(200, body)
 
+Base.convert(::Type{Response},s::AbstractString) = Response(s)
+
 function reset!(r::Response)
     r.version = v"1.1"
     r.status = 0
