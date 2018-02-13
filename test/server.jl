@@ -55,7 +55,7 @@ sleep(1.0)
 
 
 r = testget("http://127.0.0.1:$port/")
-@test ismatch(r"HTTP/1.1 200 OK", r)
+@test contains(r, r"HTTP/1.1 200 OK")
 
 rv = []
 n = 5
@@ -69,7 +69,7 @@ m = 20
     sleep(0.01)
 end
 for i = 1:n
-    @test length(filter(l->ismatch(r"HTTP/1.1 200 OK", l),
+    @test length(filter(l->contains(l, r"HTTP/1.1 200 OK"),
                         split(rv[i], "\n"))) == n * m
 end
 
@@ -84,13 +84,13 @@ x = "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n"
 @show length(x)
 write(tcp, "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n")
 sleep(0.1)
-@test ismatch(r"HTTP/1.1 413 Request Entity Too Large", String(read(tcp)))
+@test contains(String(read(tcp)), r"HTTP/1.1 413 Request Entity Too Large")
 
 # invalid HTTP
 tcp = connect(ip"127.0.0.1", port)
 sleep(0.1)
 write(tcp, "GET / HTP/1.1\r\n\r\n")
-@test ismatch(r"HTTP/1.1 400 Bad Request", String(read(tcp)))
+@test contains(String(read(tcp)), r"HTTP/1.1 400 Bad Request")
 
 
 # no URL
@@ -98,7 +98,7 @@ tcp = connect(ip"127.0.0.1", port)
 write(tcp, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
 sleep(0.1)
 r = String(read(tcp))
-@test ismatch(r"HTTP/1.1 400 Bad Request", r)
+@test contains(r, r"HTTP/1.1 400 Bad Request")
 
 
 # Expect: 100-continue

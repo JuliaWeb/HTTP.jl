@@ -390,8 +390,8 @@ function handle_transaction(f::Function, t::Transaction;
     try
         startread(http)
     catch e
-        @show typeof(e)
-        @show fieldnames(e)
+        # @show typeof(e)
+        # @show fieldnames(e)
         if e isa EOFError && isempty(request.method)
             return
 # FIXME https://github.com/JuliaWeb/HTTP.jl/pull/178#pullrequestreview-92547066
