@@ -73,3 +73,15 @@ end
 if !isdefined(Base, :isnumeric)
     const isnumeric = isnumber
 end
+
+if !applicable(contains, "", r"")
+    contains(s::String, r::Regex) = ismatch(r, s)
+end
+
+if !applicable(replace, "", ""=>"")
+    replace(s::String, p::Pair) = replace(s, p.first, p.second)
+end
+
+if !isdefined(Base, :lastindex)
+    lastindex(x) = endof(x)
+end

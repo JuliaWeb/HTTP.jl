@@ -109,7 +109,7 @@ function request(client::Client, method, url::URI;
     m = string(method)
     h = mkheaders(headers)
     if stream
-        setkv(newargs, :response_stream, BufferStream())
+        setkv(newargs, :response_stream, Base.BufferStream())
     end
 
     if isa(body, Dict)

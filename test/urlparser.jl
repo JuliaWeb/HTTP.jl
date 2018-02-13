@@ -194,7 +194,7 @@ function http_parser_parse_url(url::String)
     scheme = userinfo = host = port = path = query = fragment = empty
 
     mask = 0x00
-    end_i = endof(url)
+    end_i = HTTP.lastindex(url)
     for i in eachindex(url)
         @inbounds p = url[i]
         olds = s

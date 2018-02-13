@@ -7,9 +7,7 @@ using ..Cookies
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL
 
-
 const default_cookiejar = Dict{String, Set{Cookie}}()
-
 
 """
     request(CookieLayer, method, ::URI, headers, body) -> HTTP.Response
@@ -17,7 +15,6 @@ const default_cookiejar = Dict{String, Set{Cookie}}()
 Add locally stored Cookies to the request headers.
 Store new Cookies found in the response headers.
 """
-
 abstract type CookieLayer{Next <: Layer} <: Layer end
 export CookieLayer
 
@@ -39,7 +36,6 @@ function request(::Type{CookieLayer{Next}},
 
     return res
 end
-
 
 function getcookies(cookies, url)
 
@@ -64,13 +60,11 @@ function getcookies(cookies, url)
     return tosend
 end
 
-
 function setcookies(cookies, host, headers)
     for (k,v) in filter(x->x[1]=="Set-Cookie", headers)
         @debug 1 "Set-Cookie: $v (from $host)"
         push!(cookies, Cookies.readsetcookie(host, v))
     end
 end
-
 
 end # module CookieRequest

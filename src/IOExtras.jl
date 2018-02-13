@@ -4,7 +4,6 @@ This module defines extensions to the `Base.IO` interface to support:
  - `startwrite`, `closewrite`, `startread` and `closeread` for streams
     with transactional semantics.
 """
-
 module IOExtras
 
 export bytes, ByteView, CodeUnits, IOError, isioerror,
@@ -37,7 +36,6 @@ bytes(s::Vector{UInt8}) = s
 
 Is `exception` caused by a possibly recoverable IO error.
 """
-
 isioerror(e) = false
 isioerror(::Base.EOFError) = true
 isioerror(::Base.UVError) = true
@@ -50,7 +48,6 @@ The request terminated with due to an IO-related error.
 Fields:
  - `e`, the error.
 """
-
 struct IOError <: Exception
     e
     message
@@ -64,8 +61,6 @@ Base.show(io::IO, e::IOError) = print(io, "IOError(", e.e, " ", e.message, ")\n"
 
 Push bytes back into a connection (to be returned by the next read).
 """
-
-
 function unread!(io::IOBuffer, bytes)
     l = length(bytes)
     if l == 0
@@ -105,12 +100,14 @@ start_close_read_write_doc = """
 
 Signal start/end of write or read operations.
 """
-
-@doc start_close_read_write_doc -> startwrite(io) = nothing
-@doc start_close_read_write_doc -> closewrite(io) = nothing
-@doc start_close_read_write_doc -> startread(io) = nothing
-@doc start_close_read_write_doc -> closeread(io) = nothing
-
+start_close_read_write_doc
+startwrite(io) = nothing
+start_close_read_write_doc
+closewrite(io) = nothing
+start_close_read_write_doc
+startread(io) = nothing
+start_close_read_write_doc
+closeread(io) = nothing
 
 using MbedTLS: SSLContext
 tcpsocket(io::SSLContext)::TCPSocket = io.bio
@@ -142,7 +139,6 @@ const ByteView = typeof(view(UInt8[], 1:0))
 Read from an `IO` stream until `find_delimiter(bytes)` returns non-zero.
 Return view of bytes up to the delimiter.
 """
-
 function Base.readuntil(io::IO,
                         find_delimiter::Function #= Vector{UInt8} -> Int =#
                        )::ByteView

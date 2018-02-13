@@ -5,7 +5,6 @@ using HTTP.Parsers
 using HTTP.Messages
 using HTTP.MessageRequest: bodylength
 
-
 mutable struct FunctionIO <: IO
     f::Function
     buf::IOBuffer
@@ -20,13 +19,12 @@ HTTP.bytesavailable(fio::FunctionIO) = (call(fio); HTTP.bytesavailable(fio.buf))
 Base.readavailable(fio::FunctionIO) = (call(fio); readavailable(fio.buf))
 Base.read(fio::FunctionIO, a...) = (call(fio); read(fio.buf, a...))
 
-
 mutable struct Loopback <: IO
     got_headers::Bool
     buf::IOBuffer
-    io::BufferStream
+    io::Base.BufferStream
 end
-Loopback() = Loopback(false, IOBuffer(), BufferStream())
+Loopback() = Loopback(false, IOBuffer(), Base.BufferStream())
 
 function reset(lb::Loopback)
     truncate(lb.buf, 0)
@@ -41,19 +39,16 @@ Base.isopen(lb::Loopback) = isopen(lb.io)
 
 HTTP.ConnectionPool.tcpstatus(c::HTTP.ConnectionPool.Connection{Loopback}) = "🤖 "
 
-
 """
     escapelines(string)
 
 Escape `string` and insert '\n' after escaped newline characters.
 """
-
 function escapelines(s)
     s = Base.escape_string(s)
     s = replace(s, "\\n", "\\n\n    ")
     return string("    ", strip(s))
 end
-
 
 server_events = []
 
@@ -99,7 +94,6 @@ function on_body(f, lb)
         end
     end
 end
-
 
 function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
 
@@ -215,8 +209,6 @@ lbopen(f, req, headers) =
     end
     @test String(body) == "Hello World!"
 
-
-
     # "If [the response] indicates the server does not wish to receive the
     #  message body and is closing the connection, the client SHOULD
     #  immediately cease transmitting the body and close the connection."
@@ -300,7 +292,6 @@ lbopen(f, req, headers) =
 
         return t2 - t1
     end
-
 
     server_events = []
     t = async_test(;pipeline_limit=0)
@@ -387,7 +378,6 @@ lbopen(f, req, headers) =
         "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
         "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
     end
-
 
     # "A user agent SHOULD NOT pipeline requests after a
     #  non-idempotent method, until the final response
