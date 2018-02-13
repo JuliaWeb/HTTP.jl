@@ -290,6 +290,8 @@ end
 
 request(method::String, url::URI, headers::Headers, body; kw...)::Response =
     request(HTTP.stack(;kw...), method, url, headers, body; kw...)
+#FIXME consider @nospecialize for `body` ? (other places? in ConnectionPool?)
+
 
 const nobody = UInt8[]
 
