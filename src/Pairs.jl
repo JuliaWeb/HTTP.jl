@@ -11,7 +11,6 @@ Set `item` in a `collection`.
 If `first() of an exisiting item matches `first(item)` it is replaced.
 Otherwise the new `item` is inserted at the end of the `collection`.
 """
-
 function setbyfirst(c, item, eq = ==)
     k = first(item)
     if (i = compat_findfirst(x->eq(first(x), k), c)) > 0
@@ -28,7 +27,6 @@ end
 
 Get `item` from collection where `first(item)` matches `key`.
 """
-
 function getbyfirst(c, k, default=nothing, eq = ==)
     i = compat_findfirst(x->eq(first(x), k), c)
     return i > 0 ? c[i] : default
@@ -41,7 +39,6 @@ end
 If `first(item)` does not match match `first()` of any existing items,
 insert the new `item` at the end of the `collection`.
 """
-
 function defaultbyfirst(c, item, eq = ==)
     k = first(item)
     if (i = compat_findfirst(x->eq(first(x), k), c)) == 0
@@ -56,7 +53,6 @@ end
 
 Set `value` for `key` in collection of key/value `Pairs`.
 """
-
 setkv(c, k, v) = setbyfirst(c, k => v)
 
 
@@ -66,7 +62,6 @@ setkv(c, k, v) = setbyfirst(c, k => v)
 Get `value` for `key` in collection of key/value `Pairs`,
 where `first(item) == key` and `value = item[2]`
 """
-
 function getkv(c, k, default=nothing)
     i = compat_findfirst(x->first(x) == k, c)
     return i > 0 ? c[i][2] : default
@@ -78,7 +73,6 @@ end
 
 Remove `key` from `collection` of key/value `Pairs`.
 """
-
 function rmkv(c, k, default=nothing)
     i = compat_findfirst(x->first(x) == k, c)
     if i > 0

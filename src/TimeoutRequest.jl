@@ -4,13 +4,11 @@ import ..Layer, ..request
 using ..ConnectionPool
 import ..@debug, ..DEBUG_LEVEL
 
-
 """
     request(TimeoutLayer, ::IO, ::Request, body) -> HTTP.Response
 
 Close `IO` if no data has been received for `timeout` seconds.
 """
-
 abstract type TimeoutLayer{Next <: Layer} <: Layer end
 export TimeoutLayer
 

@@ -55,8 +55,6 @@ The `HTTP.Message` structs represent the Message Body as `Vector{UInt8}`.
 Streaming of request and response bodies is handled by the
 [`HTTP.StreamLayer`](@ref) and the [`HTTP.Stream`](@ref) `<: IO` stream.
 """
-
-
 module Messages
 
 export Message, Request, Response, HeaderSizeError,
@@ -72,7 +70,7 @@ export Message, Request, Response, HeaderSizeError,
 import ..HTTP
 
 using ..Pairs
-using ..@warn
+import ..@warn
 using ..IOExtras
 using ..Parsers
 import ..@require, ..precondition_error
@@ -80,13 +78,9 @@ import ..bytes, ..bytesavailable
 
 const unknown_length = typemax(Int)
 
-
 abstract type Message end
 
-
-
 # HTTP Response
-
 
 """
     Response <: Message
@@ -108,7 +102,6 @@ Represents a HTTP Response Message.
 
 - `request`, the `Request` that yielded this `Response`.
 """
-
 mutable struct Response <: Message
     version::VersionNumber
     status::Int16
@@ -147,24 +140,18 @@ function reset!(r::Response)
     end
 end
 
-
 """
     statustext(::Response) -> String
 
 `String` representation of a HTTP status code. e.g. `200 => "OK"`.
 """
-
 statustext(r::Response) = Base.get(STATUS_MESSAGES, r.status, "Unknown Code")
-
 
 @deprecate status(r::Response) getfield(r, :status)
 @deprecate headers(r::Response) getfield(r, :headers)
 @deprecate body(r::Response) getfield(r, :body)
 
-
-
 # HTTP Request
-
 
 """
     Request <: Message
@@ -192,7 +179,6 @@ Represents a HTTP Request Message.
   (e.g. in the case of a redirect).
    [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
 """
-
 mutable struct Request <: Message
     method::String
     target::String
@@ -218,7 +204,6 @@ function Request(method::String, target, headers=[], body=UInt8[];
     return r
 end
 
-
 mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
 
@@ -227,38 +212,29 @@ mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
 @deprecate headers(r::Request) getfield(r, :headers)
 @deprecate body(r::Request) getfield(r, :body)
 
-
-
 # HTTP Message state and type queries
-
 
 """
     issafe(::Request)
 
 https://tools.ietf.org/html/rfc7231#section-4.2.1
 """
-
 issafe(r::Request) = r.method in ["GET", "HEAD", "OPTIONS", "TRACE"]
-
 
 """
     isidempotent(::Request)
 
 https://tools.ietf.org/html/rfc7231#section-4.2.2
 """
-
 isidempotent(r::Request) = issafe(r) || r.method in ["PUT", "DELETE"]
-
 
 """
     iserror(::Response)
 
 Does this `Response` have an error status?
 """
-
 iserror(r::Response) = r.status != 0 && r.status != 100 && r.status != 101 &&
                        (r.status < 200 || r.status >= 300) && !isredirect(r)
-
 
 """
     isredirect(::Response)
@@ -267,27 +243,22 @@ Does this `Response` have a redirect status?
 """
 isredirect(r::Response) = r.status in (301, 302, 307, 308)
 
-
 """
     ischunked(::Message)
 
 Does the `Message` have a "Transfer-Encoding: chunked" header?
 """
-
 ischunked(m) = any(h->(lowercase(h[1]) == "transfer-encoding" &&
                        endswith(lowercase(h[2]), "chunked")),
                    m.headers)
-
 
 """
     headerscomplete(::Message)
 
 Have the headers been read into this `Message`?
 """
-
 headerscomplete(r::Response) = r.status != 0 && r.status != 100
 headerscomplete(r::Request) = r.method != ""
-
 
 """
 "The presence of a message body in a response depends on both the
@@ -300,13 +271,11 @@ headerscomplete(r::Request) = r.method != ""
  include a message body, although the body might be of zero length."
 [RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
 """
-
 bodylength(r::Response)::Int =
                  r.request.method == "HEAD" ? 0 :
                      r.status in [204, 304] ? 0 :
     (l = header(r, "Content-Length")) != "" ? parse(Int, l) :
                                               unknown_length
-
 
 """
 "The presence of a message body in a request is signaled by a
@@ -315,15 +284,11 @@ bodylength(r::Response)::Int =
  not define any use for a message body."
 [RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
 """
-
 bodylength(r::Request)::Int =
     ischunked(r) ? unknown_length :
                    parse(Int, header(r, "Content-Length", "0"))
 
-
-
 # HTTP header-fields
-
 
 """
     header(::Message, key [, default=""]) -> String
@@ -335,14 +300,12 @@ header(h::Headers, k::AbstractString, d::AbstractString="") =
     getbyfirst(h, k, k => d, lceq)[2]
 lceq(a,b) = lowercase(a) == lowercase(b)
 
-
 """
     hasheader(::Message, key) -> Bool
 
 Does header value for `key` exist (case-insensitive)?
 """
 hasheader(m, k::AbstractString) = header(m, k) != ""
-
 
 """
     hasheader(::Message, key, value) -> Bool
@@ -351,7 +314,6 @@ Does header for `key` match `value` (both case-insensitive)?
 """
 hasheader(m, k::AbstractString, v::AbstractString) =
     lowercase(header(m, k)) == lowercase(v)
-
 
 """
     setheader(::Message, key => value)
@@ -363,20 +325,17 @@ setheader(h::Headers, v::Header) = setbyfirst(h, v, lceq)
 setheader(h::Headers, v::Pair) =
     setbyfirst(h, Header(SubString(v.first), SubString(v.second)), lceq)
 
-
 """
     defaultheader(::Message, key => value)
 
 Set header `value` for `key` if it is not already set.
 """
-
 function defaultheader(m, v::Pair)
     if header(m, first(v)) == ""
         setheader(m, v)
     end
     return
 end
-
 
 """
     appendheader(::Message, key => value)
@@ -392,7 +351,6 @@ delimiter](https://stackoverflow.com/a/24502264)
 `Set-Cookie` headers are not comma-combined because [cookies often contain
 internal commas](https://tools.ietf.org/html/rfc6265#section-3).
 """
-
 function appendheader(m::Message, header::Header)
     c = m.headers
     k,v = header
@@ -406,10 +364,7 @@ function appendheader(m::Message, header::Header)
     return
 end
 
-
-
 # HTTP payload body
-
 
 #Like https://github.com/JuliaIO/FileIO.jl/blob/v0.6.1/src/FileIO.jl#L19 ?
 load(m::Message) = payload(m, String)
@@ -431,26 +386,20 @@ function decode(m::Message, encoding::String)::Vector{UInt8}
     return m.body
 end
 
-
-
 # Writing HTTP Messages to IO streams
-
 
 """
     httpversion(::Message)
 
 e.g. `"HTTP/1.1"`
 """
-
 httpversion(m::Message) = "HTTP/$(m.version.major).$(m.version.minor)"
-
 
 """
     writestartline(::IO, ::Message)
 
 e.g. `"GET /path HTTP/1.1\\r\\n"` or `"HTTP/1.1 200 OK\\r\\n"`
 """
-
 function writestartline(io::IO, r::Request)
     write(io, "$(r.method) $(r.target) $(httpversion(r))\r\n")
     return
@@ -461,14 +410,12 @@ function writestartline(io::IO, r::Response)
     return
 end
 
-
 """
     writeheaders(::IO, ::Message)
 
 Write `Message` start line and
 a line for each "name: value" pair and a trailing blank line.
 """
-
 function writeheaders(io::IO, m::Message)
     writestartline(io, m)
     for (name, value) in m.headers
@@ -478,19 +425,16 @@ function writeheaders(io::IO, m::Message)
     return
 end
 
-
 """
     write(::IO, ::Message)
 
 Write start line, headers and body of HTTP Message.
 """
-
 function Base.write(io::IO, m::Message)
     writeheaders(io, m)
     write(io, m.body)
     return
 end
-
 
 function Base.String(m::Message)
     io = IOBuffer()
@@ -498,9 +442,7 @@ function Base.String(m::Message)
     String(take!(io))
 end
 
-
 # Reading HTTP Messages from IO streams
-
 
 """
     readheaders(::IO, ::Message)
@@ -508,7 +450,6 @@ end
 Read headers (and startline) from an `IO` stream into a `Message` struct.
 Throw `EOFError` if input is incomplete.
 """
-
 function readheaders(io::IO, message::Message)
     bytes = String(readuntil(io, find_end_of_header))
     bytes = parse_start_line!(bytes, message)
@@ -530,12 +471,10 @@ function parse_header_fields!(bytes::SubString{String}, m::Message)
     return
 end
 
-
 """
 Read chunk-size from an `IO` stream.
 After the final zero size chunk, read trailers into a `Message` struct.
 """
-
 function readchunksize(io::IO, message::Message)::Int
     n = parse_chunk_size(readuntil(io, find_end_of_line))
     if n == 0
@@ -547,20 +486,15 @@ function readchunksize(io::IO, message::Message)::Int
     return n
 end
 
-
-
 # Debug message printing
-
 
 """
     set_show_max(x)
 
 Set the maximum number of body bytes to be displayed by `show(::IO, ::Message)`
 """
-
 set_show_max(x) = global body_show_max = x
 body_show_max = 1000
-
 
 """
     bodysummary(bytes)
@@ -594,7 +528,6 @@ function Base.show(io::IO, m::Message)
     print(io, "\"\"\"")
     return
 end
-
 
 const STATUS_MESSAGES = (()->begin
     v = fill("Unknown Code", 530)

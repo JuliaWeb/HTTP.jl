@@ -47,7 +47,6 @@ e.g. `"\$path?\$query#\$fragment"`.
 
 The `HTTP.queryparams(::URI)` function returns a `Dict` containing the `query`.
 """
-
 struct URI
     uri::String
     scheme::SubString{String}
@@ -112,7 +111,6 @@ const uri_reference_regex =
 """
 https://tools.ietf.org/html/rfc3986#section-3
 """
-
 function parse_uri(str::AbstractString; kw...)
     uri = parse_uri_reference(str; kw...)
     if isempty(uri.scheme)
@@ -125,7 +123,6 @@ end
 """
 https://tools.ietf.org/html/rfc3986#section-4.1
 """
-
 function parse_uri_reference(str::AbstractString; strict = false)
 
     if !exec(uri_reference_regex, str)
@@ -156,25 +153,25 @@ function ensurevalid(uri::URI)
     # https://tools.ietf.org/html/rfc3986#section-3.1
     # ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
     if !(uri.scheme === absent ||
-         ismatch(r"^[[:alpha:]][[:alnum:]+-.]*$", uri.scheme))
+         contains(uri.scheme, r"^[[:alpha:]][[:alnum:]+-.]*$"))
         throw(ParseError("Invalid URI scheme: $(uri.scheme)"))
     end
     # https://tools.ietf.org/html/rfc3986#section-3.2.2
     # unreserved / pct-encoded / sub-delims
     if !(uri.host === absent ||
-         ismatch(r"^[:[:alnum:]\-._~%!$&'()*+,;=]+$", uri.host))
+         contains(uri.host, r"^[:[:alnum:]\-._~%!$&'()*+,;=]+$"))
         throw(ParseError("Invalid URI host: $(uri.host) $uri"))
     end
     # https://tools.ietf.org/html/rfc3986#section-3.2.3
     # "port number in decimal"
-    if !(uri.port === absent || ismatch(r"^\d+$", uri.port))
+    if !(uri.port === absent || contains(uri.port, r"^\d+$"))
         throw(ParseError("Invalid URI port: $(uri.port)"))
     end
 
     # https://tools.ietf.org/html/rfc3986#section-3.3
     # unreserved / pct-encoded / sub-delims / ":" / "@"
     if !(uri.path === absent ||
-         ismatch(r"^[/[:alnum:]\-._~%!$&'()*+,;=:@]*$", uri.path))
+         contains(uri.path, r"^[/[:alnum:]\-._~%!$&'()*+,;=:@]*$"))
         throw(ParseError("Invalid URI path: $(uri.path)"))
     end
 
@@ -192,7 +189,6 @@ end
 """
 https://tools.ietf.org/html/rfc3986#section-4.3
 """
-
 isabsolute(uri::URI) =
     !isempty(uri.scheme) &&
      isempty(uri.fragment) &&
@@ -203,7 +199,6 @@ isabsolute(uri::URI) =
 https://tools.ietf.org/html/rfc7230#section-5.3.1
 https://tools.ietf.org/html/rfc3986#section-3.3
 """
-
 pathissabsolute(uri::URI) = startwith(uri.path, "/")
 
 
@@ -219,7 +214,6 @@ pathissabsolute(uri::URI) = startwith(uri.path, "/")
 """
 "request-target" per https://tools.ietf.org/html/rfc7230#section-5.3
 """
-
 resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
                             !isempty(uri.query)    ? "?" : "", uri.query,
                             !isempty(uri.fragment) ? "#" : "", uri.fragment)
@@ -300,7 +294,6 @@ const uses_query = ["http", "wais", "imap", "https", "shttp", "mms", "gopher", "
 const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "wais", "https", "shttp", "snews", "file", "prospero"]
 
 "checks if a `HTTP.URI` is valid"
-
 function Base.isvalid(uri::URI)
     sch = uri.scheme
     isempty(sch) && throw(ArgumentError("can not validate relative URI"))

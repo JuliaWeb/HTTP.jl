@@ -8,7 +8,6 @@ using ..ConnectionPool
 import ..@info, ..@warn, ..@error, ..@debug, ..@debugshow, ..DEBUG_LEVEL
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
-
 if !isdefined(Base, :Nothing)
     const Nothing = Void
     const Cvoid = Void
@@ -272,7 +271,6 @@ e.g.
     end
 ```
 """
-
 listen(f, host, port; kw...) = listen(f, string(host), Int(port); kw...)
 
 function listen(f::Function,
@@ -341,7 +339,6 @@ end
 Start a timeout monitor task to close the `Connection` if it is inactive.
 Create a `Transaction` object for each HTTP Request received.
 """
-
 function handle_connection(f::Function, c::Connection;
                            reuse_limit::Int=nolimit,
                            readtimeout::Int=0, kw...)
@@ -383,7 +380,6 @@ Create a `HTTP.Stream` and parse the Request headers from a `HTTP.Transaction`.
 If there is a parse error, send an error Response.
 Otherwise, execute stream processing function `f`.
 """
-
 function handle_transaction(f::Function, t::Transaction;
                             final_transaction::Bool=false,
                             verbose::Bool=false, kw...)
@@ -394,6 +390,8 @@ function handle_transaction(f::Function, t::Transaction;
     try
         startread(http)
     catch e
+        @show typeof(e)
+        @show fieldnames(e)
         if e isa EOFError && isempty(request.method)
             return
 # FIXME https://github.com/JuliaWeb/HTTP.jl/pull/178#pullrequestreview-92547066
@@ -434,7 +432,6 @@ function handle_transaction(f::Function, t::Transaction;
     return
 end
 
-
 """
 Execute stream processing function `f`.
 If there is an error and the stream is still open,
@@ -442,7 +439,6 @@ send a 500 response with the error message.
 
 Close the `Stream` for read and write (in case `f` has not already done so).
 """
-
 function handle_stream(f::Function, http::Stream)
 
     try
@@ -467,11 +463,9 @@ function handle_stream(f::Function, http::Stream)
     return
 end
 
-
 """
 Execute Request processing function `f(::HTTP.Request) -> HTTP.Response`.
 """
-
 function handle_request(f::Function, http::Stream)
     request::HTTP.Request = http.message
     request.body = read(http)
@@ -480,6 +474,5 @@ function handle_request(f::Function, http::Stream)
     write(http, request.response.body)
     return
 end
-
 
 end # module

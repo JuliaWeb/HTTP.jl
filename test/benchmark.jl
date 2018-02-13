@@ -179,7 +179,7 @@ function go(count::Int)
     end
 
                                                            t_init_start = time()
-    io = BufferStream()
+    io = Base.BufferStream()
     c = Connection("", "", pipeline_limit, io)
 
                                                             t_init_done = time()
@@ -217,7 +217,7 @@ function go(count::Int)
             # Ensure that the header and body are buffered in the Connection
             # object. Otherwise, the time spent in readheaders below is
             # dominated by readavailable() copying huge body data from the
-            # BufferStream. We want to measure the parsing performance.
+            # Base.BufferStream. We want to measure the parsing performance.
             unread!(http.stream, readavailable(http.stream))
 
                                                                 t_setup = time()

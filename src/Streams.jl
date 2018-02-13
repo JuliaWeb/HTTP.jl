@@ -17,7 +17,6 @@ import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
 import ..@debug, ..DEBUG_LEVEL
 
-
 mutable struct Stream{M <: Message, S <: IO} <: IO
     message::M
     stream::S
@@ -25,7 +24,6 @@ mutable struct Stream{M <: Message, S <: IO} <: IO
     readchunked::Bool
     ntoread::Int
 end
-
 
 """
     Stream(::IO, ::Request)
@@ -52,7 +50,6 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
     response to be read by another `Stream` that is waiting in `startread`.
     If a complete response has not been recieved, `closeread` throws `EOFError`.
 """
-
 Stream(r::M, io::S) where {M, S} = Stream{M,S}(r, io, false, false, 0)
 
 header(http::Stream, a...) = header(http.message, a...)
@@ -62,14 +59,10 @@ getrawstream(http::Stream) = getrawstream(http.stream)
 
 IOExtras.isopen(http::Stream) = isopen(http.stream)
 
-
-
 # Writing HTTP Messages
-
 
 messagetowrite(http::Stream{Response}) = http.message.request
 messagetowrite(http::Stream{Request}) = http.message.response
-
 
 IOExtras.iswritable(http::Stream) = iswritable(http.stream)
 
@@ -89,7 +82,6 @@ function IOExtras.startwrite(http::Stream)
     writeheaders(http.stream, m)
 end
 
-
 function Base.unsafe_write(http::Stream, p::Ptr{UInt8}, n::UInt)
     if n == 0
         return 0
@@ -105,20 +97,17 @@ function Base.unsafe_write(http::Stream, p::Ptr{UInt8}, n::UInt)
            write(http.stream, "\r\n")
 end
 
-
 """
     closebody(::Stream)
 
 Write the final `0` chunk if needed.
 """
-
 function closebody(http::Stream)
     if http.writechunked
         http.writechunked = false
         write(http.stream, "0\r\n\r\n")
     end
 end
-
 
 function IOExtras.closewrite(http::Stream{Response})
     if !iswritable(http)
@@ -143,10 +132,7 @@ function IOExtras.closewrite(http::Stream{Request})
     end
 end
 
-
-
 # Reading HTTP Messages
-
 
 IOExtras.isreadable(http::Stream) = isreadable(http.stream)
 
@@ -163,13 +149,11 @@ function IOExtras.startread(http::Stream)
     return http.message
 end
 
-
 """
 100 Continue
 https://tools.ietf.org/html/rfc7230#section-5.6
 https://tools.ietf.org/html/rfc7231#section-6.2.1
 """
-
 function handle_continue(http::Stream{Response})
     if http.message.status == 100
         @debug 1 "✅  Continue:   $(http.stream)"
@@ -188,7 +172,6 @@ function handle_continue(http::Stream{Request})
     end
 end
 
-
 function Base.eof(http::Stream)
     if !headerscomplete(http.message)
         startread(http)
@@ -201,7 +184,6 @@ function Base.eof(http::Stream)
     end
     return false
 end
-
 
 function Base.readavailable(http::Stream)::ByteView
     @require headerscomplete(http.message)
@@ -239,16 +221,13 @@ function Base.readavailable(http::Stream)::ByteView
     return bytes
 end
 
-
 IOExtras.unread!(http::Stream, excess) = unread!(http.stream, excess)
-
 
 function Base.read(http::Stream)
     buf = IOBuffer()
     write(buf, http)
     return take!(buf)
 end
-
 
 """
     isaborted(::Stream{Response})
@@ -260,7 +239,6 @@ Has the server signaled that it does not wish to receive the message body?
  immediately cease transmitting the body and close the connection."
 [RFC7230, 6.5](https://tools.ietf.org/html/rfc7230#section-6.5)
 """
-
 function isaborted(http::Stream{Response})
 
     if iswritable(http.stream) &&
@@ -299,7 +277,6 @@ function IOExtras.closeread(http::Stream{Response})
     return http.message
 end
 
-
 function IOExtras.closeread(http::Stream{Request})
     if incomplete(http)
         # Error if Message is not complete...
@@ -310,6 +287,5 @@ function IOExtras.closeread(http::Stream{Request})
         closeread(http.stream)
     end
 end
-
 
 end #module Streams

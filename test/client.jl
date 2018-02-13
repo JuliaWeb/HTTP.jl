@@ -58,7 +58,7 @@ for sch in ("http", "https")
     a = [JSON.parse(l) for l in split(chomp(String(bytes)), "\n")]
     totallen = length(bytes) # number of bytes to expect
     begin
-        io = BufferStream()
+        io = Base.BufferStream()
         r = HTTP.get("$sch://httpbin.org/stream/100"; response_stream=io)
         @test status(r) == 200
 
@@ -66,7 +66,7 @@ for sch in ("http", "https")
         @test a == b
     end
 
-    # body posting: Vector{UInt8}, String, IOStream, IOBuffer, BufferStream
+    # body posting: Vector{UInt8}, String, IOStream, IOBuffer, Base.BufferStream
     println("client body posting of various types")
     @test status(HTTP.post("$sch://httpbin.org/post"; body="hey")) == 200
     @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'])) == 200
@@ -77,7 +77,7 @@ for sch in ("http", "https")
     io = open(tmp)
     @test status(HTTP.post("$sch://httpbin.org/post"; body=io, enablechunked=false)) == 200
     close(io); rm(tmp)
-    f = BufferStream()
+    f = Base.BufferStream()
     write(f, "hey")
     close(f)
     @test status(HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false)) == 200
@@ -98,7 +98,7 @@ for sch in ("http", "https")
     io = open(tmp)
     @test_broken status(HTTP.post("$sch://httpbin.org/post"; body=io, #=chunksize=2=#)) == 200
     close(io); rm(tmp)
-    f = BufferStream()
+    f = Base.BufferStream()
     write(f, "hey")
     close(f)
     @test_broken status(HTTP.post("$sch://httpbin.org/post"; body=f, #=chunksize=2=#)) == 200
@@ -151,7 +151,7 @@ for sch in ("http", "https")
     # asynchronous
     println("asynchronous client request body")
     begin
-        f = BufferStream()
+        f = Base.BufferStream()
         write(f, "hey")
         t = @async HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false)
         #wait(f) # wait for the async call to write it's first data
