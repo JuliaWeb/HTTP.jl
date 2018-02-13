@@ -27,7 +27,6 @@ include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
 
-
 """
 
     HTTP.request(method, url [, headers [, body]]; <keyword arguments>]) -> HTTP.Response
@@ -219,7 +218,7 @@ println(read("get_data.txt"))
 
 Stream body through buffer:
 ```julia
-io = BufferStream()
+io = Base.BufferStream()
 @async while !eof(io)
     bytes = readavailable(io))
     println("GET data: \$bytes")
@@ -287,7 +286,6 @@ HTTP.open("POST", "http://music.com/play") do io
 end
 ```
 """
-
 request(method::String, url::URI, headers::Headers, body; kw...)::Response =
     request(HTTP.stack(;kw...), method, url, headers, body; kw...)
 #FIXME consider @nospecialize for `body` ? (other places? in ConnectionPool?)
@@ -304,7 +302,6 @@ function request(method, url, h=Header[], b=nobody;
     end
     return request(string(method), uri, mkheaders(headers), body; kw...)
 end
-
 
 """
     HTTP.open(method, url, [,headers]) do io
@@ -328,10 +325,8 @@ HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
 end
 ```
 """
-
 open(f::Function, method::String, url, headers=Header[]; kw...)::Response =
     request(method, url, headers, nothing; iofunction=f, kw...)
-
 
 """
     HTTP.get(url [, headers]; <keyword arguments>) -> HTTP.Response
@@ -339,37 +334,28 @@ open(f::Function, method::String, url, headers=Header[]; kw...)::Response =
 
 Shorthand for `HTTP.request("GET", ...)`. See [`HTTP.request`](@ref).
 """
-
 get(u, a...; kw...) = request("GET", u, a...; kw...)
-
 
 """
     HTTP.put(url, headers, body; <keyword arguments>) -> HTTP.Response
 
 Shorthand for `HTTP.request("PUT", ...)`. See [`HTTP.request`](@ref).
 """
-
 put(u, h, b; kw...) = request("PUT", u, h, b; kw...)
-
 
 """
     HTTP.post(url, headers, body; <keyword arguments>) -> HTTP.Response
 
 Shorthand for `HTTP.request("POST", ...)`. See [`HTTP.request`](@ref).
 """
-
 post(u, h, b; kw...) = request("POST", u, h, b; kw...)
-
 
 """
     HTTP.head(url; <keyword arguments>) -> HTTP.Response
 
 Shorthand for `HTTP.request("HEAD", ...)`. See [`HTTP.request`](@ref).
 """
-
 head(u; kw...) = request("HEAD", u; kw...)
-
-
 
 """
 
@@ -425,7 +411,6 @@ CodeInfo(:(begin
 end))
 ```
 """
-
 abstract type Layer end
 include("RedirectRequest.jl");          using .RedirectRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
@@ -551,7 +536,6 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 ```
 *See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
 """
-
 function stack(;redirect=true,
                 basic_authorization=false,
                 aws_authorization=false,
@@ -580,7 +564,6 @@ function stack(;redirect=true,
     }}}}}}}}}}}
 end
 
-
 include("client.jl")
 include("Handlers.jl")                 ;using .Handlers
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
@@ -590,11 +573,10 @@ include("WebSockets.jl")               ;using .WebSockets
 
 include("precompile.jl")
 
-
 import .ConnectionPool: Transaction, Connection
 
 function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
-    buffer = BufferStream()
+    buffer = Base.BufferStream()
     write(buffer, str)
     close(buffer)
     m = T()
@@ -603,6 +585,5 @@ function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
     closeread(http)
     return m
 end
-
 
 end # module

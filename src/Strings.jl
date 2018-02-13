@@ -9,14 +9,13 @@ escapeHTML(i::String)
 
 Returns a string with special HTML characters escaped: &, <, >, ", '
 """
-
 function escapehtml(i::AbstractString)
     # Refer to http://stackoverflow.com/a/7382028/3822752 for spec. links
-    o = replace(i, "&", "&amp;")
-    o = replace(o, "\"", "&quot;")
-    o = replace(o, "'", "&#39;")
-    o = replace(o, "<", "&lt;")
-    o = replace(o, ">", "&gt;")
+    o = replace(i, "&" =>"&amp;")
+    o = replace(o, "\""=>"&quot;")
+    o = replace(o, "'" =>"&#39;")
+    o = replace(o, "<" =>"&lt;")
+    o = replace(o, ">" =>"&gt;")
     return o
 end
 
@@ -26,7 +25,6 @@ end
 
 Ensure the first character and characters that follow a '-' are uppercase.
 """
-
 function tocameldash!(s::String)
     toUpper = UInt8('A') - UInt8('a')
     bytes = Vector{UInt8}(s)
@@ -55,7 +53,6 @@ tocameldash(s::AbstractString) = tocameldash!(String(s))
 
 Convert from ISO8859_1 to UTF8.
 """
-
 function iso8859_1_to_utf8(bytes::Vector{UInt8})
     io = IOBuffer()
     for b in bytes

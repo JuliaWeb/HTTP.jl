@@ -135,13 +135,13 @@ get_data_sums = Dict()
     for i = 1:count
         @async try
             url = "$s3url/http.jl.test/file$i"
-            buf = BufferStream()
+            buf = Base.BufferStream()
             r = nothing
             if mode == :open
                 r = HTTP.open("GET", url, ["Content-Length" => 0];
                               aws_authorization=true,
                               conf...) do http
-                    buf = BufferStream() # in case of retry!
+                    buf = Base.BufferStream() # in case of retry!
                     while !eof(http)
                         write(buf, readavailable(http))
                         sleep(rand(1:10)/1000)
@@ -275,8 +275,8 @@ println("running async $count, 1:$num, $config, $http C")
                     if rand(Bool)
                         for attempt in 1:4
                             try
-                                #println("GET $i $n BufferStream $attempt")
-                                s = BufferStream()
+                                #println("GET $i $n Base.BufferStream $attempt")
+                                s = Base.BufferStream()
                                 r = HTTP.request(
                                     "GET", url; response_stream=s, config...)
                                 @assert r.status == 200

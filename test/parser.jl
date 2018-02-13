@@ -1640,7 +1640,7 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure\r\n\r\n"
       @test_throws HTTP.ParseError parse(Response,respstr)
-      @test ismatch(r"INVALID_HEADER_FIELD", @errmsg(parse(Response,respstr)))
+      @test contains(@errmsg(parse(Response,respstr)), r"INVALID_HEADER_FIELD")
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar\r\n\r\n"
       @test_throws HTTP.ParseError parse(Response,respstr)

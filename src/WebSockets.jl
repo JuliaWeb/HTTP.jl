@@ -56,6 +56,11 @@ end
 
 # Handshake
 
+is_websocket_upgrade(r::HTTP.Message) =
+    (r isa HTTP.Request && r.method == "GET" || r.status == 101) &&
+    HTTP.hasheader(r, "Connection", "upgrade") &&
+    HTTP.hasheader(r, "Upgrade", "webscoket")
+
 
 function check_upgrade(http)
 

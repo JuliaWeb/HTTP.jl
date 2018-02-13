@@ -8,7 +8,6 @@ using ..URIs
 using ..Pairs: getkv, setkv, rmkv
 import ..@debug, ..DEBUG_LEVEL
 
-
 """
     request(AWS4AuthLayer, ::URI, ::Request, body) -> HTTP.Response
 
@@ -19,7 +18,6 @@ Add a [AWS Signature Version 4](http://docs.aws.amazon.com/general/latest/gr/sig
 Credentials are read from environment variables `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`.
 """
-
 abstract type AWS4AuthLayer{Next <: Layer} <: Layer end
 export AWS4AuthLayer
 
@@ -38,7 +36,6 @@ function request(::Type{AWS4AuthLayer{Next}},
     return request(Next, url, req, body; kw...)
 end
 
-
 function sign_aws4!(method::String,
                     url::URI,
                     headers::Headers,
@@ -52,7 +49,6 @@ function sign_aws4!(method::String,
                     aws_secret_access_key::String=ENV["AWS_SECRET_ACCESS_KEY"],
                     aws_session_token::String=get(ENV, "AWS_SESSION_TOKEN", ""),
                     kw...)
-
 
     # ISO8601 date/time strings for time of request...
     date = Dates.format(t, dateformat"yyyymmdd")
@@ -128,7 +124,6 @@ credentials = NamedTuple()
 Load Credentials from [AWS CLI ~/.aws/credentials file]
 (http://docs.aws.amazon.com/cli/latest/userguide/cli-config-files.html).
 """
-
 function dot_aws_credentials()::NamedTuple
 
     global credentials

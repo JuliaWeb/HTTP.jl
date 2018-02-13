@@ -22,7 +22,6 @@ When the `request` function has read the Response Message it calls
 `closeread` to signal that the `Connection` can be reused for
 reading.
 """
-
 module ConnectionPool
 
 export Connection, Transaction,
@@ -35,7 +34,6 @@ import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
-
 const default_connection_limit = 8
 const default_pipeline_limit = 16
 const nolimit = typemax(Int)
@@ -43,7 +41,6 @@ const nolimit = typemax(Int)
 const nobytes = view(UInt8[], 1:0)
 byteview(bytes::ByteView) = bytes
 byteview(bytes)::ByteView = view(bytes, 1:length(bytes))
-
 
 """
     Connection{T <: IO}
@@ -67,7 +64,6 @@ Fields:
 - `readdone`, signal that `readcount` was incremented.
 - `timestamp`, time data was last recieved.
 """
-
 mutable struct Connection{T <: IO}
     host::String
     port::String
@@ -86,7 +82,6 @@ mutable struct Connection{T <: IO}
     timestamp::Float64
 end
 
-
 """
 A single pipelined HTTP Request/Response transaction`.
 
@@ -94,12 +89,10 @@ Fields:
  - `c`, the shared [`Connection`](@ref) used for this `Transaction`.
  - `sequence::Int`, identifies this `Transaction` among the others that share `c`.
 """
-
 struct Transaction{T <: IO} <: IO
     c::Connection{T}
     sequence::Int
 end
-
 
 Connection(host::AbstractString, port::AbstractString,
            pipeline_limit::Int, io::T) where T <: IO =
@@ -122,9 +115,7 @@ function client_transaction(c)
     return t
 end
 
-
 getrawstream(t::Transaction) = t.c.io
-
 
 inactiveseconds(t::Transaction) = inactiveseconds(t.c)
 
@@ -134,7 +125,6 @@ function inactiveseconds(c::Connection)::Float64
     end
     return time() - c.timestamp
 end
-
 
 Base.unsafe_write(t::Transaction, p::Ptr{UInt8}, n::UInt) =
     unsafe_write(t.c.io, p, n)
@@ -157,11 +147,9 @@ bytesavailable(t::Transaction) = bytesavailable(t.c)
 bytesavailable(c::Connection) =
     !isempty(c.excess) ? length(c.excess) : bytesavailable(c.io)
 
-
 Base.isreadable(t::Transaction) = t.c.readbusy && t.c.readcount == t.sequence
 
 Base.iswritable(t::Transaction) = t.c.writebusy && t.c.writecount == t.sequence
-
 
 function Base.read(t::Transaction, nb::Integer)::ByteView
     bytes = readavailable(t)
@@ -172,7 +160,6 @@ function Base.read(t::Transaction, nb::Integer)::ByteView
     end
     return bytes
 end
-
 
 function Base.readavailable(t::Transaction)::ByteView
     @require isreadable(t)
@@ -188,14 +175,12 @@ function Base.readavailable(t::Transaction)::ByteView
     return bytes
 end
 
-
 """
     unread!(::Transaction, bytes)
 
 Push bytes back into a connection's `excess` buffer
 (to be returned by the next read).
 """
-
 function IOExtras.unread!(t::Transaction, bytes::ByteView)
     @require isreadable(t)
     @require !isempty(bytes)
@@ -204,13 +189,11 @@ function IOExtras.unread!(t::Transaction, bytes::ByteView)
     return
 end
 
-
 """
     startwrite(::Transaction)
 
 Wait for prior pending writes to complete.
 """
-
 function IOExtras.startwrite(t::Transaction)
     @require !iswritable(t)                     ;t.c.writecount != t.sequence &&
                                                    @debug 1 "⏳  Wait write: $t"
@@ -222,13 +205,11 @@ function IOExtras.startwrite(t::Transaction)
     return
 end
 
-
 """
     closewrite(::Transaction)
 
 Signal that an entire Request Message has been written to the `Transaction`.
 """
-
 function IOExtras.closewrite(t::Transaction)
     @require iswritable(t)
 
@@ -241,13 +222,11 @@ function IOExtras.closewrite(t::Transaction)
     return
 end
 
-
 """
     startread(::Transaction)
 
 Wait for prior pending reads to complete.
 """
-
 function IOExtras.startread(t::Transaction)
     @require !isreadable(t)                      ;t.c.readcount != t.sequence &&
                                                    @debug 1 "⏳  Wait read:  $t"
@@ -260,7 +239,6 @@ function IOExtras.startread(t::Transaction)
     return
 end
 
-
 """
     closeread(::Transaction)
 
@@ -268,7 +246,6 @@ Signal that an entire Response Message has been read from the `Transaction`.
 
 Increment `readcount` and wake up tasks waiting in `startread`.
 """
-
 function IOExtras.closeread(t::Transaction)
     @require isreadable(t)
 
@@ -301,13 +278,11 @@ function Base.close(c::Connection)
     return
 end
 
-
 """
     purge(::Connection)
 
 Remove unread data from a `Connection`.
 """
-
 function purge(c::Connection)
     @require !isopen(c.io)
     while !eof(c.io)
@@ -316,7 +291,6 @@ function purge(c::Connection)
     c.excess = nobytes
     @ensure bytesavailable(c) == 0
 end
-
 
 """
 The `pool` is a collection of open `Connection`s.  The `request`
@@ -327,7 +301,6 @@ for writing (to send the next Request). When the `request` function
 has read the Response Message it calls `closeread` to signal that
 the `Connection` can be reused for reading.
 """
-
 const pool = Vector{Connection}()
 const poollock = ReentrantLock()
 const poolcondition = Condition()
@@ -337,7 +310,6 @@ const poolcondition = Condition()
 
 Close all connections in `pool`.
 """
-
 function closeall()
 
     lock(poollock)
@@ -350,13 +322,11 @@ function closeall()
     return
 end
 
-
 """
     findwritable(type, host, port) -> Vector{Connection}
 
 Find `Connections` in the `pool` that are ready for writing.
 """
-
 function findwritable(T::Type,
                       host::AbstractString,
                       port::AbstractString,
@@ -373,14 +343,12 @@ function findwritable(T::Type,
                isopen(c.io)), pool)
 end
 
-
 """
     findoverused(type, host, port, reuse_limit) -> Vector{Connection}
 
 Find `Connections` in the `pool` that are over the reuse limit
 and have no more active readers.
 """
-
 function findoverused(T::Type,
                       host::AbstractString,
                       port::AbstractString,
@@ -394,13 +362,11 @@ function findoverused(T::Type,
                isopen(c.io)), pool)
 end
 
-
 """
     findall(type, host, port) -> Vector{Connection}
 
 Find all `Connections` in the `pool` for `host` and `port`.
 """
-
 function findall(T::Type,
                  host::AbstractString,
                  port::AbstractString,
@@ -413,7 +379,6 @@ function findall(T::Type,
                isopen(c.io)), pool)
 end
 
-
 """
     purge()
 
@@ -424,14 +389,12 @@ function purge()
     deleteat!(pool, map(isdeletable, pool))
 end
 
-
 """
     getconnection(type, host, port) -> Connection
 
 Find a reusable `Connection` in the `pool`,
 or create a new `Connection` if required.
 """
-
 function getconnection(::Type{Transaction{T}},
                        host::AbstractString,
                        port::AbstractString;
@@ -488,7 +451,6 @@ function getconnection(::Type{Transaction{T}},
     end
 end
 
-
 function getconnection(::Type{TCPSocket},
                        host::AbstractString,
                        port::AbstractString;
@@ -498,7 +460,6 @@ function getconnection(::Type{TCPSocket},
     @debug 2 "TCP connect: $host:$p..."
     connect(getaddrinfo(host), p)
 end
-
 
 const nosslconfig = SSLConfig()
 default_sslconfig = nothing
@@ -535,7 +496,6 @@ function getconnection(::Type{SSLContext},
     return io
 end
 
-
 function Base.show(io::IO, c::Connection)
     nwaiting = bytesavailable(tcpsocket(c.io))
     print(
@@ -554,7 +514,6 @@ function Base.show(io::IO, c::Connection)
 end
 
 Base.show(io::IO, t::Transaction) = print(io, "T$(rpad(t.sequence,2)) ", t.c)
-
 
 function tcpstatus(c::Connection)
     s = Base.uv_status_string(tcpsocket(c.io))

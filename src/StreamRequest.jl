@@ -8,7 +8,6 @@ import ..ConnectionPool
 using ..MessageRequest
 import ..@debug, ..DEBUG_LEVEL, ..printlncompact
 
-
 """
     request(StreamLayer, ::IO, ::Request, body) -> HTTP.Response
 
@@ -20,7 +19,6 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-
 abstract type StreamLayer <: Layer end
 export StreamLayer
 
@@ -75,7 +73,6 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
     return response
 end
 
-
 function writebody(http::Stream, req::Request, body)
 
     if req.body === body_is_a_stream
@@ -111,7 +108,6 @@ end
 writechunk(http, req, body::IO) = writebodystream(http, req, body)
 writechunk(http, req, body) = write(http, body)
 
-
 function readbody(http::Stream, res::Response, response_stream)
     if response_stream == nothing
         res.body = read(http)
@@ -121,6 +117,5 @@ function readbody(http::Stream, res::Response, response_stream)
         close(response_stream)
     end
 end
-
 
 end # module StreamRequest

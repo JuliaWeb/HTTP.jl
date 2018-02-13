@@ -107,7 +107,7 @@ using JSON
 
 #=
     @sync begin
-        io = BufferStream()
+        io = Base.BufferStream()
         @async begin
             for i = 1:100
                 sleep(0.1)
@@ -129,7 +129,7 @@ using JSON
             @test r.status == 200
             body = r.body
 
-            io = BufferStream()
+            io = Base.BufferStream()
             r = request(m, uri, response_stream=io)
             @test r.status == 200
             @test read(io) == body
@@ -140,7 +140,7 @@ using JSON
         for m in ["POST", "PUT", "DELETE", "PATCH"]
 
             uri = "$sch://httpbin.org/$(lowercase(m))"
-            io = BufferStream()
+            io = Base.BufferStream()
             r = request(m, uri, response_stream=io)
             @test r.status == 200
         end

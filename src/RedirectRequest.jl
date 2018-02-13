@@ -4,16 +4,14 @@ import ..Layer, ..request
 using ..URIs
 using ..Messages
 using ..Pairs: setkv
-using ..Header
+import ..Header
 import ..@debug, ..DEBUG_LEVEL
-
 
 """
     request(RedirectLayer, method, ::URI, headers, body) -> HTTP.Response
 
 Redirects the request in the case of 3xx response status.
 """
-
 abstract type RedirectLayer{Next <: Layer} <: Layer end
 export RedirectLayer
 

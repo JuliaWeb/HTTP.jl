@@ -32,10 +32,14 @@ module Cookies
 
 export Cookie, cookies
 
-import ..Dates
+@static if VERSION < v"0.7-"
+using Base.Dates
+else
+using Dates
+end
 
 import Base: ==
-using ..pairs
+import ..pairs
 import ..compat_search
 using ..IOExtras: bytes
 using ..Parsers: Headers
@@ -387,7 +391,7 @@ function isCookieDomainName(s::String)
     return ok
 end
 
-sanitizeCookieName(n::String) = replace(replace(n, '\n', '-'), '\r', '-')
+sanitizeCookieName(n::String) = replace(replace(n, '\n'=>'-'), '\r'=>'-')
 sanitizeCookieName(n) = sanitizeCookieName(String(n))
 
 # http:#tools.ietf.org/html/rfc6265#section-4.1.1

@@ -7,7 +7,7 @@ using HTTP.Messages
     @test String(take!(Body(Vector{UInt8}("Hello!")))) == "Hello!"
     @test String(take!(Body())) == ""
 
-    io = BufferStream()
+    io = Base.BufferStream()
     @async begin
         write(io, "Hello")
         sleep(0.1)
@@ -22,7 +22,7 @@ using HTTP.Messages
     write(b, "!")
     @test String(take!(b)) == "Hello!"
 
-    io = BufferStream()
+    io = Base.BufferStream()
     b = Body(io)
     write(b, "Hello")
     write(b, "!")
@@ -32,7 +32,7 @@ using HTTP.Messages
 
     buf = IOBuffer()
     show(buf, b)
-    @test String(take!(buf)) == "Hello!\n⋮\nWaiting for BufferStream...\n"
+    @test String(take!(buf)) == "Hello!\n⋮\nWaiting for Base.BufferStream...\n"
 
     write(b, "\nWorld!")
     close(io)
