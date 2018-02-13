@@ -325,6 +325,10 @@ bodylength(r::Request)::Int =
 # HTTP header-fields
 
 
+Base.getindex(m::Message, k) = header(m, k)
+
+
+
 """
     header(::Message, key [, default=""]) -> String
 
@@ -334,6 +338,12 @@ header(m::Message, k, d="") = header(m.headers, k, d)
 header(h::Headers, k::AbstractString, d::AbstractString="") =
     getbyfirst(h, k, k => d, lceq)[2]
 lceq(a,b) = lowercase(a) == lowercase(b)
+
+# FIXME consider allocation and speed efficiency of lowercase comparisons
+# - Make a LCString <: AbstractString wrapper that translates in-line?
+# - Make a lcmp function that translates as it goes?
+# https://github.com/JuliaLang/julia/issues/19972
+
 
 
 """
