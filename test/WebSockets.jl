@@ -25,4 +25,28 @@ for s in ["ws", "wss"]
 
 end
 
+p = UInt16(8000)
+@async HTTP.listen("127.0.0.1",p) do http
+    if HTTP.WebSockets.is_websocket_upgrade(http.message)
+        HTTP.WebSockets.upgrade(http) do ws
+            while !eof(ws)
+                data = readavailable(ws)
+                write(ws,data)
+            end
+        end
+    end
+end
+
+sleep(2)
+
+info("Testing local server...")
+HTTP.WebSockets.open("ws://127.0.0.1:$(p)") do ws
+    write(ws, "Foo")
+    @test String(readavailable(ws)) == "Foo"
+
+    write(ws, "Bar")
+    @test String(readavailable(ws)) == "Bar"
+end
+
+
 end # testset

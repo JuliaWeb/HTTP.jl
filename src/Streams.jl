@@ -118,14 +118,16 @@ function IOExtras.closewrite(http::Stream{Response})
 end
 
 function IOExtras.closewrite(http::Stream{Request})
-    @require iswritable(http)
 
-    closebody(http)
-    closewrite(http.stream)
+    if iswritable(http)
+        closebody(http)
+        closewrite(http.stream)
+    end
 
     if hasheader(http.message, "Connection", "close") ||
        http.message.version < v"1.1" &&
-      !hasheader(http.message, "Connection", "keep-alive")
+      !hasheader(http.message, "Connection", "keep-alive") ||
+      !hasheader(http.message, "Connection", "upgrade")
 
         @debug 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)

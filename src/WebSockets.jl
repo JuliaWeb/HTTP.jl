@@ -59,7 +59,7 @@ end
 is_websocket_upgrade(r::HTTP.Message) =
     (r isa HTTP.Request && r.method == "GET" || r.status == 101) &&
     HTTP.hasheader(r, "Connection", "upgrade") &&
-    HTTP.hasheader(r, "Upgrade", "webscoket")
+    HTTP.hasheader(r, "Upgrade", "websocket")
 
 
 function check_upgrade(http)
@@ -111,7 +111,9 @@ function open(f::Function, url; binary=false, verbose=false, kw...)
         end
 
         io = ConnectionPool.getrawstream(http)
-        f(WebSocket(io; binary=binary))
+        ws = WebSocket(io; binary=binary)
+        f(ws)
+        close(ws)
     end
 end
 
@@ -143,7 +145,9 @@ function upgrade(f::Function, http::HTTP.Stream; binary=false)
     startwrite(http)
 
     io = ConnectionPool.getrawstream(http)
-    f(WebSocket(io; binary=binary, server=true))
+    ws = WebSocket(io; binary=binary, server=true)
+    f(ws)
+    close(ws)
 end
 
 
@@ -221,7 +225,7 @@ function Base.close(ws::WebSocket)
     if !ws.txclosed
         closewrite(ws)
     end
-    while !ws.rxclosed
+    while !eof(ws) # FIXME Timeout in case other end does not send CLOSE?
         readframe(ws)
     end
     close(ws.io)
