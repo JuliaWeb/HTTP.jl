@@ -1,28 +1,53 @@
 using HTTP
-using HTTP.Test
+using HTTP.WebSockets
 using HTTP.IOExtras
+using Base.Test
+
+import HTTP.WebSockets: CONNECTED, CLOSING, CLOSED
 
 @testset "WebSockets" begin
 
-for s in ["ws", "wss"]
+info("Testing ws...")
+WebSockets.open("ws://echo.websocket.org") do ws
+    write(ws, "Foo")
+    @test String(read(ws)) == "Foo"
 
-    HTTP.WebSockets.open("$s://echo.websocket.org") do io
-        write(io, HTTP.bytes("Foo"))
-        @test !eof(io)
-        @test String(readavailable(io)) == "Foo"
+    close(ws)
+end
+sleep(1)
 
-        write(io, HTTP.bytes("Hello"))
-        write(io, " There")
-        write(io, " World", "!")
-        closewrite(io)
+info("Testing wss...")
+WebSockets.open("wss://echo.websocket.org") do ws
+    write(ws, "Foo")
+    @test String(read(ws)) == "Foo"
 
-        buf = IOBuffer()
-        write(buf, io)
-        @test String(take!(buf)) == "Hello There World!"
+    close(ws)
+end
+sleep(1)
 
-        close(io)
+p = UInt16(8000)
+@async HTTP.listen("127.0.0.1",p) do http
+    if WebSockets.is_upgrade(http.message)
+        WebSockets.upgrade(http) do ws
+            while ws.state == CONNECTED
+                data = String(read(ws))
+                write(ws,data)
+            end
+        end
     end
+end
 
+sleep(2)
+
+info("Testing local server...")
+WebSockets.open("ws://127.0.0.1:$(p)") do ws
+    write(ws, "Foo")
+    @test String(read(ws)) == "Foo"
+
+    write(ws, "Bar")
+    @test String(read(ws)) == "Bar"
+
+    close(ws)
 end
 
 end # testset
