@@ -224,6 +224,7 @@ function Base.close(ws::WebSocket)
     while !ws.rxclosed
         readframe(ws)
     end
+    close(ws.io)
 end
 
 
@@ -233,7 +234,7 @@ Base.isopen(ws::WebSocket) = !ws.rxclosed
 
 # Receiving Frames
 
-Base.eof(ws::WebSocket) = eof(ws.io)
+Base.eof(ws::WebSocket) = ws.rxclosed || eof(ws.io)
 
 Base.readavailable(ws::WebSocket) = collect(readframe(ws))
 
