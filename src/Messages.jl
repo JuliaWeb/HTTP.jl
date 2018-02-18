@@ -65,7 +65,7 @@ export Message, Request, Response, HeaderSizeError,
        readchunksize,
        writeheaders, writestartline,
        bodylength, unknown_length,
-       load, payload
+       payload
 
 import ..HTTP
 
@@ -377,7 +377,7 @@ end
 # HTTP payload body
 
 #Like https://github.com/JuliaIO/FileIO.jl/blob/v0.6.1/src/FileIO.jl#L19 ?
-load(m::Message) = payload(m, String)
+@deprecate load(m::Message) payload(m, String)
 
 function payload(m::Message)::Vector{UInt8}
     enc = lowercase(first(split(header(m, "Transfer-Encoding"), ", ")))
