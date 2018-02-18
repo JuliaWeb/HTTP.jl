@@ -112,8 +112,11 @@ function open(f::Function, url; binary=false, verbose=false, kw...)
 
         io = ConnectionPool.getrawstream(http)
         ws = WebSocket(io; binary=binary)
-        f(ws)
-        close(ws)
+        try
+            f(ws)
+        finally
+            close(ws)
+        end
     end
 end
 
@@ -146,8 +149,11 @@ function upgrade(f::Function, http::HTTP.Stream; binary=false)
 
     io = ConnectionPool.getrawstream(http)
     ws = WebSocket(io; binary=binary, server=true)
-    f(ws)
-    close(ws)
+    try
+        f(ws)
+    finally
+        close(ws)
+    end
 end
 
 
