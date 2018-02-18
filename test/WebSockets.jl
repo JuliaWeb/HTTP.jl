@@ -19,15 +19,13 @@ for s in ["ws", "wss"]
         buf = IOBuffer()
         write(buf, io)
         @test String(take!(buf)) == "Hello There World!"
-
-        close(io)
     end
 
 end
 
 p = UInt16(8000)
 @async HTTP.listen("127.0.0.1",p) do http
-    if HTTP.WebSockets.is_websocket_upgrade(http.message)
+    if HTTP.WebSockets.is_upgrade(http.message)
         HTTP.WebSockets.upgrade(http) do ws
             while !eof(ws)
                 data = readavailable(ws)
