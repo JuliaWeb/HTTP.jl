@@ -245,7 +245,7 @@ showparts(io::IO, uri::URI) =
 
 showparts(uri::URI) = showparts(STDOUT, uri)
 
-Base.print(io::IO, u::URI) = print(io, u.uri)
+Base.print(io::IO, u::URI) = print(io, string(u))
 
 Base.string(u::URI) = u.uri === nostring ? uristring(u) : u.uri
 
