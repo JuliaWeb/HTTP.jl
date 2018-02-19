@@ -29,11 +29,17 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
                  kw...)::Response
 
     verbose == 1 && printlncompact(request)
-    verbose >= 2 && println(request)
 
     response = request.response
     http = Stream(response, io)
     startwrite(http)
+
+    if verbose >= 2
+        println(request)
+        if iofunction == nothing && request.body === body_is_a_stream
+            println("$(typeof(request)).body: $(sprint(showcompact, body))")
+        end
+    end
 
     aborted = false
     try
