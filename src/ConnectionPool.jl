@@ -139,7 +139,7 @@ function Base.eof(t::Transaction)
     @require isreadable(t) || !isopen(t)
     if bytesavailable(t) > 0
         return false
-    end                 ;@debug 4 "eof(::Transaction) -> eof($typeof(c.io)): $t"
+    end               ;@debug 4 "eof(::Transaction) -> eof($(typeof(c.io))): $t"
     return eof(t.c.io)
 end
 
