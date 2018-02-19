@@ -5,6 +5,9 @@ using ..IOExtras
 import ..ConnectionPool: ByteView, byteview
 
 
+const live_mode = true
+
+
 include("IODebug.jl")
 
 
@@ -19,12 +22,15 @@ export DebugLayer
 
 function request(::Type{DebugLayer{Next}}, io::IO, req, body; kw...) where Next
 
-    iod = IODebug(io)
-
-    try
-        return request(Next, iod, req, body; kw...)
-    finally
-        print(STDOUT, iod)
+    @static if live_mode
+        return request(Next, IODebug(io), req, body; kw...)
+    else
+        iod = IODebug(io)
+        try
+            return request(Next, iod, req, body; kw...)
+        finally
+            show_log(STDOUT, iod)
+        end
     end
 end
 

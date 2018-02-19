@@ -34,7 +34,7 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
     http = Stream(response, io)
     startwrite(http)
 
-    if verbose >= 2
+    if verbose == 2
         println(request)
         if iofunction == nothing && request.body === body_is_a_stream
             println("$(typeof(request)).body: $(sprint(showcompact, body))")
@@ -74,7 +74,7 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
     closeread(http)
 
     verbose == 1 && printlncompact(response)
-    verbose >= 2 && println(response)
+    verbose == 2 && println(response)
 
     return response
 end
