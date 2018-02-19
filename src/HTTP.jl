@@ -423,6 +423,7 @@ include("ExceptionRequest.jl");         using .ExceptionRequest
                                         import .ExceptionRequest.StatusError
 include("RetryRequest.jl");             using .RetryRequest
 include("ConnectionRequest.jl");        using .ConnectionRequest
+include("DebugRequest.jl");             using .DebugRequest
 include("StreamRequest.jl");            using .StreamRequest
 include("ContentTypeRequest.jl");       using .ContentTypeDetection
 
@@ -545,6 +546,7 @@ function stack(;redirect=true,
                 status_exception=true,
                 readtimeout=0,
                 detect_content_type=false,
+                verbose=0,
                 kw...)
 
     NoLayer = Union
@@ -559,9 +561,10 @@ function stack(;redirect=true,
     (retry                ? RetryLayer                : NoLayer){
     (status_exception     ? ExceptionLayer            : NoLayer){
                             ConnectionPoolLayer{
+    (verbose >= 3         ? DebugLayer                : NoLayer){
     (readtimeout > 0      ? TimeoutLayer              : NoLayer){
                             StreamLayer
-    }}}}}}}}}}}
+    }}}}}}}}}}}}
 end
 
 include("client.jl")
