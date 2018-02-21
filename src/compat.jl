@@ -75,7 +75,7 @@ if !isdefined(Base, :isnumeric)
 end
 
 if !applicable(contains, "", r"")
-    contains(s::String, r::Regex) = ismatch(r, s)
+    Base.contains(s::String, r::Regex) = ismatch(r, s)
 end
 
 if !applicable(replace, "", ""=>"")
