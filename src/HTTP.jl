@@ -13,7 +13,7 @@ Base.@deprecate URL URI
 
 include("compat.jl")
 include("debug.jl")
-
+include("BufferedLogs.jl")             ;using .BufferedLogs
 include("Pairs.jl")
 include("IOExtras.jl")                 ;using .IOExtras
 include("Strings.jl")
