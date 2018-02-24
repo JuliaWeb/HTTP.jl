@@ -39,11 +39,13 @@ using Dates
 end
 
 import Base: ==
-import ..pairs
-import ..compat_search
 using ..IOExtras: bytes
 using ..Parsers: Headers
 using ..Messages: Request, mkheaders, hasheader, header
+
+import ..compat_search, ..compat_replace
+const replace = compat_replace
+const search = compat_search
 
 """
     Cookie()
@@ -85,7 +87,7 @@ mutable struct Cookie
 end
 
 function Cookie(cookie::Cookie; kwargs...)
-    for (k, v) in pairs(kwargs)
+    for (k, v) in kwargs
         setfield!(cookie, k, convert(fieldtype(Cookie, k), v))
     end
     return cookie
@@ -159,8 +161,8 @@ function readsetcookie(host, cookie)
     parts = split(strip(cookie), ';')
     length(parts) == 1 && parts[1] == "" && return Cookie()
     parts[1] = strip(parts[1])
-    j = compat_search(parts[1], '=')
-    j < 1 && return Cookie()
+    j = search(parts[1], '=')
+    j === nothing && return Cookie()
     name, value = parts[1][1:j-1], parts[1][j+1:end]
     iscookienamevalid(name) || return Cookie()
     value, ok = parsecookievalue(value, true)
@@ -170,8 +172,8 @@ function readsetcookie(host, cookie)
         parts[x] = strip(parts[x])
         length(parts[x]) == 0 && continue
         attr, val = parts[x], ""
-        j = compat_search(parts[x], '=')
-        if j > 0
+        j = search(parts[x], '=')
+        if j != nothing
             attr, val = attr[1:j-1], attr[j+1:end]
         end
         lowerattr = lowercase(attr)
@@ -328,8 +330,8 @@ function readcookies(h::Headers, filter::String)
     for part in split(header(h, "Cookie", ""), ';')
         part = strip(part)
         length(part) <= 1 && continue
-        j = compat_search(part, '=')
-        if j >= 0
+        j = search(part, '=')
+        if j != nothing
             name, val = part[1:j-1], part[j+1:end]
         else
             name, val = part, ""

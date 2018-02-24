@@ -1,5 +1,5 @@
+include("compat.jl")
 using HTTP
-using HTTP.Test
 
 mutable struct URLTest
     name::String

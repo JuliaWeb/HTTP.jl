@@ -1,36 +1,39 @@
-
-@static if VERSION >= v"0.7.0-DEV.2915"
+@static if VERSION >= v"0.7.0-DEV.4366"
 
     using Base64
-    using Distributed
     import Dates
 
-    compat_search(s::AbstractString, c::Char) = compat_findfirst(equalto(c), s)
-    compat_search(a...) = (r = search(a...); r === nothing ? 0 : r)
-    compat_findfirst(a...) = (r = findfirst(a...); r === nothing ? 0 : r)
-    compat_findprev(A::String, v, i::Integer) = compat_findprev(equalto(v), A, i)
-    compat_findprev(a...) = (r = findprev(a...); r === nothing ? 0 : r)
-    compat_findnext(A::String, v, i::Integer) = compat_findnext(equalto(v), A, i)
-    compat_findnext(a...) = (r = findnext(a...); r === nothing ? 0 : r)
-    compat_parse(s, T; base::Int=10) = Base.parse(s, T; base=base)
+    const bytesavailable = Base.bytesavailable
+    const compat_findfirst = Base.findfirst
+    const compat_contains = Base.contains
+    const compat_replace = Base.replace
+    const compat_parse = Base.parse
 
-    Base.convert(::Type{SubString{S}}, s::SubString{S}) where {S<:AbstractString} = s
+    compat_search(s::AbstractString, c::Char) = Base.findfirst(equalto(c), s)
 
-else # Julia v0.6
+else
+
+    if VERSION != v"0.6.2"
+        error("HTTP.jl has not been tested with Julia version $VERSION")
+    end
 
     eval(:(module Base64 end))
     const Dates = Base.Dates
-    const Distributed = Base.Distributed
 
-    const compat_search = search
-    const compat_findfirst = findfirst
-    const compat_findprev = findprev
-    const compat_findnext = findnext
+    const bytesavailable = Base.nb_available
+    compat_findfirst(a...) = (r = Base.findfirst(a...); r == 0 ? nothing : r)
+    compat_contains(s, r) = Base.ismatch(r, s)
+    compat_replace(s, p) = Base.replace(s, p.first, p.second)
     compat_parse(s, T; base::Int=10) = Base.parse(s, T, base)
 
-    pairs(x) = [k => v for (k,v) in x]
+    compat_search(s::AbstractString, c::Char) = compat_findfirst(s, c)
+
+    const Nothing = Void
+    const isnumeric = isnumber
+    const stdout = STDOUT
 
     Base.SubString(s) = SubString(s, 1)
+    Base.String(x::SubArray{UInt8,1}) = String(Vector{UInt8}(x))
 
     macro debug(s) DEBUG_LEVEL > 0 ? :(("D- ", $(esc(s)))) : :() end
     macro info(s)  DEBUG_LEVEL >= 0 ? :(println("I- ", $(esc(s)))) : :() end
@@ -41,47 +44,7 @@ else # Julia v0.6
     end
 end
 
-macro uninit(expr)
-    if !isdefined(Base, :uninitialized)
-        splice!(expr.args, 2)
-    end
-    return esc(expr)
-end
-
-if !isdefined(Base, :Nothing)
-    const Nothing = Void
-    const Cvoid = Void
-end
-
-# https://github.com/JuliaLang/julia/pull/25535
-Base.String(x::SubArray{UInt8,1}) = String(Vector{UInt8}(x))
-Base.SubString(x::SubArray{UInt8,1}) = SubString(String(x))
-
-@static if !isdefined(Base, :bytesavailable)
-    const bytesavailable = nb_available
-else
-    import Base: bytesavailable
-    bytesavailable(ssl::MbedTLS.SSLContext) = nb_available(ssl)
-end
-
-@static if VERSION < v"0.7.0-DEV.2005"
-    using Base.Test
-else
-    using Test
-end
-
-if !isdefined(Base, :isnumeric)
-    const isnumeric = isnumber
-end
-
-if !applicable(contains, "", r"")
-    Base.contains(s::String, r::Regex) = ismatch(r, s)
-end
-
-if !applicable(replace, "", ""=>"")
-    replace(s::String, p::Pair) = replace(s, p.first, p.second)
-end
-
-if !isdefined(Base, :lastindex)
-    lastindex(x) = endof(x)
+#https://github.com/JuliaWeb/MbedTLS.jl/issues/122
+@static if !applicable(bytesavailable, MbedTLS.SSLContext())
+    Base.bytesavailable(ssl::MbedTLS.SSLContext) = nb_available(ssl)
 end

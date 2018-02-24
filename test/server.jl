@@ -6,7 +6,11 @@ while nworkers() < 5
 end
 
 @everywhere using HTTP
-@everywhere using HTTP.Test
+@static if VERSION < v"0.7.0-DEV.2005"
+    @everywhere using Base.Test
+else
+    @everywhere using Test
+end
 
 """
     n: number of remotes

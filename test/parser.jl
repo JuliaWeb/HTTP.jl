@@ -1,5 +1,5 @@
+include("compat.jl")
 using HTTP
-using HTTP.Test
 
 module ParserTest
 
@@ -8,7 +8,6 @@ const strict = false
 using ..Test
 
 import ..HTTP
-import ..HTTP.pairs
 
 using HTTP.Messages
 using HTTP.Parsers
@@ -61,7 +60,7 @@ end
 
 function Message(; name::String="", kwargs...)
   m = Message(name)
-  for (k, v) in pairs(kwargs)
+  for (k, v) in kwargs
       try
           setfield!(m, k, v)
       catch e
@@ -1750,7 +1749,7 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       r = parse(Request, reqstr)
       @test r.method == "GET"
 
-      @test "GET / HTTP/1.1X-SSL-FoooBarr:   $(header(r, "X-SSL-FoooBarr"))" == replace(reqstr, "\r\n", "")
+      @test "GET / HTTP/1.1X-SSL-FoooBarr:   $(header(r, "X-SSL-FoooBarr"))" == HTTP.compat_replace(reqstr, "\r\n" => "")
 
       # @test_throws HTTP.HTTP.ParseError HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\nHost: www.example.com\r\nConnection\r\033\065\325eep-Alive\r\nAccept-Encoding: gzip\r\n\r\n")
 

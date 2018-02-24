@@ -1,5 +1,5 @@
+include("compat.jl")
 using HTTP
-using HTTP.Test
 using HTTP.IOExtras
 using HTTP.Parsers
 using HTTP.Messages
@@ -46,7 +46,7 @@ Escape `string` and insert '\n' after escaped newline characters.
 """
 function escapelines(s)
     s = Base.escape_string(s)
-    s = replace(s, "\\n", "\\n\n    ")
+    s = HTTP.compat_replace(s, "\\n" => "\\n\n    ")
     return string("    ", strip(s))
 end
 

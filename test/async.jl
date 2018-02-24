@@ -1,5 +1,5 @@
+include("compat.jl")
 using HTTP
-using HTTP.Test
 using HTTP.Base64
 using JSON
 using MbedTLS: digest, MD_MD5, MD_SHA256

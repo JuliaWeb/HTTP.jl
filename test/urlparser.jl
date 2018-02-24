@@ -181,6 +181,10 @@ end
 
 http_parser_parse_url(url::AbstractString) = http_parser_parse_url(String(url))
 
+if !isdefined(Base, :lastindex)
+    const lastindex = endof
+end
+
 function http_parser_parse_url(url::String)
 
     s = s_req_spaces_before_target
@@ -194,7 +198,7 @@ function http_parser_parse_url(url::String)
     scheme = userinfo = host = port = path = query = fragment = empty
 
     mask = 0x00
-    end_i = HTTP.lastindex(url)
+    end_i = lastindex(url)
     for i in eachindex(url)
         @inbounds p = url[i]
         olds = s

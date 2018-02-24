@@ -10,7 +10,6 @@ using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
 if !isdefined(Base, :Nothing)
     const Nothing = Void
-    const Cvoid = Void
 end
 
 import ..Dates

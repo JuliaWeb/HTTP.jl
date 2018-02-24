@@ -283,7 +283,12 @@ const LITTLE_F = UInt8('f')
 const LITTLE_A = UInt8('a')
 const LITTLE_S = UInt8('s')
 const PERIOD = UInt8('.')
-const REF = @uninit Vector{Ptr{UInt8}}(uninitialized, 1)
+
+@static if VERSION >= v"0.7.0-DEV.4370"
+    const REF = Vector{Ptr{UInt8}}(uninitialized, 1)
+else
+    const REF = Vector{Ptr{UInt8}}(1)
+end
 
 function isjson(bytes, i=0, maxlen=min(length(bytes), MAXSNIFFLENGTH))
     # ignore leading whitespace

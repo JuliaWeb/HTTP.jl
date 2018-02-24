@@ -1,5 +1,5 @@
+include("compat.jl")
 using HTTP
-using HTTP.Test
 
 import Base.==
 

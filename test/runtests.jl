@@ -3,9 +3,10 @@ using Distributed
 end
 addprocs(5)
 
+include("compat.jl")
+
 using HTTP
 using HTTP.Dates
-using HTTP.Test
 
 
 @testset "HTTP" begin

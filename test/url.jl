@@ -1,7 +1,7 @@
+include("compat.jl")
 using JSON
 
 using HTTP
-using HTTP.Test
 
 @testset "HTTP.URL" begin
 

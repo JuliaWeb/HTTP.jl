@@ -2,7 +2,7 @@ module Strings
 
 export escapehtml, tocameldash, iso8859_1_to_utf8
 
-using ..IOExtras
+using ..IOExtras, ..compat_replace
 
 """
 escapeHTML(i::String)
@@ -11,37 +11,37 @@ Returns a string with special HTML characters escaped: &, <, >, ", '
 """
 function escapehtml(i::AbstractString)
     # Refer to http://stackoverflow.com/a/7382028/3822752 for spec. links
-    o = replace(i, "&" =>"&amp;")
-    o = replace(o, "\""=>"&quot;")
-    o = replace(o, "'" =>"&#39;")
-    o = replace(o, "<" =>"&lt;")
-    o = replace(o, ">" =>"&gt;")
+    o = compat_replace(i, "&" =>"&amp;")
+    o = compat_replace(o, "\""=>"&quot;")
+    o = compat_replace(o, "'" =>"&#39;")
+    o = compat_replace(o, "<" =>"&lt;")
+    o = compat_replace(o, ">" =>"&gt;")
     return o
 end
 
 
 """
-    tocameldash!(s::String)
+    tocameldash(s::String)
 
 Ensure the first character and characters that follow a '-' are uppercase.
 """
-function tocameldash!(s::String)
+function tocameldash(s::String)
     toUpper = UInt8('A') - UInt8('a')
-    bytes = Vector{UInt8}(s)
+    v = Vector{UInt8}(bytes(s))
     upper = true
-    for i = 1:length(bytes)
-        @inbounds b = bytes[i]
+    for i = 1:length(v)
+        @inbounds b = v[i]
         if upper
-            islower(b) && (bytes[i] = b + toUpper)
+            islower(b) && (v[i] = b + toUpper)
         else
-            isupper(b) && (bytes[i] = lower(b))
+            isupper(b) && (v[i] = lower(b))
         end
         upper = b == UInt8('-')
     end
-    return String(bytes)
+    return String(v)
 end
 
-tocameldash(s::AbstractString) = tocameldash!(String(s))
+tocameldash(s::AbstractString) = tocameldash(String(s))
 
 @inline islower(b::UInt8) = UInt8('a') <= b <= UInt8('z')
 @inline isupper(b::UInt8) = UInt8('A') <= b <= UInt8('Z')

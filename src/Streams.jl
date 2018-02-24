@@ -8,7 +8,6 @@ import ..HTTP
 using ..IOExtras
 using ..Messages
 import ..bytesavailable
-import ..Cvoid
 import ..ByteView
 import ..Messages: header, hasheader, setheader,
                    writeheaders, writestartline

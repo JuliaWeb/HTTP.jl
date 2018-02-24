@@ -8,7 +8,7 @@ import HTTP.URI
 import HTTP.request
 import HTTP: bytes
 
-using HTTP.StatusError
+using HTTP: StatusError
 
 using HTTP.MessageRequest: bodylength
 using HTTP.MessageRequest: bodybytes

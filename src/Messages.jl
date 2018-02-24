@@ -490,7 +490,7 @@ function readchunksize(io::IO, message::Message)::Int
     if n == 0
         bytes = readuntil(io, find_end_of_trailer)
         if bytes[2] != UInt8('\n')
-            parse_header_fields!(SubString(bytes), message)
+            parse_header_fields!(SubString(String(bytes)), message)
         end
     end
     return n

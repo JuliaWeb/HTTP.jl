@@ -1,7 +1,7 @@
 module DebugRequest
 
 import ..Layer, ..request
-using ..IOExtras
+using ..IOExtras, ..stdout
 import ..ConnectionPool: ByteView, byteview
 
 
@@ -29,7 +29,7 @@ function request(::Type{DebugLayer{Next}}, io::IO, req, body; kw...) where Next
         try
             return request(Next, iod, req, body; kw...)
         finally
-            show_log(STDOUT, iod)
+            show_log(stdout, iod)
         end
     end
 end

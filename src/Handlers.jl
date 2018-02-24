@@ -2,7 +2,7 @@ module Handlers
 
 export handle, gethandler, Handler, HandlerFunction, Router, register!
 
-import ..Nothing, ..Cvoid, ..Val
+import ..Nothing, ..Val
 
 using HTTP
 

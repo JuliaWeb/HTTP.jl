@@ -1,5 +1,5 @@
+include("compat.jl")
 using HTTP
-using HTTP.Test
 using HTTP.IOExtras
 
 @testset "WebSockets" begin
@@ -23,7 +23,7 @@ for s in ["ws", "wss"]
 
 end
 
-p = UInt16(8000)
+p = rand(8000:8999)
 @async HTTP.listen("127.0.0.1",p) do http
     if HTTP.WebSockets.is_upgrade(http.message)
         HTTP.WebSockets.upgrade(http) do ws

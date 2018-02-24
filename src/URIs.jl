@@ -9,7 +9,7 @@ import Base.==
 using ..IOExtras
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
-import ..compat_search
+import ..compat_search, ..compat_contains
 import ..isnumeric
 import ..compat_parse
 
@@ -153,25 +153,25 @@ function ensurevalid(uri::URI)
     # https://tools.ietf.org/html/rfc3986#section-3.1
     # ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
     if !(uri.scheme === absent ||
-         contains(uri.scheme, r"^[[:alpha:]][[:alnum:]+-.]*$"))
+         compat_contains(uri.scheme, r"^[[:alpha:]][[:alnum:]+-.]*$"))
         throw(ParseError("Invalid URI scheme: $(uri.scheme)"))
     end
     # https://tools.ietf.org/html/rfc3986#section-3.2.2
     # unreserved / pct-encoded / sub-delims
     if !(uri.host === absent ||
-         contains(uri.host, r"^[:[:alnum:]\-._~%!$&'()*+,;=]+$"))
+         compat_contains(uri.host, r"^[:[:alnum:]\-._~%!$&'()*+,;=]+$"))
         throw(ParseError("Invalid URI host: $(uri.host) $uri"))
     end
     # https://tools.ietf.org/html/rfc3986#section-3.2.3
     # "port number in decimal"
-    if !(uri.port === absent || contains(uri.port, r"^\d+$"))
+    if !(uri.port === absent || compat_contains(uri.port, r"^\d+$"))
         throw(ParseError("Invalid URI port: $(uri.port)"))
     end
 
     # https://tools.ietf.org/html/rfc3986#section-3.3
     # unreserved / pct-encoded / sub-delims / ":" / "@"
     if !(uri.path === absent ||
-         contains(uri.path, r"^[/[:alnum:]\-._~%!$&'()*+,;=:@]*$"))
+         compat_contains(uri.path, r"^[/[:alnum:]\-._~%!$&'()*+,;=:@]*$"))
         throw(ParseError("Invalid URI path: $(uri.path)"))
     end
 
@@ -297,7 +297,7 @@ const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "
 function Base.isvalid(uri::URI)
     sch = uri.scheme
     isempty(sch) && throw(ArgumentError("can not validate relative URI"))
-    if ((sch in non_hierarchical) && (compat_search(uri.path, '/') > 1)) ||       # path hierarchy not allowed
+    if ((sch in non_hierarchical) && (i = compat_search(uri.path, '/'); i != nothing && i > 1)) ||       # path hierarchy not allowed
        (!(sch in uses_query) && !isempty(uri.query)) ||                    # query component not allowed
        (!(sch in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
        (!(sch in uses_authority) && (!isempty(uri.host) || ("" != uri.port) || !isempty(uri.userinfo))) # authority component not allowed
@@ -343,7 +343,7 @@ function unescapeuri(str)
         if c == '%'
             c1, i = next(str, i)
             c, i = next(str, i)
-            write(out, compat_parse(UInt8, string(c1, c), base=16))
+            write(out, compat_parse(UInt8, string(c1, c); base=16))
         else
             write(out, c)
         end

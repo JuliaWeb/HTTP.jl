@@ -6,9 +6,9 @@ const live_mode = true
         io::T
     end
 
-    logwrite(iod::IODebug, x) = show_io_debug(STDOUT, "➡️ ", x)
-    logread(iod::IODebug, x) = show_io_debug(STDOUT, "⬅️ ", x)
-    logunread(iod::IODebug, x) = show_io_debug(STDOUT, "♻️ ", x)
+    logwrite(iod::IODebug, x) = show_io_debug(stdout, "➡️ ", x)
+    logread(iod::IODebug, x) = show_io_debug(stdout, "⬅️ ", x)
+    logunread(iod::IODebug, x) = show_io_debug(stdout, "♻️ ", x)
 
 else
 

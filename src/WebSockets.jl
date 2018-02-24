@@ -194,25 +194,26 @@ wslength(l) = l < 0x7E ? (UInt8(l), UInt8[]) :
 
 wswrite(ws::WebSocket, x) = wswrite(ws, WS_FINAL | ws.frame_type, x)
 
-wswrite(ws::WebSocket, opcode::UInt8, x) = wswrite(ws, opcode, Vector{UInt8}(x))
+wswrite(ws::WebSocket, opcode::UInt8, x) = wswrite(ws, opcode, bytes(x))
 
-function wswrite(ws::WebSocket, opcode::UInt8, bytes::Vector{UInt8})
+function wswrite(ws::WebSocket, opcode::UInt8, bytes::AbstractVector{UInt8})
 
     n = length(bytes)
     len, extended_len = wslength(n)
     if ws.server
         mask = UInt8[]
-        ws.txpayload = bytes
+        txpayload = bytes
     else
         len |= WS_MASK
         mask = mask!(ws.txpayload, bytes, n)
+        txpayload = ws.txpayload
     end
 
     @debug 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, len, extended_len, mask))"
     write(ws.io, opcode, len, extended_len, mask)
 
-    @debug 2 "          ⬅️  $(ws.txpayload[1:n])"
-    unsafe_write(ws.io, pointer(ws.txpayload), n)
+    @debug 2 "          ⬅️  $(txpayload[1:n])"
+    unsafe_write(ws.io, pointer(txpayload), n)
 end
 
 

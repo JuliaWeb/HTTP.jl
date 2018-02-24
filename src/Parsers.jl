@@ -25,6 +25,8 @@ export Header, Headers,
 
 include("parseutils.jl")
 
+import ..compat_replace
+
 const emptyss = SubString("",1,0)
 const emptyheader = emptyss => emptyss
 const Header = Pair{SubString{String},SubString{String}}
@@ -189,7 +191,7 @@ function parse_header_field(bytes::SubString{String})::Tuple{Header,SubString{St
     # Finally look for obsolete line folding format:
     re = obs_fold_header_field_regex
     if exec(re, bytes)
-        unfold = SubString(strip(replace(group(2, re, bytes), r"\r?\n"=>"")))
+        unfold = SubString(strip(compat_replace(group(2, re, bytes), r"\r?\n"=>"")))
         return (group(1, re, bytes) => unfold), nextbytes(re, bytes)
     end
 
