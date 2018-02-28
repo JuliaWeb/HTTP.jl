@@ -6,9 +6,9 @@ const live_mode = true
         io::T
     end
 
-    logwrite(iod::IODebug, x) = show_io_debug(stdout, "➡️ ", x)
-    logread(iod::IODebug, x) = show_io_debug(stdout, "⬅️ ", x)
-    logunread(iod::IODebug, x) = show_io_debug(stdout, "♻️ ", x)
+    logwrite(iod::IODebug, x) = show_io_debug(compat_stdout(), "➡️ ", x)
+    logread(iod::IODebug, x) = show_io_debug(compat_stdout(), "⬅️ ", x)
+    logunread(iod::IODebug, x) = show_io_debug(compat_stdout(), "♻️ ", x)
 
 else
 
@@ -33,7 +33,7 @@ Base.unsafe_write(iod::IODebug, x::Ptr{UInt8}, n::UInt) =
     (logwrite(iod, unsafe_string(x,n));
      unsafe_write(iod.io, x, n))
 
-Base.read(iod::IODebug, n) =
+Base.read(iod::IODebug, n::Integer) =
     (r = read(iod.io, n);
      logread(iod, String(r)); r)
 

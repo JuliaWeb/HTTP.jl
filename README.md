@@ -33,6 +33,56 @@ Contributions are very welcome, as are feature requests and suggestions. Please 
 [issue][issues-url] if you encounter any problems or would just like to ask a question.
 
 
+## Client Examples
+
+[`HTTP.request`](@ref) sends a HTTP Request Message and
+returns a Response Message.
+
+```julia
+r = HTTP.request("GET", "http://httpbin.org/ip"; verbose=3)
+println(r.status)
+println(String(r.body))
+```
+
+[`HTTP.open`](@ref) sends a HTTP Request Message and
+opens an `IO` stream from which the Response can be read.
+
+```julia
+HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
+    open(`vlc -q --play-and-exit --intf dummy -`, "w") do vlc
+        write(vlc, http)
+    end
+end
+```
+
+## Server Examples
+
+```
+HTTP.listen() do http::HTTP.Stream
+    @show http.message
+    @show HTTP.header(http, "Content-Type")
+    while !eof(http)
+        println("body data: ", String(readavailable(http)))
+    end
+    setstatus(http, 404)
+    setheader(http, "Foo-Header" => "bar")
+    startwrite(http)
+    write(http, "response body")
+    write(http, "more response body")
+end
+
+HTTP.listen() do request::HTTP.Request
+   @show request
+   @show request.method
+   @show HTTP.header(request, "Content-Type")
+   @show HTTP.payload(request)
+   try
+       return HTTP.Response("Hello")
+   catch e
+       return HTTP.Response(404, "Error: $e")
+   end
+end
+```
 
 [docs-latest-img]: https://img.shields.io/badge/docs-latest-blue.svg
 [docs-latest-url]: https://JuliaWeb.github.io/HTTP.jl/latest

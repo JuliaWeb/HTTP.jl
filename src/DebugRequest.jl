@@ -1,7 +1,7 @@
 module DebugRequest
 
 import ..Layer, ..request
-using ..IOExtras, ..stdout
+using ..IOExtras, ..compat_stdout
 import ..ConnectionPool: ByteView, byteview
 
 

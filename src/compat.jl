@@ -23,6 +23,8 @@ __init__() = supported() || compat_warn()
     const compat_replace = Base.replace
     const compat_parse = Base.parse
 
+    compat_stdout() = stdout
+
     compat_search(s::AbstractString, c::Char) = Base.findfirst(equalto(c), s)
 
 else
@@ -38,11 +40,12 @@ else
     compat_replace(s, p) = Base.replace(s, p.first, p.second)
     compat_parse(s, T; base::Int=10) = Base.parse(s, T, base)
 
+    compat_stdout() = STDOUT
+
     compat_search(s::AbstractString, c::Char) = compat_findfirst(s, c)
 
     const Nothing = Void
     const isnumeric = isnumber
-    const stdout = STDOUT
 
     Base.SubString(s) = SubString(s, 1)
     Base.String(x::SubArray{UInt8,1}) = String(Vector{UInt8}(x))
