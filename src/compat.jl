@@ -1,4 +1,18 @@
-@static if VERSION >= v"0.7.0-DEV.4366"
+
+v06 = v"0.6.2"
+v07 = v"0.7.0-DEV.4366"
+
+supported() = VERSION >= v07 ||
+             (VERSION >= v06 && VERSION < v"0.7.0-DEV")
+
+compat_warn() = warn("""
+    HTTP.jl has not been tested with Julia version $VERSION
+    Supported versions are $v06 and $v07 and above.
+    """)
+
+__init__() = supported() || compat_warn()
+
+@static if VERSION >= v07
 
     using Base64
     import Dates
@@ -13,9 +27,7 @@
 
 else
 
-    if VERSION != v"0.6.2"
-        error("HTTP.jl has not been tested with Julia version $VERSION")
-    end
+    supported() || compat_warn()
 
     eval(:(module Base64 end))
     const Dates = Base.Dates
