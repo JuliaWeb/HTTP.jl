@@ -84,7 +84,7 @@ for sch in ("http", "https")
 
     # chunksize
     #
-    #     FIXME
+    #     https://github.com/JuliaWeb/HTTP.jl/issues/60
     #     Currently httpbin.org responds with 411 status and “Length Required”
     #     message to any POST/PUT requests that are sent using chunked encoding
     #     See https://github.com/kennethreitz/httpbin/issues/340#issuecomment-330176449
@@ -96,12 +96,12 @@ for sch in ("http", "https")
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
     io = open(tmp)
-    @test_broken status(HTTP.post("$sch://httpbin.org/post"; body=io, #=chunksize=2=#)) == 200
+#    @test_broken status(HTTP.post("$sch://httpbin.org/post"; body=io, #=chunksize=2=#)) == 200
     close(io); rm(tmp)
     f = Base.BufferStream()
     write(f, "hey")
     close(f)
-    @test_broken status(HTTP.post("$sch://httpbin.org/post"; body=f, #=chunksize=2=#)) == 200
+#    @test_broken status(HTTP.post("$sch://httpbin.org/post"; body=f, #=chunksize=2=#)) == 200
 
     # multipart
     println("client multipart body")
