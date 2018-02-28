@@ -35,8 +35,8 @@ Contributions are very welcome, as are feature requests and suggestions. Please 
 
 ## Client Examples
 
-[`HTTP.request`](@ref) sends a HTTP Request Message and
-returns a Response Message.
+[`HTTP.request`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.request-Tuple{String,HTTP.URIs.URI,Array{Pair{SubString{String},SubString{String}},1},Any})
+sends a HTTP Request Message and returns a Response Message.
 
 ```julia
 r = HTTP.request("GET", "http://httpbin.org/ip"; verbose=3)
@@ -44,7 +44,8 @@ println(r.status)
 println(String(r.body))
 ```
 
-[`HTTP.open`](@ref) sends a HTTP Request Message and
+[`HTTP.open`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.open)
+sends a HTTP Request Message and
 opens an `IO` stream from which the Response can be read.
 
 ```julia
@@ -57,7 +58,9 @@ end
 
 ## Server Examples
 
-```
+[`HTTP.Servers.listen`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.Servers.listen):
+
+```julia
 HTTP.listen() do http::HTTP.Stream
     @show http.message
     @show HTTP.header(http, "Content-Type")
@@ -70,7 +73,9 @@ HTTP.listen() do http::HTTP.Stream
     write(http, "response body")
     write(http, "more response body")
 end
+```
 
+```julia
 HTTP.listen() do request::HTTP.Request
    @show request
    @show request.method
