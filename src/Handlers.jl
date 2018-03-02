@@ -63,8 +63,8 @@ struct Router <: Handler
     end
 end
 
-const SCHEMES = Dict{String, Val}("http" => Val(:http), "https" => Val(:https))
-const EMPTYVAL = Val(())
+const SCHEMES = Dict{String, Val}("http" => Val{:http}(), "https" => Val{:https}())
+const EMPTYVAL = Val{()}()
 
 """
 HTTP.register!(r::Router, url, handler)

@@ -29,7 +29,7 @@ export Connection, Transaction,
 
 using ..IOExtras
 
-import ..ByteView, ..bytesavailable
+import ..ByteView, ..bytesavailable, ..Nothing
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
@@ -453,7 +453,7 @@ end
 
 function keepalive!(tcp)
     @debug 2 "setting keepalive on tcp socket"
-    err = ccall(:uv_tcp_keepalive, Cint, (Ptr{Cvoid}, Cint, Cuint),
+    err = ccall(:uv_tcp_keepalive, Cint, (Ptr{Nothing}, Cint, Cuint),
                                           tcp.handle, 1, 1)
     err != 0 && error("error setting keepalive on socket")
     return
