@@ -54,7 +54,7 @@ isrecoverable(e, req, retry_non_idempotent) =
     isrecoverable(e) &&
     !(req.body === body_was_streamed) &&
     !(req.response.body === body_was_streamed) &&
-    (retry_non_idempotent || isidempotent(req))
+    (retry_non_idempotent || req.txcount == 0 || isidempotent(req))
     # "MUST NOT automatically retry a request with a non-idempotent method"
     # https://tools.ietf.org/html/rfc7230#section-6.3.1
 

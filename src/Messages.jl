@@ -177,6 +177,8 @@ Represents a HTTP Request Message.
 
 - `response`, the `Response` to this `Request`
 
+- `txcount`, number of times this `Request` has been sent (see RetryRequest.jl).
+
 - `parent`, the `Response` (if any) that led to this request
   (e.g. in the case of a redirect).
    [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
@@ -188,6 +190,7 @@ mutable struct Request <: Message
     headers::Headers
     body::Vector{UInt8}
     response::Response
+    txcount::Int
     parent
 end
 
@@ -201,6 +204,7 @@ function Request(method::String, target, headers=[], body=UInt8[];
                 mkheaders(headers),
                 bytes(body),
                 Response(0),
+                0,
                 parent)
     r.response.request = r
     return r

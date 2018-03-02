@@ -41,13 +41,19 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
         end
     end
 
+    if !isidempotent(request)
+        # Wait for pipelined reads to complete
+        # before sending non-idempotent request body.
+        startread(io)
+    end
+
     aborted = false
     try
 
         @sync begin
+
             if iofunction == nothing
                 @async writebody(http, request, body)
-                yield()
                 startread(http)
                 readbody(http, response, response_stream)
             else
@@ -61,9 +67,10 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
         end
 
     catch e
-        if aborted &&
-           e isa CompositeException &&
-           (ex = first(e.exceptions).ex; isioerror(ex))
+        if e isa CompositeException
+           e = first(e.exceptions).ex
+        end
+        if aborted && isioerror(e)
             @debug 1 "⚠️  $(response.status) abort exception excpeted: $ex"
         else
             rethrow(e)
@@ -87,6 +94,8 @@ function writebody(http::Stream, req::Request, body)
     else
         write(http, req.body)
     end
+
+    req.txcount += 1
 
     if isidempotent(req)
         closewrite(http)
