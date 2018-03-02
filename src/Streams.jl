@@ -158,7 +158,7 @@ https://tools.ietf.org/html/rfc7231#section-6.2.1
 function handle_continue(http::Stream{Response})
     if http.message.status == 100
         @debug 1 "✅  Continue:   $(http.stream)"
-        readheaders(http.stream, http.message)
+#        readheaders(http.stream, http.message)
     end
 
 end

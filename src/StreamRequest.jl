@@ -41,6 +41,13 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
         end
     end
 
+    if hasheader(request, "Expect", "100-continue")
+        startread(http)
+        if response.status != 100
+            @goto done
+        end
+    end
+
     aborted = false
     try
 
@@ -69,6 +76,8 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
             rethrow(e)
         end
     end
+
+    @label done
 
     closewrite(http)
     closeread(http)
