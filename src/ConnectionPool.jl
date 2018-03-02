@@ -462,7 +462,7 @@ end
 function getconnection(::Type{TCPSocket},
                        host::AbstractString,
                        port::AbstractString;
-                       keepalive::Bool=false,
+                       keepalive::Bool=true,
                        kw...)::TCPSocket
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
     @debug 2 "TCP connect: $host:$p..."
