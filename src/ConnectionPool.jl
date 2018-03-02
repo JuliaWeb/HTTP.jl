@@ -451,14 +451,24 @@ function getconnection(::Type{Transaction{T}},
     end
 end
 
+function keepalive!(tcp)
+    @debug 2 "setting keepalive on tcp socket"
+    err = ccall(:uv_tcp_keepalive, Cint, (Ptr{Cvoid}, Cint, Cuint),
+                                          tcp.handle, 1, 1)
+    err != 0 && error("error setting keepalive on socket")
+    return
+end
+
 function getconnection(::Type{TCPSocket},
                        host::AbstractString,
                        port::AbstractString;
+                       keepalive::Bool=false,
                        kw...)::TCPSocket
-
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
     @debug 2 "TCP connect: $host:$p..."
-    connect(getaddrinfo(host), p)
+    tcp = connect(getaddrinfo(host), p)
+    keepalive && keepalive!(tcp)
+    return tcp
 end
 
 const nosslconfig = SSLConfig()
@@ -490,7 +500,7 @@ function getconnection(::Type{SSLContext},
     @debug 2 "SSL connect: $host:$port..."
     io = SSLContext()
     setup!(io, sslconfig)
-    associate!(io, getconnection(TCPSocket, host, port))
+    associate!(io, getconnection(TCPSocket, host, port; kw...))
     hostname!(io, host)
     handshake!(io)
     return io
