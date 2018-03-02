@@ -139,7 +139,9 @@ IOExtras.isreadable(http::Stream) = isreadable(http.stream)
 
 function IOExtras.startread(http::Stream)
 
-    startread(http.stream)
+    if !isreadable(http.stream)
+        startread(http.stream)
+    end
 
     readheaders(http.stream, http.message)
     handle_continue(http)
@@ -160,7 +162,6 @@ function handle_continue(http::Stream{Response})
         @debug 1 "✅  Continue:   $(http.stream)"
         readheaders(http.stream, http.message)
     end
-
 end
 
 function handle_continue(http::Stream{Request})
