@@ -65,7 +65,7 @@ end
 
 @static if isdefined(Base, :_sockname)
     eval(:(module Sockets
-        import Base: TCPSocket, TCPServer, IPAddr, @ip_str,
+        import Base: TCPSocket, TCPServer, IPAddr, @ip_str, DNSError,
             getsockname, getaddrinfo, connect, listen
         end))
     using .Sockets
