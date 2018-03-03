@@ -5,11 +5,14 @@ while nworkers() < 5
     addprocs(1)
 end
 
-@everywhere using HTTP
+@everywhere using HTTP, HTTP.Sockets
 @static if VERSION < v"0.7.0-DEV.2005"
     @everywhere using Base.Test
 else
     @everywhere using Test
+end
+@static if !isdefined(Base, :stdout)
+    const stdout = STDOUT
 end
 
 """
@@ -51,7 +54,7 @@ sleep(2)
 server = HTTP.Servers.Server((req) -> begin
     req.response.body = req.body
     return req.response
-end, STDOUT)
+end, stdout)
 
 server.options.ratelimit=0
 tsk = @async HTTP.Servers.serve(server, "localhost", port)
@@ -83,7 +86,7 @@ r = HTTP.get("http://127.0.0.1:$port/"; readtimeout=30)
 
 
 # large headers
-tcp = connect(ip"127.0.0.1", port)
+tcp = Sockets.connect(ip"127.0.0.1", port)
 x = "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n"
 @show length(x)
 write(tcp, "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n")
@@ -91,14 +94,14 @@ sleep(0.1)
 @test contains(String(read(tcp)), r"HTTP/1.1 413 Request Entity Too Large")
 
 # invalid HTTP
-tcp = connect(ip"127.0.0.1", port)
+tcp = Sockets.connect(ip"127.0.0.1", port)
 sleep(0.1)
 write(tcp, "GET / HTP/1.1\r\n\r\n")
 @test contains(String(read(tcp)), r"HTTP/1.1 400 Bad Request")
 
 
 # no URL
-tcp = connect(ip"127.0.0.1", port)
+tcp = Sockets.connect(ip"127.0.0.1", port)
 write(tcp, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
 sleep(0.1)
 r = String(read(tcp))
@@ -106,7 +109,7 @@ r = String(read(tcp))
 
 
 # Expect: 100-continue
-tcp = connect(ip"127.0.0.1", port)
+tcp = Sockets.connect(ip"127.0.0.1", port)
 write(tcp, "POST / HTTP/1.1\r\nContent-Length: 15\r\nExpect: 100-continue\r\n\r\n")
 sleep(0.1)
 client = String(readavailable(tcp))
@@ -164,7 +167,7 @@ put!(server.in, HTTP.Servers.KILL)
 
 # keep-alive vs. close: issue #81
 port += 1
-tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req) -> (req.response.body = "Hello\n"; req.response), STDOUT), ip"127.0.0.1", port)
+tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req) -> (req.response.body = "Hello\n"; req.response), stdout), ip"127.0.0.1", port)
 sleep(2.0)
 r = HTTP.request("GET", "http://127.0.0.1:$port/", ["Host"=>"127.0.0.1:$port"]; http_version=v"1.0")
 @test r.status == 200

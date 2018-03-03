@@ -46,7 +46,7 @@ HTTP.ParseError
 HTTP.IOError
 ```
 ```
-Base.DNSError
+Sockets.DNSError
 ```
 
 

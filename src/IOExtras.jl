@@ -6,6 +6,8 @@ This module defines extensions to the `Base.IO` interface to support:
 """
 module IOExtras
 
+using ..Sockets
+
 export bytes, ByteView, CodeUnits, IOError, isioerror,
        unread!,
        startwrite, closewrite, startread, closeread,
@@ -110,20 +112,20 @@ start_close_read_write_doc
 closeread(io) = nothing
 
 using MbedTLS: SSLContext
-tcpsocket(io::SSLContext)::TCPSocket = io.bio
-tcpsocket(io::TCPSocket)::TCPSocket = io
+tcpsocket(io::SSLContext)::Sockets.TCPSocket = io.bio
+tcpsocket(io::Sockets.TCPSocket)::Sockets.TCPSocket = io
 
 localport(io) = try !isopen(tcpsocket(io)) ? 0 :
                     VERSION > v"0.7.0-DEV" ?
-                    getsockname(tcpsocket(io))[2] :
-                    Base._sockname(tcpsocket(io), true)[2]
+                    Sockets.getsockname(tcpsocket(io))[2] :
+                    Sockets._sockname(tcpsocket(io), true)[2]
                 catch
                     0
                 end
 
 peerport(io) = try !isopen(tcpsocket(io)) ? 0 :
                   VERSION > v"0.7.0-DEV" ?
-                  getpeername(tcpsocket(io))[2] :
+                  Sockets.getpeername(tcpsocket(io))[2] :
                   Base._sockname(tcpsocket(io), false)[2]
                catch
                    0

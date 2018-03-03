@@ -22,6 +22,7 @@ __init__() = supported() || compat_warn()
     const compat_contains = Base.contains
     const compat_replace = Base.replace
     const compat_parse = Base.parse
+    const compat_string = Base.string
 
     compat_stdout() = stdout
 
@@ -39,6 +40,7 @@ else
     compat_contains(s, r) = Base.ismatch(r, s)
     compat_replace(s, p) = Base.replace(s, p.first, p.second)
     compat_parse(s, T; base::Int=10) = Base.parse(s, T, base)
+    compat_string(s; base::Int=16, pad::Int=0) = hex(s, pad)
 
     compat_stdout() = STDOUT
 
@@ -57,6 +59,18 @@ else
         args = [:(print("|  "); @show $a) for a in args]
         esc(:(println("E- ", $m); $(args...); nothing))
     end
+    Base.fetch(t::Task) = wait(t)
+
+end
+
+@static if isdefined(Base, :_sockname)
+    eval(:(module Sockets
+        import Base: TCPSocket, TCPServer, IPAddr, @ip_str,
+            getsockname, getaddrinfo, connect, listen
+        end))
+    using .Sockets
+else
+    using Sockets
 end
 
 #https://github.com/JuliaWeb/MbedTLS.jl/issues/122

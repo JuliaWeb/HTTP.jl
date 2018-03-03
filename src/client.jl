@@ -156,7 +156,7 @@ function download(url::AbstractString, file; threshold::Int=50000000, verbose::B
             nbytes += write(f, readavailable(body))
             if verbose && nbytes > threshold
                 println("[$(Dates.now())]: downloaded $nbytes bytes...")
-                flush(STDOUT)
+                flush(stdout)
                 threshold += threshold_step
             end
         end

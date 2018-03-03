@@ -43,7 +43,7 @@ using ..IOExtras: bytes
 using ..Parsers: Headers
 using ..Messages: Request, mkheaders, hasheader, header
 
-import ..compat_search, ..compat_replace
+import ..compat_search, ..compat_replace, ..IPAddr
 const replace = compat_replace
 const search = compat_search
 

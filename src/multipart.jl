@@ -54,7 +54,7 @@ function Base.read(f::Form, n::Integer)
 end
 
 function Form(d::Dict)
-    boundary = hex(rand(UInt128))
+    boundary = compat_string(rand(UInt128), base=16)
     data = IO[]
     io = IOBuffer()
     len = length(d)

@@ -1,6 +1,6 @@
 @testset "types.jl" begin
 
-@test HTTP.schemetype(TCPSocket) == HTTP.http
+@test HTTP.schemetype(HTTP.Sockets.TCPSocket) == HTTP.http
 @test HTTP.schemetype(HTTP.TLS.SSLContext) == HTTP.https
 
 @test HTTP.not(nothing)

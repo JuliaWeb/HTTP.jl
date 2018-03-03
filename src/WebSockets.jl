@@ -8,8 +8,7 @@ using ..Streams
 import ..ConnectionPool
 using HTTP: header
 import ..@debug, ..DEBUG_LEVEL, ..@require, ..precondition_error
-
-
+import ..compat_string
 
 const WS_FINAL = 0x80
 const WS_CONTINUATION = 0x00
@@ -21,12 +20,10 @@ const WS_PONG = 0x0A
 
 const WS_MASK = 0x80
 
-
 struct WebSocketError <: Exception
     status::Int16
     message::String
 end
-
 
 struct WebSocketHeader
     opcode::UInt8
@@ -35,7 +32,6 @@ struct WebSocketHeader
     hasmask::Bool
     mask::UInt32
 end
-
 
 mutable struct WebSocket{T <: IO} <: IO
     io::T
@@ -52,8 +48,6 @@ function WebSocket(io::T; server=false, binary=false) where T <: IO
                 UInt8[], UInt8[], false, false)
 end
 
-
-
 # Handshake
 
 function is_upgrade(r::HTTP.Message)
@@ -61,7 +55,6 @@ function is_upgrade(r::HTTP.Message)
     HTTP.hasheader(r, "Connection", "upgrade") &&
     HTTP.hasheader(r, "Upgrade", "websocket")
 end
-
 
 function check_upgrade(http)
 
@@ -76,12 +69,10 @@ function check_upgrade(http)
     end
 end
 
-
 function accept_hash(key)
     hashkey = "$(key)258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     return base64encode(digest(MD_SHA1, hashkey))
 end
-
 
 function open(f::Function, url; binary=false, verbose=false, kw...)
 
@@ -121,7 +112,6 @@ function open(f::Function, url; binary=false, verbose=false, kw...)
     end
 end
 
-
 function listen(f::Function,
                 host::String="localhost", port::UInt16=UInt16(8081);
                 binary=false, verbose=false)
@@ -130,7 +120,6 @@ function listen(f::Function,
         upgrade(f, http; binary=binary)
     end
 end
-
 
 function upgrade(f::Function, http::HTTP.Stream; binary=false)
 
@@ -157,15 +146,11 @@ function upgrade(f::Function, http::HTTP.Stream; binary=false)
     end
 end
 
-
-
 # Sending Frames
-
 
 function Base.unsafe_write(ws::WebSocket, p::Ptr{UInt8}, n::UInt)
     return wswrite(ws, unsafe_wrap(Array, p, n))
 end
-
 
 function Base.write(ws::WebSocket, x1, x2, xs...)
     local n::Int = 0
@@ -178,7 +163,6 @@ function Base.write(ws::WebSocket, x1, x2, xs...)
     return n
 end
 
-
 function IOExtras.closewrite(ws::WebSocket)
     @require !ws.txclosed
     opcode = WS_FINAL | WS_CLOSE
@@ -187,11 +171,9 @@ function IOExtras.closewrite(ws::WebSocket)
     ws.txclosed = true
 end
 
-
 wslength(l) = l < 0x7E ? (UInt8(l), UInt8[]) :
               l <= 0xFFFF ? (0x7E, reinterpret(UInt8, [hton(UInt16(l))])) :
                             (0x7F, reinterpret(UInt8, [hton(UInt64(l))]))
-
 
 wswrite(ws::WebSocket, x) = wswrite(ws, WS_FINAL | ws.frame_type, x)
 
@@ -217,7 +199,6 @@ function wswrite(ws::WebSocket, opcode::UInt8, bytes::AbstractVector{UInt8})
     unsafe_write(ws.io, pointer(txpayload), n)
 end
 
-
 function mask!(to, from, l, mask=rand(UInt8, 4))
     if length(to) < l
         resize!(to, l)
@@ -227,7 +208,6 @@ function mask!(to, from, l, mask=rand(UInt8, 4))
     end
     return mask
 end
-
 
 function Base.close(ws::WebSocket)
     if !ws.txclosed
@@ -239,17 +219,13 @@ function Base.close(ws::WebSocket)
     close(ws.io)
 end
 
-
 Base.isopen(ws::WebSocket) = !ws.rxclosed
-
-
 
 # Receiving Frames
 
 Base.eof(ws::WebSocket) = ws.rxclosed || eof(ws.io)
 
 Base.readavailable(ws::WebSocket) = collect(readframe(ws))
-
 
 function readheader(io::IO)
     b = UInt8[0,0]
@@ -263,7 +239,6 @@ function readheader(io::IO)
         b[2] & WS_MASK > 0,
         b[2] & WS_MASK > 0 ? read(io, UInt32) : UInt32(0))
 end
-
 
 function readframe(ws::WebSocket)
     h = readheader(ws.io)
@@ -317,9 +292,8 @@ function Base.show(io::IO, h::WebSocketHeader)
           h.opcode == WS_PONG ? "PONG" : h.opcode,
           h.final ? " | FINAL, " : ", ",
           h.length > 0 ? "$(Int(h.length))-byte payload" : "",
-          h.hasmask ? ", mask = $(hex(h.mask))" : "",
+          h.hasmask ? ", mask = $(compat_string(h.mask, base=16))" : "",
           ")")
 end
-
 
 end # module WebSockets

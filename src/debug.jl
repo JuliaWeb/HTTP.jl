@@ -1,4 +1,4 @@
-taskid(t=current_task()) = hex(hash(t) & 0xffff, 4)
+taskid(t=current_task()) = compat_string(hash(t) & 0xffff, base=16, pad=4)
 
 macro debug(n::Int, s)
     DEBUG_LEVEL >= n ? :(println("DEBUG: ", taskid(), " ", $(esc(s)))) :
