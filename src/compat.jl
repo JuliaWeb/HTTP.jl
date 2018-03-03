@@ -1,6 +1,6 @@
 
 v06 = v"0.6.2"
-v07 = v"0.7.0-DEV.4366"
+v07 = v"0.7.0-DEV.4456"
 
 supported() = VERSION >= v07 ||
              (VERSION >= v06 && VERSION < v"0.7.0-DEV")
@@ -27,6 +27,7 @@ __init__() = supported() || compat_warn()
     compat_stdout() = stdout
 
     compat_search(s::AbstractString, c::Char) = Base.findfirst(equalto(c), s)
+    using Sockets
 
 else
 
@@ -61,16 +62,11 @@ else
     end
     Base.fetch(t::Task) = wait(t)
 
-end
-
-@static if isdefined(Base, :_sockname)
     eval(:(module Sockets
         import Base: TCPSocket, TCPServer, IPAddr, @ip_str, DNSError,
             getsockname, getaddrinfo, connect, listen
         end))
     using .Sockets
-else
-    using Sockets
 end
 
 #https://github.com/JuliaWeb/MbedTLS.jl/issues/122
