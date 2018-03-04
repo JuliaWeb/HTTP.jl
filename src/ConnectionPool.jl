@@ -142,7 +142,7 @@ function Base.eof(t::Transaction)
     @require isreadable(t) || !isopen(t)
     if bytesavailable(t) > 0
         return false
-    end               ;@debug 4 "eof(::Transaction) -> eof($(typeof(c.io))): $t"
+    end             ;@debug 4 "eof(::Transaction) -> eof($(typeof(t.c.io))): $t"
     return eof(t.c.io)
 end
 
@@ -388,11 +388,18 @@ end
 Remove closed connections from `pool`.
 """
 function purge()
-    isdeletable(c) = (!isopen(c.io) || (c.idle_timeout > 0 &&
-                                       !c.readbusy &&
-                                       !c.writebusy &&
-                                       time()-c.timestamp > c.idle_timeout)) &&
-                     (@debug 1 "🗑  Deleted:        $c"; true)
+
+    for c in pool
+        if c.idle_timeout > 0 &&
+          !c.readbusy &&
+          !c.writebusy &&
+           time() - c.timestamp > c.idle_timeout
+
+            close(c.io)                       ;@debug 1 "⌛️  Timeout:        $c"
+        end
+    end
+
+    isdeletable(c) = !isopen(c.io) && (@debug 1 "🗑  Deleted:        $c"; true)
     deleteat!(pool, map(isdeletable, pool))
 end
 
