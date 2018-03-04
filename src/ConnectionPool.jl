@@ -474,7 +474,7 @@ struct ConnectTimeout <: Exception
     port
 end
 
-function getconnection(::Type{TCPSocket},
+function getconnection(::Type{Sockets.TCP},
                        host::AbstractString,
                        port::AbstractString;
                        keepalive::Bool=false,
