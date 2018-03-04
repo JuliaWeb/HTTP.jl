@@ -107,7 +107,7 @@ Connection(host::AbstractString, port::AbstractString,
                   0, false, Condition(),
                   0)
 
-Connection(io) = Connection("", "", 0, default_pipeline_limit, 0, io)
+Connection(io) = Connection("", "", default_pipeline_limit, 0, io)
 
 Transaction(c::Connection{T}) where T <: IO =
     Transaction{T}(c, (c.sequence += 1))
