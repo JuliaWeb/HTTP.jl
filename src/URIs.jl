@@ -9,9 +9,8 @@ import Base.==
 using ..IOExtras
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
-import ..compat_search, ..compat_contains
+import ..compat_search, ..compat_contains, ..compat_parse, ..compat_string, ..compat_stdout
 import ..isnumeric
-import ..compat_parse
 
 include("parseutils.jl")
 
@@ -243,7 +242,7 @@ showparts(io::IO, uri::URI) =
               "    fragment = \"", uri.fragment, "\"",
                        uri.fragment === absent ? " (absent)" : "", ")\n")
 
-showparts(uri::URI) = showparts(STDOUT, uri)
+showparts(uri::URI) = showparts(compat_stdout(), uri)
 
 Base.print(io::IO, u::URI) = print(io, string(u))
 
@@ -318,7 +317,7 @@ utf8_chars(str::AbstractString) = (Char(c) for c in IOExtras.bytes(str))
 "percent-encode a string, dict, or pair for a uri"
 function escapeuri end
 
-escapeuri(c::Char) = string('%', uppercase(hex(c,2)))
+escapeuri(c::Char) = string('%', uppercase(compat_string(Int(c), base=16, pad=2)))
 escapeuri(str::AbstractString, safe::Function=issafe) =
     join(safe(c) ? c : escapeuri(c) for c in utf8_chars(str))
 

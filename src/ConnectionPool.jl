@@ -11,7 +11,7 @@ struct to manage pipelining and connection reuse and a
 pipelined request. Methods are provided for `eof`, `readavailable`,
 `unsafe_write` and `close`.
 This allows the `Transaction` object to act as a proxy for the
-`TCPSocket` or `SSLContext` that it wraps.
+`Sockets.TCP` or `SSLContext` that it wraps.
 
 The [`pool`](@ref) is a collection of open
 `Connection`s.  The `request` function calls `getconnection` to
@@ -27,7 +27,7 @@ module ConnectionPool
 export Connection, Transaction,
        getconnection, getrawstream, inactiveseconds
 
-using ..IOExtras
+using ..IOExtras, ..Sockets
 
 import ..ByteView, ..bytesavailable, ..Nothing
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
@@ -45,7 +45,7 @@ byteview(bytes)::ByteView = view(bytes, 1:length(bytes))
 """
     Connection{T <: IO}
 
-A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
+A `Sockets.TCP` or `SSLContext` connection to a HTTP `host` and `port`.
 
 Fields:
 - `host::String`
@@ -53,7 +53,7 @@ Fields:
 - `pipeline_limit`, number of requests to send before waiting for responses.
 - `peerport`, remote TCP port number (used for debug messages).
 - `localport`, local TCP port number (used for debug messages).
-- `io::T`, the `TCPSocket` or `SSLContext.
+- `io::T`, the `Sockets.TCP` or `SSLContext.
 - `excess::ByteView`, left over bytes read from the connection after
    the end of a response message. These bytes are probably the start of the
    next response message.
@@ -459,14 +459,14 @@ function keepalive!(tcp)
     return
 end
 
-function getconnection(::Type{TCPSocket},
+function getconnection(::Type{Sockets.TCP},
                        host::AbstractString,
                        port::AbstractString;
                        keepalive::Bool=false,
-                       kw...)::TCPSocket
+                       kw...)::Sockets.TCP
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
     @debug 2 "TCP connect: $host:$p..."
-    tcp = connect(getaddrinfo(host), p)
+    tcp = Sockets.connect(Sockets.getaddrinfo(host), p)
     keepalive && keepalive!(tcp)
     return tcp
 end
@@ -500,7 +500,7 @@ function getconnection(::Type{SSLContext},
     @debug 2 "SSL connect: $host:$port..."
     io = SSLContext()
     setup!(io, sslconfig)
-    associate!(io, getconnection(TCPSocket, host, port; kw...))
+    associate!(io, getconnection(Sockets.TCP, host, port; kw...))
     hostname!(io, host)
     handshake!(io)
     return io

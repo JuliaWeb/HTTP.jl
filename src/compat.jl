@@ -1,6 +1,6 @@
 
 v06 = v"0.6.2"
-v07 = v"0.7.0-DEV.4366"
+v07 = v"0.7.0-DEV.4456"
 
 supported() = VERSION >= v07 ||
              (VERSION >= v06 && VERSION < v"0.7.0-DEV")
@@ -22,10 +22,13 @@ __init__() = supported() || compat_warn()
     const compat_contains = Base.contains
     const compat_replace = Base.replace
     const compat_parse = Base.parse
+    const compat_string = Base.string
 
     compat_stdout() = stdout
 
     compat_search(s::AbstractString, c::Char) = Base.findfirst(equalto(c), s)
+    using Sockets
+    eval(Sockets, :(const TCP = TCPSocket))
 
 else
 
@@ -39,6 +42,7 @@ else
     compat_contains(s, r) = Base.ismatch(r, s)
     compat_replace(s, p) = Base.replace(s, p.first, p.second)
     compat_parse(s, T; base::Int=10) = Base.parse(s, T, base)
+    compat_string(s; base::Int=16, pad::Int=0) = hex(s, pad)
 
     compat_stdout() = STDOUT
 
@@ -57,6 +61,14 @@ else
         args = [:(print("|  "); @show $a) for a in args]
         esc(:(println("E- ", $m); $(args...); nothing))
     end
+    Base.fetch(t::Task) = wait(t)
+
+    eval(:(module Sockets
+        import Base: TCPSocket, TCPServer, IPAddr, @ip_str, DNSError,
+            getsockname, getaddrinfo, connect, listen, DNSError
+        const TCP = TCPSocket
+        end))
+    using .Sockets
 end
 
 #https://github.com/JuliaWeb/MbedTLS.jl/issues/122

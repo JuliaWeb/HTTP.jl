@@ -1,6 +1,6 @@
 include("compat.jl")
 using HTTP
-using HTTP.IOExtras
+using HTTP.IOExtras, HTTP.Sockets
 
 @testset "WebSockets" begin
 
@@ -37,7 +37,7 @@ end
 
 sleep(2)
 
-info("Testing local server...")
+println("Testing local server...")
 HTTP.WebSockets.open("ws://127.0.0.1:$(p)") do ws
     write(ws, "Foo")
     @test String(readavailable(ws)) == "Foo"

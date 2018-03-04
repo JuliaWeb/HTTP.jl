@@ -5,7 +5,8 @@ using ..Streams
 using ..Messages
 using ..Parsers
 using ..ConnectionPool
-import ..@info, ..@warn, ..@error, ..@debug, ..@debugshow, ..DEBUG_LEVEL
+using ..Sockets
+import ..@info, ..@warn, ..@error, ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..compat_stdout
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
 if !isdefined(Base, :Nothing)
@@ -70,7 +71,7 @@ ServerOptions(; sslconfig::HTTP.MbedTLS.SSLConfig=HTTP.MbedTLS.SSLConfig(true),
     ServerOptions(sslconfig, readtimeout, ratelimit, support100continue, chunksize, logbody)
 
 """
-    Server(handler, logger::IO=STDOUT; kwargs...)
+    Server(handler, logger::IO=stdout; kwargs...)
 
 An http/https server. Supports listening on a `host` and `port` via the `HTTP.serve(server, host, port)` function.
 `handler` is a function of the form `f(::Request, ::Response) -> HTTP.Response`, i.e. it takes both a `Request` and pre-built `Response`
@@ -95,7 +96,7 @@ mutable struct Server{T <: Scheme, H <: HTTP.Handler}
     out::Channel{Any}
     options::ServerOptions
 
-    Server{T, H}(handler::H, logger::IO=STDOUT, ch=Channel(1), ch2=Channel(1),
+    Server{T, H}(handler::H, logger::IO=compat_stdout(), ch=Channel(1), ch2=Channel(1),
                  options=ServerOptions()) where {T, H} =
         new{T, H}(handler, logger, ch, ch2, options)
 end
@@ -117,7 +118,7 @@ end
 function check_rate_limit(tcp;
                           ratelimits=nothing,
                           ratelimit::Rational{Int}=Int(10)//Int(1), kw...)
-    ip = getsockname(tcp)[1]
+    ip = Sockets.getsockname(tcp)[1]
     rate = Float64(ratelimit.num)
     rl = get!(ratelimits, ip, RateLimit(rate, Dates.now()))
     update!(rl, ratelimit)
@@ -139,7 +140,7 @@ end
 
 function serve(server::Server{T, H}, host, port, verbose) where {T, H}
 
-    tcpserver = Ref{Base.TCPServer}()
+    tcpserver = Ref{Sockets.TCPServer}()
 
     @async begin
         while !isassigned(tcpserver)
@@ -167,9 +168,9 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
     return
 end
 
-Server(h::Function, l::IO=STDOUT; cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
+Server(h::Function, l::IO=compat_stdout(); cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
 function Server(handler::H=HTTP.HandlerFunction(req -> HTTP.Response(200, "Hello World!")),
-               logger::IO=STDOUT;
+                logger::IO=compat_stdout();
                cert::String="",
                key::String="",
                args...) where {H <: HTTP.Handler}
@@ -196,7 +197,7 @@ function serve end
 serve(server::Server, host=ip"127.0.0.1", port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
 function serve(host::IPAddr, port::Int,
                    handler=req -> HTTP.Response(200, "Hello World!"),
-                   logger::I=STDOUT;
+                   logger::I=compat_stdout();
                    cert::String="",
                    key::String="",
                    verbose::Bool=true,
@@ -207,7 +208,7 @@ end
 serve(; host::IPAddr=ip"127.0.0.1",
         port::Int=8081,
         handler=req -> HTTP.Response(200, "Hello World!"),
-        logger::IO=STDOUT,
+        logger::IO=compat_stdout(),
         cert::String="",
         key::String="",
         verbose::Bool=true,
@@ -242,11 +243,11 @@ Optional keyword arguments:
  - `pipeline_limit = 16`, number of concurrent requests per connection.
  - `reuse_limit = nolimit`, number of times a connection is allowed to be reused
                             after the first request.
- - `tcpisvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
+ - `tcpisvalid::Function (::Sockets.TCP) -> Bool`, check accepted connection before
     processing requests. e.g. to implement source IP filtering, rate-limiting,
     etc.
- - `tcpref::Ref{Base.TCPServer}`, this reference is set to the underlying
-                                  `TCPServer`. e.g. to allow closing the server.
+ - `tcpref::Ref{Sockets.TCPServer}`, this reference is set to the underlying
+                                  `Sockets.TCPServer`. e.g. to allow closing the server.
 
 e.g.
 ```
@@ -279,7 +280,7 @@ function listen(f::Function,
                 sslconfig::SSLConfig=nosslconfig,
                 pipeline_limit::Int=ConnectionPool.default_pipeline_limit,
                 tcpisvalid::Function=(tcp; kw...)->true,
-                tcpref::Ref{Base.TCPServer}=Ref{Base.TCPServer}(),
+                tcpref::Ref{Sockets.TCPServer}=Ref{Sockets.TCPServer}(),
                 kw...)
 
     if sslconfig === nosslconfig
@@ -287,7 +288,7 @@ function listen(f::Function,
     end
 
     @info "Listening on: $host:$port"
-    tcpserver = Base.listen(getaddrinfo(host), port)
+    tcpserver = Sockets.listen(Sockets.getaddrinfo(host), port)
 
     tcpref[] = tcpserver
 

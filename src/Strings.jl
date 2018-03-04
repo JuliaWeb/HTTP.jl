@@ -2,7 +2,8 @@ module Strings
 
 export escapehtml, tocameldash, iso8859_1_to_utf8
 
-using ..IOExtras, ..compat_replace
+using ..IOExtras 
+import ..compat_replace
 
 """
 escapeHTML(i::String)

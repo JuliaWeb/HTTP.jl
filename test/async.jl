@@ -7,6 +7,10 @@ using MbedTLS: digest, MD_MD5, MD_SHA256
 using HTTP.IOExtras
 using HTTP: request
 
+@static if !isdefined(Base, :stdout)
+    const stdout = STDOUT
+end
+
 println("async tests")
 
 stop_pool_dump = false
@@ -36,7 +40,7 @@ end
         run(`open http://localhost:8081`)
     catch e
         while !stop_pool_dump
-            HTTP.ConnectionPool.showpool(STDOUT)
+            HTTP.ConnectionPool.showpool(stdout)
             sleep(1)
         end
     end
@@ -209,7 +213,7 @@ println("running async $count, 1:$num, $config, $http A")
         @test a == b
     end
 
-    HTTP.ConnectionPool.showpool(STDOUT)
+    HTTP.ConnectionPool.showpool(stdout)
     HTTP.ConnectionPool.closeall()
 
     result = []
@@ -235,7 +239,7 @@ println("running async $count, 1:$num, $config, $http B")
         @test a == b
     end
 
-    HTTP.ConnectionPool.showpool(STDOUT)
+    HTTP.ConnectionPool.showpool(stdout)
     HTTP.ConnectionPool.closeall()
 
     result = []
@@ -289,7 +293,7 @@ println("running async $count, 1:$num, $config, $http C")
                                 end
                                 buf = IOBuffer()
                                 println(buf, "$i retry $e $attempt...")
-                                write(STDOUT, take!(buf))
+                                write(stdout, take!(buf))
                                 sleep(0.1)
                             end
                         end
@@ -326,7 +330,7 @@ println("running async $count, 1:$num, $config, $http C")
         @test a == b
     end
 
-    HTTP.ConnectionPool.showpool(STDOUT)
+    HTTP.ConnectionPool.showpool(stdout)
     HTTP.ConnectionPool.closeall()
 
 
@@ -338,6 +342,6 @@ end # testset
 
 stop_pool_dump=true
 
-HTTP.ConnectionPool.showpool(STDOUT)
+HTTP.ConnectionPool.showpool(stdout)
 
 println("async tests done")

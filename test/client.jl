@@ -22,7 +22,7 @@ for sch in ("http", "https")
 
     # Testing within tasks, see https://github.com/JuliaWeb/HTTP.jl/issues/18
     println("async client request")
-    @test status(wait(@schedule HTTP.get("$sch://httpbin.org/ip"))) == 200
+    @test status(fetch(@schedule HTTP.get("$sch://httpbin.org/ip"))) == 200
 
     @test status(HTTP.get("$sch://httpbin.org/encoding/utf8")) == 200
 
@@ -154,11 +154,11 @@ for sch in ("http", "https")
         f = Base.BufferStream()
         write(f, "hey")
         t = @async HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false)
-        #wait(f) # wait for the async call to write it's first data
+        #fetch(f) # fetch for the async call to write it's first data
         write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
         write(f, "sailor")
         close(f) # setting eof on f causes the async request to send a final chunk and return the response
-        @test status(wait(t)) == 200
+        @test status(fetch(t)) == 200
     end
 
     # redirects

@@ -3,7 +3,12 @@ using HTTP
 using HTTP.IOExtras
 using HTTP.Parsers
 using HTTP.Messages
+using HTTP.Sockets
 using HTTP.MessageRequest: bodylength
+
+@static if !isdefined(Base, :stdout)
+    const stdout = STDOUT
+end
 
 mutable struct FunctionIO <: IO
     f::Function
@@ -144,7 +149,7 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
     return n
 end
 
-HTTP.IOExtras.tcpsocket(::Loopback) = TCPSocket()
+HTTP.IOExtras.tcpsocket(::Loopback) = Sockets.TCPSocket()
 
 function HTTP.ConnectionPool.getconnection(::Type{Loopback},
                                            host::AbstractString,
@@ -191,7 +196,7 @@ lbopen(f, req, headers) =
                               HTTP.bytes("World!")]);
     @test String(r.body) == "Hello World!"
 
-    HTTP.ConnectionPool.showpool(STDOUT)
+    HTTP.ConnectionPool.showpool(stdout)
 
     body = nothing
     body_sent = false
@@ -257,7 +262,7 @@ lbopen(f, req, headers) =
     @test hello_sent
     @test !world_sent
 
-    HTTP.ConnectionPool.showpool(STDOUT)
+    HTTP.ConnectionPool.showpool(stdout)
 
     function async_test(m=["GET","GET","GET","GET","GET"];kw...)
         r1 = nothing
