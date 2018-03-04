@@ -112,8 +112,8 @@ start_close_read_write_doc
 closeread(io) = nothing
 
 using MbedTLS: SSLContext
-tcpsocket(io::SSLContext)::Sockets.TCPSocket = io.bio
-tcpsocket(io::Sockets.TCPSocket)::Sockets.TCPSocket = io
+tcpsocket(io::SSLContext)::Sockets.TCP = io.bio
+tcpsocket(io::Sockets.TCP)::Sockets.TCP = io
 
 localport(io) = try !isopen(tcpsocket(io)) ? 0 :
                     VERSION > v"0.7.0-DEV" ?

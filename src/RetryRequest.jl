@@ -2,17 +2,11 @@ module RetryRequest
 
 import ..HTTP
 import ..Layer, ..request
+using ..Sockets
 using ..IOExtras
 using ..MessageRequest
 using ..Messages
 import ..@debug, ..DEBUG_LEVEL
-
-@static if isdefined(Base, :DNSError)
-    import Base: DNSError
-else
-    using Sockets
-    import Sockets: DNSError
-end
 
 """
     request(RetryLayer, ::URI, ::Request, body) -> HTTP.Response
@@ -52,7 +46,7 @@ end
 
 isrecoverable(e) = false
 isrecoverable(e::IOError) = true
-isrecoverable(e::DNSError) = true
+isrecoverable(e::Sockets.DNSError) = true
 isrecoverable(e::HTTP.StatusError) = e.status == 403 || # Forbidden
                                      e.status == 408 || # Timeout
                                      e.status >= 500    # Server Error
