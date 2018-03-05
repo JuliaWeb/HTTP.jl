@@ -498,23 +498,26 @@ function getconnection(::Type{Sockets.TCP},
         return tcp
     end
 
-    # FIXME this currently causes the Julia runtime to hang on exit...
-    result = Ref{TCPSocket}()
-    error = Ref{Any}()
-    @schedule try
-        result[] = Sockets.connect(Sockets.getaddrinfo(host), p)
-    catch e
-        error[] = e
+    tcp = Sockets.TCPSocket()
+    Base.connect!(tcp, Sockets.getaddrinfo(host), p)
+    yield()
+
+    # sum(delays) ~= connect_timeout
+    delays = ExponentialBackOff(n=connect_timeout + 10,
+                                first_delay=0.001,
+                                factor=1.871,
+                                max_delay=1)
+    for d in delays
+        if tcp.status != Base.StatusConnecting
+            Base.check_open(tcp)
+            keepalive && keepalive!(tcp)
+            return tcp
+        end
+        sleep(d)
     end
-    sleep(connect_timeout)
-    if isassigned(error)
-        throw(error[])
-    end
-    if !isassigned(result)
-        throw(ConnectTimeout(host, port))
-    end
-    keepalive && keepalive!(result[])
-    return result[]
+
+    ccall(:jl_forceclose_uv, Void, (Ptr{Void},), tcp.handle)
+    throw(ConnectTimeout(host, port))
 end
 
 const nosslconfig = SSLConfig()
