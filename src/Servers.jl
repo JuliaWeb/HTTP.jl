@@ -243,7 +243,7 @@ Optional keyword arguments:
  - `pipeline_limit = 16`, number of concurrent requests per connection.
  - `reuse_limit = nolimit`, number of times a connection is allowed to be reused
                             after the first request.
- - `tcpisvalid::Function (::Sockets.TCP) -> Bool`, check accepted connection before
+ - `tcpisvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
     processing requests. e.g. to implement source IP filtering, rate-limiting,
     etc.
  - `tcpref::Ref{Sockets.TCPServer}`, this reference is set to the underlying

@@ -23,7 +23,7 @@ abstract type ConnectionPoolLayer{Next <: Layer} <: Layer end
 export ConnectionPoolLayer
 
 function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
-                 socket_type::Type=Sockets.TCP, kw...) where Next
+                 socket_type::Type=TCPSocket, kw...) where Next
 
     IOType = ConnectionPool.Transaction{sockettype(url, socket_type)}
     io = getconnection(IOType, url.host, url.port; kw...)

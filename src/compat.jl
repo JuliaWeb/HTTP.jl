@@ -28,7 +28,6 @@ __init__() = supported() || compat_warn()
 
     compat_search(s::AbstractString, c::Char) = Base.findfirst(equalto(c), s)
     using Sockets
-    eval(Sockets, :(const TCP = TCPSocket))
 
 else
 
@@ -64,9 +63,9 @@ else
     Base.fetch(t::Task) = wait(t)
 
     eval(:(module Sockets
+        export TCPSocket
         import Base: TCPSocket, TCPServer, IPAddr, @ip_str, DNSError,
             getsockname, getaddrinfo, connect, listen, DNSError
-        const TCP = TCPSocket
         end))
     using .Sockets
 end
