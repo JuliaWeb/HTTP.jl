@@ -500,24 +500,27 @@ function getconnection(::Type{Sockets.TCP},
 
     tcp = Sockets.TCPSocket()
     Base.connect!(tcp, Sockets.getaddrinfo(host), p)
-    yield()
 
-    # sum(delays) ~= connect_timeout
-    delays = ExponentialBackOff(n=connect_timeout + 10,
-                                first_delay=0.001,
-                                factor=1.871,
-                                max_delay=1)
-    for d in delays
-        if tcp.status != Base.StatusConnecting
-            Base.check_open(tcp)
-            keepalive && keepalive!(tcp)
-            return tcp
+    timeout = Ref{Bool}(false)
+    @schedule begin
+        sleep(connect_timeout)
+        if tcp.status == Base.StatusConnecting
+            timeout[] = true
+            ccall(:jl_forceclose_uv, Void, (Ptr{Void},), tcp.handle)
+            #close(tcp)
         end
-        sleep(d)
+    end
+    try
+        Base.wait_connected(tcp)
+    catch e
+        if timeout[]
+            throw(ConnectTimeout(host, port))
+        end
+        rethrow(e)
     end
 
-    ccall(:jl_forceclose_uv, Void, (Ptr{Void},), tcp.handle)
-    throw(ConnectTimeout(host, port))
+    keepalive && keepalive!(tcp)
+    return tcp
 end
 
 const nosslconfig = SSLConfig()
