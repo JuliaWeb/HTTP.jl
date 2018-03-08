@@ -23,7 +23,6 @@ function request(::Type{MessageLayer{Next}},
                  method::String, url::URI, headers::Headers, body;
                  http_version=v"1.1",
                  target=resource(url),
-                 proxy=nothing,
                  parent=nothing, iofunction=nothing, kw...) where Next
 
     defaultheader(headers, "Host" => url.host)
@@ -37,11 +36,6 @@ function request(::Type{MessageLayer{Next}},
         elseif method == "GET" && iofunction isa Function
             setheader(headers, "Content-Length" => "0")
         end
-    end
-
-    if proxy != nothing
-        target = string(url)
-        url = URI(proxy)
     end
 
     req = Request(method, target, headers, bodybytes(body);
