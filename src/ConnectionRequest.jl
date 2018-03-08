@@ -38,18 +38,8 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     io = getconnection(IOType, url.host, url.port; kw...)
 
     try
-
         if proxy != nothing && target_url.scheme == "https"
-            target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
-            @debug 1 "📡  CONNECT HTTPS tunnel to $target"
-            r = Request("CONNECT", target)
-            writeheaders(io, r)
-            startread(io)
-            readheaders(io, r.response)
-            if r.response.status != 200
-                return r
-            end
-            io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+            return tunnel_request(Next, io, target_url, req, body; kw...)
         end
 
         return request(Next, io, req, body; kw...)
@@ -66,6 +56,27 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
 
 end
 
-sockettype(url::URI, default) = url.scheme in ("wss", "https") ? SSLContext : default
+sockettype(url::URI, default) = url.scheme in ("wss", "https") ? SSLContext :
+                                                                 default
+
+function tunnel_request(Next, io, target_url, req, body; kw...)
+    r = connect_tunnel(io, target_url)
+    if r.status != 200
+        return r
+    end
+    io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+    return request(Next, io, req, body; kw...)
+end
+
+function connect_tunnel(io, target_url)
+    target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
+    @debug 1 "📡  CONNECT HTTPS tunnel to $target"
+    request = Request("CONNECT", target)
+    writeheaders(io, request)
+    startread(io)
+    readheaders(io, request.response)
+    return request.response
+end
+
 
 end # module ConnectionRequest
