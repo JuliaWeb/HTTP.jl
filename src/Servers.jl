@@ -1,5 +1,6 @@
 module Servers
 
+using ..BufferedLogs
 using ..IOExtras
 using ..Streams
 using ..Messages
@@ -8,6 +9,7 @@ using ..ConnectionPool
 using ..Sockets
 import ..@info, ..@warn, ..@error, ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..compat_stdout
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
+using Logging
 
 if !isdefined(Base, :Nothing)
     const Nothing = Void
@@ -194,13 +196,13 @@ By default, `HTTP.serve` aims to "never die", catching and recovering from all i
 """
 function serve end
 
-serve(server::Server, host=ip"127.0.0.1", port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
+serve(server::Server, host=ip"127.0.0.1", port=8081; verbose::Bool=false) = serve(server, host, port, verbose)
 function serve(host::IPAddr, port::Int,
                    handler=req -> HTTP.Response(200, "Hello World!"),
                    logger::I=compat_stdout();
                    cert::String="",
                    key::String="",
-                   verbose::Bool=true,
+                   verbose::Bool=false,
                    args...) where {I}
     server = Server(handler, logger; cert=cert, key=key, args...)
     return serve(server, host, port, verbose)
@@ -211,7 +213,7 @@ serve(; host::IPAddr=ip"127.0.0.1",
         logger::IO=compat_stdout(),
         cert::String="",
         key::String="",
-        verbose::Bool=true,
+        verbose::Bool=false,
         args...) =
     serve(host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
 
@@ -310,14 +312,20 @@ function listen(f::Function,
             end
             io = ssl ? getsslcontext(io, sslconfig) : io
             let io = Connection(host, string(port), pipeline_limit, io)
-                @info "Accept:  $io"
-                @async try
-                    handle_connection(f, io; kw...)
-                catch e
-                    @error "Error:   $io" e catch_stacktrace()
-                finally
-                    close(io)
-                    @info "Closed:  $io"
+                @schedule begin
+                    logger = BufferedLogger()
+                    Logging.with_logger(logger) do
+                        @info "Accept:  $io"
+                        try
+                            handle_connection(f, io; kw...)
+                        catch e
+                            @error "Error:   $io" e catch_stacktrace()
+                        finally
+                            close(io)
+                            @info "Closed:  $io"
+                        end
+                    end
+                    flush(logger)
                 end
             end
         end
@@ -361,6 +369,7 @@ function handle_connection(f::Function, c::Connection;
         count = 0
         while isopen(c)
             io = Transaction(c)
+            @info "new Transaction $io"
             handle_transaction(f, io; final_transaction=(count == reuse_limit),
                                       kw...)
             if count == reuse_limit
@@ -419,7 +428,8 @@ function handle_transaction(f::Function, t::Transaction;
         setheader(response, "Connection" => "close")
     end
 
-    @async try
+    @schedule try
+        @info "new Stream $http"
         handle_stream(f, http)
     catch e
         if isioerror(e)

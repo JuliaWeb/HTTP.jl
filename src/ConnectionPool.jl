@@ -65,6 +65,7 @@ Fields:
 - `timestamp`, time data was last recieved.
 """
 mutable struct Connection{T <: IO}
+    id::Int
     host::String
     port::String
     pipeline_limit::Int
@@ -94,9 +95,11 @@ struct Transaction{T <: IO} <: IO
     sequence::Int
 end
 
+const CONNECTION_COUNTER = Ref{Int}(0)
+
 Connection(host::AbstractString, port::AbstractString,
            pipeline_limit::Int, io::T) where T <: IO =
-    Connection{T}(host, port, pipeline_limit,
+    Connection{T}((CONNECTION_COUNTER[] += 1), host, port, pipeline_limit,
                   peerport(io), localport(io),
                   io, nobytes,
                   -1,
@@ -509,7 +512,7 @@ end
 function Base.show(io::IO, c::Connection)
     nwaiting = bytesavailable(tcpsocket(c.io))
     print(
-        io,
+        io, "C$(c.id)  ",
         tcpstatus(c), " ",
         lpad(c.writecount,3),"↑", c.writebusy ? "🔒  " : "   ",
         lpad(c.readcount,3), "↓", c.readbusy ? "🔒   " : "    ",
