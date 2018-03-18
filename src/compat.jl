@@ -1,6 +1,6 @@
 
 v06 = v"0.6.2"
-v07 = v"0.7.0-DEV.4456"
+v07 = v"0.7.0-DEV.4616"
 
 supported() = VERSION >= v07 ||
              (VERSION >= v06 && VERSION < v"0.7.0-DEV")
@@ -26,8 +26,10 @@ __init__() = supported() || compat_warn()
 
     compat_stdout() = stdout
 
-    compat_search(s::AbstractString, c::Char) = Base.findfirst(equalto(c), s)
+    compat_search(s::AbstractString, c::Char) = Base.findfirst(isequal(c), s)
     using Sockets
+
+    sprintcompact(x) = sprint(show, x; context=:compact => true)
 
 else
 
@@ -68,6 +70,8 @@ else
             getsockname, getaddrinfo, connect, listen, DNSError
         end))
     using .Sockets
+
+    sprintcompact(x) = sprint(showcompact, x)
 end
 
 #https://github.com/JuliaWeb/MbedTLS.jl/issues/122

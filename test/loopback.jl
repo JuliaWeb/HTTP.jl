@@ -112,14 +112,14 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
 
     on_headers(lb) do req
 
-        println("📡  $(sprint(showcompact, req))")
-        push!(server_events, "Request: $(sprint(showcompact, req))")
+        println("📡  $(HTTP.sprintcompact(req))")
+        push!(server_events, "Request: $(HTTP.sprintcompact(req))")
 
         if req.target == "/abort"
             reset(lb)
             response = HTTP.Response(403, ["Connection" => "close",
                                           "Content-Length" => 0]; request=req)
-            push!(server_events, "Response: $(sprint(showcompact, response))")
+            push!(server_events, "Response: $(HTTP.sprintcompact(response))")
             write(lb.io, response)
         end
     end
@@ -130,18 +130,18 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
         response = HTTP.Response(200, ["Content-Length" => l],
                                       body = req.body; request=req)
         if req.target == "/echo"
-            push!(server_events, "Response: $(sprint(showcompact, response))")
+            push!(server_events, "Response: $(HTTP.sprintcompact(response))")
             write(lb.io, response)
         elseif (m = match(r"^/delay([0-9]*)$", req.target)) != nothing
             t = parse(Int, first(m.captures))
             sleep(t/10)
-            push!(server_events, "Response: $(sprint(showcompact, response))")
+            push!(server_events, "Response: $(HTTP.sprintcompact(response))")
             write(lb.io, response)
         else
             response = HTTP.Response(403,
                                      ["Connection" => "close",
                                       "Content-Length" => 0]; request=req)
-            push!(server_events, "Response: $(sprint(showcompact, response))")
+            push!(server_events, "Response: $(HTTP.sprintcompact(response))")
             write(lb.io, response)
         end
     end

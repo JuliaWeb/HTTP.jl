@@ -16,11 +16,11 @@ end
 
 macro debugshort(n::Int, s)
     DEBUG_LEVEL >= n ? :(println("DEBUG: ", taskid(), " ",
-                                 sprint(showcompact, $(esc(s))))) :
+                                 sprintcompact($(esc(s))))) :
                        :()
 end
 
-printlncompact(x) = println(sprint(showcompact, x))
+printlncompact(x) = println(sprintcompact(x))
 
 
 @noinline function precondition_error(msg, frame)

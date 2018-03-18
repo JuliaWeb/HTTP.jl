@@ -251,7 +251,7 @@ end
 else
 
     find_delim(bytes, d::UInt8) =
-        (i = findfirst(equalto(d), bytes)) == nothing ? 0 : i
+        (i = findfirst(isequal(d), bytes)) == nothing ? 0 : i
 
     function Base.readuntil(http::Stream, delim::UInt8; keep::Bool=false)
         bytes = readuntil(http, bytes->find_delim(bytes, delim))
