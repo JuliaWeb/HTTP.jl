@@ -211,7 +211,7 @@ else
 Find `\\n` in `bytes`
 """
 find_end_of_line(bytes::AbstractVector{UInt8}) =
-    (i = findfirst(equalto(UInt8('\n')), bytes)) == nothing ? 0 : i
+    (i = findfirst(isequal(UInt8('\n')), bytes)) == nothing ? 0 : i
 end
 
 """

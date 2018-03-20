@@ -6,7 +6,7 @@ using ..Messages
 using ..Streams
 import ..ConnectionPool
 using ..MessageRequest
-import ..@debug, ..DEBUG_LEVEL, ..printlncompact
+import ..@debug, ..DEBUG_LEVEL, ..printlncompact, ..sprintcompact
 
 """
     request(StreamLayer, ::IO, ::Request, body) -> HTTP.Response
@@ -37,7 +37,7 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
     if verbose == 2
         println(request)
         if iofunction == nothing && request.body === body_is_a_stream
-            println("$(typeof(request)).body: $(sprint(showcompact, body))")
+            println("$(typeof(request)).body: $(sprintcompact(body))")
         end
     end
 

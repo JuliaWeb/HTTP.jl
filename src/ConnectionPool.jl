@@ -11,7 +11,7 @@ struct to manage pipelining and connection reuse and a
 pipelined request. Methods are provided for `eof`, `readavailable`,
 `unsafe_write` and `close`.
 This allows the `Transaction` object to act as a proxy for the
-`Sockets.TCP` or `SSLContext` that it wraps.
+`TCPSocket` or `SSLContext` that it wraps.
 
 The [`pool`](@ref) is a collection of open
 `Connection`s.  The `request` function calls `getconnection` to
@@ -45,7 +45,7 @@ byteview(bytes)::ByteView = view(bytes, 1:length(bytes))
 """
     Connection{T <: IO}
 
-A `Sockets.TCP` or `SSLContext` connection to a HTTP `host` and `port`.
+A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 
 Fields:
 - `host::String`
@@ -54,7 +54,7 @@ Fields:
 - `idle_timeout`, No. of sconds to maintain connection after last transaction.
 - `peerport`, remote TCP port number (used for debug messages).
 - `localport`, local TCP port number (used for debug messages).
-- `io::T`, the `Sockets.TCP` or `SSLContext.
+- `io::T`, the `TCPSocket` or `SSLContext.
 - `excess::ByteView`, left over bytes read from the connection after
    the end of a response message. These bytes are probably the start of the
    next response message.
@@ -187,8 +187,15 @@ Push bytes back into a connection's `excess` buffer
 function IOExtras.unread!(t::Transaction, bytes::ByteView)
     @require isreadable(t)
     @require !isempty(bytes)
-    @require t.c.excess === nobytes
-    t.c.excess = bytes
+    @require t.c.excess === nobytes || bytes.parent == t.c.excess.parent &&
+                                       bytes.indexes[1].stop + 1 ==
+                                       t.c.excess.indexes[1].start
+    if t.c.excess === nobytes
+        t.c.excess = bytes
+    else
+        t.c.excess = view(bytes.parent,
+                          bytes.indexes[1].start:t.c.excess.indexes[1].stop)
+    end
     return
 end
 
@@ -481,7 +488,7 @@ struct ConnectTimeout <: Exception
     port
 end
 
-function getconnection(::Type{Sockets.TCP},
+function getconnection(::Type{TCPSocket},
                        host::AbstractString,
                        port::AbstractString;
                        keepalive::Bool=false,
@@ -541,6 +548,15 @@ end
 function getconnection(::Type{SSLContext},
                        host::AbstractString,
                        port::AbstractString;
+                       kw...)::SSLContext
+
+    port = isempty(port) ? "443" : port
+    @debug 2 "SSL connect: $host:$port..."
+    tcp = getconnection(TCPSocket, host, port; kw...)
+    return sslconnection(tcp, host; kw...)
+end
+
+function sslconnection(tcp::TCPSocket, host::AbstractString;
                        require_ssl_verification::Bool=true,
                        sslconfig::SSLConfig=nosslconfig,
                        kw...)::SSLContext
@@ -549,14 +565,19 @@ function getconnection(::Type{SSLContext},
         sslconfig = global_sslconfig(require_ssl_verification)
     end
 
-    port = isempty(port) ? "443" : port
-    @debug 2 "SSL connect: $host:$port..."
     io = SSLContext()
     setup!(io, sslconfig)
-    associate!(io, getconnection(Sockets.TCP, host, port; kw...))
+    associate!(io, tcp)
     hostname!(io, host)
     handshake!(io)
     return io
+end
+
+function sslupgrade(t::Transaction{TCPSocket},
+                    host::AbstractString; kw...)::Transaction{SSLContext}
+    tls = sslconnection(t.c.io, host; kw...)
+    c = Connection(tls)
+    return client_transaction(c)
 end
 
 function Base.show(io::IO, c::Connection)

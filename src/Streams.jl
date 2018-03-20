@@ -223,7 +223,44 @@ function Base.readavailable(http::Stream)::ByteView
     return bytes
 end
 
-IOExtras.unread!(http::Stream, excess) = unread!(http.stream, excess)
+function IOExtras.unread!(http::Stream, excess)
+
+    if http.readchunked && http.ntoread == unknown_length
+        # If the whole chunk was read, unread! needs to push
+        # back the CRLF that came after the chunk data
+        # (See readavailable above).
+        excess = view(excess.parent, excess.indexes[1].start:
+                                     excess.indexes[1].stop + 2)
+        http.ntoread = length(excess)
+
+    elseif http.ntoread != unknown_length
+        http.ntoread += length(excess)
+    end
+
+    unread!(http.stream, excess)
+end
+
+@static if VERSION < v"0.7.0-DEV.2005"
+
+    find_delim(bytes, d::UInt8) = findfirst(x->x==d, bytes)
+
+    Base.readuntil(http::Stream, delim::UInt8) =
+        Vector{UInt8}(readuntil(http, bytes->find_delim(bytes, delim)))
+                # See readuntil(::IO, ::Function) in IOExtras.jl
+
+else
+
+    find_delim(bytes, d::UInt8) =
+        (i = findfirst(isequal(d), bytes)) == nothing ? 0 : i
+
+    function Base.readuntil(http::Stream, delim::UInt8; keep::Bool=false)
+        bytes = readuntil(http, bytes->find_delim(bytes, delim))
+        if keep == false
+            bytes = view(bytes, 1:length(bytes)-1)
+        end
+        return Vector{UInt8}(bytes)
+    end
+end
 
 function Base.read(http::Stream)
     buf = IOBuffer()
