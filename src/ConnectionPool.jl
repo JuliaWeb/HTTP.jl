@@ -493,7 +493,7 @@ function getconnection(::Type{TCPSocket},
                        port::AbstractString;
                        keepalive::Bool=false,
                        connect_timeout::Int=0,
-                       kw...)::Sockets.TCP
+                       kw...)::TCPSocket
 
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
 
