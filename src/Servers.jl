@@ -309,7 +309,7 @@ function listen(f::Function,
                 continue
             end
             io = ssl ? getsslcontext(io, sslconfig) : io
-            let io = Connection(host, string(port), pipeline_limit, io)
+            let io = Connection(host, string(port), pipeline_limit, 0, io)
                 @info "Accept:  $io"
                 @async try
                     handle_connection(f, io; kw...)
