@@ -3,6 +3,7 @@ The HTTP.jl package is licensed under the MIT "Expat" License:
 > src/cookies.jl based on src/net/http/cookie.go Copyright 2009 The Go Authors
 
 > Copyright (c) 2016: quinnj.
+>
 > Copyright (c) 2017: Sam O'Connor
 > and contributors: https://github.com/JuliaWeb/HTTP.jl/graphs/contributors
 >
