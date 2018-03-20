@@ -495,6 +495,15 @@ end
 function getconnection(::Type{SSLContext},
                        host::AbstractString,
                        port::AbstractString;
+                       kw...)::SSLContext
+
+    port = isempty(port) ? "443" : port
+    @debug 2 "SSL connect: $host:$port..."
+    tcp = getconnection(TCPSocket, host, port; kw...)
+    return sslconnection(tcp, host; kw...)
+end
+
+function sslconnection(tcp::TCPSocket, host::AbstractString;
                        require_ssl_verification::Bool=true,
                        sslconfig::SSLConfig=nosslconfig,
                        kw...)::SSLContext
@@ -503,14 +512,19 @@ function getconnection(::Type{SSLContext},
         sslconfig = global_sslconfig(require_ssl_verification)
     end
 
-    port = isempty(port) ? "443" : port
-    @debug 2 "SSL connect: $host:$port..."
     io = SSLContext()
     setup!(io, sslconfig)
-    associate!(io, getconnection(TCPSocket, host, port; kw...))
+    associate!(io, tcp)
     hostname!(io, host)
     handshake!(io)
     return io
+end
+
+function sslupgrade(t::Transaction{TCPSocket},
+                    host::AbstractString; kw...)::Transaction{SSLContext}
+    tls = sslconnection(t.c.io, host; kw...)
+    c = Connection(tls)
+    return client_transaction(c)
 end
 
 function Base.show(io::IO, c::Connection)
