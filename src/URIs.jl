@@ -9,7 +9,7 @@ import Base.==
 using ..IOExtras
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
-import ..compat_search, ..compat_contains, ..compat_parse, ..compat_string, ..compat_stdout
+import ..compat_search, ..compat_occursin, ..compat_parse, ..compat_string, ..compat_stdout
 import ..isnumeric
 
 include("parseutils.jl")
@@ -152,34 +152,34 @@ function ensurevalid(uri::URI)
     # https://tools.ietf.org/html/rfc3986#section-3.1
     # ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
     if !(uri.scheme === absent ||
-         compat_contains(uri.scheme, r"^[[:alpha:]][[:alnum:]+-.]*$"))
+         compat_occursin(r"^[[:alpha:]][[:alnum:]+-.]*$", uri.scheme))
         throw(ParseError("Invalid URI scheme: $(uri.scheme)"))
     end
     # https://tools.ietf.org/html/rfc3986#section-3.2.2
     # unreserved / pct-encoded / sub-delims
     if !(uri.host === absent ||
-         compat_contains(uri.host, r"^[:[:alnum:]\-._~%!$&'()*+,;=]+$"))
+         compat_occursin(r"^[:[:alnum:]\-._~%!$&'()*+,;=]+$", uri.host))
         throw(ParseError("Invalid URI host: $(uri.host) $uri"))
     end
     # https://tools.ietf.org/html/rfc3986#section-3.2.3
     # "port number in decimal"
-    if !(uri.port === absent || compat_contains(uri.port, r"^\d+$"))
+    if !(uri.port === absent || compat_occursin(r"^\d+$", uri.port))
         throw(ParseError("Invalid URI port: $(uri.port)"))
     end
 
     # https://tools.ietf.org/html/rfc3986#section-3.3
     # unreserved / pct-encoded / sub-delims / ":" / "@"
     if !(uri.path === absent ||
-         compat_contains(uri.path, r"^[/[:alnum:]\-._~%!$&'()*+,;=:@]*$"))
+         compat_occursin(r"^[/[:alnum:]\-._~%!$&'()*+,;=:@]*$", uri.path))
         throw(ParseError("Invalid URI path: $(uri.path)"))
     end
 
     # FIXME
     # For compatibility with existing test/uri.jl
     if !(uri.host === absent) &&
-        (contains(uri.host, "=") ||
-         contains(uri.host, ";") ||
-         contains(uri.host, "%"))
+        (compat_occursin("=", uri.host) ||
+         compat_occursin(";", uri.host) ||
+         compat_occursin("%", uri.host))
         throw(ParseError("Invalid URI host: $(uri.host)"))
     end
 end
@@ -334,7 +334,7 @@ escapeuri(query) = join((escapeuri(k, v) for (k,v) in query), "&")
 
 "unescape a percent-encoded uri/url"
 function unescapeuri(str)
-    contains(str, "%") || return str
+    compat_occursin("%", str) || return str
     out = IOBuffer()
     i = 1
     while !done(str, i)

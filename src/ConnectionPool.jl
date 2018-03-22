@@ -514,7 +514,7 @@ function getconnection(::Type{TCPSocket},
         if tcp.status == Base.StatusConnecting
             timeout[] = true
             tcp.status = Base.StatusClosing
-            ccall(:jl_forceclose_uv, Void, (Ptr{Void},), tcp.handle)
+            ccall(:jl_forceclose_uv, Nothing, (Ptr{Nothing},), tcp.handle)
             #close(tcp)
         end
     end
