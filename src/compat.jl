@@ -1,6 +1,6 @@
 
 v06 = v"0.6.2"
-v07 = v"0.7.0-DEV.4616"
+v07 = v"0.7.0-DEV.4654"
 
 supported() = VERSION >= v07 ||
              (VERSION >= v06 && VERSION < v"0.7.0-DEV")
@@ -19,8 +19,8 @@ __init__() = supported() || compat_warn()
 
     const bytesavailable = Base.bytesavailable
     const compat_findfirst = Base.findfirst
-    const compat_contains = Base.contains
     const compat_replace = Base.replace
+    const compat_occursin = Base.occursin
     const compat_parse = Base.parse
     const compat_string = Base.string
 
@@ -40,8 +40,8 @@ else
 
     const bytesavailable = Base.nb_available
     compat_findfirst(a...) = (r = Base.findfirst(a...); r == 0 ? nothing : r)
-    compat_contains(s, r) = Base.ismatch(r, s)
     compat_replace(s, p) = Base.replace(s, p.first, p.second)
+    compat_occursin(needle, haystack) = contains(haystack, needle)
     compat_parse(s, T; base::Int=10) = Base.parse(s, T, base)
     compat_string(s; base::Int=16, pad::Int=0) = hex(s, pad)
 
