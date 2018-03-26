@@ -6,7 +6,7 @@ using ..Sockets
 using ..IOExtras
 using ..MessageRequest
 using ..Messages
-import ..@debug, ..DEBUG_LEVEL
+import ..@debug, ..DEBUG_LEVEL, ..sprintcompact
 
 """
     request(RetryLayer, ::URI, ::Request, body) -> HTTP.Response
