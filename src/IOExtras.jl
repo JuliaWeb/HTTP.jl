@@ -118,7 +118,7 @@ tcpsocket(io::TCPSocket)::TCPSocket = io
 localport(io) = try !isopen(tcpsocket(io)) ? 0 :
                     VERSION > v"0.7.0-DEV" ?
                     Sockets.getsockname(tcpsocket(io))[2] :
-                    Sockets._sockname(tcpsocket(io), true)[2]
+                    Base._sockname(tcpsocket(io), true)[2]
                 catch
                     0
                 end
