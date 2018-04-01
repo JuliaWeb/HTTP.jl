@@ -49,16 +49,10 @@ Paths can be mapped to a handler via `HTTP.register!(r::Router, path, handler)`,
 """
 struct Router <: Handler
     segments::Dict{String, Val}
-    sym::Symbol
     func::Function
-    function Router(ff::Union{Handler, Function, Nothing}=nothing)
-        sym = gensym()
-        if ff == nothing
-            f = @eval $sym(args...) = FourOhFour
-        else
-            f = ff isa Function ? HandlerFunction(ff) : ff
-        end
-        r = new(Dict{String, Val}(), sym, f)
+    function Router(ff::Union{Handler, Function, Nothing}=nothing)    
+        f(args...) = ff == nothing ? FourOhFour : ff isa Function ? HandlerFunction(ff) : ff
+        r = new(Dict{String, Val}(), f)
         return r
     end
 end
@@ -117,7 +111,7 @@ function register!(r::Router, method::DataType, scheme, host, path, handler)
     vals = splitsegments(r, handler, segments)
     # return a method to get dispatched to
     #TODO: detect whether defining this method will create ambiguity?
-    @eval $(r.sym)(::$method, ::$scheme, ::$host, $(vals...), args...) = $handler
+    r.func(method, scheme, host, vals...) = handler
     return
 end
 
