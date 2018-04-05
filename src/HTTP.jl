@@ -561,7 +561,8 @@ function stack(;redirect=true,
     (retry                ? RetryLayer                : NoLayer){
     (status_exception     ? ExceptionLayer            : NoLayer){
                             ConnectionPoolLayer{
-    (verbose >= 3         ? DebugLayer                : NoLayer){
+    (verbose >= 3 ||
+     DEBUG_LEVEL >= 3     ? DebugLayer                : NoLayer){
     (readtimeout > 0      ? TimeoutLayer              : NoLayer){
                             StreamLayer
     }}}}}}}}}}}}

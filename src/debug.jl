@@ -1,12 +1,14 @@
 taskid(t=current_task()) = compat_string(hash(t) & 0xffff, base=16, pad=4)
 
+debug_header() = string("DEBUG: ", rpad(now(), 24), taskid(), " ")
+
 macro debug(n::Int, s)
-    DEBUG_LEVEL >= n ? :(println("DEBUG: ", taskid(), " ", $(esc(s)))) :
+    DEBUG_LEVEL >= n ? :(println(debug_header(), $(esc(s)))) :
                        :()
 end
 
 macro debugshow(n::Int, s)
-    DEBUG_LEVEL >= n ? :(println("DEBUG: ", taskid(), " ",
+    DEBUG_LEVEL >= n ? :(println(debug_header(),
                                  $(sprint(Base.show_unquoted, s)), " = ",
                                  sprint(io->show(io, "text/plain",
                                                  begin value=$(esc(s)) end)))) :
@@ -15,7 +17,7 @@ macro debugshow(n::Int, s)
 end
 
 macro debugshort(n::Int, s)
-    DEBUG_LEVEL >= n ? :(println("DEBUG: ", taskid(), " ",
+    DEBUG_LEVEL >= n ? :(println(debug_header(),
                                  sprintcompact($(esc(s))))) :
                        :()
 end

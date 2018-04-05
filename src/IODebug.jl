@@ -1,5 +1,7 @@
 const live_mode = true
 
+import ..debug_header
+
 @static if live_mode
 
     struct IODebug{T <: IO} <: IO
@@ -80,15 +82,17 @@ end
 
 
 function show_io_debug(io::IO, operation, bytes)
-    prefix = rpad(operation, 5)
+    prefix = string(debug_header(), rpad(operation, 4))
     i = j = 1
     while i < length(bytes)
         j = findnext(bytes, '\n', i)
         if j == nothing || j == 0
-            j = length(bytes)
+            j = prevind(bytes, length(bytes)+1)
         end
         println(io, prefix, "\"", escape_string(bytes[i:j]), "\"")
-        prefix = "    "
+        if i == 1
+            prefix = rpad("DEBUG:", length(prefix) - 1)
+        end
         i = nextind(bytes, j)
     end
 end
