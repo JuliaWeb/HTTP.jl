@@ -54,7 +54,7 @@ struct Router <: Handler
     function Router(ff::Union{Handler, Function, Nothing}=nothing)
         sym = gensym()
         if ff == nothing
-            f = @eval $sym(args...) = FourOhFour
+            f = (args...)-> FourOhFour
         else
             f = ff isa Function ? HandlerFunction(ff) : ff
         end
