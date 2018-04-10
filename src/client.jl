@@ -39,6 +39,7 @@ global const DEFAULT_CLIENT = Client()
 function request(client::Client, method, url::URI;
                  headers=Header[],
                  body="",
+                 query=nothing,
                  enablechunked::Bool=true,
                  stream::Bool=false,
                  verbose=false,
@@ -47,6 +48,9 @@ function request(client::Client, method, url::URI;
     # Add default values from client options to args...
     if VERSION > v"0.7.0-DEV.2338"
     args = merge(client.options, args)
+    if query != nothing
+       url = merge(url, query=query)
+    end
     getarg = Base.get
     else
     for option in client.options
