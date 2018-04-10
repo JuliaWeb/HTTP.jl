@@ -52,8 +52,7 @@ struct Router <: Handler
     func::Function
     function Router(ff::Union{Handler, Function, Nothing} = nothing)
         if ff == nothing
-            f = identity
-            f = (args...)-> FourOhFour
+            f(args...) = FourOhFour
         else
             f = ff isa Function ? HandlerFunction(ff) : ff
         end
@@ -114,9 +113,10 @@ function register!(r::Router, method::DataType, scheme, host, path, handler)
     # save string => Val mappings in r.segments
     segments = map(String, split(path, '/'; keep=false))
     vals = splitsegments(r, handler, segments)
+    println(vals)
     # return a method to get dispatched to
     #TODO: detect whether defining this method will create ambiguity?
-    (::typeof(r.func))(::method, ::scheme, ::host, args...) = handler
+    @eval (::$(typeof(r.func)))(::$method, ::$scheme, ::$host, $(vals...), args...) = $handler
     return
 end
 
