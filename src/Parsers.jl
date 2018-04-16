@@ -270,6 +270,8 @@ const unhex = Int8[
 ]
 
 function __init__()
+    # FIXME Consider turing off `PCRE.UTF` in `Regex.compile_options`
+    # https://github.com/JuliaLang/julia/pull/26731#issuecomment-380676770
     Base.compile(status_line_regex)
     Base.compile(request_line_regex)
     Base.compile(header_field_regex)
