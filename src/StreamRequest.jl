@@ -54,6 +54,7 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
 
             if iofunction == nothing
                 @async writebody(http, request, body)
+                yield()
                 startread(http)
                 readbody(http, response, response_stream)
             else
