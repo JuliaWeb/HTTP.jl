@@ -105,7 +105,7 @@ Connection(host::AbstractString, port::AbstractString,
                   -1,
                   0, false, Condition(),
                   0, false, Condition(),
-                  0)
+                  time())
 
 Connection(io) = Connection("", "", default_pipeline_limit, 0, io)
 
@@ -586,13 +586,12 @@ function Base.show(io::IO, c::Connection)
         io,
         tcpstatus(c), " ",
         lpad(c.writecount,3),"↑", c.writebusy ? "🔒  " : "   ",
-        lpad(c.readcount,3), "↓", c.readbusy ? "🔒   " : "    ",
+        lpad(c.readcount,3), "↓", c.readbusy ? "🔒 " : "  ",
+        "$(lpad(round(Int, time() - c.timestamp), 3))s ",
         c.host, ":",
         c.port != "" ? c.port : Int(c.peerport), ":", Int(c.localport),
         " ≣", c.pipeline_limit,
         length(c.excess) > 0 ? " $(length(c.excess))-byte excess" : "",
-        inactiveseconds(c) > 5 ?
-            " inactive $(round(inactiveseconds(c),1))s" : "",
         nwaiting > 0 ? " $nwaiting bytes waiting" : "",
         DEBUG_LEVEL > 1 ? " $(Base._fd(tcpsocket(c.io)))" : "")
 end
