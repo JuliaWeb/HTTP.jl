@@ -140,8 +140,12 @@ for f in [:get, :post, :put, :delete, :head,
     @eval begin
         ($f)(client::Client, url::URI; kw...) = request(client, $meth, url; kw...)
         ($f)(client::Client, url::AbstractString; kw...) = request(client, $meth, URI(url); kw...)
-        ($f)(url::URI; kw...) = request(DEFAULT_CLIENT, $meth, url; kw...)
-        ($f)(url::AbstractString; kw...) = request(DEFAULT_CLIENT, $meth, URI(url); kw...)
+    end
+    if !(f in [:get, :head])
+        @eval begin
+            ($f)(url::URI; kw...) = request(DEFAULT_CLIENT, $meth, url; kw...)
+            ($f)(url::AbstractString; kw...) = request(DEFAULT_CLIENT, $meth, URI(url); kw...)
+        end
     end
 end
 

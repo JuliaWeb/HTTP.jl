@@ -334,7 +334,7 @@ open(f::Function, method::String, url, headers=Header[]; kw...)::Response =
 
 Shorthand for `HTTP.request("GET", ...)`. See [`HTTP.request`](@ref).
 """
-get(u, a...; kw...) = request("GET", u, a...; kw...)
+get(a...; kw...) = request("GET", a...; kw...)
 
 """
     HTTP.put(url, headers, body; <keyword arguments>) -> HTTP.Response
