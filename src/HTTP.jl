@@ -480,6 +480,8 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
 ┌┼───┤ request(ConnectionPoolLayer,       ::URI, ::Request, body) ├ ─ ─ ─     │
 ││   ├────────────────────────────────────────────────────────────┤         │ │
+││   │ request(DebugLayer,                ::IO,  ::Request, body) │           │
+││   ├────────────────────────────────────────────────────────────┤         │ │
 ││   │ request(TimeoutLayer,              ::IO,  ::Request, body) │           │
 ││   ├────────────────────────────────────────────────────────────┤         │ │
 ││   │ request(StreamLayer,               ::IO,  ::Request, body) │           │
