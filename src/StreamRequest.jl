@@ -72,7 +72,7 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
            e = first(e.exceptions).ex
         end
         if aborted && isioerror(e)
-            @debug 1 "⚠️  $(response.status) abort exception excpeted: $ex"
+            @debug 1 "⚠️  $(response.status) abort exception excpeted: $e"
         else
             rethrow(e)
         end

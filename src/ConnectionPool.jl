@@ -581,7 +581,7 @@ function sslupgrade(t::Transaction{TCPSocket},
 end
 
 function Base.show(io::IO, c::Connection)
-    nwaiting = bytesavailable(tcpsocket(c.io))
+    nwaiting = applicable(tcpsocket, c.io) ? bytesavailable(tcpsocket(c.io)) : 0
     print(
         io,
         tcpstatus(c), " ",
@@ -593,12 +593,16 @@ function Base.show(io::IO, c::Connection)
         " ≣", c.pipeline_limit,
         length(c.excess) > 0 ? " $(length(c.excess))-byte excess" : "",
         nwaiting > 0 ? " $nwaiting bytes waiting" : "",
-        DEBUG_LEVEL > 1 ? " $(Base._fd(tcpsocket(c.io)))" : "")
+        DEBUG_LEVEL > 1 && applicable(tcpsocket, c.io) ?
+            " $(Base._fd(tcpsocket(c.io)))" : "")
 end
 
 Base.show(io::IO, t::Transaction) = print(io, "T$(rpad(t.sequence,2)) ", t.c)
 
 function tcpstatus(c::Connection)
+    if !applicable(tcpsocket, c.io)
+        return ""
+    end
     s = Base.uv_status_string(tcpsocket(c.io))
         if s == "connecting" return "🔜🔗"
     elseif s == "open"       return "🔗 "
