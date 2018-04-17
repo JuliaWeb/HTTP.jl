@@ -453,6 +453,7 @@ function getconnection(::Type{Transaction{T}},
             busy = findall(T, host, port, pipeline_limit)
             if length(busy) < connection_limit
                 io = getconnection(T, host, port; kw...)
+                @schedule tcp_monitor(io)
                 c = Connection(host, port,
                                pipeline_limit, idle_timeout,
                                io)
@@ -486,6 +487,16 @@ end
 struct ConnectTimeout <: Exception
     host
     port
+end
+
+function tcp_monitor(io)
+    tcp = tcpsocket(io)
+    while isopen(io)
+        Base.start_reading(tcp)
+        wait(tcp.readnotify)
+        yield()
+    end
+    close(tcp)
 end
 
 function getconnection(::Type{TCPSocket},
