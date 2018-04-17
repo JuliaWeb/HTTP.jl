@@ -265,6 +265,20 @@ function IOExtras.closeread(t::Transaction)
     notify(poolcondition)
 
     @ensure !isreadable(t)
+
+    # (re)start a watcher for idle connections in the pool
+    # short-circuit if it is already dead or has already started to be reused
+    if isopen(t.c) && !t.c.writebusy && (t.c.writecount <= t.sequence + 1) # && !isreadable(t)
+        @schedule begin
+            if !eof(t.c.io) && # wait to see if receive any more data
+                    !t.c.readbusy && # and aren't actively expecting to receive data
+                    !t.c.writebusy && (t.c.writecount <= t.sequence + 1) # nor have returned from startwrite and/or called closewrite again
+                # other end must be in an invalid state, or terminated the connection:
+                # drop our end from the pool also
+                close(t.c)
+            end
+        end
+    end
     return
 end
 
