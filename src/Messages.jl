@@ -182,6 +182,9 @@ Represents a HTTP Request Message.
 - `parent`, the `Response` (if any) that led to this request
   (e.g. in the case of a redirect).
    [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
+
+- `context::Dict{String, Any}`, allows storage of additional information
+  related to the request.
 """
 mutable struct Request <: Message
     method::String
@@ -192,12 +195,14 @@ mutable struct Request <: Message
     response::Response
     txcount::Int
     parent
+    context::Dict{String, Any}
 end
 
 Request() = Request("", "")
 
 function Request(method::String, target, headers=[], body=UInt8[];
-                 version=v"1.1", parent=nothing)
+                 version=v"1.1", parent=nothing,
+                 context=Dict{String, Any}())
     r = Request(method,
                 target == "" ? "/" : target,
                 version,
@@ -205,7 +210,8 @@ function Request(method::String, target, headers=[], body=UInt8[];
                 bytes(body),
                 Response(0),
                 0,
-                parent)
+                parent,
+                context)
     r.response.request = r
     return r
 end
