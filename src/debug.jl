@@ -1,3 +1,5 @@
+using ..Dates
+
 taskid(t=current_task()) = compat_string(hash(t) & 0xffff, base=16, pad=4)
 
 debug_header() = string("DEBUG: ", rpad(now(), 24), taskid(), " ")
