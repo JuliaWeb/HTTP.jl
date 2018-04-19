@@ -138,6 +138,12 @@ Base.isopen(t::Transaction) = isopen(t.c) &&
                               t.c.readcount <= t.sequence &&
                               t.c.writecount <= t.sequence
 
+"""
+Is `c` currently in use or expecting a response to request already sent?
+"""
+isbusy(c::Connection) = isopen(c) && (c.writebusy || c.readbusy ||
+                                      c.writecount > c.readcount)
+
 function Base.eof(t::Transaction)
     @require isreadable(t) || !isopen(t)
     if bytesavailable(t) > 0
@@ -264,23 +270,31 @@ function IOExtras.closeread(t::Transaction)
     notify(t.c.readdone)                          ;@debug 2 "✉️  Read done:  $t"
     notify(poolcondition)
 
-    @ensure !isreadable(t)
-
-    # (re)start a watcher for idle connections in the pool
-    # short-circuit if it is already dead or has already started to be reused
-    if isopen(t.c) && !t.c.writebusy && (t.c.writecount <= t.sequence + 1) # && !isreadable(t)
-        @schedule begin
-            if !eof(t.c.io) && # wait to see if receive any more data
-                    !t.c.readbusy && # and aren't actively expecting to receive data
-                    !t.c.writebusy && (t.c.writecount <= t.sequence + 1) # nor have returned from startwrite and/or called closewrite again
-                # other end must be in an invalid state, or terminated the connection:
-                # drop our end from the pool also
-                close(t.c)
-            end
-        end
+    if !isbusy(t.c)
+        @schedule monitor_idle_connection(t.c)
     end
+
+    @ensure !isreadable(t)
     return
 end
+
+"""
+Wait for `c` to receive data or reach EOF.
+Close `c` on EOF or if response data arrives when no request was sent.
+"""
+function monitor_idle_connection(c::Connection)
+    if eof(c.io)                                  ;@debug 2 "💀  Closed:     $c"
+        close(c.io)
+    elseif !isbusy(c)                             ;@debug 1 "😈  Idle RX!!:  $c"
+        close(c.io)
+    end
+end
+
+function monitor_idle_connection(c::Connection{SSLContext})
+    # MbedTLS.jl monitors idle connections for TLS close_notify messages.
+    # https://github.com/JuliaWeb/MbedTLS.jl/pull/145
+end
+
 
 function Base.close(t::Transaction)
     close(t.c)
