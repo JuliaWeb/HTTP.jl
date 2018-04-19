@@ -280,9 +280,15 @@ uristring(u::URI) = uristring(u.scheme, u.userinfo, u.host, u.port,
 queryparams(uri::URI) = queryparams(uri.query)
 
 function queryparams(q::AbstractString)
-    Dict(unescapeuri(k) => unescapeuri(v)
-        for (k,v) in ([split(e, "=")..., ""][1:2]
-            for e in split(q, "&", keep=false)))
+    @static if VERSION < v"0.7.0-DEV.4724"
+        Dict(unescapeuri(k) => unescapeuri(v)
+            for (k,v) in ([split(e, "=")..., ""][1:2]
+                for e in split(q, "&", keep=false)))
+    else
+        Dict(unescapeuri(k) => unescapeuri(v)
+            for (k,v) in ([split(e, "=")..., ""][1:2]
+                for e in split(q, "&", keepempty=false)))
+    end
 end
 
 

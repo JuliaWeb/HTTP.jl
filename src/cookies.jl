@@ -32,13 +32,8 @@ module Cookies
 
 export Cookie, cookies
 
-@static if VERSION < v"0.7-"
-using Base.Dates
-else
-using Dates
-end
-
 import Base: ==
+using ..Dates
 using ..IOExtras: bytes
 using ..Parsers: Headers
 using ..Messages: Request, mkheaders, hasheader, header
