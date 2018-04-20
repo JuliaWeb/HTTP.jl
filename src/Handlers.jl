@@ -135,12 +135,12 @@ function gethandler(r::Router, req)
     return r.func(m, s, h, vals...)
 end
 
-function handle(r::Router, req)
+function handle(r::Router, req::HTTP.Request)
     handler = gethandler(r,req)
     # pass the request to the handler and return
     return handle(handler, req)
 end
 
-handle(hf::HandlerFunction, http::HTTP.Stream) = handle_request(hf.func,http)
+handle(h::Handler, http::HTTP.Stream) = HTTP.Servers.handle_request(req->handle(h, req), http) # FIXME: Consider moving
 
 end # module
