@@ -24,12 +24,12 @@ for s in ["ws", "wss"]
 end
 
 p = rand(8000:8999)
-@async HTTP.listen("127.0.0.1",p) do http
+@async HTTP.listen(Sockets.localhost, p) do http
     if HTTP.WebSockets.is_upgrade(http.message)
         HTTP.WebSockets.upgrade(http) do ws
             while !eof(ws)
                 data = readavailable(ws)
-                write(ws,data)
+                write(ws, data)
             end
         end
     end

@@ -41,7 +41,7 @@ port = rand(8000:8999)
 
 # test kill switch
 server = HTTP.Servers.Server()
-tsk = @async HTTP.Servers.serve(server, "localhost", port)
+tsk = @async HTTP.Servers.serve(server, Sockets.localhost, port)
 sleep(1.0)
 put!(server.in, HTTP.Servers.KILL)
 sleep(2)
@@ -57,7 +57,7 @@ server = HTTP.Servers.Server((req) -> begin
 end, stdout)
 
 server.options.ratelimit=0
-tsk = @async HTTP.Servers.serve(server, "localhost", port)
+tsk = @async HTTP.Servers.serve(server, Sockets.localhost, port)
 sleep(1.0)
 
 

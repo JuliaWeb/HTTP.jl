@@ -70,8 +70,8 @@ mutable struct Connection{T <: IO}
     port::String
     pipeline_limit::Int
     idle_timeout::Int
-    peerport::UInt16
-    localport::UInt16
+    peerport::UInt16 # debug only
+    localport::UInt16 # debug only
     io::T
     excess::ByteView
     sequence::Int
