@@ -303,8 +303,12 @@ function listen(f::Function,
     end
 
     @info "Listening on: $host"
-    tcpserver = Sockets.listen(host)
-    tcpref[] = tcpserver
+    if isassigned(tcpref)
+        tcpserver = tcpref[]
+    else
+        tcpserver = Sockets.listen(host)
+        tcpref[] = tcpserver
+    end
 
     try
         while isopen(tcpserver)
