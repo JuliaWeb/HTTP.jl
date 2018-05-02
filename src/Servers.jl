@@ -140,6 +140,7 @@ end
 @enum Signals KILL
 
 serve(server::Server, host::IPAddr, port::Integer, verbose::Bool) = serve(server, Sockets.InetAddr(host, port), verbose)
+serve(server::Server, host::AbstractString, port::Integer, verbose::Bool) = serve(server, parse(IPAddr, host), port, verbose)
 serve(server::Server{T, H}, host::AbstractString, verbose::Bool) where {T, H} = serve(server, String(host), verbose)
 function serve(server::Server{T, H}, host::Union{Sockets.InetAddr, String}, verbose::Bool) where {T, H}
 
@@ -170,8 +171,11 @@ function serve(server::Server{T, H}, host::Union{Sockets.InetAddr, String}, verb
 
     return
 end
+
 serve(server::Server, host::IPAddr=Sockets.localhost, port::Integer=8081; verbose::Bool=true) =
     serve(server, Sockets.InetAddr(host, port), verbose)
+serve(server::Server, host::AbstractString, port::Integer; verbose::Bool=true) =
+    serve(server, Sockets.InetAddr(parse(IPAddr, host), port), verbose)
 serve(server::Server, host::Union{Sockets.InetAddr, AbstractString}; verbose::Bool=true) =
     serve(server, host, verbose)
 
@@ -191,7 +195,7 @@ function Server(handler::H=HTTP.HandlerFunction(req -> HTTP.Response(200, "Hello
 end
 
 """
-    HTTP.serve([server,] host::IPAddr, port::Integer; verbose::Bool=true, kwargs...)
+    HTTP.serve([server,] host::Union{IPAddr, String}, port::Integer; verbose::Bool=true, kwargs...)
     HTTP.serve([server,] host::InetAddr; verbose::Bool=true, kwargs...)
     HTTP.serve([server,] host::String; verbose::Bool=true, kwargs...)
 
@@ -205,6 +209,7 @@ By default, `HTTP.serve` aims to "never die", catching and recovering from all i
 function serve end
 
 serve(host::IPAddr, port::Integer, args...; kwargs...) = serve(Sockets.InetAddr(host, port), args...; kwargs...)
+serve(host::AbstractString, port::Integer, args...; kwargs...) = serve(parse(IPAddr, host), port, args...; kwargs...)
 serve(host::AbstractString, args...; kwargs...) = serve(String(host), args...; kwargs...)
 function serve(host::Union{Sockets.InetAddr, String},
                handler=req -> HTTP.Response(200, "Hello World!"),
@@ -279,6 +284,7 @@ e.g.
 ```
 """
 listen(f, host::IPAddr=Sockets.localhost, port::Integer=8081; kw...) = listen(f, Sockets.InetAddr(host, port); kw...)
+listen(f, host::AbstractString, port::Integer; kw...) = listen(f, parse(IPAddr, host), port; kw...)
 listen(f, host::AbstractString; kw...) = listen(f, string(host); kw...)
 
 function listen(f::Function,
