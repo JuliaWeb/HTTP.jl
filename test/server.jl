@@ -41,7 +41,7 @@ port = rand(8000:8999)
 
 # test kill switch
 server = HTTP.Servers.Server()
-tsk = @async HTTP.Servers.serve(server, "localhost", port)
+tsk = @async HTTP.Servers.serve(server, Sockets.localhost, port)
 sleep(1.0)
 put!(server.in, HTTP.Servers.KILL)
 sleep(2)
@@ -57,7 +57,7 @@ server = HTTP.Servers.Server((req) -> begin
 end, stdout)
 
 server.options.ratelimit=0
-tsk = @async HTTP.Servers.serve(server, "localhost", port)
+tsk = @async HTTP.Servers.serve(server, Sockets.localhost, port)
 sleep(1.0)
 
 
@@ -167,7 +167,7 @@ put!(server.in, HTTP.Servers.KILL)
 
 # keep-alive vs. close: issue #81
 port += 1
-tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req) -> (req.response.body = "Hello\n"; req.response), stdout), ip"127.0.0.1", port)
+tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req) -> (req.response.body = "Hello\n"; req.response), stdout), "127.0.0.1", port)
 sleep(2.0)
 r = HTTP.request("GET", "http://127.0.0.1:$port/", ["Host"=>"127.0.0.1:$port"]; http_version=v"1.0")
 @test r.status == 200

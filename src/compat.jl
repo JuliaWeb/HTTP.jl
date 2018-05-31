@@ -67,7 +67,8 @@ else
     eval(:(module Sockets
         export TCPSocket
         import Base: TCPSocket, TCPServer, IPAddr, @ip_str, DNSError,
-            getsockname, getaddrinfo, connect, listen, DNSError
+            getsockname, getaddrinfo, connect, listen, DNSError, InetAddr
+        const localhost = ip"127.0.0.1"
         end))
     using .Sockets
 

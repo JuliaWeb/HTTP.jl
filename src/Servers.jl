@@ -115,6 +115,7 @@ function update!(rl::RateLimit, ratelimit)
     return nothing
 end
 
+check_rate_limit(tcp::Base.PipeEndpoint; kw...) = true
 function check_rate_limit(tcp;
                           ratelimits=nothing,
                           ratelimit::Rational{Int}=Int(10)//Int(1), kw...)
@@ -138,9 +139,12 @@ end
 
 @enum Signals KILL
 
-function serve(server::Server{T, H}, host, port, verbose) where {T, H}
+serve(server::Server, host::IPAddr, port::Integer, verbose::Bool) = serve(server, Sockets.InetAddr(host, port), verbose)
+serve(server::Server, host::AbstractString, port::Integer, verbose::Bool) = serve(server, parse(IPAddr, host), port, verbose)
+serve(server::Server{T, H}, host::AbstractString, verbose::Bool) where {T, H} = serve(server, String(host), verbose)
+function serve(server::Server{T, H}, host::Union{Sockets.InetAddr, String}, verbose::Bool) where {T, H}
 
-    tcpserver = Ref{Sockets.TCPServer}()
+    tcpserver = Ref{Base.IOServer}()
 
     @async begin
         while !isassigned(tcpserver)
@@ -152,7 +156,7 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
         end
     end
 
-    listen(host, port;
+    listen(host;
            tcpref=tcpserver,
            ssl=(T == https),
            sslconfig=server.options.sslconfig,
@@ -168,12 +172,20 @@ function serve(server::Server{T, H}, host, port, verbose) where {T, H}
     return
 end
 
+serve(server::Server, host::IPAddr=Sockets.localhost, port::Integer=8081; verbose::Bool=true) =
+    serve(server, Sockets.InetAddr(host, port), verbose)
+serve(server::Server, host::AbstractString, port::Integer; verbose::Bool=true) =
+    serve(server, Sockets.InetAddr(parse(IPAddr, host), port), verbose)
+serve(server::Server, host::Union{Sockets.InetAddr, AbstractString}; verbose::Bool=true) =
+    serve(server, host, verbose)
+
 Server(h::Function, l::IO=compat_stdout(); cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
 function Server(handler::H=HTTP.HandlerFunction(req -> HTTP.Response(200, "Hello World!")),
-                logger::IO=compat_stdout();
-               cert::String="",
-               key::String="",
-               args...) where {H <: HTTP.Handler}
+                logger::IO=compat_stdout(),
+                ;
+                cert::String="",
+                key::String="",
+                args...) where {H <: HTTP.Handler}
     if cert != "" && key != ""
         server = Server{https, H}(handler, logger, Channel(1), Channel(1), ServerOptions(; sslconfig=HTTP.MbedTLS.SSLConfig(cert, key), args...))
     else
@@ -183,9 +195,11 @@ function Server(handler::H=HTTP.HandlerFunction(req -> HTTP.Response(200, "Hello
 end
 
 """
-    HTTP.serve([server,] host::IPAddr, port::Int; verbose::Bool=true, kwargs...)
+    HTTP.serve([server,] host::Union{IPAddr, String}, port::Integer; verbose::Bool=true, kwargs...)
+    HTTP.serve([server,] host::InetAddr; verbose::Bool=true, kwargs...)
+    HTTP.serve([server,] host::String; verbose::Bool=true, kwargs...)
 
-Start a server listening on the provided `host` and `port`. `verbose` indicates whether server activity should be logged.
+Start a server listening on the provided `host:port`. `verbose` indicates whether server activity should be logged.
 Optional keyword arguments allow construction of `Server` on the fly if the `server` argument isn't provided directly.
 See `?HTTP.Server` for more details on server construction and supported keyword arguments.
 By default, `HTTP.serve` aims to "never die", catching and recovering from all internal errors. Two methods for stopping
@@ -194,26 +208,24 @@ By default, `HTTP.serve` aims to "never die", catching and recovering from all i
 """
 function serve end
 
-serve(server::Server, host=ip"127.0.0.1", port=8081; verbose::Bool=true) = serve(server, host, port, verbose)
-function serve(host::IPAddr, port::Int,
-                   handler=req -> HTTP.Response(200, "Hello World!"),
-                   logger::I=compat_stdout();
-                   cert::String="",
-                   key::String="",
-                   verbose::Bool=true,
-                   args...) where {I}
-    server = Server(handler, logger; cert=cert, key=key, args...)
-    return serve(server, host, port, verbose)
+serve(host::IPAddr, port::Integer, args...; kwargs...) = serve(Sockets.InetAddr(host, port), args...; kwargs...)
+serve(host::AbstractString, port::Integer, args...; kwargs...) = serve(parse(IPAddr, host), port, args...; kwargs...)
+serve(host::AbstractString, args...; kwargs...) = serve(String(host), args...; kwargs...)
+function serve(host::Union{Sockets.InetAddr, String},
+               handler=req -> HTTP.Response(200, "Hello World!"),
+               logger::IO=compat_stdout(),
+               ;
+               verbose::Bool=true,
+               args...)
+    server = Server(handler, logger; cert="", key="", args...)
+    return serve(server, host, verbose)
 end
-serve(; host::IPAddr=ip"127.0.0.1",
-        port::Int=8081,
+serve(; host::IPAddr=Sockets.localhost,
+        port::Integer=8081,
         handler=req -> HTTP.Response(200, "Hello World!"),
         logger::IO=compat_stdout(),
-        cert::String="",
-        key::String="",
-        verbose::Bool=true,
         args...) =
-    serve(host, port, handler, logger; cert=cert, key=key, verbose=verbose, args...)
+    serve(host, port, handler, logger; args...)
 
 function getsslcontext(tcp, sslconfig)
     ssl = SSLContext()
@@ -227,7 +239,7 @@ const nosslconfig = SSLConfig()
 const nolimit = typemax(Int)
 
 """
-    HTTP.listen([host="localhost" [, port=8081]]; <keyword arguments>) do http
+    HTTP.listen([host=Sockets.localhost[, port=8081]]; <keyword arguments>) do http
         ...
     end
 
@@ -246,8 +258,8 @@ Optional keyword arguments:
  - `tcpisvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
     processing requests. e.g. to implement source IP filtering, rate-limiting,
     etc.
- - `tcpref::Ref{Sockets.TCPServer}`, this reference is set to the underlying
-                                  `Sockets.TCPServer`. e.g. to allow closing the server.
+ - `tcpref::Ref{Base.IOServer}`, this reference is set to the underlying
+                                 `IOServer`. e.g. to allow closing the server.
 
 e.g.
 ```
@@ -271,26 +283,32 @@ e.g.
     end
 ```
 """
-listen(f, host, port; kw...) = listen(f, string(host), Int(port); kw...)
+listen(f, host::IPAddr=Sockets.localhost, port::Integer=8081; kw...) = listen(f, Sockets.InetAddr(host, port); kw...)
+listen(f, host::AbstractString, port::Integer; kw...) = listen(f, parse(IPAddr, host), port; kw...)
+listen(f, host::AbstractString; kw...) = listen(f, string(host); kw...)
 
 function listen(f::Function,
-                host::String="127.0.0.1", port::Int=8081;
+                host::Union{Sockets.InetAddr, String},
+                ;
                 ssl::Bool=false,
                 require_ssl_verification::Bool=true,
                 sslconfig::SSLConfig=nosslconfig,
                 pipeline_limit::Int=ConnectionPool.default_pipeline_limit,
                 tcpisvalid::Function=(tcp; kw...)->true,
-                tcpref::Ref{Sockets.TCPServer}=Ref{Sockets.TCPServer}(),
+                tcpref::Ref=Ref{Base.IOServer}(),
                 kw...)
 
     if sslconfig === nosslconfig
         sslconfig = SSLConfig(require_ssl_verification)
     end
 
-    @info "Listening on: $host:$port"
-    tcpserver = Sockets.listen(Sockets.getaddrinfo(host), port)
-
-    tcpref[] = tcpserver
+    @info "Listening on: $host"
+    if isassigned(tcpref)
+        tcpserver = tcpref[]
+    else
+        tcpserver = Sockets.listen(host)
+        tcpref[] = tcpserver
+    end
 
     try
         while isopen(tcpserver)
@@ -305,11 +323,19 @@ function listen(f::Function,
                 end
             end
             if !tcpisvalid(io; kw...)
+                @info "Accept-Reject:  $io"
                 close(io)
                 continue
             end
             io = ssl ? getsslcontext(io, sslconfig) : io
-            let io = Connection(host, string(port), pipeline_limit, 0, io)
+            if host isa Sockets.InetAddr # build debugging info
+                hostname = string(host.host)
+                hostport = string(host.port)
+            else
+                hostname = string(host)
+                hostport = ""
+            end
+            let io = Connection(hostname, hostport, pipeline_limit, 0, io)
                 @info "Accept:  $io"
                 @async try
                     handle_connection(f, io; kw...)
@@ -323,7 +349,7 @@ function listen(f::Function,
         end
     catch e
         if typeof(e) <: InterruptException
-            @warn "Interrupted: listen($host,$port)"
+            @warn "Interrupted: listen($host)"
         else
             rethrow(e)
         end
