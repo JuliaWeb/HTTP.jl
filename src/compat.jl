@@ -1,6 +1,6 @@
 
 v06 = v"0.6.2"
-v07 = v"0.7.0-DEV.4654"
+v07 = v"0.7.0-alpha.0"
 
 supported() = VERSION >= v07 ||
              (VERSION >= v06 && VERSION < v"0.7.0-DEV")
