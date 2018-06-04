@@ -271,7 +271,7 @@ function IOExtras.closeread(t::Transaction)
     notify(poolcondition)
 
     if !isbusy(t.c)
-        @schedule monitor_idle_connection(t.c)
+        @async monitor_idle_connection(t.c)
     end
 
     @ensure !isreadable(t)
@@ -537,7 +537,7 @@ function getconnection(::Type{TCPSocket},
     Base.connect!(tcp, Sockets.getaddrinfo(host), p)
 
     timeout = Ref{Bool}(false)
-    @schedule begin
+    @async begin
         sleep(connect_timeout)
         if tcp.status == Base.StatusConnecting
             timeout[] = true

@@ -51,6 +51,7 @@ else
 
     const Nothing = Void
     const isnumeric = isnumber
+    const isletter = isalpha
 
     Base.SubString(s) = SubString(s, 1)
     Base.String(x::SubArray{UInt8,1}) = String(Vector{UInt8}(x))

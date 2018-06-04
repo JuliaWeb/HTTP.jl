@@ -113,7 +113,11 @@ end
 
 function register!(r::Router, method::DataType, scheme, host, path, handler)
     # save string => Val mappings in r.segments
-    segments = map(String, split(path, '/'; keep=false))
+    @static if VERSION < v"0.7.0-DEV.4724"
+        segments = map(String, split(path, '/'; keep=false))
+    else
+        segments = map(String, split(path, '/'; keepempty=false))
+    end
     vals = splitsegments(r, handler, segments)
     # return a method to get dispatched to
     #TODO: detect whether defining this method will create ambiguity?
@@ -129,7 +133,11 @@ function gethandler(r::Router, req)
     s = get(SCHEMES, uri.scheme, EMPTYVAL)
     h = Val(Symbol(uri.host))
     p = uri.path
-    segments = split(p, '/'; keep=false)
+    @static if VERSION < v"0.7.0-DEV.4724"
+        segments = split(p, '/'; keep=false)
+    else
+        segments = split(p, '/'; keepempty=false)
+    end
     # dispatch to the most specific handler, given the path
     vals = (get(r.segments, s, EMPTYVAL) for s in segments)
     return r.func(m, s, h, vals...)

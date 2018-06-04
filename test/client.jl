@@ -22,7 +22,7 @@ for sch in ("http", "https")
 
     # Testing within tasks, see https://github.com/JuliaWeb/HTTP.jl/issues/18
     println("async client request")
-    @test status(fetch(@schedule HTTP.get("$sch://httpbin.org/ip"))) == 200
+    @test status(fetch(@async HTTP.get("$sch://httpbin.org/ip"))) == 200
 
     @test status(HTTP.get("$sch://httpbin.org/encoding/utf8")) == 200
 
@@ -36,11 +36,11 @@ for sch in ("http", "https")
     empty!(HTTP.DEFAULT_CLIENT.cookies)
     r = HTTP.get("$sch://httpbin.org/cookies", cookies=true)
     body = String(r.body)
-    @test body == "{\n  \"cookies\": {}\n}\n"
+    @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{}}"
     r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor&foo=bar", cookies=true)
     @test status(r) == 200
     body = String(r.body)
-    @test body == "{\n  \"cookies\": {\n    \"foo\": \"bar\", \n    \"hey\": \"sailor\"\n  }\n}\n"
+    @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{\"foo\":\"bar\",\"hey\":\"sailor\"}}"
 
     # r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
     # @test String(take!(r)) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
@@ -107,11 +107,11 @@ for sch in ("http", "https")
     println("client multipart body")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
     @test status(r) == 200
-    @test startswith(String(r.body), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{},\"form\":{\"hey\":\"there\"}")
 
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
     @test status(r) == 200
-    @test startswith(String(r.body), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {}, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{},\"form\":{\"hey\":\"there\"}")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -119,8 +119,8 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
     close(io); rm(tmp)
     @test status(r) == 200
-    str = String(r.body)
-    @test startswith(str, "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    str = replace(replace(String(r.body), " "=>""), "\n"=>"")
+    @test startswith(str, "{\"args\":{},\"data\":\"\",\"files\":{\"iostream\":\"hey\"},\"form\":{\"hey\":\"there\"}")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -128,7 +128,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
     close(io); rm(tmp)
     @test status(r) == 200
-    @test startswith(String(r.body), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"iostream\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{\"iostream\":\"hey\"},\"form\":{\"hey\":\"there\"}")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -137,7 +137,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m))
     close(io); rm(tmp)
     @test status(r) == 200
-    @test startswith(String(r.body), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{\"multi\":\"hey\"},\"form\":{\"hey\":\"there\"}")
 
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
@@ -146,7 +146,7 @@ for sch in ("http", "https")
     r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m), #=chunksize=1000=#)
     close(io); rm(tmp)
     @test status(r) == 200
-    @test startswith(String(r.body), "{\n  \"args\": {}, \n  \"data\": \"\", \n  \"files\": {\n    \"multi\": \"hey\"\n  }, \n  \"form\": {\n    \"hey\": \"there\"\n  }")
+    @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{\"multi\":\"hey\"},\"form\":{\"hey\":\"there\"}")
 
     # asynchronous
     println("asynchronous client request body")
@@ -169,7 +169,7 @@ for sch in ("http", "https")
         @test status(HTTP.request(meth, "$sch://httpbin.org/redirect/6")) == 302 #over max number of redirects
         @test status(HTTP.request(meth, "$sch://httpbin.org/relative-redirect/1")) == 200
         @test status(HTTP.request(meth, "$sch://httpbin.org/absolute-redirect/1")) == 200
-        @test status(HTTP.request(meth, "$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fexample.com")) == 200
+        @test status(HTTP.request(meth, "$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fgoogle.com")) == 200
     end
 
 

@@ -92,7 +92,7 @@ function on_body(f, lb)
     end
     if req != nothing
         reset(lb)
-        @schedule try
+        @async try
             f(req)
         catch e
             println("⚠️ on_body exception: $(sprint(showerror, e))\n$(catch_stacktrace())")

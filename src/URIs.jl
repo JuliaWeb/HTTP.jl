@@ -10,7 +10,7 @@ using ..IOExtras
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
 import ..compat_search, ..compat_occursin, ..compat_parse, ..compat_string, ..compat_stdout
-import ..isnumeric
+import ..isnumeric, ..isletter
 
 include("parseutils.jl")
 
@@ -280,9 +280,15 @@ uristring(u::URI) = uristring(u.scheme, u.userinfo, u.host, u.port,
 queryparams(uri::URI) = queryparams(uri.query)
 
 function queryparams(q::AbstractString)
-    Dict(unescapeuri(k) => unescapeuri(v)
-        for (k,v) in ([split(e, "=")..., ""][1:2]
-            for e in split(q, "&", keep=false)))
+    @static if VERSION < v"0.7.0-DEV.4724"
+        Dict(unescapeuri(k) => unescapeuri(v)
+            for (k,v) in ([split(e, "=")..., ""][1:2]
+                for e in split(q, "&", keep=false)))
+    else
+        Dict(unescapeuri(k) => unescapeuri(v)
+            for (k,v) in ([split(e, "=")..., ""][1:2]
+                for e in split(q, "&", keepempty=false)))
+    end
 end
 
 
@@ -310,7 +316,7 @@ end
 @inline issafe(c::Char) = c == '-' ||
                           c == '.' ||
                           c == '_' ||
-                          (isascii(c) && (isalpha(c) || isnumeric(c)))
+                          (isascii(c) && (isletter(c) || isnumeric(c)))
 
 utf8_chars(str::AbstractString) = (Char(c) for c in IOExtras.bytes(str))
 
@@ -337,11 +343,12 @@ function unescapeuri(str)
     compat_occursin("%", str) || return str
     out = IOBuffer()
     i = 1
-    while !done(str, i)
-        c, i = next(str, i)
+    io = IOBuffer(str)
+    while !eof(io)
+        c = read(io, Char)
         if c == '%'
-            c1, i = next(str, i)
-            c, i = next(str, i)
+            c1 = read(io, Char)
+            c = read(io, Char)
             write(out, compat_parse(UInt8, string(c1, c); base=16))
         else
             write(out, c)
