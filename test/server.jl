@@ -200,7 +200,7 @@ try
 catch e
     @test e isa Base.UVError
     @test e.prefix == "listen"
-    @test e.code == -48
+    @test e.code == Base.UV_EADDRINUSE
 end
 
 end # @testset
