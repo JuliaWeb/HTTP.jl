@@ -178,18 +178,21 @@ r = HTTP.request("GET", "http://127.0.0.1:$port/", ["Host"=>"127.0.0.1:$port"]; 
 # other bad requests
 
 # SO_REUSEPORT
-t1 = @async HTTP.listen("0.0.0.0", 8089; reuseaddr=true) do req
+println("Testing server port reuse")
+t1 = @async HTTP.listen("127.0.0.1", 8089; reuseaddr=true) do req
     return HTTP.Response(200, "hello world")
 end
 @test !istaskdone(t1)
 
-t2 = @async HTTP.listen("0.0.0.0", 8089; reuseaddr=true) do req
+println("Starting second server listening on same port")
+t2 = @async HTTP.listen("127.0.0.1", 8089; reuseaddr=true) do req
     return HTTP.Response(200, "hello world")
 end
 @test !istaskdone(t2)
 
+println("Starting server on same port without port reuse (throws error)")
 try
-    HTTP.listen("0.0.0.0", 8089) do req
+    HTTP.listen("127.0.0.1", 8089) do req
         return HTTP.Response(200, "hello world")
     end
 catch e
