@@ -178,18 +178,18 @@ r = HTTP.request("GET", "http://127.0.0.1:$port/", ["Host"=>"127.0.0.1:$port"]; 
 # other bad requests
 
 # SO_REUSEPORT
-t1 = @async HTTP.listen("0.0.0.0", 8081; reuseaddr=true) do req
+t1 = @async HTTP.listen("0.0.0.0", 8089; reuseaddr=true) do req
     return HTTP.Response(200, "hello world")
 end
 @test !istaskdone(t1)
 
-t2 = @async HTTP.listen("0.0.0.0", 8081; reuseaddr=true) do req
+t2 = @async HTTP.listen("0.0.0.0", 8089; reuseaddr=true) do req
     return HTTP.Response(200, "hello world")
 end
 @test !istaskdone(t2)
 
 try
-    HTTP.listen("0.0.0.0", 8081) do req
+    HTTP.listen("0.0.0.0", 8089) do req
         return HTTP.Response(200, "hello world")
     end
 catch e
