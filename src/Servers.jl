@@ -314,10 +314,7 @@ function listen(f::Function,
                         Base.eventloop(), tcpserver.handle, 2)
             Base.uv_error("failed to create tcpserver server", err)
             tcpserver.status = Base.StatusInit
-            if Sys.KERNEL == :Linux
-                Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
-                rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
-            elseif Sys.KERNEL in (:Darwin, :Apple)
+            if Sys.KERNEL == :Linux || Sys.KERNEL in (:Darwin, :Apple)
                 rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
                 Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
             else
@@ -326,10 +323,7 @@ function listen(f::Function,
             end
         else
             tcpserver = Sockets.TCPServer(; delay=false)
-            if Sys.islinux()
-                Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
-                rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
-            elseif Sys.isapple()
+            if Sys.islinux() || Sys.isapple()
                 rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
                 Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
             else
