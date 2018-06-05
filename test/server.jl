@@ -177,4 +177,30 @@ r = HTTP.request("GET", "http://127.0.0.1:$port/", ["Host"=>"127.0.0.1:$port"]; 
 
 # other bad requests
 
+# SO_REUSEPORT
+println("Testing server port reuse")
+t1 = @async HTTP.listen("127.0.0.1", 8089; reuseaddr=true) do req
+    return HTTP.Response(200, "hello world")
+end
+@test !istaskdone(t1)
+sleep(0.5)
+
+println("Starting second server listening on same port")
+t2 = @async HTTP.listen("127.0.0.1", 8089; reuseaddr=true) do req
+    return HTTP.Response(200, "hello world")
+end
+@test !istaskdone(t2)
+sleep(0.5)
+
+println("Starting server on same port without port reuse (throws error)")
+try
+    HTTP.listen("127.0.0.1", 8089) do req
+        return HTTP.Response(200, "hello world")
+    end
+catch e
+    @test e isa Base.UVError
+    @test e.prefix == "listen"
+    @test e.code == Base.UV_EADDRINUSE
+end
+
 end # @testset
