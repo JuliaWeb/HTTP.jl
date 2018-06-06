@@ -331,7 +331,6 @@ open(f::Function, method::String, url, headers=Header[]; kw...)::Response =
 """
     HTTP.get(url [, headers]; <keyword arguments>) -> HTTP.Response
 
-
 Shorthand for `HTTP.request("GET", ...)`. See [`HTTP.request`](@ref).
 """
 get(a...; kw...) = request("GET", a...; kw...)
@@ -351,11 +350,25 @@ Shorthand for `HTTP.request("POST", ...)`. See [`HTTP.request`](@ref).
 post(u, h, b; kw...) = request("POST", u, h, b; kw...)
 
 """
+    HTTP.patch(url, headers, body; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("PATCH", ...)`. See [`HTTP.request`](@ref).
+"""
+patch(u, h, b; kw...) = request("PATCH", u, h, b; kw...)
+
+"""
     HTTP.head(url; <keyword arguments>) -> HTTP.Response
 
 Shorthand for `HTTP.request("HEAD", ...)`. See [`HTTP.request`](@ref).
 """
 head(u; kw...) = request("HEAD", u; kw...)
+
+"""
+    HTTP.delete(url [, headers]; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("DELETE", ...)`. See [`HTTP.request`](@ref).
+"""
+delete(a...; kw...) = request("DELETE", a...; kw...)
 
 """
 
