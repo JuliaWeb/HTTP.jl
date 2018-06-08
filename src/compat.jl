@@ -63,7 +63,9 @@ else
         args = [:(print("|  "); @show $a) for a in args]
         esc(:(println("E- ", $m); $(args...); nothing))
     end
-    Base.fetch(t::Task) = wait(t)
+    if !isdefined(Main, :Compat)
+        Base.fetch(t::Task) = wait(t)
+    end
 
     eval(:(module Sockets
         export TCPSocket
