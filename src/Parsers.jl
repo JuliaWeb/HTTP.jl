@@ -44,7 +44,7 @@ struct ParseError <: Exception
     bytes::SubString{String}
 end
 
-ParseError(code::Symbol, bytes="") = 
+ParseError(code::Symbol, bytes="") =
     ParseError(code, first(split(String(bytes), '\n')))
 
 # Regular expressions for parsing HTTP start-line and header-fields

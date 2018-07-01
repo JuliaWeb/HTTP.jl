@@ -500,7 +500,7 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 ││   │ request(StreamLayer,               ::IO,  ::Request, body) │           │
 ││   └──────────────┬───────────────────┬─────────────────────────┘         │ │
 │└──────────────────┼────────║──────────┼───────────────║─────────────────────┘
-│                   │        ║          │               ║                   │  
+│                   │        ║          │               ║                   │
 │┌──────────────────▼───────────────┐   │  ┌──────────────────────────────────┐
 ││ HTTP.Request                     │   │  │ HTTP.Response                  │ │
 ││                                  │   │  │                                  │
@@ -524,7 +524,7 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 ││ writestartline(::IO, ::Request)  │ │  ║ │ parse_status_line(bytes, ::Req') │
 ││ writeheaders(::IO, ::Request)    │ │  ║ │ parse_header_field(bytes, ::Req')│
 │└──────────────────────────────────┘ │  ║ └──────────────────────────────────┘
-│                            ║        │  ║                                     
+│                            ║        │  ║
 │┌───────────────────────────║────────┼──║────────────────────────────────────┐
 └▶ HTTP.ConnectionPool       ║        │  ║                                    │
  │                     ┌──────────────▼────────┐ ┌───────────────────────┐    │
@@ -544,7 +544,7 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
  │                           ║           ║       │ Base.TCPSocket <:IO   │    │
  │                           ║           ║       └───────────────────────┘    │
  └───────────────────────────║───────────║────────────────────────────────────┘
-                             ║           ║                                     
+                             ║           ║
  ┌───────────────────────────║───────────║──────────────┐  ┏━━━━━━━━━━━━━━━━━━┓
  │ HTTP Server               ▼                          │  ┃ data flow: ════▶ ┃
  │                        Request     Response          │  ┃ reference: ────▶ ┃
@@ -587,6 +587,8 @@ include("client.jl")
 include("Handlers.jl")                 ;using .Handlers
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
 Base.@deprecate_binding(Nitrogen, Servers, false)
+
+include("parsemultipart.jl")
 
 include("WebSockets.jl")               ;using .WebSockets
 
