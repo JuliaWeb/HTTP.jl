@@ -3,7 +3,7 @@ function parse_multipart_chunk!(chunk, d)
     Parsers.exec(re, chunk) || return nothing
     i, j = re.ovec
     description = String(chunk[1:i])
-    content = chunk[nextind(chunk, j):end]
+    content = Parsers.nextbytes(re, chunk)
 
     v = match(r"Content-Disposition: form-data; name=\"(.*)\"; filename=\"(.*)\"[\r\n]+Content-Type: (\S*)", description)
     if v !== nothing
@@ -23,7 +23,11 @@ function parse_multipart_chunk!(chunk, d)
     push!(d["content"], content)
 end
 
+parse_multipart_body(body::AbstractArray{UInt8}, boundary) =
+    parse_multipart_body(String(body), boundary)
+
 function parse_multipart_body(body, boundary)
+    body = String(body)
     dict = Dict(
         "name" => String[],
         "filename" => Union{String, Void}[],
@@ -32,11 +36,11 @@ function parse_multipart_body(body, boundary)
     )
     re = Regex(boundary)
     Parsers.exec(re, body) || return nothing
-    str = body[nextind(body, re.ovec[2]):endof(body)]
+    str = Parsers.nextbytes(re, body)
     while Parsers.exec(re, str)
         chunk = str[1:re.ovec[1]]
         parse_multipart_chunk!(chunk, dict)
-        str = str[nextind(str, re.ovec[2]):endof(str)]
+        str = Parsers.nextbytes(re, str)
     end
     return dict
 end
