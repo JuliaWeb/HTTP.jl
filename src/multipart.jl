@@ -83,8 +83,8 @@ function writemultipartheader(io::IOBuffer, i::IOStream)
     write(io, "; filename=\"$(basename(i.name[7:end-1]))\"\r\n")
     write(io, "Content-Type: $(HTTP.sniff(i))\r\n\r\n")
     return
-    end
-    function writemultipartheader(io::IOBuffer, i::IO)
+end
+function writemultipartheader(io::IOBuffer, i::IO)
     write(io, "\r\n\r\n")
     return
 end
@@ -97,15 +97,45 @@ key-value pair of a Dict passed to an http request, like `HTTP.post(url; body=Di
 The `data` argument must be an `IO` type such as `IOStream`, or `IOBuffer`.
 The `content_type` and `content_transfer_encoding` arguments allow the manual setting of these multipart headers. `Content-Type` will default to the result
 of the `HTTP.sniff(data)` mimetype detection algorithm, whereas `Content-Transfer-Encoding` will be left out if not specified.
+
+Filename SHOULD be included when the Multipart represents the contents of a file
+[RFC7578 4.2](https://tools.ietf.org/html/rfc7578#section-4.2)
+
+Content-Disposition set to "form-data" MUST be included with each Multipart.
+An additional "name" parameter MUST be included
+An optional "filename" parameter SHOULD be included if the contents of a file are sent
+This will be formatted such as:
+  Content-Disposition: form-data; name="user"; filename="myfile.txt"
+[RFC7578 4.2](https://tools.ietf.org/html/rfc7578#section-4.2)
+
+Content-Type for each Multipart is optional, but SHOULD be included if the contents
+of a file are sent.
+[RFC7578 4.4](https://tools.ietf.org/html/rfc7578#section-4.4)
+
+Content-Transfer-Encoding for each Multipart is deprecated
+[RFC7578 4.7](https://tools.ietf.org/html/rfc7578#section-4.7)
+
+Other Content- header fields MUST be ignored
+[RFC7578 4.8](https://tools.ietf.org/html/rfc7578#section-4.8)
 """
 mutable struct Multipart{T <: IO} <: IO
-    filename::String
+    filename::Union{String, Nothing}
     data::T
     contenttype::String
     contenttransferencoding::String
+    name::String
 end
-Multipart(f::String, data::T, ct="", cte="") where {T} = Multipart(f, data, ct, cte)
-Base.show(io::IO, m::Multipart{T}) where {T} = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", data=::$T, contenttype=\"$(m.contenttype)\", contenttransferencoding=\"$(m.contenttransferencoding)\")")
+
+function Multipart(f::Union{AbstractString, Nothing}, data::T, ct::AbstractString="", cte::AbstractString="", name::AbstractString="") where {T<:IO}
+    f = f !== nothing ? String(f) : nothing
+    return Multipart{T}(f, data, String(ct), String(cte), String(name))
+end
+
+function Base.show(io::IO, m::Multipart{T}) where {T}
+    items = ["data=::$T", "contenttype=\"$(m.contenttype)\"", "contenttransferencoding=\"$(m.contenttransferencoding)\")"]
+    isnothing(m.filename) || pushfirst!(items, "filename=\"$(m.filename)\"")
+    print(io, "HTTP.Multipart($(join(items, ", ")))")
+end
 
 Base.bytesavailable(m::Multipart{T}) where {T} = isa(m.data, IOStream) ? filesize(m.data) - position(m.data) : bytesavailable(m.data)
 Base.eof(m::Multipart{T}) where {T} = eof(m.data)
@@ -113,9 +143,14 @@ Base.read(m::Multipart{T}, n::Integer) where {T} = read(m.data, n)
 Base.read(m::Multipart{T}) where {T} = read(m.data)
 Base.mark(m::Multipart{T}) where {T} = mark(m.data)
 Base.reset(m::Multipart{T}) where {T} = reset(m.data)
+Base.seekstart(m::Multipart{T}) where {T} = seekstart(m.data)
 
 function writemultipartheader(io::IOBuffer, i::Multipart)
-    write(io, "; filename=\"$(i.filename)\"\r\n")
+    if isnothing(i.filename)
+        write(io, "\r\n")
+    else
+        write(io, "; filename=\"$(i.filename)\"\r\n")
+    end
     contenttype = i.contenttype == "" ? HTTP.sniff(i.data) : i.contenttype
     write(io, "Content-Type: $(contenttype)\r\n")
     write(io, i.contenttransferencoding == "" ? "\r\n" : "Content-Transfer-Encoding: $(i.contenttransferencoding)\r\n\r\n")

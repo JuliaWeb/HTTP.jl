@@ -11,6 +11,7 @@ using JSON
               "utils.jl",
               "client.jl",
               "multipart.jl",
+              "parsemultipart.jl",
               "sniff.jl",
               "uri.jl",
               "url.jl",
