@@ -39,7 +39,7 @@ function parse_multipart_body(body, boundary)
     str = Parsers.nextbytes(re, body)
     while Parsers.exec(re, str)
         chunk = str[1:re.ovec[1]]
-        parse_multipart_chunk!(chunk, dict)
+        isempty(chunk) || parse_multipart_chunk!(chunk, dict)
         str = Parsers.nextbytes(re, str)
     end
     return dict
