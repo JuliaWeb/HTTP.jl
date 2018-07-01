@@ -8,6 +8,7 @@ const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
               "utils.jl",
               "client.jl",
               "multipart.jl",
+              "parsemultipart.jl",
               "sniff.jl",
               "uri.jl",
               "url.jl",
