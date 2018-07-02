@@ -82,3 +82,7 @@ end
 @static if !applicable(bytesavailable, MbedTLS.SSLContext())
     Base.bytesavailable(ssl::MbedTLS.SSLContext) = nb_available(ssl)
 end
+
+@static if !applicable(Sockets.getsockname, MbedTLS.SSLContext())
+    Sockets.getsockname(ctx::SSLContext) = Sockets.getsockname(ctx.bio)
+end
