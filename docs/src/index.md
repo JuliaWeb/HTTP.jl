@@ -176,6 +176,7 @@ HTTP.Messages.setheader
 HTTP.Messages.defaultheader
 HTTP.Messages.appendheader
 HTTP.Messages.readheaders
+HTTP.MessageRequest.setuseragent!
 HTTP.Messages.readchunksize
 HTTP.Messages.headerscomplete(::HTTP.Messages.Response)
 HTTP.Messages.writestartline

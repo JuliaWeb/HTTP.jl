@@ -37,7 +37,7 @@ end
 
 @testset "HTTP.Servers.serve" begin
 
-port = rand(8000:8999)
+port = 8086 # rand(8000:8999)
 
 # test kill switch
 server = HTTP.Servers.Server()
@@ -58,10 +58,10 @@ end, stdout)
 
 server.options.ratelimit=0
 tsk = @async HTTP.Servers.serve(server, Sockets.localhost, port)
-sleep(1.0)
+sleep(5.0)
 
 
-r = testget("http://127.0.0.1:$port/")
+r = testget("http://127.0.0.1:$port")
 @test HTTP.compat_occursin(r"HTTP/1.1 200 OK", r)
 
 rv = []
