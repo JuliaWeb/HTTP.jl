@@ -4,24 +4,29 @@ using HTTP.IOExtras, HTTP.Sockets
 
 @testset "WebSockets" begin
 
-for s in ["ws", "wss"]
+# for s in ["wss", "ws"]
 
-    HTTP.WebSockets.open("$s://echo.websocket.org") do io
-        write(io, HTTP.bytes("Foo"))
-        @test !eof(io)
-        @test String(readavailable(io)) == "Foo"
+#     HTTP.WebSockets.open("$s://echo.websocket.org") do io
+#         println("writing")
+#         write(io, "Foo")
+#         println("testing")
+#         @test !eof(io)
+#         @test String(readavailable(io)) == "Foo"
 
-        write(io, HTTP.bytes("Hello"))
-        write(io, " There")
-        write(io, " World", "!")
-        closewrite(io)
+#         println("writing again")
+#         write(io, "Hello")
+#         write(io, " There")
+#         write(io, " World", "!")
+#         println("closewrite")
+#         closewrite(io)
 
-        buf = IOBuffer()
-        write(buf, io)
-        @test String(take!(buf)) == "Hello There World!"
-    end
+#         println("reading response")
+#         buf = IOBuffer()
+#         write(buf, io)
+#         @test String(take!(buf)) == "Hello There World!"
+#     end
 
-end
+# end
 
 p = rand(8000:8999)
 @async HTTP.listen(Sockets.localhost, p) do http
