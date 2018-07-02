@@ -279,6 +279,7 @@ headerscomplete(r::Request) = r.method != ""
 """
 bodylength(r::Response)::Int =
                  r.request.method == "HEAD" ? 0 :
+                               ischunked(r) ? unknown_length :
                      r.status in [204, 304] ? 0 :
     (l = header(r, "Content-Length")) != "" ? parse(Int, l) :
                                               unknown_length

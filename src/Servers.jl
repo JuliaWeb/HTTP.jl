@@ -523,6 +523,7 @@ function handle_request(f::Function, http::Stream)
     request::HTTP.Request = http.message
     request.body = read(http)
     request.response::HTTP.Response = f(request)
+    request.response.request = request
     startwrite(http)
     write(http, request.response.body)
     return
