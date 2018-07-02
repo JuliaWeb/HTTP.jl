@@ -1,7 +1,7 @@
-@static if VERSION >= v"0.7.0-DEV.2915"
-using Distributed
-end
-addprocs(5)
+# @static if VERSION >= v"0.7.0-DEV.2915"
+# using Distributed
+# end
+# addprocs(5)
 
 include("compat.jl")
 
