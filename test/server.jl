@@ -58,7 +58,7 @@ end, stdout)
 
 server.options.ratelimit=0
 tsk = @async HTTP.Servers.serve(server, Sockets.localhost, port)
-sleep(1.0)
+sleep(5.0)
 
 
 r = testget("http://127.0.0.1:$port")
