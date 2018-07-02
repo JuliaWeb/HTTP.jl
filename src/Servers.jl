@@ -362,7 +362,7 @@ function listen(f::Function,
                 hostname = string(host)
                 hostport = ""
             end
-            let io = Connection(hostname, hostport, pipeline_limit, 0, io)
+            let io = Connection(hostname, hostport, pipeline_limit, 0, require_ssl_verification, io)
                 @info "Accept:  $io"
                 @async try
                     handle_connection(f, io; kw...)
