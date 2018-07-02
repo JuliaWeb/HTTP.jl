@@ -1,6 +1,6 @@
 module MessageRequest
 
-export body_is_a_stream, body_was_streamed
+export body_is_a_stream, body_was_streamed, setuseragent!
 
 import ..bytesavailable
 import ..Layer, ..request
@@ -26,6 +26,7 @@ function request(::Type{MessageLayer{Next}},
                  parent=nothing, iofunction=nothing, kw...) where Next
 
     defaultheader(headers, "Host" => url.host)
+    isassigned(USER_AGENT) && defaultheader(headers, "User-Agent" => USER_AGENT[])
 
     if !hasheader(headers, "Content-Length") &&
        !hasheader(headers, "Transfer-Encoding") &&
@@ -42,6 +43,13 @@ function request(::Type{MessageLayer{Next}},
                   parent=parent, version=http_version)
 
     return request(Next, url, req, body; iofunction=iofunction, kw...)
+end
+
+const USER_AGENT = Ref{String}()
+"Set the default User-Agent string to be used in each HTTP request; when set, can be manually overridden by passing in an explicit `User-Agent` header"
+function setuseragent!(x::String)
+    USER_AGENT[] = x
+    return
 end
 
 bodylength(body) = unknown_length
