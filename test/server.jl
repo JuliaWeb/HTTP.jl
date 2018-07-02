@@ -1,9 +1,9 @@
-@static if VERSION >= v"0.7.0-DEV.2915"
-using Distributed
-end
-while nworkers() < 5
-    addprocs(1)
-end
+# @static if VERSION >= v"0.7.0-DEV.2915"
+# using Distributed
+# end
+# while nworkers() < 5
+#     addprocs(1)
+# end
 
 @everywhere using HTTP, HTTP.Sockets
 @static if VERSION < v"0.7.0-DEV.2005"
