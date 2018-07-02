@@ -37,7 +37,7 @@ end
 
 @testset "HTTP.Servers.serve" begin
 
-port = rand(8000:8999)
+port = 8086 # rand(8000:8999)
 
 # test kill switch
 server = HTTP.Servers.Server()

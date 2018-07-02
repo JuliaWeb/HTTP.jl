@@ -28,7 +28,7 @@ using HTTP.IOExtras, HTTP.Sockets
 
 # end
 
-p = rand(8000:8999)
+p = 8085 # rand(8000:8999)
 @async HTTP.listen(Sockets.localhost, p) do http
     if HTTP.WebSockets.is_upgrade(http.message)
         HTTP.WebSockets.upgrade(http) do ws
