@@ -5,6 +5,7 @@ export Stream, closebody, isaborted,
        setstatus, setheader
 
 import ..HTTP
+using ..Sockets
 using ..IOExtras
 using ..Messages
 import ..bytesavailable, ..compat_string
@@ -55,6 +56,8 @@ header(http::Stream, a...) = header(http.message, a...)
 setstatus(http::Stream, status) = (http.message.response.status = status)
 setheader(http::Stream, a...) = setheader(http.message.response, a...)
 getrawstream(http::Stream) = getrawstream(http.stream)
+
+Sockets.getsockname(http::Stream) = Sockets.getsockname(getrawstream(http))
 
 IOExtras.isopen(http::Stream) = isopen(http.stream)
 

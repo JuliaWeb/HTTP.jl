@@ -1,6 +1,7 @@
 include("compat.jl")
 using HTTP
 using HTTP.Base64
+using HTTP.Sockets
 using JSON
 using MbedTLS: digest, MD_MD5, MD_SHA256
 
@@ -16,6 +17,7 @@ println("async tests")
 stop_pool_dump = false
 
 @async HTTP.listen() do http
+    @show HTTP.Sockets.getsockname(http)
     startwrite(http)
     write(http, """
         <html><head>
