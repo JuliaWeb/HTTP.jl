@@ -203,4 +203,22 @@ catch e
     @test e.code == Base.UV_EADDRINUSE
 end
 
+# test automatic forwarding of non-sensitive headers
+# this is a server that will "echo" whatever headers were sent to it
+t1 = @async HTTP.listen("127.0.0.1", 8090) do req::HTTP.Request
+    r = HTTP.Response(200)
+    r.headers = req.headers
+    return r
+end
+@test !istaskdone(t1)
+sleep(0.5)
+
+# test that an Authorization header is **not** forwarded to a domain different than initial request
+r = HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:8090", ["Authorization"=>"auth"])
+@test !HTTP.hasheader(r, "Authorization")
+
+# test that an Authorization header **is** forwarded to redirect in same domain
+r = HTTP.get("http://httpbin.org/redirect-to?url=https://httpbin.org/response-headers?Authorization=auth")
+@test HTTP.hasheader(r, "Authorization")
+
 end # @testset

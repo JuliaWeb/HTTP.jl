@@ -13,7 +13,7 @@ Additional keyword arguments can be passed that will get transmitted with each H
   * `tlsconfig::TLS.SSLConfig`: a valid `TLS.SSLConfig` which will be used to initialize every https connection; default = `nothing`
   * `maxredirects::Int`: the maximum number of redirects that will automatically be followed for an http request; default = 5
   * `allowredirects::Bool`: whether redirects should be allowed to be followed at all; default = `true`
-  * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `false`
+  * `forwardheaders::Bool`: whether user-provided headers should be forwarded on redirects; default = `true`
   * `retries::Int`: # of times a request will be tried before throwing an error; default = 3
   * `managecookies::Bool`: whether the request client should automatically store and add cookies from/to requests (following appropriate host-specific & expiration rules); default = `true`
   * `statusraise::Bool`: whether an `HTTP.StatusError` should be raised on a non-2XX response status code; default = `true`

@@ -17,7 +17,7 @@ export RedirectLayer
 
 function request(::Type{RedirectLayer{Next}},
                  method::String, url::URI, headers, body;
-                 redirect_limit=3, forwardheaders=false, kw...) where Next
+                 redirect_limit=3, forwardheaders=true, kw...) where Next
     count = 0
     while true
     
@@ -35,9 +35,20 @@ function request(::Type{RedirectLayer{Next}},
         else
         setkv(kw, :parent, res)
         end
+        oldurl = url
         url = absuri(location, url)
         if forwardheaders 
-            headers = filter(h->!(h[1] in ("Host", "Cookie")), headers)
+            headers = filter(headers) do h
+                # false return values are filtered out
+                header, value = h
+                if header == "Host"
+                    return false
+                elseif header in SENSITIVE_HEADERS && !isdomainorsubdomain(url.host, oldurl.host)
+                    return false
+                else
+                    return true
+                end
+            end
         else
             headers = Header[]
         end
@@ -50,5 +61,12 @@ function request(::Type{RedirectLayer{Next}},
     @assert false "Unreachable!"
 end
 
+const SENSITIVE_HEADERS = Set(["Authorization", "Www-Authenticate", "Cookie", "Cookie2"])
+
+function isdomainorsubdomain(sub, parent)
+    sub == parent && return true
+    endswith(sub, parent) || return false
+    return sub[length(sub)-length(parent)] == '.'
+end
 
 end # module RedirectRequest

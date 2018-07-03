@@ -118,7 +118,7 @@ Redirect options
 
  - `redirect = true`, follow 3xx redirect responses.
  - `redirect_limit = 3`, number of times to redirect.
- - `forwardheaders = false`, forward original headers on redirect.
+ - `forwardheaders = true`, forward original headers on redirect.
 
 
 Status Exception options
