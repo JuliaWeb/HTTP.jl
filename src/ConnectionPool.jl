@@ -98,7 +98,8 @@ struct Transaction{T <: IO} <: IO
 end
 
 Connection(host::AbstractString, port::AbstractString,
-           pipeline_limit::Int, idle_timeout::Int, require_ssl_verification::Bool, io::T) where T <: IO =
+           pipeline_limit::Int, idle_timeout::Int,
+           require_ssl_verification::Bool, io::T) where T <: IO =
     Connection{T}(host, port,
                   pipeline_limit, idle_timeout,
                   require_ssl_verification,
@@ -109,7 +110,8 @@ Connection(host::AbstractString, port::AbstractString,
                   0, false, Condition(),
                   time())
 
-Connection(io; require_ssl_verification::Bool=true) = Connection("", "", default_pipeline_limit, 0, require_ssl_verification, io)
+Connection(io; require_ssl_verification::Bool=true) =
+    Connection("", "", default_pipeline_limit, 0, require_ssl_verification, io)
 
 Transaction(c::Connection{T}) where T <: IO =
     Transaction{T}(c, (c.sequence += 1))
@@ -478,7 +480,9 @@ function getconnection(::Type{Transaction{T}},
             purge()
 
             # Try to find a connection with no active readers or writers...
-            writable = findwritable(T, host, port, pipeline_limit, require_ssl_verification, reuse_limit)
+            writable = findwritable(T, host, port, pipeline_limit,
+                                                   require_ssl_verification,
+                                                   reuse_limit)
             idle = filter(c->!c.readbusy, writable)
             if !isempty(idle)
                 c = rand(idle)                 ;@debug 2 "♻️  Idle:           $c"
@@ -487,9 +491,12 @@ function getconnection(::Type{Transaction{T}},
 
             # If there are not too many connections to this host:port,
             # create a new connection...
-            busy = findall(T, host, port, pipeline_limit, require_ssl_verification)
+            busy = findall(T, host, port, pipeline_limit,
+                                          require_ssl_verification)
             if length(busy) < connection_limit
-                io = getconnection(T, host, port; require_ssl_verification=require_ssl_verification, kw...)
+                io = getconnection(T, host, port; require_ssl_verification=
+                                                  require_ssl_verification,
+                                                  kw...)
                 c = Connection(host, port,
                                pipeline_limit, idle_timeout,
                                require_ssl_verification,
@@ -624,8 +631,12 @@ function sslconnection(tcp::TCPSocket, host::AbstractString;
 end
 
 function sslupgrade(t::Transaction{TCPSocket},
-                    host::AbstractString; require_ssl_verification::Bool=true, kw...)::Transaction{SSLContext}
-    tls = sslconnection(t.c.io, host; require_ssl_verification=require_ssl_verification, kw...)
+                    host::AbstractString;
+                    require_ssl_verification::Bool=true,
+                    kw...)::Transaction{SSLContext}
+    tls = sslconnection(t.c.io, host;
+                        require_ssl_verification=require_ssl_verification,
+                        kw...)
     c = Connection(tls; require_ssl_verification=require_ssl_verification)
     return client_transaction(c)
 end
