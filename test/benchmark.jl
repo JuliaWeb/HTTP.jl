@@ -180,7 +180,7 @@ function go(count::Int)
 
                                                            t_init_start = time()
     io = Base.BufferStream()
-    c = Connection("", "", pipeline_limit, io)
+    c = Connection("", "", pipeline_limit, 0, true, io)
 
                                                             t_init_done = time()
     for rep in 1:count
