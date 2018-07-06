@@ -152,23 +152,3 @@ for f in [:get, :post, :put, :delete, :head,
         end
     end
 end
-
-function download(url::AbstractString, file; threshold::Int=50000000, verbose::Bool=false, query="", args...)
-    res = request(GET, url; verbose=verbose, query=query, stream=true, args...)
-    body = HTTP.body(res)
-    file = Base.get(HTTP.headers(res), "Content-Encoding", "") == "gzip" ? string(file, ".gz") : file
-    threshold_step = threshold
-    nbytes = 0
-    open(file, "w") do f
-        while !eof(body)
-            nbytes += write(f, readavailable(body))
-            if verbose && nbytes > threshold
-                println("[$(Dates.now())]: downloaded $nbytes bytes...")
-                flush(stdout)
-                threshold += threshold_step
-            end
-        end
-        length(body) > 0 && write(f, readavailable(body))
-    end
-    return file
-end
