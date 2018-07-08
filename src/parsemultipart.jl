@@ -1,6 +1,11 @@
 const RETURN_BYTES = [0x0d, 0x0a]
 const DASH_BYTE = 0x2d
 
+const FORMDATA_REGEX = r"Content-Disposition: form-data"
+const NAME_REGEX = r"name=\"(.*)\""
+const FILENAME_REGEX = r"filename=\"(.*)\""
+const CONTENTTYPE_REGEX = r"Content-Type: (\S*)"
+
 function find_boundary(bytes::AbstractVector{UInt8}, str, dashes; start::Int = 1)
     l = length(bytes)
     i = start
@@ -33,9 +38,11 @@ function find_boundaries(bytes::AbstractVector{UInt8}, boundary; start::Int = 1)
 end
 
 function remove_trailing(bytes::AbstractVector{UInt8}, charlist::AbstractVector{UInt8})
-    i = findlast(in(charlist), bytes)
-    j = i !== nothing ? i-1 : lastindex(bytes)
-    view(bytes, 1:j)
+    i = lastindex(bytes)
+    while bytes[i] in charlist
+        i -= 1
+    end
+    view(bytes, 1:i)
 end
 
 remove_trailing(bytes::AbstractVector{UInt8}, char::UInt8) = remove_trailing(bytes, [char])
@@ -67,21 +74,19 @@ function parse_multipart_chunk!(d, chunk)
     description = String(view(chunk, 1:i[1]))
     content = view(chunk, i[2]+1:lastindex(chunk))
 
-    v = match(r"Content-Disposition: form-data; name=\"(.*)\"; filename=\"(.*)\"[\r\n]+Content-Type: (\S*)", description)
-    if v !== nothing
-        name = String(v[1])
-        filename = String(v[2])
-        contenttype = String(v[3])
-    else
-        v = match(r"Content-Disposition: form-data; name=\"(.*)\"", description)
-        v == nothing && return
-        name = String(v[1])
-        filename = nothing
-        contenttype = "plain/text"
-    end
+    occursin(FORMDATA_REGEX, description) || return # Specifying content disposition is mandatory
+
+    match_name        = match(NAME_REGEX, description)
+    match_filename    = match(FILENAME_REGEX, description)
+    match_contenttype = match(CONTENTTYPE_REGEX, description)
+
+    name        = match_name !== nothing ? match_name[1] : return # Specifying name is mandatory
+    filename    = match_filename !== nothing ? match_filename[1] : nothing
+    contenttype = match_contenttype !== nothing ? match_contenttype[1] : "text/plain" # if content_type is not specified, the default text/plain is assumed
 
     content = remove_trailing(content, DASH_BYTE)
     content = remove_trailing(content, RETURN_BYTES)
+
     io = IOBuffer()
     write(io, content)
     push!(d, Multipart(filename, io, contenttype, "", name))

@@ -104,7 +104,12 @@ mutable struct Multipart{T <: IO} <: IO
     contenttransferencoding::String
     name::String
 end
-Multipart(f::Union{String, Nothing}, data::T, ct="", cte="", name="") where {T} = Multipart(f, data, ct, cte, name)
+
+function Multipart(f::Union{AbstractString, Nothing}, data::T, ct::AbstractString="", cte::AbstractString="", name::AbstractString="") where {T}
+    f = f !== nothing ? String(f) : nothing
+    Multipart(f, data, String(ct), String(cte), String(name))
+end
+
 Base.show(io::IO, m::Multipart{T}) where {T} = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", data=::$T, contenttype=\"$(m.contenttype)\", contenttransferencoding=\"$(m.contenttransferencoding)\")")
 
 bytesavailable(m::Multipart{T}) where {T} = isa(m.data, IOStream) ? filesize(m.data) - position(m.data) : bytesavailable(m.data)
