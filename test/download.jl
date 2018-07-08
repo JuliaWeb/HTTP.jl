@@ -6,10 +6,12 @@ using HTTP
         invalid_content_disposition_fn = HTTP.download(
             "http://test.greenbytes.de/tech/tc2231/attonlyquoted.asis")
         @test isfile(invalid_content_disposition_fn)
-        @test basename(invilid_content_disposition_fn) == "attonlyquoted.asis" # just last part  of name
+        @test basename(invalid_content_disposition_fn) == "attonlyquoted.asis" # just last part  of name
+
+
 
         content_disposition_fn = HTTP.download(
-            "http://test.greenbytes.de/tech/tc2231/attwithasciifilenamepdf.asis")
+            "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis")
         @test isfile(content_disposition_fn)
         @test basename(content_disposition_fn) == "foo.pdf"
 
@@ -22,7 +24,7 @@ using HTTP
     @testset "Provided Filename" begin
         provided_filename = tempname()
         returned_filename = HTTP.download(
-            "http://test.greenbytes.de/tech/tc2231/attwithasciifilenamepdf.asis",
+            "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis",
             provided_filename
         )
         @test provided_filename == returned_filename
@@ -32,7 +34,7 @@ using HTTP
     end
 
     @testset "Content-Encoding" begin
-        zip_content_encoding_fn = HTTP.download("https://httpbin.org/gzip")
+        gzip_content_encoding_fn = HTTP.download("https://httpbin.org/gzip")
         @test isfile(gzip_content_encoding_fn)
         @test last(splitext(gzip_content_encoding_fn)) == ".gz"
     end

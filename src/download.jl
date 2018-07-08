@@ -72,6 +72,7 @@ from the rules of the HTTP.
 
 """
 function download(url::AbstractString, local_path=nothing; update_period=0.5)
+    @debug 1 "downloading $url"
     local file
     HTTP.open("GET", url) do stream
         resp = startread(stream)
