@@ -98,12 +98,13 @@ The `content_type` and `content_transfer_encoding` arguments allow the manual se
 of the `HTTP.sniff(data)` mimetype detection algorithm, whereas `Content-Transfer-Encoding` will be left out if not specified.
 """
 mutable struct Multipart{T <: IO} <: IO
-    filename::String
+    filename::Union{String, Nothing}
     data::T
     contenttype::String
     contenttransferencoding::String
+    name::String
 end
-Multipart(f::String, data::T, ct="", cte="") where {T} = Multipart(f, data, ct, cte)
+Multipart(f::Union{String, Nothing}, data::T, ct="", cte="", name="") where {T} = Multipart(f, data, ct, cte, name)
 Base.show(io::IO, m::Multipart{T}) where {T} = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", data=::$T, contenttype=\"$(m.contenttype)\", contenttransferencoding=\"$(m.contenttransferencoding)\")")
 
 bytesavailable(m::Multipart{T}) where {T} = isa(m.data, IOStream) ? filesize(m.data) - position(m.data) : bytesavailable(m.data)
