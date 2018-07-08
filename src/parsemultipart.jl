@@ -1,9 +1,12 @@
+const RETURN_BYTES = [0x0d, 0x0a]
+const DASH_BYTE = 0x2d
+
 function find_boundary(bytes::AbstractVector{UInt8}, str, dashes; start::Int = 1)
     l = length(bytes)
     i = start
     cons_dash = 0
     while i+length(str) <= l
-        @inbounds cons_dash = (bytes[i] == 0x2d) ? cons_dash + 1 : 0
+        @inbounds cons_dash = (bytes[i] == DASH_BYTE) ? cons_dash + 1 : 0
         if cons_dash >= dashes && bytes[(i+1):(i+length(str))] == str
             return [i-dashes, i+length(str)]
         end
@@ -41,12 +44,11 @@ function find_returns(bytes::AbstractVector{UInt8})
     l = length(bytes)
     i = 1
     returns = UInt8[]
-    returnbytes = [0x0d, 0x0a]
     while i <= l
         @inbounds byte = bytes[i]
-        if byte in returnbytes
+        if byte in RETURN_BYTES
             push!(returns, byte)
-            if i==l || !(bytes[i+1] in returnbytes)
+            if i==l || !(bytes[i+1] in RETURN_BYTES)
                 len = length(returns)
                 uniquelen = length(unique(returns))
                 len >= 2 * uniquelen && return [i-len, i]
@@ -67,35 +69,32 @@ function parse_multipart_chunk!(d, chunk)
 
     v = match(r"Content-Disposition: form-data; name=\"(.*)\"; filename=\"(.*)\"[\r\n]+Content-Type: (\S*)", description)
     if v !== nothing
-        push!(d["name"], v[1])
-        push!(d["filename"], v[2])
-        push!(d["contenttype"], v[3])
+        name = String(v[1])
+        filename = String(v[2])
+        contenttype = String(v[3])
     else
         v = match(r"Content-Disposition: form-data; name=\"(.*)\"", description)
         v == nothing && return
-        push!(d["name"], v[1])
-        push!(d["filename"], nothing)
-        push!(d["contenttype"], nothing)
+        name = String(v[1])
+        filename = nothing
+        contenttype = "plain/text"
     end
 
-    content = remove_trailing(content, 0xd)
-    content = remove_trailing(content, [0x0d, 0x0a])
-    push!(d["content"], content)
+    content = remove_trailing(content, DASH_BYTE)
+    content = remove_trailing(content, RETURN_BYTES)
+    io = IOBuffer()
+    write(io, content)
+    push!(d, Multipart(filename, io, contenttype, "", name))
 end
 
 function parse_multipart_body(body::Vector{UInt8}, boundary)
-    dict = Dict(
-        "name" => String[],
-        "filename" => Union{String, Nothing}[],
-        "contenttype" => Union{String, Nothing}[],
-        "content" => Any[]
-    )
+    d = Multipart[]
     idxs = find_boundaries(body, boundary)
     for i in 1:length(idxs)-1
         chunk = view(body, idxs[i][2]+1:idxs[i+1][1])
-        parse_multipart_chunk!(dict, chunk)
+        parse_multipart_chunk!(d, chunk)
     end
-    return dict
+    return d
 end
 
 function parse_multipart_form(req::Request)
