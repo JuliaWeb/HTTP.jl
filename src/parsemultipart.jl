@@ -2,7 +2,7 @@ const RETURN_BYTES = [0x0d, 0x0a]
 const DASH_BYTE = 0x2d
 
 const FORMDATA_REGEX = r"Content-Disposition: form-data"
-const NAME_REGEX = r"name=\"(.*)\""
+const NAME_REGEX = r" name=\"(.*)\""
 const FILENAME_REGEX = r"filename=\"(.*)\""
 const CONTENTTYPE_REGEX = r"Content-Type: (\S*)"
 
