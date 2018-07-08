@@ -56,7 +56,7 @@ function determine_file(path, resp)
 end
 
 """
-    download(url, [local_path])
+    download(url, [local_path]; update_period=0.5)
 
 Similar to `Base.download` this downloads a file, returning the filename.
 If the `local_path`:
@@ -66,14 +66,16 @@ If the `local_path`:
 
 When saving into a directory, the filename is determined (where possible),
 from the rules of the HTTP.
+
+ - `update_period` controls how often (in seconds) to report the progress.
+    - set to `Inf` to disable reporting
+
 """
-function download(url::AbstractString, local_path=nothing)
+function download(url::AbstractString, local_path=nothing; update_period=0.5)
     local file
     HTTP.open("GET", url) do stream
         resp = startread(stream)
         file = determine_file(local_path, resp)
-        @show file
-        @show resp
         total_bytes = parse(Float64, getkv(resp.headers, "Content-Length", "NaN"))
         downloaded_bytes = 0
         start_time = now()
@@ -100,10 +102,10 @@ function download(url::AbstractString, local_path=nothing)
             )
         end
 
-        open(file, "w") do fh
+        Base.open(file, "w") do fh
             while(!eof(stream))
                 downloaded_bytes += write(fh, readavailable(stream))
-                if now() - prev_time > Millisecond(500)
+                if now() - prev_time > Millisecond(1000update_period)
                     report_callback()
                 end
             end
