@@ -1,5 +1,21 @@
 using .Pairs
 
+"""
+    safer_joinpath(basepart, parts...)
+A variation on `joinpath`, that is more resistant to directory traveral attack
+The parts to be joined (excluding the `basepart`),
+are not allowed to contain `..`, or begin with a `/`.
+If they do then this throws an `DomainError`.
+"""
+function safer_joinpath(basepart, parts...)
+    explain =  "Possible Directory Traversal Attack detected."
+    for part in parts
+        contains(part, "..") && throw(DomainError(part, "contains illegal string \"..\". $explain"))
+        startswith(part, '/') && throw(DomainError(part, "begins with \"/\". $explain"))
+    end
+    joinpath(basepart, parts...)
+end
+
 function try_get_filename_from_headers(headers)
     content_disp = getkv(headers, "Content-Disposition")
     if content_disp != nothing
@@ -42,7 +58,7 @@ function determine_file(path, resp)
                         try_get_filename_from_remote_path(resp.request.target),
                         basename(tempname()) # fallback, basically a random string
                     )
-        joinpath(path, filename)
+        safer_joinpath(path, filename)
     else
         # It is a file, we are done.
         path
