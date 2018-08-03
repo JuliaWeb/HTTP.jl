@@ -342,7 +342,7 @@ function listen(f::Function,
             try
                 io = accept(tcpserver)
             catch e
-                if e isa Base.UVError
+                if e isa @static VERSION>=v"0.7-" ? Base.IOError : Base.UVError
                     @warn "$e"
                     break
                 else

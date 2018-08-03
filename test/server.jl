@@ -198,8 +198,8 @@ try
         return HTTP.Response(200, "hello world")
     end
 catch e
-    @test e isa Base.UVError
-    @test e.prefix == "listen"
+    @test e isa @static VERSION>=v"0.7-" ? Base.IOError : Base.UVError
+    @test startswith((@static VERSION>=v"0.7-" ? e.msg : e.prefix), "listen")
     @test e.code == Base.UV_EADDRINUSE
 end
 
