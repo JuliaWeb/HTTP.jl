@@ -167,7 +167,7 @@ put!(server.in, HTTP.Servers.KILL)
 
 # keep-alive vs. close: issue #81
 port += 1
-tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req) -> (req.response.body = "Hello\n"; req.response), stdout), "127.0.0.1", port)
+tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req) -> HTTP.Response("Hello\n"), stdout), "127.0.0.1", port)
 sleep(2.0)
 r = HTTP.request("GET", "http://127.0.0.1:$port/", ["Host"=>"127.0.0.1:$port"]; http_version=v"1.0")
 @test r.status == 200

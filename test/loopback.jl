@@ -95,7 +95,7 @@ function on_body(f, lb)
         @async try
             f(req)
         catch e
-            println("⚠️ on_body exception: $(sprint(showerror, e))\n$(catch_stacktrace())")
+            println("⚠️ on_body exception: $(sprint(showerror, e))\n$(stacktrace(catch_backtrace()))")
         end
     end
 end

@@ -130,7 +130,7 @@ conf = [:reuse_limit => 90,
         #println("S3 put file$i")
         @assert strip(HTTP.header(r, "ETag"), '"') == md5
     catch e
-        dump_async_exception(e, catch_stacktrace())
+        dump_async_exception(e, stacktrace(catch_backtrace()))
         rethrow(e)
     end
 end
@@ -164,7 +164,7 @@ get_data_sums = Dict()
             md5 = bytes2hex(digest(MD_MD5, bytes))
             get_data_sums[i] = (md5, strip(HTTP.header(r, "ETag"), '"'))
         catch e
-            dump_async_exception(e, catch_stacktrace())
+            dump_async_exception(e, stacktrace(catch_backtrace()))
             rethrow(e)
         end
     end
@@ -206,7 +206,7 @@ println("running async $count, 1:$num, $config, $http A")
                 r = JSON.parse(String(r.body))
                 push!(result, r["headers"]["I"] => string(i))
             catch e
-                dump_async_exception(e, catch_stacktrace())
+                dump_async_exception(e, stacktrace(catch_backtrace()))
                 rethrow(e)
             end
         end
@@ -231,7 +231,7 @@ println("running async $count, 1:$num, $config, $http B")
                 r = split(strip(r), "\n")
                 push!(result, length(r) => i)
             catch e
-                dump_async_exception(e, catch_stacktrace())
+                dump_async_exception(e, stacktrace(catch_backtrace()))
                 rethrow(e)
             end
         end
@@ -322,7 +322,7 @@ println("running async $count, 1:$num, $config, $http C")
                 push!(result, length(l) => n)
             catch e
                 push!(result, e => n)
-                dump_async_exception(e, catch_stacktrace())
+                dump_async_exception(e, stacktrace(catch_backtrace()))
                 rethrow(e)
             end
         end
