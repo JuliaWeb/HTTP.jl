@@ -72,7 +72,7 @@ function determine_file(path, resp)
 end
 
 """
-    download(url, [local_path]; update_period=0.5)
+    download(url, [local_path], [headers]; update_period=0.5, kw...)
 
 Similar to `Base.download` this downloads a file, returning the filename.
 If the `local_path`:
@@ -85,12 +85,13 @@ from the rules of the HTTP.
 
  - `update_period` controls how often (in seconds) to report the progress.
     - set to `Inf` to disable reporting
-
+ - `headers` specifies headers to be used for the HTTP GET request
+ - any additional keyword args (`kw...`) are passed on to the HTTP request.
 """
-function download(url::AbstractString, local_path=nothing; update_period=0.5)
+function download(url::AbstractString, local_path=nothing, headers=Header[]; update_period=0.5; kw...)
     @debug 1 "downloading $url"
     local file
-    HTTP.open("GET", url) do stream
+    HTTP.open("GET", url, headers; kw..) do stream
         resp = startread(stream)
         file = determine_file(local_path, resp)
         total_bytes = parse(Float64, getkv(resp.headers, "Content-Length", "NaN"))
