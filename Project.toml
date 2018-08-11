@@ -1,0 +1,15 @@
+authors = ["Jacob Quinn", "Sam O'Conner", "contributors: https://github.com/JuliaWeb/HTTP.jl/graphs/contributors"]
+name = "HTTP"
+uuid = "132d396a-9d4e-11e8-2bcf-fd61033e480f"
+version = "0.7.0"
+
+
+[deps]
+IniFile = "83e8ac13-25f8-5344-8a64-a9f2b223428f"
+MbedTLS = "739be429-bea8-5141-9913-cc70e7f3736d"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
