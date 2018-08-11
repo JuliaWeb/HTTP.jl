@@ -1,4 +1,4 @@
-using Base64, Sockets, Dates
+using Test
 using HTTP
 
 @testset "HTTP.Client" begin
