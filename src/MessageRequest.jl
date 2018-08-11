@@ -2,7 +2,7 @@ module MessageRequest
 
 export body_is_a_stream, body_was_streamed, setuseragent!
 
-import ..bytesavailable
+
 import ..Layer, ..request
 using ..IOExtras
 using ..URIs

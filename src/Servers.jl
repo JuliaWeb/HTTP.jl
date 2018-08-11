@@ -6,19 +6,12 @@ using ..Messages
 using ..Parsers
 using ..ConnectionPool
 using ..Sockets
-import ..@info, ..@warn, ..@error, ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..compat_stdout
+import ..@info, ..@warn, ..@error, ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..stdout
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
-if !isdefined(Base, :Nothing)
-    const Nothing = Void
-    const Cvoid = Void
-end
 
-import ..Dates
-
-@static if !isdefined(Base, :Distributed)
-    using Distributed
-end
+import Dates
+using Distributed
 
 using ..HTTP, ..Handlers
 
@@ -97,7 +90,7 @@ mutable struct Server{T <: Scheme, H <: HTTP.Handler}
     out::Channel{Any}
     options::ServerOptions
 
-    Server{T, H}(handler::H, logger::IO=compat_stdout(), ch=Channel(1), ch2=Channel(1),
+    Server{T, H}(handler::H, logger::IO=stdout, ch=Channel(1), ch2=Channel(1),
                  options=ServerOptions()) where {T, H} =
         new{T, H}(handler, logger, ch, ch2, options)
 end
@@ -180,9 +173,9 @@ serve(server::Server, host::AbstractString, port::Integer; verbose::Bool=true) =
 serve(server::Server, host::Union{Sockets.InetAddr, AbstractString}; verbose::Bool=true) =
     serve(server, host, verbose)
 
-Server(h::Function, l::IO=compat_stdout(); cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
+Server(h::Function, l::IO=stdout; cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
 function Server(handler::H=HTTP.HandlerFunction(req -> HTTP.Response(200, "Hello World!")),
-                logger::IO=compat_stdout(),
+                logger::IO=stdout,
                 ;
                 cert::String="",
                 key::String="",
@@ -214,7 +207,7 @@ serve(host::AbstractString, port::Integer, args...; kwargs...) = serve(parse(IPA
 serve(host::AbstractString, args...; kwargs...) = serve(String(host), args...; kwargs...)
 function serve(host::Union{Sockets.InetAddr, String},
                handler=req -> HTTP.Response(200, "Hello World!"),
-               logger::IO=compat_stdout(),
+               logger::IO=stdout,
                ;
                verbose::Bool=true,
                args...)
@@ -224,7 +217,7 @@ end
 serve(; host::IPAddr=Sockets.localhost,
         port::Integer=8081,
         handler=req -> HTTP.Response(200, "Hello World!"),
-        logger::IO=compat_stdout(),
+        logger::IO=stdout,
         args...) =
     serve(host, port, handler, logger; args...)
 

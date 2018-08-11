@@ -8,9 +8,6 @@ using MbedTLS: digest, MD_MD5, MD_SHA256
 using HTTP.IOExtras
 using HTTP: request
 
-@static if !isdefined(Base, :stdout)
-    const stdout = STDOUT
-end
 
 println("async tests")
 

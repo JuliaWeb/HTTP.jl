@@ -9,7 +9,6 @@ import Base.==
 using ..IOExtras
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
-import ..compat_search, ..compat_occursin, ..compat_parse, ..compat_string, ..compat_stdout
 import ..isnumeric, ..isletter
 
 include("parseutils.jl")
@@ -152,34 +151,34 @@ function ensurevalid(uri::URI)
     # https://tools.ietf.org/html/rfc3986#section-3.1
     # ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
     if !(uri.scheme === absent ||
-         compat_occursin(r"^[[:alpha:]][[:alnum:]+-.]*$", uri.scheme))
+         occursin(r"^[[:alpha:]][[:alnum:]+-.]*$", uri.scheme))
         throw(ParseError("Invalid URI scheme: $(uri.scheme)"))
     end
     # https://tools.ietf.org/html/rfc3986#section-3.2.2
     # unreserved / pct-encoded / sub-delims
     if !(uri.host === absent ||
-         compat_occursin(r"^[:[:alnum:]\-._~%!$&'()*+,;=]+$", uri.host))
+         occursin(r"^[:[:alnum:]\-._~%!$&'()*+,;=]+$", uri.host))
         throw(ParseError("Invalid URI host: $(uri.host) $uri"))
     end
     # https://tools.ietf.org/html/rfc3986#section-3.2.3
     # "port number in decimal"
-    if !(uri.port === absent || compat_occursin(r"^\d+$", uri.port))
+    if !(uri.port === absent || occursin(r"^\d+$", uri.port))
         throw(ParseError("Invalid URI port: $(uri.port)"))
     end
 
     # https://tools.ietf.org/html/rfc3986#section-3.3
     # unreserved / pct-encoded / sub-delims / ":" / "@"
     if !(uri.path === absent ||
-         compat_occursin(r"^[/[:alnum:]\-._~%!$&'()*+,;=:@]*$", uri.path))
+         occursin(r"^[/[:alnum:]\-._~%!$&'()*+,;=:@]*$", uri.path))
         throw(ParseError("Invalid URI path: $(uri.path)"))
     end
 
     # FIXME
     # For compatibility with existing test/uri.jl
     if !(uri.host === absent) &&
-        (compat_occursin("=", uri.host) ||
-         compat_occursin(";", uri.host) ||
-         compat_occursin("%", uri.host))
+        (occursin("=", uri.host) ||
+         occursin(";", uri.host) ||
+         occursin("%", uri.host))
         throw(ParseError("Invalid URI host: $(uri.host)"))
     end
 end
@@ -242,7 +241,7 @@ showparts(io::IO, uri::URI) =
               "    fragment = \"", uri.fragment, "\"",
                        uri.fragment === absent ? " (absent)" : "", ")\n")
 
-showparts(uri::URI) = showparts(compat_stdout(), uri)
+showparts(uri::URI) = showparts(stdout, uri)
 
 Base.print(io::IO, u::URI) = print(io, string(u))
 
@@ -302,7 +301,7 @@ const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "
 function Base.isvalid(uri::URI)
     sch = uri.scheme
     isempty(sch) && throw(ArgumentError("can not validate relative URI"))
-    if ((sch in non_hierarchical) && (i = compat_search(uri.path, '/'); i != nothing && i > 1)) ||       # path hierarchy not allowed
+    if ((sch in non_hierarchical) && (i = search(uri.path, '/'); i != nothing && i > 1)) ||       # path hierarchy not allowed
        (!(sch in uses_query) && !isempty(uri.query)) ||                    # query component not allowed
        (!(sch in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
        (!(sch in uses_authority) && (!isempty(uri.host) || ("" != uri.port) || !isempty(uri.userinfo))) # authority component not allowed
@@ -323,7 +322,7 @@ utf8_chars(str::AbstractString) = (Char(c) for c in IOExtras.bytes(str))
 "percent-encode a string, dict, or pair for a uri"
 function escapeuri end
 
-escapeuri(c::Char) = string('%', uppercase(compat_string(Int(c), base=16, pad=2)))
+escapeuri(c::Char) = string('%', uppercase(string(Int(c), base=16, pad=2)))
 escapeuri(str::AbstractString, safe::Function=issafe) =
     join(safe(c) ? c : escapeuri(c) for c in utf8_chars(str))
 
@@ -340,7 +339,7 @@ escapeuri(query) = join((escapeuri(k, v) for (k,v) in query), "&")
 
 "unescape a percent-encoded uri/url"
 function unescapeuri(str)
-    compat_occursin("%", str) || return str
+    occursin("%", str) || return str
     out = IOBuffer()
     i = 1
     io = IOBuffer(str)
@@ -349,7 +348,7 @@ function unescapeuri(str)
         if c == '%'
             c1 = read(io, Char)
             c = read(io, Char)
-            write(out, compat_parse(UInt8, string(c1, c); base=16))
+            write(out, parse(UInt8, string(c1, c); base=16))
         else
             write(out, c)
         end
