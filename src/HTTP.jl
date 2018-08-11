@@ -11,7 +11,7 @@ const DEBUG_LEVEL = 0
 Base.@deprecate escape escapeuri
 Base.@deprecate URL URI
 
-include("compat.jl")
+using Base64, Sockets, Dates
 include("debug.jl")
 
 include("Pairs.jl")
