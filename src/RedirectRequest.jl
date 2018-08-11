@@ -30,11 +30,7 @@ function request(::Type{RedirectLayer{Next}},
         end
             
 
-        @static if VERSION > v"0.7.0-DEV.2338"
         kw = merge(merge(NamedTuple(), kw), (parent = res,))
-        else
-        setkv(kw, :parent, res)
-        end
         oldurl = url
         url = absuri(location, url)
         if forwardheaders 

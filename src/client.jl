@@ -25,14 +25,10 @@ mutable struct Client
     # cookies are stored in-memory per host and automatically sent when appropriate
     cookies::Dict{String, Set{Cookie}}
     # global request settings
-    options::(VERSION > v"0.7.0-DEV.2338" ? NamedTuple : Vector{Pair{Symbol,Any}})
+    options::NamedTuple
 end
 
-if VERSION > v"0.7.0-DEV.2338"
 Client(;options...) = Client(Dict{String, Set{Cookie}}(), merge(NamedTuple(), options))
-else
-Client(;options...) = Client(Dict{String, Set{Cookie}}(), options)
-end
 global const DEFAULT_CLIENT = Client()
 
 # build Request

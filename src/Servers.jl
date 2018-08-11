@@ -301,28 +301,13 @@ function listen(f::Function,
     if isassigned(tcpref)
         tcpserver = tcpref[]
     elseif reuseaddr
-        @static if VERSION < v"0.7.0-alpha.0"
-            tcpserver = Sockets.TCPServer(Base.Libc.malloc(Base._sizeof_uv_tcp), Base.StatusUninit)
-            err = ccall(:uv_tcp_init_ex, Cint, (Ptr{Cvoid}, Ptr{Cvoid}, Cuint),
-                        Base.eventloop(), tcpserver.handle, 2)
-            Base.uv_error("failed to create tcpserver server", err)
-            tcpserver.status = Base.StatusInit
-            if Sys.KERNEL == :Linux || Sys.KERNEL in (:Darwin, :Apple)
-                rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
-                Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
-            else
-                @warn "reuseaddr=true may not be supported on this platform: $(Sys.KERNEL)"
-                Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
-            end
+        tcpserver = Sockets.TCPServer(; delay=false)
+        if Sys.islinux() || Sys.isapple()
+            rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
+            Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
         else
-            tcpserver = Sockets.TCPServer(; delay=false)
-            if Sys.islinux() || Sys.isapple()
-                rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
-                Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
-            else
-                @warn "reuseaddr=true may not be supported on this platform: $(Sys.KERNEL)"
-                Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
-            end
+            @warn "reuseaddr=true may not be supported on this platform: $(Sys.KERNEL)"
+            Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
         end
         Sockets.listen(tcpserver)
     else
