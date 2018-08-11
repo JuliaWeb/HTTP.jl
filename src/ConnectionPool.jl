@@ -275,11 +275,7 @@ function IOExtras.closeread(t::Transaction)
     notify(poolcondition)
 
     if !isbusy(t.c)
-        @static if VERSION < v"0.7.0-alpha.0"
-            @schedule monitor_idle_connection(t.c)
-        else
-            @async monitor_idle_connection(t.c)
-        end
+        @async monitor_idle_connection(t.c)
     end
 
     @ensure !isreadable(t)

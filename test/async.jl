@@ -75,8 +75,7 @@ function dump_async_exception(e, st)
     print(String(take!(buf)))
 end
 
-if haskey(ENV, "AWS_ACCESS_KEY_ID") ||
-   (VERSION > v"0.7.0-DEV.2338" && haskey(ENV, "AWS_DEFAULT_PROFILE"))
+if haskey(ENV, "AWS_ACCESS_KEY_ID") || haskey(ENV, "AWS_DEFAULT_PROFILE")
 @testset "async s3 dup$dup, count$count, sz$sz, pipw$pipe, $http, $mode" for
     count in [10, 100, 1000],
     dup in [0, 7],

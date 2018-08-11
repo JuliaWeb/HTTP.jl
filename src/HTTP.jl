@@ -1,4 +1,3 @@
-VERSION < v"0.7.0-beta2.199" && __precompile__()
 module HTTP
 
 export startwrite, startread, closewrite, closeread
@@ -12,6 +11,8 @@ Base.@deprecate escape escapeuri
 Base.@deprecate URL URI
 
 using Base64, Sockets, Dates
+
+include("utils.jl")
 include("debug.jl")
 
 include("Pairs.jl")

@@ -36,11 +36,7 @@ Is `exception` caused by a possibly recoverable IO error.
 """
 isioerror(e) = false
 isioerror(::Base.EOFError) = true
-@static if VERSION >= v"0.7-"
-    isioerror(::Base.IOError) = true
-else
-    isioerror(::Base.UVError) = true
-end
+isioerror(::Base.IOError) = true
 isioerror(e::ArgumentError) = e.msg == "stream is closed or unusable"
 
 

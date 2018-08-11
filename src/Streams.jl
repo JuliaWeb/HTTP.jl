@@ -242,26 +242,16 @@ function IOExtras.unread!(http::Stream, excess)
     unread!(http.stream, excess)
 end
 
-@static if VERSION < v"0.7.0-DEV.2005"
 
-    find_delim(bytes, d::UInt8) = findfirst(x->x==d, bytes)
+find_delim(bytes, d::UInt8) =
+    (i = findfirst(isequal(d), bytes)) == nothing ? 0 : i
 
-    Base.readuntil(http::Stream, delim::UInt8) =
-        Vector{UInt8}(readuntil(http, bytes->find_delim(bytes, delim)))
-                # See readuntil(::IO, ::Function) in IOExtras.jl
-
-else
-
-    find_delim(bytes, d::UInt8) =
-        (i = findfirst(isequal(d), bytes)) == nothing ? 0 : i
-
-    function Base.readuntil(http::Stream, delim::UInt8; keep::Bool=false)
-        bytes = readuntil(http, bytes->find_delim(bytes, delim))
-        if keep == false
-            bytes = view(bytes, 1:length(bytes)-1)
-        end
-        return Vector{UInt8}(bytes)
+function Base.readuntil(http::Stream, delim::UInt8; keep::Bool=false)
+    bytes = readuntil(http, bytes->find_delim(bytes, delim))
+    if keep == false
+        bytes = view(bytes, 1:length(bytes)-1)
     end
+    return Vector{UInt8}(bytes)
 end
 
 function Base.read(http::Stream)
