@@ -8,7 +8,7 @@ using ..Streams
 import ..ConnectionPool
 using HTTP: header
 import ..@debug, ..DEBUG_LEVEL, ..@require, ..precondition_error
-import ..compat_string
+import ..string
 
 const WS_FINAL = 0x80
 const WS_CONTINUATION = 0x00
@@ -292,7 +292,7 @@ function Base.show(io::IO, h::WebSocketHeader)
           h.opcode == WS_PONG ? "PONG" : h.opcode,
           h.final ? " | FINAL, " : ", ",
           h.length > 0 ? "$(Int(h.length))-byte payload" : "",
-          h.hasmask ? ", mask = $(compat_string(h.mask, base=16))" : "",
+          h.hasmask ? ", mask = $(string(h.mask, base=16))" : "",
           ")")
 end
 

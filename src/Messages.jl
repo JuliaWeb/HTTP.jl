@@ -74,7 +74,7 @@ import ..@warn
 using ..IOExtras
 using ..Parsers
 import ..@require, ..precondition_error
-import ..bytes, ..bytesavailable
+import ..bytes
 
 const unknown_length = typemax(Int)
 
