@@ -198,19 +198,11 @@ end
 
 # HTTP Chunked Transfer Coding
 
-@static if VERSION < v"0.7.0-DEV.2005"
-"""
-Find `\\n` in `bytes`
-"""
-find_end_of_line(bytes::AbstractVector{UInt8}) =
-    findfirst(x->x==UInt8('\n'), bytes)
-else
 """
 Find `\\n` in `bytes`
 """
 find_end_of_line(bytes::AbstractVector{UInt8}) =
     (i = findfirst(isequal(UInt8('\n')), bytes)) == nothing ? 0 : i
-end
 
 """
     find_end_of_trailer(bytes) -> length or 0
