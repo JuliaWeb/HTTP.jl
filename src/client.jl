@@ -127,14 +127,7 @@ function request(client::Client, method, url::URI;
         body = read(body)
     end
 
-    if VERSION > v"0.7.0-DEV.2338"
     args = merge(args, newargs)
-    else
-    for newarg in newargs
-        defaultbyfirst(args, newarg)
-    end
-    end
-
     return request(m, url, h, body; verbose=Int(verbose), args...)
 end
 

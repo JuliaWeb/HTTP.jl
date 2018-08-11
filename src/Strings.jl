@@ -3,7 +3,7 @@ module Strings
 export escapehtml, tocameldash, iso8859_1_to_utf8
 
 using ..IOExtras 
-import ..compat_replace
+import ..replace
 
 """
 escapeHTML(i::String)
@@ -12,11 +12,11 @@ Returns a string with special HTML characters escaped: &, <, >, ", '
 """
 function escapehtml(i::AbstractString)
     # Refer to http://stackoverflow.com/a/7382028/3822752 for spec. links
-    o = compat_replace(i, "&" =>"&amp;")
-    o = compat_replace(o, "\""=>"&quot;")
-    o = compat_replace(o, "'" =>"&#39;")
-    o = compat_replace(o, "<" =>"&lt;")
-    o = compat_replace(o, ">" =>"&gt;")
+    o = replace(i, "&" =>"&amp;")
+    o = replace(o, "\""=>"&quot;")
+    o = replace(o, "'" =>"&#39;")
+    o = replace(o, "<" =>"&lt;")
+    o = replace(o, ">" =>"&gt;")
     return o
 end
 

@@ -8,9 +8,9 @@ import ..debug_header
         io::T
     end
 
-    logwrite(iod::IODebug, x) = show_io_debug(compat_stdout(), "➡️ ", x)
-    logread(iod::IODebug, x) = show_io_debug(compat_stdout(), "⬅️ ", x)
-    logunread(iod::IODebug, x) = show_io_debug(compat_stdout(), "♻️ ", x)
+    logwrite(iod::IODebug, x) = show_io_debug(stdout, "➡️ ", x)
+    logread(iod::IODebug, x) = show_io_debug(stdout, "⬅️ ", x)
+    logunread(iod::IODebug, x) = show_io_debug(stdout, "♻️ ", x)
 
 else
 
@@ -57,11 +57,7 @@ IOExtras.startwrite(iod::IODebug) = startwrite(iod.io)
 IOExtras.closeread(iod::IODebug) = closeread(iod.io)
 IOExtras.closewrite(iod::IODebug) = closewrite(iod.io)
 
-@static if isdefined(Base, :bytesavailable)
-    Base.bytesavailable(iod::IODebug) = bytesavailable(iod.io)
-else
-    Base.nb_available(iod::IODebug) = nb_available(iod.io)
-end
+Base.bytesavailable(iod::IODebug) = bytesavailable(iod.io)
 
 Base.show(io::IO, iod::IODebug) = show(io, iod.io)
 

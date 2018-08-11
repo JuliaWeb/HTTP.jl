@@ -21,16 +21,12 @@ Get a `Vector{UInt8}`, a vector of bytes of a string.
 """
 function bytes end
 bytes(s::SubArray{UInt8}) = unsafe_wrap(Array, pointer(s), length(s))
-if !isdefined(Base, :CodeUnits)
-    const CodeUnits = Vector{UInt8}
-    bytes(s::String) = Vector{UInt8}(s)
-    bytes(s::SubString{String}) = unsafe_wrap(Array, pointer(s), length(s))
-else
-    const CodeUnits = Union{Vector{UInt8}, Base.CodeUnits}
-    bytes(s::Base.CodeUnits) = bytes(String(s))
-    bytes(s::String) = codeunits(s)
-    bytes(s::SubString{String}) = codeunits(s)
-end
+
+const CodeUnits = Union{Vector{UInt8}, Base.CodeUnits}
+bytes(s::Base.CodeUnits) = bytes(String(s))
+bytes(s::String) = codeunits(s)
+bytes(s::SubString{String}) = codeunits(s)
+
 bytes(s::Vector{UInt8}) = s
 
 """

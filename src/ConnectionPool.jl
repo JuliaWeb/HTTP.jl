@@ -29,7 +29,7 @@ export Connection, Transaction,
 
 using ..IOExtras, ..Sockets
 
-import ..ByteView, ..bytesavailable, ..Nothing
+import ..ByteView
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
@@ -156,8 +156,8 @@ function Base.eof(t::Transaction)
     return eof(t.c.io)
 end
 
-bytesavailable(t::Transaction) = bytesavailable(t.c)
-bytesavailable(c::Connection) =
+Base.bytesavailable(t::Transaction) = bytesavailable(t.c)
+Base.bytesavailable(c::Connection) =
     !isempty(c.excess) ? length(c.excess) : bytesavailable(c.io)
 
 Base.isreadable(t::Transaction) = t.c.readbusy && t.c.readcount == t.sequence

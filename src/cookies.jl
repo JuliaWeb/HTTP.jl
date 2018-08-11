@@ -38,9 +38,7 @@ using ..IOExtras: bytes
 using ..Parsers: Headers
 using ..Messages: Request, mkheaders, hasheader, header
 
-import ..compat_search, ..compat_occursin, ..compat_replace, ..IPAddr
-const replace = compat_replace
-const search = compat_search
+import ..IPAddr
 
 """
     Cookie()
@@ -352,7 +350,7 @@ end
 # validCookieDomain returns whether v is a valid cookie domain-value.
 function validCookieDomain(v::String)
     isCookieDomainName(v) && return true
-    isIP(v) && !compat_occursin(":", v) && return true
+    isIP(v) && !occursin(":", v) && return true
     return false
 end
 

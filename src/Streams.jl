@@ -8,7 +8,6 @@ import ..HTTP
 using ..Sockets
 using ..IOExtras
 using ..Messages
-import ..bytesavailable, ..compat_string
 import ..ByteView
 import ..Messages: header, hasheader, setheader,
                    writeheaders, writestartline
@@ -94,7 +93,7 @@ function Base.unsafe_write(http::Stream, p::Ptr{UInt8}, n::UInt)
     if !http.writechunked
         return unsafe_write(http.stream, p, n)
     end
-    return write(http.stream, compat_string(n, base=16), "\r\n") +
+    return write(http.stream, string(n, base=16), "\r\n") +
            unsafe_write(http.stream, p, n) +
            write(http.stream, "\r\n")
 end

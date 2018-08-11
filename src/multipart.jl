@@ -54,7 +54,7 @@ function Base.read(f::Form, n::Integer)
 end
 
 function Form(d::Dict)
-    boundary = compat_string(rand(UInt128), base=16)
+    boundary = string(rand(UInt128), base=16)
     data = IO[]
     io = IOBuffer()
     len = length(d)
@@ -106,7 +106,7 @@ end
 Multipart(f::String, data::T, ct="", cte="") where {T} = Multipart(f, data, ct, cte)
 Base.show(io::IO, m::Multipart{T}) where {T} = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", data=::$T, contenttype=\"$(m.contenttype)\", contenttransferencoding=\"$(m.contenttransferencoding)\")")
 
-bytesavailable(m::Multipart{T}) where {T} = isa(m.data, IOStream) ? filesize(m.data) - position(m.data) : bytesavailable(m.data)
+Base.bytesavailable(m::Multipart{T}) where {T} = isa(m.data, IOStream) ? filesize(m.data) - position(m.data) : bytesavailable(m.data)
 Base.eof(m::Multipart{T}) where {T} = eof(m.data)
 Base.read(m::Multipart{T}, n::Integer) where {T} = read(m.data, n)
 Base.read(m::Multipart{T}) where {T} = read(m.data)
