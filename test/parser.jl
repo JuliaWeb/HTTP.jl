@@ -1,4 +1,4 @@
-include("compat.jl")
+using Base64, Sockets, Dates
 using HTTP
 
 module ParserTest

@@ -3,7 +3,7 @@ using Distributed
 end
 addprocs(5)
 
-include("compat.jl")
+using Base64, Sockets, Dates
 
 using HTTP
 using HTTP.Dates
