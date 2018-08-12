@@ -1,6 +1,8 @@
 include("compat.jl")
 using HTTP
 
+keep_open_stream = nothing
+
 @testset "HTTP.Client" begin
 
 using JSON
@@ -240,6 +242,21 @@ for sch in ("http", "https")
     # body = UInt8[0x1f,0x8b,0x08,0x00,0x00,0x00,0x00,0x00,0x00,0x03,0xcb,0x48,0xad,0x04,0x00,0xf0,0x15,0xd6,0x88,0x03,0x00,0x00,0x00]
     # r = HTTP.post("$sch://httpbin.org/post"; body=body, chunksize=1)
 
+    @testset "Keep stream open" begin
+        println("keep stream open")
+        # Make a WebSocket upgrade which won't immediately close the socket.
+        headers = Dict(
+            "Upgrade" => "websocket",
+            "Connection" => "Upgrade",
+            "Sec-WebSocket-Key" => "dGhlIHNhbXBsZSBub25jZQ==",
+            "Sec-WebSocket-Version" => "13")
+
+        r = HTTP.open("GET", "ws://echo.websocket.org", headers; reuse_limit=0, keep_open=true) do http
+            HTTP.startread(http)
+            global keep_open_stream = HTTP.ConnectionPool.getrawstream(http)
+        end
+        @test isopen(keep_open_stream)
+    end
 end
 
 end # @testset "HTTP.Client"
