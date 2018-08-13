@@ -26,6 +26,7 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
                  response_stream=nothing,
                  iofunction=nothing,
                  verbose::Int=0,
+                 keep_open::Bool=false,
                  kw...)::Response
 
     verbose == 1 && printlncompact(request)
@@ -78,8 +79,10 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
         end
     end
 
-    closewrite(http)
-    closeread(http)
+    if !keep_open
+        closewrite(http)
+        closeread(http)
+    end
 
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)

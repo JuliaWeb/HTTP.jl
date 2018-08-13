@@ -90,6 +90,8 @@ Streaming options
  - `response_stream = nothing`, a writeable `IO` stream or any `IO`-like
     type `T` for which `write(T, AbstractVector{UInt8})` is defined.
  - `verbose = 0`, set to `1` or `2` for extra message logging.
+ - `keep_open = false`, set to `true` to prevent the closing of the socket.
+   Use with `reuse_limit = 0` to prevent reuse of the socket.
 
 
 Connection Pool options
