@@ -9,6 +9,7 @@ Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 IniFile = "83e8ac13-25f8-5344-8a64-a9f2b223428f"
 MbedTLS = "739be429-bea8-5141-9913-cc70e7f3736d"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 
 [compat]
 MbedTLS = "v0.6.0"
@@ -16,7 +17,6 @@ MbedTLS = "v0.6.0"
 [extras]
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 XMLDict = "228000da-037f-5747-90a9-8195ccbf91a5"
-Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
