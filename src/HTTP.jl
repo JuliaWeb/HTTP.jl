@@ -262,6 +262,19 @@ r = HTTP.request("POST", "http://httpbin.org/post", [], "post body data")
 println(String(r.body))
 ```
 
+Interfacing with RESTful JSON APIs:
+```julia
+using JSON
+params = Dict("user"=>"RAO...tjN", "token"=>"NzU...Wnp", "message"=>"Hello!")
+base_url = "http://api.domain.com"
+endpoint = "/1/messages.json"
+url = base_url * endpoint
+r = HTTP.request("POST", url,
+             ["Content-Type" => "application/json"],
+             JSON.json(params))
+println(JSON.parse(String(r.body)))
+```
+
 Stream bodies from and to files:
 ```julia
 in = open("foo.png", "r")
