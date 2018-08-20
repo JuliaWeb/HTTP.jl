@@ -291,6 +291,7 @@ function listen(f::Function,
                 tcpisvalid::Function=(tcp; kw...)->true,
                 tcpref::Ref=Ref{Base.IOServer}(),
                 reuseaddr::Bool=false,
+                connectioncounter::Base.RefValue{Int}=Ref(0),
                 kw...)
 
     if sslconfig === nosslconfig
@@ -343,10 +344,12 @@ function listen(f::Function,
             let io = Connection(hostname, hostport, pipeline_limit, 0, require_ssl_verification, io)
                 @info "Accept:  $io"
                 @async try
+                    connectioncounter[] += 1
                     handle_connection(f, io; kw...)
                 catch e
                     @error "Error:   $io" exception=(e, stacktrace(catch_backtrace()))
                 finally
+                    connectioncounter[] -= 1
                     close(io)
                     @info "Closed:  $io"
                 end
