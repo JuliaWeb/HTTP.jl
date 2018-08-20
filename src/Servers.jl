@@ -397,9 +397,6 @@ function handle_connection(f::Function, c::Connection;
             io = Transaction(c)
             handle_transaction(f, io; final_transaction=(count == reuse_limit),
                                       kw...)
-            if count == reuse_limit
-                close(c)
-            end
             count += 1
         end
     finally
@@ -462,6 +459,8 @@ function handle_transaction(f::Function, t::Transaction;
             @error exception=(e, stacktrace(catch_backtrace()))
         end
         close(t)
+    finally
+        final_transaction && close(c)
     end
     return
 end
