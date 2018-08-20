@@ -460,7 +460,7 @@ function handle_transaction(f::Function, t::Transaction;
         end
         close(t)
     finally
-        final_transaction && close(c)
+        final_transaction && close(t. sc)
     end
     return
 end
