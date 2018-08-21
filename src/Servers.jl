@@ -317,6 +317,7 @@ function listen(f::Function,
     end
 
     try
+        id = 0
         while isopen(tcpserver)
             try
                 io = accept(tcpserver)
@@ -341,19 +342,20 @@ function listen(f::Function,
                 hostname = string(host)
                 hostport = ""
             end
-            let io = Connection(hostname, hostport, pipeline_limit, 0, require_ssl_verification, io)
-                @info "Accept:  $io"
+            let id=id, conn = Connection(hostname, hostport, pipeline_limit, 0, require_ssl_verification, io)
+                @info "Accept ($id):  $conn"
                 @async try
                     connectioncounter[] += 1
-                    handle_connection(f, io; kw...)
+                    handle_connection(f, conn; kw...)
                 catch e
-                    @error "Error:   $io" exception=(e, stacktrace(catch_backtrace()))
+                    @error "Error ($id):  $conn" exception=(e, stacktrace(catch_backtrace()))
                 finally
                     connectioncounter[] -= 1
-                    close(io)
-                    @info "Closed:  $io"
+                    close(conn)
+                    @info "Closed ($id):  $conn"
                 end
             end
+            id += 1
         end
     catch e
         if typeof(e) <: InterruptException
