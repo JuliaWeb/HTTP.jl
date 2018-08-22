@@ -48,12 +48,20 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
     end
 
     aborted = false
+    write_error = nothing
     try
 
         @sync begin
 
             if iofunction == nothing
-                @async writebody(http, request, body)
+                @async try
+                    writebody(http, request, body)
+                catch e
+                    write_error = e
+                    @warn("Error in @async writebody task",
+                          exception=(write_error, catch_backtrace()))
+                    close(io)
+                end
                 yield()
                 startread(http)
                 readbody(http, response, response_stream)
@@ -68,8 +76,8 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
         end
 
     catch e
-        if e isa CompositeException
-           e = first(e.exceptions).ex
+        if write_error != nothing
+            throw(write_error)
         end
         if aborted && isioerror(e)
             @debug 1 "⚠️  $(response.status) abort exception excpeted: $e"
