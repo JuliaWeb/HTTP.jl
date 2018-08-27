@@ -584,7 +584,6 @@ function stack(;redirect=true,
     }}}}}}}}}}}}
 end
 
-include("client.jl")
 include("Handlers.jl")                 ;using .Handlers
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
 Base.@deprecate_binding(Nitrogen, Servers, false)
