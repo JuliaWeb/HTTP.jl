@@ -17,7 +17,6 @@ using HTTP
     include("loopback.jl");
     include("WebSockets.jl");
     include("messages.jl");
-    include("client.jl");
 
     include("handlers.jl")
     include("server.jl")
