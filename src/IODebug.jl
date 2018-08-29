@@ -85,7 +85,7 @@ function show_io_debug(io::IO, operation, bytes)
     prefix = string(debug_header(), rpad(operation, 4))
     i = j = 1
     while i < length(bytes)
-        j = findnext(bytes, '\n', i)
+        j = findnext(isequal('\n'), bytes, i)
         if j == nothing || j == 0
             j = prevind(bytes, length(bytes)+1)
         end
