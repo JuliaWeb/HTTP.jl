@@ -262,14 +262,14 @@ function readframe(ws::WebSocket)
             end
         end
         return UInt8[]
-    elseif h.opcode == WS_PING
-        write(ws.io, [WS_PONG, 0x00])
-        wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload)
-        return readframe(ws)
     else
         l = Int(h.length)
         if h.hasmask
             mask!(ws.rxpayload, ws.rxpayload, l, reinterpret(UInt8, [h.mask]))
+        end
+        if h.opcode == WS_PING
+            wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload[1:l])
+            return readframe(ws)
         end
         return view(ws.rxpayload, 1:l)
     end
