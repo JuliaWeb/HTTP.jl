@@ -78,9 +78,6 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
     catch e
         if write_error != nothing
             throw(write_error)
-        end
-        if aborted && isioerror(e)
-            @debug 1 "⚠️  $(response.status) abort exception excpeted: $e"
         else
             rethrow(e)
         end
