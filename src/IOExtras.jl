@@ -21,16 +21,12 @@ Get a `Vector{UInt8}`, a vector of bytes of a string.
 """
 function bytes end
 bytes(s::SubArray{UInt8}) = unsafe_wrap(Array, pointer(s), length(s))
-if !isdefined(Base, :CodeUnits)
-    const CodeUnits = Vector{UInt8}
-    bytes(s::String) = Vector{UInt8}(s)
-    bytes(s::SubString{String}) = unsafe_wrap(Array, pointer(s), length(s))
-else
-    const CodeUnits = Union{Vector{UInt8}, Base.CodeUnits}
-    bytes(s::Base.CodeUnits) = bytes(String(s))
-    bytes(s::String) = codeunits(s)
-    bytes(s::SubString{String}) = codeunits(s)
-end
+
+const CodeUnits = Union{Vector{UInt8}, Base.CodeUnits}
+bytes(s::Base.CodeUnits) = bytes(String(s))
+bytes(s::String) = codeunits(s)
+bytes(s::SubString{String}) = codeunits(s)
+
 bytes(s::Vector{UInt8}) = s
 
 """
@@ -40,11 +36,7 @@ Is `exception` caused by a possibly recoverable IO error.
 """
 isioerror(e) = false
 isioerror(::Base.EOFError) = true
-@static if VERSION >= v"0.7-"
-    isioerror(::Base.IOError) = true
-else
-    isioerror(::Base.UVError) = true
-end
+isioerror(::Base.IOError) = true
 isioerror(e::ArgumentError) = e.msg == "stream is closed or unusable"
 
 

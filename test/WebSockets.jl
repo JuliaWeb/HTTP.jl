@@ -1,4 +1,4 @@
-include("compat.jl")
+using Test
 using HTTP
 using HTTP.IOExtras, HTTP.Sockets
 

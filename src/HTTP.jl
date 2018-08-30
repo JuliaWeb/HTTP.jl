@@ -1,4 +1,3 @@
-VERSION < v"0.7.0-beta2.199" && __precompile__()
 module HTTP
 
 export startwrite, startread, closewrite, closeread
@@ -11,7 +10,9 @@ const DEBUG_LEVEL = 0
 Base.@deprecate escape escapeuri
 Base.@deprecate URL URI
 
-include("compat.jl")
+using Base64, Sockets, Dates
+
+include("utils.jl")
 include("debug.jl")
 
 include("Pairs.jl")
@@ -583,7 +584,6 @@ function stack(;redirect=true,
     }}}}}}}}}}}}
 end
 
-include("client.jl")
 include("Handlers.jl")                 ;using .Handlers
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
 Base.@deprecate_binding(Nitrogen, Servers, false)

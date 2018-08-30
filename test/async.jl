@@ -1,4 +1,4 @@
-include("compat.jl")
+using Test
 using HTTP
 using HTTP.Base64
 using HTTP.Sockets
@@ -8,9 +8,6 @@ using MbedTLS: digest, MD_MD5, MD_SHA256
 using HTTP.IOExtras
 using HTTP: request
 
-@static if !isdefined(Base, :stdout)
-    const stdout = STDOUT
-end
 
 println("async tests")
 
@@ -78,8 +75,7 @@ function dump_async_exception(e, st)
     print(String(take!(buf)))
 end
 
-if haskey(ENV, "AWS_ACCESS_KEY_ID") ||
-   (VERSION > v"0.7.0-DEV.2338" && haskey(ENV, "AWS_DEFAULT_PROFILE"))
+if haskey(ENV, "AWS_ACCESS_KEY_ID") || haskey(ENV, "AWS_DEFAULT_PROFILE")
 @testset "async s3 dup$dup, count$count, sz$sz, pipw$pipe, $http, $mode" for
     count in [10, 100, 1000],
     dup in [0, 7],
