@@ -341,21 +341,21 @@ get(a...; kw...) = request("GET", a...; kw...)
 
 Shorthand for `HTTP.request("PUT", ...)`. See [`HTTP.request`](@ref).
 """
-put(u, h, b; kw...) = request("PUT", u, h, b; kw...)
+put(u, h=[], b=""; kw...) = request("PUT", u, h, b; kw...)
 
 """
     HTTP.post(url, headers, body; <keyword arguments>) -> HTTP.Response
 
 Shorthand for `HTTP.request("POST", ...)`. See [`HTTP.request`](@ref).
 """
-post(u, h, b; kw...) = request("POST", u, h, b; kw...)
+post(u, h=[], b=""; kw...) = request("POST", u, h, b; kw...)
 
 """
     HTTP.patch(url, headers, body; <keyword arguments>) -> HTTP.Response
 
 Shorthand for `HTTP.request("PATCH", ...)`. See [`HTTP.request`](@ref).
 """
-patch(u, h, b; kw...) = request("PATCH", u, h, b; kw...)
+patch(u, h=[], b=""; kw...) = request("PATCH", u, h, b; kw...)
 
 """
     HTTP.head(url; <keyword arguments>) -> HTTP.Response
