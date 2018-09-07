@@ -26,7 +26,7 @@ else
     logunread(iod::IODebug, x) = push!(iod.log, ("♻️ ", x))
 
 end
- 
+
 Base.write(iod::IODebug, a...) = (logwrite(iod, join(a)); write(iod.io, a...))
 
 Base.write(iod::IODebug, x::String) = (logwrite(iod, x); write(iod.io, x))
@@ -81,7 +81,7 @@ function show_io_debug(io::IO, operation, bytes)
     prefix = string(debug_header(), rpad(operation, 4))
     i = j = 1
     while i < length(bytes)
-        j = findnext(bytes, '\n', i)
+        j = @static VERSION>=v"0.7-" ? something(findnext(isequal('\n'), bytes, i), 0) : findnext(bytes, '\n', i)
         if j == nothing || j == 0
             j = prevind(bytes, length(bytes)+1)
         end
