@@ -153,7 +153,7 @@ function serve(server::Server{T, H}, host::Union{Sockets.InetAddr, String}, verb
     listen(host;
            tcpref=tcpserver,
            ssl=(T == https),
-           sslconfig=server.options.sslconfig,
+           sslconfig=(T == https) ? server.options.sslconfig : nothing,
            verbose=verbose,
            tcpisvalid=server.options.ratelimit > 0 ? check_rate_limit :
                                                      (tcp; kw...) -> true,
@@ -228,8 +228,8 @@ function getsslcontext(tcp, sslconfig)
     handshake!(ssl)
     return ssl
 end
+getsslcontext(tcp, ::Nothing) = tcp
 
-const nosslconfig = SSLConfig()
 const nolimit = typemax(Int)
 
 """
@@ -286,14 +286,15 @@ function listen(f::Function,
                 ;
                 ssl::Bool=false,
                 require_ssl_verification::Bool=true,
-                sslconfig::SSLConfig=nosslconfig,
+                sslconfig::Union{SSLConfig, Nothing}=nothing,
                 pipeline_limit::Int=ConnectionPool.default_pipeline_limit,
                 tcpisvalid::Function=(tcp; kw...)->true,
                 tcpref::Ref=Ref{Base.IOServer}(),
                 reuseaddr::Bool=false,
+                connectioncounter::Base.RefValue{Int}=Ref(0),
                 kw...)
 
-    if sslconfig === nosslconfig
+    if ssl && sslconfig === nothing
         sslconfig = SSLConfig(require_ssl_verification)
     end
 
@@ -315,12 +316,24 @@ function listen(f::Function,
         tcpref[] = tcpserver
     end
 
+    if host isa Sockets.InetAddr # build debugging info
+        hostname = string(host.host)
+        hostport = string(host.port)
+    else
+        hostname = string(host)
+        hostport = ""
+    end
+    listenloop(f, tcpserver, sslconfig, hostname, hostport, pipeline_limit, require_ssl_verification, tcpisvalid, connectioncounter; kw...)
+end
+
+function listenloop(f, tcpserver, sslconfig, hostname, hostport, pipeline_limit, require_ssl_verification, tcpisvalid, connectioncounter; kw...)
     try
+        id = 0
         while isopen(tcpserver)
             try
                 io = accept(tcpserver)
             catch e
-                if e isa @static VERSION>=v"0.7-" ? Base.IOError : Base.UVError
+                if e isa Base.IOError
                     @warn "$e"
                     break
                 else
@@ -332,28 +345,24 @@ function listen(f::Function,
                 close(io)
                 continue
             end
-            io = ssl ? getsslcontext(io, sslconfig) : io
-            if host isa Sockets.InetAddr # build debugging info
-                hostname = string(host.host)
-                hostport = string(host.port)
-            else
-                hostname = string(host)
-                hostport = ""
-            end
-            let io = Connection(hostname, hostport, pipeline_limit, 0, require_ssl_verification, io)
-                @info "Accept:  $io"
+            io = getsslcontext(io, sslconfig)
+            let i=id, conn = Connection(hostname, hostport, pipeline_limit, 0, require_ssl_verification, io)
                 @async try
-                    handle_connection(f, io; kw...)
+                    @info "Accept ($i):  $conn"
+                    connectioncounter[] += 1
+                    handle_connection(f, conn; kw...)
                 catch e
-                    @error "Error:   $io" exception=(e, stacktrace(catch_backtrace()))
+                    @error "Error ($i):  $conn" exception=(e, stacktrace(catch_backtrace()))
                 finally
-                    close(io)
-                    @info "Closed:  $io"
+                    connectioncounter[] -= 1
+                    close(conn)
+                    @info "Closed ($i):  $conn"
                 end
             end
+            id += 1
         end
     catch e
-        if typeof(e) <: InterruptException
+        if e isa InterruptException
             @warn "Interrupted: listen($host)"
         else
             rethrow(e)
@@ -392,11 +401,7 @@ function handle_connection(f::Function, c::Connection;
         count = 0
         while isopen(c)
             io = Transaction(c)
-            handle_transaction(f, io; final_transaction=(count == reuse_limit),
-                                      kw...)
-            if count == reuse_limit
-                close(c)
-            end
+            handle_transaction(f, io; final_transaction=(count == reuse_limit), kw...)
             count += 1
         end
     finally
@@ -459,6 +464,8 @@ function handle_transaction(f::Function, t::Transaction;
             @error exception=(e, stacktrace(catch_backtrace()))
         end
         close(t)
+    finally
+        final_transaction && close(t.c)
     end
     return
 end

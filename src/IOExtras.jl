@@ -112,17 +112,13 @@ tcpsocket(io::SSLContext)::TCPSocket = io.bio
 tcpsocket(io::TCPSocket)::TCPSocket = io
 
 localport(io) = try !isopen(tcpsocket(io)) ? 0 :
-                    VERSION > v"0.7.0-DEV" ?
-                    Sockets.getsockname(tcpsocket(io))[2] :
-                    Base._sockname(tcpsocket(io), true)[2]
+                    Sockets.getsockname(tcpsocket(io))[2]
                 catch
                     0
                 end
 
 peerport(io) = try !isopen(tcpsocket(io)) ? 0 :
-                  VERSION > v"0.7.0-DEV" ?
-                  Sockets.getpeername(tcpsocket(io))[2] :
-                  Base._sockname(tcpsocket(io), false)[2]
+                  Sockets.getpeername(tcpsocket(io))[2]
                catch
                    0
                end

@@ -4,8 +4,7 @@ while nworkers() < 5
     addprocs(1)
 end
 
-@everywhere using HTTP, HTTP.Sockets
-@everywhere using Test
+@everywhere using HTTP, Sockets, Test
 
 
 """
@@ -20,6 +19,7 @@ function testget(url, n=1, m=1)
             @sync for ii in 1:mm
                 l = rand([0,0,10,1000,10000])
                 body = Vector{UInt8}(rand('A':'Z', l))
+                println("sending request...")
                 @async push!(rr, HTTP.request("GET", "$url/$ii", [], body))
             end
             return rr
@@ -30,7 +30,7 @@ end
 
 @testset "HTTP.Servers.serve" begin
 
-port = 8086 # rand(8000:8999)
+port = 8087 # rand(8000:8999)
 
 # test kill switch
 server = HTTP.Servers.Server()
@@ -50,7 +50,7 @@ server = HTTP.Servers.Server((req) -> begin
 end, stdout)
 
 server.options.ratelimit=0
-tsk = @async HTTP.Servers.serve(server, Sockets.localhost, port)
+tsk = @async HTTP.Servers.serve(server, Sockets.localhost, port; verbose=true)
 sleep(5.0)
 
 
