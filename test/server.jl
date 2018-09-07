@@ -4,8 +4,7 @@ while nworkers() < 5
     addprocs(1)
 end
 
-@everywhere using HTTP, Sockets
-@everywhere using Test
+@everywhere using HTTP, Sockets, Test
 
 
 """
@@ -31,7 +30,7 @@ end
 
 @testset "HTTP.Servers.serve" begin
 
-port = 8086 # rand(8000:8999)
+port = 8087 # rand(8000:8999)
 
 # test kill switch
 server = HTTP.Servers.Server()

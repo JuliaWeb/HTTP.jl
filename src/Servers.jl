@@ -323,7 +323,7 @@ function listen(f::Function,
         hostname = string(host)
         hostport = ""
     end
-    listenloop(f, tcpserver, sslconfig, hostname, hostport, pipeline_limit, require_ssl_verification, connectioncounter; kw...)
+    listenloop(f, tcpserver, sslconfig, hostname, hostport, pipeline_limit, require_ssl_verification, tcpisvalid, connectioncounter; kw...)
 end
 
 function listenloop(f, tcpserver, sslconfig, hostname, hostport, pipeline_limit, require_ssl_verification, tcpisvalid, connectioncounter; kw...)
