@@ -295,7 +295,7 @@ const uses_fragment = ["hdfs", "ftp", "hdl", "http", "gopher", "news", "nntp", "
 function Base.isvalid(uri::URI)
     sch = uri.scheme
     isempty(sch) && throw(ArgumentError("can not validate relative URI"))
-    if ((sch in non_hierarchical) && (i = search(uri.path, '/'); i != nothing && i > 1)) ||       # path hierarchy not allowed
+    if ((sch in non_hierarchical) && (i = findfirst(isequal('/'), uri.path); i !== nothing && i > 1)) ||       # path hierarchy not allowed
        (!(sch in uses_query) && !isempty(uri.query)) ||                    # query component not allowed
        (!(sch in uses_fragment) && !isempty(uri.fragment)) ||              # fragment identifier component not allowed
        (!(sch in uses_authority) && (!isempty(uri.host) || ("" != uri.port) || !isempty(uri.userinfo))) # authority component not allowed
