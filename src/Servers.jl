@@ -153,7 +153,7 @@ function serve(server::Server{T, H}, host::Union{Sockets.InetAddr, String}, verb
     listen(host;
            tcpref=tcpserver,
            ssl=(T == https),
-           sslconfig=server.options.sslconfig,
+           sslconfig=(T == https) ? server.options.sslconfig : nothing,
            verbose=verbose,
            tcpisvalid=server.options.ratelimit > 0 ? check_rate_limit :
                                                      (tcp; kw...) -> true,
