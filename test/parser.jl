@@ -1,4 +1,4 @@
-include("compat.jl")
+using Test
 using HTTP
 
 module ParserTest
@@ -1638,30 +1638,30 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       @test_throws HTTP.ParseError parse(Request, reqstr)
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Fo@: Failure\r\n\r\n"
-      @test_throws HTTP.ParseError parse(Response,respstr)
-      @test HTTP.compat_occursin(r"INVALID_HEADER_FIELD", @errmsg(parse(Response,respstr)))
+      @test_throws HTTP.ParseError parse(Response, respstr)
+      @test occursin(r"INVALID_HEADER_FIELD", @errmsg(parse(Response, respstr)))
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo\01\test: Bar\r\n\r\n"
-      @test_throws HTTP.ParseError parse(Response,respstr)
+      @test_throws HTTP.ParseError parse(Response, respstr)
 
       reqstr = "GET / HTTP/1.1\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
       strict && @test_throws HTTP.ParseError parse(Request, reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: 0\r\nContent-Length: 1\r\n\r\n"
-      strict && @test_throws HTTP.ParseError parse(Response,respstr)
+      strict && @test_throws HTTP.ParseError parse(Response, respstr)
 
       reqstr = "GET / HTTP/1.1\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
       strict && @test_throws HTTP.ParseError parse(Request, reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\nContent-Length: 1\r\n\r\n"
-      strict && @test_throws HTTP.ParseError parse(Response,respstr)
+      strict && @test_throws HTTP.ParseError parse(Response, respstr)
 
       reqstr = "GET / HTTP/1.1\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
       @test_throws HTTP.ParseError parse(Request, reqstr)
       respstr = "HTTP/1.1 200 OK\r\n" * "Foo: 1\rBar: 1\r\n\r\n"
-      @test_throws HTTP.ParseError parse(Response,respstr)
+      @test_throws HTTP.ParseError parse(Response, respstr)
 
 
       buf = "GET / HTTP/1.1\r\nheader: value\nhdr: value\r\n"
-      @test_throws EOFError r = parse(Request,buf)
+      @test_throws EOFError r = parse(Request, buf)
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "1844674407370955160" * "\r\n\r\n"
       r = Response()
@@ -1749,7 +1749,7 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       r = parse(Request, reqstr)
       @test r.method == "GET"
 
-      @test "GET / HTTP/1.1X-SSL-FoooBarr:   $(header(r, "X-SSL-FoooBarr"))" == HTTP.compat_replace(reqstr, "\r\n" => "")
+      @test "GET / HTTP/1.1X-SSL-FoooBarr:   $(header(r, "X-SSL-FoooBarr"))" == replace(reqstr, "\r\n" => "")
 
       # @test_throws HTTP.HTTP.ParseError HTTP.parse(HTTP.Request, "GET / HTTP/1.1\r\nHost: www.example.com\r\nConnection\r\033\065\325eep-Alive\r\nAccept-Encoding: gzip\r\n\r\n")
 

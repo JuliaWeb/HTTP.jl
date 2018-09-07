@@ -26,7 +26,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
                  proxy=nothing,
                  socket_type::Type=TCPSocket, kw...) where Next
 
-    if proxy != nothing
+    if proxy !== nothing
         target_url = url
         url = URI(proxy)
         if target_url.scheme == "http"
@@ -38,7 +38,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     io = getconnection(IOType, url.host, url.port; kw...)
 
     try
-        if proxy != nothing && target_url.scheme == "https"
+        if proxy !== nothing && target_url.scheme == "https"
             return tunnel_request(Next, io, target_url, req, body; kw...)
         end
 
@@ -49,7 +49,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
         close(io)
         rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
     finally
-        if proxy != nothing && target_url.scheme == "https"
+        if proxy !== nothing && target_url.scheme == "https"
             close(io)
         end
     end

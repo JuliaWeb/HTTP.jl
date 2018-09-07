@@ -1,12 +1,9 @@
-@static if VERSION >= v"0.7.0-DEV.2915"
+using Test
 using Distributed
-end
 addprocs(5)
 
-include("compat.jl")
-
+using Test
 using HTTP
-using HTTP.Dates
 
 
 @testset "HTTP" begin
@@ -20,7 +17,6 @@ using HTTP.Dates
     include("loopback.jl");
     include("WebSockets.jl");
     include("messages.jl");
-    include("client.jl");
 
     include("handlers.jl")
     include("server.jl")
