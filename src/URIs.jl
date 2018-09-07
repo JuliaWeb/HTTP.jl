@@ -323,9 +323,6 @@ escapeuri(str::AbstractString, safe::Function=issafe) =
 escapeuri(bytes::Vector{UInt8}) = bytes
 escapeuri(v::Number) = escapeuri(string(v))
 escapeuri(v::Symbol) = escapeuri(string(v))
-@static if VERSION < v"0.7.0-DEV.3017"
-escapeuri(v::Nullable) = Base.isnull(v) ? "" : escapeuri(get(v))
-end
 
 escapeuri(key, value) = string(escapeuri(key), "=", escapeuri(value))
 escapeuri(key, values::Vector) = escapeuri(key => v for v in values)
