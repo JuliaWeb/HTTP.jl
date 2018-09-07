@@ -115,7 +115,7 @@ mutable struct Response <: Message
         r.status = status
         r.headers = mkheaders(headers)
         r.body = bytes(body)
-        if request != nothing
+        if request !== nothing
             r.request = request
         end
         return r

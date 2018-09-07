@@ -591,7 +591,7 @@ noverify_sslconfig = nothing
 function global_sslconfig(require_ssl_verification::Bool)::SSLConfig
     global default_sslconfig
     global noverify_sslconfig
-    if default_sslconfig == nothing
+    if default_sslconfig === nothing
         default_sslconfig = SSLConfig(true)
         noverify_sslconfig = SSLConfig(false)
     end

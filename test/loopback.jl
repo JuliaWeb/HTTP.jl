@@ -86,7 +86,7 @@ function on_body(f, lb)
             rethrow(e)
         end
     end
-    if req != nothing
+    if req !== nothing
         reset(lb)
         @async try
             f(req)
@@ -128,7 +128,7 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
         if req.target == "/echo"
             push!(server_events, "Response: $(HTTP.sprintcompact(response))")
             write(lb.io, response)
-        elseif (m = match(r"^/delay([0-9]*)$", req.target)) != nothing
+        elseif (m = match(r"^/delay([0-9]*)$", req.target)) !== nothing
             t = parse(Int, first(m.captures))
             sleep(t/10)
             push!(server_events, "Response: $(HTTP.sprintcompact(response))")

@@ -36,7 +36,7 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
 
     if verbose == 2
         println(request)
-        if iofunction == nothing && request.body === body_is_a_stream
+        if iofunction === nothing && request.body === body_is_a_stream
             println("$(typeof(request)).body: $(sprintcompact(body))")
         end
     end
@@ -52,7 +52,7 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
 
         @sync begin
 
-            if iofunction == nothing
+            if iofunction === nothing
                 @async writebody(http, request, body)
                 yield()
                 startread(http)

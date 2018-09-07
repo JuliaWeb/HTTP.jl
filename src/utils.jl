@@ -4,7 +4,7 @@ sprintcompact(x) = sprint(show, x; context=:compact => true)
 macro src()
     esc(quote
         (__module__,
-         __source__.file == nothing ? "?" : String(__source__.file),
+         __source__.file === nothing ? "?" : String(__source__.file),
          __source__.line)
     end)
 end

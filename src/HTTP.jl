@@ -298,7 +298,7 @@ function request(method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
 
     uri = URI(url)
-    if query != nothing
+    if query !== nothing
         uri = merge(uri, query=query)
     end
     return request(string(method), uri, mkheaders(headers), body; kw...)
