@@ -332,6 +332,25 @@ function listenloop(f, tcpserver, sslconfig, hostname, hostport, pipeline_limit,
         while isopen(tcpserver)
             try
                 io = accept(tcpserver)
+                if !tcpisvalid(io; kw...)
+                    @info "Accept-Reject:  $io"
+                    close(io)
+                    continue
+                end
+                io = getsslcontext(io, sslconfig)
+                let i=id, conn = Connection(hostname, hostport, pipeline_limit, 0, require_ssl_verification, io)
+                    @async try
+                        @info "Accept ($i):  $conn"
+                        connectioncounter[] += 1
+                        handle_connection(f, conn; kw...)
+                    catch e
+                        @error "Error ($i):  $conn" exception=(e, stacktrace(catch_backtrace()))
+                    finally
+                        connectioncounter[] -= 1
+                        close(conn)
+                        @info "Closed ($i):  $conn"
+                    end
+                end
             catch e
                 if e isa Base.IOError
                     @warn "$e"
@@ -340,30 +359,11 @@ function listenloop(f, tcpserver, sslconfig, hostname, hostport, pipeline_limit,
                     rethrow(e)
                 end
             end
-            if !tcpisvalid(io; kw...)
-                @info "Accept-Reject:  $io"
-                close(io)
-                continue
-            end
-            io = getsslcontext(io, sslconfig)
-            let i=id, conn = Connection(hostname, hostport, pipeline_limit, 0, require_ssl_verification, io)
-                @async try
-                    @info "Accept ($i):  $conn"
-                    connectioncounter[] += 1
-                    handle_connection(f, conn; kw...)
-                catch e
-                    @error "Error ($i):  $conn" exception=(e, stacktrace(catch_backtrace()))
-                finally
-                    connectioncounter[] -= 1
-                    close(conn)
-                    @info "Closed ($i):  $conn"
-                end
-            end
             id += 1
         end
     catch e
         if e isa InterruptException
-            @warn "Interrupted: listen($host)"
+            @warn "Interrupted: listen($hostname)"
         else
             rethrow(e)
         end
