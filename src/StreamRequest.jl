@@ -75,7 +75,7 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
         end
 
     catch e
-        if write_error != nothing
+        if write_error !== nothing
             throw(write_error)
         else
             rethrow(e)
