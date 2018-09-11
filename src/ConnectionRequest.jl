@@ -36,7 +36,12 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     end
 
     IOType = ConnectionPool.Transaction{sockettype(url, socket_type)}
-    io = getconnection(IOType, url.host, url.port; reuse_limit=reuse_limit, kw...)
+    local io
+    try
+        io = getconnection(IOType, url.host, url.port; reuse_limit=reuse_limit, kw...)
+    catch e
+        rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
+    end
 
     try
         if proxy !== nothing && target_url.scheme == "https"
