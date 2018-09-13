@@ -243,33 +243,34 @@ for sch in ("http", "https")
 end
 
 @testset "openraw client method" begin
-    println("openraw client method")
+    for sch in ("ws",)
+        println("openraw client method: $sch")
 
-    @testset "can send and receive a WebSocket frame" begin
-        # WebSockets require valid headers.
-        headers = Dict(
-            "Upgrade" => "websocket",
-            "Connection" => "Upgrade",
-            "Sec-WebSocket-Key" => "dGhlIHNhbXBsZSBub25jZQ==",
-            "Sec-WebSocket-Version" => "13")
+        @testset "can send and receive a WebSocket frame" begin
+            # WebSockets require valid headers.
+            headers = Dict(
+                "Upgrade" => "websocket",
+                "Connection" => "Upgrade",
+                "Sec-WebSocket-Key" => "dGhlIHNhbXBsZSBub25jZQ==",
+                "Sec-WebSocket-Version" => "13")
 
-            socket, response, excess = HTTP.openraw("GET", "ws://echo.websocket.org", headers)
+            socket, response, excess = HTTP.openraw("GET", "$sch://echo.websocket.org", headers)
 
-        @test response.status == 101
-        @test isempty(excess) # The echo service only echoes bytes written to it.
+            @test response.status == 101
+            @test isempty(excess) # The echo service only echoes bytes written to it.
 
-        # This is an example text frame from RFC 6455, section 5.7. It sends the text "Hello" to the
-        # echo server, and so we expect "Hello" back, in an unmasked frame.
-        frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
+            # This is an example text frame from RFC 6455, section 5.7. It sends the text "Hello" to the
+            # echo server, and so we expect "Hello" back, in an unmasked frame.
+            frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
 
-        write(socket, frame)
+            write(socket, frame)
 
-        # The frame we expect back looks like `expectedframe`.
-        expectedframe = UInt8[0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f]
-        actualframe = read(socket, 7)
-        @test expectedframe == actualframe
-
-        close(socket)
+            # The frame we expect back looks like `expectedframe`.
+            expectedframe = UInt8[0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f]
+            actualframe = read(socket, 7)
+            @test expectedframe == actualframe
+            close(socket)
+        end
     end
 end
 

@@ -350,8 +350,8 @@ frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
 write(socket, frame)
 ```
 """
-function openraw(method::String, url, headers=Header[]; kw...)::Tuple{TCPSocket, Response, ByteView}
-    socketready = Channel{Tuple{TCPSocket, Response, ByteView}}(0)
+function openraw(method::String, url, headers=Header[]; kw...)::Tuple{IO, Response, ByteView}
+    socketready = Channel{Tuple{IO, Response, ByteView}}(0)
     @async HTTP.open(method, url, headers; kw...) do http
         HTTP.startread(http)
         socket = HTTP.ConnectionPool.getrawstream(http)
