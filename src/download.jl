@@ -72,7 +72,7 @@ function determine_file(path, resp)
 end
 
 """
-    download(url, [local_path], [headers]; update_period=5, pretty_print=true, kw...)
+    download(url, [local_path], [headers]; update_period=1, kw...)
 
 Similar to `Base.download` this downloads a file, returning the filename.
 If the `local_path`:
@@ -85,22 +85,14 @@ from the rules of the HTTP.
 
  - `update_period` controls how often (in seconds) to report the progress.
     - set to `Inf` to disable reporting
- - `pretty_print` controls if the progress reports should be use human-friendly units.
  - `headers` specifies headers to be used for the HTTP GET request
  - any additional keyword args (`kw...`) are passed on to the HTTP request.
 """
-function download(url::AbstractString, local_path=nothing, headers=Header[]; update_period=5, pretty_print=true, kw...)
-    if pretty_print
-        format_progress(x) = "$(round(100x, digits=2))%"
-        format_bytes(x) = Base.format_bytes(x)
-        format_seconds(x) = "$(round(Int, x)) s"
-        format_bytes_per_second(x) = format_bytes(x) * "/s"
-    else
-        format_progress(x) = x
-        format_bytes(x) = x
-        format_seconds(x) = x
-        format_bytes_per_second(x) = x
-    end
+function download(url::AbstractString, local_path=nothing, headers=Header[]; update_period=1, kw...)
+    format_progress(x) = "$(round(100x, digits=2))%"
+    format_bytes(x) = x==Inf ? "∞ B" : Base.format_bytes(x)
+    format_seconds(x) = "$(round(x; digits=2)) s"
+    format_bytes_per_second(x) = format_bytes(x) * "/s"
 
 
     @debug 1 "downloading $url"
@@ -125,12 +117,12 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
                   source=url,
                   dest = file,
                   progress = completion_progress |> format_progress,
-                  taken_time |> format_seconds,
-                  remaining_time |> format_seconds,
-                  average_speed |> format_bytes_per_second,
-                  downloaded_bytes |> format_bytes,
-                  remaining_bytes |> format_bytes,
-                  total_bytes |> format_bytes,
+                  time_taken = taken_time |> format_seconds,
+                  time_remaining = remaining_time |> format_seconds,
+                  average_speed = average_speed |> format_bytes_per_second,
+                  downloaded = downloaded_bytes |> format_bytes,
+                  remaining = remaining_bytes |> format_bytes,
+                  total = total_bytes |> format_bytes,
                  )
         end
 
