@@ -1,4 +1,3 @@
-include("compat.jl")
 using HTTP
 
 @testset "HTTP.download" begin

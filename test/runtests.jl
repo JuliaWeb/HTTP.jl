@@ -18,10 +18,10 @@ using HTTP
     # println("running WebSockets.jl tests..."); include("WebSockets.jl");
     println("running messages.jl tests..."); include("messages.jl");
     
-    println("running download.jl tests...)"; include("download.jl");
+    println("running download.jl tests..."); include("download.jl");
 
-    println("running handlers.jl tests..."); include("handlers.jl")
-    println("running server.jl tests..."); include("server.jl")
+    println("running handlers.jl tests..."); include("handlers.jl");
+    println("running server.jl tests..."); include("server.jl");
 
     println("running async.jl tests..."); include("async.jl");
 end;
