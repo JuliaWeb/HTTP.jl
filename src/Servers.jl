@@ -6,19 +6,12 @@ using ..Messages
 using ..Parsers
 using ..ConnectionPool
 using ..Sockets
-import ..@info, ..@warn, ..@error, ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..compat_stdout
+import ..@info, ..@warn, ..@error, ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..stdout
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 
-if !isdefined(Base, :Nothing)
-    const Nothing = Void
-    const Cvoid = Void
-end
 
-import ..Dates
-
-@static if !isdefined(Base, :Distributed)
-    using Distributed
-end
+import Dates
+using Distributed
 
 using ..HTTP, ..Handlers
 
@@ -97,7 +90,7 @@ mutable struct Server{T <: Scheme, H <: HTTP.Handler}
     out::Channel{Any}
     options::ServerOptions
 
-    Server{T, H}(handler::H, logger::IO=compat_stdout(), ch=Channel(1), ch2=Channel(1),
+    Server{T, H}(handler::H, logger::IO=stdout, ch=Channel(1), ch2=Channel(1),
                  options=ServerOptions()) where {T, H} =
         new{T, H}(handler, logger, ch, ch2, options)
 end
@@ -160,7 +153,7 @@ function serve(server::Server{T, H}, host::Union{Sockets.InetAddr, String}, verb
     listen(host;
            tcpref=tcpserver,
            ssl=(T == https),
-           sslconfig=server.options.sslconfig,
+           sslconfig=(T == https) ? server.options.sslconfig : nothing,
            verbose=verbose,
            tcpisvalid=server.options.ratelimit > 0 ? check_rate_limit :
                                                      (tcp; kw...) -> true,
@@ -180,9 +173,9 @@ serve(server::Server, host::AbstractString, port::Integer; verbose::Bool=true) =
 serve(server::Server, host::Union{Sockets.InetAddr, AbstractString}; verbose::Bool=true) =
     serve(server, host, verbose)
 
-Server(h::Function, l::IO=compat_stdout(); cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
+Server(h::Function, l::IO=stdout; cert::String="", key::String="", args...) = Server(HTTP.HandlerFunction(h), l; cert=cert, key=key, args...)
 function Server(handler::H=HTTP.HandlerFunction(req -> HTTP.Response(200, "Hello World!")),
-                logger::IO=compat_stdout(),
+                logger::IO=stdout,
                 ;
                 cert::String="",
                 key::String="",
@@ -214,7 +207,7 @@ serve(host::AbstractString, port::Integer, args...; kwargs...) = serve(parse(IPA
 serve(host::AbstractString, args...; kwargs...) = serve(String(host), args...; kwargs...)
 function serve(host::Union{Sockets.InetAddr, String},
                handler=req -> HTTP.Response(200, "Hello World!"),
-               logger::IO=compat_stdout(),
+               logger::IO=stdout,
                ;
                verbose::Bool=true,
                args...)
@@ -224,7 +217,7 @@ end
 serve(; host::IPAddr=Sockets.localhost,
         port::Integer=8081,
         handler=req -> HTTP.Response(200, "Hello World!"),
-        logger::IO=compat_stdout(),
+        logger::IO=stdout,
         args...) =
     serve(host, port, handler, logger; args...)
 
@@ -235,8 +228,8 @@ function getsslcontext(tcp, sslconfig)
     handshake!(ssl)
     return ssl
 end
+getsslcontext(tcp, ::Nothing) = tcp
 
-const nosslconfig = SSLConfig()
 const nolimit = typemax(Int)
 
 """
@@ -293,14 +286,15 @@ function listen(f::Function,
                 ;
                 ssl::Bool=false,
                 require_ssl_verification::Bool=true,
-                sslconfig::SSLConfig=nosslconfig,
+                sslconfig::Union{SSLConfig, Nothing}=nothing,
                 pipeline_limit::Int=ConnectionPool.default_pipeline_limit,
                 tcpisvalid::Function=(tcp; kw...)->true,
                 tcpref::Ref=Ref{Base.IOServer}(),
                 reuseaddr::Bool=false,
+                connectioncounter::Base.RefValue{Int}=Ref(0),
                 kw...)
 
-    if sslconfig === nosslconfig
+    if ssl && sslconfig === nothing
         sslconfig = SSLConfig(require_ssl_verification)
     end
 
@@ -308,28 +302,13 @@ function listen(f::Function,
     if isassigned(tcpref)
         tcpserver = tcpref[]
     elseif reuseaddr
-        @static if VERSION < v"0.7.0-alpha.0"
-            tcpserver = Sockets.TCPServer(Base.Libc.malloc(Base._sizeof_uv_tcp), Base.StatusUninit)
-            err = ccall(:uv_tcp_init_ex, Cint, (Ptr{Cvoid}, Ptr{Cvoid}, Cuint),
-                        Base.eventloop(), tcpserver.handle, 2)
-            Base.uv_error("failed to create tcpserver server", err)
-            tcpserver.status = Base.StatusInit
-            if Sys.KERNEL == :Linux || Sys.KERNEL in (:Darwin, :Apple)
-                rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
-                Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
-            else
-                @warn "reuseaddr=true may not be supported on this platform: $(Sys.KERNEL)"
-                Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
-            end
+        tcpserver = Sockets.TCPServer(; delay=false)
+        if Sys.islinux() || Sys.isapple()
+            rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
+            Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
         else
-            tcpserver = Sockets.TCPServer(; delay=false)
-            if Sys.islinux() || Sys.isapple()
-                rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
-                Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
-            else
-                @warn "reuseaddr=true may not be supported on this platform: $(Sys.KERNEL)"
-                Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
-            end
+            @warn "reuseaddr=true may not be supported on this platform: $(Sys.KERNEL)"
+            Sockets.bind(tcpserver, host.host, host.port; reuseaddr=true)
         end
         Sockets.listen(tcpserver)
     else
@@ -337,46 +316,54 @@ function listen(f::Function,
         tcpref[] = tcpserver
     end
 
+    if host isa Sockets.InetAddr # build debugging info
+        hostname = string(host.host)
+        hostport = string(host.port)
+    else
+        hostname = string(host)
+        hostport = ""
+    end
+    listenloop(f, tcpserver, sslconfig, hostname, hostport, pipeline_limit, require_ssl_verification, tcpisvalid, connectioncounter; kw...)
+end
+
+function listenloop(f, tcpserver, sslconfig, hostname, hostport, pipeline_limit, require_ssl_verification, tcpisvalid, connectioncounter; kw...)
     try
+        id = 0
         while isopen(tcpserver)
             try
                 io = accept(tcpserver)
+                if !tcpisvalid(io; kw...)
+                    @info "Accept-Reject:  $io"
+                    close(io)
+                    continue
+                end
+                io = getsslcontext(io, sslconfig)
+                let i=id, conn = Connection(hostname, hostport, pipeline_limit, 0, require_ssl_verification, io)
+                    @async try
+                        @info "Accept ($i):  $conn"
+                        connectioncounter[] += 1
+                        handle_connection(f, conn; kw...)
+                    catch e
+                        @error "Error ($i):  $conn" exception=(e, stacktrace(catch_backtrace()))
+                    finally
+                        connectioncounter[] -= 1
+                        close(conn)
+                        @info "Closed ($i):  $conn"
+                    end
+                end
             catch e
-                if e isa @static VERSION>=v"0.7-" ? Base.IOError : Base.UVError
+                if e isa Base.IOError
                     @warn "$e"
                     break
                 else
                     rethrow(e)
                 end
             end
-            if !tcpisvalid(io; kw...)
-                @info "Accept-Reject:  $io"
-                close(io)
-                continue
-            end
-            io = ssl ? getsslcontext(io, sslconfig) : io
-            if host isa Sockets.InetAddr # build debugging info
-                hostname = string(host.host)
-                hostport = string(host.port)
-            else
-                hostname = string(host)
-                hostport = ""
-            end
-            let io = Connection(hostname, hostport, pipeline_limit, 0, require_ssl_verification, io)
-                @info "Accept:  $io"
-                @async try
-                    handle_connection(f, io; kw...)
-                catch e
-                    @error "Error:   $io" exception=(e, stacktrace(catch_backtrace()))
-                finally
-                    close(io)
-                    @info "Closed:  $io"
-                end
-            end
+            id += 1
         end
     catch e
-        if typeof(e) <: InterruptException
-            @warn "Interrupted: listen($host)"
+        if e isa InterruptException
+            @warn "Interrupted: listen($hostname)"
         else
             rethrow(e)
         end
@@ -414,11 +401,7 @@ function handle_connection(f::Function, c::Connection;
         count = 0
         while isopen(c)
             io = Transaction(c)
-            handle_transaction(f, io; final_transaction=(count == reuse_limit),
-                                      kw...)
-            if count == reuse_limit
-                close(c)
-            end
+            handle_transaction(f, io; final_transaction=(count == reuse_limit), kw...)
             count += 1
         end
     finally
@@ -481,6 +464,8 @@ function handle_transaction(f::Function, t::Transaction;
             @error exception=(e, stacktrace(catch_backtrace()))
         end
         close(t)
+    finally
+        final_transaction && close(t.c)
     end
     return
 end

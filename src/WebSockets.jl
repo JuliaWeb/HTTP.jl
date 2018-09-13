@@ -8,7 +8,7 @@ using ..Streams
 import ..ConnectionPool
 using HTTP: header
 import ..@debug, ..DEBUG_LEVEL, ..@require, ..precondition_error
-import ..compat_string
+import ..string
 
 const WS_FINAL = 0x80
 const WS_CONTINUATION = 0x00
@@ -262,14 +262,14 @@ function readframe(ws::WebSocket)
             end
         end
         return UInt8[]
-    elseif h.opcode == WS_PING
-        write(ws.io, [WS_PONG, 0x00])
-        wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload)
-        return readframe(ws)
     else
         l = Int(h.length)
         if h.hasmask
             mask!(ws.rxpayload, ws.rxpayload, l, reinterpret(UInt8, [h.mask]))
+        end
+        if h.opcode == WS_PING
+            wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload[1:l])
+            return readframe(ws)
         end
         return view(ws.rxpayload, 1:l)
     end
@@ -292,7 +292,7 @@ function Base.show(io::IO, h::WebSocketHeader)
           h.opcode == WS_PONG ? "PONG" : h.opcode,
           h.final ? " | FINAL, " : ", ",
           h.length > 0 ? "$(Int(h.length))-byte payload" : "",
-          h.hasmask ? ", mask = $(compat_string(h.mask, base=16))" : "",
+          h.hasmask ? ", mask = $(string(h.mask, base=16))" : "",
           ")")
 end
 

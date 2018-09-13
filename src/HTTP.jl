@@ -1,4 +1,3 @@
-VERSION < v"0.7.0-beta2.199" && __precompile__()
 module HTTP
 
 export startwrite, startread, closewrite, closeread
@@ -11,7 +10,9 @@ const DEBUG_LEVEL = 0
 Base.@deprecate escape escapeuri
 Base.@deprecate URL URI
 
-include("compat.jl")
+using Base64, Sockets, Dates
+
+include("utils.jl")
 include("debug.jl")
 
 include("Pairs.jl")
@@ -261,6 +262,19 @@ r = HTTP.request("POST", "http://httpbin.org/post", [], "post body data")
 println(String(r.body))
 ```
 
+Interfacing with RESTful JSON APIs:
+```julia
+using JSON
+params = Dict("user"=>"RAO...tjN", "token"=>"NzU...Wnp", "message"=>"Hello!")
+base_url = "http://api.domain.com"
+endpoint = "/1/messages.json"
+url = base_url * endpoint
+r = HTTP.request("POST", url,
+             ["Content-Type" => "application/json"],
+             JSON.json(params))
+println(JSON.parse(String(r.body)))
+```
+
 Stream bodies from and to files:
 ```julia
 in = open("foo.png", "r")
@@ -297,7 +311,7 @@ function request(method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
 
     uri = URI(url)
-    if query != nothing
+    if query !== nothing
         uri = merge(uri, query=query)
     end
     return request(string(method), uri, mkheaders(headers), body; kw...)
@@ -376,21 +390,21 @@ get(a...; kw...) = request("GET", a...; kw...)
 
 Shorthand for `HTTP.request("PUT", ...)`. See [`HTTP.request`](@ref).
 """
-put(u, h, b; kw...) = request("PUT", u, h, b; kw...)
+put(u, h=[], b=""; kw...) = request("PUT", u, h, b; kw...)
 
 """
     HTTP.post(url, headers, body; <keyword arguments>) -> HTTP.Response
 
 Shorthand for `HTTP.request("POST", ...)`. See [`HTTP.request`](@ref).
 """
-post(u, h, b; kw...) = request("POST", u, h, b; kw...)
+post(u, h=[], b=""; kw...) = request("POST", u, h, b; kw...)
 
 """
     HTTP.patch(url, headers, body; <keyword arguments>) -> HTTP.Response
 
 Shorthand for `HTTP.request("PATCH", ...)`. See [`HTTP.request`](@ref).
 """
-patch(u, h, b; kw...) = request("PATCH", u, h, b; kw...)
+patch(u, h=[], b=""; kw...) = request("PATCH", u, h, b; kw...)
 
 """
     HTTP.head(url; <keyword arguments>) -> HTTP.Response
@@ -619,7 +633,6 @@ function stack(;redirect=true,
     }}}}}}}}}}}}
 end
 
-include("client.jl")
 include("Handlers.jl")                 ;using .Handlers
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
 Base.@deprecate_binding(Nitrogen, Servers, false)

@@ -74,7 +74,7 @@ import ..@warn
 using ..IOExtras
 using ..Parsers
 import ..@require, ..precondition_error
-import ..bytes, ..bytesavailable
+import ..bytes
 
 const unknown_length = typemax(Int)
 
@@ -115,7 +115,7 @@ mutable struct Response <: Message
         r.status = status
         r.headers = mkheaders(headers)
         r.body = bytes(body)
-        if request != nothing
+        if request !== nothing
             r.request = request
         end
         return r

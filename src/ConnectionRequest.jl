@@ -24,9 +24,10 @@ export ConnectionPoolLayer
 
 function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
                  proxy=nothing,
-                 socket_type::Type=TCPSocket, kw...) where Next
+                 socket_type::Type=TCPSocket,
+                 reuse_limit::Int=ConnectionPool.nolimit, kw...) where Next
 
-    if proxy != nothing
+    if proxy !== nothing
         target_url = url
         url = URI(proxy)
         if target_url.scheme == "http"
@@ -35,10 +36,10 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     end
 
     IOType = ConnectionPool.Transaction{sockettype(url, socket_type)}
-    io = getconnection(IOType, url.host, url.port; kw...)
+    io = getconnection(IOType, url.host, url.port; reuse_limit=reuse_limit, kw...)
 
     try
-        if proxy != nothing && target_url.scheme == "https"
+        if proxy !== nothing && target_url.scheme == "https"
             return tunnel_request(Next, io, target_url, req, body; kw...)
         end
 
@@ -49,7 +50,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
         close(io)
         rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
     finally
-        if proxy != nothing && target_url.scheme == "https"
+        if (proxy !== nothing && target_url.scheme == "https") || reuse_limit == 0
             close(io)
         end
     end

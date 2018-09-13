@@ -53,7 +53,7 @@ struct Router <: Handler
     func::Function
     function Router(ff::Union{Handler, Function, Nothing}=nothing)
         sym = gensym()
-        if ff == nothing
+        if ff === nothing
             f = @eval $sym(args...) = FourOhFour
         else
             f = ff isa Function ? HandlerFunction(ff) : ff
@@ -113,11 +113,7 @@ end
 
 function register!(r::Router, method::DataType, scheme, host, path, handler)
     # save string => Val mappings in r.segments
-    @static if VERSION < v"0.7.0-DEV.4724"
-        segments = map(String, split(path, '/'; keep=false))
-    else
-        segments = map(String, split(path, '/'; keepempty=false))
-    end
+    segments = map(String, split(path, '/'; keepempty=false))
     vals = splitsegments(r, handler, segments)
     # return a method to get dispatched to
     #TODO: detect whether defining this method will create ambiguity?
@@ -133,11 +129,7 @@ function gethandler(r::Router, req)
     s = get(SCHEMES, uri.scheme, EMPTYVAL)
     h = Val(Symbol(uri.host))
     p = uri.path
-    @static if VERSION < v"0.7.0-DEV.4724"
-        segments = split(p, '/'; keep=false)
-    else
-        segments = split(p, '/'; keepempty=false)
-    end
+    segments = split(p, '/'; keepempty=false)
     # dispatch to the most specific handler, given the path
     vals = (get(r.segments, s, EMPTYVAL) for s in segments)
     return r.func(m, s, h, vals...)

@@ -29,7 +29,7 @@ export Connection, Transaction,
 
 using ..IOExtras, ..Sockets
 
-import ..ByteView, ..bytesavailable, ..Nothing
+import ..ByteView
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
@@ -156,8 +156,8 @@ function Base.eof(t::Transaction)
     return eof(t.c.io)
 end
 
-bytesavailable(t::Transaction) = bytesavailable(t.c)
-bytesavailable(c::Connection) =
+Base.bytesavailable(t::Transaction) = bytesavailable(t.c)
+Base.bytesavailable(c::Connection) =
     !isempty(c.excess) ? length(c.excess) : bytesavailable(c.io)
 
 Base.isreadable(t::Transaction) = t.c.readbusy && t.c.readcount == t.sequence
@@ -275,11 +275,7 @@ function IOExtras.closeread(t::Transaction)
     notify(poolcondition)
 
     if !isbusy(t.c)
-        @static if VERSION < v"0.7.0-alpha.0"
-            @schedule monitor_idle_connection(t.c)
-        else
-            @async monitor_idle_connection(t.c)
-        end
+        @async monitor_idle_connection(t.c)
     end
 
     @ensure !isreadable(t)
@@ -595,7 +591,7 @@ noverify_sslconfig = nothing
 function global_sslconfig(require_ssl_verification::Bool)::SSLConfig
     global default_sslconfig
     global noverify_sslconfig
-    if default_sslconfig == nothing
+    if default_sslconfig === nothing
         default_sslconfig = SSLConfig(true)
         noverify_sslconfig = SSLConfig(false)
     end

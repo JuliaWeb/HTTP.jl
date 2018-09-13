@@ -1,14 +1,10 @@
-include("compat.jl")
+using Test
 using HTTP
 using HTTP.IOExtras
 using HTTP.Parsers
 using HTTP.Messages
 using HTTP.Sockets
 using HTTP.MessageRequest: bodylength
-
-@static if !isdefined(Base, :stdout)
-    const stdout = STDOUT
-end
 
 mutable struct FunctionIO <: IO
     f::Function
@@ -20,7 +16,7 @@ FunctionIO(f::Function) = FunctionIO(f, IOBuffer(), false)
 call(fio::FunctionIO) = !fio.done &&
                         (fio.buf = IOBuffer(fio.f()) ; fio.done = true)
 Base.eof(fio::FunctionIO) = (call(fio); eof(fio.buf))
-HTTP.bytesavailable(fio::FunctionIO) = (call(fio); HTTP.bytesavailable(fio.buf))
+Base.bytesavailable(fio::FunctionIO) = (call(fio); bytesavailable(fio.buf))
 Base.readavailable(fio::FunctionIO) = (call(fio); readavailable(fio.buf))
 Base.read(fio::FunctionIO, a...) = (call(fio); read(fio.buf, a...))
 
@@ -37,7 +33,7 @@ function reset(lb::Loopback)
 end
 
 Base.eof(lb::Loopback) = eof(lb.io)
-HTTP.bytesavailable(lb::Loopback) = HTTP.bytesavailable(lb.io)
+Base.bytesavailable(lb::Loopback) = bytesavailable(lb.io)
 Base.readavailable(lb::Loopback) = readavailable(lb.io)
 Base.close(lb::Loopback) = (close(lb.io); close(lb.buf))
 Base.isopen(lb::Loopback) = isopen(lb.io)
@@ -51,7 +47,7 @@ Escape `string` and insert '\n' after escaped newline characters.
 """
 function escapelines(s)
     s = Base.escape_string(s)
-    s = HTTP.compat_replace(s, "\\n" => "\\n\n    ")
+    s = replace(s, "\\n" => "\\n\n    ")
     return string("    ", strip(s))
 end
 
@@ -90,7 +86,7 @@ function on_body(f, lb)
             rethrow(e)
         end
     end
-    if req != nothing
+    if req !== nothing
         reset(lb)
         @async try
             f(req)
@@ -132,7 +128,7 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
         if req.target == "/echo"
             push!(server_events, "Response: $(HTTP.sprintcompact(response))")
             write(lb.io, response)
-        elseif (m = match(r"^/delay([0-9]*)$", req.target)) != nothing
+        elseif (m = match(r"^/delay([0-9]*)$", req.target)) !== nothing
             t = parse(Int, first(m.captures))
             sleep(t/10)
             push!(server_events, "Response: $(HTTP.sprintcompact(response))")

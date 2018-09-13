@@ -1,29 +1,25 @@
-@static if VERSION >= v"0.7.0-DEV.2915"
+using Test
 using Distributed
-end
 addprocs(5)
 
-include("compat.jl")
-
+using Test
 using HTTP
-using HTTP.Dates
 
 
 @testset "HTTP" begin
-    include("utils.jl");
-    include("sniff.jl");
-    include("uri.jl");
-    include("url.jl");
-    include("cookies.jl");
-    include("parser.jl");
+    println("running utils.jl tests..."); include("utils.jl");
+    println("running sniff.jl tests..."); include("sniff.jl");
+    println("running uri.jl tests..."); include("uri.jl");
+    println("running url.jl tests..."); include("url.jl");
+    println("running cookies.jl tests..."); include("cookies.jl");
+    println("running parser.jl tests..."); include("parser.jl");
 
-    include("loopback.jl");
-    include("WebSockets.jl");
-    include("messages.jl");
-    include("client.jl");
+    println("running loopback.jl tests..."); include("loopback.jl");
+    # println("running WebSockets.jl tests..."); include("WebSockets.jl");
+    println("running messages.jl tests..."); include("messages.jl");
 
-    include("handlers.jl")
-    include("server.jl")
+    println("running handlers.jl tests..."); include("handlers.jl")
+    println("running server.jl tests..."); include("server.jl")
 
-    include("async.jl");
+    println("running async.jl tests..."); include("async.jl");
 end;

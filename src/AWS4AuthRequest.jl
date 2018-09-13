@@ -24,11 +24,9 @@ export AWS4AuthLayer
 function request(::Type{AWS4AuthLayer{Next}},
                  url::URI, req, body; kw...) where Next
 
-    @static if VERSION > v"0.7.0-DEV.2915"
     if !haskey(kw, :aws_access_key_id) &&
        !haskey(ENV, "AWS_ACCESS_KEY_ID")
         kw = merge(dot_aws_credentials(), kw)
-    end
     end
 
     sign_aws4!(req.method, url, req.headers, req.body; kw...)
@@ -114,8 +112,6 @@ function sign_aws4!(method::String,
     ))
 end
 
-@static if VERSION > v"0.7.0-DEV.2915"
-
 using IniFile
 
 credentials = NamedTuple()
@@ -143,8 +139,6 @@ function dot_aws_credentials()::NamedTuple
     credentials = (
         aws_access_key_id = String(get(ini, p, "aws_access_key_id")),
         aws_secret_access_key = String(get(ini, p, "aws_secret_access_key")))
-end
-
 end
 
 end # module AWS4AuthRequest

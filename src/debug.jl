@@ -1,4 +1,4 @@
-taskid(t=current_task()) = compat_string(hash(t) & 0xffff, base=16, pad=4)
+taskid(t=current_task()) = string(hash(t) & 0xffff, base=16, pad=4)
 
 debug_header() = string("DEBUG: ", rpad(Dates.now(), 24), taskid(), " ")
 
@@ -90,26 +90,3 @@ macro ensure(condition, msg = string(condition))
 
     esc(:(if ! $condition throw(postcondition_error($msg, backtrace()[1])) end))
 end
-
-
-# FIXME
-# Should this have a branch-prediction hint? (same for @assert?)
-# http://llvm.org/docs/BranchWeightMetadata.html#built-in-expect-instructions
-
-#=
-macro src()
-    @static if VERSION >= v"0.7-" && length(:(@test).args) == 2
-        esc(quote
-            (__module__,
-             __source__.file == nothing ? "?" : String(__source__.file),
-             __source__.line)
-        end)
-    else
-        esc(quote
-            (current_module(),
-             (p = Base.source_path(); p == nothing ? "REPL" : p),
-             Int(unsafe_load(cglobal(:jl_lineno, Cint))))
-        end)
-    end
-end
-=#

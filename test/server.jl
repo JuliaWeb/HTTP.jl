@@ -1,19 +1,11 @@
-@static if VERSION >= v"0.7.0-DEV.2915"
 using Distributed
-end
+
 while nworkers() < 5
     addprocs(1)
 end
 
-@everywhere using HTTP, HTTP.Sockets
-@static if VERSION < v"0.7.0-DEV.2005"
-    @everywhere using Base.Test
-else
-    @everywhere using Test
-end
-@static if !isdefined(Base, :stdout)
-    const stdout = STDOUT
-end
+@everywhere using HTTP, Sockets, Test
+
 
 """
     n: number of remotes
@@ -27,6 +19,7 @@ function testget(url, n=1, m=1)
             @sync for ii in 1:mm
                 l = rand([0,0,10,1000,10000])
                 body = Vector{UInt8}(rand('A':'Z', l))
+                println("sending request...")
                 @async push!(rr, HTTP.request("GET", "$url/$ii", [], body))
             end
             return rr
@@ -37,7 +30,7 @@ end
 
 @testset "HTTP.Servers.serve" begin
 
-port = 8086 # rand(8000:8999)
+port = 8087 # rand(8000:8999)
 
 # test kill switch
 server = HTTP.Servers.Server()
@@ -57,12 +50,12 @@ server = HTTP.Servers.Server((req) -> begin
 end, stdout)
 
 server.options.ratelimit=0
-tsk = @async HTTP.Servers.serve(server, Sockets.localhost, port)
+tsk = @async HTTP.Servers.serve(server, Sockets.localhost, port; verbose=true)
 sleep(5.0)
 
 
 r = testget("http://127.0.0.1:$port")
-@test HTTP.compat_occursin(r"HTTP/1.1 200 OK", r)
+@test occursin(r"HTTP/1.1 200 OK", r)
 
 rv = []
 n = 5
@@ -76,7 +69,7 @@ m = 20
     sleep(0.01)
 end
 for i = 1:n
-    @test length(filter(l->HTTP.compat_occursin(r"HTTP/1.1 200 OK", l),
+    @test length(filter(l->occursin(r"HTTP/1.1 200 OK", l),
                         split(rv[i], "\n"))) == n * m
 end
 
@@ -91,13 +84,13 @@ x = "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n"
 @show length(x)
 write(tcp, "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n")
 sleep(0.1)
-@test HTTP.compat_occursin(r"HTTP/1.1 413 Request Entity Too Large", String(read(tcp)))
+@test occursin(r"HTTP/1.1 413 Request Entity Too Large", String(read(tcp)))
 
 # invalid HTTP
 tcp = Sockets.connect(ip"127.0.0.1", port)
 sleep(0.1)
 write(tcp, "GET / HTP/1.1\r\n\r\n")
-@test HTTP.compat_occursin(r"HTTP/1.1 400 Bad Request", String(read(tcp)))
+@test occursin(r"HTTP/1.1 400 Bad Request", String(read(tcp)))
 
 
 # no URL
@@ -105,7 +98,7 @@ tcp = Sockets.connect(ip"127.0.0.1", port)
 write(tcp, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
 sleep(0.1)
 r = String(read(tcp))
-@test HTTP.compat_occursin(r"HTTP/1.1 400 Bad Request", r)
+@test occursin(r"HTTP/1.1 400 Bad Request", r)
 
 
 # Expect: 100-continue
@@ -125,9 +118,9 @@ client = String(readavailable(tcp))
 #println()
 println("client:")
 println(client)
-@test HTTP.compat_occursin("HTTP/1.1 200 OK\r\n", client)
-@test HTTP.compat_occursin("Transfer-Encoding: chunked\r\n", client)
-@test HTTP.compat_occursin("Body of Request", client)
+@test occursin("HTTP/1.1 200 OK\r\n", client)
+@test occursin("Transfer-Encoding: chunked\r\n", client)
+@test occursin("Body of Request", client)
 
 put!(server.in, HTTP.Servers.KILL)
 
@@ -198,8 +191,8 @@ try
         return HTTP.Response(200, "hello world")
     end
 catch e
-    @test e isa @static VERSION>=v"0.7-" ? Base.IOError : Base.UVError
-    @test startswith((@static VERSION>=v"0.7-" ? e.msg : e.prefix), "listen")
+    @test e isa Base.IOError
+    @test startswith(e.msg, "listen")
     @test e.code == Base.UV_EADDRINUSE
 end
 

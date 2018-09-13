@@ -2,9 +2,6 @@ module Pairs
 
 export defaultbyfirst, setbyfirst, getbyfirst, setkv, getkv, rmkv
 
-import ..compat_findfirst
-const findfirst = compat_findfirst
-
 """
     setbyfirst(collection, item) -> item
 

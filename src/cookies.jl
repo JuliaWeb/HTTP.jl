@@ -38,9 +38,7 @@ using ..IOExtras: bytes
 using ..Parsers: Headers
 using ..Messages: Request, mkheaders, hasheader, header
 
-import ..compat_search, ..compat_occursin, ..compat_replace, ..IPAddr
-const replace = compat_replace
-const search = compat_search
+import ..IPAddr
 
 """
     Cookie()
@@ -156,7 +154,7 @@ function readsetcookie(host, cookie)
     parts = split(strip(cookie), ';')
     length(parts) == 1 && parts[1] == "" && return Cookie()
     parts[1] = strip(parts[1])
-    j = search(parts[1], '=')
+    j = findfirst(isequal('='), parts[1])
     j === nothing && return Cookie()
     name, value = parts[1][1:j-1], parts[1][j+1:end]
     iscookienamevalid(name) || return Cookie()
@@ -167,8 +165,8 @@ function readsetcookie(host, cookie)
         parts[x] = strip(parts[x])
         length(parts[x]) == 0 && continue
         attr, val = parts[x], ""
-        j = search(parts[x], '=')
-        if j != nothing
+        j = findfirst(isequal('='), parts[x])
+        if j !== nothing
             attr, val = attr[1:j-1], attr[j+1:end]
         end
         lowerattr = lowercase(attr)
@@ -325,8 +323,8 @@ function readcookies(h::Headers, filter::String)
     for part in split(header(h, "Cookie", ""), ';')
         part = strip(part)
         length(part) <= 1 && continue
-        j = search(part, '=')
-        if j != nothing
+        j = findfirst(isequal('='), part)
+        if j !== nothing
             name, val = part[1:j-1], part[j+1:end]
         else
             name, val = part, ""
@@ -352,7 +350,7 @@ end
 # validCookieDomain returns whether v is a valid cookie domain-value.
 function validCookieDomain(v::String)
     isCookieDomainName(v) && return true
-    isIP(v) && !compat_occursin(":", v) && return true
+    isIP(v) && !occursin(":", v) && return true
     return false
 end
 

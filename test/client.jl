@@ -1,9 +1,6 @@
-include("compat.jl")
-using HTTP
+using HTTP, Test, JSON
 
 @testset "HTTP.Client" begin
-
-using JSON
 
 status(r) = r.status
 
@@ -13,7 +10,6 @@ for sch in ("http", "https")
     println("simple GET, HEAD, POST, DELETE, etc.")
     @test status(HTTP.get("$sch://httpbin.org/ip")) == 200
     @test status(HTTP.head("$sch://httpbin.org/ip")) == 200
-    @test status(HTTP.options("$sch://httpbin.org/ip")) == 200
     @test status(HTTP.post("$sch://httpbin.org/ip"; status_exception=false)) == 405
     @test status(HTTP.post("$sch://httpbin.org/post")) == 200
     @test status(HTTP.put("$sch://httpbin.org/put")) == 200
@@ -33,7 +29,6 @@ for sch in ("http", "https")
 
     println("cookie requests")
     empty!(HTTP.CookieRequest.default_cookiejar)
-    empty!(HTTP.DEFAULT_CLIENT.cookies)
     r = HTTP.get("$sch://httpbin.org/cookies", cookies=true)
     body = String(r.body)
     @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{}}"
@@ -42,8 +37,8 @@ for sch in ("http", "https")
     body = String(r.body)
     @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{\"foo\":\"bar\",\"hey\":\"sailor\"}}"
 
-    # r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
-    # @test String(take!(r)) == "{\n  \"cookies\": {\n    \"hey\": \"\"\n  }\n}\n"
+    r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
+    @test isempty(JSON.parse(String(r.body))["cookies"])
 
     # stream
     println("client streaming tests")
@@ -96,57 +91,57 @@ for sch in ("http", "https")
     tmp = tempname()
     open(f->write(f, "hey"), tmp, "w")
     io = open(tmp)
-#    @test_broken status(HTTP.post("$sch://httpbin.org/post"; body=io, #=chunksize=2=#)) == 200
+    @test status(HTTP.post("$sch://httpbin.org/post"; body=io, #=chunksize=2=#)) == 200
     close(io); rm(tmp)
     f = Base.BufferStream()
     write(f, "hey")
     close(f)
-#    @test_broken status(HTTP.post("$sch://httpbin.org/post"; body=f, #=chunksize=2=#)) == 200
+    @test status(HTTP.post("$sch://httpbin.org/post"; body=f, #=chunksize=2=#)) == 200
 
     # multipart
-    println("client multipart body")
-    r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
-    @test status(r) == 200
-    @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{},\"form\":{\"hey\":\"there\"}")
+    # println("client multipart body")
+    # r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
+    # @test status(r) == 200
+    # @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{},\"form\":{\"hey\":\"there\"}")
 
-    r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
-    @test status(r) == 200
-    @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{},\"form\":{\"hey\":\"there\"}")
+    # r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there"))
+    # @test status(r) == 200
+    # @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{},\"form\":{\"hey\":\"there\"}")
 
-    tmp = tempname()
-    open(f->write(f, "hey"), tmp, "w")
-    io = open(tmp)
-    r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
-    close(io); rm(tmp)
-    @test status(r) == 200
-    str = replace(replace(String(r.body), " "=>""), "\n"=>"")
-    @test startswith(str, "{\"args\":{},\"data\":\"\",\"files\":{\"iostream\":\"hey\"},\"form\":{\"hey\":\"there\"}")
+    # tmp = tempname()
+    # open(f->write(f, "hey"), tmp, "w")
+    # io = open(tmp)
+    # r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
+    # close(io); rm(tmp)
+    # @test status(r) == 200
+    # str = replace(replace(String(r.body), " "=>""), "\n"=>"")
+    # @test startswith(str, "{\"args\":{},\"data\":\"\",\"files\":{\"iostream\":\"hey\"},\"form\":{\"hey\":\"there\"}")
 
-    tmp = tempname()
-    open(f->write(f, "hey"), tmp, "w")
-    io = open(tmp)
-    r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
-    close(io); rm(tmp)
-    @test status(r) == 200
-    @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{\"iostream\":\"hey\"},\"form\":{\"hey\":\"there\"}")
+    # tmp = tempname()
+    # open(f->write(f, "hey"), tmp, "w")
+    # io = open(tmp)
+    # r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "iostream"=>io))
+    # close(io); rm(tmp)
+    # @test status(r) == 200
+    # @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{\"iostream\":\"hey\"},\"form\":{\"hey\":\"there\"}")
 
-    tmp = tempname()
-    open(f->write(f, "hey"), tmp, "w")
-    io = open(tmp)
-    m = HTTP.Multipart("mycoolfile.txt", io)
-    r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m))
-    close(io); rm(tmp)
-    @test status(r) == 200
-    @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{\"multi\":\"hey\"},\"form\":{\"hey\":\"there\"}")
+    # tmp = tempname()
+    # open(f->write(f, "hey"), tmp, "w")
+    # io = open(tmp)
+    # m = HTTP.Multipart("mycoolfile.txt", io)
+    # r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m))
+    # close(io); rm(tmp)
+    # @test status(r) == 200
+    # @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{\"multi\":\"hey\"},\"form\":{\"hey\":\"there\"}")
 
-    tmp = tempname()
-    open(f->write(f, "hey"), tmp, "w")
-    io = open(tmp)
-    m = HTTP.Multipart("mycoolfile", io, "application/octet-stream")
-    r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m), #=chunksize=1000=#)
-    close(io); rm(tmp)
-    @test status(r) == 200
-    @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{\"multi\":\"hey\"},\"form\":{\"hey\":\"there\"}")
+    # tmp = tempname()
+    # open(f->write(f, "hey"), tmp, "w")
+    # io = open(tmp)
+    # m = HTTP.Multipart("mycoolfile", io, "application/octet-stream")
+    # r = HTTP.post("$sch://httpbin.org/post"; body=Dict("hey"=>"there", "multi"=>m), #=chunksize=1000=#)
+    # close(io); rm(tmp)
+    # @test status(r) == 200
+    # @test startswith(replace(replace(String(r.body), " "=>""), "\n"=>""), "{\"args\":{},\"data\":\"\",\"files\":{\"multi\":\"hey\"},\"form\":{\"hey\":\"there\"}")
 
     # asynchronous
     println("asynchronous client request body")
@@ -179,17 +174,6 @@ for sch in ("http", "https")
     @test status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd"; basic_authorization=true)) == 200
     @test status(HTTP.get("$sch://test:%40test@httpbin.org/basic-auth/test/%40test"; basic_authorization=true)) == 200
 
-    # custom client & other high-level entries
-    println("high-level client request methods")
-    cli = HTTP.Client()
-#=
-    buf = IOBuffer()
-    cli = HTTP.Client(buf)
-    HTTP.get(cli, "$sch://httpbin.org/ip")
-    seekstart(buf)
-    @test length(String(take!(buf))) > 0
-=#
-
     r = HTTP.request("GET", "$sch://httpbin.org/ip")
     @test status(r) == 200
 
@@ -198,8 +182,6 @@ for sch in ("http", "https")
     @test status(r) == 200
     r = HTTP.get(uri)
     @test status(r) == 200
-    r = HTTP.get(cli, uri)
-    @test status(r) == 200
 
     r = HTTP.request("GET", "$sch://httpbin.org/ip")
     @test status(r) == 200
@@ -207,24 +189,6 @@ for sch in ("http", "https")
     uri = HTTP.URI("$sch://httpbin.org/ip")
     r = HTTP.request("GET", uri)
     @test status(r) == 200
-
-#= FIXME
-    req = HTTP.Request(HTTP.GET, uri, HTTP.Headers(), HTTP.FIFOBuffer())
-    r = HTTP.request(req)
-    @test status(r) == 200
-    @test HTTP.request(r) !== nothing
-    @test length(take!(r)) > 0
-=#
-
-#=
-    for c in HTTP.DEFAULT_CLIENT.httppool["httpbin.org"]
-        HTTP.dead!(c)
-    end
-=#
-
-    r = HTTP.get(cli, "$sch://httpbin.org/ip")
-#    @test isempty(HTTP.cookies(r))
-#    @test isempty(HTTP.history(r))
 
     r = HTTP.get("$sch://httpbin.org/image/png")
     @test status(r) == 200
@@ -234,11 +198,6 @@ for sch in ("http", "https")
 
     # canonicalizeheaders
     @test status(HTTP.get("$sch://httpbin.org/ip"; canonicalizeheaders=false)) == 200
-
-    # r = HTTP.connect("http://47.89.41.164:80")
-    # gzip body = "hey"
-    # body = UInt8[0x1f,0x8b,0x08,0x00,0x00,0x00,0x00,0x00,0x00,0x03,0xcb,0x48,0xad,0x04,0x00,0xf0,0x15,0xd6,0x88,0x03,0x00,0x00,0x00]
-    # r = HTTP.post("$sch://httpbin.org/post"; body=body, chunksize=1)
 
 end
 
