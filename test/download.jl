@@ -14,10 +14,12 @@ using HTTP
         @test isfile(content_disposition_fn)
         @test basename(content_disposition_fn) == "foo.pdf"
 
-        escaped_content_disposition_fn = HTTP.download(
-            "http://test.greenbytes.de/tech/tc2231/attwithasciifnescapedquote.asis")
-        @test isfile(escaped_content_disposition_fn)
-        @test basename(escaped_content_disposition_fn) == "\"quoting\" tested.html"
+        if Sys.isunix() # Don't try this on windows, quotes are not allowed in windows filenames.
+            escaped_content_disposition_fn = HTTP.download(
+                "http://test.greenbytes.de/tech/tc2231/attwithasciifnescapedquote.asis")
+            @test isfile(escaped_content_disposition_fn)
+            @test basename(escaped_content_disposition_fn) == "\"quoting\" tested.html"
+        end
     end
 
     @testset "Provided Filename" begin
