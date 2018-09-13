@@ -202,7 +202,7 @@ for sch in ("http", "https")
 end
 
 @testset "openraw client method" begin
-    for sch in ("ws",)
+    for sch in ("ws", "wss")
         println("openraw client method: $sch")
 
         @testset "can send and receive a WebSocket frame" begin

@@ -365,6 +365,8 @@ write(socket, frame)
 ```
 """
 function openraw(method::String, url, headers=Header[]; kw...)::Tuple{IO, Response, ByteView}
+    waitforclose(socket::TCPSocket) = Base.wait_close(socket)
+    waitforclose(sslcontext::MbedTLS.SSLContext) = Base.wait_close(sslcontext.bio)
     socketready = Channel{Tuple{IO, Response, ByteView}}(0)
     @async HTTP.open(method, url, headers; kw...) do http
         HTTP.startread(http)
@@ -372,7 +374,7 @@ function openraw(method::String, url, headers=Header[]; kw...)::Tuple{IO, Respon
         excess = http.stream.c.excess
         put!(socketready, (socket, http.message, excess))
         while(isopen(socket))
-            Base.wait_close(socket)
+            waitforclose(socket)
         end
     end
     take!(socketready)
