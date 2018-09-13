@@ -10,7 +10,7 @@ If they do then this throws an `DomainError`.
 function safer_joinpath(basepart, parts...)
     explain =  "Possible Directory Traversal Attack detected."
     for part in parts
-        contains(part, "..") && throw(DomainError(part, "contains illegal string \"..\". $explain"))
+        occursin("..", part) && throw(DomainError(part, "contains illegal string \"..\". $explain"))
         startswith(part, '/') && throw(DomainError(part, "begins with \"/\". $explain"))
     end
     joinpath(basepart, parts...)
@@ -72,7 +72,7 @@ function determine_file(path, resp)
 end
 
 """
-    download(url, [local_path], [headers]; update_period=5, kw...)
+    download(url, [local_path], [headers]; update_period=5, pretty_print=true, kw...)
 
 Similar to `Base.download` this downloads a file, returning the filename.
 If the `local_path`:
@@ -85,10 +85,24 @@ from the rules of the HTTP.
 
  - `update_period` controls how often (in seconds) to report the progress.
     - set to `Inf` to disable reporting
+ - `pretty_print` controls if the progress reports should be use human-friendly units.
  - `headers` specifies headers to be used for the HTTP GET request
  - any additional keyword args (`kw...`) are passed on to the HTTP request.
 """
-function download(url::AbstractString, local_path=nothing, headers=Header[]; update_period=5, kw...)
+function download(url::AbstractString, local_path=nothing, headers=Header[]; update_period=5, pretty_print=true, kw...)
+    if pretty_print
+        format_progress(x) = "$(round(100x, digits=2))%"
+        format_bytes(x) = Base.format_bytes(x)
+        format_seconds(x) = "$(round(Int, x)) s"
+        format_bytes_per_second(x) = format_bytes(x) * "/s"
+    else
+        format_progress(x) = x
+        format_bytes(x) = x
+        format_seconds(x) = x
+        format_bytes_per_second(x) = x
+    end
+
+
     @debug 1 "downloading $url"
     local file
     HTTP.open("GET", url, headers; kw...) do stream
@@ -104,19 +118,19 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
             taken_time = (prev_time - start_time).value / 1000 # in seconds
             average_speed = downloaded_bytes / taken_time
             remaining_bytes = total_bytes - downloaded_bytes
-            remaining_time = remaining_bytes/average_speed
-            completion_progress = downloaded_bytes/total_bytes
+            remaining_time = remaining_bytes / average_speed
+            completion_progress = downloaded_bytes / total_bytes
         
             @info("Downloading",
                   source=url,
                   dest = file,
-                  progress = completion_progress,
-                  taken_time,
-                  remaining_time,
-                  average_speed,
-                  downloaded_bytes,
-                  remaining_bytes,
-                  total_bytes,
+                  progress = completion_progress |> format_progress,
+                  taken_time |> format_seconds,
+                  remaining_time |> format_seconds,
+                  average_speed |> format_bytes_per_second,
+                  downloaded_bytes |> format_bytes,
+                  remaining_bytes |> format_bytes,
+                  total_bytes |> format_bytes,
                  )
         end
 
