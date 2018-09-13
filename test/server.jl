@@ -124,39 +124,6 @@ println(client)
 
 put!(server.in, HTTP.Servers.KILL)
 
-# serverlog = HTTP.FIFOBuffer()
-# server = HTTP.Server((req, rep) -> begin
-#     io = HTTP.FIFOBuffer()
-#     @async begin
-#         i = 0
-#         while true
-#             println(io, "data: $(now())\n")
-#             sleep(2)
-#             i += 1
-#             i > 5 && break
-#         end
-#         close(io)
-#     end
-#     r = HTTP.Response(200, Dict(
-#         "Content-Type" => "text/event-stream",
-#         "Cache-Control" => "no-cache",
-#         "Connection" => "keep-alive"), io)
-# end, serverlog)
-
-# tsk = @async HTTP.Servers.serve(server, IPv4(0,0,0,0), 8082)
-# sleep(5.0)
-# r = HTTP.get("http://localhost:8082/"; readtimeout=30, verbose=true)
-# log = String(read(serverlog))
-# println(log)
-# @test length(String(r)) > 175
-
-# test readtimeout, before sending anything and then mid-request
-
-# header overflow
-
-# upgrade request
-
-# handler throw error
 
 # keep-alive vs. close: issue #81
 port += 1

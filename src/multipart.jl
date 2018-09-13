@@ -5,7 +5,7 @@ Form(dict::Dict)
 A type representing a request body using the multipart/form-data encoding.
 The key-value pairs in the Dict argument will constitute the name and value of each multipart boundary chunk.
 Files and other large data arguments can be provided as values as IO arguments: either an `IOStream` such as returned via `open(file)`,
-an `IOBuffer` for in-memory data, or even an `HTTP.FIFOBuffer`. For complete control over a multipart chunk's details, an
+an `IOBuffer` for in-memory data. For complete control over a multipart chunk's details, an
 `HTTP.Multipart` type is provided to support setting the `Content-Type`, `filename`, and `Content-Transfer-Encoding` if desired. See `?HTTP.Multipart` for more details.
 """
 mutable struct Form <: IO
@@ -93,7 +93,7 @@ Multipart(filename::String, data::IO, content_type=HTTP.sniff(data), content_tra
 
 A type to represent a single multipart upload chunk for a file. This type would be used as the value in a
 key-value pair of a Dict passed to an http request, like `HTTP.post(url; body=Dict("key"=>HTTP.Multipart("MyFile.txt", open("MyFile.txt"))))`.
-The `data` argument must be an `IO` type such as `IOStream`, `IOBuffer`, or `HTTP.FIFOBuffer`.
+The `data` argument must be an `IO` type such as `IOStream`, or `IOBuffer`.
 The `content_type` and `content_transfer_encoding` arguments allow the manual setting of these multipart headers. `Content-Type` will default to the result
 of the `HTTP.sniff(data)` mimetype detection algorithm, whereas `Content-Transfer-Encoding` will be left out if not specified.
 """
