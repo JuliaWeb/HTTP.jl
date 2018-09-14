@@ -2,15 +2,15 @@ using .Pairs
 
 """
     safer_joinpath(basepart, parts...)
-A variation on `joinpath`, that is more resistant to directory traveral attack
+A variation on `joinpath`, that is more resistant to directory traversal attacks.
 The parts to be joined (excluding the `basepart`),
 are not allowed to contain `..`, or begin with a `/`.
 If they do then this throws an `DomainError`.
 """
 function safer_joinpath(basepart, parts...)
-    explain =  "Possible Directory Traversal Attack detected."
+    explain =  "Possible directory traversal attack detected."
     for part in parts
-        occursin("..", part) && throw(DomainError(part, "contains illegal string \"..\". $explain"))
+        occursin("..", part) && throw(DomainError(part, "contains \"..\". $explain"))
         startswith(part, '/') && throw(DomainError(part, "begins with \"/\". $explain"))
     end
     joinpath(basepart, parts...)
