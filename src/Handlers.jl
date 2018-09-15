@@ -17,8 +17,10 @@ function handle end
 """
 Abstract type representing an object that knows how to "handle" a server request.
 
-Types of handlers include `HandlerFunction` (a julia function of the form `f(request)` and
-`Router` (which pattern matches request url paths to other specific `Handler` types).
+Types of handlers include:
+  * `HTTP.RequestHandlerFunction`: a julia function of the form `f(request::HTTP.Request)`
+  * `HTTP.Router`: pattern matches request url paths to other specific `Handler` types
+  * `HTTP.StreamHandlerFunction`: a julia function of the form `f(stream::HTTP.Stream)`
 """
 abstract type Handler end
 abstract type RequestHandler <: Handler end
@@ -113,7 +115,7 @@ function register!(r::Router, method::String, url, handler)
     s = uri.scheme
     sch = !isempty(s) ? typeof(get!(SCHEMES, s, Val(s))) : Any
     h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
-    hand = handler isa Function ? HandlerFunction(handler) : handler
+    hand = handler isa Function ? RequestHandlerFunction(handler) : handler
     register!(r, m, sch, h, uri.path, hand)
 end
 
