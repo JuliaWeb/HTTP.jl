@@ -1,10 +1,10 @@
 module Handlers
 
-export handle, gethandler, Handler, HandlerFunction, Router, register!
+export handle, Handler, RequestHandler, StreamHandler,
+       RequestHandlerFunction, StreamHandlerFunction, Router,
+       @register, register!
 
-import ..Nothing, ..Val
-
-using HTTP
+using ..Messages, ..URIs, ..Streams, ..IOExtras
 
 """
 handle(handler::Handler, request) => Response
@@ -21,21 +21,48 @@ Types of handlers include `HandlerFunction` (a julia function of the form `f(req
 `Router` (which pattern matches request url paths to other specific `Handler` types).
 """
 abstract type Handler end
+abstract type RequestHandler <: Handler end
+abstract type StreamHandler <: Handler end
 
 """
-HandlerFunction(f::Function)
+RequestHandlerFunction(f::Function)
 
 A Function-wrapper type that is a subtype of `Handler`. Takes a single Function as an argument.
 The provided argument should be of the form `f(request) => Response`, i.e. it accepts a `Request` returns a `Response`.
 """
-struct HandlerFunction{F <: Function} <: Handler
+struct RequestHandlerFunction{F <: Function} <: RequestHandler
     func::F # func(req)
 end
 
-handle(h::HandlerFunction, req) = h.func(req)
-
 "A default 404 Handler"
-const FourOhFour = HandlerFunction(req -> HTTP.Response(404))
+const FourOhFour = RequestHandlerFunction(req -> Response(404))
+
+@inline function handle(h::RequestHandler, stream::Stream)
+    request::Request = stream.message
+    request.body = read(stream)
+    request.response::Response = handle(h, request)
+    request.response.request = request
+    startwrite(stream)
+    write(stream, request.response.body)
+    return
+end
+
+handle(h::RequestHandlerFunction, req::Request) = h.func(req)
+
+struct StreamHandlerFunction{F <: Function} <: StreamHandler
+    func::F # func(stream)
+end
+
+handle(h::StreamHandlerFunction, stream::Stream) = h.func(stream)
+
+struct Route
+    method::String
+    scheme::String
+    host::String
+    path::String
+end
+getprt(s) = isempty(s) ? "*" : s
+Base.show(io::IO, r::Route) = print(io, "HTTP.Route(method=$(getprt(r.method)), scheme=$(getprt(r.scheme)), host=$(getprt(r.host)), path=$(r.path))")
 
 """
 Router(h::Handler)
@@ -47,19 +74,13 @@ Can accept a default `Handler` or `Function` that will be used in case no other 
 default, a 404 response handler is used.
 Paths can be mapped to a handler via `HTTP.register!(r::Router, path, handler)`, see `?HTTP.register!` for more details.
 """
-struct Router <: Handler
+struct Router{sym} <: Handler
+    default::Handler
+    routes::Dict{Route, String}
     segments::Dict{String, Val}
-    sym::Symbol
-    func::Function
-    function Router(ff::Union{Handler, Function, Nothing}=nothing)
+    function Router(default::Union{Handler, Function, Nothing}=FourOhFour)
         sym = gensym()
-        if ff === nothing
-            f = @eval $sym(args...) = FourOhFour
-        else
-            f = ff isa Function ? HandlerFunction(ff) : ff
-        end
-        r = new(Dict{String, Val}(), sym, f)
-        return r
+        return new{sym}(default, Dict{Route, String}(), Dict{String, Val}())
     end
 end
 
@@ -88,7 +109,7 @@ register!(r::Router, url, handler) = register!(r, "", url, handler)
 function register!(r::Router, method::String, url, handler)
     m = isempty(method) ? Any : typeof(Val(Symbol(method)))
     # get scheme, host, split path into strings & vals
-    uri = url isa String ? HTTP.URI(url) : url
+    uri = url isa String ? URI(url) : url
     s = uri.scheme
     sch = !isempty(s) ? typeof(get!(SCHEMES, s, Val(s))) : Any
     h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
@@ -96,7 +117,7 @@ function register!(r::Router, method::String, url, handler)
     register!(r, m, sch, h, uri.path, hand)
 end
 
-function splitsegments(r::Router, h::Handler, segments)
+function splitsegments(r::Router, segments)
     vals = Expr[]
     for s in segments
         if s == "*" #TODO: or variable, keep track of variable types and store in handler
@@ -110,37 +131,79 @@ function splitsegments(r::Router, h::Handler, segments)
     end
     return vals
 end
+function newsplitsegments(segments)
+    vals = Expr[]
+    for s in segments
+        if s == "*" #TODO: or variable, keep track of variable types and store in handler
+            T = Any
+        else
+            v = Val(Symbol(s))
+            T = typeof(v)
+        end
+        push!(vals, Expr(:(::), T))
+    end
+    return vals
+end
 
-function register!(r::Router, method::DataType, scheme, host, path, handler)
+function gethandler end
+gethandler(r::Router, args...) = r.default
+
+function register!(r::Router{id}, method, scheme, host, path, handler) where {id}
+    Base.depwarn("`HTTP.register!(r::Router, ...)` is deprecated, use `HTTP.@register r ...` instead", nothing)
     # save string => Val mappings in r.segments
     segments = map(String, split(path, '/'; keepempty=false))
-    vals = splitsegments(r, handler, segments)
+    vals = splitsegments(r, segments)
     # return a method to get dispatched to
     #TODO: detect whether defining this method will create ambiguity?
-    @eval $(r.sym)(::$method, ::$scheme, ::$host, $(vals...), args...) = $handler
+    @eval gethandler(r::Router{$(Meta.QuoteNode(id))}, ::$method, ::$scheme, ::$host, $(vals...), args...) = $handler
     return
 end
 
-function gethandler(r::Router, req)
+gh(s::String) = isempty(s) ? Any : typeof(Val(Symbol(s)))
+gh(s::Symbol) = s
+
+function generate_gethandler(router::Symbol, method,
+    scheme, host, path, handler::Symbol)
+    vals = :(HTTP.Handlers.newsplitsegments(map(String, split($path, '/'; keepempty=false)))...)
+    q = esc(quote
+        r.routes[HTTP.Handlers.Route($method, $scheme, $host, $path)] = $(string(handler))
+        @eval function HTTP.Handlers.gethandler(r::$(Expr(:$, :(typeof($router)))),
+            ::(HTTP.Handlers.gh($method)),
+            ::(HTTP.Handlers.gh($scheme)),
+            ::(HTTP.Handlers.gh($host)),
+            $(Expr(:$, vals)),
+            args...)
+            return $(Expr(:$, handler))
+        end
+    end)
+    # @show q
+    return q
+end
+
+macro register(r, method, scheme, host, path, handler)
+    return generate_gethandler(r, method, scheme, host, path, handler)
+end
+macro register(r, method, path, handler)
+    return generate_gethandler(r, method, "", "", path, handler)
+end
+macro register(r, path, handler)
+    return generate_gethandler(r, "", "", "", path, handler)
+end
+
+function gethandler(r::Router, req::Request)
     # get the url/path of the request
     m = Val(Symbol(req.method))
     # get scheme, host, split path into strings and get Vals
-    uri = HTTP.URI(req.target)
+    uri = URI(req.target)
     s = get(SCHEMES, uri.scheme, EMPTYVAL)
     h = Val(Symbol(uri.host))
     p = uri.path
     segments = split(p, '/'; keepempty=false)
     # dispatch to the most specific handler, given the path
-    vals = (get(r.segments, s, EMPTYVAL) for s in segments)
-    return r.func(m, s, h, vals...)
+    vals = (get(r.segments, s, Val(Symbol(s))) for s in segments)
+    return gethandler(r, m, s, h, vals...)
 end
 
-function handle(r::Router, req::HTTP.Request)
-    handler = gethandler(r,req)
-    # pass the request to the handler and return
-    return handle(handler, req)
-end
-
-handle(h::Handler, http::HTTP.Stream) = HTTP.Servers.handle_request(req->handle(h, req), http) # FIXME: Consider moving
+handle(r::Router, req::Request) = handle(gethandler(r, req), req)
 
 end # module

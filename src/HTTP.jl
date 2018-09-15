@@ -14,7 +14,7 @@ using Base64, Sockets, Dates
 
 include("debug.jl")
 
-include("Pairs.jl")
+include("Pairs.jl")                    ;using .Pairs
 include("IOExtras.jl")                 ;using .IOExtras
 include("Strings.jl")
 include("URIs.jl")                     ;using .URIs
@@ -600,9 +600,7 @@ include("download.jl")
 
 
 include("Handlers.jl")                 ;using .Handlers
-include("Servers.jl")                  ;using .Servers; using .Servers: listen
-Base.@deprecate_binding(Nitrogen, Servers, false)
-
+include("Servers.jl"); using .Servers; using .Servers: listen
 include("WebSockets.jl")               ;using .WebSockets
 
 import .ConnectionPool: Transaction, Connection
