@@ -174,7 +174,10 @@ function listenloop(h::Handler, server,
     return
 end
 
-function listen(h::Handler, host::String, port::Integer;
+getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
+getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
+
+function listen(h::Handler, host::Union{IPAddr, String}, port::Integer;
     tcpref::Union{Ref, Nothing}=nothing,
     reuseaddr::Bool=false,
     sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
@@ -183,7 +186,7 @@ function listen(h::Handler, host::String, port::Integer;
     connectioncounter::Ref{Int}=Ref(0),
     reuse_limit::Int=1, readtimeout::Int=0, verbose::Bool=false)
 
-    inet = Sockets.InetAddr(parse(IPAddr, host), port)
+    inet = getinet(host, port)
     if tcpref !== nothing
         tcpserver = tcpref[]
     elseif reuseaddr
@@ -209,7 +212,7 @@ function listen(h::Handler, host::String, port::Integer;
         connectioncounter, reuse_limit, readtimeout, verbose)
 end
 
-function listen(f::Function, host::String, port::Integer; kw...)
+function listen(f::Function, host, port::Integer; kw...)
     req = applicable(f, Request())
     strm = applicable(f, Stream(Request(), IOBuffer()))
     if strm && !req
