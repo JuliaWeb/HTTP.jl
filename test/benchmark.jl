@@ -164,7 +164,7 @@ randbody(l) = Vector{UInt8}(rand('A':'Z', l))
 
 const tunit = u"μs"
 const tmul = Int(1u"s"/1tunit)
-delta_t(a, b) = round((b - a) * tmul, 0)tunit
+delta_t(a, b) = round((b - a) * tmul, digits=0)tunit
 
 fields = [:setup, :head, :body, :close, :joyent_head]
 
@@ -282,7 +282,7 @@ function go(count::Int)
         end
         faster = mean(times[name][:joyent_head]) / mean(times[name][:head])
         print(" | ")
-        print(lpad("x $(round(faster, 1))", w))
+        print(lpad("x $(round(faster, digits=1))", w))
         println(" |")
     end
 end
