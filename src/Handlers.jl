@@ -165,7 +165,7 @@ gh(s::String) = isempty(s) ? Any : typeof(Val(Symbol(s)))
 gh(s::Symbol) = s
 
 function generate_gethandler(router::Symbol, method,
-    scheme, host, path, handler::Symbol)
+    scheme, host, path, handler)
     vals = :(HTTP.Handlers.newsplitsegments(map(String, split($path, '/'; keepempty=false)))...)
     q = esc(quote
         r.routes[HTTP.Handlers.Route($method, $scheme, $host, $path)] = $(string(handler))
