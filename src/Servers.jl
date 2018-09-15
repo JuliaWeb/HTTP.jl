@@ -215,18 +215,7 @@ function listen(h::Handler, host::Union{IPAddr, String}, port::Integer;
         connectioncounter, reuse_limit, readtimeout, verbose)
 end
 
-function listen(f::Function, host, port::Integer; kw...)
-    req = applicable(f, Request())
-    strm = applicable(f, Stream(Request(), IOBuffer()))
-    if strm && !req
-        h = StreamHandlerFunction(f)
-    elseif req
-        h = RequestHandlerFunction(f)
-    else
-        throw(ArgumentError("$f function doesn't take an Request or HTTP.Stream argument"))
-    end
-    return listen(h, host, port; kw...)
-end
+listen(f::Function, host, port::Integer; kw...) = listen(Handlers.Handler(f), host, port; kw...)
 
 function serve(host, port; handler=req->HTTP.Response(200, "Hello World!"),
     ssl::Bool=false, require_ssl_verification::Bool=true, kw...)
