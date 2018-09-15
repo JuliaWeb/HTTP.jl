@@ -55,6 +55,9 @@ function handle(h::Handler, t::Transaction, last::Bool=false)
             write(t, Response(status, body = string(e.code)))
             close(t)
             return
+        elseif e isa Base.IOError && e.code == -54
+            # read: connection reset by peer (ECONNRESET)
+            return
         else
             rethrow(e)
         end
