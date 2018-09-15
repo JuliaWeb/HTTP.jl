@@ -168,7 +168,7 @@ function generate_gethandler(router::Symbol, method,
     scheme, host, path, handler)
     vals = :(HTTP.Handlers.newsplitsegments(map(String, split($path, '/'; keepempty=false)))...)
     q = esc(quote
-        r.routes[HTTP.Handlers.Route($method, $scheme, $host, $path)] = $(string(handler))
+        $(router).routes[HTTP.Handlers.Route($method, $scheme, $host, $path)] = $(string(handler))
         @eval function HTTP.Handlers.gethandler(r::$(Expr(:$, :(typeof($router)))),
             ::(HTTP.Handlers.gh($method)),
             ::(HTTP.Handlers.gh($scheme)),
