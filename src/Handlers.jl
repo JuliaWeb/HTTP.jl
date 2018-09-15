@@ -26,6 +26,20 @@ abstract type Handler end
 abstract type RequestHandler <: Handler end
 abstract type StreamHandler <: Handler end
 
+Handler(h::Handler) = h
+function Handler(f::Base.Callable)
+    req = applicable(f, Request())
+    strm = applicable(f, Stream(Request(), IOBuffer()))
+    if strm && !req
+        h = StreamHandlerFunction(f)
+    elseif req
+        h = RequestHandlerFunction(f)
+    else
+        throw(ArgumentError("$f function doesn't take an Request or HTTP.Stream argument"))
+    end
+    return h
+end
+
 """
 RequestHandlerFunction(f::Function)
 
@@ -35,6 +49,7 @@ The provided argument should be of the form `f(request) => Response`, i.e. it ac
 struct RequestHandlerFunction{F <: Function} <: RequestHandler
     func::F # func(req)
 end
+RequestHandlerFunction(f::RequestHandlerFunction) = f
 
 "A default 404 Handler"
 const FourOhFour = RequestHandlerFunction(req -> Response(404))
@@ -76,7 +91,7 @@ Can accept a default `Handler` or `Function` that will be used in case no other 
 default, a 404 response handler is used.
 Paths can be mapped to a handler via `HTTP.register!(r::Router, path, handler)`, see `?HTTP.register!` for more details.
 """
-struct Router{sym} <: Handler
+struct Router{sym} <: RequestHandler
     default::Handler
     routes::Dict{Route, String}
     segments::Dict{String, Val}
@@ -174,7 +189,7 @@ function generate_gethandler(router, method, scheme, host, path, handler)
             ::(HTTP.Handlers.gh($host)),
             $(Expr(:$, vals)),
             args...)
-            return $(Expr(:$, handler))
+            return HTTP.Handler($(Expr(:$, handler)))
         end
     end)
     # @show q
