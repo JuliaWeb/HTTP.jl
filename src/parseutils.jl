@@ -21,3 +21,28 @@ group(i, re::Regex, bytes, default) =
     re.ovec[2i+1] == Base.PCRE.UNSET ?
     default :
     SubString(bytes, re.ovec[2i+1]+1, prevind(bytes, re.ovec[2i+2]+1))
+
+function lceq(a, b)
+    astate = iterate(a)
+    bstate = iterate(b)
+    if astate === nothing
+        return bstate === nothing
+    elseif bstate === nothing
+        return false
+    end
+    ac::Char, ast = astate
+    bc::Char, bst = bstate
+    while true
+        lowercase(ac) === lowercase(bc) || return false
+        astate = iterate(a, ast)
+        bstate = iterate(b, bst)
+        if astate === nothing
+            return bstate === nothing
+        elseif bstate === nothing
+            return false
+        end
+        ac, ast = astate
+        bc, bst = bstate
+    end
+    return true
+end

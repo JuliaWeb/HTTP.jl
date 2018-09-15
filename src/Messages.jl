@@ -70,7 +70,6 @@ export Message, Request, Response, HeaderSizeError,
 import ..HTTP
 
 using ..Pairs
-import ..@warn
 using ..IOExtras
 using ..Parsers
 import ..@require, ..precondition_error
