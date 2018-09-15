@@ -254,7 +254,7 @@ isredirect(r::Response) = r.status in (301, 302, 307, 308)
 
 Does the `Message` have a "Transfer-Encoding: chunked" header?
 """
-ischunked(m) = any(h->(lowercase(h[1]) == "transfer-encoding" &&
+ischunked(m) = any(h->(lceq(h[1], "transfer-encoding") &&
                        endswith(lowercase(h[2]), "chunked")),
                    m.headers)
 
@@ -307,8 +307,32 @@ Get header value for `key` (case-insensitive).
 header(m::Message, k, d="") = header(m.headers, k, d)
 header(h::Headers, k::AbstractString, d::AbstractString="") =
     getbyfirst(h, k, k => d, lceq)[2]
-lceq(a,b) = lowercase(a) == lowercase(b)
+# lceq(a,b) = lowercase(a) == lowercase(b)
 
+function lceq(a, b)
+    astate = iterate(a)
+    bstate = iterate(b)
+    if astate === nothing
+        return bstate === nothing
+    elseif bstate === nothing
+        return false
+    end
+    ac::Char, ast = astate
+    bc::Char, bst = bstate
+    while true
+        lowercase(ac) === lowercase(bc) || return false
+        astate = iterate(a, ast)
+        bstate = iterate(b, bst)
+        if astate === nothing
+            return bstate === nothing
+        elseif bstate === nothing
+            return false
+        end
+        ac, ast = astate
+        bc, bst = bstate
+    end
+    return true
+end
 # FIXME consider allocation and speed efficiency of lowercase comparisons
 # - Make a LCString <: AbstractString wrapper that translates in-line?
 # - Make a lcmp function that translates as it goes?
@@ -328,7 +352,7 @@ hasheader(m, k::AbstractString) = header(m, k) != ""
 Does header for `key` match `value` (both case-insensitive)?
 """
 hasheader(m, k::AbstractString, v::AbstractString) =
-    lowercase(header(m, k)) == lowercase(v)
+    lceq(header(m, k), v)
 
 """
     setheader(::Message, key => value)
