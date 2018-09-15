@@ -18,7 +18,7 @@ function testget(url, n=1, m=1)
             @sync for ii in 1:mm
                 l = rand([0,0,10,1000,10000])
                 body = Vector{UInt8}(rand('A':'Z', l))
-                println("sending request...")
+                # println("sending request...")
                 @async push!(rr, HTTP.request("GET", "$url/$ii", [], body))
             end
             return rr
@@ -37,7 +37,7 @@ handler = (req) -> begin
     return req.response
 end
 
-tsk = @async HTTP.Servers.listen(handler, "127.0.0.1", port; verbose=true)
+tsk = @async HTTP.Servers.listen(handler, "127.0.0.1", port)
 sleep(3.0)
 
 r = testget("http://127.0.0.1:$port")

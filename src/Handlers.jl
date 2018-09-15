@@ -46,7 +46,7 @@ RequestHandlerFunction(f::Function)
 A Function-wrapper type that is a subtype of `Handler`. Takes a single Function as an argument.
 The provided argument should be of the form `f(request) => Response`, i.e. it accepts a `Request` returns a `Response`.
 """
-struct RequestHandlerFunction{F <: Function} <: RequestHandler
+struct RequestHandlerFunction{F <: Base.Callable} <: RequestHandler
     func::F # func(req)
 end
 RequestHandlerFunction(f::RequestHandlerFunction) = f
@@ -66,7 +66,7 @@ end
 
 handle(h::RequestHandlerFunction, req::Request) = h.func(req)
 
-struct StreamHandlerFunction{F <: Function} <: StreamHandler
+struct StreamHandlerFunction{F <: Base.Callable} <: StreamHandler
     func::F # func(stream)
 end
 
@@ -95,10 +95,11 @@ struct Router{sym} <: RequestHandler
     default::Handler
     routes::Dict{Route, String}
     segments::Dict{String, Val}
-    function Router(default::Union{Handler, Function, Nothing}=FourOhFour)
-        sym = gensym()
-        return new{sym}(default, Dict{Route, String}(), Dict{String, Val}())
-    end
+end
+
+function Router(default::Union{Handler, Function, Nothing}=FourOhFour)
+    sym = gensym()
+    return Router{sym}(default, Dict{Route, String}(), Dict{String, Val}())
 end
 
 const SCHEMES = Dict{String, Val}("http" => Val{:http}(), "https" => Val{:https}())
@@ -124,13 +125,13 @@ The following examples show how various urls will direct how a request is routed
 register!(r::Router, url, handler) = register!(r, "", url, handler)
 
 function register!(r::Router, method::String, url, handler)
-    m = isempty(method) ? Any : typeof(Val(Symbol(method)))
+    m = isempty(method) ? Any : Val{Symbol(method)}
     # get scheme, host, split path into strings & vals
     uri = url isa String ? URI(url) : url
     s = uri.scheme
     sch = !isempty(s) ? typeof(get!(SCHEMES, s, Val(s))) : Any
     h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
-    hand = handler isa Function ? RequestHandlerFunction(handler) : handler
+    hand = Handler(handler)
     register!(r, m, sch, h, uri.path, hand)
 end
 
@@ -154,8 +155,7 @@ function newsplitsegments(segments)
         if s == "*" #TODO: or variable, keep track of variable types and store in handler
             T = Any
         else
-            v = Val(Symbol(s))
-            T = typeof(v)
+            T = Val{Symbol(s)}
         end
         push!(vals, Expr(:(::), T))
     end
@@ -176,7 +176,7 @@ function register!(r::Router{id}, method, scheme, host, path, handler) where {id
     return
 end
 
-gh(s::String) = isempty(s) ? Any : typeof(Val(Symbol(s)))
+gh(s::String) = isempty(s) ? Any : Val{Symbol(s)}
 gh(s::Symbol) = s
 
 function generate_gethandler(router, method, scheme, host, path, handler)

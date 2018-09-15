@@ -151,17 +151,19 @@ function listenloop(h::Handler, server,
             end
             connectioncounter[] += 1
             conn = Connection(server.hostname, server.hostport, 0, 0, true, io)
-            @async begin
-                try
-                    verbose && @info "Accept ($count):  $conn"
-                    handle(h, conn)
-                    verbose && @info "Closed ($count):  $conn"
-                catch e
-                    @error exception=(e, stacktrace(catch_backtrace()))
-                finally
-                    connectioncounter[] -= 1
-                    close(io)
-                    verbose && @info "Closed ($count):  $conn"
+            let io=io, count=count
+                @async begin
+                    try
+                        verbose && @info "Accept ($count):  $conn"
+                        handle(h, conn, reuse_limit, readtimeout)
+                        verbose && @info "Closed ($count):  $conn"
+                    catch e
+                        @error exception=(e, stacktrace(catch_backtrace()))
+                    finally
+                        connectioncounter[] -= 1
+                        close(io)
+                        verbose && @info "Closed ($count):  $conn"
+                    end
                 end
             end
         catch e
@@ -194,7 +196,7 @@ function listen(h::Handler, host::Union{IPAddr, String}, port::Integer;
         tcpserver = tcpref[]
     elseif reuseaddr
         tcpserver = Sockets.TCPServer(; delay=false)
-        if Sys.islinux() || Sys.isapple()
+        if Sys.isunix()
             rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
             Sockets.bind(tcpserver, inet.host, inet.port; reuseaddr=true)
         else
@@ -205,7 +207,7 @@ function listen(h::Handler, host::Union{IPAddr, String}, port::Integer;
     else
         tcpserver = Sockets.listen(inet)
     end
-    verbose && println("Listening on: $host:$port")
+    verbose && @info "Listening on: $host:$port"
 
     if tcpisvalid === nothing
         tcpisvalid = ratelimit === nothing ? x->true : x->check_rate_limit(x, ratelimit)
@@ -215,11 +217,11 @@ function listen(h::Handler, host::Union{IPAddr, String}, port::Integer;
         connectioncounter, reuse_limit, readtimeout, verbose)
 end
 
-listen(f::Function, host, port::Integer; kw...) = listen(Handlers.Handler(f), host, port; kw...)
+listen(f::Base.Callable, host, port::Integer; kw...) = listen(Handlers.Handler(f), host, port; kw...)
 
 function serve(host, port; handler=req->HTTP.Response(200, "Hello World!"),
     ssl::Bool=false, require_ssl_verification::Bool=true, kw...)
-    Base.depwarn("", nothing)
+    Base.depwarn("`HTTP.serve` is deprecated, use `HTTP.listen(f_or_handler, host, port; kw...)` instead", nothing)
     sslconfig = ssl ? MbedTLS.SSLConfig(require_ssl_verification) : nothing
     return listen(handler, host, port; sslconfig=sslconfig, kw...)
 end
