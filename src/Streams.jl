@@ -74,7 +74,8 @@ function IOExtras.startwrite(http::Stream)
     m = messagetowrite(http)
     if !hasheader(m, "Content-Length") &&
        !hasheader(m, "Transfer-Encoding") &&
-       !hasheader(m, "Upgrade")
+       !hasheader(m, "Upgrade") &&
+        (m isa Request || bodylength(m) > 0)
         http.writechunked = true
         setheader(m, "Transfer-Encoding" => "chunked")
     else
