@@ -1,11 +1,10 @@
-include("compat.jl")
-using HTTP
-
 # See https://github.com/JuliaWeb/HTTP.jl/pull/288
 
 @testset "HTTP.Issues.288" begin
 
 sz = 90
+
+hex(n) = string(n, base=16)
 
 encoded_data = "$(hex(sz + 9))\r\n" * "data: 1$(repeat("x", sz))\n\n" * "\r\n" *
                "$(hex(sz + 9))\r\n" * "data: 2$(repeat("x", sz))\n\n" * "\r\n" *
@@ -18,7 +17,7 @@ decoded_data = "data: 1$(repeat("x", sz))\n\n" *
 split1 = 106
 split2 = 300
 
-@async HTTP.listen("127.0.0.1", 8087) do http::HTTP.Stream
+@async HTTP.listen("127.0.0.1", 8091) do http::HTTP.Stream
     startwrite(http)
 
     tcp = http.stream.c.io
@@ -37,16 +36,22 @@ end
 
 sleep(1)
 
-r = HTTP.get("http://127.0.0.1:8087")
+r = HTTP.get("http://127.0.0.1:8091")
 
 @test String(r.body) == decoded_data
 
-HTTP.open("GET", "http://127.0.0.1:8087") do io
+r = ""
+
+HTTP.open("GET", "http://127.0.0.1:8091") do io
 
     x = split(decoded_data, "\n")
     for i in 1:6
-        @test readline(io) == x[i]
+        l = readline(io)
+        @test l == x[i]
+        r *= l * "\n"
     end
 end
+
+@test r == decoded_data
 
 end # @testset
