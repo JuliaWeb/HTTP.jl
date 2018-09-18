@@ -1,8 +1,6 @@
 environment:
   matrix:
   - julia_version: 0.6
-  - julia_version: 0.7
-  - julia_version: latest
 
 platform:
   - x86
