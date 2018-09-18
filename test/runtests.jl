@@ -20,6 +20,7 @@ using HTTP
               "server.jl",
               "async.jl"]
 
-    println("Running $f tests...")
-    include(f)
+        println("Running $f tests...")
+        include(f)
+    end
 end
