@@ -29,7 +29,7 @@ for s in ["wss", "ws"]
 end
 
 p = 8085 # rand(8000:8999)
-@async HTTP.listen(Sockets.localhost, p) do http
+@async HTTP.listen(Sockets.localhost, p) do http::HTTP.Stream
     if HTTP.WebSockets.is_upgrade(http.message)
         HTTP.WebSockets.upgrade(http) do ws
             while !eof(ws)
