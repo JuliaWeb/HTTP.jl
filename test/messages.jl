@@ -94,10 +94,10 @@ using JSON
 
     for sch in ["http", "https"]
         for m in ["GET", "HEAD", "OPTIONS"]
-            @test request(m, "$sch://httpbin.org/ip").status == 200
+            @test request(m, "$sch://httpbin.org/ip", verbose=1).status == 200
         end
         try
-            request("POST", "$sch://httpbin.org/ip")
+            request("POST", "$sch://httpbin.org/ip", verbose=1)
             @test false
         catch e
             @test isa(e, StatusError)
@@ -125,12 +125,12 @@ using JSON
         for m in ["POST", "PUT", "DELETE", "PATCH"]
 
             uri = "$sch://httpbin.org/$(lowercase(m))"
-            r = request(m, uri)
+            r = request(m, uri, verbose=1)
             @test r.status == 200
             body = r.body
 
             io = Base.BufferStream()
-            r = request(m, uri, response_stream=io)
+            r = request(m, uri, response_stream=io, verbose=1)
             @test r.status == 200
             @test read(io) == body
         end
@@ -141,12 +141,12 @@ using JSON
 
             uri = "$sch://httpbin.org/$(lowercase(m))"
             io = Base.BufferStream()
-            r = request(m, uri, response_stream=io)
+            r = request(m, uri, response_stream=io, verbose=1)
             @test r.status == 200
         end
 
         r = request("POST", "$sch://httpbin.org/post",
-                   ["Expect" => "100-continue"], "Hello")
+                   ["Expect" => "100-continue"], "Hello", verbose=1)
         @test r.status == 200
         r = JSON.parse(String(r.body))
         @test r["data"] == "Hello"
@@ -158,7 +158,7 @@ using JSON
             n = 50
             io = open("result_file", "w")
             r = request("GET", "http://httpbin.org/stream/$n",
-                        response_stream=io)
+                        response_stream=io, verbose=1)
             @show filesize("result_file")
             i = 0
             for l in readlines("result_file")
