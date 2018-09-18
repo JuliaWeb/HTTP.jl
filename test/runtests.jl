@@ -10,6 +10,7 @@ using HTTP.Dates
 
 
 @testset "HTTP" begin
+    include("issue_288.jl");
     include("utils.jl");
     include("sniff.jl");
     include("uri.jl");
