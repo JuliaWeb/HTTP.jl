@@ -231,8 +231,8 @@ function IOExtras.unread!(http::Stream, excess)
         # If the whole chunk was read, unread! needs to push
         # back the CRLF that came after the chunk data
         # (See readavailable above).
-        excess = view(excess.parent, excess.indexes[1].start:
-                                     excess.indexes[1].stop + 2)
+        excess = view(excess.parent, excess.indices[1].start:
+                                     excess.indices[1].stop + 2)
         http.ntoread = length(excess)
 
     elseif http.ntoread != unknown_length

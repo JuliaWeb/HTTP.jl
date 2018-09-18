@@ -198,13 +198,13 @@ function IOExtras.unread!(t::Transaction, bytes::ByteView)
     @require isreadable(t)
     @require !isempty(bytes)
     @require t.c.excess === nobytes || bytes.parent == t.c.excess.parent &&
-                                       bytes.indexes[1].stop + 1 ==
-                                       t.c.excess.indexes[1].start
+                                       bytes.indices[1].stop + 1 ==
+                                       t.c.excess.indices[1].start
     if t.c.excess === nobytes
         t.c.excess = bytes
     else
         t.c.excess = view(bytes.parent,
-                          bytes.indexes[1].start:t.c.excess.indexes[1].stop)
+                          bytes.indices[1].start:t.c.excess.indices[1].stop)
     end
     return
 end
