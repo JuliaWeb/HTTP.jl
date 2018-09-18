@@ -150,10 +150,13 @@ function Base.readuntil(io::IO,
         # Otherwise, wait for delimiter...
         buf = Vector{UInt8}(bytes)
         while !eof(io)
-            append!(buf, readavailable(io))
+            bytes = readavailable(io)
+            append!(buf, bytes)
             if (l = find_delimiter(buf)) > 0
                 if l < length(buf)
-                    unread!(io, view(buf, l+1:length(buf)))
+                    n = length(buf) - l
+                    bl = length(bytes)
+                    unread!(io, view(bytes, 1+bl-n:bl))
                 end
                 return view(buf, 1:l)
             end
