@@ -102,7 +102,7 @@ function open(f::Function, url; binary=false, verbose=false, kw...)
                                     "$(http.message)"))
         end
 
-        io = ConnectionPool.getrawstream(http)
+        io = http.stream
         ws = WebSocket(io; binary=binary)
         try
             f(ws)
@@ -137,7 +137,7 @@ function upgrade(f::Function, http::HTTP.Stream; binary=false)
 
     startwrite(http)
 
-    io = ConnectionPool.getrawstream(http)
+    io = http.stream
     ws = WebSocket(io; binary=binary, server=true)
     try
         f(ws)
@@ -167,7 +167,7 @@ function IOExtras.closewrite(ws::WebSocket)
     @require !ws.txclosed
     opcode = WS_FINAL | WS_CLOSE
     @debug 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, 0x00))"
-    write(ws.io, opcode, 0x00)
+    write(ws.io, [opcode, 0x00])
     ws.txclosed = true
 end
 
@@ -193,7 +193,7 @@ function wswrite(ws::WebSocket, opcode::UInt8, bytes::AbstractVector{UInt8})
     end
 
     @debug 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, len, extended_len, mask))"
-    write(ws.io, opcode, len, extended_len, mask)
+    write(ws.io, vcat(opcode, len, extended_len, mask))
 
     @debug 2 "          ⬅️  $(txpayload[1:n])"
     unsafe_write(ws.io, pointer(txpayload), n)
