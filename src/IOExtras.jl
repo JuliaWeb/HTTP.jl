@@ -7,6 +7,7 @@ This module defines extensions to the `Base.IO` interface to support:
 module IOExtras
 
 using ..Sockets
+using MbedTLS: MbedException
 
 export bytes, ByteView, CodeUnits, IOError, isioerror,
        unread!,
@@ -38,6 +39,7 @@ isioerror(e) = false
 isioerror(::Base.EOFError) = true
 isioerror(::Base.IOError) = true
 isioerror(e::ArgumentError) = e.msg == "stream is closed or unusable"
+isioerror(::MbedException) = true
 
 
 """
