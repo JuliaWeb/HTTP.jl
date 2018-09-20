@@ -550,13 +550,25 @@ function getconnection(::Type{TCPSocket},
     Base.connect!(tcp, Sockets.getaddrinfo(host), p)
 
     timeout = Ref{Bool}(false)
-    @async begin
-        sleep(connect_timeout)
-        if tcp.status == Base.StatusConnecting
-            timeout[] = true
-            tcp.status = Base.StatusClosing
-            ccall(:jl_forceclose_uv, Nothing, (Ptr{Nothing},), tcp.handle)
-            #close(tcp)
+    @static if VERSION < v"0.7.0-alpha.0"
+        @schedule begin
+            sleep(connect_timeout)
+            if tcp.status == Base.StatusConnecting
+                timeout[] = true
+                tcp.status = Base.StatusClosing
+                ccall(:jl_forceclose_uv, Nothing, (Ptr{Nothing},), tcp.handle)
+                #close(tcp)
+            end
+        end
+    else
+        @async begin
+            sleep(connect_timeout)
+            if tcp.status == Base.StatusConnecting
+                timeout[] = true
+                tcp.status = Base.StatusClosing
+                ccall(:jl_forceclose_uv, Nothing, (Ptr{Nothing},), tcp.handle)
+                #close(tcp)
+            end
         end
     end
     try
