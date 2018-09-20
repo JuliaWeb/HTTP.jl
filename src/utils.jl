@@ -1,5 +1,3 @@
-sprintcompact(x) = sprint(show, x; context=:compact => true)
-
 macro src()
     esc(quote
         (__module__,
