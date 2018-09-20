@@ -22,6 +22,7 @@ macro debugshort(n::Int, s)
                        :()
 end
 
+sprintcompact(x) = sprint(show, x; context=:compact => true)
 printlncompact(x) = println(sprintcompact(x))
 
 
