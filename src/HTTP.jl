@@ -12,7 +12,6 @@ Base.@deprecate URL URI
 
 using Base64, Sockets, Dates
 
-include("utils.jl")
 include("debug.jl")
 
 include("Pairs.jl")
@@ -605,8 +604,6 @@ include("Servers.jl")                  ;using .Servers; using .Servers: listen
 Base.@deprecate_binding(Nitrogen, Servers, false)
 
 include("WebSockets.jl")               ;using .WebSockets
-
-include("precompile.jl")
 
 import .ConnectionPool: Transaction, Connection
 
