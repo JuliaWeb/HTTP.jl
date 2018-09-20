@@ -164,16 +164,6 @@ Base.isreadable(t::Transaction) = t.c.readbusy && t.c.readcount == t.sequence
 
 Base.iswritable(t::Transaction) = t.c.writebusy && t.c.writecount == t.sequence
 
-function Base.read(t::Transaction, nb::Integer)::ByteView
-    bytes = readavailable(t)
-    l = length(bytes)
-    if l > nb
-        unread!(t, view(bytes, nb+1:l))
-        bytes = view(bytes, 1:nb)
-    end
-    return bytes
-end
-
 function Base.readavailable(t::Transaction)::ByteView
     @require isreadable(t)
     if !isempty(t.c.excess)
@@ -187,6 +177,44 @@ function Base.readavailable(t::Transaction)::ByteView
     t.c.timestamp = time()
     return bytes
 end
+
+function Base.read(t::Transaction, nb::Integer)::ByteView
+    bytes = t.c.excess
+    l = length(bytes)
+    if l > 0
+        if l > nb
+            t.c.excess = view(bytes, nb+1:l)
+            return view(bytes, 1:nb)
+        else
+            t.c.excess = nobytes
+            return bytes
+        end
+    end
+    v = Base.StringVector(min(nb, bytesavailable(t.c.io)))
+    unsafe_read(t.c.io, pointer(v), length(v))
+    return byteview(v)
+end
+
+function Base.unsafe_read(t::Transaction, p::Ptr{UInt8}, n::UInt)
+    bytes = t.c.excess
+    l = length(bytes)
+    if l > 0
+        nb = min(l,n)
+        unsafe_copyto!(p, pointer(bytes), nb)
+        p += nb;
+        n -= nb
+        if nb == l
+            t.c.excess = nobytes
+        else
+            t.c.excess = view(bytes, nb+1:l)
+        end
+    end
+    if n > 0
+        unsafe_read(t.c.io, p, n)
+    end
+    return nothing
+end
+
 
 """
     unread!(::Transaction, bytes)
