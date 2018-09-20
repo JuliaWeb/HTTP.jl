@@ -6,7 +6,7 @@ include("urlparser.jl")
 
 const tunit = u"ms"
 const tmul = Int(1u"s"/1tunit)
-delta_t(a, b) = round((b - a) * tmul, 0)tunit
+delta_t(a, b) = round((b - a) * tmul, digits=0)tunit
 
 function go(count::Int)
 
@@ -35,7 +35,7 @@ function go(count::Int)
     t2 = delta_t(t_start, t_done)
 
     if count > 10
-        println("regex_parse parsed $(length(urls)) urls $count times in $t2 ($(round(100*t2/t1, 1))%)")
+        println("regex_parse parsed $(length(urls)) urls $count times in $t2 ($(round(100*t2/t1, digits=1))%)")
     end
 end
 

@@ -3,7 +3,7 @@
 module HttpParserTest
 
 using HttpParser
-using Base.Test
+using Test
 using Compat
 import Compat: String
 

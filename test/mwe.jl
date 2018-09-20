@@ -32,7 +32,7 @@ HTTP.listen("127.0.0.1", 8000;
         end
     else
         HTTP.Servers.handle_request(http) do req::HTTP.Request
-            HTTP.Response(200,readstring(joinpath(dirname(@__FILE__),"mwe.html")))
+            HTTP.Response(200,read(joinpath(dirname(@__FILE__),"mwe.html"), String))
         end
     end
 end
