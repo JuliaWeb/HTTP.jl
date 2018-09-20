@@ -38,7 +38,8 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     IOType = ConnectionPool.Transaction{sockettype(url, socket_type)}
     local io
     try
-        io = getconnection(IOType, url.host, url.port; reuse_limit=reuse_limit, kw...)
+        io = getconnection(IOType, url.host, url.port;
+                           reuse_limit=reuse_limit, kw...)
     catch e
         rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
     end
@@ -55,7 +56,8 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
         close(io)
         rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
     finally
-        if (proxy !== nothing && target_url.scheme == "https") || reuse_limit == 0
+        if (reuse_limit == 0
+        || (proxy !== nothing && target_url.scheme == "https"))
             close(io)
         end
     end
