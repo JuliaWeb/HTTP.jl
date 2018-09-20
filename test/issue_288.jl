@@ -20,7 +20,7 @@ decoded_data = "data: 1$(repeat("x", sz))\n\n" *
 split1 = 106
 split2 = 300
 
-@async HTTP.listen("127.0.0.1", 8091) do http::HTTP.Stream
+@async HTTP.listen("127.0.0.1", 8091; stream=true) do http
     startwrite(http)
 
     tcp = http.stream.c.io
