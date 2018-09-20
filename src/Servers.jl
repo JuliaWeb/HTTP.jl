@@ -263,8 +263,8 @@ e.g.
         while !eof(http)
             println("body data: ", String(readavailable(http)))
         end
-        setstatus(http, 404)
-        setheader(http, "Foo-Header" => "bar")
+        HTTP.setstatus(http, 404)
+        HTTP.setheader(http, "Foo-Header" => "bar")
         startwrite(http)
         write(http, "response body")
         write(http, "more response body")
