@@ -186,7 +186,7 @@ Parse HTTP header-field.
 Return `Pair(field-name => field-value)` and
 a `SubString` containing the remaining header-field lines.
 """
-@inline function parse_header_field(bytes::SubString{String})::Tuple{Header,SubString{String}}
+function parse_header_field(bytes::SubString{String})::Tuple{Header,SubString{String}}
     # First look for: field-name ":" field-value
     re = header_field_regex
     if exec(re, bytes)
