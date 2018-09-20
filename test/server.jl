@@ -37,7 +37,7 @@ handler = (req) -> begin
     return req.response
 end
 
-tsk = @async HTTP.Servers.listen(handler, "127.0.0.1", port)
+tsk = @async HTTP.listen(handler, "127.0.0.1", port)
 sleep(3.0)
 
 r = testget("http://127.0.0.1:$port")
