@@ -39,7 +39,8 @@ function request(::Type{RedirectLayer{Next}},
                 header, value = h
                 if header == "Host"
                     return false
-                elseif header in SENSITIVE_HEADERS && !isdomainorsubdomain(url.host, oldurl.host)
+                elseif (header in SENSITIVE_HEADERS
+                    && !isdomainorsubdomain(url.host, oldurl.host))
                     return false
                 else
                     return true
@@ -57,7 +58,12 @@ function request(::Type{RedirectLayer{Next}},
     @assert false "Unreachable!"
 end
 
-const SENSITIVE_HEADERS = Set(["Authorization", "Www-Authenticate", "Cookie", "Cookie2"])
+const SENSITIVE_HEADERS = Set([
+    "Authorization",
+    "Www-Authenticate",
+    "Cookie",
+    "Cookie2"
+])
 
 function isdomainorsubdomain(sub, parent)
     sub == parent && return true

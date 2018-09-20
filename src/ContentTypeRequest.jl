@@ -15,8 +15,11 @@ export ContentTypeDetectionLayer
 function request(::Type{ContentTypeDetectionLayer{Next}},
                  method::String, url::URI, headers, body; kw...) where Next
 
-    if getkv(headers, "Content-Type", "") == "" &&
-        !isa(body, Form) && bodylength(body) != unknown_length && bodylength(body) > 0
+    if (getkv(headers, "Content-Type", "") == ""
+    &&  !isa(body, Form)
+    &&  bodylength(body) != unknown_length
+    &&  bodylength(body) > 0)
+
         sn = sniff(bodybytes(body))
         setkv(headers, "Content-Type", sn)
         @debug 1 "setting Content-Type header to: $sn"

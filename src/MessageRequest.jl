@@ -26,7 +26,9 @@ function request(::Type{MessageLayer{Next}},
                  parent=nothing, iofunction=nothing, kw...) where Next
 
     defaultheader(headers, "Host" => url.host)
-    isassigned(USER_AGENT) && defaultheader(headers, "User-Agent" => USER_AGENT[])
+    if isassigned(USER_AGENT)
+        defaultheader(headers, "User-Agent" => USER_AGENT[])
+    end
 
     if !hasheader(headers, "Content-Length") &&
        !hasheader(headers, "Transfer-Encoding") &&
@@ -46,7 +48,11 @@ function request(::Type{MessageLayer{Next}},
 end
 
 const USER_AGENT = Ref{String}()
-"Set the default User-Agent string to be used in each HTTP request; when set, can be manually overridden by passing in an explicit `User-Agent` header"
+
+"""
+Set the default User-Agent string to be used in each HTTP request.
+Can be manually overridden by passing an explicit `User-Agent` header.
+"""
 function setuseragent!(x::String)
     USER_AGENT[] = x
     return
