@@ -21,8 +21,7 @@ export Header, Headers,
        find_end_of_header, find_end_of_line, find_end_of_trailer,
        parse_status_line!, parse_request_line!, parse_header_field,
        parse_chunk_size,
-       ParseError,
-       lceq
+       ParseError
 
 include("parseutils.jl")
 

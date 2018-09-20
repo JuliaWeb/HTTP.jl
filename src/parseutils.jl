@@ -21,5 +21,3 @@ group(i, re::Regex, bytes, default) =
     re.ovec[2i+1] == Base.PCRE.UNSET ?
     default :
     SubString(bytes, re.ovec[2i+1]+1, prevind(bytes, re.ovec[2i+2]+1))
-
-lceq(a, b) = lowercase(a) == lowercase(b)

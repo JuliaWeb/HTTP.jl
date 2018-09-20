@@ -295,6 +295,7 @@ bodylength(r::Request)::Int =
                    parse(Int, header(r, "Content-Length", "0"))
 
 # HTTP header-fields
+lceq(a, b) = lowercase(a) == lowercase(b)
 
 Base.getindex(m::Message, k) = header(m, k)
 
