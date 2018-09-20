@@ -8,9 +8,9 @@ import ..debug_header
         io::T
     end
 
-    logwrite(iod::IODebug, x) = show_io_debug(stdout, "➡️ ", x)
-    logread(iod::IODebug, x) = show_io_debug(stdout, "⬅️ ", x)
-    logunread(iod::IODebug, x) = show_io_debug(stdout, "♻️ ", x)
+    logwrite(iod::IODebug, f, x) = show_io_debug(stdout, "➡️ ", f, x)
+    logread(iod::IODebug, f, x) = show_io_debug(stdout, "⬅️ ", f, x)
+    logunread(iod::IODebug, f, x) = show_io_debug(stdout, "♻️ ", f, x)
 
 else
 
@@ -21,30 +21,38 @@ else
 
     IODebug(io::T) where T <: IO = IODebug{T}(io, [])
 
-    logwrite(iod::IODebug, x) = push!(iod.log, ("➡️ ", x))
-    logread(iod::IODebug, x) = push!(iod.log, ("⬅️ ", x))
-    logunread(iod::IODebug, x) = push!(iod.log, ("♻️ ", x))
+    logwrite(iod::IODebug, f, x) = push!(iod.log, ("➡️ ", f, x))
+    logread(iod::IODebug, f, x) = push!(iod.log, ("⬅️ ", f, x))
+    logunread(iod::IODebug, f, x) = push!(iod.log, ("♻️ ", f, x))
 
 end
  
-Base.write(iod::IODebug, a...) = (logwrite(iod, join(a)); write(iod.io, a...))
+Base.write(iod::IODebug, a...) =
+    (logwrite(iod, :write, join(a));
+     write(iod.io, a...))
 
-Base.write(iod::IODebug, x::String) = (logwrite(iod, x); write(iod.io, x))
+Base.write(iod::IODebug, x::String) =
+    (logwrite(iod, :write, x);
+     write(iod.io, x))
 
 Base.unsafe_write(iod::IODebug, x::Ptr{UInt8}, n::UInt) =
-    (logwrite(iod, unsafe_string(x,n));
+    (logwrite(iod, :unsafe_write, unsafe_string(x,n));
      unsafe_write(iod.io, x, n))
+
+Base.unsafe_read(iod::IODebug, x::Ptr{UInt8}, n::UInt) =
+    (r = unsafe_read(iod.io, x, n);
+     logread(iod, :unsafe_read, unsafe_string(x,n)); r)
 
 Base.read(iod::IODebug, n::Integer) =
     (r = read(iod.io, n);
-     logread(iod, String(r)); r)
+     logread(iod, :read, String(copy(r))); r)
 
 Base.readavailable(iod::IODebug) =
     (r = readavailable(iod.io);
-     logread(iod, String(r)); r)
+     logread(iod, :readavailable, String(copy(r))); r)
 
 IOExtras.unread!(iod::IODebug, bytes) =
-    (logunread(iod, String(bytes));
+    (logunread(iod, :unread!, String(copy(bytes)));
      unread!(iod.io, bytes))
 
 Base.eof(iod::IODebug) = eof(iod.io)
@@ -65,11 +73,11 @@ function show_log(io::IO, iod::IODebug)
     lock(io)
     println(io, "$(typeof(iod)):\nio:     $(iod.io)")
     prevop = ""
-    for (operation, bytes) in iod.log
+    for (operation, f, bytes) in iod.log
         if prevop != "" && prevop != operation
             println(io)
         end
-        show_io_debug(io, operation, bytes)
+        show_io_debug(io, operation, f, bytes)
         prevop = operation
     end
     println(io)
@@ -77,15 +85,16 @@ function show_log(io::IO, iod::IODebug)
 end
 
 
-function show_io_debug(io::IO, operation, bytes)
+function show_io_debug(io::IO, operation, f, bytes)
     prefix = string(debug_header(), rpad(operation, 4))
     i = j = 1
-    while i < length(bytes)
+    while i <= length(bytes)
         j = findnext(isequal('\n'), bytes, i)
         if j === nothing || j == 0
             j = prevind(bytes, length(bytes)+1)
         end
-        println(io, prefix, "\"", escape_string(bytes[i:j]), "\"")
+        println(io, prefix, "\"", escape_string(bytes[i:j]), "\"",
+                i == 1 ? " ($f)" : "")
         if i == 1
             prefix = rpad("DEBUG:", length(prefix) - 1)
         end
