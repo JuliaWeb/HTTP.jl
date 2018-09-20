@@ -1,6 +1,6 @@
 module HTTP
 
-export startwrite, startread, closewrite, closeread
+export startwrite, startread, closewrite, closeread, setstatus, setheader
 
 using MbedTLS
 import MbedTLS: SSLContext
