@@ -54,20 +54,7 @@ See `?HTTP.StreamHandlerFunction` for an example of a concrete implementation.
 abstract type StreamHandler <: Handler end
 
 Handler(h::Handler) = h
-"Given an arbitrary function, return an appropriate RequestHandlerFunction or StreamHandlerFunction; for
-functions with an untyped argument, the default is RequestHandlerFunction."
-function Handler(f::Base.Callable)
-    req = applicable(f, Request())
-    strm = applicable(f, Stream(Request(), IOBuffer()))
-    if strm && !req
-        h = StreamHandlerFunction(f)
-    elseif req
-        h = RequestHandlerFunction(f)
-    else
-        throw(ArgumentError("$f function doesn't take an HTTP.Request or HTTP.Stream argument"))
-    end
-    return h
-end
+Handler(f::Base.Callable) = RequestHandlerFunction(f)
 
 """
 RequestHandlerFunction(f::Function)

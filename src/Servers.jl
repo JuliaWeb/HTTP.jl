@@ -213,7 +213,7 @@ export listen
 using Sockets, Dates, MbedTLS
 using ..ConnectionPool, ..Parsers, ..IOExtras, ..Messages, ..Streams, ..Handlers
 
-import ..Handlers.handle
+import ..Handlers: handle, StreamHandlerFunction, RequestHandlerFunction
 
 # rate limiting
 mutable struct RateLimit
@@ -468,7 +468,8 @@ function listen(h::Handler, host::Union{IPAddr, String}, port::Integer=8081;
     tcpisvalid::Union{Function, Nothing}=nothing,
     ratelimit::Union{Rational{Int}, Nothing}=nothing,
     connectioncounter::Ref{Int}=Ref(0),
-    reuse_limit::Int=1, readtimeout::Int=0, verbose::Bool=false)
+    reuse_limit::Int=1, readtimeout::Int=0,
+    verbose::Bool=false, kw...)
 
     inet = getinet(host, port)
     if tcpref !== nothing
@@ -496,7 +497,8 @@ function listen(h::Handler, host::Union{IPAddr, String}, port::Integer=8081;
         connectioncounter, reuse_limit, readtimeout, verbose)
 end
 
-listen(f::Base.Callable, host, port::Integer=8081; kw...) = listen(Handlers.Handler(f), host, port; kw...)
+listen(f::Base.Callable, args...; stream::Bool=false, kw...) =
+    listen(stream ? StreamHandlerFunction(f) : RequestHandlerFunction(f), args...; kw...)
 
 function serve(host, port=8081; handler=req->HTTP.Response(200, "Hello World!"),
     ssl::Bool=false, require_ssl_verification::Bool=true, kw...)
