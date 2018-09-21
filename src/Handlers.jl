@@ -72,6 +72,8 @@ const FourOhFour = RequestHandlerFunction(req -> Response(404))
 
 handle(h::RequestHandlerFunction, req::Request) = h.func(req)
 
+(h::RequestHandlerFunction)(req) = handle(h,req)
+
 """
 StreamHandlerFunction(f::Function)
 
@@ -84,5 +86,7 @@ struct StreamHandlerFunction{F <: Base.Callable} <: StreamHandler
 end
 
 handle(h::StreamHandlerFunction, stream::Stream) = h.func(stream)
+
+(h::StreamHandlerFunction)(stream) = handle(h, stream)
 
 end # module

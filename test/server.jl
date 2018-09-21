@@ -38,9 +38,16 @@ handler = (req) -> begin
 end
 
 tsk = @async HTTP.listen(handler, "127.0.0.1", port)
+
+handler2 = HTTP.RequestHandlerFunction(handler)
+
+tsk2 = @async HTTP.listen(handler2, "127.0.0.1", port+100)
 sleep(3.0)
 
 r = testget("http://127.0.0.1:$port")
+@test occursin(r"HTTP/1.1 200 OK", r)
+
+r = testget("http://127.0.0.1:$(port+100)")
 @test occursin(r"HTTP/1.1 200 OK", r)
 
 rv = []

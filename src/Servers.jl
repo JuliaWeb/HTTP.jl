@@ -16,9 +16,7 @@ using ..ConnectionPool
 using Sockets
 using MbedTLS
 using Dates
-using ..Handlers
 
-import ..Handlers: handle, StreamHandlerFunction, RequestHandlerFunction
 
 # rate limiting
 mutable struct RateLimit
@@ -149,13 +147,11 @@ function listen end
 getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
 getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
 
-listen(f::Base.Callable, args...; stream::Bool=false, kw...) =
-    listen(stream ? StreamHandlerFunction(f) : RequestHandlerFunction(f), args...; kw...)
-
-function listen(h::Handler,
+function listen(h,
                 host::Union{IPAddr, String}=Sockets.localhost,
                 port::Integer=8081
                 ;
+                stream::Bool=false,
                 sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
                 tcpisvalid::Union{Function, Nothing}=nothing,
                 tcpref::Union{Ref, Nothing}=nothing,
@@ -163,7 +159,12 @@ function listen(h::Handler,
                 connectioncounter::Ref{Int}=Ref(0),
                 ratelimit::Union{Rational{Int}, Nothing}=nothing,
                 reuse_limit::Int=1, readtimeout::Int=0,
-                verbose::Bool=false, kw...)
+                verbose::Bool=false)
+
+    # If `h` does not accept a stream wrap it with the stream handling function.
+    if !stream
+        h = let f = h; http::Stream -> handle(f, http) end
+    end
 
     inet = getinet(host, port)
     if tcpref !== nothing
@@ -192,7 +193,7 @@ function listen(h::Handler,
 end
 
 "main server loop that accepts new tcp connections and spawns async threads to handle them"
-function listenloop(h::Handler, server,
+function listenloop(h, server,
     tcpisvalid=x->true, connectioncounter=Ref(0),
     reuse_limit::Int=1, readtimeout::Int=0, verbose::Bool=false)
     count = 1
@@ -240,7 +241,7 @@ Connection handler: starts an async readtimeout thread if needed, then creates
 Transactions to be handled as long as the Connection stays open. Only reuse_limit + 1
 # of Transactions will be allowed during the lifetime of the Connection.
 """
-function handle(h::Handler, c::Connection,
+function handle(h, c::Connection,
                 reuse_limit::Int=10,
                 readtimeout::Int=0)
 
@@ -280,7 +281,7 @@ Transaction handler: creates a new Stream for the Transaction, calls startread o
 then dispatches the stream to the user-provided handler function. Catches errors on all
 IO operations and closes gracefully if encountered.
 """
-function handle(h::Handler,t::Transaction, last::Bool=false)
+function handle(h, t::Transaction, last::Bool=false)
     request = Request()
     http = Stream(request, t)
 
@@ -308,7 +309,7 @@ function handle(h::Handler,t::Transaction, last::Bool=false)
     end
 
     try
-        handle(h, http)
+        h(http)
         closeread(http)
         closewrite(http)
     catch e
@@ -326,10 +327,10 @@ function handle(h::Handler,t::Transaction, last::Bool=false)
 end
 
 "For request handlers, read a full request from a stream, pass to the handler, then write out the response"
-@inline function handle(h::RequestHandler, http::Stream)
+function handle(h, http::Stream)
     request::Request = http.message
     request.body = read(http)
-    request.response::Response = handle(h, request)
+    request.response::Response = h(request)
     request.response.request = request
     startwrite(http)
     write(http, request.response.body)
