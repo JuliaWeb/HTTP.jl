@@ -5,7 +5,8 @@ using Test
 using HTTP
 
 @testset "HTTP" begin
-    for f in ["issue_288.jl",
+    for f in ["ascii.jl",
+              "issue_288.jl",
               "utils.jl",
               "sniff.jl",
               "uri.jl",

@@ -76,6 +76,8 @@ using ..Parsers
 import ..@require, ..precondition_error
 import ..bytes
 
+include("ascii.jl")
+
 const unknown_length = typemax(Int)
 
 abstract type Message end
@@ -254,7 +256,7 @@ isredirect(r::Response) = r.status in (301, 302, 307, 308)
 
 Does the `Message` have a "Transfer-Encoding: chunked" header?
 """
-ischunked(m) = any(h->(lowercase(h[1]) == "transfer-encoding" &&
+ischunked(m) = any(h->(field_name_isequal(h[1], "transfer-encoding") &&
                        endswith(lowercase(h[2]), "chunked")),
                    m.headers)
 
@@ -300,20 +302,22 @@ bodylength(r::Request)::Int =
 Base.getindex(m::Message, k) = header(m, k)
 
 """
+    Are `field-name`s `a` and `b` equal?
+
+[HTTP `field-name`s](https://tools.ietf.org/html/rfc7230#section-3.2)
+are ASCII-only and case-insensitive.
+"""
+
+field_name_isequal(a, b) = ascii_lc_isequal(a, b)
+
+"""
     header(::Message, key [, default=""]) -> String
 
 Get header value for `key` (case-insensitive).
 """
 header(m::Message, k, d="") = header(m.headers, k, d)
 header(h::Headers, k::AbstractString, d::AbstractString="") =
-    getbyfirst(h, k, k => d, lceq)[2]
-lceq(a,b) = lowercase(a) == lowercase(b)
-
-# FIXME consider allocation and speed efficiency of lowercase comparisons
-# - Make a LCString <: AbstractString wrapper that translates in-line?
-# - Make a lcmp function that translates as it goes?
-# https://github.com/JuliaLang/julia/issues/19972
-
+    getbyfirst(h, k, k => d, field_name_isequal)[2]
 
 """
     hasheader(::Message, key) -> Bool
@@ -328,7 +332,7 @@ hasheader(m, k::AbstractString) = header(m, k) != ""
 Does header for `key` match `value` (both case-insensitive)?
 """
 hasheader(m, k::AbstractString, v::AbstractString) =
-    lowercase(header(m, k)) == lowercase(v)
+    field_name_isequal(header(m, k), lowercase(v))
 
 """
     setheader(::Message, key => value)
@@ -336,9 +340,10 @@ hasheader(m, k::AbstractString, v::AbstractString) =
 Set header `value` for `key` (case-insensitive).
 """
 setheader(m::Message, v) = setheader(m.headers, v)
-setheader(h::Headers, v::Header) = setbyfirst(h, v, lceq)
+setheader(h::Headers, v::Header) = setbyfirst(h, v, field_name_isequal)
 setheader(h::Headers, v::Pair) =
-    setbyfirst(h, Header(SubString(v.first), SubString(v.second)), lceq)
+    setbyfirst(h, Header(SubString(v.first), SubString(v.second)),
+               field_name_isequal)
 
 """
     defaultheader(::Message, key => value)
