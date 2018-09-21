@@ -277,7 +277,7 @@ function generate_gethandler(router, method, scheme, host, path, handler)
             ::(HTTP.Routers.gh($host)),
             $(Expr(:$, vals)),
             args...)
-            return $(Expr(:$, handler))
+            return HTTP.Servers.RequestHandlerFunction($(Expr(:$, handler)))
         end
     end)
     # @show q
@@ -337,7 +337,7 @@ function register!(r::Router, method::String, url, handler)
     s = uri.scheme
     sch = !isempty(s) ? typeof(get!(SCHEMES, s, Val(s))) : Any
     h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
-    hand = Handler(handler)
+    hand = handler isa Handler ? handler : Servers.RequestHandlerFunction(handler)
     register!(r, m, sch, h, uri.path, hand)
 end
 function splitsegments(r::Router, segments)
