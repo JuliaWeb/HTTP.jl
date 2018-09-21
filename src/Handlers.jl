@@ -70,17 +70,6 @@ RequestHandlerFunction(f::RequestHandlerFunction) = f
 "A default 404 Handler"
 const FourOhFour = RequestHandlerFunction(req -> Response(404))
 
-"For request handlers, read a full request from a stream, pass to the handler, then write out the response"
-@inline function handle(h::RequestHandler, stream::Stream)
-    request::Request = stream.message
-    request.body = read(stream)
-    request.response::Response = handle(h, request)
-    request.response.request = request
-    startwrite(stream)
-    write(stream, request.response.body)
-    return
-end
-
 handle(h::RequestHandlerFunction, req::Request) = h.func(req)
 
 """
