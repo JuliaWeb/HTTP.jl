@@ -27,9 +27,15 @@ else
 
 end
  
+Base.wait_close(iod::IODebug) = Base.wait_close(iod.io)
+
 Base.write(iod::IODebug, a...) =
     (logwrite(iod, :write, join(a));
      write(iod.io, a...))
+
+Base.write(iod::IODebug, a::Array) =
+    (logwrite(iod, :write, join(a));
+     write(iod.io, a))
 
 Base.write(iod::IODebug, x::String) =
     (logwrite(iod, :write, x);
