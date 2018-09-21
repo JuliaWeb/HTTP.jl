@@ -282,10 +282,10 @@ IO operations and closes gracefully if encountered.
 """
 function handle(h::Handler,t::Transaction, last::Bool=false)
     request = Request()
-    stream = Stream(request, t)
+    http = Stream(request, t)
 
     try
-        startread(stream)
+        startread(http)
     catch e
         if e isa EOFError && isempty(request.method)
             return
@@ -308,15 +308,15 @@ function handle(h::Handler,t::Transaction, last::Bool=false)
     end
 
     try
-        handle(h, stream)
-        closeread(stream)
-        closewrite(stream)
+        handle(h, http)
+        closeread(http)
+        closewrite(http)
     catch e
         @error "error handling request" exception=(e, stacktrace(catch_backtrace()))
-        if isopen(stream) && !iswritable(stream)
-            stream.message.response.status = 500
-            startwrite(stream)
-            write(stream, sprint(showerror, e))
+        if isopen(http) && !iswritable(http)
+            http.message.response.status = 500
+            startwrite(http)
+            write(http, sprint(showerror, e))
         end
         last = true
     finally
@@ -326,13 +326,13 @@ function handle(h::Handler,t::Transaction, last::Bool=false)
 end
 
 "For request handlers, read a full request from a stream, pass to the handler, then write out the response"
-@inline function handle(h::RequestHandler, stream::Stream)
-    request::Request = stream.message
-    request.body = read(stream)
+@inline function handle(h::RequestHandler, http::Stream)
+    request::Request = http.message
+    request.body = read(http)
     request.response::Response = handle(h, request)
     request.response.request = request
-    startwrite(stream)
-    write(stream, request.response.body)
+    startwrite(http)
+    write(http, request.response.body)
     return
 end
 
