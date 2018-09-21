@@ -236,7 +236,7 @@ function listen(f,
         tcpisvalid = ratelimit === nothing ? x->true : x->check_rate_limit(x, ratelimit)
     end
 
-    return listenloop(h, Server2(sslconfig, tcpserver, string(host), string(port)), tcpisvalid,
+    return listenloop(handler, Server2(sslconfig, tcpserver, string(host), string(port)), tcpisvalid,
         connectioncounter, reuse_limit, readtimeout, verbose)
 end
 

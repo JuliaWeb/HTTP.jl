@@ -9,7 +9,7 @@ import Base.==
 
 @testset "HTTP.Handler deprecations tests" begin
 
-f = HTTP.RequestHandlerFunction((req) -> HTTP.Response(200))
+f = HTTP.Servers.RequestHandlerFunction((req) -> HTTP.Response(200))
 @test HTTP.handle(f, HTTP.Request()) == HTTP.Response(200)
 
 r = HTTP.Router()
@@ -22,7 +22,7 @@ req.target = "/path/to/greatness"
 @test HTTP.handle(r, req) == HTTP.Response(200)
 
 p = "/next/path/to/greatness"
-f2 = HTTP.RequestHandlerFunction((req) -> HTTP.Response(201))
+f2 = HTTP.Servers.RequestHandlerFunction((req) -> HTTP.Response(201))
 HTTP.register!(r, p, f2)
 req = HTTP.Request()
 req.target = "/next/path/to/greatness"
@@ -48,9 +48,9 @@ req = HTTP.Request("POST", "/tpost")
 r = HTTP.Router()
 HTTP.register!(r, "/test", f)
 HTTP.register!(r, "/test/*", f2)
-f3 = HTTP.RequestHandlerFunction((req) -> HTTP.Response(202))
+f3 = HTTP.Servers.RequestHandlerFunction((req) -> HTTP.Response(202))
 HTTP.register!(r, "/test/sarv/ghotra", f3)
-f4 = HTTP.RequestHandlerFunction((req) -> HTTP.Response(203))
+f4 = HTTP.Servers.RequestHandlerFunction((req) -> HTTP.Response(203))
 HTTP.register!(r, "/test/*/ghotra/seven", f4)
 
 req = HTTP.Request()
@@ -70,7 +70,7 @@ end
 
 @testset "HTTP.Handler" begin
 
-f = HTTP.RequestHandlerFunction((req) -> HTTP.Response(200))
+f = HTTP.Servers.RequestHandlerFunction((req) -> HTTP.Response(200))
 @test HTTP.handle(f, HTTP.Request()) == HTTP.Response(200)
 
 r = HTTP.Router()
@@ -83,7 +83,7 @@ req.target = "/path/to/greatness"
 @test HTTP.handle(r, req) == HTTP.Response(200)
 
 p = "/next/path/to/greatness"
-f2 = HTTP.RequestHandlerFunction((req) -> HTTP.Response(201))
+f2 = HTTP.Servers.RequestHandlerFunction((req) -> HTTP.Response(201))
 HTTP.@register(r, p, f2)
 req = HTTP.Request()
 req.target = "/next/path/to/greatness"
@@ -109,9 +109,9 @@ req = HTTP.Request("POST", "/tpost")
 r = HTTP.Router()
 HTTP.@register(r, "/test", f)
 HTTP.@register(r, "/test/*", f2)
-f3 = HTTP.RequestHandlerFunction((req) -> HTTP.Response(202))
+f3 = HTTP.Servers.RequestHandlerFunction((req) -> HTTP.Response(202))
 HTTP.@register(r, "/test/sarv/ghotra", f3)
-f4 = HTTP.RequestHandlerFunction((req) -> HTTP.Response(203))
+f4 = HTTP.Servers.RequestHandlerFunction((req) -> HTTP.Response(203))
 HTTP.@register(r, "/test/*/ghotra/seven", f4)
 
 req = HTTP.Request()
@@ -132,7 +132,7 @@ end
 module FooRouter
 using HTTP
 const r = HTTP.Router()
-f = HTTP.RequestHandlerFunction((req) -> HTTP.Response(200))
+f = HTTP.Servers.RequestHandlerFunction((req) -> HTTP.Response(200))
 HTTP.@register(r, "/test", f)
 
 end # module
