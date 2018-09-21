@@ -327,6 +327,7 @@ function monitor_idle_connection(c::Connection{SSLContext})
     # https://github.com/JuliaWeb/MbedTLS.jl/pull/145
 end
 
+Base.wait_close(t::Transaction) = Base.wait_close(tcpsocket(t.c.io))
 
 function Base.close(t::Transaction)
     close(t.c)
