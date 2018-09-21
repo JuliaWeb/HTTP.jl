@@ -294,7 +294,6 @@ bodylength(r::Request)::Int =
                    parse(Int, header(r, "Content-Length", "0"))
 
 # HTTP header-fields
-lceq(a, b) = lowercase(a) == lowercase(b)
 
 Base.getindex(m::Message, k) = header(m, k)
 
@@ -314,6 +313,8 @@ Get header value for `key` (case-insensitive).
 header(m::Message, k, d="") = header(m.headers, k, d)
 header(h::Headers, k::AbstractString, d::AbstractString="") =
     getbyfirst(h, k, k => d, field_name_isequal)[2]
+
+lceq(a, b) = lowercase(a) == lowercase(b)
 
 """
     hasheader(::Message, key) -> Bool
