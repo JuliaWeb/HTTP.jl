@@ -1,7 +1,7 @@
 """
 # Examples
 Let's put together an example http REST server for our hypothetical "ZooApplication" that utilizes various
-parts of the Servers & Handlers frameworks.
+parts of the Servers & Handler frameworks.
 
 Our application allows users to interact with custom "animal" JSON objects.
 
@@ -199,14 +199,16 @@ Let's review what's going on here:
     HTTP response, signalling that the request is unauthorized
 
 Voila, hopefully that helps provide a slightly-more-than-trivial example of utilizing the
-HTTP.Handlers framework in conjuction with running an HTTP server.
+HTTP.Handler framework in conjuction with running an HTTP server.
 """
-
 module Routers
 
 export Router, @register, register!
 
-using ..Messages, ..URIs, ..Streams, ..IOExtras, ..Handlers
+using ..Messages, ..URIs, ..Streams, ..IOExtras, ..Servers
+
+"A default 404 Handler"
+const FourOhFour = Servers.RequestHandlerFunction(req -> Response(404))
 
 struct Route
     method::String
@@ -233,7 +235,7 @@ struct Router{sym} <: Handler
     segments::Dict{String, Val}
 end
 
-function Router(default::Union{Handler, Function, Nothing}=Handlers.FourOhFour)
+function Router(default::Union{Handler, Function, Nothing}=FourOhFour)
     # each router gets a unique symbol as a type parameter so that dispatching
     # requests always go to the correct router
     sym = gensym()
@@ -275,7 +277,7 @@ function generate_gethandler(router, method, scheme, host, path, handler)
             ::(HTTP.Routers.gh($host)),
             $(Expr(:$, vals)),
             args...)
-            return HTTP.Handler($(Expr(:$, handler)))
+            return $(Expr(:$, handler))
         end
     end)
     # @show q
@@ -323,8 +325,8 @@ function gethandler(r::Router, req::Request)
     return gethandler(r, m, s, h, vals...)
 end
 
-Handlers.handle(r::Router, stream::Stream, args...) = handle(gethandler(r, stream.message), stream, args...)
-Handlers.handle(r::Router, req::Request, args...) = handle(gethandler(r, req), req, args...)
+Servers.handle(r::Router, stream::Stream, args...) = handle(gethandler(r, stream.message), stream, args...)
+Servers.handle(r::Router, req::Request, args...) = handle(gethandler(r, req), req, args...)
 
 # deprecated
 register!(r::Router, url, handler) = register!(r, "", url, handler)

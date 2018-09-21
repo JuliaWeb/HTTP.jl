@@ -598,8 +598,6 @@ end
 
 include("download.jl")
 
-
-include("Handlers.jl")                 ;using .Handlers
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
 include("Routers.jl")                  ;using .Routers
 include("WebSockets.jl")               ;using .WebSockets

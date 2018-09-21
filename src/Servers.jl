@@ -6,7 +6,7 @@ a `host` and `port` and optional keyword arguments. For full details, see `?HTTP
 """
 module Servers
 
-export listen
+export listen, handle, Handler, RequestHandler, StreamHandler
 
 using ..IOExtras
 using ..Streams
@@ -17,6 +17,56 @@ using Sockets
 using MbedTLS
 using Dates
 
+"""
+HTTP.handle(handler::HTTP.RequestHandler, ::HTTP.Request) => HTTP.Response
+HTTP.handle(handler::HTTP.StreamHandler, ::HTTP.Stream)
+
+Dispatch function used to handle incoming requests to a server. Can be
+overloaded by custom `HTTP.Handler` subtypes to implement custom "handling"
+behavior.
+"""
+function handle end
+
+abstract type Handler end
+
+"""
+Abstract type representing objects that handle `HTTP.Request` and return `HTTP.Response` objects.
+
+See `?HTTP.RequestHandlerFunction` for an example of a concrete implementation.
+"""
+abstract type RequestHandler <: Handler end
+
+"""
+Abstract type representing objects that handle `HTTP.Stream` objects directly.
+
+See `?HTTP.StreamHandlerFunction` for an example of a concrete implementation.
+"""
+abstract type StreamHandler <: Handler end
+
+"""
+RequestHandlerFunction(f)
+
+A function-wrapper type that is a subtype of `RequestHandler`. Takes a single function as an argument
+that should be of the form `f(::HTTP.Request) => HTTP.Response`
+"""
+struct RequestHandlerFunction{F} <: RequestHandler
+    func::F # func(req)
+end
+
+handle(h::RequestHandlerFunction, req::Request) = h.func(req)
+
+"""
+StreamHandlerFunction(f)
+
+A function-wrapper type that is a subtype of `StreamHandler`. Takes a single function as an argument
+that should be of the form `f(::HTTP.Stream) => Nothing`, i.e. it accepts a raw `HTTP.Stream`,
+handles the incoming request, writes a response back out to the stream directly, then returns.
+"""
+struct StreamHandlerFunction{F} <: StreamHandler
+    func::F # func(stream)
+end
+
+handle(h::StreamHandlerFunction, stream::Stream) = h.func(stream)
 
 # rate limiting
 mutable struct RateLimit
@@ -81,7 +131,6 @@ Base.close(s::Server2) = close(s.server)
 Sockets.accept(s::Server2{Nothing, S}) where {S} = Sockets.accept(s.server)
 Sockets.accept(s::Server2) = getsslcontext(accept(s.server), s.ssl)
 
-
 function getsslcontext(tcp, sslconfig)
     ssl = MbedTLS.SSLContext()
     MbedTLS.setup!(ssl, sslconfig)
@@ -144,10 +193,12 @@ e.g.
 """
 function listen end
 
+const nolimit = typemax(Int)
+
 getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
 getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
 
-function listen(h,
+function listen(f,
                 host::Union{IPAddr, String}=Sockets.localhost,
                 port::Integer=8081
                 ;
@@ -158,13 +209,10 @@ function listen(h,
                 reuseaddr::Bool=false,
                 connectioncounter::Ref{Int}=Ref(0),
                 ratelimit::Union{Rational{Int}, Nothing}=nothing,
-                reuse_limit::Int=1, readtimeout::Int=0,
+                reuse_limit::Int=nolimit, readtimeout::Int=0,
                 verbose::Bool=false)
 
-    # If `h` does not accept a stream wrap it with the stream handling function.
-    if !stream
-        h = let f = h; http::Stream -> handle(f, http) end
-    end
+    handler = f isa Handler ? f : stream ? StreamHandlerFunction(f) : RequestHandlerFunction(f)
 
     inet = getinet(host, port)
     if tcpref !== nothing
@@ -309,7 +357,7 @@ function handle(h, t::Transaction, last::Bool=false)
     end
 
     try
-        h(http)
+        handle(h, http)
         closeread(http)
         closewrite(http)
     catch e
@@ -327,10 +375,10 @@ function handle(h, t::Transaction, last::Bool=false)
 end
 
 "For request handlers, read a full request from a stream, pass to the handler, then write out the response"
-function handle(h, http::Stream)
+function handle(h::RequestHandler, http::Stream)
     request::Request = http.message
     request.body = read(http)
-    request.response::Response = h(request)
+    request.response::Response = handle(h, request)
     request.response.request = request
     startwrite(http)
     write(http, request.response.body)
