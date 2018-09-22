@@ -277,7 +277,7 @@ function generate_gethandler(router, method, scheme, host, path, handler)
             ::(HTTP.Routers.gh($host)),
             $(Expr(:$, vals)),
             args...)
-            return HTTP.Servers.RequestHandlerFunction($(Expr(:$, handler)))
+            return $(Expr(:$, handler)) isa Handler ? $(Expr(:$, handler)) : HTTP.Servers.RequestHandlerFunction($(Expr(:$, handler)))
         end
     end)
     # @show q
