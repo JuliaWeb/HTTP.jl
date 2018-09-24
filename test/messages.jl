@@ -60,11 +60,11 @@ using JSON
 
     ah(m::Message, h) = appendheader(m, SubString(h[1]) => SubString(h[2]))
 
-    ah(req, "" => "Z")
-    @test header(req, "X") == "YZ"
+    ah(req, "X" => "Z")
+    @test header(req, "X") == "Y, Z"
 
     ah(req, "X" => "more")
-    @test header(req, "X") == "YZ, more"
+    @test header(req, "X") == "Y, Z, more"
 
     ah(req, "Set-Cookie" => "A")
     ah(req, "Set-Cookie" => "B")

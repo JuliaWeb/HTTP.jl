@@ -362,8 +362,6 @@ end
 
 Append a header value to `message.headers`.
 
-If `key` is `""` the `value` is appended to the value of the previous header.
-
 If `key` is the same as the previous header, the `value` is [appended to the
 value of the previous header with a comma
 delimiter](https://stackoverflow.com/a/24502264)
@@ -374,9 +372,7 @@ internal commas](https://tools.ietf.org/html/rfc6265#section-3).
 function appendheader(m::Message, header::Header)
     c = m.headers
     k,v = header
-    if k == ""
-        c[end] = c[end][1] => string(c[end][2], v)
-    elseif k != "Set-Cookie" && length(c) > 0 && k == c[end][1]
+    if k != "Set-Cookie" && length(c) > 0 && k == c[end][1]
         c[end] = c[end][1] => string(c[end][2], ", ", v)
     else
         push!(m.headers, header)
