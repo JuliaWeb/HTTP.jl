@@ -11,5 +11,5 @@ ascii_lc_isequal(a::UInt8, b::UInt8) = ascii_lc(a) == ascii_lc(b)
 """
 Case insensitive ASCII string comparison.
 """
-ascii_lc_isequal(a, b) = length(a) == length(b) &&
+ascii_lc_isequal(a, b) = ncodeunits(a) == ncodeunits(b) &&
                          all(map(ascii_lc_isequal, codeunits(a), codeunits(b)))
