@@ -113,7 +113,17 @@ const header_size_limit = Int(0x10000)
 
 Find length of header delimited by `\\r\\n\\r\\n` or `\\n\\n`.
 """
-function find_end_of_header(bytes::AbstractVector{UInt8})
+function find_end_of_header(bytes::AbstractVector{UInt8}; allow_obs_fold=true)
+
+#= FIXME =======================================================================
+
+Before merging:
+
+ - Consider allow_obs_fold=false by default,
+ - and/or returning (i, has_obs_fold) instead of throwing ParseError
+
+===============================================================================#
+
     buf = 0xFFFFFFFF
     l = min(length(bytes), header_size_limit)
     i = 1
@@ -121,8 +131,20 @@ function find_end_of_header(bytes::AbstractVector{UInt8})
         @inbounds x = bytes[i]
         if x == 0x0D || x == 0x0A
             buf = (buf << 8) | UInt32(x)
-            if buf == 0x0D0A0D0A || (buf & 0xFFFF) == 0x0A0A
+            # "Although the line terminator for the start-line and header
+            #  fields is the sequence CRLF, a recipient MAY recognize a single
+            #  LF as a line terminator"
+            # [RFC7230 3.5](https://tools.ietf.org/html/rfc7230#section-3.5)
+            buf16 = buf & 0xFFFF
+            if buf == 0x0D0A0D0A || buf16 == 0x0A0A
                 return i
+            end
+            # "A server that receives an obs-fold ... MUST either reject the
+            # message by sending a 400 (Bad Request) ... or replace each
+            # received obs-fold with one or more SP octets..."
+            # [RFC7230 3.2.4](https://tools.ietf.org/html/rfc7230#section-3.2.4)
+            if !allow_obs_fold && (buf16 == 0x0A20 || buf16 == 0x0A09)
+                throw(ParseError(:HEADER_CONTAINS_OBS_FOLD, bytes))
             end
         else
             buf = 0xFFFFFFFF
