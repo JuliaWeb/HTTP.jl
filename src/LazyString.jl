@@ -70,11 +70,9 @@ end
 `jl_alloc_string` allocates `n + 1` bytes and sets the last byte to `0x00`
 https://github.com/JuliaLang/julia/blob/master/src/array.c#L464
 """
-isend(::LazyASCII, c, i) = c == '\0'
-isskip(::LazyASCII, c, i) = c > 0x7F
-isstart(::LazyASCII, c) = true
-
-findstart(::LazyASCII, c, i) = c, i
+isend(::LazyASCII, i, c) = c == '\0'
+isskip(::LazyASCII, i, c) = c > 0x7F
+findstart(s::LazyASCII) = s.i
 
 getc(s, i) = unsafe_load(pointer(s), i)
 
@@ -83,15 +81,12 @@ next_ic(s, i) = (i += 1; (i, getc(s, i)))
 function scan_string(s::LazyASCII)
 
     ss = s.s
-    i = s.i
-    c = getc(ss, i)
-    while !isstart(s, c)
-        i, c = next_ic(ss, i)
-    end
+    i = findstart(s)
     first = i
     n = 0
-    while !isend(s, c, i)
-        if !isskip(s, c, i)
+    c = getc(ss, first)
+    while !isend(s, i, c)
+        if !isskip(s, i, c)
             n += 1
         end
         i, c = next_ic(ss, i)
@@ -106,18 +101,14 @@ Base.iterate(s::LazyASCII, i::Integer = 1) = _iterate(Char, s, i))
 
 @propagate_inbounds(
 function _iterate(character::Type, s::LazyASCII, i)
-    si = s.i + i - 1
-    c = getc(s.s, si)
-    if i == 1
-        while !isstart(s, c)
-            si, c = next_ic(s.s, si)
-        end
-    end
-    if isend(s, c, si)
+    ss = s.s
+    si = i == 1 ? findstart(s) : s.i + i - 1
+    c = getc(ss, si)
+    if isend(s, si, c)
         return nothing
     end
-    while isskip(s, c, si)
-        si, c = next_ic(s.s, si)
+    while isskip(s, si, c)
+        si, c = next_ic(ss, si)
     end
     return character(c), si + 2 - s.i
 end)
