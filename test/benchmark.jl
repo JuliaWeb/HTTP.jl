@@ -1,7 +1,11 @@
 using Unitful
 
-include("http_parser_benchmark.jl")
+#include("http_parser_benchmark.jl")
+include("../src/LazyHTTP.jl")
+using .LazyHTTP
 
+using Random
+using Statistics
 using HTTP
 using HTTP.IOExtras
 using HTTP.ConnectionPool
@@ -163,10 +167,10 @@ pipeline_limit = 100
 randbody(l) = Vector{UInt8}(rand('A':'Z', l))
 
 const tunit = u"μs"
-const tmul = Int(1u"s"/1tunit)
+const tmul = convert(Int,1u"s"/1tunit)
 delta_t(a, b) = round((b - a) * tmul, digits=0)tunit
 
-fields = [:setup, :head, :body, :close, :joyent_head]
+fields = [:setup, :head, :body, :close, :lazy_head]
 
 function go(count::Int)
 
@@ -184,7 +188,7 @@ function go(count::Int)
 
                                                             t_init_done = time()
     for rep in 1:count
-    gc()
+    Base.GC.gc()
     for (name, bytes) in shuffle(responses)
 
 
@@ -197,7 +201,7 @@ function go(count::Int)
             for i = 1:100
                 l = 10000
                 chunk = randbody(l)
-                write(io, hex(l), "\r\n", chunk, "\r\n")
+                write(io, string(l, base=16), "\r\n", chunk, "\r\n")
             end
             write(io, "0\r\n\r\n")
         else
@@ -222,6 +226,8 @@ function go(count::Int)
 
                                                                 t_setup = time()
             HTTP.Streams.readheaders(http.stream, http.message)
+            HTTP.header(http.message, "content-length")
+            HTTP.header(http.message, "content-type")
                                                          t_headers_done = time()
             HTTP.Streams.handle_continue(http)
 
@@ -243,10 +249,18 @@ function go(count::Int)
         push!(times[name][:body],  delta_t(t_headers_done, t_body_done))
         push!(times[name][:close], delta_t(t_body_done, t_done))
 
+
                                                                 t_start = time()
-        r = HttpParserTest.parse(bytes)
+        r = LazyHTTP.ResponseHeader(bytes)
+        #isvalid(r)
+        r.status == 200
+        collect(r["content-type"])
+        collect(get(r, "content-length", ""))
+        #[SubString(n) => SubString(v) for (n,v) in r]
+        #collect(r)
+#        r = HttpParserTest.parse(bytes)
                                                                  t_done = time()
-        push!(times[name][:joyent_head], delta_t(t_start, t_done))
+        push!(times[name][:lazy_head], delta_t(t_start, t_done))
     end
     end
 
@@ -262,7 +276,7 @@ function go(count::Int)
         print(lpad(f,w))
     end
     print(" | ")
-    print(lpad("jl faster",w))
+    print(lpad("lazy faster",w))
     println(" |")
 
     print("| ")
@@ -280,7 +294,7 @@ function go(count::Int)
             print(" | ")
             print(lpad(mean(times[name][f]), w))
         end
-        faster = mean(times[name][:joyent_head]) / mean(times[name][:head])
+        faster = mean(times[name][:head]) / mean(times[name][:lazy_head])
         print(" | ")
         print(lpad("x $(round(faster, digits=1))", w))
         println(" |")
