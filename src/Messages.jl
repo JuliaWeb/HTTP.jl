@@ -307,7 +307,6 @@ Base.getindex(m::Message, k) = header(m, k)
 [HTTP `field-name`s](https://tools.ietf.org/html/rfc7230#section-3.2)
 are ASCII-only and case-insensitive.
 """
-
 field_name_isequal(a, b) = ascii_lc_isequal(a, b)
 
 """
