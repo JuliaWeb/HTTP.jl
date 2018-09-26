@@ -26,10 +26,11 @@ sprintcompact(x) = sprint(show, x; context=:compact => true)
 printlncompact(x) = println(sprintcompact(x))
 
 
-@noinline function precondition_error(msg, frame)
-    msg = string(#=sprint(StackTraces.show_spec_linfo,
-                        StackTrace0.lookup(frame)[2])=# "function",
-                 " requires ", msg)
+method_name(bt) = sprint(StackTraces.show_spec_linfo,
+                         first(StackTraces.lookup(first(bt))))
+
+@noinline function precondition_error(msg, bt)
+    msg = string(method_name(bt), " requires ", msg)
     return ArgumentError(msg)
 end
 
@@ -39,14 +40,12 @@ end
 Throw `ArgumentError` if `precondition` is false.
 """
 macro require(condition, msg = string(condition))
-    esc(:(if ! $condition throw(precondition_error($msg, backtrace()[1])) end))
+    esc(:(if ! $condition throw(precondition_error($msg, backtrace())) end))
 end
 
 
 @noinline function postcondition_error(msg, frame, ls="", l="", rs="", r="")
-    msg = string(#= sprint(StackTraces.show_spec_linfo,
-                        StackTraces.lookup(frame)[2]) =# "function",
-                 " failed to ensure ", msg)
+    msg = string(method_name(bt), " failed to ensure ", msg)
     if ls != ""
         msg = string(msg, "\n", ls, " = ", sprint(show, l),
                           "\n", rs, " = ", sprint(show, r))
@@ -83,11 +82,11 @@ macro ensure(condition, msg = string(condition))
         return esc(quote
             if ! $condition
                 # FIXME double-execution of condition l and r!
-                throw(postcondition_error($msg, backtrace()[1],
+                throw(postcondition_error($msg, backtrace(),
                                           $ls, $l, $rs, $r))
             end
         end)
     end
 
-    esc(:(if ! $condition throw(postcondition_error($msg, backtrace()[1])) end))
+    esc(:(if ! $condition throw(postcondition_error($msg, backtrace())) end))
 end
