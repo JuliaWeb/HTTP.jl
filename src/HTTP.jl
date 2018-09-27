@@ -23,6 +23,8 @@ include("multipart.jl")
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,
                                                          ParseError
 include("ConnectionPool.jl")
+include("LazyStrings.jl")
+include("LazyHTTP.jl")
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams

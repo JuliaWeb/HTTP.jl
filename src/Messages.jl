@@ -76,6 +76,10 @@ using ..Parsers
 import ..@require, ..precondition_error
 import ..bytes
 
+const LAZY_HTTP_VALIDATE = true
+import ..LazyHTTP.RequestHeader
+import ..LazyHTTP.ResponseHeader
+
 include("ascii.jl")
 
 const unknown_length = typemax(Int)
@@ -365,7 +369,7 @@ delimiter](https://stackoverflow.com/a/24502264)
 `Set-Cookie` headers are not comma-combined because [cookies often contain
 internal commas](https://tools.ietf.org/html/rfc6265#section-3).
 """
-function appendheader(m::Message, header::Header)
+function appendheader(m::Message, header)
     c = m.headers
     k,v = header
     if k != "Set-Cookie" && length(c) > 0 && k == c[end][1]
@@ -464,14 +468,30 @@ Throw `EOFError` if input is incomplete.
 """
 function readheaders(io::IO, message::Message)
     bytes = String(readuntil(io, find_end_of_header))
-    bytes = parse_start_line!(bytes, message)
-    parse_header_fields!(bytes, message)
+    h = parse_lazy(bytes, message)
+    if LAZY_HTTP_VALIDATE && !isvalid(h, obs=true)
+        throw(ParseError(:INVALID_HTTP_HEADER))
+    end
+    for f in h
+        appendheader(message, f)
+    end
     return
 end
 
-parse_start_line!(bytes, r::Response) = parse_status_line!(bytes, r)
+function parse_lazy(bytes, r::Response)
+    h = ResponseHeader(bytes)
+    r.status = h.status
+    r.version = h.version
+    return h
+end
 
-parse_start_line!(bytes, r::Request) = parse_request_line!(bytes, r)
+function parse_lazy(bytes, r::Request)
+    h = RequestHeader(bytes)
+    r.method = h.method
+    r.target = h.target
+    r.version = h.version
+    return h
+end
 
 function parse_header_fields!(bytes::SubString{String}, m::Message)
 
