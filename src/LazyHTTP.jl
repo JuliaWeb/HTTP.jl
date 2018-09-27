@@ -4,7 +4,7 @@ of HTTP headers.
 
 `RequestHeader` has properties: `method`, `target` and `version.
 `ResponseHeader` has properties: `version` and `status`.
-Both types implement the `AbstractDict` interface for accessing header fields.
+Both types have an `AbstractDict`-like interface for accessing header fields.
 
 e.g.
 ```
@@ -27,11 +27,31 @@ Lazy parsing means that a malformed headers may go unnoticed (i.e. the malformed
 part of the header might not be visited during lazy parsing). The `isvalid`
 function can be used to check the whole header for compliance with the RFC7230
 grammar.
+
+This parser does not attempt to comma-combine values when multiple fields have
+then same name. This behaviour is not required by RFC7230 and is incompatible
+with the `Set-Cookie` header.
+
+[RFC7230 3.2.2](https://tools.ietf.org/html/rfc7230#section-3.2.2) says:
+"A recipient MAY combine multiple header fields with the same field
+name .. by appending each .. value... separated by a comma."
+
+[RFC6265 3](https://tools.ietf.org/html/rfc6265#section-3) says
+"... folding HTTP headers fields might change the semantics of
+the Set-Cookie header field because the %x2C (",") character is used
+by Set-Cookie in a way that conflicts with such folding."
 """
 module LazyHTTP
 
+import ..@require, ..precondition_error
+import ..@ensure, ..postcondition_error
 
-const ENABLE_FOLDING = false
+using ..LazyStrings
+import ..LazyStrings: LazyASCII,
+                      getc, next_ic, findstart, isskip, isend
+
+
+const ENABLE_OBS_FOLD = true
 
 
 """
@@ -53,18 +73,12 @@ end
 ==(i::T, c::Char) where T <: Integer = Base.isequal(i, T(c))
 
 
-include("debug.jl") # FIXME
 
 
-include("LazyString.jl")
-using .LazyStrings
-import .LazyStrings: getc, next_ic, findstart, isskip, replace, isend
-
-
-abstract type Header <: AbstractDict{AbstractString,AbstractString} end
+abstract type Header #= <: AbstractDict{AbstractString,AbstractString} =# end
 
 const REQUEST_LENGTH_MIN = ncodeunits("GET / HTTP/1.1\n\n")
-const RESPONSE_LENGTH_MIN = ncodeunits("HTTP/1.1 200 OK\n\n")
+const RESPONSE_LENGTH_MIN = ncodeunits("HTTP/1.1 200\n\n")
 
 struct ResponseHeader{T <: AbstractString} <: Header
     s::T
@@ -87,8 +101,16 @@ struct RequestHeader{T <: AbstractString} <: Header
 end
 
 
-Base.show(io::IO, h::Header) = print(io, h.s)
-Base.show(io::IO, ::MIME"text/plain", h::Header) = print(io, h.s)
+Base.show(io::IO, h::Header) = _show(io, h)
+Base.show(io::IO, ::MIME"text/plain", h::Header) = _show(io, h)
+
+function _show(io, h)
+    println(io, "$(typeof(h).name)(\"\"\"")
+    for l in split(h.s, "\n")[1:end-1]
+        println(io, "    ", escape_string(l))
+    end
+    println(io, "    \"\"\")")
+end
 
 
 abstract type HTTPString <: LazyASCII end
@@ -160,9 +182,8 @@ starting at index `i` in String `s`.
 """
 function token_end(s, i, c = getc(s,i))
     while c != ' ' && c != '\n'         # Check for '\n' prevents reading past
-        i += 1                          # end of malformed buffer.
-        c = getc(s, i)                  # See @require ends_with_crlf(s) above.
-    end
+        i, c = next_ic(s, i)            # end of malformed buffer.
+    end                                 # See @require ends_with_crlf(s) above.
     return i - 1
 end
 
@@ -196,18 +217,22 @@ isend(s::FieldName, i, c) = c == ':' || # Check for '\n' prevents reading past
 Find index and first character of `field-value` in `s`
 starting at index `s.i`, which points to the `field-name`.
 """
-findstart(s::FieldValue) = skip_token(s.s, s.i)
+function findstart(s::FieldValue)
+    i, c = next_ic(s.s, s.i)
+    while c != ':' && c != '\n'
+        i, c = next_ic(s.s, i)
+    end
+    i, c = skip_ows(s.s, i + 1)
+    return i
+end
 
 
-if ENABLE_FOLDING
+if ENABLE_OBS_FOLD
 """
 Skip over `obs-fold` in `field-value`.
 https://tools.ietf.org/html/rfc7230#section-3.2.4
 """
-function isskip(s::FieldValue, i, c)
-    i, c = skip_ows(s.s, i, c)
-    return c == '\r' || c == '\n'
-end
+isskip(s::FieldValue, i, c) = c == '\r' || c == '\n'
 end
 
 
@@ -218,34 +243,25 @@ i.e. Last non `OWS` character before `CRLF` (unless `CRLF` is an `obs-fold`).
 https://tools.ietf.org/html/rfc7230#section-3.2.4
 """
 function isend(s::FieldValue, i, c)
+#@show :isend, i, Char(c)
+    if getc(s.s, i-1) == '\n'
+        return false
+    end
     i, c = skip_ows(s.s, i, c)
     if iscrlf(c)
         if c == '\r'
             i, c = next_ic(s.s, i)
         end
         i, c = next_ic(s.s, i)
-        if ENABLE_FOLDING
-            if !isows(c) && !should_comma_combine(s.s, s.i, i)
-                return true
-            end
-        else
-            if isows(c)
+        if isows(c)
+            if !ENABLE_OBS_FOLD
                 throw(ParseError(:RFC7230_3_2_4_OBS_FOLD, SubString(s.s, i)))
             end
+        else    
             return true
         end
     end
     return false
-end
-
-if ENABLE_FOLDING
-function replace(s::FieldValue, i, c)
-    if getc(s.s, i-1) == '\n' && !isows(c)
-        j = skip_token(s.s, i)
-        return UInt8(','), max(j - 2 - i, 0)
-    end
-    return c, 0
-end
 end
 
 
@@ -402,7 +418,7 @@ function iterate_fields(s, i::Int)::Int
 
     # https://tools.ietf.org/html/rfc7230#section-3.2.4
     # obs-fold = CRLF 1*( SP / HTAB )
-    if isows(c) || (ENABLE_FOLDING && should_comma_combine(s, i, old_i))
+    if isows(c)
         @goto top
     end
 
@@ -440,7 +456,7 @@ function field_isequal_string(f, fi, s, si)
     if si > slast
         return 0
     end
-    while (fc = getc(f, fi)) != ':' && fc != '\n'
+    while (fc = getc(f, fi)) != ':' && fc != '\n' &&
           ascii_lc(fc) == ascii_lc(getc(s, si))
         fi += 1
         si += 1
@@ -485,6 +501,7 @@ Base.get(s::Header, key, default=nothing) = _get(s, key, default)
 function _get(s::Header, key, default)
     for i in indicies(s)
         n = field_isequal_string(s.s, i, key, 1)
+        #@show n, i, key
         if n > 0
             #return FieldValue(s.s, n) #FIXME
             return FieldValue(s.s, i) #FIXME
@@ -512,171 +529,3 @@ Base.length(h::Header) = count(x->true, indicies(h))
 include("isvalid.jl")
 
 end #module
-
-#=
-
-import .LazyHTTP.FieldName
-import .LazyHTTP.Header
-import .LazyHTTP.RequestHeader
-import .LazyHTTP.ResponseHeader
-import .LazyHTTP.status
-import .LazyHTTP.version
-import .LazyHTTP.method
-import .LazyHTTP.target
-import .LazyHTTP.isend
-import .LazyHTTP.version_is_1_1
-import .LazyHTTP.test_lazy_ascii
-import .LazyHTTP.field_isequal_string
-import .LazyHTTP.field_isequal_field
-
-using HTTP
-
-using Test
-
-test_lazy_ascii()
-
-for l in ["Foo-12", "FOO-12", "foo-12"],
-    r =  ["Foo-12", "FOO-12", "foo-12"]
-
-    for (c, i) in [(":", 7), ("\n", 0), ("", 0)]
-        @test field_isequal_string("$l$c", 1, "$r", 1) == i
-        @test field_isequal_string("$l$c", 1, SubString("$r"), 1) == i
-        @test field_isequal_string("$l$c", 1, SubString(" $r ", 2, 7), 1) == i
-        @test field_isequal_string("$l$c", 1, " $r", 2) == i
-
-        @test field_isequal_field("$l$c", 1, "$r$c", 1) == i
-        @test field_isequal_field("$l$c xxx", 1, "$r$c xxx", 1) == i
-        @test field_isequal_field("$l$c xxx", 1, "$r$c yyy", 1) == i
-    end
-
-    @test field_isequal_string("$l:", 1, "$r:", 1) == 0
-    @test field_isequal_string("$l:", 1, " $r:", 2) == 0
-    @test field_isequal_string("$l:", 1, " $r ", 2) == 0
-    @test field_isequal_string("$l:", 1, SubString("$r", 1, 5), 1) == 0
-
-    @test field_isequal_string("$l\n:", 1, "$r\n", 1) == 0
-
-    @test field_isequal_string("$l:a", 1, "$r:a", 1) == 0
-
-    @test field_isequal_field("$l\n", 1, "$r\n", 1) == 0
-    @test field_isequal_field("$l", 1, "$r", 1) == 0
-    @test field_isequal_field("$l:", 1, "$r", 1) == 0
-    @test field_isequal_field("$l", 1, "$r:", 1) == 0
-    @test field_isequal_field("$l: xxx", 1, "$r: yyy", 2) == 0
-    @test field_isequal_field("$l: xxx", 2, "$r: yyy", 1) == 0
-end
-
-
-s = "HTTP/1.1 200 OK\r\n" *
-    "Foo: \t Bar Bar\t  \r\n" *
-    "X: Y  \r\n" *
-    "X:  Z \r\n" *
-    "XX: Y  \r\n" *
-    "XX:  Z \r\n" *
-    "Field: Value\n folded \r\n more fold\n" *
-    "Blah: x\x84x" *
-    "\r\n" *
-    "\r\n"
-
-h = ResponseHeader(s)
-
-@test (@allocated h = ResponseHeader(s)) <= 32
-
-@test h.status == 200
-@test (@allocated h.status) == 0
-@test h.version == v"1.1"
-@test (@allocated h.version) <= 48
-
-@test h["X"] == (LazyHTTP.ENABLE_FOLDING ? "Y, Z" : "Y")
-@test h["XX"] == (LazyHTTP.ENABLE_FOLDING ? "Y, Z" : "Y")
-
-if LazyHTTP.ENABLE_FOLDING
-@test collect(keys(h)) == ["Foo", "X", "XX", "Field", "Blah"]
-@test collect(h) == ["Foo" => "Bar Bar",
-                     "X" => "Y, Z",
-                     "XX" => "Y, Z",
-                     "Field" => "Value folded more fold",
-                     "Blah" => "x\x84x"]
-else
-@test collect(keys(h)) == ["Foo", "X", "X", "XX", "XX", "Field", "Blah"]
-@test h["Field"] != "Foo"
-@test h["Field"] != "Valu"
-@test_throws LazyHTTP.ParseError h["Field"] == "Value"
-@test_throws LazyHTTP.ParseError h["Field"] == "Value folded more fold"
-@test [n => h[n] for n in filter(x->x != "Field", collect(keys(h)))] ==
-    ["Foo" => "Bar Bar",
-     "X" => "Y",
-     "X" => "Z",
-     "XX" => "Y",
-     "XX" => "Z",
-     "Blah" => "x\x84x"]
-end
-
-@test (@allocated keys(h)) <= 16
-@test iterate(keys(h)) == ("Foo", 18)
-@test (@allocated iterate(keys(h))) <= 80
-
-@test SubString(h["Foo"]).string == s
-@test SubString(h["Blah"]).string == s
-if LazyHTTP.ENABLE_FOLDING
-@test SubString(h["X"]).string != s
-@test SubString(h["Field"]).string != s
-end
-
-@test (@allocated SubString(h["Blah"])) <= 64
-
-@test all(n->SubString(n).string == s, keys(h))
-
-@test haskey(h, "Foo")
-@test haskey(h, "FOO")
-@test haskey(h, "foO")
-@test (@allocated haskey(h, "Foo")) == 0
-@test (@allocated haskey(h, "XXx")) == 0
-
-if LazyHTTP.ENABLE_FOLDING
-@test [h[n] for n in keys(h)] == ["Bar Bar",
-                                  "Y, Z",
-                                  "Y, Z",
-                                  "Value folded more fold",
-                                  "x\x84x"]
-
-@test [h[n] for n in keys(h)] == [x for x in values(h)]
-@test [h[n] for n in keys(h)] == [String(x) for x in values(h)]
-@test [h[n] for n in keys(h)] == [SubString(x) for x in values(h)]
-else
-@test [h[n] for n in filter(x->x != "Field", collect(keys(h)))] == ["Bar Bar",
-                                  "Y",
-                                  "Z",
-                                  "Y",
-                                  "Z",
-                                  "x\x84x"]
-end
-
-
-
-s = "GET /foobar HTTP/1.1\r\n" *
-    "Foo: \t Bar Bar\t  \r\n" *
-    "X: Y  \r\n" *
-    "Field: Value\n folded \r\n more fold\n" *
-    "Blah: x\x84x" *
-    "\r\n" *
-    "\r\n"
-
-@test !isvalid(RequestHeader(s))
-@test isvalid(RequestHeader(s); obs=true)
-
-@test method(RequestHeader(s)) == "GET"
-@test target(RequestHeader(s)) == "/foobar"
-@test version(RequestHeader(s)) == v"1.1"
-
-@test RequestHeader(s).method == "GET"
-@test RequestHeader(s).target == "/foobar"
-@test RequestHeader(s).version == v"1.1"
-@test version_is_1_1(RequestHeader(s))
-
-
-h = RequestHeader(s)
-@test h.method == "GET"
-@test (@allocated h.method) <= 32
-
-=#

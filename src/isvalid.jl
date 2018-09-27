@@ -2,7 +2,7 @@
 https://tools.ietf.org/html/rfc7230#section-3.1.1
 request-line = method SP request-target SP HTTP-version CRLF
 """
-const request_line_regex = r"""
+const request_line_regex = r"""^
     (?: \r? \n) ?                       #    ignore leading blank line
     [!#$%&'*+\-.^_`|~[:alnum:]]+ [ ]+   # 1. method = token (RFC7230 3.2.6)
     [^.][^ \r\n]* [ ]+                  # 2. target
@@ -17,7 +17,7 @@ status-line = HTTP-version SP status-code SP reason-phrase CRLF
 See:
 [#190](https://github.com/JuliaWeb/HTTP.jl/issues/190#issuecomment-363314009)
 """
-const status_line_regex = r"""
+const status_line_regex = r"""^
     [ ]?                                # Issue #190
     HTTP/\d\.\d [ ]+                    # 1. version
     \d\d\d .*                           # 2. status
@@ -55,19 +55,19 @@ const obs_fold_header_fields_regex = r"""
 
 const request_header_regex = Regex(request_line_regex.pattern *
                                    header_fields_regex.pattern *
-                                   r"\r? \n".pattern, "x")
+                                   r"\r? \n$".pattern, "x")
 
 const obs_request_header_regex = Regex(request_line_regex.pattern *
                                        obs_fold_header_fields_regex.pattern *
-                                       r"\r? \n".pattern, "x")
+                                       r"\r? \n$".pattern, "x")
 
 const response_header_regex = Regex(status_line_regex.pattern *
                                     header_fields_regex.pattern *
-                                    r"\r? \n".pattern, "x")
+                                    r"\r? \n$".pattern, "x")
 
 const obs_response_header_regex = Regex(status_line_regex.pattern *
                                         obs_fold_header_fields_regex.pattern *
-                                        r"\r? \n".pattern, "x")
+                                        r"\r? \n$".pattern, "x")
 
 Base.isvalid(h::RequestHeader; obs=false) =
     occursin(obs ? obs_request_header_regex : request_header_regex, h.s)
