@@ -77,6 +77,17 @@ Base.codeunit(s::LazyString, i::Integer) = codeunit(s.s, s.i + i -1)
 
 Base.ncodeunits(s::LazyString) = ncodeunits(s.s) + 1 - s.i
 
+function Base.length(s::LazyString)
+
+    if WARN_FULL_ITERATION_OF_LAZY_STRING
+        @warn "Full iteration of LazyString " *
+              "length(::$(typeof(s)))!" stacktrace()
+    end
+
+    first, last, n = scan_string(s)
+    return n
+end
+
 Base.isvalid(s::LazyString, i::Integer) = isvalid(s.s, s.i + i - 1)
 
 
@@ -134,14 +145,14 @@ abstract type LazyASCII <: LazyString end
 """
 Does character `c` at index `i` mark the end of the sub-string?
 """
-isend(s::LazyASCII, i) = isend(s, i, getc(s.s, s.i + i - 1))
+isend(s::LazyASCII, i) = isend(s, i, getc(s.s, i))
 isend(::LazyASCII, i, c) = false
 
 
 """
 Should character `c` at index `i` be ignored?
 """
-isskip(s::LazyASCII, i) = isskip(s, i, getc(s.s, s.i + i - 1))
+isskip(s::LazyASCII, i) = isskip(s, i, getc(s.s, i))
 isskip(::LazyASCII, i, c) = false
 
 
@@ -196,26 +207,21 @@ Base.iterate(s::LazyASCII, i::Int = 1) = _iterate(ascii_char, s, i)
 
 function _iterate(character, s::LazyASCII, i)
     ss = s.s
-    si = i == 1 ? findstart(s) : s.i + i - 1
-    if si > ncodeunits(ss)
+    i = i == 1 ? findstart(s) : s.i + i - 1
+    if i > ncodeunits(ss)
         return nothing
     end
-    c = getc(ss, si)
-    if isend(s, si, c)
+    c = getc(ss, i)
+    if isend(s, i, c)
         return nothing
     end
-    if isskip(s, si, c)
-        while true
-            si, c = next_ic(ss, si)
-            if isend(s, si, c)
-                return nothing
-            end
-            if !isskip(s, si, c)
-                break
-            end
+    while isskip(s, i, c)
+        i, c = next_ic(ss, i)
+        if isend(s, i, c)
+            return nothing
         end
     end
-    return character(c), si + 2 - s.i
+    return character(c), i + 2 - s.i
 end
 
 
@@ -234,36 +240,23 @@ function Base.isvalid(s::LazyASCII, i::Integer)
     if i == 1
         return true
     end
-    si = s.i + i - 1
-    if si < findstart(s) || isend(s, i) || isskip(s, i)
+    i = s.i + i - 1
+    if i <= findstart(s) || isend(s, i) || isskip(s, i-1)
         return false
     end
-    return isvalid(s.s, si)
-end
-
-
-function Base.thisind(s::LazyASCII, i::Int)
-    if i > 1 && isend(s, i)
-        return i
-    end
-    z = ncodeunits(s) + 1
-    @boundscheck 0 ≤ i ≤ z || throw(BoundsError(s, i))
-    @inbounds while 1 < i && !isvalid(s, i)
-        i -= 1
-    end
-    return i
+    return isvalid(s.s, i)
 end
 
 
 function Base.nextind(s::LazyASCII, i::Int, n::Int)
     n < 0 && throw(ArgumentError("n cannot be negative: $n"))
-    if isend(s, i)
-        throw(BoundsError(s, i))
-    end
     z = ncodeunits(s)
     @boundscheck 0 ≤ i ≤ z || throw(BoundsError(s, i))
     n == 0 && return thisind(s, i) == i ? i : string_index_err(s, i)
-    while n > 0 && !isend(s, i + 1)
+    while n > 0
+        if isend(s, s.i + i)
+            return z + 1
+        end
         @inbounds n -= isvalid(s, i += 1)
     end
     return i + n

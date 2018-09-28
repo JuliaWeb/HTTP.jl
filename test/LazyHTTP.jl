@@ -51,17 +51,17 @@ end
 s = "GET / HTP/1.1\r\n\r\n"
 h = RequestHeader(s)
 
-@show h.method
-@show h.target
-@show h.version
+@test h.method == "GET"
+@test h.target == "/"
+@test_throws LazyHTTP.ParseError h.version
 
 s = "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n"
 
 h = RequestHeader(s)
 
-@show h.method
-@show h.target
-@show h.version
+@test h.method == "SOMEMETHOD"
+@test h.target == "HTTP/1.1"
+@test_throws LazyHTTP.ParseError h.version
 
 s = "HTTP/1.1 200\r\n" *
     "A: \r\n" *
@@ -100,6 +100,15 @@ h = ResponseHeader(s)
 @test (@allocated h.status) == 0
 @test h.version == v"1.1"
 @test (@allocated h.version) <= 48
+
+f = h["Foo"]
+ff = "Bar Bar"
+@test h["Foo"] == ff
+@test count(x->true, keys(f)) == length(keys(ff))
+for (c, k, kk)  in zip(f, keys(f), keys(ff))
+    @test c == f[k]
+    @test f[k] == ff[kk]
+end
 
 @test h["X"] == "Y"
 @test collect(ifilter(p -> p.first == "X", h)) == ["X" => "Y", "X" => "Z"]

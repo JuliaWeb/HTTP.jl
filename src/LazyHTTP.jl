@@ -135,6 +135,8 @@ header-field = field-name ":" OWS field-value OWS CRLF
 """
 isows(c)  = c == ' '  || c == '\t'
 iscrlf(c) = c == '\r' || c == '\n'
+isws(c) = isows(c) || iscrlf(c)
+isdecimal(c) = c in UInt8('0'):UInt8('9')
 
 
 """
@@ -181,7 +183,7 @@ Find index of last character of space-delimited token
 starting at index `i` in String `s`.
 """
 function token_end(s, i, c = getc(s,i))
-    while c != ' ' && c != '\n'         # Check for '\n' prevents reading past
+    while !isws(c)                      # Check for '\n' prevents reading past
         i, c = next_ic(s, i)            # end of malformed buffer.
     end                                 # See @require ends_with_crlf(s) above.
     return i - 1
@@ -257,7 +259,7 @@ function isend(s::FieldValue, i, c)
             if !ENABLE_OBS_FOLD
                 throw(ParseError(:RFC7230_3_2_4_OBS_FOLD, SubString(s.s, i)))
             end
-        else    
+        else
             return true
         end
     end
@@ -298,9 +300,11 @@ Response status.
 [RFC7230 3.1.2](https://tools.ietf.org/html/rfc7230#section-3.1.2)
 [RFC7231 6](https://tools.ietf.org/html/rfc7231#section-6)
 `status-line = HTTP-version SP status-code SP reason-phrase CRLF`
+See:
+[#190](https://github.com/JuliaWeb/HTTP.jl/issues/190#issuecomment-363314009)
 """
 function status(s::ResponseHeader)
-    i = getc(s.s, 1) == 'c' ? 11 : 10
+    i = getc(s.s, 1) == ' ' ? 11 : 10 # Issue #190
     i, c = skip_ows(s.s, i)
     return (   c             - UInt8('0')) * 100 +
            (getc(s.s, i + 1) - UInt8('0')) *  10 +
@@ -321,17 +325,27 @@ end
 
 """
 `status-line = HTTP-version SP status-code SP reason-phrase CRLF`
+See:
+[#190](https://github.com/JuliaWeb/HTTP.jl/issues/190#issuecomment-363314009)
 """
-versioni(s::ResponseHeader) = getc(s.s, 1) == 'c' ? 7 : 6
+versioni(s::ResponseHeader) = getc(s.s, 1) == ' ' ? 7 : 6 # Issue #190
 
 
 """
 Does the `Header` have version `HTTP/1.1`?
 """
 function version(s::Header)
-    i = versioni(s)
-    return VersionNumber(getc(s.s, i    ) - UInt8('0'),
-                         getc(s.s, i + 2) - UInt8('0'))
+
+    i = versioni(s) - 2
+    i, slash = next_ic(s.s, i)
+    i, major = next_ic(s.s, i)
+    i, dot   = next_ic(s.s, i)
+    i, minor = next_ic(s.s, i)
+
+    if slash != '/' || !isdecimal(major) || dot != '.' || !isdecimal(minor)
+        throw(ParseError(:INVALID_HTTP_VERSION, SubString(s.s, 1, i + 2)))
+    end
+    return VersionNumber(major - UInt8('0'), minor - UInt8('0'))
 end
 
 
