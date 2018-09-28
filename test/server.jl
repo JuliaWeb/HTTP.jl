@@ -88,16 +88,16 @@ sleep(0.1)
 
 # invalid HTTP
 tcp = Sockets.connect(ip"127.0.0.1", port)
-sleep(0.1)
 write(tcp, "GET / HTP/1.1\r\n\r\n")
-@test occursin(r"HTTP/1.1 400 Bad Request", String(read(tcp)))
+sleep(0.1)
+@test occursin(r"HTTP/1.1 400 Bad Request", String(readavailable(tcp)))
 
 
 # no URL
 tcp = Sockets.connect(ip"127.0.0.1", port)
 write(tcp, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
 sleep(0.1)
-r = String(read(tcp))
+r = String(readavailable(tcp))
 @test occursin(r"HTTP/1.1 400 Bad Request", r)
 
 
