@@ -73,9 +73,9 @@ Base.IteratorSize(::Type{T}) where T <: LazyString = Base.SizeUnknown()
 
 Base.codeunit(s::LazyString) = codeunit(s.s)
 
-Base.codeunit(s::LazyString, i::Integer) = codeunit(s.s, s.i + i -1)
+Base.codeunit(s::LazyString, i::Integer) = codeunit(s.s, i)
 
-Base.ncodeunits(s::LazyString) = ncodeunits(s.s) + 1 - s.i
+Base.ncodeunits(s::LazyString) = ncodeunits(s.s)
 
 function Base.length(s::LazyString)
 
@@ -88,7 +88,7 @@ function Base.length(s::LazyString)
     return n
 end
 
-Base.isvalid(s::LazyString, i::Integer) = isvalid(s.s, s.i + i - 1)
+Base.isvalid(s::LazyString, i::Integer) = isvalid(s.s, i)
 
 
 function Base.lastindex(s::LazyString)
@@ -103,16 +103,13 @@ function Base.lastindex(s::LazyString)
 end
 
 
-function Base.iterate(s::LazyString, i::Int = 1)
-    next = iterate(s.s, s.i + i - 1)
+function Base.iterate(s::LazyString, i::Int = s.i)
+    next = iterate(s.s, i)
     if next == nothing
         return nothing
     end
     c, i = next
-    if isend(s, i, c)
-        return nothing
-    end
-    return c, i + 1 - s.i
+    return isend(s, i, c) ? nothing : next
 end
 
 
@@ -203,12 +200,14 @@ Convert ASCII byte `c` to `Char`.
 """
 ascii_char(c::UInt8) = reinterpret(Char, (c % UInt32) << 24)
 
-Base.iterate(s::LazyASCII, i::Int = 1) = _iterate(ascii_char, s, i)
+Base.iterate(s::LazyASCII, i::Int = s.i) = _iterate(ascii_char, s, i)
 
 function _iterate(character, s::LazyASCII, i)
     ss = s.s
-    i = i == 1 ? findstart(s) : s.i + i - 1
-    if i > ncodeunits(ss)
+    if i <= s.i
+        i = findstart(s)
+    end
+    if i > ncodeunits(s)
         return nothing
     end
     c = getc(ss, i)
@@ -221,7 +220,7 @@ function _iterate(character, s::LazyASCII, i)
             return nothing
         end
     end
-    return character(c), i + 2 - s.i
+    return character(c), i + 1
 end
 
 
@@ -233,14 +232,13 @@ end
 
 Base.IteratorSize(::Type{T}) where T <: LazyASCIICodeUnits = Base.SizeUnknown()
 
-Base.iterate(s::LazyASCIICodeUnits, i::Integer = 1) = _iterate(identity, s.s, i)
+Base.iterate(s::LazyASCIICodeUnits, i::Integer = s.s.i) = _iterate(identity, s.s, i)
 
 
 function Base.isvalid(s::LazyASCII, i::Integer)
     if i == 1
         return true
     end
-    i = s.i + i - 1
     if i <= findstart(s) || isend(s, i) || isskip(s, i-1)
         return false
     end
@@ -250,11 +248,17 @@ end
 
 function Base.nextind(s::LazyASCII, i::Int, n::Int)
     n < 0 && throw(ArgumentError("n cannot be negative: $n"))
+    if i == 0
+        return 1
+    end
+    if i <= s.i
+        i = findstart(s)
+    end
     z = ncodeunits(s)
     @boundscheck 0 ≤ i ≤ z || throw(BoundsError(s, i))
     n == 0 && return thisind(s, i) == i ? i : string_index_err(s, i)
     while n > 0
-        if isend(s, s.i + i)
+        if isend(s, i)
             return z + 1
         end
         @inbounds n -= isvalid(s, i += 1)

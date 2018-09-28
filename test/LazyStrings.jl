@@ -51,7 +51,6 @@ LazyStrings.isend(::TestLazyASCIIC, i, c) = c == UInt8('\n')
 
 @test TestLazy(" Foo\n ", 2) == "Foo"
 
-
 for pada in [0, 1, 7, 1234], padb in [0, 1, 7, 1234]
     s = "Foo"
     pads = repeat(" ", pada) * s * "\n" * repeat(" ", padb)
@@ -62,6 +61,7 @@ for pada in [0, 1, 7, 1234], padb in [0, 1, 7, 1234]
         @test x == String(x)
         @test x == SubString(x)
 
+        if pada == 0
         @test map(i->isvalid(x, i), 0:4) == [false, true, true, true, false]
         @test map(i->thisind(x, i), 0:3) == [0, 1, 2, 3]
         @test map(i->prevind(x, i), 1:4) ==    [0, 1, 2, 3]
@@ -71,6 +71,7 @@ for pada in [0, 1, 7, 1234], padb in [0, 1, 7, 1234]
                                              ('o', 3),
                                              ('o', 4),
                                              nothing]
+        end
 
         @test_throws BoundsError prevind(x, 0)
         @test_throws BoundsError nextind(x, ncodeunits(x)+1)
@@ -87,6 +88,7 @@ for pada in [0, 1, 7, 1234], padb in [0, 1, 7, 1234]
         @test x == String(x)
         @test x == SubString(x)
 
+        if pada == 0
         index_valid(x) = i->(isvalid(x, i) ? 1 : 0)
                                           #     F  u  _  m
                                           #  0  1  2  3  4  5
@@ -102,6 +104,7 @@ for pada in [0, 1, 7, 1234], padb in [0, 1, 7, 1234]
                                              ('m', 5),
                                              ('m', 5),
                                              nothing]
+        end
 
         @test_throws BoundsError prevind(x, 0)
         @test_throws BoundsError nextind(x, ncodeunits(x) + 1)
@@ -118,6 +121,7 @@ for pada in [0, 1, 7, 1234], padb in [0, 1, 7, 1234]
         @test x == String(x)
         @test x == SubString(x)
 
+        if pada == 0
         index_valid(x) = i->(isvalid(x, i) ? 1 : 0)
         index_isend(x) = i->(LazyStrings.isend(x, x.i + i - 1) ? 1 : 0)
                                           #     F  u  _  m  _
@@ -134,6 +138,7 @@ for pada in [0, 1, 7, 1234], padb in [0, 1, 7, 1234]
                                              ('m', 5),
                                              nothing,
                                              nothing]
+        end
 
         @test_throws BoundsError prevind(x, 0)
         @test_throws BoundsError nextind(x, ncodeunits(x) + 1)
@@ -150,6 +155,7 @@ for pada in [0, 1, 7, 1234], padb in [0, 1, 7, 1234]
         @test x == String(x)
         @test x == SubString(x)
 
+        if pada == 0
         index_valid(x) = i->(isvalid(x, i) ? 1 : 0)
         index_isend(x) = i->(LazyStrings.isend(x, x.i + i - 1) ? 1 : 0)
                                           #    ' ' u  _  m  _
@@ -166,6 +172,7 @@ for pada in [0, 1, 7, 1234], padb in [0, 1, 7, 1234]
                                              ('m', 5),
                                              nothing,
                                              nothing]
+        end
 
         @test_throws BoundsError prevind(x, 0)
         @test_throws BoundsError nextind(x, ncodeunits(x) + 1)
