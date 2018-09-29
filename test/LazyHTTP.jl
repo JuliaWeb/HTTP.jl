@@ -51,6 +51,15 @@ end
 s = "GET / HTP/1.1\r\n\r\n"
 h = RequestHeader(s)
 
+@test eltype(LazyHTTP.indicies(h)) == Int
+@test eltype(keys(h)) == LazyHTTP.FieldName{String}
+@test eltype(values(h)) == LazyHTTP.FieldValue{String}
+@test eltype(h) == Pair{LazyHTTP.FieldName{String},
+                        LazyHTTP.FieldValue{String}}
+
+@test Base.IteratorSize(LazyHTTP.indicies(h)) == Base.SizeUnknown()
+@test Base.IteratorSize(h) == Base.SizeUnknown()
+
 @test h.method == "GET"
 @test h.target == "/"
 @test_throws LazyHTTP.ParseError h.version
@@ -75,6 +84,12 @@ s = "HTTP/1.1 200\r\n" *
     "\r\n"
 
 h = ResponseHeader(s)
+
+@test eltype(LazyHTTP.indicies(h)) == Int
+@test eltype(keys(h)) == LazyHTTP.FieldName{String}
+@test eltype(values(h)) == LazyHTTP.FieldValue{String}
+@test eltype(h) == Pair{LazyHTTP.FieldName{String},
+                        LazyHTTP.FieldValue{String}}
 
 @test h["A"] == " "
 @test h["B"] == "B"
