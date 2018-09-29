@@ -1,32 +1,71 @@
 """
+*LazyHTTP*
+
 This module defines `RequestHeader` and `ResponseHeader` types for lazy parsing
 of HTTP headers.
 
-`RequestHeader` has properties: `method`, `target` and `version.
+`RequestHeader` has properties: `method`, `target` and `version`.
+
 `ResponseHeader` has properties: `version` and `status`.
+
 Both types have an `AbstractDict`-like interface for accessing header fields.
 
 e.g.
 ```
-h = RequestHeader(
-    "POST / HTTP/1.1\r\n" *
-    "Content-Type: foo\r\n" *
-    "Content-Length: 7\r\n" *
-    "\r\n")
+julia> s = "POST / HTTP/1.1\\r\\n" *
+           "Content-Type: foo\\r\\n" *
+           "Content-Length: 7\\r\\n" *
+           "Tag: FOO\\r\\n" *
+           "Tag: BAR\\r\\n" *
+           "\\r\\n"
 
-h.method == "POST"
-h.target == "/"
-h["Content-Type"] == "foo"
-h["Content-Length"] == "7"
+julia> h = LazyHTTP.RequestHeader(s)
+
+julia> h.method
+"POST"
+
+julia> h.target
+"/"
+
+julia> h["Content-Type"]
+"foo"
+
+julia> h["Content-Length"]
+"7"
+
+julia> h["Tag"]
+"FOO"
+
+julia> collect(h)
+4-element Array{Any,1}:
+   "Content-Type" => "foo"
+ "Content-Length" => "7"
+            "Tag" => "FOO"
+            "Tag" => "BAR"
+
+julia> map(i->h[i], Iterators.filter(isequal("Tag"), keys(h)))
+2-element Array{HTTP.LazyHTTP.FieldValue{String},1}:
+ "FOO"
+ "BAR"
 ```
+
+
+*Lazy Parsing*
 
 The implementation simply stores a reference to the input string.
 Parsing is deferred until the properties or header fields are accessed.
+
+The value objects returned by the parser are also lazy. They store a reference
+to the input string and the start index of the value. Parsing of the value
+content is deferred until needed by the `AbstractString` interface.
 
 Lazy parsing means that a malformed headers may go unnoticed (i.e. the malformed
 part of the header might not be visited during lazy parsing). The `isvalid`
 function can be used to check the whole header for compliance with the RFC7230
 grammar.
+
+
+*Repeated `field-name`s*
 
 This parser does not attempt to comma-combine values when multiple fields have
 then same name. This behaviour is not required by RFC7230 and is incompatible
@@ -40,6 +79,69 @@ name .. by appending each .. value... separated by a comma."
 "... folding HTTP headers fields might change the semantics of
 the Set-Cookie header field because the %x2C (",") character is used
 by Set-Cookie in a way that conflicts with such folding."
+
+
+*Implementation*
+
+The `FieldName` and `FieldValue` structs store:
+ - a reference to the underlying HTTP Header `String`
+ - the start index of the `field-name` or `field-value`.
+
+(`header-field = field-name ":" OWS field-value OWS CRLF`)
+
+When a `field-name` is accessed via the `AbstractString` iteration
+interface the parser begins at the start index stops at the ":".
+For `field-value` the parser skips over whitespace after the ":"
+and stops at whitespace at the end of the line.
+
+              ┌▶"GET / HTTP/1.1\\r\\n" *
+              │ "Content-Type: text/plain\\r\\r\\r\\n"
+              │  ▲          ▲
+              │  │          │
+    FieldName(s, i=17)      │        == "Content-Type"
+              └──────────┐  │
+              FieldValue(s, i=28)    == "text/plain"
+
+
+Parser does not always know the start index of the `field-value` at the time
+a `FieldValue` obeject is created. In such cases the start index is set to
+the start of the line and the parser skips over the `field-name` and ":"
+before iterating over the `field-value` characters.
+
+              ┌▶"GET / HTTP/1.1\\r\\n" *
+              │ "Content-Type: text/plain\\r\\r\\r\\n"
+              │  ▲
+              │  ├──────────┐
+              │  │          │
+    FieldName(s, i=17)      │        == "Content-Type"
+              └──────────┐  │
+              FieldValue(s, i=17)    == "text/plain"
+
+
+e.g.
+```
+julia> dump(h["Content-Type"])
+HTTP.LazyHTTP.FieldValue{String}
+  s: String "GET / HTTP/1.1\\r\\nContent-Type: text/plain\\r\\n\\r\\n"
+  i: Int64 28
+
+julia> v = h["Content-Type"]
+"text/plain"
+
+julia> for i in keys(v)
+          @show i, v[i]
+       end
+(i, v[i]) = (1, 't')
+(i, v[i]) = (32, 'e')
+(i, v[i]) = (33, 'x')
+(i, v[i]) = (34, 't')
+(i, v[i]) = (35, '/')
+(i, v[i]) = (36, 'p')
+(i, v[i]) = (37, 'l')
+(i, v[i]) = (38, 'a')
+(i, v[i]) = (39, 'i')
+(i, v[i]) = (40, 'n')
+```
 """
 module LazyHTTP
 
@@ -118,52 +220,13 @@ function _show(io, h)
 end
 
 
-_doc = """
-The `FieldName` and `FieldValue` structs store:
- - a reference to the underlying HTTP Header `String`
- - the start index of the `field-name` or `field-value`.
-
-`header-field = field-name ":" OWS field-value OWS CRLF`
-https://tools.ietf.org/html/rfc7230#section-3.2
-
-When a `field-name` is accessed via the `AbstractString` iteration
-interface the parser begins at the start index stops at the ":".
-For `field-value` the parser skips over whitespace after the ":"
-and stops at whitespace at the end of the line.
-
-              ┌▶"GET / HTTP/1.1\\r\\n" *
-              │ "Content-Type: text/plain\\r\\r\\r\\n"
-              │  ▲          ▲
-              │  │          │
-    FieldName(s, i=17)      │        == "Content-Type"
-              └──────────┐  │
-              FieldValue(s, i=28)    == "text/plain"
-
-
-In some cases the parser does not know the start index of the `field-value`
-at the time a `FieldValue` obeject is created. In such cases the start index
-is set to the start of the line and the parser skips over the `field-name`
-and "I" before iterating over the `field-value` characters.
-
-              ┌▶"GET / HTTP/1.1\\r\\n" *
-              │ "Content-Type: text/plain\\r\\r\\r\\n"
-              │  ▲
-              │  ├──────────┐
-              │  │          │
-    FieldName(s, i=17)      │        == "Content-Type"
-              └──────────┐  │
-              FieldValue(s, i=17)    == "text/plain"
-"""
-
 abstract type HTTPString <: LazyASCII end
 
-"$_doc"
 struct FieldName{T <: AbstractString} <: HTTPString
     s::T
     i::Int
 end
 
-"$_doc"
 struct FieldValue{T <: AbstractString} <: HTTPString
     s::T
     i::Int
@@ -481,19 +544,6 @@ function iterate_fields(s, i::Int)::Int
 
     return i
 end
-
-"""
-If `field-name` is the same as the previous field the value is
-appended to the value of the previous header with a comma delimiter.
-[RFC7230 3.2.2](https://tools.ietf.org/html/rfc7230#section-3.2.2)
-`Set-Cookie` headers are not comma-combined because cookies often
-contain internal commas.
-[RFC6265 3](https://tools.ietf.org/html/rfc6265#section-3)
-"""
-should_comma_combine(s, i, old_i) =
-    field_isequal_field(s, i, s,         old_i) != 0 &&
-    field_isequal_field(s, i, "Set-Cookie:", 1) == 0
-
 
 """
     Is HTTP `field-name` `f` equal to `String` `b`?
