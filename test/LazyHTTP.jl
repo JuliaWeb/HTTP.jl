@@ -223,4 +223,47 @@ h = RequestHeader(s)
 @test (@allocated h.method) <= 32
 
 
+function lazy_parse(s, a, b)
+    h = ResponseHeader(s)
+    #collect(SubString(n) => SubString(v) for (n,v) in h)
+    return h.status == 200, SubString(h[a]), SubString(h[b])
+end
+
+function old_parse(s, a, b)
+    r = HTTP.Response()
+    s = HTTP.Parsers.parse_status_line!(s, r)
+    HTTP.Messages.parse_header_fields!(s, r)
+    return r.status == 200, HTTP.header(r, a), HTTP.header(r, b)
+end
+
+using InteractiveUtils
+
+println("----------------------------------------------")
+println("LazyHTTP performance test (vs HTTP.Parsers)")
+println("----------------------------------------------")
+for (n,r) in include("responses.jl")
+
+    h = ResponseHeader(r)
+    last_header = String(last(collect((keys(h)))))
+
+    @test lazy_parse(r, "Content-Type", last_header) ==
+           old_parse(r, "Content-Type", last_header)
+
+    aa = @allocated lazy_parse(r, "Content-Type", last_header)
+    ab = @allocated old_parse(r, "Content-Type", last_header)
+
+    ta = (@timed for i in 1:100000
+            lazy_parse(r, "Content-Type", last_header)
+          end)[2]
+    tb = (@timed for i in 1:100000
+            old_parse(r, "Content-Type", last_header)
+          end)[2]
+
+    println(rpad("$n header:", 18) *
+            "$(lpad(round(Int, 100*aa/ab), 2))% memory use, " *
+            "$(lpad(round(Int, 100*ta/tb), 2))% time")
+end
+println("----------------------------------------------")
+
+
 end # testset "LazyHTTP"
