@@ -92,7 +92,7 @@ end
 
 
 
-start_close_read_write_doc = """
+_doc = """
     startwrite(::IO)
     closewrite(::IO)
     startread(::IO)
@@ -100,13 +100,13 @@ start_close_read_write_doc = """
 
 Signal start/end of write or read operations.
 """
-start_close_read_write_doc
+"$_doc"
 startwrite(io) = nothing
-start_close_read_write_doc
+"$_doc"
 closewrite(io) = nothing
-start_close_read_write_doc
+"$_doc"
 startread(io) = nothing
-start_close_read_write_doc
+"$_doc"
 closeread(io) = nothing
 
 using MbedTLS: SSLContext
