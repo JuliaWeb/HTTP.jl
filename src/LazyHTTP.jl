@@ -101,6 +101,11 @@ struct RequestHeader{T <: AbstractString} <: Header
 end
 
 
+getc(s::Header, i) = unsafe_load(pointer(s.s), i)
+
+next_ic(s::Header, i) = (i = i + 1 ; (i, getc(s, i)))
+
+
 Base.show(io::IO, h::Header) = _show(io, h)
 Base.show(io::IO, ::MIME"text/plain", h::Header) = _show(io, h)
 
@@ -113,13 +118,52 @@ function _show(io, h)
 end
 
 
+_doc = """
+The `FieldName` and `FieldValue` structs store:
+ - a reference to the underlying HTTP Header `String`
+ - the start index of the `field-name` or `field-value`.
+
+`header-field = field-name ":" OWS field-value OWS CRLF`
+https://tools.ietf.org/html/rfc7230#section-3.2
+
+When a `field-name` is accessed via the `AbstractString` iteration
+interface the parser begins at the start index stops at the ":".
+For `field-value` the parser skips over whitespace after the ":"
+and stops at whitespace at the end of the line.
+
+              ┌▶"GET / HTTP/1.1\\r\\n" *
+              │ "Content-Type: text/plain\\r\\r\\r\\n"
+              │  ▲          ▲
+              │  │          │
+    FieldName(s, i=17)      │        == "Content-Type"
+              └──────────┐  │
+              FieldValue(s, i=28)    == "text/plain"
+
+
+In some cases the parser does not know the start index of the `field-value`
+at the time a `FieldValue` obeject is created. In such cases the start index
+is set to the start of the line and the parser skips over the `field-name`
+and "I" before iterating over the `field-value` characters.
+
+              ┌▶"GET / HTTP/1.1\\r\\n" *
+              │ "Content-Type: text/plain\\r\\r\\r\\n"
+              │  ▲
+              │  ├──────────┐
+              │  │          │
+    FieldName(s, i=17)      │        == "Content-Type"
+              └──────────┐  │
+              FieldValue(s, i=17)    == "text/plain"
+"""
+
 abstract type HTTPString <: LazyASCII end
 
+"$_doc"
 struct FieldName{T <: AbstractString} <: HTTPString
     s::T
     i::Int
 end
 
+"$_doc"
 struct FieldValue{T <: AbstractString} <: HTTPString
     s::T
     i::Int
@@ -204,7 +248,7 @@ end
 """
 `SubString` of space-delimited token starting at index `i` in String `s`.
 """
-token(s, i) = SubString(s, i, token_end(s, i))
+token(s, i) = SubString(s.s, i, token_end(s, i))
 
 
 """
@@ -220,11 +264,11 @@ Find index and first character of `field-value` in `s`
 starting at index `s.i`, which points to the `field-name`.
 """
 function findstart(s::FieldValue)
-    i, c = next_ic(s.s, s.i)
+    i, c = next_ic(s, s.i)
     while c != ':' && c != '\n'
-        i, c = next_ic(s.s, i)
+        i, c = next_ic(s, i)
     end
-    i, c = skip_ows(s.s, i + 1)
+    i, c = skip_ows(s, i + 1)
     return i
 end
 
@@ -245,16 +289,15 @@ i.e. Last non `OWS` character before `CRLF` (unless `CRLF` is an `obs-fold`).
 https://tools.ietf.org/html/rfc7230#section-3.2.4
 """
 function isend(s::FieldValue, i, c)
-#@show :isend, i, Char(c)
-    if getc(s.s, i-1) == '\n'
+    if getc(s, i-1) == '\n'
         return false
     end
-    i, c = skip_ows(s.s, i, c)
+    i, c = skip_ows(s, i, c)
     if iscrlf(c)
         if c == '\r'
-            i, c = next_ic(s.s, i)
+            i, c = next_ic(s, i)
         end
-        i, c = next_ic(s.s, i)
+        i, c = next_ic(s, i)
         if isows(c)
             if !ENABLE_OBS_FOLD
                 throw(ParseError(:RFC7230_3_2_4_OBS_FOLD, SubString(s.s, i)))
@@ -278,8 +321,8 @@ Request method.
 > received prior to the request-line.
 """
 function method(s::RequestHeader)
-    i = skip_crlf(s.s, 1)
-    return token(s.s, i)
+    i = skip_crlf(s, 1)
+    return token(s, i)
 end
 
 
@@ -289,9 +332,9 @@ Request target.
 `request-line = method SP request-target SP HTTP-version CRLF`
 """
 function target(s::RequestHeader)
-    i = skip_crlf(s.s, 1)
-    i = skip_token(s.s, i)
-    return token(s.s, i)
+    i = skip_crlf(s, 1)
+    i = skip_token(s, i)
+    return token(s, i)
 end
 
 
@@ -304,11 +347,11 @@ See:
 [#190](https://github.com/JuliaWeb/HTTP.jl/issues/190#issuecomment-363314009)
 """
 function status(s::ResponseHeader)
-    i = getc(s.s, 1) == ' ' ? 11 : 10 # Issue #190
-    i, c = skip_ows(s.s, i)
-    return (   c             - UInt8('0')) * 100 +
-           (getc(s.s, i + 1) - UInt8('0')) *  10 +
-           (getc(s.s, i + 2) - UInt8('0'))
+    i = getc(s, 1) == ' ' ? 11 : 10 # Issue #190
+    i, c = skip_ows(s, i)
+    return (   c           - UInt8('0')) * 100 +
+           (getc(s, i + 1) - UInt8('0')) *  10 +
+           (getc(s, i + 2) - UInt8('0'))
 end
 
 
@@ -316,9 +359,9 @@ end
 `request-line = method SP request-target SP HTTP-version CRLF`
 """
 function versioni(s::RequestHeader)
-    i = skip_crlf(s.s, 1)
-    i = skip_token(s.s, i)
-    i = skip_token(s.s, i)
+    i = skip_crlf(s, 1)
+    i = skip_token(s, i)
+    i = skip_token(s, i)
     return i + 5
 end
 
@@ -328,7 +371,7 @@ end
 See:
 [#190](https://github.com/JuliaWeb/HTTP.jl/issues/190#issuecomment-363314009)
 """
-versioni(s::ResponseHeader) = getc(s.s, 1) == ' ' ? 7 : 6 # Issue #190
+versioni(s::ResponseHeader) = getc(s, 1) == ' ' ? 7 : 6 # Issue #190
 
 
 """
@@ -337,10 +380,10 @@ Does the `Header` have version `HTTP/1.1`?
 function version(s::Header)
 
     i = versioni(s) - 2
-    i, slash = next_ic(s.s, i)
-    i, major = next_ic(s.s, i)
-    i, dot   = next_ic(s.s, i)
-    i, minor = next_ic(s.s, i)
+    i, slash = next_ic(s, i)
+    i, major = next_ic(s, i)
+    i, dot   = next_ic(s, i)
+    i, minor = next_ic(s, i)
 
     if slash != '/' || !isdecimal(major) || dot != '.' || !isdecimal(minor)
         throw(ParseError(:INVALID_HTTP_VERSION, SubString(s.s, 1, i + 2)))
@@ -354,7 +397,7 @@ Does the `Header` have version `HTTP/1.1`?
 """
 function version_is_1_1(s::Header)
     i = versioni(s)
-    return getc(s.s, i) == '1' && getc(s.s, i + 2) == '1'
+    return getc(s, i) == '1' && getc(s, i + 2) == '1'
 end
 
 
@@ -386,22 +429,22 @@ Base.keys(s::Header) = HeaderKeys(s)
 Base.values(s::Header) = HeaderValues(s)
 
 @inline function Base.iterate(h::HeaderIndicies, i::Int = 1)
-    i = iterate_fields(h.h.s, i)
+    i = iterate_fields(h.h, i)
     return i == 0 ? nothing : (i, i)
 end
 
 @inline function Base.iterate(h::HeaderKeys, i::Int = 1)
-    i = iterate_fields(h.h.s, i)
+    i = iterate_fields(h.h, i)
     return i == 0 ? nothing : (FieldName(h.h.s, i), i)
 end
 
 @inline function Base.iterate(h::HeaderValues, i::Int = 1)
-    i = iterate_fields(h.h.s, i)
+    i = iterate_fields(h.h, i)
     return i == 0 ? nothing : (FieldValue(h.h.s, i), i)
 end
 
 @inline function Base.iterate(s::Header, i::Int = 1)
-    i = iterate_fields(s.s, i)
+    i = iterate_fields(s, i)
     return i == 0 ? nothing : ((FieldName(s.s, i) => FieldValue(s.s, i), i))
 end
 
@@ -465,13 +508,15 @@ Base.isequal(f::FieldName, s::AbstractString) =
 Base.isequal(a::FieldName, b::FieldName) =
     field_isequal_field(a.s, a.i, b.s, b.i) != 0
 
+getascii(s, i) = unsafe_load(pointer(s), i)
+
 function field_isequal_string(f, fi, s, si)
     slast = lastindex(s)
     if si > slast
         return 0
     end
-    while (fc = getc(f, fi)) != ':' && fc != '\n' &&
-          ascii_lc(fc) == ascii_lc(getc(s, si))
+    while (fc = getascii(f, fi)) != ':' && fc != '\n' &&
+          ascii_lc(fc) == ascii_lc(getascii(s, si))
         fi += 1
         si += 1
     end
@@ -482,8 +527,8 @@ function field_isequal_string(f, fi, s, si)
 end
 
 function field_isequal_field(a, ai, b, bi)
-    while (ac = ascii_lc(getc(a, ai))) ==
-          (bc = ascii_lc(getc(b, bi))) && ac != '\n'
+    while (ac = ascii_lc(getascii(a, ai))) ==
+          (bc = ascii_lc(getascii(b, bi))) && ac != '\n'
         if ac == ':'
             return ai
         end
@@ -515,10 +560,8 @@ Base.get(s::Header, key, default=nothing) = _get(s, key, default)
 function _get(s::Header, key, default)
     for i in indicies(s)
         n = field_isequal_string(s.s, i, key, 1)
-        #@show n, i, key
         if n > 0
-            #return FieldValue(s.s, n) #FIXME
-            return FieldValue(s.s, i) #FIXME
+            return FieldValue(s.s, n - 1)
         end
     end
     return default

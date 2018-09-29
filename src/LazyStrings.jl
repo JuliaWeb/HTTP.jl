@@ -48,24 +48,86 @@ const WARN_FULL_ITERATION_OF_LAZY_STRING = true
 abstract type LazyString <: AbstractString end
 
 
-isend(s::LazyString, i, c) = false
+"""
+Does character `c` at index `i` mark the end of the sub-string?
+"""
+isend(s::LazyString, i) = isend(s, i, getc(s, i))
+isend(::LazyString, i, c) = false
+
+
+"""
+Should character `c` at index `i` be ignored?
+"""
+isskip(s::LazyString, i) = isskip(s, i, getc(s, i))
+isskip(::LazyString, i, c) = false
+
+
+"""
+Find the index of the first character of the sub-string.
+"""
+findstart(s::LazyString) = s.i
+
+
+"""
+Read a character from source string `s.s` at index `i` with no bounds check.
+"""
+getc(s::LazyString, i) = @inbounds s.s[i]
+
+
+"""
+Increment `i.
+"""
+next_i(s::LazyString, i) = nextind(s.s, i)
+
+
+"""
+Increment `i`, read a character, return new `i` and the character.
+"""
+next_ic(s::LazyString, i) = (i = next_i(s, i); (i, getc(s, i)))
 
 
 """
 Iterate over the characers of `s`.
 Return first index, last index and number of characters.
 """
-@inline function scan_string(s::LazyString)
-    frist = iterate(s)
-    last = 0
-    i = first
+function scan_string(s::LazyString)
+
+    i = findstart(s)
+    first = i
     n = 0
-    while i != nothing
-        c, last = i
-        i = iterate(s, last)
-        n += 1
+    c = getc(s, first)
+    last = ncodeunits(s)
+    while i <= last && !isend(s, i, c)
+        if !isskip(s, i, c)
+            n += 1
+        end
+        i, c = next_ic(s, i)
     end
-    return s.i, s.i + last - 1, n
+
+    return first, i-1, n
+end
+
+
+Base.iterate(s::LazyString, i::Int = s.i) = _iterate(identity, s, i)
+
+function _iterate(character, s::LazyString, i)
+    if i <= s.i
+        i = findstart(s)
+    end
+    if i > ncodeunits(s)
+        return nothing
+    end
+    c = getc(s, i)
+    if isend(s, i, c)
+        return nothing
+    end
+    while isskip(s, i, c)
+        i, c = next_ic(s, i)
+        if isend(s, i, c)
+            return nothing
+        end
+    end
+    return character(c), next_i(s, i)
 end
 
 
@@ -76,6 +138,34 @@ Base.codeunit(s::LazyString) = codeunit(s.s)
 Base.codeunit(s::LazyString, i::Integer) = codeunit(s.s, i)
 
 Base.ncodeunits(s::LazyString) = ncodeunits(s.s)
+
+
+Base.isvalid(s::LazyString, i::Integer) = i == 1 || (i > findstart(s) &&
+                                                    isvalid(s.s, i) &&
+                                                    !isend(s, i) &&
+                                                    !isskip(s, prevind(s.s, i)))
+
+
+function Base.nextind(s::LazyString, i::Int, n::Int)
+    n < 0 && throw(ArgumentError("n cannot be negative: $n"))
+    if i == 0
+        return 1
+    end
+    if i <= s.i
+        i = findstart(s)
+    end
+    z = ncodeunits(s)
+    @boundscheck 0 ≤ i ≤ z || throw(BoundsError(s, i))
+    n == 0 && return thisind(s, i) == i ? i : string_index_err(s, i)
+    while n > 0
+        if isend(s, i)
+            return z + 1
+        end
+        @inbounds n -= isvalid(s, i += 1)
+    end
+    return i + n
+end
+
 
 function Base.length(s::LazyString)
 
@@ -88,8 +178,6 @@ function Base.length(s::LazyString)
     return n
 end
 
-Base.isvalid(s::LazyString, i::Integer) = isvalid(s.s, i)
-
 
 function Base.lastindex(s::LazyString)
 
@@ -100,16 +188,6 @@ function Base.lastindex(s::LazyString)
 
     first, last, n = scan_string(s)
     return last
-end
-
-
-function Base.iterate(s::LazyString, i::Int = s.i)
-    next = iterate(s.s, i)
-    if next == nothing
-        return nothing
-    end
-    c, i = next
-    return isend(s, i, c) ? nothing : next
 end
 
 
@@ -139,59 +217,9 @@ Base.SubString(s::LazyString) = convert(SubString, s)
 abstract type LazyASCII <: LazyString end
 
 
-"""
-Does character `c` at index `i` mark the end of the sub-string?
-"""
-isend(s::LazyASCII, i) = isend(s, i, getc(s.s, i))
-isend(::LazyASCII, i, c) = false
+getc(s::LazyASCII, i) = unsafe_load(pointer(s.s), i)
 
-
-"""
-Should character `c` at index `i` be ignored?
-"""
-isskip(s::LazyASCII, i) = isskip(s, i, getc(s.s, i))
-isskip(::LazyASCII, i, c) = false
-
-
-"""
-Find the index of the first character of the sub-string.
-"""
-findstart(s::LazyASCII) = s.i
-
-
-"""
-Read a character from ASCII string `s` at index `i` with no bounds check.
-"""
-getc(s, i) = unsafe_load(pointer(s), i)
-
-
-"""
-Increment `i`, read a character, return new `i` and the character.
-"""
-next_ic(s, i) = (i += 1; (i, getc(s, i)))
-
-
-"""
-Iterate over the characers of `s`.
-Return first index, last index and number of characters.
-"""
-function scan_string(s::LazyASCII)
-
-    ss = s.s
-    i = findstart(s)
-    first = i
-    n = 0
-    c = getc(ss, first)
-    last = ncodeunits(ss)
-    while i <= last && !isend(s, i, c)
-        if !isskip(s, i, c)
-            n += 1
-        end
-        i, c = next_ic(ss, i)
-    end
-
-    return first, i-1, n
-end
+next_i(s::LazyASCII, i) = i + 1
 
 
 """
@@ -200,28 +228,7 @@ Convert ASCII byte `c` to `Char`.
 """
 ascii_char(c::UInt8) = reinterpret(Char, (c % UInt32) << 24)
 
-Base.iterate(s::LazyASCII, i::Int = s.i) = _iterate(ascii_char, s, i)
-
-function _iterate(character, s::LazyASCII, i)
-    ss = s.s
-    if i <= s.i
-        i = findstart(s)
-    end
-    if i > ncodeunits(s)
-        return nothing
-    end
-    c = getc(ss, i)
-    if isend(s, i, c)
-        return nothing
-    end
-    while isskip(s, i, c)
-        i, c = next_ic(ss, i)
-        if isend(s, i, c)
-            return nothing
-        end
-    end
-    return character(c), i + 1
-end
+Base.iterate(s::LazyASCII, i::Int = 1) = _iterate(ascii_char, s, i)
 
 
 Base.codeunits(s::LazyASCII) = LazyASCIICodeUnits(s)
@@ -232,39 +239,9 @@ end
 
 Base.IteratorSize(::Type{T}) where T <: LazyASCIICodeUnits = Base.SizeUnknown()
 
-Base.iterate(s::LazyASCIICodeUnits, i::Integer = s.s.i) = _iterate(identity, s.s, i)
+Base.iterate(s::LazyASCIICodeUnits, i::Integer = s.s.i) =
+    _iterate(identity, s.s, i)
 
-
-function Base.isvalid(s::LazyASCII, i::Integer)
-    if i == 1
-        return true
-    end
-    if i <= findstart(s) || isend(s, i) || isskip(s, i-1)
-        return false
-    end
-    return isvalid(s.s, i)
-end
-
-
-function Base.nextind(s::LazyASCII, i::Int, n::Int)
-    n < 0 && throw(ArgumentError("n cannot be negative: $n"))
-    if i == 0
-        return 1
-    end
-    if i <= s.i
-        i = findstart(s)
-    end
-    z = ncodeunits(s)
-    @boundscheck 0 ≤ i ≤ z || throw(BoundsError(s, i))
-    n == 0 && return thisind(s, i) == i ? i : string_index_err(s, i)
-    while n > 0
-        if isend(s, i)
-            return z + 1
-        end
-        @inbounds n -= isvalid(s, i += 1)
-    end
-    return i + n
-end
 
 
 end # module LazyStrings
