@@ -131,7 +131,7 @@ function _iterate(character, s::LazyString, i)
 end
 
 
-Base.IteratorSize(::Type{T}) where T <: LazyString = Base.SizeUnknown()
+Base.IteratorSize(::Type{<:LazyString}) = Base.SizeUnknown()
 
 Base.codeunit(s::LazyString) = codeunit(s.s)
 
@@ -237,7 +237,8 @@ struct LazyASCIICodeUnits{S<:LazyASCII}
     s::S
 end
 
-Base.IteratorSize(::Type{T}) where T <: LazyASCIICodeUnits = Base.SizeUnknown()
+Base.IteratorSize(::Type{<:LazyASCIICodeUnits}) = Base.SizeUnknown()
+Base.eltype(::Type{<:LazyASCIICodeUnits}) = UInt8
 
 Base.iterate(s::LazyASCIICodeUnits, i::Integer = s.s.i) =
     _iterate(identity, s.s, i)

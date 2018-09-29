@@ -37,7 +37,7 @@ julia> h["Tag"]
 "FOO"
 
 julia> collect(h)
-4-element Array{Any,1}:
+4-element Array:
    "Content-Type" => "foo"
  "Content-Length" => "7"
             "Tag" => "FOO"
@@ -177,25 +177,25 @@ end
 
 
 
-abstract type Header #= <: AbstractDict{AbstractString,AbstractString} =# end
+abstract type Header{T} #= <: AbstractDict{AbstractString,AbstractString} =# end
 
 const REQUEST_LENGTH_MIN = ncodeunits("GET / HTTP/1.1\n\n")
 const RESPONSE_LENGTH_MIN = ncodeunits("HTTP/1.1 200\n\n")
 
-struct ResponseHeader{T <: AbstractString} <: Header
+struct ResponseHeader{T <: AbstractString} <: Header{T}
     s::T
 
-    function ResponseHeader(s::T) where T <: AbstractString
+    function ResponseHeader(s::T) where T
         @require ncodeunits(s) >= RESPONSE_LENGTH_MIN
         @require ends_with_crlf(s)
         return new{T}(s)
     end
 end
 
-struct RequestHeader{T <: AbstractString} <: Header
+struct RequestHeader{T <: AbstractString} <: Header{T}
     s::T
 
-    function RequestHeader(s::T) where T <: AbstractString
+    function RequestHeader(s::T) where T
         @require ncodeunits(s) >= REQUEST_LENGTH_MIN
         @require ends_with_crlf(s)
         return new{T}(s)
@@ -479,13 +479,19 @@ Base.String(h::Header) = h.s
 
 
 struct HeaderIndicies{T} h::T end
-struct HeaderKeys{T} h::T end
-struct HeaderValues{T} h::T end
+struct HeaderKeys{T} h::Header{T} end
+struct HeaderValues{T} h::Header{T} end
 
-Base.IteratorSize(::Type{T}) where T <: Header = Base.SizeUnknown()
-Base.IteratorSize(::Type{T}) where T <: HeaderIndicies = Base.SizeUnknown()
-Base.IteratorSize(::Type{T}) where T <: HeaderKeys = Base.SizeUnknown()
-Base.IteratorSize(::Type{T}) where T <: HeaderValues = Base.SizeUnknown()
+Base.IteratorSize(::Type{<:HeaderIndicies}) = Base.SizeUnknown()
+Base.IteratorSize(::Type{<:HeaderKeys})     = Base.SizeUnknown()
+Base.IteratorSize(::Type{<:HeaderValues})   = Base.SizeUnknown()
+Base.IteratorSize(::Type{<:Header})         = Base.SizeUnknown()
+
+Base.eltype(::Type{<:HeaderIndicies})          = Int
+Base.eltype(::Type{<:HeaderKeys{S}})   where S = FieldName{S}
+Base.eltype(::Type{<:HeaderValues{S}}) where S = FieldValue{S}
+Base.eltype(::Type{<:Header{S}})       where S = Pair{FieldName{S},
+                                                      FieldValue{S}}
 
 indicies(s::Header) = HeaderIndicies(s)
 Base.keys(s::Header) = HeaderKeys(s)
