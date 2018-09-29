@@ -584,7 +584,7 @@ end
 
 function field_isequal_field(a, ai, b, bi)
     while (ac = ascii_lc(getascii(a, ai))) ==
-          (bc = ascii_lc(getascii(b, bi))) && ac != '\n'
+          (bc = ascii_lc(getascii(b, bi))) && ac != '\n' && ac != '\0'
         if ac == ':'
             return ai
         end
