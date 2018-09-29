@@ -33,7 +33,7 @@ LazyStrings.findstart(s::TestLazyASCIIB) = findnext(c->c != ' ', s.s, s.i)
 LazyStrings.isskip(::TestLazyASCIIB, i, c) = c == UInt8('_')
 function LazyStrings.isend(s::TestLazyASCIIB, i, c)
     while LazyStrings.isskip(s, i, c)
-        i, c = LazyStrings.next_ic(s.s, i)
+        i, c = LazyStrings.next_ic(s, i)
     end
     return c == UInt8('\n')
 end
@@ -50,6 +50,16 @@ LazyStrings.isend(::TestLazyASCIIC, i, c) = c == UInt8('\n')
 @test TestLazy(" Foo", 2) == "Foo"
 
 @test TestLazy(" Foo\n ", 2) == "Foo"
+@test TestLazy(" Foo\n ", 2)[1] == 'F'
+@test TestLazy(" Foo\n ", 2)[3] == 'o'
+@test TestLazy(" Fox\n ", 2)[4] == 'x'
+@test_throws StringIndexError TestLazy(" Fox\n ", 2)[5] == '\n'
+
+@test TestLazy(" F🍍o\n ", 2) == "F🍍o"
+@test TestLazy(" F🍍o\n ", 2)[1] == 'F'
+@test TestLazy(" F🍍o\n ", 2)[3] == '🍍'
+@test TestLazy(" F🍍x\n ", 2)[7] == 'x'
+@test_throws BoundsError TestLazy(" Fox\n ", 2)[8] == '\n'
 
 for pada in [0, 1, 7, 1234], padb in [0, 1, 7, 1234]
     s = "Foo"
