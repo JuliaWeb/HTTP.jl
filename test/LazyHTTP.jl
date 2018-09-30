@@ -12,6 +12,44 @@ ifilter(a...) = Base.Iterators.filter(a...)
 
 @testset "LazyHTTP" begin
 
+h = ResponseHeader(407)
+
+h["Foo"] = "Bar"
+h["Fii"] = "Fum"
+h["XXX"] = "YYY"
+
+@test h.status == 407
+
+@test h["Foo"] == "Bar"
+@test h["Fii"] == "Fum"
+@test h["XXX"] == "YYY"
+
+delete!(h, "Fii")
+
+@test h["Foo"] == "Bar"
+@test_throws KeyError h["Fii"] == "Fum"
+@test h["XXX"] == "YYY"
+
+h["One"] = "111"
+h["Two"] = "222"
+h["One"] = "Won"
+
+@test h["Foo"] == "Bar"
+@test h["XXX"] == "YYY"
+@test h["Two"] == "222"
+@test h["One"] == "Won"
+
+io = IOBuffer()
+write(io, h)
+@test String(take!(io)) == """
+    HTTP/1.1 407 Proxy Authentication Required\r
+    Foo: Bar\r
+    XXX: YYY\r
+    Two: 222\r
+    One: Won\r
+    \r
+    """
+
 f_eq_s = LazyHTTP.field_isequal_string
 f_eq_f = LazyHTTP.field_isequal_field
 
@@ -50,6 +88,10 @@ end
 
 s = "GET / HTP/1.1\r\n\r\n"
 h = RequestHeader(s)
+
+io = IOBuffer()
+write(io, h)
+@test String(take!(io)) == s
 
 @test eltype(LazyHTTP.indicies(h)) == Int
 @test eltype(keys(h)) == LazyHTTP.FieldName{String}
@@ -236,10 +278,28 @@ function old_parse(s, a, b)
     return r.status == 200, HTTP.header(r, a), HTTP.header(r, b)
 end
 
+
+function lazy_send(io, status, headers)
+    h = ResponseHeader(status)
+    for x in headers
+        push!(h, x)
+    end
+    write(io, h)
+end
+
+function old_send(io, status, headers)
+    r = HTTP.Response(status)
+    for x in headers
+        HTTP.appendheader(r, x)
+    end
+    write(io, r)
+end
+
+
 using InteractiveUtils
 
 println("----------------------------------------------")
-println("LazyHTTP performance test (vs HTTP.Parsers)")
+println("LazyHTTP performance (vs HTTP.Parsers)")
 println("----------------------------------------------")
 for (n,r) in include("responses.jl")
 
@@ -249,21 +309,64 @@ for (n,r) in include("responses.jl")
     @test lazy_parse(r, "Content-Type", last_header) ==
            old_parse(r, "Content-Type", last_header)
 
-    aa = @allocated lazy_parse(r, "Content-Type", last_header)
-    ab = @allocated old_parse(r, "Content-Type", last_header)
+    aa = Base.gc_alloc_count(
+            (@timed lazy_parse(r, "Content-Type", last_header))[5])
+    ab = Base.gc_alloc_count(
+            (@timed old_parse(r, "Content-Type", last_header))[5])
 
-    ta = (@timed for i in 1:100000
+    Base.GC.gc()
+    ta = (@timed for i in 1:10000
             lazy_parse(r, "Content-Type", last_header)
           end)[2]
-    tb = (@timed for i in 1:100000
+    Base.GC.gc()
+    tb = (@timed for i in 1:10000
             old_parse(r, "Content-Type", last_header)
           end)[2]
 
     println(rpad("$n header:", 18) *
-            "$(lpad(round(Int, 100*aa/ab), 2))% memory use, " *
+            "$(lpad(round(Int, 100*aa/ab), 2))% allocs, " *
             "$(lpad(round(Int, 100*ta/tb), 2))% time")
 end
 println("----------------------------------------------")
+
+
+
+println("----------------------------------------------")
+println("LazyHTTP send performance (vs HTTP.Response)")
+println("----------------------------------------------")
+for (n,r) in include("responses.jl")
+
+    h = ResponseHeader(r)
+    status = h.status
+    test_headers = [String(n) => String(v) for (n,v) in h]
+
+    a = IOBuffer()
+    lazy_send(a, status, test_headers)
+    b = IOBuffer()
+    old_send(b, status, test_headers)
+
+    a = String(take!(a))
+    b = String(take!(b))
+    @test a == b
+
+    a = IOBuffer()
+    b = IOBuffer()
+    aa = Base.gc_alloc_count((@timed lazy_send(a, status, test_headers))[5])
+    ab = Base.gc_alloc_count((@timed old_send(b, status, test_headers))[5])
+
+    a = IOBuffer(sizehint = 1000000)
+    Base.GC.gc()
+    ta = (@timed for i in 1:10000 lazy_send(a, status, test_headers) end)[2]
+    b = IOBuffer(sizehint = 1000000)
+    Base.GC.gc()
+    tb = (@timed for i in 1:10000 old_send(a, status, test_headers) end)[2]
+
+    println(rpad("$n header:", 18) *
+            "$(lpad(round(Int, 100*aa/ab), 3))% allocs, " *
+            "$(lpad(round(Int, 100*ta/tb), 3))% time")
+end
+println("----------------------------------------------")
+
 
 
 end # testset "LazyHTTP"
