@@ -42,11 +42,6 @@ julia> collect(h)
  "Content-Length" => "7"
             "Tag" => "FOO"
             "Tag" => "BAR"
-
-julia> map(i->h[i], Iterators.filter(isequal("Tag"), keys(h)))
-2-element Array{HTTP.LazyHTTP.FieldValue{String},1}:
- "FOO"
- "BAR"
 ```
 
 
@@ -415,7 +410,7 @@ Request method.
 > and parse a request-line SHOULD ignore at least one empty line (CRLF)
 > received prior to the request-line.
 """
-function method(s::RequestHeader)
+function method(s::RequestHeader{T})::SubString{T} where T
     i = skip_crlf(s, 1)
     return token(s, i)
 end
@@ -426,7 +421,7 @@ Request target.
 [RFC7230 5.3](https://tools.ietf.org/html/rfc7230#section-5.3)
 `request-line = method SP request-target SP HTTP-version CRLF`
 """
-function target(s::RequestHeader)
+function target(s::RequestHeader{T})::SubString{T} where T
     i = skip_crlf(s, 1)
     i = skip_token(s, i)
     return token(s, i)
@@ -441,7 +436,7 @@ Response status.
 See:
 [#190](https://github.com/JuliaWeb/HTTP.jl/issues/190#issuecomment-363314009)
 """
-function status(s::ResponseHeader)
+function status(s::ResponseHeader)::Int
     i = getc(s, 1) == ' ' ? 11 : 10 # Issue #190
     i, c = skip_ows(s, i)
     return (   c           - UInt8('0')) * 100 +
@@ -472,7 +467,7 @@ versioni(s::ResponseHeader) = getc(s, 1) == ' ' ? 7 : 6 # Issue #190
 """
 Does the `Header` have version `HTTP/1.1`?
 """
-function version(s::Header)
+function version(s::Header)::VersionNumber
 
     i = versioni(s) - 2
     i, slash = next_ic(s, i)
@@ -531,22 +526,22 @@ Base.keys(s::Header) = HeaderKeys(s)
 Base.values(s::Header) = HeaderValues(s)
 
 @inline function Base.iterate(h::HeaderIndicies, i::Int = 1)
-    i = iterate_fields(h.h, i)
+    i = next_field(h.h, i)
     return i == 0 ? nothing : (i, i)
 end
 
 @inline function Base.iterate(h::HeaderKeys, i::Int = 1)
-    i = iterate_fields(h.h, i)
+    i = next_field(h.h, i)
     return i == 0 ? nothing : (FieldName(h.h.s, i), i)
 end
 
 @inline function Base.iterate(h::HeaderValues, i::Int = 1)
-    i = iterate_fields(h.h, i)
+    i = next_field(h.h, i)
     return i == 0 ? nothing : (FieldValue(h.h.s, i), i)
 end
 
 @inline function Base.iterate(s::Header, i::Int = 1)
-    i = iterate_fields(s, i)
+    i = next_field(s, i)
     return i == 0 ? nothing : ((FieldName(s.s, i) => FieldValue(s.s, i), i))
 end
 
@@ -555,7 +550,7 @@ end
 Iterate to next header field line
 `@require ends_with_crlf(s)` in constructor prevents reading past end of string.
 """
-function iterate_fields(s, i::Int)::Int
+function next_field(s::Header, i::Int)::Int
 
     @label top
 
@@ -685,18 +680,13 @@ Base.length(h::Header) = count(x->true, indicies(h))
 const DEBUG_MUTATION = false
 
 function Base.delete!(h::Header{IOBuffer}, key)
-    a = 0
     for i in indicies(h)
-        if a != 0
-            l = h.s.size + 1 - i
-            copyto!(h.s.data, a, h.s.data, i, l)
-            dl = i - a
-            h.s.size -= dl
-            h.s.ptr -= dl
-            break
-        end
         if field_isequal_string(h.s, i, key, 1) > 0
-            a = i
+            j = next_field(h, i)
+            copyto!(h.s.data, i, h.s.data, j, h.s.size + 1 - j)
+            h.s.size -= j - i
+            h.s.ptr = h.s.size + 1
+            break
         end
     end
     if DEBUG_MUTATION
@@ -707,17 +697,11 @@ function Base.delete!(h::Header{IOBuffer}, key)
 end
 
 
-function Base.push!(h::Header{IOBuffer}, pair)
-
-    key, value = pair
-
-    h.s.size -= 2
+function Base.push!(h::Header{IOBuffer}, v)
     h.s.ptr -= 2
-
-    write(h.s, key, ": ", value, "\r\n\r\n")
-
+    write(h.s, v.first, ": ", v.second, "\r\n\r\n")
     if DEBUG_MUTATION
-        @ensure pair in h
+        @ensure v in h
         @ensure isvalid(h)
     end
     return h
