@@ -44,7 +44,7 @@ macro require(condition, msg = string(condition))
 end
 
 
-@noinline function postcondition_error(msg, frame, ls="", l="", rs="", r="")
+@noinline function postcondition_error(msg, bt, ls="", l="", rs="", r="")
     msg = string(method_name(bt), " failed to ensure ", msg)
     if ls != ""
         msg = string(msg, "\n", ls, " = ", sprint(show, l),
