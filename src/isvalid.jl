@@ -1,3 +1,5 @@
+include("parseutils.jl")
+
 """
 https://tools.ietf.org/html/rfc7230#section-3.1.1
 request-line = method SP request-target SP HTTP-version CRLF
@@ -69,8 +71,20 @@ const obs_response_header_regex = Regex(status_line_regex.pattern *
                                         obs_fold_header_fields_regex.pattern *
                                         r"\r? \n$".pattern, "x")
 
+function __init__()
+    # FIXME Consider turing off `PCRE.UTF` in `Regex.compile_options`
+    # https://github.com/JuliaLang/julia/pull/26731#issuecomment-380676770
+    Base.compile(request_header_regex)
+    Base.compile(obs_request_header_regex)
+    Base.compile(response_header_regex)
+    Base.compile(obs_response_header_regex)
+end
+
 Base.isvalid(h::RequestHeader; obs=false) =
-    occursin(obs ? obs_request_header_regex : request_header_regex, h.s)
+    ismatch(obs ? obs_request_header_regex : request_header_regex, h.s)
 
 Base.isvalid(h::ResponseHeader; obs=false) =
-    occursin(obs ? obs_response_header_regex : response_header_regex, h.s)
+    ismatch(obs ? obs_response_header_regex : response_header_regex, h.s)
+
+ismatch(r, s) = exec(r, s)
+ismatch(r, s::IOBuffer) = exec(r, view(s.data, 1:s.size))
