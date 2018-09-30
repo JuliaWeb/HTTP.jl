@@ -227,29 +227,33 @@ mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
 
 https://tools.ietf.org/html/rfc7231#section-4.2.1
 """
-issafe(r::Request) = r.method in ["GET", "HEAD", "OPTIONS", "TRACE"]
+issafe(r::Request) = issafe(r.method)
+issafe(method) = method in ["GET", "HEAD", "OPTIONS", "TRACE"]
 
 """
     isidempotent(::Request)
 
 https://tools.ietf.org/html/rfc7231#section-4.2.2
 """
-isidempotent(r::Request) = issafe(r) || r.method in ["PUT", "DELETE"]
+isidempotent(r::Request) = isidempotent(r.method)
+isidempotent(method) = issafe(method) || method in ["PUT", "DELETE"]
 
 """
     iserror(::Response)
 
 Does this `Response` have an error status?
 """
-iserror(r::Response) = r.status != 0 && r.status != 100 && r.status != 101 &&
-                       (r.status < 200 || r.status >= 300) && !isredirect(r)
+iserror(r::Response) = iserror(r.status)
+iserror(status) = status != 0 && status != 100 && status != 101 &&
+                 (status < 200 || status >= 300) && !isredirect(status)
 
 """
     isredirect(::Response)
 
 Does this `Response` have a redirect status?
 """
-isredirect(r::Response) = r.status in (301, 302, 307, 308)
+isredirect(r::Response) = isredirect(r.status)
+isredirect(status) = status in (301, 302, 307, 308)
 
 """
     ischunked(::Message)
