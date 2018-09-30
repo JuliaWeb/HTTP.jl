@@ -96,7 +96,7 @@ function scan_string(s::LazyString)
     first = i
     n = 0
     c = getc(s, first)
-    last = ncodeunits(s)
+    last = maxindex(s)
     while i <= last && !isend(s, i, c)
         if !isskip(s, i, c)
             n += 1
@@ -114,7 +114,7 @@ function _iterate(character, s::LazyString, i)
     if i <= s.i
         i = findstart(s)
     end
-    if i > ncodeunits(s)
+    if i > maxindex(s)
         return nothing
     end
     c = getc(s, i)
@@ -137,7 +137,8 @@ Base.codeunit(s::LazyString) = codeunit(s.s)
 
 Base.codeunit(s::LazyString, i::Integer) = codeunit(s.s, i)
 
-Base.ncodeunits(s::LazyString) = ncodeunits(s.s)
+Base.ncodeunits(s::LazyString) = maxindex(s)
+maxindex(s::LazyString) = ncodeunits(s.s)
 
 
 Base.isvalid(s::LazyString, i::Integer) = i == 1 || (i > findstart(s) &&
@@ -154,7 +155,7 @@ function Base.nextind(s::LazyString, i::Int, n::Int)
     if i <= s.i
         i = findstart(s)
     end
-    z = ncodeunits(s)
+    z = maxindex(s)
     @boundscheck 0 ≤ i ≤ z || throw(BoundsError(s, i))
     n == 0 && return thisind(s, i) == i ? i : string_index_err(s, i)
     while n > 0
