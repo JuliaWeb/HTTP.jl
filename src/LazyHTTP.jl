@@ -150,8 +150,9 @@ import ..@ensure, ..postcondition_error
 
 using ..LazyStrings
 import ..LazyStrings: LazyASCII,
-                      getc, next_ic, findstart, isskip, isend
+                      getc, next_ic, findstart, maxindex, isskip, isend
 
+include("status_messages.jl")
 
 const ENABLE_OBS_FOLD = true
 
@@ -176,34 +177,54 @@ end
 
 
 
+# HTTP Headers
 
 abstract type Header{T} #= <: AbstractDict{AbstractString,AbstractString} =# end
 
 const REQUEST_LENGTH_MIN = ncodeunits("GET / HTTP/1.1\n\n")
 const RESPONSE_LENGTH_MIN = ncodeunits("HTTP/1.1 200\n\n")
 
-struct ResponseHeader{T <: AbstractString} <: Header{T}
+struct ResponseHeader{T} <: Header{T}
     s::T
 
-    function ResponseHeader(s::T) where T
+    function ResponseHeader(s::T) where T <: AbstractString
         @require ncodeunits(s) >= RESPONSE_LENGTH_MIN
         @require ends_with_crlf(s)
         return new{T}(s)
     end
+    function ResponseHeader(status::Int)
+        io = IOBuffer()
+        write(io, "HTTP/1.1 $status $(statustext(status))\r\n\r\n")
+        return new{IOBuffer}(io)
+    end
 end
 
-struct RequestHeader{T <: AbstractString} <: Header{T}
+struct RequestHeader{T} <: Header{T}
     s::T
 
-    function RequestHeader(s::T) where T
+    function RequestHeader(s::T) where T <: AbstractString
         @require ncodeunits(s) >= REQUEST_LENGTH_MIN
         @require ends_with_crlf(s)
         return new{T}(s)
     end
+    function RequestHeader(method, target)
+        io = IOBuffer()
+        write(io, "$method $target HTTP/1.1\r\n\r\n")
+        return new{IOBuffer}(io)
+    end
+    RequestHeader(s::T) where T = new{T}(s)
 end
 
+Base.String(h::Header{<:AbstractString}) = h.s
+Base.String(h::Header{IOBuffer}) = String(take!(copy(h.s)))
 
-getc(s::Header, i) = unsafe_load(pointer(s.s), i)
+Base.write(io::IO, h::Header{<:AbstractString}) = write(io, h.s)
+Base.write(io::IO, h::Header{IOBuffer}) = unsafe_write(io, pointer(h.s.data),
+                                                           h.s.size)
+
+getc(s, i) = unsafe_load(pointer(s), i)
+getc(s::IOBuffer, i) = getc(s.data, i)
+getc(s::Header, i) = getc(s.s, i)
 
 next_ic(s::Header, i) = (i = i + 1 ; (i, getc(s, i)))
 
@@ -213,21 +234,24 @@ Base.show(io::IO, ::MIME"text/plain", h::Header) = _show(io, h)
 
 function _show(io, h)
     println(io, "$(typeof(h).name)(\"\"\"")
-    for l in split(h.s, "\n")[1:end-1]
+    for l in split(String(h), "\n")[1:end-1]
         println(io, "    ", escape_string(l))
     end
     println(io, "    \"\"\")")
 end
 
 
-abstract type HTTPString <: LazyASCII end
 
-struct FieldName{T <: AbstractString} <: HTTPString
+# HTTP Fields
+
+abstract type HTTPString{T} <: LazyASCII end
+
+struct FieldName{T} <: HTTPString{T}
     s::T
     i::Int
 end
 
-struct FieldValue{T <: AbstractString} <: HTTPString
+struct FieldValue{T} <: HTTPString{T}
     s::T
     i::Int
 end
@@ -235,6 +259,11 @@ end
 FieldValue(n::FieldName) = FieldValue(n.s, n.i)
 FieldName(v::FieldValue) = FieldName(v.s, v.i)
 
+getc(s::HTTPString{IOBuffer}, i) = getc(s.s, i)
+maxindex(s::HTTPString{IOBuffer}) = s.s.size
+
+
+# Parsing Utilities
 
 """
 https://tools.ietf.org/html/rfc7230#section-3.2
@@ -373,6 +402,9 @@ function isend(s::FieldValue, i, c)
 end
 
 
+
+# Request/Status Line Interface
+
 """
 Request method.
 [RFC7230 3.1.1](https://tools.ietf.org/html/rfc7230#section-3.1.1)
@@ -475,8 +507,9 @@ function Base.getproperty(h::Header, s::Symbol)
     end
 end
 
-Base.String(h::Header) = h.s
 
+
+# Iteration Interface
 
 struct HeaderIndicies{T} h::T end
 struct HeaderKeys{T} h::Header{T} end
@@ -551,6 +584,10 @@ function iterate_fields(s, i::Int)::Int
     return i
 end
 
+
+
+# Field Name Comparison
+
 """
     Is HTTP `field-name` `f` equal to `String` `b`?
 
@@ -565,6 +602,7 @@ Base.isequal(a::FieldName, b::FieldName) =
     field_isequal_field(a.s, a.i, b.s, b.i) != 0
 
 getascii(s, i) = unsafe_load(pointer(s), i)
+getascii(s::IOBuffer, i) = unsafe_load(pointer(s.data), i)
 
 function field_isequal_string(f, fi, s, si)
     slast = lastindex(s)
@@ -595,11 +633,14 @@ function field_isequal_field(a, ai, b, bi)
 end
 
 
-
 """
 Convert ASCII (RFC20) character `c` to lower case.
 """
 ascii_lc(c::UInt8) = c in UInt8('A'):UInt8('Z') ? c + 0x20 : c
+
+
+
+# Indexing Interface
 
 function Base.haskey(s::Header, key)
     for i in indicies(s)
@@ -639,6 +680,62 @@ end
 Base.length(h::Header) = count(x->true, indicies(h))
 
 
+# Mutation
+
+const DEBUG_MUTATION = false
+
+function Base.delete!(h::Header{IOBuffer}, key)
+    a = 0
+    for i in indicies(h)
+        if a != 0
+            l = h.s.size + 1 - i
+            copyto!(h.s.data, a, h.s.data, i, l)
+            dl = i - a
+            h.s.size -= dl
+            h.s.ptr -= dl
+            break
+        end
+        if field_isequal_string(h.s, i, key, 1) > 0
+            a = i
+        end
+    end
+    if DEBUG_MUTATION
+        @ensure !haskey(h, key)
+        @ensure isvalid(h)
+    end
+    return h
+end
+
+
+function Base.push!(h::Header{IOBuffer}, pair)
+
+    key, value = pair
+
+    h.s.size -= 2
+    h.s.ptr -= 2
+
+    write(h.s, key, ": ", value, "\r\n\r\n")
+
+    if DEBUG_MUTATION
+        @ensure pair in h
+        @ensure isvalid(h)
+    end
+    return h
+end
+
+
+function Base.setindex!(h::Header{IOBuffer}, value, key)
+    delete!(h, key)
+    push!(h, key => value)
+    if DEBUG_MUTATION
+        @ensure get(h,key) == value
+    end
+    return h
+end
+
+
 include("isvalid.jl")
+
+
 
 end #module
