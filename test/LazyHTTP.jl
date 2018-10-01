@@ -323,8 +323,6 @@ function lazy_parse(s, a, b)
     return h.status == 200, SubString(h[a]), SubString(h[b])
 end
 
-#=
-
 function old_parse(s, a, b)
     r = HTTP.Response()
     s = HTTP.Parsers.parse_status_line!(s, r)
@@ -332,26 +330,28 @@ function old_parse(s, a, b)
     return r.status == 200, HTTP.header(r, a), HTTP.header(r, b)
 end
 
+lazy_send(io, status, headers) = write(io, ResponseHeader(status, headers))
 
-function lazy_send(io, status, headers)
-    h = ResponseHeader(status)
-    for x in headers
-        push!(h, x)
-    end
-    write(io, h)
-end
-
-function old_send(io, status, headers)
-    r = HTTP.Response(status)
-    for x in headers
-        HTTP.appendheader(r, x)
-    end
-    write(io, r)
-end
+old_send(io, status, headers) = write(io, HTTP.Response(status, headers))
 
 
 using InteractiveUtils
+using Sockets
 
+tcpserver = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), 8786))
+
+@async while isopen(tcpserver)
+    io = accept(tcpserver)
+    let io=io
+        @async while isopen(io)
+            readavailable(io)
+        end
+    end
+end
+
+sleep(2)
+
+function benchmark()
 println("----------------------------------------------")
 println("LazyHTTP performance (vs HTTP.Parsers)")
 println("----------------------------------------------")
@@ -390,8 +390,10 @@ println("LazyHTTP send performance (vs HTTP.Response)")
 println("----------------------------------------------")
 for (n,r) in include("responses.jl")
 
+    tcp = Sockets.connect("127.0.0.1", 8786)
+
     h = ResponseHeader(r)
-    status = h.status
+    status::Int = h.status
     test_headers = [String(n) => String(v) for (n,v) in h]
 
     a = IOBuffer()
@@ -408,20 +410,24 @@ for (n,r) in include("responses.jl")
     aa = Base.gc_alloc_count((@timed lazy_send(a, status, test_headers))[5])
     ab = Base.gc_alloc_count((@timed old_send(b, status, test_headers))[5])
 
-    a = IOBuffer(sizehint = 1000000)
+    for i in 1:100 lazy_send(tcp, status, test_headers) end
     Base.GC.gc()
-    ta = (@timed for i in 1:10000 lazy_send(a, status, test_headers) end)[2]
-    b = IOBuffer(sizehint = 1000000)
+    ta = (@timed for i in 1:10000 lazy_send(tcp, status, test_headers) end)[2]
+
+    for i in 1:100 old_send(tcp, status, test_headers) end
     Base.GC.gc()
-    tb = (@timed for i in 1:10000 old_send(a, status, test_headers) end)[2]
+    tb = (@timed for i in 1:10000 old_send(tcp, status, test_headers) end)[2]
 
     println(rpad("$n header:", 18) *
             "$(lpad(round(Int, 100*aa/ab), 3))% allocs, " *
             "$(lpad(round(Int, 100*ta/tb), 3))% time")
+
+    close(tcp)
 end
 println("----------------------------------------------")
+end
 
-=#
+benchmark()
 
 
 end # testset "LazyHTTP"
