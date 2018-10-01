@@ -739,6 +739,47 @@ function append_trailer(h::T, trailer) where T <: Header
 end
 
 
+# Monkeypatch 🙈
+
+import Base.parseint_iterate
+
+function Base.parseint_preamble(signed::Bool, base::Int, s::LazyHTTP.FieldValue, startpos::Int, endpos::Int)
+    c, i, j = parseint_iterate(s, startpos, endpos)
+
+    while isspace(c)
+        c, i, j = parseint_iterate(s,i,endpos)
+    end
+    (j == 0) && (return 0, 0, 0)
+
+    sgn = 1
+    if signed
+        if c == '-' || c == '+'
+            (c == '-') && (sgn = -1)
+            c, i, j = parseint_iterate(s,i,endpos)
+        end
+    end
+
+    while isspace(c)
+        c, i, j = parseint_iterate(s,i,endpos)
+    end
+    (j == 0) && (return 0, 0, 0)
+
+    if base == 0
+        if c == '0' && i <= endpos # <<<<<<<< # https://github.com/JuliaLang/julia/commit/1a1d6b6d1c636a822cf2da371dc41a5752e8c848#r30713661
+            c, i = iterate(s,i)::Tuple{Char, Int}
+            base = c=='b' ? 2 : c=='o' ? 8 : c=='x' ? 16 : 10
+            if base != 10
+                c, i, j = parseint_iterate(s,i,endpos)
+            end
+        else
+            base = 10
+        end
+    end
+    return sgn, base, j
+end
+
+
+
 include("isvalid.jl")
 
 

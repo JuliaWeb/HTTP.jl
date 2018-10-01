@@ -60,7 +60,7 @@ module Messages
 export Message, Request, Response, HeaderSizeError,
        reset!, status, method, headers, uri, body,
        iserror, isredirect, ischunked, issafe, isidempotent,
-       header, hasheader, setheader, defaultheader, appendheader,
+       setstatus, header, hasheader, setheader, defaultheader,
        mkheaders, readheaders, headerscomplete,
        readchunksize,
        writeheaders, writestartline,
@@ -68,6 +68,8 @@ export Message, Request, Response, HeaderSizeError,
        payload
 
 import ..HTTP
+
+using ..LazyHTTP
 
 using ..Pairs
 import ..@warn
@@ -109,23 +111,22 @@ Represents a HTTP Response Message.
 - `request`, the `Request` that yielded this `Response`.
 """
 mutable struct Response <: Message
-    version::VersionNumber
-    status::Int16
-    headers::Headers
+    headers::Union{ResponseHeader,Nothing}
     body::Vector{UInt8}
-    request::Message
+    request::Union{Message,Nothing}
+end
 
-    function Response(status::Int, headers=[]; body=UInt8[], request=nothing)
-        r = new()
-        r.version = v"1.1"
-        r.status = status
-        r.headers = mkheaders(headers)
-        r.body = bytes(body)
-        if request !== nothing
-            r.request = request
-        end
-        return r
+Response(::Nothing) = Response(nothing, UInt8[], nothing)
+
+Response(h::ResponseHeader, body) =
+    Response(h, bytes(body), nothing)
+
+function Response(status::Int, headers=[]; body=UInt8[], request=nothing)
+    h = ResponseHeader(status)
+    for x in headers
+        push!(h, x)
     end
+    Response(h, bytes(body), request)
 end
 
 Response() = Request().response
@@ -135,14 +136,23 @@ Response(s::Int, body::AbstractString) = Response(s, bytes(body))
 
 Response(body) = Response(200, body)
 
+function Base.getproperty(r::Response, s::Symbol)
+    if s === :status
+        r.headers == nothing ? 0 : Int16(LazyHTTP.status(r.headers))
+    elseif s === :version
+        r.headers == nothing ? v"1.1" : LazyHTTP.version(r.headers)
+    else
+        getfield(r, s)
+    end
+end
+
+setstatus(r::Response, status) = (r.headers = ResponseHeader(status))
+
+
 Base.convert(::Type{Response},s::AbstractString) = Response(s)
 
 function reset!(r::Response)
-    r.version = v"1.1"
-    r.status = 0
-    if !isempty(r.headers)
-        empty!(r.headers)
-    end
+    r.headers = ResponseHeader(0)
     if !isempty(r.body)
         empty!(r.body)
     end
@@ -183,34 +193,49 @@ Represents a HTTP Request Message.
    [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
 """
 mutable struct Request <: Message
-    method::String
-    target::String
-    version::VersionNumber
-    headers::Headers
+    headers::Union{RequestHeader,Nothing}
     body::Vector{UInt8}
     response::Response
     txcount::Int
-    parent
+    parent::Union{Response,Nothing}
 end
 
-Request() = Request("", "")
+function Base.getproperty(r::Request, s::Symbol)
+    if s === :method
+        r.headers == nothing ? "" : LazyHTTP.method(r.headers)
+    elseif s === :target
+        r.headers == nothing ? "" : LazyHTTP.target(r.headers)
+    elseif s === :version
+        r.headers == nothing ? "" : LazyHTTP.version(r.headers)
+    else
+        getfield(r, s)
+    end
+end
+
+function Request()
+    request = Request(nothing, UInt8[], Response(nothing), 0, nothing)
+    request.response.request = request
+    return request
+end
 
 function Request(method::String, target, headers=[], body=UInt8[];
-                 version=v"1.1", parent=nothing)
-    r = Request(method,
-                target == "" ? "/" : target,
-                version,
-                mkheaders(headers),
-                bytes(body),
-                Response(0),
-                0,
-                parent)
-    r.response.request = r
-    return r
+                 parent=nothing)
+
+    h = RequestHeader(method, target == "" ? "/" : target)
+    for x in headers
+        push!(h, x)
+    end
+
+    request = Request(h, bytes(body), Response(nothing), 0, parent)
+    request.response.request = request
+    return request
 end
 
 mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
+
+import Base.==
+==(a::Message, b::Message) = a.headers == b.headers && a.body == b.body
 
 @deprecate method(r::Request) getfield(r, :method)
 @deprecate uri(r::Request) getfield(r, :target)
@@ -257,7 +282,7 @@ isredirect(status) = status in (301, 302, 307, 308)
 
 Does the `Message` have a "Transfer-Encoding: chunked" header?
 """
-ischunked(m) = any(h->(field_name_isequal(h[1], "transfer-encoding") &&
+ischunked(m) = any(h->((h[1] == "transfer-encoding") &&
                        endswith(lowercase(h[2]), "chunked")),
                    m.headers)
 
@@ -266,8 +291,8 @@ ischunked(m) = any(h->(field_name_isequal(h[1], "transfer-encoding") &&
 
 Have the headers been read into this `Message`?
 """
-headerscomplete(r::Response) = r.status != 0 && r.status != 100
-headerscomplete(r::Request) = r.method != ""
+headerscomplete(r::Response) = r.headers !== nothing && r.headers.status != 100
+headerscomplete(r::Request) = r.headers !== nothing
 
 """
 "The presence of a message body in a response depends on both the
@@ -298,9 +323,10 @@ bodylength(r::Request)::Int =
     ischunked(r) ? unknown_length :
                    parse(Int, header(r, "Content-Length", "0"))
 
+
 # HTTP header-fields
 
-Base.getindex(m::Message, k) = header(m, k)
+Base.getindex(m::Message, k) = getindex(m.headers, k)
 
 """
     Are `field-name`s `a` and `b` equal?
@@ -316,8 +342,11 @@ field_name_isequal(a, b) = ascii_lc_isequal(a, b)
 Get header value for `key` (case-insensitive).
 """
 header(m::Message, k, d="") = header(m.headers, k, d)
+header(h::LazyHTTP.Header, k::AbstractString,
+                           d::AbstractString="") = get(h, k, d)
 header(h::Headers, k::AbstractString, d::AbstractString="") =
     getbyfirst(h, k, k => d, field_name_isequal)[2]
+header(::Nothing, k, d="") = d
 
 """
     hasheader(::Message, key) -> Bool
@@ -325,6 +354,8 @@ header(h::Headers, k::AbstractString, d::AbstractString="") =
 Does header value for `key` exist (case-insensitive)?
 """
 hasheader(m, k::AbstractString) = header(m, k) != ""
+hasheader(m::LazyHTTP.Header, k::AbstractString) = haskey(m.headers, k)
+hasheader(::Nothing, a...) = false
 
 """
     hasheader(::Message, key, value) -> Bool
@@ -332,7 +363,7 @@ hasheader(m, k::AbstractString) = header(m, k) != ""
 Does header for `key` match `value` (both case-insensitive)?
 """
 hasheader(m, k::AbstractString, v::AbstractString) =
-    field_name_isequal(header(m, k), lowercase(v))
+    field_name_isequal(header(m, k), v)
 
 """
     setheader(::Message, key => value)
@@ -340,6 +371,7 @@ hasheader(m, k::AbstractString, v::AbstractString) =
 Set header `value` for `key` (case-insensitive).
 """
 setheader(m::Message, v) = setheader(m.headers, v)
+setheader(h::LazyHTTP.Header, v::Pair) = setindex!(h, v.second, v.first)
 setheader(h::Headers, v::Header) = setbyfirst(h, v, field_name_isequal)
 setheader(h::Headers, v::Pair) =
     setbyfirst(h, Header(SubString(v.first), SubString(v.second)),
@@ -351,31 +383,8 @@ setheader(h::Headers, v::Pair) =
 Set header `value` for `key` if it is not already set.
 """
 function defaultheader(m, v::Pair)
-    if header(m, first(v)) == ""
+    if !hasheader(m, v.first)
         setheader(m, v)
-    end
-    return
-end
-
-"""
-    appendheader(::Message, key => value)
-
-Append a header value to `message.headers`.
-
-If `key` is the same as the previous header, the `value` is [appended to the
-value of the previous header with a comma
-delimiter](https://stackoverflow.com/a/24502264)
-
-`Set-Cookie` headers are not comma-combined because [cookies often contain
-internal commas](https://tools.ietf.org/html/rfc6265#section-3).
-"""
-function appendheader(m::Message, header)
-    c = m.headers
-    k,v = header
-    if k != "Set-Cookie" && length(c) > 0 && k == c[end][1]
-        c[end] = c[end][1] => string(c[end][2], ", ", v)
-    else
-        push!(m.headers, header)
     end
     return
 end
@@ -432,14 +441,8 @@ end
 Write `Message` start line and
 a line for each "name: value" pair and a trailing blank line.
 """
-function writeheaders(io::IO, m::Message)
-    writestartline(io, m)
-    for (name, value) in m.headers
-        write(io, "$name: $value\r\n")
-    end
-    write(io, "\r\n")
-    return
-end
+writeheaders(io::IO, m::Message) = write(io, m.headers)
+
 
 """
     write(::IO, ::Message)
@@ -468,40 +471,15 @@ Throw `EOFError` if input is incomplete.
 """
 function readheaders(io::IO, message::Message)
     bytes = String(readuntil(io, find_end_of_header))
-    h = parse_lazy(bytes, message)
-    if LAZY_HTTP_VALIDATE && !isvalid(h, obs=true)
-        throw(ParseError(:INVALID_HTTP_HEADER))
-    end
-    for f in h
-        appendheader(message, f)
+    message.headers = lazy_header(message, bytes)
+    if LAZY_HTTP_VALIDATE && !isvalid(message.headers, obs=true)
+        throw(ParseError(:INVALID_HEADER_FIELD))
     end
     return
 end
 
-function parse_lazy(bytes, r::Response)
-    h = ResponseHeader(bytes)
-    r.status = h.status
-    r.version = h.version
-    return h
-end
-
-function parse_lazy(bytes, r::Request)
-    h = RequestHeader(bytes)
-    r.method = h.method
-    r.target = h.target
-    r.version = h.version
-    return h
-end
-
-function parse_header_fields!(bytes::SubString{String}, m::Message)
-
-    h, bytes = parse_header_field(bytes)
-    while !(h === Parsers.emptyheader)
-        appendheader(m, h)
-        h, bytes = parse_header_field(bytes)
-    end
-    return
-end
+lazy_header(::Response, bytes) = ResponseHeader(bytes)
+lazy_header(::Request, bytes) = RequestHeader(bytes)
 
 """
 Read chunk-size from an `IO` stream.
@@ -512,7 +490,8 @@ function readchunksize(io::IO, message::Message)::Int
     if n == 0
         bytes = readuntil(io, find_end_of_trailer)
         if bytes[2] != UInt8('\n')
-            parse_header_fields!(SubString(String(bytes)), message)
+            message.headers = LazyHTTP.append_trailer(message.headers,
+                                                      String(bytes))
         end
     end
     return n
@@ -549,15 +528,15 @@ function Base.show(io::IO, m::Message)
         end
         return
     end
-    println(io, typeof(m), ":")
-    println(io, "\"\"\"")
-    writeheaders(io, m)
+    println(io, typeof(m), "(")
+    show(io, m.headers)
+    println(io, ",\n\"\"\"")
     summary = bodysummary(m.body)
     write(io, summary)
     if length(m.body) > length(summary)
         println(io, "\n⋮\n$(length(m.body))-byte body")
     end
-    print(io, "\"\"\"")
+    print(io, "\"\"\")")
     return
 end
 

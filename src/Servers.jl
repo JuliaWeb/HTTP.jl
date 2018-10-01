@@ -450,7 +450,7 @@ function handle_transaction(f::Function, t::Transaction;
     end
 
     response = request.response
-    response.status = 200
+    setstatus(response, 200)
     if final_transaction || hasheader(request, "Connection", "close")
         setheader(response, "Connection" => "close")
     end
@@ -488,7 +488,7 @@ function handle_stream(f::Function, http::Stream)
     catch e
         if isopen(http) && !iswritable(http)
             @error exception=(e, stacktrace(catch_backtrace()))
-            http.message.response.status = 500
+            setstatus(http, 500)
             startwrite(http)
             write(http, sprint(showerror, e))
         else
