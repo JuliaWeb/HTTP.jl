@@ -127,11 +127,16 @@ put!(server.in, HTTP.Servers.KILL)
 
 # keep-alive vs. close: issue #81
 port += 1
-tsk = @async HTTP.Servers.serve(HTTP.Servers.Server((req) -> HTTP.Response("Hello\n"), stdout), "127.0.0.1", port)
+tsk = @async HTTP.listen("127.0.0.1", port,verbose=true) do r::HTTP.Request
+    HTTP.Response("Hello")
+end
 sleep(2.0)
-r = HTTP.request("GET", "http://127.0.0.1:$port/", ["Host"=>"127.0.0.1:$port"]; http_version=v"1.0")
-@test r.status == 200
-#@test HTTP.header(r, "Connection") == "close"
+tcp = Sockets.connect(ip"127.0.0.1", port)
+write(tcp, "GET / HTTP/1.0\r\n\r\n")
+sleep(0.5)
+client = String(readavailable(tcp))
+@show client
+@test client == "HTTP/1.1 200 OK\r\n\r\nHello"
 
 # body too big
 
@@ -166,8 +171,7 @@ end
 # test automatic forwarding of non-sensitive headers
 # this is a server that will "echo" whatever headers were sent to it
 t1 = @async HTTP.listen("127.0.0.1", 8090) do req::HTTP.Request
-    r = HTTP.Response(200)
-    r.headers = req.headers
+    r = HTTP.Response(200, req.headers)
     return r
 end
 @test !istaskdone(t1)
