@@ -11,6 +11,8 @@ import ..HTTP
 
 using HTTP.Messages
 using HTTP.Parsers
+using HTTP.Strings: tocameldash
+
 
 import Base.==
 
@@ -833,9 +835,9 @@ Message(name= "curl get"
 ,num_headers= 5
 ,headers=[ "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
            , "Line2"=> "line2"
-           , "Line3"=> "line3"
-           , "Line4"=> ""
-           , "Connection"=> "close"
+           , "Line3"=> " line3"
+           , "Line4"=> " "
+           , "Connection"=> " close"
          ]
 ,body= ""
 ), Message(name = "multiple connection header values with folding and lws"
@@ -905,9 +907,9 @@ Message(name= "curl get"
 ,num_headers= 5
 ,headers=[ "Line1"=> "abc\tdef ghi\t\tjkl  mno \t \tqrs"
            , "Line2"=> "line2"
-           , "Line3"=> "line3"
-           , "Line4"=> ""
-           , "Connection"=> "close"
+           , "Line3"=> " line3"
+           , "Line4"=> " "
+           , "Connection"=> " close"
          ]
 ,body= ""
 )
@@ -1419,7 +1421,8 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
           @test r.version.minor == req.http_minor
           @test r.method == string(req.method)
           @test length(r.headers) == req.num_headers
-          @test Dict(HTTP.CanonicalizeRequest.canonicalizeheaders(r.headers)) == Dict(req.headers)
+          r_headers = [tocameldash(n) => String(v) for (n,v) in r.headers]
+          @test r_headers == req.headers
           @test String(r.body) == req.body
 # FIXME          @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == req.should_keep_alive
 # FIXME          @test String(collect(upgrade[])) == req.upgrade
@@ -1436,8 +1439,8 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
                "Content-Length: 7\r\n" *
                "Proxy-Connection: keep-alive\r\n\r\n1234567"
 
-      req = Request("GET", "http://www.techcrunch.com/")
-      req.headers = ["Host"=>"www.techcrunch.com","User-Agent"=>"Fake","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language"=>"en-us,en;q=0.5","Accept-Encoding"=>"gzip,deflate","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Keep-Alive"=>"300","Content-Length"=>"7","Proxy-Connection"=>"keep-alive"]
+      req = Request("GET", "http://www.techcrunch.com/",
+                    ["Host"=>"www.techcrunch.com","User-Agent"=>"Fake","Accept"=>"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language"=>"en-us,en;q=0.5","Accept-Encoding"=>"gzip,deflate","Accept-Charset"=>"ISO-8859-1,utf-8;q=0.7,*;q=0.7","Keep-Alive"=>"300","Content-Length"=>"7","Proxy-Connection"=>"keep-alive"])
       req.body = HTTP.bytes("1234567")
 
       @test parse(Request,reqstr).headers == req.headers
@@ -1446,16 +1449,15 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       reqstr = "GET / HTTP/1.1\r\n" *
                "Host: foo.com\r\n\r\n"
 
-      req = Request("GET", "/")
-      req.headers = ["Host"=>"foo.com"]
+      req = Request("GET", "/", ["Host"=>"foo.com"])
 
       @test parse(Request, reqstr) == req
 
       reqstr = "GET //user@host/is/actually/a/path/ HTTP/1.1\r\n" *
                "Host: test\r\n\r\n"
 
-      req = Request("GET", "//user@host/is/actually/a/path/")
-      req.headers = ["Host"=>"test"]
+      req = Request("GET", "//user@host/is/actually/a/path/",
+                   ["Host"=>"test"])
 
       @test parse(Request, reqstr) == req
 
@@ -1478,10 +1480,8 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
                "Trailer-Key: Trailer-Value\r\n" *
                "\r\n"
 
-      req = Request()
-      req.method = "POST"
-      req.target = "/"
-      req.headers = ["Host"=>"foo.com", "Transfer-Encoding"=>"chunked", "Trailer-Key"=>"Trailer-Value"]
+      req = Request("POST", "/",
+                    ["Host"=>"foo.com", "Transfer-Encoding"=>"chunked", "Trailer-Key"=>"Trailer-Value"])
       req.body = HTTP.bytes("foobar")
 
       @test parse(Request, reqstr) == req
@@ -1501,58 +1501,42 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
 
       reqstr = "CONNECT www.google.com:443 HTTP/1.1\r\n\r\n"
 
-      req = Request()
-      req.method = "CONNECT"
-      req.target = "www.google.com:443"
+      req = Request("CONNECT", "www.google.com:443")
 
       @test parse(Request, reqstr) == req
 
       reqstr = "CONNECT 127.0.0.1:6060 HTTP/1.1\r\n\r\n"
 
-      req = Request()
-      req.method = "CONNECT"
-      req.target = "127.0.0.1:6060"
+      req = Request("CONNECT", "127.0.0.1:6060")
 
       @test parse(Request, reqstr) == req
 
       reqstr = "CONNECT /_goRPC_ HTTP/1.1\r\n\r\n"
-      req = HTTP.Request()
-      req.method = "CONNECT"
-      req.target = "/_goRPC_"
+      req = HTTP.Request("CONNECT", "/_goRPC_")
 
-      @test HTTP.parse(HTTP.Request, reqstr) == req
+      @test parse(Request, reqstr) == req
 
       reqstr = "NOTIFY * HTTP/1.1\r\nServer: foo\r\n\r\n"
 
-      req = Request()
-      req.method = "NOTIFY"
-      req.target = "*"
-      req.headers = ["Server"=>"foo"]
+      req = Request("NOTIFY", "*", ["Server"=>"foo"])
 
       @test parse(Request, reqstr) == req
 
       reqstr = "OPTIONS * HTTP/1.1\r\nServer: foo\r\n\r\n"
 
-      req = Request()
-      req.method = "OPTIONS"
-      req.target = "*"
-      req.headers = ["Server"=>"foo"]
+      req = Request("OPTIONS", "*", ["Server"=>"foo"])
 
       @test parse(Request, reqstr) == req
 
       reqstr = "GET / HTTP/1.1\r\nHost: issue8261.com\r\nConnection: close\r\n\r\n"
 
-      req = Request("GET", "/")
-      req.headers = ["Host"=>"issue8261.com", "Connection"=>"close"]
+      req = Request("GET", "/", ["Host"=>"issue8261.com", "Connection"=>"close"])
 
       @test parse(Request, reqstr) == req
 
       reqstr = "HEAD / HTTP/1.1\r\nHost: issue8261.com\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
 
-      req = Request()
-      req.method = "HEAD"
-      req.target = "/"
-      req.headers = ["Host"=>"issue8261.com", "Connection"=>"close", "Content-Length"=>"0"]
+      req = Request("HEAD", "/", ["Host"=>"issue8261.com", "Connection"=>"close", "Content-Length"=>"0"])
 
       @test parse(Request, reqstr) == req
 
@@ -1566,16 +1550,14 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
                "Connection: Keep-Alive\r\n\r\n" *
                "first=Zara&last=Ali\r\n\r\n"
 
-      req = Request()
-      req.method = "POST"
-      req.target = "/cgi-bin/process.cgi"
-      req.headers = ["User-Agent"=>"Mozilla/4.0 (compatible; MSIE5.01; Windows NT)",
+      req = Request("POST", "/cgi-bin/process.cgi",
+                    ["User-Agent"=>"Mozilla/4.0 (compatible; MSIE5.01; Windows NT)",
                      "Host"=>"www.tutorialspoint.com",
                      "Content-Type"=>"text/xml; charset=utf-8",
                      "Content-Length"=>"19",
                      "Accept-Language"=>"en-us",
                      "Accept-Encoding"=>"gzip, deflate",
-                     "Connection"=>"Keep-Alive"]
+                     "Connection"=>"Keep-Alive"])
       req.body = HTTP.bytes("first=Zara&last=Ali")
 
       @test parse(Request, reqstr) == req
@@ -1590,7 +1572,8 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
           @test r.status == resp.status_code
           @test HTTP.Messages.statustext(r.status) == resp.response_status
           @test length(r.headers) == resp.num_headers
-          @test Dict(HTTP.CanonicalizeRequest.canonicalizeheaders(r.headers)) == Dict(resp.headers)
+          r_headers = [tocameldash(n) => String(v) for (n,v) in r.headers]
+          @test r_headers == resp.headers
           @test String(r.body) == resp.body
 # FIXME              @test HTTP.http_should_keep_alive(HTTP.DEFAULT_PARSER) == resp.should_keep_alive
       end
@@ -1667,7 +1650,7 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       r = Response()
       readheaders(IOBuffer(respstr), r)
       @test r.status == 200
-      @test r.headers == ["Content-Length"=>"1844674407370955160"]
+      @test [r.headers...] == ["Content-Length"=>"1844674407370955160"]
 
 #=
       respstr = "HTTP/1.1 200 OK\r\n" * "Content-Length: " * "18446744073709551615" * "\r\n\r\n"
@@ -1683,7 +1666,7 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       r = Response()
       readheaders(IOBuffer(respstr), r)
       @test r.status == 200
-      @test r.headers == ["Transfer-Encoding"=>"chunked"]
+      @test [r.headers...] == ["Transfer-Encoding"=>"chunked"]
 
       respstr = "HTTP/1.1 200 OK\r\n" * "Transfer-Encoding: chunked\r\n\r\n" * "FFFFFFFFFFFFFFF" * "\r\n..."
       e = try parse(Response,respstr) catch e e end
@@ -1695,7 +1678,7 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
       @test_throws HTTP.ParseError parse(Request,"GET / HTP/1.1\r\n\r\n")
 
       r = parse(Request,"GET / HTTP/1.1\r\n" * "Test: Düsseldorf\r\n\r\n")
-      @test r.headers == ["Test" => "Düsseldorf"]
+      @test Pair{String,String}[r.headers...] == ["Test" => "Düsseldorf"]
 
       for m in ["GET", "PUT", "M-SEARCH", "FOOMETHOD"]
           r = parse(Request,"$m / HTTP/1.1\r\n\r\n")
