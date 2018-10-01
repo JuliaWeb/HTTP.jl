@@ -11,5 +11,13 @@ ascii_lc_isequal(a::UInt8, b::UInt8) = ascii_lc(a) == ascii_lc(b)
 """
 Case insensitive ASCII string comparison.
 """
-ascii_lc_isequal(a, b) = ncodeunits(a) == ncodeunits(b) &&
-                         all(map(ascii_lc_isequal, codeunits(a), codeunits(b)))
+function ascii_lc_isequal(a, b)
+    a = Iterators.Stateful(codeunits(a))
+    b = Iterators.Stateful(codeunits(b))
+    for (i, j) in zip(a, b)
+        if !ascii_lc_isequal(i, j)
+            return false
+        end
+    end
+    return isempty(a) && isempty(b)
+end
