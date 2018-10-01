@@ -54,6 +54,7 @@ function Base.read(f::Form, n::Integer)
 end
 
 function Form(d)
+    @require eltype(d) <: Pair
     boundary = string(rand(UInt128), base=16)
     data = IO[]
     io = IOBuffer()
@@ -119,4 +120,14 @@ function writemultipartheader(io::IOBuffer, i::Multipart)
     write(io, "Content-Type: $(contenttype)\r\n")
     write(io, i.contenttransferencoding == "" ? "\r\n" : "Content-Transfer-Encoding: $(i.contenttransferencoding)\r\n\r\n")
     return
+end
+
+content_type(f::Form) = "Content-Type" =>
+                        "multipart/form-data; boundary=$(f.boundary)"
+
+post(url, f::Form; kw...) = post(url, Header[], f; kw...)
+
+function post(url, headers, f::Form; kw...)
+    setheader(headers, content_type(f))
+    request("POST", url, headers, f; kw...)
 end
