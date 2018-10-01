@@ -26,8 +26,17 @@ sprintcompact(x) = sprint(show, x; context=:compact => true)
 printlncompact(x) = println(sprintcompact(x))
 
 
-method_name(bt) = sprint(StackTraces.show_spec_linfo,
-                         first(StackTraces.lookup(first(bt))))
+function method_name(bt)
+    for f in bt
+        for i in StackTraces.lookup(f)
+            n = sprint(StackTraces.show_spec_linfo, i)
+            if n != "macro expansion"
+                return n
+            end
+        end
+    end
+    return "unknown method"
+end
 
 @noinline function precondition_error(msg, bt)
     msg = string(method_name(bt), " requires ", msg)
