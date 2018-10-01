@@ -39,7 +39,7 @@ FieldName("  foo: bar", 1) == "foo"
 """
 module LazyStrings
 
-const WARN_FULL_ITERATION_OF_LAZY_STRING = true
+const WARN_FULL_ITERATION_OF_LAZY_STRING = false
 
 
 
@@ -140,6 +140,8 @@ Base.codeunit(s::LazyString, i::Integer) = codeunit(s.s, i)
 Base.ncodeunits(s::LazyString) = maxindex(s)
 maxindex(s::LazyString) = ncodeunits(s.s)
 
+isvalid(s, i) = Base.isvalid(s, i)
+prevind(s, i) = Base.prevind(s, i)
 
 Base.isvalid(s::LazyString, i::Integer) = i == 1 || (i > findstart(s) &&
                                                     isvalid(s.s, i) &&
@@ -188,7 +190,7 @@ function Base.lastindex(s::LazyString)
     end
 
     first, last, n = scan_string(s)
-    return last
+    return first == last ? 1 : last
 end
 
 
@@ -232,6 +234,7 @@ ascii_char(c::UInt8) = reinterpret(Char, (c % UInt32) << 24)
 Base.iterate(s::LazyASCII, i::Int = 1) = _iterate(ascii_char, s, i)
 
 
+Base.codeunit(s::LazyASCII) = UInt8
 Base.codeunits(s::LazyASCII) = LazyASCIICodeUnits(s)
 
 struct LazyASCIICodeUnits{S<:LazyASCII}

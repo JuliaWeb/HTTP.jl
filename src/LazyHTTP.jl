@@ -189,7 +189,7 @@ struct ResponseHeader{T} <: Header{T}
     end
     function ResponseHeader(status::Int)
         io = IOBuffer()
-        write(io, "HTTP/1.1 $status $(statustext(status))\r\n\r\n")
+        print(io, "HTTP/1.1 ", status, " ", statustext(status), "\r\n\r\n")
         return new{IOBuffer}(io)
     end
 end
@@ -204,11 +204,13 @@ struct RequestHeader{T} <: Header{T}
     end
     function RequestHeader(method, target)
         io = IOBuffer()
-        write(io, "$method $target HTTP/1.1\r\n\r\n")
+        print(io, method, " ", target, " HTTP/1.1\r\n\r\n")
         return new{IOBuffer}(io)
     end
     RequestHeader(s::T) where T = new{T}(s)
 end
+
+RequestHeader{T}(s::T) where T = RequestHeader(s)
 
 Base.String(h::Header{<:AbstractString}) = h.s
 Base.String(h::Header{IOBuffer}) = String(take!(copy(h.s)))
@@ -256,6 +258,8 @@ FieldName(v::FieldValue) = FieldName(v.s, v.i)
 
 getc(s::HTTPString{IOBuffer}, i) = getc(s.s, i)
 maxindex(s::HTTPString{IOBuffer}) = s.s.size
+LazyStrings.isvalid(b::IOBuffer, i) = 1 <= i <= b.size
+LazyStrings.prevind(::IOBuffer, i) = i - 1
 
 
 # Parsing Utilities
@@ -335,7 +339,8 @@ end
 """
 `SubString` of space-delimited token starting at index `i` in String `s`.
 """
-token(s, i) = SubString(s.s, i, token_end(s, i))
+token(s::Header, i) = SubString(s.s, i, token_end(s, i))
+token(s::Header{IOBuffer}, i) = String(view(s.s.data, i:token_end(s, i)))
 
 
 """
@@ -410,7 +415,7 @@ Request method.
 > and parse a request-line SHOULD ignore at least one empty line (CRLF)
 > received prior to the request-line.
 """
-function method(s::RequestHeader{T})::SubString{T} where T
+function method(s::RequestHeader)
     i = skip_crlf(s, 1)
     return token(s, i)
 end
@@ -421,7 +426,7 @@ Request target.
 [RFC7230 5.3](https://tools.ietf.org/html/rfc7230#section-5.3)
 `request-line = method SP request-target SP HTTP-version CRLF`
 """
-function target(s::RequestHeader{T})::SubString{T} where T
+function target(s::RequestHeader)
     i = skip_crlf(s, 1)
     i = skip_token(s, i)
     return token(s, i)
@@ -583,19 +588,6 @@ end
 
 # Field Name Comparison
 
-"""
-    Is HTTP `field-name` `f` equal to `String` `b`?
-
-[HTTP `field-name`s](https://tools.ietf.org/html/rfc7230#section-3.2)
-are ASCII-only and case-insensitive.
-
-"""
-Base.isequal(f::FieldName, s::AbstractString) =
-    field_isequal_string(f.s, f.i, s, 1) != 0
-
-Base.isequal(a::FieldName, b::FieldName) =
-    field_isequal_field(a.s, a.i, b.s, b.i) != 0
-
 getascii(s, i) = unsafe_load(pointer(s), i)
 getascii(s::IOBuffer, i) = unsafe_load(pointer(s.data), i)
 
@@ -627,6 +619,26 @@ function field_isequal_field(a, ai, b, bi)
     return 0
 end
 
+module OverloadBaseEquals
+import Base.==
+import ..Header
+import ..FieldName
+import ..field_isequal_string
+import ..field_isequal_field
+
+"""
+    Is HTTP `field-name` `f` equal to `String` `b`?
+
+[HTTP `field-name`s](https://tools.ietf.org/html/rfc7230#section-3.2)
+are ASCII-only and case-insensitive.
+
+"""
+==(f::FieldName, s::AbstractString) = field_isequal_string(f.s, f.i, s, 1) != 0
+==(a::FieldName, b::FieldName) = field_isequal_field(a.s, a.i, b.s, b.i) != 0
+
+==(a::Header, b::Header) = String(a) == String(b)
+
+end # module OverloadBaseEquals
 
 """
 Convert ASCII (RFC20) character `c` to lower case.
@@ -699,7 +711,7 @@ end
 
 function Base.push!(h::Header{IOBuffer}, v)
     h.s.ptr -= 2
-    write(h.s, v.first, ": ", v.second, "\r\n\r\n")
+    print(h.s, v.first, ": ", v.second, "\r\n\r\n")
     if DEBUG_MUTATION
         @ensure v in h
         @ensure isvalid(h)
@@ -715,6 +727,15 @@ function Base.setindex!(h::Header{IOBuffer}, value, key)
         @ensure get(h,key) == value
     end
     return h
+end
+
+
+function append_trailer(h::T, trailer) where T <: Header
+    last = lastindex(h.s) - 1
+    if h.s[last] == '\r'
+        last -= 1
+    end
+    return T(h.s[1:last] * trailer)
 end
 
 
