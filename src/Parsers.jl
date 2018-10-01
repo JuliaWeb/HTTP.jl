@@ -115,15 +115,6 @@ Find length of header delimited by `\\r\\n\\r\\n` or `\\n\\n`.
 """
 function find_end_of_header(bytes::AbstractVector{UInt8}; allow_obs_fold=true)
 
-#= FIXME =======================================================================
-
-Before merging:
-
- - Consider allow_obs_fold=false by default,
- - and/or returning (i, has_obs_fold) instead of throwing ParseError
-
-===============================================================================#
-
     buf = 0xFFFFFFFF
     l = min(length(bytes), header_size_limit)
     i = 1
