@@ -53,7 +53,7 @@ function Base.read(f::Form, n::Integer)
     return result
 end
 
-function Form(d::Vector{Pair{String,T}}) where T<:Any
+function Form(d)
     boundary = string(rand(UInt128), base=16)
     data = IO[]
     io = IOBuffer()
@@ -76,10 +76,6 @@ function Form(d::Vector{Pair{String,T}}) where T<:Any
     seekstart(io)
     push!(data, io)
     return Form(data, 1, boundary)
-end
-
-function Form(d::Dict{String,T}) where T<:Any
-    return Form(collect(d))
 end
 
 function writemultipartheader(io::IOBuffer, i::IOStream)
