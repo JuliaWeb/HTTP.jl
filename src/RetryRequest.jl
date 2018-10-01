@@ -62,7 +62,7 @@ isrecoverable(e, req, retry_non_idempotent) =
 
 function no_retry_reason(ex, req)
     buf = IOBuffer()
-    showcompact(buf, req)
+    show(IOContext(buf, :compact => true), req)
     print(buf, ", ",
         ex isa HTTP.StatusError ? "HTTP $(ex.status): " :
         !isrecoverable(ex) ?  "$ex not recoverable, " : "",
