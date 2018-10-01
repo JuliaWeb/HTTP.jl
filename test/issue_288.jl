@@ -1,5 +1,8 @@
 # See https://github.com/JuliaWeb/HTTP.jl/pull/288
 
+using Test
+using HTTP
+
 @testset "HTTP.Issues.288" begin
 
 sz = 90
