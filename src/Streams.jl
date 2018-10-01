@@ -10,7 +10,7 @@ using ..IOExtras
 using ..Messages
 import ..ByteView
 import ..Messages: header, hasheader, setheader,
-                   writeheaders, writestartline
+                   writeheaders, writestartline, setstatus
 import ..ConnectionPool: getrawstream, nobytes, ByteView
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
@@ -52,7 +52,7 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
 Stream(r::M, io::S) where {M, S} = Stream{M,S}(r, io, false, false, 0)
 
 header(http::Stream, a...) = header(http.message, a...)
-setstatus(http::Stream, status) = (http.message.response.status = status)
+setstatus(http::Stream, status) = setstatus(http.message.response, status)
 setheader(http::Stream, a...) = setheader(http.message.response, a...)
 getrawstream(http::Stream) = getrawstream(http.stream)
 

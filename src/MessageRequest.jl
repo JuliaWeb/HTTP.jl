@@ -21,7 +21,6 @@ export MessageLayer
 
 function request(::Type{MessageLayer{Next}},
                  method::String, url::URI, headers::Headers, body;
-                 http_version=v"1.1",
                  target=resource(url),
                  parent=nothing, iofunction=nothing, kw...) where Next
 
@@ -41,8 +40,7 @@ function request(::Type{MessageLayer{Next}},
         end
     end
 
-    req = Request(method, target, headers, bodybytes(body);
-                  parent=parent, version=http_version)
+    req = Request(method, target, headers, bodybytes(body); parent=parent)
 
     return request(Next, url, req, body; iofunction=iofunction, kw...)
 end
