@@ -121,7 +121,8 @@ end
 """
 https://tools.ietf.org/html/rfc3986#section-4.1
 """
-function parse_uri_reference(str::AbstractString; strict = false)
+function parse_uri_reference(str::Union{String, SubString{String}};
+                             strict = false)
 
     if !exec(uri_reference_regex, str)
         throw(ParseError("URI contains invalid character"))
@@ -139,6 +140,9 @@ function parse_uri_reference(str::AbstractString; strict = false)
     end
     return uri
 end
+
+parse_uri_reference(str; strict = false) =
+    parse_uri_reference(SubString(str); strict = false)
 
 
 URI(str::AbstractString) = parse_uri_reference(str)
