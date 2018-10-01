@@ -1588,7 +1588,7 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
           @test r.version.major == resp.http_major
           @test r.version.minor == resp.http_minor
           @test r.status == resp.status_code
-          @test HTTP.Messages.statustext(r) == resp.response_status
+          @test HTTP.Messages.statustext(r.status) == resp.response_status
           @test length(r.headers) == resp.num_headers
           @test Dict(HTTP.CanonicalizeRequest.canonicalizeheaders(r.headers)) == Dict(resp.headers)
           @test String(r.body) == resp.body
