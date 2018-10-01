@@ -12,6 +12,12 @@ ifilter(a...) = Base.Iterators.filter(a...)
 
 @testset "LazyHTTP" begin
 
+h = RequestHeader("HEAD / HTTP/1.1\r\ncontent-Length: 0\r\n\r\n")
+
+@test h["content-length"] == "0"
+
+@test parse(Int, h["content-length"]) == 0
+
 h = ResponseHeader("""
     HTTP/1.1 302 FOUND\r
     Connection: keep-alive\r
@@ -43,6 +49,8 @@ h = RequestHeader("""
 
 @test strip(h["host"]) == "s3.ap-southeast-2.amazonaws.com"
 @test strip(h["content-length"]) == "3"
+
+@test parse(Int, h["content-length"]) == 3
 
 @test lowercase(h["x-amz-date"]) == lowercase("20181001T011722Z")
 

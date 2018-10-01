@@ -5,8 +5,14 @@ using ..Dates
 using MbedTLS: digest, MD_SHA256, MD_MD5
 import ..Layer, ..request, ..Headers
 using ..URIs
-using ..Pairs: getkv, setkv, rmkv
+import ..Pairs: setkv, rmkv
 import ..@debug, ..DEBUG_LEVEL
+
+using ..LazyHTTP
+setkv(c::LazyHTTP.Header, k, v) = setindex!(c, v, k)
+rmkv(c::LazyHTTP.Header, k) = delete!(c, k)
+
+
 
 """
     request(AWS4AuthLayer, ::URI, ::Request, body) -> HTTP.Response
@@ -36,7 +42,7 @@ end
 
 function sign_aws4!(method::String,
                     url::URI,
-                    headers::Headers,
+                    headers::Union{Headers,LazyHTTP.Header},
                     body::Vector{UInt8};
                     body_sha256::Vector{UInt8}=digest(MD_SHA256, body),
                     body_md5::Vector{UInt8}=digest(MD_MD5, body),
