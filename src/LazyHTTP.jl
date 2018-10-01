@@ -187,9 +187,13 @@ struct ResponseHeader{T} <: Header{T}
         @require ends_with_crlf(s)
         return new{T}(s)
     end
-    function ResponseHeader(status::Int)
+    function ResponseHeader(status::Int, headers=Nothing[])
         io = IOBuffer()
-        print(io, "HTTP/1.1 ", status, " ", statustext(status), "\r\n\r\n")
+        print(io, "HTTP/1.1 ", status, " ", statustext(status), "\r\n")
+        for h in headers
+            print(io, h.first, ": ", h.second, "\r\n")
+        end
+        print(io, "\r\n")
         return new{IOBuffer}(io)
     end
 end
@@ -703,6 +707,20 @@ function Base.delete!(h::Header{IOBuffer}, key)
     end
     if DEBUG_MUTATION
         @ensure !haskey(h, key)
+        @ensure isvalid(h)
+    end
+    return h
+end
+
+
+function Base.append!(h::Header{IOBuffer}, v)
+    h.s.ptr -= 2
+    for (n, v) in v
+        print(h.s, n, ": ", v, "\r\n")
+    end
+    print(h.s, "\r\n")
+    if DEBUG_MUTATION
+        @ensure v in h
         @ensure isvalid(h)
     end
     return h
