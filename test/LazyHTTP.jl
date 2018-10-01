@@ -324,6 +324,29 @@ function lazy_parse(s, a, b)
 end
 
 #=
+Results as of 8e4eb7872d0b74b120cd83e2cebf8a7d9c8c4a97:
+(After this, the lazy parser was integrated into HTTP.Response
+ so the performance comparison is no longer as easy to do).
+
+----------------------------------------------
+LazyHTTP performance (vs HTTP.Parsers)
+----------------------------------------------
+github header:     5% allocs, 10% time
+wikipedia header:  5% allocs,  7% time
+netflix header:    4% allocs,  8% time
+twitter header:    6% allocs, 10% time
+nytimes header:    5% allocs,  8% time
+----------------------------------------------
+----------------------------------------------
+LazyHTTP send performance (vs HTTP.Response)
+----------------------------------------------
+github header:     17% allocs, 105% time
+wikipedia header:  15% allocs,  90% time
+netflix header:    15% allocs,  68% time
+twitter header:    16% allocs,  46% time
+nytimes header:    14% allocs,  71% time
+----------------------------------------------
+
 
 function old_parse(s, a, b)
     r = HTTP.Response()
