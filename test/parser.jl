@@ -754,9 +754,10 @@ Message(name= "curl get"
 ,request_url= "/images/my_dog.jpg"
 ,query_string= ""
 ,fragment= ""
-,num_headers= 2
+,num_headers= 3
 ,headers=[ "Host"=> "example.com"
-           , "Link"=> "<http://example.com/profiles/joe>; rel=\"tag\", <http://example.com/profiles/sally>; rel=\"tag\""
+           , "Link"=> "<http://example.com/profiles/joe>; rel=\"tag\""
+           , "Link"=> "<http://example.com/profiles/sally>; rel=\"tag\""
          ]
 ,body= ""
 ), Message(name = "link request"
