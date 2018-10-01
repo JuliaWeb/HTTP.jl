@@ -12,6 +12,50 @@ ifilter(a...) = Base.Iterators.filter(a...)
 
 @testset "LazyHTTP" begin
 
+h = ResponseHeader("""
+    HTTP/1.1 302 FOUND\r
+    Connection: keep-alive\r
+    Server: gunicorn/19.9.0\r
+    Date: Mon, 01 Oct 2018 04:51:05 GMT\r
+    Content-Type: text/html; charset=utf-8\r
+    Content-Length: 0\r
+    Location: http://127.0.0.1:8090\r
+    Access-Control-Allow-Origin: *\r
+    Access-Control-Allow-Credentials: true\r
+    Via: 1.1 vegur\r
+    \r
+    """)
+
+@test HTTP.URIs.URI(h["Location"]).port == "8090"
+
+h = RequestHeader("""
+    PUT /http.jl.test/filez HTTP/1.1\r
+    Host: s3.ap-southeast-2.amazonaws.com\r
+    Content-Length: 3\r
+    x-amz-content-sha256: 12345\r
+    x-amz-date: 20181001T011722Z\r
+    Content-MD5: 12345==\r
+    \r
+    """)
+
+@test lastindex(h["content-length"]) ==
+     firstindex(h["content-length"])
+
+@test strip(h["host"]) == "s3.ap-southeast-2.amazonaws.com"
+@test strip(h["content-length"]) == "3"
+
+@test lowercase(h["x-amz-date"]) == lowercase("20181001T011722Z")
+
+h = RequestHeader("GET", "/http.jl.test/filez ")
+h["Host"] = "s3.ap-southeast-2.amazonaws.com\r"
+h["Content-Length"] = "3"
+h["x-amz-content-sha256"] = "12345"
+
+@test strip(h["host"]) == "s3.ap-southeast-2.amazonaws.com"
+@test strip(h["content-length"]) == "3"
+@test String([Iterators.reverse(h["x-amz-content-sha256"])...]) ==
+      reverse("12345")
+
 h = ResponseHeader(407)
 
 h["Foo"] = "Bar"
@@ -271,6 +315,8 @@ function lazy_parse(s, a, b)
     return h.status == 200, SubString(h[a]), SubString(h[b])
 end
 
+#=
+
 function old_parse(s, a, b)
     r = HTTP.Response()
     s = HTTP.Parsers.parse_status_line!(s, r)
@@ -367,6 +413,7 @@ for (n,r) in include("responses.jl")
 end
 println("----------------------------------------------")
 
+=#
 
 
 end # testset "LazyHTTP"
