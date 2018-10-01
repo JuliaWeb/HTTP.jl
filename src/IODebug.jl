@@ -1,6 +1,7 @@
 const live_mode = true
 
 import ..debug_header
+using ..LazyHTTP
 
 @static if live_mode
 
@@ -32,6 +33,10 @@ Base.wait_close(iod::IODebug) = Base.wait_close(iod.io)
 Base.write(iod::IODebug, a...) =
     (logwrite(iod, :write, join(a));
      write(iod.io, a...))
+
+Base.write(iod::IODebug, a::LazyHTTP.Header{IOBuffer}) where T =
+    (logwrite(iod, :write, sprint(write, a));
+     write(iod.io, a))
 
 Base.write(iod::IODebug, a::Array) =
     (logwrite(iod, :write, join(a));
