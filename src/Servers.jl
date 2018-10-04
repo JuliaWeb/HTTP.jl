@@ -356,7 +356,7 @@ function handle(h, t::Transaction, last::Bool=false)
         setheader(request.response, "Connection" => "close")
     end
 
-    try
+    @async try
         handle(h, http)
         closeread(http)
         closewrite(http)
@@ -378,6 +378,7 @@ end
 function handle(h::RequestHandler, http::Stream)
     request::Request = http.message
     request.body = read(http)
+    closeread(http)
     request.response::Response = handle(h, request)
     request.response.request = request
     startwrite(http)
