@@ -314,8 +314,6 @@ header(m::Message, k, d="") = header(m.headers, k, d)
 header(h::Headers, k::AbstractString, d::AbstractString="") =
     getbyfirst(h, k, k => d, field_name_isequal)[2]
 
-lceq(a, b) = lowercase(a) == lowercase(b)
-
 """
     hasheader(::Message, key) -> Bool
 

@@ -74,11 +74,11 @@ mutable struct RateLimit
     lastcheck::Dates.DateTime
 end
 
-function update!(rl::RateLimit, ratelimit)
+function update!(rl::RateLimit, rate_limit)
     current = Dates.now()
     timepassed = float(Dates.value(current - rl.lastcheck)) / 1000.0
     rl.lastcheck = current
-    rl.allowance += timepassed * ratelimit
+    rl.allowance += timepassed * rate_limit
     return nothing
 end
 
@@ -91,11 +91,11 @@ store for the last time a connection was seen for the same ip address. If the ne
 connection has come too soon, it is closed and discarded, otherwise, the timestamp for
 the ip address is updated in the global cache.
 """
-function check_rate_limit(tcp, ratelimit::Rational{Int})
+function check_rate_limit(tcp, rate_limit::Rational{Int})
     ip = Sockets.getsockname(tcp)[1]
-    rate = Float64(ratelimit.num)
+    rate = Float64(rate_limit.num)
     rl = get!(RATE_LIMITS, ip, RateLimit(rate, Dates.now()))
-    update!(rl, ratelimit)
+    update!(rl, rate_limit)
     if rl.allowance > rate
         @warn "throttling $ip"
         rl.allowance = rate
@@ -151,22 +151,22 @@ provided `handler`. Both the function or `handler` can accept an `HTTP.Request` 
 keyword argument to operate on the `HTTP.Stream` directly.
 
 Optional keyword arguments:
- - `sslconfig=nothing`: Provide an `MbedTLS.SSLConfig` object to handle ssl connections
+ - `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl connections.
  - `reuse_limit = nolimit`, number of times a connection is allowed to be reused
                             after the first request.
  - `tcpisvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
-    processing requests. e.g. to implement source IP filtering, rate-limiting,
-    etc.
- - `readtimeout::Int=0`: # of seconds to wait on an incoming request before closing a connection
- - `reuseaddr::Bool=false`: whether multiple servers should be allowed to listen on the same port
- - `tcpref::Ref{Base.IOServer}`, this reference is set to the underlying
-                                 `IOServer`. e.g. to allow closing the server.
- - `connectioncounter::Ref{Int}`: a `Ref{Int}` that can be used to track the # of currently open (i.e
-        currently being handled) connections for a server
- - `ratelimit`: a `Rational{Int}` of the form `5//1` indicating how many `messages//second`
-        should be allowed per client IP address; requests exceeding the rate limit will be auto-closed
- - `stream::Bool=false`: whether the handler should operate on an `HTTP.Stream` to read & write directly
- - `verbose::Bool=false`: whether simple logging should print to stdout for connections handled
+    processing requests. e.g. to implement source IP filtering, rate-limiting, etc.
+ - `readtimeout::Int=60`, close the connection if no data is recieved for this
+    many seconds. Use readtimeout = 0 to disable.
+ - `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
+ - `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
+    allows closing the server.
+ - `connection_count::Ref{Int}`, reference to track the # of currently open connections.
+ - `rate_limit::Rational{Int}=nothing"`, number of `connections//second` allowed
+    per client IP address; excess connections are immediately closed. e.g. 5//1.
+ - `stream::Bool=false`, pass a HTTP.Stream to the handler function
+    (instead of a HTTP.Request).
+ - `verbose::Bool=false`, log connection information to `stdout`.
 
 e.g.
 ```
@@ -176,8 +176,8 @@ e.g.
         while !eof(http)
             println("body data: ", String(readavailable(http)))
         end
-        setstatus(http, 404)
-        setheader(http, "Foo-Header" => "bar")
+        HTTP.setstatus(http, 404)
+        HTTP.setheader(http, "Foo-Header" => "bar")
         startwrite(http)
         write(http, "response body")
         write(http, "more response body")
@@ -205,18 +205,19 @@ function listen(f,
                 stream::Bool=false,
                 sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
                 tcpisvalid::Union{Function, Nothing}=nothing,
-                tcpref::Union{Ref, Nothing}=nothing,
+                server::Union{Base.IOServer, Nothing}=nothing,
                 reuseaddr::Bool=false,
-                connectioncounter::Ref{Int}=Ref(0),
-                ratelimit::Union{Rational{Int}, Nothing}=nothing,
-                reuse_limit::Int=nolimit, readtimeout::Int=0,
+                connection_count::Ref{Int}=Ref(0),
+                rate_limit::Union{Rational{Int}, Nothing}=nothing,
+                reuse_limit::Int=nolimit,
+                readtimeout::Int=60,
                 verbose::Bool=false)
 
     handler = f isa Handler ? f : stream ? StreamHandlerFunction(f) : RequestHandlerFunction(f)
 
     inet = getinet(host, port)
-    if tcpref !== nothing
-        tcpserver = tcpref[]
+    if server !== nothing
+        tcpserver = server
     elseif reuseaddr
         tcpserver = Sockets.TCPServer(; delay=false)
         if Sys.isunix()
@@ -233,17 +234,19 @@ function listen(f,
     verbose && @info "Listening on: $host:$port"
 
     if tcpisvalid === nothing
-        tcpisvalid = ratelimit === nothing ? x->true : x->check_rate_limit(x, ratelimit)
+        tcpisvalid = rate_limit === nothing ? x->true : x->check_rate_limit(x, rate_limit)
+    elseif rate_limit !== nothing
+        tcpisvalid = let f=tcpisvalid
+            x -> f(x) && check_rate_limit(x, rate_limit)
+        end
     end
 
     return listenloop(handler, Server2(sslconfig, tcpserver, string(host), string(port)), tcpisvalid,
-        connectioncounter, reuse_limit, readtimeout, verbose)
+        connection_count, reuse_limit, readtimeout, verbose)
 end
 
 "main server loop that accepts new tcp connections and spawns async threads to handle them"
-function listenloop(h, server,
-    tcpisvalid=x->true, connectioncounter=Ref(0),
-    reuse_limit::Int=1, readtimeout::Int=0, verbose::Bool=false)
+function listenloop(h, server, tcpisvalid, connection_count, reuse_limit, readtimeout, verbose)
     count = 1
     while isopen(server)
         try
@@ -254,21 +257,24 @@ function listenloop(h, server,
                 close(io)
                 continue
             end
-            connectioncounter[] += 1
-            conn = Connection(server.hostname, server.hostport, 0, 0, true, io)
+            connection_count[] += 1
+            conn = Connection(io)
+            conn.host, conn.port = server.hostname, server.hostport
             let io=io, count=count
-                @async begin
-                    try
-                        verbose && @info "Accept ($count):  $conn"
-                        handle(h, conn, reuse_limit, readtimeout)
-                        verbose && @info "Closed ($count):  $conn"
-                    catch e
+                @async try
+                    verbose && @info "Accept ($count):  $conn"
+                    handle_connection(h, conn, reuse_limit, readtimeout)
+                    verbose && @info "Closed ($count):  $conn"
+                catch e
+                    if e isa Base.IOError && e.code == -54
+                        verbose && @warn "connection reset by peer (ECONNRESET)"
+                    else
                         @error exception=(e, stacktrace(catch_backtrace()))
-                    finally
-                        connectioncounter[] -= 1
-                        close(io)
-                        verbose && @info "Closed ($count):  $conn"
                     end
+                finally
+                    connection_count[] -= 1
+                    close(io)
+                    verbose && @info "Closed ($count):  $conn"
                 end
             end
         catch e
@@ -276,8 +282,9 @@ function listenloop(h, server,
                 @warn "Interrupted: listen($server)"
                 close(server)
                 break
+            else
+                rethrow(e)
             end
-            @error exception=(e, stacktrace(catch_backtrace()))
         end
         count += 1
     end
@@ -289,16 +296,13 @@ Connection handler: starts an async readtimeout thread if needed, then creates
 Transactions to be handled as long as the Connection stays open. Only reuse_limit + 1
 # of Transactions will be allowed during the lifetime of the Connection.
 """
-function handle(h, c::Connection,
-                reuse_limit::Int=10,
-                readtimeout::Int=0)
-
+function handle_connection(h, c::Connection, reuse_limit, readtimeout)
     wait_for_timeout = Ref{Bool}(true)
     readtimeout > 0 && check_readtimeout(c, readtimeout, wait_for_timeout)
     try
         count = 0
         while isopen(c)
-            handle(h, Transaction(c), count == reuse_limit)
+            handle_transaction(h, Transaction(c); final_transaction=count == reuse_limit)
             count += 1
         end
     finally
@@ -307,7 +311,7 @@ function handle(h, c::Connection,
     return
 end
 
-"creates an async thread that waits a specified amount of time before closing the connection"
+"creates an async task that waits a specified amount of time before closing the connection"
 function check_readtimeout(c, readtimeout, wait_for_timeout)
     @async while wait_for_timeout[]
         if inactiveseconds(c) > readtimeout
@@ -329,7 +333,7 @@ Transaction handler: creates a new Stream for the Transaction, calls startread o
 then dispatches the stream to the user-provided handler function. Catches errors on all
 IO operations and closes gracefully if encountered.
 """
-function handle(h, t::Transaction, last::Bool=false)
+function handle_transaction(h, t::Transaction; final_transaction::Bool=false)
     request = Request()
     http = Stream(request, t)
 
@@ -343,16 +347,13 @@ function handle(h, t::Transaction, last::Bool=false)
             write(t, Response(status, body = string(e.code)))
             close(t)
             return
-        elseif e isa Base.IOError && e.code == -54
-            # read: connection reset by peer (ECONNRESET)
-            return
         else
             rethrow(e)
         end
     end
 
     request.response.status = 200
-    if last || hasheader(request, "Connection", "close")
+    if final_transaction || hasheader(request, "Connection", "close")
         setheader(request.response, "Connection" => "close")
     end
 
@@ -367,9 +368,9 @@ function handle(h, t::Transaction, last::Bool=false)
             startwrite(http)
             write(http, sprint(showerror, e))
         end
-        last = true
+        final_transaction = true
     finally
-        last && close(t.c.io)
+        final_transaction && close(t.c.io)
     end
     return
 end
