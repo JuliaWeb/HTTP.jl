@@ -473,4 +473,8 @@ end
             end
         end
     end
+
+    # Issue 323
+    @test string(HTTP.URI(scheme="http", host="example.com")) == "http://example.com"
+
 end; # @testset

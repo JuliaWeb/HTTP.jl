@@ -84,10 +84,12 @@ function Base.merge(uri::URI; scheme::AbstractString=uri.scheme,
     @require !(scheme in ["http", "https"]) || isempty(path) || path[1] == '/'
     @require !isempty(path) || !isempty(query) || isempty(fragment)
 
-    ports = string(port)
+    if port !== absent
+        port = string(port)
+    end
     querys = query isa AbstractString ? query : escapeuri(query)
 
-    return URI(nostring, scheme, userinfo, host, ports, path, querys, fragment)
+    return URI(nostring, scheme, userinfo, host, port, path, querys, fragment)
 end
 
 
