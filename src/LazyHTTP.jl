@@ -691,6 +691,27 @@ end
 Base.length(h::Header) = count(x->true, indicies(h))
 
 
+# Pseudo-Header Fields
+# https://tools.ietf.org/html/rfc7540#section-8.1.2.1
+
+Base.haskey(::RequestHeader, key::Symbol) = key === :method ||
+                                            key === :target ||
+                                            key === :version
+
+Base.haskey(::ResponseHeader, key::Symbol) = key === :status ||
+                                             key === :version
+
+function Base.getindex(h::Header, key::Symbol)
+    if !haskey(h, key)
+        throw(KeyError(key))
+    end
+    return getfield(LazyHTTP, key)(h)
+end
+
+Base.get(h::Header, key::Symbol) = getindex(h, key)
+
+
+
 # Mutation
 
 const DEBUG_MUTATION = false
@@ -758,6 +779,7 @@ end
 
 
 # Monkeypatch 🙈
+# https://github.com/JuliaLang/julia/pull/29465
 
 import Base.parseint_iterate
 

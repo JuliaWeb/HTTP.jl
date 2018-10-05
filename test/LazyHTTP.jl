@@ -70,7 +70,7 @@ h["Foo"] = "Bar"
 h["Fii"] = "Fum"
 h["XXX"] = "YYY"
 
-@test h.status == 407
+@test h[:status] == 407
 
 @test h["Foo"] == "Bar"
 @test h["Fii"] == "Fum"
@@ -154,17 +154,17 @@ write(io, h)
 @test Base.IteratorSize(LazyHTTP.indicies(h)) == Base.SizeUnknown()
 @test Base.IteratorSize(h) == Base.SizeUnknown()
 
-@test h.method == "GET"
-@test h.target == "/"
-@test_throws LazyHTTP.ParseError h.version
+@test h[:method] == "GET"
+@test h[:target] == "/"
+@test_throws LazyHTTP.ParseError h[:version]
 
 s = "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n"
 
 h = RequestHeader(s)
 
-@test h.method == "SOMEMETHOD"
-@test h.target == "HTTP/1.1"
-@test_throws LazyHTTP.ParseError h.version
+@test h[:method] == "SOMEMETHOD"
+@test h[:target] == "HTTP/1.1"
+@test_throws LazyHTTP.ParseError h[:version]
 
 s = "HTTP/1.1 200\r\n" *
     "A: \r\n" *
@@ -205,10 +205,10 @@ h = ResponseHeader(s)
 
 @test (@allocated h = ResponseHeader(s)) <= 32
 
-@test h.status == 200
-@test (@allocated h.status) == 0
-@test h.version == v"1.1"
-@test (@allocated h.version) <= 48
+@test h[:status] == 200
+@test (@allocated h[:status]) == 0
+@test h[:version] == v"1.1"
+@test (@allocated h[:version]) <= 48
 
 f = h["Foo"]
 ff = "Bar Bar"
@@ -306,21 +306,21 @@ s = "GET /foobar HTTP/1.1\r\n" *
 @test LazyHTTP.target(RequestHeader(s)) == "/foobar"
 @test LazyHTTP.version(RequestHeader(s)) == v"1.1"
 
-@test RequestHeader(s).method == "GET"
-@test RequestHeader(s).target == "/foobar"
-@test RequestHeader(s).version == v"1.1"
+@test RequestHeader(s)[:method] == "GET"
+@test RequestHeader(s)[:target] == "/foobar"
+@test RequestHeader(s)[:version] == v"1.1"
 @test LazyHTTP.version_is_1_1(RequestHeader(s))
 
 
 h = RequestHeader(s)
-@test h.method == "GET"
-@test (@allocated h.method) <= 32
+@test h[:method] == "GET"
+@test (@allocated h[:method]) <= 32
 
 
 function lazy_parse(s, a, b)
     h = ResponseHeader(s)
     #collect(SubString(n) => SubString(v) for (n,v) in h)
-    return h.status == 200, SubString(h[a]), SubString(h[b])
+    return h[:status] == 200, SubString(h[a]), SubString(h[b])
 end
 
 function old_parse(s, a, b)
@@ -393,7 +393,7 @@ for (n,r) in include("responses.jl")
     tcp = Sockets.connect("127.0.0.1", 8786)
 
     h = ResponseHeader(r)
-    status::Int = h.status
+    status::Int = h[:status]
     test_headers = [String(n) => String(v) for (n,v) in h]
 
     a = IOBuffer()
