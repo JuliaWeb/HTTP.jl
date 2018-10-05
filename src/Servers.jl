@@ -198,6 +198,9 @@ const nolimit = typemax(Int)
 getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
 getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
 
+listen(h::RequestHandler, a...; kw...) = listen(x->handle(h, x), a...; kw...)
+listen(h::StreamHandler, a...; kw...) = listen(x->handle(h, x), a...; stream=true, kw...)
+
 function listen(f,
                 host::Union{IPAddr, String}=Sockets.localhost,
                 port::Integer=8081
@@ -213,7 +216,7 @@ function listen(f,
                 readtimeout::Int=60,
                 verbose::Bool=false)
 
-    handler = f isa Handler ? f : stream ? StreamHandlerFunction(f) : RequestHandlerFunction(f)
+    handle_stream = stream ? f : http::Stream -> handle_request_from_stream(f, http)
 
     inet = getinet(host, port)
     if server !== nothing
@@ -241,7 +244,7 @@ function listen(f,
         end
     end
 
-    return listenloop(handler, Server2(sslconfig, tcpserver, string(host), string(port)), tcpisvalid,
+    return listenloop(handle_stream, Server2(sslconfig, tcpserver, string(host), string(port)), tcpisvalid,
         connection_count, reuse_limit, readtimeout, verbose)
 end
 
@@ -333,7 +336,7 @@ Transaction handler: creates a new Stream for the Transaction, calls startread o
 then dispatches the stream to the user-provided handler function. Catches errors on all
 IO operations and closes gracefully if encountered.
 """
-function handle_transaction(h, t::Transaction; final_transaction::Bool=false)
+function handle_transaction(handle_stream, t::Transaction; final_transaction::Bool=false)
     request = Request()
     http = Stream(request, t)
 
@@ -358,7 +361,7 @@ function handle_transaction(h, t::Transaction; final_transaction::Bool=false)
     end
 
     @async try
-        handle(h, http)
+        handle_stream(http)
         closeread(http)
         closewrite(http)
     catch e
@@ -376,11 +379,11 @@ function handle_transaction(h, t::Transaction; final_transaction::Bool=false)
 end
 
 "For request handlers, read a full request from a stream, pass to the handler, then write out the response"
-function handle(h::RequestHandler, http::Stream)
+function handle_request_from_stream(handle_request, http::Stream)
     request::Request = http.message
     request.body = read(http)
     closeread(http)
-    request.response::Response = handle(h, request)
+    request.response::Response = handle_request(request)
     request.response.request = request
     startwrite(http)
     write(http, request.response.body)
