@@ -336,7 +336,7 @@ hasheader(m, k::AbstractString, v::AbstractString) =
 Does the header for `key` (interpreted as comma-separated list) contain `value` (both case-insensitive)?
 """
 headercontains(m, k::AbstractString, v::AbstractString) =
-    any(field_name_isequal.(strip.(split(header(m, k), ",")), lowercase(v)))
+    any(field_name_isequal.(strip.(split(header(m, k), ",")), v))
 
 """
     setheader(::Message, key => value)
