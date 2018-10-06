@@ -1,5 +1,7 @@
 module Streams
 
+using MbedTLS
+
 export Stream, closebody, isaborted,
        header, hasheader,
        setstatus, setheader
