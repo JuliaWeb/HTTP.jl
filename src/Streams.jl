@@ -273,8 +273,12 @@ function Base.read(http::Stream)
         sleep(2)
         if wait_for_timeout[]
             println("Waiting to read $(http.ntoread) bytes.",
-                    Messages.compactstartline(http.message))
-            println("Buf = ", String(take!(copy(buf))))
+                    sprint(showcompact, http.message))
+            b = String(take!(copy(buf)))
+            if length(b) > 40
+                b = b[end-40:end]
+            end
+            println("Buf = ", b)
         end
     end
     try
