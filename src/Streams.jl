@@ -305,8 +305,10 @@ function Base.read(http::Stream)
             @show http.stream.c.io.bio.buffer.ptr
             @show length(http.stream.c.io.bio.buffer.data)
 
-            @show Int(ccall((:mbedtls_ssl_check_pending, MbedTLS.libmbedtls),
-                         Csize_t, (Ptr{Void},), http.stream.c.io.data))
+            pending = Int(ccall((:mbedtls_ssl_check_pending, MbedTLS.libmbedtls),
+                         Cint, (Ptr{Void},), http.stream.c.io.data))
+            @show pending
+            @show MbedTLS._bytesavailable(http.stream.c.io)
         end
     end
     try
