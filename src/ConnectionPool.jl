@@ -174,6 +174,9 @@ function Base.read(t::Transaction, nb::Integer)::ByteView
     return bytes
 end
 
+global last_read_count = -1
+global last_read_bytes = Char[]
+
 function Base.readavailable(t::Transaction)::ByteView
     @require isreadable(t)
     if !isempty(t.c.excess)
@@ -184,6 +187,15 @@ function Base.readavailable(t::Transaction)::ByteView
         bytes = byteview(readavailable(t.c.io))
         @debug 4 "⬅️  read $(length(bytes))-bytes from $(typeof(t.c.io)) $(length(bytes) > 1 ? repr(Char(bytes[end-1])): "") $(length(bytes) > 0 ? repr(Char(bytes[end])): "")"
     end
+
+    global last_read_count = length(bytes)
+    global last_read_bytes = Char[]
+    i = max(1, last_read_count - 4)
+    while i <= last_read_count
+        push!(last_read_bytes, Char(bytes[i]))
+        i += 1
+    end
+
     t.c.timestamp = time()
     return bytes
 end
