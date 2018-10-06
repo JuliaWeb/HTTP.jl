@@ -491,9 +491,10 @@ Read chunk-size from an `IO` stream.
 After the final zero size chunk, read trailers into a `Message` struct.
 """
 function readchunksize(io::IO, message::Message)::Int
+    println("read chunk size...")
     n = parse_chunk_size(readuntil(io, find_end_of_line))
+    println("chunk size $n")
     if n == 0
-        println("chunk size 0")
         bytes = readuntil(io, find_end_of_trailer)
         if bytes[2] != UInt8('\n')
             parse_header_fields!(SubString(String(bytes)), message)

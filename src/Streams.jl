@@ -210,8 +210,8 @@ function Base.readavailable(http::Stream)::ByteView
 
     # Read bytes from stream and update ntoread
     bytes = read(http.stream, http.ntoread)
-    last_read_count = length(bytes)
-    last_read_bytes = Char[]
+    global last_read_count = length(bytes)
+    global last_read_bytes = Char[]
     i = max(1, last_read_count - 4)
     while i <= last_read_count
         push!(last_read_bytes, Char(bytes[i]))
