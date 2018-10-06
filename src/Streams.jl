@@ -280,6 +280,8 @@ function Base.read(http::Stream)
             end
             println("Buf = ", b)
             @show http.stream
+            @show http.readchunked
+            @show incomplete(http)
         end
     end
     try
