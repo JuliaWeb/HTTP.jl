@@ -152,6 +152,7 @@ function Base.readuntil(io::IO,
     # Fast path, buffer already contains delimiter...
     if !eof(io)
         bytes = readavailable(io)
+        println("readuntil got $(length(bytes)) bytes")
         if (l = find_delimiter(bytes)) > 0
             if l < length(bytes)
                 unread!(io, view(bytes, l+1:length(bytes)))
