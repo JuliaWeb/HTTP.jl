@@ -15,21 +15,15 @@ export TimeoutLayer
 function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
                  readtimeout::Int=60, kw...) where Next
 
-        @show readtimeout
-
     wait_for_timeout = Ref{Bool}(true)
 
-    @schedule while wait_for_timeout[]
+    @async while wait_for_timeout[]
         if isreadable(io) && inactiveseconds(io) > readtimeout
             close(io)
             @debug 1 "💥  Read inactive > $(readtimeout)s: $io"
             break
         end
         sleep(8 + rand() * 4)
-        println("*** checking readtimeout ***)")
-        @show isreadable(io)
-        @show inactiveseconds(io)
-        @show readtimeout
     end
 
     try
