@@ -12,7 +12,7 @@ import ..bytesavailable, ..compat_string
 import ..ByteView
 import ..Messages: header, hasheader, setheader,
                    writeheaders, writestartline
-import ..ConnectionPool: getrawstream, nobytes, ByteView
+import ..ConnectionPool: getrawstream, nobytes, ByteView, last_read_info
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
 import ..@debug, ..DEBUG_LEVEL
@@ -274,8 +274,7 @@ function Base.read(http::Stream)
         if wait_for_timeout[]
             println("Waiting to read $(http.ntoread) bytes.",
                     sprint(showcompact, http.message))
-            @show ConnectionPool.last_read_count
-            @show ConnectionPool.last_read_bytes
+            last_read_info()
             @show http.stream
             @show http.readchunked
             @show incomplete(http)

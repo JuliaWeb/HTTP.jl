@@ -174,18 +174,30 @@ function Base.read(t::Transaction, nb::Integer)::ByteView
     return bytes
 end
 
+global last_read_excess = false
 global last_read_count = -1
 global last_read_bytes = Char[]
 
+function last_read_info()
+    @show last_read_excess
+    @show last_read_count
+    @show last_read_bytes
+end
+
 function Base.readavailable(t::Transaction)::ByteView
     @require isreadable(t)
+
+    global last_read_excess
+
     if !isempty(t.c.excess)
         bytes = t.c.excess
         @debug 4 "↩️  read $(length(bytes))-bytes from excess buffer."
         t.c.excess = nobytes
+        last_read_excess = true
     else
         bytes = byteview(readavailable(t.c.io))
         @debug 4 "⬅️  read $(length(bytes))-bytes from $(typeof(t.c.io)) $(length(bytes) > 1 ? repr(Char(bytes[end-1])): "") $(length(bytes) > 0 ? repr(Char(bytes[end])): "")"
+        last_read_excess = false
     end
 
     global last_read_count = length(bytes)
