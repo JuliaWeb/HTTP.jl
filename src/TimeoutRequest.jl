@@ -15,6 +15,8 @@ export TimeoutLayer
 function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
                  readtimeout::Int=60, kw...) where Next
 
+        @show readtimeout
+
     wait_for_timeout = Ref{Bool}(true)
 
     @schedule while wait_for_timeout[]
