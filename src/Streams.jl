@@ -190,14 +190,16 @@ function Base.eof(http::Stream)
     return false
 end
 
+global in_read_chunksize = false
+
 function Base.readavailable(http::Stream)::ByteView
     @require headerscomplete(http.message)
 
     # Find length of next chunk
     if http.ntoread == unknown_length && http.readchunked
-        println("readchunksize...")
+        global in_read_chunksize = true
         http.ntoread = readchunksize(http.stream, http.message)
-        @show http.ntoread
+        in_read_chunksize = false
         if http.ntoread > 0
             http.ntoread += 2 # expect CRLF after chunk-data
         end
@@ -277,6 +279,7 @@ function Base.read(http::Stream)
             println("Waiting to read $(http.ntoread) bytes.",
                     sprint(showcompact, http.message))
             last_read_info()
+            @show in_read_chunk_size
             @show http.stream
             @show http.readchunked
             @show incomplete(http)
