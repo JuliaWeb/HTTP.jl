@@ -279,6 +279,7 @@ function Base.read(http::Stream)
                 b = b[end-40:end]
             end
             println("Buf = ", b)
+            @show http.stream
         end
     end
     try
