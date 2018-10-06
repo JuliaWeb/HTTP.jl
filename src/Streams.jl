@@ -293,7 +293,8 @@ function Base.read(http::Stream)
             @show http.readchunked
             @show incomplete(http)
             @show islocked(http.stream.c.io.datalock)
-            @show islocked(http.stream.c.io.isopen)
+            @show http.stream.c.io.isopen
+            @show http.stream.c.excess
         end
     end
     try
