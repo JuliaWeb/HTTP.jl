@@ -192,6 +192,9 @@ function Base.eof(http::Stream)
     end
     if eof(http.stream)
         in_eof = false
+        println("eof(http.stream) is true !!!!")
+        @show isopen(http.stream)
+        @show http.stream.c.io.bio
         return true
     end
     in_eof = false
