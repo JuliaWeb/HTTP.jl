@@ -17,7 +17,7 @@ function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
 
     wait_for_timeout = Ref{Bool}(true)
 
-    @async while wait_for_timeout[]
+    @schedule while wait_for_timeout[]
         if isreadable(io) && inactiveseconds(io) > readtimeout
             close(io)
             @debug 1 "💥  Read inactive > $(readtimeout)s: $io"
