@@ -292,6 +292,8 @@ function Base.read(http::Stream)
             @show http.stream
             @show http.readchunked
             @show incomplete(http)
+            @show islocked(http.stream.c.io.datalock)
+            @show islocked(http.stream.c.io.isopen)
         end
     end
     try
