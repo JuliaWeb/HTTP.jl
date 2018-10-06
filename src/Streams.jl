@@ -279,7 +279,7 @@ function Base.read(http::Stream)
             println("Waiting to read $(http.ntoread) bytes.",
                     sprint(showcompact, http.message))
             last_read_info()
-            @show in_read_chunk_size
+            @show in_read_chunksize
             @show http.stream
             @show http.readchunked
             @show incomplete(http)
