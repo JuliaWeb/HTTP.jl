@@ -296,8 +296,8 @@ function Base.read(http::Stream)
             @show http.stream.c.io.isopen
             @show http.stream.c.excess
             @show http.stream.c.io.bio
-            @show http.stream.c.io.buffer.size
-            @show http.stream.c.io.buffer.ptr
+            @show http.stream.c.io.bio.buffer.size
+            @show http.stream.c.io.bio.buffer.ptr
             @show length(http.stream.c.io.buffer.data)
         end
     end
