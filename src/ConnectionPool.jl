@@ -164,12 +164,16 @@ Base.isreadable(t::Transaction) = t.c.readbusy && t.c.readcount == t.sequence
 
 Base.iswritable(t::Transaction) = t.c.writebusy && t.c.writecount == t.sequence
 
+global last_read_did_unread = false
+
 function Base.read(t::Transaction, nb::Integer)::ByteView
     bytes = readavailable(t)
     l = length(bytes)
+    global last_read_did_unread = false
     if l > nb
         unread!(t, view(bytes, nb+1:l))
         bytes = view(bytes, 1:nb)
+        last_read_did_unread = true
     end
     return bytes
 end
@@ -182,6 +186,7 @@ function last_read_info()
     @show last_read_excess
     @show last_read_count
     @show last_read_bytes
+    @show last_read_did_unread
 end
 
 function Base.readavailable(t::Transaction)::ByteView
