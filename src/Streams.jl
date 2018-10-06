@@ -267,7 +267,18 @@ end
 
 function Base.read(http::Stream)
     buf = IOBuffer()
+
+    wait_for_timeout = Ref{Bool}(true)
+    @schedule while wait_for_timeout[]
+        sleep(2)
+        if wait_for_timeout[]
+            println("Waiting to read $(http.ntoread) bytes.",
+                    Messages.compactstartline(http.message))
+            println("Buf = ", String(take!(copy(buf))))
+        end
+    end
     write(buf, http)
+    wait_for_timeout[] = false
     return take!(buf)
 end
 
