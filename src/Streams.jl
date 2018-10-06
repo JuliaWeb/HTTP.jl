@@ -190,6 +190,9 @@ function Base.eof(http::Stream)
     return false
 end
 
+global last_read_count = -1
+global last_read_bytes = Char[]
+
 function Base.readavailable(http::Stream)::ByteView
     @require headerscomplete(http.message)
 
@@ -207,6 +210,12 @@ function Base.readavailable(http::Stream)::ByteView
 
     # Read bytes from stream and update ntoread
     bytes = read(http.stream, http.ntoread)
+    last_read_count = length(bytes)
+    last_read_bytes = Char[]
+    i = max(1, last_read_count - 4)
+    while i <= last_read_count
+        push!(last_read_bytes, Char(bytes[i]))
+    end
     if http.ntoread != unknown_length
         http.ntoread -= length(bytes)
     end
@@ -274,11 +283,8 @@ function Base.read(http::Stream)
         if wait_for_timeout[]
             println("Waiting to read $(http.ntoread) bytes.",
                     sprint(showcompact, http.message))
-            b = String(take!(copy(buf)))
-            if length(b) > 40
-                b = b[end-40:end]
-            end
-            println("Buf = ", b)
+            @show last_read_count
+            @show last_read_bytes
             @show http.stream
             @show http.readchunked
             @show incomplete(http)
