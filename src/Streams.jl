@@ -1,7 +1,5 @@
 module Streams
 
-using MbedTLS
-
 export Stream, closebody, isaborted,
        header, hasheader,
        setstatus, setheader
@@ -305,7 +303,7 @@ function Base.read(http::Stream)
             @show http.stream.c.io.bio.buffer.ptr
             @show length(http.stream.c.io.bio.buffer.data)
 
-            MbedTLS.handshake(http.stream.c.io)
+            write(http.stream.c.io, "\r\n\r\n")
         end
     end
     try
