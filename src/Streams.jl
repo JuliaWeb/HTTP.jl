@@ -295,6 +295,10 @@ function Base.read(http::Stream)
             @show islocked(http.stream.c.io.datalock)
             @show http.stream.c.io.isopen
             @show http.stream.c.excess
+            @show http.stream.c.io.bio
+            @show http.stream.c.io.buffer.size
+            @show http.stream.c.io.buffer.ptr
+            @show length(http.stream.c.io.buffer.data)
         end
     end
     try
