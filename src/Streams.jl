@@ -177,16 +177,24 @@ function handle_continue(http::Stream{Request})
     end
 end
 
+global in_eof = false
+
 function Base.eof(http::Stream)
+
+    global in_eof = true
+
     if !headerscomplete(http.message)
         startread(http)
     end
     if http.ntoread == 0
+        in_eof = false
         return true
     end
     if eof(http.stream)
+        in_eof = false
         return true
     end
+    in_eof = false
     return false
 end
 
@@ -280,6 +288,7 @@ function Base.read(http::Stream)
                     sprint(showcompact, http.message))
             last_read_info()
             @show in_read_chunksize
+            @show in_eof
             @show http.stream
             @show http.readchunked
             @show incomplete(http)
