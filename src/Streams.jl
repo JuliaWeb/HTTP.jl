@@ -302,6 +302,8 @@ function Base.read(http::Stream)
             @show http.stream.c.io.bio.buffer.size
             @show http.stream.c.io.bio.buffer.ptr
             @show length(http.stream.c.io.bio.buffer.data)
+
+            MbedTLS.handshake(http.stream.c.io)
         end
     end
     try
