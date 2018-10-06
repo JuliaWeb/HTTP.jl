@@ -306,7 +306,7 @@ function Base.read(http::Stream)
             @show length(http.stream.c.io.bio.buffer.data)
 
             @show Int(ccall((:mbedtls_ssl_check_pending, MbedTLS.libmbedtls),
-                         Csize_t, (Ptr{Cvoid},), http.stream.c.io.data))
+                         Csize_t, (Ptr{Void},), http.stream.c.io.data))
         end
     end
     try
