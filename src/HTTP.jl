@@ -6,7 +6,7 @@ export startwrite, startread, closewrite, closeread
 using MbedTLS
 import MbedTLS: SSLContext
 
-const DEBUG_LEVEL = 0
+const DEBUG_LEVEL = 2
 
 Base.@deprecate escape escapeuri
 Base.@deprecate URL URI
