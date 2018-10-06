@@ -182,7 +182,7 @@ function Base.readavailable(t::Transaction)::ByteView
         t.c.excess = nobytes
     else
         bytes = byteview(readavailable(t.c.io))
-        @debug 4 "⬅️  read $(length(bytes))-bytes from $(typeof(t.c.io))"
+        @debug 0 "⬅️  read $(length(bytes))-bytes from $(typeof(t.c.io)) $(Char(bytes[end-1])) $(Char(bytes[end]))"
     end
     t.c.timestamp = time()
     return bytes
