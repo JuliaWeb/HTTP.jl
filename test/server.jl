@@ -37,6 +37,15 @@ handler = (req) -> begin
     return req.response
 end
 
+server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
+tsk = @async HTTP.listen(handler, "127.0.0.1", port; server=server)
+sleep(3.0)
+r = testget("http://127.0.0.1:$port")
+@test occursin(r"HTTP/1.1 200 OK", r)
+close(server)
+sleep(1.0)
+@test istaskdone(tsk)
+
 tsk = @async HTTP.listen(handler, "127.0.0.1", port)
 
 handler2 = HTTP.Servers.RequestHandlerFunction(handler)

@@ -83,7 +83,8 @@ function update!(rl::RateLimit, rate_limit)
 end
 
 const RATE_LIMITS = Dict{IPAddr, RateLimit}()
-check_rate_limit(tcp::Base.PipeEndpoint; kw...) = true
+check_rate_limit(tcp::Base.PipeEndpoint, rate_limit::Rational{Int}) = true
+check_rate_limit(tcp, ::Nothing) = true
 
 """
 `check_rate_limit` takes a new connection (socket), and checks in the global RATE_LIMITS
@@ -128,7 +129,7 @@ end
 Base.isopen(s::Server2) = isopen(s.server)
 Base.close(s::Server2) = close(s.server)
 
-Sockets.accept(s::Server2{Nothing, S}) where {S} = Sockets.accept(s.server)
+Sockets.accept(s::Server2{Nothing, S}) where {S} = Sockets.accept(s.server)::TCPSocket
 Sockets.accept(s::Server2) = getsslcontext(accept(s.server), s.ssl)
 
 function getsslcontext(tcp, sslconfig)
@@ -152,8 +153,9 @@ keyword argument to operate on the `HTTP.Stream` directly.
 
 Optional keyword arguments:
  - `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl connections.
+    Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl verification (useful for testing)
  - `reuse_limit = nolimit`, number of times a connection is allowed to be reused
-                            after the first request.
+    after the first request.
  - `tcpisvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
     processing requests. e.g. to implement source IP filtering, rate-limiting, etc.
  - `readtimeout::Int=60`, close the connection if no data is recieved for this
@@ -189,6 +191,12 @@ e.g.
         @show HTTP.payload(request, String)
         return HTTP.Response(404)
     end
+
+    # pass in own server socket to control shutdown
+    server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
+    @async HTTP.listen(handler, host, port; server=server)
+    # close server which will stop HTTP.listen
+    close(server)
 ```
 """
 function listen end
@@ -204,7 +212,7 @@ function listen(f,
                 ;
                 stream::Bool=false,
                 sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
-                tcpisvalid::Union{Function, Nothing}=nothing,
+                tcpisvalid::Function=x->true,
                 server::Union{Base.IOServer, Nothing}=nothing,
                 reuseaddr::Bool=false,
                 connection_count::Ref{Int}=Ref(0),
@@ -233,12 +241,8 @@ function listen(f,
     end
     verbose && @info "Listening on: $host:$port"
 
-    if tcpisvalid === nothing
-        tcpisvalid = rate_limit === nothing ? x->true : x->check_rate_limit(x, rate_limit)
-    elseif rate_limit !== nothing
-        tcpisvalid = let f=tcpisvalid
-            x -> f(x) && check_rate_limit(x, rate_limit)
-        end
+    tcpisvalid = let f=tcpisvalid
+        x -> f(x) && check_rate_limit(x, rate_limit)
     end
 
     return listenloop(handler, Server2(sslconfig, tcpserver, string(host), string(port)), tcpisvalid,
@@ -251,7 +255,6 @@ function listenloop(h, server, tcpisvalid, connection_count, reuse_limit, readti
     while isopen(server)
         try
             io = accept(server)
-            io === nothing && continue
             if !tcpisvalid(io)
                 verbose && @info "Accept-Reject:  $io"
                 close(io)
