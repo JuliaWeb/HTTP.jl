@@ -277,8 +277,11 @@ function Base.read(http::Stream)
             println("Buf = ", String(take!(copy(buf))))
         end
     end
-    write(buf, http)
-    wait_for_timeout[] = false
+    try
+        write(buf, http)
+    finally
+        wait_for_timeout[] = false
+    end
     return take!(buf)
 end
 
