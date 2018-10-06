@@ -24,6 +24,10 @@ function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
             break
         end
         sleep(8 + rand() * 4)
+        println("*** checking readtimeout ***)")
+        @show isreadable(io)
+        @show inactiveseconds(io)
+        @show readtimeout
     end
 
     try
