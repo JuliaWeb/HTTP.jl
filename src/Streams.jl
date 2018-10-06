@@ -215,6 +215,7 @@ function Base.readavailable(http::Stream)::ByteView
     i = max(1, last_read_count - 4)
     while i <= last_read_count
         push!(last_read_bytes, Char(bytes[i]))
+        i += 1
     end
     if http.ntoread != unknown_length
         http.ntoread -= length(bytes)
