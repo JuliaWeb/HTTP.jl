@@ -195,7 +195,9 @@ function Base.readavailable(http::Stream)::ByteView
 
     # Find length of next chunk
     if http.ntoread == unknown_length && http.readchunked
+        println("readchunksize...")
         http.ntoread = readchunksize(http.stream, http.message)
+        @show http.ntoread
         if http.ntoread > 0
             http.ntoread += 2 # expect CRLF after chunk-data
         end
