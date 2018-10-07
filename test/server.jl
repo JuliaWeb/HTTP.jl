@@ -32,9 +32,14 @@ end
 port = 8087 # rand(8000:8999)
 
 # echo response
-handler = (req) -> begin
-    req.response.body = req.body
-    return req.response
+handler = (http) -> begin
+    request::Request = http.message
+    request.body = read(http)
+    closeread(http)
+    request.response::Response = Response(request.body)
+    request.response.request = request
+    startwrite(http)
+    write(http, request.response.body)
 end
 
 server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
@@ -50,7 +55,7 @@ tsk = @async HTTP.listen(handler, "127.0.0.1", port)
 
 handler2 = HTTP.Servers.RequestHandlerFunction(handler)
 
-tsk2 = @async HTTP.listen(handler2, "127.0.0.1", port+100)
+tsk2 = @async HTTP.serve(handler2, "127.0.0.1", port+100)
 sleep(3.0)
 
 r = testget("http://127.0.0.1:$port")
@@ -117,11 +122,18 @@ println(client)
 @test occursin("Transfer-Encoding: chunked\r\n", client)
 @test occursin("Body of Request", client)
 
+hello = (http) -> begin
+    request::Request = http.message
+    request.body = read(http)
+    closeread(http)
+    request.response::Response = Response("Hello")
+    request.response.request = request
+    startwrite(http)
+    write(http, request.response.body)
+end
 # keep-alive vs. close: issue #81
 port += 1
-tsk = @async HTTP.listen("127.0.0.1", port,verbose=true) do r::HTTP.Request
-    HTTP.Response("Hello")
-end
+tsk = @async HTTP.listen(hello, "127.0.0.1", port,verbose=true) 
 sleep(2.0)
 tcp = Sockets.connect(ip"127.0.0.1", port)
 write(tcp, "GET / HTTP/1.0\r\n\r\n")
@@ -136,24 +148,18 @@ client = String(readavailable(tcp))
 
 # SO_REUSEPORT
 println("Testing server port reuse")
-t1 = @async HTTP.listen("127.0.0.1", 8089; reuseaddr=true) do req
-    return HTTP.Response(200, "hello world")
-end
+t1 = @async HTTP.listen(hello, "127.0.0.1", 8089; reuseaddr=true)
 @test !istaskdone(t1)
 sleep(0.5)
 
 println("Starting second server listening on same port")
-t2 = @async HTTP.listen("127.0.0.1", 8089; reuseaddr=true) do req
-    return HTTP.Response(200, "hello world")
-end
+t2 = @async HTTP.listen(hello, "127.0.0.1", 8089; reuseaddr=true)
 @test !istaskdone(t2)
 sleep(0.5)
 
 println("Starting server on same port without port reuse (throws error)")
 try
-    HTTP.listen("127.0.0.1", 8089) do req
-        return HTTP.Response(200, "hello world")
-    end
+    HTTP.listen(hello, "127.0.0.1", 8089)
 catch e
     @test e isa Base.IOError
     @test startswith(e.msg, "listen")
@@ -162,9 +168,14 @@ end
 
 # test automatic forwarding of non-sensitive headers
 # this is a server that will "echo" whatever headers were sent to it
-t1 = @async HTTP.listen("127.0.0.1", 8090) do req::HTTP.Request
-    r = HTTP.Response(200, req.headers)
-    return r
+t1 = @async HTTP.listen("127.0.0.1", 8090) do http
+    request::Request = http.message
+    request.body = read(http)
+    closeread(http)
+    request.response::Response = Response(200, req.headers)
+    request.response.request = request
+    startwrite(http)
+    write(http, request.response.body)
 end
 @test !istaskdone(t1)
 sleep(0.5)

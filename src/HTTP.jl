@@ -599,7 +599,7 @@ end
 include("download.jl")
 
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
-include("Routers.jl")                  ;using .Routers
+include("Handlers.jl")                 ;using .Handlers; using .Handlers: serve
 include("WebSockets.jl")               ;using .WebSockets
 
 import .ConnectionPool: Transaction, Connection

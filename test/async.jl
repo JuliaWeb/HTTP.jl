@@ -13,7 +13,7 @@ println("async tests")
 
 stop_pool_dump = false
 
-@async HTTP.listen(; stream=true) do http
+@async HTTP.listen() do http
     @show HTTP.Sockets.getsockname(http)
     startwrite(http)
     write(http, """

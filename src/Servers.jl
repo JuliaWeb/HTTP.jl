@@ -1,12 +1,12 @@
 """
 The `HTTP.Servers` module provides server-side http functionality in pure Julia.
 
-The main entry point is `HTTP.listen(handler, host, port; kw...)` which takes a `handler` argument (see `?HTTP.Handlers`),
+The main entry point is `HTTP.listen(f, host, port; kw...)` which takes a `f(::HTTP.Stream)::Nothing` function argument
 a `host` and `port` and optional keyword arguments. For full details, see `?HTTP.listen`.
 """
 module Servers
 
-export listen, handle, Handler, RequestHandler, StreamHandler
+export listen
 
 using ..IOExtras
 using ..Streams
@@ -16,57 +16,6 @@ using ..ConnectionPool
 using Sockets
 using MbedTLS
 using Dates
-
-"""
-HTTP.handle(handler::HTTP.RequestHandler, ::HTTP.Request) => HTTP.Response
-HTTP.handle(handler::HTTP.StreamHandler, ::HTTP.Stream)
-
-Dispatch function used to handle incoming requests to a server. Can be
-overloaded by custom `HTTP.Handler` subtypes to implement custom "handling"
-behavior.
-"""
-function handle end
-
-abstract type Handler end
-
-"""
-Abstract type representing objects that handle `HTTP.Request` and return `HTTP.Response` objects.
-
-See `?HTTP.RequestHandlerFunction` for an example of a concrete implementation.
-"""
-abstract type RequestHandler <: Handler end
-
-"""
-Abstract type representing objects that handle `HTTP.Stream` objects directly.
-
-See `?HTTP.StreamHandlerFunction` for an example of a concrete implementation.
-"""
-abstract type StreamHandler <: Handler end
-
-"""
-RequestHandlerFunction(f)
-
-A function-wrapper type that is a subtype of `RequestHandler`. Takes a single function as an argument
-that should be of the form `f(::HTTP.Request) => HTTP.Response`
-"""
-struct RequestHandlerFunction{F} <: RequestHandler
-    func::F # func(req)
-end
-
-handle(h::RequestHandlerFunction, req::Request) = h.func(req)
-
-"""
-StreamHandlerFunction(f)
-
-A function-wrapper type that is a subtype of `StreamHandler`. Takes a single function as an argument
-that should be of the form `f(::HTTP.Stream) => Nothing`, i.e. it accepts a raw `HTTP.Stream`,
-handles the incoming request, writes a response back out to the stream directly, then returns.
-"""
-struct StreamHandlerFunction{F} <: StreamHandler
-    func::F # func(stream)
-end
-
-handle(h::StreamHandlerFunction, stream::Stream) = h.func(stream)
 
 # rate limiting
 mutable struct RateLimit
@@ -110,14 +59,6 @@ function check_rate_limit(tcp, rate_limit::Rational{Int})
     return true
 end
 
-# deprecated
-function serve(host, port=8081; handler=req->HTTP.Response(200, "Hello World!"),
-    ssl::Bool=false, require_ssl_verification::Bool=true, kw...)
-    Base.depwarn("`HTTP.serve` is deprecated, use `HTTP.listen(f_or_handler, host, port; kw...)` instead", nothing)
-    sslconfig = ssl ? MbedTLS.SSLConfig(require_ssl_verification) : nothing
-    return listen(handler, host, port; sslconfig=sslconfig, kw...)
-end
-
 "Convenience object for passing around server details"
 struct Server2{S, I}
     ssl::S # Union{SSLConfig, Nothing}; Nothing if non-SSL
@@ -141,15 +82,12 @@ function getsslcontext(tcp, sslconfig)
 end
 
 """
-    HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do req
+    HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do stream::HTTP.Stream
         ...
     end
-    HTTP.listen(handler::HTTP.Handler, host=Sockets.localhost, port=8081; kw...)
 
-Listen for HTTP connections and either execute the `do` function for each request, or dispatch to the
-provided `handler`. Both the function or `handler` can accept an `HTTP.Request` object, or a raw
-`HTTP.Stream` connection to read & write from directly; for the latter, pass the `stream=true`
-keyword argument to operate on the `HTTP.Stream` directly.
+Listen for HTTP connections and execute the `do` function for each stream request.
+Specifically, the function should be of the form `f(stream::HTTP.Stream)::Nothing`.
 
 Optional keyword arguments:
  - `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl connections.
@@ -166,8 +104,6 @@ Optional keyword arguments:
  - `connection_count::Ref{Int}`, reference to track the # of currently open connections.
  - `rate_limit::Rational{Int}=nothing"`, number of `connections//second` allowed
     per client IP address; excess connections are immediately closed. e.g. 5//1.
- - `stream::Bool=false`, pass a HTTP.Stream to the handler function
-    (instead of a HTTP.Request).
  - `verbose::Bool=false`, log connection information to `stdout`.
 
 e.g.
@@ -186,15 +122,9 @@ e.g.
         return
     end
 
-    HTTP.listen() do request::HTTP.Request
-        @show HTTP.header(request, "Content-Type")
-        @show HTTP.payload(request, String)
-        return HTTP.Response(404)
-    end
-
     # pass in own server socket to control shutdown
     server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
-    @async HTTP.listen(handler, host, port; server=server)
+    @async HTTP.listen(f, host, port; server=server)
     # close server which will stop HTTP.listen
     close(server)
 ```
@@ -210,7 +140,6 @@ function listen(f,
                 host::Union{IPAddr, String}=Sockets.localhost,
                 port::Integer=8081
                 ;
-                stream::Bool=false,
                 sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
                 tcpisvalid::Function=x->true,
                 server::Union{Base.IOServer, Nothing}=nothing,
@@ -220,8 +149,6 @@ function listen(f,
                 reuse_limit::Int=nolimit,
                 readtimeout::Int=60,
                 verbose::Bool=false)
-
-    handler = f isa Handler ? f : stream ? StreamHandlerFunction(f) : RequestHandlerFunction(f)
 
     inet = getinet(host, port)
     if server !== nothing
@@ -245,12 +172,12 @@ function listen(f,
         x -> f(x) && check_rate_limit(x, rate_limit)
     end
 
-    return listenloop(handler, Server2(sslconfig, tcpserver, string(host), string(port)), tcpisvalid,
+    return listenloop(f, Server2(sslconfig, tcpserver, string(host), string(port)), tcpisvalid,
         connection_count, reuse_limit, readtimeout, verbose)
 end
 
 "main server loop that accepts new tcp connections and spawns async threads to handle them"
-function listenloop(h, server, tcpisvalid, connection_count, reuse_limit, readtimeout, verbose)
+function listenloop(f, server, tcpisvalid, connection_count, reuse_limit, readtimeout, verbose)
     count = 1
     while isopen(server)
         try
@@ -266,7 +193,7 @@ function listenloop(h, server, tcpisvalid, connection_count, reuse_limit, readti
             let io=io, count=count
                 @async try
                     verbose && @info "Accept ($count):  $conn"
-                    handle_connection(h, conn, reuse_limit, readtimeout)
+                    handle_connection(f, conn, reuse_limit, readtimeout)
                     verbose && @info "Closed ($count):  $conn"
                 catch e
                     if e isa Base.IOError && e.code == -54
@@ -299,13 +226,13 @@ Connection handler: starts an async readtimeout thread if needed, then creates
 Transactions to be handled as long as the Connection stays open. Only reuse_limit + 1
 # of Transactions will be allowed during the lifetime of the Connection.
 """
-function handle_connection(h, c::Connection, reuse_limit, readtimeout)
+function handle_connection(f, c::Connection, reuse_limit, readtimeout)
     wait_for_timeout = Ref{Bool}(true)
     readtimeout > 0 && check_readtimeout(c, readtimeout, wait_for_timeout)
     try
         count = 0
         while isopen(c)
-            handle_transaction(h, Transaction(c); final_transaction=count == reuse_limit)
+            handle_transaction(f, Transaction(c); final_transaction=(count == reuse_limit))
             count += 1
         end
     finally
@@ -336,7 +263,7 @@ Transaction handler: creates a new Stream for the Transaction, calls startread o
 then dispatches the stream to the user-provided handler function. Catches errors on all
 IO operations and closes gracefully if encountered.
 """
-function handle_transaction(h, t::Transaction; final_transaction::Bool=false)
+function handle_transaction(f, t::Transaction; final_transaction::Bool=false)
     request = Request()
     http = Stream(request, t)
 
@@ -361,7 +288,7 @@ function handle_transaction(h, t::Transaction; final_transaction::Bool=false)
     end
 
     @async try
-        handle(h, http)
+        f(http)
         closeread(http)
         closewrite(http)
     catch e
@@ -375,18 +302,6 @@ function handle_transaction(h, t::Transaction; final_transaction::Bool=false)
     finally
         final_transaction && close(t.c.io)
     end
-    return
-end
-
-"For request handlers, read a full request from a stream, pass to the handler, then write out the response"
-function handle(h::RequestHandler, http::Stream)
-    request::Request = http.message
-    request.body = read(http)
-    closeread(http)
-    request.response::Response = handle(h, request)
-    request.response.request = request
-    startwrite(http)
-    write(http, request.response.body)
     return
 end
 

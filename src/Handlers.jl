@@ -62,7 +62,7 @@ HTTP.@register(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/animals/*", deleteAnimal)
 
 Great! At this point, we could spin up our server and let users start managing their animals:
 ```julia
-HTTP.listen(ANIMAL_ROUTER, Sockets.localhost, 8081)
+HTTP.serve(ANIMAL_ROUTER, Sockets.localhost, 8081)
 ```
 
 Now, you may have noticed that there was a bit of repitition in our "service" functions, particularly
@@ -109,7 +109,7 @@ end
 And we modify slightly how we run our server, letting our new `JSONHandler` be the entry point
 instead of our router:
 ```julia
-HTTP.listen(JSONHandler, Sockets.localhost, 8081)
+HTTP.serve(JSONHandler, Sockets.localhost, 8081)
 ```
 
 Our `JSONHandler` is nice because it saves us a bunch of repitition: if a request body comes in,
@@ -184,7 +184,7 @@ end
 
 And our mofidified server invocation:
 ```julia
-HTTP.listen(AuthHandler, Sockets.localhost, 8081)
+HTTP.serve(AuthHandler, Sockets.localhost, 8081)
 ```
 
 Let's review what's going on here:
@@ -201,14 +201,140 @@ Let's review what's going on here:
 Voila, hopefully that helps provide a slightly-more-than-trivial example of utilizing the
 HTTP.Handler framework in conjuction with running an HTTP server.
 """
-module Routers
+module Handlers
 
-export Router, @register, register!
+export serve, Handler, handle, RequestHandlerFunction, StreamHandlerFunction,
+       RequestHandler, StreamHandler,
+       Router, @register, register!
 
 using ..Messages, ..URIs, ..Streams, ..IOExtras, ..Servers
 
+"""
+HTTP.handle(handler::HTTP.RequestHandler, ::HTTP.Request) => HTTP.Response
+HTTP.handle(handler::HTTP.StreamHandler, ::HTTP.Stream)
+
+Dispatch function used to handle incoming requests to a server. Can be
+overloaded by custom `HTTP.Handler` subtypes to implement custom "handling"
+behavior.
+"""
+function handle end
+
+abstract type Handler end
+
+"""
+Abstract type representing objects that handle `HTTP.Request` and return `HTTP.Response` objects.
+
+See `?HTTP.RequestHandlerFunction` for an example of a concrete implementation.
+"""
+abstract type RequestHandler <: Handler end
+
+"""
+Abstract type representing objects that handle `HTTP.Stream` objects directly.
+
+See `?HTTP.StreamHandlerFunction` for an example of a concrete implementation.
+"""
+abstract type StreamHandler <: Handler end
+
+"""
+RequestHandlerFunction(f)
+
+A function-wrapper type that is a subtype of `RequestHandler`. Takes a single function as an argument
+that should be of the form `f(::HTTP.Request) => HTTP.Response`
+"""
+struct RequestHandlerFunction{F} <: RequestHandler
+    func::F # func(req)
+end
+
+handle(h::RequestHandlerFunction, req::Request) = h.func(req)
+
+"""
+StreamHandlerFunction(f)
+
+A function-wrapper type that is a subtype of `StreamHandler`. Takes a single function as an argument
+that should be of the form `f(::HTTP.Stream) => Nothing`, i.e. it accepts a raw `HTTP.Stream`,
+handles the incoming request, writes a response back out to the stream directly, then returns.
+"""
+struct StreamHandlerFunction{F} <: StreamHandler
+    func::F # func(stream)
+end
+
+handle(h::StreamHandlerFunction, stream::Stream) = h.func(stream)
+
+"For request handlers, read a full request from a stream, pass to the handler, then write out the response"
+function handle(h::RequestHandler, http::Stream)
+    request::Request = http.message
+    request.body = read(http)
+    closeread(http)
+    request.response::Response = handle(h, request)
+    request.response.request = request
+    startwrite(http)
+    write(http, request.response.body)
+    return
+end
+
 "A default 404 Handler"
-const FourOhFour = Servers.RequestHandlerFunction(req -> Response(404))
+const FourOhFour = RequestHandlerFunction(req -> Response(404))
+
+"""
+    HTTP.serve([host=Sockets.localhost[, port=8081]]; kw...) do req::HTTP.Request
+        ...
+    end
+    HTTP.serve([host=Sockets.localhost[, port=8081]]; stream=true, kw...) do stream::HTTP.Stream
+        ...
+    end
+    HTTP.serve(handler, [host=Sockets.localhost[, port=8081]]; kw...)
+
+Listen for HTTP connections and handle each request received. The "handler" can be a function
+that operates directly on `HTTP.Stream`, `HTTP.Request`, or any kind of `HTTP.Handler` instance.
+For functions like `f(::HTTP.Stream)`, also pass `stream=true` to signal a streaming handler.
+
+Optional keyword arguments:
+ - `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl connections.
+    Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl verification (useful for testing)
+ - `reuse_limit = nolimit`, number of times a connection is allowed to be reused
+    after the first request.
+ - `tcpisvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
+    processing requests. e.g. to implement source IP filtering, rate-limiting, etc.
+ - `readtimeout::Int=60`, close the connection if no data is recieved for this
+    many seconds. Use readtimeout = 0 to disable.
+ - `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
+ - `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
+    allows closing the server.
+ - `connection_count::Ref{Int}`, reference to track the # of currently open connections.
+ - `rate_limit::Rational{Int}=nothing"`, number of `connections//second` allowed
+    per client IP address; excess connections are immediately closed. e.g. 5//1.
+ - `stream::Bool=false`, the handler will operate on an `HTTP.Stream` instead of `HTTP.Request`
+ - `verbose::Bool=false`, log connection information to `stdout`.
+
+e.g.
+```
+    HTTP.serve(; stream=true) do http::HTTP.Stream
+        @show http.message
+        @show HTTP.header(http, "Content-Type")
+        while !eof(http)
+            println("body data: ", String(readavailable(http)))
+        end
+        HTTP.setstatus(http, 404)
+        HTTP.setheader(http, "Foo-Header" => "bar")
+        startwrite(http)
+        write(http, "response body")
+        write(http, "more response body")
+        return
+    end
+
+    # pass in own server socket to control shutdown
+    server = Sockets.serve(Sockets.InetAddr(parse(IPAddr, host), port))
+    @async HTTP.serve(f, host, port; server=server)
+    # close server which will stop HTTP.serve
+    close(server)
+```
+"""
+function serve end
+
+function serve(f, host, port=8081; stream::Bool=false, kw...)
+    handler = f isa Handler ? f : stream ? StreamHandlerFunction(f) : RequestHandlerFunction(f)
+    return Servers.listen(x->handle(handler, x), host, port; kw...)
+end
 
 struct Route
     method::String
@@ -268,16 +394,16 @@ gh(s::String) = isempty(s) ? Any : Val{Symbol(s)}
 gh(s::Symbol) = Val{s}
 
 function generate_gethandler(router, method, scheme, host, path, handler)
-    vals = :(HTTP.Routers.newsplitsegments(map(String, split($path, '/'; keepempty=false)))...)
+    vals = :(HTTP.Handlers.newsplitsegments(map(String, split($path, '/'; keepempty=false)))...)
     q = esc(quote
-        $(router).routes[HTTP.Routers.Route(string($method), string($scheme), string($host), string($path))] = $handler
-        @eval function HTTP.Routers.gethandler(r::$(Expr(:$, :(typeof($router)))),
-            ::(HTTP.Routers.gh($method)),
-            ::(HTTP.Routers.gh($scheme)),
-            ::(HTTP.Routers.gh($host)),
+        $(router).routes[HTTP.Handlers.Route(string($method), string($scheme), string($host), string($path))] = $handler
+        @eval function HTTP.Handlers.gethandler(r::$(Expr(:$, :(typeof($router)))),
+            ::(HTTP.Handlers.gh($method)),
+            ::(HTTP.Handlers.gh($scheme)),
+            ::(HTTP.Handlers.gh($host)),
             $(Expr(:$, vals)),
             args...)
-            return $(Expr(:$, handler)) isa HTTP.Handler ? $(Expr(:$, handler)) : HTTP.Servers.RequestHandlerFunction($(Expr(:$, handler)))
+            return $(Expr(:$, handler)) isa HTTP.Handler ? $(Expr(:$, handler)) : HTTP.Handlers.RequestHandlerFunction($(Expr(:$, handler)))
         end
     end)
     # @show q
@@ -325,8 +451,8 @@ function gethandler(r::Router, req::Request)
     return gethandler(r, m, s, h, vals...)
 end
 
-Servers.handle(r::Router, stream::Stream, args...) = handle(gethandler(r, stream.message), stream, args...)
-Servers.handle(r::Router, req::Request, args...) = handle(gethandler(r, req), req, args...)
+handle(r::Router, stream::Stream, args...) = handle(gethandler(r, stream.message), stream, args...)
+handle(r::Router, req::Request, args...) = handle(gethandler(r, req), req, args...)
 
 # deprecated
 register!(r::Router, url, handler) = register!(r, "", url, handler)
@@ -337,7 +463,7 @@ function register!(r::Router, method::String, url, handler)
     s = uri.scheme
     sch = !isempty(s) ? typeof(get!(SCHEMES, s, Val(s))) : Any
     h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
-    hand = handler isa Handler ? handler : Servers.RequestHandlerFunction(handler)
+    hand = handler isa Handler ? handler : RequestHandlerFunction(handler)
     register!(r, m, sch, h, uri.path, hand)
 end
 function splitsegments(r::Router, segments)
