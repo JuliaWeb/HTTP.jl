@@ -53,7 +53,7 @@ sleep(1.0)
 
 tsk = @async HTTP.listen(handler, "127.0.0.1", port)
 
-handler2 = HTTP.Handlers.RequestHandlerFunction(handler)
+handler2 = HTTP.Handlers.RequestHandlerFunction(req->HTTP.Response(200, req.body))
 
 tsk2 = @async HTTP.serve(handler2, "127.0.0.1", port+100)
 sleep(3.0)
