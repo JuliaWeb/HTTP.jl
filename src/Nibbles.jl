@@ -25,19 +25,21 @@ julia> ni[1], ni[2], ni[3]
 """
 struct Iterator{T <: AbstractVector{UInt8}}
     v::T
+    i::UInt
+    max::UInt
 end
 
-Iterator() = Iterator(UInt8[])
+Iterator(v) = Iterator(v, UInt(1), UInt(length(v)))
 
 Base.eltype(::Type{<:Iterator}) = UInt8
 
-Base.length(n::Iterator) = length(n.v) * 2
+Base.length(n::Iterator) = (n.max + 1 - n.i) * 2
 
 Base.@propagate_inbounds Base.getindex(n::Iterator, i) = getindex(n, UInt(i))
 
 Base.@propagate_inbounds(
 function Base.getindex(n::Iterator, i::UInt)
-    @inbounds c = n.v[((i - 1) >> 1) + 1]
+    @inbounds c = n.v[n.i + ((i - 1) >> 1)]
     return i & 1 == 1 ? c >> 4 : c & 0x0F
 end)
 
@@ -46,9 +48,9 @@ const State = Tuple{UInt,UInt8}
 const Value = Union{Nothing, Tuple{UInt8, State}}
 
 Base.@propagate_inbounds(
-function Base.iterate(n::Iterator, state::State = (1 % UInt, 0x00))::Value
+function Base.iterate(n::Iterator, state::State = (n.i, 0x00))::Value
     i, c = state
-    if i > length(n.v)
+    if i > n.max
         return nothing
     elseif c != 0x00
         return c & 0x0F, (i + 1, 0x00)
