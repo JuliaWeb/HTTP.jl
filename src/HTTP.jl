@@ -364,17 +364,14 @@ frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
 write(socket, frame)
 ```
 """
-function openraw(method::String, url, headers=Header[]; kw...)::Tuple{IO, Response, ByteView}
-    waitforclose(socket::TCPSocket) = Base.wait_close(socket)
-    waitforclose(sslcontext::MbedTLS.SSLContext) = Base.wait_close(sslcontext.bio)
-    socketready = Channel{Tuple{IO, Response, ByteView}}(0)
+function openraw(method::String, url, headers=Header[]; kw...)::Tuple{IO, Response}
+    socketready = Channel{Tuple{IO, Response}}(0)
     @async HTTP.open(method, url, headers; kw...) do http
         HTTP.startread(http)
-        socket = HTTP.ConnectionPool.getrawstream(http)
-        excess = http.stream.c.excess
-        put!(socketready, (socket, http.message, excess))
+        socket = http.stream
+        put!(socketready, (socket, http.message))
         while(isopen(socket))
-            waitforclose(socket)
+            Base.wait_close(socket)
         end
     end
     take!(socketready)

@@ -213,10 +213,9 @@ end
                 "Sec-WebSocket-Key" => "dGhlIHNhbXBsZSBub25jZQ==",
                 "Sec-WebSocket-Version" => "13")
 
-            socket, response, excess = HTTP.openraw("GET", "$sch://echo.websocket.org", headers)
+            socket, response = HTTP.openraw("GET", "$sch://echo.websocket.org", headers)
 
             @test response.status == 101
-            @test isempty(excess) # The echo service only echoes bytes written to it.
 
             # This is an example text frame from RFC 6455, section 5.7. It sends the text "Hello" to the
             # echo server, and so we expect "Hello" back, in an unmasked frame.
@@ -226,8 +225,15 @@ end
 
             # The frame we expect back looks like `expectedframe`.
             expectedframe = UInt8[0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f]
+
+            # Note the spec for read says:
+            #     read(s::IO, nb=typemax(Int))
+            # Read at most nb bytes from s, returning a Vector{UInt8} of the bytes read.
+            # ... so read will return less than 7 bytes unless we wait first:
+            eof(socket)
             actualframe = read(socket, 7)
             @test expectedframe == actualframe
+
             close(socket)
         end
     end
