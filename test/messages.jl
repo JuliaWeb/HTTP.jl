@@ -62,9 +62,17 @@ using JSON
 
     ah(req, "X" => "Z")
     @test header(req, "X") == "Y, Z"
+    @test hasheader(req, "X", "Y, Z")
+    @test headercontains(req, "X", "Y")
+    @test headercontains(req, "X", "Z")
+    @test !headercontains(req, "X", "more")
 
     ah(req, "X" => "more")
     @test header(req, "X") == "Y, Z, more"
+    @test hasheader(req, "X", "Y, Z, more")
+    @test headercontains(req, "X", "Y")
+    @test headercontains(req, "X", "Z")
+    @test headercontains(req, "X", "more")
 
     ah(req, "Set-Cookie" => "A")
     ah(req, "Set-Cookie" => "B")

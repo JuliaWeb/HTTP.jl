@@ -60,7 +60,7 @@ module Messages
 export Message, Request, Response, HeaderSizeError,
        reset!, status, method, headers, uri, body,
        iserror, isredirect, ischunked, issafe, isidempotent,
-       header, hasheader, setheader, defaultheader, appendheader,
+       header, hasheader, headercontains, setheader, defaultheader, appendheader,
        mkheaders, readheaders, headerscomplete,
        readchunksize,
        writeheaders, writestartline,
@@ -329,6 +329,14 @@ Does header for `key` match `value` (both case-insensitive)?
 """
 hasheader(m, k::AbstractString, v::AbstractString) =
     field_name_isequal(header(m, k), lowercase(v))
+
+"""
+    headercontains(::Message, key, value) -> Bool
+
+Does the header for `key` (interpreted as comma-separated list) contain `value` (both case-insensitive)?
+"""
+headercontains(m, k::AbstractString, v::AbstractString) =
+    any(field_name_isequal.(strip.(split(header(m, k), ",")), v))
 
 """
     setheader(::Message, key => value)
