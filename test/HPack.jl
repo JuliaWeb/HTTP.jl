@@ -176,6 +176,7 @@ bytes = hexdump("""
     e9ae 82ae 43d3                          | ....C.
     """)
 
+#=
 i::UInt = 1
 
 j, idx = HPack.hp_integer(bytes, i, 0b00111111)
@@ -201,6 +202,7 @@ i = HPack.hp_field_nexti(bytes, i)
 
 @test i == length(bytes) + 1
 
+=#
 b = HPack.HPackBlock(HPack.HPackSession(), bytes, 1)
 
 #=

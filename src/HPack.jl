@@ -13,7 +13,7 @@ module HPack
 
 include("Nibbles.jl")
 
-abstract type DecodingError <: Exception
+abstract type DecodingError <: Exception end
 
 struct IntegerDecodingError <: DecodingError end
 struct FieldBoundsError <: DecodingError end
@@ -40,13 +40,13 @@ function Base.show(io::IO, ::IndexBoundsError)
         HPack.IndexBoundsError()
             Encoded field index exceeds Dynamic Table size.
         """)
+end
 
 function Base.show(io::IO, ::TableUpdateError)
     println(io, """
         HPack.TableUpdateError()
-            This dynamic table size update MUST occur at the beginning
-            of the first header block following the change to the dynamic
-            table size.
+            This dynamic table size update MUST occur at the beginning of the
+            first header block following the change to the dynamic table size.
             https://tools.ietf.org/html/rfc7541#section-4.2
         """)
 end
@@ -96,6 +96,7 @@ end
 
 hp_integer(buf, i, mask) = hp_integer(buf, UInt(i), mask)
 
+#=
 function hp_integer_nexti(buf::Array{UInt8}, i::UInt,
                           mask::UInt8, flags::UInt8)::UInt
 
@@ -111,6 +112,7 @@ function hp_integer_nexti(buf::Array{UInt8}, i::UInt,
     end
     return i
 end
+=#
 
 
 # Huffman Encoded Strings
@@ -389,7 +391,7 @@ function set_max_table_size(s::HPackSession, n)
 end
 
 function purge(s::HPackSession)
-    return
+    return #FIXME can't purge stuff that old lazy blocks may refer to.
     while s.table_size > s.max_table_size
         s.table_size -= hp_field_size(s, lastindex(s.names))
         pop!(s)
@@ -442,12 +444,18 @@ Base.lastindex(s::HPackSession) = hp_static_max + lastindex(s.names)
 
 function get_name(s::HPackSession, i::UInt, offset::UInt=0)::HPackString
     i &= ~table_index_flag
+    if i + offset > lastindex(s)
+        throw(IndexBoundsError())
+    end
     return i <= hp_static_max ? hp_static_names[i] :
                                 s.names[i + offset - hp_static_max]
 end
 
 function get_value(s::HPackSession, i::UInt, offset::UInt=0)::HPackString
     i &= ~table_index_flag
+    if i + offset > lastindex(s)
+        throw(IndexBoundsError())
+    end
     return i <= hp_static_max ? hp_static_values[i] :
                                 s.values[i + offset - hp_static_max]
 end
@@ -476,24 +484,23 @@ end
 HPackBlock(session, bytes, i) = HPackBlock(session, bytes, i, 0, 0)
 
 Base.getproperty(h::HPackBlock, s::Symbol) =
-    s === :authority  ? hp_getindex(h, ":authority")  :
-    s === :method     ? hp_getindex(h, ":method")     :
-    s === :path       ? hp_getindex(h, ":path")     :
-    s === :scheme     ? hp_getindex(h, ":scheme")     :
-    s === :status     ? hp_getindex(h, ":status")     :
+    s === :authority  ? h[":authority"]  :
+    s === :method     ? h[":method"]     :
+    s === :path       ? h[":path"]       :
+    s === :scheme     ? h[":scheme"]     :
+    s === :status     ? h[":status"]     :
                         getfield(h, s)
 
-Base.getindex(b::HPackBlock, key) = hp_getindex(b, key)
-
-function hp_getindex(b::HPackBlock, key)
-    for (n, v, o) in BlockFields(b)
-        if hp_cmp(get_name(b, n, o), key)
-            return get_value(b, v, o)
+function Base.getindex(b::HPackBlock, key)
+    for (n, v) in b
+        if n == key
+            return v
         end
     end
     throw(KeyError(key))
 end
 
+#=
 hp_field_nexti(buf, i) = hp_field_nexti(buf, i, @inbounds buf[i])
 
 function hp_field_nexti(buf::Vector{UInt8}, i::UInt, flags::UInt8)::UInt
@@ -512,73 +519,95 @@ function hp_field_nexti(buf::Vector{UInt8}, i::UInt, flags::UInt8)::UInt
     @assert i <= length(buf) + 1
     return i
 end
+=#
 
 
 # Iteration Interface
 
 struct BlockKeys   b::HPackBlock end
 struct BlockValues b::HPackBlock end
-struct BlockFields b::HPackBlock end
 
 Base.eltype(::Type{BlockKeys})   = HPackString
 Base.eltype(::Type{BlockValues}) = HPackString
-Base.eltype(::Type{BlockFields}) = Tuple{UInt, UInt, UInt}
 Base.eltype(::Type{HPackBlock})  = Pair{HPackString, HPackString}
 
 Base.keys(b::HPackBlock)   = BlockKeys(b)
 Base.values(b::HPackBlock) = BlockValues(b)
 
-const BlockIterator = Union{BlockKeys, BlockValues, BlockFields, HPackBlock}
+const BlockIterator = Union{BlockKeys, BlockValues, HPackBlock}
 
 Base.IteratorSize(::BlockIterator) = Base.SizeUnknown()
 
-@inline function Base.iterate(bi::BlockIterator, state=nothing)
+@inline function Base.iterate(bi::BlockIterator)
+
     b::HPackBlock = bi isa HPackBlock ? bi : bi.b
-    i, offset = state === nothing ? (b.i, b.offset) : state
     buf = b.bytes
-    while i <= length(buf)
-        name, value, i, offset = hp_field(b, i, offset)
-        if name != 0
-            v = bi isa BlockKeys   ? get_name(b, name, offset) :
-                bi isa BlockValues ? get_value(b, value, offset) :
-                bi isa BlockFields ? (name, value, offset) :
-                                     get_name(b, name, offset) =>
-                                     get_value(b, value, offset)
-            return v, (i, offset)
+    i = b.i
+    flags = @inbounds buf[i]
+
+    # 6.3 Dynamic Table Size Update
+    #   0   1   2   3   4   5   6   7
+    # +---+---+---+---+---+---+---+---+
+    # | 0 | 0 | 1 |   Max size (5+)   |
+    # +---+---------------------------+
+    if flags & 0b11100000 == 0b00100000
+        i, table_size = hp_integer(buf, i, 0b00011111)
+        if b.cursor == 0
+            b.cursor = i
+            @assert table_size < 64000  #FIXME Limit to HTTP setting value
+            set_max_table_size(b.session, table_size)
         end
     end
-    return nothing
+    return iterate(bi, (i, b.offset))
+end
+
+@inline function Base.iterate(bi::BlockIterator, state::Tuple{UInt,UInt})
+
+    b::HPackBlock = bi isa HPackBlock ? bi : bi.b
+    buf = b.bytes
+    i, offset = state
+
+    if i > length(buf)
+        return nothing
+    end
+
+    flags = @inbounds buf[i]
+    name, value, i = hp_field(buf, i, flags)
+
+    v = bi isa BlockKeys   ? get_name(b, name, offset) :
+        bi isa BlockValues ? get_value(b, value, offset) :
+                             get_name(b, name, offset) =>
+                             get_value(b, value, offset)
+
+    # 6.2.1.  Literal Header Field with Incremental Indexing
+    if flags & 0b11000000 == 0b01000000
+        if i <= b.cursor
+            offset -= 1
+        else
+            b.cursor = i
+            b.offset += 1
+            pushfirst!(b.session, buf, name, value, offset)
+        end
+    end
+
+    return v, (i, offset)
 end
 
 const nobytes = UInt8[]
 
-@noinline function hp_field(block::HPackBlock, i::UInt, offset::UInt)::Tuple{UInt,UInt,UInt,UInt}
+@noinline function hp_field(buf, i::UInt, flags::UInt8)::
+                            Tuple{UInt,UInt,UInt}
 
-    buf = block.bytes
-    flags = @inbounds buf[i]
     int_mask, string_count = hp_field_format(buf, i, flags)
 
     # 6.3 Dynamic Table Size Update
     if int_mask == 0b00011111
-        if i != block.i
-            throw(TableUpdateError())
-        end
-        i, table_size = hp_integer(buf, i, int_mask)
-        if i > block.cursor
-            block.cursor = block.i
-            #FIXME Limit to HTTP setting value
-            @assert table_size < 64000
-            set_max_table_size(block.session, table_size)
-        end
-        return 0, 0, i, offset
+        throw(TableUpdateError())
     end
-
-    local name::UInt
-    local value::UInt
 
     if int_mask != 0
         i, idx = hp_integer(buf, i, int_mask)
-        if idx == 0 || idx > lastindex(block.session)
+        if idx == 0
             throw(IndexBoundsError())
         end
         name = idx | table_index_flag
@@ -594,24 +623,7 @@ const nobytes = UInt8[]
         i = hp_string_nexti(buf, value)
     end
 
-    # 6.2.1.  Literal Header Field with Incremental Indexing
-    if flags & 0b11000000 == 0b01000000
-        if i > block.cursor
-            block.cursor = i
-            block.offset += 1
-            pushfirst!(block.session, buf, name, value, offset)
-        else
-            @assert offset != 0
-            offset -= 1
-        end
-        if is_dynamicindex(name)
-            name += 1
-        end
-        if is_dynamicindex(value)
-            value += 1
-        end
-    end
-    return name, value, i, offset
+    return name, value, i
 end
 
 function hp_field_format(buf::Vector{UInt8}, i::UInt, flags::UInt8)
