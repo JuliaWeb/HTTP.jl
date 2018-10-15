@@ -342,6 +342,41 @@ open(f::Function, method::String, url, headers=Header[]; kw...)::Response =
     request(method, url, headers, nothing; iofunction=f, kw...)
 
 """
+    HTTP.openraw(method, url, [, headers])::Tuple{TCPSocket, Response, ByteView}
+
+Open a raw socket that is unmanaged by HTTP.jl. Useful for doing HTTP upgrades to other protocols.
+Any bytes of the body read from the socket when reading headers, is returned as excess bytes in the
+last tuple argument.
+
+Example of a WebSocket upgrade:
+```julia
+headers = Dict(
+    "Upgrade" => "websocket",
+    "Connection" => "Upgrade",
+    "Sec-WebSocket-Key" => "dGhlIHNhbXBsZSBub25jZQ==",
+    "Sec-WebSocket-Version" => "13")
+
+socket, response, excess = HTTP.openraw("GET", "ws://echo.websocket.org", headers)
+
+# Write a WebSocket frame
+frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
+write(socket, frame)
+```
+"""
+function openraw(method::String, url, headers=Header[]; kw...)::Tuple{IO, Response}
+    socketready = Channel{Tuple{IO, Response}}(0)
+    @async HTTP.open(method, url, headers; kw...) do http
+        HTTP.startread(http)
+        socket = http.stream
+        put!(socketready, (socket, http.message))
+        while(isopen(socket))
+            Base.wait_close(socket)
+        end
+    end
+    take!(socketready)
+end
+
+"""
     HTTP.get(url [, headers]; <keyword arguments>) -> HTTP.Response
 
 Shorthand for `HTTP.request("GET", ...)`. See [`HTTP.request`](@ref).
