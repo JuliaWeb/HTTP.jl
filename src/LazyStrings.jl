@@ -1,4 +1,8 @@
 """
+*LazyStrings*
+
+Copyright (c) 2018, Sam O'Connor
+
 This module defines `AbstractString` methods for accessing sub-strings whose
 length is not known in advance. Length is lazily determined during iteration.
 `LazyString` is intended for use by lazy parsers. A parser that has identified
@@ -35,7 +39,6 @@ LazyStrings.isend(::FieldName, i, c) = c == UInt8(':')
 
 FieldName("  foo: bar", 1) == "foo"
 ```
-
 """
 module LazyStrings
 

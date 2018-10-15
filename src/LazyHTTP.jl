@@ -1,6 +1,8 @@
 """
 *LazyHTTP*
 
+Copyright (c) 2018, Sam O'Connor
+
 This module defines `RequestHeader` and `ResponseHeader` types for lazy parsing
 of HTTP headers.
 

@@ -1,10 +1,11 @@
-using Test 
-using HTTP 
-using LazyJSON 
+using Test
+using HTTP
+using LazyJSON
+using Random
 
 include("../src/HPack.jl")
 
-function hexdump(s) 
+function hexdump(s)
     mktemp() do path, io
         write(io, s)
         close(io)
@@ -268,36 +269,58 @@ for r in (ascii_requests, huffman_requests)
     s = HPack.HPackSession()
     b1 = HPack.HPackBlock(s, r[1], 1)
 
-    @test collect(b1) == [
-       ":method" => "GET",
-       ":scheme" => "http",
-       ":path" => "/",
-       ":authority" => "www.example.com"
-    ]
-    #@test s.table_size == 57
+    for rep in 1:3
+        @test collect(b1) == [
+           ":method" => "GET",
+           ":scheme" => "http",
+           ":path" => "/",
+           ":authority" => "www.example.com"
+        ]
+        #@test s.table_size == 57
 
+        @test b1.authority == "www.example.com"
+        @test b1.scheme == "http"
+        @test b1.method == "GET"
+        @test b1.path == "/"
+    end
 
     b2 = HPack.HPackBlock(s, r[2], 1)
 
-    @test collect(b2) == [
-       ":method" => "GET",
-       ":scheme" => "http",
-       ":path" => "/",
-       ":authority" => "www.example.com",
-       "cache-control" => "no-cache"
-    ]
-    #@test s.table_size == 110
+    for rep in 1:3
+        @test b2.scheme == "http"
+        @test b2.authority == "www.example.com"
+        @test b2.method == "GET"
+        @test b2.path == "/"
+
+        @test collect(b2) == [
+           ":method" => "GET",
+           ":scheme" => "http",
+           ":path" => "/",
+           ":authority" => "www.example.com",
+           "cache-control" => "no-cache"
+        ]
+        #@test s.table_size == 110
+    end
 
     b3 = HPack.HPackBlock(s, r[3], 1)
 
-    @test collect(b3) == [
-      ":method" => "GET",
-       ":scheme" => "https",
-       ":path" => "/index.html",
-       ":authority" => "www.example.com",
-       "custom-key" => "custom-value"
-    ]
-    #@test s.table_size == 164
+    for rep in 1:3
+        @test b3.scheme == "https"
+        @test b3.path == "/index.html"
+        @test b3.authority == "www.example.com"
+
+        @test collect(b3) == [
+           ":method" => "GET",
+           ":scheme" => "https",
+           ":path" => "/index.html",
+           ":authority" => "www.example.com",
+           "custom-key" => "custom-value"
+        ]
+
+        @test b3.method == "GET"
+
+        #@test s.table_size == 164
+    end
 
     @test split(string(s), "\n")[2:end] == [
         "    [62] custom-key: custom-value",
@@ -317,7 +340,7 @@ ascii_responses = [
     hexdump("""
     4803 3330 37c1 c0bf
     """),
-    
+
     hexdump("""
     88c1 611d 4d6f 6e2c 2032 3120 4f63 7420
     3230 3133 2032 303a 3133 3a32 3220 474d
@@ -336,7 +359,7 @@ huffman_responses = [
     2d1b ff6e 919d 29ad 1718 63c7 8f0b 97c8
     e9ae 82ae 43d3
     """),
-    
+
     hexdump("""
     4883 640e ffc1 c0bf
     """),
@@ -349,7 +372,7 @@ huffman_responses = [
     9587 3160 65c0 03ed 4ee5 b106 3d50 07
     """)
 ]
-    
+
 for r in (ascii_responses, huffman_responses)
 
     s = HPack.HPackSession()
@@ -408,7 +431,7 @@ for group in [
     "node-http2-hpack",
     "python-hpack"
 ]
-    @testset "HPack.http2jp.$group" begin
+    @testset "$group" begin
         for name in ("$group/story_$(lpad(n, 2, '0')).json" for n in 0:31)
             if cachehas(name)
                 tc = cacheget(name)
@@ -425,17 +448,31 @@ for group in [
                 end
                 cacheput(name, tc)
             end
-            @testset "HPack.http2jp.$group.$name" begin
+            @testset "$group.$name" begin
                 tc = LazyJSON.value(tc)
                 #println(tc.description)
-                s = HPack.HPackSession()
-                for case in tc.cases
-                    if haskey(case, "header_table_size")
-                        s.max_table_size = case.header_table_size
-                    end
-                    block = HPack.HPackBlock(s, hex2bytes(case.wire), 1)
-                    for (a, b) in zip(block, case.headers)
-                        @test a == first(b)
+                for seq in [(1,1,2), (1,2,1), (2,1,1)]
+                    s = HPack.HPackSession()
+                    for case in tc.cases
+                        if haskey(case, "header_table_size")
+                            s.max_table_size = case.header_table_size
+                        end
+                        block = HPack.HPackBlock(s, hex2bytes(case.wire), 1)
+                        t = [()-> for (a, b) in zip(block, case.headers)
+                                @test a == first(b)
+                            end,
+                            ()->for h in shuffle(case.headers)
+                                n, v = first(h)
+                                if count(isequal(n), keys(block)) == 1
+                                    @test block[n] == v
+                                else
+                                    @test (n => v) in
+                                          Iterators.filter(x->x[1] == n, block)
+                                end
+                            end]
+                        for i in seq
+                            t[i]()
+                        end
                     end
                 end
             end

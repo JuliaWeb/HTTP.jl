@@ -3,6 +3,8 @@ Lazy Parsing and String comparison for
 [RFC7541](https://tools.ietf.org/html/rfc7541)
 "HPACK Header Compression for HTTP/2".
 
+Copyright (c) 2018, Sam O'Connor
+
 huffmandata.jl and hp_huffman_encode created by Wei Tang:
 Copyright (c) 2016: Wei Tang, MIT "Expat" License:
 https://github.com/sorpaas/HPack.jl/blob/master/LICENSE.md
@@ -11,12 +13,49 @@ module HPack
 
 include("Nibbles.jl")
 
+abstract type DecodingError <: Exception
+
+struct IntegerDecodingError <: DecodingError end
+struct FieldBoundsError <: DecodingError end
+struct IndexBoundsError <: DecodingError end
+struct TableUpdateError <: DecodingError end
+
+function Base.show(io::IO, ::IntegerDecodingError)
+    println(io, """
+        HPack.IntegerDecodingError()
+            Encoded integer length exceeds Implementation Limit (~ 2097278).
+            See: https://tools.ietf.org/html/rfc7541#section-7.4
+        """)
+end
+
+function Base.show(io::IO, ::FieldBoundsError)
+    println(io, """
+        HPack.FieldBoundsError()
+            Encoded field length exceeds Header Block size.
+        """)
+end
+
+function Base.show(io::IO, ::IndexBoundsError)
+    println(io, """
+        HPack.IndexBoundsError()
+            Encoded field index exceeds Dynamic Table size.
+        """)
+
+function Base.show(io::IO, ::TableUpdateError)
+    println(io, """
+        HPack.TableUpdateError()
+            This dynamic table size update MUST occur at the beginning
+            of the first header block following the change to the dynamic
+            table size.
+            https://tools.ietf.org/html/rfc7541#section-4.2
+        """)
+end
 
 # Integers
 
 """
 Decode integer at index `i` in `buf` with prefix `mask`.
-Return index of next byte in `buf` and decoded value.
+Return the index of next byte in `buf` and the decoded value.
 
 > An integer is represented in two parts: a prefix that fills the
 > current octet and an optional list of octets that are used if the
@@ -47,8 +86,7 @@ function hp_integer(buf::Array{UInt8}, i::UInt, mask::UInt8)::Tuple{UInt,UInt}
                 i += 1
                 v += UInt(c & 0b01111111) << (2 * 7)
                 if c & 0b10000000 != 0
-                    @assert false "Integer exceeds Implementation Limits. " *
-                               "https://tools.ietf.org/html/rfc7541#section-7.4"
+                    throw(IntegerDecodingError())
                 end
             end
         end
@@ -67,7 +105,11 @@ function hp_integer_nexti(buf::Array{UInt8}, i::UInt,
             flags = @inbounds v[i += 1]
         end
     end
-    return i + 1
+    i += 1
+    if i > length(buf) + 1                         # Allow next i to be one past
+        throw(IntegerDecodingError())              # the end of the buffer.
+    end
+    return i
 end
 
 
@@ -162,9 +204,12 @@ struct HPackString
     i::UInt
 end
 
+@inline HPackString(s::HPackString) = HPackString(s.bytes, s.i)
+
 HPackString() = HPackString("")
 
-HPackString(bytes::Vector{UInt8}, i::Integer=1) = HPackString(bytes, UInt(i))
+@inline HPackString(bytes::Vector{UInt8}, i::Integer=1) =
+    HPackString(bytes, UInt(i))
 
 function HPackString(s)
     @assert length(s) < 127
@@ -174,21 +219,28 @@ function HPackString(s)
     HPackString(take!(buf), 1)
 end
 
-function hp_string_nexti(buf::Array{UInt8}, i::UInt)
-    l, j = hp_integer(buf, i, 0b01111111)
+@inline function hp_string_nexti(buf::Array{UInt8}, i::UInt)
+    j, l = hp_string_length(buf, i)
     return j + l
 end
 
-hp_ishuffman(s::HPackString) = hp_ishuffman(@inbounds s.bytes[s.i])
+@inline hp_ishuffman(s::HPackString) = hp_ishuffman(@inbounds s.bytes[s.i])
 
-hp_ishuffman(flags::UInt8) = flags & 0b10000000 != 0
+@inline hp_ishuffman(flags::UInt8) = flags & 0b10000000 != 0
 
-@inline hp_length(bytes, i)::Tuple{UInt,UInt} = hp_integer(bytes, i, 0b01111111)
+@inline function hp_string_length(bytes, i)::Tuple{UInt,UInt}
+    i, l = hp_integer(bytes, i, 0b01111111)
+    if i + l > length(bytes) + 1                   # Allow next i to be one past
+        throw(FieldBoundsError())                  # the end of the buffer.
+    end
+    return i, l
+end
 
-@inline hp_length(s::HPackString)::Tuple{UInt,UInt} = hp_length(s.bytes, s.i)
+@inline hp_string_length(s::HPackString)::Tuple{UInt,UInt} =
+    hp_string_length(s.bytes, s.i)
 
 Base.length(s::HPackString) =
-    hp_ishuffman(s) ? (l = 0; for c in s l += 1 end; l) : hp_length(s)[2]
+    hp_ishuffman(s) ? (l = 0; for c in s l += 1 end; l) : hp_string_length(s)[2]
 
 Base.eltype(::Type{HPackString}) = UInt8
 
@@ -197,8 +249,8 @@ Base.IteratorSize(::Type{HPackString}) = Base.SizeUnknown()
 const StrItrState = Tuple{Union{Huffman, UInt}, UInt}
 const StrItrReturn = Union{Nothing, Tuple{UInt8, StrItrState}}
 
-function Base.iterate(s::HPackString)::StrItrReturn
-    i, l = hp_length(s)
+@inline function Base.iterate(s::HPackString)::StrItrReturn
+    i, l = hp_string_length(s)
     max = i + l - 1
     if hp_ishuffman(s)
         h = Huffman(s.bytes, i, max)
@@ -208,7 +260,7 @@ function Base.iterate(s::HPackString)::StrItrReturn
     end
 end
 
-function hp_iterate_huffman(h::Huffman, i::UInt)::StrItrReturn
+@inline function hp_iterate_huffman(h::Huffman, i::UInt)::StrItrReturn
     hstate = iterate(h, i)
     if hstate == nothing
         return nothing
@@ -217,14 +269,14 @@ function hp_iterate_huffman(h::Huffman, i::UInt)::StrItrReturn
     return c, (h, i)
 end
 
-function hp_iterate_ascii(bytes, max::UInt, i::UInt)::StrItrReturn
+@inline function hp_iterate_ascii(bytes, max::UInt, i::UInt)::StrItrReturn
     if i > max
         return nothing
     end
     return (@inbounds bytes[i], (max, i+1))
 end
 
-function Base.iterate(s::HPackString, state::StrItrState)::StrItrReturn
+@inline function Base.iterate(s::HPackString, state::StrItrState)::StrItrReturn
     huf_or_max, i = state
     return huf_or_max isa Huffman ? hp_iterate_huffman(huf_or_max, i) :
                                     hp_iterate_ascii(s.bytes, huf_or_max, i)
@@ -241,7 +293,7 @@ function Base.convert(::Type{String}, s::HPackString)
     if hp_ishuffman(s)
         return String(collect(s))
     else
-        i, l = hp_length(s)
+        i, l = hp_string_length(s)
         buf = Base.StringVector(l)
         unsafe_copyto!(buf, 1, s.bytes, i, l)
         return String(buf)
@@ -270,8 +322,8 @@ function hp_cmp_hpack_hpack(a::HPackString, b::HPackString)
     if @inbounds a.bytes[a.i] != b.bytes[b.i]
         return false
     end
-    ai, al = hp_length(a)
-    bi, bl = hp_length(b)
+    ai, al = hp_string_length(a)
+    bi, bl = hp_string_length(b)
     if al != bl
         return false
     end
@@ -285,7 +337,7 @@ function hp_cmp(a::HPackString, b::StringLike)
     if hp_ishuffman(a)
         return hp_cmp(a, codeunits(b))
     end
-    ai, al = hp_length(a)
+    ai, al = hp_string_length(a)
     if al != length(b)
         return false
     end
@@ -310,10 +362,8 @@ hp_cmp(a::HPackString, b::AbstractString) = hp_cmp(a, (UInt(c) for c in b))
 # Connection State
 
 mutable struct HPackSession
-    namev::Vector{Vector{UInt8}}
-    namei::Vector{UInt}
-    valuev::Vector{Vector{UInt8}}
-    valuei::Vector{UInt}
+    names::Vector{HPackString}
+    values::Vector{HPackString}
     max_table_size::UInt
     table_size::UInt
 end
@@ -321,16 +371,14 @@ end
 function Base.show(io::IO, s::HPackSession)
     println(io, "HPackSession with Table Size $(s.table_size):")
     i = hp_static_max + 1
-    for (n, ni, v, vi) in zip(s.namev, s.namei, s.valuev, s.valuei)
-        n = HPackString(n, ni)
-        v = HPackString(v, vi)
+    for (n, v) in zip(s.names, s.values)
         println(io, "    [$i] $n: $v")
         i += 1
     end
     println(io, "")
 end
 
-HPackSession() = HPackSession([],[],[],[],default_max_table_size,0)
+HPackSession() = HPackSession([],[],default_max_table_size,0)
 
 #https://tools.ietf.org/html/rfc7540#section-6.5.2
 const default_max_table_size = 4096
@@ -341,11 +389,16 @@ function set_max_table_size(s::HPackSession, n)
 end
 
 function purge(s::HPackSession)
+    return
     while s.table_size > s.max_table_size
-        namev, namei, = pop!(s.namev), pop!(s.namei)
-        valuev, valuei = pop!(s.valuev), pop!(s.valuei)
-        s.table_size -= hp_field_size(namev, namei, valuev, valuei)
+        s.table_size -= hp_field_size(s, lastindex(s.names))
+        pop!(s)
     end
+end
+
+function Base.pop!(s::HPackSession)
+    pop!(s.names)
+    pop!(s.values)
 end
 
 """
@@ -353,32 +406,51 @@ The size of an entry is the sum of its name's length in octets (as
 defined in Section 5.2), its value's length in octets, and 32.
 https://tools.ietf.org/html/rfc7541#section-4.1
 """
-hp_field_size(namev, namei, valuev, valuei) = hp_length(namev, namei)[2] +
-                                              hp_length(valuev, valuei)[2] +
-                                              32
-# Note this is the non huffman decoded length.
+hp_field_size(s, i) = hp_string_length(s.names[i])[2] +
+                      hp_string_length(s.values[i])[2] +
+                      32
+# Note: implemented as the non huffman decoded length.
+# More efficient than decoding and probably has no
+# impact other than slightly fewer evictions than normal.
 # See https://github.com/http2/http2-spec/issues/767
+# Strict decoded length version is:
 # hp_field_size(field) = length(field.first) +
 #                        length(field.second) +
 #                        32
 
 
-function Base.pushfirst!(s::HPackSession, namev, namei, valuev, valuei)
-    pushfirst!(s.namev, namev)
-    pushfirst!(s.namei, namei)
-    pushfirst!(s.valuev, valuev)
-    pushfirst!(s.valuei, valuei)
-    s.table_size += hp_field_size(namev, namei, valuev, valuei)
+const table_index_flag = UInt(1) << 63
+is_tableindex(i) = i > table_index_flag
+is_dynamicindex(i) = i > (table_index_flag | hp_static_max)
+
+@noinline function Base.pushfirst!(s::HPackSession, bytes,
+                         namei::UInt, valuei::UInt, offset::UInt)
+
+    name = is_tableindex(namei) ? get_name(s, namei, offset) :
+                                  HPackString(bytes, namei)
+
+    value = is_tableindex(valuei) ? get_value(s, valuei, offset) :
+                                    HPackString(bytes, valuei)
+    pushfirst!(s.names, name)
+    pushfirst!(s.values, value)
+
+    s.table_size += hp_field_size(s, 1)
     purge(s)
 end
 
-get_name(s::HPackSession, i)::Tuple{Vector{UInt8}, UInt} =
-    i < hp_static_max ? hp_static_names[i] :
-                        (i -= hp_static_max; (s.namev[i], s.namei[i]))
+Base.lastindex(s::HPackSession) = hp_static_max + lastindex(s.names)
 
-get_value(s::HPackSession, i)::Tuple{Vector{UInt8}, UInt} =
-    i < hp_static_max ? hp_static_values[i] :
-                        (i -= hp_static_max; (s.valuev[i], s.valuei[i]))
+function get_name(s::HPackSession, i::UInt, offset::UInt=0)::HPackString
+    i &= ~table_index_flag
+    return i <= hp_static_max ? hp_static_names[i] :
+                                s.names[i + offset - hp_static_max]
+end
+
+function get_value(s::HPackSession, i::UInt, offset::UInt=0)::HPackString
+    i &= ~table_index_flag
+    return i <= hp_static_max ? hp_static_values[i] :
+                                s.values[i + offset - hp_static_max]
+end
 
 # Header Fields
 
@@ -386,22 +458,41 @@ mutable struct HPackBlock
     session::HPackSession
     bytes::Vector{UInt8}
     i::UInt
-    j::UInt
+    cursor::UInt
+    offset::UInt
 end
 
-HPackBlock(session, bytes, i) = HPackBlock(session, bytes, i, 0)
+                                     # FIXME
+                                     # Copy of HPackString might allow iteration
+                                     # loop optimisation to eliminate struct?
+@inline get_name(b::HPackBlock, i::UInt, offset::UInt)::HPackString =
+    is_tableindex(i) ? HPackString(get_name(b.session, i, offset)) :
+                       HPackString(b.bytes, i)
 
+@inline get_value(b::HPackBlock, i::UInt, offset::UInt)::HPackString =
+    is_tableindex(i) ? HPackString(get_value(b.session, i, offset)) :
+                       HPackString(b.bytes, i)
 
-# FIXME index iterator
-#Base.eltype(::Type{HPackBlock}) = UInt
-#Base.IteratorSize(::Type{HPackBlock}) = Base.SizeUnknown()
+HPackBlock(session, bytes, i) = HPackBlock(session, bytes, i, 0, 0)
 
-#Base.iterate(b::HPackBlock) = b.i > length(b.bytes) ? nothing : (b.i, b.i)
-#
-#function Base.iterate(b::HPackBlock, state::UInt)
-#    i = hp_field_nexti(b.bytes, state)
-#    return i > length(b.bytes) ? nothing : (i, i)
-#end
+Base.getproperty(h::HPackBlock, s::Symbol) =
+    s === :authority  ? hp_getindex(h, ":authority")  :
+    s === :method     ? hp_getindex(h, ":method")     :
+    s === :path       ? hp_getindex(h, ":path")     :
+    s === :scheme     ? hp_getindex(h, ":scheme")     :
+    s === :status     ? hp_getindex(h, ":status")     :
+                        getfield(h, s)
+
+Base.getindex(b::HPackBlock, key) = hp_getindex(b, key)
+
+function hp_getindex(b::HPackBlock, key)
+    for (n, v, o) in BlockFields(b)
+        if hp_cmp(get_name(b, n, o), key)
+            return get_value(b, v, o)
+        end
+    end
+    throw(KeyError(key))
+end
 
 hp_field_nexti(buf, i) = hp_field_nexti(buf, i, @inbounds buf[i])
 
@@ -418,74 +509,109 @@ function hp_field_nexti(buf::Vector{UInt8}, i::UInt, flags::UInt8)::UInt
         i = hp_string_nexti(buf, i)
         string_count -= 1
     end
+    @assert i <= length(buf) + 1
     return i
 end
 
-hp_field_size(buf::Vector{UInt8}, i::UInt, flags::UInt8)::UInt =
-    hp_field_nexti(buf, i, flags) - i
 
-Base.eltype(::Type{HPackBlock}) = Pair{HPackString, HPackString}
-Base.IteratorSize(::Type{HPackBlock}) = Base.SizeUnknown()
+# Iteration Interface
 
-function Base.iterate(b::HPackBlock, i::UInt=b.i)
-    while true
-        if i > length(b.bytes)
-            return nothing
-        end
-        namev, namei, valuev, valuei, i = hp_field(b, i)
-        if namev != nothing
-            name = HPackString(namev, namei)
-            value = HPackString(valuev, valuei)
-            return (name => value), i
+struct BlockKeys   b::HPackBlock end
+struct BlockValues b::HPackBlock end
+struct BlockFields b::HPackBlock end
+
+Base.eltype(::Type{BlockKeys})   = HPackString
+Base.eltype(::Type{BlockValues}) = HPackString
+Base.eltype(::Type{BlockFields}) = Tuple{UInt, UInt, UInt}
+Base.eltype(::Type{HPackBlock})  = Pair{HPackString, HPackString}
+
+Base.keys(b::HPackBlock)   = BlockKeys(b)
+Base.values(b::HPackBlock) = BlockValues(b)
+
+const BlockIterator = Union{BlockKeys, BlockValues, BlockFields, HPackBlock}
+
+Base.IteratorSize(::BlockIterator) = Base.SizeUnknown()
+
+@inline function Base.iterate(bi::BlockIterator, state=nothing)
+    b::HPackBlock = bi isa HPackBlock ? bi : bi.b
+    i, offset = state === nothing ? (b.i, b.offset) : state
+    buf = b.bytes
+    while i <= length(buf)
+        name, value, i, offset = hp_field(b, i, offset)
+        if name != 0
+            v = bi isa BlockKeys   ? get_name(b, name, offset) :
+                bi isa BlockValues ? get_value(b, value, offset) :
+                bi isa BlockFields ? (name, value, offset) :
+                                     get_name(b, name, offset) =>
+                                     get_value(b, value, offset)
+            return v, (i, offset)
         end
     end
+    return nothing
 end
 
-hp_field(block, i) = hp_field(block, i, @inbounds block.bytes[i])
+const nobytes = UInt8[]
 
-function hp_field(block::HPackBlock, i::UInt, flags::UInt8)
+@noinline function hp_field(block::HPackBlock, i::UInt, offset::UInt)::Tuple{UInt,UInt,UInt,UInt}
 
     buf = block.bytes
-    namev = buf
-    valuev = buf
+    flags = @inbounds buf[i]
     int_mask, string_count = hp_field_format(buf, i, flags)
 
-    # 6.3 Dynamic Table Size Update #FIXME only allowed in 1st field?
+    # 6.3 Dynamic Table Size Update
     if int_mask == 0b00011111
-        if i > block.j
-            block.j = i
-            i, table_size = hp_integer(buf, i, int_mask)
+        if i != block.i
+            throw(TableUpdateError())
+        end
+        i, table_size = hp_integer(buf, i, int_mask)
+        if i > block.cursor
+            block.cursor = block.i
+            #FIXME Limit to HTTP setting value
+            @assert table_size < 64000
             set_max_table_size(block.session, table_size)
         end
-        return nothing, nothing, nothing, nothing, i
+        return 0, 0, i, offset
     end
 
-    local name
-    local value
+    local name::UInt
+    local value::UInt
 
     if int_mask != 0
         i, idx = hp_integer(buf, i, int_mask)
-        @assert idx > 0
-        namev, namei = get_name(block.session, idx)
+        if idx == 0 || idx > lastindex(block.session)
+            throw(IndexBoundsError())
+        end
+        name = idx | table_index_flag
         if string_count == 0
-            valuev, valuei = get_value(block.session, idx)
+            value = idx | table_index_flag
         else
-            valuei = i
+            value = i
             i = hp_string_nexti(buf, i)
         end
     else
-        namei = i + 1
-        valuei = hp_string_nexti(buf, namei)
-        i = hp_string_nexti(buf, valuei)
+        name = i + 1
+        value = hp_string_nexti(buf, name)
+        i = hp_string_nexti(buf, value)
     end
 
     # 6.2.1.  Literal Header Field with Incremental Indexing
-    if flags & 0b11000000 == 0b01000000 && i > block.j
-        block.j = i
-        #@show :push, HPackString(namev, namei) => HPackString(valuev, valuei)
-        pushfirst!(block.session, namev, namei, valuev, valuei)
+    if flags & 0b11000000 == 0b01000000
+        if i > block.cursor
+            block.cursor = i
+            block.offset += 1
+            pushfirst!(block.session, buf, name, value, offset)
+        else
+            @assert offset != 0
+            offset -= 1
+        end
+        if is_dynamicindex(name)
+            name += 1
+        end
+        if is_dynamicindex(value)
+            value += 1
+        end
     end
-    return namev, namei, valuev, valuei, i
+    return name, value, i, offset
 end
 
 function hp_field_format(buf::Vector{UInt8}, i::UInt, flags::UInt8)
@@ -626,11 +752,8 @@ const hp_static_strings = [
     "www-authenticate" => ""
 ]
 
-const hp_static_max = length(hp_static_strings)
-const hp_static_names = [(HPackString(n).bytes, 1)
-                         for (n, v) in hp_static_strings]
-const hp_static_values = [(HPackString(v).bytes, 1)
-                          for (n, v) in hp_static_strings]
-
+const hp_static_max = lastindex(hp_static_strings)
+const hp_static_names = [HPackString(n) for (n, v) in hp_static_strings]
+const hp_static_values = [HPackString(v) for (n, v) in hp_static_strings]
 
 end # module HPack

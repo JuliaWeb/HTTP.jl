@@ -1,5 +1,7 @@
 """
 Iterate over byte-vectors 4-bits at a time.
+
+Copyright (c) 2018, Sam O'Connor
 """
 module Nibbles
 
