@@ -3,6 +3,8 @@ Lazy Parsing and String comparison for
 [RFC7541](https://tools.ietf.org/html/rfc7541)
 "HPACK Header Compression for HTTP/2".
 
+See ../test/HPack.jl
+
 Copyright (c) 2018, Sam O'Connor
 
 huffmandata.jl and hp_huffman_encode created by Wei Tang:
@@ -11,14 +13,17 @@ https://github.com/sorpaas/HPack.jl/blob/master/LICENSE.md
 """
 module HPack
 
-include("Nibbles.jl")
+
+
+# Decoding Errors
 
 abstract type DecodingError <: Exception end
 
 struct IntegerDecodingError <: DecodingError end
-struct FieldBoundsError <: DecodingError end
-struct IndexBoundsError <: DecodingError end
-struct TableUpdateError <: DecodingError end
+struct FieldBoundsError     <: DecodingError end
+struct IndexBoundsError     <: DecodingError end
+struct TableUpdateError     <: DecodingError end
+
 
 function Base.show(io::IO, ::IntegerDecodingError)
     println(io, """
@@ -28,6 +33,7 @@ function Base.show(io::IO, ::IntegerDecodingError)
         """)
 end
 
+
 function Base.show(io::IO, ::FieldBoundsError)
     println(io, """
         HPack.FieldBoundsError()
@@ -35,12 +41,14 @@ function Base.show(io::IO, ::FieldBoundsError)
         """)
 end
 
+
 function Base.show(io::IO, ::IndexBoundsError)
     println(io, """
         HPack.IndexBoundsError()
             Encoded field index exceeds Dynamic Table size.
         """)
 end
+
 
 function Base.show(io::IO, ::TableUpdateError)
     println(io, """
@@ -50,6 +58,8 @@ function Base.show(io::IO, ::TableUpdateError)
             https://tools.ietf.org/html/rfc7541#section-4.2
         """)
 end
+
+
 
 # Integers
 
@@ -96,27 +106,11 @@ end
 
 hp_integer(buf, i, mask) = hp_integer(buf, UInt(i), mask)
 
-#=
-function hp_integer_nexti(buf::Array{UInt8}, i::UInt,
-                          mask::UInt8, flags::UInt8)::UInt
-
-    if flags & mask == mask
-        flags = @inbounds v[i += 1]
-        while flags & 0b10000000 != 0
-            flags = @inbounds v[i += 1]
-        end
-    end
-    i += 1
-    if i > length(buf) + 1                         # Allow next i to be one past
-        throw(IntegerDecodingError())              # the end of the buffer.
-    end
-    return i
-end
-=#
 
 
 # Huffman Encoded Strings
 
+include("Nibbles.jl")
 include("huffmandata.jl")
 
 struct Huffman
@@ -125,6 +119,7 @@ end
 
 Huffman(bytes::AbstractVector{UInt8}, i, j) =
     Huffman(Iterators.Stateful(Nibbles.Iterator(bytes, i, j)))
+
 
 Base.eltype(::Type{Huffman}) = UInt8
 
@@ -208,8 +203,6 @@ end
 
 @inline HPackString(s::HPackString) = HPackString(s.bytes, s.i)
 
-HPackString() = HPackString("")
-
 @inline HPackString(bytes::Vector{UInt8}, i::Integer=1) =
     HPackString(bytes, UInt(i))
 
@@ -221,15 +214,22 @@ function HPackString(s)
     HPackString(take!(buf), 1)
 end
 
-@inline function hp_string_nexti(buf::Array{UInt8}, i::UInt)
-    j, l = hp_string_length(buf, i)
-    return j + l
-end
+HPackString() = HPackString("")
 
+
+"""
+Is `s` Huffman encoded?
+"""
 @inline hp_ishuffman(s::HPackString) = hp_ishuffman(@inbounds s.bytes[s.i])
-
 @inline hp_ishuffman(flags::UInt8) = flags & 0b10000000 != 0
 
+
+"""
+Find encoded byte-length of string starting at `i` in `bytes`.
+Returns:
+ - index of first byte after the string and
+ - byte-length of string.
+"""
 @inline function hp_string_length(bytes, i)::Tuple{UInt,UInt}
     i, l = hp_integer(bytes, i, 0b01111111)
     if i + l > length(bytes) + 1                   # Allow next i to be one past
@@ -241,8 +241,26 @@ end
 @inline hp_string_length(s::HPackString)::Tuple{UInt,UInt} =
     hp_string_length(s.bytes, s.i)
 
+
+"""
+Find the index of the first byte after the string starting at `i` in `bytes`.
+"""
+@inline function hp_string_nexti(bytes::Array{UInt8}, i::UInt)
+    j, l = hp_string_length(bytes, i)
+    return j + l
+end
+
+
+
+"""
+Number of decoded bytes in `s`.
+"""
 Base.length(s::HPackString) =
     hp_ishuffman(s) ? (l = 0; for c in s l += 1 end; l) : hp_string_length(s)[2]
+
+
+
+# Iteration Over Decoded Bytes
 
 Base.eltype(::Type{HPackString}) = UInt8
 
@@ -250,6 +268,7 @@ Base.IteratorSize(::Type{HPackString}) = Base.SizeUnknown()
 
 const StrItrState = Tuple{Union{Huffman, UInt}, UInt}
 const StrItrReturn = Union{Nothing, Tuple{UInt8, StrItrState}}
+
 
 @inline function Base.iterate(s::HPackString)::StrItrReturn
     i, l = hp_string_length(s)
@@ -262,6 +281,21 @@ const StrItrReturn = Union{Nothing, Tuple{UInt8, StrItrState}}
     end
 end
 
+@inline function Base.iterate(s::HPackString, state::StrItrState)::StrItrReturn
+    huf_or_max, i = state
+    return huf_or_max isa Huffman ? hp_iterate_huffman(huf_or_max, i) :
+                                    hp_iterate_ascii(s.bytes, huf_or_max, i)
+end
+
+
+@inline function hp_iterate_ascii(bytes, max::UInt, i::UInt)::StrItrReturn
+    if i > max
+        return nothing
+    end
+    return (@inbounds bytes[i], (max, i+1))
+end
+
+
 @inline function hp_iterate_huffman(h::Huffman, i::UInt)::StrItrReturn
     hstate = iterate(h, i)
     if hstate == nothing
@@ -271,18 +305,6 @@ end
     return c, (h, i)
 end
 
-@inline function hp_iterate_ascii(bytes, max::UInt, i::UInt)::StrItrReturn
-    if i > max
-        return nothing
-    end
-    return (@inbounds bytes[i], (max, i+1))
-end
-
-@inline function Base.iterate(s::HPackString, state::StrItrState)::StrItrReturn
-    huf_or_max, i = state
-    return huf_or_max isa Huffman ? hp_iterate_huffman(huf_or_max, i) :
-                                    hp_iterate_ascii(s.bytes, huf_or_max, i)
-end
 
 
 # Conversion to Base.String
@@ -302,9 +324,13 @@ function Base.convert(::Type{String}, s::HPackString)
     end
 end
 
+
 Base.string(s::HPackString) = convert(String, s)
+
 Base.print(io::IO, s::HPackString) = print(io, string(s))
+
 Base.show(io::IO, s::HPackString) = show(io, string(s))
+
 
 
 # String Comparison
@@ -314,6 +340,7 @@ import Base.==
 ==(a::HPackString, b::HPackString) = hp_cmp_hpack_hpack(a, b)
 ==(a::HPackString, b) = hp_cmp(a, b)
 ==(a, b::HPackString) = hp_cmp(b, a)
+
 
 function hp_cmp_hpack_hpack(a::HPackString, b::HPackString)
 
@@ -333,9 +360,7 @@ function hp_cmp_hpack_hpack(a::HPackString, b::HPackString)
                         pointer(b.bytes, bi), al) == 0
 end
 
-const StringLike = Union{String, SubString{String}}
-
-function hp_cmp(a::HPackString, b::StringLike)
+function hp_cmp(a::HPackString, b::Union{String, SubString{String}})
     if hp_ishuffman(a)
         return hp_cmp(a, codeunits(b))
     end
@@ -361,6 +386,7 @@ end
 hp_cmp(a::HPackString, b::AbstractString) = hp_cmp(a, (UInt(c) for c in b))
 
 
+
 # Connection State
 
 mutable struct HPackSession
@@ -369,6 +395,12 @@ mutable struct HPackSession
     max_table_size::UInt
     table_size::UInt
 end
+
+HPackSession() = HPackSession([],[],default_max_table_size,0)
+
+#https://tools.ietf.org/html/rfc7540#section-6.5.2
+const default_max_table_size = 4096
+
 
 function Base.show(io::IO, s::HPackSession)
     println(io, "HPackSession with Table Size $(s.table_size):")
@@ -380,28 +412,22 @@ function Base.show(io::IO, s::HPackSession)
     println(io, "")
 end
 
-HPackSession() = HPackSession([],[],default_max_table_size,0)
-
-#https://tools.ietf.org/html/rfc7540#section-6.5.2
-const default_max_table_size = 4096
 
 function set_max_table_size(s::HPackSession, n)
     s.max_table_size = n
     purge(s)
 end
 
+
 function purge(s::HPackSession)
     return #FIXME can't purge stuff that old lazy blocks may refer to.
     while s.table_size > s.max_table_size
         s.table_size -= hp_field_size(s, lastindex(s.names))
-        pop!(s)
+        pop!(s.names)
+        pop!(s.values)
     end
 end
 
-function Base.pop!(s::HPackSession)
-    pop!(s.names)
-    pop!(s.values)
-end
 
 """
 The size of an entry is the sum of its name's length in octets (as
@@ -425,6 +451,9 @@ const table_index_flag = UInt(1) << 63
 is_tableindex(i) = i > table_index_flag
 is_dynamicindex(i) = i > (table_index_flag | hp_static_max)
 
+Base.lastindex(s::HPackSession) = hp_static_max + lastindex(s.names)
+
+
 @noinline function Base.pushfirst!(s::HPackSession, bytes,
                          namei::UInt, valuei::UInt, offset::UInt)
 
@@ -440,7 +469,6 @@ is_dynamicindex(i) = i > (table_index_flag | hp_static_max)
     purge(s)
 end
 
-Base.lastindex(s::HPackSession) = hp_static_max + lastindex(s.names)
 
 function get_name(s::HPackSession, i::UInt, offset::UInt=0)::HPackString
     i &= ~table_index_flag
@@ -451,6 +479,7 @@ function get_name(s::HPackSession, i::UInt, offset::UInt=0)::HPackString
                                 s.names[i + offset - hp_static_max]
 end
 
+
 function get_value(s::HPackSession, i::UInt, offset::UInt=0)::HPackString
     i &= ~table_index_flag
     if i + offset > lastindex(s)
@@ -460,6 +489,8 @@ function get_value(s::HPackSession, i::UInt, offset::UInt=0)::HPackString
                                 s.values[i + offset - hp_static_max]
 end
 
+
+
 # Header Fields
 
 mutable struct HPackBlock
@@ -467,21 +498,25 @@ mutable struct HPackBlock
     bytes::Vector{UInt8}
     i::UInt
     cursor::UInt
-    offset::UInt
+    dynamic_table_offset::UInt
 end
 
-                                     # FIXME
-                                     # Copy of HPackString might allow iteration
-                                     # loop optimisation to eliminate struct?
 @inline get_name(b::HPackBlock, i::UInt, offset::UInt)::HPackString =
     is_tableindex(i) ? HPackString(get_name(b.session, i, offset)) :
                        HPackString(b.bytes, i)
+                                    # FIXME get_name already returns HPackString
+                                    # Copy of HPackString might allow iteration
+                                    # loop optimisation to eliminate struct?
 
 @inline get_value(b::HPackBlock, i::UInt, offset::UInt)::HPackString =
     is_tableindex(i) ? HPackString(get_value(b.session, i, offset)) :
                        HPackString(b.bytes, i)
 
 HPackBlock(session, bytes, i) = HPackBlock(session, bytes, i, 0, 0)
+
+
+
+# Key Lookup Interface
 
 Base.getproperty(h::HPackBlock, s::Symbol) =
     s === :authority  ? h[":authority"]  :
@@ -500,7 +535,320 @@ function Base.getindex(b::HPackBlock, key)
     throw(KeyError(key))
 end
 
+
+
+# Iteration Interface
+
+struct BlockKeys   b::HPackBlock end
+struct BlockValues b::HPackBlock end
+
+const BlockIterator = Union{BlockKeys, BlockValues, HPackBlock}
+
+Base.eltype(::Type{BlockKeys})   = HPackString
+Base.eltype(::Type{BlockValues}) = HPackString
+Base.eltype(::Type{HPackBlock})  = Pair{HPackString, HPackString}
+
+elvalue(b::BlockKeys, name, value, offset) = get_name(b.b, name, offset)
+elvalue(b::BlockValues, name, value, offset) = get_name(b.b, value, offset)
+elvalue(b::HPackBlock, name, value, offset) = get_name(b, name, offset) =>
+                                              get_value(b, value, offset)
+
+Base.keys(b::HPackBlock)   = BlockKeys(b)
+Base.values(b::HPackBlock) = BlockValues(b)
+
+Base.IteratorSize(::BlockIterator) = Base.SizeUnknown()
+
+
+@inline function Base.iterate(bi::BlockIterator)
+
+    b::HPackBlock = bi isa HPackBlock ? bi : bi.b
+    buf = b.bytes
+    i = b.i                              # 6.3 Dynamic Table Size Update
+                                         #   0   1   2   3   4   5   6   7
+    flags = @inbounds buf[i]             # +---+---+---+---+---+---+---+---+
+    if flags & 0b11100000 == 0b00100000  # | 0 | 0 | 1 |   Max size (5+)   |
+        i, n = hp_integer(buf, i,        # +---+---------------------------+
+                          0b00011111)
+        if b.cursor == 0
+            b.cursor = i                 # FIXME Limit to HTTP setting value
+            @assert n < 64000            #       SETTINGS_HEADER_TABLE_SIZE
+            set_max_table_size(b.session, n)
+        end
+    end
+
+    return iterate(bi, (i, b.dynamic_table_offset))
+end
+
+
+@inline function Base.iterate(bi::BlockIterator, state::Tuple{UInt,UInt})
+
+    b::HPackBlock = bi isa HPackBlock ? bi : bi.b
+    buf = b.bytes
+    i, dynamic_table_offset = state
+
+    if i > length(buf)
+        @assert i == length(buf) + 1
+        return nothing
+    end
+
+    flags = @inbounds buf[i]
+    name, value, i = hp_field(buf, i, flags)
+    v = elvalue(bi, name, value, dynamic_table_offset)
+
+    if flags & 0b11000000 == 0b01000000   # 6.2.1. Incremental Indexing.
+        if i <= b.cursor                  # For old fields (behind the cursor),
+            dynamic_table_offset -= 1     # update the Dynamic Table offset.
+        else
+            b.cursor = i                  # For new fields, update the cursor
+            b.dynamic_table_offset += 1   # and push new row into Dynamic Table.
+            pushfirst!(b.session, buf,
+                       name, value,
+                       dynamic_table_offset)
+        end
+    end
+
+    return v, (i, dynamic_table_offset)
+end
+
+
+
+# Field Binary Format Decoding
+
+"""
+Returns name and value byte-indexes of the field starting at `i` in `buf`,
+and the index of the next field (or `length(buf) + 1`).
+If the name or value is a reference to the Indexing Tables then
+the table index has the `table_index_flag` flag set. See `is_tableindex`.
+"""
+function hp_field(buf, i::UInt, flags::UInt8)::Tuple{UInt,UInt,UInt}
+
+    index_mask, literal_string_count = hp_field_format(flags)
+
+    if index_mask == 0b00011111                     # Dynamic Table Size Update
+        throw(TableUpdateError())                   # only allowed at start of
+    end                                             # block [RFC7541 4.2, 6.3]
+
+    if index_mask != 0                              # Name is a reference to
+        i, name_i = hp_integer(buf, i, index_mask)  # the Indexing Tables.
+        if name_i == 0
+            throw(IndexBoundsError())
+        end
+        name_i |= table_index_flag
+        if literal_string_count == 0
+            value_i = name_i
+        else
+            value_i = i
+            i = hp_string_nexti(buf, i)
+        end
+    else
+        name_i = i + 1                              # Name and Values are
+        value_i = hp_string_nexti(buf, name_i)      # both literal strings.
+        i = hp_string_nexti(buf, value_i)
+    end
+
+    return name_i, value_i, i
+end
+
+
+"""
+Determine a field's Binary Format from `flags`.
+Returns:
+ - the integer decoding prefix mask for an indexed field (or zero) and
+ - the number of literal strings.
+
+https://tools.ietf.org/html/rfc7541#section-6
+"""
+function hp_field_format(flags::UInt8)
+
+    index_mask::UInt8 = 0                   # 6.1. Indexed Header Field
+    literal_string_count::UInt = 0          #   0   1   2   3   4   5   6   7
+                                            # +---+---+---+---+---+---+---+---+
+    if flags & 0b10000000 != 0              # | 1 |        Index (7+)         |
+                                            # +---+---------------------------+
+        index_mask = 0b01111111
+                                            # 6.2.1. Literal Header Field
+                                            #  0   1   2   3   4   5   6   7
+                                            # +---+---+---+---+---+---+---+---+
+    elseif flags == 0b01000000 ||           # | 0 | 1 |           0           |
+                                            # +---+---+-----------------------+
+                                            # | H |     Name Length (7+)      |
+                                            # +---+---------------------------+
+                                            # |  Name String (Length octets)  |
+                                            # +---+---------------------------+
+                                            # | H |     Value Length (7+)     |
+                                            # +---+---------------------------+
+                                            # | Value String (Length octets)  |
+                                            # +-------------------------------+
+                                            #
+                                            # 6.2.2. Literal Header Field
+                                            #        without Indexing
+                                            #  0   1   2   3   4   5   6   7
+                                            # +---+---+---+---+---+---+---+---+
+            flags == 0b00000000 ||          # | 0 | 0 | 0 | 0 |       0       |
+                                            # +---+---+-----------------------+
+                                            # | H |     Name Length (7+)      |
+                                            # +---+---------------------------+
+                                            # |  Name String (Length octets)  |
+                                            # +---+---------------------------+
+                                            # | H |     Value Length (7+)     |
+                                            # +---+---------------------------+
+                                            # | Value String (Length octets)  |
+                                            # +-------------------------------+
+                                            #
+                                            # 6.2.3. Literal Header Field
+                                            # Never Indexed
+                                            #   0   1   2   3   4   5   6   7
+                                            # +---+---+---+---+---+---+---+---+
+            flags == 0b00010000             # | 0 | 0 | 0 | 1 |       0       |
+                                            # +---+---+-----------------------+
+           literal_string_count = 2         # | H |     Name Length (7+)      |
+                                            # +---+---------------------------+
+                                            # |  Name String (Length octets)  |
+                                            # +---+---------------------------+
+                                            # | H |     Value Length (7+)     |
+                                            # +---+---------------------------+
+                                            # | Value String (Length octets)  |
+                                            # +-------------------------------+
+
+                                            # 6.2.1. Literal Header Field
+                                            #   0   1   2   3   4   5   6   7
+                                            # +---+---+---+---+---+---+---+---+
+    elseif flags & 0b01000000 != 0          # | 0 | 1 |      Index (6+)       |
+                                            # +---+---+-----------------------+
+        index_mask = 0b00111111             # | H |     Value Length (7+)     |
+        literal_string_count = 1            # +---+---------------------------+
+                                            # | Value String (Length octets)  |
+                                            # +-------------------------------+
+
+                                            # 6.3 Dynamic Table Size Update
+                                            #   0   1   2   3   4   5   6   7
+                                            # +---+---+---+---+---+---+---+---+
+    elseif flags & 0b00100000 != 0          # | 0 | 0 | 1 |   Max size (5+)   |
+                                            # +---+---------------------------+
+        index_mask = 0b00011111
+                                            # 6.2.2.  Literal Header Field
+                                            #         without Indexing
+    else                                    #   0   1   2   3   4   5   6   7
+        index_mask = 0b00001111             # +---+---+---+---+---+---+---+---+
+        literal_string_count = 1            # | 0 | 0 | 0 | 0 |  Index (4+)   |
+    end                                     # +---+---+-----------------------+
+                                            # | H |     Value Length (7+)     |
+                                            # +---+---------------------------+
+                                            # | Value String (Length octets)  |
+                                            # +-------------------------------+
+                                            #
+                                            # 6.2.3.  Literal Header Field
+                                            #         Never Indexed
+                                            #   0   1   2   3   4   5   6   7
+                                            # +---+---+---+---+---+---+---+---+
+                                            # | 0 | 0 | 0 | 1 |  Index (4+)   |
+                                            # +---+---+-----------------------+
+                                            # | H |     Value Length (7+)     |
+                                            # +---+---------------------------+
+                                            # | Value String (Length octets)  |
+                                            # +-------------------------------+
+    return index_mask, literal_string_count
+end
+
+
+
+# Static Table
+
+"""
+> The static table (see Section 2.3.1) consists in a predefined and
+> unchangeable list of header fields.
+
+https://tools.ietf.org/html/rfc7541#appendix-A
+"""
+const hp_static_strings = [
+    ":authority"                  => "",
+    ":method"                     => "GET",
+    ":method"                     => "POST",
+    ":path"                       => "/",
+    ":path"                       => "/index.html",
+    ":scheme"                     => "http",
+    ":scheme"                     => "https",
+    ":status"                     => "200",
+    ":status"                     => "204",
+    ":status"                     => "206",
+    ":status"                     => "304",
+    ":status"                     => "400",
+    ":status"                     => "404",
+    ":status"                     => "500",
+    "accept-"                     => "",
+    "accept-encoding"             => "gzip, deflate",
+    "accept-language"             => "",
+    "accept-ranges"               => "",
+    "accept"                      => "",
+    "access-control-allow-origin" => "",
+    "age"                         => "",
+    "allow"                       => "",
+    "authorization"               => "",
+    "cache-control"               => "",
+    "content-disposition"         => "",
+    "content-encoding"            => "",
+    "content-language"            => "",
+    "content-length"              => "",
+    "content-location"            => "",
+    "content-range"               => "",
+    "content-type"                => "",
+    "cookie"                      => "",
+    "date"                        => "",
+    "etag"                        => "",
+    "expect"                      => "",
+    "expires"                     => "",
+    "from"                        => "",
+    "host"                        => "",
+    "if-match"                    => "",
+    "if-modified-since"           => "",
+    "if-none-match"               => "",
+    "if-range"                    => "",
+    "if-unmodified-since"         => "",
+    "last-modified"               => "",
+    "link"                        => "",
+    "location"                    => "",
+    "max-forwards"                => "",
+    "proxy-authenticate"          => "",
+    "proxy-authorization"         => "",
+    "range"                       => "",
+    "referer"                     => "",
+    "refresh"                     => "",
+    "retry-after"                 => "",
+    "server"                      => "",
+    "set-cookie"                  => "",
+    "strict-transport-security"   => "",
+    "transfer-encoding"           => "",
+    "user-agent"                  => "",
+    "vary"                        => "",
+    "via"                         => "",
+    "www-authenticate"            => ""
+]
+
+const hp_static_max = lastindex(hp_static_strings)
+const hp_static_names = [HPackString(n) for (n, v) in hp_static_strings]
+const hp_static_values = [HPackString(v) for (n, v) in hp_static_strings]
+
+
+
+# Fast skipping of fields without decoding
+
 #=
+function hp_integer_nexti(buf::Array{UInt8}, i::UInt,
+                          mask::UInt8, flags::UInt8)::UInt
+
+    if flags & mask == mask
+        flags = @inbounds v[i += 1]
+        while flags & 0b10000000 != 0
+            flags = @inbounds v[i += 1]
+        end
+    end
+    i += 1
+    if i > length(buf) + 1                         # Allow next i to be one past
+        throw(IntegerDecodingError())              # the end of the buffer.
+    end
+    return i
+end
+
 hp_field_nexti(buf, i) = hp_field_nexti(buf, i, @inbounds buf[i])
 
 function hp_field_nexti(buf::Vector{UInt8}, i::UInt, flags::UInt8)::UInt
@@ -520,252 +868,5 @@ function hp_field_nexti(buf::Vector{UInt8}, i::UInt, flags::UInt8)::UInt
     return i
 end
 =#
-
-
-# Iteration Interface
-
-struct BlockKeys   b::HPackBlock end
-struct BlockValues b::HPackBlock end
-
-Base.eltype(::Type{BlockKeys})   = HPackString
-Base.eltype(::Type{BlockValues}) = HPackString
-Base.eltype(::Type{HPackBlock})  = Pair{HPackString, HPackString}
-
-Base.keys(b::HPackBlock)   = BlockKeys(b)
-Base.values(b::HPackBlock) = BlockValues(b)
-
-const BlockIterator = Union{BlockKeys, BlockValues, HPackBlock}
-
-Base.IteratorSize(::BlockIterator) = Base.SizeUnknown()
-
-@inline function Base.iterate(bi::BlockIterator)
-
-    b::HPackBlock = bi isa HPackBlock ? bi : bi.b
-    buf = b.bytes
-    i = b.i
-    flags = @inbounds buf[i]
-
-    # 6.3 Dynamic Table Size Update
-    #   0   1   2   3   4   5   6   7
-    # +---+---+---+---+---+---+---+---+
-    # | 0 | 0 | 1 |   Max size (5+)   |
-    # +---+---------------------------+
-    if flags & 0b11100000 == 0b00100000
-        i, table_size = hp_integer(buf, i, 0b00011111)
-        if b.cursor == 0
-            b.cursor = i
-            @assert table_size < 64000  #FIXME Limit to HTTP setting value
-            set_max_table_size(b.session, table_size)
-        end
-    end
-    return iterate(bi, (i, b.offset))
-end
-
-@inline function Base.iterate(bi::BlockIterator, state::Tuple{UInt,UInt})
-
-    b::HPackBlock = bi isa HPackBlock ? bi : bi.b
-    buf = b.bytes
-    i, offset = state
-
-    if i > length(buf)
-        return nothing
-    end
-
-    flags = @inbounds buf[i]
-    name, value, i = hp_field(buf, i, flags)
-
-    v = bi isa BlockKeys   ? get_name(b, name, offset) :
-        bi isa BlockValues ? get_value(b, value, offset) :
-                             get_name(b, name, offset) =>
-                             get_value(b, value, offset)
-
-    # 6.2.1.  Literal Header Field with Incremental Indexing
-    if flags & 0b11000000 == 0b01000000
-        if i <= b.cursor
-            offset -= 1
-        else
-            b.cursor = i
-            b.offset += 1
-            pushfirst!(b.session, buf, name, value, offset)
-        end
-    end
-
-    return v, (i, offset)
-end
-
-const nobytes = UInt8[]
-
-@noinline function hp_field(buf, i::UInt, flags::UInt8)::
-                            Tuple{UInt,UInt,UInt}
-
-    int_mask, string_count = hp_field_format(buf, i, flags)
-
-    # 6.3 Dynamic Table Size Update
-    if int_mask == 0b00011111
-        throw(TableUpdateError())
-    end
-
-    if int_mask != 0
-        i, idx = hp_integer(buf, i, int_mask)
-        if idx == 0
-            throw(IndexBoundsError())
-        end
-        name = idx | table_index_flag
-        if string_count == 0
-            value = idx | table_index_flag
-        else
-            value = i
-            i = hp_string_nexti(buf, i)
-        end
-    else
-        name = i + 1
-        value = hp_string_nexti(buf, name)
-        i = hp_string_nexti(buf, value)
-    end
-
-    return name, value, i
-end
-
-function hp_field_format(buf::Vector{UInt8}, i::UInt, flags::UInt8)
-
-    int_mask::UInt8 = 0
-    string_count = 0
-
-    # Headings below are from: https://tools.ietf.org/html/rfc7541
-
-    # 6.1. Indexed Header Field
-    #   0   1   2   3   4   5   6   7
-    # +---+---+---+---+---+---+---+---+
-    # | 1 |        Index (7+)         |
-    # +---+---------------------------+
-    if flags & 0b10000000 != 0
-        int_mask = 0b01111111
-
-    # 6.2.1. Literal Header Field
-    # (or 6.2.2. Literal Header Field without Indexing)
-    # (or 6.2.3. Literal Header Field Never Indexed)
-    #  0   1   2   3   4   5   6   7
-    # +---+---+---+---+---+---+---+---+
-    # | 0 | 1 |           0           |
-    # +---+---+-----------------------+
-    # | H |     Name Length (7+)      |
-    # +---+---------------------------+
-    # |  Name String (Length octets)  |
-    # +---+---------------------------+
-    # | H |     Value Length (7+)     |
-    # +---+---------------------------+
-    # | Value String (Length octets)  |
-    # +-------------------------------+
-    elseif flags == 0b01000000 ||
-           flags == 0b00010000 ||
-           flags == 0b00000000
-        string_count = 2
-
-    # 6.2.1. Literal Header Field
-    #   0   1   2   3   4   5   6   7
-    # +---+---+---+---+---+---+---+---+
-    # | 0 | 1 |      Index (6+)       |
-    # +---+---+-----------------------+
-    # | H |     Value Length (7+)     |
-    # +---+---------------------------+
-    # | Value String (Length octets)  |
-    # +-------------------------------+
-    elseif flags & 0b01000000 != 0
-        int_mask = 0b00111111
-        string_count = 1
-
-    # 6.3 Dynamic Table Size Update
-    #   0   1   2   3   4   5   6   7
-    # +---+---+---+---+---+---+---+---+
-    # | 0 | 0 | 1 |   Max size (5+)   |
-    # +---+---------------------------+
-    elseif flags & 0b00100000 != 0
-        int_mask = 0b00011111
-
-    # 6.2.3.  Literal Header Field Never Indexed
-    # (or 6.2.2.  Literal Header Field without Indexing)
-    #   0   1   2   3   4   5   6   7
-    # +---+---+---+---+---+---+---+---+
-    # | 0 | 0 | 0 | 1 |  Index (4+)   |
-    # +---+---+-----------------------+
-    # | H |     Value Length (7+)     |
-    # +---+---------------------------+
-    # | Value String (Length octets)  |
-    # +-------------------------------+
-    else
-        int_mask = 0b00001111
-        string_count = 1
-    end
-
-    return int_mask, string_count
-end
-
-const hp_static_strings = [
-    ":authority" => "",
-    ":method" => "GET",
-    ":method" => "POST",
-    ":path" => "/",
-    ":path" => "/index.html",
-    ":scheme" => "http",
-    ":scheme" => "https",
-    ":status" => "200",
-    ":status" => "204",
-    ":status" => "206",
-    ":status" => "304",
-    ":status" => "400",
-    ":status" => "404",
-    ":status" => "500",
-    "accept-" => "",
-    "accept-encoding" => "gzip, deflate",
-    "accept-language" => "",
-    "accept-ranges" => "",
-    "accept" => "",
-    "access-control-allow-origin" => "",
-    "age" => "",
-    "allow" => "",
-    "authorization" => "",
-    "cache-control" => "",
-    "content-disposition" => "",
-    "content-encoding" => "",
-    "content-language" => "",
-    "content-length" => "",
-    "content-location" => "",
-    "content-range" => "",
-    "content-type" => "",
-    "cookie" => "",
-    "date" => "",
-    "etag" => "",
-    "expect" => "",
-    "expires" => "",
-    "from" => "",
-    "host" => "",
-    "if-match" => "",
-    "if-modified-since" => "",
-    "if-none-match" => "",
-    "if-range" => "",
-    "if-unmodified-since" => "",
-    "last-modified" => "",
-    "link" => "",
-    "location" => "",
-    "max-forwards" => "",
-    "proxy-authenticate" => "",
-    "proxy-authorization" => "",
-    "range" => "",
-    "referer" => "",
-    "refresh" => "",
-    "retry-after" => "",
-    "server" => "",
-    "set-cookie" => "",
-    "strict-transport-security" => "",
-    "transfer-encoding" => "",
-    "user-agent" => "",
-    "vary" => "",
-    "via" => "",
-    "www-authenticate" => ""
-]
-
-const hp_static_max = lastindex(hp_static_strings)
-const hp_static_names = [HPackString(n) for (n, v) in hp_static_strings]
-const hp_static_values = [HPackString(v) for (n, v) in hp_static_strings]
 
 end # module HPack
