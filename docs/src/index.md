@@ -49,20 +49,6 @@ HTTP.IOError
 Sockets.DNSError
 ```
 
-
-## Server / Handlers
-
-```@docs
-HTTP.listen
-HTTP.Servers.serve
-HTTP.Servers.Server
-HTTP.Handler
-HTTP.HandlerFunction
-HTTP.Router
-HTTP.register!
-```
-
-
 ## URIs
 
 ```@docs
@@ -86,6 +72,20 @@ HTTP.Cookie
 ```@docs
 HTTP.sniff
 HTTP.Strings.escapehtml
+```
+
+## Server / Handlers
+
+```@docs
+HTTP.listen
+HTTP.serve
+HTTP.Handlers
+HTTP.handle
+HTTP.Handler
+HTTP.RequestHandlerFunction
+HTTP.StreamHandlerFunction
+HTTP.Router
+HTTP.@register
 ```
 
 # HTTP.jl Internal Architecture

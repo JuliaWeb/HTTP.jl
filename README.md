@@ -75,8 +75,9 @@ HTTP.listen() do http::HTTP.Stream
 end
 ```
 
+[`HTTP.Handlers.serve`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.Handlers.serve):
 ```julia
-HTTP.listen() do request::HTTP.Request
+HTTP.serve() do request::HTTP.Request
    @show request
    @show request.method
    @show HTTP.header(request, "Content-Type")

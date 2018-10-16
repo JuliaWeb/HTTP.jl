@@ -16,7 +16,6 @@ end
 end
 
 HTTP.listen("127.0.0.1", 8000;
-            ssl = true,
             sslconfig = MbedTLS.SSLConfig(joinpath(dirname(@__FILE__), "cert.pem"),
                                           joinpath(dirname(@__FILE__), "key.pem"))) do http
     if HTTP.WebSockets.is_websocket_upgrade(http.message)
@@ -31,9 +30,10 @@ HTTP.listen("127.0.0.1", 8000;
             end
         end
     else
-        HTTP.Servers.handle_request(http) do req::HTTP.Request
+        h = HTTP.Handlers.RequestHandlerFunction() do req::HTTP.Request
             HTTP.Response(200,read(joinpath(dirname(@__FILE__),"mwe.html"), String))
         end
+        HTTP.Handlers.handle(h, http)
     end
 end
 
