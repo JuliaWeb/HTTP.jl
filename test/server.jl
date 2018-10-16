@@ -33,10 +33,10 @@ port = 8087 # rand(8000:8999)
 
 # echo response
 handler = (http) -> begin
-    request::Request = http.message
+    request::HTTP.Request = http.message
     request.body = read(http)
     closeread(http)
-    request.response::Response = Response(request.body)
+    request.response::HTTP.Response = HTTP.Response(request.body)
     request.response.request = request
     startwrite(http)
     write(http, request.response.body)
@@ -123,10 +123,10 @@ println(client)
 @test occursin("Body of Request", client)
 
 hello = (http) -> begin
-    request::Request = http.message
+    request::HTTP.Request = http.message
     request.body = read(http)
     closeread(http)
-    request.response::Response = Response("Hello")
+    request.response::HTTP.Response = HTTP.Response("Hello")
     request.response.request = request
     startwrite(http)
     write(http, request.response.body)
@@ -169,10 +169,10 @@ end
 # test automatic forwarding of non-sensitive headers
 # this is a server that will "echo" whatever headers were sent to it
 t1 = @async HTTP.listen("127.0.0.1", 8090) do http
-    request::Request = http.message
+    request::HTTP.Request = http.message
     request.body = read(http)
     closeread(http)
-    request.response::Response = Response(200, req.headers)
+    request.response::HTTP.Response = HTTP.Response(200, request.headers)
     request.response.request = request
     startwrite(http)
     write(http, request.response.body)
