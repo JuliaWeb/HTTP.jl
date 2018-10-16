@@ -7,6 +7,8 @@ using HTTP
 @testset "HTTP" begin
     for f in ["LazyStrings.jl",
               "LazyHTTP.jl",
+              "Nibbles.jl",
+              "HPack.jl",
               "ascii.jl",
               "issue_288.jl",
               "utils.jl",
