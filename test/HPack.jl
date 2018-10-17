@@ -454,6 +454,10 @@ for group in [
                 tc = LazyJSON.value(tc)
                 #println(tc.description)
                 for seq in [(1,1,2), (1,2,1), (2,1,1)]
+                    if !haskey(ENV, "HTTP_JL_RUN_FULL_HPACK_TEST") &&
+                        rand(1:10) < 10
+                        continue
+                    end
                     s = HPack.HPackSession()
                     for case in tc.cases
                         if haskey(case, "header_table_size")
