@@ -434,11 +434,17 @@ for group in [
     "python-hpack"
 ]
     @testset "$group" begin
-        for name in ("$group/story_$(lpad(n, 2, '0')).json" for n in 0:31)
+        if haskey(ENV, "HTTP_JL_RUN_FULL_HPACK_TEST")
+            range = 0:31
+        else
+            range = 29:31
+        end
+        for name in ("$group/story_$(lpad(n, 2, '0')).json" for n in range)
             if cachehas(name)
                 tc = cacheget(name)
             else
                 tc = try
+                    println("GET $url/$name")
                     HTTP.get("$url/$name").body
                 catch e
                     if e isa HTTP.StatusError && e.status == 404
