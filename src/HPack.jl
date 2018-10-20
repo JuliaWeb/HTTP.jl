@@ -514,8 +514,6 @@ end
 
 HPackBlock(session, bytes, i) = HPackBlock(session, bytes, i, 0, 0)
 
-
-
 # Key Lookup Interface
 
 Base.getproperty(h::HPackBlock, s::Symbol) =
@@ -523,8 +521,79 @@ Base.getproperty(h::HPackBlock, s::Symbol) =
     s === :method     ? h[":method"]     :
     s === :path       ? h[":path"]       :
     s === :scheme     ? h[":scheme"]     :
-    s === :status     ? h[":status"]     :
+    s === :status     ? hp_status(h)     :
                         getfield(h, s)
+
+
+"""
+`:status` is always the first field of a response.
+
+> the `:status` pseudo-header field MUST be included in all responses
+https://tools.ietf.org/html/rfc7540#section-8.1.2.4
+> Endpoints MUST NOT generate pseudo-header fields other than those defined
+ in this document.
+> All pseudo-header fields MUST appear in the header block before
+regular header fields 
+https://tools.ietf.org/html/rfc7540#section-8.1.2.1
+"""
+function hp_status(h::HPackBlock)
+    flags = @inbounds h.bytes[h.i]
+    return flags in 0x88:0x83 ? hp_static_values[flags & 0b01111111] :
+                                h[":status"]
+end
+
+#=
+function hp_path(h::HPackBlock)
+    i = h.i
+    for i = 1:3
+        flags = @inbounds h.bytes[h.i]
+            flags == 0x84 || flags == 0x85 ? 
+                    0b0000 
+                    0b0001 
+                    0b0100 
+    FIXME
+    end
+    return flags == 0x84 || flags == 0x85 ? 
+    return flags in 0x88:0x83 ? hp_static_values[flags & 0b01111111] :
+    return h[":path"]
+end
+=#
+
+
+hp_statusis200(h::HPackBlock) = @inbounds h.bytes[h.i] == 0x88 ||
+                                h[":status"] == "200"
+
+
+#=
+FIXME use the following rules to:
+    - shortcut pseudo-header field lookup
+    - shortcut :status above to: value of field 1
+    - maybe have a status_is_200() that checks for static-index-8 
+            is it just: if b.bytes[i] == 0x88 return true ?
+        
+
+     All HTTP/2 requests MUST include exactly one valid value for the
+   ":method", ":scheme", and ":path"
+https://tools.ietf.org/html/rfc7540#section-8.1.2.3
+
+The following says that the first field of response is always `:status`.
+
+
+    the `:status` pseudo-header field MUST be included in all responses
+https://tools.ietf.org/html/rfc7540#section-8.1.2.4
+
+    Endpoints MUST NOT generate pseudo-header fields other than those defined
+ in this document.
+
+   All pseudo-header fields MUST appear in the header block before
+   regular header fields 
+https://tools.ietf.org/html/rfc7540#section-8.1.2.1
+
+
+FIXME maybe have a hp_getindex that takes an optional static-index argument to
+short-cut lookup of :path, :method, content-type, etc
+A
+=#
 
 function Base.getindex(b::HPackBlock, key)
     for (n, v) in b

@@ -400,6 +400,19 @@ for r in (ascii_responses, huffman_responses)
     ]
     #@test s.table_size == 215
     #@show s
+
+
+    bytes = UInt8[0x88]
+    b = HPack.HPackBlock(s, bytes, 1)
+    @test collect(b) == [":status" => "200"]
+    @test b.status == "200"
+    @test HPack.hp_statusis200(b)
+
+    bytes = UInt8[0x89]
+    b = HPack.HPackBlock(s, bytes, 1)
+    @test collect(b) == [":status" => "204"]
+    @test b.status == "204"
+    @test HPack.hp_statusis200(b) == false
 end
 
 end # @testset HPack.fields
@@ -433,6 +446,9 @@ for group in [
     "node-http2-hpack",
     "python-hpack"
 ]
+    if haskey(ENV, "HTTP_JL_QUICK_HPACK_TEST")
+        break
+    end
     @testset "$group" begin
         if haskey(ENV, "HTTP_JL_RUN_FULL_HPACK_TEST")
             range = 0:31
