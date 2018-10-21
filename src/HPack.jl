@@ -519,13 +519,18 @@ HPackBlock(session, bytes, i) = HPackBlock(session, bytes, i, 0, 0)
 Base.getproperty(h::HPackBlock, s::Symbol) =
     s === :authority  ? h[":authority"]  :
     s === :method     ? h[":method"]     :
-    s === :path       ? h[":path"]       :
+    s === :path       ? hp_path(h)       :
     s === :scheme     ? h[":scheme"]     :
     s === :status     ? hp_status(h)     :
                         getfield(h, s)
 
 
 """
+FIXME if might be worth having these shortcut method for looking up :status
+for clients that don't look at header fields but need to check for expected
+response status. If shortcut methods yeild no significant speedup in these
+cases they should be deleted.
+
 `:status` is always the first field of a response.
 
 > the `:status` pseudo-header field MUST be included in all responses
@@ -533,7 +538,7 @@ https://tools.ietf.org/html/rfc7540#section-8.1.2.4
 > Endpoints MUST NOT generate pseudo-header fields other than those defined
  in this document.
 > All pseudo-header fields MUST appear in the header block before
-regular header fields 
+regular header fields
 https://tools.ietf.org/html/rfc7540#section-8.1.2.1
 """
 function hp_status(h::HPackBlock)
@@ -542,54 +547,43 @@ function hp_status(h::HPackBlock)
                                 h[":status"]
 end
 
-#=
-function hp_path(h::HPackBlock)
-    i = h.i
-    for i = 1:3
-        flags = @inbounds h.bytes[h.i]
-            flags == 0x84 || flags == 0x85 ? 
-                    0b0000 
-                    0b0001 
-                    0b0100 
-    FIXME
-    end
-    return flags == 0x84 || flags == 0x85 ? 
-    return flags in 0x88:0x83 ? hp_static_values[flags & 0b01111111] :
-    return h[":path"]
-end
-=#
-
-
 hp_statusis200(h::HPackBlock) = @inbounds h.bytes[h.i] == 0x88 ||
                                 h[":status"] == "200"
 
 
-#=
-FIXME use the following rules to:
-    - shortcut pseudo-header field lookup
-    - shortcut :status above to: value of field 1
-    - maybe have a status_is_200() that checks for static-index-8 
-            is it just: if b.bytes[i] == 0x88 return true ?
-        
+"""
+FIXME if might be worth having this shortcut method for looking up :path
+in 1st stage server request routing. If no significant speedup is achieved
+it should be deleted.
 
-     All HTTP/2 requests MUST include exactly one valid value for the
-   ":method", ":scheme", and ":path"
+> All HTTP/2 requests MUST include exactly one valid value for the
+> ":method", ":scheme", and ":path"
 https://tools.ietf.org/html/rfc7540#section-8.1.2.3
+"""
+function hp_path(h::HPackBlock)::HPackString
+    bytes = h.bytes
+    i = h.i
+    for field = 1:3
+        flags = @inbounds bytes[i]
+        if flags == 0x84 || flags == 0x85
+            return hp_static_values[flags & 0b01111111]
+        elseif flags == 0x04 || flags == 0x14 || flags == 0x44
+            return HPackString(bytes, i + 1)
+        else
+            name = unsafe_load(Ptr{UInt32}(pointer(bytes, i+1)))
+            if name == ntoh(0x84b958d3)                # Huffman encoded ":pat"
+                return HPackString(bytes, i + 6)
+            elseif name == ntoh(0x053a7061)            # ASCII ":pa"
+                return HPackString(bytes, i + 7)
+            end
+        end
+        i = hp_field_nexti(bytes, i, flags)
+    end
+    return h[":path"]
+end
 
-The following says that the first field of response is always `:status`.
 
-
-    the `:status` pseudo-header field MUST be included in all responses
-https://tools.ietf.org/html/rfc7540#section-8.1.2.4
-
-    Endpoints MUST NOT generate pseudo-header fields other than those defined
- in this document.
-
-   All pseudo-header fields MUST appear in the header block before
-   regular header fields 
-https://tools.ietf.org/html/rfc7540#section-8.1.2.1
-
-
+#=
 FIXME maybe have a hp_getindex that takes an optional static-index argument to
 short-cut lookup of :path, :method, content-type, etc
 A
@@ -901,14 +895,13 @@ const hp_static_values = [HPackString(v) for (n, v) in hp_static_strings]
 
 # Fast skipping of fields without decoding
 
-#=
 function hp_integer_nexti(buf::Array{UInt8}, i::UInt,
                           mask::UInt8, flags::UInt8)::UInt
 
     if flags & mask == mask
-        flags = @inbounds v[i += 1]
+        flags = @inbounds buf[i += 1]
         while flags & 0b10000000 != 0
-            flags = @inbounds v[i += 1]
+            flags = @inbounds buf[i += 1]
         end
     end
     i += 1
@@ -922,7 +915,7 @@ hp_field_nexti(buf, i) = hp_field_nexti(buf, i, @inbounds buf[i])
 
 function hp_field_nexti(buf::Vector{UInt8}, i::UInt, flags::UInt8)::UInt
 
-    int_mask, string_count = hp_field_format(buf, i, flags)
+    int_mask, string_count = hp_field_format(flags)
 
     if int_mask != 0
         i = hp_integer_nexti(buf, i, int_mask, flags)
@@ -936,6 +929,5 @@ function hp_field_nexti(buf::Vector{UInt8}, i::UInt, flags::UInt8)::UInt
     @assert i <= length(buf) + 1
     return i
 end
-=#
 
 end # module HPack

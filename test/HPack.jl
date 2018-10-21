@@ -153,6 +153,14 @@ for T in (String, SubString, HPackString)
     end
 end
 
+bytes = [0x84,0xb9, 0x58, 0xd3, 0x3f]
+@test HPackString(bytes, 1) == ":path"
+@test unsafe_load(Ptr{UInt32}(pointer(bytes))) == ntoh(0x84b958d3)
+
+bytes = [0x05,0x3a, 0x70, 0x61, 0x74, 0x68]
+@test HPackString(bytes, 1) == ":path"
+@test unsafe_load(Ptr{UInt32}(pointer(bytes))) == ntoh(0x053a7061)
+
 end # @testset HPack.huffman
 
 @testset "HPack.fields" begin
@@ -414,6 +422,50 @@ for r in (ascii_responses, huffman_responses)
     @test b.status == "204"
     @test HPack.hp_statusis200(b) == false
 end
+
+for flags in [0x00, 0x10, 0x40], variant in [:a, :b], huf in [true, false]
+    v1 = UInt8[0x82]
+    v2 = UInt8[0x87]
+    if variant == :a
+        v3 = UInt8[flags | 0x04]
+    else
+        v = Vector{UInt8}(":path")
+        if huf
+            v = HPack.hp_huffman_encode(v)
+            v3 = vcat(UInt8[flags, 0x80 | UInt8(length(v))], v)
+        else
+            v3 = vcat(UInt8[flags, UInt8(length(v))], v)
+        end
+    end
+    v = HPack.hp_huffman_encode(Vector{UInt8}("/foo/bar"))
+    v3 = vcat(v3, UInt8[0x80 | UInt8(length(v))], v)
+
+    for buf in [vcat(v1, v2, v3),
+                vcat(v1, v3, v2),
+                vcat(v2, v1, v3),
+                vcat(v2, v3, v1),
+                vcat(v3, v1, v2),
+                vcat(v3, v2, v1)]
+
+        s = HPack.HPackSession()
+        b = HPack.HPackBlock(s, buf, 1)
+
+        @test b.method == "GET"
+        @test b.scheme == "https"
+        @test b.path == "/foo/bar"
+    end
+end
+
+b = HPack.HPackBlock(HPack.HPackSession(), [0x82, 0x87, 0x85], 1)
+@test b.method == "GET"
+@test b.scheme == "https"
+@test b.path == "/index.html"
+
+b = HPack.HPackBlock(HPack.HPackSession(), [0x84, 0x87, 0x82], 1)
+@test b.method == "GET"
+@test b.scheme == "https"
+@test b.path == "/"
+
 
 end # @testset HPack.fields
 
