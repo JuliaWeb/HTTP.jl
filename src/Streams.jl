@@ -194,6 +194,10 @@ end
 @inline function ntoread(http::Stream)
 
     @require headerscomplete(http.message)
+    # FIXME ?
+    #if !headerscomplete(http.message)
+    #    startread(http)
+    #end
 
     # Find length of next chunk
     if http.ntoread == unknown_length && http.readchunked
@@ -205,6 +209,10 @@ end
 
     return http.ntoread
 end
+
+# CRLF at end of chunk.
+@inline nextra(http::Stream) = http.readchunked ? 2 : 0
+
 
 @inline function update_ntoread(http::Stream, n)
 
@@ -229,8 +237,14 @@ function Base.readavailable(http::Stream, n::Int=typemax(Int))::ByteView
         return nobytes
     end
 
-    bytes = read(http.stream, n)
-    update_ntoread(http, length(bytes))
+    bytes = read(http.stream, n + nextra(http)) # Try to read (and ignore)
+    l = min(n, length(bytes))                   # trailing CRLF after chunk.
+    if l > n
+        bytes = view(bytes, 1:n)
+        l = n
+    end
+
+    update_ntoread(http, l)
 
     return bytes
 end
@@ -239,19 +253,22 @@ Base.read(http::Stream, n::Integer) = readavailable(http, Int(n))
 
 function http_unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)::Int
 
-    n = min(n, UInt(ntoread(http)))
+    ntr = UInt(ntoread(http))
 
-    if n == 0
+    if ntr == 0
         return 0
     end
 
-    unsafe_read(http.stream, p, n)
+    n2 = min(n, ntr + nextra(http)) # Try to read (and ignore) trailing CRLF
+    n = min(n, ntr)
+    unsafe_read(http.stream, p, n2)
     update_ntoread(http, n)
 
     return n
 end
 
-function Base.readbytes!(http::Stream, buf, n)
+function Base.readbytes!(http::Stream, buf::AbstractVector{UInt8},
+                                       n=length(buf))
     @require n <= length(buf)
     return http_unsafe_read(http, pointer(buf), UInt(n))
 end

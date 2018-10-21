@@ -130,6 +130,7 @@ end
 
 const ByteView = typeof(view(UInt8[], 1:0))
 
+const readuntil_block_size = 4096
 
 """
 Read from an `IO` stream until `find_delimiter(bytes)` returns non-zero.
@@ -141,7 +142,7 @@ function Base.readuntil(io::IO,
 
     # Fast path, buffer already contains delimiter...
     if !eof(io)
-        bytes = readavailable(io)
+        bytes = read(io, readuntil_block_size)
         if (l = find_delimiter(bytes)) > 0
             if l < length(bytes)
                 unread!(io, view(bytes, l+1:length(bytes)))
@@ -152,7 +153,7 @@ function Base.readuntil(io::IO,
         # Otherwise, wait for delimiter...
         buf = Vector{UInt8}(bytes)
         while !eof(io)
-            bytes = readavailable(io)
+            bytes = read(io, readuntil_block_size)
             append!(buf, bytes)
             if (l = find_delimiter(buf)) > 0
                 if l < length(buf)
