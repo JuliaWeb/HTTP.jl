@@ -1,6 +1,6 @@
 name = "HTTP"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-authors = ["Jacob Quinn", "Sam O'Conner", "contributors: https://github.com/JuliaWeb/HTTP.jl/graphs/contributors"]
+authors = ["Jacob Quinn", "Sam O'Connor", "contributors: https://github.com/JuliaWeb/HTTP.jl/graphs/contributors"]
 version = "0.7.0"
 
 [deps]
