@@ -191,13 +191,69 @@ function Base.eof(http::Stream)
     return false
 end
 
-Base.readavailable(http::Stream)::ByteView = _readavailable(http)[1]
+@inline function ntoread(http::Stream)
 
-Base.read(http::Stream, n::Integer)::ByteView = _readavailable(http, Int(n))[1]
+    @require headerscomplete(http.message)
+
+    # Find length of next chunk
+    if http.ntoread == unknown_length && http.readchunked
+        http.ntoread = readchunksize(http.stream, http.message)
+        if http.ntoread > 0
+            http.ntoread
+        end
+    end
+
+    return http.ntoread
+end
+
+@inline function update_ntoread(http::Stream, n)
+
+    if http.ntoread != unknown_length
+        http.ntoread -= n
+    end
+
+    if http.readchunked
+        if http.ntoread == 0
+            http.ntoread = unknown_length
+        end
+    end
+
+    @ensure http.ntoread >= 0
+end
+
+function Base.readavailable(http::Stream, n::Int=typemax(Int))::ByteView
+
+    n = min(n, ntoread(http))
+
+    if n == 0
+        return nobytes
+    end
+
+    bytes = read(http.stream, n)
+    update_ntoread(http, length(bytes))
+
+    return bytes
+end
+
+Base.read(http::Stream, n::Integer) = readavailable(http, Int(n))
+
+function http_unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)::Int
+
+    n = min(n, UInt(ntoread(http)))
+
+    if n == 0
+        return 0
+    end
+
+    unsafe_read(http.stream, p, n)
+    update_ntoread(http, n)
+
+    return n
+end
 
 function Base.readbytes!(http::Stream, buf, n)
     @require n <= length(buf)
-    return _readavailable(http, Int(n), pointer(buf))[2]
+    return http_unsafe_read(http, pointer(buf), UInt(n))
 end
 
 function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
@@ -206,76 +262,21 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
         if eof(http)
             throw(EOFError())
         end
-        nread += _readavailable(http, n - nread, p + nread)[2]
+        nread += http_unsafe_read(http, p + nread, n - nread)
     end
     nothing
-end
-
-function _readavailable(http::Stream, n::Int=0,
-                                      p::Ptr{UInt8}=Ptr{UInt8}(C_NULL))::
-                                                            Tuple{ByteView, Int}
-    @require headerscomplete(http.message)
-
-    # Find length of next chunk
-    if http.ntoread == unknown_length && http.readchunked
-        http.ntoread = readchunksize(http.stream, http.message)
-        if http.ntoread > 0
-            http.ntoread += 2 # expect CRLF after chunk-data
-        end
-    end
-
-    if http.ntoread == 0
-        return nobytes, 0
-    end
-
-    # Read bytes from stream and update ntoread
-    if n == 0 || n > http.ntoread
-        n = http.ntoread
-    end
-    if p == C_NULL
-        bytes = read(http.stream, n)
-        n = length(bytes)
-    else
-        unsafe_read(http.stream, p, n)
-        bytes = nobytes
-    end
-    if http.ntoread != unknown_length
-        http.ntoread -= n
-    end
-
-    # Ignore CRLF at end of chunk-data
-    if http.readchunked
-        if http.ntoread < 2
-            n -= (2 - http.ntoread)
-            l = length(bytes) + http.ntoread - 2
-            bytes = view(bytes, 1:l)
-        end
-        if http.ntoread == 0
-            http.ntoread = unknown_length
-        end
-    end
-
-    @ensure http.ntoread >= 0
-    return bytes, n
 end
 
 function IOExtras.unread!(http::Stream, excess)
 
     if http.readchunked && http.ntoread == unknown_length
-        # If the whole chunk was read, unread! needs to push
-        # back the CRLF that came after the chunk data
-        # (See readavailable above).
-        excess = view(excess.parent, excess.indices[1].start:
-                                     excess.indices[1].stop + 2)
         http.ntoread = length(excess)
-
     elseif http.ntoread != unknown_length
         http.ntoread += length(excess)
     end
 
     unread!(http.stream, excess)
 end
-
 
 find_delim(bytes, d::UInt8) =
     (i = findfirst(isequal(d), bytes)) === nothing ? 0 : i
