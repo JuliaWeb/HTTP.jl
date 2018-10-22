@@ -167,6 +167,13 @@ function Base.read(t::Transaction, nb::Int)
     return bytes
 end
 
+function Base.read(t::Transaction, ::Type{UInt8})
+    if bytesavailable(t.c.buffer) == 0
+        read_to_buffer(t)
+    end
+    return read(t.c.buffer, UInt8)
+end
+
 function Base.unsafe_read(t::Transaction, p::Ptr{UInt8}, n::UInt)
     l = bytesavailable(t.c.buffer)
     if l > 0
@@ -183,14 +190,7 @@ function Base.unsafe_read(t::Transaction, p::Ptr{UInt8}, n::UInt)
     return nothing
 end
 
-"""
-Read until `find_delimiter(bytes)` returns non-zero.
-Return view of bytes up to the delimiter.
-"""
-function Base.readuntil(t::Transaction,
-                             find_delimiter::Function #=Vector{UInt8} -> Int=#,
-                             sizehint=4096
-                            )::ByteView
+function read_to_buffer(t::Transaction, sizehint=4096)
 
     buf = t.c.buffer
 
@@ -200,18 +200,32 @@ function Base.readuntil(t::Transaction,
         buf.ptr = 1
     end
 
-    while bytesavailable(buf) == 0 ||
-          (bytes = readuntil(buf, find_delimiter)) === nobytes
-
-        if eof(t.c.io)
-            throw(EOFError())
-        end
-        n = min(sizehint, bytesavailable(t.c.io))
-        Base.ensureroom(buf, n)
-        unsafe_read(t.c.io, pointer(buf.data, buf.size + 1), n)
-        buf.size += n
+    # Wait for data.
+    if eof(t.c.io)
+        throw(EOFError())
     end
 
+    # Read from stream into buffer.
+    n = min(sizehint, bytesavailable(t.c.io))
+    buf = t.c.buffer
+    Base.ensureroom(buf, n)
+    unsafe_read(t.c.io, pointer(buf.data, buf.size + 1), n)
+    buf.size += n
+end
+
+"""
+Read until `find_delimiter(bytes)` returns non-zero.
+Return view of bytes up to the delimiter.
+"""
+function Base.readuntil(t::Transaction, f::Function #=Vector{UInt8} -> Int=#,
+                                        sizehint=4096)::ByteView
+    buf = t.c.buffer
+    if bytesavailable(buf) == 0
+        read_to_buffer(t, sizehint)
+    end
+    while (bytes = readuntil(buf, f)) === nobytes
+        read_to_buffer(t, sizehint)
+    end
     return bytes
 end
 

@@ -251,13 +251,27 @@ end
 
 Base.read(http::Stream, n::Integer) = readavailable(http, Int(n))
 
+global byte_read_warning_done = false
+
 function Base.read(http::Stream, ::Type{UInt8})
-    @warn "Reading byte-by-byte from HTTP.Stream is very inefficient.\n" *
-          "Use: io = BufferedInputStream(http::HTTP.Stream) instead.\n" *
-          "See: https://github.com/BioJulia/BufferedStreams.jl"
-    v = Vector{UInt8}(undef, 1)
-    http_unsafe_read(http, pointer(v), UInt(1))
-    return @inbounds v[1]
+
+    global byte_read_warning_done
+    if !byte_read_warning_done
+        @warn "Reading byte-by-byte from HTTP.Stream is inefficient.\n" *
+              "Use: io = BufferedInputStream(http::HTTP.Stream) instead.\n" *
+              "See: https://github.com/BioJulia/BufferedStreams.jl" stacktrace()
+        byte_read_warning_done = true
+    end
+
+    if ntoread(http) == 0
+        throw(EOFError())
+    end
+
+    x = read(http.stream, UInt8)
+
+    update_ntoread(http, 1)
+
+    return x
 end
 
 function http_unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)::Int
