@@ -2,6 +2,7 @@
 
 using Test
 using HTTP
+using BufferedStreams
 
 @testset "HTTP.Issues.288" begin
 
@@ -43,18 +44,30 @@ r = HTTP.get("http://127.0.0.1:8091")
 
 @test String(r.body) == decoded_data
 
-r = ""
+# Ignore byte-by-byte read warning
+ll = Base.CoreLogging.min_enabled_level(Base.CoreLogging.global_logger())
+Base.CoreLogging.disable_logging(Base.CoreLogging.Warn)
 
-HTTP.open("GET", "http://127.0.0.1:8091") do io
+for wrap in (identity, BufferedInputStream)
 
-    x = split(decoded_data, "\n")
-    for i in 1:6
-        l = readline(io)
-        @test l == x[i]
-        r *= l * "\n"
+    r = ""
+
+    HTTP.open("GET", "http://127.0.0.1:8091") do io
+
+        io = wrap(io)
+
+        x = split(decoded_data, "\n")
+        for i in 1:6
+            l = readline(io)
+            @test l == x[i]
+            r *= l * "\n"
+        end
     end
+
+    @test r == decoded_data
+
 end
 
-@test r == decoded_data
+Base.CoreLogging.disable_logging(ll)
 
 end # @testset

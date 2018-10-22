@@ -230,14 +230,16 @@ end
 
 function Base.readavailable(http::Stream, n::Int=typemax(Int))::ByteView
 
-    n = min(n, ntoread(http))
+    ntr = ntoread(http)
 
-    if n == 0
+    if ntr == 0
         return nobytes
     end
 
-    bytes = read(http.stream, n + nextra(http)) # Try to read (and ignore)
-    l = min(n, length(bytes))                   # trailing CRLF after chunk.
+    n2 = min(n, ntr + nextra(http)) # Try to read (and ignore) trailing CRLF
+    n = min(n, ntr)
+    bytes = read(http.stream, n2)
+    l = length(bytes)
     if l > n
         bytes = view(bytes, 1:n)
         l = n
@@ -249,6 +251,15 @@ function Base.readavailable(http::Stream, n::Int=typemax(Int))::ByteView
 end
 
 Base.read(http::Stream, n::Integer) = readavailable(http, Int(n))
+
+function Base.read(http::Stream, ::Type{UInt8})
+    @warn "Reading byte-by-byte from HTTP.Stream is very inefficient.\n" *
+          "Use: io = BufferedInputStream(http::HTTP.Stream) instead.\n" *
+          "See: https://github.com/BioJulia/BufferedStreams.jl"
+    v = Vector{UInt8}(undef, 1)
+    http_unsafe_read(http, pointer(v), UInt(1))
+    return @inbounds v[1]
+end
 
 function http_unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)::Int
 
@@ -281,28 +292,6 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
         nread += http_unsafe_read(http, p + nread, n - nread)
     end
     nothing
-end
-
-function IOExtras.unread!(http::Stream, excess)
-
-    if http.readchunked && http.ntoread == unknown_length
-        http.ntoread = length(excess)
-    elseif http.ntoread != unknown_length
-        http.ntoread += length(excess)
-    end
-
-    unread!(http.stream, excess)
-end
-
-find_delim(bytes, d::UInt8) =
-    (i = findfirst(isequal(d), bytes)) === nothing ? 0 : i
-
-function Base.readuntil(http::Stream, delim::UInt8; keep::Bool=false)
-    bytes = readuntil(http, bytes->find_delim(bytes, delim))
-    if keep == false
-        bytes = view(bytes, 1:length(bytes)-1)
-    end
-    return Vector{UInt8}(bytes)
 end
 
 function Base.read(http::Stream)
