@@ -29,7 +29,6 @@ export Connection, Transaction,
 
 using ..IOExtras, ..Sockets
 
-import ..ByteView
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
@@ -38,9 +37,6 @@ const default_connection_limit = 8
 const default_pipeline_limit = 16
 const nolimit = typemax(Int)
 
-const nobytes = view(UInt8[], 1:0)
-byteview(bytes::ByteView) = bytes
-byteview(bytes)::ByteView = view(bytes, 1:length(bytes))
 
 """
     Connection{T <: IO}
@@ -55,9 +51,9 @@ Fields:
 - `peerport`, remote TCP port number (used for debug messages).
 - `localport`, local TCP port number (used for debug messages).
 - `io::T`, the `TCPSocket` or `SSLContext.
-- `excess::ByteView`, left over bytes read from the connection after
-   the end of a response message. These bytes are probably the start of the
-   next response message.
+- `buffer::IOBuffer`, left over bytes read from the connection after
+   the end of a response header (or chunksize). These bytes are usually
+   part of the response body.
 - `sequence`, number of most recent `Transaction`.
 - `writecount`, number of Messages that have been written.
 - `writedone`, signal that `writecount` was incremented.
@@ -74,7 +70,7 @@ mutable struct Connection{T <: IO}
     peerport::UInt16 # debug only
     localport::UInt16 # debug only
     io::T
-    excess::ByteView
+    buffer::IOBuffer
     sequence::Int
     writecount::Int
     writebusy::Bool
@@ -104,7 +100,7 @@ Connection(host::AbstractString, port::AbstractString,
                   pipeline_limit, idle_timeout,
                   require_ssl_verification,
                   peerport(io), localport(io),
-                  io, nobytes,
+                  io, PipeBuffer(),
                   -1,
                   0, false, Condition(),
                   0, false, Condition(),
@@ -157,84 +153,66 @@ function Base.eof(t::Transaction)
 end
 
 Base.bytesavailable(t::Transaction) = bytesavailable(t.c)
-Base.bytesavailable(c::Connection) =
-    !isempty(c.excess) ? length(c.excess) : bytesavailable(c.io)
+Base.bytesavailable(c::Connection) = bytesavailable(c.buffer) +
+                                     bytesavailable(c.io)
 
 Base.isreadable(t::Transaction) = t.c.readbusy && t.c.readcount == t.sequence
 
 Base.iswritable(t::Transaction) = t.c.writebusy && t.c.writecount == t.sequence
 
-function Base.readavailable(t::Transaction)::ByteView
-    @require isreadable(t)
-    if !isempty(t.c.excess)
-        bytes = t.c.excess
-        @debug 4 "↩️  read $(length(bytes))-bytes from excess buffer."
-        t.c.excess = nobytes
-    else
-        bytes = byteview(readavailable(t.c.io))
-        @debug 4 "⬅️  read $(length(bytes))-bytes from $(typeof(t.c.io))"
-    end
-    t.c.timestamp = time()
+function Base.read(t::Transaction, nb::Int)
+    nb = min(nb, bytesavailable(t))
+    bytes = Base.StringVector(nb)
+    unsafe_read(t, pointer(bytes), nb)
     return bytes
 end
 
-function Base.read(t::Transaction, nb::Integer)::ByteView
-    bytes = t.c.excess
-    l = length(bytes)
-    if l > 0
-        if l > nb
-            t.c.excess = view(bytes, nb+1:l)
-            return view(bytes, 1:nb)
-        else
-            t.c.excess = nobytes
-            return bytes
-        end
-    end
-    v = Base.StringVector(min(nb, bytesavailable(t.c.io)))
-    unsafe_read(t.c.io, pointer(v), length(v))
-    return byteview(v)
-end
-
 function Base.unsafe_read(t::Transaction, p::Ptr{UInt8}, n::UInt)
-    bytes = t.c.excess
-    l = length(bytes)
+    l = bytesavailable(t.c.buffer)
     if l > 0
         nb = min(l,n)
-        unsafe_copyto!(p, pointer(bytes), nb)
-        p += nb;
+        unsafe_read(t.c.buffer, p, nb)
+        p += nb
         n -= nb
-        if nb == l
-            t.c.excess = nobytes
-        else
-            t.c.excess = view(bytes, nb+1:l)
-        end
+        @debug 4 "↩️  read $nb-bytes from buffer."
     end
     if n > 0
         unsafe_read(t.c.io, p, n)
+        @debug 4 "⬅️  read $n-bytes from $(typeof(t.c.io))"
     end
     return nothing
 end
 
-
 """
-    unread!(::Transaction, bytes)
-
-Push bytes back into a connection's `excess` buffer
-(to be returned by the next read).
+Read until `find_delimiter(bytes)` returns non-zero.
+Return view of bytes up to the delimiter.
 """
-function IOExtras.unread!(t::Transaction, bytes::ByteView)
-    @require isreadable(t)
-    @require !isempty(bytes)
-    @require t.c.excess === nobytes || bytes.parent == t.c.excess.parent &&
-                                       bytes.indices[1].stop + 1 ==
-                                       t.c.excess.indices[1].start
-    if t.c.excess === nobytes
-        t.c.excess = bytes
-    else
-        t.c.excess = view(bytes.parent,
-                          bytes.indices[1].start:t.c.excess.indices[1].stop)
+function Base.readuntil(t::Transaction,
+                             find_delimiter::Function #=Vector{UInt8} -> Int=#,
+                             sizehint=4096
+                            )::ByteView
+
+    buf = t.c.buffer
+
+    # Reset the buffer if it is empty.
+    if bytesavailable(buf) == 0
+        buf.size = 0
+        buf.ptr = 1
     end
-    return
+
+    while bytesavailable(buf) == 0 ||
+          (bytes = readuntil(buf, find_delimiter)) === nobytes
+
+        if eof(t.c.io)
+            throw(EOFError())
+        end
+        n = min(sizehint, bytesavailable(t.c.io))
+        Base.ensureroom(buf, n)
+        unsafe_read(t.c.io, pointer(buf.data, buf.size + 1), n)
+        buf.size += n
+    end
+
+    return bytes
 end
 
 """
@@ -359,7 +337,8 @@ function purge(c::Connection)
     while !eof(c.io)
         readavailable(c.io)
     end
-    c.excess = nobytes
+    c.buffer.size = 0
+    c.buffer.ptr = 1
     @ensure bytesavailable(c) == 0
 end
 
@@ -665,7 +644,8 @@ function Base.show(io::IO, c::Connection)
         c.host, ":",
         c.port != "" ? c.port : Int(c.peerport), ":", Int(c.localport),
         " ≣", c.pipeline_limit,
-        length(c.excess) > 0 ? " $(length(c.excess))-byte excess" : "",
+        bytesavailable(c.buffer) > 0 ?
+            " $(bytesavailable(c.buffer))-byte excess" : "",
         nwaiting > 0 ? " $nwaiting bytes waiting" : "",
         DEBUG_LEVEL > 1 && applicable(tcpsocket, c.io) ?
             " $(Base._fd(tcpsocket(c.io)))" : "")

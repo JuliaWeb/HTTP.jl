@@ -8,10 +8,9 @@ import ..HTTP
 using ..Sockets
 using ..IOExtras
 using ..Messages
-import ..ByteView
 import ..Messages: header, hasheader, setheader,
                    writeheaders, writestartline
-import ..ConnectionPool: getrawstream, nobytes, ByteView
+import ..ConnectionPool: getrawstream
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
 import ..@debug, ..DEBUG_LEVEL
@@ -228,12 +227,12 @@ end
     @ensure http.ntoread >= 0
 end
 
-function Base.readavailable(http::Stream, n::Int=typemax(Int))::ByteView
+function Base.readavailable(http::Stream, n::Int=typemax(Int))
 
     ntr = ntoread(http)
 
     if ntr == 0
-        return nobytes
+        return UInt8[]
     end
 
     n2 = min(n, ntr + nextra(http)) # Try to read (and ignore) trailing CRLF
