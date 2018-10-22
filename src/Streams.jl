@@ -140,6 +140,9 @@ end
 
 IOExtras.isreadable(http::Stream) = isreadable(http.stream)
 
+Base.bytesavailable(http::Stream) = min(ntoread(http),
+                                        bytesavailable(http.stream))
+
 function IOExtras.startread(http::Stream)
 
     if !isreadable(http.stream)
@@ -200,17 +203,10 @@ end
     # Find length of next chunk
     if http.ntoread == unknown_length && http.readchunked
         http.ntoread = readchunksize(http.stream, http.message)
-        if http.ntoread > 0
-            http.ntoread
-        end
     end
 
     return http.ntoread
 end
-
-# CRLF at end of chunk.
-@inline nextra(http::Stream) = http.readchunked ? 2 : 0
-
 
 @inline function update_ntoread(http::Stream, n)
 
@@ -230,22 +226,12 @@ end
 function Base.readavailable(http::Stream, n::Int=typemax(Int))
 
     ntr = ntoread(http)
-
     if ntr == 0
         return UInt8[]
     end
 
-    n2 = min(n, ntr + nextra(http)) # Try to read (and ignore) trailing CRLF
-    n = min(n, ntr)
-    bytes = read(http.stream, n2)
-    l = length(bytes)
-    if l > n
-        bytes = view(bytes, 1:n)
-        l = n
-    end
-
-    update_ntoread(http, l)
-
+    bytes = read(http.stream, min(n, ntr))
+    update_ntoread(http, length(bytes))
     return bytes
 end
 
@@ -266,27 +252,23 @@ function Base.read(http::Stream, ::Type{UInt8})
     if ntoread(http) == 0
         throw(EOFError())
     end
-
-    x = read(http.stream, UInt8)
-
     update_ntoread(http, 1)
 
-    return x
+    return read(http.stream, UInt8)
 end
 
 function http_unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)::Int
 
     ntr = UInt(ntoread(http))
-
     if ntr == 0
         return 0
     end
 
-    n2 = min(n, ntr + nextra(http)) # Try to read (and ignore) trailing CRLF
-    n = min(n, ntr)
-    unsafe_read(http.stream, p, n2)
+    unsafe_read(http.stream, p, min(n, ntr + (http.readchunked ? 2 : 0)))
+                                             # If there is spare space in `p`
+                                             # read two extra bytes
+    n = min(n, ntr)                          # (`\r\n` at end ofchunk).
     update_ntoread(http, n)
-
     return n
 end
 
@@ -308,8 +290,13 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
 end
 
 function Base.read(http::Stream)
-    buf = IOBuffer()
-    write(buf, http)
+    buf = PipeBuffer()
+    while !eof(http)
+        n = bytesavailable(http)
+        Base.ensureroom(buf, n)
+        unsafe_read(http, pointer(buf.data, buf.size + 1), n)
+        buf.size += n
+    end
     return take!(buf)
 end
 
