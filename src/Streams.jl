@@ -289,13 +289,22 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
     nothing
 end
 
+function Base.readbytes!(http::Stream, buf::IOBuffer, n=bytesavailable(http))
+    Base.ensureroom(buf, n)
+    unsafe_read(http, pointer(buf.data, buf.size + 1), n)
+    buf.size += n
+end
+
 function Base.read(http::Stream)
     buf = PipeBuffer()
-    while !eof(http)
-        n = bytesavailable(http)
-        Base.ensureroom(buf, n)
-        unsafe_read(http, pointer(buf.data, buf.size + 1), n)
-        buf.size += n
+    if ntoread(http) == unknown_length
+        while !eof(http)
+            readbytes!(http, buf)
+        end
+    else
+        while !eof(http)
+            readbytes!(http, buf, ntoread(http))
+        end
     end
     return take!(buf)
 end
