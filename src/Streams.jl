@@ -20,6 +20,7 @@ mutable struct Stream{M <: Message, S <: IO} <: IO
     stream::S
     writechunked::Bool
     readchunked::Bool
+    warn_not_to_read_one_byte_at_a_time::Bool
     ntoread::Int
 end
 
@@ -48,7 +49,7 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
     response to be read by another `Stream` that is waiting in `startread`.
     If a complete response has not been recieved, `closeread` throws `EOFError`.
 """
-Stream(r::M, io::S) where {M, S} = Stream{M,S}(r, io, false, false, 0)
+Stream(r::M, io::S) where {M, S} = Stream{M,S}(r, io, false, false, true, 0)
 
 header(http::Stream, a...) = header(http.message, a...)
 setstatus(http::Stream, status) = (http.message.response.status = status)
@@ -237,16 +238,13 @@ end
 
 Base.read(http::Stream, n::Integer) = readavailable(http, Int(n))
 
-global byte_read_warning_done = false
-
 function Base.read(http::Stream, ::Type{UInt8})
 
-    global byte_read_warning_done
-    if !byte_read_warning_done
-        @warn "Reading byte-by-byte from HTTP.Stream is inefficient.\n" *
+    if http.warn_not_to_read_one_byte_at_a_time
+        @warn "Reading one byte at a time from HTTP.Stream is inefficient.\n" *
               "Use: io = BufferedInputStream(http::HTTP.Stream) instead.\n" *
               "See: https://github.com/BioJulia/BufferedStreams.jl" stacktrace()
-        byte_read_warning_done = true
+        http.warn_not_to_read_one_byte_at_a_time = false
     end
 
     if ntoread(http) == 0
