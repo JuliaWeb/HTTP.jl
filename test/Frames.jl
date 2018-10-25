@@ -78,13 +78,17 @@ frames = LazyJSON.value("""[
     "description": "normal continuation frame without header block fragment"
 }]""")
 
+settings = Vector{UInt32}(undef, 6)
+settings[Frames.SETTINGS_MAX_FRAME_SIZE] = 1 << 14
 
 for test in frames
-    b = hex2bytes(test.wire)
-    @test Frames.frame_length(b) == test.frame.length
-    @test Frames.frame_type(b) == test.frame["type"]
-    @test Frames.flags(b) == test.frame.flags
-    @test Frames.stream_id(b) == test.frame.stream_identifier
+    io = IOBuffer(hex2bytes(test.wire))
+    b = Vector{UInt8}(undef, 9)
+    Frames.read_frame!(settings, io, b)
+    @test Frames.f_length(b) == test.frame.length
+    @test Frames.f_type(b) == test.frame["type"]
+    @test Frames.f_flags(b) == test.frame.flags
+    @test Frames.f_stream(b) == test.frame.stream_identifier
     @test view(b, UnitRange(Frames.payload(b)...)) ==
           hex2bytes(test.wire[19:end])
     if Frames.frame_is_padded(b)
@@ -142,10 +146,10 @@ frames = LazyJSON.value("""
 
 for test in frames
     b = hex2bytes(test.wire)
-    @test Frames.frame_length(b) == test.frame.length
-    @test Frames.frame_type(b) == test.frame["type"]
-    @test Frames.flags(b) == test.frame.flags
-    @test Frames.stream_id(b) == test.frame.stream_identifier
+    @test Frames.f_length(b) == test.frame.length
+    @test Frames.f_type(b) == test.frame["type"]
+    @test Frames.f_flags(b) == test.frame.flags
+    @test Frames.f_stream(b) == test.frame.stream_identifier
 
     @test String(view(b, UnitRange(Frames.data(b)...))) ==
           test.frame.frame_payload.data
@@ -170,10 +174,10 @@ frames = LazyJSON.value("""[
 
 for test in frames
     b = hex2bytes(test.wire)
-    @test Frames.frame_length(b) == test.frame.length
-    @test Frames.frame_type(b) == test.frame["type"]
-    @test Frames.flags(b) == test.frame.flags
-    @test Frames.stream_id(b) == test.frame.stream_identifier
+    @test Frames.f_length(b) == test.frame.length
+    @test Frames.f_type(b) == test.frame["type"]
+    @test Frames.f_flags(b) == test.frame.flags
+    @test Frames.f_stream(b) == test.frame.stream_identifier
 
     @test Frames.error_code(b) == test.frame.frame_payload.error_code
 end
@@ -207,10 +211,10 @@ frames = LazyJSON.value("""[
 
 for test in frames
     b = hex2bytes(test.wire)
-    @test Frames.frame_length(b) == test.frame.length
-    @test Frames.frame_type(b) == test.frame["type"]
-    @test Frames.flags(b) == test.frame.flags
-    @test Frames.stream_id(b) == test.frame.stream_identifier
+    @test Frames.f_length(b) == test.frame.length
+    @test Frames.f_type(b) == test.frame["type"]
+    @test Frames.f_flags(b) == test.frame.flags
+    @test Frames.f_stream(b) == test.frame.stream_identifier
 
     @test Frames.settings_count(b) == length(test.frame.frame_payload.settings)
     for (i, v) in enumerate(test.frame.frame_payload.settings)
@@ -258,10 +262,10 @@ frames = LazyJSON.value("""[
 
 for test in frames
     b = hex2bytes(test.wire)
-    @test Frames.frame_length(b) == test.frame.length
-    @test Frames.frame_type(b) == test.frame["type"]
-    @test Frames.flags(b) == test.frame.flags
-    @test Frames.stream_id(b) == test.frame.stream_identifier
+    @test Frames.f_length(b) == test.frame.length
+    @test Frames.f_type(b) == test.frame["type"]
+    @test Frames.f_flags(b) == test.frame.flags
+    @test Frames.f_stream(b) == test.frame.stream_identifier
 
     @test Frames.promised_stream_id(b) ==
           test.frame.frame_payload.promised_stream_id
@@ -291,10 +295,10 @@ frames = LazyJSON.value("""[
 
 for test in frames
     b = hex2bytes(test.wire)
-    @test Frames.frame_length(b) == test.frame.length
-    @test Frames.frame_type(b) == test.frame["type"]
-    @test Frames.flags(b) == test.frame.flags
-    @test Frames.stream_id(b) == test.frame.stream_identifier
+    @test Frames.f_length(b) == test.frame.length
+    @test Frames.f_type(b) == test.frame["type"]
+    @test Frames.f_flags(b) == test.frame.flags
+    @test Frames.f_stream(b) == test.frame.stream_identifier
 
     @test Frames.last_stream_id(b) ==
           test.frame.frame_payload.last_stream_id
@@ -325,15 +329,88 @@ frames = LazyJSON.value("""[
 
 for test in frames
     b = hex2bytes(test.wire)
-    @test Frames.frame_length(b) == test.frame.length
-    @test Frames.frame_type(b) == test.frame["type"]
-    @test Frames.flags(b) == test.frame.flags
-    @test Frames.stream_id(b) == test.frame.stream_identifier
+    @test Frames.f_length(b) == test.frame.length
+    @test Frames.f_type(b) == test.frame["type"]
+    @test Frames.f_flags(b) == test.frame.flags
+    @test Frames.f_stream(b) == test.frame.stream_identifier
 
     @test Frames.window_size_increment(b) == 
           test.frame.frame_payload.window_size_increment
 end
 
 
-
 end #@testset "Frames"
+
+frames = LazyJSON.value("""[
+{
+    "error": null,
+    "wire": "00000D010000000032746869732069732064756D6D79",
+    "frame": {
+        "length": 13,
+        "frame_payload": {
+            "stream_dependency": null,
+            "weight": null,
+            "header_block_fragment": "this is dummy",
+            "padding_length": null,
+            "exclusive": null,
+            "padding": null
+        },
+        "flags": 0,
+        "stream_identifier": 50,
+        "type": 1
+    },
+    "state": "idle",
+    "description": "normal headers frame"
+},{
+    "error": null,
+    "wire": "00000D090400000032746869732069732064756D6D79",
+    "frame": {
+        "length": 13,
+        "frame_payload": {
+            "header_block_fragment": "this is dummy"
+        },
+        "flags": 4,
+        "stream_identifier": 50,
+        "type": 9
+    },
+    "state": "open",
+    "description": "normal continuation frame without header block fragment"
+}]""")
+
+
+struct Stream
+    state
+    fragments
+end
+
+function Frames.set_dependency(s::Stream, e, d, w)
+    println("set_dependency($s, e=$e, d=$d, w=$w)A")
+end
+
+function Frames.append_fragment(s::Stream, b, i, j)
+    frag = String(b[i:j])
+    println("append_fragment($s, \"$frag\")")
+    push!(s.fragments, frag)
+end
+
+function Frames.set_end_stream(s::Stream)
+    println("set_end_stream($s)")
+    s.state = :end_stream
+end
+
+Frames.is_end_stream(s::Stream) = s.state == :end_stream
+
+
+@testset "Process Frames" begin
+
+s = Stream(:init, [])
+
+for test in frames
+    b = hex2bytes(test.wire)
+    state = Frames.process_idle(s, b)
+    @test string(state) == test.state
+end
+
+@test s.fragments == ["this is dummy", "this is dummy"]
+
+end #@testset "Process Frames"
