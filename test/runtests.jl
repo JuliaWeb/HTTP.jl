@@ -9,7 +9,7 @@ using HTTP
               "LazyHTTP.jl",
               "Nibbles.jl",
               "HPack.jl",
-              "Frames.jl",
+              #"Frames.jl",
               "ascii.jl",
               "issue_288.jl",
               "utils.jl",
