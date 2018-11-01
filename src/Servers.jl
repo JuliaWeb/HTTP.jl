@@ -1,8 +1,9 @@
 """
-The `HTTP.Servers` module provides server-side http functionality in pure Julia.
+The `HTTP.Servers` module provides HTTP server functionality.
 
-The main entry point is `HTTP.listen(f, host, port; kw...)` which takes a `f(::HTTP.Stream)::Nothing` function argument
-a `host` and `port` and optional keyword arguments. For full details, see `?HTTP.listen`.
+The main entry point is `HTTP.listen(f, host, port; kw...)` which takes
+a `f(::HTTP.Stream)::Nothing` function argument, a `host`, a `port` and
+optional keyword arguments.  For full details, see `?HTTP.listen`.
 """
 module Servers
 
@@ -14,7 +15,9 @@ using ..Messages
 using ..Parsers
 using ..ConnectionPool
 using Sockets
-using MbedTLS
+using MbedTLS: SSLContext, SSLConfig
+import MbedTLS
+
 using Dates
 
 # rate limiting
@@ -36,10 +39,11 @@ check_rate_limit(tcp::Base.PipeEndpoint, rate_limit::Rational{Int}) = true
 check_rate_limit(tcp, ::Nothing) = true
 
 """
-`check_rate_limit` takes a new connection (socket), and checks in the global RATE_LIMITS
-store for the last time a connection was seen for the same ip address. If the new 
-connection has come too soon, it is closed and discarded, otherwise, the timestamp for
-the ip address is updated in the global cache.
+`check_rate_limit` takes a new connection (socket), and checks in
+the global RATE_LIMITS store for the last time a connection was
+seen for the same ip address. If the new connection has come too
+soon, it is closed and discarded, otherwise, the timestamp for the
+ip address is updated in the global cache.
 """
 function check_rate_limit(tcp, rate_limit::Rational{Int})
     ip = Sockets.getsockname(tcp)[1]
@@ -60,18 +64,18 @@ function check_rate_limit(tcp, rate_limit::Rational{Int})
 end
 
 "Convenience object for passing around server details"
-struct Server2{S, I}
-    ssl::S # Union{SSLConfig, Nothing}; Nothing if non-SSL
+struct Server{S <: Union{SSLConfig, Nothing}, I <: Base.IOServer}
+    ssl::S
     server::I
     hostname::String
     hostport::String
 end
 
-Base.isopen(s::Server2) = isopen(s.server)
-Base.close(s::Server2) = close(s.server)
+Base.isopen(s::Server) = isopen(s.server)
+Base.close(s::Server) = close(s.server)
 
-Sockets.accept(s::Server2{Nothing, S}) where {S} = Sockets.accept(s.server)::TCPSocket
-Sockets.accept(s::Server2) = getsslcontext(accept(s.server), s.ssl)
+Sockets.accept(s::Server{Nothing}) = accept(s.server)::TCPSocket
+Sockets.accept(s::Server{SSLConfig}) = getsslcontext(accept(s.server), s.ssl)
 
 function getsslcontext(tcp, sslconfig)
     ssl = MbedTLS.SSLContext()
@@ -82,33 +86,45 @@ function getsslcontext(tcp, sslconfig)
 end
 
 """
-    HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do stream::HTTP.Stream
+    HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do http
         ...
     end
 
-Listen for HTTP connections and execute the `do` function for each stream request.
-Specifically, the function should be of the form `f(stream::HTTP.Stream)::Nothing`.
+Listen for HTTP connections and execute the `do` function for each request.
+
+The `do` function should be of the form `f(::HTTP.Stream)::Nothing`.
 
 Optional keyword arguments:
- - `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl connections.
-    Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl verification (useful for testing)
- - `reuse_limit = nolimit`, number of times a connection is allowed to be reused
-    after the first request.
- - `tcpisvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
-    processing requests. e.g. to implement source IP filtering, rate-limiting, etc.
+ - `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl
+    connections. Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl
+    verification (useful for testing).
+ - `reuse_limit = nolimit`, number of times a connection is allowed to be
+   reused after the first request.
+ - `tcpisvalid = tcp->true`, function `f(::TCPSocket)::Bool` to, check accepted
+    connection before processing requests. e.g. to do source IP filtering.
  - `readtimeout::Int=60`, close the connection if no data is recieved for this
     many seconds. Use readtimeout = 0 to disable.
  - `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
  - `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
     allows closing the server.
- - `connection_count::Ref{Int}`, reference to track the # of currently open connections.
- - `rate_limit::Rational{Int}=nothing"`, number of `connections//second` allowed
-    per client IP address; excess connections are immediately closed. e.g. 5//1.
+ - `connection_count::Ref{Int}`, reference to track the number of currently
+    open connections.
+ - `rate_limit::Rational{Int}=nothing"`, number of `connections//second`
+    allowed per client IP address; excess connections are immediately closed.
+    e.g. 5//1.
  - `verbose::Bool=false`, log connection information to `stdout`.
 
 e.g.
 ```
-    HTTP.listen(; stream=true) do http::HTTP.Stream
+    HTTP.listen("127.0.0.1", 8081) do http
+        HTTP.setheader(http, "Content-Type" => "text/html")
+        write(http, "target uri: \$(http.message.target)<BR>")
+        write(http, "request body:<BR><PRE>")
+        write(http, read(http))
+        write(http, "</PRE>")
+    end
+
+    HTTP.listen("127.0.0.1", 8081) do http
         @show http.message
         @show HTTP.header(http, "Content-Type")
         while !eof(http)
@@ -119,14 +135,46 @@ e.g.
         startwrite(http)
         write(http, "response body")
         write(http, "more response body")
-        return
     end
+```
 
-    # pass in own server socket to control shutdown
+The `server=` option can be used to pass an already listening socket to
+`HTTP.listen`. This allows control of server shutdown.
+
+e.g.
+```
     server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
     @async HTTP.listen(f, host, port; server=server)
-    # close server which will stop HTTP.listen
+
+    # Closeing server will stop HTTP.listen.
     close(server)
+```
+
+To run the following HTTP chat example, open two Julia REPL windows and paste
+the example code into both of them. Then in one window run `chat_server()` and
+in the other run `chat_client()`, then type `hello` and press return.
+Whatever you type on the client will be displayed on the server and vis-versa.
+
+```
+using HTTP
+
+function chat(io::HTTP.Stream)
+    @async while !eof(io)
+        write(stdout, readavailable(io), "\\n")
+    end
+    while isopen(io)
+        write(io, readline(stdin))
+    end
+end
+
+chat_server() = HTTP.listen("127.0.0.1", 8087) do io
+    write(io, "HTTP.jl Chat Server. Welcome!")
+    chat(io)
+end
+
+chat_client() = HTTP.open("POST", "http://127.0.0.1:8087") do io
+    chat(io)
+end
 ```
 """
 function listen end
@@ -141,7 +189,7 @@ function listen(f,
                 port::Integer=8081
                 ;
                 sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
-                tcpisvalid::Function=x->true,
+                tcpisvalid::Function=tcp->true,
                 server::Union{Base.IOServer, Nothing}=nothing,
                 reuseaddr::Bool=false,
                 connection_count::Ref{Int}=Ref(0),
@@ -172,12 +220,17 @@ function listen(f,
         x -> f(x) && check_rate_limit(x, rate_limit)
     end
 
-    return listenloop(f, Server2(sslconfig, tcpserver, string(host), string(port)), tcpisvalid,
-        connection_count, reuse_limit, readtimeout, verbose)
+    s = Server(sslconfig, tcpserver, string(host), string(port))
+    return listenloop(f, s, tcpisvalid, connection_count,
+                         reuse_limit, readtimeout, verbose)
 end
 
-"main server loop that accepts new tcp connections and spawns async threads to handle them"
-function listenloop(f, server, tcpisvalid, connection_count, reuse_limit, readtimeout, verbose)
+""""
+Main server loop.
+Accepts new tcp connections and spawns async tasks to handle them."
+"""
+function listenloop(f, server, tcpisvalid, connection_count,
+                       reuse_limit, readtimeout, verbose)
     count = 1
     while isopen(server)
         try
@@ -222,17 +275,21 @@ function listenloop(f, server, tcpisvalid, connection_count, reuse_limit, readti
 end
 
 """
-Connection handler: starts an async readtimeout thread if needed, then creates
-Transactions to be handled as long as the Connection stays open. Only reuse_limit + 1
-# of Transactions will be allowed during the lifetime of the Connection.
+Start a `check_readtimeout` task to close the `Connection` if it is inactive.
+Create a `Transaction` object for each HTTP Request received.
+After `reuse_limit + 1` transactions, signal `final_transaction` to the
+transaction handler.
 """
 function handle_connection(f, c::Connection, reuse_limit, readtimeout)
     wait_for_timeout = Ref{Bool}(true)
-    readtimeout > 0 && check_readtimeout(c, readtimeout, wait_for_timeout)
+    if readtimeout > 0
+        @async check_readtimeout(c, readtimeout, wait_for_timeout)
+    end
     try
         count = 0
         while isopen(c)
-            handle_transaction(f, Transaction(c); final_transaction=(count == reuse_limit))
+            handle_transaction(f, Transaction(c);
+                               final_transaction=(count == reuse_limit))
             count += 1
         end
     finally
@@ -241,9 +298,11 @@ function handle_connection(f, c::Connection, reuse_limit, readtimeout)
     return
 end
 
-"creates an async task that waits a specified amount of time before closing the connection"
+"""
+If `c` is inactive for a more than `readtimeout` then close the `c`."
+"""
 function check_readtimeout(c, readtimeout, wait_for_timeout)
-    @async while wait_for_timeout[]
+    while wait_for_timeout[]
         if inactiveseconds(c) > readtimeout
             @warn "Connection Timeout: $c"
             try
@@ -259,9 +318,11 @@ function check_readtimeout(c, readtimeout, wait_for_timeout)
 end
 
 """
-Transaction handler: creates a new Stream for the Transaction, calls startread on it,
-then dispatches the stream to the user-provided handler function. Catches errors on all
-IO operations and closes gracefully if encountered.
+Create a `HTTP.Stream` and parse the Request headers from a `HTTP.Transaction`
+(by calling `startread(::Stream`).
+If there is a parse error, send an error Response.
+Otherwise, execute stream processing function `f`.
+If `f` throws an exception, send an error Response and close the connection.
 """
 function handle_transaction(f, t::Transaction; final_transaction::Bool=false)
     request = Request()

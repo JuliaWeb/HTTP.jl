@@ -2,9 +2,6 @@ module HTTP
 
 export startwrite, startread, closewrite, closeread
 
-using MbedTLS
-import MbedTLS: SSLContext
-
 const DEBUG_LEVEL = 0
 
 Base.@deprecate escape escapeuri
@@ -346,9 +343,9 @@ open(f::Function, method::String, url, headers=Header[]; kw...)::Response =
 """
     HTTP.openraw(method, url, [, headers])::Tuple{TCPSocket, Response, ByteView}
 
-Open a raw socket that is unmanaged by HTTP.jl. Useful for doing HTTP upgrades to other protocols.
-Any bytes of the body read from the socket when reading headers, is returned as excess bytes in the
-last tuple argument.
+Open a raw socket that is unmanaged by HTTP.jl. Useful for doing HTTP upgrades
+to other protocols.  Any bytes of the body read from the socket when reading
+headers, is returned as excess bytes in the last tuple argument.
 
 Example of a WebSocket upgrade:
 ```julia
