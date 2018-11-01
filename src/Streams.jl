@@ -199,7 +199,6 @@ end
     if !headerscomplete(http.message)
         startread(http)
     end
-    # FIXME was: @require headerscomplete(http.message)
 
     # Find length of next chunk
     if http.ntoread == unknown_length && http.readchunked
