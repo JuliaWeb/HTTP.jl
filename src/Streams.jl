@@ -290,21 +290,24 @@ incomplete(http::Stream) =
 
 function IOExtras.closeread(http::Stream{Response})
 
-    # Discard body bytes that were not read...
-    while !eof(http)
-        readavailable(http)
-    end
-
-    if incomplete(http)
-        # Error if Message is not complete...
-        close(http.stream)
-        throw(EOFError())
-    elseif hasheader(http.message, "Connection", "close")
+    if hasheader(http.message, "Connection", "close")
         # Close conncetion if server sent "Connection: close"...
         @debug 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
-    elseif isreadable(http.stream)
-        closeread(http.stream)
+    else
+
+        # Discard body bytes that were not read...
+        while !eof(http)
+            readavailable(http)
+        end
+
+        if incomplete(http)
+            # Error if Message is not complete...
+            close(http.stream)
+            throw(EOFError())
+        elseif isreadable(http.stream)
+            closeread(http.stream)
+        end
     end
 
     return http.message
