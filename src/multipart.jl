@@ -80,7 +80,7 @@ function Form(d)
 end
 
 function writemultipartheader(io::IOBuffer, i::IOStream)
-    write(io, "; filename=\"$(i.name[7:end-1])\"\r\n")
+    write(io, "; filename=\"$(basename(i.name[7:end-1]))\"\r\n")
     write(io, "Content-Type: $(HTTP.sniff(i))\r\n\r\n")
     return
     end
