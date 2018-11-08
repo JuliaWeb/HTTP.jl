@@ -220,7 +220,7 @@ function Base.close(ws::WebSocket; statuscode::Union{Int, Nothing}=nothing)
         closewrite(ws; statuscode=statuscode)
     end
     while !eof(ws) # FIXME Timeout in case other end does not send CLOSE?
-        readframe(ws)
+        readframe(ws; strict=false)
     end
     close(ws.io)
 end
@@ -246,7 +246,7 @@ function readheader(io::IO)
         b[2] & WS_MASK > 0 ? read(io, UInt32) : UInt32(0))
 end
 
-function readframe(ws::WebSocket)
+function readframe(ws::WebSocket; strict=true)
     h = readheader(ws.io)
     @debug 1 "WebSocket ➡️  $h"
 
@@ -261,10 +261,12 @@ function readframe(ws::WebSocket)
     if h.opcode == WS_CLOSE
         ws.rxclosed = true
         if h.length >= 2
-            status = UInt16(ws.rxpayload[1]) << 8 | ws.rxpayload[2]
-            if status != 1000
-                message = String(ws.rxpayload[3:h.length])
-                throw(WebSocketError(status, message))
+            if strict
+                status = UInt16(ws.rxpayload[1]) << 8 | ws.rxpayload[2]
+                if status != 1000
+                    message = String(ws.rxpayload[3:h.length])
+                    throw(WebSocketError(status, message))
+                end
             end
         end
         return UInt8[]
