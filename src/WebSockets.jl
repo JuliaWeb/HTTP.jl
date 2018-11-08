@@ -215,12 +215,15 @@ function mask!(to, from, l, mask=rand(UInt8, 4))
 end
 
 function Base.close(ws::WebSocket; statuscode::Union{Int, Nothing}=nothing)
-    isopen(ws) || return
     if !ws.txclosed
         closewrite(ws; statuscode=statuscode)
     end
     while !eof(ws) # FIXME Timeout in case other end does not send CLOSE?
-        readframe(ws; strict=false)
+        try
+            readframe(ws)
+        catch e
+            e isa WebSocketError || rethrow(e)
+        end
     end
     close(ws.io)
 end
@@ -246,7 +249,7 @@ function readheader(io::IO)
         b[2] & WS_MASK > 0 ? read(io, UInt32) : UInt32(0))
 end
 
-function readframe(ws::WebSocket; strict=true)
+function readframe(ws::WebSocket)
     h = readheader(ws.io)
     @debug 1 "WebSocket ➡️  $h"
 
@@ -261,12 +264,10 @@ function readframe(ws::WebSocket; strict=true)
     if h.opcode == WS_CLOSE
         ws.rxclosed = true
         if h.length >= 2
-            if strict
-                status = UInt16(ws.rxpayload[1]) << 8 | ws.rxpayload[2]
-                if status != 1000
-                    message = String(ws.rxpayload[3:h.length])
-                    throw(WebSocketError(status, message))
-                end
+            status = UInt16(ws.rxpayload[1]) << 8 | ws.rxpayload[2]
+            if status != 1000
+                message = String(ws.rxpayload[3:h.length])
+                throw(WebSocketError(status, message))
             end
         end
         return UInt8[]
