@@ -164,11 +164,15 @@ function Base.write(ws::WebSocket, x1, x2, xs...)
     return n
 end
 
-function IOExtras.closewrite(ws::WebSocket)
+function IOExtras.closewrite(ws::WebSocket; statuscode=nothing)
     @require !ws.txclosed
     opcode = WS_FINAL | WS_CLOSE
     @debug 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, 0x00))"
-    write(ws.io, [opcode, 0x00])
+    if statuscode === nothing
+        write(ws.io, [opcode, 0x00])
+    else
+        wswrite(ws, opcode, reinterpret(UInt8, [hton(UInt16(statuscode))]))
+    end
     ws.txclosed = true
 end
 
@@ -210,12 +214,16 @@ function mask!(to, from, l, mask=rand(UInt8, 4))
     return mask
 end
 
-function Base.close(ws::WebSocket)
+function Base.close(ws::WebSocket; statuscode::Union{Int, Nothing}=nothing)
     if !ws.txclosed
-        closewrite(ws)
+        closewrite(ws; statuscode=statuscode)
     end
     while !eof(ws) # FIXME Timeout in case other end does not send CLOSE?
-        readframe(ws)
+        try
+            readframe(ws)
+        catch e
+            e isa WebSocketError || rethrow(e)
+        end
     end
     close(ws.io)
 end
