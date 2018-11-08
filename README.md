@@ -90,6 +90,26 @@ HTTP.serve() do request::HTTP.Request
 end
 ```
 
+## WebSocket Examples
+
+```julia
+julia> @async HTTP.WebSockets.listen("127.0.0.1", UInt16(8081)) do ws
+           while !eof(ws)
+               data = readavailable(ws)
+               write(ws, data)
+           end
+       end
+
+julia> HTTP.WebSockets.open("ws://127.0.0.1:8081") do ws
+           write(ws, "Hello")
+           x = readavailable(ws)
+           @show x
+           println(String(x))
+       end;
+x = UInt8[0x48, 0x65, 0x6c, 0x6c, 0x6f]
+Hello
+```
+
 [docs-latest-img]: https://img.shields.io/badge/docs-latest-blue.svg
 [docs-latest-url]: https://JuliaWeb.github.io/HTTP.jl/latest
 
