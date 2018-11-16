@@ -368,7 +368,7 @@ function Router(default::Union{Handler, Function, Nothing}=FourOhFour)
     return Router{sym}(default, Dict{Route, String}(), Dict{String, Val}())
 end
 
-const SCHEMES = Ref{Dict{String, Val}}(0)
+const SCHEMES = Ref{Dict{String, Val}}()
 
 function __init__()
 
@@ -449,7 +449,7 @@ function gethandler(r::Router, req::Request)
     m = Val(Symbol(req.method))
     # get scheme, host, split path into strings and get Vals
     uri = URI(req.target)
-    s = get(SCHEMES, uri.scheme, EMPTYVAL)
+    s = get(SCHEMES[], uri.scheme, EMPTYVAL)
     h = Val(Symbol(uri.host))
     p = uri.path
     segments = split(p, '/'; keepempty=false)
@@ -468,7 +468,7 @@ function register!(r::Router, method::String, url, handler)
     # get scheme, host, split path into strings & vals
     uri = url isa String ? URI(url) : url
     s = uri.scheme
-    sch = !isempty(s) ? typeof(get!(SCHEMES, s, Val(s))) : Any
+    sch = !isempty(s) ? typeof(get!(SCHEMES[], s, Val(s))) : Any
     h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
     hand = handler isa Handler ? handler : RequestHandlerFunction(handler)
     register!(r, m, sch, h, uri.path, hand)
