@@ -368,7 +368,7 @@ function Router(default::Union{Handler, Function, Nothing}=FourOhFour)
     return Router{sym}(default, Dict{Route, String}(), Dict{String, Val}())
 end
 
-const SCHEMES = Ref{Dict{String, Val}}()
+const SCHEMES = Ref{Dict{String, Val}}(0)
 
 function __init__()
 
