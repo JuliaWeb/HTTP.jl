@@ -368,7 +368,14 @@ function Router(default::Union{Handler, Function, Nothing}=FourOhFour)
     return Router{sym}(default, Dict{Route, String}(), Dict{String, Val}())
 end
 
-const SCHEMES = Dict{String, Val}("http" => Val{:http}(), "https" => Val{:https}())
+const SCHEMES = Ref{Dict{String, Val}}()
+
+function __init__()
+
+    SCHEMES[] = Dict{String, Val}("http" => Val{:http}(), "https" => Val{:https}())
+
+end
+
 const EMPTYVAL = Val{()}()
 
 function newsplitsegments(segments)
