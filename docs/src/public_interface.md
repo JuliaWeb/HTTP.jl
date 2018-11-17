@@ -54,7 +54,6 @@ HTTP.listen
 HTTP.serve
 HTTP.Handlers
 HTTP.handle
-HTTP.Handler
 HTTP.RequestHandlerFunction
 HTTP.StreamHandlerFunction
 HTTP.Router
