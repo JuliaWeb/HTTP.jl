@@ -40,17 +40,23 @@ function sign_aws4!(method::String,
                     body::Vector{UInt8};
                     body_sha256::Vector{UInt8}=digest(MD_SHA256, body),
                     body_md5::Vector{UInt8}=digest(MD_MD5, body),
-                    t::DateTime=now(Dates.UTC),
+                    t::Union{DateTime,Nothing}=nothing,
+                    timestamp::DateTime=now(Dates.UTC),
                     aws_service::String=String(split(url.host, ".")[1]),
                     aws_region::String=String(split(url.host, ".")[2]),
                     aws_access_key_id::String=ENV["AWS_ACCESS_KEY_ID"],
                     aws_secret_access_key::String=ENV["AWS_SECRET_ACCESS_KEY"],
                     aws_session_token::String=get(ENV, "AWS_SESSION_TOKEN", ""),
                     kw...)
+    if t !== nothing
+        Base.depwarn("The `t` keyword argument to `sign_aws4!` is deprecated; use " *
+                     "`timestamp` instead.", :sign_aws4!)
+        timestamp = t
+    end
 
     # ISO8601 date/time strings for time of request...
-    date = Dates.format(t, dateformat"yyyymmdd")
-    datetime = Dates.format(t, dateformat"yyyymmddTHHMMSS\Z")
+    date = Dates.format(timestamp, dateformat"yyyymmdd")
+    datetime = Dates.format(timestamp, dateformat"yyyymmddTHHMMSS\Z")
 
     # Authentication scope...
     scope = [date, aws_region, aws_service, "aws4_request"]
