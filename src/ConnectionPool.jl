@@ -667,7 +667,7 @@ function Base.show(io::IO, c::Connection)
         " ≣", c.pipeline_limit,
         length(c.excess) > 0 ? " $(length(c.excess))-byte excess" : "",
         nwaiting > 0 ? " $nwaiting bytes waiting" : "",
-        DEBUG_LEVEL > 1 && applicable(tcpsocket, c.io) ?
+        DEBUG_LEVEL[] > 1 && applicable(tcpsocket, c.io) ?
             " $(Base._fd(tcpsocket(c.io)))" : "")
 end
 
