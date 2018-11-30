@@ -84,7 +84,7 @@ function sign_aws4!(method::String,
 
     # Sort and lowercase() Headers to produce canonical form...
     canonical_headers = sort!(map(headers) do (k, v)
-        string(lowercase(k), ':', replace(strip(v), r" +" => " "))
+        string(lowercase(k), ':', replace(strip(v), r"\s+" => " "))
     end)
     signed_headers = join(sort!(map(lowercase∘first, headers)), ";")
 
