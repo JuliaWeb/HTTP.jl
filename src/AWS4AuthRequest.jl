@@ -83,21 +83,22 @@ function sign_aws4!(method::String,
     end
 
     # Sort and lowercase() Headers to produce canonical form...
-    canonical_headers = ["$(lowercase(k)):$(strip(v))" for (k,v) in headers]
-    signed_headers = join(sort([lowercase(k) for (k,v) in headers]), ";")
+    canonical_headers = sort!(map(headers) do (k, v)
+        string(lowercase(k), ':', replace(strip(v), r"\s+" => " "))
+    end)
+    signed_headers = join(sort!(map(lowercase∘first, headers)), ";")
 
     # Sort Query String...
-    query = queryparams(url.query)
-    query = Pair[k => query[k] for k in sort(collect(keys(query)))]
+    query = sort!(collect(queryparams(url.query)), by=first)
 
     # Create hash of canonical request...
-    canonical_form = string(method, "\n",
-                            aws_service == "s3" ? url.path
-                                                : escapepath(url.path), "\n",
-                            escapeuri(query), "\n",
-                            join(sort(canonical_headers), "\n"), "\n\n",
-                            signed_headers, "\n",
-                            content_hash)
+    canonical_form = join([method,
+                           aws_service == "s3" ? url.path : escapepath(url.path),
+                           escapeuri(query),
+                           join(canonical_headers, "\n"),
+                           "",
+                           signed_headers,
+                           content_hash], "\n")
     @debug 3 "AWS4 canonical_form: $canonical_form"
 
     canonical_hash = bytes2hex(digest(MD_SHA256, canonical_form))
