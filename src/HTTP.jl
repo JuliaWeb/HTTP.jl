@@ -2,7 +2,7 @@ module HTTP
 
 export startwrite, startread, closewrite, closeread
 
-const DEBUG_LEVEL = 0
+const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
 Base.@deprecate URL URI
@@ -622,7 +622,7 @@ function stack(;redirect=true,
     (status_exception     ? ExceptionLayer            : NoLayer){
                             ConnectionPoolLayer{
     (verbose >= 3 ||
-     DEBUG_LEVEL >= 3     ? DebugLayer                : NoLayer){
+     DEBUG_LEVEL[] >= 3   ? DebugLayer                : NoLayer){
     (readtimeout > 0      ? TimeoutLayer              : NoLayer){
                             StreamLayer
     }}}}}}}}}}}}
