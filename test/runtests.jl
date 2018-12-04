@@ -18,7 +18,8 @@ using HTTP
               "messages.jl",
               "handlers.jl",
               "server.jl",
-              "async.jl"]
+              "async.jl",
+              "aws4.jl"]
 
         println("Running $f tests...")
         include(f)
