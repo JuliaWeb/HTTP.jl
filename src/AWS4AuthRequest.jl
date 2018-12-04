@@ -47,6 +47,7 @@ function sign_aws4!(method::String,
                     aws_access_key_id::String=ENV["AWS_ACCESS_KEY_ID"],
                     aws_secret_access_key::String=ENV["AWS_SECRET_ACCESS_KEY"],
                     aws_session_token::String=get(ENV, "AWS_SESSION_TOKEN", ""),
+                    include_md5=true,
                     kw...)
     if t !== nothing
         Base.depwarn("The `t` keyword argument to `sign_aws4!` is deprecated; use " *
@@ -78,7 +79,7 @@ function sign_aws4!(method::String,
     setkv(headers, "host", url.host)
     setkv(headers, "x-amz-content-sha256",  content_hash)
     setkv(headers, "x-amz-date",  datetime)
-    setkv(headers, "Content-MD5", base64encode(body_md5))
+    include_md5 && setkv(headers, "Content-MD5", base64encode(body_md5))
     if aws_session_token != ""
         setkv(headers, "x-amz-security-token", aws_session_token)
     end
