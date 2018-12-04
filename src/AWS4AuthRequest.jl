@@ -75,6 +75,7 @@ function sign_aws4!(method::String,
 
     # HTTP headers...
     rmkv(headers, "Authorization")
+    setkv(headers, "host", url.host)
     setkv(headers, "x-amz-content-sha256",  content_hash)
     setkv(headers, "x-amz-date",  datetime)
     setkv(headers, "Content-MD5", base64encode(body_md5))
