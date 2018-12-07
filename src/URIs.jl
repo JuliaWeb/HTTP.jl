@@ -196,14 +196,14 @@ https://tools.ietf.org/html/rfc3986#section-4.3
 isabsolute(uri::URI) =
     !isempty(uri.scheme) &&
      isempty(uri.fragment) &&
-    (isempty(uri.host) || isempty(uri.path) || pathissabsolute(uri))
+    (isempty(uri.host) || isempty(uri.path) || isabspath(uri))
 
 
 """
 https://tools.ietf.org/html/rfc7230#section-5.3.1
 https://tools.ietf.org/html/rfc3986#section-3.3
 """
-pathissabsolute(uri::URI) = startwith(uri.path, "/")
+isabspath(uri::URI) = startswith(uri.path, "/") && !startswith(uri.path, "//")
 
 
 ==(a::URI,b::URI) = a.scheme      == b.scheme      &&
@@ -378,6 +378,45 @@ function splitpath(p::AbstractString)
         (i > len || c in ('?', '#')) && break
     end
     return elems
+end
+
+"""
+    URIs.normpath(url)
+
+Normalize the path portion of a URI by removing dot segments.
+
+Refer to:
+* https://tools.ietf.org/html/rfc3986#section-5.2.4
+"""
+normpath(url::URI) =
+    URI(scheme=url.scheme, userinfo=url.userinfo, host=url.host, port=url.port,
+        path=normpath(url.path), query=url.query, fragment=url.fragment)
+
+function normpath(p::AbstractString)
+    if isempty(p) || p == "/"
+        return p
+    elseif p == "." || p == ".."
+        return "/"
+    end
+    buf = String[]
+    for part in splitpath(p)
+        if part == "."
+            continue
+        elseif part == ".."
+            isempty(buf) || pop!(buf)
+        else
+            push!(buf, part)
+        end
+    end
+    out = join(buf, '/')
+    # Preserve leading and trailing slashes if present, but don't duplicate them
+    if startswith(p, '/') && !startswith(out, '/')
+        out = "/" * out
+    end
+    if (endswith(p, '/') || endswith(p, '.')) && !endswith(out, '/')
+        out *= "/"
+    end
+    out
 end
 
 absuri(u, context) = absuri(URI(u), URI(context))
