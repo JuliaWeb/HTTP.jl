@@ -1,5 +1,6 @@
 using Test
 using HTTP
+using HTTP.URIs
 
 mutable struct URLTest
     name::String
@@ -26,7 +27,7 @@ function parse_connect_target(target)
     return t.host, t.port
 end
 
-    
+
 function offsetss(uri, offset)
     if offset == Offset(0,0)
         return SubString(uri, 1, 0)
@@ -476,5 +477,28 @@ end
 
     # Issue 323
     @test string(HTTP.URI(scheme="http", host="example.com")) == "http://example.com"
+
+    @testset "Normalize URI paths" begin
+        # Examples given in https://tools.ietf.org/html/rfc3986#section-5.2.4
+        @test URIs.normpath("/a/b/c/./../../g") == "/a/g"
+        @test URIs.normpath("mid/content=5/../6") == "mid/6"
+
+        checknp = (x, y)->(@test URIs.normpath(URI(x)) == URI(y))
+
+        # "Abnormal" examples in https://tools.ietf.org/html/rfc3986#section-5.4.2
+        checknp("http://a/b/c/d/../../../g", "http://a/g")
+        checknp("http://a/b/c/d/../../../../g", "http://a/g")
+
+        # "Normal" examples
+        checknp("http://a", "http://a")
+        checknp("http://a/b/c/.", "http://a/b/c/")
+        checknp("http://a/b/c/./", "http://a/b/c/")
+        checknp("http://a/b/c/..", "http://a/b/")
+        checknp("http://a/b/c/../", "http://a/b/")
+        checknp("http://a/b/c/../g", "http://a/b/g")
+        checknp("http://a/b/c/../..", "http://a/")
+        checknp("http://a/b/c/../../", "http://a/")
+        checknp("http://a/b/c/../../g", "http://a/g")
+    end
 
 end; # @testset
