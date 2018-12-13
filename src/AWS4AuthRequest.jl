@@ -120,9 +120,13 @@ function sign_aws4!(method::String,
     # Sort Query String...
     query = sort!(collect(queryparams(url.query)), by=first)
 
+    # Paths for requests to S3 should be neither normalized nor escaped. See
+    # http://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html#canonical-request
+    path = aws_service == "s3" ? url.path : escapepath(URIs.normpath(url.path))
+
     # Create hash of canonical request...
     canonical_form = join([method,
-                           aws_service == "s3" ? url.path : escapepath(url.path),
+                           path,
                            escapeuri(query),
                            join(canonical_headers, "\n"),
                            "",

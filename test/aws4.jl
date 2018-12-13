@@ -38,10 +38,19 @@ header_keys(headers) = sort!(map(first, headers))
 const required_headers = ["Authorization", "host", "x-amz-date"]
 
 @testset "AWS Signature Version 4" begin
+    # The signature for requests with no headers where the path ends up as simply /
+    slash_only_sig = "5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
     noheaders = [
-        ("get-vanilla", "", "5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"),
+        ("get-vanilla", "", slash_only_sig),
         ("get-vanilla-empty-query-key", "?Param1=value1", "a67d582fa61cc504c4bae71f336f98b97f1ea3c7a6bfe1b6e45aec72011b9aeb"),
         ("get-utf8", "ሴ", "8318018e0b0f223aa2bbf98705b62bb787dc9c0e678f255a891fd03141be5d85"),
+        ("get-relative", "example/..", slash_only_sig),
+        ("get-relative-relative", "example1/example2/../..", slash_only_sig),
+        ("get-slash", "/", slash_only_sig),
+        ("get-slash-dot-slash", "./", slash_only_sig),
+        ("get-slashes", "example/", "9a624bd73a37c9a373b5312afbebe7a714a789de108f0bdfe846570885f57e84"),
+        ("get-slash-pointless-dot", "./example", "ef75d96142cf21edca26f06005da7988e4f8dc83a165a80865db7089db637ec5"),
+        ("get-space", "example space/", "652487583200325589f1fba4c7e578f72c47cb61beeca81406b39ddec1366741"),
     ]
     @testset "$name" for (name, p, sig) in noheaders
         headers = test_get!(Headers([]), p)
