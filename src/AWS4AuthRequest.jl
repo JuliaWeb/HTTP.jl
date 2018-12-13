@@ -122,6 +122,9 @@ function sign_aws4!(method::String,
 
     # Paths for requests to S3 should be neither normalized nor escaped. See
     # http://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html#canonical-request
+    # Note that escapepath escapes ~ per RFC 1738, but Amazon includes an example in their
+    # signature v4 test suite where ~ remains unescaped. We follow the spec here and thus
+    # deviate from Amazon's example in this case.
     path = aws_service == "s3" ? url.path : escapepath(URIs.normpath(url.path))
 
     # Create hash of canonical request...
