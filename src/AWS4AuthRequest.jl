@@ -60,6 +60,7 @@ function sign_aws4!(method::String,
                     aws_access_key_id::String=ENV["AWS_ACCESS_KEY_ID"],
                     aws_secret_access_key::String=ENV["AWS_SECRET_ACCESS_KEY"],
                     aws_session_token::String=get(ENV, "AWS_SESSION_TOKEN", ""),
+                    token_in_signature=true,
                     include_md5=true,
                     include_sha256=true,
                     kw...)
@@ -106,6 +107,10 @@ function sign_aws4!(method::String,
     unique_header_keys = Vector{String}()
     normalized_headers = Dict{String,Vector{String}}()
     for (k, v) in sort!([lowercase(k) => v for (k, v) in headers], by=first)
+        # Some services want the token included as part of the signature
+        if k == "x-amz-security-token" && !token_in_signature
+            continue
+        end
         if !haskey(normalized_headers, k)
             normalized_headers[k] = Vector{String}()
             push!(unique_header_keys, k)

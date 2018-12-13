@@ -106,5 +106,30 @@ const required_headers = ["Authorization", "host", "x-amz-date"]
         @test d["host"] == "example.amazonaws.com"
         @test d["Authorization"] == test_auth_string(sh, sig)
     end
+    @testset "AWS Security Token Service" begin
+        # Not a real security token, provided by AWS as an example
+        token = string("AQoDYXdzEPT//////////wEXAMPLEtc764bNrC9SAPBSM22wDOk4x4HIZ8j4FZTwd",
+                       "QWLWsKWHGBuFqwAeMicRXmxfpSPfIeoIYRqTflfKD8YUuwthAx7mSEI/qkPpKPi/k",
+                       "McGdQrmGdeehM4IC1NtBmUpp2wUE8phUZampKsburEDy0KPkyQDYwT7WZ0wq5VSXD",
+                       "vp75YU9HFvlRd8Tx6q6fE8YQcHNVXAkiY9q6d+xo0rKwT38xVqr7ZD0u0iPPkUL64",
+                       "lIZbqBAz+scqKmlzm8FDrypNC9Yjc8fPOLn9FX9KSYvKTr4rvx3iSIlTJabIQwj2I",
+                       "CCR/oLxBA==")
+        @testset "Token included in signature" begin
+            sh = "host;x-amz-date;x-amz-security-token"
+            sig = "85d96828115b5dc0cfc3bd16ad9e210dd772bbebba041836c64533a82be05ead"
+            h = test_sign!("POST", Headers([]), "", aws_session_token=token)
+            d = Dict(h)
+            @test d["Authorization"] == test_auth_string(sh, sig)
+            @test haskey(d, "x-amz-security-token")
+        end
+        @testset "Token not included in signature" begin
+            sh = "host;x-amz-date"
+            sig = "5da7c1a2acd57cee7505fc6676e4e544621c30862966e37dddb68e92efbe5d6b"
+            h = test_sign!("POST", Headers([]), "", aws_session_token=token, token_in_signature=false)
+            d = Dict(h)
+            @test d["Authorization"] == test_auth_string(sh, sig)
+            @test haskey(d, "x-amz-security-token")
+        end
+    end
 end
 
