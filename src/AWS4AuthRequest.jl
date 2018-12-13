@@ -34,6 +34,19 @@ function request(::Type{AWS4AuthLayer{Next}},
     return request(Next, url, req, body; kw...)
 end
 
+# Normalize whitespace to the form required in the canonical headers.
+# Note that the expected format for multiline headers seems not to be explicitly
+# documented, but Amazon provides a test case for it, so we'll match that behavior.
+# We replace each `\n` with a `,` and remove all whitespace around the newlines,
+# then any remaining contiguous whitespace is replaced with a single space.
+function _normalize_ws(s::AbstractString)
+    if any(isequal('\n'), s)
+        join(map(_normalize_ws, split(s, '\n')), ',')
+    else
+        replace(strip(s), r"\s+" => " ")
+    end
+end
+
 function sign_aws4!(method::String,
                     url::URI,
                     headers::Headers,
@@ -90,10 +103,19 @@ function sign_aws4!(method::String,
     end
 
     # Sort and lowercase() Headers to produce canonical form...
-    canonical_headers = sort!(map(headers) do (k, v)
-        string(lowercase(k), ':', replace(strip(v), r"\s+" => " "))
-    end)
-    signed_headers = join(sort!(map(lowercase∘first, headers)), ";")
+    unique_header_keys = Vector{String}()
+    normalized_headers = Dict{String,Vector{String}}()
+    for (k, v) in sort!([lowercase(k) => v for (k, v) in headers], by=first)
+        if !haskey(normalized_headers, k)
+            normalized_headers[k] = Vector{String}()
+            push!(unique_header_keys, k)
+        end
+        push!(normalized_headers[k], _normalize_ws(v))
+    end
+    canonical_headers = map(unique_header_keys) do k
+        string(k, ':', join(normalized_headers[k], ','))
+    end
+    signed_headers = join(unique_header_keys, ';')
 
     # Sort Query String...
     query = sort!(collect(queryparams(url.query)), by=first)
