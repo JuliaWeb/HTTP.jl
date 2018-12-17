@@ -111,6 +111,11 @@ function sign_aws4!(method::String,
         if k == "x-amz-security-token" && !token_in_signature
             continue
         end
+        # In Amazon's examples, they exclude Content-Length from signing. This does not
+        # appear to be addressed in the documentation, so we'll just mimic the example.
+        if k == "content-length"
+            continue
+        end
         if !haskey(normalized_headers, k)
             normalized_headers[k] = Vector{String}()
             push!(unique_header_keys, k)
