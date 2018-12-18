@@ -2,7 +2,6 @@ module DebugRequest
 
 import ..Layer, ..request
 using ..IOExtras
-import ..ConnectionPool: ByteView, byteview
 
 const live_mode = true
 

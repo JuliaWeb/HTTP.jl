@@ -18,7 +18,7 @@ have field names compatible with those expected by the `parse_status_line!` and
 module Parsers
 
 export Header, Headers,
-       find_end_of_header, find_end_of_line, find_end_of_trailer,
+       find_end_of_header, find_end_of_chunk_size, find_end_of_trailer,
        parse_status_line!, parse_request_line!, parse_header_field,
        parse_chunk_size,
        ParseError
@@ -42,7 +42,7 @@ struct ParseError <: Exception
     bytes::SubString{String}
 end
 
-ParseError(code::Symbol, bytes="") = 
+ParseError(code::Symbol, bytes="") =
     ParseError(code, first(split(String(bytes), '\n')))
 
 # Regular expressions for parsing HTTP start-line and header-fields
@@ -212,10 +212,43 @@ end
 # HTTP Chunked Transfer Coding
 
 """
-Find `\\n` in `bytes`
+Arbitrary limit to protect against denial of service attacks.
 """
-find_end_of_line(bytes::AbstractVector{UInt8}) =
-    (i = findfirst(isequal(UInt8('\n')), bytes)) === nothing ? 0 : i
+const chunk_size_line_max = 64
+
+const chunk_size_line_min = ncodeunits("0\r\n")
+
+@inline function skip_crlf(bytes, i=1)
+    if @inbounds bytes[i] == UInt('\r')
+        i += 1
+    end
+    if @inbounds bytes[i] == UInt('\n')
+        i += 1
+    end
+    return i
+end
+
+
+"""
+Find `\\n` after chunk size in `bytes`.
+"""
+function find_end_of_chunk_size(bytes::AbstractVector{UInt8})
+    l = length(bytes)
+    if l < chunk_size_line_min
+        return 0
+    end
+    if l > chunk_size_line_max
+        l = chunk_size_line_max
+    end
+    i = skip_crlf(bytes)
+    while i <= l
+        if @inbounds bytes[i] == UInt('\n')
+            return i
+        end
+        i += 1
+    end
+    return 0
+end
 
 """
     find_end_of_trailer(bytes) -> length or 0
@@ -227,7 +260,6 @@ find_end_of_trailer(bytes::AbstractVector{UInt8}) =
     length(bytes) < 2 ? 0 :
     bytes[2] == UInt8('\n') ? 2 :
     find_end_of_header(bytes)
-
 
 """
 Arbitrary limit to protect against denial of service attacks.
@@ -244,15 +276,18 @@ Return number of bytes of chunk-data.
 function parse_chunk_size(bytes::AbstractVector{UInt8})::Int
 
     chunk_size = Int64(0)
-    i = 1
-    x = Int64(unhex[bytes[i]])
-    while x != -1
+    i = skip_crlf(bytes)
+
+    while true
+        x = Int64(unhex[@inbounds bytes[i]])
+        if x == -1
+            break
+        end
         chunk_size = chunk_size * Int64(16) + x
         if chunk_size > chunk_size_limit
             throw(ParseError(:CHUNK_SIZE_EXCEEDS_LIMIT, bytes))
         end
         i += 1
-        x = Int64(unhex[bytes[i]])
     end
     if i > 1
         return Int(chunk_size)

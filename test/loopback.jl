@@ -35,6 +35,7 @@ end
 Base.eof(lb::Loopback) = eof(lb.io)
 Base.bytesavailable(lb::Loopback) = bytesavailable(lb.io)
 Base.readavailable(lb::Loopback) = readavailable(lb.io)
+Base.unsafe_read(lb::Loopback, p::Ptr, n::Integer) = unsafe_read(lb.io, p, n)
 Base.close(lb::Loopback) = (close(lb.io); close(lb.buf))
 Base.isopen(lb::Loopback) = isopen(lb.io)
 
