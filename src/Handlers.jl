@@ -394,13 +394,16 @@ gh(s::String) = isempty(s) ? Any : Val{Symbol(s)}
 gh(s::Symbol) = Val{s}
 
 function generate_gethandler(router, method, scheme, host, path, handler)
+    m = :(HTTP.Handlers.gh($method))
+    s = :(HTTP.Handlers.gh($scheme))
+    h = :(HTTP.Handlers.gh($host))
     vals = :(HTTP.Handlers.newsplitsegments(map(String, split($path, '/'; keepempty=false)))...)
     q = esc(quote
         $(router).routes[HTTP.Handlers.Route(string($method), string($scheme), string($host), string($path))] = $handler
         @eval function HTTP.Handlers.gethandler(r::$(Expr(:$, :(typeof($router)))),
-            ::(HTTP.Handlers.gh($method)),
-            ::(HTTP.Handlers.gh($scheme)),
-            ::(HTTP.Handlers.gh($host)),
+            ::$(Expr(:$, m)),
+            ::$(Expr(:$, s)),
+            ::$(Expr(:$, h)),
             $(Expr(:$, vals)),
             args...)
             return $(Expr(:$, handler)) isa HTTP.Handler ? $(Expr(:$, handler)) : HTTP.Handlers.RequestHandlerFunction($(Expr(:$, handler)))
