@@ -427,6 +427,9 @@ The following examples show how various urls will direct how a request is routed
 - `"https://*"`: match all HTTPS requests, regardless of path
 - `"/gmail"`: regardless of scheme or host, match any request with a path starting with "gmail"
 - `"/gmail/userId/*/inbox`: match any request matching the path pattern, "*" is used as a wildcard that matches any value between the two "/"
+
+Note that due to being a macro (and the internal routing functionality), routes can only be registered
+statically, i.e. at the top level of a module, and not dynamically, i.e. inside a function.
 """
 :(@register)
 
