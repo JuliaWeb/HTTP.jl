@@ -247,6 +247,9 @@ end
 
 handle(h::RequestHandlerFunction, req::Request) = h.func(req)
 
+# deprecated
+const HandlerFunction = RequestHandlerFunction
+
 """
 StreamHandlerFunction(f)
 
