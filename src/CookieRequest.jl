@@ -20,14 +20,18 @@ export CookieLayer
 
 function request(::Type{CookieLayer{Next}},
                  method::String, url::URI, headers, body;
+                 cookies::Dict{String, String}=Dict{String, String}(),
                  cookiejar::Dict{String, Set{Cookie}}=default_cookiejar,
                  kw...) where Next
 
     hostcookies = get!(cookiejar, url.host, Set{Cookie}())
 
-    cookies = getcookies(hostcookies, url)
-    if !isempty(cookies)
-        setkv(headers, "Cookie", string(getkv(headers, "Cookie", ""), cookies))
+    cookiestosend = getcookies(hostcookies, url)
+    for (name, value) in cookies
+        push!(cookiestosend, Cookie(name, value))
+    end
+    if !isempty(cookiestosend)
+        setkv(headers, "Cookie", string(getkv(headers, "Cookie", ""), cookiestosend))
     end
 
     res = request(Next, method, url, headers, body; kw...)

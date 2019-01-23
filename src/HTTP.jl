@@ -152,8 +152,9 @@ AWS Authenticaiton options
 
 Cookie options
 
- - `cookies = false`, enable cookies.
- - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`
+ - `cookies::Union{Bool, Dict{String, String}} = false`, enable cookies, or alternatively,
+        pass a `Dict{String, String}` of name-value pairs to manually pass cookies
+ - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`, 
 
 
 Cananoincalization options
@@ -614,7 +615,8 @@ function stack(;redirect=true,
     (redirect             ? RedirectLayer             : NoLayer){
     (basic_authorization  ? BasicAuthLayer            : NoLayer){
     (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
-    (cookies              ? CookieLayer               : NoLayer){
+    (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
+                            CookieLayer               : NoLayer){
     (canonicalize_headers ? CanonicalizeLayer         : NoLayer){
                             MessageLayer{
     (aws_authorization    ? AWS4AuthLayer             : NoLayer){
