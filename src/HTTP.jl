@@ -610,6 +610,9 @@ function stack(;redirect=true,
                 verbose=0,
                 kw...)
 
+    # hard code readtimeout of 0 to disable timeout until #341 can be properly resolved
+    readtimeout = 0
+
     NoLayer = Union
 
     (redirect             ? RedirectLayer             : NoLayer){
