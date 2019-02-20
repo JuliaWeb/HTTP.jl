@@ -200,5 +200,28 @@ const required_headers = ["Authorization", "host", "x-amz-date"]
             @test haskey(d, "x-amz-content-sha256")
         end
     end
-end
 
+    @testset "HTTP.request with AWS authentication" begin
+        resp = HTTP.request("GET",
+                            "https://httpbin.org/headers";
+                            aws_authorization=true,
+                            timestamp=DateTime(2015, 8, 30, 12, 36),
+                            aws_service="service",
+                            aws_region="us-east-1",
+                            # NOTE: These are the example credentials as specified in the AWS docs,
+                            # they are not real
+                            aws_access_key_id="AKIDEXAMPLE",
+                            aws_secret_access_key="wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+                            include_md5=false,
+                            include_sha256=false)
+        @test resp.status == 200
+        headers = JSON.parse(String(resp.body))["headers"]
+        @test headers["Host"] == "httpbin.org"
+        @test headers["X-Amz-Date"] == "20150830T123600Z"
+        auth = "AWS4-HMAC-SHA256 " *
+               "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, " *
+               "SignedHeaders=host;x-amz-date, " *
+               "Signature=5d7c2f752f5597c1a2ad2f65008974307a7b25bd7cc4f79146b06435e91fa95e"
+        @test headers["Authorization"] == auth
+    end
+end
