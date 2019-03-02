@@ -100,11 +100,14 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
     local file
     HTTP.open("GET", url, headers; kw...) do stream
         resp = startread(stream)
+        eof(stream) && return  # don't do anything for streams we can't read (yet)
+        
         file = determine_file(local_path, resp)
         total_bytes = parse(Float64, header(resp, "Content-Length", "NaN"))
         downloaded_bytes = 0
         start_time = now()
         prev_time = now()
+         
         
         function report_callback()
             prev_time = now()
