@@ -16,9 +16,9 @@ function safer_joinpath(basepart, parts...)
     joinpath(basepart, parts...)
 end
 
-function try_get_filename_from_headers(headers)
-    content_disp = getkv(headers, "Content-Disposition")
-    if content_disp != nothing
+function try_get_filename_from_headers(resp)
+    content_disp = header(resp, "Content-Disposition")
+    if content_disp != ""
         # extract out of Content-Disposition line
         # rough version of what is needed in https://github.com/JuliaWeb/HTTP.jl/issues/179
         filename_part = match(r"filename\s*=\s*(.*)", content_disp)
@@ -54,9 +54,9 @@ function determine_file(path, resp)
     name = if isdir(path)
         # got to to workout what file to put there
         filename = something(
-                        try_get_filename_from_headers(resp.headers),
+                        try_get_filename_from_headers(resp),
                         try_get_filename_from_remote_path(resp.request.target),
-                        basename(tempname()) # fallback, basically a random string
+                        basename(tempname())  # fallback, basically a random string
                     )
         safer_joinpath(path, filename)
     else
@@ -100,7 +100,7 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
     HTTP.open("GET", url, headers; kw...) do stream
         resp = startread(stream)
         file = determine_file(local_path, resp)
-        total_bytes = parse(Float64, getkv(resp.headers, "Content-Length", "NaN"))
+        total_bytes = parse(Float64, header(resp, "Content-Length", "NaN"))
         downloaded_bytes = 0
         start_time = now()
         prev_time = now()
