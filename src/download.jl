@@ -52,7 +52,7 @@ determine_file(::Nothing, resp) = determine_file(tempdir(), resp)
 function determine_file(path, resp)
     # get the name
     name = if isdir(path)
-        # We have been given a path too a directory
+        # we have been given a path to a directory
         # got to to workout what file to put there
         filename = something(
                         try_get_filename_from_headers(resp),
