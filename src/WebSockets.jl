@@ -117,7 +117,7 @@ function listen(f::Function,
                 host::String="localhost", port::UInt16=UInt16(8081);
                 binary=false, verbose=false)
 
-    HTTP.listen(host, port; verbose=verbose) do http
+    HTTP.listen(host, port; verbose=verbose, idle_timeout_enabled = false) do http
         upgrade(f, http; binary=binary)
     end
 end
