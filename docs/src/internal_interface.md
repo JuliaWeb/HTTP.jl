@@ -25,7 +25,7 @@ HTTP.Messages.isidempotent
 HTTP.Messages.header
 HTTP.Messages.hasheader
 HTTP.Messages.setheader
-HTTP.Messages.defaultheader
+HTTP.Messages.defaultheader!
 HTTP.Messages.appendheader
 HTTP.Messages.readheaders
 HTTP.MessageRequest.setuseragent!

@@ -60,7 +60,7 @@ module Messages
 export Message, Request, Response, HeaderSizeError,
        reset!, status, method, headers, uri, body,
        iserror, isredirect, ischunked, issafe, isidempotent,
-       header, hasheader, headercontains, setheader, defaultheader, appendheader,
+       header, hasheader, headercontains, setheader, defaultheader!, appendheader,
        mkheaders, readheaders, headerscomplete,
        readchunksize,
        writeheaders, writestartline,
@@ -349,16 +349,17 @@ setheader(h::Headers, v::Pair) =
                field_name_isequal)
 
 """
-    defaultheader(::Message, key => value)
+    defaultheader!(::Message, key => value)
 
-Set header `value` for `key` if it is not already set.
+Set header `value` in message for `key` if it is not already set.
 """
-function defaultheader(m, v::Pair)
+function defaultheader!(m, v::Pair)
     if header(m, first(v)) == ""
         setheader(m, v)
     end
     return
 end
+Base.@deprecate defaultheader defaultheader!
 
 """
     appendheader(::Message, key => value)

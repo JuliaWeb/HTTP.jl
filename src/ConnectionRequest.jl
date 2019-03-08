@@ -45,7 +45,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     end
 
     if io.sequence >= reuse_limit
-        defaultheader(req, "Connection" => "close")
+        defaultheader!(req, "Connection" => "close")
     end
 
     try

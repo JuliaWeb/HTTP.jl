@@ -25,9 +25,9 @@ function request(::Type{MessageLayer{Next}},
                  target=resource(url),
                  parent=nothing, iofunction=nothing, kw...) where Next
 
-    defaultheader(headers, "Host" => url.host)
+    defaultheader!(headers, "Host" => url.host)
     if isassigned(USER_AGENT)
-        defaultheader(headers, "User-Agent" => USER_AGENT[])
+        defaultheader!(headers, "User-Agent" => USER_AGENT[])
     end
 
     if !hasheader(headers, "Content-Length") &&
