@@ -107,7 +107,6 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
         downloaded_bytes = 0
         start_time = now()
         prev_time = now()
-         
         
         function report_callback()
             prev_time = now()
