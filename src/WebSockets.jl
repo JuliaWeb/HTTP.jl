@@ -53,7 +53,8 @@ end
 function is_upgrade(r::HTTP.Message)
     ((r isa HTTP.Request && r.method == "GET") ||
      (r isa HTTP.Response && r.status == 101)) &&
-    HTTP.headercontains(r, "Connection", "upgrade") &&
+    (HTTP.hasheader(r, "Connection", "upgrade") ||
+     HTTP.hasheader(r, "Connection", "keep-alive, upgrade")) &&
     HTTP.hasheader(r, "Upgrade", "websocket")
 end
 
@@ -64,7 +65,8 @@ function check_upgrade(http)
                                 "$(http.message)"))
     end
 
-    if !headercontains(http, "Connection", "upgrade")
+    if !(hasheader(http, "Connection", "upgrade") ||
+         hasheader(http, "Connection", "keep-alive, upgrade"))
         throw(WebSocketError(0, "Expected \"Connection: upgrade\"!\n" *
                                 "$(http.message)"))
     end
