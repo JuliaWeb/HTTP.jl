@@ -7,7 +7,7 @@ optional keyword arguments.  For full details, see `?HTTP.listen`.
 """
 module Servers
 
-export listen
+export listen, Server
 
 using ..IOExtras
 using ..Streams
@@ -64,12 +64,37 @@ function check_rate_limit(tcp, rate_limit::Rational{Int})
 end
 
 "Convenience object for passing around server details"
-struct Server{S <: Union{SSLConfig, Nothing}, I <: Base.IOServer}
-    ssl::S
-    server::I
-    hostname::String
-    hostport::String
+mutable struct Server{T <: Union{MbedTLS.SSLConfig, Nothing}}
+    host::Union{IPAddr, String}
+    port::Union{Integer, String}
+    ssl::T
+    tcpisvalid::Function
+    server::Union{Base.IOServer, Nothing}
+    reuseaddr::Bool
+    connection_count::Ref{Int}
+    rate_limit::Union{Rational{Int}, Nothing}
+    reuse_limit::Int
+    readtimeout::Int
+    verbose::Bool
+
+    function Server{T}(
+        ssl::T=nothing,server=nothing,host=Sockets.localhost,port=8081;
+        tcpisvalid::Function=tcp->true,
+        reuseaddr::Bool=false,
+        connection_count::Ref{Int}=Ref(0),
+        rate_limit::Union{Rational{Int}, Nothing}=nothing,
+        reuse_limit::Int=nolimit,
+        readtimeout::Int=60,
+        verbose::Bool=false,
+        ) where {T}
+        new(host,port,ssl,tcpisvalid,server,
+        reuseaddr,connection_count,rate_limit,reuse_limit,readtimeout,verbose)
+    end
 end
+
+Server(;
+    ssl=nothing,server=nothing,host=Sockets.localhost,port=8081,kwargs...) =
+Server{typeof(ssl)}(ssl,server,host,port;kwargs...)
 
 Base.isopen(s::Server) = isopen(s.server)
 Base.close(s::Server) = close(s.server)
@@ -181,89 +206,78 @@ function listen end
 
 const nolimit = typemax(Int)
 
+getinet(host::String, port::String) = Sockets.InetAddr(parse(IPAddr, host), parse(Int,port))
 getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
 getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
 
-function listen(f,
-                host::Union{IPAddr, String}=Sockets.localhost,
-                port::Integer=8081
-                ;
-                sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
-                tcpisvalid::Function=tcp->true,
-                server::Union{Base.IOServer, Nothing}=nothing,
-                reuseaddr::Bool=false,
-                connection_count::Ref{Int}=Ref(0),
-                rate_limit::Union{Rational{Int}, Nothing}=nothing,
-                reuse_limit::Int=nolimit,
-                readtimeout::Int=60,
-                verbose::Bool=false)
-
-    inet = getinet(host, port)
-    if server !== nothing
-        tcpserver = server
-    elseif reuseaddr
-        tcpserver = Sockets.TCPServer(; delay=false)
-        if Sys.isunix()
-            rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
-            Sockets.bind(tcpserver, inet.host, inet.port; reuseaddr=true)
+function listen(f, s::Server)
+    inet = getinet(s.host, s.port)
+    if s.server == nothing
+        if s.reuseaddr
+            s.server = Sockets.TCPServer(; delay=false)
+            if Sys.isunix()
+                rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), s.server.handle)
+                Sockets.bind(s.server, inet.host, inet.port; reuseaddr=true)
+            else
+                @warn "reuseaddr=true may not be supported on this platform: $(Sys.KERNEL)"
+                Sockets.bind(s.server, inet.host, inet.port; reuseaddr=true)
+            end
+            Sockets.listen(s.server)
         else
-            @warn "reuseaddr=true may not be supported on this platform: $(Sys.KERNEL)"
-            Sockets.bind(tcpserver, inet.host, inet.port; reuseaddr=true)
+            s.server = Sockets.listen(inet)
         end
-        Sockets.listen(tcpserver)
-    else
-        tcpserver = Sockets.listen(inet)
     end
-    verbose && @info "Listening on: $host:$port"
+    s.verbose && @info "Listening on: $(s.host):$(s.port)"
 
-    tcpisvalid = let f=tcpisvalid
-        x -> f(x) && check_rate_limit(x, rate_limit)
+    s.tcpisvalid = let f=s.tcpisvalid
+        x -> f(x) && check_rate_limit(x, s.rate_limit)
     end
 
-    s = Server(sslconfig, tcpserver, string(host), string(port))
-    return listenloop(f, s, tcpisvalid, connection_count,
-                         reuse_limit, readtimeout, verbose)
+    return listenloop(f, s::Server)
 end
+
+listen(f,host::Union{IPAddr,String}=Sockets.localhost,port::Integer=8081;
+    ssl=nothing,server=nothing,kwargs...) =
+    listen(f,Server{typeof(ssl)}(ssl,server,host,port;kwargs...))
 
 """"
 Main server loop.
 Accepts new tcp connections and spawns async tasks to handle them."
 """
-function listenloop(f, server, tcpisvalid, connection_count,
-                       reuse_limit, readtimeout, verbose)
+function listenloop(f, s::Server)
     count = 1
-    while isopen(server)
+    while isopen(s)
         try
-            io = accept(server)
-            if !tcpisvalid(io)
-                verbose && @info "Accept-Reject:  $io"
+            io = accept(s)
+            if !s.tcpisvalid(io)
+                s.verbose && @info "Accept-Reject:  $io"
                 close(io)
                 continue
             end
-            connection_count[] += 1
+            s.connection_count[] += 1
             conn = Connection(io)
-            conn.host, conn.port = server.hostname, server.hostport
+            conn.host, conn.port = string(s.host), string(s.port)
             let io=io, count=count
                 @async try
-                    verbose && @info "Accept ($count):  $conn"
-                    handle_connection(f, conn, reuse_limit, readtimeout)
-                    verbose && @info "Closed ($count):  $conn"
+                    s.verbose && @info "Accept ($count):  $conn"
+                    handle_connection(f, conn, s.reuse_limit, s.readtimeout)
+                    s.verbose && @info "Closed ($count):  $conn"
                 catch e
                     if e isa Base.IOError && e.code == -54
-                        verbose && @warn "connection reset by peer (ECONNRESET)"
+                        s.verbose && @warn "connection reset by peer (ECONNRESET)"
                     else
                         @error exception=(e, stacktrace(catch_backtrace()))
                     end
                 finally
-                    connection_count[] -= 1
+                    s.connection_count[] -= 1
                     close(io)
-                    verbose && @info "Closed ($count):  $conn"
+                    s.verbose && @info "Closed ($count):  $conn"
                 end
             end
         catch e
             if e isa InterruptException
-                @warn "Interrupted: listen($server)"
-                close(server)
+                @warn "Interrupted: listen($s)"
+                close(s)
                 break
             else
                 rethrow(e)
@@ -272,6 +286,17 @@ function listenloop(f, server, tcpisvalid, connection_count,
         count += 1
     end
     return
+end
+
+function listenloop(
+    f, server, tcpisvalid, connection_count,
+    reuse_limit, readtimeout, verbose)
+    
+    s = Server(
+        server=server,tcpisvalid=tcpisvalid,
+        connection_count=connection_count,reuse_limit=reuse_limit,
+        readtimeout=readtimeout,verbose=verbose)
+    listenloop(f,s)
 end
 
 """
