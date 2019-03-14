@@ -70,7 +70,6 @@ mutable struct Connection{T <: IO}
     peerport::UInt16 # debug only
     localport::UInt16 # debug only
     io::T
-    idle_timeout_enabled::Bool
     buffer::IOBuffer
     sequence::Int
     writecount::Int
@@ -96,13 +95,13 @@ end
 
 Connection(host::AbstractString, port::AbstractString,
            pipeline_limit::Int, idle_timeout::Int,
-           require_ssl_verification::Bool, io::T, idle_timeout_enabled = true) where T <: IO =
+           require_ssl_verification::Bool, io::T) where T <: IO =
     Connection{T}(host, port,
                   pipeline_limit, idle_timeout,
                   require_ssl_verification,
                   peerport(io), localport(io),
-                  io, idle_timeout_enabled,
-                  PipeBuffer(), -1,
+                  io, PipeBuffer(),
+                  -1,
                   0, false, Condition(),
                   0, false, Condition(),
                   time())
@@ -124,7 +123,7 @@ getrawstream(t::Transaction) = t.c.io
 inactiveseconds(t::Transaction) = inactiveseconds(t.c)
 
 function inactiveseconds(c::Connection)::Float64
-    if !c.readbusy && !c.writebusy || !c.idle_timeout_enabled
+    if !c.readbusy && !c.writebusy
         return 0.0
     end
     return time() - c.timestamp
@@ -457,8 +456,7 @@ function purge()
         if c.idle_timeout > 0 &&
           !c.readbusy &&
           !c.writebusy &&
-           time() - c.timestamp > c.idle_timeout &&
-           c.idle_timeout_enabled
+           time() - c.timestamp > c.idle_timeout
 
             close(c.io)                       ;@debug 1 "⌛️  Timeout:        $c"
         end

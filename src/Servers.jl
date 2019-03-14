@@ -195,9 +195,8 @@ function listen(f,
                 connection_count::Ref{Int}=Ref(0),
                 rate_limit::Union{Rational{Int}, Nothing}=nothing,
                 reuse_limit::Int=nolimit,
-                verbose::Bool=false,
-                idle_timeout_enabled = true)
                 readtimeout::Int=0,
+                verbose::Bool=false)
 
     inet = getinet(host, port)
     if server !== nothing
@@ -223,7 +222,7 @@ function listen(f,
 
     s = Server(sslconfig, tcpserver, string(host), string(port))
     return listenloop(f, s, tcpisvalid, connection_count,
-                         reuse_limit, readtimeout, verbose, idle_timeout_enabled)
+                         reuse_limit, readtimeout, verbose)
 end
 
 """"
@@ -231,7 +230,7 @@ Main server loop.
 Accepts new tcp connections and spawns async tasks to handle them."
 """
 function listenloop(f, server, tcpisvalid, connection_count,
-                       reuse_limit, readtimeout, verbose, idle_timeout_enabled = true)
+                       reuse_limit, readtimeout, verbose)
     count = 1
     while isopen(server)
         try
@@ -244,7 +243,6 @@ function listenloop(f, server, tcpisvalid, connection_count,
             connection_count[] += 1
             conn = Connection(io)
             conn.host, conn.port = server.hostname, server.hostport
-            conn.idle_timeout_enabled =  idle_timeout_enabled
             let io=io, count=count
                 @async try
                     verbose && @info "Accept ($count):  $conn"
