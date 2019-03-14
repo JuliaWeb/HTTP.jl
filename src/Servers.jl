@@ -195,9 +195,9 @@ function listen(f,
                 connection_count::Ref{Int}=Ref(0),
                 rate_limit::Union{Rational{Int}, Nothing}=nothing,
                 reuse_limit::Int=nolimit,
-                readtimeout::Int=60,
                 verbose::Bool=false,
                 idle_timeout_enabled = true)
+                readtimeout::Int=0,
 
     inet = getinet(host, port)
     if server !== nothing
