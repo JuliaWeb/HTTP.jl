@@ -72,18 +72,20 @@ sockettype(url::URI, default) = url.scheme in ("wss", "https") ? SSLContext :
                                                                  default
 
 function tunnel_request(Next, io, target_url, req, body; kw...)
-    r = connect_tunnel(io, target_url)
+    r = connect_tunnel(io, target_url, req)
     if r.status != 200
         return r
     end
     io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+    req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
     return request(Next, io, req, body; kw...)
 end
 
-function connect_tunnel(io, target_url)
+function connect_tunnel(io, target_url, req)
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
     @debug 1 "📡  CONNECT HTTPS tunnel to $target"
-    request = Request("CONNECT", target)
+    headers = Dict(filter(x->x.first == "Proxy-Authorization", req.headers))
+    request = Request("CONNECT", target, headers)
     writeheaders(io, request)
     startread(io)
     readheaders(io, request.response)
