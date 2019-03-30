@@ -28,7 +28,7 @@ include("Streams.jl")                  ;using .Streams
 
     HTTP.request(method, url [, headers [, body]]; <keyword arguments>]) -> HTTP.Response
 
-Send a HTTP Request Message and recieve a HTTP Response Message.
+Send a HTTP Request Message and receive a HTTP Response Message.
 
 e.g.
 ```julia
@@ -100,7 +100,7 @@ Connection Pool options
 
 Timeout options
 
- - `readtimeout = 60`, close the connection if no data is recieved for this many
+ - `readtimeout = 60`, close the connection if no data is received for this many
    seconds. Use `readtimeout = 0` to disable.
 
 
@@ -132,13 +132,13 @@ SSLContext options
  - `sslconfig = SSLConfig(require_ssl_verification)`
 
 
-Basic Authenticaiton options
+Basic Authentication options
 
  - basic_authorization=false, add `Authorization: Basic` header using credentials
    from url userinfo.
 
 
-AWS Authenticaiton options
+AWS Authentication options
 
  - `aws_authorization = false`, enable AWS4 Authentication.
  - `aws_service = split(url.host, ".")[1]`
@@ -157,7 +157,7 @@ Cookie options
  - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`, 
 
 
-Cananoincalization options
+Canonicalization options
 
  - `canonicalize_headers = false`, rewrite request and response headers in
    Canonical-Camel-Dash-Format.
@@ -459,7 +459,7 @@ julia> request(stack3, "boo")
 ```
 
 This stack definition pattern gives the user flexibility in how layers are
-combined but still allows Julia to do whole-stack comiple time optimistations.
+combined but still allows Julia to do whole-stack compile time optimisations.
 
 e.g. the `request(stack1, "foo")` call above is optimised down to a single
 function:
