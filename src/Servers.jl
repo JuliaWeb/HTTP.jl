@@ -246,7 +246,7 @@ function listenloop(f, server, tcpisvalid, connection_count,
             let io=io, count=count
                 @async try
                     verbose && @info "Accept ($count):  $conn"
-                    handle_connection(f, conn, reuse_limit, readtimeout)
+                    handle_connection(f, conn, reuse_limit, readtimeout, server)
                     verbose && @info "Closed ($count):  $conn"
                 catch e
                     if e isa Base.IOError && e.code == -54
@@ -280,7 +280,7 @@ Create a `Transaction` object for each HTTP Request received.
 After `reuse_limit + 1` transactions, signal `final_transaction` to the
 transaction handler.
 """
-function handle_connection(f, c::Connection, reuse_limit, readtimeout)
+function handle_connection(f, c::Connection, reuse_limit, readtimeout, server)
     wait_for_timeout = Ref{Bool}(true)
     if readtimeout > 0
         @async check_readtimeout(c, readtimeout, wait_for_timeout)
@@ -288,9 +288,13 @@ function handle_connection(f, c::Connection, reuse_limit, readtimeout)
     try
         count = 0
         while isopen(c)
-            handle_transaction(f, Transaction(c);
-                               final_transaction=(count == reuse_limit))
-            count += 1
+            if isopen(server)
+                handle_transaction(f, Transaction(c), server;
+                                   final_transaction=(count == reuse_limit))
+                count += 1
+            else
+                close(c)
+            end
         end
     finally
         wait_for_timeout[] = false
@@ -324,7 +328,7 @@ If there is a parse error, send an error Response.
 Otherwise, execute stream processing function `f`.
 If `f` throws an exception, send an error Response and close the connection.
 """
-function handle_transaction(f, t::Transaction; final_transaction::Bool=false)
+function handle_transaction(f, t::Transaction, server; final_transaction::Bool=false)
     request = Request()
     http = Stream(request, t)
 
@@ -349,9 +353,11 @@ function handle_transaction(f, t::Transaction; final_transaction::Bool=false)
     end
 
     @async try
-        f(http)
-        closeread(http)
-        closewrite(http)
+        if isopen(server)
+            f(http)
+            closeread(http)
+            closewrite(http)
+        end
     catch e
         @error "error handling request" exception=(e, stacktrace(catch_backtrace()))
         if isopen(http) && !iswritable(http)
