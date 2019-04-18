@@ -31,6 +31,8 @@ const Header = Pair{SubString{String},SubString{String}}
 const Headers = Vector{Header}
 
 """
+    ParseError <: Exception
+
 Parser input was invalid.
 
 Fields:

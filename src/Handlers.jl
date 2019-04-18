@@ -210,8 +210,8 @@ export serve, Handler, handle, RequestHandlerFunction, StreamHandlerFunction,
 using ..Messages, ..URIs, ..Streams, ..IOExtras, ..Servers
 
 """
-HTTP.handle(handler::HTTP.RequestHandler, ::HTTP.Request) => HTTP.Response
-HTTP.handle(handler::HTTP.StreamHandler, ::HTTP.Stream)
+    HTTP.handle(handler::HTTP.RequestHandler, ::HTTP.Request) => HTTP.Response
+    HTTP.handle(handler::HTTP.StreamHandler, ::HTTP.Stream)
 
 Dispatch function used to handle incoming requests to a server. Can be
 overloaded by custom `HTTP.Handler` subtypes to implement custom "handling"
@@ -222,6 +222,8 @@ function handle end
 abstract type Handler end
 
 """
+    RequestHandler
+
 Abstract type representing objects that handle `HTTP.Request` and return `HTTP.Response` objects.
 
 See `?HTTP.RequestHandlerFunction` for an example of a concrete implementation.
@@ -229,6 +231,8 @@ See `?HTTP.RequestHandlerFunction` for an example of a concrete implementation.
 abstract type RequestHandler <: Handler end
 
 """
+    StreamHandler
+
 Abstract type representing objects that handle `HTTP.Stream` objects directly.
 
 See `?HTTP.StreamHandlerFunction` for an example of a concrete implementation.
@@ -236,7 +240,7 @@ See `?HTTP.StreamHandlerFunction` for an example of a concrete implementation.
 abstract type StreamHandler <: Handler end
 
 """
-RequestHandlerFunction(f)
+    RequestHandlerFunction(f)
 
 A function-wrapper type that is a subtype of `RequestHandler`. Takes a single function as an argument
 that should be of the form `f(::HTTP.Request) => HTTP.Response`
@@ -251,7 +255,7 @@ handle(h::RequestHandlerFunction, req::Request) = h.func(req)
 const HandlerFunction = RequestHandlerFunction
 
 """
-StreamHandlerFunction(f)
+    StreamHandlerFunction(f)
 
 A function-wrapper type that is a subtype of `StreamHandler`. Takes a single function as an argument
 that should be of the form `f(::HTTP.Stream) => Nothing`, i.e. it accepts a raw `HTTP.Stream`,
@@ -309,27 +313,27 @@ Optional keyword arguments:
  - `stream::Bool=false`, the handler will operate on an `HTTP.Stream` instead of `HTTP.Request`
  - `verbose::Bool=false`, log connection information to `stdout`.
 
-e.g.
-```
-    HTTP.serve(; stream=true) do http::HTTP.Stream
-        @show http.message
-        @show HTTP.header(http, "Content-Type")
-        while !eof(http)
-            println("body data: ", String(readavailable(http)))
-        end
-        HTTP.setstatus(http, 404)
-        HTTP.setheader(http, "Foo-Header" => "bar")
-        startwrite(http)
-        write(http, "response body")
-        write(http, "more response body")
-        return
+# Examples
+```julia
+HTTP.serve(; stream=true) do http::HTTP.Stream
+    @show http.message
+    @show HTTP.header(http, "Content-Type")
+    while !eof(http)
+        println("body data: ", String(readavailable(http)))
     end
+    HTTP.setstatus(http, 404)
+    HTTP.setheader(http, "Foo-Header" => "bar")
+    startwrite(http)
+    write(http, "response body")
+    write(http, "more response body")
+    return
+end
 
-    # pass in own server socket to control shutdown
-    server = Sockets.serve(Sockets.InetAddr(parse(IPAddr, host), port))
-    @async HTTP.serve(f, host, port; server=server)
-    # close server which will stop HTTP.serve
-    close(server)
+# pass in own server socket to control shutdown
+server = Sockets.serve(Sockets.InetAddr(parse(IPAddr, host), port))
+@async HTTP.serve(f, host, port; server=server)
+# close server which will stop HTTP.serve
+close(server)
 ```
 """
 function serve end
@@ -349,9 +353,9 @@ getprt(s) = isempty(s) ? "*" : s
 Base.show(io::IO, r::Route) = print(io, "HTTP.Route(method=$(getprt(r.method)), scheme=$(getprt(r.scheme)), host=$(getprt(r.host)), path=$(r.path))")
 
 """
-HTTP.Router(h::Handler)
-HTTP.Router(f::Function)
-HTTP.Router()
+    HTTP.Router(h::Handler)
+    HTTP.Router(f::Function)
+    HTTP.Router()
 
 An `HTTP.Handler` type that supports pattern matching request url paths to registered `HTTP.Handler`s.
 Can accept a default `Handler` or `Function` that will be used in case no other handlers match; by
@@ -414,9 +418,9 @@ function generate_gethandler(router, method, scheme, host, path, handler)
 end
 
 """
-HTTP.@register(r::Router, path, handler)
-HTTP.@register(r::Router, method::String, path, handler)
-HTTP.@register(r::Router, method::String, scheme::String, host::String, path, handler)
+    HTTP.@register(r::Router, path, handler)
+    HTTP.@register(r::Router, method::String, path, handler)
+    HTTP.@register(r::Router, method::String, scheme::String, host::String, path, handler)
 
 Function to map request urls matching `path` and optional method, scheme, host to another `handler::HTTP.Handler`.
 URL paths are registered one at a time, and multiple urls can map to the same handler.

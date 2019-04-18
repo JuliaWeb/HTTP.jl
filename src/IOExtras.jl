@@ -1,4 +1,6 @@
 """
+    IOExtras
+
 This module defines extensions to the `Base.IO` interface to support:
  - `startwrite`, `closewrite`, `startread` and `closeread` for streams
     with transactional semantics.
@@ -41,6 +43,8 @@ isioerror(::MbedException) = true
 
 
 """
+    IOError <: Exception
+
 The request terminated with due to an IO-related error.
 
 Fields:

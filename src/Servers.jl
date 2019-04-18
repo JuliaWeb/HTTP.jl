@@ -115,39 +115,39 @@ Optional keyword arguments:
  - `verbose::Bool=false`, log connection information to `stdout`.
 
 e.g.
-```
-    HTTP.listen("127.0.0.1", 8081) do http
-        HTTP.setheader(http, "Content-Type" => "text/html")
-        write(http, "target uri: \$(http.message.target)<BR>")
-        write(http, "request body:<BR><PRE>")
-        write(http, read(http))
-        write(http, "</PRE>")
-    end
+```julia
+HTTP.listen("127.0.0.1", 8081) do http
+    HTTP.setheader(http, "Content-Type" => "text/html")
+    write(http, "target uri: \$(http.message.target)<BR>")
+    write(http, "request body:<BR><PRE>")
+    write(http, read(http))
+    write(http, "</PRE>")
+end
 
-    HTTP.listen("127.0.0.1", 8081) do http
-        @show http.message
-        @show HTTP.header(http, "Content-Type")
-        while !eof(http)
-            println("body data: ", String(readavailable(http)))
-        end
-        HTTP.setstatus(http, 404)
-        HTTP.setheader(http, "Foo-Header" => "bar")
-        startwrite(http)
-        write(http, "response body")
-        write(http, "more response body")
+HTTP.listen("127.0.0.1", 8081) do http
+    @show http.message
+    @show HTTP.header(http, "Content-Type")
+    while !eof(http)
+        println("body data: ", String(readavailable(http)))
     end
+    HTTP.setstatus(http, 404)
+    HTTP.setheader(http, "Foo-Header" => "bar")
+    startwrite(http)
+    write(http, "response body")
+    write(http, "more response body")
+end
 ```
 
 The `server=` option can be used to pass an already listening socket to
 `HTTP.listen`. This allows control of server shutdown.
 
 e.g.
-```
-    server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
-    @async HTTP.listen(f, host, port; server=server)
+```julia
+server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
+@async HTTP.listen(f, host, port; server=server)
 
-    # Closeing server will stop HTTP.listen.
-    close(server)
+# Closeing server will stop HTTP.listen.
+close(server)
 ```
 
 To run the following HTTP chat example, open two Julia REPL windows and paste
