@@ -26,6 +26,8 @@ function request(::Type{ExceptionLayer{Next}}, a...; kw...) where Next
 end
 
 """
+    StatusError <: Exception
+
 The `Response` has a `4xx`, `5xx` or unrecognised status code.
 
 Fields:

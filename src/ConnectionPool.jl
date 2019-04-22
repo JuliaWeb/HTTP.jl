@@ -82,6 +82,8 @@ mutable struct Connection{T <: IO}
 end
 
 """
+    Transaction
+
 A single pipelined HTTP Request/Response transaction`.
 
 Fields:
