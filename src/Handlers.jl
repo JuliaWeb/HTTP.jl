@@ -207,7 +207,7 @@ export serve, Handler, handle, RequestHandlerFunction, StreamHandlerFunction,
        RequestHandler, StreamHandler,
        Router, @register, register!
 
-using ..Messages, ..URIs, ..Streams, ..IOExtras, ..Servers
+using ..Messages, ..URIs, ..Streams, ..IOExtras, ..Servers, ..Sockets
 
 """
     HTTP.handle(handler::HTTP.RequestHandler, ::HTTP.Request) => HTTP.Response
@@ -338,7 +338,7 @@ close(server)
 """
 function serve end
 
-function serve(f, host, port=8081; stream::Bool=false, kw...)
+function serve(f, host=Sockets.localhost, port=8081; stream::Bool=false, kw...)
     handler = f isa Handler ? f : stream ? StreamHandlerFunction(f) : RequestHandlerFunction(f)
     return Servers.listen(x->handle(handler, x), host, port; kw...)
 end
