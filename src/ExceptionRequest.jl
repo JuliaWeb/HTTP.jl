@@ -19,7 +19,7 @@ function request(::Type{ExceptionLayer{Next}}, a...; kw...) where Next
     res = request(Next, a...; kw...)
 
     if iserror(res)
-        throw(StatusError(res.status, res))
+        throw(StatusError(res.status, res.request.method, res.request.target, res))
     end
 
     return res
@@ -36,6 +36,8 @@ Fields:
 """
 struct StatusError <: Exception
     status::Int16
+    method::String
+    target::String
     response::HTTP.Response
 end
 
