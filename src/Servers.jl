@@ -246,7 +246,7 @@ function listenloop(f, server, tcpisvalid, connection_count,
             let io=io, count=count
                 @async try
                     verbose && @info "Accept ($count):  $conn"
-                    handle_connection(f, conn, reuse_limit, readtimeout)
+                    handle_connection(f, conn, server, reuse_limit, readtimeout)
                     verbose && @info "Closed ($count):  $conn"
                 catch e
                     if e isa Base.IOError && e.code == -54
@@ -261,9 +261,9 @@ function listenloop(f, server, tcpisvalid, connection_count,
                 end
             end
         catch e
+            close(server)
             if e isa InterruptException
                 @warn "Interrupted: listen($server)"
-                close(server)
                 break
             else
                 rethrow(e)
@@ -280,14 +280,15 @@ Create a `Transaction` object for each HTTP Request received.
 After `reuse_limit + 1` transactions, signal `final_transaction` to the
 transaction handler.
 """
-function handle_connection(f, c::Connection, reuse_limit, readtimeout)
+function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
     wait_for_timeout = Ref{Bool}(true)
     if readtimeout > 0
         @async check_readtimeout(c, readtimeout, wait_for_timeout)
     end
     try
         count = 0
-        while isopen(c)
+        # if the connection socket or original server close, we stop taking requests
+        while isopen(c) && isopen(server)
             handle_transaction(f, Transaction(c);
                                final_transaction=(count == reuse_limit))
             count += 1
