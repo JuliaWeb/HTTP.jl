@@ -354,7 +354,6 @@ function handle_transaction(f, t::Transaction; final_transaction::Bool=false)
         closeread(http)
         closewrite(http)
     catch e
-        @error "error handling request" exception=(e, stacktrace(catch_backtrace()))
         if isopen(http) && !iswritable(http)
             http.message.response.status = 500
             startwrite(http)
