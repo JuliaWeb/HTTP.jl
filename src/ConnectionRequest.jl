@@ -8,6 +8,43 @@ using ..ConnectionPool
 using MbedTLS: SSLContext
 import ..@debug, ..DEBUG_LEVEL
 
+const HTTP_PROXY = Ref{String}()
+const HTTPS_PROXY = Ref{String}()
+const NO_PROXY = Set{String}()
+
+gethttp_proxy() = isdefined(HTTP_PROXY, :x) ? HTTP_PROXY[] : nothing
+gethttps_proxy() = isdefined(HTTPS_PROXY, :x) ? HTTPS_PROXY[] : nothing
+
+getproxy(scheme) = scheme == "http" ? gethttp_proxy() : scheme == "https" ? gethttps_proxy() : nothing
+
+# hasdotsuffix reports whether s ends in "."+suffix.
+function hasdotsuffix(s, suffix)
+    return length(s) > length(suffix) && s[length(s)-length(suffix)] == '.' && s[length(s)-length(suffix)+1:end] == suffix
+end
+
+function isnoproxy(host)
+    for x in NO_PROXY
+        hasdotsuffix(host, x) && return true
+    end
+    return false
+end
+
+function __init__()
+    # check for http_proxy/https_proxy environment variables
+    if haskey(ENV, "http_proxy")
+        HTTP_PROXY[] = ENV["http_proxy"]
+    end
+    if haskey(ENV, "https_proxy")
+        HTTPS_PROXY[] = ENV["https_proxy"]
+    end
+    if haskey(ENV, "no_proxy")
+        for x in split(ENV["no_proxy"], ","; keepempty=false)
+            push!(NO_PROXY, startswith(x, ".") ? x[2:end] : x)
+        end
+    end
+    return
+end
+
 """
     request(ConnectionPoolLayer, ::URI, ::Request, body) -> HTTP.Response
 
@@ -23,11 +60,11 @@ abstract type ConnectionPoolLayer{Next <: Layer} <: Layer{Next} end
 export ConnectionPoolLayer
 
 function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
-                 proxy=nothing,
+                 proxy=getproxy(url.scheme),
                  socket_type::Type=TCPSocket,
                  reuse_limit::Int=ConnectionPool.nolimit, kw...) where Next
 
-    if proxy !== nothing
+    if proxy !== nothing && !isnoproxy(url.host)
         target_url = url
         url = URI(proxy)
         if target_url.scheme == "http"
@@ -49,7 +86,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     end
 
     try
-        if proxy !== nothing && target_url.scheme == "https"
+        if proxy !== nothing && !isnoproxy(url.host) && target_url.scheme == "https"
             return tunnel_request(Next, io, target_url, req, body; kw...)
         end
 
@@ -61,7 +98,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
         rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
     finally
         if (io.sequence >= reuse_limit
-        || (proxy !== nothing && target_url.scheme == "https"))
+        || (proxy !== nothing && !isnoproxy(url.host) && target_url.scheme == "https"))
             close(io)
         end
     end
@@ -91,6 +128,5 @@ function connect_tunnel(io, target_url, req)
     readheaders(io, request.response)
     return request.response
 end
-
 
 end # module ConnectionRequest
