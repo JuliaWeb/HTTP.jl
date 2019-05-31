@@ -204,6 +204,9 @@ function listen(f,
     elseif reuseaddr
         tcpserver = Sockets.TCPServer(; delay=false)
         if Sys.isunix()
+            if Sys.isapple()
+                verbose && @warn "note that `reuseaddr=true` allows multiple processes to bind to the same addr/port, but only one process will accept new connections (if that process exits, another process listening will start accepting)"
+            end
             rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
             Sockets.bind(tcpserver, inet.host, inet.port; reuseaddr=true)
         else
