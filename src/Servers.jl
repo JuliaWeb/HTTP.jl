@@ -4,6 +4,9 @@ The `HTTP.Servers` module provides HTTP server functionality.
 The main entry point is `HTTP.listen(f, host, port; kw...)` which takes
 a `f(::HTTP.Stream)::Nothing` function argument, a `host`, a `port` and
 optional keyword arguments.  For full details, see `?HTTP.listen`.
+
+For server functionality operating on full requests, see `?HTTP.Handlers`
+module and `?HTTP.serve` function.
 """
 module Servers
 
@@ -86,7 +89,7 @@ function getsslcontext(tcp, sslconfig)
 end
 
 """
-    HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do http
+    HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do http::HTTP.Stream
         ...
     end
 
@@ -122,6 +125,7 @@ HTTP.listen("127.0.0.1", 8081) do http
     write(http, "request body:<BR><PRE>")
     write(http, read(http))
     write(http, "</PRE>")
+    return
 end
 
 HTTP.listen("127.0.0.1", 8081) do http
@@ -139,14 +143,15 @@ end
 ```
 
 The `server=` option can be used to pass an already listening socket to
-`HTTP.listen`. This allows control of server shutdown.
+`HTTP.listen`. This allows manual control of server shutdown.
 
 e.g.
 ```julia
+using Sockets
 server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
 @async HTTP.listen(f, host, port; server=server)
 
-# Closeing server will stop HTTP.listen.
+# Closing server will stop HTTP.listen.
 close(server)
 ```
 

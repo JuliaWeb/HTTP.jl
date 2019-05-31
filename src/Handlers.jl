@@ -36,7 +36,7 @@ end
 
 function getAnimal(req::HTTP.Request)
     animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
-    animal = ANIMALS[animalId]
+    animal = ANIMALS[parse(Int, animalId)]
     return HTTP.Response(200, JSON2.write(animal))
 end
 
@@ -48,13 +48,14 @@ end
 
 function deleteAnimal(req::HTTP.Request)
     animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
-    delete!(ANIMALS, animal.id)
+    delete!(ANIMALS, parse(Int, animal.id))
     return HTTP.Response(200)
 end
 
 # define REST endpoints to dispatch to "service" functions
 const ANIMAL_ROUTER = HTTP.Router()
 HTTP.@register(ANIMAL_ROUTER, "POST", "/api/zoo/v1/animals", createAnimal)
+# note the use of `*` to capture the path segment "variable" animal id
 HTTP.@register(ANIMAL_ROUTER, "GET", "/api/zoo/v1/animals/*", getAnimal)
 HTTP.@register(ANIMAL_ROUTER, "PUT", "/api/zoo/v1/animals", updateAnimal)
 HTTP.@register(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/animals/*", deleteAnimal)
@@ -117,7 +118,7 @@ we automatically deserialize it and pass it on to the service function. And each
 doesn't need to worry about returning `HTTP.Response`s anymore, but can just focus on returning
 plain Julia objects/strings. The other huge advantage is it provides a clean separation of concerns
 between the "service" layer, which should really concern itself with application logic, and the
-"REST API" layer, which should take care of translating between a web data format (JSON).
+"REST API" layer, which should take care of translating between our model and a web data format (JSON).
 
 Let's take this one step further and allow multiple users to manage users, and add in one more
 custom handler to provide an authentication layer to our application. We can't just let anybody
@@ -154,7 +155,7 @@ function getAnimal(req::HTTP.Request)
     paths = HTTP.URIs.splitpath(req.target)
     userId = path[5] # /api/zoo/v1/users/x92jf-.../animals/10, get user UUID
     animalId = path[7] # /api/zoo/v1/users/x92jf-.../animals/10, get 10
-    return ANIMALS[userId][animalId]
+    return ANIMALS[userId][parse(Int, animalId)]
 end
 
 function updateAnimal(req::HTTP.Request, animal)
@@ -166,7 +167,7 @@ function deleteAnimal(req::HTTP.Request)
     paths = HTTP.URIs.splitpath(req.target)
     userId = path[5] # /api/zoo/v1/users/x92jf-.../animals/10, get user UUID
     animalId = path[7] # /api/zoo/v1/users/x92jf-.../animals/10, get 10
-    delete!(ANIMALS[userId], animal.id)
+    delete!(ANIMALS[userId], parse(Int, animal.id))
     return ""
 end
 
@@ -304,9 +305,9 @@ Optional keyword arguments:
     processing requests. e.g. to implement source IP filtering, rate-limiting, etc.
  - `readtimeout::Int=60`, close the connection if no data is recieved for this
     many seconds. Use readtimeout = 0 to disable.
- - `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
+ - `reuseaddr::Bool=false`, allow multiple server processes to listen on the same port. Only fully supported on linux; OSX will allow multiple server processes to listen, but only one will accept connections
  - `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
-    allows closing the server.
+    allows manual control over closing the server.
  - `connection_count::Ref{Int}`, reference to track the # of currently open connections.
  - `rate_limit::Rational{Int}=nothing"`, number of `connections//second` allowed
     per client IP address; excess connections are immediately closed. e.g. 5//1.
@@ -330,6 +331,7 @@ HTTP.serve(; stream=true) do http::HTTP.Stream
 end
 
 # pass in own server socket to control shutdown
+using Sockets
 server = Sockets.serve(Sockets.InetAddr(parse(IPAddr, host), port))
 @async HTTP.serve(f, host, port; server=server)
 # close server which will stop HTTP.serve
