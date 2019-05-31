@@ -41,4 +41,7 @@ struct StatusError <: Exception
     response::HTTP.Response
 end
 
+# for backwards compatibility
+StatusError(status, response::HTTP.Response) = StatusError(status, response.request.method, response.request.target, response)
+
 end # module ExceptionRequest
