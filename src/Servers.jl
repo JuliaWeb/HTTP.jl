@@ -256,8 +256,7 @@ function listenloop(f, server, tcpisvalid, connection_count,
                     end
                 finally
                     connection_count[] -= 1
-                    close(io)
-                    verbose && @info "Closed ($count):  $conn"
+                    # handle_connection is in charge of closing the underlying io
                 end
             end
         catch e
@@ -288,7 +287,7 @@ function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
     try
         count = 0
         # if the connection socket or original server close, we stop taking requests
-        while isopen(c) && isopen(server)
+        while isopen(c) && isopen(server) && count <= reuse_limit
             handle_transaction(f, Transaction(c);
                                final_transaction=(count == reuse_limit))
             count += 1
