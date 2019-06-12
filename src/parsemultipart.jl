@@ -89,6 +89,7 @@ function parse_multipart_chunk!(d, chunk)
 
     io = IOBuffer()
     write(io, content)
+    seekstart(io)
     push!(d, Multipart(filename, io, contenttype, "", name))
 end
 
