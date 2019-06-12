@@ -37,16 +37,6 @@ function find_boundaries(bytes::AbstractVector{UInt8}, boundary; start::Int = 1)
     find_boundaries(bytes, unsafe_wrap(Array{UInt8, 1}, String(str)), length(d); start = start)
 end
 
-function remove_trailing(bytes::AbstractVector{UInt8}, charlist::AbstractVector{UInt8})
-    i = lastindex(bytes)
-    while bytes[i] in charlist
-        i -= 1
-    end
-    view(bytes, 1:i)
-end
-
-remove_trailing(bytes::AbstractVector{UInt8}, char::UInt8) = remove_trailing(bytes, [char])
-
 function find_returns(bytes::AbstractVector{UInt8})
     l = length(bytes)
     i = 1
@@ -70,6 +60,7 @@ end
 
 function parse_multipart_chunk!(d, chunk)
     i = find_returns(chunk)
+    Base.@debug "number of returns $(i)"
     i == nothing && return
     description = String(view(chunk, 1:i[1]))
     content = view(chunk, i[2]+1:lastindex(chunk))
@@ -84,8 +75,8 @@ function parse_multipart_chunk!(d, chunk)
     filename    = match_filename !== nothing ? match_filename[1] : nothing
     contenttype = match_contenttype !== nothing ? match_contenttype[1] : "text/plain" # if content_type is not specified, the default text/plain is assumed
 
-    content = remove_trailing(content, DASH_BYTE)
-    content = remove_trailing(content, RETURN_BYTES)
+    # remove trailing \r\n-- characters
+    content = view(content, 1:length(content)-4)
 
     io = IOBuffer()
     write(io, content)
