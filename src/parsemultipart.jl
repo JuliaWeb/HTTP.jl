@@ -2,8 +2,8 @@ const RETURN_BYTES = [0x0d, 0x0a]
 const DASH_BYTE = 0x2d
 
 const FORMDATA_REGEX = r"Content-Disposition: form-data"
-const NAME_REGEX = r" name=\"(.*)\""
-const FILENAME_REGEX = r"filename=\"(.*)\""
+const NAME_REGEX = r" name=\"(.*?)\""
+const FILENAME_REGEX = r" filename=\"(.*?)\""
 const CONTENTTYPE_REGEX = r"Content-Type: (\S*)"
 
 function find_boundary(bytes::AbstractVector{UInt8}, str, dashes; start::Int = 1)
@@ -60,7 +60,6 @@ end
 
 function parse_multipart_chunk!(d, chunk)
     i = find_returns(chunk)
-    Base.@debug "number of returns $(i)"
     i == nothing && return
     description = String(view(chunk, 1:i[1]))
     content = view(chunk, i[2]+1:lastindex(chunk))
