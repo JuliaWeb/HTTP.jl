@@ -30,9 +30,6 @@ Messages are parsed from `IO` stream data by
 This function calls [`HTTP.Parsers.parse_header_field`](@ref) and passes each
 header-field to [`HTTP.Messages.appendheader`](@ref).
 
-`readheaders` relies on [`HTTP.IOExtras.unread!`](@ref) to push excess
-data back to the input stream.
-
 
 ### Headers
 

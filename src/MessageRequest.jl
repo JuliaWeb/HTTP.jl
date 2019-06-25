@@ -50,6 +50,8 @@ end
 const USER_AGENT = Ref{String}()
 
 """
+    setuseragent!(x::String)
+
 Set the default User-Agent string to be used in each HTTP request.
 Can be manually overridden by passing an explicit `User-Agent` header.
 """

@@ -4,6 +4,9 @@ The `HTTP.Servers` module provides HTTP server functionality.
 The main entry point is `HTTP.listen(f, host, port; kw...)` which takes
 a `f(::HTTP.Stream)::Nothing` function argument, a `host`, a `port` and
 optional keyword arguments.  For full details, see `?HTTP.listen`.
+
+For server functionality operating on full requests, see `?HTTP.Handlers`
+module and `?HTTP.serve` function.
 """
 module Servers
 
@@ -86,7 +89,7 @@ function getsslcontext(tcp, sslconfig)
 end
 
 """
-    HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do http
+    HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do http::HTTP.Stream
         ...
     end
 
@@ -115,39 +118,41 @@ Optional keyword arguments:
  - `verbose::Bool=false`, log connection information to `stdout`.
 
 e.g.
-```
-    HTTP.listen("127.0.0.1", 8081) do http
-        HTTP.setheader(http, "Content-Type" => "text/html")
-        write(http, "target uri: \$(http.message.target)<BR>")
-        write(http, "request body:<BR><PRE>")
-        write(http, read(http))
-        write(http, "</PRE>")
-    end
+```julia
+HTTP.listen("127.0.0.1", 8081) do http
+    HTTP.setheader(http, "Content-Type" => "text/html")
+    write(http, "target uri: \$(http.message.target)<BR>")
+    write(http, "request body:<BR><PRE>")
+    write(http, read(http))
+    write(http, "</PRE>")
+    return
+end
 
-    HTTP.listen("127.0.0.1", 8081) do http
-        @show http.message
-        @show HTTP.header(http, "Content-Type")
-        while !eof(http)
-            println("body data: ", String(readavailable(http)))
-        end
-        HTTP.setstatus(http, 404)
-        HTTP.setheader(http, "Foo-Header" => "bar")
-        startwrite(http)
-        write(http, "response body")
-        write(http, "more response body")
+HTTP.listen("127.0.0.1", 8081) do http
+    @show http.message
+    @show HTTP.header(http, "Content-Type")
+    while !eof(http)
+        println("body data: ", String(readavailable(http)))
     end
+    HTTP.setstatus(http, 404)
+    HTTP.setheader(http, "Foo-Header" => "bar")
+    startwrite(http)
+    write(http, "response body")
+    write(http, "more response body")
+end
 ```
 
 The `server=` option can be used to pass an already listening socket to
-`HTTP.listen`. This allows control of server shutdown.
+`HTTP.listen`. This allows manual control of server shutdown.
 
 e.g.
-```
-    server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
-    @async HTTP.listen(f, host, port; server=server)
+```julia
+using Sockets
+server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
+@async HTTP.listen(f, host, port; server=server)
 
-    # Closeing server will stop HTTP.listen.
-    close(server)
+# Closing server will stop HTTP.listen.
+close(server)
 ```
 
 To run the following HTTP chat example, open two Julia REPL windows and paste
@@ -204,6 +209,9 @@ function listen(f,
     elseif reuseaddr
         tcpserver = Sockets.TCPServer(; delay=false)
         if Sys.isunix()
+            if Sys.isapple()
+                verbose && @warn "note that `reuseaddr=true` allows multiple processes to bind to the same addr/port, but only one process will accept new connections (if that process exits, another process listening will start accepting)"
+            end
             rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
             Sockets.bind(tcpserver, inet.host, inet.port; reuseaddr=true)
         else
@@ -246,7 +254,7 @@ function listenloop(f, server, tcpisvalid, connection_count,
             let io=io, count=count
                 @async try
                     verbose && @info "Accept ($count):  $conn"
-                    handle_connection(f, conn, reuse_limit, readtimeout)
+                    handle_connection(f, conn, server, reuse_limit, readtimeout)
                     verbose && @info "Closed ($count):  $conn"
                 catch e
                     if e isa Base.IOError && e.code == -54
@@ -256,14 +264,13 @@ function listenloop(f, server, tcpisvalid, connection_count,
                     end
                 finally
                     connection_count[] -= 1
-                    close(io)
-                    verbose && @info "Closed ($count):  $conn"
+                    # handle_connection is in charge of closing the underlying io
                 end
             end
         catch e
+            close(server)
             if e isa InterruptException
                 @warn "Interrupted: listen($server)"
-                close(server)
                 break
             else
                 rethrow(e)
@@ -280,14 +287,15 @@ Create a `Transaction` object for each HTTP Request received.
 After `reuse_limit + 1` transactions, signal `final_transaction` to the
 transaction handler.
 """
-function handle_connection(f, c::Connection, reuse_limit, readtimeout)
+function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
     wait_for_timeout = Ref{Bool}(true)
     if readtimeout > 0
         @async check_readtimeout(c, readtimeout, wait_for_timeout)
     end
     try
         count = 0
-        while isopen(c)
+        # if the connection socket or original server close, we stop taking requests
+        while isopen(c) && isopen(server) && count <= reuse_limit
             handle_transaction(f, Transaction(c);
                                final_transaction=(count == reuse_limit))
             count += 1

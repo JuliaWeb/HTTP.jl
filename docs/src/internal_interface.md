@@ -4,7 +4,7 @@
 
 ```@docs
 HTTP.Parsers.find_end_of_header
-HTTP.Parsers.find_end_of_line
+HTTP.Parsers.find_end_of_chunk_size
 HTTP.Parsers.find_end_of_trailer
 HTTP.Parsers.parse_status_line!
 HTTP.Parsers.parse_request_line!
@@ -40,7 +40,6 @@ Base.write(::IO,::HTTP.Messages.Message)
 
 ```@docs
 HTTP.IOExtras
-HTTP.IOExtras.unread!
 HTTP.IOExtras.startwrite(::IO)
 HTTP.IOExtras.isioerror
 ```
@@ -61,7 +60,6 @@ HTTP.ConnectionPool.Connection
 HTTP.ConnectionPool.Transaction
 HTTP.ConnectionPool.pool
 HTTP.ConnectionPool.getconnection
-HTTP.IOExtras.unread!(::HTTP.ConnectionPool.Transaction,::SubArray{UInt8,1,Array{UInt8,1},Tuple{UnitRange{Int64}},true})
 HTTP.IOExtras.startwrite(::HTTP.ConnectionPool.Transaction)
 HTTP.IOExtras.closewrite(::HTTP.ConnectionPool.Transaction)
 HTTP.IOExtras.startread(::HTTP.ConnectionPool.Transaction)

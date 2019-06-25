@@ -1,6 +1,6 @@
 # Form request body
 """
-Form(dict::Dict)
+    Form(dict::Dict)
 
 A type representing a request body using the multipart/form-data encoding.
 The key-value pairs in the Dict argument will constitute the name and value of each multipart boundary chunk.
@@ -80,7 +80,7 @@ function Form(d)
 end
 
 function writemultipartheader(io::IOBuffer, i::IOStream)
-    write(io, "; filename=\"$(i.name[7:end-1])\"\r\n")
+    write(io, "; filename=\"$(basename(i.name[7:end-1]))\"\r\n")
     write(io, "Content-Type: $(HTTP.sniff(i))\r\n\r\n")
     return
     end
@@ -90,7 +90,7 @@ function writemultipartheader(io::IOBuffer, i::IOStream)
 end
 
 """
-Multipart(filename::String, data::IO, content_type=HTTP.sniff(data), content_transfer_encoding="")
+    Multipart(filename::String, data::IO, content_type=HTTP.sniff(data), content_transfer_encoding="")
 
 A type to represent a single multipart upload chunk for a file. This type would be used as the value in a
 key-value pair of a Dict passed to an http request, like `HTTP.post(url; body=Dict("key"=>HTTP.Multipart("MyFile.txt", open("MyFile.txt"))))`.
