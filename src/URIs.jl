@@ -4,7 +4,7 @@ export URI,
        resource, queryparams, absuri,
        escapeuri, unescapeuri, escapepath
 
-import Base.==
+import Base.==, Base.joinpath
 
 using ..IOExtras
 import ..@require, ..precondition_error
@@ -92,6 +92,7 @@ function Base.merge(uri::URI; scheme::AbstractString=uri.scheme,
     return URI(nostring, scheme, userinfo, host, port, path, querys, fragment)
 end
 
+Base.joinpath(uri::URI, parts::AbstractString...) = merge(uri; path=joinpath(uri.path, parts...))
 
 # Based on regex from RFC 3986:
 # https://tools.ietf.org/html/rfc3986#appendix-B
