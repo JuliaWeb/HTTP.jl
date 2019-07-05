@@ -13,11 +13,9 @@ import ..isnumeric, ..isletter
 
 include("parseutils.jl")
 
-
 struct ParseError <: Exception
     msg::String
 end
-
 
 """
     HTTP.URI(; scheme="", host="", port="", etc...)
@@ -56,7 +54,6 @@ struct URI
     fragment::SubString{String}
 end
 
-
 URI(uri::URI) = uri
 
 const absent = SubString("absent", 1, 0)
@@ -92,11 +89,10 @@ function Base.merge(uri::URI; scheme::AbstractString=uri.scheme,
     return URI(nostring, scheme, userinfo, host, port, path, querys, fragment)
 end
 
-
 # Based on regex from RFC 3986:
 # https://tools.ietf.org/html/rfc3986#appendix-B
 const uri_reference_regex =
-    r"""^
+    RegexAndMatchData(r"""^
     (?: ([^:/?#]+) :) ?                     # 1. scheme
     (?: // (?: ([^/?#@]*) @) ?              # 2. userinfo
            (?| (?: \[ ([^:\]]*:[^\]]*) \] ) # 3. host (ipv6)
@@ -105,8 +101,7 @@ const uri_reference_regex =
     ([^?#]*)                                # 5. path
     (?: \?([^#]*) ) ?                       # 6. query
     (?: [#](.*) ) ?                         # 7. fragment
-    $"""x
-
+    $"""x)
 
 """
 https://tools.ietf.org/html/rfc3986#section-3
@@ -118,7 +113,6 @@ function parse_uri(str::AbstractString; kw...)
     end
     return uri
 end
-
 
 """
 https://tools.ietf.org/html/rfc3986#section-4.1
@@ -146,11 +140,9 @@ end
 parse_uri_reference(str; strict = false) =
     parse_uri_reference(SubString(str); strict = false)
 
-
 URI(str::AbstractString) = parse_uri_reference(str)
 
 Base.parse(::Type{URI}, str::AbstractString) = parse_uri_reference(str)
-
 
 function ensurevalid(uri::URI)
 
@@ -189,7 +181,6 @@ function ensurevalid(uri::URI)
     end
 end
 
-
 """
 https://tools.ietf.org/html/rfc3986#section-4.3
 """
@@ -198,13 +189,11 @@ isabsolute(uri::URI) =
      isempty(uri.fragment) &&
     (isempty(uri.host) || isempty(uri.path) || isabspath(uri))
 
-
 """
 https://tools.ietf.org/html/rfc7230#section-5.3.1
 https://tools.ietf.org/html/rfc3986#section-3.3
 """
 isabspath(uri::URI) = startswith(uri.path, "/") && !startswith(uri.path, "//")
-
 
 ==(a::URI,b::URI) = a.scheme      == b.scheme      &&
                     a.host        == b.host        &&
@@ -213,7 +202,6 @@ isabspath(uri::URI) = startswith(uri.path, "/") && !startswith(uri.path, "//")
                     a.query       == b.query       &&
                     a.fragment    == b.fragment    &&
                     a.userinfo    == b.userinfo
-
 
 """
 "request-target" per https://tools.ietf.org/html/rfc7230#section-5.3
@@ -290,7 +278,6 @@ function queryparams(q::AbstractString)
             for e in split(q, "&", keepempty=false)))
 end
 
-
 # Validate known URI formats
 const uses_authority = ["https", "http", "ws", "wss", "hdfs", "ftp", "gopher", "nntp", "telnet", "imap", "wais", "file", "mms", "shttp", "snews", "prospero", "rtsp", "rtspu", "rsync", "svn", "svn+ssh", "sftp" ,"nfs", "git", "git+ssh", "ldap", "s3"]
 const non_hierarchical = ["gopher", "hdl", "mailto", "news", "telnet", "wais", "imap", "snews", "sip", "sips"]
@@ -309,7 +296,6 @@ function Base.isvalid(uri::URI)
     end
     return true
 end
-
 
 # RFC3986 Unreserved Characters (and '~' Unsafe per RFC1738).
 @inline issafe(c::Char) = c == '-' ||
@@ -355,7 +341,6 @@ end
 
 ispathsafe(c::Char) = c == '/' || issafe(c)
 escapepath(path) = escapeuri(path, ispathsafe)
-
 
 """
 Splits the path into components
@@ -434,9 +419,10 @@ function absuri(uri::URI, context::URI)
     return merge(context; path=uri.path, query=uri.query)
 end
 
-
 function __init__()
-    Base.compile(uri_reference_regex)
+    Base.compile(uri_reference_regex.re)
+    initialize!(uri_reference_regex)
+    return
 end
 
 
