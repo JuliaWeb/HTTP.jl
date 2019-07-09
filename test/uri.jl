@@ -55,6 +55,9 @@ end
     @test HTTP.URI(scheme="http", host="google.com", query=Dict("key"=>"value")) == HTTP.URI("http://google.com?key=value")
     @test HTTP.URI(scheme="http", host="google.com", path="/", fragment="user") == HTTP.URI("http://google.com/#user")
 
+    # joinpath support
+    @test joinpath(HTTP.URI(scheme="http", host="google.com", path="/basedir/"), "whatever") == HTTP.URI(scheme="http", host="google.com", path=joinpath("/basedir/", "whatever"))
+
     urls = [("hdfs://user:password@hdfshost:9000/root/folder/file.csv#frag", ["root", "folder", "file.csv"]),
             ("https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag", ["path1", "path2;paramstring"]),
             ("https://user:password@httphost:9000/path1/path2?q=a&p=r#frag", ["path1","path2"]),
