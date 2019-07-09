@@ -25,7 +25,7 @@ mutable struct Stream{M <: Message, S <: IO} <: IO
 end
 
 """
-    Stream(::IO, ::Request)
+    Stream(::Request, ::IO)
 
 Creates a `HTTP.Stream` that wraps an existing `IO` stream.
 

@@ -36,7 +36,7 @@ end
 
 function getAnimal(req::HTTP.Request)
     animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
-    animal = ANIMALS[animalId]
+    animal = ANIMALS[parse(Int, animalId)]
     return HTTP.Response(200, JSON2.write(animal))
 end
 
@@ -48,13 +48,14 @@ end
 
 function deleteAnimal(req::HTTP.Request)
     animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
-    delete!(ANIMALS, animal.id)
+    delete!(ANIMALS, parse(Int, animal.id))
     return HTTP.Response(200)
 end
 
 # define REST endpoints to dispatch to "service" functions
 const ANIMAL_ROUTER = HTTP.Router()
 HTTP.@register(ANIMAL_ROUTER, "POST", "/api/zoo/v1/animals", createAnimal)
+# note the use of `*` to capture the path segment "variable" animal id
 HTTP.@register(ANIMAL_ROUTER, "GET", "/api/zoo/v1/animals/*", getAnimal)
 HTTP.@register(ANIMAL_ROUTER, "PUT", "/api/zoo/v1/animals", updateAnimal)
 HTTP.@register(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/animals/*", deleteAnimal)
@@ -117,7 +118,7 @@ we automatically deserialize it and pass it on to the service function. And each
 doesn't need to worry about returning `HTTP.Response`s anymore, but can just focus on returning
 plain Julia objects/strings. The other huge advantage is it provides a clean separation of concerns
 between the "service" layer, which should really concern itself with application logic, and the
-"REST API" layer, which should take care of translating between a web data format (JSON).
+"REST API" layer, which should take care of translating between our model and a web data format (JSON).
 
 Let's take this one step further and allow multiple users to manage users, and add in one more
 custom handler to provide an authentication layer to our application. We can't just let anybody
@@ -154,7 +155,7 @@ function getAnimal(req::HTTP.Request)
     paths = HTTP.URIs.splitpath(req.target)
     userId = path[5] # /api/zoo/v1/users/x92jf-.../animals/10, get user UUID
     animalId = path[7] # /api/zoo/v1/users/x92jf-.../animals/10, get 10
-    return ANIMALS[userId][animalId]
+    return ANIMALS[userId][parse(Int, animalId)]
 end
 
 function updateAnimal(req::HTTP.Request, animal)
@@ -166,7 +167,7 @@ function deleteAnimal(req::HTTP.Request)
     paths = HTTP.URIs.splitpath(req.target)
     userId = path[5] # /api/zoo/v1/users/x92jf-.../animals/10, get user UUID
     animalId = path[7] # /api/zoo/v1/users/x92jf-.../animals/10, get 10
-    delete!(ANIMALS[userId], animal.id)
+    delete!(ANIMALS[userId], parse(Int, animal.id))
     return ""
 end
 
@@ -207,11 +208,11 @@ export serve, Handler, handle, RequestHandlerFunction, StreamHandlerFunction,
        RequestHandler, StreamHandler,
        Router, @register, register!
 
-using ..Messages, ..URIs, ..Streams, ..IOExtras, ..Servers
+using ..Messages, ..URIs, ..Streams, ..IOExtras, ..Servers, ..Sockets
 
 """
-HTTP.handle(handler::HTTP.RequestHandler, ::HTTP.Request) => HTTP.Response
-HTTP.handle(handler::HTTP.StreamHandler, ::HTTP.Stream)
+    HTTP.handle(handler::HTTP.RequestHandler, ::HTTP.Request) => HTTP.Response
+    HTTP.handle(handler::HTTP.StreamHandler, ::HTTP.Stream)
 
 Dispatch function used to handle incoming requests to a server. Can be
 overloaded by custom `HTTP.Handler` subtypes to implement custom "handling"
@@ -222,6 +223,8 @@ function handle end
 abstract type Handler end
 
 """
+    RequestHandler
+
 Abstract type representing objects that handle `HTTP.Request` and return `HTTP.Response` objects.
 
 See `?HTTP.RequestHandlerFunction` for an example of a concrete implementation.
@@ -229,6 +232,8 @@ See `?HTTP.RequestHandlerFunction` for an example of a concrete implementation.
 abstract type RequestHandler <: Handler end
 
 """
+    StreamHandler
+
 Abstract type representing objects that handle `HTTP.Stream` objects directly.
 
 See `?HTTP.StreamHandlerFunction` for an example of a concrete implementation.
@@ -236,7 +241,7 @@ See `?HTTP.StreamHandlerFunction` for an example of a concrete implementation.
 abstract type StreamHandler <: Handler end
 
 """
-RequestHandlerFunction(f)
+    RequestHandlerFunction(f)
 
 A function-wrapper type that is a subtype of `RequestHandler`. Takes a single function as an argument
 that should be of the form `f(::HTTP.Request) => HTTP.Response`
@@ -251,7 +256,7 @@ handle(h::RequestHandlerFunction, req::Request) = h.func(req)
 const HandlerFunction = RequestHandlerFunction
 
 """
-StreamHandlerFunction(f)
+    StreamHandlerFunction(f)
 
 A function-wrapper type that is a subtype of `StreamHandler`. Takes a single function as an argument
 that should be of the form `f(::HTTP.Stream) => Nothing`, i.e. it accepts a raw `HTTP.Stream`,
@@ -300,41 +305,42 @@ Optional keyword arguments:
     processing requests. e.g. to implement source IP filtering, rate-limiting, etc.
  - `readtimeout::Int=60`, close the connection if no data is recieved for this
     many seconds. Use readtimeout = 0 to disable.
- - `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
+ - `reuseaddr::Bool=false`, allow multiple server processes to listen on the same port. Only fully supported on linux; OSX will allow multiple server processes to listen, but only one will accept connections
  - `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
-    allows closing the server.
+    allows manual control over closing the server.
  - `connection_count::Ref{Int}`, reference to track the # of currently open connections.
  - `rate_limit::Rational{Int}=nothing"`, number of `connections//second` allowed
     per client IP address; excess connections are immediately closed. e.g. 5//1.
  - `stream::Bool=false`, the handler will operate on an `HTTP.Stream` instead of `HTTP.Request`
  - `verbose::Bool=false`, log connection information to `stdout`.
 
-e.g.
-```
-    HTTP.serve(; stream=true) do http::HTTP.Stream
-        @show http.message
-        @show HTTP.header(http, "Content-Type")
-        while !eof(http)
-            println("body data: ", String(readavailable(http)))
-        end
-        HTTP.setstatus(http, 404)
-        HTTP.setheader(http, "Foo-Header" => "bar")
-        startwrite(http)
-        write(http, "response body")
-        write(http, "more response body")
-        return
+# Examples
+```julia
+HTTP.serve(; stream=true) do http::HTTP.Stream
+    @show http.message
+    @show HTTP.header(http, "Content-Type")
+    while !eof(http)
+        println("body data: ", String(readavailable(http)))
     end
+    HTTP.setstatus(http, 404)
+    HTTP.setheader(http, "Foo-Header" => "bar")
+    startwrite(http)
+    write(http, "response body")
+    write(http, "more response body")
+    return
+end
 
-    # pass in own server socket to control shutdown
-    server = Sockets.serve(Sockets.InetAddr(parse(IPAddr, host), port))
-    @async HTTP.serve(f, host, port; server=server)
-    # close server which will stop HTTP.serve
-    close(server)
+# pass in own server socket to control shutdown
+using Sockets
+server = Sockets.serve(Sockets.InetAddr(parse(IPAddr, host), port))
+@async HTTP.serve(f, host, port; server=server)
+# close server which will stop HTTP.serve
+close(server)
 ```
 """
 function serve end
 
-function serve(f, host, port=8081; stream::Bool=false, kw...)
+function serve(f, host=Sockets.localhost, port=8081; stream::Bool=false, kw...)
     handler = f isa Handler ? f : stream ? StreamHandlerFunction(f) : RequestHandlerFunction(f)
     return Servers.listen(x->handle(handler, x), host, port; kw...)
 end
@@ -349,9 +355,9 @@ getprt(s) = isempty(s) ? "*" : s
 Base.show(io::IO, r::Route) = print(io, "HTTP.Route(method=$(getprt(r.method)), scheme=$(getprt(r.scheme)), host=$(getprt(r.host)), path=$(r.path))")
 
 """
-HTTP.Router(h::Handler)
-HTTP.Router(f::Function)
-HTTP.Router()
+    HTTP.Router(h::Handler)
+    HTTP.Router(f::Function)
+    HTTP.Router()
 
 An `HTTP.Handler` type that supports pattern matching request url paths to registered `HTTP.Handler`s.
 Can accept a default `Handler` or `Function` that will be used in case no other handlers match; by
@@ -414,9 +420,9 @@ function generate_gethandler(router, method, scheme, host, path, handler)
 end
 
 """
-HTTP.@register(r::Router, path, handler)
-HTTP.@register(r::Router, method::String, path, handler)
-HTTP.@register(r::Router, method::String, scheme::String, host::String, path, handler)
+    HTTP.@register(r::Router, path, handler)
+    HTTP.@register(r::Router, method::String, path, handler)
+    HTTP.@register(r::Router, method::String, scheme::String, host::String, path, handler)
 
 Function to map request urls matching `path` and optional method, scheme, host to another `handler::HTTP.Handler`.
 URL paths are registered one at a time, and multiple urls can map to the same handler.

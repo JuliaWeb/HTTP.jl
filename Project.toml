@@ -1,27 +1,24 @@
 name = "HTTP"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 authors = ["Jacob Quinn", "Sam O'Connor", "contributors: https://github.com/JuliaWeb/HTTP.jl/graphs/contributors"]
-version = "0.8.0"
+version = "0.8.4"
 
 [deps]
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
-Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 IniFile = "83e8ac13-25f8-5344-8a64-a9f2b223428f"
-JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 MbedTLS = "739be429-bea8-5141-9913-cc70e7f3736d"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
-Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
-MbedTLS = "v0.6.0"
+MbedTLS = "0.6.8, 0.7"
+julia = "0.7, 1"
 
 [extras]
 BufferedStreams = "e1450e63-4bb3-523b-b2a4-4ffa8c0fd77d"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-XMLDict = "228000da-037f-5747-90a9-8195ccbf91a5"
 
 [targets]
-test = ["Test", "JSON", "XMLDict", "Distributed", "BufferedStreams"]
+test = ["BufferedStreams", "Distributed", "JSON", "Test"]

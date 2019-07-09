@@ -2,11 +2,11 @@ module Strings
 
 export escapehtml, tocameldash, iso8859_1_to_utf8
 
-using ..IOExtras 
+using ..IOExtras
 import ..replace
 
 """
-escapeHTML(i::String)
+    escapeHTML(i::String)
 
 Returns a string with special HTML characters escaped: &, <, >, ", '
 """
