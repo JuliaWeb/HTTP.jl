@@ -61,7 +61,10 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
                           "Server likely closed the connection unexpectedly. " *
                           "Only an issue if unable to read the response and this error gets re-thrown. ",
                           exception=(write_error, catch_backtrace()))
-                    close(io)
+                    try
+                        close(io)
+                    catch e
+                    end
                 end
                 yield()
                 startread(http)
