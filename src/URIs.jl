@@ -273,9 +273,21 @@ uristring(u::URI) = uristring(u.scheme, u.userinfo, u.host, u.port,
 queryparams(uri::URI) = queryparams(uri.query)
 
 function queryparams(q::AbstractString)
-    Dict(unescapeuri(k) => unescapeuri(v)
-        for (k,v) in ([split(e, "=")..., ""][1:2]
-            for e in split(q, "&", keepempty=false)))
+    result = Dict()
+    for (k,v) in ([split(e, "=")..., ""][1:2] for e in split(q, "&", keepempty=false))
+        key = unescapeuri(k)
+        value = unescapeuri(v)
+        # RFC 3986 does not specify how duplicate keys are to be handled, store 
+        # duplicate keys in an array
+        if haskey(result, key)
+            isa(result[key], Vector) || (result[key] = [result[key]])
+            push!(result[key], value)
+        else
+            result[key] = value
+        end
+    end
+    
+    return result
 end
 
 # Validate known URI formats

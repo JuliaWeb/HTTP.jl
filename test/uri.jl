@@ -97,6 +97,8 @@ end
     @test "user:password" == parse(HTTP.URI, "https://user:password@httphost:9000/path1/path2;paramstring?q=a&p=r#frag").userinfo
 
     @test HTTP.queryparams(HTTP.URI("https://httphost/path1/path2;paramstring?q=a&p=r#frag")) == Dict("q"=>"a","p"=>"r")
+    @test HTTP.queryparams(HTTP.URI("https://httphost/path1/path2;paramstring?q=a1&q=a2#frag")) == Dict("q"=>["a1", "a2"])
+    @test HTTP.queryparams(HTTP.URI("https://httphost/path1/path2;paramstring?q[]=a1&q[]=a2#frag")) == Dict("q[]"=>["a1", "a2"])
     @test HTTP.queryparams(HTTP.URI("https://foo.net/?q=a&malformed")) == Dict("q"=>"a","malformed"=>"")
 
 
