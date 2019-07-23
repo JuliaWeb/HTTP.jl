@@ -110,9 +110,9 @@ mutable struct Multipart{T <: IO} <: IO
     name::String
 end
 
-function Multipart(f::Union{AbstractString, Nothing}, data::T, ct::AbstractString="", cte::AbstractString="", name::AbstractString="") where {T}
+function Multipart(f::Union{AbstractString, Nothing}, data::T, ct::AbstractString="", cte::AbstractString="", name::AbstractString="") where {T<:IO}
     f = f !== nothing ? String(f) : nothing
-    Multipart(f, data, String(ct), String(cte), String(name))
+    Multipart{T}(f, data, String(ct), String(cte), String(name))
 end
 
 function Base.show(io::IO, m::Multipart{T}) where {T}

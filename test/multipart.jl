@@ -11,4 +11,11 @@
 			@test false
 		end
 	end
+	
+	
+	@testset "constructor" begin
+		@testset "don't allow String for data" begin
+			@test_throws MethodError HTTP.Multipart(nothing, "some data", "plain/text", "", "testname")
+		end
+	end
 end
