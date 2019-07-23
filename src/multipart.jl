@@ -119,6 +119,7 @@ Base.read(m::Multipart{T}, n::Integer) where {T} = read(m.data, n)
 Base.read(m::Multipart{T}) where {T} = read(m.data)
 Base.mark(m::Multipart{T}) where {T} = mark(m.data)
 Base.reset(m::Multipart{T}) where {T} = reset(m.data)
+Base.seekstart(m::Multipart{T}) where {T} = seekstart(m.data)
 
 function writemultipartheader(io::IOBuffer, i::Multipart)
     write(io, "; filename=\"$(i.filename)\"\r\n")
