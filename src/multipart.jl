@@ -99,6 +99,10 @@ The `content_type` and `content_transfer_encoding` arguments allow the manual se
 of the `HTTP.sniff(data)` mimetype detection algorithm, whereas `Content-Transfer-Encoding` will be left out if not specified.
 """
 mutable struct Multipart{T <: IO} <: IO
+    # RFC 7578: The file name isn't mandatory for cases where the file name isn't 
+    # available or is meaningless or private; this might result, for example, when 
+    # selection or drag-and-drop is used or when the form data content is streamed 
+    # directly from a device.
     filename::Union{String, Nothing}
     data::T
     contenttype::String
@@ -111,7 +115,11 @@ function Multipart(f::Union{AbstractString, Nothing}, data::T, ct::AbstractStrin
     Multipart(f, data, String(ct), String(cte), String(name))
 end
 
-Base.show(io::IO, m::Multipart{T}) where {T} = print(io, "HTTP.Multipart(filename=\"$(m.filename)\", data=::$T, contenttype=\"$(m.contenttype)\", contenttransferencoding=\"$(m.contenttransferencoding)\")")
+function Base.show(io::IO, m::Multipart{T}) where {T}
+    items = ["data=::$T", "contenttype=\"$(m.contenttype)\"", "contenttransferencoding=\"$(m.contenttransferencoding)\")"]
+    isnothing(m.filename) || insert!(items, 1, "filename=\"$(m.filename)\"")
+    print(io, "HTTP.Multipart($(join(items, ", ")))")
+end
 
 Base.bytesavailable(m::Multipart{T}) where {T} = isa(m.data, IOStream) ? filesize(m.data) - position(m.data) : bytesavailable(m.data)
 Base.eof(m::Multipart{T}) where {T} = eof(m.data)
@@ -122,7 +130,7 @@ Base.reset(m::Multipart{T}) where {T} = reset(m.data)
 Base.seekstart(m::Multipart{T}) where {T} = seekstart(m.data)
 
 function writemultipartheader(io::IOBuffer, i::Multipart)
-    write(io, "; filename=\"$(i.filename)\"\r\n")
+    isnothing(i.filename) || write(io, "; filename=\"$(i.filename)\"\r\n")
     contenttype = i.contenttype == "" ? HTTP.sniff(i.data) : i.contenttype
     write(io, "Content-Type: $(contenttype)\r\n")
     write(io, i.contenttransferencoding == "" ? "\r\n" : "Content-Transfer-Encoding: $(i.contenttransferencoding)\r\n\r\n")
