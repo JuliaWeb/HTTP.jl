@@ -22,6 +22,7 @@ using HTTP
             "async.jl",
             "aws4.jl",
             "multipart.jl",
+            "parsemultipart.jl"
         ]
 
         println("Running $f tests...")

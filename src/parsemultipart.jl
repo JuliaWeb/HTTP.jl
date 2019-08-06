@@ -83,7 +83,7 @@ function parse_multipart_chunk!(d, chunk)
     push!(d, Multipart(filename, io, contenttype, "", name))
 end
 
-function parse_multipart_body(body::Vector{UInt8}, boundary)
+function parse_multipart_body(body::Vector{UInt8}, boundary)::Vector{Multipart}
     d = Multipart[]
     idxs = find_boundaries(body, boundary)
     for i in 1:length(idxs)-1
@@ -93,8 +93,12 @@ function parse_multipart_body(body::Vector{UInt8}, boundary)
     return d
 end
 
-function parse_multipart_form(req::Request)
+"""
+The order of the multipart form data in the request should be preserved
+[RFC7578 5.2](https://tools.ietf.org/html/rfc7578#section-5.2).
+"""
+function parse_multipart_form(req::Request)::Vector{Multipart}
     m = match(r"multipart/form-data; boundary=(.*)$", req["Content-Type"])
-    m === nothing && return nothing
-    parse_multipart_body(req.body, m[1])
+    isnothing(m) && return nothing
+    parse_multipart_body(payload(req), m[1])
 end

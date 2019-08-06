@@ -97,12 +97,28 @@ key-value pair of a Dict passed to an http request, like `HTTP.post(url; body=Di
 The `data` argument must be an `IO` type such as `IOStream`, or `IOBuffer`.
 The `content_type` and `content_transfer_encoding` arguments allow the manual setting of these multipart headers. `Content-Type` will default to the result
 of the `HTTP.sniff(data)` mimetype detection algorithm, whereas `Content-Transfer-Encoding` will be left out if not specified.
+
+filename SHOULD be included when the Multipart represents the contents of a file
+[RFC7578 4.2](https://tools.ietf.org/html/rfc7578#section-4.2)
+
+Content-Disposition set to "form-data" MUST be included with each Multipart.
+An additional "name" parameter MUST be included
+An optional "filename" parameter SHOULD be included if the contents of a file are sent
+This will be formatted such as:
+  Content-Disposition: form-data; name="user"; filename="myfile.txt"
+[RFC7578 4.2](https://tools.ietf.org/html/rfc7578#section-4.2)
+
+Content-Type for each Multipart is optional, but SHOULD be included if the contents
+of a file are sent.
+[RFC7578 4.4](https://tools.ietf.org/html/rfc7578#section-4.4)
+
+Content-Transfer-Encoding for each Multipart is deprecated
+[RFC7578 4.7](https://tools.ietf.org/html/rfc7578#section-4.7)
+
+Other Content- header fields MUST be ignored
+[RFC7578 4.8](https://tools.ietf.org/html/rfc7578#section-4.8)
 """
 mutable struct Multipart{T <: IO} <: IO
-    # RFC 7578: The file name isn't mandatory for cases where the file name isn't 
-    # available or is meaningless or private; this might result, for example, when 
-    # selection or drag-and-drop is used or when the form data content is streamed 
-    # directly from a device.
     filename::Union{String, Nothing}
     data::T
     contenttype::String
