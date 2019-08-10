@@ -6,7 +6,7 @@ const NAME_REGEX = r" name=\"(.*?)\""
 const FILENAME_REGEX = r" filename=\"(.*?)\""
 const CONTENTTYPE_REGEX = r"Content-Type: (\S*)"
 
-function find_boundary(bytes::AbstractVector{UInt8}, str, dashes; start::Int = 1)
+function find_boundary(bytes::AbstractVector{UInt8}, str::AbstractVector{UInt8}, dashes; start::Int = 1)
     l = length(bytes)
     i = start
     cons_dash = 0
@@ -34,7 +34,7 @@ function find_boundaries(bytes::AbstractVector{UInt8}, boundary; start::Int = 1)
     m =  match(r"^(-*)(.*)$", boundary)
     m === nothing && return nothing
     d, str = m[1], m[2]
-    find_boundaries(bytes, unsafe_wrap(Array{UInt8, 1}, String(str)), length(d); start = start)
+    find_boundaries(bytes, IOBuffer(str).data, length(d); start = start)
 end
 
 function find_returns(bytes::AbstractVector{UInt8})
