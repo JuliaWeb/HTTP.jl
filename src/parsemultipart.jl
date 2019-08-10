@@ -23,7 +23,7 @@ end
 function find_boundaries(bytes::AbstractVector{UInt8}, str, dashes; start = 1)
     idxs = Vector{Int}[]
     j = find_boundary(bytes, str, dashes; start = start)
-    while j !== nothing
+    while !isnothing(j)
         push!(idxs, j)
         j = find_boundary(bytes, str, dashes; start = j[2]+1)
     end
@@ -32,7 +32,7 @@ end
 
 function find_boundaries(bytes::AbstractVector{UInt8}, boundary; start::Int = 1)
     m =  match(r"^(-*)(.*)$", boundary)
-    m === nothing && return nothing
+    isnothing(m) && return nothing
     d, str = m[1], m[2]
     find_boundaries(bytes, IOBuffer(str).data, length(d); start = start)
 end
@@ -60,7 +60,7 @@ end
 
 function parse_multipart_chunk!(d, chunk)
     i = find_returns(chunk)
-    i == nothing && return
+    isnothing(i) && return
     description = String(view(chunk, 1:i[1]))
     content = view(chunk, i[2]+1:lastindex(chunk))
 
@@ -70,9 +70,9 @@ function parse_multipart_chunk!(d, chunk)
     match_filename    = match(FILENAME_REGEX, description)
     match_contenttype = match(CONTENTTYPE_REGEX, description)
 
-    name        = match_name !== nothing ? match_name[1] : return # Specifying name is mandatory
-    filename    = match_filename !== nothing ? match_filename[1] : nothing
-    contenttype = match_contenttype !== nothing ? match_contenttype[1] : "text/plain" # if content_type is not specified, the default text/plain is assumed
+    name        = !isnothing(match_name) ? match_name[1] : return # Specifying name is mandatory
+    filename    = !isnothing(match_filename) ? match_filename[1] : nothing
+    contenttype = !isnothing(match_contenttype) ? match_contenttype[1] : "text/plain" # if content_type is not specified, the default text/plain is assumed
 
     # remove trailing \r\n-- characters
     content = view(content, 1:length(content)-4)
