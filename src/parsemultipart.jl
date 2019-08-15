@@ -102,10 +102,7 @@ function chunk2Multipart(chunk)
     filename    = !isnothing(match_filename) ? match_filename[1] : nothing
     contenttype = !isnothing(match_contenttype) ? match_contenttype[1] : "text/plain" # if content_type is not specified, the default text/plain is assumed
 
-    io = IOBuffer()
-    write(io, content)
-    seekstart(io)
-    return Multipart(filename, io, contenttype, "", name)
+    return Multipart(filename, IOBuffer(content), contenttype, "", name)
 end
 
 function parse_multipart_body(body::AbstractVector{UInt8}, boundary::AbstractString)::Vector{Multipart}
