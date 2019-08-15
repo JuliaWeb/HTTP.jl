@@ -5,10 +5,10 @@ const HTAB_BYTE = 0x09 # \t
 const SPACE_BYTE = 0x20
 const RETURN_BYTES = [CR_BYTE, LF_BYTE]
 
-const FORMDATA_REGEX = r"Content-Disposition: form-data"
+const FORMDATA_REGEX = r"(?i)Content-Disposition: form-data"
 const NAME_REGEX = r" name=\"(.*?)\""
 const FILENAME_REGEX = r" filename=\"(.*?)\""
-const CONTENTTYPE_REGEX = r"Content-Type: (\S*)"
+const CONTENTTYPE_REGEX = r"(?i)Content-Type: (\S*[^;\s])"
 
 """
 Returns the first and last index of the next boundary delimiting a part, and if 
