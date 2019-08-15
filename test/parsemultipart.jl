@@ -23,11 +23,48 @@ function generateTestRequest()
 end
 
 
-@testset "parse_multipart_form" begin
-    multiparts = HTTP.parse_multipart_form(generateTestRequest())
-    @test 3 == length(multiparts)
-    @test "multipart.txt" === multiparts[1].filename
-    @test "not much to say\n" === String(read(multiparts[1].data))
-    @test "text/plain" === multiparts[1].contenttype
-    @test "namevalue" === multiparts[1].name
+@testset "parse multipart form-data" begin
+    @testset "find_boundary" begin
+        request = generateTestRequest()
+
+        # NOTE: this is the start of a "boundary delimiter line" and has two leading
+        # '-' characters prepended to the boundary delimiter from Content-Type header
+        delimiter = IOBuffer("----------------------------276518006714602527406457").data
+        # length of the delimiter, CRLF, and -1 for the end index to be the LF character
+        endIndexOffset = length(delimiter) + 2 - 1
+
+        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_boundary(generateTestBody().data, delimiter)
+        @test !isTerminatingDelimiter
+        @test 1 == startIndex
+        @test (startIndex + endIndexOffset) == endIndex
+
+        # the remaining "boundary delimiter lines" will have a CRLF preceding them
+        endIndexOffset += 2
+
+        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_boundary(generateTestBody().data, delimiter, start = startIndex + 1)
+        @test !isTerminatingDelimiter
+        @test 175 == startIndex
+        @test (startIndex + endIndexOffset) == endIndex
+
+        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_boundary(generateTestBody().data, delimiter, start = startIndex + 3)
+        @test !isTerminatingDelimiter
+        @test 279 == startIndex
+        @test (startIndex + endIndexOffset) == endIndex
+
+        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_boundary(generateTestBody().data, delimiter, start = startIndex + 3)
+        @test isTerminatingDelimiter
+        @test 396 == startIndex
+        # +2 because of the two additional '--' characters
+        @test (startIndex + endIndexOffset + 2) == endIndex
+    end
+
+
+    @testset "parse_multipart_form" begin
+        multiparts = HTTP.parse_multipart_form(generateTestRequest())
+        @test 3 == length(multiparts)
+        @test "multipart.txt" === multiparts[1].filename
+        @test "not much to say\n" === String(read(multiparts[1].data))
+        @test "text/plain" === multiparts[1].contenttype
+        @test "namevalue" === multiparts[1].name
+    end
 end
