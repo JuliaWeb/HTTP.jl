@@ -25,7 +25,7 @@ using HTTP
             "parsemultipart.jl"
         ]
 
-        println("Running $f tests...")
+        @info("Running $f tests...")
         include(f)
     end
 end
