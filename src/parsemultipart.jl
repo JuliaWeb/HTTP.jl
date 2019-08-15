@@ -29,6 +29,8 @@ function find_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::Abstract
             # boundary delimiter line start on a new line ...
             if i > 1
                 (i == 2 || bytes[i-2] != CR_BYTE || bytes[i-1] != LF_BYTE) && error("boundary delimiter found, but it was not the start of a line")
+                # the CRLF preceding the boundary delimiter is "conceptually attached
+                # to the boundary", so account for this with the index
                 i-=2
             end
 
@@ -87,6 +89,7 @@ function find_returns(bytes::AbstractVector{UInt8})
 end
 
 function chunk2Multipart(chunk)
+    @warn "" String(copy(chunk))
     i = find_returns(chunk)
     isnothing(i) && return
     description = String(view(chunk, 1:i[1]))
