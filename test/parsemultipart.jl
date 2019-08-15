@@ -25,7 +25,7 @@ end
 
 
 @testset "parse multipart form-data" begin
-    @testset "find_boundary" begin
+    @testset "find_multipart_boundary" begin
         request = generateTestRequest()
 
         # NOTE: this is the start of a "boundary delimiter line" and has two leading
@@ -35,7 +35,7 @@ end
         # length of the delimiter, CRLF, and -1 for the end index to be the LF character
         endIndexOffset = length(delimiter) + 2 - 1
 
-        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_boundary(body, delimiter)
+        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_multipart_boundary(body, delimiter)
         @test !isTerminatingDelimiter
         @test 1 == startIndex
         @test (startIndex + endIndexOffset) == endIndex
@@ -43,22 +43,22 @@ end
         # the remaining "boundary delimiter lines" will have a CRLF preceding them
         endIndexOffset += 2
 
-        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_boundary(body, delimiter, start = startIndex + 1)
+        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_multipart_boundary(body, delimiter, start = startIndex + 1)
         @test !isTerminatingDelimiter
         @test 175 == startIndex
         @test (startIndex + endIndexOffset) == endIndex
 
-        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_boundary(body, delimiter, start = startIndex + 3)
+        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_multipart_boundary(body, delimiter, start = startIndex + 3)
         @test !isTerminatingDelimiter
         @test 279 == startIndex
         @test (startIndex + endIndexOffset) == endIndex
 
-        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_boundary(body, delimiter, start = startIndex + 3)
+        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_multipart_boundary(body, delimiter, start = startIndex + 3)
         @test !isTerminatingDelimiter
         @test 396 == startIndex
         @test (startIndex + endIndexOffset) == endIndex
 
-        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_boundary(body, delimiter, start = startIndex + 3)
+        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_multipart_boundary(body, delimiter, start = startIndex + 3)
         @test isTerminatingDelimiter
         @test 600 == startIndex
         # +2 because of the two additional '--' characters

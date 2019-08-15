@@ -11,10 +11,10 @@ const FILENAME_REGEX = r" filename=\"(.*?)\""
 const CONTENTTYPE_REGEX = r"Content-Type: (\S*)"
 
 """
-Returns the first and last index of the boundary delimiting a part, and if the discovered
-boundary is the terminating boundary.
+Returns the first and last index of the next boundary delimiting a part, and if 
+the discovered boundary is the terminating boundary.
 """
-function find_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::AbstractVector{UInt8}; start::Int = 1)
+function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::AbstractVector{UInt8}; start::Int = 1)
     # The boundary delimiter line is prepended with two '-' characters
     # The boundary delimiter line starts on a new line, so must be preceded by a \r\n.
     # The boundary delimiter line ends with \r\n, and can have "optional linear whitespace" between
@@ -56,10 +56,10 @@ function find_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::Abstract
     error("boundary delimiter not found")
 end
 
-function find_boundaries(bytes::AbstractVector{UInt8}, boundary::AbstractVector{UInt8}; start = 1)
+function find_multipart_boundaries(bytes::AbstractVector{UInt8}, boundary::AbstractVector{UInt8}; start = 1)
     idxs = []
     while true
-        (isTerminatingDelimiter, i, endIndex) = find_boundary(bytes, boundary; start = start)
+        (isTerminatingDelimiter, i, endIndex) = find_multipart_boundary(bytes, boundary; start = start)
         push!(idxs, (i, endIndex))
         isTerminatingDelimiter && break
         start = endIndex + 1
@@ -110,7 +110,7 @@ end
 
 function parse_multipart_body(body::AbstractVector{UInt8}, boundary::AbstractString)::Vector{Multipart}
     multiparts = Multipart[]
-    idxs = find_boundaries(body, IOBuffer("--$(boundary)").data)
+    idxs = find_multipart_boundaries(body, IOBuffer("--$(boundary)").data)
     length(idxs) > 1 || (return multiparts)
 
     for i in 1:length(idxs)-1
