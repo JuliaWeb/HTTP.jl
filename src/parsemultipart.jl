@@ -67,39 +67,37 @@ function find_multipart_boundaries(bytes::AbstractVector{UInt8}, boundary::Abstr
     return idxs
 end
 
-function find_returns(bytes::AbstractVector{UInt8})
-    l = length(bytes)
+"""
+Headers are separated from the body by CRLFCRLF
+[RFC2046 5.1](https://tools.ietf.org/html/rfc2046#section-5.1)
+[RFC822 3.1](https://tools.ietf.org/html/rfc822#section-3.1)
+"""
+function find_header_boundary(bytes::AbstractVector{UInt8})
+    delimiter = UInt8[CR_BYTE, LF_BYTE, CR_BYTE, LF_BYTE]
+    length(delimiter) > length(bytes) && (return nothing)
+    
+    l = length(bytes) - length(delimiter) + 1
     i = 1
-    returns = UInt8[]
-    while i <= l
-        @inbounds byte = bytes[i]
-        if byte in RETURN_BYTES
-            push!(returns, byte)
-            if i==l || !(bytes[i+1] in RETURN_BYTES)
-                len = length(returns)
-                uniquelen = length(unique(returns))
-                len >= 2 * uniquelen && return [i-len, i]
-            end
-        else
-            isempty(returns) || empty!(returns)
-        end
+    endIndex = length(delimiter)
+    while (i <= l) 
+        bytes[i:endIndex] == delimiter && (return (1, endIndex))
         i += 1
+        endIndex += 1
     end
-    nothing
+    error("no delimiter found separating header from multipart body")
 end
 
 function chunk2Multipart(chunk)
-    @warn "" String(copy(chunk))
-    i = find_returns(chunk)
-    isnothing(i) && return
-    description = String(view(chunk, 1:i[1]))
-    content = view(chunk, i[2]+1:lastindex(chunk))
+    (startIndex, endIndex) = find_header_boundary(chunk)
 
-    occursin(FORMDATA_REGEX, description) || return # Specifying content disposition is mandatory
+    headers = String(view(chunk, startIndex:endIndex))
+    content = view(chunk, endIndex+1:lastindex(chunk))
 
-    match_name        = match(NAME_REGEX, description)
-    match_filename    = match(FILENAME_REGEX, description)
-    match_contenttype = match(CONTENTTYPE_REGEX, description)
+    occursin(FORMDATA_REGEX, headers) || return # Specifying content disposition is mandatory
+
+    match_name        = match(NAME_REGEX, headers)
+    match_filename    = match(FILENAME_REGEX, headers)
+    match_contenttype = match(CONTENTTYPE_REGEX, headers)
 
     name        = !isnothing(match_name) ? match_name[1] : return # Specifying name is mandatory
     filename    = !isnothing(match_filename) ? match_filename[1] : nothing
