@@ -1,6 +1,17 @@
 using HTTP
 
 @testset "HTTP.download" begin
+    @testset "Update Period" begin
+        @test_logs (:info, "Downloading") HTTP.download(
+        "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis";)
+        @test_logs (:info, "Downloading") HTTP.download(
+        "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis";
+        update_periods=0.5)
+        @test_logs HTTP.download(
+        "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis";
+        update_periods=Inf)
+    end
+
     @testset "Content-Disposition" begin
         invalid_content_disposition_fn = HTTP.download(
             "http://test.greenbytes.de/tech/tc2231/attonlyquoted.asis")
