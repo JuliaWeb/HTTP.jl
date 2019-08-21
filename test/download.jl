@@ -9,7 +9,7 @@ using HTTP
         update_periods=0.5)
         @test_logs HTTP.download(
         "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis";
-        update_periods=Inf)
+        update_period=Inf)
     end
 
     @testset "Content-Disposition" begin
