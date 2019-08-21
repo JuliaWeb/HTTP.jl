@@ -139,8 +139,9 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
                 end
             end
         end
-        report_callback()
-        
+        if !isinf(update_period)
+            report_callback()
+        end
     end
     file
 end
