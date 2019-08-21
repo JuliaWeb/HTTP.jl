@@ -6,7 +6,7 @@ using HTTP
         "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis";)
         @test_logs (:info, "Downloading") HTTP.download(
         "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis";
-        update_periods=0.5)
+        update_period=0.5)
         @test_logs HTTP.download(
         "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis";
         update_period=Inf)
