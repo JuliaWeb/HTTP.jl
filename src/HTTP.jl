@@ -154,7 +154,7 @@ Cookie options
 
  - `cookies::Union{Bool, Dict{String, String}} = false`, enable cookies, or alternatively,
         pass a `Dict{String, String}` of name-value pairs to manually pass cookies
- - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`, 
+ - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`,
 
 
 Canonicalization options
@@ -329,15 +329,15 @@ Response Body to be read from) an `IO` stream.
 
 e.g. Streaming an audio file to the `vlc` player:
 ```julia
-HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
+HTTP.open(:GET, "https://tinyurl.com/bach-cello-suite-1-ogg") do http
     open(`vlc -q --play-and-exit --intf dummy -`, "w") do vlc
         write(vlc, http)
     end
 end
 ```
 """
-open(f::Function, method::String, url, headers=Header[]; kw...)::Response =
-    request(method, url, headers, nothing; iofunction=f, kw...)
+open(f::Function, method::Union{String,Symbol}, url, headers=Header[]; kw...)::Response =
+    request(string(method), url, headers, nothing; iofunction=f, kw...)
 
 """
     HTTP.openraw(method, url, [, headers])::Tuple{TCPSocket, Response, ByteView}
@@ -361,7 +361,7 @@ frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
 write(socket, frame)
 ```
 """
-function openraw(method::String, url, headers=Header[]; kw...)::Tuple{IO, Response}
+function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tuple{IO, Response}
     socketready = Channel{Tuple{IO, Response}}(0)
     @async HTTP.open(method, url, headers; kw...) do http
         HTTP.startread(http)
