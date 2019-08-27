@@ -16,7 +16,7 @@ import ..Form
 
 Construct a [`Request`](@ref) object and set mandatory headers.
 """
-struct MessageLayer{Next <: Layer} <: Layer end
+struct MessageLayer{Next <: Layer} <: Layer{Next} end
 export MessageLayer
 
 function request(::Type{MessageLayer{Next}},

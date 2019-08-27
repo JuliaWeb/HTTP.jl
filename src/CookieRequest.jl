@@ -15,7 +15,7 @@ const default_cookiejar = Dict{String, Set{Cookie}}()
 Add locally stored Cookies to the request headers.
 Store new Cookies found in the response headers.
 """
-abstract type CookieLayer{Next <: Layer} <: Layer end
+abstract type CookieLayer{Next <: Layer} <: Layer{Next} end
 export CookieLayer
 
 function request(::Type{CookieLayer{Next}},

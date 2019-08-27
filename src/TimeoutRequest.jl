@@ -9,7 +9,7 @@ import ..@debug, ..DEBUG_LEVEL
 
 Close `IO` if no data has been received for `timeout` seconds.
 """
-abstract type TimeoutLayer{Next <: Layer} <: Layer end
+abstract type TimeoutLayer{Next <: Layer} <: Layer{Next} end
 export TimeoutLayer
 
 function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;

@@ -1,5 +1,3 @@
-using HTTP
-
 @testset "HTTP.ascii" begin
 
     lc = HTTP.Messages.ascii_lc

@@ -1,8 +1,19 @@
 using HTTP, Test, JSON
+include("resources/TestRequest.jl")
+using ..TestRequest
+
 
 @testset "HTTP.Client" begin
 
 status(r) = r.status
+@testset "Custom HTTP Stack" begin
+   @testset "Low-level Request" begin
+        custom_stack = insert(stack(), StreamLayer, TestLayer)
+        result = request(custom_stack, "GET", "https://httpbin.org/ip")
+
+        @test status(result) == 200
+    end
+end
 
 for sch in ("http", "https")
     println("running $sch client tests...")
@@ -238,5 +249,4 @@ end
         end
     end
 end
-
 end # @testset "HTTP.Client"
