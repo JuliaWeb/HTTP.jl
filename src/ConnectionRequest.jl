@@ -19,7 +19,7 @@ Otherwise leave it open so that it can be reused.
 `IO` related exceptions from `Base` are wrapped in `HTTP.IOError`.
 See [`isioerror`](@ref).
 """
-abstract type ConnectionPoolLayer{Next <: Layer} <: Layer end
+abstract type ConnectionPoolLayer{Next <: Layer} <: Layer{Next} end
 export ConnectionPoolLayer
 
 function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;

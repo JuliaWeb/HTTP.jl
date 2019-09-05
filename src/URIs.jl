@@ -145,7 +145,6 @@ URI(str::AbstractString) = parse_uri_reference(str)
 Base.parse(::Type{URI}, str::AbstractString) = parse_uri_reference(str)
 
 function ensurevalid(uri::URI)
-
     # https://tools.ietf.org/html/rfc3986#section-3.1
     # ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
     if !(uri.scheme === absent ||

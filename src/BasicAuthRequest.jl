@@ -12,7 +12,7 @@ import ..@debug, ..DEBUG_LEVEL
 
 Add `Authorization: Basic` header using credentials from url userinfo.
 """
-abstract type BasicAuthLayer{Next <: Layer} <: Layer end
+abstract type BasicAuthLayer{Next <: Layer} <: Layer{Next} end
 export BasicAuthLayer
 
 function request(::Type{BasicAuthLayer{Next}},
