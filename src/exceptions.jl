@@ -1,7 +1,7 @@
 struct LayerNotFoundException <: Exception
-	var::String
+    var::String
 end
 
 function Base.showerror(io::IO, e::LayerNotFoundException)
-	println(io, typeof(e), ": ", e.var)
+    println(io, typeof(e), ": ", e.var)
 end
