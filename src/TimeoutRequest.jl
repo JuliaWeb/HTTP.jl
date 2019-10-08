@@ -28,7 +28,7 @@ function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
 
     try
         return request(Next, io, req, body; kw...)
-    finally 
+    finally
         wait_for_timeout[] = false
     end
 end

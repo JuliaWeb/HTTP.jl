@@ -16,7 +16,7 @@ function request(::Type{CanonicalizeLayer{Next}},
                  method::String, url, headers, body; kw...) where Next
 
     headers = canonicalizeheaders(headers)
-    
+
     res = request(Next, method, url, headers, body; kw...)
 
     res.headers = canonicalizeheaders(res.headers)
