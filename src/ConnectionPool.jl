@@ -258,7 +258,9 @@ function IOExtras.closewrite(t::Transaction)
     t.c.writebusy = false
     t.c.writecount += 1                           ;@debug 2 "🗣  Write done: $t"
     notify(t.c.writedone)
+    lock(poolcondition)
     notify(poolcondition)
+    unlock(poolcondition)
 
     @ensure !iswritable(t)
     return
@@ -294,7 +296,9 @@ function IOExtras.closeread(t::Transaction)
     t.c.readbusy = false
     t.c.readcount += 1
     notify(t.c.readdone)                          ;@debug 2 "✉️  Read done:  $t"
+    lock(poolcondition)
     notify(poolcondition)
+    unlock(poolcondition)
 
     if !isbusy(t.c)
         @async monitor_idle_connection(t.c)
@@ -339,7 +343,9 @@ function Base.close(c::Connection)
     if bytesavailable(c) > 0
         purge(c)
     end
+    lock(poolcondition)
     notify(poolcondition)
+    unlock(poolcondition)
     return
 end
 
@@ -369,7 +375,7 @@ the `Connection` can be reused for reading.
 """
 const pool = Vector{Connection}()
 const poollock = ReentrantLock()
-const poolcondition = Condition()
+const poolcondition = Threads.Condition()
 
 """
     closeall()
@@ -383,7 +389,9 @@ function closeall()
     end
     empty!(pool)
     unlock(poollock)
+    lock(poolcondition)
     notify(poolcondition)
+    unlock(poolcondition)
     return
 end
 
@@ -536,7 +544,9 @@ function getconnection(::Type{Transaction{T}},
         end
 
         # Wait for `closewrite` or `close` to signal that a connection is ready.
+        lock(poolcondition)
         wait(poolcondition)
+        unlock(poolcondition)
     end
 end
 
