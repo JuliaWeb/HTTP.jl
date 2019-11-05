@@ -305,22 +305,15 @@ end
 """
 function request(method, url, h=Header[], b=nobody;
                 headers=h, body=b, query=nothing, kw...)::Response
-    uri = URI(url)
-    if query !== nothing
-        uri = merge(uri, query=query)
-    end
-
-    return request(HTTP.stack(;kw...), string(method), uri, mkheaders(headers), body; kw...)
+    request(HTTP.stack(;kw...), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
 function request(stack::Type{<:Layer}, method, url, h=Header[], b=nobody;
                 headers=h, body=b, query=nothing, kw...)::Response
-    uri = URI(url)
-    if query !== nothing
-        uri = merge(uri, query=query)
-    end
-
-    return request(stack, string(method), uri, mkheaders(headers), body; kw...)
+    request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
+
+request_uri(url, query) = merge(URI(url); query=query)
+request_uri(url, ::Nothing) = URI(url)
 
 """
     HTTP.open(method, url, [,headers]) do io
