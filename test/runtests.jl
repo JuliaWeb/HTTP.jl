@@ -16,7 +16,7 @@ using JSON
               "cookies.jl",
               "parser.jl",
               "loopback.jl",
-              "WebSockets.jl",
+              "websockets.jl",
               "messages.jl",
               "handlers.jl",
               "server.jl",
