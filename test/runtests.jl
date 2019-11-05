@@ -7,7 +7,7 @@ using JSON
 
 @testset "HTTP" begin
     for f in ["ascii.jl",
-              "issue_288.jl",
+              "chunking.jl",
               "utils.jl",
               "client.jl",
               "sniff.jl",
