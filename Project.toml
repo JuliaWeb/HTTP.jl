@@ -19,6 +19,7 @@ BufferedStreams = "e1450e63-4bb3-523b-b2a4-4ffa8c0fd77d"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [targets]
-test = ["BufferedStreams", "Distributed", "JSON", "Test"]
+test = ["BufferedStreams", "Distributed", "JSON", "Test", "Unitful"]
