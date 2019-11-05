@@ -23,8 +23,8 @@ using JSON
               "async.jl",
               "aws4.jl",
               "insert_layers.jl",
-              "mwe.jl"]
-
+              "mwe.jl",
+              "uri_benchmark.jl"]
         println("Running $f tests...")
         include(f)
     end
