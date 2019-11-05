@@ -448,7 +448,7 @@ The minimal request execution stack is:
 stack = MessageLayer{ConnectionPoolLayer{StreamLayer}}
 ```
 
-The figure below illustrates the full request exection stack and its
+The figure below illustrates the full request execution stack and its
 relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 [`HTTP.Stream`](@ref) and the [`HTTP.ConnectionPool`](@ref).
 
