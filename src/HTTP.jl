@@ -1,8 +1,8 @@
 module HTTP
 
-export startwrite, startread, closewrite, closeread, stack, insert, AWS4AuthLayer, 
+export startwrite, startread, closewrite, closeread, stack, insert, AWS4AuthLayer,
     BasicAuthLayer, CanonicalizeLayer, ConnectionPoolLayer, ContentTypeDetectionLayer,
-    DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer, RetryLayer, StreamLayer, 
+    DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer, RetryLayer, StreamLayer,
     TimeoutLayer
 
 const DEBUG_LEVEL = Ref(0)
@@ -160,7 +160,7 @@ Cookie options
 
  - `cookies::Union{Bool, Dict{String, String}} = false`, enable cookies, or alternatively,
         pass a `Dict{String, String}` of name-value pairs to manually pass cookies
- - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`, 
+ - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`,
 
 
 Canonicalization options
@@ -303,17 +303,17 @@ HTTP.open("POST", "http://music.com/play") do io
 end
 ```
 """
+function request(method, url, h=Header[], b=nobody;
+                 headers=h, body=b, query=nothing, kw...)::Response
+    return request(HTTP.stack(;kw...), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+end
 function request(stack::Type{<:Layer}, method, url, h=Header[], b=nobody;
-                headers=h, body=b, query=nothing, kw...)::Response
-    uri = URI(url)
-    if query !== nothing
-        uri = merge(uri, query=query)
-    end
-
-    return request(stack, string(method), uri, mkheaders(headers), body; kw...)
+                 headers=h, body=b, query=nothing, kw...)::Response
+    return request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
 
-request(a...; kw...)::Response = return request(HTTP.stack(;kw...), a...; kw...)
+request_uri(url, query) = merge(URI(url); query=query)
+request_uri(url, ::Nothing) = URI(url)
 
 """
     HTTP.open(method, url, [,headers]) do io
