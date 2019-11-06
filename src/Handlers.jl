@@ -66,7 +66,7 @@ Great! At this point, we could spin up our server and let users start managing t
 HTTP.serve(ANIMAL_ROUTER, Sockets.localhost, 8081)
 ```
 
-Now, you may have noticed that there was a bit of repitition in our "service" functions, particularly
+Now, you may have noticed that there was a bit of repetition in our "service" functions, particularly
 with regards to the JSON serialization/deserialization. Perhaps we can simplify things by writing
 a custom "JSONHandler" to do some of the repetitive work for us.
 ```julia
@@ -113,7 +113,7 @@ instead of our router:
 HTTP.serve(JSONHandler, Sockets.localhost, 8081)
 ```
 
-Our `JSONHandler` is nice because it saves us a bunch of repitition: if a request body comes in,
+Our `JSONHandler` is nice because it saves us a bunch of repetition: if a request body comes in,
 we automatically deserialize it and pass it on to the service function. And each service function
 doesn't need to worry about returning `HTTP.Response`s anymore, but can just focus on returning
 plain Julia objects/strings. The other huge advantage is it provides a clean separation of concerns
@@ -183,7 +183,7 @@ function AuthHandler(req)
 end
 ```
 
-And our mofidified server invocation:
+And our modified server invocation:
 ```julia
 HTTP.serve(AuthHandler, Sockets.localhost, 8081)
 ```
@@ -200,7 +200,7 @@ Let's review what's going on here:
     HTTP response, signalling that the request is unauthorized
 
 Voila, hopefully that helps provide a slightly-more-than-trivial example of utilizing the
-HTTP.Handler framework in conjuction with running an HTTP server.
+HTTP.Handler framework in conjunction with running an HTTP server.
 """
 module Handlers
 
@@ -303,7 +303,7 @@ Optional keyword arguments:
     after the first request.
  - `tcpisvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
     processing requests. e.g. to implement source IP filtering, rate-limiting, etc.
- - `readtimeout::Int=60`, close the connection if no data is recieved for this
+ - `readtimeout::Int=60`, close the connection if no data is received for this
     many seconds. Use readtimeout = 0 to disable.
  - `reuseaddr::Bool=false`, allow multiple server processes to listen on the same port. Only fully supported on linux; OSX will allow multiple server processes to listen, but only one will accept connections
  - `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;

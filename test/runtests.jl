@@ -7,7 +7,7 @@ using JSON
 
 @testset "HTTP" begin
     for f in ["ascii.jl",
-              "issue_288.jl",
+              "chunking.jl",
               "utils.jl",
               "client.jl",
               "sniff.jl",
@@ -16,14 +16,14 @@ using JSON
               "cookies.jl",
               "parser.jl",
               "loopback.jl",
-              "WebSockets.jl",
+              "websockets.jl",
               "messages.jl",
               "handlers.jl",
               "server.jl",
               "async.jl",
               "aws4.jl",
-              "insert_layers.jl"]
-
+              "insert_layers.jl",
+              "mwe.jl"]
         println("Running $f tests...")
         include(f)
     end

@@ -27,7 +27,7 @@ to parse the `HTTP.URI` directly. The `HTTP.URI` constructors will automatically
 `query` arguments, typically provided as `"key"=>"value"::Pair` or `Dict("key"=>"value")`.
 Note that multiple values for a single query key can provided like `Dict("key"=>["value1", "value2"])`.
 
-The `URI` struct stores the compelte URI in the `uri::String` field and the
+The `URI` struct stores the complete URI in the `uri::String` field and the
 component parts in the following `SubString` fields:
   * `scheme`, e.g. `"http"` or `"https"`
   * `userinfo`, e.g. `"username:password"`

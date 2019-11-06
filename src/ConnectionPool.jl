@@ -47,7 +47,7 @@ Fields:
 - `host::String`
 - `port::String`, exactly as specified in the URI (i.e. may be empty).
 - `pipeline_limit`, number of requests to send before waiting for responses.
-- `idle_timeout`, No. of sconds to maintain connection after last transaction.
+- `idle_timeout`, No. of seconds to maintain connection after last transaction.
 - `peerport`, remote TCP port number (used for debug messages).
 - `localport`, local TCP port number (used for debug messages).
 - `io::T`, the `TCPSocket` or `SSLContext.
@@ -59,7 +59,7 @@ Fields:
 - `writedone`, signal that `writecount` was incremented.
 - `readcount`, number of Messages that have been read.
 - `readdone`, signal that `readcount` was incremented.
-- `timestamp`, time data was last recieved.
+- `timestamp`, time data was last received.
 """
 mutable struct Connection{T <: IO}
     host::String
