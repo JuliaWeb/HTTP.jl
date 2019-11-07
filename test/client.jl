@@ -199,3 +199,47 @@ end
         close(socket)
     end
 end
+
+@testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
+    headers = Dict("User-Agent" => "HTTP.jl")
+    query = Dict("hello" => "world")
+    body = UInt8[1, 2, 3]
+    stack = HTTP.stack()
+    function test(r, m)
+        @test r.status == 200
+        d = JSON.parse(IOBuffer(HTTP.payload(r)))
+        @test d["headers"]["User-Agent"] == "HTTP.jl"
+        @test d["data"] == "\x01\x02\x03"
+        @test endswith(d["url"], "?hello=world")
+        @test d["method"] == m
+    end
+    for uri in ("https://httpbin.org/anything", HTTP.URI("https://httpbin.org/anything"))
+        # HTTP.request
+        test(HTTP.request("GET", uri; headers=headers, body=body, query=query), "GET")
+        test(HTTP.request("GET", uri, headers; body=body, query=query), "GET")
+        test(HTTP.request("GET", uri, headers, body; query=query), "GET")
+        !isa(uri, HTTP.URI) && test(HTTP.request(stack, "GET", uri; headers=headers, body=body, query=query), "GET")
+        test(HTTP.request(stack, "GET", uri, headers; body=body, query=query), "GET")
+        test(HTTP.request(stack, "GET", uri, headers, body; query=query), "GET")
+        # HTTP.get
+        test(HTTP.get(uri; headers=headers, body=body, query=query), "GET")
+        test(HTTP.get(uri, headers; body=body, query=query), "GET")
+        test(HTTP.get(uri, headers, body; query=query), "GET")
+        # HTTP.put
+        test(HTTP.put(uri; headers=headers, body=body, query=query), "PUT")
+        test(HTTP.put(uri, headers; body=body, query=query), "PUT")
+        test(HTTP.put(uri, headers, body; query=query), "PUT")
+        # HTTP.post
+        test(HTTP.post(uri; headers=headers, body=body, query=query), "POST")
+        test(HTTP.post(uri, headers; body=body, query=query), "POST")
+        test(HTTP.post(uri, headers, body; query=query), "POST")
+        # HTTP.patch
+        test(HTTP.patch(uri; headers=headers, body=body, query=query), "PATCH")
+        test(HTTP.patch(uri, headers; body=body, query=query), "PATCH")
+        test(HTTP.patch(uri, headers, body; query=query), "PATCH")
+        # HTTP.delete
+        test(HTTP.delete(uri; headers=headers, body=body, query=query), "DELETE")
+        test(HTTP.delete(uri, headers; body=body, query=query), "DELETE")
+        test(HTTP.delete(uri, headers, body; query=query), "DELETE")
+    end
+end
