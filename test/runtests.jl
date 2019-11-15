@@ -10,6 +10,7 @@ using JSON
               "chunking.jl",
               "utils.jl",
               "client.jl",
+              "multipart.jl",
               "sniff.jl",
               "uri.jl",
               "url.jl",
