@@ -24,6 +24,12 @@ reading.
 """
 module ConnectionPool
 
+@static if VERSION >= v"1.3-DEV"
+    const Cond = Threads.Condition
+else
+    const Cond = Condition
+end
+
 export Connection, Transaction,
        getconnection, getrawstream, inactiveseconds
 
@@ -74,10 +80,10 @@ mutable struct Connection{T <: IO}
     sequence::Int
     writecount::Int
     writebusy::Bool
-    writedone::Condition
+    writedone::Cond
     readcount::Int
     readbusy::Bool
-    readdone::Condition
+    readdone::Cond
     timestamp::Float64
 end
 
@@ -104,8 +110,8 @@ Connection(host::AbstractString, port::AbstractString,
                   peerport(io), localport(io),
                   io, PipeBuffer(),
                   -1,
-                  0, false, Condition(),
-                  0, false, Condition(),
+                  0, false, Cond(),
+                  0, false, Cond(),
                   time())
 
 Connection(io; require_ssl_verification::Bool=true) =
@@ -369,7 +375,7 @@ the `Connection` can be reused for reading.
 """
 const pool = Vector{Connection}()
 const poollock = ReentrantLock()
-const poolcondition = Condition()
+const poolcondition = Cond()
 
 """
     closeall()
