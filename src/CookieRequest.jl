@@ -7,7 +7,11 @@ using ..Cookies
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL
 
-const default_cookiejar = Dict{String, Set{Cookie}}()
+const default_cookiejar = [Dict{String, Set{Cookie}}()]
+
+function __init__()
+    Threads.resize_nthreads!(default_cookiejar)
+end
 
 """
     request(CookieLayer, method, ::URI, headers, body) -> HTTP.Response
@@ -21,7 +25,7 @@ export CookieLayer
 function request(::Type{CookieLayer{Next}},
                  method::String, url::URI, headers, body;
                  cookies::Union{Bool, Dict{String, String}}=Dict{String, String}(),
-                 cookiejar::Dict{String, Set{Cookie}}=default_cookiejar,
+                 cookiejar::Dict{String, Set{Cookie}}=default_cookiejar[Threads.threadid()],
                  kw...) where Next
 
     hostcookies = get!(cookiejar, url.host, Set{Cookie}())

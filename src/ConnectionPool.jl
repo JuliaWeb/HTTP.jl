@@ -258,7 +258,7 @@ function IOExtras.closewrite(t::Transaction)
     t.c.writebusy = false
     t.c.writecount += 1                           ;@debug 2 "🗣  Write done: $t"
     notify(t.c.writedone)
-    notify(poolcondition)
+    notify(poolcondition[Threads.threadid()])
 
     @ensure !iswritable(t)
     return
@@ -294,7 +294,7 @@ function IOExtras.closeread(t::Transaction)
     t.c.readbusy = false
     t.c.readcount += 1
     notify(t.c.readdone)                          ;@debug 2 "✉️  Read done:  $t"
-    notify(poolcondition)
+    notify(poolcondition[Threads.threadid()])
 
     if !isbusy(t.c)
         @async monitor_idle_connection(t.c)
@@ -339,7 +339,7 @@ function Base.close(c::Connection)
     if bytesavailable(c) > 0
         purge(c)
     end
-    notify(poolcondition)
+    notify(poolcondition[Threads.threadid()])
     return
 end
 
@@ -367,9 +367,9 @@ for writing (to send the next Request). When the `request` function
 has read the Response Message it calls `closeread` to signal that
 the `Connection` can be reused for reading.
 """
-const pool = Vector{Connection}()
-const poollock = ReentrantLock()
-const poolcondition = Condition()
+const pool = [Vector{Connection}()]
+const poollock = [ReentrantLock()]
+const poolcondition = [Condition()]
 
 """
     closeall()
@@ -377,13 +377,13 @@ const poolcondition = Condition()
 Close all connections in `pool`.
 """
 function closeall()
-    lock(poollock)
-    for c in pool
-        close(c)
+    lock(poollock[Threads.threadid()]) do
+        for c in pool[Threads.threadid()]
+            close(c)
+        end
+        empty!(pool[Threads.threadid()])
     end
-    empty!(pool)
-    unlock(poollock)
-    notify(poolcondition)
+    notify(poolcondition[Threads.threadid()])
     return
 end
 
@@ -407,7 +407,7 @@ function findwritable(T::Type,
                c.require_ssl_verification == require_ssl_verification &&
                c.writecount < reuse_limit &&
                c.writecount - c.readcount < pipeline_limit + 1 &&
-               isopen(c.io)), pool)
+               isopen(c.io)), pool[Threads.threadid()])
 end
 
 """
@@ -426,7 +426,7 @@ function findoverused(T::Type,
                c.port == port &&
                c.readcount >= reuse_limit &&
                !c.readbusy &&
-               isopen(c.io)), pool)
+               isopen(c.io)), pool[Threads.threadid()])
 end
 
 """
@@ -445,7 +445,7 @@ function findall(T::Type,
                c.port == port &&
                c.pipeline_limit == pipeline_limit &&
                c.require_ssl_verification == require_ssl_verification &&
-               isopen(c.io)), pool)
+               isopen(c.io)), pool[Threads.threadid()])
 end
 
 """
@@ -454,7 +454,7 @@ end
 Remove closed connections from `pool`.
 """
 function purge()
-    for c in pool
+    for c in pool[Threads.threadid()]
         if c.idle_timeout > 0 &&
           !c.readbusy &&
           !c.writebusy &&
@@ -465,7 +465,7 @@ function purge()
     end
 
     isdeletable(c) = !isopen(c.io) && (@debug 1 "🗑  Deleted:        $c"; true)
-    deleteat!(pool, map(isdeletable, pool))
+    deleteat!(pool[Threads.threadid()], map(isdeletable, pool[Threads.threadid()]))
 end
 
 """
@@ -486,9 +486,8 @@ function getconnection(::Type{Transaction{T}},
 
     while true
 
-        lock(poollock)
+        lock(poollock[Threads.threadid()])
         try
-
             # Close connections that have reached the reuse limit...
             if reuse_limit != nolimit
                 for c in findoverused(T, host, port, reuse_limit)
@@ -521,7 +520,7 @@ function getconnection(::Type{Transaction{T}},
                                pipeline_limit, idle_timeout,
                                require_ssl_verification,
                                io)
-                push!(pool, c)                ;@debug 1 "🔗  New:            $c"
+                push!(pool[Threads.threadid()], c)                ;@debug 1 "🔗  New:            $c"
                 return client_transaction(c)
             end
 
@@ -530,13 +529,12 @@ function getconnection(::Type{Transaction{T}},
                 c = rand(writable)             ;@debug 2 "⇆  Shared:         $c"
                 return client_transaction(c)
             end
-
         finally
-            unlock(poollock)
+            unlock(poollock[Threads.threadid()])
         end
 
         # Wait for `closewrite` or `close` to signal that a connection is ready.
-        wait(poolcondition)
+        wait(poolcondition[Threads.threadid()])
     end
 end
 
@@ -686,27 +684,34 @@ function tcpstatus(c::Connection)
 end
 
 function showpool(io::IO)
-    lock(poollock)
-    println(io, "ConnectionPool[")
-    for c in pool
-        println(io, "   $c")
+    lock(poollock[Threads.threadid()]) do
+        println(io, "ConnectionPool[")
+        for c in pool[Threads.threadid()]
+            println(io, "   $c")
+        end
+        println(io, "]\n")
     end
-    println(io, "]\n")
-    unlock(poollock)
 end
 
 function showpoolhtml(io::IO)
-    lock(poollock)
-    println(io, "<table>")
-    for c in pool
-        print(io, "<tr>")
-        for x in split("$c")
-            print(io, "<td>$x</td>")
+    lock(poollock[Threads.threadid()]) do
+        println(io, "<table>")
+        for c in pool[Threads.threadid()]
+            print(io, "<tr>")
+            for x in split("$c")
+                print(io, "<td>$x</td>")
+            end
+            println(io, "<tr>")
         end
-        println(io, "<tr>")
+        println(io, "</table>")
     end
-    println(io, "</table>")
-    unlock(poollock)
+end
+
+function __init__()
+    Threads.resize_nthreads!(pool)
+    Threads.resize_nthreads!(poollock)
+    Threads.resize_nthreads!(poolcondition)
+    return
 end
 
 end # module ConnectionPool
