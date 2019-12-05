@@ -11,6 +11,7 @@ const default_cookiejar = [Dict{String, Set{Cookie}}()]
 
 function __init__()
     Threads.resize_nthreads!(default_cookiejar)
+    return
 end
 
 """
