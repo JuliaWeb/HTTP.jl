@@ -12,7 +12,7 @@ import ..@debug, ..DEBUG_LEVEL
 
 Redirects the request in the case of 3xx response status.
 """
-abstract type RedirectLayer{Next <: Layer} <: Layer end
+abstract type RedirectLayer{Next <: Layer} <: Layer{Next} end
 export RedirectLayer
 
 function request(::Type{RedirectLayer{Next}},

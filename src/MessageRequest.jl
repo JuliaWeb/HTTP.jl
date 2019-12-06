@@ -9,14 +9,14 @@ using ..URIs
 using ..Messages
 import ..Messages: bodylength
 import ..Headers
-import ..Form
+import ..Form, ..content_type
 
 """
     request(MessageLayer, method, ::URI, headers, body) -> HTTP.Response
 
 Construct a [`Request`](@ref) object and set mandatory headers.
 """
-struct MessageLayer{Next <: Layer} <: Layer end
+struct MessageLayer{Next <: Layer} <: Layer{Next} end
 export MessageLayer
 
 function request(::Type{MessageLayer{Next}},
@@ -39,6 +39,10 @@ function request(::Type{MessageLayer{Next}},
         elseif method == "GET" && iofunction isa Function
             setheader(headers, "Content-Length" => "0")
         end
+    end
+    if !hasheader(headers, "Content-Type") && body isa Form && method == "POST"
+        # "Content-Type" => "multipart/form-data; boundary=..."
+        setheader(headers, content_type(body))
     end
 
     req = Request(method, target, headers, bodybytes(body);

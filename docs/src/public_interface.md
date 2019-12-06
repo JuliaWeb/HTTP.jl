@@ -3,7 +3,7 @@
 ## Requests
 
 ```@docs
-HTTP.request(::String,::HTTP.URIs.URI,::Array{Pair{SubString{String},SubString{String}},1},::Any)
+HTTP.request
 HTTP.open
 HTTP.get
 HTTP.put

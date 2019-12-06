@@ -11,7 +11,7 @@ using ..Messages: iserror
 
 Throw a `StatusError` if the request returns an error response status.
 """
-abstract type ExceptionLayer{Next <: Layer} <: Layer end
+abstract type ExceptionLayer{Next <: Layer} <: Layer{Next} end
 export ExceptionLayer
 
 function request(::Type{ExceptionLayer{Next}}, a...; kw...) where Next

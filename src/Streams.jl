@@ -47,7 +47,7 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
     stream.  When the `IO` stream is a [`HTTP.ConnectionPool.Transaction`](@ref),
     calling `closeread` releases the readlock and allows the next pipelined
     response to be read by another `Stream` that is waiting in `startread`.
-    If a complete response has not been recieved, `closeread` throws `EOFError`.
+    If a complete response has not been received, `closeread` throws `EOFError`.
 """
 Stream(r::M, io::S) where {M, S} = Stream{M,S}(r, io, false, false, true, 0)
 

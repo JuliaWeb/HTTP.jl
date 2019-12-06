@@ -9,7 +9,7 @@ using ..Strings: tocameldash
 
 Rewrite request and response headers in Canonical-Camel-Dash-Format.
 """
-abstract type CanonicalizeLayer{Next <: Layer} <: Layer end
+abstract type CanonicalizeLayer{Next <: Layer} <: Layer{Next} end
 export CanonicalizeLayer
 
 function request(::Type{CanonicalizeLayer{Next}},

@@ -16,9 +16,7 @@ using HTTP
         invalid_content_disposition_fn = HTTP.download(
             "http://test.greenbytes.de/tech/tc2231/attonlyquoted.asis")
         @test isfile(invalid_content_disposition_fn)
-        @test basename(invalid_content_disposition_fn) == "attonlyquoted.asis" # just last part  of name
-
-
+        @test basename(invalid_content_disposition_fn) == "attonlyquoted.asis"
 
         content_disposition_fn = HTTP.download(
             "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis")
@@ -41,8 +39,6 @@ using HTTP
         )
         @test provided_filename == returned_filename
         @test isfile(provided_filename)
-
-
     end
 
     @testset "Content-Encoding" begin

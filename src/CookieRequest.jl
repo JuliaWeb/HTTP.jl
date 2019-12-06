@@ -7,7 +7,12 @@ using ..Cookies
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL
 
-const default_cookiejar = Dict{String, Set{Cookie}}()
+const default_cookiejar = [Dict{String, Set{Cookie}}()]
+
+function __init__()
+    Threads.resize_nthreads!(default_cookiejar)
+    return
+end
 
 """
     request(CookieLayer, method, ::URI, headers, body) -> HTTP.Response
@@ -15,13 +20,13 @@ const default_cookiejar = Dict{String, Set{Cookie}}()
 Add locally stored Cookies to the request headers.
 Store new Cookies found in the response headers.
 """
-abstract type CookieLayer{Next <: Layer} <: Layer end
+abstract type CookieLayer{Next <: Layer} <: Layer{Next} end
 export CookieLayer
 
 function request(::Type{CookieLayer{Next}},
                  method::String, url::URI, headers, body;
                  cookies::Union{Bool, Dict{String, String}}=Dict{String, String}(),
-                 cookiejar::Dict{String, Set{Cookie}}=default_cookiejar,
+                 cookiejar::Dict{String, Set{Cookie}}=default_cookiejar[Threads.threadid()],
                  kw...) where Next
 
     hostcookies = get!(cookiejar, url.host, Set{Cookie}())

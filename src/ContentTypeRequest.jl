@@ -9,7 +9,7 @@ using ..Messages
 import ..MessageRequest: bodylength, bodybytes
 import ..@debug, ..DEBUG_LEVEL
 
-abstract type ContentTypeDetectionLayer{Next <: Layer} <: Layer end
+abstract type ContentTypeDetectionLayer{Next <: Layer} <: Layer{Next} end
 export ContentTypeDetectionLayer
 
 function request(::Type{ContentTypeDetectionLayer{Next}},

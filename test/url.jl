@@ -1,53 +1,39 @@
-using Test
 using JSON
-
 using HTTP
+using Test
 
 @testset "HTTP.URL" begin
+    tests = JSON.parse(String(read("resources/cweb-urls.json")))["tests"]["group"]
 
-    tests = JSON.parse(String(read("cweb-urls.json")))["tests"]["group"]
+    @testset " - $test - $group" for group in tests, test in group["test"]
+        name = group["name"]
 
-for group in tests
+        url = get(test, "url", nothing)
 
-    name = group["name"]
-    @testset "HTTP.URL.$name" begin
-
-        println(name)
-
-        for test in group["test"]
-
-            if !haskey(test, "url")
-                continue
-            end
-            println("$(test["id"]). $(test["url"]) $(test["name"])")
-
-            url = test["url"]
+        if url !== nothing
             uri = nothing
+
             try
                 uri = HTTP.URIs.parse_uri_reference(url; strict=true)
             catch e
-                if e isa HTTP.URIs.ParseError
-                    println(e)
-                    continue
-                elseif e isa AssertionError
-                    println(e)
+                if e isa HTTP.URIs.ParseError || e isa AssertionError
                     continue
                 else
                     rethrow(e)
                 end
             end
+
             if haskey(test, "expect_protocol")
                 @test uri.scheme == test["expect_protocol"][1:end-1]
             end
+
             if haskey(test, "expect_hostname")
                 @test uri.host == test["expect_hostname"]
             end
+
             if haskey(test, "expect_port")
                 @test uri.port == test["expect_port"]
             end
         end
     end
 end
-    
-
-end # @testset "HTTP.URL"

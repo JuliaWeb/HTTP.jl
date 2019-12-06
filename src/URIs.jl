@@ -27,7 +27,7 @@ to parse the `HTTP.URI` directly. The `HTTP.URI` constructors will automatically
 `query` arguments, typically provided as `"key"=>"value"::Pair` or `Dict("key"=>"value")`.
 Note that multiple values for a single query key can provided like `Dict("key"=>["value1", "value2"])`.
 
-The `URI` struct stores the compelte URI in the `uri::String` field and the
+The `URI` struct stores the complete URI in the `uri::String` field and the
 component parts in the following `SubString` fields:
   * `scheme`, e.g. `"http"` or `"https"`
   * `userinfo`, e.g. `"username:password"`
@@ -92,7 +92,7 @@ end
 # Based on regex from RFC 3986:
 # https://tools.ietf.org/html/rfc3986#appendix-B
 const uri_reference_regex =
-    RegexAndMatchData(r"""^
+    [RegexAndMatchData(r"""^
     (?: ([^:/?#]+) :) ?                     # 1. scheme
     (?: // (?: ([^/?#@]*) @) ?              # 2. userinfo
            (?| (?: \[ ([^:\]]*:[^\]]*) \] ) # 3. host (ipv6)
@@ -101,7 +101,7 @@ const uri_reference_regex =
     ([^?#]*)                                # 5. path
     (?: \?([^#]*) ) ?                       # 6. query
     (?: [#](.*) ) ?                         # 7. fragment
-    $"""x)
+    $"""x)]
 
 """
 https://tools.ietf.org/html/rfc3986#section-3
@@ -119,17 +119,17 @@ https://tools.ietf.org/html/rfc3986#section-4.1
 """
 function parse_uri_reference(str::Union{String, SubString{String}};
                              strict = false)
-
-    if !exec(uri_reference_regex, str)
+    uri_reference_re = uri_reference_regex[Threads.threadid()]
+    if !exec(uri_reference_re, str)
         throw(ParseError("URI contains invalid character"))
     end
-    uri = URI(str, group(1, uri_reference_regex, str, absent),
-                   group(2, uri_reference_regex, str, absent),
-                   group(3, uri_reference_regex, str, absent),
-                   group(4, uri_reference_regex, str, absent),
-                   group(5, uri_reference_regex, str, absent),
-                   group(6, uri_reference_regex, str, absent),
-                   group(7, uri_reference_regex, str, absent))
+    uri = URI(str, group(1, uri_reference_re, str, absent),
+                   group(2, uri_reference_re, str, absent),
+                   group(3, uri_reference_re, str, absent),
+                   group(4, uri_reference_re, str, absent),
+                   group(5, uri_reference_re, str, absent),
+                   group(6, uri_reference_re, str, absent),
+                   group(7, uri_reference_re, str, absent))
     if strict
         ensurevalid(uri)
         @ensure uristring(uri) == str
@@ -145,7 +145,6 @@ URI(str::AbstractString) = parse_uri_reference(str)
 Base.parse(::Type{URI}, str::AbstractString) = parse_uri_reference(str)
 
 function ensurevalid(uri::URI)
-
     # https://tools.ietf.org/html/rfc3986#section-3.1
     # ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
     if !(uri.scheme === absent ||
@@ -420,8 +419,9 @@ function absuri(uri::URI, context::URI)
 end
 
 function __init__()
-    Base.compile(uri_reference_regex.re)
-    initialize!(uri_reference_regex)
+    Threads.resize_nthreads!(uri_reference_regex)
+    foreach(x -> Base.compile(x.re), uri_reference_regex)
+    foreach(initialize!, uri_reference_regex)
     return
 end
 
