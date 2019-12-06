@@ -18,6 +18,8 @@ function isnoproxy(host)
     return false
 end
 
+const NO_PROXY = String[]
+
 function __init__()
     # check for no_proxy environment variable
     if haskey(ENV, "no_proxy")
