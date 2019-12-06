@@ -29,14 +29,11 @@ function __init__()
 end
 
 function getproxy(scheme, host)
+    isnoproxy(host) && return nothing
     if scheme == "http" && haskey(ENV, "http_proxy")
-        if !isnoproxy(host)
-            return ENV["http_proxy"]
-        end
+        return ENV["http_proxy"]
     elseif scheme == "https" && haskey(ENV, "https_proxy")
-        if !isnoproxy(host)
-            return ENV["https_proxy"]
-        end
+        return ENV["https_proxy"]
     end
     return nothing
 end
