@@ -9,7 +9,7 @@ using MbedTLS: SSLContext
 import ..@debug, ..DEBUG_LEVEL
 
 # hasdotsuffix reports whether s ends in "."+suffix.
-hasdotsuffix(s, suffix) = length(s) > length(suffix) && s[length(s)-length(suffix)] == '.' && s[length(s)-length(suffix)+1:end] == suffix
+hasdotsuffix(s, suffix) = endswith(s, "." * suffix)
 
 function isnoproxy(host)
     for x in NO_PROXY
