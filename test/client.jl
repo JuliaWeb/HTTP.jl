@@ -200,6 +200,10 @@ end
     end
 end
 
+@testset "HTTP.open accepts method::Symbol" begin
+    @test status(HTTP.open(x -> x, :GET, "http://httpbin.org/ip")) == 200
+end
+
 @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
     headers = Dict("User-Agent" => "HTTP.jl")
     query = Dict("hello" => "world")

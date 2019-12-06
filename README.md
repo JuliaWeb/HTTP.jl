@@ -49,7 +49,7 @@ sends a HTTP Request Message and
 opens an `IO` stream from which the Response can be read.
 
 ```julia
-HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
+HTTP.open(:GET, "https://tinyurl.com/bach-cello-suite-1-ogg") do http
     open(`vlc -q --play-and-exit --intf dummy -`, "w") do vlc
         write(vlc, http)
     end
