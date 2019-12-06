@@ -200,8 +200,6 @@ end
     end
 end
 
-end # @testset "HTTP.Client"
-
 @testset "HTTP.open accepts method::Symbol" begin
     @test status(HTTP.open(x -> x, :GET, "http://httpbin.org/ip")) == 200
 end
