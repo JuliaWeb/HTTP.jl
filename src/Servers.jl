@@ -37,7 +37,7 @@ function update!(rl::RateLimit, rate_limit)
     return nothing
 end
 
-const RATE_LIMITS = Dict{IPAddr, RateLimit}()
+const RATE_LIMITS = [Dict{IPAddr, RateLimit}()]
 check_rate_limit(tcp::Base.PipeEndpoint, rate_limit::Rational{Int}) = true
 check_rate_limit(tcp, ::Nothing) = true
 
@@ -51,7 +51,7 @@ ip address is updated in the global cache.
 function check_rate_limit(tcp, rate_limit::Rational{Int})
     ip = Sockets.getsockname(tcp)[1]
     rate = Float64(rate_limit.num)
-    rl = get!(RATE_LIMITS, ip, RateLimit(rate, Dates.now()))
+    rl = get!(RATE_LIMITS[Threads.threadid()], ip, RateLimit(rate, Dates.now()))
     update!(rl, rate_limit)
     if rl.allowance > rate
         @warn "throttling $ip"
@@ -371,6 +371,11 @@ function handle_transaction(f, t::Transaction; final_transaction::Bool=false)
     finally
         final_transaction && close(t.c.io)
     end
+    return
+end
+
+function __init__()
+    Threads.resize_nthreads!(RATE_LIMITS)
     return
 end
 

@@ -37,7 +37,7 @@ end
     end
 
     @testset "Cookie Requests" begin
-        empty!(HTTP.CookieRequest.default_cookiejar)
+        empty!(HTTP.CookieRequest.default_cookiejar[1])
         r = HTTP.get("$sch://httpbin.org/cookies", cookies=true)
 
         body = String(r.body)
