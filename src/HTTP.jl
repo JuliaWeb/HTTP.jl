@@ -168,6 +168,12 @@ Canonicalization options
  - `canonicalize_headers = false`, rewrite request and response headers in
    Canonical-Camel-Dash-Format.
 
+Proxy options
+
+ - `proxy = proxyurl`, pass request through a proxy given as a url
+
+Alternatively, HTTP.jl also respects the `http_proxy`, `https_proxy`, and `no_proxy`
+environment variables; if set, they will be used automatically when making requests.
 
 ## Request Body Examples
 
