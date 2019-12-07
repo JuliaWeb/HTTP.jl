@@ -51,7 +51,7 @@ function request(::Type{MessageLayer{Next}},
     return request(Next, url, req, body; iofunction=iofunction, kw...)
 end
 
-const USER_AGENT = Ref{String}()
+const USER_AGENT = Ref{String}("HTTP.jl/$VERSION")
 
 """
     setuseragent!(x::String)
