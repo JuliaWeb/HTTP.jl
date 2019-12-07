@@ -62,7 +62,7 @@ const required_headers = ["Authorization", "host", "x-amz-date"]
         d = Dict(headers)
         @test d["x-amz-date"] == "20150830T123600Z"
         @test d["host"] == "example.amazonaws.com"
-        @test d["Authorization"] == test_auth_string("host;x-amz-date", sig)
+        @test d["Authorization"] == test_auth_string("host;user-agent;x-amz-date", sig)
     end
 
     yesheaders = [
