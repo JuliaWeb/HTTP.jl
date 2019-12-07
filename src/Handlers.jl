@@ -250,7 +250,7 @@ struct RequestHandlerFunction{F} <: RequestHandler
     func::F # func(req)
 end
 
-handle(h::RequestHandlerFunction, req::Request) = h.func(req)
+handle(h::RequestHandlerFunction, req::Request, args...) = h.func(req, args...)
 
 # deprecated
 const HandlerFunction = RequestHandlerFunction
@@ -266,14 +266,14 @@ struct StreamHandlerFunction{F} <: StreamHandler
     func::F # func(stream)
 end
 
-handle(h::StreamHandlerFunction, stream::Stream) = h.func(stream)
+handle(h::StreamHandlerFunction, stream::Stream, args...) = h.func(stream, args...)
 
 "For request handlers, read a full request from a stream, pass to the handler, then write out the response"
-function handle(h::RequestHandler, http::Stream)
+function handle(h::RequestHandler, http::Stream, args...)
     request::Request = http.message
     request.body = read(http)
     closeread(http)
-    request.response::Response = handle(h, request)
+    request.response::Response = handle(h, request, args...)
     request.response.request = request
     startwrite(http)
     write(http, request.response.body)
