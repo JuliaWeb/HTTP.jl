@@ -140,8 +140,8 @@ SSLContext options
 
 Basic Authentication options
 
- - basic_authorization=false, add `Authorization: Basic` header using credentials
-   from url userinfo.
+ - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)
+   and adds the `Authorization: Basic` header
 
 
 AWS Authentication options
@@ -552,7 +552,6 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 *See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
 """
 function stack(;redirect=true,
-                basic_authorization=false,
                 aws_authorization=false,
                 cookies=false,
                 canonicalize_headers=false,
@@ -566,7 +565,7 @@ function stack(;redirect=true,
     NoLayer = Union
 
     (redirect             ? RedirectLayer             : NoLayer){
-    (basic_authorization  ? BasicAuthLayer            : NoLayer){
+                            BasicAuthLayer{
     (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
     (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
                             CookieLayer               : NoLayer){
