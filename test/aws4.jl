@@ -4,6 +4,9 @@ using HTTP
 using HTTP: Headers, URI
 using HTTP.AWS4AuthRequest: sign_aws4!
 
+const useragent = HTTP.MessageRequest.USER_AGENT[]
+HTTP.setuseragent!(nothing)
+
 # Based on https://docs.aws.amazon.com/general/latest/gr/signature-v4-test-suite.html
 # and https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
 
@@ -62,7 +65,7 @@ const required_headers = ["Authorization", "host", "x-amz-date"]
         d = Dict(headers)
         @test d["x-amz-date"] == "20150830T123600Z"
         @test d["host"] == "example.amazonaws.com"
-        @test d["Authorization"] == test_auth_string("host;user-agent;x-amz-date", sig)
+        @test d["Authorization"] == test_auth_string("host;x-amz-date", sig)
     end
 
     yesheaders = [
@@ -225,3 +228,5 @@ const required_headers = ["Authorization", "host", "x-amz-date"]
         @test headers["Authorization"] == auth
     end
 end
+
+HTTP.setuseragent!(useragent)
