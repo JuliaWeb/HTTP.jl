@@ -22,7 +22,6 @@ using JSON
               "handlers.jl",
               "server.jl",
               "async.jl",
-              "aws4.jl",
               "insert_layers.jl",
               "mwe.jl"]
         println("Running $f tests...")
