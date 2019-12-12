@@ -125,6 +125,4 @@ end
 content_type(f::Form) = "Content-Type" =>
                         "multipart/form-data; boundary=$(f.boundary)"
 
-# To be deprecated in HTTP@0.9
-# @deprecate post(url, f::Form; kw...) post(url, [], f; kw...)
-post(url, f::Form; kw...) = post(url, Header[], f; kw...)
+@deprecate post(url, f::Form; kw...) post(url, [], f; kw...)
