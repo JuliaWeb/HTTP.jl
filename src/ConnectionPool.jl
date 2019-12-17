@@ -29,6 +29,28 @@ export Connection, Transaction,
 
 using ..IOExtras, ..Sockets
 
+
+@static if VERSION >= v"1.3"
+    using Base.Threads
+    const Cond = Threads.Condition
+
+    function _notify(cond)
+        lock(cond)
+        notify(cond)
+        unlock(cond)
+    end
+
+    function _wait(cond)
+        lock(cond)
+        wait(cond)
+        unlock(cond)
+    end
+else
+    const Cond = Condition
+    const _notify(cond) = notify(cond)
+    const _wait(cond) = wait(cond)
+end
+
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
@@ -74,10 +96,10 @@ mutable struct Connection{T <: IO}
     sequence::Int
     writecount::Int
     writebusy::Bool
-    writedone::Condition
+    writedone::Cond
     readcount::Int
     readbusy::Bool
-    readdone::Condition
+    readdone::Cond
     timestamp::Float64
 end
 
@@ -95,6 +117,7 @@ struct Transaction{T <: IO} <: IO
     sequence::Int
 end
 
+
 Connection(host::AbstractString, port::AbstractString,
            pipeline_limit::Int, idle_timeout::Int,
            require_ssl_verification::Bool, io::T) where T <: IO =
@@ -104,8 +127,8 @@ Connection(host::AbstractString, port::AbstractString,
                   peerport(io), localport(io),
                   io, PipeBuffer(),
                   -1,
-                  0, false, Condition(),
-                  0, false, Condition(),
+                  0, false, Cond(),
+                  0, false, Cond(),
                   time())
 
 Connection(io; require_ssl_verification::Bool=true) =
@@ -240,7 +263,7 @@ function IOExtras.startwrite(t::Transaction)
     @require !iswritable(t)                     ;t.c.writecount != t.sequence &&
                                                    @debug 1 "⏳  Wait write: $t"
     while t.c.writecount != t.sequence
-        wait(t.c.writedone)
+        _wait(t.c.writedone)
     end                                           ;@debug 2 "👁  Start write:$t"
     t.c.writebusy = true
     @ensure iswritable(t)
@@ -257,8 +280,8 @@ function IOExtras.closewrite(t::Transaction)
 
     t.c.writebusy = false
     t.c.writecount += 1                           ;@debug 2 "🗣  Write done: $t"
-    notify(t.c.writedone)
-    notify(poolcondition[Threads.threadid()])
+    _notify(t.c.writedone)
+    _notify(poolcondition[Threads.threadid()])
 
     @ensure !iswritable(t)
     return
@@ -274,7 +297,7 @@ function IOExtras.startread(t::Transaction)
                                                    @debug 1 "⏳  Wait read:  $t"
     t.c.timestamp = time()
     while t.c.readcount != t.sequence
-        wait(t.c.readdone)
+        _wait(t.c.readdone)
     end                                           ;@debug 2 "👁  Start read: $t"
     t.c.readbusy = true
     @ensure isreadable(t)
@@ -293,8 +316,8 @@ function IOExtras.closeread(t::Transaction)
 
     t.c.readbusy = false
     t.c.readcount += 1
-    notify(t.c.readdone)                          ;@debug 2 "✉️  Read done:  $t"
-    notify(poolcondition[Threads.threadid()])
+    _notify(t.c.readdone)                          ;@debug 2 "✉️  Read done:  $t"
+    _notify(poolcondition[Threads.threadid()])
 
     if !isbusy(t.c)
         @async monitor_idle_connection(t.c)
@@ -339,7 +362,7 @@ function Base.close(c::Connection)
     if bytesavailable(c) > 0
         purge(c)
     end
-    notify(poolcondition[Threads.threadid()])
+    _notify(poolcondition[Threads.threadid()])
     return
 end
 
@@ -369,7 +392,7 @@ the `Connection` can be reused for reading.
 """
 const pool = [Vector{Connection}()]
 const poollock = [ReentrantLock()]
-const poolcondition = [Condition()]
+const poolcondition = [Cond()]
 
 """
     closeall()
@@ -383,7 +406,7 @@ function closeall()
         end
         empty!(pool[Threads.threadid()])
     end
-    notify(poolcondition[Threads.threadid()])
+    _notify(poolcondition[Threads.threadid()])
     return
 end
 
@@ -534,7 +557,7 @@ function getconnection(::Type{Transaction{T}},
         end
 
         # Wait for `closewrite` or `close` to signal that a connection is ready.
-        wait(poolcondition[Threads.threadid()])
+        _wait(poolcondition[Threads.threadid()])
     end
 end
 
