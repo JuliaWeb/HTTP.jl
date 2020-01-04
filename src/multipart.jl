@@ -146,7 +146,11 @@ Base.reset(m::Multipart{T}) where {T} = reset(m.data)
 Base.seekstart(m::Multipart{T}) where {T} = seekstart(m.data)
 
 function writemultipartheader(io::IOBuffer, i::Multipart)
-    isnothing(i.filename) || write(io, "; filename=\"$(i.filename)\"\r\n")
+    if isnothing(i.filename)
+        write(io, "\r\n")
+    else
+        write(io, "; filename=\"$(i.filename)\"\r\n")
+    end
     contenttype = i.contenttype == "" ? HTTP.sniff(i.data) : i.contenttype
     write(io, "Content-Type: $(contenttype)\r\n")
     write(io, i.contenttransferencoding == "" ? "\r\n" : "Content-Transfer-Encoding: $(i.contenttransferencoding)\r\n\r\n")
