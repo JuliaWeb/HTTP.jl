@@ -133,7 +133,7 @@ end
 
 function Base.show(io::IO, m::Multipart{T}) where {T}
     items = ["data=::$T", "contenttype=\"$(m.contenttype)\"", "contenttransferencoding=\"$(m.contenttransferencoding)\")"]
-    isnothing(m.filename) || insert!(items, 1, "filename=\"$(m.filename)\"")
+    isnothing(m.filename) || pushfirst!(items, "filename=\"$(m.filename)\"")
     print(io, "HTTP.Multipart($(join(items, ", ")))")
 end
 
