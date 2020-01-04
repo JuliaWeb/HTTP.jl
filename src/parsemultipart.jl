@@ -11,7 +11,7 @@ const FILENAME_REGEX = r" filename=\"(.*?)\""
 const CONTENTTYPE_REGEX = r"(?i)Content-Type: (\S*[^;\s])"
 
 """
-Returns the first and last index of the next boundary delimiting a part, and if 
+Returns the first and last index of the next boundary delimiting a part, and if
 the discovered boundary is the terminating boundary.
 """
 function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::AbstractVector{UInt8}; start::Int = 1)
@@ -75,11 +75,11 @@ Headers are separated from the body by CRLFCRLF
 function find_header_boundary(bytes::AbstractVector{UInt8})
     delimiter = UInt8[CR_BYTE, LF_BYTE, CR_BYTE, LF_BYTE]
     length(delimiter) > length(bytes) && (return nothing)
-    
+
     l = length(bytes) - length(delimiter) + 1
     i = 1
     endIndex = length(delimiter)
-    while (i <= l) 
+    while (i <= l)
         bytes[i:endIndex] == delimiter && (return (1, endIndex))
         i += 1
         endIndex += 1
@@ -87,7 +87,7 @@ function find_header_boundary(bytes::AbstractVector{UInt8})
     error("no delimiter found separating header from multipart body")
 end
 
-function chunk2Multipart(chunk)
+function parse_multipart_chunk(chunk)
     (startIndex, endIndex) = find_header_boundary(chunk)
 
     headers = String(view(chunk, startIndex:endIndex))
@@ -113,7 +113,7 @@ function parse_multipart_body(body::AbstractVector{UInt8}, boundary::AbstractStr
 
     for i in 1:length(idxs)-1
         chunk = view(body, idxs[i][2]+1:idxs[i+1][1]-1)
-        push!(multiparts, chunk2Multipart(chunk))
+        push!(multiparts, parse_multipart_chunk(chunk))
     end
     return multiparts
 end
