@@ -23,7 +23,7 @@ function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
             @debug 1 "💥  Read inactive > $(readtimeout)s: $io"
             break
         end
-        sleep(8 + rand() * 4)
+        sleep(readtimeout / 10)
     end
 
     try

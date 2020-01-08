@@ -125,9 +125,6 @@ end
 content_type(f::Form) = "Content-Type" =>
                         "multipart/form-data; boundary=$(f.boundary)"
 
+# To be deprecated in HTTP@0.9
+# @deprecate post(url, f::Form; kw...) post(url, [], f; kw...)
 post(url, f::Form; kw...) = post(url, Header[], f; kw...)
-
-function post(url, headers, f::Form; kw...)
-    setheader(headers, content_type(f))
-    request("POST", url, headers, f; kw...)
-end

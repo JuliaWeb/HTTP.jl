@@ -6,7 +6,7 @@ using ..IOExtras
 import ..replace
 
 """
-    escapeHTML(i::String)
+    escapehtml(i::String)
 
 Returns a string with special HTML characters escaped: &, <, >, ", '
 """

@@ -1,8 +1,8 @@
 module HTTP
 
-export startwrite, startread, closewrite, closeread, stack, insert, AWS4AuthLayer, 
+export startwrite, startread, closewrite, closeread, stack, insert, AWS4AuthLayer,
     BasicAuthLayer, CanonicalizeLayer, ConnectionPoolLayer, ContentTypeDetectionLayer,
-    DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer, RetryLayer, StreamLayer, 
+    DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer, RetryLayer, StreamLayer,
     TimeoutLayer
 
 const DEBUG_LEVEL = Ref(0)
@@ -140,8 +140,8 @@ SSLContext options
 
 Basic Authentication options
 
- - basic_authorization=false, add `Authorization: Basic` header using credentials
-   from url userinfo.
+ - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)
+   and adds the `Authorization: Basic` header
 
 
 AWS Authentication options
@@ -160,7 +160,7 @@ Cookie options
 
  - `cookies::Union{Bool, Dict{String, String}} = false`, enable cookies, or alternatively,
         pass a `Dict{String, String}` of name-value pairs to manually pass cookies
- - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`, 
+ - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`,
 
 
 Canonicalization options
@@ -168,6 +168,12 @@ Canonicalization options
  - `canonicalize_headers = false`, rewrite request and response headers in
    Canonical-Camel-Dash-Format.
 
+Proxy options
+
+ - `proxy = proxyurl`, pass request through a proxy given as a url
+
+Alternatively, HTTP.jl also respects the `http_proxy`, `https_proxy`, and `no_proxy`
+environment variables; if set, they will be used automatically when making requests.
 
 ## Request Body Examples
 
@@ -303,17 +309,17 @@ HTTP.open("POST", "http://music.com/play") do io
 end
 ```
 """
+function request(method, url, h=Header[], b=nobody;
+                 headers=h, body=b, query=nothing, kw...)::Response
+    return request(HTTP.stack(;kw...), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+end
 function request(stack::Type{<:Layer}, method, url, h=Header[], b=nobody;
-                headers=h, body=b, query=nothing, kw...)::Response
-    uri = URI(url)
-    if query !== nothing
-        uri = merge(uri, query=query)
-    end
-
-    return request(stack, string(method), uri, mkheaders(headers), body; kw...)
+                 headers=h, body=b, query=nothing, kw...)::Response
+    return request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
 
-request(a...; kw...)::Response = return request(HTTP.stack(;kw...), a...; kw...)
+request_uri(url, query) = merge(URI(url); query=query)
+request_uri(url, ::Nothing) = URI(url)
 
 """
     HTTP.open(method, url, [,headers]) do io
@@ -330,15 +336,15 @@ Response Body to be read from) an `IO` stream.
 
 e.g. Streaming an audio file to the `vlc` player:
 ```julia
-HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
+HTTP.open(:GET, "https://tinyurl.com/bach-cello-suite-1-ogg") do http
     open(`vlc -q --play-and-exit --intf dummy -`, "w") do vlc
         write(vlc, http)
     end
 end
 ```
 """
-open(f::Function, method::String, url, headers=Header[]; kw...)::Response =
-    request(method, url, headers, nothing; iofunction=f, kw...)
+open(f::Function, method::Union{String,Symbol}, url, headers=Header[]; kw...)::Response =
+    request(string(method), url, headers, nothing; iofunction=f, kw...)
 
 """
     HTTP.openraw(method, url, [, headers])::Tuple{TCPSocket, Response, ByteView}
@@ -362,7 +368,7 @@ frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
 write(socket, frame)
 ```
 """
-function openraw(method::String, url, headers=Header[]; kw...)::Tuple{IO, Response}
+function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tuple{IO, Response}
     socketready = Channel{Tuple{IO, Response}}(0)
     @async HTTP.open(method, url, headers; kw...) do http
         HTTP.startread(http)
@@ -448,7 +454,7 @@ The minimal request execution stack is:
 stack = MessageLayer{ConnectionPoolLayer{StreamLayer}}
 ```
 
-The figure below illustrates the full request exection stack and its
+The figure below illustrates the full request execution stack and its
 relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 [`HTTP.Stream`](@ref) and the [`HTTP.ConnectionPool`](@ref).
 
@@ -546,7 +552,6 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 *See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
 """
 function stack(;redirect=true,
-                basic_authorization=false,
                 aws_authorization=false,
                 cookies=false,
                 canonicalize_headers=false,
@@ -560,7 +565,7 @@ function stack(;redirect=true,
     NoLayer = Union
 
     (redirect             ? RedirectLayer             : NoLayer){
-    (basic_authorization  ? BasicAuthLayer            : NoLayer){
+                            BasicAuthLayer{
     (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
     (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
                             CookieLayer               : NoLayer){

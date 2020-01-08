@@ -53,13 +53,13 @@ ParseError(code::Symbol, bytes="") =
 https://tools.ietf.org/html/rfc7230#section-3.1.1
 request-line = method SP request-target SP HTTP-version CRLF
 """
-const request_line_regex = RegexAndMatchData(r"""^
+const request_line_regex = [RegexAndMatchData(r"""^
     (?: \r? \n) ?                       #    ignore leading blank line
     ([!#$%&'*+\-.^_`|~[:alnum:]]+) [ ]+ # 1. method = token (RFC7230 3.2.6)
     ([^.][^ \r\n]*) [ ]+                # 2. target
     HTTP/(\d\.\d)                       # 3. version
     \r? \n                              #    CRLF
-"""x)
+"""x)]
 
 """
 https://tools.ietf.org/html/rfc7230#section-3.1.2
@@ -68,40 +68,40 @@ status-line = HTTP-version SP status-code SP reason-phrase CRLF
 See:
 [#190](https://github.com/JuliaWeb/HTTP.jl/issues/190#issuecomment-363314009)
 """
-const status_line_regex = RegexAndMatchData(r"""^
+const status_line_regex = [RegexAndMatchData(r"""^
     [ ]?                                # Issue #190
     HTTP/(\d\.\d) [ ]+                  # 1. version
     (\d\d\d) .*                         # 2. status
     \r? \n                              #    CRLF
-"""x)
+"""x)]
 
 """
 https://tools.ietf.org/html/rfc7230#section-3.2
 header-field = field-name ":" OWS field-value OWS
 """
-const header_field_regex = RegexAndMatchData(r"""^
+const header_field_regex = [RegexAndMatchData(r"""^
     ([!#$%&'*+\-.^_`|~[:alnum:]]+) :    # 1. field-name = token (RFC7230 3.2.6)
     [ \t]*                              #    OWS
     ([^\r\n]*?)                         # 2. field-value
     [ \t]*                              #    OWS
     \r? \n                              #    CRLF
     (?= [^ \t])                         #    no WS on next line
-"""x)
+"""x)]
 
 """
 https://tools.ietf.org/html/rfc7230#section-3.2.4
 obs-fold = CRLF 1*( SP / HTAB )
 """
-const obs_fold_header_field_regex = RegexAndMatchData(r"""^
+const obs_fold_header_field_regex = [RegexAndMatchData(r"""^
     ([!#$%&'*+\-.^_`|~[:alnum:]]+) :    # 1. field-name = token (RFC7230 3.2.6)
     [ \t]*                              #    OWS
     ([^\r\n]*                           # 2. field-value
         (?: \r? \n [ \t] [^\r\n]*)*)    #    obs-fold
     [ \t]*                              #    OWS
     \r? \n                              #    CRLF
-"""x)
+"""x)]
 
-const empty_header_field_regex = RegexAndMatchData(r"^ \r? \n"x)
+const empty_header_field_regex = [RegexAndMatchData(r"^ \r? \n"x)]
 
 # HTTP start-line and header-field parsing
 
@@ -157,7 +157,7 @@ Parse HTTP request-line `bytes` and set the
 Return a `SubString` containing the header-field lines.
 """
 function parse_request_line!(bytes::AbstractString, request)::SubString{String}
-    re = request_line_regex
+    re = request_line_regex[Threads.threadid()]
     if !exec(re, bytes)
         throw(ParseError(:INVALID_REQUEST_LINE, bytes))
     end
@@ -173,7 +173,7 @@ Parse HTTP response-line `bytes` and set the
 Return a `SubString` containing the header-field lines.
 """
 function parse_status_line!(bytes::AbstractString, response)::SubString{String}
-    re = status_line_regex
+    re = status_line_regex[Threads.threadid()]
     if !exec(re, bytes)
         throw(ParseError(:INVALID_STATUS_LINE, bytes))
     end
@@ -189,20 +189,20 @@ a `SubString` containing the remaining header-field lines.
 """
 function parse_header_field(bytes::SubString{String})::Tuple{Header,SubString{String}}
     # First look for: field-name ":" field-value
-    re = header_field_regex
+    re = header_field_regex[Threads.threadid()]
     if exec(re, bytes)
         return (group(1, re, bytes) => group(2, re, bytes)),
                 nextbytes(re, bytes)
     end
 
     # Then check for empty termination line:
-    re = empty_header_field_regex
+    re = empty_header_field_regex[Threads.threadid()]
     if exec(re, bytes)
         return emptyheader, nextbytes(re, bytes)
     end
 
     # Finally look for obsolete line folding format:
-    re = obs_fold_header_field_regex
+    re = obs_fold_header_field_regex[Threads.threadid()]
     if exec(re, bytes)
         unfold = SubString(replace(group(2, re, bytes), r"\r?\n"=>""))
         return (group(1, re, bytes) => unfold), nextbytes(re, bytes)
@@ -312,16 +312,21 @@ const unhex = Int8[
 function __init__()
     # FIXME Consider turing off `PCRE.UTF` in `Regex.compile_options`
     # https://github.com/JuliaLang/julia/pull/26731#issuecomment-380676770
-    Base.compile(status_line_regex.re)
-    Base.compile(request_line_regex.re)
-    Base.compile(header_field_regex.re)
-    Base.compile(empty_header_field_regex.re)
-    Base.compile(obs_fold_header_field_regex.re)
-    initialize!(status_line_regex)
-    initialize!(request_line_regex)
-    initialize!(header_field_regex)
-    initialize!(empty_header_field_regex)
-    initialize!(obs_fold_header_field_regex)
+    Threads.resize_nthreads!(status_line_regex)
+    Threads.resize_nthreads!(request_line_regex)
+    Threads.resize_nthreads!(header_field_regex)
+    Threads.resize_nthreads!(obs_fold_header_field_regex)
+    Threads.resize_nthreads!(empty_header_field_regex)
+    foreach(x -> Base.compile(x.re), status_line_regex)
+    foreach(x -> Base.compile(x.re), request_line_regex)
+    foreach(x -> Base.compile(x.re), header_field_regex)
+    foreach(x -> Base.compile(x.re), empty_header_field_regex)
+    foreach(x -> Base.compile(x.re), obs_fold_header_field_regex)
+    foreach(initialize!, status_line_regex)
+    foreach(initialize!, request_line_regex)
+    foreach(initialize!, header_field_regex)
+    foreach(initialize!, empty_header_field_regex)
+    foreach(initialize!, obs_fold_header_field_regex)
     return
 end
 
