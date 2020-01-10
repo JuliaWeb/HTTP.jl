@@ -15,6 +15,7 @@ function generateTestRequest()
         "Postman-Token" => "288c2481-1837-4ba9-add3-f23d380fa440",
         "Host" => "localhost:8888",
         "Accept-Encoding" => "gzip, deflate",
+        "Accept-Encoding" => "gzip, deflate",
         "Content-Type" => "multipart/form-data; boundary=--------------------------918073721150061572809433",
         "Content-Length" => "657",
         "Connection" => "keep-alive",
@@ -90,4 +91,36 @@ end
         @test "text/plain" === multiparts[4].contenttype
         @test "\nfile with leading newline\n" === String(read(multiparts[4].data))
     end
+end
+
+@testset "content_disposition_extract($(v[1])" for v in (
+        ("; filename=abc.txt ; name = xyz", "xyz", "abc.txt"),
+        ("; name=abc ; filename = xyz", "abc", "xyz"),
+        ("""; mno;filename="abc";name=xyz""", "xyz", "abc"),
+        (""";filename="abc";mno;name=xyz""", "xyz", "abc"),
+        (""";filename=   "abc"   ;mno;name=xyz""", "xyz", "abc"),
+        ("; filename=abc.txt ; name = xyz ;", "xyz", "abc.txt"),
+        ("; filename=abc.txt ; name = xyz;", "xyz", "abc.txt"),
+        ("; filename=abc.txt ; name = xyz ; mno", "xyz", "abc.txt"),
+        ("; filename=abc.txt ; name = xyz ; mno ;", "xyz", "abc.txt"),
+        (";name=\"ab\\\"cdef\"","ab\\\"cdef", nothing),
+        (";filename=abc\\;xyz", nothing, "abc\\;xyz"),
+        (";filename=\\\"abc;name=xyz", "xyz", "\\\"abc"),
+        (";name=xyz;filename=;mno", "xyz", nothing),
+        (";name=\"xy;z\";filename=;mno", "xy;z", nothing),
+        (";name=\"x=z\";filename=bbb", "x=z", "bbb")
+        )
+    name = nothing
+    filename = nothing
+
+    for (pair, key, value) in HTTP.content_disposition_extract(v[1])
+        if pair && key == "name"
+            name = value
+        elseif pair && key == "filename"
+            filename = value
+        end
+    end
+
+    @test name == v[2]
+    @test filename == v[3]
 end

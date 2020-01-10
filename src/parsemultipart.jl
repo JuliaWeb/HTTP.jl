@@ -5,9 +5,7 @@ const HTAB_BYTE = 0x09 # \t
 const SPACE_BYTE = 0x20
 const RETURN_BYTES = [CR_BYTE, LF_BYTE]
 
-const FORMDATA_REGEX = r"(?i)Content-Disposition: form-data"
-const NAME_REGEX = r" name=\"(.*?)\""
-const FILENAME_REGEX = r" filename=\"(.*?)\""
+const FORMDATA_REGEX = r"(?i)Content-Disposition: form-data(.*)\r\n"
 const CONTENTTYPE_REGEX = r"(?i)Content-Type: (\S*[^;\s])"
 
 """
@@ -87,20 +85,101 @@ function find_header_boundary(bytes::AbstractVector{UInt8})
     error("no delimiter found separating header from multipart body")
 end
 
+function content_disposition_tokenize(str)
+    retval = Vector{SubString}()
+    start = 1
+    quotes = false
+    escaped = false
+
+    for offset in eachindex(str)
+        if escaped == false
+            if quotes == true && str[offset] == '"'
+                quotes = false
+            elseif str[offset] == '\\'
+                escaped = true
+            elseif str[offset] == '"'
+                quotes = true
+            elseif quotes == false && (str[offset] == ';' || str[offset] == '=')
+                prev = prevind(str, offset)
+                if prev > start
+                    push!(retval, strip(SubString(str, start, prev)))
+                end
+                push!(retval, SubString(str, offset, offset))
+                start = nextind(str, offset)
+            end
+        else
+            escaped = false
+        end
+    end
+
+    if start != lastindex(str)
+        push!(retval, strip(SubString(str, start)))
+    end
+
+    retval
+end
+
+function content_disposition_extract(str)
+    retval = Vector{Tuple{Bool, SubString, Union{SubString,Nothing}}}()
+    tokens = content_disposition_tokenize(str)
+    total  = length(tokens)
+
+    function strip_quotes(val)
+        if val[1] == '"'
+            SubString(val, 2, lastindex(val) - 1)
+        else
+            val
+        end
+    end
+
+    i = 1
+    while i < total
+        if tokens[i] != ';'
+            pair  = (i + 1 <= total && tokens[i + 1] == "=")
+            key   = strip_quotes(tokens[i])
+            value = (pair && i + 2 <= total && tokens[i + 2] != ";" ? strip_quotes(tokens[i + 2]) : nothing)
+
+            push!(retval, (pair, key, value))
+
+            if pair
+                i += 3
+            else
+                i += 1
+            end
+        else
+            i += 1
+        end
+    end
+    retval
+end
+
 function parse_multipart_chunk(chunk)
     (startIndex, endIndex) = find_header_boundary(chunk)
 
     headers = String(view(chunk, startIndex:endIndex))
     content = view(chunk, endIndex+1:lastindex(chunk))
 
-    occursin(FORMDATA_REGEX, headers) || return # Specifying content disposition is mandatory
+    disposition = match(FORMDATA_REGEX, headers)
 
-    match_name        = match(NAME_REGEX, headers)
-    match_filename    = match(FILENAME_REGEX, headers)
+    if isnothing(disposition)
+        @warn "Content disposition is not specified dropping the chunk."
+        return # Specifying content disposition is mandatory
+    end
+
+    name = nothing
+    filename = nothing
+
+    for (pair, key, value) in content_disposition_extract(disposition[1])
+        if pair && key == "name"
+            name = value
+        elseif pair && key == "filename"
+            filename = value
+        end
+    end
+
+    isnothing(name) && return
+
     match_contenttype = match(CONTENTTYPE_REGEX, headers)
-
-    name        = !isnothing(match_name) ? match_name[1] : return # Specifying name is mandatory
-    filename    = !isnothing(match_filename) ? match_filename[1] : nothing
     contenttype = !isnothing(match_contenttype) ? match_contenttype[1] : "text/plain" # if content_type is not specified, the default text/plain is assumed
 
     return Multipart(filename, IOBuffer(content), contenttype, "", name)
