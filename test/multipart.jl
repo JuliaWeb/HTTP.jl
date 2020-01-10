@@ -8,8 +8,7 @@
 
 
 	@testset "constructor" begin
-		@testset "don't allow String for data" begin
-			@test_throws MethodError HTTP.Multipart(nothing, "some data", "plain/text", "", "testname")
-		end
+		@test_nowarn HTTP.Multipart(nothing, IOBuffer("some data"), "plain/text", "", "testname")
+		@test_throws MethodError HTTP.Multipart(nothing, "some data", "plain/text", "", "testname")
 	end
 end
