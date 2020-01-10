@@ -2,12 +2,12 @@ using Test
 using HTTP
 
 
-function generateTestBody()
+function generate_test_body()
     IOBuffer("----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"namevalue\"; filename=\"multipart.txt\"\r\nContent-Type: text/plain\r\n\r\nnot much to say\n\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"key1\"\r\n\r\n1\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"key2\"\r\n\r\nkey the second\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"namevalue2\"; filename=\"multipart-leading-newline.txt\"\r\nContent-Type: text/plain\r\n\r\n\nfile with leading newline\n\r\n----------------------------918073721150061572809433--\r\n").data
 end
 
 
-function generateTestRequest()
+function generate_test_request()
     headers = [
         "User-Agent" => "PostmanRuntime/7.15.2",
         "Accept" => "*/*",
@@ -21,18 +21,18 @@ function generateTestRequest()
         "Connection" => "keep-alive",
     ]
 
-    HTTP.Request("POST", "/", headers, generateTestBody())
+    HTTP.Request("POST", "/", headers, generate_test_body())
 end
 
 
 @testset "parse multipart form-data" begin
     @testset "find_multipart_boundary" begin
-        request = generateTestRequest()
+        request = generate_test_request()
 
         # NOTE: this is the start of a "boundary delimiter line" and has two leading
         # '-' characters prepended to the boundary delimiter from Content-Type header
         delimiter = IOBuffer("----------------------------918073721150061572809433").data
-        body = generateTestBody()
+        body = generate_test_body()
         # length of the delimiter, CRLF, and -1 for the end index to be the LF character
         endIndexOffset = length(delimiter) + 2 - 1
 
@@ -68,7 +68,7 @@ end
 
 
     @testset "parse_multipart_form" begin
-        multiparts = HTTP.parse_multipart_form(generateTestRequest())
+        multiparts = HTTP.parse_multipart_form(generate_test_request())
         @test 4 == length(multiparts)
 
         @test "multipart.txt" === multiparts[1].filename
