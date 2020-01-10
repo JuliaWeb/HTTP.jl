@@ -132,13 +132,16 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
         Base.open(file, "w") do fh
             while(!eof(stream))
                 downloaded_bytes += write(fh, readavailable(stream))
-                if now() - prev_time > Millisecond(1000update_period)
-                    report_callback()
+                if !isinf(update_period)
+                    if now() - prev_time > Millisecond(round(1000update_period))
+                        report_callback()
+                    end
                 end
             end
         end
-        report_callback()
-        
+        if !isinf(update_period)
+            report_callback()
+        end
     end
     file
 end

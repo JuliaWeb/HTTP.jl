@@ -1,7 +1,7 @@
 name = "HTTP"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 authors = ["Jacob Quinn", "Sam O'Connor", "contributors: https://github.com/JuliaWeb/HTTP.jl/graphs/contributors"]
-version = "0.8.4"
+version = "0.8.8"
 
 [deps]
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
@@ -11,6 +11,7 @@ MbedTLS = "739be429-bea8-5141-9913-cc70e7f3736d"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 
 [compat]
+IniFile = "0.5"
 MbedTLS = "0.6.8, 0.7"
 julia = "0.7, 1"
 
@@ -19,6 +20,7 @@ BufferedStreams = "e1450e63-4bb3-523b-b2a4-4ffa8c0fd77d"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [targets]
-test = ["BufferedStreams", "Distributed", "JSON", "Test"]
+test = ["BufferedStreams", "Distributed", "JSON", "Test", "Unitful"]

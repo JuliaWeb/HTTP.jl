@@ -19,14 +19,14 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-abstract type StreamLayer <: Layer end
+abstract type StreamLayer{Next <: Layer} <: Layer{Next} end
 export StreamLayer
 
-function request(::Type{StreamLayer}, io::IO, request::Request, body;
+function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
                  response_stream=nothing,
                  iofunction=nothing,
                  verbose::Int=0,
-                 kw...)::Response
+                 kw...)::Response where Next
 
     verbose == 1 && printlncompact(request)
 
@@ -57,9 +57,11 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
                     writebody(http, request, body)
                 catch e
                     write_error = e
-                    @warn("Error in @async writebody task",
+                    @info("Error in @async writebody task. " *
+                          "Server likely closed the connection unexpectedly. " *
+                          "Only an issue if unable to read the response and this error gets re-thrown. ",
                           exception=(write_error, catch_backtrace()))
-                    close(io)
+                    isopen(io) && close(io)
                 end
                 yield()
                 startread(http)
