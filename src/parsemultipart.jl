@@ -5,9 +5,6 @@ const HTAB_BYTE = 0x09 # \t
 const SPACE_BYTE = 0x20
 const RETURN_BYTES = [CR_BYTE, LF_BYTE]
 
-const FORMDATA_REGEX = r"(?i)Content-Disposition: form-data(.*)\r\n"
-const CONTENTTYPE_REGEX = r"(?i)Content-Type: (\S*[^;\s])"
-
 """
 Returns the first and last index of the next boundary delimiting a part, and if
 the discovered boundary is the terminating boundary.
@@ -159,7 +156,7 @@ function parse_multipart_chunk(chunk)
     headers = String(view(chunk, startIndex:endIndex))
     content = view(chunk, endIndex+1:lastindex(chunk))
 
-    disposition = match(FORMDATA_REGEX, headers)
+    disposition = match(r"(?i)Content-Disposition: form-data(.*)\r\n", headers)
 
     if isnothing(disposition)
         @warn "Content disposition is not specified dropping the chunk."
@@ -179,7 +176,7 @@ function parse_multipart_chunk(chunk)
 
     isnothing(name) && return
 
-    match_contenttype = match(CONTENTTYPE_REGEX, headers)
+    match_contenttype = match(r"(?i)Content-Type: (\S*[^;\s])", headers)
     contenttype = !isnothing(match_contenttype) ? match_contenttype[1] : "text/plain" # if content_type is not specified, the default text/plain is assumed
 
     return Multipart(filename, IOBuffer(content), contenttype, "", name)
