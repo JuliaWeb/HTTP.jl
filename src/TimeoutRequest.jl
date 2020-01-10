@@ -9,7 +9,7 @@ import ..@debug, ..DEBUG_LEVEL
 
 Close `IO` if no data has been received for `timeout` seconds.
 """
-abstract type TimeoutLayer{Next <: Layer} <: Layer end
+abstract type TimeoutLayer{Next <: Layer} <: Layer{Next} end
 export TimeoutLayer
 
 function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
@@ -23,7 +23,7 @@ function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
             @debug 1 "💥  Read inactive > $(readtimeout)s: $io"
             break
         end
-        sleep(8 + rand() * 4)
+        sleep(readtimeout / 10)
     end
 
     try

@@ -18,7 +18,7 @@ Add a [AWS Signature Version 4](http://docs.aws.amazon.com/general/latest/gr/sig
 Credentials are read from environment variables `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`.
 """
-abstract type AWS4AuthLayer{Next <: Layer} <: Layer end
+abstract type AWS4AuthLayer{Next <: Layer} <: Layer{Next} end
 export AWS4AuthLayer
 
 function request(::Type{AWS4AuthLayer{Next}},
