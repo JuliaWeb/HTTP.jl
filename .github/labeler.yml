@@ -5,11 +5,32 @@ CI:
 - "**/*.yml"
 - ".github/workflows/**/*"
 
-examples: 
-- "examples/*"
+bug: 
+- "bug/*"
 
-internals: 
-- "src/*"
+duplicate: 
+- "duplicate/*"
 
-tests: 
-- "test/*"
+help wanted: 
+- "help wanted/*"
+
+improve error message: 
+- "improve error message/*"
+
+invalid: 
+- "invalid/*"
+
+question: 
+- "question/*"
+
+waiting for feedback: 
+- "waiting for feedback/*"
+
+waiting on author: 
+- "waiting on author/*"
+
+websockets: 
+- "websockets/*"
+
+wontfix: 
+- "wontfix/*"
