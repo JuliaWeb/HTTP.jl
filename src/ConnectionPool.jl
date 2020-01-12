@@ -35,15 +35,15 @@ using ..IOExtras, ..Sockets
     const Cond = Threads.Condition
 
     function _notify(cond)
-        lock(cond)
-        notify(cond)
-        unlock(cond)
+        lock(cond) do
+            notify(cond)
+        end
     end
 
     function _wait(cond)
-        lock(cond)
-        wait(cond)
-        unlock(cond)
+        lock(cond) do
+            wait(cond)
+        end
     end
 else
     const Cond = Condition
