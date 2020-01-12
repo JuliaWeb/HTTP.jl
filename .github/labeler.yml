@@ -1,2 +1,6 @@
 📖 documentation: 
 - "docs/*"
+
+CI:
+- "**/*.yml"
+- ".github/workflows/**/*"
