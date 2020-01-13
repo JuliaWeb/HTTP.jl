@@ -305,33 +305,37 @@ end
         server_events = []
         t = async_test(;pipeline_limit=0)
         @show t
-        @test server_events == [
-            "Request: GET /delay1 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
-            "Request: GET /delay2 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
-            "Request: GET /delay3 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
-            "Request: GET /delay4 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
-            "Request: GET /delay5 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+        if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
+            @test server_events == [
+                "Request: GET /delay1 HTTP/1.1",
+                "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+                "Request: GET /delay2 HTTP/1.1",
+                "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+                "Request: GET /delay3 HTTP/1.1",
+                "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
+                "Request: GET /delay4 HTTP/1.1",
+                "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+                "Request: GET /delay5 HTTP/1.1",
+                "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+        end
     end
 
     @testset "ASync - Pipeline limit = 1" begin
         server_events = []
         t = async_test(;pipeline_limit=1)
-        @test server_events == [
-            "Request: GET /delay1 HTTP/1.1",
-            "Request: GET /delay2 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
-            "Request: GET /delay3 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
-            "Request: GET /delay4 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
-            "Request: GET /delay5 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
-            "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+        if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
+            @test server_events == [
+                "Request: GET /delay1 HTTP/1.1",
+                "Request: GET /delay2 HTTP/1.1",
+                "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+                "Request: GET /delay3 HTTP/1.1",
+                "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+                "Request: GET /delay4 HTTP/1.1",
+                "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
+                "Request: GET /delay5 HTTP/1.1",
+                "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
+                "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
+        end
     end
 
     @testset "ASync - Pipeline limit = 2" begin
