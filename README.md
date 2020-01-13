@@ -60,7 +60,11 @@ end
 
 [`HTTP.Servers.listen`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.Servers.listen):
 
+The server will start listening on 127.0.0.1:8081 by default.
+
 ```julia
+using HTTP
+
 HTTP.listen() do http::HTTP.Stream
     @show http.message
     @show HTTP.header(http, "Content-Type")
@@ -77,6 +81,8 @@ end
 
 [`HTTP.Handlers.serve`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.Handlers.serve):
 ```julia
+using HTTP
+
 HTTP.serve() do request::HTTP.Request
    @show request
    @show request.method
