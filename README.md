@@ -67,9 +67,9 @@ HTTP.listen() do http::HTTP.Stream
     while !eof(http)
         println("body data: ", String(readavailable(http)))
     end
-    setstatus(http, 404)
-    setheader(http, "Foo-Header" => "bar")
-    startwrite(http)
+    HTTP.setstatus(http, 404)
+    HTTP.setheader(http, "Foo-Header" => "bar")
+    HTTP.startwrite(http)
     write(http, "response body")
     write(http, "more response body")
 end
@@ -111,7 +111,7 @@ Hello
 ```
 
 ## Custom HTTP Layer Examples
-#####Notes:
+##### Notes:
 - There is no enforcement of a "well-defined" stack, you can insert a layer anywhere in the stack even if it logically
 does not make sense
 - When creating a custom layer, you need to create a `request()`, see below for an example
