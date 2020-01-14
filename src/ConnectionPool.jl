@@ -31,7 +31,6 @@ using ..IOExtras, ..Sockets
 
 
 @static if VERSION >= v"1.3"
-    using Base.Threads
     const Cond = Threads.Condition
 
     function _notify(cond)

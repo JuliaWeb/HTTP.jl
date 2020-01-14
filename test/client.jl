@@ -25,6 +25,19 @@ end
         @test status(HTTP.patch("$sch://httpbin.org/patch")) == 200
     end
 
+    @static if VERSION >= v"1.3"
+        @testset "GET, HEAD, POST, PUT, DELETE, PATCH from a thread" begin
+            @test status(fetch(Threads.@spawn(HTTP.get("$sch://httpbin.org/ip")))) == 200
+            @test status(fetch(Threads.@spawn(HTTP.get("$sch://httpbin.org/ip")))) == 200
+            @test status(fetch(Threads.@spawn(HTTP.head("$sch://httpbin.org/ip")))) == 200
+            @test status(fetch(Threads.@spawn(HTTP.post("$sch://httpbin.org/ip"; status_exception=false)))) == 405
+            @test status(fetch(Threads.@spawn(HTTP.post("$sch://httpbin.org/post")))) == 200
+            @test status(fetch(Threads.@spawn(HTTP.put("$sch://httpbin.org/put")))) == 200
+            @test status(fetch(Threads.@spawn(HTTP.delete("$sch://httpbin.org/delete")))) == 200
+            @test status(fetch(Threads.@spawn(HTTP.patch("$sch://httpbin.org/patch")))) == 200
+        end
+    end
+
     @testset "ASync Client Requests" begin
         @test status(fetch(@async HTTP.get("$sch://httpbin.org/ip"))) == 200
         @test status(HTTP.get("$sch://httpbin.org/encoding/utf8")) == 200
