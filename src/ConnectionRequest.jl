@@ -82,6 +82,9 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
 
     try
         if proxy !== nothing && target_url.scheme == "https"
+            target_url = URI(scheme=target_url.scheme,
+                             host=target_url.host,
+                             port=443)
             return tunnel_request(Next, io, target_url, req, body; kw...)
         end
 
