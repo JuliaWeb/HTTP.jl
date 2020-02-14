@@ -14,7 +14,6 @@ HTTP.BasicAuthLayer
 HTTP.CookieLayer
 HTTP.CanonicalizeLayer
 HTTP.MessageLayer
-HTTP.AWS4AuthLayer
 HTTP.RetryLayer
 HTTP.ExceptionLayer
 HTTP.ConnectionPoolLayer

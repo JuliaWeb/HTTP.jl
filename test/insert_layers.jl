@@ -25,8 +25,8 @@ using ..TestRequest
         @test expected == result
     end
 
-    @testset "Insert - Non-existant layer" begin
-        @test_throws HTTP.Layers.LayerNotFoundException insert(stack(), AWS4AuthLayer, TestLayer)
+    @testset "Insert - Non-existent layer" begin
+        @test_throws HTTP.Layers.LayerNotFoundException insert(stack(), DebugLayer, TestLayer)
     end
 
     @testset "Insert - Multiple Same layer" begin

@@ -1,6 +1,6 @@
 module HTTP
 
-export startwrite, startread, closewrite, closeread, stack, insert, AWS4AuthLayer,
+export startwrite, startread, closewrite, closeread, stack, insert,
     BasicAuthLayer, CanonicalizeLayer, ConnectionPoolLayer, ContentTypeDetectionLayer,
     DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer, RetryLayer, StreamLayer,
     TimeoutLayer
@@ -142,18 +142,6 @@ Basic Authentication options
 
  - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)
    and adds the `Authorization: Basic` header
-
-
-AWS Authentication options
-
- - `aws_authorization = false`, enable AWS4 Authentication.
- - `aws_service = split(url.host, ".")[1]`
- - `aws_region = split(url.host, ".")[2]`
- - `aws_access_key_id = ENV["AWS_ACCESS_KEY_ID"]`
- - `aws_secret_access_key = ENV["AWS_SECRET_ACCESS_KEY"]`
- - `aws_session_token = get(ENV, "AWS_SESSION_TOKEN", "")`
- - `body_sha256 = digest(MD_SHA256, body)`,
- - `body_md5 = digest(MD_MD5, body)`,
 
 
 Cookie options
@@ -425,7 +413,6 @@ delete(a...; kw...) = request("DELETE", a...; kw...)
 
 include("RedirectRequest.jl");          using .RedirectRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
-include("AWS4AuthRequest.jl");          using .AWS4AuthRequest
 include("CookieRequest.jl");            using .CookieRequest
 include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
 include("TimeoutRequest.jl");           using .TimeoutRequest
@@ -483,8 +470,6 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
  │   │ request(CanonicalizeLayer, method, ::URI, ::Headers, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
  │   │ request(MessageLayer,      method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(AWS4AuthLayer,             ::URI, ::Request, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
  │   │ request(RetryLayer,                ::URI, ::Request, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
@@ -552,7 +537,6 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 *See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
 """
 function stack(;redirect=true,
-                aws_authorization=false,
                 cookies=false,
                 canonicalize_headers=false,
                 retry=true,
@@ -571,7 +555,6 @@ function stack(;redirect=true,
                             CookieLayer               : NoLayer){
     (canonicalize_headers ? CanonicalizeLayer         : NoLayer){
                             MessageLayer{
-    (aws_authorization    ? AWS4AuthLayer             : NoLayer){
     (retry                ? RetryLayer                : NoLayer){
     (status_exception     ? ExceptionLayer            : NoLayer){
                             ConnectionPoolLayer{
@@ -579,7 +562,7 @@ function stack(;redirect=true,
      DEBUG_LEVEL[] >= 3   ? DebugLayer                : NoLayer){
     (readtimeout > 0      ? TimeoutLayer              : NoLayer){
                             StreamLayer{Union{}}
-    }}}}}}}}}}}}
+    }}}}}}}}}}}
 end
 
 include("download.jl")
