@@ -44,6 +44,7 @@ end
     server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
     tsk = @async HTTP.listen(handler, "127.0.0.1", port; server=server)
     sleep(3.0)
+    @test !istaskdone(tsk)
     r = testget("http://127.0.0.1:$port")
     @test occursin(r"HTTP/1.1 200 OK", r)
     close(server)
@@ -56,6 +57,8 @@ end
 
     tsk2 = @async HTTP.serve(handler2, "127.0.0.1", port+100)
     sleep(3.0)
+    @test !istaskdone(tsk)
+    @test !istaskdone(tsk2)
 
     r = testget("http://127.0.0.1:$port")
     @test occursin(r"HTTP/1.1 200 OK", r)
@@ -135,6 +138,7 @@ end
     port += 1
     tsk = @async HTTP.listen(hello, "127.0.0.1", port,verbose=true)
     sleep(2.0)
+    @test !istaskdone(tsk)
     tcp = Sockets.connect(ip"127.0.0.1", port)
     write(tcp, "GET / HTTP/1.0\r\n\r\n")
     sleep(0.5)
@@ -145,13 +149,13 @@ end
     # SO_REUSEPORT
     println("Testing server port reuse")
     t1 = @async HTTP.listen(hello, "127.0.0.1", 8089; reuseaddr=true)
-    @test !istaskdone(t1)
     sleep(0.5)
+    @test !istaskdone(t1)
 
     println("Starting second server listening on same port")
     t2 = @async HTTP.listen(hello, "127.0.0.1", 8089; reuseaddr=true)
-    @test !istaskdone(t2)
     sleep(0.5)
+    @test !istaskdone(t2)
 
     println("Starting server on same port without port reuse (throws error)")
     try
@@ -174,8 +178,8 @@ end
         write(http, request.response.body)
     end
 
-    @test !istaskdone(t1)
     sleep(0.5)
+    @test !istaskdone(t1)
 
     # test that an Authorization header is **not** forwarded to a domain different than initial request
     r = HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:8090", ["Authorization"=>"auth"])

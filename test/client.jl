@@ -73,7 +73,15 @@ end
         @test status(r) == 200
 
         b = [JSON.parse(l) for l in eachline(io)]
-        @test a == b
+        @test all(zip(a, b)) do (x, y)
+            x["args"] == y["args"] &&
+            x["id"] == y["id"] &&
+            x["url"] == y["url"] &&
+            x["origin"] == y["origin"] &&
+            x["headers"]["Content-Length"] == y["headers"]["Content-Length"] &&
+            x["headers"]["Host"] == y["headers"]["Host"] &&
+            x["headers"]["User-Agent"] == y["headers"]["User-Agent"]
+        end
     end
 
     @testset "Client Body Posting - Vector{UTF8}, String, IOStream, IOBuffer, BufferStream" begin

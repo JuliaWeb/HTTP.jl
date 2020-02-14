@@ -10,7 +10,7 @@ using MbedTLS: digest, MD_SHA256, MD_MD5
         [:verbose => 0, :reuse_limit => 50]
     ]
     protocols = ["http", "https"]
-
+    
     function dump_async_exception(e, st)
         buf = IOBuffer()
         write(buf, "==========\n@async exception:\n==========\n")
@@ -22,7 +22,6 @@ using MbedTLS: digest, MD_SHA256, MD_MD5
 
     function startASyncHTTP()
         @async HTTP.listen() do http
-            @show HTTP.Sockets.getsockname(http)
             startwrite(http)
             write(http, """
                 <html><head>
