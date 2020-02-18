@@ -3,7 +3,7 @@ taskid(t=current_task()) = string(hash(t) & 0xffff, base=16, pad=4)
 debug_header() = string("DEBUG: ", rpad(Dates.now(), 24), taskid(), " ")
 
 macro debug(n::Int, s)
-    DEBUG_LEVEL[] >= n ? :(println($__source__, ": ", debug_header(), $(esc(s)))) :
+    DEBUG_LEVEL[] >= n ? :(println(debug_header(), $(esc(s)))) :
                          :()
 end
 

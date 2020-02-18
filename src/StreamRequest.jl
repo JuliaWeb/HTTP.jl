@@ -32,6 +32,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
 
     response = request.response
     http = Stream(response, io)
+    println("streamlayer startwrite")
     startwrite(http)
 
     if verbose == 2
@@ -83,7 +84,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
             rethrow(e)
         end
     end
-
+    println("streamrequest closewrite")
     closewrite(http)
     closeread(http)
 
@@ -105,6 +106,7 @@ function writebody(http::Stream, req::Request, body)
     req.txcount += 1
 
     if isidempotent(req)
+        println("writebody closewriter")
         closewrite(http)
     else
         @debug 2 "🔒  $(req.method) non-idempotent, " *

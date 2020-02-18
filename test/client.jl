@@ -177,6 +177,7 @@ end
 
     @testset "openraw client method - $socket_protocol" for socket_protocol in ["wss", "ws"]
         # WebSockets require valid headers.
+        @show sch, socket_protocol
         headers = Dict(
             "Upgrade" => "websocket",
             "Connection" => "Upgrade",
@@ -203,7 +204,7 @@ end
         eof(socket)
         actualframe = read(socket, 7)
         @test expectedframe == actualframe
-
+        println("calling close")
         close(socket)
     end
 end

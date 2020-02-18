@@ -117,6 +117,7 @@ function IOExtras.closewrite(http::Stream{Response})
         return
     end
     closebody(http)
+    println("stream response closewrite")
     closewrite(http.stream)
 end
 
@@ -124,6 +125,7 @@ function IOExtras.closewrite(http::Stream{Request})
 
     if iswritable(http)
         closebody(http)
+        println("stream request closewrite")
         closewrite(http.stream)
     end
 

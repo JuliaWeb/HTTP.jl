@@ -5,7 +5,7 @@ export startwrite, startread, closewrite, closeread, stack, insert, AWS4AuthLaye
     DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer, RetryLayer, StreamLayer,
     TimeoutLayer
 
-const DEBUG_LEVEL = Ref(0)
+const DEBUG_LEVEL = Ref(1)
 
 Base.@deprecate escape escapeuri
 Base.@deprecate URL URI
