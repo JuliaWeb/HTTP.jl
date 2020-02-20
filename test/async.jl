@@ -35,9 +35,6 @@ using MbedTLS: digest, MD_SHA256, MD_MD5
                 <body><pre>
             """)
             write(http, "<body><pre>")
-            buf = IOBuffer()
-            HTTP.ConnectionPool.showpoolhtml(buf)
-            write(http, take!(buf))
             write(http, "</pre></body>")
         end
 
@@ -47,7 +44,6 @@ using MbedTLS: digest, MD_SHA256, MD_MD5
                 run(`open http://localhost:8081`)
             catch e
                 while !stop_pool_dump
-                    HTTP.ConnectionPool.showpool(stdout)
                     sleep(1)
                 end
             end
