@@ -73,11 +73,9 @@ mutable struct Connection{T <: IO}
     buffer::IOBuffer
     sequence::Int
     writecount::Int
-    writebusy::Bool
-    writedone::Condition
+    writelock::Channel{Bool}
     readcount::Int
-    readbusy::Bool
-    readdone::Condition
+    readlock::Channel{Bool}
     timestamp::Float64
 end
 
@@ -93,9 +91,17 @@ Fields:
  - `c`, the shared [`Connection`](@ref) used for this `Transaction`.
  - `sequence::Int`, identifies this `Transaction` among the others that share `c`.
 """
-struct Transaction{T <: IO} <: IO
+mutable struct Transaction{T <: IO} <: IO
     c::Connection{T}
     sequence::Int
+    writebusy::Bool
+    readbusy::Bool
+end
+
+function boolchannel()
+    c = Channel{Bool}(1)
+    put!(c, true)
+    return c
 end
 
 Connection(host::AbstractString, port::AbstractString,
@@ -105,17 +111,16 @@ Connection(host::AbstractString, port::AbstractString,
                   pipeline_limit, idle_timeout,
                   require_ssl_verification,
                   peerport(io), localport(io),
-                  io, client, PipeBuffer(),
-                  -1,
-                  0, false, Condition(),
-                  0, false, Condition(),
+                  io, client, PipeBuffer(), -1,
+                  0, boolchannel(),
+                  0, boolchannel(),
                   time())
 
 Connection(io; require_ssl_verification::Bool=true) =
     Connection("", "", default_pipeline_limit, 0, require_ssl_verification, io, false)
 
 Transaction(c::Connection{T}) where T <: IO =
-    Transaction{T}(c, (c.sequence += 1))
+    Transaction{T}(c, (c.sequence += 1), false, false)
 
 function client_transaction(c)
     t = Transaction(c)
@@ -143,10 +148,15 @@ Base.isopen(t::Transaction) = isopen(t.c) &&
                               t.c.readcount <= t.sequence &&
                               t.c.writecount <= t.sequence
 
+writebusy(c::Connection) = !isready(c.writelock)
+readbusy(c::Connection) = !isready(c.readlock)
+writebusy(t::Transaction) = t.writebusy
+readbusy(t::Transaction) = t.readbusy
+
 """
 Is `c` currently in use or expecting a response to request already sent?
 """
-isbusy(c::Connection) = isopen(c) && (c.writebusy || c.readbusy ||
+isbusy(c::Connection) = isopen(c) && (writebusy(c) || readbusy(c) ||
                                       c.writecount > c.readcount)
 
 function Base.eof(t::Transaction)
@@ -161,9 +171,9 @@ Base.bytesavailable(t::Transaction) = bytesavailable(t.c)
 Base.bytesavailable(c::Connection) = bytesavailable(c.buffer) +
                                      bytesavailable(c.io)
 
-Base.isreadable(t::Transaction) = t.c.readbusy && t.c.readcount == t.sequence
+Base.isreadable(t::Transaction) = readbusy(t)
 
-Base.iswritable(t::Transaction) = t.c.writebusy && t.c.writecount == t.sequence
+Base.iswritable(t::Transaction) = writebusy(t)
 
 function Base.read(t::Transaction, nb::Int)
     nb = min(nb, bytesavailable(t))
@@ -240,12 +250,19 @@ end
 Wait for prior pending writes to complete.
 """
 function IOExtras.startwrite(t::Transaction)
-    @require !iswritable(t)                     ;t.c.writecount != t.sequence &&
-                                                   @debug 1 "⏳  Wait write: $t"
-    while t.c.writecount != t.sequence
-        wait(t.c.writedone)
-    end                                           ;@debug 2 "👁  Start write:$t"
-    t.c.writebusy = true
+    @require !iswritable(t)
+
+    writebusy(t.c) && @debug 1 "⏳  Wait write: $t"
+    while true
+        lock = take!(t.c.writelock)
+        if t.c.writecount == t.sequence
+            t.writebusy = lock
+            break
+        end
+        put!(t.c.writelock, lock)
+    end
+    @debug 2 "👁  Start write:$t"
+
     @ensure iswritable(t)
     return
 end
@@ -258,9 +275,9 @@ Signal that an entire Request Message has been written to the `Transaction`.
 function IOExtras.closewrite(t::Transaction)
     @require iswritable(t)
 
-    t.c.writebusy = false
+    t.writebusy = false
     t.c.writecount += 1                           ;@debug 2 "🗣  Write done: $t"
-    notify(t.c.writedone)
+    put!(t.c.writelock, true)
     release(t.c)
 
     @ensure !iswritable(t)
@@ -273,13 +290,20 @@ end
 Wait for prior pending reads to complete.
 """
 function IOExtras.startread(t::Transaction)
-    @require !isreadable(t)                      ;t.c.readcount != t.sequence &&
-                                                   @debug 1 "⏳  Wait read:  $t"
+    @require !isreadable(t)
+
+    readbusy(t.c) && @debug 1 "⏳  Wait read:  $t"
     t.c.timestamp = time()
-    while t.c.readcount != t.sequence
-        wait(t.c.readdone)
-    end                                           ;@debug 2 "👁  Start read: $t"
-    t.c.readbusy = true
+    while true
+        lock = take!(t.c.readlock)
+        if t.c.readcount == t.sequence
+            t.readbusy = lock
+            break
+        end
+        put!(t.c.readlock, lock)
+    end
+    @debug 2 "👁  Start read: $t"
+
     @ensure isreadable(t)
     return
 end
@@ -294,9 +318,9 @@ Increment `readcount` and wake up tasks waiting in `startread`.
 function IOExtras.closeread(t::Transaction)
     @require isreadable(t)
 
-    t.c.readbusy = false
-    t.c.readcount += 1
-    notify(t.c.readdone)                          ;@debug 2 "✉️  Read done:  $t"
+    t.readbusy = false
+    t.c.readcount += 1                          ;@debug 2 "✉️  Read done:  $t"
+    put!(t.c.readlock, true)
 
     if !isbusy(t.c)
         @async monitor_idle_connection(t.c)
@@ -420,7 +444,7 @@ function getconnection(::Type{Transaction{T}},
 @label check_connection
         # Close connections that have reached the reuse limit...
         if reuse_limit != nolimit
-            if conn.readcount >= reuse_limit && !conn.readbusy
+            if conn.readcount >= reuse_limit && !readbusy(conn)
                 @debug 2 "💀 overuse:         $c"
                 close(conn.io)
             end
@@ -432,6 +456,11 @@ function getconnection(::Type{Transaction{T}},
                 close(conn.io)
             end
         end
+        # If we've hit our pipeline_limit, put the connection back
+        # if (conn.writecount - conn.readcount) >= pipeline_limit + 1
+        #     release(conn)
+        #     continue
+        # end
         # For closed connections, we decrease active count in pod, and "continue"
         # which effectively drops the connection
         if !isopen(conn.io)
@@ -580,8 +609,8 @@ function Base.show(io::IO, c::Connection)
     print(
         io,
         tcpstatus(c), " ",
-        lpad(c.writecount,3),"↑", c.writebusy ? "🔒  " : "   ",
-        lpad(c.readcount,3), "↓", c.readbusy ? "🔒 " : "  ",
+        lpad(c.writecount, 3),"↑", writebusy(c) ? "🔒  " : "   ",
+        lpad(c.readcount, 3), "↓", readbusy(c) ? "🔒 " : "  ",
         "$(lpad(round(Int, time() - c.timestamp), 3))s ",
         c.host, ":",
         c.port != "" ? c.port : Int(c.peerport), ":", Int(c.localport),
