@@ -445,7 +445,7 @@ function getconnection(::Type{Transaction{T}},
         # Close connections that have reached the reuse limit...
         if reuse_limit != nolimit
             if conn.readcount >= reuse_limit && !readbusy(conn)
-                @debug 2 "💀 overuse:         $c"
+                @debug 0 "💀 overuse:         $c"
                 close(conn.io)
             end
         end
@@ -464,6 +464,7 @@ function getconnection(::Type{Transaction{T}},
         # For closed connections, we decrease active count in pod, and "continue"
         # which effectively drops the connection
         if !isopen(conn.io)
+            close(conn)
             decr!(pod)
             continue
         end
@@ -480,8 +481,11 @@ function getconnection(::Type{Transaction{T}},
     end
 
     # Wait for `closewrite` or `close` to signal that a connection is ready.
-    @debug 2 "connection pool full, waiting..."
+    # sym = gensym()
+    # @debug 0 "$sym: connection pool full, waiting..."
+    # tt = time()
     conn = take!(pod.conns)
+    # @debug 0 "$sym: waited $(time() - tt) seconds for take!"
     # otherwise, we got a connection that was closewrite-ed, so check if we can use it
     @goto check_connection
 end

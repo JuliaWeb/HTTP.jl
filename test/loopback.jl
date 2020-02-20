@@ -409,6 +409,22 @@ end
     @testset "ASync - " begin
         server_events = []
         t = async_test(["GET","GET","POST", "GET","GET"])
+        if !(server_events[1:6] == [
+            "Request: GET /delay1 HTTP/1.1",
+            "Request: GET /delay2 HTTP/1.1",
+            "Request: POST /delay3 HTTP/1.1",
+            "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+            "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+            "Response: HTTP/1.1 200 OK <= (POST /delay3 HTTP/1.1)"] ||
+        server_events[1:6] == [
+            "Request: GET /delay1 HTTP/1.1",
+            "Request: GET /delay2 HTTP/1.1",
+            "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
+            "Request: POST /delay3 HTTP/1.1",
+            "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
+            "Response: HTTP/1.1 200 OK <= (POST /delay3 HTTP/1.1)"])
+            @show server_events
+        end
         @test server_events[1:6] == [
             "Request: GET /delay1 HTTP/1.1",
             "Request: GET /delay2 HTTP/1.1",

@@ -111,12 +111,23 @@ using JSON
         uri = "$protocol://httpbin.org/$(lowercase(method))"
         r = request(method, uri, verbose=1)
         @test r.status == 200
-        body = r.body
+        r1 = JSON.parse(String(r.body))
 
         io = Base.BufferStream()
         r = request(method, uri, response_stream=io, verbose=1)
         @test r.status == 200
-        @test read(io) == body
+        r2 = JSON.parse(IOBuffer(read(io)))
+        for (k, v) in r1
+            if k == "headers"
+                for (k2, v2) in r1[k]
+                    if k2 != "X-Amzn-Trace-Id"
+                        @test r1[k][k2] == r2[k][k2]
+                    end
+                end
+            else
+                @test r1[k] == r2[k]
+            end
+        end
     end
 
     @testset "Body - JSON Parse" for protocol in protocols, method in http_writes
