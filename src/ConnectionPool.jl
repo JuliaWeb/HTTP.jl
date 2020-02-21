@@ -37,6 +37,16 @@ const default_connection_limit = 8
 const default_pipeline_limit = 16
 const nolimit = typemax(Int)
 
+macro v1_3(expr, elses=nothing)
+    quote
+        @static if VERSION >= v"1.3"
+            $expr
+        else
+            $elses
+        end
+    end
+end
+
 @static if VERSION >= v"1.3"
     const Cond = Threads.Condition
 else
@@ -264,7 +274,7 @@ Wait for prior pending writes to complete.
 function IOExtras.startwrite(t::Transaction)
     @require !iswritable(t)
 
-    lock(t.c.writelock)
+    @v1_3 lock(t.c.writelock)
     try
         t.c.writecount[] != t.sequence && @debug 1 "⏳  Wait write: $t"
         while t.c.writecount[] != t.sequence
@@ -273,7 +283,7 @@ function IOExtras.startwrite(t::Transaction)
         t.writebusy[] = true
         t.c.writebusy[] = true
     finally
-        unlock(t.c.writelock)
+        @v1_3 unlock(t.c.writelock)
     end
     @debug 2 "👁  Start write:$t"
 
@@ -289,12 +299,12 @@ Signal that an entire Request Message has been written to the `Transaction`.
 function IOExtras.closewrite(t::Transaction)
     @require iswritable(t)
 
-    lock(t.c.writelock) do
-        t.writebusy[] = false
-        Threads.atomic_add!(t.c.writecount, 1)          ;@debug 2 "🗣  Write done: $t"
-        t.c.writebusy[] = false
-        notify(t.c.writelock)
-    end
+    @v1_3 lock(t.c.writelock)
+    t.writebusy[] = false
+    Threads.atomic_add!(t.c.writecount, 1)          ;@debug 2 "🗣  Write done: $t"
+    t.c.writebusy[] = false
+    notify(t.c.writelock)
+    @v1_3 unlock(t.c.writelock)
     release(t.c)
 
     @ensure !iswritable(t)
@@ -310,7 +320,7 @@ function IOExtras.startread(t::Transaction)
     @require !isreadable(t)
 
     t.c.timestamp = time()
-    lock(t.c.readlock)
+    @v1_3 lock(t.c.readlock)
     try
         t.c.readcount[] != t.sequence && @debug 1 "⏳  Wait read: $t"
         while t.c.readcount[] != t.sequence
@@ -319,7 +329,7 @@ function IOExtras.startread(t::Transaction)
         t.readbusy[] = true
         t.c.readbusy[] = true
     finally
-        unlock(t.c.readlock)
+        @v1_3 unlock(t.c.readlock)
     end
     @debug 2 "👁  Start read: $t"
 
@@ -337,12 +347,12 @@ Increment `readcount` and wake up tasks waiting in `startread`.
 function IOExtras.closeread(t::Transaction)
     @require isreadable(t)
 
-    lock(t.c.readlock) do
-        t.readbusy[] = false
-        Threads.atomic_add!(t.c.readcount, 1)         ;@debug 2 "✉️  Read done:  $t"
-        t.c.readbusy[] = false
-        notify(t.c.readlock)
-    end
+    @v1_3 lock(t.c.readlock)
+    t.readbusy[] = false
+    Threads.atomic_add!(t.c.readcount, 1)         ;@debug 2 "✉️  Read done:  $t"
+    t.c.readbusy[] = false
+    notify(t.c.readlock)
+    @v1_3 unlock(t.c.readlock)
     release(t.c)
 
     if !isbusy(t.c)
@@ -413,11 +423,11 @@ Close all connections in `pool`.
 """
 function closeall()
     for pod in values(POOL.conns)
-        lock(pod.conns)
+        @v1_3 lock(pod.conns)
         while isready(pod.conns)
             close(take!(pod.conns))
         end
-        unlock(pod.conns)
+        @v1_3 unlock(pod.conns)
         pod.numactive[] = 0
     end
     return
@@ -464,7 +474,7 @@ function getconnection(::Type{Transaction{T}},
                        require_ssl_verification::Bool=true,
                        kw...)::Transaction{T} where T <: IO
     pod = getpod(POOL, hashconn(T, host, port, pipeline_limit, require_ssl_verification, true))
-    lock(pod.conns)
+    @v1_3 lock(pod.conns)
     try
         while isready(pod.conns)
             conn = take!(pod.conns)
@@ -475,7 +485,7 @@ function getconnection(::Type{Transaction{T}},
             end
         end
     finally
-        unlock(pod.conns)
+        @v1_3 unlock(pod.conns)
     end
 
     # If there are not too many connections to this host:port,
