@@ -45,7 +45,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
     if !isidempotent(request)
         # Wait for pipelined reads to complete
         # before sending non-idempotent request body.
-        @debug 2 "client startread"
+        @debug 2 "non-idempotent client startread"
         startread(io)
     end
 

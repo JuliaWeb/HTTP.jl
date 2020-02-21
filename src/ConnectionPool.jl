@@ -13,7 +13,7 @@ pipelined request. Methods are provided for `eof`, `readavailable`,
 This allows the `Transaction` object to act as a proxy for the
 `TCPSocket` or `SSLContext` that it wraps.
 
-The [`pool`](@ref) is a collection of open
+The [`POOL`](@ref) is a collection of open
 `Connection`s.  The `request` function calls `getconnection` to
 retrieve a connection from the `pool`.  When the `request` function
 has written a Request Message it calls `closewrite` to signal that
@@ -36,6 +36,12 @@ using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 const default_connection_limit = 8
 const default_pipeline_limit = 16
 const nolimit = typemax(Int)
+
+@static if VERSION >= v"1.3"
+    const Cond = Threads.Condition
+else
+    const Cond = Condition
+end
 
 """
     Connection{T <: IO}
@@ -71,13 +77,28 @@ mutable struct Connection{T <: IO}
     io::T
     clientconnection::Bool
     buffer::IOBuffer
-    sequence::Int
-    writecount::Int
-    writelock::Channel{Bool}
-    readcount::Int
-    readlock::Channel{Bool}
+    sequence::Threads.Atomic{Int}
+    writecount::Threads.Atomic{Int}
+    writelock::Cond
+    writebusy::Threads.Atomic{Bool}
+    readcount::Threads.Atomic{Int}
+    readlock::Cond
+    readbusy::Threads.Atomic{Bool}
     timestamp::Float64
+    closelock::ReentrantLock
+    closed::Bool
 end
+
+"""
+    hashconn
+
+Used for "hashing" a Connection object on just the key properties necessary for determining
+connection re-useability. That is, when a new request calls `getconnection`, we take the
+request parameters of what socket type, the host and port, any pipeline_limit and if ssl
+verification is required, and if an existing Connection was already created with the exact
+same parameters, we can re-use it (as long as it's not already being used, obviously).
+"""
+function hashconn end
 
 hashconn(x::Connection{T}) where {T} = hashconn(T, x.host, x.port, x.pipeline_limit, x.require_ssl_verification, x.clientconnection)
 hashconn(T, host, port, pipeline_limit, require_ssl_verification, client) = hash(T, hash(host, hash(port, hash(pipeline_limit, hash(require_ssl_verification, hash(client, UInt(0)))))))
@@ -94,14 +115,8 @@ Fields:
 mutable struct Transaction{T <: IO} <: IO
     c::Connection{T}
     sequence::Int
-    writebusy::Bool
-    readbusy::Bool
-end
-
-function boolchannel()
-    c = Channel{Bool}(1)
-    put!(c, true)
-    return c
+    writebusy::Threads.Atomic{Bool}
+    readbusy::Threads.Atomic{Bool}
 end
 
 Connection(host::AbstractString, port::AbstractString,
@@ -111,16 +126,16 @@ Connection(host::AbstractString, port::AbstractString,
                   pipeline_limit, idle_timeout,
                   require_ssl_verification,
                   peerport(io), localport(io),
-                  io, client, PipeBuffer(), -1,
-                  0, boolchannel(),
-                  0, boolchannel(),
-                  time())
+                  io, client, PipeBuffer(), Threads.Atomic{Int}(0),
+                  Threads.Atomic{Int}(0), Cond(), Threads.Atomic{Bool}(false),
+                  Threads.Atomic{Int}(0), Cond(), Threads.Atomic{Bool}(false),
+                  time(), ReentrantLock(), false)
 
 Connection(io; require_ssl_verification::Bool=true) =
     Connection("", "", default_pipeline_limit, 0, require_ssl_verification, io, false)
 
 Transaction(c::Connection{T}) where T <: IO =
-    Transaction{T}(c, (c.sequence += 1), false, false)
+    Transaction{T}(c, (Threads.atomic_add!(c.sequence, 1)), Threads.Atomic{Bool}(false), Threads.Atomic{Bool}(false))
 
 function client_transaction(c)
     t = Transaction(c)
@@ -145,19 +160,17 @@ Base.unsafe_write(t::Transaction, p::Ptr{UInt8}, n::UInt) =
 Base.isopen(c::Connection) = isopen(c.io)
 
 Base.isopen(t::Transaction) = isopen(t.c) &&
-                              t.c.readcount <= t.sequence &&
-                              t.c.writecount <= t.sequence
+                              t.c.readcount[] <= t.sequence &&
+                              t.c.writecount[] <= t.sequence
 
-writebusy(c::Connection) = !isready(c.writelock)
-readbusy(c::Connection) = !isready(c.readlock)
-writebusy(t::Transaction) = t.writebusy
-readbusy(t::Transaction) = t.readbusy
+writebusy(c::Union{Connection, Transaction}) = c.writebusy[]
+readbusy(c::Union{Connection, Transaction}) = c.readbusy[]
 
 """
 Is `c` currently in use or expecting a response to request already sent?
 """
 isbusy(c::Connection) = isopen(c) && (writebusy(c) || readbusy(c) ||
-                                      c.writecount > c.readcount)
+                                      c.writecount[] > c.readcount[])
 
 function Base.eof(t::Transaction)
     @require isreadable(t) || !isopen(t)
@@ -172,7 +185,6 @@ Base.bytesavailable(c::Connection) = bytesavailable(c.buffer) +
                                      bytesavailable(c.io)
 
 Base.isreadable(t::Transaction) = readbusy(t)
-
 Base.iswritable(t::Transaction) = writebusy(t)
 
 function Base.read(t::Transaction, nb::Int)
@@ -252,14 +264,16 @@ Wait for prior pending writes to complete.
 function IOExtras.startwrite(t::Transaction)
     @require !iswritable(t)
 
-    writebusy(t.c) && @debug 1 "⏳  Wait write: $t"
-    while true
-        lock = take!(t.c.writelock)
-        if t.c.writecount == t.sequence
-            t.writebusy = lock
-            break
+    lock(t.c.writelock)
+    try
+        t.c.writecount[] != t.sequence && @debug 1 "⏳  Wait write: $t"
+        while t.c.writecount[] != t.sequence
+            wait(t.c.writelock)
         end
-        put!(t.c.writelock, lock)
+        t.writebusy[] = true
+        t.c.writebusy[] = true
+    finally
+        unlock(t.c.writelock)
     end
     @debug 2 "👁  Start write:$t"
 
@@ -275,9 +289,12 @@ Signal that an entire Request Message has been written to the `Transaction`.
 function IOExtras.closewrite(t::Transaction)
     @require iswritable(t)
 
-    t.writebusy = false
-    t.c.writecount += 1                           ;@debug 2 "🗣  Write done: $t"
-    put!(t.c.writelock, true)
+    lock(t.c.writelock) do
+        t.writebusy[] = false
+        Threads.atomic_add!(t.c.writecount, 1)          ;@debug 2 "🗣  Write done: $t"
+        t.c.writebusy[] = false
+        notify(t.c.writelock)
+    end
     release(t.c)
 
     @ensure !iswritable(t)
@@ -292,15 +309,17 @@ Wait for prior pending reads to complete.
 function IOExtras.startread(t::Transaction)
     @require !isreadable(t)
 
-    readbusy(t.c) && @debug 1 "⏳  Wait read:  $t"
     t.c.timestamp = time()
-    while true
-        lock = take!(t.c.readlock)
-        if t.c.readcount == t.sequence
-            t.readbusy = lock
-            break
+    lock(t.c.readlock)
+    try
+        t.c.readcount[] != t.sequence && @debug 1 "⏳  Wait read: $t"
+        while t.c.readcount[] != t.sequence
+            wait(t.c.readlock)
         end
-        put!(t.c.readlock, lock)
+        t.readbusy[] = true
+        t.c.readbusy[] = true
+    finally
+        unlock(t.c.readlock)
     end
     @debug 2 "👁  Start read: $t"
 
@@ -318,9 +337,13 @@ Increment `readcount` and wake up tasks waiting in `startread`.
 function IOExtras.closeread(t::Transaction)
     @require isreadable(t)
 
-    t.readbusy = false
-    t.c.readcount += 1                          ;@debug 2 "✉️  Read done:  $t"
-    put!(t.c.readlock, true)
+    lock(t.c.readlock) do
+        t.readbusy[] = false
+        Threads.atomic_add!(t.c.readcount, 1)         ;@debug 2 "✉️  Read done:  $t"
+        t.c.readbusy[] = false
+        notify(t.c.readlock)
+    end
+    release(t.c)
 
     if !isbusy(t.c)
         @async monitor_idle_connection(t.c)
@@ -390,10 +413,12 @@ Close all connections in `pool`.
 """
 function closeall()
     for pod in values(POOL.conns)
+        lock(pod.conns)
         while isready(pod.conns)
             close(take!(pod.conns))
         end
-        Threads.atomic_xchg!(pod.numactive, 0)
+        unlock(pod.conns)
+        pod.numactive[] = 0
     end
     return
 end
@@ -419,7 +444,7 @@ struct Pool
     conns::Dict{UInt, Pod}
 end
 
-const POOL = Pool(Dict{Any, Pod}())
+const POOL = Pool(Dict{UInt, Pod}())
 
 getpod(pool::Pool, x) = get!(() -> Pod(), pool.conns, x)
 
@@ -439,38 +464,18 @@ function getconnection(::Type{Transaction{T}},
                        require_ssl_verification::Bool=true,
                        kw...)::Transaction{T} where T <: IO
     pod = getpod(POOL, hashconn(T, host, port, pipeline_limit, require_ssl_verification, true))
-    while isready(pod.conns)
-        conn = take!(pod.conns)
-@label check_connection
-        # Close connections that have reached the reuse limit...
-        if reuse_limit != nolimit
-            if conn.readcount >= reuse_limit && !readbusy(conn)
-                @debug 0 "💀 overuse:         $c"
-                close(conn.io)
+    lock(pod.conns)
+    try
+        while isready(pod.conns)
+            conn = take!(pod.conns)
+            if isvalid(pod, conn, reuse_limit, pipeline_limit)
+                # this is a reuseable connection, so use it
+                @debug 2 "1 reusing connection: $conn"
+                return client_transaction(conn)
             end
         end
-        # Close connections that have reached the timeout limit...
-        if conn.idle_timeout > 0
-            if !isbusy(conn) && inactiveseconds(conn) > conn.idle_timeout
-                @debug 2 "💀 idle timeout:    $c"
-                close(conn.io)
-            end
-        end
-        # If we've hit our pipeline_limit, put the connection back
-        # if (conn.writecount - conn.readcount) >= pipeline_limit + 1
-        #     release(conn)
-        #     continue
-        # end
-        # For closed connections, we decrease active count in pod, and "continue"
-        # which effectively drops the connection
-        if !isopen(conn.io)
-            close(conn)
-            decr!(pod)
-            continue
-        end
-        # otherwise, this is a reuseable connection, so use it
-        @debug 2 "reusing connection: $conn"
-        return client_transaction(conn)
+    finally
+        unlock(pod.conns)
     end
 
     # If there are not too many connections to this host:port,
@@ -484,10 +489,52 @@ function getconnection(::Type{Transaction{T}},
     # sym = gensym()
     # @debug 0 "$sym: connection pool full, waiting..."
     # tt = time()
-    conn = take!(pod.conns)
-    # @debug 0 "$sym: waited $(time() - tt) seconds for take!"
-    # otherwise, we got a connection that was closewrite-ed, so check if we can use it
-    @goto check_connection
+    while true
+        conn = take!(pod.conns)
+        if isvalid(pod, conn, reuse_limit, pipeline_limit)
+            # this is a reuseable connection, so use it
+            @debug 2 "2 reusing connection: $conn"
+            return client_transaction(conn)
+        elseif pod.numactive[] < connection_limit
+            return newconnection(pod, T, host, port, pipeline_limit,
+                require_ssl_verification, idle_timeout; kw...)
+        end
+    end
+end
+
+function isvalid(pod, conn, reuse_limit, pipeline_limit)
+    # Close connections that have reached the reuse limit...
+    if reuse_limit != nolimit
+        if conn.readcount[] >= reuse_limit && !readbusy(conn)
+            @debug 0 "💀 overuse:         $c"
+            close(conn.io)
+        end
+    end
+    # Close connections that have reached the timeout limit...
+    if conn.idle_timeout > 0
+        if !isbusy(conn) && inactiveseconds(conn) > conn.idle_timeout
+            @debug 2 "💀 idle timeout:    $c"
+            close(conn.io)
+        end
+    end
+    # For closed connections, we decrease active count in pod, and "continue"
+    # which effectively drops the connection
+    if !isopen(conn.io)
+        close(conn)
+        lock(conn.closelock) do
+            if !conn.closed
+                conn.closed = true
+                decr!(pod)
+            end
+        end
+        return false
+    end
+    # If we've hit our pipeline_limit, can't use this one, but don't close
+    if (conn.writecount[] - conn.readcount[]) >= pipeline_limit + 1
+        return false
+    end
+
+    return !writebusy(conn)
 end
 
 function newconnection(pod, T, host, port, pipeline_limit, require_ssl_verification, idle_timeout; kw...)
@@ -613,8 +660,8 @@ function Base.show(io::IO, c::Connection)
     print(
         io,
         tcpstatus(c), " ",
-        lpad(c.writecount, 3),"↑", writebusy(c) ? "🔒  " : "   ",
-        lpad(c.readcount, 3), "↓", readbusy(c) ? "🔒 " : "  ",
+        lpad(c.writecount[], 3),"↑", writebusy(c) ? "🔒  " : "   ",
+        lpad(c.readcount[], 3), "↓", readbusy(c) ? "🔒 " : "  ",
         "$(lpad(round(Int, time() - c.timestamp), 3))s ",
         c.host, ":",
         c.port != "" ? c.port : Int(c.peerport), ":", Int(c.localport),
