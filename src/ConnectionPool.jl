@@ -38,13 +38,13 @@ const default_pipeline_limit = 16
 const nolimit = typemax(Int)
 
 macro v1_3(expr, elses=nothing)
-    quote
+    esc(quote
         @static if VERSION >= v"1.3"
             $expr
         else
             $elses
         end
-    end
+    end)
 end
 
 @static if VERSION >= v"1.3"
