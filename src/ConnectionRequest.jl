@@ -114,7 +114,7 @@ function tunnel_request(Next, io, target_url, req, body; kw...)
 end
 
 function connect_tunnel(io, target_url, req)
-    if isempty(target_url.port)
+    if isempty( target_url.port )
         target_url.port = target_url.scheme == "https" ? "443" : "80"
     end
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
