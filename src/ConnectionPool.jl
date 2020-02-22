@@ -516,14 +516,14 @@ function isvalid(pod, conn, reuse_limit, pipeline_limit)
     # Close connections that have reached the reuse limit...
     if reuse_limit != nolimit
         if conn.readcount[] >= reuse_limit && !readbusy(conn)
-            @debug 0 "💀 overuse:         $c"
+            @debug 2 "💀 overuse:         $conn"
             close(conn.io)
         end
     end
     # Close connections that have reached the timeout limit...
     if conn.idle_timeout > 0
         if !isbusy(conn) && inactiveseconds(conn) > conn.idle_timeout
-            @debug 2 "💀 idle timeout:    $c"
+            @debug 2 "💀 idle timeout:    $conn"
             close(conn.io)
         end
     end
