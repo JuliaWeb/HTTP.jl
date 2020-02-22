@@ -405,7 +405,7 @@ end
             "Request: POST /delay1 HTTP/1.1",
             "Response: HTTP/1.1 200 OK <= (POST /delay1 HTTP/1.1)"]
     end
-
+@static if Sys.WORD_SIZE == 64
     @testset "ASync - " begin
         server_events = []
         t = async_test(["GET","GET","POST", "GET","GET"])
@@ -442,4 +442,5 @@ end
     end
 
     HTTP.ConnectionPool.closeall()
+end # @static
 end
