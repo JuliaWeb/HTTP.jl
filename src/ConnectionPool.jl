@@ -180,13 +180,13 @@ Base.isopen(t::Transaction) = isopen(t.c) &&
                               readcount(t.c) <= t.sequence &&
                               writecount(t.c) <= t.sequence
 
-writebusy(c::Connection) = lock(() -> c.writebusy, c.writelock)
-writecount(c::Connection) = lock(() -> c.writecount, c.writelock)
-readbusy(c::Connection) = lock(() -> c.readbusy, c.readlock)
-readcount(c::Connection) = lock(() -> c.readcount, c.readlock)
+writebusy(c::Connection) = @v1_3 lock(() -> c.writebusy, c.writelock) c.writebusy
+writecount(c::Connection) = @v1_3 lock(() -> c.writecount, c.writelock) c.writecount
+readbusy(c::Connection) = @v1_3 lock(() -> c.readbusy, c.readlock) c.readbusy
+readcount(c::Connection) = @v1_3 lock(() -> c.readcount, c.readlock) c.readcount
 
-writebusy(t::Transaction) = lock(() -> t.writebusy, t.c.writelock)
-readbusy(t::Transaction) = lock(() -> t.readbusy, t.c.readlock)
+writebusy(t::Transaction) = @v1_3 lock(() -> t.writebusy, t.c.writelock) t.writebusy
+readbusy(t::Transaction) = @v1_3 lock(() -> t.readbusy, t.c.readlock) t.readbusy
 
 """
 Is `c` currently in use or expecting a response to request already sent?
