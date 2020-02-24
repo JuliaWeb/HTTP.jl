@@ -133,7 +133,7 @@ end
 
 function Base.show(io::IO, m::Multipart{T}) where {T}
     items = ["data=::$T", "contenttype=\"$(m.contenttype)\"", "contenttransferencoding=\"$(m.contenttransferencoding)\")"]
-    isnothing(m.filename) || pushfirst!(items, "filename=\"$(m.filename)\"")
+    m.filename === nothing || pushfirst!(items, "filename=\"$(m.filename)\"")
     print(io, "HTTP.Multipart($(join(items, ", ")))")
 end
 
@@ -146,7 +146,7 @@ Base.reset(m::Multipart{T}) where {T} = reset(m.data)
 Base.seekstart(m::Multipart{T}) where {T} = seekstart(m.data)
 
 function writemultipartheader(io::IOBuffer, i::Multipart)
-    if isnothing(i.filename)
+    if i.filename === nothing
         write(io, "\r\n")
     else
         write(io, "; filename=\"$(i.filename)\"\r\n")

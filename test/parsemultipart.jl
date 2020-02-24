@@ -76,12 +76,12 @@ end
         @test "text/plain" === multiparts[1].contenttype
         @test "not much to say\n" === String(read(multiparts[1].data))
 
-        @test isnothing(multiparts[2].filename)
+        @test multiparts[2].filename === nothing
         @test "key1" === multiparts[2].name
         @test "text/plain" === multiparts[2].contenttype
         @test "1" === String(read(multiparts[2].data))
 
-        @test isnothing(multiparts[3].filename)
+        @test multiparts[3].filename === nothing
         @test "key2" === multiparts[3].name
         @test "text/plain" === multiparts[3].contenttype
         @test "key the second" === String(read(multiparts[3].data))
