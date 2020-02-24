@@ -405,6 +405,11 @@ end
             "Request: POST /delay1 HTTP/1.1",
             "Response: HTTP/1.1 200 OK <= (POST /delay1 HTTP/1.1)"]
     end
+# there were issues in travis testing for windows 32-bit where
+# the slowness causes these tests to be pretty unreliable; i.e.
+# the requests were still pipelined fine and in the correct order
+# but we just didn't see the right order of the server receiving all
+# three requests first then sending the 3 responses
 @static if Sys.WORD_SIZE == 64
     @testset "ASync - " begin
         server_events = []
