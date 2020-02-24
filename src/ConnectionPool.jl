@@ -49,10 +49,10 @@ macro v1_3(expr, elses=nothing)
     end)
 end
 
-@static if VERSION >= v"1.3"	
-    const Cond = Threads.Condition	
-else	
-    const Cond = Condition	
+@static if VERSION >= v"1.3"
+    const Cond = Threads.Condition
+else
+    const Cond = Condition
 end
 
 """
