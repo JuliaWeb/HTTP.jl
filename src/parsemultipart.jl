@@ -198,7 +198,7 @@ function parse_multipart_chunk(chunk)
 
     disposition = match(r"(?i)Content-Disposition: form-data(.*)\r\n", headers)
 
-    if isnothing(disposition)
+    if disposition === nothing
         @warn "Content disposition is not specified dropping the chunk."
         return # Specifying content disposition is mandatory
     end
@@ -214,10 +214,10 @@ function parse_multipart_chunk(chunk)
         end
     end
 
-    isnothing(name) && return
+    name === nothing && return
 
     match_contenttype = match(r"(?i)Content-Type: (\S*[^;\s])", headers)
-    contenttype = !isnothing(match_contenttype) ? match_contenttype[1] : "text/plain" # if content_type is not specified, the default text/plain is assumed
+    contenttype = match_contenttype !== nothing ? match_contenttype[1] : "text/plain" # if content_type is not specified, the default text/plain is assumed
 
     return Multipart(filename, IOBuffer(content), contenttype, "", name)
 end
@@ -258,7 +258,7 @@ the boundary delimiter will start with '--' and end in \r\n.
 function parse_multipart_form(req::Request)::Vector{Multipart}
     # parse boundary from Content-Type
     m = match(r"multipart/form-data; boundary=(.*)$", req["Content-Type"])
-    isnothing(m) && return nothing
+    m === nothing && return nothing
 
     boundary_delimiter = m[1]
 
