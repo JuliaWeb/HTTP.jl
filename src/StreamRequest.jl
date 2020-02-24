@@ -32,6 +32,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
 
     response = request.response
     http = Stream(response, io)
+    @debug 2 "client startwrite"
     startwrite(http)
 
     if verbose == 2
@@ -44,6 +45,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
     if !isidempotent(request)
         # Wait for pipelined reads to complete
         # before sending non-idempotent request body.
+        @debug 2 "non-idempotent client startread"
         startread(io)
     end
 
@@ -64,6 +66,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
                     isopen(io) && close(io)
                 end
                 yield()
+                @debug 2 "client startread"
                 startread(http)
                 readbody(http, response, response_stream)
             else
@@ -83,8 +86,9 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
             rethrow(e)
         end
     end
-
+    @debug 2 "client closewrite"
     closewrite(http)
+    @debug 2 "client closeread"
     closeread(http)
 
     verbose == 1 && printlncompact(response)
@@ -105,6 +109,7 @@ function writebody(http::Stream, req::Request, body)
     req.txcount += 1
 
     if isidempotent(req)
+        @debug 2 "client closewrite"
         closewrite(http)
     else
         @debug 2 "🔒  $(req.method) non-idempotent, " *

@@ -1,9 +1,4 @@
-using Distributed
-addprocs(5)
-
-using Test
-using HTTP
-using JSON
+using Test, HTTP, JSON
 
 @testset "HTTP" begin
     for f in ["ascii.jl",

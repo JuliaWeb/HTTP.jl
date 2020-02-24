@@ -1,30 +1,16 @@
-using Distributed
+module test_server
 
-while nworkers() < 5
-    addprocs(1)
-end
+using HTTP, Sockets, Test
 
-@everywhere using HTTP, Sockets, Test
-
-"""
-    n: number of remotes
-    m: number of async requests per remote
-"""
-function testget(url, n=1, m=1)
+function testget(url, m=1)
     r = []
-    @sync for i in 1:n
-        @async push!(r, remote((url, mm) -> begin
-            rr = []
-            @sync for ii in 1:mm
-                l = rand([0,0,10,1000,10000])
-                body = Vector{UInt8}(rand('A':'Z', l))
-                # println("sending request...")
-                @async push!(rr, HTTP.request("GET", "$url/$ii", [], body))
-            end
-            return rr
-        end)("$url/$i", m))
+    @sync for i in 1:m
+        l = rand([0,0,10,1000,10000])
+        body = Vector{UInt8}(rand('A':'Z', l))
+        # println("sending request...")
+        @async push!(r, HTTP.request("GET", "$url/$i", [], body))
     end
-    return join([String(x) for x in vcat(r...)], "\n")
+    return r
 end
 
 @testset "HTTP.listen" begin
@@ -44,39 +30,33 @@ end
     server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
     tsk = @async HTTP.listen(handler, "127.0.0.1", port; server=server)
     sleep(3.0)
+    @test !istaskdone(tsk)
     r = testget("http://127.0.0.1:$port")
-    @test occursin(r"HTTP/1.1 200 OK", r)
+    @test r[1].status == 200
     close(server)
-    sleep(1.0)
+    sleep(0.5)
     @test istaskdone(tsk)
 
-    tsk = @async HTTP.listen(handler, "127.0.0.1", port)
+    server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
+    tsk = @async HTTP.listen(handler, "127.0.0.1", port; server=server)
 
     handler2 = HTTP.Handlers.RequestHandlerFunction(req->HTTP.Response(200, req.body))
 
-    tsk2 = @async HTTP.serve(handler2, "127.0.0.1", port+100)
-    sleep(3.0)
+    server2 = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port+100))
+    tsk2 = @async HTTP.serve(handler2, "127.0.0.1", port+100; server=server2)
+    sleep(0.5)
+    @test !istaskdone(tsk)
+    @test !istaskdone(tsk2)
 
     r = testget("http://127.0.0.1:$port")
-    @test occursin(r"HTTP/1.1 200 OK", r)
+    @test r[1].status == 200
 
     r = testget("http://127.0.0.1:$(port+100)")
-    @test occursin(r"HTTP/1.1 200 OK", r)
+    @test r[1].status == 200
 
-    rv = []
-    n = 5
-    m = 20
-    @sync for i = 1:n
-        @async begin
-            r = testget("http://127.0.0.1:$port/$i", n, m)
-            #println(r)
-            push!(rv, r)
-        end
-        sleep(0.01)
-    end
-    for i = 1:n
-        @test length(filter(l->occursin(r"HTTP/1.1 200 OK", l),
-                            split(rv[i], "\n"))) == n * m
+    rs = testget("http://127.0.0.1:$port/", 20)
+    foreach(rs) do r
+        @test r.status == 200
     end
 
     r = HTTP.get("http://127.0.0.1:$port/"; readtimeout=30)
@@ -130,11 +110,15 @@ end
         startwrite(http)
         write(http, request.response.body)
     end
+    close(server)
+    close(server2)
 
     # keep-alive vs. close: issue #81
     port += 1
-    tsk = @async HTTP.listen(hello, "127.0.0.1", port,verbose=true)
-    sleep(2.0)
+    server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
+    tsk = @async HTTP.listen(hello, "127.0.0.1", port; server=server, verbose=true)
+    sleep(0.5)
+    @test !istaskdone(tsk)
     tcp = Sockets.connect(ip"127.0.0.1", port)
     write(tcp, "GET / HTTP/1.0\r\n\r\n")
     sleep(0.5)
@@ -145,13 +129,13 @@ end
     # SO_REUSEPORT
     println("Testing server port reuse")
     t1 = @async HTTP.listen(hello, "127.0.0.1", 8089; reuseaddr=true)
-    @test !istaskdone(t1)
     sleep(0.5)
+    @test !istaskdone(t1)
 
     println("Starting second server listening on same port")
     t2 = @async HTTP.listen(hello, "127.0.0.1", 8089; reuseaddr=true)
-    @test !istaskdone(t2)
     sleep(0.5)
+    @test Sys.iswindows() ? istaskdone(t2) : !istaskdone(t2)
 
     println("Starting server on same port without port reuse (throws error)")
     try
@@ -174,8 +158,8 @@ end
         write(http, request.response.body)
     end
 
-    @test !istaskdone(t1)
     sleep(0.5)
+    @test !istaskdone(t1)
 
     # test that an Authorization header is **not** forwarded to a domain different than initial request
     r = HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:8090", ["Authorization"=>"auth"])
@@ -185,3 +169,5 @@ end
     r = HTTP.get("http://httpbin.org/redirect-to?url=https://httpbin.org/response-headers?Authorization=auth")
     @test HTTP.hasheader(r, "Authorization")
 end # @testset
+
+end # module

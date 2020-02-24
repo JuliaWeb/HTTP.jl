@@ -15,7 +15,7 @@ using BufferedStreams
     split1 = 106
     split2 = 300
 
-    @async HTTP.listen("127.0.0.1", 8091) do http
+    t = @async HTTP.listen("127.0.0.1", 8091) do http
         startwrite(http)
         tcp = http.stream.c.io
 
@@ -32,6 +32,7 @@ using BufferedStreams
     end
 
     sleep(1)
+    @assert !istaskdone(t)
 
     r = HTTP.get("http://127.0.0.1:8091")
 

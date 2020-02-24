@@ -23,6 +23,8 @@ import MbedTLS
 
 using Dates
 
+import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
+
 # rate limiting
 mutable struct RateLimit
     allowance::Float64
@@ -337,6 +339,7 @@ function handle_transaction(f, t::Transaction; final_transaction::Bool=false)
     http = Stream(request, t)
 
     try
+        @debug 2 "server startread"
         startread(http)
     catch e
         if e isa EOFError && isempty(request.method)
@@ -358,7 +361,9 @@ function handle_transaction(f, t::Transaction; final_transaction::Bool=false)
 
     @async try
         f(http)
+        @debug 2 "server closeread"
         closeread(http)
+        @debug 2 "server closewrite"
         closewrite(http)
     catch e
         @error "error handling request" exception=(e, stacktrace(catch_backtrace()))
