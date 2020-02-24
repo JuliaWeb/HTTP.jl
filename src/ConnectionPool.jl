@@ -49,6 +49,12 @@ macro v1_3(expr, elses=nothing)
     end)
 end
 
+@static if VERSION >= v"1.3"	
+    const Cond = Threads.Condition	
+else	
+    const Cond = Condition	
+end
+
 """
     Connection{T <: IO}
 
@@ -88,10 +94,10 @@ mutable struct Connection{T <: IO}
     buffer::IOBuffer
     sequence::Threads.Atomic{Int}
     writecount::Int
-    writelock::Threads.Condition # protects the writecount and writebusy fields, notifies on closewrite
+    writelock::Cond # protects the writecount and writebusy fields, notifies on closewrite
     writebusy::Bool
     readcount::Int
-    readlock::Threads.Condition # protects the readcount and readbusy fields, notifies on closeread
+    readlock::Cond # protects the readcount and readbusy fields, notifies on closeread
     readbusy::Bool
     timestamp::Float64
     closelock::ReentrantLock
@@ -138,8 +144,8 @@ Connection(host::AbstractString, port::AbstractString,
                   require_ssl_verification,
                   peerport(io), localport(io),
                   io, client, PipeBuffer(), Threads.Atomic{Int}(0),
-                  0, Threads.Condition(), false,
-                  0, Threads.Condition(), false,
+                  0, Cond(), false,
+                  0, Cond(), false,
                   time(), ReentrantLock(), false)
 
 Connection(io; require_ssl_verification::Bool=true) =
@@ -363,14 +369,13 @@ function IOExtras.closeread(t::Transaction)
         t.c.readbusy = false
         notify(t.c.readlock)
         @ensure !isreadable(t)
+        if !isbusy(t.c)
+            @async monitor_idle_connection(t.c)
+        end
     finally
         @v1_3 unlock(t.c.readlock)
     end
     release(t.c)
-
-    if !isbusy(t.c)
-        @async monitor_idle_connection(t.c)
-    end
 
     return
 end
