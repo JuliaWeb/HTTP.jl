@@ -24,6 +24,21 @@ function generate_test_request()
     HTTP.Request("POST", "/", headers, generate_test_body())
 end
 
+function generate_non_multi_test_request()
+    headers = [
+        "User-Agent" => "PostmanRuntime/7.15.2",
+        "Accept" => "*/*",
+        "Cache-Control" => "no-cache",
+        "Postman-Token" => "288c2481-1837-4ba9-add3-f23d380fa440",
+        "Host" => "localhost:8888",
+        "Accept-Encoding" => "gzip, deflate",
+        "Accept-Encoding" => "gzip, deflate",
+        "Content-Length" => "657",
+        "Connection" => "keep-alive",
+    ]
+
+    HTTP.Request("POST", "/", headers, Vector{UInt8}())
+end
 
 @testset "parse multipart form-data" begin
     @testset "find_multipart_boundary" begin
@@ -68,6 +83,8 @@ end
 
 
     @testset "parse_multipart_form" begin
+        @test HTTP.parse_multipart_form(generate_non_multi_test_request()) === nothing
+        
         multiparts = HTTP.parse_multipart_form(generate_test_request())
         @test 4 == length(multiparts)
 

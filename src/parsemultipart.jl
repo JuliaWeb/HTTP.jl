@@ -263,7 +263,7 @@ that the boundary delimiter does not need to have '-' characters, but a line usi
 the boundary delimiter will start with '--' and end in \r\n.
 [RFC2046 5.1](https://tools.ietf.org/html/rfc2046#section-5.1.1)
 """
-function parse_multipart_form(req::Request)::Vector{Multipart}
+function parse_multipart_form(req::Request)::Union{Vector{Multipart}, Nothing}
     # parse boundary from Content-Type
     m = match(r"multipart/form-data; boundary=(.*)$", req["Content-Type"])
     m === nothing && return nothing
