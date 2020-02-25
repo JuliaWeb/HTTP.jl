@@ -610,7 +610,7 @@ function getconnection(::Type{TCPSocket},
     @debug 2 "TCP connect: $host:$p..."
 
     if connect_timeout == 0
-        tcp = Sockets.connect(Sockets.getalladdrinfo(host)[1], p)
+        tcp = Sockets.connect(host == "localhost" ? ip"127.0.0.1" : Sockets.getalladdrinfo(host)[1], p)
         keepalive && keepalive!(tcp)
         return tcp
     end
