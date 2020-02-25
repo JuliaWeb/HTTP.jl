@@ -3,7 +3,7 @@ using HTTP
 
 
 function generate_test_body()
-    IOBuffer("----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"namevalue\"; filename=\"multipart.txt\"\r\nContent-Type: text/plain\r\n\r\nnot much to say\n\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"key1\"\r\n\r\n1\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"key2\"\r\n\r\nkey the second\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"namevalue2\"; filename=\"multipart-leading-newline.txt\"\r\nContent-Type: text/plain\r\n\r\n\nfile with leading newline\n\r\n----------------------------918073721150061572809433--\r\n").data
+    Vector{UInt8}("----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"namevalue\"; filename=\"multipart.txt\"\r\nContent-Type: text/plain\r\n\r\nnot much to say\n\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"key1\"\r\n\r\n1\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"key2\"\r\n\r\nkey the second\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"namevalue2\"; filename=\"multipart-leading-newline.txt\"\r\nContent-Type: text/plain\r\n\r\n\nfile with leading newline\n\r\n----------------------------918073721150061572809433--\r\n")
 end
 
 
@@ -31,7 +31,7 @@ end
 
         # NOTE: this is the start of a "boundary delimiter line" and has two leading
         # '-' characters prepended to the boundary delimiter from Content-Type header
-        delimiter = IOBuffer("----------------------------918073721150061572809433").data
+        delimiter = Vector{UInt8}("----------------------------918073721150061572809433")
         body = generate_test_body()
         # length of the delimiter, CRLF, and -1 for the end index to be the LF character
         endIndexOffset = length(delimiter) + 2 - 1
