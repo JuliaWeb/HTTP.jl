@@ -230,7 +230,7 @@ chunks which are returned as an array of Multipart objects.
 """
 function parse_multipart_body(body::AbstractVector{UInt8}, boundary::AbstractString)::Vector{Multipart}
     multiparts = Multipart[]
-    idxs = find_multipart_boundaries(body, IOBuffer("--$(boundary)").data)
+    idxs = find_multipart_boundaries(body, Vector{UInt8}("--$(boundary)"))
     length(idxs) > 1 || (return multiparts)
 
     for i in 1:length(idxs)-1
