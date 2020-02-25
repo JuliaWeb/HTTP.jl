@@ -298,7 +298,7 @@ function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
         count = 0
         # if the connection socket or original server close, we stop taking requests
         while isopen(c) && isopen(server) && count <= reuse_limit
-            handle_transaction(f, Transaction(c);
+            handle_transaction(f, Transaction(c), server;
                                final_transaction=(count == reuse_limit))
             count += 1
         end
@@ -334,13 +334,17 @@ If there is a parse error, send an error Response.
 Otherwise, execute stream processing function `f`.
 If `f` throws an exception, send an error Response and close the connection.
 """
-function handle_transaction(f, t::Transaction; final_transaction::Bool=false)
+function handle_transaction(f, t::Transaction, server; final_transaction::Bool=false)
     request = Request()
     http = Stream(request, t)
 
     try
         @debug 2 "server startread"
         startread(http)
+        if !isopen(server)
+            close(t)
+            return
+        end
     catch e
         if e isa EOFError && isempty(request.method)
             return
