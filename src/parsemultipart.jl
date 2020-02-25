@@ -38,9 +38,17 @@ function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter
             is_terminating_delimiter && (end_index+=2)
 
             # ... there can be arbitrary SP and HTAB space between the boundary delimiter ...
-            while (end_index < length(bytes) && (bytes[end_index+1] in [HTAB_BYTE, SPACE_BYTE])) end_index+=1 end
+            while (end_index < length(bytes) && (bytes[end_index+1] in [HTAB_BYTE, SPACE_BYTE]))
+                end_index+=1
+            end
             # ... and ends with a new line
-            (end_index < length(bytes)-1) && bytes[end_index+1] == CR_BYTE && bytes[end_index+2] == LF_BYTE || error("boundary delimiter found, but did not end with new line")
+            newlineEnd = end_index < length(bytes)-1 &&
+                         bytes[end_index+1] == CR_BYTE &&
+                         bytes[end_index+2] == LF_BYTE
+            if !newlineEnd
+                error("boundary delimiter found, but did not end with new line")
+            end
+
             end_index += 2
 
             return (is_terminating_delimiter, i, end_index)
@@ -61,7 +69,7 @@ looking for the data between the boundary delimiters in the byte array.  A vecto
 the start/end pairs is returned.
 """
 function find_multipart_boundaries(bytes::AbstractVector{UInt8}, boundary::AbstractVector{UInt8}; start=1)
-    idxs = []
+    idxs = Tuple{Int, Int}[]
     while true
         (is_terminating_delimiter, i, end_index) = find_multipart_boundary(bytes, boundary; start = start)
         push!(idxs, (i, end_index))
@@ -98,7 +106,7 @@ end
 """
     content_disposition_tokenize(str)
 
-Tokenize the "arguments" for the Content-Disposition delcaration.  A vector of
+Tokenize the "arguments" for the Content-Disposition declaration.  A vector of
 strings is returned that contains each token and separator found in the source
 string. Tokens are separated by either an equal sign(=) or a semi-colon(;) and
 may be quoted or escaped with a backslash(\\). All tokens returned are stripped
@@ -199,7 +207,7 @@ function parse_multipart_chunk(chunk)
     disposition = match(r"(?i)Content-Disposition: form-data(.*)\r\n", headers)
 
     if disposition === nothing
-        @warn "Content disposition is not specified dropping the chunk."
+        @warn "Content disposition is not specified dropping the chunk." chunk
         return # Specifying content disposition is mandatory
     end
 
