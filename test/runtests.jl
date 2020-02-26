@@ -1,5 +1,7 @@
 using Test, HTTP, JSON
 
+const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
+
 @testset "HTTP" begin
     for f in ["ascii.jl",
               "chunking.jl",
@@ -21,6 +23,11 @@ using Test, HTTP, JSON
               "insert_layers.jl",
               "mwe.jl"]
         println("Running $f tests...")
-        include(f)
+        file = joinpath(dir, f)
+        if isfile(file)
+            include(file)
+        else
+            @show readdir()
+        end
     end
 end

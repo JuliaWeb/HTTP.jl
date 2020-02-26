@@ -148,25 +148,25 @@ using JSON
     end
 
     @testset "Write to file" begin
-        temp_dir = mktempdir()
-        cd(temp_dir)
+        cd(mktempdir()) do
 
-        line_count = 0
-        num_lines = 50
+            line_count = 0
+            num_lines = 50
 
-        open("result_file", "w") do io
-            r = request("GET",
-                "http://httpbin.org/stream/$num_lines",
-                response_stream=io,
-                verbose=1)
+            open("result_file", "w") do io
+                r = request("GET",
+                    "http://httpbin.org/stream/$num_lines",
+                    response_stream=io,
+                    verbose=1)
+            end
+
+            for line in readlines("result_file")
+                line_parsed = JSON.parse(line)
+                @test line_count == line_parsed["id"]
+                line_count += 1
+            end
+
+            @test line_count == num_lines
         end
-
-        for line in readlines("result_file")
-            line_parsed = JSON.parse(line)
-            @test line_count == line_parsed["id"]
-            line_count += 1
-        end
-
-        @test line_count == num_lines
     end
 end
