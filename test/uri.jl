@@ -484,6 +484,7 @@ urltests = URLTest[
         # Issue 475
         @test HTTP.queryparams(HTTP.URI("http://www.example.com/path/foo+bar/path?query+name=query+value")) ==
             Dict("query name" => "query value")
+        @test HTTP.queryparams(HTTP.escapeuri(Dict("a+b" => "c d+e"))) == Dict("a+b" => "c d+e")
     end
 
     @testset "Normalize URI paths" begin
