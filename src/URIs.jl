@@ -272,7 +272,7 @@ uristring(u::URI) = uristring(u.scheme, u.userinfo, u.host, u.port,
 queryparams(uri::URI) = queryparams(uri.query)
 
 function queryparams(q::AbstractString)
-    Dict(unescapeuri(k) => unescapeuri(v)
+    Dict(decodeplus(unescapeuri(k)) => decodeplus(unescapeuri(v))
         for (k,v) in ([split(e, "=")..., ""][1:2]
             for e in split(q, "&", keepempty=false)))
 end
@@ -318,6 +318,8 @@ escapeuri(v::Symbol) = escapeuri(string(v))
 escapeuri(key, value) = string(escapeuri(key), "=", escapeuri(value))
 escapeuri(key, values::Vector) = escapeuri(key => v for v in values)
 escapeuri(query) = join((escapeuri(k, v) for (k,v) in query), "&")
+
+decodeplus(q) = replace(q, '+' => ' ')
 
 "unescape a percent-encoded uri/url"
 function unescapeuri(str)
