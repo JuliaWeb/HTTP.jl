@@ -8,6 +8,7 @@ const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
               "utils.jl",
               "client.jl",
               "multipart.jl",
+              "parsemultipart.jl",
               "sniff.jl",
               "uri.jl",
               "url.jl",
@@ -22,12 +23,12 @@ const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
               "aws4.jl",
               "insert_layers.jl",
               "mwe.jl"]
-        println("Running $f tests...")
         file = joinpath(dir, f)
+        println("Running $file tests...")
         if isfile(file)
             include(file)
         else
-            @show readdir()
+            @show readdir(dirname(file))
         end
     end
 end
