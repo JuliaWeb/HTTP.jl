@@ -21,6 +21,10 @@ using Test, HTTP, JSON
               "insert_layers.jl",
               "mwe.jl"]
         println("Running $f tests...")
-        include(f)
+        if isfile(f)
+            include(f)
+        else
+            @show readdir()
+        end
     end
 end
