@@ -272,7 +272,7 @@ uristring(u::URI) = uristring(u.scheme, u.userinfo, u.host, u.port,
 queryparams(uri::URI) = queryparams(uri.query)
 
 function queryparams(q::AbstractString)
-    Dict(decodeplus(unescapeuri(k)) => decodeplus(unescapeuri(v))
+    Dict(unescapeuri(decodeplus(k)) => unescapeuri(decodeplus(v))
         for (k,v) in ([split(e, "=")..., ""][1:2]
             for e in split(q, "&", keepempty=false)))
 end
