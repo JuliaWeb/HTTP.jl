@@ -480,6 +480,10 @@ urltests = URLTest[
 
         # Issue 323
         @test string(HTTP.URI(scheme="http", host="example.com")) == "http://example.com"
+
+        # Issue 475
+        @test HTTP.queryparams(HTTP.URI("http://www.example.com/path/foo+bar/path?query+name=query+value")) ==
+            Dict("query name" => "query value")
     end
 
     @testset "Normalize URI paths" begin
