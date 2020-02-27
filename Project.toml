@@ -12,7 +12,7 @@ Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 
 [compat]
 IniFile = "0.5"
-MbedTLS = "0.6.8, 0.7"
+MbedTLS = "0.6.8, 0.7, 1"
 julia = "0.7, 1"
 
 [extras]
