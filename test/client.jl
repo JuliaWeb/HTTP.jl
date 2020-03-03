@@ -142,9 +142,9 @@ end
     end
 
     @testset "Client Basic Auth" begin
-        @test status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd"; basic_authorization=true)) == 200
-        @test status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd"; basic_authorization=true)) == 200
-        @test status(HTTP.get("$sch://test:%40test@httpbin.org/basic-auth/test/%40test"; basic_authorization=true)) == 200
+        @test status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd")) == 200
+        @test status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd")) == 200
+        @test status(HTTP.get("$sch://test:%40test@httpbin.org/basic-auth/test/%40test")) == 200
     end
 
     @testset "Misc" begin
