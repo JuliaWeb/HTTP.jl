@@ -21,7 +21,7 @@ const WS_PONG = 0x0A
 const WS_MASK = 0x80
 
 struct WebSocketError <: Exception
-    status::Int16
+    status::UInt16
     message::String
 end
 
