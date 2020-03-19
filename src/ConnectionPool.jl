@@ -473,9 +473,12 @@ end
 
 
 function release(c::Connection)
-    pod = getpod(POOL, hashconn(c))
-    @debug 2 "returning connection to pod: $c"
-    put!(pod.conns, c)
+    h = hashconn(c)
+    if haskey(POOL.conns, h)
+        pod = getpod(POOL, h)
+        @debug 2 "returning connection to pod: $c"
+        put!(pod.conns, c)
+    end
     return
 end
 

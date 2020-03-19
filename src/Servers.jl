@@ -253,21 +253,19 @@ function listenloop(f, server, tcpisvalid, connection_count,
             connection_count[] += 1
             conn = Connection(io)
             conn.host, conn.port = server.hostname, server.hostport
-            let io=io, count=count
-                @async try
-                    verbose && @info "Accept ($count):  $conn"
-                    handle_connection(f, conn, server, reuse_limit, readtimeout)
-                    verbose && @info "Closed ($count):  $conn"
-                catch e
-                    if e isa Base.IOError && e.code == -54
-                        verbose && @warn "connection reset by peer (ECONNRESET)"
-                    else
-                        @error exception=(e, stacktrace(catch_backtrace()))
-                    end
-                finally
-                    connection_count[] -= 1
-                    # handle_connection is in charge of closing the underlying io
+            @async try
+                # verbose && @info "Accept ($count):  $conn"
+                handle_connection(f, conn, server, reuse_limit, readtimeout)
+                # verbose && @info "Closed ($count):  $conn"
+            catch e
+                if e isa Base.IOError && e.code == -54
+                    verbose && @warn "connection reset by peer (ECONNRESET)"
+                else
+                    @error exception=(e, stacktrace(catch_backtrace()))
                 end
+            finally
+                connection_count[] -= 1
+                # handle_connection is in charge of closing the underlying io
             end
         catch e
             close(server)
@@ -290,8 +288,8 @@ After `reuse_limit + 1` transactions, signal `final_transaction` to the
 transaction handler.
 """
 function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
-    wait_for_timeout = Ref{Bool}(true)
     if readtimeout > 0
+        wait_for_timeout = Ref{Bool}(true)
         @async check_readtimeout(c, readtimeout, wait_for_timeout)
     end
     try
@@ -303,7 +301,9 @@ function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
             count += 1
         end
     finally
-        wait_for_timeout[] = false
+        if readtimeout > 0
+            wait_for_timeout[] = false
+        end
     end
     return
 end
