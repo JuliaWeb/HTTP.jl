@@ -5,7 +5,7 @@
 
 | **Documentation**                                                         | **Build Status**                                                                                |
 |:-------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------------------:|
-| [![][docs-stable-img]][docs-stable-url] [![][docs-dev-img]][docs-dev-url] | [![][travis-img]][travis-url] [![][appveyor-img]][appveyor-url] [![][codecov-img]][codecov-url] |
+| [![][docs-stable-img]][docs-stable-url] [![][docs-dev-img]][docs-dev-url] | [![][travis-img]][travis-url] [![][codecov-img]][codecov-url] |
 
 
 ## Installation
@@ -22,10 +22,10 @@ julia> using Pkg; Pkg.add("HTTP")
 
 ## Project Status
 
-The package is new and not yet tested in production systems.
-Please try it out and report your experience.
+The package has matured and is used in many production systems.
+But as with all open-source software, please try it out and report your experience.
 
-The package is tested against Julia 1.0 & current master on Linux, macOS, and Windows.
+The package is tested against Julia 1.0, 1.3 & current master on Linux, macOS, and Windows.
 
 ## Contributing and Questions
 
@@ -177,13 +177,7 @@ julia>
 [travis-img]: https://travis-ci.org/JuliaWeb/HTTP.jl.svg?branch=master
 [travis-url]: https://travis-ci.org/JuliaWeb/HTTP.jl
 
-[appveyor-img]: https://ci.appveyor.com/api/projects/status/qdy0vfps9gne3sd7?svg=true
-[appveyor-url]: https://ci.appveyor.com/project/quinnj/http-jl
-
 [codecov-img]: https://codecov.io/gh/JuliaWeb/HTTP.jl/branch/master/graph/badge.svg
 [codecov-url]: https://codecov.io/gh/JuliaWeb/HTTP.jl
 
 [issues-url]: https://github.com/JuliaWeb/HTTP.jl/issues
-
-[pkg-0.6-img]: http://pkg.julialang.org/badges/HTTP_0.6.svg
-[pkg-0.6-url]: http://pkg.julialang.org/?pkg=HTTP
