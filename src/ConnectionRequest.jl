@@ -86,17 +86,18 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
             return tunnel_request(Next, io, target_url, req, body; kw...)
         end
 
-        return request(Next, io, req, body; kw...)
+        r =  request(Next, io, req, body; kw...)
 
-    catch e
-        @debug 1 "❗️  ConnectionLayer $e. Closing: $io"
-        close(io)
-        rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
-    finally
         if (io.sequence >= reuse_limit
         || (proxy !== nothing && target_url.scheme == "https"))
             close(io)
         end
+
+        return r
+    catch e
+        @debug 1 "❗️  ConnectionLayer $e. Closing: $io"
+        try; close(io); catch; end
+        rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
     end
 
 end

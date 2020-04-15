@@ -59,11 +59,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
                     writebody(http, request, body)
                 catch e
                     write_error = e
-                    @info("Error in @async writebody task. " *
-                          "Server likely closed the connection unexpectedly. " *
-                          "Only an issue if unable to read the response and this error gets re-thrown. ",
-                          exception=(write_error, catch_backtrace()))
-                    isopen(io) && close(io)
+                    isopen(io) && try; close(io); catch; end
                 end
                 yield()
                 @debug 2 "client startread"
@@ -74,7 +70,9 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
             end
 
             if isaborted(http)
-                close(io)
+                # The server may have closed the connection.
+                # Don't propagate such errors.
+                try; close(io); catch; end
                 aborted = true
             end
         end
@@ -86,10 +84,15 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
             rethrow(e)
         end
     end
-    @debug 2 "client closewrite"
-    closewrite(http)
-    @debug 2 "client closeread"
-    closeread(http)
+
+    # Suppress errors from closing
+    try
+        @debug 2 "client closewrite"
+        closewrite(http)
+        @debug 2 "client closeread"
+        closeread(http)
+    catch;
+    end
 
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)
