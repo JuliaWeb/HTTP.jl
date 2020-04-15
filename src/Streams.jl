@@ -82,7 +82,9 @@ function IOExtras.startwrite(http::Stream)
     else
         http.writechunked = ischunked(m)
     end
-    writeheaders(http.stream, m)
+    buf = IOBuffer()
+    writeheaders(buf, m)
+    write(http.stream, take!(buf))
 end
 
 function Base.unsafe_write(http::Stream, p::Ptr{UInt8}, n::UInt)
