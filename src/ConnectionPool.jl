@@ -619,7 +619,7 @@ function getconnection(::Type{TCPSocket},
     end
 
     tcp = Sockets.TCPSocket()
-    Base.connect!(tcp, Sockets.getaddrinfo(host), p)
+    Sockets.bind(tcp, Sockets.getaddrinfo(host), p)
 
     timeout = Ref{Bool}(false)
     @async begin
