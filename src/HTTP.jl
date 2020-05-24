@@ -319,7 +319,6 @@ function request(stack::Type{<:Layer}, method, url, h=Header[], b=nobody;
 end
 
 request(::Type{Union{}}, resp::Response) = resp
-request(a...; kw...)::Response = request(HTTP.stack(; kw...), a...; kw...)
 
 request_uri(url, query) = merge(URI(url); query=query)
 request_uri(url, ::Nothing) = URI(url)
