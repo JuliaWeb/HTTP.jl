@@ -22,27 +22,27 @@ indicates that the server does not wish to receive the message body.
 abstract type StreamLayer{Next <: Layer} <: Layer{Next} end
 export StreamLayer
 
-function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
+function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
                  response_stream=nothing,
                  iofunction=nothing,
                  verbose::Int=0,
                  kw...)::Response where Next
 
-    verbose == 1 && printlncompact(request)
+    verbose == 1 && printlncompact(req)
 
-    response = request.response
+    response = req.response
     http = Stream(response, io)
     @debug 2 "client startwrite"
     startwrite(http)
 
     if verbose == 2
-        println(request)
-        if iofunction === nothing && request.body === body_is_a_stream
-            println("$(typeof(request)).body: $(sprintcompact(body))")
+        println(req)
+        if iofunction === nothing && req.body === body_is_a_stream
+            println("$(typeof(req)).body: $(sprintcompact(body))")
         end
     end
 
-    if !isidempotent(request)
+    if !isidempotent(req)
         # Wait for pipelined reads to complete
         # before sending non-idempotent request body.
         @debug 2 "non-idempotent client startread"
@@ -56,7 +56,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
         @sync begin
             if iofunction === nothing
                 @async try
-                    writebody(http, request, body)
+                    writebody(http, req, body)
                 catch e
                     write_error = e
                     isopen(io) && try; close(io); catch; end
@@ -97,7 +97,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, request::Request, body;
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)
 
-    return response
+    return request(Next, response)
 end
 
 function writebody(http::Stream, req::Request, body)

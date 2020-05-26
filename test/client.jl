@@ -1,4 +1,3 @@
-include("resources/TestRequest.jl")
 using ..TestRequest
 using HTTP
 using JSON

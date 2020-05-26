@@ -20,7 +20,7 @@ function request(::Type{RedirectLayer{Next}},
                  redirect_limit=3, forwardheaders=true, kw...) where Next
     count = 0
     while true
-    
+
         res = request(Next, method, url, headers, body; kw...)
 
         if (count == redirect_limit
@@ -28,12 +28,12 @@ function request(::Type{RedirectLayer{Next}},
         ||  (location = header(res, "Location")) == "")
             return res
         end
-            
+
 
         kw = merge(merge(NamedTuple(), kw), (parent = res,))
         oldurl = url
         url = absuri(location, url)
-        if forwardheaders 
+        if forwardheaders
             headers = filter(headers) do h
                 # false return values are filtered out
                 header, value = h

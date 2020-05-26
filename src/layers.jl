@@ -67,7 +67,7 @@ Example:
 stack = MessageLayer{ConnectionPoolLayer{StreamLayer{Union{}}}
 next(stack)  # ConnectionPoolLayer{StreamLayer{Union{}}}
 """
-next(::Type{S}) where {T, S<:Layer{T}} = return T
+next(::Type{S}) where {T, S<:Layer{T}} = T
 
 """
     top_layer(::Type{T}) where T <: Layer
@@ -78,8 +78,8 @@ Example:
 stack = MessageLayer{ConnectionPoolLayer{StreamLayer{Union{}}}
 top_layer(stack)  # MessageLayer
 """
-top_layer(::Type{T}) where T <: Layer = return T.name.wrapper
-top_layer(::Type{Union{}}) = return Union{}
+top_layer(::Type{T}) where T <: Layer = T.name.wrapper
+top_layer(::Type{Union{}}) = Union{}
 
 """
     insert(stack::Type{<:Layer}, layer_before::Type{<:Layer}, custom_layer::Type{<:Layer})

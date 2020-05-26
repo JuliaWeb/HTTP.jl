@@ -24,7 +24,7 @@ else
     logread(iod::IODebug, f, x) = push!(iod.log, ("⬅️ ", f, x))
 
 end
- 
+
 Base.wait_close(iod::IODebug) = Base.wait_close(iod.io)
 
 Base.write(iod::IODebug, a...) =

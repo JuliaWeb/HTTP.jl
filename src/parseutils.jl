@@ -27,7 +27,7 @@ nextbytes(re::RegexAndMatchData, bytes) = SubString(bytes, unsafe_load(Base.PCRE
 """
 `SubString` containing a regular expression match group.
 """
-function group(i, re::RegexAndMatchData, bytes) 
+function group(i, re::RegexAndMatchData, bytes)
     p = Base.PCRE.ovec_ptr(re.match_data)
     SubString(bytes, unsafe_load(p, 2i+1) + 1, prevind(bytes, unsafe_load(p, 2i+2) + 1))
 end

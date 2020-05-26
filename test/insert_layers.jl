@@ -1,4 +1,3 @@
-include("resources/TestRequest.jl")
 include("../src/exceptions.jl")
 
 using ..TestRequest
@@ -36,5 +35,11 @@ using ..TestRequest
         result = insert(test_stack, ExceptionLayer, TestLayer)
 
         @test expected == result
+    end
+
+    @testset "Inserted final layer runs handler" begin
+        TestRequest.FLAG[] = false
+        request(insert(stack(), Union{}, LastLayer), "GET", "https://httpbin.org/anything")
+        @test TestRequest.FLAG[]
     end
 end

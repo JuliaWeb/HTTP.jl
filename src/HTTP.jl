@@ -318,6 +318,8 @@ function request(stack::Type{<:Layer}, method, url, h=Header[], b=nobody;
     return request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
 
+request(::Type{Union{}}, resp::Response) = resp
+
 request_uri(url, query) = merge(URI(url); query=query)
 request_uri(url, ::Nothing) = URI(url)
 
@@ -445,7 +447,7 @@ This type is passed as the first parameter to the [`HTTP.request`](@ref) functio
 
 `stack()` accepts optional keyword arguments to enable/disable specific layers
 in the stack:
-`request(method, args...; kw...) request(stack(;kw...), args...; kw...)`
+`request(method, args...; kw...) request(stack(; kw...), args...; kw...)`
 
 
 The minimal request execution stack is:

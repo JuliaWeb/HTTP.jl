@@ -101,13 +101,13 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
     HTTP.open("GET", url, headers; kw...) do stream
         resp = startread(stream)
         eof(stream) && return  # don't do anything for streams we can't read (yet)
-        
+
         file = determine_file(local_path, resp)
         total_bytes = parse(Float64, header(resp, "Content-Length", "NaN"))
         downloaded_bytes = 0
         start_time = now()
         prev_time = now()
-        
+
         function report_callback()
             prev_time = now()
             taken_time = (prev_time - start_time).value / 1000 # in seconds
@@ -115,7 +115,7 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
             remaining_bytes = total_bytes - downloaded_bytes
             remaining_time = remaining_bytes / average_speed
             completion_progress = downloaded_bytes / total_bytes
-        
+
             @info("Downloading",
                   source=url,
                   dest = file,
@@ -145,4 +145,3 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
     end
     file
 end
-
