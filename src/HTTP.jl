@@ -250,7 +250,7 @@ using HTTP.IOExtras
 HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
     n = 0
     r = startread(http)
-    l = parse(Int, header(r, "Content-Length"))
+    l = parse(Int, HTTP.header(r, "Content-Length"))
     open(`vlc -q --play-and-exit --intf dummy -`, "w") do vlc
         while !eof(http)
             bytes = readavailable(http)
