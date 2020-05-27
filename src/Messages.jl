@@ -526,6 +526,10 @@ function compactstartline(m::Message)
     strip(String(take!(b)))
 end
 
+# temporary replacement for isvalid(String, s), until the
+# latter supports subarrays (JuliaLang/julia#36047):
+isvalidstr(s) = ccall(:u8_isvalid, Int32, (Ptr{UInt8}, Int), s, sizeof(s)) ≠ 0
+
 function Base.show(io::IO, m::Message)
     if get(io, :compact, false)
         print(io, compactstartline(m))
@@ -538,8 +542,8 @@ function Base.show(io::IO, m::Message)
     println(io, "\"\"\"")
     writeheaders(io, m)
     summary = bodysummary(m.body)
-    validsummary = isvalid(String, summary)
-    validsummary && write(io, summary)       
+    validsummary = isvalidstr(summary)
+    validsummary && write(io, summary)
     if !validsummary || length(m.body) > length(summary)
         println(io, "\n⋮\n$(length(m.body))-byte body")
     end
