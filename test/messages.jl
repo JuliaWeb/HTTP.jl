@@ -169,4 +169,17 @@ using JSON
             @test line_count == num_lines
         end
     end
+
+    @testset "Display" begin
+        @test repr(Response(200, []; body="Hello world.")) == "Response:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\nHello world.\"\"\""
+
+        # truncation of long bodies
+        for body_show_max in (Messages.body_show_max, 100)
+            Messages.set_show_max(body_show_max)
+            @test repr(Response(200, []; body="Hello world.\n"*'x'^10000)) == "Response:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\nHello world.\n"*'x'^(body_show_max-13)*"\n⋮\n10013-byte body\n\"\"\""
+        end
+
+        # don't display raw binary (non-Unicode) data:
+        @test repr(Response(200, []; body=String([0xde,0xad,0xc1,0x71,0x1c]))) == "Response:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\n\n⋮\n5-byte body\n\"\"\""
+    end
 end
