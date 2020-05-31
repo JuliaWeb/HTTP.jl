@@ -13,7 +13,7 @@ hasdotsuffix(s, suffix) = endswith(s, "." * suffix)
 
 function isnoproxy(host)
     for x in NO_PROXY
-        hasdotsuffix(host, x) || host == x) && return true
+        (hasdotsuffix(host, x) || (host == x)) && return true
     end
     return false
 end
