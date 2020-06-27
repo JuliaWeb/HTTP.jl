@@ -46,7 +46,7 @@
                    HTTP.Cookie("cookie-2", "v\$2"),
                    HTTP.Cookie("cookie-3", "v\$3"),
                   ]
-        @test string("", cookies) == "cookie-1=v\$1; cookie-2=v\$2; cookie-3=v\$3"
+        @test HTTP.stringify("", cookies) == "cookie-1=v\$1; cookie-2=v\$2; cookie-3=v\$3"
     end
 
     @testset "readsetcookies" begin
