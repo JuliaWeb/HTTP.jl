@@ -139,12 +139,11 @@ writechunk(http, req, body::IO) = writebodystream(http, req, body)
 writechunk(http, req, body) = write(http, body)
 
 function readbody(http::Stream, res::Response, response_stream)
-    if response_stream == nothing
+    if response_stream === nothing
         res.body = read(http)
     else
         res.body = body_was_streamed
         write(response_stream, http)
-        close(response_stream)
     end
 end
 

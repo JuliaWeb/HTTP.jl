@@ -114,7 +114,7 @@ using Test, HTTP, JSON
                     try
                         stream = Base.BufferStream()
                         response = HTTP.request("GET", url; response_stream=stream, config...)
-
+                        close(stream)
                         if response.status != 200
                             @error "non-200 response" response=response
                         else

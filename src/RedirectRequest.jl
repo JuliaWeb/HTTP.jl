@@ -17,11 +17,15 @@ export RedirectLayer
 
 function request(::Type{RedirectLayer{Next}},
                  method::String, url::URI, headers, body;
-                 redirect_limit=3, forwardheaders=true, kw...) where Next
+                 redirect_limit=3, forwardheaders=true,
+                 response_stream=nothing, kw...) where Next
     count = 0
     while true
-
-        res = request(Next, method, url, headers, body; kw...)
+        # save position of response_stream in case of redirect
+        if response_stream !== nothing
+            mark(response_stream)
+        end
+        res = request(Next, method, url, headers, body; response_stream=response_stream, kw...)
 
         if (count == redirect_limit
         ||  !isredirect(res)
@@ -53,6 +57,9 @@ function request(::Type{RedirectLayer{Next}},
         @debug 1 "➡️  Redirect: $url"
 
         count += 1
+        if response_stream !== nothing
+            reset(response_stream)
+        end
     end
 
     @assert false "Unreachable!"
