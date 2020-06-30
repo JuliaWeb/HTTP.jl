@@ -23,6 +23,7 @@ abstract type StreamLayer{Next <: Layer} <: Layer{Next} end
 export StreamLayer
 
 function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
+                 reached_redirect_limit=false,
                  response_stream=nothing,
                  iofunction=nothing,
                  verbose::Int=0,
@@ -64,7 +65,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
                 yield()
                 @debug 2 "client startread"
                 startread(http)
-                readbody(http, response, response_stream)
+                readbody(http, response, response_stream, reached_redirect_limit)
             else
                 iofunction(http)
             end
@@ -138,13 +139,15 @@ end
 writechunk(http, req, body::IO) = writebodystream(http, req, body)
 writechunk(http, req, body) = write(http, body)
 
-function readbody(http::Stream, res::Response, response_stream)
-    if response_stream == nothing
+function readbody(http::Stream, res::Response, response_stream, reached_redirect_limit)
+    if response_stream === nothing
         res.body = read(http)
     else
-        res.body = body_was_streamed
-        write(response_stream, http)
-        close(response_stream)
+        if reached_redirect_limit || !isredirect(res)
+            res.body = body_was_streamed
+            write(response_stream, http)
+            close(response_stream)
+        end
     end
 end
 
