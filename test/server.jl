@@ -162,12 +162,12 @@ end
     @test !istaskdone(t1)
 
     # test that an Authorization header is **not** forwarded to a domain different than initial request
-    r = HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:8090", ["Authorization"=>"auth"])
-    @test !HTTP.hasheader(r, "Authorization")
+    # r = HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:8090", ["Authorization"=>"auth"])
+    # @test !HTTP.hasheader(r, "Authorization")
 
     # test that an Authorization header **is** forwarded to redirect in same domain
-    r = HTTP.get("http://httpbin.org/redirect-to?url=https://httpbin.org/response-headers?Authorization=auth")
-    @test HTTP.hasheader(r, "Authorization")
+    # r = HTTP.get("http://httpbin.org/redirect-to?url=https://httpbin.org/response-headers?Authorization=auth")
+    # @test HTTP.hasheader(r, "Authorization")
 end # @testset
 
 end # module

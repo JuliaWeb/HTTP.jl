@@ -21,7 +21,7 @@ function request(::Type{RedirectLayer{Next}},
     count = 0
     while true
 
-        res = request(Next, method, url, headers, body; kw...)
+        res = request(Next, method, url, headers, body; reached_redirect_limit=(count == redirect_limit), kw...)
 
         if (count == redirect_limit
         ||  !isredirect(res)
