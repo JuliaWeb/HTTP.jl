@@ -38,7 +38,7 @@ function request(::Type{CookieLayer{Next}},
         end
     end
     if !isempty(cookiestosend)
-        setkv(headers, "Cookie", string(getkv(headers, "Cookie", ""), cookiestosend))
+        setkv(headers, "Cookie", stringify(getkv(headers, "Cookie", ""), cookiestosend))
     end
 
     res = request(Next, method, url, headers, body; kw...)
