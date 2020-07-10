@@ -1,3 +1,6 @@
+# A simple example of creating a server with HTTP.jl. It handles creating, deleting, 
+# updating, and retrieving Animals from a dictionary thorugh 4 different routes
+
 using HTTP
 
 # modified Animal struct to associate with specific user
@@ -51,5 +54,5 @@ HTTP.@register(ANIMAL_ROUTER, "GET", "/api/zoo/v1/animals/*", getAnimal)
 HTTP.@register(ANIMAL_ROUTER, "PUT", "/api/zoo/v1/animals", updateAnimal)
 HTTP.@register(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/animals/*", deleteAnimal)
 
-HTTP.serve(ANIMAL_ROUTER, Sockets.localhost, 8081)
+HTTP.serve(ANIMAL_ROUTER, ip"127.0.0.1", 8080)
 

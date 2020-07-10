@@ -1,3 +1,6 @@
+#Server example that takes after the simple server, however
+# handles dealing with CORS preflight headers when dealing with more
+# than just a simple request
 using HTTP
 
 # modified Animal struct to associate with specific user
@@ -8,11 +11,14 @@ mutable struct Animal
     name::String
 end
 
-# modify our data store to allow for multiple users
-const ANIMALS = Dict{Base.UUID, Dict{Int, Animal}}()
-
-# creating a user returns a new UUID key unique to the user
-createUser(req) = Base.UUID(rand(UInt128))
+# use a plain `Dict` as a "data store"
+const ANIMALS = Dict{Int, Animal}()
+const NEXT_ID = Ref(0)
+function getNextId()
+    id = NEXT_ID[]
+    NEXT_ID[] += 1
+    return id
+end
 
 #CORS headers that show what kinds of complex requests are allowed to API
 headers = [
@@ -55,30 +61,26 @@ function CorsHandler(req)
     end
 
 
-# modified service functions to account for multiple users
+# **simplified** "service" functions
 function createAnimal(req::HTTP.Request, animal)
     animal.id = getNextId()
-    ANIMALS[animal.userId][animal.id] = animal
+    ANIMALS[animal.id] = animal
     return animal
 end
 
 function getAnimal(req::HTTP.Request)
-    paths = HTTP.URIs.splitpath(req.target)
-    userId = path[5] # /api/zoo/v1/users/x92jf-.../animals/10, get user UUID
-    animalId = path[7] # /api/zoo/v1/users/x92jf-.../animals/10, get 10
-    return ANIMALS[userId][parse(Int, animalId)]
+    animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
+    return ANIMALS[animalId]
 end
 
 function updateAnimal(req::HTTP.Request, animal)
-    ANIMALS[animal.userId][animal.id] = animal
+    ANIMALS[animal.id] = animal
     return animal
 end
 
 function deleteAnimal(req::HTTP.Request)
-    paths = HTTP.URIs.splitpath(req.target)
-    userId = path[5] # /api/zoo/v1/users/x92jf-.../animals/10, get user UUID
-    animalId = path[7] # /api/zoo/v1/users/x92jf-.../animals/10, get 10
-    delete!(ANIMALS[userId], parse(Int, animal.id))
+    animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
+    delete!(ANIMALS, animal.id)
     return ""
 end
 
@@ -89,4 +91,4 @@ HTTP.@register(ANIMAL_ROUTER, "GET", "/api/zoo/v1/users/*/animals/*", getAnimal)
 HTTP.@register(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/users/*/animals/*", deleteAnimal)
 
 
-HTTP.serve(CorsHandler, Sockets.localhost, 8081)
+HTTP.serve(CorsHandler, ip"127.0.0.1", 8080)
