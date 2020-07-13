@@ -19,12 +19,22 @@ function generateExamples()
             title = titlecase(title)
             title = "## "*title*"\n"
             write(f, title)
-            #find doc string intro if exists
+            #open each file and read contents
             opened = open("examples/"*file)
             lines = readlines(opened, keep=true)
+            index = 1
+            #find doc string intro if exists
+            if "\"\"\"\n" in lines
+                index = findall(isequal("\"\"\"\n"), lines)[2]
+                print(index)
+                for i in 2:index-1
+                    write(f, lines[i])
+                end
+                lines = lines[index+1:end]
+            end
+            
             write(f, "```julia")
             write(f, "\n")
-            #lines = readlines(opened, keep=true)
             for line in lines
                 write(f, line)
             end
@@ -34,9 +44,6 @@ function generateExamples()
         end
     end
     close(f)
-    #add intro with doc string
-    #add headers
-    #run through examples and add to doc
 end
 
 generateExamples()

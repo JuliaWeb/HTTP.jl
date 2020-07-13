@@ -1,6 +1,7 @@
-# A simple example of creating a server with HTTP.jl. It handles creating, deleting, 
-# updating, and retrieving Animals from a dictionary thorugh 4 different routes
-
+"""
+A simple example of creating a server with HTTP.jl. It handles creating, deleting, 
+updating, and retrieving Animals from a dictionary thorugh 4 different routes
+"""
 using HTTP
 
 # modified Animal struct to associate with specific user

@@ -3,12 +3,10 @@ Some examples that may prove potentially useful for those using
     `HTTP.jl`. The code for these examples can also be found on Github
      in the docs folder, in an inner folder called examples.
 ## Cors Server
-```julia
-"""
 Server example that takes after the simple server, however
 handles dealing with CORS preflight headers when dealing with more
 than just a simple request
-"""
+```julia
 
 using HTTP
 
@@ -221,10 +219,9 @@ result = request(custom_stack, "GET", "https://httpbin.org/ip")
  
 ```
 ## Simple Server
+A simple example of creating a server with HTTP.jl. It handles creating, deleting, 
+updating, and retrieving Animals from a dictionary thorugh 4 different routes
 ```julia
-# A simple example of creating a server with HTTP.jl. It handles creating, deleting, 
-# updating, and retrieving Animals from a dictionary thorugh 4 different routes
-
 using HTTP
 
 # modified Animal struct to associate with specific user
