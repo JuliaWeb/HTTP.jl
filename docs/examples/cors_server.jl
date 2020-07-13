@@ -1,6 +1,9 @@
-#Server example that takes after the simple server, however
-# handles dealing with CORS preflight headers when dealing with more
-# than just a simple request
+"""
+Server example that takes after the simple server, however
+handles dealing with CORS preflight headers when dealing with more
+than just a simple request
+"""
+
 using HTTP
 
 # modified Animal struct to associate with specific user
