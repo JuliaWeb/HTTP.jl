@@ -3,7 +3,6 @@ Server example that takes after the simple server, however
 handles dealing with CORS preflight headers when dealing with more
 than just a simple request
 """
-
 using HTTP
 
 # modified Animal struct to associate with specific user
@@ -33,7 +32,7 @@ headers = [
 #= 
 JSONHandler minimizes code by automatically converting the request body
 to JSON to pass to the other service functions automatically. JSONHandler
-recieves the body the response from the other service funtions 
+recieves the body of the response from the other service funtions 
 =#
 function JSONHandler(req::HTTP.Request)
     # first check if there's any request body
