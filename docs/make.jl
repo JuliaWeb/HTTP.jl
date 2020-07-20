@@ -5,7 +5,7 @@ Loops through the files in the examples folder and adds them (with any header co
 markdown file. 
 """
 function generateExamples()
-    f = open("src/examples.md", "w")
+    f = open(joinpath(@__DIR__, "src/examples.md"), "w")
     write(
         f,
         "```@meta
@@ -20,7 +20,7 @@ function generateExamples()
 `HTTP.jl`. The code for these examples can also be found on Github
  in the `docs/examples` folder.",
     )
-    for (root, dirs, files) in walkdir("examples")
+    for (root, dirs, files) in walkdir(joinpath(@__DIR__, "examples"))
         #set order of files so simple is first, and Readme examples are last
         temp = files[1]
         files[findfirst(isequal("simple_server.jl"), files)] = temp
@@ -43,7 +43,7 @@ function generateExamples()
             title = "## " * title * "\n"
             write(f, title)
             #open each file and read contents
-            opened = open("examples/" * file)
+            opened = open(joinpath(@__DIR__, "examples/") * file)
             lines = readlines(opened, keep = true)
             index = 1
             #find doc string intro if exists
