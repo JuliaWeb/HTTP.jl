@@ -1,5 +1,5 @@
 """
-Server example that takes after the simple server, however
+Server example that takes after the simple server, however,
 handles dealing with CORS preflight headers when dealing with more
 than just a simple request
 """
@@ -32,7 +32,8 @@ headers = [
 #= 
 JSONHandler minimizes code by automatically converting the request body
 to JSON to pass to the other service functions automatically. JSONHandler
-recieves the body of the response from the other service funtions 
+recieves the body of the response from the other service funtions and sends
+back a success response code
 =#
 function JSONHandler(req::HTTP.Request)
     # first check if there's any request body
@@ -48,7 +49,7 @@ function JSONHandler(req::HTTP.Request)
 end
 
 #= CorsHandler: handles preflight request with the OPTIONS flag
-If a request was recieved with the correct headers, then a Response will be 
+If a request was recieved with the correct headers, then a response will be 
 sent back with a 200 code, if the correct headers were not specified in the request,
 then a CORS error will be recieved on the client side
 
