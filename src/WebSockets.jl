@@ -109,6 +109,8 @@ function open(f::Function, url; binary=false, verbose=false, kw...)
         ws = WebSocket(io; binary=binary)
         try
             f(ws)
+        catch e
+            throw(e)
         finally
             close(ws)
         end
@@ -144,6 +146,8 @@ function upgrade(f::Function, http::HTTP.Stream; binary=false)
     ws = WebSocket(io; binary=binary, server=true)
     try
         f(ws)
+    catch e
+        rethrow(e)
     finally
         close(ws)
     end
