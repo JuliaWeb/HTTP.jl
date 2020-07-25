@@ -555,7 +555,7 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 """
 function stack(;redirect=true,
                 aws_authorization=false,
-                cookies=false,
+                cookies=true,
                 canonicalize_headers=false,
                 retry=true,
                 status_exception=true,
