@@ -370,11 +370,11 @@ struct Router{sym} <: Handler
     segments::Dict{String, Val}
 end
 
-function Router(default::Union{Handler, Function, Nothing}=FourOhFour)
+function Router(default::Union{Handler, Function}=FourOhFour)
     # each router gets a unique symbol as a type parameter so that dispatching
     # requests always go to the correct router
     sym = gensym()
-    return Router{sym}(default, Dict{Route, String}(), Dict{String, Val}())
+    return Router{sym}(default isa Function ? RequestHandlerFunction(default) : default, Dict{Route, String}(), Dict{String, Val}())
 end
 
 const SCHEMES = Dict{String, Val}("http" => Val{:http}(), "https" => Val{:https}())
