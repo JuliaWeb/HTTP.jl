@@ -29,7 +29,7 @@ function try_get_filename_from_headers(resp)
                 # It was in quotes, so it will be double escaped
                 filename = unescape_string(quoted_filename[1])
             end
-            return filename
+            return filename == "" ? nothing : filename
         end
     end
     return nothing
