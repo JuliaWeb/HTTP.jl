@@ -1,6 +1,7 @@
 using Test
 using HTTP
 using HTTP.IOExtras, HTTP.Sockets
+using Sockets
 
 @testset "websockets.jl" begin
     p = 8085 # rand(8000:8999)
@@ -46,5 +47,33 @@ using HTTP.IOExtras, HTTP.Sockets
             write(ws, "Bar")
             @test String(readavailable(ws)) == "Bar"
         end
+    end
+
+    @testset "extened feautre support for listen" begin
+        port=UInt16(8086)
+        tcpserver = listen(port)
+        target = "/query?k1=v1&k2=v2"
+        
+        servertask =  @async HTTP.WebSockets.listen("127.0.0.1", port; server=tcpserver) do ws
+            @testset "request access" begin
+                @test ws.request isa HTTP.Request
+                write(ws, ws.request.target)
+                while !eof(ws)
+                    write(ws, readavailable(ws))
+                end
+                close(ws)
+            end
+        end
+
+        HTTP.WebSockets.open("ws://127.0.0.1:$(port)$(target)") do ws
+            @test String(readavailable(ws)) == target
+            @test write(ws, "Bye!") == 4
+            @test String(readavailable(ws)) == "Bye!"
+            close(ws)
+        end
+
+        close(tcpserver)
+        @test timedwait(()->servertask.state === :failed, 5.0) === :ok
+        @test_throws Exception wait(servertask)        
     end
 end
