@@ -41,11 +41,12 @@ mutable struct WebSocket{T <: IO} <: IO
     txpayload::Vector{UInt8}
     txclosed::Bool
     rxclosed::Bool
+    request::Union{Nothing,HTTP.Request}
 end
 
-function WebSocket(io::T; server=false, binary=false) where T <: IO
+function WebSocket(io::T; server=false, binary=false, request=nothing) where T <: IO
    WebSocket{T}(io, binary ? WS_BINARY : WS_TEXT, server,
-                UInt8[], UInt8[], false, false)
+                UInt8[], UInt8[], false, false, request)
 end
 
 # Handshake
@@ -117,9 +118,9 @@ end
 
 function listen(f::Function,
                 host::String="localhost", port::UInt16=UInt16(8081);
-                binary=false, verbose=false)
+                binary=false, verbose=false, kw...)
 
-    HTTP.listen(host, port; verbose=verbose) do http
+    HTTP.listen(host, port; verbose=verbose, kw...) do http
         upgrade(f, http; binary=binary)
     end
 end
@@ -141,7 +142,8 @@ function upgrade(f::Function, http::HTTP.Stream; binary=false)
     startwrite(http)
 
     io = http.stream
-    ws = WebSocket(io; binary=binary, server=true)
+    req = http.message
+    ws = WebSocket(io; binary=binary, server=true, request=req)
     try
         f(ws)
     finally
