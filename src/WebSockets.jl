@@ -20,6 +20,17 @@ const WS_PONG = 0x0A
 
 const WS_MASK = 0x80
 
+"Status codes according to RFC 6455 7.4.1"
+const STATUS_CODE_DESCRIPTION = Dict{Int, String}(
+    1000=>"Normal",                     1001=>"Going Away",
+    1002=>"Protocol Error",             1003=>"Unsupported Data",
+    1004=>"Reserved",                   1005=>"No Status Recvd- reserved",
+    1006=>"Abnormal Closure- reserved", 1007=>"Invalid frame payload data",
+    1008=>"Policy Violation",           1009=>"Message too big",
+    1010=>"Missing Extension",          1011=>"Internal Error",
+    1012=>"Service Restart",            1013=>"Try Again Later",
+    1014=>"Bad Gateway",                1015=>"TLS Handshake")
+
 struct WebSocketError <: Exception
     status::UInt16
     message::String
@@ -264,22 +275,24 @@ function readframe(ws::WebSocket)
         unsafe_read(ws.io, pointer(ws.rxpayload), h.length)
         @debug 2 "          ➡️  \"$(String(ws.rxpayload[1:h.length]))\""
     end
-
+    l = Int(h.length)
+    if h.hasmask
+        mask!(ws.rxpayload, ws.rxpayload, l, reinterpret(UInt8, [h.mask]))
+    end
+    
     if h.opcode == WS_CLOSE
         ws.rxclosed = true
-        if h.length >= 2
+        if l >= 2
             status = UInt16(ws.rxpayload[1]) << 8 | ws.rxpayload[2]
             if status != 1000
-                message = String(ws.rxpayload[3:h.length])
-                throw(WebSocketError(status, message))
+                message = String(ws.rxpayload[3:l])
+                status_descr = get(STATUS_CODE_DESCRIPTION, Int(status), "")
+                msg = "Status: $(status_descr), Internal Code: $(message)"
+                throw(WebSocketError(status, msg))
             end
         end
         return UInt8[]
     else
-        l = Int(h.length)
-        if h.hasmask
-            mask!(ws.rxpayload, ws.rxpayload, l, reinterpret(UInt8, [h.mask]))
-        end
         if h.opcode == WS_PING
             wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload[1:l])
             return readframe(ws)
