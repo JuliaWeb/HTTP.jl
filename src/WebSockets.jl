@@ -89,7 +89,7 @@ function accept_hash(key)
     return base64encode(digest(MD_SHA1, hashkey))
 end
 
-function open(f::Function, url; binary=false, verbose=false, kw...)
+function open(f::Function, url; binary=false, verbose=false, headers = [], kw...)
 
     key = base64encode(rand(UInt8, 16))
 
@@ -97,7 +97,8 @@ function open(f::Function, url; binary=false, verbose=false, kw...)
         "Upgrade" => "websocket",
         "Connection" => "Upgrade",
         "Sec-WebSocket-Key" => key,
-        "Sec-WebSocket-Version" => "13"
+        "Sec-WebSocket-Version" => "13",
+        headers...
     ]
 
     HTTP.open("GET", url, headers;
@@ -279,7 +280,7 @@ function readframe(ws::WebSocket)
     if h.hasmask
         mask!(ws.rxpayload, ws.rxpayload, l, reinterpret(UInt8, [h.mask]))
     end
-    
+
     if h.opcode == WS_CLOSE
         ws.rxclosed = true
         if l >= 2
