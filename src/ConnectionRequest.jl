@@ -82,14 +82,22 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
 
     try
         if proxy !== nothing && target_url.scheme == "https"
+            # tunnel request
             target_url = merge(target_url, port=443)
-            return tunnel_request(Next, io, target_url, req, body; kw...)
+            r = connect_tunnel(io, target_url, req)
+            if r.status != 200
+                close(io)
+                return r
+            end
+            io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+            req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
         end
 
         r =  request(Next, io, req, body; kw...)
 
         if (io.sequence >= reuse_limit
-        || (proxy !== nothing && target_url.scheme == "https"))
+            || (proxy !== nothing && target_url.scheme == "https"))
+            println("HERE")
             close(io)
         end
 
@@ -102,18 +110,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
 
 end
 
-sockettype(url::URI, default) = url.scheme in ("wss", "https") ? SSLContext :
-                                                                 default
-
-function tunnel_request(Next, io, target_url, req, body; kw...)
-    r = connect_tunnel(io, target_url, req)
-    if r.status != 200
-        return r
-    end
-    io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
-    req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
-    return request(Next, io, req, body; kw...)
-end
+sockettype(url::URI, default) = url.scheme in ("wss", "https") ? SSLContext : default
 
 function connect_tunnel(io, target_url, req)
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
