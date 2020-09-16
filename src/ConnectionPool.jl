@@ -482,6 +482,22 @@ function release(c::Connection)
     return
 end
 
+# "release" a Connection, without returning to pod for re-use
+# used for https proxy tunnel upgrades which shouldn't be reused
+function kill!(c::Connection)
+    h = hashconn(c)
+    if haskey(POOL.conns, h)
+        pod = getpod(POOL, h)
+        @v1_3 lock(pod.conns)
+        try
+            decr!(pod)
+        finally
+            @v1_3 unlock(pod.conns)
+        end
+    end
+    return
+end
+
 struct Pool
     lock::ReentrantLock
     conns::Dict{UInt, Pod}
@@ -694,6 +710,7 @@ function sslupgrade(t::Transaction{TCPSocket},
                         require_ssl_verification=require_ssl_verification,
                         kw...)
     c = Connection(tls; require_ssl_verification=require_ssl_verification)
+    kill!(t.c)
     return client_transaction(c)
 end
 
