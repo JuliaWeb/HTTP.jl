@@ -97,7 +97,6 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
 
         if (io.sequence >= reuse_limit
             || (proxy !== nothing && target_url.scheme == "https"))
-            println("HERE")
             close(io)
         end
 
