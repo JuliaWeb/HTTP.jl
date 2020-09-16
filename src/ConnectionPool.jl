@@ -165,9 +165,6 @@ getrawstream(t::Transaction) = t.c.io
 inactiveseconds(t::Transaction) = inactiveseconds(t.c)
 
 function inactiveseconds(c::Connection)::Float64
-    if isbusy(c)
-        return 0.0
-    end
     return time() - c.timestamp
 end
 
@@ -231,16 +228,17 @@ function Base.unsafe_read(t::Transaction, p::Ptr{UInt8}, n::UInt)
         p += nb
         n -= nb
         @debug 4 "↩️  read $nb-bytes from buffer."
+        t.c.timestamp = time()
     end
     if n > 0
         unsafe_read(t.c.io, p, n)
         @debug 4 "⬅️  read $n-bytes from $(typeof(t.c.io))"
+        t.c.timestamp = time()
     end
     return nothing
 end
 
 function read_to_buffer(t::Transaction, sizehint=4096)
-
     buf = t.c.buffer
 
     # Reset the buffer if it is empty.
