@@ -211,6 +211,10 @@ end
     @test status(HTTP.open(x -> x, :GET, "http://httpbin.org/ip")) == 200
 end
 
+@testset "readtimeout" begin
+    @test_throws HTTP.IOError HTTP.get("http://httpbin.org/delay/5"; readtimeout=1, retry=false)
+end
+
 @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
     headers = Dict("User-Agent" => "HTTP.jl")
     query = Dict("hello" => "world")
