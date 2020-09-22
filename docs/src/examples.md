@@ -10,6 +10,7 @@ A simple example of creating a server with HTTP.jl. It handles creating, deletin
 updating, and retrieving Animals from a dictionary thorugh 4 different routes
 ```julia
 using HTTP
+using Sockets
 
 # modified Animal struct to associate with specific user
 mutable struct Animal
