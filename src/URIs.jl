@@ -21,11 +21,12 @@ end
     HTTP.URI(; scheme="", host="", port="", etc...)
     HTTP.URI(str) = parse(HTTP.URI, str::String)
 
-A type representing a valid uri. Can be constructed from distinct parts using the various
-supported keyword arguments. With a raw, already-encoded uri string, use `parse(HTTP.URI, str)`
-to parse the `HTTP.URI` directly. The `HTTP.URI` constructors will automatically escape any provided
+A type representing a URI (e.g. a URL). Can be constructed from distinct parts using the various
+supported keyword arguments, or from a string. The `HTTP.URI` constructors will automatically escape any provided
 `query` arguments, typically provided as `"key"=>"value"::Pair` or `Dict("key"=>"value")`.
 Note that multiple values for a single query key can provided like `Dict("key"=>["value1", "value2"])`.
+
+When constructing a `HTTP.URI` from a `String`, you need to first unescape that string: `HTTP.URI( HTTP.URIs.unescapeuri(str) )`.
 
 The `URI` struct stores the complete URI in the `uri::String` field and the
 component parts in the following `SubString` fields:
