@@ -332,7 +332,7 @@ end
 
 # pass in own server socket to control shutdown
 using Sockets
-server = Sockets.serve(Sockets.InetAddr(parse(IPAddr, host), port))
+server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
 @async HTTP.serve(f, host, port; server=server)
 # close server which will stop HTTP.serve
 close(server)
