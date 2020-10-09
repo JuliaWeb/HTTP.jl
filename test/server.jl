@@ -1,6 +1,6 @@
 module test_server
 
-using HTTP, Sockets, Test
+using HTTP, Sockets, Test, MbedTLS
 
 function testget(url, m=1)
     r = []
