@@ -91,7 +91,7 @@ from the rules of the HTTP.
 """
 function download(url::AbstractString, local_path=nothing, headers=Header[]; update_period=1, kw...)
     format_progress(x) = round(x, digits=4)
-    format_bytes(x) = !isfinite(x) ? "∞ B" : Base.format_bytes(round(x))
+    format_bytes(x) = !isfinite(x) ? "∞ B" : Base.format_bytes(round(Int, x))
     format_seconds(x) = "$(round(x; digits=2)) s"
     format_bytes_per_second(x) = format_bytes(x) * "/s"
 
