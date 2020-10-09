@@ -15,12 +15,12 @@ end
         sleep(2)
         launch("https://127.0.0.1:8000/examples/mwe")
     end
-
+    dir = joinpath(dirname(pathof(HTTP)), "../test")
     HTTP.listen("127.0.0.1", 8000;
-                sslconfig = MbedTLS.SSLConfig(joinpath(dirname(@__FILE__), "resources/cert.pem"),
-                                              joinpath(dirname(@__FILE__), "resources/key.pem"))) do http
+                sslconfig = MbedTLS.SSLConfig(joinpath(dir, "resources/cert.pem"),
+                                              joinpath(dir, "resources/key.pem"))) do http
 
-        if HTTP.WebSockets.is_websocket_upgrade(http.message)
+        if HTTP.WebSockets.is_upgrade(http.message)
             HTTP.WebSockets.upgrade(http) do client
                 count = 1
                 while !eof(client);
@@ -32,7 +32,7 @@ end
             end
         else
             h = HTTP.Handlers.RequestHandlerFunction() do req::HTTP.Request
-                HTTP.Response(200,read(joinpath(dirname(@__FILE__),"resources/mwe.html"), String))
+                HTTP.Response(200,read(joinpath(dir, "resources/mwe.html"), String))
             end
             HTTP.Handlers.handle(h, http)
         end

@@ -83,11 +83,15 @@ Sockets.accept(s::Server{Nothing}) = accept(s.server)::TCPSocket
 Sockets.accept(s::Server{SSLConfig}) = getsslcontext(accept(s.server), s.ssl)
 
 function getsslcontext(tcp, sslconfig)
-    ssl = MbedTLS.SSLContext()
-    MbedTLS.setup!(ssl, sslconfig)
-    MbedTLS.associate!(ssl, tcp)
-    MbedTLS.handshake!(ssl)
-    return ssl
+    try
+        ssl = MbedTLS.SSLContext()
+        MbedTLS.setup!(ssl, sslconfig)
+        MbedTLS.associate!(ssl, tcp)
+        MbedTLS.handshake!(ssl)
+        return ssl
+    catch e
+        return nothing
+    end
 end
 
 """
@@ -245,7 +249,10 @@ function listenloop(f, server, tcpisvalid, connection_count,
     while isopen(server)
         try
             io = accept(server)
-            if !tcpisvalid(io)
+            if io === nothing
+                verbose && @warn "unable to accept new connection"
+                continue
+            elseif !tcpisvalid(io)
                 verbose && @info "Accept-Reject:  $io"
                 close(io)
                 continue
