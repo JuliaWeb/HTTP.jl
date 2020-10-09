@@ -171,7 +171,7 @@ end
     dir = joinpath(dirname(pathof(HTTP)), "../test")
     sslconfig = MbedTLS.SSLConfig(joinpath(dir, "resources/cert.pem"), joinpath(dir, "resources/key.pem"))
     tsk = @async try
-        HTTP.listen("127.0.0.1", 8091; sslconfig = sslconfig, verbose=true) do http::HTTP.Stream
+        HTTP.listen("127.0.0.1", 8092; sslconfig = sslconfig, verbose=true) do http::HTTP.Stream
             while !eof(http)
                 println("body data: ", String(readavailable(http)))
             end
@@ -186,8 +186,8 @@ end
     clientoptions = (;
         require_ssl_verification = false,
     )
-    r = HTTP.request("GET", "https://127.0.0.1:8091"; clientoptions...)
-    @test_throws HTTP.IOError HTTP.request("GET", "http://127.0.0.1:8091"; clientoptions...)
+    r = HTTP.request("GET", "https://127.0.0.1:8092"; clientoptions...)
+    @test_throws HTTP.IOError HTTP.request("GET", "http://127.0.0.1:8092"; clientoptions...)
 
 end # @testset
 
