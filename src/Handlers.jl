@@ -303,7 +303,7 @@ Optional keyword arguments:
     after the first request.
  - `tcpisvalid::Function (::TCPSocket) -> Bool`, check accepted connection before
     processing requests. e.g. to implement source IP filtering, rate-limiting, etc.
- - `readtimeout::Int=60`, close the connection if no data is received for this
+ - `readtimeout::Int=0`, close the connection if no data is received for this
     many seconds. Use readtimeout = 0 to disable.
  - `reuseaddr::Bool=false`, allow multiple server processes to listen on the same port. Only fully supported on linux; OSX will allow multiple server processes to listen, but only one will accept connections
  - `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;

@@ -106,7 +106,7 @@ Connection Pool options
 
 Timeout options
 
- - `readtimeout = 60`, close the connection if no data is received for this many
+ - `readtimeout = 0`, close the connection if no data is received for this many
    seconds. Use `readtimeout = 0` to disable.
 
 

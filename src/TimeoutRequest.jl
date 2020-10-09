@@ -13,7 +13,7 @@ abstract type TimeoutLayer{Next <: Layer} <: Layer{Next} end
 export TimeoutLayer
 
 function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
-                 readtimeout::Int=60, kw...) where Next
+                 readtimeout::Int=0, kw...) where Next
 
     wait_for_timeout = Ref{Bool}(true)
 
