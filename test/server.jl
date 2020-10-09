@@ -166,6 +166,29 @@ end
 
     # test that an Authorization header **is** forwarded to redirect in same domain
     @test_skip HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=https://httpbin.org/response-headers?Authorization=auth"), "Authorization")
+
+    # 318
+    dir = joinpath(dirname(pathof(HTTP)), "../test")
+    sslconfig = MbedTLS.SSLConfig(joinpath(dir, "resources/cert.pem"), joinpath(dir, "resources/key.pem"))
+    tsk = @async try
+        HTTP.listen("127.0.0.1", 8085; sslconfig = sslconfig, verbose=true) do http::HTTP.Stream
+            while !eof(http)
+                println("body data: ", String(readavailable(http)))
+            end
+            HTTP.setstatus(http, 200)
+            HTTP.startwrite(http)
+            write(http, "response body\n")
+            write(http, "more response body")
+        end
+    catch err
+        @error err exception = (err, catch_backtrace())
+    end
+    clientoptions = (;
+        require_ssl_verification = false,
+    )
+    r = HTTP.request("GET", "https://127.0.0.1:8085"; clientoptions...)
+    @test_throws HTTP.IOError HTTP.request("GET", "http://127.0.0.1:8085"; clientoptions...)
+
 end # @testset
 
 end # module
