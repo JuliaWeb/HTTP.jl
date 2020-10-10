@@ -1,6 +1,6 @@
 module StreamRequest
 
-import ..Layer, ..request
+import ..Layer, ..Layers
 using ..IOExtras
 using ..Messages
 using ..Streams
@@ -9,7 +9,7 @@ using ..MessageRequest
 import ..@debug, ..DEBUG_LEVEL, ..printlncompact, ..sprintcompact
 
 """
-    request(StreamLayer, ::IO, ::Request, body) -> HTTP.Response
+    Layers.request(StreamLayer, ::IO, ::Request, body) -> HTTP.Response
 
 Create a [`Stream`](@ref) to send a `Request` and `body` to an `IO`
 stream and read the response.
@@ -22,7 +22,7 @@ indicates that the server does not wish to receive the message body.
 abstract type StreamLayer{Next <: Layer} <: Layer{Next} end
 export StreamLayer
 
-function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
+function Layers.request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
                  reached_redirect_limit=false,
                  response_stream=nothing,
                  iofunction=nothing,
@@ -98,7 +98,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)
 
-    return request(Next, response)
+    return Layers.request(Next, response)
 end
 
 function writebody(http::Stream, req::Request, body)

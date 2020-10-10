@@ -7,7 +7,7 @@ status(r) = r.status
 @testset "Custom HTTP Stack" begin
    @testset "Low-level Request" begin
         custom_stack = insert(stack(), StreamLayer, TestLayer)
-        result = request(custom_stack, "GET", "https://httpbin.org/ip")
+        result = HTTP.request(custom_stack, "GET", "https://httpbin.org/ip")
 
         @test status(result) == 200
     end
@@ -233,7 +233,7 @@ end
         test(HTTP.request("GET", uri; headers=headers, body=body, query=query), "GET")
         test(HTTP.request("GET", uri, headers; body=body, query=query), "GET")
         test(HTTP.request("GET", uri, headers, body; query=query), "GET")
-        !isa(uri, HTTP.URI) && test(HTTP.request(stack, "GET", uri; headers=headers, body=body, query=query), "GET")
+        test(HTTP.request(stack, "GET", uri; headers=headers, body=body, query=query), "GET")
         test(HTTP.request(stack, "GET", uri, headers; body=body, query=query), "GET")
         test(HTTP.request(stack, "GET", uri, headers, body; query=query), "GET")
         # HTTP.get

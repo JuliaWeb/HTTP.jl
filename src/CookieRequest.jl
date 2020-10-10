@@ -1,7 +1,7 @@
 module CookieRequest
 
 import ..Dates
-import ..Layer, ..request
+import ..Layer, ..Layers
 using URIs
 using ..Cookies
 using ..Pairs: getkv, setkv
@@ -15,7 +15,7 @@ function __init__()
 end
 
 """
-    request(CookieLayer, method, ::URI, headers, body) -> HTTP.Response
+    Layers.request(CookieLayer, method, ::URI, headers, body) -> HTTP.Response
 
 Add locally stored Cookies to the request headers.
 Store new Cookies found in the response headers.
@@ -23,7 +23,7 @@ Store new Cookies found in the response headers.
 abstract type CookieLayer{Next <: Layer} <: Layer{Next} end
 export CookieLayer
 
-function request(::Type{CookieLayer{Next}},
+function Layers.request(::Type{CookieLayer{Next}},
                  method::String, url::URI, headers, body;
                  cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}}=Dict{String, String}(),
                  cookiejar::Dict{String, Set{Cookie}}=default_cookiejar[Threads.threadid()],
@@ -41,7 +41,7 @@ function request(::Type{CookieLayer{Next}},
         setkv(headers, "Cookie", stringify(getkv(headers, "Cookie", ""), cookiestosend))
     end
 
-    res = request(Next, method, url, headers, body; kw...)
+    res = Layers.request(Next, method, url, headers, body; kw...)
 
     setcookies(hostcookies, url.host, res.headers)
 

@@ -3,7 +3,7 @@ module MessageRequest
 export body_is_a_stream, body_was_streamed, setuseragent!, resource
 
 
-import ..Layer, ..request
+import ..Layer, ..Layers
 using ..IOExtras
 using URIs
 using ..Messages
@@ -18,15 +18,15 @@ resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
                             !isempty(uri.query)    ? "?" : "", uri.query,
                             !isempty(uri.fragment) ? "#" : "", uri.fragment)
 
-"""
-    request(MessageLayer, method, ::URI, headers, body) -> HTTP.Response
-
-Construct a [`Request`](@ref) object and set mandatory headers.
-"""
 struct MessageLayer{Next <: Layer} <: Layer{Next} end
 export MessageLayer
 
-function request(::Type{MessageLayer{Next}},
+"""
+    Layers.request(MessageLayer, method, ::URI, headers, body) -> HTTP.Response
+
+Construct a [`Request`](@ref) object and set mandatory headers.
+"""
+function Layers.request(::Type{MessageLayer{Next}},
                  method::String, url::URI, headers::Headers, body;
                  http_version=v"1.1",
                  target=resource(url),
@@ -56,7 +56,7 @@ function request(::Type{MessageLayer{Next}},
     req = Request(method, target, headers, bodybytes(body);
                   parent=parent, version=http_version)
 
-    return request(Next, url, req, body; iofunction=iofunction, kw...)
+    return Layers.request(Next, url, req, body; iofunction=iofunction, kw...)
 end
 
 const USER_AGENT = Ref{Union{String, Nothing}}("HTTP.jl/$VERSION")

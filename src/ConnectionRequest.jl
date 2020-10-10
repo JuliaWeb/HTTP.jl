@@ -1,6 +1,6 @@
 module ConnectionRequest
 
-import ..Layer, ..request
+import ..Layer, ..Layers
 using URIs, ..Sockets
 using ..Messages
 using ..IOExtras
@@ -47,7 +47,7 @@ function getproxy(scheme, host)
 end
 
 """
-    request(ConnectionPoolLayer, ::URI, ::Request, body) -> HTTP.Response
+    Layers.request(ConnectionPoolLayer, ::URI, ::Request, body) -> HTTP.Response
 
 Retrieve an `IO` connection from the [`ConnectionPool`](@ref).
 
@@ -60,7 +60,7 @@ See [`isioerror`](@ref).
 abstract type ConnectionPoolLayer{Next <: Layer} <: Layer{Next} end
 export ConnectionPoolLayer
 
-function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
+function Layers.request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
                  proxy=getproxy(url.scheme, url.host),
                  socket_type::Type=TCPSocket,
                  reuse_limit::Int=ConnectionPool.nolimit, kw...) where Next
@@ -105,7 +105,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
             req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
         end
 
-        r =  request(Next, io, req, body; kw...)
+        r =  Layers.request(Next, io, req, body; kw...)
 
         if (io.sequence >= reuse_limit
             || (proxy !== nothing && target_url.scheme == "https"))

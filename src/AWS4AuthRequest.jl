@@ -3,13 +3,13 @@ module AWS4AuthRequest
 using ..Base64
 using ..Dates
 using MbedTLS: digest, MD_SHA256, MD_MD5
-import ..Layer, ..request, ..Headers
+import ..Layers, ..Layer, ..Headers
 using URIs
 using ..Pairs: getkv, setkv, rmkv
 import ..@debug, ..DEBUG_LEVEL
 
 """
-    request(AWS4AuthLayer, ::URI, ::Request, body) -> HTTP.Response
+    Layers.request(AWS4AuthLayer, ::URI, ::Request, body) -> HTTP.Response
 
 Add a [AWS Signature Version 4](http://docs.aws.amazon.com/general/latest/gr/signature-version-4.html)
 `Authorization` header to a `Request`.
@@ -21,7 +21,7 @@ Credentials are read from environment variables `AWS_ACCESS_KEY_ID`,
 abstract type AWS4AuthLayer{Next <: Layer} <: Layer{Next} end
 export AWS4AuthLayer
 
-function request(::Type{AWS4AuthLayer{Next}},
+function Layers.request(::Type{AWS4AuthLayer{Next}},
                  url::URI, req, body; kw...) where Next
 
     if !haskey(kw, :aws_access_key_id) &&
@@ -31,7 +31,7 @@ function request(::Type{AWS4AuthLayer{Next}},
 
     sign_aws4!(req.method, url, req.headers, req.body; kw...)
 
-    return request(Next, url, req, body; kw...)
+    return Layers.request(Next, url, req, body; kw...)
 end
 
 # Normalize whitespace to the form required in the canonical headers.
