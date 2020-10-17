@@ -119,7 +119,7 @@ function Base.String(c::Cookie, isrequest::Bool=true)
     return String(take!(io))
 end
 
-function stringify(cookiestring::String, cookies::Vector{Cookie}, isrequest::Bool=true)
+function stringify(cookiestring::AbstractString, cookies::Vector{Cookie}, isrequest::Bool=true)
     io = IOBuffer()
     !isempty(cookiestring) && write(io, cookiestring, cookiestring[end] == ';' ? "" : ";")
     len = length(cookies)
