@@ -1,9 +1,9 @@
 module HTTP
 
-export startwrite, startread, closewrite, closeread, stack, insert, AWS4AuthLayer,
-    BasicAuthLayer, CanonicalizeLayer, ConnectionPoolLayer, ContentTypeDetectionLayer,
-    DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer, RetryLayer, StreamLayer,
-    TimeoutLayer
+export startwrite, startread, closewrite, closeread, stack, insert, insert_default!,
+    remove_default!, AWS4AuthLayer, BasicAuthLayer, CanonicalizeLayer, ConnectionPoolLayer,
+    ContentTypeDetectionLayer, DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer,
+    RetryLayer, StreamLayer, TimeoutLayer
 
 const DEBUG_LEVEL = Ref(0)
 
@@ -566,7 +566,7 @@ function stack(;redirect=true,
 
     NoLayer = Union
 
-    (redirect             ? RedirectLayer             : NoLayer){
+    stack = (redirect     ? RedirectLayer             : NoLayer){
                             BasicAuthLayer{
     (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
     (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
@@ -582,6 +582,10 @@ function stack(;redirect=true,
     (readtimeout > 0      ? TimeoutLayer              : NoLayer){
                             StreamLayer{Union{}}
     }}}}}}}}}}}}
+
+    reduce(Layers.EXTRA_LAYERS; init=stack) do stack, (before, custom)
+        insert(stack, before, custom)
+    end
 end
 
 include("download.jl")
