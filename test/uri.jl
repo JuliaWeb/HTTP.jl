@@ -404,6 +404,7 @@ urltests = URLTest[
         @test HTTP.URI(scheme="http", host="google.com", userinfo="user") == HTTP.URI("http://user@google.com")
         @test HTTP.URI(scheme="http", host="google.com", path="/user") == HTTP.URI("http://google.com/user")
         @test HTTP.URI(scheme="http", host="google.com", query=Dict("key"=>"value")) == HTTP.URI("http://google.com?key=value")
+        @test HTTP.URI(scheme="http", host="google.com", query=Dict()) |> string == "http://google.com"
         @test HTTP.URI(scheme="http", host="google.com", path="/", fragment="user") == HTTP.URI("http://google.com/#user")
     end
 
