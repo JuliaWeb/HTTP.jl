@@ -212,6 +212,7 @@ function listen(f,
     inet = getinet(host, port)
     if server !== nothing
         tcpserver = server
+        host, port = getsockname(server)
     elseif reuseaddr
         tcpserver = Sockets.TCPServer(; delay=false)
         if Sys.isunix()
