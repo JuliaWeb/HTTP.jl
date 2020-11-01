@@ -53,9 +53,8 @@ function Base.read(f::Form, n::Integer)
     return result
 end
 
-function Form(d)
+function Form(d; boundary=string(rand(UInt128), base=16))
     @require eltype(d) <: Pair
-    boundary = string(rand(UInt128), base=16)
     data = IO[]
     io = IOBuffer()
     len = length(d)
