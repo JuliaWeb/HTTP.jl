@@ -30,4 +30,14 @@
         @test_nowarn HTTP.Multipart(nothing, IOBuffer("some data"), "plain/text", "", "testname")
         @test_throws MethodError HTTP.Multipart(nothing, "some data", "plain/text", "", "testname")
     end
+
+    @testset "Boundary" begin
+        @test HTTP.Form(Dict()) isa HTTP.Form
+        @test HTTP.Form(Dict(); boundary="a") isa HTTP.Form
+        @test HTTP.Form(Dict(); boundary=" Aa1'()+,-.:=?") isa HTTP.Form
+        @test HTTP.Form(Dict(); boundary='a'^70) isa HTTP.Form
+        @test_throws ArgumentError HTTP.Form(Dict(); boundary="")
+        @test_throws ArgumentError HTTP.Form(Dict(); boundary='a'^71)
+        @test_throws ArgumentError HTTP.Form(Dict(); boundary="a ")
+    end
 end

@@ -54,6 +54,10 @@ function Base.read(f::Form, n::Integer)
 end
 
 function Form(d; boundary=string(rand(UInt128), base=16))
+    # https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
+    bcharsnospace = raw"\w'\(\)\+,-\./:=\?"
+    boundary_re = Regex("^[$bcharsnospace ]{0,69}[$bcharsnospace]\$")
+    @require match(boundary_re, boundary) !== nothing
     @require eltype(d) <: Pair
     data = IO[]
     io = IOBuffer()
