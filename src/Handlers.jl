@@ -208,7 +208,8 @@ export serve, Handler, handle, RequestHandlerFunction, StreamHandlerFunction,
        RequestHandler, StreamHandler,
        Router, @register, register!
 
-using ..Messages, ..URIs, ..Streams, ..IOExtras, ..Servers, ..Sockets
+using URIs
+using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets
 
 """
     HTTP.handle(handler::HTTP.RequestHandler, ::HTTP.Request) => HTTP.Response

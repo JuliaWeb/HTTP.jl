@@ -1,7 +1,7 @@
 module RedirectRequest
 
 import ..Layer, ..request
-using ..URIs
+using URIs
 using ..Messages
 using ..Pairs: setkv
 import ..Header

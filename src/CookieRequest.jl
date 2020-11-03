@@ -2,7 +2,7 @@ module CookieRequest
 
 import ..Dates
 import ..Layer, ..request
-using ..URIs
+using URIs
 using ..Cookies
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL

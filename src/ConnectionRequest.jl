@@ -1,7 +1,7 @@
 module ConnectionRequest
 
 import ..Layer, ..request
-using ..URIs, ..Sockets
+using URIs, ..Sockets
 using ..Messages
 using ..IOExtras
 using ..ConnectionPool

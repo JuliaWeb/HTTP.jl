@@ -9,10 +9,12 @@ Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 IniFile = "83e8ac13-25f8-5344-8a64-a9f2b223428f"
 MbedTLS = "739be429-bea8-5141-9913-cc70e7f3736d"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 
 [compat]
 IniFile = "0.5"
 MbedTLS = "0.6.8, 0.7, 1"
+URIs = "1"
 julia = "0.7, 1"
 
 [extras]
