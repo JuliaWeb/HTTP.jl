@@ -1,7 +1,7 @@
 module ContentTypeDetection
 
 import ..Layer, ..request
-using ..URIs
+using URIs
 using ..Pairs: getkv, setkv
 import ..sniff
 import ..Form

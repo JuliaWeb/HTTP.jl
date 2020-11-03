@@ -11,8 +11,6 @@ include("resources/TestRequest.jl")
               "multipart.jl",
               "parsemultipart.jl",
               "sniff.jl",
-              "uri.jl",
-              "url.jl",
               "cookies.jl",
               "parser.jl",
               "loopback.jl",

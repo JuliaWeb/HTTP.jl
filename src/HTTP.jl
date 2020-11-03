@@ -8,16 +8,15 @@ export startwrite, startread, closewrite, closeread, stack, insert, AWS4AuthLaye
 const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
-Base.@deprecate URL URI
 
 using Base64, Sockets, Dates
+using URIs
 
 include("debug.jl")
 
 include("Pairs.jl")                    ;using .Pairs
 include("IOExtras.jl")                 ;using .IOExtras
 include("Strings.jl")
-include("URIs.jl")                     ;using .URIs
 include("sniff.jl")
 include("multipart.jl")
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,

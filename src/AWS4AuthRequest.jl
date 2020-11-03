@@ -4,7 +4,7 @@ using ..Base64
 using ..Dates
 using MbedTLS: digest, MD_SHA256, MD_MD5
 import ..Layer, ..request, ..Headers
-using ..URIs
+using URIs
 using ..Pairs: getkv, setkv, rmkv
 import ..@debug, ..DEBUG_LEVEL
 

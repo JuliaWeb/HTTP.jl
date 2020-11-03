@@ -1,15 +1,22 @@
 module MessageRequest
 
-export body_is_a_stream, body_was_streamed, setuseragent!
+export body_is_a_stream, body_was_streamed, setuseragent!, resource
 
 
 import ..Layer, ..request
 using ..IOExtras
-using ..URIs
+using URIs
 using ..Messages
 import ..Messages: bodylength
 import ..Headers
 import ..Form, ..content_type
+
+"""
+"request-target" per https://tools.ietf.org/html/rfc7230#section-5.3
+"""
+resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
+                            !isempty(uri.query)    ? "?" : "", uri.query,
+                            !isempty(uri.fragment) ? "#" : "", uri.fragment)
 
 """
     request(MessageLayer, method, ::URI, headers, body) -> HTTP.Response

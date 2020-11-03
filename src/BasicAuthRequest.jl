@@ -3,7 +3,7 @@ module BasicAuthRequest
 using ..Base64
 
 import ..Layer, ..request
-using ..URIs
+using URIs
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL
 
