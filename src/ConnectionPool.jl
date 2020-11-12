@@ -633,7 +633,7 @@ function getconnection(::Type{TCPSocket},
     end
 
     tcp = Sockets.TCPSocket()
-    Sockets.bind(tcp, Sockets.getaddrinfo(host), p)
+    Sockets.connect!(tcp, Sockets.getalladdrinfo(host)[1], p)
 
     timeout = Ref{Bool}(false)
     @async begin
@@ -646,7 +646,7 @@ function getconnection(::Type{TCPSocket},
         end
     end
     try
-        Base.wait_connected(tcp)
+        Sockets.wait_connected(tcp)
     catch e
         if timeout[]
             throw(ConnectTimeout(host, port))
