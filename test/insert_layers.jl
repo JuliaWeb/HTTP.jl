@@ -42,4 +42,14 @@ using ..TestRequest
         request(insert(stack(), Union{}, LastLayer), "GET", "https://httpbin.org/anything")
         @test TestRequest.FLAG[]
     end
+
+    @testset "Insert/remove default layers" begin
+        top = HTTP.top_layer(stack())
+        insert_default!(top, TestLayer)
+        @test HTTP.top_layer(stack()) <: TestLayer
+        remove_default!(top, TestLayer)
+        @test HTTP.top_layer(stack()) <: top
+        insert_default!(Union{}, TestLayer)
+        remove_default!(Union{}, TestLayer)
+    end
 end

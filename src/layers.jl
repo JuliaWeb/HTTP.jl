@@ -1,5 +1,7 @@
 module Layers
-export Layer, next, top_layer, insert
+export Layer, next, top_layer, insert, insert_default!, remove_default!
+
+const EXTRA_LAYERS = Set{Tuple{Union{UnionAll, Type{Union{}}}, UnionAll}}()
 
 include("exceptions.jl")
 
@@ -107,5 +109,11 @@ function insert(stack::Type{<:Layer}, layer_before::Type{<:Layer}, custom_layer:
     end
     throw(LayerNotFoundException("$layer_before not found in $stack"))
 end
+
+insert_default!(before::Type{<:Layer}, custom_layer::Type{<:Layer}) =
+    push!(EXTRA_LAYERS, (before, custom_layer))
+
+remove_default!(before::Type{<:Layer}, custom_layer::Type{<:Layer}) =
+    delete!(EXTRA_LAYERS, (before, custom_layer))
 
 end
