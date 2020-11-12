@@ -74,10 +74,29 @@ struct Server{S <: Union{SSLConfig, Nothing}, I <: Base.IOServer}
     server::I
     hostname::String
     hostport::String
+    on_shutdown::Any
 end
 
 Base.isopen(s::Server) = isopen(s.server)
-Base.close(s::Server) = close(s.server)
+Base.close(s::Server) = (shutdown(s.on_shutdown); close(s.server))
+
+"""
+    shutdown(fns::Vector{<:Function})
+    shutdown(fn::Function)
+    shutdown(::Nothing)
+
+Runs function(s) in `on_shutdown` field of `Server` when
+`Server` is closed.
+"""
+shutdown(fns::Vector{<:Function}) = foreach(shutdown, fns)
+shutdown(::Nothing) = nothing
+function shutdown(fn::Function)
+    try
+        fn()
+    catch e
+        @error "shutdown function $fn failed" exception=(e, catch_backtrace())
+    end
+end
 
 Sockets.accept(s::Server{Nothing}) = accept(s.server)::TCPSocket
 Sockets.accept(s::Server{SSLConfig}) = getsslcontext(accept(s.server), s.ssl)
@@ -122,6 +141,10 @@ Optional keyword arguments:
     allowed per client IP address; excess connections are immediately closed.
     e.g. 5//1.
  - `verbose::Bool=false`, log connection information to `stdout`.
+ - `on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing`, one or
+    more functions to be run if the server is closed (for example by an
+    `InterruptException`). Note, shutdown function(s) will not run if a
+    `IOServer` object is supplied and closed by `close(server)`.
 
 e.g.
 ```julia
@@ -207,7 +230,8 @@ function listen(f,
                 rate_limit::Union{Rational{Int}, Nothing}=nothing,
                 reuse_limit::Int=nolimit,
                 readtimeout::Int=0,
-                verbose::Bool=false)
+                verbose::Bool=false,
+                on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing)
 
     inet = getinet(host, port)
     if server !== nothing
@@ -235,7 +259,7 @@ function listen(f,
         x -> f(x) && check_rate_limit(x, rate_limit)
     end
 
-    s = Server(sslconfig, tcpserver, string(host), string(port))
+    s = Server(sslconfig, tcpserver, string(host), string(port), on_shutdown)
     return listenloop(f, s, tcpisvalid, connection_count,
                          reuse_limit, readtimeout, verbose)
 end

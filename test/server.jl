@@ -191,4 +191,28 @@ end
 
 end # @testset
 
+@testset "on_shutdown" begin
+    @test HTTP.Servers.shutdown(nothing) === nothing
+
+    IOserver = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), 8052))
+    
+    # Shutdown adds 1
+    TEST_COUNT = Ref(0)
+    shutdown_add() = TEST_COUNT[] += 1
+    server = HTTP.Servers.Server(nothing, IOserver, "host", "port", shutdown_add)
+    close(server)
+
+    # Shutdown adds 1, performed twice
+    @test TEST_COUNT[] == 1
+    server = HTTP.Servers.Server(nothing, IOserver, "host", "port", [shutdown_add, shutdown_add])
+    close(server)
+    @test TEST_COUNT[] == 3
+
+    # First shutdown function errors, second adds 1
+    shutdown_throw() = throw(ErrorException("Broken"))
+    server = HTTP.Servers.Server(nothing, IOserver, "host", "port", [shutdown_throw, shutdown_add])
+    @test_logs (:error, r"shutdown function .* failed") close(server)
+    @test TEST_COUNT[] == 4
+end # @testset
+
 end # module
