@@ -13,12 +13,23 @@
         proj = normpath(joinpath(pathof(HTTP), "..", "..", "Project.toml"))
         # Extract version = "(...)" from Project.toml
         vers = VersionNumber(match(r"^version\s*=\s*\"(.*?)\"$"m, read(proj, String)).captures[1])
-        if vers.minor == 8 # this version
-            HTTP.post(uri, body).status == 200
-        elseif vers.minor == 9 || vers.major == 1 # Next breaking release
-            @test_logs (:warn, r"deprecated") HTTP.post(uri, body).status == 200
-        else # two breaking versions from now
-            @test_throws MethodError HTTP.post(uri, body)
+        if vers.minor == 9 && vers.major == 0 # Keep deprecation around for at least the 0.9 release series
+            depwarn_flag = Base.JLOptions().depwarn
+            if depwarn_flag == 0 # silent
+                @test @test_logs HTTP.post(uri, body).status == 200
+            elseif depwarn_flag == 1 # warning
+                @test @test_logs (:warn, r"deprecated") HTTP.post(uri, body).status == 200
+            else # depwarn_flag == 2 # error
+                @test_throws ErrorException HTTP.post(uri, body)
+            end
+        else # Next breaking release
+            try
+                HTTP.post(uri, body)
+            catch e
+                if !(e isa MethodError)
+                    @warn "Deprecation for HTTP.post(uri, body) should be removed."
+                end
+            end
         end
     end
     @testset "HTTP.Multipart ensure show() works correctly" begin
