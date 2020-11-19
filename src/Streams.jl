@@ -110,7 +110,9 @@ Write the final `0` chunk if needed.
 function closebody(http::Stream)
     if http.writechunked
         http.writechunked = false
-        write(http.stream, "0\r\n\r\n")
+        try
+            write(http.stream, "0\r\n\r\n")
+        catch end
     end
 end
 
