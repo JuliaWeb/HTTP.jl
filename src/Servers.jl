@@ -293,7 +293,7 @@ function listenloop(f, server, tcpisvalid, connection_count,
                 if e isa Base.IOError && e.code == -54
                     verbose && @warn "connection reset by peer (ECONNRESET)"
                 else
-                    @error exception=(e, stacktrace(catch_backtrace()))
+                    @error "" exception=(e, stacktrace(catch_backtrace()))
                 end
             finally
                 connection_count[] -= 1
