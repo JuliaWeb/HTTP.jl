@@ -290,7 +290,7 @@ function listenloop(f, server, tcpisvalid, connection_count,
                 handle_connection(f, conn, server, reuse_limit, readtimeout)
                 # verbose && @info "Closed ($count):  $conn"
             catch e
-                if e isa Base.IOError && e.code == -54
+                if e isa Base.IOError && (e.code == -54 || e.code == -4077)
                     verbose && @warn "connection reset by peer (ECONNRESET)"
                 else
                     @error exception=(e, stacktrace(catch_backtrace()))
