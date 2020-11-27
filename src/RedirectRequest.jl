@@ -32,7 +32,7 @@ function request(::Type{RedirectLayer{Next}},
 
         kw = merge(merge(NamedTuple(), kw), (parent = res,))
         oldurl = url
-        url = absuri(location, url)
+        url = absuri(location, url; effective_request_uri = oldurl)
         if forwardheaders
             headers = filter(headers) do h
                 # false return values are filtered out

@@ -21,7 +21,8 @@ include("resources/TestRequest.jl")
               "async.jl",
               "aws4.jl",
               "insert_layers.jl",
-              "mwe.jl"]
+              "mwe.jl",
+              "redirects.jl"]
         file = joinpath(dir, f)
         println("Running $file tests...")
         if isfile(file)
