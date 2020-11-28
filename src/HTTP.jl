@@ -319,7 +319,7 @@ end
 
 request(::Type{Union{}}, resp::Response) = resp
 
-request_uri(url, query) = merge(URI(url); query=query)
+request_uri(url, query) = URI(URI(url); query=query)
 request_uri(url, ::Nothing) = URI(url)
 
 """
