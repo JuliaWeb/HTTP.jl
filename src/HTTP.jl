@@ -157,8 +157,8 @@ AWS Authentication options
 
 Cookie options
 
- - `cookies::Union{Bool, Dict{String, String}} = false`, enable cookies, or alternatively,
-        pass a `Dict{String, String}` of name-value pairs to manually pass cookies
+ - `cookies::Union{Bool, Dict{AbstractString, AbstractString}} = false`, enable cookies, or alternatively,
+        pass a `Dict{AbstractString, AbstractString}` of name-value pairs to manually pass cookies
  - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`,
 
 
