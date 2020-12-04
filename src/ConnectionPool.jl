@@ -193,12 +193,15 @@ This forces the socket to send whatever data is within its buffer immediately,
 rather than waiting 10's of milliseconds for the buffer to fill more.
 """
 function Base.flush(c::Connection)
-    sock = tcpsocket(c.io)
-
-    # I don't understand why uninitializd sockets can get here, but they can, so filter 'em out.
-    if sock.status ∉ (Base.StatusInit, Base.StatusUninit) && isopen(sock)
-        Sockets.nagle(sock, false)
-        Sockets.nagle(sock, true)
+    # Flushing the TCP buffer requires support for `Sockets.nagle()`
+    # which was only added in Julia v1.3
+    @static if VERSION >= v"1.3"
+        sock = tcpsocket(c.io)
+        # I don't understand why uninitializd sockets can get here, but they can
+        if sock.status ∉ (Base.StatusInit, Base.StatusUninit) && isopen(sock)
+            Sockets.nagle(sock, false)
+            Sockets.nagle(sock, true)
+        end
     end
 end
 
