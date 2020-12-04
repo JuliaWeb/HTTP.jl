@@ -186,6 +186,26 @@ writebusy(t::Transaction) = @v1_3 lock(() -> t.writebusy, t.c.writelock) t.write
 readbusy(t::Transaction) = @v1_3 lock(() -> t.readbusy, t.c.readlock) t.readbusy
 
 """
+    flush(c::Connection)
+
+Flush a TCP buffer by toggling the Nagle algorithm off and on again for a socket.
+This forces the socket to send whatever data is within its buffer immediately,
+rather than waiting 10's of milliseconds for the buffer to fill more.
+"""
+function Base.flush(c::Connection)
+    # Flushing the TCP buffer requires support for `Sockets.nagle()`
+    # which was only added in Julia v1.3
+    @static if VERSION >= v"1.3"
+        sock = tcpsocket(c.io)
+        # I don't understand why uninitializd sockets can get here, but they can
+        if sock.status ∉ (Base.StatusInit, Base.StatusUninit) && isopen(sock)
+            Sockets.nagle(sock, false)
+            Sockets.nagle(sock, true)
+        end
+    end
+end
+
+"""
 Is `c` currently in use or expecting a response to request already sent?
 """
 isbusy(c::Connection) = isopen(c) && (writebusy(c) || readbusy(c) ||
@@ -319,6 +339,7 @@ function IOExtras.closewrite(t::Transaction)
     finally
         @v1_3 unlock(t.c.writelock)
     end
+    flush(t.c)
     release(t.c)
 
     return
