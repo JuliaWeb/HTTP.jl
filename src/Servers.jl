@@ -120,7 +120,10 @@ end
 
 Listen for HTTP connections and execute the `do` function for each request.
 
-The `do` function should be of the form `f(::HTTP.Stream)::Nothing`.
+The `do` function should be of the form `f(::HTTP.Stream)::Nothing`, and should
+at the minimum set a status via `setstatus()` and call `startwrite()` either
+explicitly or implicitly by writing out a response via `write()`.  Failure to
+do this will result in an HTTP 500 error being transmitted to the client.
 
 Optional keyword arguments:
  - `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl
