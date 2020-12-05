@@ -250,7 +250,18 @@ Base.isopen(ws::WebSocket) = !ws.rxclosed
 
 Base.eof(ws::WebSocket) = ws.rxclosed || eof(ws.io)
 
-Base.readavailable(ws::WebSocket) = collect(readframe(ws))
+Base.readavailable(ws::WebSocket) = readmessage(ws)
+
+function readmessage(ws::WebSocket)
+    payload, header = _readframe(ws)
+    bytes = collect(payload)
+    while !(header.final)
+        payload, header = _readframe(ws)
+        @assert header.opcode == WS_CONTINUATION
+        append!(bytes, payload)
+    end
+    return bytes
+end
 
 function readheader(io::IO)
     b = UInt8[0,0]
@@ -265,40 +276,45 @@ function readheader(io::IO)
         b[2] & WS_MASK > 0 ? read(io, UInt32) : UInt32(0))
 end
 
-function readframe(ws::WebSocket)
+readframe(ws::WebSocket) = first(_readframe(ws))
+
+function _readframe(ws::WebSocket)
     h = readheader(ws.io)
     @debug 1 "WebSocket ➡️  $h"
 
-    if h.length > 0
-        if length(ws.rxpayload) < h.length
-            resize!(ws.rxpayload, h.length)
+    len = Int(h.length)
+
+    if len > 0
+        if length(ws.rxpayload) < len
+            resize!(ws.rxpayload, len)
         end
-        unsafe_read(ws.io, pointer(ws.rxpayload), h.length)
-        @debug 2 "          ➡️  \"$(String(ws.rxpayload[1:h.length]))\""
+        unsafe_read(ws.io, pointer(ws.rxpayload), len)
+        @debug 2 "          ➡️  \"$(String(ws.rxpayload[1:len]))\""
     end
-    l = Int(h.length)
+    
     if h.hasmask
-        mask!(ws.rxpayload, ws.rxpayload, l, reinterpret(UInt8, [h.mask]))
+        mask!(ws.rxpayload, ws.rxpayload, len, reinterpret(UInt8, [h.mask]))
     end
 
     if h.opcode == WS_CLOSE
         ws.rxclosed = true
-        if l >= 2
+        if len >= 2
             status = UInt16(ws.rxpayload[1]) << 8 | ws.rxpayload[2]
             if status != 1000
-                message = String(ws.rxpayload[3:l])
+                message = String(ws.rxpayload[3:len])
                 status_descr = get(STATUS_CODE_DESCRIPTION, Int(status), "")
                 msg = "Status: $(status_descr), Internal Code: $(message)"
                 throw(WebSocketError(status, msg))
             end
         end
-        return UInt8[]
+        return view(ws.rxpayload, 1:0), h
+    elseif h.opcode == WS_PING
+        wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload[1:len])
+        return _readframe(ws)
+    elseif h.opcode == WS_PONG
+        return _readframe(ws)
     else
-        if h.opcode == WS_PING
-            wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload[1:l])
-            return readframe(ws)
-        end
-        return view(ws.rxpayload, 1:l)
+        return view(ws.rxpayload, 1:len), h
     end
 end
 
