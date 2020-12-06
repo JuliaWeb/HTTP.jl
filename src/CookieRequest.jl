@@ -25,9 +25,9 @@ export CookieLayer
 
 function request(::Type{CookieLayer{Next}},
                  method::String, url::URI, headers, body;
-                 cookies::Union{Bool, Dict{S1, S2}}=Dict{String, String}(),
+                 cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}}=Dict{String, String}(),
                  cookiejar::Dict{String, Set{Cookie}}=default_cookiejar[Threads.threadid()],
-                 kw...) where {Next, S1 <: AbstractString, S2 <: AbstractString}
+                 kw...) where {Next}
 
     hostcookies = get!(cookiejar, url.host, Set{Cookie}())
 
