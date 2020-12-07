@@ -1,16 +1,16 @@
 using Test
 using HTTP
-using HTTP.IOExtras, HTTP.Sockets
+using HTTP.IOExtras, HTTP.Sockets, HTTP.WebSockets
 using Sockets
 
-@testset "websockets.jl" begin
+@testset "WebSockets" begin
     p = 8085 # rand(8000:8999)
     socket_type = ["wss", "ws"]
 
     function listen_localhost()
         @async HTTP.listen(Sockets.localhost, p) do http
-            if HTTP.WebSockets.is_upgrade(http.message)
-                HTTP.WebSockets.upgrade(http) do ws
+            if WebSockets.is_upgrade(http.message)
+                WebSockets.upgrade(http) do ws
                     while !eof(ws)
                         data = readavailable(ws)
                         write(ws, data)
@@ -21,51 +21,68 @@ using Sockets
     end
 
     @testset "External Host - $s" for s in socket_type
-        HTTP.WebSockets.open("$s://echo.websocket.org") do io
-            write(io, "Foo")
-            @test !eof(io)
-            @test String(readavailable(io)) == "Foo"
+        WebSockets.open("$s://echo.websocket.org") do ws
+            write(ws, "Foo")
+            @test !eof(ws)
+            @test String(readavailable(ws)) == "Foo"
 
-            write(io, "Hello")
-            write(io, " There")
-            write(io, " World", "!")
-            closewrite(io)
+            write(ws, "Foo"," Bar")
+            @test !eof(ws)
+            @test String(readavailable(ws)) == "Foo Bar"
+
+            # send fragmented message manually with ping in between frames
+            WebSockets.wswrite(ws, ws.frame_type, "Hello ")
+            WebSockets.wswrite(ws, WebSockets.WS_FINAL | WebSockets.WS_PING, "things")
+            WebSockets.wswrite(ws, WebSockets.WS_FINAL, "again!")
+            @test String(readavailable(ws)) == "Hello again!"
+
+            write(ws, "Hello")
+            write(ws, " There")
+            write(ws, " World", "!")
+            closewrite(ws)
 
             buf = IOBuffer()
-            write(buf, io)
+            write(buf, ws)
             @test String(take!(buf)) == "Hello There World!"
         end
     end
 
     @testset "Localhost" begin
-       listen_localhost()
+        listen_localhost()
 
-        HTTP.WebSockets.open("ws://127.0.0.1:$(p)") do ws
+        WebSockets.open("ws://127.0.0.1:$(p)") do ws
             write(ws, "Foo")
             @test String(readavailable(ws)) == "Foo"
 
             write(ws, "Bar")
             @test String(readavailable(ws)) == "Bar"
+
+            write(ws, "This", " is", " a", " fragmented", " message.")
+            @test String(readavailable(ws)) == "This is a fragmented message."
+
+            # send fragmented message manually with ping in between frames
+            WebSockets.wswrite(ws, ws.frame_type, "Ping ")
+            WebSockets.wswrite(ws, WebSockets.WS_FINAL | WebSockets.WS_PING, "stuff")
+            WebSockets.wswrite(ws, WebSockets.WS_FINAL, "pong!")
+            @test String(readavailable(ws)) == "Ping pong!"
         end
     end
 
-    @testset "extened feautre support for listen" begin
+    @testset "Extended feature support for listen" begin
         port=UInt16(8086)
         tcpserver = listen(port)
         target = "/query?k1=v1&k2=v2"
-        
-        servertask =  @async HTTP.WebSockets.listen("127.0.0.1", port; server=tcpserver) do ws
-            @testset "request access" begin
-                @test ws.request isa HTTP.Request
-                write(ws, ws.request.target)
-                while !eof(ws)
-                    write(ws, readavailable(ws))
-                end
-                close(ws)
+
+        servertask =  @async WebSockets.listen("127.0.0.1", port; server=tcpserver) do ws
+            @test ws.request isa HTTP.Request
+            write(ws, ws.request.target)
+            while !eof(ws)
+                write(ws, readavailable(ws))
             end
+            close(ws)
         end
 
-        HTTP.WebSockets.open("ws://127.0.0.1:$(port)$(target)") do ws
+        WebSockets.open("ws://127.0.0.1:$(port)$(target)") do ws
             @test String(readavailable(ws)) == target
             @test write(ws, "Bye!") == 4
             @test String(readavailable(ws)) == "Bye!"
@@ -74,6 +91,6 @@ using Sockets
 
         close(tcpserver)
         @test timedwait(()->servertask.state === :failed, 5.0) === :ok
-        @test_throws Exception wait(servertask)        
+        @test_throws Exception wait(servertask)
     end
 end
