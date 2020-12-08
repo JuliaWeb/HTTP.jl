@@ -6,6 +6,8 @@ using ..Messages
 using ..IOExtras
 using ..ConnectionPool
 using MbedTLS: SSLContext
+using ..Pairs: getkv, setkv
+using Base64: base64encode
 import ..@debug, ..DEBUG_LEVEL
 
 # hasdotsuffix reports whether s ends in "."+suffix.
@@ -64,6 +66,12 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
         url = URI(proxy)
         if target_url.scheme == "http"
             req.target = string(target_url)
+        end
+
+        userinfo = unescapeuri(url.userinfo)
+        if !isempty(userinfo) && getkv(req.headers, "Proxy-Authorization", "") == ""
+            @debug 1 "Adding Proxy-Authorization: Basic header."
+            setkv(req.headers, "Proxy-Authorization", "Basic $(base64encode(userinfo))")
         end
     end
 
