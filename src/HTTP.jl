@@ -561,7 +561,7 @@ function stack(;redirect=true,
                 retry=true,
                 status_exception=true,
                 readtimeout=0,
-                connecttimeout=0,
+                connect_timeout=0,
                 detect_content_type=false,
                 verbose=0,
                 kw...)
