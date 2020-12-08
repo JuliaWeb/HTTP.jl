@@ -96,7 +96,7 @@ Streaming options
 
 Connection Pool options
 
- - `connectiontimeout = 0`, close the connection after this many seconds if it
+ - `connect_timeout = 0`, close the connection after this many seconds if it
    is still attempting to connect. Use `connectiontimeout = 0` to disable.
  - `connection_limit = 8`, number of concurrent connections to each host:port.
  - `pipeline_limit = 16`, number of concurrent requests per connection.

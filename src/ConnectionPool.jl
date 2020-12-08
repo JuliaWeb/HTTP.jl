@@ -640,7 +640,7 @@ function getconnection(::Type{TCPSocket},
                        host::AbstractString,
                        port::AbstractString;
                        keepalive::Bool=false,
-                       connecttimeout::Int=0,
+                       connect_timeout::Int=0,
                        readtimeout::Int=0,
                        kw...)::TCPSocket
 
@@ -648,9 +648,9 @@ function getconnection(::Type{TCPSocket},
 
     @debug 2 "TCP connect: $host:$p..."
 
-    timeouts = filter(!iszero, [connecttimeout, readtimeout])
-    connecttimeout = isempty(timeouts) ? 0 : minimum(timeouts)
-    if connecttimeout == 0
+    timeouts = filter(!iszero, [connect_timeout, readtimeout])
+    connect_timeout = isempty(timeouts) ? 0 : minimum(timeouts)
+    if connect_timeout == 0
         tcp = Sockets.connect(host == "localhost" ? ip"127.0.0.1" : Sockets.getalladdrinfo(host)[1], p)
         keepalive && keepalive!(tcp)
         return tcp
@@ -661,7 +661,7 @@ function getconnection(::Type{TCPSocket},
 
     timeout = Ref{Bool}(false)
     @async begin
-        sleep(connecttimeout)
+        sleep(connect_timeout)
         if tcp.status == Base.StatusConnecting
             timeout[] = true
             tcp.status = Base.StatusClosing
