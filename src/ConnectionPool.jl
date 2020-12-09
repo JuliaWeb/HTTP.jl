@@ -648,8 +648,7 @@ function getconnection(::Type{TCPSocket},
 
     @debug 2 "TCP connect: $host:$p..."
 
-    timeouts = filter(!iszero, [connect_timeout, readtimeout])
-    connect_timeout = isempty(timeouts) ? 0 : minimum(timeouts)
+    connect_timeout = connect_timeout == 0 && readtimeout > 0 ? readtimeout : connect_timeout
     if connect_timeout == 0
         tcp = Sockets.connect(host == "localhost" ? ip"127.0.0.1" : Sockets.getalladdrinfo(host)[1], p)
         keepalive && keepalive!(tcp)
