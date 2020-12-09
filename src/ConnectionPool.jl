@@ -641,12 +641,14 @@ function getconnection(::Type{TCPSocket},
                        port::AbstractString;
                        keepalive::Bool=false,
                        connect_timeout::Int=0,
+                       readtimeout::Int=0,
                        kw...)::TCPSocket
 
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
 
     @debug 2 "TCP connect: $host:$p..."
 
+    connect_timeout = connect_timeout == 0 && readtimeout > 0 ? readtimeout : connect_timeout
     if connect_timeout == 0
         tcp = Sockets.connect(host == "localhost" ? ip"127.0.0.1" : Sockets.getalladdrinfo(host)[1], p)
         keepalive && keepalive!(tcp)
