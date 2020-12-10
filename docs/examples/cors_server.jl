@@ -22,11 +22,11 @@ function getNextId()
     return id
 end
 
-#CORS headers that show what kinds of complex requests are allowed to API
+# CORS headers that show what kinds of complex requests are allowed to API
 headers = [
     "Access-Control-Allow-Origin" => "*",
     "Access-Control-Allow-Headers" => "*",
-    "Access-Control-Allow-Methods" => "POST;GET;OPTIONS"
+    "Access-Control-Allow-Methods" => "POST, GET, OPTIONS"
 ]
 
 #= 
