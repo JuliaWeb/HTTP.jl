@@ -107,6 +107,9 @@ mutable struct Response <: Message
     body::Vector{UInt8}
     request::Message
 
+    @doc """
+        Response(status::Int, headers=[]; body=UInt8[], request=nothing) -> HTTP.Response
+    """
     function Response(status::Int, headers=[]; body=UInt8[], request=nothing)
         r = new()
         r.version = v"1.1"
@@ -120,6 +123,17 @@ mutable struct Response <: Message
     end
 end
 
+"""
+    HTTP.Response(status::Int, body) -> HTTP.Response
+
+## Examples
+```julia
+HTTP.Response(200, "Hello")
+
+headers = ["Server" => "Apache"]
+HTTP.Response(200, headers; body = "Hello")
+```
+"""
 Response() = Request().response
 
 Response(s::Int, body::AbstractVector{UInt8}) = Response(s; body=body)
@@ -187,6 +201,12 @@ end
 
 Request() = Request("", "")
 
+"""
+    HTTP.Request(method, target, headers, body; version, parent) -> HTTP.Request
+
+Constructor for `HTTP.Request`.
+For daily use, see [`HTTP.request`](@ref).
+"""
 function Request(method::String, target, headers=[], body=UInt8[];
                  version=v"1.1", parent=nothing)
     r = Request(method,
