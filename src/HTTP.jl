@@ -173,7 +173,7 @@ Proxy options
 
  - `proxy = proxyurl`, pass request through a proxy given as a url
 
-Alternatively, HTTP.jl also respects the `http_proxy`, `https_proxy`, and `no_proxy`
+Alternatively, HTTP.jl also respects the `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, and `no_proxy`
 environment variables; if set, they will be used automatically when making requests.
 
 ## Request Body Examples
