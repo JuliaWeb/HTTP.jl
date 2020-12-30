@@ -229,6 +229,7 @@ function listen(f,
                 tcpisvalid::Function=tcp->true,
                 server::Union{Base.IOServer, Nothing}=nothing,
                 reuseaddr::Bool=false,
+                max_connections::Int=nolimit,
                 connection_count::Ref{Int}=Ref(0),
                 rate_limit::Union{Rational{Int}, Nothing}=nothing,
                 reuse_limit::Int=nolimit,
@@ -263,7 +264,7 @@ function listen(f,
     end
 
     s = Server(sslconfig, tcpserver, string(host), string(port), on_shutdown)
-    return listenloop(f, s, tcpisvalid, connection_count,
+    return listenloop(f, s, tcpisvalid, connection_count, max_connections,
                          reuse_limit, readtimeout, verbose)
 end
 
@@ -272,10 +273,12 @@ Main server loop.
 Accepts new tcp connections and spawns async tasks to handle them."
 """
 function listenloop(f, server, tcpisvalid, connection_count,
-                       reuse_limit, readtimeout, verbose)
+                       max_connections, reuse_limit, readtimeout, verbose)
+    sem = Base.Semaphore(max_connections)
     count = 1
     while isopen(server)
         try
+            Base.acquire(sem)
             io = accept(server)
             if io === nothing
                 verbose && @warn "unable to accept new connection"
@@ -300,6 +303,7 @@ function listenloop(f, server, tcpisvalid, connection_count,
                 end
             finally
                 connection_count[] -= 1
+                Base.release(sem)
                 # handle_connection is in charge of closing the underlying io
             end
         catch e
