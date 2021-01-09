@@ -231,7 +231,7 @@ Stream body through buffer:
 ```julia
 io = Base.BufferStream()
 @async while !eof(io)
-    bytes = readavailable(io))
+    bytes = readavailable(io)
     println("GET data: \$bytes")
 end
 r = HTTP.request("GET", "http://httpbin.org/get", response_stream=io)
@@ -304,7 +304,7 @@ HTTP.open("POST", "http://music.com/play") do io
     r = startread(io)
     @show r.status
     while !eof(io)
-        bytes = readavailable(io))
+        bytes = readavailable(io)
         play_audio(bytes)
     end
 end
