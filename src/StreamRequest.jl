@@ -24,9 +24,11 @@ export StreamLayer
 
 function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
                  reached_redirect_limit=false,
+                 redirect=true,
                  response_stream=nothing,
                  iofunction=nothing,
                  verbose::Int=0,
+                 status_headers::Union{StatusHeaders,Nothing}=nothing,
                  kw...)::Response where Next
 
     verbose == 1 && printlncompact(req)
@@ -65,6 +67,19 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
                 yield()
                 @debug 2 "client startread"
                 startread(http)
+                # If caller has requested to see status code and headers, send it back,
+                # but only if there will be no more redirects
+                if status_headers !== nothing && (reached_redirect_limit || !(isredirect(response) && redirect))
+                    lock(status_headers.cond) do
+                        if status_headers.is_done
+                            throw(ArgumentError("StatusHeaders object already used"))
+                        end
+                        status_headers.status  = response.status
+                        status_headers.headers = response.headers
+                        status_headers.is_done = true
+                        notify(status_headers.cond)
+                    end
+                end
                 readbody(http, response, response_stream, reached_redirect_limit)
             else
                 iofunction(http)

@@ -62,7 +62,7 @@ export Message, Request, Response, HeaderSizeError,
        readchunksize,
        writeheaders, writestartline,
        bodylength, unknown_length,
-       payload
+       payload, StatusHeaders
 
 import ..HTTP
 
@@ -77,6 +77,41 @@ include("ascii.jl")
 const unknown_length = typemax(Int)
 
 abstract type Message end
+
+"""
+    StatusHeaders()
+
+Return an object that can be used to "pre-fetch" status code and
+headers from an in-flight asynchronous HTTP request.
+Use `wait` or `fetch` to block until the object is ready.
+
+Example usage:
+```julia
+@sync begin
+    sh = HTTP.StatusHeaders()
+    req = @async HTTP.get("https://github.com", status_headers=sh)
+    wait(sh) # Blocks until ready
+    # Do something with status/headers while body is still transmitting
+    @show sh.status
+    @show sh.headers
+    # ...
+end
+```
+"""
+mutable struct StatusHeaders
+    cond::Threads.Condition
+    is_done::Bool
+    status::Int16
+    headers::Headers
+    StatusHeaders() = new(Threads.Condition(), false)
+end
+function Base.wait(sh::StatusHeaders)
+    lock(sh.cond) do
+        sh.is_done || wait(sh.cond)
+    end
+    return nothing
+end
+Base.fetch(sh::StatusHeaders) = (wait(sh); sh)
 
 # HTTP Response
 
