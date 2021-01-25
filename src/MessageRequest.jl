@@ -33,6 +33,7 @@ function request(::Type{MessageLayer{Next}},
                  parent=nothing, iofunction=nothing, kw...) where Next
 
     defaultheader!(headers, "Host" => url.host)
+    defaultheader!(headers, "Accept" => "*/*")
     if USER_AGENT[] !== nothing
         defaultheader!(headers, "User-Agent" => USER_AGENT[])
     end

@@ -223,8 +223,8 @@ const required_headers = ["Authorization", "host", "x-amz-date"]
         @test headers["X-Amz-Date"] == "20150830T123600Z"
         auth = "AWS4-HMAC-SHA256 " *
                "Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, " *
-               "SignedHeaders=host;x-amz-date, " *
-               "Signature=5d7c2f752f5597c1a2ad2f65008974307a7b25bd7cc4f79146b06435e91fa95e"
+               "SignedHeaders=accept;host;x-amz-date, " *
+               "Signature=599128338d879e1e2aee2ce58222da02b47428696b7cf7c5d1b4a9cc75749ff9"
         @test headers["Authorization"] == auth
     end
 end
