@@ -38,10 +38,11 @@ import HTTP.URIs
 
     @test isnothing(HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/"))
     withenv("HTTPS_PROXY"=>"") do
-        @test isnothing(HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/"))
+        # to be compatible with Julia 1.0
+        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == nothing
     end
     withenv("https_proxy"=>"") do
-        @test isnothing(HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/"))
+        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == nothing
     end
     withenv("HTTPS_PROXY"=>"https://user:pass@server:80") do
         @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == "https://user:pass@server:80"
@@ -52,10 +53,10 @@ import HTTP.URIs
 
     @test isnothing(HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/"))
     withenv("HTTP_PROXY"=>"") do
-        @test isnothing(HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/"))
+        @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == nothing
     end
     withenv("http_proxy"=>"") do
-        @test isnothing(HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/"))
+        @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == nothing
     end
     withenv("HTTP_PROXY"=>"http://user:pass@server:80") do
         @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == "http://user:pass@server:80"
