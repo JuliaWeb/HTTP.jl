@@ -35,4 +35,32 @@ import HTTP.URIs
         )
         @test HTTP.Strings.iso8859_1_to_utf8(bytes) == utf8
     end
+
+    @test isnothing(HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/"))
+    withenv("HTTPS_PROXY"=>"") do
+        @test isnothing(HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/"))
+    end
+    withenv("https_proxy"=>"") do
+        @test isnothing(HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/"))
+    end
+    withenv("HTTPS_PROXY"=>"https://user:pass@server:80") do
+        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == "https://user:pass@server:80"
+    end
+    withenv("https_proxy"=>"https://user:pass@server:80") do
+        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == "https://user:pass@server:80"
+    end
+
+    @test isnothing(HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/"))
+    withenv("HTTP_PROXY"=>"") do
+        @test isnothing(HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/"))
+    end
+    withenv("http_proxy"=>"") do
+        @test isnothing(HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/"))
+    end
+    withenv("HTTP_PROXY"=>"http://user:pass@server:80") do
+        @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == "http://user:pass@server:80"
+    end
+    withenv("http_proxy"=>"http://user:pass@server:80") do
+        @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == "http://user:pass@server:80"
+    end
 end # testset
