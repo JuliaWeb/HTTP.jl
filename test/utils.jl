@@ -36,7 +36,7 @@ import HTTP.URIs
         @test HTTP.Strings.iso8859_1_to_utf8(bytes) == utf8
     end
 
-    @test isnothing(HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/"))
+    @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == nothing
     withenv("HTTPS_PROXY"=>"") do
         # to be compatible with Julia 1.0
         @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == nothing
@@ -51,7 +51,7 @@ import HTTP.URIs
         @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == "https://user:pass@server:80"
     end
 
-    @test isnothing(HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/"))
+    @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == nothing
     withenv("HTTP_PROXY"=>"") do
         @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == nothing
     end
