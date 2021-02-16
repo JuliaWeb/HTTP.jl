@@ -34,7 +34,7 @@ end
 
 function getproxy(scheme, host)
     isnoproxy(host) && return nothing
-    if scheme == "http" && haskey(ENV, "http_proxy") && !isempty(ENV["http_proxy"])
+    if scheme == "http" && !isempty(get(ENV, "http_proxy", ""))
         return ENV["http_proxy"]
     elseif scheme == "http" && haskey(ENV, "HTTP_PROXY") && !isempty(ENV["HTTP_PROXY"])
         return ENV["HTTP_PROXY"]
