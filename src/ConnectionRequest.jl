@@ -34,14 +34,14 @@ end
 
 function getproxy(scheme, host)
     isnoproxy(host) && return nothing
-    if scheme == "http" && haskey(ENV, "http_proxy")
-        return ENV["http_proxy"]
-    elseif scheme == "http" && haskey(ENV, "HTTP_PROXY")
-        return ENV["HTTP_PROXY"]
-    elseif scheme == "https" && haskey(ENV, "https_proxy")
-        return ENV["https_proxy"]
-    elseif scheme == "https" && haskey(ENV, "HTTPS_PROXY")
-        return ENV["HTTPS_PROXY"]
+    if scheme == "http" && (p = get(ENV, "http_proxy", ""); !isempty(p))
+        return p
+    elseif scheme == "http" && (p = get(ENV, "HTTP_PROXY", ""); !isempty(p))
+        return p
+    elseif scheme == "https" && (p = get(ENV, "https_proxy", ""); !isempty(p))
+        return p
+    elseif scheme == "https" && (p = get(ENV, "HTTPS_PROXY", ""); !isempty(p))
+        return p
     end
     return nothing
 end
