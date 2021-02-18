@@ -53,7 +53,9 @@ import HTTP.URIs
         @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == "https://user:pass@server:80"
     end
 
-    @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == nothing
+    withenv("HTTP_PROXY"=>nothing, "http_proxy"=>nothing) do
+        @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == nothing
+    end
     withenv("HTTP_PROXY"=>"") do
         @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == nothing
     end
