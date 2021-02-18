@@ -36,7 +36,9 @@ import HTTP.URIs
         @test HTTP.Strings.iso8859_1_to_utf8(bytes) == utf8
     end
 
-    @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == nothing
+    withenv("HTTPS_PROXY"=>nothing, "https_proxy"=>nothing) do
+        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == nothing
+    end
     withenv("HTTPS_PROXY"=>"") do
         # to be compatible with Julia 1.0
         @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == nothing
