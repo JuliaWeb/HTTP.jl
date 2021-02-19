@@ -1,13 +1,4 @@
 # Form request body
-"""
-    Form(dict::Dict)
-
-A type representing a request body using the multipart/form-data encoding.
-The key-value pairs in the Dict argument will constitute the name and value of each multipart boundary chunk.
-Files and other large data arguments can be provided as values as IO arguments: either an `IOStream` such as returned via `open(file)`,
-an `IOBuffer` for in-memory data. For complete control over a multipart chunk's details, an
-`HTTP.Multipart` type is provided to support setting the `Content-Type`, `filename`, and `Content-Transfer-Encoding` if desired. See `?HTTP.Multipart` for more details.
-"""
 mutable struct Form <: IO
     data::Vector{IO}
     index::Int
@@ -53,6 +44,34 @@ function Base.read(f::Form, n::Integer)
     return result
 end
 
+"""
+    Form(data; boundary=string(rand(UInt128), base=16))
+
+Construct a request body for multipart/form-data encoding from `data`.
+
+`data` must iterate key-value pairs (e.g. `Dict` or `Vector{Pair}`) where the key/value of the
+iterator is the key/value of each mutipart boundary chunk.
+Files and other large data arguments can be provided as values as IO arguments: either an `IOStream`
+such as returned via `open(file)`, or an `IOBuffer` for in-memory data.
+
+For complete control over a multipart chunk's details, an
+[`HTTP.Multipart`](@ref) type is provided to support setting the `filename`, `Content-Type`,
+and `Content-Transfer-Encoding`.
+
+# Examples
+```julia
+data = Dict(
+    "text" => "text data",
+    # filename (cat.png) and content-type (image/png) inferred from the IOStream
+    "file1" => open("cat.png"),
+    # manully controlled chunk
+    "file2" => HTTP.Multipart("dog.jpeg", open("mydog.jpg"), "image/jpeg"),
+)
+body = HTTP.Form(data)
+headers = []
+HTTP.post(url, headers, body)
+```
+"""
 function Form(d; boundary=string(rand(UInt128), base=16))
     # https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
     bcharsnospace = raw"\w'\(\)\+,-\./:=\?"
@@ -96,10 +115,22 @@ end
     Multipart(filename::String, data::IO, content_type=HTTP.sniff(data), content_transfer_encoding="")
 
 A type to represent a single multipart upload chunk for a file. This type would be used as the value in a
-key-value pair of a Dict passed to an http request, like `HTTP.post(url; body=Dict("key"=>HTTP.Multipart("MyFile.txt", open("MyFile.txt"))))`.
+key-value pair when constructing a [`HTTP.Form`](@ref) for a request body (see example below).
 The `data` argument must be an `IO` type such as `IOStream`, or `IOBuffer`.
-The `content_type` and `content_transfer_encoding` arguments allow the manual setting of these multipart headers. `Content-Type` will default to the result
-of the `HTTP.sniff(data)` mimetype detection algorithm, whereas `Content-Transfer-Encoding` will be left out if not specified.
+The `content_type` and `content_transfer_encoding` arguments allow manual setting of these multipart headers.
+`Content-Type` will default to the result of the `HTTP.sniff(data)` mimetype detection algorithm, whereas
+`Content-Transfer-Encoding` will be left out if not specified.
+
+# Examples
+```julia
+body = HTTP.Form(Dict(
+    "key" => HTTP.Multipart("File.txt", open("MyFile.txt"), "text/plain"),
+))
+headers = []
+HTTP.post(url, headers, body)
+```
+
+# Extended help
 
 Filename SHOULD be included when the Multipart represents the contents of a file
 [RFC7578 4.2](https://tools.ietf.org/html/rfc7578#section-4.2)
