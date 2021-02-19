@@ -1,5 +1,6 @@
 using ..TestRequest
 using HTTP
+using Sockets
 using JSON
 using Test
 
@@ -213,6 +214,28 @@ end
 
 @testset "readtimeout" begin
     @test_throws HTTP.IOError HTTP.get("http://httpbin.org/delay/5"; readtimeout=1, retry=false)
+end
+
+@testset "Retry all resolved IP addresses" begin
+    # See issue https://github.com/JuliaWeb/HTTP.jl/issues/672
+    # Bit tricky to test, but can at least be tested if localhost
+    # resolves to both IPv4 and IPv6 by listening to the respective
+    # interface
+    alladdrs = getalladdrinfo("localhost")
+    if ip"127.0.0.1" in alladdrs && ip"::1" in alladdrs
+        for interface in (IPv4(0), IPv6(0))
+            server = listen(interface, 8080)
+            @async HTTP.listen(string(interface), 8080; server=server) do http
+                HTTP.setstatus(http, 200)
+                HTTP.startwrite(http)
+                HTTP.write(http, "hello, world")
+            end
+            req = HTTP.get("http://localhost:8080")
+            close(server)
+            @test req.status == 200
+            @test String(req.body) == "hello, world"
+        end
+    end
 end
 
 @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
