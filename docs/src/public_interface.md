@@ -11,6 +11,12 @@ HTTP.post
 HTTP.head
 ```
 
+Request body types
+```@docs
+HTTP.Form
+HTTP.Multipart
+```
+
 Request functions may throw the following exceptions:
 
 ```@docs
