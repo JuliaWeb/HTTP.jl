@@ -1,4 +1,4 @@
-using Documenter, HTTP
+using Documenter, HTTP, Sockets, URIs
 
 """
 Loops through the files in the examples folder and adds them (with any header comments) to the examples.md
@@ -72,7 +72,7 @@ end
 generateExamples()
 
 makedocs(
-    modules = [HTTP],
+    # modules = [HTTP],
     sitename = "HTTP.jl",
     pages = [
         "Home" => "index.md",
