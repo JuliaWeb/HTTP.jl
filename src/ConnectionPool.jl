@@ -648,37 +648,52 @@ function getconnection(::Type{TCPSocket},
 
     @debug 2 "TCP connect: $host:$p..."
 
+    addrs = Sockets.getalladdrinfo(host)
+
     connect_timeout = connect_timeout == 0 && readtimeout > 0 ? readtimeout : connect_timeout
-    if connect_timeout == 0
-        tcp = Sockets.connect(host == "localhost" ? ip"127.0.0.1" : Sockets.getalladdrinfo(host)[1], p)
-        keepalive && keepalive!(tcp)
-        return tcp
-    end
 
-    tcp = Sockets.TCPSocket()
-    Sockets.connect!(tcp, Sockets.getalladdrinfo(host)[1], p)
+    lasterr = ErrorException("unknown connection error")
 
-    timeout = Ref{Bool}(false)
-    @async begin
-        sleep(connect_timeout)
-        if tcp.status == Base.StatusConnecting
-            timeout[] = true
-            tcp.status = Base.StatusClosing
-            ccall(:jl_forceclose_uv, Nothing, (Ptr{Nothing},), tcp.handle)
-            #close(tcp)
+    for addr in addrs
+        if connect_timeout == 0
+            try
+                tcp = Sockets.connect(addr, p)
+                keepalive && keepalive!(tcp)
+                return tcp
+            catch err
+                lasterr = err
+                continue # to next ip addr
+            end
+        else
+            tcp = Sockets.TCPSocket()
+            Sockets.connect!(tcp, addr, p)
+
+            timeout = Ref{Bool}(false)
+            @async begin
+                sleep(connect_timeout)
+                if tcp.status == Base.StatusConnecting
+                    timeout[] = true
+                    tcp.status = Base.StatusClosing
+                    ccall(:jl_forceclose_uv, Nothing, (Ptr{Nothing},), tcp.handle)
+                    #close(tcp)
+                end
+            end
+            try
+                Sockets.wait_connected(tcp)
+                keepalive && keepalive!(tcp)
+                return tcp
+            catch err
+                if timeout[]
+                    lasterr = ConnectTimeout(host, port)
+                else
+                    lasterr = err
+                end
+                continue # to next ip addr
+            end
         end
     end
-    try
-        Sockets.wait_connected(tcp)
-    catch e
-        if timeout[]
-            throw(ConnectTimeout(host, port))
-        end
-        rethrow(e)
-    end
-
-    keepalive && keepalive!(tcp)
-    return tcp
+    # If no connetion could be set up, to any address, throw last error
+    throw(lasterr)
 end
 
 const nosslconfig = SSLConfig()
