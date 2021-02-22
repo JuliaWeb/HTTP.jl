@@ -32,6 +32,7 @@ using ..IOExtras, ..Sockets
 import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
+import NetworkOptions
 
 const default_connection_limit = 8
 const default_pipeline_limit = 16
@@ -543,7 +544,7 @@ function getconnection(::Type{Transaction{T}},
                        pipeline_limit::Int=default_pipeline_limit,
                        idle_timeout::Int=0,
                        reuse_limit::Int=nolimit,
-                       require_ssl_verification::Bool=true,
+                       require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        kw...)::Transaction{T} where T <: IO
     pod = getpod(POOL, hashconn(T, host, port, pipeline_limit, require_ssl_verification, true))
     @v1_3 lock(pod.conns)
@@ -722,7 +723,7 @@ function getconnection(::Type{SSLContext},
 end
 
 function sslconnection(tcp::TCPSocket, host::AbstractString;
-                       require_ssl_verification::Bool=true,
+                       require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        sslconfig::SSLConfig=nosslconfig,
                        kw...)::SSLContext
 
@@ -740,7 +741,7 @@ end
 
 function sslupgrade(t::Transaction{TCPSocket},
                     host::AbstractString;
-                    require_ssl_verification::Bool=true,
+                    require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                     kw...)::Transaction{SSLContext}
     tls = sslconnection(t.c.io, host;
                         require_ssl_verification=require_ssl_verification,
