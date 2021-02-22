@@ -132,7 +132,7 @@ Status Exception options
 
 SSLContext options
 
- - `require_ssl_verification = false`, pass `MBEDTLS_SSL_VERIFY_REQUIRED` to
+ - `require_ssl_verification = NetworkOptions.verify_host(host)`, pass `MBEDTLS_SSL_VERIFY_REQUIRED` to
    the mbed TLS library.
    ["... peer must present a valid certificate, handshake is aborted if
      verification failed."](https://tls.mbed.org/api/ssl_8h.html#a5695285c9dbfefec295012b566290f37)

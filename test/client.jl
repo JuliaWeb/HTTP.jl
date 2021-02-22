@@ -238,6 +238,43 @@ end
     end
 end
 
+import NetworkOptions, MbedTLS
+@testset "NetworkOptions for host verification" begin
+    # Set up server with self-signed cert
+    server = listen(IPv4(0), 8443)
+    cert, key = joinpath.(@__DIR__, "resources", ("cert.pem", "key.pem"))
+    sslconfig = MbedTLS.SSLConfig(cert, key)
+    tsk = @async HTTP.listen("0.0.0.0", 8443; server=server, sslconfig=sslconfig) do http
+        HTTP.setstatus(http, 200)
+        HTTP.startwrite(http)
+        HTTP.write(http, "hello, world")
+    end
+    url = "https://localhost:8443"
+    env = ["JULIA_NO_VERIFY_HOSTS" => nothing, "JULIA_SSL_NO_VERIFY_HOSTS" => nothing, "JULIA_ALWAYS_VERIFY_HOSTS" => nothing]
+    withenv(env...) do
+        @test NetworkOptions.verify_host(url)
+        @test NetworkOptions.verify_host(url, "SSL")
+        @test_throws HTTP.IOError HTTP.get(url; retries=1)
+        @test_throws HTTP.IOError HTTP.get(url; require_ssl_verification=true, retries=1)
+        @test HTTP.get(url; require_ssl_verification=false).status == 200
+    end
+    withenv(env..., "JULIA_NO_VERIFY_HOSTS" => "localhost") do
+        @test !NetworkOptions.verify_host(url)
+        @test !NetworkOptions.verify_host(url, "SSL")
+        @test HTTP.get(url).status == 200
+        @test_throws HTTP.IOError HTTP.get(url; require_ssl_verification=true, retries=1)
+        @test HTTP.get(url; require_ssl_verification=false).status == 200
+    end
+    withenv(env..., "JULIA_SSL_NO_VERIFY_HOSTS" => "localhost") do
+        @test NetworkOptions.verify_host(url)
+        @test !NetworkOptions.verify_host(url, "SSL")
+        @test HTTP.get(url).status == 200
+        @test_throws HTTP.IOError HTTP.get(url; require_ssl_verification=true, retries=1)
+        @test HTTP.get(url; require_ssl_verification=false).status == 200
+    end
+    close(server)
+end
+
 @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
     headers = Dict("User-Agent" => "HTTP.jl")
     query = Dict("hello" => "world")
