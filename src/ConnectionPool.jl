@@ -523,6 +523,11 @@ struct Pool
     conns::Dict{UInt, Pod}
 end
 
+"""
+    POOL
+
+Global connection pool keeping track of active connections.
+"""
 const POOL = Pool(ReentrantLock(), Dict{UInt, Pod}())
 
 function getpod(pool::Pool, x)
