@@ -32,7 +32,14 @@ function request(::Type{MessageLayer{Next}},
                  target=resource(url),
                  parent=nothing, iofunction=nothing, kw...) where Next
 
-    defaultheader!(headers, "Host" => url.host)
+    if isempty(url.port) ||
+              (url.scheme == "http" && url.port == "80") ||
+              (url.scheme == "https" && url.port == "443")
+        hostheader = url.host
+    else
+        hostheader = url.host * ":" * url.port
+    end
+    defaultheader!(headers, "Host" => hostheader)
     defaultheader!(headers, "Accept" => "*/*")
     if USER_AGENT[] !== nothing
         defaultheader!(headers, "User-Agent" => USER_AGENT[])

@@ -238,6 +238,38 @@ end
     end
 end
 
+@testset "Implicit request headers" begin
+    server = listen(IPv4(0), 8080)
+    tsk = @async HTTP.listen("0.0.0.0", 8080; server=server) do http
+        data = Dict{String,String}(http.message.headers)
+        HTTP.setstatus(http, 200)
+        HTTP.startwrite(http)
+        HTTP.write(http, sprint(JSON.print, data))
+    end
+    old_user_agent = HTTP.MessageRequest.USER_AGENT[]
+    default_user_agent = "HTTP.jl/$VERSION"
+    # Default values
+    HTTP.setuseragent!(default_user_agent)
+    d = JSON.parse(IOBuffer(HTTP.get("http://localhost:8080").body))
+    @test d["Host"] == "localhost:8080"
+    @test d["Accept"] == "*/*"
+    @test d["User-Agent"] == default_user_agent
+    # Overwriting behavior
+    headers = ["Host" => "http.jl", "Accept" => "application/json"]
+    HTTP.setuseragent!("HTTP.jl test")
+    d = JSON.parse(IOBuffer(HTTP.get("http://localhost:8080", headers).body))
+    @test d["Host"] == "http.jl"
+    @test d["Accept"] == "application/json"
+    @test d["User-Agent"] == "HTTP.jl test"
+    # No User-Agent
+    HTTP.setuseragent!(nothing)
+    d = JSON.parse(IOBuffer(HTTP.get("http://localhost:8080").body))
+    @test !haskey(d, "User-Agent")
+
+    HTTP.setuseragent!(old_user_agent)
+    close(server)
+end
+
 import NetworkOptions, MbedTLS
 @testset "NetworkOptions for host verification" begin
     # Set up server with self-signed cert
