@@ -71,3 +71,16 @@ HTTP.StreamHandlerFunction
 HTTP.Router
 HTTP.@register
 ```
+
+## Messages Interface
+
+```@docs
+HTTP.Request
+HTTP.Response
+HTTP.status
+HTTP.headers
+HTTP.body
+HTTP.method
+HTTP.uri
+```
+

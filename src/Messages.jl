@@ -99,6 +99,9 @@ Represents a HTTP Response Message.
    [RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
 
 - `request`, the `Request` that yielded this `Response`.
+
+You can get each data with [`HTTP.status`](@ref), [`HTTP.headers`](@ref), and [`HTTP.body`](@ref).
+
 """
 mutable struct Response <: Message
     version::VersionNumber
@@ -154,9 +157,26 @@ function reset!(r::Response)
     end
 end
 
-@deprecate status(r::Response) getfield(r, :status)
-@deprecate headers(r::Response) getfield(r, :headers)
-@deprecate body(r::Response) getfield(r, :body)
+"""
+    status(r::Response)
+
+Get status from a response.
+"""
+status(r::Response) = getfield(r, :status)
+
+"""
+    headers(r::Response)
+
+Get headers from a response.
+"""
+headers(r::Response) = getfield(r, :headers)
+
+"""
+    body(r::Response)
+
+Get body from a response.
+"""
+body(r::Response) = getfield(r, :body)
 
 # HTTP Request
 
@@ -187,6 +207,9 @@ Represents a HTTP Request Message.
 - `parent`, the `Response` (if any) that led to this request
   (e.g. in the case of a redirect).
    [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
+
+You can get each data with [`HTTP.method`](@ref), [`HTTP.headers`](@ref), [`HTTP.uri`](@ref), and [`HTTP.body`](@ref).
+
 """
 mutable struct Request <: Message
     method::String
@@ -224,10 +247,33 @@ end
 mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
 
-@deprecate method(r::Request) getfield(r, :method)
-@deprecate uri(r::Request) getfield(r, :target)
-@deprecate headers(r::Request) getfield(r, :headers)
-@deprecate body(r::Request) getfield(r, :body)
+"""
+    method(r::Request)
+
+Get method from a request.
+"""
+method(r::Request) = getfield(r, :method)
+
+"""
+    uri(r::Request)
+
+Get URI from a request.
+"""
+uri(r::Request) = getfield(r, :target)
+
+"""
+    headers(r::Request)
+
+Get headers from a request.
+"""
+headers(r::Request) = getfield(r, :headers)
+
+"""
+    body(r::Request)
+
+Get body from a request.
+"""
+body(r::Request) = getfield(r, :body)
 
 # HTTP Message state and type queries
 
