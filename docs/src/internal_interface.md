@@ -15,8 +15,6 @@ HTTP.Parsers.parse_chunk_size
 ## Messages Interface
 
 ```@docs
-HTTP.Messages.Request
-HTTP.Messages.Response
 HTTP.Messages.iserror
 HTTP.Messages.isredirect
 HTTP.Messages.ischunked
