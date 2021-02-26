@@ -54,7 +54,7 @@ Streaming of request and response bodies is handled by the
 """
 module Messages
 
-export Message, Request, Response, HeaderSizeError,
+export Message, Request, Response,
        reset!, status, method, headers, uri, body,
        iserror, isredirect, ischunked, issafe, isidempotent,
        header, hasheader, headercontains, setheader, defaultheader!, appendheader,
