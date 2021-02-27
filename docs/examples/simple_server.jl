@@ -1,6 +1,6 @@
 """
 A simple example of creating a server with HTTP.jl. It handles creating, deleting, 
-updating, and retrieving Animals from a dictionary thorugh 4 different routes
+updating, and retrieving Animals from a dictionary through 4 different routes
 """
 using HTTP
 
