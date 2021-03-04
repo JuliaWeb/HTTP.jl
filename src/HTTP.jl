@@ -78,8 +78,8 @@ conf = (readtimeout = 10,
         retry = false,
         redirect = false)
 
-HTTP.get("http://httpbin.org/ip"; conf..)
-HTTP.put("http://httpbin.org/put", [], "Hello"; conf..)
+HTTP.get("http://httpbin.org/ip"; conf...)
+HTTP.put("http://httpbin.org/put", [], "Hello"; conf...)
 ```
 
 
