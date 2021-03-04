@@ -57,6 +57,7 @@ HTTP.Cookie
 ```@docs
 HTTP.sniff
 HTTP.Strings.escapehtml
+HTTP.statustext
 ```
 
 ## Server / Handlers

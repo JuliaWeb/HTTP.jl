@@ -1,7 +1,16 @@
 """
     statustext(::Int) -> String
 
-`String` representation of a HTTP status code. e.g. `200 => "OK"`.
+`String` representation of a HTTP status code.
+
+## Examples
+```julia
+julia> statustext(200)
+"OK"
+
+julia> statustext(404)
+"Not Found"
+```
 """
 statustext(status) = Base.get(STATUS_MESSAGES, status, "Unknown Code")
 
