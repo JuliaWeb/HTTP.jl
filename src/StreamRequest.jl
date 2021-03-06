@@ -66,6 +66,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
                 @debug 2 "client startread"
                 startread(http)
                 readbody(http, response, response_stream, reached_redirect_limit)
+                iserror(response) && save_response_stream!(response, response_stream)
             else
                 iofunction(http)
             end
@@ -149,6 +150,15 @@ function readbody(http::Stream, res::Response, response_stream, reached_redirect
             close(response_stream)
         end
     end
+end
+
+function save_response_stream!(response::Response, response_stream)
+    resp = UInt8[]
+    response_stream_copy = deepcopy(response_stream)
+    while !eof(response_stream_copy)
+        append!(resp, readavailable(response_stream_copy))
+    end
+    response.body = resp
 end
 
 end # module StreamRequest
