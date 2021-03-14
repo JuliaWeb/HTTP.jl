@@ -316,10 +316,8 @@ function request(method, url, h=Header[], b=nobody;
 end
 function request(stack::Type{<:Layer}, method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
-    return request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+    return Layers.request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
-
-request(::Type{Union{}}, resp::Response) = resp
 
 request_uri(url, query) = URI(URI(url); query=query)
 request_uri(url, ::Nothing) = URI(url)

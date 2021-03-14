@@ -1,6 +1,6 @@
 module ContentTypeDetection
 
-import ..Layer, ..request
+import ..Layer, ..Layers
 using URIs
 using ..Pairs: getkv, setkv
 import ..sniff
@@ -12,7 +12,7 @@ import ..@debug, ..DEBUG_LEVEL
 abstract type ContentTypeDetectionLayer{Next <: Layer} <: Layer{Next} end
 export ContentTypeDetectionLayer
 
-function request(::Type{ContentTypeDetectionLayer{Next}},
+function Layers.request(::Type{ContentTypeDetectionLayer{Next}},
                  method::String, url::URI, headers, body; kw...) where Next
 
     if (getkv(headers, "Content-Type", "") == ""
@@ -24,7 +24,7 @@ function request(::Type{ContentTypeDetectionLayer{Next}},
         setkv(headers, "Content-Type", sn)
         @debug 1 "setting Content-Type header to: $sn"
     end
-    return request(Next, method, url, headers, body; kw...)
+    return Layers.request(Next, method, url, headers, body; kw...)
 end
 
 end # module

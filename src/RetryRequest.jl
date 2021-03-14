@@ -1,7 +1,7 @@
 module RetryRequest
 
 import ..HTTP
-import ..Layer, ..request
+import ..Layer, ..Layers
 using ..Sockets
 using ..IOExtras
 using ..MessageRequest
@@ -9,7 +9,7 @@ using ..Messages
 import ..@debug, ..DEBUG_LEVEL, ..sprintcompact
 
 """
-    request(RetryLayer, ::URI, ::Request, body) -> HTTP.Response
+    Layers.request(RetryLayer, ::URI, ::Request, body) -> HTTP.Response
 
 Retry the request if it throws a recoverable exception.
 
@@ -24,11 +24,11 @@ e.g. `HTTP.IOError`, `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 abstract type RetryLayer{Next <: Layer} <: Layer{Next} end
 export RetryLayer
 
-function request(::Type{RetryLayer{Next}}, url, req, body;
+function Layers.request(::Type{RetryLayer{Next}}, url, req, body;
                  retries::Int=4, retry_non_idempotent::Bool=false,
                  kw...) where Next
 
-    retry_request = Base.retry(request,
+    retry_request = Base.retry(Layers.request,
         delays=ExponentialBackOff(n = retries),
         check=(s,ex)->begin
             retry = isrecoverable(ex, req, retry_non_idempotent)
