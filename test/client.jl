@@ -213,7 +213,10 @@ end
 end
 
 @testset "readtimeout" begin
-    @test_throws HTTP.IOError HTTP.get("http://httpbin.org/delay/5"; readtimeout=1, retry=false)
+    @test_throws HTTP.TimeoutRequest.ReadTimeoutError begin
+        HTTP.get("http://httpbin.org/delay/5"; readtimeout=1, retry=false)
+    end
+    HTTP.get("http://httpbin.org/delay/1"; readtimeout=2, retry=false)
 end
 
 @testset "Retry all resolved IP addresses" begin
