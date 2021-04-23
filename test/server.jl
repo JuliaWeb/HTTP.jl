@@ -191,6 +191,62 @@ end
 
 end # @testset
 
+@testset "HTTP.listen: rate_limit" begin
+    io = IOBuffer()
+    logger = Base.CoreLogging.SimpleLogger(io)
+    server = listen(IPv4(0), 8080)
+    @async Base.CoreLogging.with_logger(logger) do
+        HTTP.listen("0.0.0.0", 8080; server=server, rate_limit=2//1) do http
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Length" => "0")
+            HTTP.startwrite(http)
+            HTTP.close(http.stream) # close to force a new connection everytime
+        end
+    end
+    # Test requests from the same IP within the limit
+    for _ in 1:5
+        sleep(0.6) # rate limit allows 2 per second
+        @test HTTP.get("http://127.0.0.1:8080").status == 200
+    end
+    # Test requests from the same IP over the limit
+    try
+        for _ in 1:5
+            sleep(0.2) # rate limit allows 2 per second
+            r = HTTP.get("http://127.0.0.1:8080"; retry=false)
+            @test r.status == 200
+        end
+    catch e
+        @test e isa HTTP.IOExtras.IOError
+    end
+
+    close(server)
+    @test occursin("discarding connection from 127.0.0.1 due to rate limiting", String(take!(io)))
+
+    # # Tests to make sure the correct client IP is used (https://github.com/JuliaWeb/HTTP.jl/pull/701)
+    # # This test requires a second machine and thus commented out
+    #
+    # Machine 1
+    # @async HTTP.listen("0.0.0.0", 8080; rate_limit=2//1) do http
+    #     HTTP.setstatus(http, 200)
+    #     HTTP.setheader(http, "Content-Length" => "0")
+    #     HTTP.startwrite(http)
+    #     HTTP.close(http.stream) # close to force a new connection everytime
+    # end
+    # while true
+    #     sleep(0.6)
+    #     print("#") # to show some progress
+    #     HTTP.get("http://$(MACHINE_1_IPV4):8080"; retry=false)
+    # end
+    #
+    # # Machine 2
+    # while true
+    #     sleep(0.6)
+    #     print("#") # to show some progress
+    #     HTTP.get("http://$(MACHINE_1_IPV4):8080"; retry=false)
+    # end
+
+end
+
 @testset "on_shutdown" begin
     @test HTTP.Servers.shutdown(nothing) === nothing
 

@@ -36,6 +36,9 @@ function update!(rl::RateLimit, rate_limit)
     timepassed = float(Dates.value(current - rl.lastcheck)) / 1000.0
     rl.lastcheck = current
     rl.allowance += timepassed * rate_limit
+    if rl.allowance > rate_limit
+        rl.allowance = rate_limit
+    end
     return nothing
 end
 
@@ -51,14 +54,9 @@ soon, it is closed and discarded, otherwise, the timestamp for the
 ip address is updated in the global cache.
 """
 function check_rate_limit(tcp, rate_limit::Rational{Int})
-    ip = Sockets.getsockname(tcp)[1]
-    rate = Float64(rate_limit.num)
-    rl = get!(RATE_LIMITS[Threads.threadid()], ip, RateLimit(rate, Dates.now()))
+    ip = Sockets.getpeername(tcp)[1]
+    rl = get!(RATE_LIMITS[Threads.threadid()], ip, RateLimit(rate_limit, Dates.DateTime(0)))
     update!(rl, rate_limit)
-    if rl.allowance > rate
-        @warn "throttling $ip"
-        rl.allowance = rate
-    end
     if rl.allowance < 1.0
         @warn "discarding connection from $ip due to rate limiting"
         return false
