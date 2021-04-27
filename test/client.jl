@@ -241,6 +241,50 @@ end
     end
 end
 
+@testset "Sockets.get(sock|peer)name(::HTTP.Stream)" begin
+    server = listen(IPv4(0), 8080)
+    @async HTTP.listen("0.0.0.0", 8080; server=server) do http
+        sock = Sockets.getsockname(http)
+        peer = Sockets.getpeername(http)
+        str = sprint() do io
+            print(io, sock[1], ":", sock[2], " - ", peer[1], ":", peer[2])
+        end
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Length" => string(sizeof(str)))
+        HTTP.startwrite(http)
+        HTTP.write(http, str)
+    end
+
+    # Tests for Stream{TCPSocket}
+    HTTP.open("GET", "http://localhost:8080") do http
+        # Test server peer/sock
+        reg = r"^127\.0\.0\.1:8080 - 127\.0\.0\.1:(\d+)$"
+        m = match(reg, read(http, String))
+        @test m !== nothing
+        server_peerport = parse(Int, m[1])
+        # Test client peer/sock
+        sock = Sockets.getsockname(http)
+        @test sock[1] == ip"127.0.0.1"
+        @test sock[2] == server_peerport
+        peer = Sockets.getpeername(http)
+        @test peer[1] == ip"127.0.0.1"
+        @test peer[2] == 8080
+    end
+
+    close(server)
+
+    # Tests for Stream{SSLContext}
+    HTTP.open("GET", "https://julialang.org") do http
+        sock = Sockets.getsockname(http)
+        if VERSION >= v"1.2.0"
+            @test sock[1] in Sockets.getipaddrs()
+        end
+        peer = Sockets.getpeername(http)
+        @test peer[1] in Sockets.getalladdrinfo("julialang.org")
+        @test peer[2] == 443
+    end
+end
+
 @testset "Implicit request headers" begin
     server = listen(IPv4(0), 8080)
     tsk = @async HTTP.listen("0.0.0.0", 8080; server=server) do http
