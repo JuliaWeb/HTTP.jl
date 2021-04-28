@@ -23,7 +23,7 @@ import MbedTLS
 
 using Dates
 
-import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
+import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid, ..access_threaded
 
 # rate limiting
 mutable struct RateLimit
@@ -42,7 +42,7 @@ function update!(rl::RateLimit, rate_limit)
     return nothing
 end
 
-const RATE_LIMITS = [Dict{IPAddr, RateLimit}()]
+const RATE_LIMITS = Dict{IPAddr, RateLimit}[]
 check_rate_limit(tcp::Base.PipeEndpoint, rate_limit::Rational{Int}) = true
 check_rate_limit(tcp, ::Nothing) = true
 
@@ -55,7 +55,8 @@ ip address is updated in the global cache.
 """
 function check_rate_limit(tcp, rate_limit::Rational{Int})
     ip = Sockets.getpeername(tcp)[1]
-    rl = get!(RATE_LIMITS[Threads.threadid()], ip, RateLimit(rate_limit, Dates.DateTime(0)))
+    rl_d = access_threaded(Dict{IPAddr, RateLimit}, RATE_LIMITS)
+    rl = get!(rl_d, ip, RateLimit(rate_limit, Dates.DateTime(0)))
     update!(rl, rate_limit)
     if rl.allowance < 1.0
         @warn "discarding connection from $ip due to rate limiting"
@@ -427,7 +428,7 @@ function handle_transaction(f, t::Transaction, server; final_transaction::Bool=f
 end
 
 function __init__()
-    Threads.resize_nthreads!(RATE_LIMITS)
+    resize!(empty!(RATE_LIMITS), Threads.nthreads())
     return
 end
 

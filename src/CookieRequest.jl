@@ -5,12 +5,12 @@ import ..Layer, ..request
 using URIs
 using ..Cookies
 using ..Pairs: getkv, setkv
-import ..@debug, ..DEBUG_LEVEL
+import ..@debug, ..DEBUG_LEVEL, ..access_threaded
 
-const default_cookiejar = [Dict{String, Set{Cookie}}()]
+const default_cookiejar = Dict{String, Set{Cookie}}[]
 
 function __init__()
-    Threads.resize_nthreads!(default_cookiejar)
+    resize!(empty!(default_cookiejar), Threads.nthreads())
     return
 end
 
@@ -26,7 +26,7 @@ export CookieLayer
 function request(::Type{CookieLayer{Next}},
                  method::String, url::URI, headers, body;
                  cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}}=Dict{String, String}(),
-                 cookiejar::Dict{String, Set{Cookie}}=default_cookiejar[Threads.threadid()],
+                 cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar),
                  kw...) where {Next}
 
     hostcookies = get!(cookiejar, url.host, Set{Cookie}())

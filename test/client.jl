@@ -37,7 +37,7 @@ end
     end
 
     @testset "Cookie Requests" begin
-        empty!(HTTP.CookieRequest.default_cookiejar[1])
+        empty!(HTTP.access_threaded(Dict{String, Set{HTTP.Cookie}}, HTTP.CookieRequest.default_cookiejar))
         r = HTTP.get("$sch://httpbin.org/cookies", cookies=true)
 
         body = String(r.body)
