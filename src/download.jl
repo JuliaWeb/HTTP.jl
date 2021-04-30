@@ -35,14 +35,23 @@ function try_get_filename_from_headers(resp)
     return nothing
 end
 
-function try_get_filename_from_remote_path(target)
-    target == "" && return nothing
-    filename = basename(target)
-    if filename == ""
-        try_get_filename_from_remote_path(dirname(target))
-    else
-        filename
+function try_get_filename_from_request(req)
+    function file_from_target(t)
+        t == "" && return nothing
+        f = basename(URI(t).path) # URI(...).path to strip out e.g. query parts
+        return (f == "" ? file_from_target(dirname(t)) : f)
     end
+
+    # First try to get file from the original request URI
+    oreq = req
+    while oreq.parent !== nothing
+        oreq = oreq.parent.request
+    end
+    f = file_from_target(oreq.target)
+    f !== nothing && return f
+
+    # Secondly try to get file from the last request URI
+    return file_from_target(req.target)
 end
 
 
@@ -56,7 +65,7 @@ function determine_file(path, resp)
         # got to to workout what file to put there
         filename = something(
                         try_get_filename_from_headers(resp),
-                        try_get_filename_from_remote_path(resp.request.target),
+                        try_get_filename_from_request(resp.request),
                         basename(tempname())  # fallback, basically a random string
                     )
         safer_joinpath(path, filename)

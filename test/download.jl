@@ -12,6 +12,17 @@ using HTTP
         update_period=Inf)
     end
 
+    @testset "filename from remote path" begin
+
+        file = HTTP.download("https://httpbingo.julialang.org/html")
+        @test basename(file) == "html"
+        file = HTTP.download("https://httpbingo.julialang.org/redirect/2")
+        @test basename(file) == "2"
+        # HTTP.jl#696
+        file = HTTP.download("https://httpbingo.julialang.org/html?a=b")
+        @test basename(file) == "html"
+    end
+
     @testset "Content-Disposition" begin
         invalid_content_disposition_fn = HTTP.download(
             "http://test.greenbytes.de/tech/tc2231/attonlyquoted.asis")
