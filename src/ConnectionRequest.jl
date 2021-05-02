@@ -64,7 +64,6 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
                  proxy=getproxy(url.scheme, url.host),
                  socket_type::Type=TCPSocket,
                  reuse_limit::Int=ConnectionPool.nolimit, kw...) where Next
-
     if proxy !== nothing
         target_url = url
         url = URI(proxy)
@@ -93,22 +92,28 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     end
 
     try
-        if proxy !== nothing && target_url.scheme == "https"
+        if proxy !== nothing && target_url.scheme in ("https", "wss", "ws")
             # tunnel request
-            target_url = merge(target_url, port=443)
+            if target_url.scheme in ("https", "wss")
+                target_url = merge(target_url, port=443)
+            elseif target_url.scheme in ("ws", ) && target_url.port == ""
+                target_url = merge(target_url, port=80)
+            end
             r = connect_tunnel(io, target_url, req)
             if r.status != 200
                 close(io)
                 return r
             end
-            io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+            if target_url.scheme in ("https", "wss")
+                io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+            end
             req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
         end
 
         r =  request(Next, io, req, body; kw...)
 
         if (io.sequence >= reuse_limit
-            || (proxy !== nothing && target_url.scheme == "https"))
+            || (proxy !== nothing && target_url.scheme in ("https", "wss", "ws")))
             close(io)
         end
 
