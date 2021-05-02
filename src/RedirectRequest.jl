@@ -21,6 +21,10 @@ function request(::Type{RedirectLayer{Next}},
     count = 0
     while true
 
+        # Verify the url before making the request. Verification is done in
+        # the redirect loop to also catch bad redirect URLs.
+        verify_url(url)
+
         res = request(Next, method, url, headers, body; reached_redirect_limit=(count == redirect_limit), kw...)
 
         if (count == redirect_limit
@@ -69,6 +73,15 @@ function isdomainorsubdomain(sub, parent)
     sub == parent && return true
     endswith(sub, parent) || return false
     return sub[length(sub)-length(parent)] == '.'
+end
+
+function verify_url(url::URI)
+    if !(url.scheme in ("http", "https", "ws", "wss"))
+        throw(ArgumentError("missing or unsupported scheme in URL (expected http(s) or ws(s)): $(url)"))
+    end
+    if isempty(url.host)
+        throw(ArgumentError("missing host in URL: $(url)"))
+    end
 end
 
 end # module RedirectRequest

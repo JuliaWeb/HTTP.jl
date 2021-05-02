@@ -285,6 +285,16 @@ end
     end
 end
 
+@testset "input verification of bad URLs" begin
+    # HTTP.jl#527, HTTP.jl#545
+    url = "julialang.org"
+    @test_throws ArgumentError("missing or unsupported scheme in URL (expected http(s) or ws(s)): $(url)") HTTP.get(url)
+    url = "ptth://julialang.org"
+    @test_throws ArgumentError("missing or unsupported scheme in URL (expected http(s) or ws(s)): $(url)") HTTP.get(url)
+    url = "http:julialang.org"
+    @test_throws ArgumentError("missing host in URL: $(url)") HTTP.get(url)
+end
+
 @testset "Implicit request headers" begin
     server = listen(IPv4(0), 8080)
     tsk = @async HTTP.listen("0.0.0.0", 8080; server=server) do http
