@@ -7,10 +7,9 @@ Some examples that may prove potentially useful for those using
  in the `docs/examples` folder.
 ## Simple Server
 A simple example of creating a server with HTTP.jl. It handles creating, deleting, 
-updating, and retrieving Animals from a dictionary thorugh 4 different routes
+updating, and retrieving Animals from a dictionary through 4 different routes
 ```julia
 using HTTP
-using Sockets
 
 # modified Animal struct to associate with specific user
 mutable struct Animal
@@ -68,7 +67,7 @@ HTTP.serve(ANIMAL_ROUTER, ip"127.0.0.1", 8080)
 
 ```
 ## Cors Server
-Server example that takes after the simple server, however
+Server example that takes after the simple server, however,
 handles dealing with CORS preflight headers when dealing with more
 than just a simple request
 ```julia
@@ -91,17 +90,18 @@ function getNextId()
     return id
 end
 
-#CORS headers that show what kinds of complex requests are allowed to API
+# CORS headers that show what kinds of complex requests are allowed to API
 headers = [
     "Access-Control-Allow-Origin" => "*",
     "Access-Control-Allow-Headers" => "*",
-    "Access-Control-Allow-Methods" => "POST;GET;OPTIONS"
+    "Access-Control-Allow-Methods" => "POST, GET, OPTIONS"
 ]
 
 #= 
 JSONHandler minimizes code by automatically converting the request body
 to JSON to pass to the other service functions automatically. JSONHandler
-recieves the body of the response from the other service funtions 
+recieves the body of the response from the other service funtions and sends
+back a success response code
 =#
 function JSONHandler(req::HTTP.Request)
     # first check if there's any request body
@@ -117,7 +117,7 @@ function JSONHandler(req::HTTP.Request)
 end
 
 #= CorsHandler: handles preflight request with the OPTIONS flag
-If a request was recieved with the correct headers, then a Response will be 
+If a request was recieved with the correct headers, then a response will be 
 sent back with a 200 code, if the correct headers were not specified in the request,
 then a CORS error will be recieved on the client side
 
@@ -163,6 +163,102 @@ HTTP.@register(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/users/*/animals/*", deleteA
 
 
 HTTP.serve(CorsHandler, ip"127.0.0.1", 8080)
+
+```
+## Server Sent Events
+Simple server that implements [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events),
+loosely following [this tutorial](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events).
+
+Example client code:
+```http
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Server-sent events demo</title>
+</head>
+<body>
+    <h3>Fetched items:</h3>
+    <ul id="list"></ul>
+</body>
+<script>
+    const evtSource = new EventSource("http://127.0.0.1:8080/api/events")
+    evtSource.onmessage = async function (event) {
+        const newElement = document.createElement("li");
+        const eventList = document.getElementById("list");
+        if (parseFloat(event.data) > 0.5) {
+            const r = await fetch("http://127.0.0.1:8080/api/getItems")
+            if (r.ok) {
+                const body = await r.json()
+                newElement.textContent = body;
+                eventList.appendChild(newElement);
+            }
+        }
+    }
+    evtSource.addEventListener("ping", function(event) {
+        console.log('ping:', event.data)
+    });
+</script>
+</html>
+```
+```julia
+
+using HTTP, JSON
+
+const ROUTER = HTTP.Router()
+
+function getItems(req::HTTP.Request)
+    headers = [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, OPTIONS"
+    ]
+    if HTTP.method(req) == "OPTIONS"
+        return HTTP.Response(200, headers)
+    end
+    return HTTP.Response(200, headers; body = JSON.json(rand(2)))
+end
+
+function events(stream::HTTP.Stream)
+    HTTP.setheader(stream, "Access-Control-Allow-Origin" => "*")
+    HTTP.setheader(stream, "Access-Control-Allow-Methods" => "GET, OPTIONS")
+    HTTP.setheader(stream, "Content-Type" => "text/event-stream")
+
+    if HTTP.method(stream.message) == "OPTIONS"
+        return nothing
+    end
+
+    HTTP.setheader(stream, "Content-Type" => "text/event-stream")
+    HTTP.setheader(stream, "Cache-Control" => "no-cache")
+    while true
+        write(stream, "event: ping\ndata: $(round(Int, time()))\n\n")
+        if rand(Bool)
+            write(stream, "data: $(rand())\n\n")
+        end
+        sleep(1)
+    end
+    return nothing
+end
+
+HTTP.@register(ROUTER, "GET", "/api/getItems", getItems)
+HTTP.@register(ROUTER, "/api/events", HTTP.Handlers.StreamHandlerFunction(events))
+
+HTTP.serve(ROUTER, "127.0.0.1", 8080)
+
+```
+## Session
+A simple example of creating a persistent session and logging into a web form. HTTP.jl does not have a distinct session object like requests.session() or rvest::html_session() but rather uses the `cookies` flag along with standard functions
+```julia
+using HTTP
+
+#dummy site, any credentials work
+url = "http://quotes.toscrape.com/login"
+session = HTTP.get(url; cookies = true)
+
+credentials = Dict(
+    "Username" => "username",
+    "Password" => "password")
+
+response = HTTP.post(url, credentials)
+
 ```
 ## Readme Examples
 ```julia
