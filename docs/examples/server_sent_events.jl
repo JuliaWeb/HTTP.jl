@@ -2,7 +2,7 @@
 Simple server that implements [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events),
 loosely following [this tutorial](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events).
 
-Example client code:
+### Example client code (JS):
 ```http
 <html>
 <head>
@@ -33,6 +33,19 @@ Example client code:
 </script>
 </html>
 ```
+
+### Example client code (Julia)
+```julia
+using HTTP, JSON
+
+HTTP.open("GET", "http://127.0.0.1:8080/api/events") do io
+    while !eof(io)
+        println(String(readavailable(io)))
+    end
+end
+```
+
+### Server code:
 """
 using HTTP, JSON
 
