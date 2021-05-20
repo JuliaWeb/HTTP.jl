@@ -3,6 +3,7 @@ using HTTP
 using Sockets
 using JSON
 using Test
+using URIs
 
 status(r) = r.status
 @testset "Custom HTTP Stack" begin
@@ -31,7 +32,7 @@ end
     end
 
     @testset "Query to URI" begin
-        r = HTTP.get(merge(HTTP.URI("$sch://httpbin.org/response-headers"); query=Dict("hey"=>"dude")))
+        r = HTTP.get(URI(HTTP.URI("$sch://httpbin.org/response-headers"); query=Dict("hey"=>"dude")))
         h = Dict(r.headers)
         @test (haskey(h, "Hey") ? h["Hey"] == "dude" : h["hey"] == "dude")
     end

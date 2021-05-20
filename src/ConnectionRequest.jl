@@ -95,7 +95,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     try
         if proxy !== nothing && target_url.scheme == "https"
             # tunnel request
-            target_url = merge(target_url, port=443)
+            target_url = URI(target_url, port=443)
             r = connect_tunnel(io, target_url, req)
             if r.status != 200
                 close(io)
