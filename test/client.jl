@@ -421,9 +421,7 @@ end
             sock = accept(proxy)
             while isopen(sock)
                 line = readline(sock)
-                if line == ""
-                    break
-                end
+                isempty(line) && break
 
                 push!(req, line)
             end
