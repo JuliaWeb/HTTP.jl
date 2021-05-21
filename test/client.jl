@@ -432,7 +432,7 @@ end
         HTTP.get("https://example.com"; proxy="http://localhost:8082", retry=false, status_exception=false)
 
         # Test if the host header exist in the request
-        @test "Host: example.com" in req
+        @test "Host: example.com:443" in req
 
         close(proxy)
     end
