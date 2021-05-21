@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
-- Include Host header for CONNECT proxy requests ([#714])
+- Include `Host` header for `CONNECT` proxy requests ([#714])
 
 ## [0.9.8] - 2020-05-02
 ### Fixed
