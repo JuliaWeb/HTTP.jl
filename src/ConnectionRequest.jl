@@ -126,7 +126,10 @@ sockettype(url::URI, default) = url.scheme in ("wss", "https") ? SSLContext : de
 function connect_tunnel(io, target_url, req)
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
     @debug 1 "📡  CONNECT HTTPS tunnel to $target"
-    headers = Dict(filter(x->x.first in ("Host", "Proxy-Authorization"), req.headers))
+    headers = Dict("Host" => target)
+    if (auth = header(req, "Proxy-Authorization"); !isempty(auth))
+        headers["Proxy-Authorization"] = auth
+    end
     request = Request("CONNECT", target, headers)
     writeheaders(io, request)
     startread(io)
