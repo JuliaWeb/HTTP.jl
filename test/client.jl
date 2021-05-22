@@ -408,3 +408,33 @@ end
         test(HTTP.delete(uri, headers, body; query=query), "DELETE")
     end
 end
+
+@testset "HTTP CONNECT Proxy" begin
+    @testset "Host header" begin
+        # Stores the http request passed by the client
+        req = String[]
+
+        # Trivial implementation of a proxy server
+        # We are only interested in the request passed in by the client
+        # Returns 400 after reading the http request into req
+        proxy = listen(IPv4(0), 8082)
+        @async begin
+            sock = accept(proxy)
+            while isopen(sock)
+                line = readline(sock)
+                isempty(line) && break
+
+                push!(req, line)
+            end
+            write(sock, "HTTP/1.1 400 Bad Request\r\n\r\n")
+        end
+
+        # Make the HTTP request
+        HTTP.get("https://example.com"; proxy="http://localhost:8082", retry=false, status_exception=false)
+
+        # Test if the host header exist in the request
+        @test "Host: example.com:443" in req
+
+        close(proxy)
+    end
+end
