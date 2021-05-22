@@ -71,6 +71,7 @@ HTTP.RequestHandlerFunction
 HTTP.StreamHandlerFunction
 HTTP.Router
 HTTP.@register
+HTTP.@logfmt_str
 ```
 
 ## Messages Interface

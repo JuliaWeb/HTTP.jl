@@ -38,25 +38,24 @@ using BufferedStreams
 
     @test String(r.body) == decoded_data
 
-    # Ignore byte-by-byte read warning
-    ll = Base.CoreLogging.min_enabled_level(Base.CoreLogging.global_logger())
-    Base.CoreLogging.disable_logging(Base.CoreLogging.Warn)
-
     for wrap in (identity, BufferedInputStream)
         r = ""
 
-        HTTP.open("GET", "http://127.0.0.1:8091") do io
-            io = wrap(io)
-            x = split(decoded_data, "\n")
+        # Ignore byte-by-byte read warning
+        CL = Base.CoreLogging
+        CL.with_logger(CL.SimpleLogger(stderr, CL.Error)) do
+            HTTP.open("GET", "http://127.0.0.1:8091") do io
+                io = wrap(io)
+                x = split(decoded_data, "\n")
 
-            for i in 1:6
-                l = readline(io)
-                @test l == x[i]
-                r *= l * "\n"
+                for i in 1:6
+                    l = readline(io)
+                    @test l == x[i]
+                    r *= l * "\n"
+                end
             end
         end
 
         @test r == decoded_data
     end
-    Base.CoreLogging.disable_logging(ll)
 end

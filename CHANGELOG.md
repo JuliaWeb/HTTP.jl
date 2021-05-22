@@ -5,8 +5,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Access logging functionality to `HTTP.listen` and `HTTP.serve` ([#713]).
 ### Fixed
-- Include `Host` header for `CONNECT` proxy requests ([#714])
+- Include `Host` header for `CONNECT` proxy requests ([#714]).
 
 ## [0.9.8] - 2020-05-02
 ### Fixed
@@ -133,3 +135,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#704]: https://github.com/JuliaWeb/HTTP.jl/pull/704
 [#706]: https://github.com/JuliaWeb/HTTP.jl/pull/706
 [#707]: https://github.com/JuliaWeb/HTTP.jl/pull/707
+[#713]: https://github.com/JuliaWeb/HTTP.jl/pull/713
+[#714]: https://github.com/JuliaWeb/HTTP.jl/pull/713
