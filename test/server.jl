@@ -273,6 +273,9 @@ end # @testset
 
 @testset "access logging" begin
     function handler(http)
+        if http.message.target == "/internal-error"
+            error("internal error")
+        end
         HTTP.setstatus(http, 200)
         HTTP.setheader(http, "Content-Type" => "text/plain")
         msg = "hello, world"
@@ -295,7 +298,7 @@ end # @testset
         finally
             close(l)
         end
-        return logger.logs
+        return filter!(x -> x.group == :access, logger.logs)
     end
 
     # Common Log Format
@@ -304,13 +307,15 @@ end # @testset
         HTTP.get("http://localhost:1234/index.html")
         HTTP.get("http://localhost:1234/index.html?a=b")
         HTTP.head("http://localhost:1234")
+        HTTP.get("http://localhost:1234/internal-error"; status_exception=false)
     end
-    @test length(logs) == 4
+    @test length(logs) == 5
     @test all(x -> x.group === :access, logs)
     @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"GET / HTTP/1.1\" 200 12$", logs[1].message)
     @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"GET /index.html HTTP/1.1\" 200 12$", logs[2].message)
     @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"GET /index.html\?a=b HTTP/1.1\" 200 12$", logs[3].message)
     @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"HEAD / HTTP/1.1\" 200 0$", logs[4].message)
+    @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"GET /internal-error HTTP/1.1\" 500 \d+$", logs[5].message)
 
     # Combined Log Format
     logs = with_testserver(combined_logfmt) do

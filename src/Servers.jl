@@ -420,9 +420,6 @@ function handle_transaction(f, t::Transaction, server; final_transaction::Bool=f
         closeread(http)
         @debug 2 "server closewrite"
         closewrite(http)
-        if server.access_log !== nothing
-            @info sprint(server.access_log, http) _group=:access
-        end
     catch e
         @error "error handling request" exception=(e, stacktrace(catch_backtrace()))
         if isopen(http) && !iswritable(http)
@@ -433,6 +430,9 @@ function handle_transaction(f, t::Transaction, server; final_transaction::Bool=f
         end
         final_transaction = true
     finally
+        if server.access_log !== nothing
+            try @info sprint(server.access_log, http) _group=:access; catch end
+        end
         final_transaction && close(t.c.io)
     end
     return
