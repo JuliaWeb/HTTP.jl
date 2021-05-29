@@ -12,7 +12,7 @@ using MbedTLS: MbedException
 
 export bytes, ByteView, nobytes, CodeUnits, IOError, isioerror,
        startwrite, closewrite, startread, closeread,
-       tcpsocket, localport, peerport
+       tcpsocket, localport, safe_getpeername
 
 
 """
@@ -85,11 +85,15 @@ localport(io) = try !isopen(tcpsocket(io)) ? 0 :
                     0
                 end
 
-peerport(io) = try !isopen(tcpsocket(io)) ? 0 :
-                  Sockets.getpeername(tcpsocket(io))[2]
-               catch
-                   0
-               end
+function safe_getpeername(io)
+    try
+        if isopen(tcpsocket(io))
+            return Sockets.getpeername(tcpsocket(io))
+        end
+    catch
+    end
+    return IPv4(0), UInt16(0)
+end
 
 
 const ByteView = typeof(view(UInt8[], 1:0))

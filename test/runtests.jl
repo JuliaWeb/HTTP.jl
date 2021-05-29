@@ -4,7 +4,8 @@ const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
 include("resources/TestRequest.jl")
 
 @testset "HTTP" begin
-    for f in ["ascii.jl",
+    for f in [
+              "ascii.jl",
               "chunking.jl",
               "utils.jl",
               "client.jl",
@@ -21,7 +22,8 @@ include("resources/TestRequest.jl")
               "async.jl",
               "aws4.jl",
               "insert_layers.jl",
-              "mwe.jl"]
+              "mwe.jl",
+             ]
         file = joinpath(dir, f)
         println("Running $file tests...")
         if isfile(file)
