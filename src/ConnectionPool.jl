@@ -66,7 +66,8 @@ Fields:
 - `port::String`, exactly as specified in the URI (i.e. may be empty).
 - `pipeline_limit`, number of requests to send before waiting for responses.
 - `idle_timeout`, No. of seconds to maintain connection after last transaction.
-- `peerport`, remote TCP port number (used for debug messages).
+- `peerip`, remote IP adress (used for debug/log messages).
+- `peerport`, remote TCP port number (used for debug/log messages).
 - `localport`, local TCP port number (used for debug messages).
 - `io::T`, the `TCPSocket` or `SSLContext.
 - `clientconnection::Bool`, whether the Connection was created from client code (as opposed to server code)
@@ -88,7 +89,8 @@ mutable struct Connection{T <: IO}
     pipeline_limit::Int
     idle_timeout::Int
     require_ssl_verification::Bool
-    peerport::UInt16 # debug only
+    peerip::IPAddr # for debugging/logging
+    peerport::UInt16 # for debugging/logging
     localport::UInt16 # debug only
     io::T
     clientconnection::Bool
@@ -143,7 +145,7 @@ Connection(host::AbstractString, port::AbstractString,
     Connection{T}(host, port,
                   pipeline_limit, idle_timeout,
                   require_ssl_verification,
-                  peerport(io), localport(io),
+                  safe_getpeername(io)..., localport(io),
                   io, client, PipeBuffer(), Threads.Atomic{Int}(0),
                   0, Cond(), false,
                   0, Cond(), false,

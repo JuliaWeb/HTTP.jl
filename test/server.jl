@@ -276,6 +276,11 @@ end # @testset
         if http.message.target == "/internal-error"
             error("internal error")
         end
+        if http.message.target == "/close"
+            HTTP.setstatus(http, 444)
+            close(http.stream)
+            return
+        end
         HTTP.setstatus(http, 200)
         HTTP.setheader(http, "Content-Type" => "text/plain")
         msg = "hello, world"
@@ -308,14 +313,19 @@ end # @testset
         HTTP.get("http://localhost:1234/index.html?a=b")
         HTTP.head("http://localhost:1234")
         HTTP.get("http://localhost:1234/internal-error"; status_exception=false)
+        sleep(1) # necessary to properly forget the closed connection from the previous call
+        try HTTP.get("http://localhost:1234/close"; retry=false) catch end
+        HTTP.get("http://localhost:1234", ["Connection" => "close"])
     end
-    @test length(logs) == 5
+    @test length(logs) == 7
     @test all(x -> x.group === :access, logs)
     @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"GET / HTTP/1.1\" 200 12$", logs[1].message)
     @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"GET /index.html HTTP/1.1\" 200 12$", logs[2].message)
     @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"GET /index.html\?a=b HTTP/1.1\" 200 12$", logs[3].message)
     @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"HEAD / HTTP/1.1\" 200 0$", logs[4].message)
     @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"GET /internal-error HTTP/1.1\" 500 \d+$", logs[5].message)
+    @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"GET /close HTTP/1.1\" 444 0$", logs[6].message)
+    @test occursin(r"^127.0.0.1 - - \[(\d{2})/.*/(\d{4}):\d{2}:\d{2}:\d{2}.*\] \"GET / HTTP/1.1\" 200 12$", logs[7].message)
 
     # Combined Log Format
     logs = with_testserver(combined_logfmt) do
@@ -342,10 +352,6 @@ end # @testset
         HTTP.get("http://localhost:1234/index.html?a=b")
         HTTP.head("http://localhost:1234")
     end
-    @show logs[1].message
-    @show logs[2].message
-    @show logs[3].message
-    @show logs[4].message
     @test length(logs) == 4
     @test all(x -> x.group === :access, logs)
     @test occursin(r"^application/json text/plain GET / HTTP/1\.1 GET / 127\.0\.0\.1 \d+ - HTTP/1\.1 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.* \d+/.*/\d{4}:\d{2}:\d{2}:\d{2}.* 200 12$", logs[1].message)

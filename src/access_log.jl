@@ -65,9 +65,9 @@ function symbol_mapping(s::Symbol)
         hdr = replace(String(m[1]), '_' => '-')
         :(HTTP.header(http.message.response, $hdr, "-"))
     elseif s === :remote_addr
-        :(Sockets.getpeername(http)[1])
+        :(http.stream.c.peerip)
     elseif s === :remote_port
-        :(Sockets.getpeername(http)[2])
+        :(http.stream.c.peerport)
     elseif s === :remote_user
         :("-") # TODO: find from Basic auth...
     elseif s === :time_iso8601
