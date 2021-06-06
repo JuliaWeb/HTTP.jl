@@ -155,6 +155,9 @@ Optional keyword arguments:
     more functions to be run if the server is closed (for example by an
     `InterruptException`). Note, shutdown function(s) will not run if a
     `IOServer` object is supplied and closed by `close(server)`.
+ -  `trigger_compilation::Bool=false`, if `true` send a get request to the
+    server via an async job to trigger compilation. This will make the server
+    respond more quickly to subsequent requests.
 
 e.g.
 ```julia
@@ -228,17 +231,6 @@ const nolimit = typemax(Int)
 getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
 getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
 
-function testget(url, m=1)
-    r = []
-    @sync for i in 1:m
-        l = rand([0,0,10,1000,10000])
-        body = Vector{UInt8}(rand('A':'Z', l))
-        # println("sending request...")
-        @async push!(r, HTTP.request("GET", "$url/$i", [], body))
-    end
-    return r
-end
-
 """
     trigger(host, port)
 
@@ -248,8 +240,8 @@ For example, when an user is interacting with the server or when the server is h
 """
 function trigger(host, port)
     try
-        sleep(1)
         url = "http://$host:$port"
+        sleep(1)
         get(url)
     catch e
         nothing

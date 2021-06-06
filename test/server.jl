@@ -194,7 +194,7 @@ end
     server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
     tsk = @async HTTP.listen(handler, "127.0.0.1", port; server=server, trigger_compilation=true)
     sleep(5.0)
-    # Using allocations instead of time to make tests more robust.
+    # Using allocations instead of time to make the tests more robust.
     bytes = @allocated HTTP.get("http://127.0.0.1:$port")
     @test bytes < 10_000_000
     close(server)
