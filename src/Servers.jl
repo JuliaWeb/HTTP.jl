@@ -237,6 +237,9 @@ getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
 Trigger compilation by hitting the main endpoint.
 This reduces the time to first response when the server is not used immediately after spawning.
 For example, when an user is interacting with the server or when the server is hosted online.
+
+This method will only do a `GET` request, but this will also reduce the time for other requests
+like `POST` since there is a lot of overlap in the logic.
 """
 function trigger(host, port)
     try
