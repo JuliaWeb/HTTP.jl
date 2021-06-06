@@ -189,6 +189,16 @@ end
     r = HTTP.request("GET", "https://127.0.0.1:8092"; clientoptions...)
     @test_throws HTTP.IOError HTTP.request("GET", "http://127.0.0.1:8092"; clientoptions...)
 
+    # trigger_compilation
+    port = 8080
+    server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
+    tsk = @async HTTP.listen(handler, "127.0.0.1", port; server=server, trigger_compilation=true)
+    sleep(5.0)
+    # Using allocations instead of time to make tests more robust.
+    bytes = @allocated HTTP.get("http://127.0.0.1:$port")
+    @test bytes < 10_000_000
+    close(server)
+
 end # @testset
 
 @testset "HTTP.listen: rate_limit" begin

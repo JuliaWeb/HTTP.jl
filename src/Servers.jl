@@ -12,6 +12,7 @@ module Servers
 
 export listen
 
+using ..HTTP: get
 using ..IOExtras
 using ..Streams
 using ..Messages
@@ -227,6 +228,34 @@ const nolimit = typemax(Int)
 getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
 getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
 
+function testget(url, m=1)
+    r = []
+    @sync for i in 1:m
+        l = rand([0,0,10,1000,10000])
+        body = Vector{UInt8}(rand('A':'Z', l))
+        # println("sending request...")
+        @async push!(r, HTTP.request("GET", "$url/$i", [], body))
+    end
+    return r
+end
+
+"""
+    trigger(host, port)
+
+Trigger compilation by hitting the main endpoint.
+This reduces the time to first response when the server is not used immediately after spawning.
+For example, when an user is interacting with the server or when the server is hosted online.
+"""
+function trigger(host, port)
+    try
+        sleep(1)
+        url = "http://$host:$port"
+        get(url)
+    catch e
+        nothing
+    end
+end
+
 function listen(f,
                 host::Union{IPAddr, String}=Sockets.localhost,
                 port::Integer=8081
@@ -242,7 +271,8 @@ function listen(f,
                 readtimeout::Int=0,
                 verbose::Bool=false,
                 access_log::Union{Function,Nothing}=nothing,
-                on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing)
+                on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing,
+                trigger_compilation::Bool=false)
 
     inet = getinet(host, port)
     if server !== nothing
@@ -271,6 +301,9 @@ function listen(f,
     end
 
     s = Server(sslconfig, tcpserver, string(host), string(port), on_shutdown, access_log)
+    if trigger_compilation
+        @async trigger(host, port)
+    end
     return listenloop(f, s, tcpisvalid, connection_count, max_connections,
                          reuse_limit, readtimeout, verbose)
 end
