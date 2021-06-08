@@ -43,9 +43,9 @@ function JSONHandler(req::HTTP.Request)
         response_body = handle(ANIMAL_ROUTER, req)
     else
         # there's a body, so pass it on to the handler we dispatch to
-        response_body = handle(ANIMAL_ROUTER, req, JSON2.read(body, Animal))
+        response_body = handle(ANIMAL_ROUTER, req, JSON3.read(body, Animal))
     end
-    return HTTP.Response(200, JSON2.write(response_body))
+    return HTTP.Response(200, JSON3.write(response_body))
 end
 
 #= CorsHandler: handles preflight request with the OPTIONS flag

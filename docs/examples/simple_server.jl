@@ -23,22 +23,22 @@ end
 
 # "service" functions to actually do the work
 function createAnimal(req::HTTP.Request)
-    animal = JSON2.read(IOBuffer(HTTP.payload(req)), Animal)
+    animal = JSON3.read(IOBuffer(HTTP.payload(req)), Animal)
     animal.id = getNextId()
     ANIMALS[animal.id] = animal
-    return HTTP.Response(200, JSON2.write(animal))
+    return HTTP.Response(200, JSON3.write(animal))
 end
 
 function getAnimal(req::HTTP.Request)
     animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
     animal = ANIMALS[parse(Int, animalId)]
-    return HTTP.Response(200, JSON2.write(animal))
+    return HTTP.Response(200, JSON3.write(animal))
 end
 
 function updateAnimal(req::HTTP.Request)
-    animal = JSON2.read(IOBuffer(HTTP.payload(req)), Animal)
+    animal = JSON3.read(IOBuffer(HTTP.payload(req)), Animal)
     ANIMALS[animal.id] = animal
-    return HTTP.Response(200, JSON2.write(animal))
+    return HTTP.Response(200, JSON3.write(animal))
 end
 
 function deleteAnimal(req::HTTP.Request)
