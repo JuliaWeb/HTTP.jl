@@ -31,22 +31,22 @@ end
 
 # "service" functions to actually do the work
 function createAnimal(req::HTTP.Request)
-    animal = JSON2.read(IOBuffer(HTTP.payload(req)), Animal)
+    animal = JSON3.read(IOBuffer(HTTP.payload(req)), Animal)
     animal.id = getNextId()
     ANIMALS[animal.id] = animal
-    return HTTP.Response(200, JSON2.write(animal))
+    return HTTP.Response(200, JSON3.write(animal))
 end
 
 function getAnimal(req::HTTP.Request)
     animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
     animal = ANIMALS[parse(Int, animalId)]
-    return HTTP.Response(200, JSON2.write(animal))
+    return HTTP.Response(200, JSON3.write(animal))
 end
 
 function updateAnimal(req::HTTP.Request)
-    animal = JSON2.read(IOBuffer(HTTP.payload(req)), Animal)
+    animal = JSON3.read(IOBuffer(HTTP.payload(req)), Animal)
     ANIMALS[animal.id] = animal
-    return HTTP.Response(200, JSON2.write(animal))
+    return HTTP.Response(200, JSON3.write(animal))
 end
 
 function deleteAnimal(req::HTTP.Request)
@@ -111,9 +111,9 @@ function JSONHandler(req::HTTP.Request)
         response_body = handle(ANIMAL_ROUTER, req)
     else
         # there's a body, so pass it on to the handler we dispatch to
-        response_body = handle(ANIMAL_ROUTER, req, JSON2.read(body, Animal))
+        response_body = handle(ANIMAL_ROUTER, req, JSON3.read(body, Animal))
     end
-    return HTTP.Response(200, JSON2.write(response_body))
+    return HTTP.Response(200, JSON3.write(response_body))
 end
 
 #= CorsHandler: handles preflight request with the OPTIONS flag
