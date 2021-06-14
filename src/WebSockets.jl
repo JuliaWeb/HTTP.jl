@@ -232,13 +232,17 @@ end
 
 function Base.close(ws::WebSocket; statuscode::Union{Int, Nothing}=nothing)
     if !ws.txclosed
-        closewrite(ws; statuscode=statuscode)
+        try
+            closewrite(ws; statuscode=statuscode)
+        catch e
+            e isa Base.IOError || rethrow(e)
+        end
     end
     while !eof(ws) # FIXME Timeout in case other end does not send CLOSE?
         try
             readframe(ws)
         catch e
-            e isa WebSocketError || rethrow(e)
+            e isa WebSocketError || e isa Base.IOError || rethrow(e)
         end
     end
     close(ws.io)
