@@ -314,9 +314,6 @@ Optional keyword arguments:
     per client IP address; excess connections are immediately closed. e.g. 5//1.
  - `stream::Bool=false`, the handler will operate on an `HTTP.Stream` instead of `HTTP.Request`
  - `verbose::Bool=false`, log connection information to `stdout`.
- -  `trigger_compilation::Bool=false`, if `true` send a get request to the
-    server via an async job to trigger compilation. This will make the server
-    respond more quickly to subsequent requests.
 
 # Examples
 ```julia

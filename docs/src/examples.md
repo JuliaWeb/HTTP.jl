@@ -165,6 +165,32 @@ HTTP.@register(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/users/*/animals/*", deleteA
 HTTP.serve(CorsHandler, ip"127.0.0.1", 8080)
 
 ```
+## Reduce First Response Time
+Due to compilation, it can take more than a second for the server to respond on the first request.
+There are two ways to reduce this time to a few milliseconds.
+One way is to use [PackageCompiler.jl](https://github.com/JuliaLang/PackageCompiler.jl) and another is to trigger compilation, which is shown below.
+Note that this trigger is only useful in situations where there is time in between starting the server and the first request like, for example, happens when running a server on Heroku.
+```julia
+using HTTP
+
+function trigger_compilation(port)
+    sleep(0.5)
+    url = "http://127.0.0.1:$(port)/"
+    HTTP.get(url)
+end
+
+function status(req::HTTP.Request)
+    HTTP.Response(200, "Ok")
+end
+
+const ROUTER = HTTP.Router()
+HTTP.@register(ROUTER, "GET", "/status", status)
+
+port = 8080
+@async trigger_compilation(port)
+HTTP.serve(ROUTER, ip"127.0.0.1", port)
+
+```
 ## Server Sent Events
 Simple server that implements [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events),
 loosely following [this tutorial](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events).

@@ -12,7 +12,6 @@ module Servers
 
 export listen
 
-using ..HTTP: get
 using ..IOExtras
 using ..Streams
 using ..Messages
@@ -155,9 +154,6 @@ Optional keyword arguments:
     more functions to be run if the server is closed (for example by an
     `InterruptException`). Note, shutdown function(s) will not run if a
     `IOServer` object is supplied and closed by `close(server)`.
- -  `trigger_compilation::Bool=false`, if `true` send a get request to the
-    server via an async job to trigger compilation. This will make the server
-    respond more quickly to subsequent requests.
 
 e.g.
 ```julia
@@ -231,26 +227,6 @@ const nolimit = typemax(Int)
 getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
 getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
 
-"""
-    trigger(host, port)
-
-Trigger compilation by hitting the main endpoint.
-This reduces the time to first response when the server is not used immediately after spawning.
-For example, when an user is interacting with the server or when the server is hosted online.
-
-This method will only do a `GET` request, but this will also reduce the time for other requests
-like `POST` since there is a lot of overlap in the logic.
-"""
-function trigger(host, port)
-    try
-        url = "http://$host:$port"
-        sleep(1)
-        get(url)
-    catch e
-        nothing
-    end
-end
-
 function listen(f,
                 host::Union{IPAddr, String}=Sockets.localhost,
                 port::Integer=8081
@@ -266,8 +242,7 @@ function listen(f,
                 readtimeout::Int=0,
                 verbose::Bool=false,
                 access_log::Union{Function,Nothing}=nothing,
-                on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing,
-                trigger_compilation::Bool=false)
+                on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing)
 
     inet = getinet(host, port)
     if server !== nothing
@@ -296,9 +271,6 @@ function listen(f,
     end
 
     s = Server(sslconfig, tcpserver, string(host), string(port), on_shutdown, access_log)
-    if trigger_compilation
-        @async trigger(host, port)
-    end
     return listenloop(f, s, tcpisvalid, connection_count, max_connections,
                          reuse_limit, readtimeout, verbose)
 end
