@@ -12,12 +12,12 @@ ascii_lc_isequal(a::UInt8, b::UInt8) = ascii_lc(a) == ascii_lc(b)
 Case insensitive ASCII string comparison.
 """
 function ascii_lc_isequal(a, b)
-    a = Iterators.Stateful(codeunits(a))
-    b = Iterators.Stateful(codeunits(b))
-    for (i, j) in zip(a, b)
-        if !ascii_lc_isequal(i, j)
-            return false
-        end
+    acu = codeunits(a)
+    bcu = codeunits(b)
+    len = length(acu)
+    len != length(bcu) && return false
+    for i = 1:len
+        @inbounds !ascii_lc_isequal(acu[i], bcu[i]) && return false
     end
-    return isempty(a) && isempty(b)
+    return true
 end
