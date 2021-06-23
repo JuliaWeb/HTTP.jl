@@ -185,12 +185,12 @@ const trigger_compilation = retry(; delays=ExponentialBackOff(n=5, first_delay=0
     HTTP.get(url)
 end
 
-function status(req::HTTP.Request)
-    HTTP.Response(200, "Ok")
+function hello(req::HTTP.Request)
+    HTTP.Response(200, "Hello")
 end
 
 const ROUTER = HTTP.Router()
-HTTP.@register(ROUTER, "GET", "/status", status)
+HTTP.@register(ROUTER, "GET", "/", hello)
 
 @async trigger_compilation()
 println("Starting server at http://$host:$port")
