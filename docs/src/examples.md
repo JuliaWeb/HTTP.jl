@@ -176,10 +176,12 @@ using HTTP
 using Sockets
 
 host = Sockets.localhost
+port = 8080
 
-function trigger_compilation(port)
-    sleep(0.5)
-    url = "http://$host:$port/"
+# Retry returns an anonymous function.
+const trigger_compilation = retry(; delays=ExponentialBackOff(n=5, first_delay=0.5)) do
+    url = "http://$host:$port"
+    # Hit "GET /" (and possibly more routes if needed)
     HTTP.get(url)
 end
 
@@ -190,8 +192,8 @@ end
 const ROUTER = HTTP.Router()
 HTTP.@register(ROUTER, "GET", "/status", status)
 
-port = 8080
-@async trigger_compilation(port)
+@async trigger_compilation()
+println("Starting server at http://$host:$port")
 HTTP.serve(ROUTER, host, port)
 
 ```
