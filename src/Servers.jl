@@ -17,7 +17,7 @@ using ..Streams
 using ..Messages
 using ..Parsers
 using ..ConnectionPool
-using Sockets
+using Sockets, Logging
 using MbedTLS: SSLContext, SSLConfig
 import MbedTLS
 
@@ -423,9 +423,9 @@ function handle_transaction(f, t::Transaction, server; final_transaction::Bool=f
     catch e
         # The remote can close the stream whenever it wants to, but there's nothing
         # anyone can do about it on this side. No reason to log an error in that case.
-        if !(e isa Base.IOError && !isopen(http))
-            @error "error handling request" exception=(e, stacktrace(catch_backtrace()))
-        end
+        level = e isa Base.IOError && !isopen(http) ? Logging.Debug : Logging.Error
+        @logmsg level "error handling request" exception=(e, stacktrace(catch_backtrace()))
+
         if isopen(http) && !iswritable(http)
             http.message.response.status = 500
             startwrite(http)
