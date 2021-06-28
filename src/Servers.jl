@@ -421,7 +421,11 @@ function handle_transaction(f, t::Transaction, server; final_transaction::Bool=f
         @debug 2 "server closewrite"
         closewrite(http)
     catch e
-        @error "error handling request" exception=(e, stacktrace(catch_backtrace()))
+        # The remote can close the stream whenever it wants to, but there's nothing
+        # anyone can do about it on this side. No reason to log an error in that case.
+        if !(e isa Base.IOError && !isopen(http))
+            @error "error handling request" exception=(e, stacktrace(catch_backtrace()))
+        end
         if isopen(http) && !iswritable(http)
             http.message.response.status = 500
             startwrite(http)
