@@ -5,19 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- "Connection closed by peer" errors are now emitted as `Debug`-level messages ([#727]).
 
-## [0.9.10] - 2020-05-30
+## [0.9.10] - 2021-05-30
 ### Fixed
 - Fix access logging to also log internal server errors ([#717]).
 - Fix a possible crash in access logging of remote IP when the connection have been closed ([#718]).
 
-## [0.9.9] - 2020-05-23
+## [0.9.9] - 2021-05-23
 ### Added
 - Access logging functionality to `HTTP.listen` and `HTTP.serve` ([#713]).
 ### Fixed
 - Include `Host` header for `CONNECT` proxy requests ([#714]).
 
-## [0.9.8] - 2020-05-02
+## [0.9.8] - 2021-05-02
 ### Fixed
 - URLs are now checked for missing protocol and hostname when making requests ([#703]).
 - Fix an issue where relative HTTP 3xx redirects would not resolve the new URL correctly
@@ -27,11 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Improvements to internal allocation of buffers to decrease package load time ([#704]).
 
-## [0.9.7] - 2020-04-28
+## [0.9.7] - 2021-04-28
 ### Added
 - Implement `Sockets.getpeername(::HTTP.Stream)` for getting the client IP address and port from a `HTTP.Stream` ([#702]).
 
-## [0.9.6] - 2020-04-27
+## [0.9.6] - 2021-04-27
 ### Added
 - New function `HTTP.statustext` for getting the string representation of a HTTP status code ([#688]).
 - New exception `ReadTimeoutError` which is thrown for request that time out ([#693]).
@@ -40,12 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Fixes and improvements to rate limiting in `HTTP.listen` and `HTTP.serve` ([#701]).
 
-## [0.9.5] - 2020-02-23
+## [0.9.5] - 2021-02-23
 ### Fixed
 - Fix implicitly added `Host` header for `HTTP.request` (and friends) to include the port
   for non-standard ports ([#680]).
 
-## [0.9.4] - 2020-02-23
+## [0.9.4] - 2021-02-23
 ### Changed
 - [NetworkOptions.jl](https://github.com/JuliaLang/NetworkOptions.jl)'s
   [`verify_host`](https://github.com/JuliaLang/NetworkOptions.jl#verify_host) is now used
@@ -56,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - When trying to establish a connection, try all IP addresses found for the host instead of
   just the first one ([#675]).
 
-## [0.9.3] - 2020-02-10
+## [0.9.3] - 2021-02-10
 ### Added
 - New keyword `max_connections::Int` to `HTTP.listen` for specifying maximum value of
   concurrent active connections ([#647]).
@@ -148,3 +150,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#714]: https://github.com/JuliaWeb/HTTP.jl/pull/713
 [#717]: https://github.com/JuliaWeb/HTTP.jl/pull/717
 [#718]: https://github.com/JuliaWeb/HTTP.jl/pull/718
+[#727]: https://github.com/JuliaWeb/HTTP.jl/pull/727
