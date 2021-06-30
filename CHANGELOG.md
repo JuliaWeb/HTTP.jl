@@ -5,8 +5,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.9.11] - 2021-06-30
 ### Changed
 - "Connection closed by peer" errors are now emitted as `Debug`-level messages (instead of `Error`-level) ([#727]).
+### Fixed
+- Fix websocket disconnection errors ([#723]).
+- Reduced allocations for some internals functions used for e.g. header comparison ([#725]).
 
 ## [0.9.10] - 2021-05-30
 ### Fixed
@@ -103,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.10...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.11...HEAD
+[0.9.11]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.10...v0.9.11
 [0.9.10]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.9...v0.9.10
 [0.9.9]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.8...v0.9.9
 [0.9.8]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.7...v0.9.8
@@ -150,4 +156,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#714]: https://github.com/JuliaWeb/HTTP.jl/pull/713
 [#717]: https://github.com/JuliaWeb/HTTP.jl/pull/717
 [#718]: https://github.com/JuliaWeb/HTTP.jl/pull/718
+[#723]: https://github.com/JuliaWeb/HTTP.jl/pull/723
+[#725]: https://github.com/JuliaWeb/HTTP.jl/pull/725
 [#727]: https://github.com/JuliaWeb/HTTP.jl/pull/727
