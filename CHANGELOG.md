@@ -6,7 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
-- "Connection closed by peer" errors are now emitted as `Debug`-level messages ([#727]).
+- "Connection closed by peer" errors are now emitted as `Debug`-level messages (instead of `Error`-level) ([#727]).
 
 ## [0.9.10] - 2021-05-30
 ### Fixed
