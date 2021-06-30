@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Fix a JSON detection issue in `HTTP.sniff` for negative numeric values ([#730]).
 
 ## [0.9.11] - 2021-06-30
 ### Changed
@@ -159,3 +161,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#723]: https://github.com/JuliaWeb/HTTP.jl/pull/723
 [#725]: https://github.com/JuliaWeb/HTTP.jl/pull/725
 [#727]: https://github.com/JuliaWeb/HTTP.jl/pull/727
+[#730]: https://github.com/JuliaWeb/HTTP.jl/pull/730
