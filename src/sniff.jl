@@ -24,6 +24,18 @@ const WHITESPACE = Set{UInt8}([UInt8('\t'),UInt8('\n'),UInt8('\u0c'),UInt8('\r')
 If a mimetype can't be determined appropriately, `"application/octet-stream"` is returned.
 
 Supports JSON detection through the `HTTP.isjson(content)` function.
+
+## Examples
+```julia
+julia> HTTP.sniff("Hello world!!")
+"text/plain; charset=utf-8"
+
+julia> HTTP.sniff("<html><body>Hello world!!</body></html>")
+"text/html; charset=utf-8"
+
+julia> HTTP.sniff("{\"a\": -1.0}")
+"application/json; charset=utf-8"
+```
 """
 function sniff end
 
