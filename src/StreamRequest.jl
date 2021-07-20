@@ -56,6 +56,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
 
         @sync begin
             if iofunction === nothing
+                # Writes request asynchronously with the read.
                 @async try
                     writebody(http, req, body)
                 catch e

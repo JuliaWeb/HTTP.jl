@@ -15,7 +15,7 @@ else
 
     struct IODebug{T <: IO} <: IO
         io::T
-        log::Vector{Tuple{String,String}}
+        log::Vector{Tuple{String,Symbol,String}}
     end
 
     IODebug(io::T) where T <: IO = IODebug{T}(io, [])
