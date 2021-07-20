@@ -343,7 +343,6 @@ function IOExtras.closewrite(t::Transaction)
         @v1_3 unlock(t.c.writelock)
     end
     flush(t.c)
-    release(t.c)
 
     return
 end
@@ -590,7 +589,7 @@ end
 function isvalid(pod, conn, reuse_limit, pipeline_limit)
     # Close connections that have reached the reuse limit...
     if reuse_limit != nolimit
-        if readcount(conn) >= reuse_limit && !readbusy(conn)
+        if conn.sequence[] >= reuse_limit && !readbusy(conn)
             @debug 2 "💀 overuse:         $conn"
             close(conn.io)
         end
@@ -615,7 +614,7 @@ function isvalid(pod, conn, reuse_limit, pipeline_limit)
         return false
     end
     # If we've hit our pipeline_limit, can't use this one, but don't close
-    if (writecount(conn) - readcount(conn)) >= pipeline_limit + 1
+    if (conn.sequence[] - readcount(conn)) >= pipeline_limit + 1
         return false
     end
 
