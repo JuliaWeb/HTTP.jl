@@ -327,9 +327,13 @@ end
 """
 function request(method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
-    return request(HTTP.stack(;kw...), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+    stack = HTTP.stack(; kw)
+    next, stack... = stack
+    return request(next, stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
-function request(stack::Type{<:Layer}, method, url, h=Header[], b=nobody;
+
+# Fallback for any type which isn't implemented?
+function request(::Type{<:Layer}, stack::Vector{Type}, method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
     return request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
@@ -598,6 +602,28 @@ function stack(;redirect=true,
     (readtimeout > 0      ? TimeoutLayer              : NoLayer){
                             StreamLayer{Union{}}
     }}}}}}}}}}}}::DataType
+
+    s = Union{Missing,Type}[
+        redirect ? RedirectLayer : missing,
+        BasicAuthLayer,
+        detect_content_type ? ContentTypeDetectionLayer : missing,
+        cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ? CookieLayer : missing,
+        canonicalize_headers ? CanonicalizeLayer : missing,
+        MessageLayer,
+        aws_authorization ? AWS4AuthLayer : missing,
+        retry ? RetryLayer : missing,
+        status_exception ? ExceptionLayer : missing,
+        ConnectionPoolLayer,
+        (verbose >= 3 || DEBUG_LEVEL[] >= 3) ? DebugLayer : missing,
+        readtimeout > 0 ? TimeoutLayer : missing,
+        StreamLayer,
+        Union{}
+    ]
+    s = collect(skipmissing(s))
+    # Type stable return value.
+    # TODO: Reimplement the Layers.EXTRA_LAYERS again.
+    return s
+    @show next(s)
 
     if !isempty(Layers.EXTRA_LAYERS)
         layers = reduce(Layers.EXTRA_LAYERS; init=layers) do stack, (before, custom)

@@ -15,7 +15,7 @@ Redirects the request in the case of 3xx response status.
 abstract type RedirectLayer{Next <: Layer} <: Layer{Next} end
 export RedirectLayer
 
-function request(::Type{RedirectLayer{Next}},
+function request(::Type{RedirectLayer}, stack::Vector{Type},
                  method::String, url::URI, headers, body;
                  redirect_limit=3, forwardheaders=true, kw...) where Next
     count = 0
@@ -25,7 +25,8 @@ function request(::Type{RedirectLayer{Next}},
         # the redirect loop to also catch bad redirect URLs.
         verify_url(url)
 
-        res = request(Next, method, url, headers, body; reached_redirect_limit=(count == redirect_limit), kw...)
+        next, stack... = stack
+        res = request(next, stack, method, url, headers, body; reached_redirect_limit=(count == redirect_limit), kw...)
 
         if (count == redirect_limit
         ||  !isredirect(res)

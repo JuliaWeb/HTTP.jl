@@ -24,9 +24,10 @@ e.g. `HTTP.IOError`, `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 abstract type RetryLayer{Next <: Layer} <: Layer{Next} end
 export RetryLayer
 
-function request(::Type{RetryLayer{Next}}, url, req, body;
+function request(::Type{RetryLayer}, stack::Vector{Type},
+                 url, req, body;
                  retries::Int=4, retry_non_idempotent::Bool=false,
-                 kw...) where Next
+                 kw...)
 
     retry_request = Base.retry(request,
         delays=ExponentialBackOff(n = retries),
@@ -41,7 +42,8 @@ function request(::Type{RetryLayer{Next}}, url, req, body;
             return s, retry
         end)
 
-    retry_request(Next, url, req, body; kw...)
+    next, stack... = stack
+    retry_request(next, stack, url, req, body; kw...)
 end
 
 isrecoverable(e) = false

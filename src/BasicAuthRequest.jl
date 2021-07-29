@@ -15,7 +15,7 @@ Add `Authorization: Basic` header using credentials from url userinfo.
 abstract type BasicAuthLayer{Next <: Layer} <: Layer{Next} end
 export BasicAuthLayer
 
-function request(::Type{BasicAuthLayer{Next}},
+function request(::Type{BasicAuthLayer}, stack::Vector{Type},
                  method::String, url::URI, headers, body; kw...) where Next
 
     userinfo = unescapeuri(url.userinfo)
@@ -25,8 +25,8 @@ function request(::Type{BasicAuthLayer{Next}},
         setkv(headers, "Authorization", "Basic $(base64encode(userinfo))")
     end
 
-    return request(Next, method, url, headers, body; kw...)
+    next, stack... = stack
+    return request(next, stack, method, url, headers, body; kw...)
 end
-
 
 end # module BasicAuthRequest

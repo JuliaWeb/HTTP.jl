@@ -22,12 +22,13 @@ indicates that the server does not wish to receive the message body.
 abstract type StreamLayer{Next <: Layer} <: Layer{Next} end
 export StreamLayer
 
-function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
+function request(::Type{StreamLayer}, stack::Vector{Type},
+                 io::IO, req::Request, body;
                  reached_redirect_limit=false,
                  response_stream=nothing,
                  iofunction=nothing,
                  verbose::Int=0,
-                 kw...)::Response where Next
+                 kw...)::Response
 
     verbose == 1 && printlncompact(req)
 
@@ -98,7 +99,7 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)
 
-    return request(Next, response)
+    return request(Union{}, response)
 end
 
 function writebody(http::Stream, req::Request, body)

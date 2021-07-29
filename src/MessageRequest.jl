@@ -26,11 +26,11 @@ Construct a [`Request`](@ref) object and set mandatory headers.
 struct MessageLayer{Next <: Layer} <: Layer{Next} end
 export MessageLayer
 
-function request(::Type{MessageLayer{Next}},
+function request(::Type{MessageLayer}, stack::Vector{Type},
                  method::String, url::URI, headers::Headers, body;
                  http_version=v"1.1",
                  target=resource(url),
-                 parent=nothing, iofunction=nothing, kw...) where Next
+                 parent=nothing, iofunction=nothing, kw...)
 
     if isempty(url.port) ||
               (url.scheme == "http" && url.port == "80") ||
@@ -63,7 +63,8 @@ function request(::Type{MessageLayer{Next}},
     req = Request(method, target, headers, bodybytes(body);
                   parent=parent, version=http_version)
 
-    return request(Next, url, req, body; iofunction=iofunction, kw...)
+    next, stack... = stack
+    return request(next, stack, url, req, body; iofunction=iofunction, kw...)
 end
 
 const USER_AGENT = Ref{Union{String, Nothing}}("HTTP.jl/$VERSION")

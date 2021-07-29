@@ -20,7 +20,6 @@ function setbyfirst(c, item, eq = ==)
     return item
 end
 
-
 """
     getbyfirst(collection, key [, default]) -> item
 

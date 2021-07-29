@@ -14,9 +14,10 @@ Throw a `StatusError` if the request returns an error response status.
 abstract type ExceptionLayer{Next <: Layer} <: Layer{Next} end
 export ExceptionLayer
 
-function request(::Type{ExceptionLayer{Next}}, a...; kw...) where Next
+function request(::Type{ExceptionLayer}, stack::Vector{Type}, a...; kw...)
 
-    res = request(Next, a...; kw...)
+    next, stack... = stack
+    res = request(next, stack, a...; kw...)
 
     if iserror(res)
         throw(StatusError(res.status, res.request.method, res.request.target, res))

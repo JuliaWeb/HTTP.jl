@@ -60,10 +60,11 @@ See [`isioerror`](@ref).
 abstract type ConnectionPoolLayer{Next <: Layer} <: Layer{Next} end
 export ConnectionPoolLayer
 
-function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
+function request(::Type{ConnectionPoolLayer}, stack::Vector{Type},
+                 url::URI, req, body;
                  proxy=getproxy(url.scheme, url.host),
                  socket_type::Type=TCPSocket,
-                 reuse_limit::Int=ConnectionPool.nolimit, kw...) where Next
+                 reuse_limit::Int=ConnectionPool.nolimit, kw...)
 
     if proxy !== nothing
         target_url = url
@@ -105,7 +106,8 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
             req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
         end
 
-        r =  request(Next, io, req, body; kw...)
+        next, stack... = stack
+        r = request(next, stack, io, req, body; kw...)
 
         if (io.sequence >= reuse_limit
             || (proxy !== nothing && target_url.scheme == "https"))
