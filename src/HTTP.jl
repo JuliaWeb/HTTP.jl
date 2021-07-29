@@ -582,7 +582,7 @@ function stack(;redirect=true,
 
     NoLayer = Union
 
-    stack = (redirect     ? RedirectLayer             : NoLayer){
+    layers = (redirect    ? RedirectLayer             : NoLayer){
                             BasicAuthLayer{
     (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
     (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
@@ -597,11 +597,14 @@ function stack(;redirect=true,
      DEBUG_LEVEL[] >= 3   ? DebugLayer                : NoLayer){
     (readtimeout > 0      ? TimeoutLayer              : NoLayer){
                             StreamLayer{Union{}}
-    }}}}}}}}}}}}
+    }}}}}}}}}}}}::DataType
 
-    reduce(Layers.EXTRA_LAYERS; init=stack) do stack, (before, custom)
-        insert(stack, before, custom)
+    if !isempty(Layers.EXTRA_LAYERS)
+        layers = reduce(Layers.EXTRA_LAYERS; init=layers) do stack, (before, custom)
+            insert(stack, before, custom)
+        end
     end
+    return layers::DataType
 end
 
 include("download.jl")
