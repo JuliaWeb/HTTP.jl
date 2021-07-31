@@ -5,7 +5,7 @@ using ..TestRequest
 @testset "HTTP Stack Inserting" begin
     @testset "Insert - Beginning" begin
         expected = TestLayer{TopLayer{RedirectLayer{BasicAuthLayer{MessageLayer{RetryLayer{ExceptionLayer{ConnectionPoolLayer{StreamLayer{Union{}}}}}}}}}}
-        result = insert(stack(), RedirectLayer, TestLayer)
+        result = insert(stack(), TopLayer, TestLayer)
 
         @test expected == result
     end
