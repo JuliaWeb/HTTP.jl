@@ -441,6 +441,7 @@ Shorthand for `HTTP.request("DELETE", ...)`. See [`HTTP.request`](@ref).
 """
 delete(a...; kw...) = request("DELETE", a...; kw...)
 
+include("TopRequest.jl");               using .TopRequest
 include("RedirectRequest.jl");          using .RedirectRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
 include("AWS4AuthRequest.jl");          using .AWS4AuthRequest
@@ -492,7 +493,9 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
  │             ──────────────────────────     └─────────▲─────────┘      │  │ │
  │                           ║                          ║             │       │
  │   ┌────────────────────────────────────────────────────────────┐      │  │ │
- │   │ request(RedirectLayer,     method, ::URI, ::Headers, body) │   │       │
+ │   │ request(TopLayer,          method, ::URI, ::Headers, body) │   │       │
+ │   ├────────────────────────────────────────────────────────────┤      │  │ │
+ │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
  │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
@@ -581,8 +584,8 @@ function stack(;redirect=true,
                 kw...)
 
     NoLayer = Union
-
-    stack = (redirect     ? RedirectLayer             : NoLayer){
+    stack =                 TopLayer{
+    (redirect             ? RedirectLayer             : NoLayer){
                             BasicAuthLayer{
     (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
     (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
@@ -597,7 +600,7 @@ function stack(;redirect=true,
      DEBUG_LEVEL[] >= 3   ? DebugLayer                : NoLayer){
     (readtimeout > 0      ? TimeoutLayer              : NoLayer){
                             StreamLayer{Union{}}
-    }}}}}}}}}}}}
+    }}}}}}}}}}}}}
 
     reduce(Layers.EXTRA_LAYERS; init=stack) do stack, (before, custom)
         insert(stack, before, custom)
