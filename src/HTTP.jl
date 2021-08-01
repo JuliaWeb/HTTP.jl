@@ -3,7 +3,7 @@ module HTTP
 export startwrite, startread, closewrite, closeread, Stack, stack, insert, insert_default!,
     remove_default!, AWS4AuthLayer, BasicAuthLayer, CanonicalizeLayer, ConnectionPoolLayer,
     ContentTypeDetectionLayer, DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer,
-    RetryLayer, StreamLayer, TimeoutLayer,
+    RetryLayer, StreamLayer, TimeoutLayer, TopLayer,
     @logfmt_str, common_logfmt, combined_logfmt
 
 const DEBUG_LEVEL = Ref(0)
@@ -445,6 +445,7 @@ Shorthand for `HTTP.request("DELETE", ...)`. See [`HTTP.request`](@ref).
 """
 delete(a...; kw...) = request("DELETE", a...; kw...)
 
+include("TopRequest.jl");               using .TopRequest
 include("RedirectRequest.jl");          using .RedirectRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
 include("AWS4AuthRequest.jl");          using .AWS4AuthRequest
@@ -569,7 +570,9 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
  │             ──────────────────────────     └─────────▲─────────┘      │  │ │
  │                           ║                          ║             │       │
  │   ┌────────────────────────────────────────────────────────────┐      │  │ │
- │   │ request(RedirectLayer,     method, ::URI, ::Headers, body) │   │       │
+ │   │ request(TopLayer,          method, ::URI, ::Headers, body) │   │       │
+ │   ├────────────────────────────────────────────────────────────┤      │  │ │
+ │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
  │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
@@ -658,8 +661,8 @@ function stack(;redirect=true,
                 kw...)
 
     NoLayer = Union
-
-    layers = (redirect    ? RedirectLayer             : NoLayer){
+    stack =                 TopLayer{
+    (redirect             ? RedirectLayer             : NoLayer){
                             BasicAuthLayer{
     (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
     (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
@@ -701,6 +704,9 @@ function stack(;redirect=true,
         layers = reduce(Layers.EXTRA_LAYERS; init=layers) do stack, (before, custom)
             insert(stack, before, custom)
         end
+
+    reduce(Layers.EXTRA_LAYERS; init=stack) do stack, (before, custom)
+        insert(stack, before, custom)
     end
     return layers::DataType
 end
