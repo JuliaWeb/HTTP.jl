@@ -1,6 +1,7 @@
 module TimeoutRequest
 
 import ..Layer, ..request
+using HTTP
 using ..ConnectionPool
 import ..@debug, ..DEBUG_LEVEL
 
@@ -17,11 +18,11 @@ end
 
 Close `IO` if no data has been received for `timeout` seconds.
 """
-abstract type TimeoutLayer{Next <: Layer} <: Layer{Next} end
+abstract type TimeoutLayer <: Layer end
 export TimeoutLayer
 
-function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
-                 readtimeout::Int=0, kw...) where Next
+function request(stack::Stack{TimeoutLayer}, io::IO, req, body;
+                 readtimeout::Int=0, kw...)
 
     wait_for_timeout = Ref{Bool}(true)
     timedout = Ref{Bool}(false)
@@ -37,7 +38,7 @@ function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
     end
 
     try
-        return request(Next, io, req, body; kw...)
+        return request(stack.next, io, req, body; kw...)
     catch e
         if timedout[]
            throw(ReadTimeoutError(readtimeout))

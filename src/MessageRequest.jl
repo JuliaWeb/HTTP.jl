@@ -4,6 +4,7 @@ export body_is_a_stream, body_was_streamed, setuseragent!, resource
 
 
 import ..Layer, ..request
+using HTTP
 using ..IOExtras
 using URIs
 using ..Messages
@@ -19,14 +20,14 @@ resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
                             !isempty(uri.fragment) ? "#" : "", uri.fragment)
 
 """
-    request(MessageLayer, method, ::URI, headers, body) -> HTTP.Response
+    request(stack::Stack{MessageLayer}, method, ::URI, headers, body) -> HTTP.Response
 
 Construct a [`Request`](@ref) object and set mandatory headers.
 """
-struct MessageLayer{Next <: Layer} <: Layer{Next} end
+abstract type MessageLayer <: Layer end
 export MessageLayer
 
-function request(::Type{MessageLayer}, stack::Vector{Type},
+function request(stack::Stack{MessageLayer},
                  method::String, url::URI, headers::Headers, body;
                  http_version=v"1.1",
                  target=resource(url),
@@ -63,8 +64,7 @@ function request(::Type{MessageLayer}, stack::Vector{Type},
     req = Request(method, target, headers, bodybytes(body);
                   parent=parent, version=http_version)
 
-    next, stack... = stack
-    return request(next, stack, url, req, body; iofunction=iofunction, kw...)
+    return request(stack.next, url, req, body; iofunction=iofunction, kw...)
 end
 
 const USER_AGENT = Ref{Union{String, Nothing}}("HTTP.jl/$VERSION")

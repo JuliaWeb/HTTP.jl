@@ -1,6 +1,6 @@
 module RetryRequest
 
-import ..HTTP
+using HTTP
 import ..Layer, ..request
 using ..Sockets
 using ..IOExtras
@@ -21,10 +21,10 @@ Methods of `isrecoverable(e)` define which exception types lead to a retry.
 e.g. `HTTP.IOError`, `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 (if status is ``5xx`).
 """
-abstract type RetryLayer{Next <: Layer} <: Layer{Next} end
+abstract type RetryLayer <: Layer end
 export RetryLayer
 
-function request(::Type{RetryLayer}, stack::Vector{Type},
+function request(stack::Stack{RetryLayer},
                  url, req, body;
                  retries::Int=4, retry_non_idempotent::Bool=false,
                  kw...)
@@ -42,8 +42,7 @@ function request(::Type{RetryLayer}, stack::Vector{Type},
             return s, retry
         end)
 
-    next, stack... = stack
-    retry_request(next, stack, url, req, body; kw...)
+    retry_request(stack.next, url, req, body; kw...)
 end
 
 isrecoverable(e) = false

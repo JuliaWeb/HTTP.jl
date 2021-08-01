@@ -350,12 +350,12 @@ Custom layers is only implemented with the "low-level" request() calls, not the 
 module TestRequest=#
         import HTTP: Layer, request, Response
 
-        abstract type TestLayer{Next <: Layer} <: Layer{Next} end
+        abstract type TestLayer <: Layer end
         export TestLayer, request
 
-        function request(::Type{TestLayer{Next}}, io::IO, req, body; kw...)::Response where Next
+        function request(stack::Stack{TestLayer}, io::IO, req, body; kw...)::Response
                 println("Insert your custom layer logic here!")
-                return request(Next, io, req, body; kw...)
+                return request(stack.next, io, req, body; kw...)
         end
 end
 

@@ -1,6 +1,7 @@
 module DebugRequest
 
 import ..Layer, ..request
+using HTTP
 using ..IOExtras
 
 const live_mode = true
@@ -12,17 +13,17 @@ include("IODebug.jl")
 
 Wrap the `IO` stream in an `IODebug` stream and print Message data.
 """
-abstract type DebugLayer{Next <:Layer} <: Layer{Next} end
+abstract type DebugLayer <: Layer end
 export DebugLayer
 
-function request(::Type{DebugLayer{Next}}, io::IO, req, body; kw...) where Next
+function request(stack::Stack{DebugLayer}, io::IO, req, body; kw...)
 
     @static if live_mode
-        return request(Next, IODebug(io), req, body; kw...)
+        return request(stack.next, IODebug(io), req, body; kw...)
     else
         iod = IODebug(io)
         try
-            return request(Next, iod, req, body; kw...)
+            return request(stack.next, iod, req, body; kw...)
         finally
             show_log(stdout, iod)
         end

@@ -1,6 +1,7 @@
 module ContentTypeDetection
 
 import ..Layer, ..request
+using HTTP
 using URIs
 using ..Pairs: getkv, setkv
 import ..sniff
@@ -9,11 +10,11 @@ using ..Messages
 import ..MessageRequest: bodylength, bodybytes
 import ..@debug, ..DEBUG_LEVEL
 
-abstract type ContentTypeDetectionLayer{Next <: Layer} <: Layer{Next} end
+abstract type ContentTypeDetectionLayer <: Layer end
 export ContentTypeDetectionLayer
 
-function request(::Type{ContentTypeDetectionLayer{Next}},
-                 method::String, url::URI, headers, body; kw...) where Next
+function request(stack::Stack{ContentTypeDetectionLayer},
+                 method::String, url::URI, headers, body; kw...)
 
     if (getkv(headers, "Content-Type", "") == ""
     &&  !isa(body, Form)
@@ -24,7 +25,7 @@ function request(::Type{ContentTypeDetectionLayer{Next}},
         setkv(headers, "Content-Type", sn)
         @debug 1 "setting Content-Type header to: $sn"
     end
-    return request(Next, method, url, headers, body; kw...)
+    return request(stack.next, method, url, headers, body; kw...)
 end
 
 end # module

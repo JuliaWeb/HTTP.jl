@@ -4,6 +4,7 @@ export StatusError
 
 import ..Layer, ..request
 import ..HTTP
+using HTTP
 using ..Messages: iserror
 
 """
@@ -11,13 +12,12 @@ using ..Messages: iserror
 
 Throw a `StatusError` if the request returns an error response status.
 """
-abstract type ExceptionLayer{Next <: Layer} <: Layer{Next} end
+abstract type ExceptionLayer <: Layer end
 export ExceptionLayer
 
-function request(::Type{ExceptionLayer}, stack::Vector{Type}, a...; kw...)
+function request(stack::Stack{ExceptionLayer}, a...; kw...)
 
-    next, stack... = stack
-    res = request(next, stack, a...; kw...)
+    res = request(stack.next, a...; kw...)
 
     if iserror(res)
         throw(StatusError(res.status, res.request.method, res.request.target, res))

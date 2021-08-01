@@ -1,6 +1,7 @@
 module StreamRequest
 
 import ..Layer, ..request
+using HTTP
 using ..IOExtras
 using ..Messages
 using ..Streams
@@ -19,10 +20,10 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-abstract type StreamLayer{Next <: Layer} <: Layer{Next} end
+abstract type StreamLayer <: Layer end
 export StreamLayer
 
-function request(::Type{StreamLayer}, stack::Vector{Type},
+function request(stack::Stack{StreamLayer},
                  io::IO, req::Request, body;
                  reached_redirect_limit=false,
                  response_stream=nothing,
@@ -99,7 +100,7 @@ function request(::Type{StreamLayer}, stack::Vector{Type},
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)
 
-    return request(Union{}, response)
+    return request(stack.next, response)
 end
 
 function writebody(http::Stream, req::Request, body)

@@ -1,18 +1,18 @@
 module TestRequest
-import HTTP: Layer, request, Response
+import HTTP: Stack, Layer, request, Response
 
-abstract type TestLayer{Next <: Layer} <: Layer{Next} end
-abstract type LastLayer{Next <: Layer} <: Layer{Next} end
+abstract type TestLayer <: Layer end
+abstract type LastLayer <: Layer end
 export TestLayer, LastLayer, request
 
-function request(::Type{TestLayer{Next}}, io::IO, req, body; kw...)::Response where Next
-		return request(Next, io, req, body; kw...)
+function request(stack::Stack{TestLayer}, io::IO, req, body; kw...)::Response
+    return request(stack.next, io, req, body; kw...)
 end
 
 const FLAG = Ref(false)
-function request(::Type{LastLayer{Next}}, resp)::Response where Next
+function request(stack::Stack{LastLayer}, resp)::Response
     FLAG[] = true
-		return request(Next, resp)
+    return request(stack.next, resp)
 end
 
 end

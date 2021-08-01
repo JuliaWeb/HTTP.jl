@@ -1,6 +1,7 @@
 module RedirectRequest
 
-import ..Layer, ..request
+import ..request
+using HTTP
 using URIs
 using ..Messages
 using ..Pairs: setkv
@@ -8,16 +9,16 @@ import ..Header
 import ..@debug, ..DEBUG_LEVEL
 
 """
-    request(RedirectLayer, method, ::URI, headers, body) -> HTTP.Response
+    request(stack::Stack{RedirectLayer}, method, ::URI, headers, body) -> HTTP.Response
 
 Redirects the request in the case of 3xx response status.
 """
-abstract type RedirectLayer{Next <: Layer} <: Layer{Next} end
+abstract type RedirectLayer <: Layer end
 export RedirectLayer
 
-function request(::Type{RedirectLayer}, stack::Vector{Type},
+function request(stack::Stack{RedirectLayer},
                  method::String, url::URI, headers, body;
-                 redirect_limit=3, forwardheaders=true, kw...) where Next
+                 redirect_limit=3, forwardheaders=true, kw...)
     count = 0
     while true
 
@@ -25,15 +26,13 @@ function request(::Type{RedirectLayer}, stack::Vector{Type},
         # the redirect loop to also catch bad redirect URLs.
         verify_url(url)
 
-        next, stack... = stack
-        res = request(next, stack, method, url, headers, body; reached_redirect_limit=(count == redirect_limit), kw...)
+        res = request(stack.next, method, url, headers, body; reached_redirect_limit=(count == redirect_limit), kw...)
 
         if (count == redirect_limit
         ||  !isredirect(res)
         ||  (location = header(res, "Location")) == "")
             return res
         end
-
 
         kw = merge(merge(NamedTuple(), kw), (parent = res,))
         oldurl = url

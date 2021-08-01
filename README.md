@@ -126,15 +126,15 @@ does not make sense
 
 ```julia
 julia> module TestRequest
-               import HTTP: Layer, request, Response
+            import HTTP: Layer, request, Response
 
-               abstract type TestLayer{Next <: Layer} <: Layer{Next} end
-               export TestLayer, request
+            abstract type TestLayer <: Layer end
+            export TestLayer, request
 
-               function request(::Type{TestLayer{Next}}, io::IO, req, body; kw...)::Response where Next
-                       println("Insert your custom layer logic here!")
-                       return request(Next, io, req, body; kw...)
-               end
+            function request(stack::Stack{TestLayer}, io::IO, req, body; kw...)::Response
+                    println("Insert your custom layer logic here!")
+                    return request(stack.next, io, req, body; kw...)
+            end
        end
 
 julia> using HTTP

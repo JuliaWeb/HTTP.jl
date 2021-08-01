@@ -2,7 +2,8 @@ module BasicAuthRequest
 
 using ..Base64
 
-import ..Layer, ..request
+import ..request
+using HTTP
 using URIs
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL
@@ -12,11 +13,11 @@ import ..@debug, ..DEBUG_LEVEL
 
 Add `Authorization: Basic` header using credentials from url userinfo.
 """
-abstract type BasicAuthLayer{Next <: Layer} <: Layer{Next} end
+abstract type BasicAuthLayer <: Layer end
 export BasicAuthLayer
 
-function request(::Type{BasicAuthLayer}, stack::Vector{Type},
-                 method::String, url::URI, headers, body; kw...) where Next
+function request(stack::Stack{BasicAuthLayer},
+                 method::String, url::URI, headers, body; kw...)
 
     userinfo = unescapeuri(url.userinfo)
 
@@ -25,8 +26,7 @@ function request(::Type{BasicAuthLayer}, stack::Vector{Type},
         setkv(headers, "Authorization", "Basic $(base64encode(userinfo))")
     end
 
-    next, stack... = stack
-    return request(next, stack, method, url, headers, body; kw...)
+    return request(stack.next, method, url, headers, body; kw...)
 end
 
 end # module BasicAuthRequest

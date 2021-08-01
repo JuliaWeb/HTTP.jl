@@ -6,6 +6,9 @@ export startwrite, startread, closewrite, closeread, Stack, stack, insert, inser
     RetryLayer, StreamLayer, TimeoutLayer, TopLayer,
     @logfmt_str, common_logfmt, combined_logfmt
 
+# stack.jl
+export Stack, Layer, next, top_layer, insert, insert_default!, remove_default!
+
 const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
@@ -40,7 +43,7 @@ include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
-include("layers.jl")                   ;using .Layers
+include("stack.jl")
 
 const nobody = UInt8[]
 
@@ -327,18 +330,29 @@ end
 """
 function request(method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
-    stack = HTTP.stack(; kw)
-    next, stack... = stack
-    return request(next, stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+    return request(HTTP.stack(;kw...), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
-
-# Fallback for any type which isn't implemented?
-function request(::Type{<:Layer}, stack::Vector{Type}, method, url, h=Header[], b=nobody;
+function request(stack::Stack, method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
     return request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
 
-request(::Type{Union{}}, resp::Response) = resp
+"""
+    request(stack::Stack, io, req, body; kw...)
+
+Fallback for unknown types L in Stack{L}.
+"""
+function request(stack::Stack, io, req, body; kw...)
+    return request(stack.next, io, req, body; kw...)
+end
+
+"""
+    request(stack::Nothing, resp::Response)::Response
+
+Return resp.
+This is called at the end of the stack.
+"""
+request(stack::Nothing, resp::Response) = resp
 
 request_uri(url, query) = URI(URI(url); query=query)
 request_uri(url, ::Nothing) = URI(url)
@@ -445,7 +459,8 @@ Shorthand for `HTTP.request("DELETE", ...)`. See [`HTTP.request`](@ref).
 """
 delete(a...; kw...) = request("DELETE", a...; kw...)
 
-include("TopRequest.jl");               using .TopRequest
+# To insert a custom layer at the top of the stack, use insert(stack, 1, custom_layer).
+# include("TopRequest.jl");               using .TopRequest
 include("RedirectRequest.jl");          using .RedirectRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
 include("AWS4AuthRequest.jl");          using .AWS4AuthRequest
@@ -461,255 +476,6 @@ include("DebugRequest.jl");             using .DebugRequest
 include("StreamRequest.jl");            using .StreamRequest
 include("ContentTypeRequest.jl");       using .ContentTypeDetection
 include("exceptions.jl")
-
-"""
-    Stack{L<:Layer}
-
-Struct containing the layer `L` to dispatch on with `request` and the next element to
-dispatch on `next`.
-This type allows for dispatching on `L` inside `request`.
-These stacks are created by `HTTP.stack`.
-
-Regarding performance, runtime dispatch could be avoided by defining a `Stack{U,V}` so that
-request methods can specialize further.
-However, this is unlikely to be much quicker when looking at the large `request` method
-bodies.
-
-# Example
-
-```
-julia> s1 = Stack{RetryLayer}(Stack{BasicAuthLayer}(nothing))
-
-julia> s2 = Stack{RetryLayer}(nothing)
-```
-"""
-struct Stack{T<:Layer}
-    next::Union{Stack,Nothing}
-end
-
-"""
-    layers2stack(layers::Vector)
-
-Create a stack from `layers`.
-
-# Example
-```
-julia> HTTP.layers2stack([BasicAuthLayer, RetryLayer])
-Stack{BasicAuthLayer}(Stack{RetryLayer}(nothing))
-```
-"""
-function layers2stack(layers::Vector)
-    length(layers) == 0 && error("Expecting at least one layer to create a stack")
-    last = Stack{layers[end]}(nothing)
-    length(layers) == 1 && return last
-
-    stack = last
-    for layer in reverse(layers[1:end-1])
-        stack = Stack{layer}(stack)
-    end
-    return stack
-end
-
-stacktype(s::Stack{T}) where {T} = T
-
-"""
-    stack2layers(stack::Stack)
-
-Return the layers contained in the stack.
-
-# Example
-```
-julia> HTTP.stack2layers(Stack{BasicAuthLayer}(Stack{RetryLayer}(nothing)))
-[BasicAuthLayer, RetryLayer]
-```
-"""
-function stack2layers(stack::Stack)
-    stack.next === nothing && return [stacktype(stack)]
-    layers = Type{<:Layer}[]
-    element = stack
-    while true
-        push!(layers, stacktype(element))
-        element = element.next
-        element === nothing && break
-    end
-    return layers
-end
-
-"""
-The `stack()` function returns the default HTTP Layer-stack type.
-This type is passed as the first parameter to the [`HTTP.request`](@ref) function.
-
-`stack()` accepts optional keyword arguments to enable/disable specific layers
-in the stack:
-`request(method, args...; kw...) request(stack(; kw...), args...; kw...)`
-
-
-The minimal request execution stack is:
-
-```julia
-stack = MessageLayer{ConnectionPoolLayer{StreamLayer}}
-```
-
-The figure below illustrates the full request execution stack and its
-relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
-[`HTTP.Stream`](@ref) and the [`HTTP.ConnectionPool`](@ref).
-
-```
- ┌────────────────────────────────────────────────────────────────────────────┐
- │                                            ┌───────────────────┐           │
- │  HTTP.jl Request Execution Stack           │ HTTP.ParsingError ├ ─ ─ ─ ─ ┐ │
- │                                            └───────────────────┘           │
- │                                            ┌───────────────────┐         │ │
- │                                            │ HTTP.IOError      ├ ─ ─ ─     │
- │                                            └───────────────────┘      │  │ │
- │                                            ┌───────────────────┐           │
- │                                            │ HTTP.StatusError  │─ ─   │  │ │
- │                                            └───────────────────┘   │       │
- │                                            ┌───────────────────┐      │  │ │
- │     request(method, url, headers, body) -> │ HTTP.Response     │   │       │
- │             ──────────────────────────     └─────────▲─────────┘      │  │ │
- │                           ║                          ║             │       │
- │   ┌────────────────────────────────────────────────────────────┐      │  │ │
- │   │ request(TopLayer,          method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(CookieLayer,       method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(CanonicalizeLayer, method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(MessageLayer,      method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(AWS4AuthLayer,             ::URI, ::Request, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(RetryLayer,                ::URI, ::Request, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(ExceptionLayer,            ::URI, ::Request, body) ├ ─ ┘       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
-┌┼───┤ request(ConnectionPoolLayer,       ::URI, ::Request, body) ├ ─ ─ ─     │
-││   ├────────────────────────────────────────────────────────────┤         │ │
-││   │ request(DebugLayer,                ::IO,  ::Request, body) │           │
-││   ├────────────────────────────────────────────────────────────┤         │ │
-││   │ request(TimeoutLayer,              ::IO,  ::Request, body) │           │
-││   ├────────────────────────────────────────────────────────────┤         │ │
-││   │ request(StreamLayer,               ::IO,  ::Request, body) │           │
-││   └──────────────┬───────────────────┬─────────────────────────┘         │ │
-│└──────────────────┼────────║──────────┼───────────────║─────────────────────┘
-│                   │        ║          │               ║                   │
-│┌──────────────────▼───────────────┐   │  ┌──────────────────────────────────┐
-││ HTTP.Request                     │   │  │ HTTP.Response                  │ │
-││                                  │   │  │                                  │
-││ method::String                   ◀───┼──▶ status::Int                    │ │
-││ target::String                   │   │  │ headers::Vector{Pair}            │
-││ headers::Vector{Pair}            │   │  │ body::Vector{UInt8}            │ │
-││ body::Vector{UInt8}              │   │  │                                  │
-│└──────────────────▲───────────────┘   │  └───────────────▲────────────────┼─┘
-│┌──────────────────┴────────║──────────▼───────────────║──┴──────────────────┐
-││ HTTP.Stream <:IO          ║           ╔══════╗       ║                   │ │
-││   ┌───────────────────────────┐       ║   ┌──▼─────────────────────────┐   │
-││   │ startwrite(::Stream)      │       ║   │ startread(::Stream)        │ │ │
-││   │ write(::Stream, body)     │       ║   │ read(::Stream) -> body     │   │
-││   │ ...                       │       ║   │ ...                        │ │ │
-││   │ closewrite(::Stream)      │       ║   │ closeread(::Stream)        │   │
-││   └───────────────────────────┘       ║   └────────────────────────────┘ │ │
-│└───────────────────────────║────────┬──║──────║───────║──┬──────────────────┘
-│┌──────────────────────────────────┐ │  ║ ┌────▼───────║──▼────────────────┴─┐
-││ HTTP.Messages                    │ │  ║ │ HTTP.Parsers                     │
-││                                  │ │  ║ │                                  │
-││ writestartline(::IO, ::Request)  │ │  ║ │ parse_status_line(bytes, ::Req') │
-││ writeheaders(::IO, ::Request)    │ │  ║ │ parse_header_field(bytes, ::Req')│
-│└──────────────────────────────────┘ │  ║ └──────────────────────────────────┘
-│                            ║        │  ║
-│┌───────────────────────────║────────┼──║────────────────────────────────────┐
-└▶ HTTP.ConnectionPool       ║        │  ║                                    │
- │                     ┌──────────────▼────────┐ ┌───────────────────────┐    │
- │ getconnection() ->  │ HTTP.Transaction <:IO │ │ HTTP.Transaction <:IO │    │
- │                     └───────────────────────┘ └───────────────────────┘    │
- │                           ║    ╲│╱    ║                  ╲│╱               │
- │                           ║     │     ║                   │                │
- │                     ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
- │              pool: [│ HTTP.Connection       │,│ HTTP.Connection       │...]│
- │                     └───────────┬───────────┘ └───────────┬───────────┘    │
- │                           ║     │     ║                   │                │
- │                     ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
- │                     │ Base.TCPSocket <:IO   │ │MbedTLS.SSLContext <:IO│    │
- │                     └───────────────────────┘ └───────────┬───────────┘    │
- │                           ║           ║                   │                │
- │                           ║           ║       ┌───────────▼───────────┐    │
- │                           ║           ║       │ Base.TCPSocket <:IO   │    │
- │                           ║           ║       └───────────────────────┘    │
- └───────────────────────────║───────────║────────────────────────────────────┘
-                             ║           ║
- ┌───────────────────────────║───────────║──────────────┐  ┏━━━━━━━━━━━━━━━━━━┓
- │ HTTP Server               ▼                          │  ┃ data flow: ════▶ ┃
- │                        Request     Response          │  ┃ reference: ────▶ ┃
- └──────────────────────────────────────────────────────┘  ┗━━━━━━━━━━━━━━━━━━┛
-```
-*See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
-"""
-function stack(;redirect=true,
-                aws_authorization=false,
-                cookies=false,
-                canonicalize_headers=false,
-                retry=true,
-                status_exception=true,
-                readtimeout=0,
-                detect_content_type=false,
-                verbose=0,
-                kw...)
-
-    NoLayer = Union
-    stack =                 TopLayer{
-    (redirect             ? RedirectLayer             : NoLayer){
-                            BasicAuthLayer{
-    (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
-    (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
-                            CookieLayer               : NoLayer){
-    (canonicalize_headers ? CanonicalizeLayer         : NoLayer){
-                            MessageLayer{
-    (aws_authorization    ? AWS4AuthLayer             : NoLayer){
-    (retry                ? RetryLayer                : NoLayer){
-    (status_exception     ? ExceptionLayer            : NoLayer){
-                            ConnectionPoolLayer{
-    (verbose >= 3 ||
-     DEBUG_LEVEL[] >= 3   ? DebugLayer                : NoLayer){
-    (readtimeout > 0      ? TimeoutLayer              : NoLayer){
-                            StreamLayer{Union{}}
-    }}}}}}}}}}}}::DataType
-
-    layers = Union{Type{<:HTTP.Layer},Missing}[
-        redirect ? RedirectLayer : missing,
-        BasicAuthLayer,
-        detect_content_type ? ContentTypeDetectionLayer : missing,
-        cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ? CookieLayer : missing,
-        canonicalize_headers ? CanonicalizeLayer : missing,
-        MessageLayer,
-        aws_authorization ? AWS4AuthLayer : missing,
-        retry ? RetryLayer : missing,
-        status_exception ? ExceptionLayer : missing,
-        ConnectionPoolLayer,
-        (verbose >= 3 || DEBUG_LEVEL[] >= 3) ? DebugLayer : missing,
-        readtimeout > 0 ? TimeoutLayer : missing,
-        StreamLayer,
-        Union{}
-    ]
-    layers = collect(skipmissing(layers))
-    # TODO: Reimplement the Layers.EXTRA_LAYERS again.
-    return layers
-    @show next(s)
-
-    if !isempty(Layers.EXTRA_LAYERS)
-        layers = reduce(Layers.EXTRA_LAYERS; init=layers) do stack, (before, custom)
-            insert(stack, before, custom)
-        end
-
-    reduce(Layers.EXTRA_LAYERS; init=stack) do stack, (before, custom)
-        insert(stack, before, custom)
-    end
-    return layers::DataType
-end
 
 include("download.jl")
 include("Servers.jl")                  ;using .Servers; using .Servers: listen

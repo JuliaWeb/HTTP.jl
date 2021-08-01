@@ -1,6 +1,7 @@
 module CanonicalizeRequest
 
 import ..Layer, ..request
+using HTTP
 using ..Messages
 using ..Strings: tocameldash
 
@@ -9,15 +10,15 @@ using ..Strings: tocameldash
 
 Rewrite request and response headers in Canonical-Camel-Dash-Format.
 """
-abstract type CanonicalizeLayer{Next <: Layer} <: Layer{Next} end
+abstract type CanonicalizeLayer <: Layer end
 export CanonicalizeLayer
 
-function request(::Type{CanonicalizeLayer{Next}},
-                 method::String, url, headers, body; kw...) where Next
+function request(stack::Stack{CanonicalizeLayer},
+                 method::String, url, headers, body; kw...)
 
     headers = canonicalizeheaders(headers)
 
-    res = request(Next, method, url, headers, body; kw...)
+    res = request(stack.next, method, url, headers, body; kw...)
 
     res.headers = canonicalizeheaders(res.headers)
 

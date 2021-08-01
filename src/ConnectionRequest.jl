@@ -2,6 +2,7 @@ module ConnectionRequest
 
 import ..Layer, ..request
 using URIs, ..Sockets
+using HTTP
 using ..Messages
 using ..IOExtras
 using ..ConnectionPool
@@ -57,10 +58,10 @@ Otherwise leave it open so that it can be reused.
 `IO` related exceptions from `Base` are wrapped in `HTTP.IOError`.
 See [`isioerror`](@ref).
 """
-abstract type ConnectionPoolLayer{Next <: Layer} <: Layer{Next} end
+abstract type ConnectionPoolLayer <: Layer end
 export ConnectionPoolLayer
 
-function request(::Type{ConnectionPoolLayer}, stack::Vector{Type},
+function request(stack::Stack{ConnectionPoolLayer},
                  url::URI, req, body;
                  proxy=getproxy(url.scheme, url.host),
                  socket_type::Type=TCPSocket,
@@ -106,8 +107,7 @@ function request(::Type{ConnectionPoolLayer}, stack::Vector{Type},
             req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
         end
 
-        next, stack... = stack
-        r = request(next, stack, io, req, body; kw...)
+        r = request(stack.next, io, req, body; kw...)
 
         if (io.sequence >= reuse_limit
             || (proxy !== nothing && target_url.scheme == "https"))
