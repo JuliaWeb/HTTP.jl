@@ -1,6 +1,6 @@
 module HTTP
 
-export startwrite, startread, closewrite, closeread, stack, insert, insert_default!,
+export startwrite, startread, closewrite, closeread, Stack, stack, insert, insert_default!,
     remove_default!, AWS4AuthLayer, BasicAuthLayer, CanonicalizeLayer, ConnectionPoolLayer,
     ContentTypeDetectionLayer, DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer,
     RetryLayer, StreamLayer, TimeoutLayer,
@@ -466,7 +466,13 @@ include("exceptions.jl")
 
 Struct containing the layer `L` to dispatch on with `request` and the next element to
 dispatch on `next`.
+This type allows for dispatching on `L` inside `request`.
 These stacks are created by `HTTP.stack`.
+
+Regarding performance, runtime dispatch could be avoided by defining a `Stack{U,V}` so that
+request methods can specialize further.
+However, this is unlikely to be much quicker when looking at the large `request` method
+bodies.
 
 # Example
 
@@ -478,6 +484,54 @@ julia> s2 = Stack{RetryLayer}(nothing)
 """
 struct Stack{T<:Layer}
     next::Union{Stack,Nothing}
+end
+
+"""
+    layers2stack(layers::Vector)
+
+Create a stack from `layers`.
+
+# Example
+```
+julia> HTTP.layers2stack([BasicAuthLayer, RetryLayer])
+Stack{BasicAuthLayer}(Stack{RetryLayer}(nothing))
+```
+"""
+function layers2stack(layers::Vector)
+    length(layers) == 0 && error("Expecting at least one layer to create a stack")
+    last = Stack{layers[end]}(nothing)
+    length(layers) == 1 && return last
+
+    stack = last
+    for layer in reverse(layers[1:end-1])
+        stack = Stack{layer}(stack)
+    end
+    return stack
+end
+
+stacktype(s::Stack{T}) where {T} = T
+
+"""
+    stack2layers(stack::Stack)
+
+Return the layers contained in the stack.
+
+# Example
+```
+julia> HTTP.stack2layers(Stack{BasicAuthLayer}(Stack{RetryLayer}(nothing)))
+[BasicAuthLayer, RetryLayer]
+```
+"""
+function stack2layers(stack::Stack)
+    stack.next === nothing && return [stacktype(stack)]
+    layers = Type{<:Layer}[]
+    element = stack
+    while true
+        push!(layers, stacktype(element))
+        element = element.next
+        element === nothing && break
+    end
+    return layers
 end
 
 """
@@ -622,7 +676,7 @@ function stack(;redirect=true,
                             StreamLayer{Union{}}
     }}}}}}}}}}}}::DataType
 
-    s = Union{Missing,Type}[
+    layers = Union{Type{<:HTTP.Layer},Missing}[
         redirect ? RedirectLayer : missing,
         BasicAuthLayer,
         detect_content_type ? ContentTypeDetectionLayer : missing,
@@ -638,10 +692,9 @@ function stack(;redirect=true,
         StreamLayer,
         Union{}
     ]
-    s = collect(skipmissing(s))
-    # Type stable return value.
+    layers = collect(skipmissing(layers))
     # TODO: Reimplement the Layers.EXTRA_LAYERS again.
-    return s
+    return layers
     @show next(s)
 
     if !isempty(Layers.EXTRA_LAYERS)

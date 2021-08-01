@@ -2,9 +2,21 @@ include("../src/exceptions.jl")
 
 using ..TestRequest
 
+@testset "Stack - Layers Conversions" begin
+    single_layer = Type{<:HTTP.Layers.Layer}[BasicAuthLayer]
+    single_stack = Stack{BasicAuthLayer}(nothing)
+    @test HTTP.layers2stack(single_layer) == single_stack
+    @test HTTP.stack2layers(single_stack) == single_layer
+
+    layers = Type{<:HTTP.Layers.Layer}[BasicAuthLayer, RetryLayer, DebugLayer]
+    stack = Stack{BasicAuthLayer}(Stack{RetryLayer}(Stack{DebugLayer}(nothing)))
+    @test HTTP.layers2stack(layers) == stack
+    @test HTTP.stack2layers(stack) == layers
+end
+
 @testset "HTTP Stack Inserting" begin
+
     @testset "Insert - Beginning" begin
-        expected = TestLayer{RedirectLayer{BasicAuthLayer{MessageLayer{RetryLayer{ExceptionLayer{ConnectionPoolLayer{StreamLayer{Union{}}}}}}}}}
         result = insert(stack(), RedirectLayer, TestLayer)
 
         @test expected == result

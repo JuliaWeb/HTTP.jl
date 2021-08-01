@@ -84,7 +84,7 @@ top_layer(::Type{T}) where T <: Layer = T.name.wrapper
 top_layer(::Type{Union{}}) = Union{}
 
 """
-    insert(stack::Type{<:Layer}, layer_before::Type{<:Layer}, custom_layer::Type{<:Layer})
+    insert(stack, layer_before::Type{<:Layer}, custom_layer::Type{<:Layer})
 
 Insert your `custom_layer` in-front of the `layer_before`
 
@@ -92,14 +92,14 @@ Example:
 stack = MessageLayer{ConnectionPoolLayer{StreamLayer{Union{}}}
 result = insert(stack, MessageLayer, TestLayer)  # TestLayer{MessageLayer{ConnectionPoolLayer{StreamLayer{Union{}}}}}
 """
-function insert(stack::Type{<:Layer}, layer_before::Type{<:Layer}, custom_layer::Type{<:Layer})
+function insert(stack, layer_before::Type{<:Layer}, custom_layer::Type{<:Layer})
     new_stack = Union
     head_layer = top_layer(stack)
     rest_stack = stack
 
     while true
         if head_layer === layer_before
-            return new_stack{custom_layer{rest_stack}}
+            return 1 # Stack{custom_layer}(rest_stack)
         else
             head_layer === Union{} && break
             new_stack = new_stack{head_layer{T}} where T
