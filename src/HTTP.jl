@@ -462,6 +462,25 @@ include("ContentTypeRequest.jl");       using .ContentTypeDetection
 include("exceptions.jl")
 
 """
+    Stack{L<:Layer}
+
+Struct containing the layer `L` to dispatch on with `request` and the next element to
+dispatch on `next`.
+These stacks are created by `HTTP.stack`.
+
+# Example
+
+```
+julia> s1 = Stack{RetryLayer}(Stack{BasicAuthLayer}(nothing))
+
+julia> s2 = Stack{RetryLayer}(nothing)
+```
+"""
+struct Stack{T<:Layer}
+    next::Union{Stack,Nothing}
+end
+
+"""
 The `stack()` function returns the default HTTP Layer-stack type.
 This type is passed as the first parameter to the [`HTTP.request`](@ref) function.
 
