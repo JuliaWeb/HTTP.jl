@@ -4,20 +4,12 @@ authors = ["Jacob Quinn", "Sam O'Connor", "contributors: https://github.com/Juli
 version = "0.9.13"
 
 [deps]
-AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
-BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 IniFile = "83e8ac13-25f8-5344-8a64-a9f2b223428f"
-JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
-JETTest = "a79fb612-4a80-4749-a9bd-c2faab13da61"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 MbedTLS = "739be429-bea8-5141-9913-cc70e7f3736d"
-MethodAnalysis = "85b6ec6f-f7df-4429-9514-a64bcd9ee824"
 NetworkOptions = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
-ProfileSVG = "132c30aa-f267-4189-9183-c8a63c7e05e6"
-PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
-SnoopCompile = "aa65fe97-06da-5843-b5b1-d5d13cad87d2"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 
