@@ -338,15 +338,6 @@ function request(stack::Stack, method, url, h=Header[], b=nobody;
 end
 
 """
-    request(stack::Stack, io, req, body; kw...)
-
-Fallback for unknown types L in Stack{L}.
-"""
-function request(stack::Stack, io, req, body; kw...)
-    return request(stack.next, io, req, body; kw...)
-end
-
-"""
     request(stack::Nothing, resp::Response)::Response
 
 Return resp.

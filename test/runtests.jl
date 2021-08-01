@@ -27,11 +27,9 @@ include("resources/TestRequest.jl")
         file = joinpath(dir, f)
         println("Running $file tests...")
         if isfile(file)
-            # include(file)
+            include(file)
         else
             @show readdir(dirname(file))
         end
     end
-    # TODO: Set file back in the loop
-    include("stack.jl")
 end
