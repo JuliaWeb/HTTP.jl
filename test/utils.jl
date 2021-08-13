@@ -47,10 +47,10 @@ import HTTP.URIs
         @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") === nothing
     end
     withenv("HTTPS_PROXY"=>"https://user:pass@server:80") do
-        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") === "https://user:pass@server:80"
+        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == "https://user:pass@server:80"
     end
     withenv("https_proxy"=>"https://user:pass@server:80") do
-        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") === "https://user:pass@server:80"
+        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == "https://user:pass@server:80"
     end
 
     withenv("HTTP_PROXY"=>nothing, "http_proxy"=>nothing) do
