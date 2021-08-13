@@ -22,10 +22,10 @@ function try_get_filename_from_headers(resp)
         # extract out of Content-Disposition line
         # rough version of what is needed in https://github.com/JuliaWeb/HTTP.jl/issues/179
         filename_part = match(r"filename\s*=\s*(.*)", content_disp)
-        if filename_part != nothing
+        if filename_part !== nothing
             filename = filename_part[1]
             quoted_filename = match(r"\"(.*)\"", filename)
-            if quoted_filename != nothing
+            if quoted_filename !== nothing
                 # It was in quotes, so it will be double escaped
                 filename = unescape_string(quoted_filename[1])
             end
