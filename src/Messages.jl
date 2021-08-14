@@ -113,7 +113,7 @@ mutable struct Response <: Message
     @doc """
         Response(status::Int, headers=[]; body=UInt8[], request=nothing) -> HTTP.Response
     """
-    function Response(status::Int, headers=[]; body=UInt8[], request=nothing)
+    function Response(status::Integer, headers=[]; body=UInt8[], request=nothing)
         r = new()
         r.version = v"1.1"
         r.status = status

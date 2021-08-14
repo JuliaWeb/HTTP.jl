@@ -62,6 +62,10 @@ using JSON
         @test header(req, "X") == "Y"
     end
 
+    @testset "Response" begin
+        @test HTTP.Response(HTTP.Response(200).status).status == 200
+    end
+
     @testset "Header Append" begin
         append_header(m, h) = appendheader(m, SubString(h[1]) => SubString(h[2]))
 
