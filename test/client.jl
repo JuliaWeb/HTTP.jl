@@ -175,7 +175,11 @@ end
         # canonicalizeheaders
         @test status(HTTP.get("$sch://httpbin.org/ip"; canonicalizeheaders=false)) == 200
     end
+end
 
+if haskey(ENV, "PIE_SOCKET_API_KEY")
+    println("found pie socket api key, running websocket tests")
+    pie_socket_api_key = ENV["PIE_SOCKET_API_KEY"]
     @testset "openraw client method - $socket_protocol" for socket_protocol in ["wss", "ws"]
         # WebSockets require valid headers.
         headers = Dict(
@@ -184,7 +188,7 @@ end
             "Sec-WebSocket-Key" => "dGhlIHNhbXBsZSBub25jZQ==",
             "Sec-WebSocket-Version" => "13")
 
-        socket, response = HTTP.openraw("GET", "$sch://echo.websocket.org", headers)
+        socket, response = HTTP.openraw("GET", "$socket_protocol://free3.piesocket.com/v3/http_test_channel?api_key=$pie_socket_api_key&notify_self", headers)
 
         @test response.status == 101
 
