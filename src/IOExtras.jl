@@ -66,14 +66,37 @@ _doc = """
 
 Signal start/end of write or read operations.
 """
-"$_doc"
-startwrite(io) = nothing
-"$_doc"
-closewrite(io) = nothing
-"$_doc"
-startread(io) = nothing
-"$_doc"
-closeread(io) = nothing
+if isdefined(Base, :startwrite)
+    "$_doc"
+    Base.startwrite(io) = nothing
+else
+    "$_doc"
+    startwrite(io) = nothing
+end
+
+if isdefined(Base, :closewrite)
+    "$_doc"
+    Base.closewrite(io) = nothing
+else
+    "$_doc"
+    closewrite(io) = nothing
+end
+
+if isdefined(Base, :startread)
+    "$_doc"
+    Base.startread(io) = nothing
+else
+    "$_doc"
+    startread(io) = nothing
+end
+
+if isdefined(Base, :closeread)
+    "$_doc"
+    Base.closeread(io) = nothing
+else
+    "$_doc"
+    closeread(io) = nothing
+end
 
 using MbedTLS: SSLContext
 tcpsocket(io::SSLContext)::TCPSocket = io.bio

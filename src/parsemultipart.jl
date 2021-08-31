@@ -11,7 +11,7 @@ const DASH_BYTE = 0x2d # -
 const HTAB_BYTE = 0x09 # \t
 const SPACE_BYTE = 0x20
 const SEMICOLON_BYTE = UInt8(';')
-const CRLFCRLF = [CR_BYTE, LF_BYTE, CR_BYTE, LF_BYTE]
+const CRLFCRLF = (CR_BYTE, LF_BYTE, CR_BYTE, LF_BYTE)
 
 "compare byte buffer `a` from index `i` to index `j` with `b` and check if they are byte-equal"
 function byte_buffers_eq(a, i, j, b)
