@@ -1,11 +1,10 @@
 using Test
 using HTTP
-
+import HTTP.MultiPartParsing: find_multipart_boundary, find_multipart_boundaries, find_header_boundary, parse_multipart_chunk, parse_multipart_body, parse_multipart_form
 
 function generate_test_body()
     Vector{UInt8}("----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"namevalue\"; filename=\"multipart.txt\"\r\nContent-Type: text/plain\r\n\r\nnot much to say\n\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"key1\"\r\n\r\n1\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"key2\"\r\n\r\nkey the second\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"namevalue2\"; filename=\"multipart-leading-newline.txt\"\r\nContent-Type: text/plain\r\n\r\n\nfile with leading newline\n\r\n----------------------------918073721150061572809433--\r\n")
 end
-
 
 function generate_test_request()
     headers = [
@@ -46,12 +45,12 @@ end
 
         # NOTE: this is the start of a "boundary delimiter line" and has two leading
         # '-' characters prepended to the boundary delimiter from Content-Type header
-        delimiter = Vector{UInt8}("----------------------------918073721150061572809433")
+        delimiter = Vector{UInt8}("--------------------------918073721150061572809433")
         body = generate_test_body()
         # length of the delimiter, CRLF, and -1 for the end index to be the LF character
-        endIndexOffset = length(delimiter) + 2 - 1
+        endIndexOffset = length(delimiter) + 4 - 1
 
-        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_multipart_boundary(body, delimiter)
+        (isTerminatingDelimiter, startIndex, endIndex) = find_multipart_boundary(body, delimiter)
         @test !isTerminatingDelimiter
         @test 1 == startIndex
         @test (startIndex + endIndexOffset) == endIndex
@@ -59,22 +58,22 @@ end
         # the remaining "boundary delimiter lines" will have a CRLF preceding them
         endIndexOffset += 2
 
-        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_multipart_boundary(body, delimiter, start = startIndex + 1)
+        (isTerminatingDelimiter, startIndex, endIndex) = find_multipart_boundary(body, delimiter, start = startIndex + 1)
         @test !isTerminatingDelimiter
         @test 175 == startIndex
         @test (startIndex + endIndexOffset) == endIndex
 
-        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_multipart_boundary(body, delimiter, start = startIndex + 3)
+        (isTerminatingDelimiter, startIndex, endIndex) = find_multipart_boundary(body, delimiter, start = startIndex + 3)
         @test !isTerminatingDelimiter
         @test 279 == startIndex
         @test (startIndex + endIndexOffset) == endIndex
 
-        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_multipart_boundary(body, delimiter, start = startIndex + 3)
+        (isTerminatingDelimiter, startIndex, endIndex) = find_multipart_boundary(body, delimiter, start = startIndex + 3)
         @test !isTerminatingDelimiter
         @test 396 == startIndex
         @test (startIndex + endIndexOffset) == endIndex
 
-        (isTerminatingDelimiter, startIndex, endIndex) = HTTP.find_multipart_boundary(body, delimiter, start = startIndex + 3)
+        (isTerminatingDelimiter, startIndex, endIndex) = find_multipart_boundary(body, delimiter, start = startIndex + 3)
         @test isTerminatingDelimiter
         @test 600 == startIndex
         # +2 because of the two additional '--' characters
@@ -108,36 +107,4 @@ end
         @test "text/plain" === multiparts[4].contenttype
         @test "\nfile with leading newline\n" === String(read(multiparts[4].data))
     end
-end
-
-@testset "content_disposition_extract($(v[1])" for v in (
-        ("; filename=abc.txt ; name = xyz", "xyz", "abc.txt"),
-        ("; name=abc ; filename = xyz", "abc", "xyz"),
-        ("""; mno;filename="abc";name=xyz""", "xyz", "abc"),
-        (""";filename="abc";mno;name=xyz""", "xyz", "abc"),
-        (""";filename=   "abc"   ;mno;name=xyz""", "xyz", "abc"),
-        ("; filename=abc.txt ; name = xyz ;", "xyz", "abc.txt"),
-        ("; filename=abc.txt ; name = xyz;", "xyz", "abc.txt"),
-        ("; filename=abc.txt ; name = xyz ; mno", "xyz", "abc.txt"),
-        ("; filename=abc.txt ; name = xyz ; mno ;", "xyz", "abc.txt"),
-        (";name=\"ab\\\"cdef\"","ab\\\"cdef", nothing),
-        (";filename=abc\\;xyz", nothing, "abc\\;xyz"),
-        (";filename=\\\"abc;name=xyz", "xyz", "\\\"abc"),
-        (";name=xyz;filename=;mno", "xyz", nothing),
-        (";name=\"xy;z\";filename=;mno", "xy;z", nothing),
-        (";name=\"x=z\";filename=bbb", "x=z", "bbb")
-        )
-    name = nothing
-    filename = nothing
-
-    for (pair, key, value) in HTTP.content_disposition_extract(v[1])
-        if pair && key == "name"
-            name = value
-        elseif pair && key == "filename"
-            filename = value
-        end
-    end
-
-    @test name == v[2]
-    @test filename == v[3]
 end

@@ -1,9 +1,27 @@
+module MultiPartParsing
+
+import ..access_threaded, ..Request, ..Multipart, ..payload
+using ..Parsers
+
+export parse_multipart_form
+
 const CR_BYTE = 0x0d # \r
 const LF_BYTE = 0x0a # \n
 const DASH_BYTE = 0x2d # -
 const HTAB_BYTE = 0x09 # \t
 const SPACE_BYTE = 0x20
-const RETURN_BYTES = [CR_BYTE, LF_BYTE]
+const SEMICOLON_BYTE = UInt8(';')
+const CRLFCRLF = [CR_BYTE, LF_BYTE, CR_BYTE, LF_BYTE]
+
+"compare byte buffer `a` from index `i` to index `j` with `b` and check if they are byte-equal"
+function byte_buffers_eq(a, i, j, b)
+    l = 1
+    @inbounds for k = i:j
+        a[k] == b[l] || return false
+        l += 1
+    end
+    return true
+end
 
 """
     find_multipart_boundary(bytes, boundaryDelimiter; start::Int=1)
@@ -11,7 +29,7 @@ const RETURN_BYTES = [CR_BYTE, LF_BYTE]
 Find the first and last index of the next boundary delimiting a part, and if
 the discovered boundary is the terminating boundary.
 """
-function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::AbstractVector{UInt8}; start::Int=1)
+@inline function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::AbstractVector{UInt8}; start::Int=1)
     # The boundary delimiter line is prepended with two '-' characters
     # The boundary delimiter line starts on a new line, so must be preceded by a \r\n.
     # The boundary delimiter line ends with \r\n, and can have "optional linear whitespace" between
@@ -20,26 +38,26 @@ function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter
     # [RFC2046 5.1.1](https://tools.ietf.org/html/rfc2046#section-5.1.1)
 
     i = start
-    end_index = i+length(boundaryDelimiter)-1
+    end_index = i + length(boundaryDelimiter) + 1
     while end_index <= length(bytes)
-        if bytes[i:end_index] == boundaryDelimiter
+        if bytes[i] == DASH_BYTE && bytes[i + 1] == DASH_BYTE && byte_buffers_eq(bytes, i + 2, end_index, boundaryDelimiter)
             # boundary delimiter line start on a new line ...
             if i > 1
                 (i == 2 || bytes[i-2] != CR_BYTE || bytes[i-1] != LF_BYTE) && error("boundary delimiter found, but it was not the start of a line")
                 # the CRLF preceding the boundary delimiter is "conceptually attached
                 # to the boundary", so account for this with the index
-                i-=2
+                i -= 2
             end
 
             # need to check if there are enough characters for the CRLF or for two dashes
             end_index < length(bytes)-1 || error("boundary delimiter found, but did not end with new line")
 
             is_terminating_delimiter = bytes[end_index+1] == DASH_BYTE && bytes[end_index+2] == DASH_BYTE
-            is_terminating_delimiter && (end_index+=2)
+            is_terminating_delimiter && (end_index += 2)
 
             # ... there can be arbitrary SP and HTAB space between the boundary delimiter ...
-            while (end_index < length(bytes) && (bytes[end_index+1] in [HTAB_BYTE, SPACE_BYTE]))
-                end_index+=1
+            while end_index < length(bytes) && (bytes[end_index+1] in (HTAB_BYTE, SPACE_BYTE))
+                end_index += 1
             end
             # ... and ends with a new line
             newlineEnd = end_index < length(bytes)-1 &&
@@ -89,107 +107,45 @@ start index(1) and the end index. Headers are separated from the body by CRLFCRL
 [RFC822 3.1](https://tools.ietf.org/html/rfc822#section-3.1)
 """
 function find_header_boundary(bytes::AbstractVector{UInt8})
-    delimiter = UInt8[CR_BYTE, LF_BYTE, CR_BYTE, LF_BYTE]
-    length(delimiter) > length(bytes) && (return nothing)
+    length(CRLFCRLF) > length(bytes) && return nothing
 
-    l = length(bytes) - length(delimiter) + 1
+    l = length(bytes) - length(CRLFCRLF) + 1
     i = 1
-    end_index = length(delimiter)
+    end_index = length(CRLFCRLF)
     while (i <= l)
-        bytes[i:end_index] == delimiter && (return (1, end_index))
+        byte_buffers_eq(bytes, i, end_index, CRLFCRLF) && return (1, end_index)
         i += 1
         end_index += 1
     end
     error("no delimiter found separating header from multipart body")
 end
 
-"""
-    content_disposition_tokenize(str)
-
-Tokenize the "arguments" for the Content-Disposition declaration.  A vector of
-strings is returned that contains each token and separator found in the source
-string. Tokens are separated by either an equal sign(=) or a semi-colon(;) and
-may be quoted or escaped with a backslash(\\). All tokens returned are stripped
-of whitespace at the beginning and end of the string, quotes are retained.
-"""
-function content_disposition_tokenize(str)
-    retval = Vector{SubString}()
-    start = 1
-    quotes = false
-    escaped = false
-
-    for offset in eachindex(str)
-        if escaped == false
-            if quotes == true && str[offset] == '"'
-                quotes = false
-            elseif str[offset] == '\\'
-                escaped = true
-            elseif str[offset] == '"'
-                quotes = true
-            elseif quotes == false && (str[offset] == ';' || str[offset] == '=')
-                prev = prevind(str, offset)
-                if prev > start
-                    push!(retval, strip(SubString(str, start, prev)))
-                end
-                push!(retval, SubString(str, offset, offset))
-                start = nextind(str, offset)
-            end
-        else
-            escaped = false
-        end
-    end
-
-    if start != lastindex(str)
-        push!(retval, strip(SubString(str, start)))
-    end
-
-    return retval
+const content_disposition_regex = Parsers.RegexAndMatchData[]
+function content_disposition_regex_f()
+    r = Parsers.RegexAndMatchData(r"^Content-Disposition:[ \t]*form-data;[ \t]*(.*)\r\n"x)
+    Parsers.init!(r)
 end
 
-"""
-    content_disposition_extract(str)
+const content_disposition_flag_regex = Parsers.RegexAndMatchData[]
+function content_disposition_flag_regex_f()
+    r = Parsers.RegexAndMatchData(r"""^
+    [ \t]*([!#$%&'*+\-.^_`|~[:alnum:]]+);?
+    """x)
+    Parsers.init!(r)
+end
 
-Extract all the flags and key/value arguments from the Content-Disposition
-line.  The result is returned as an array of tuples.
+const content_disposition_pair_regex = Parsers.RegexAndMatchData[]
+function content_disposition_pair_regex_f()
+    r = Parsers.RegexAndMatchData(r"""^
+    [ \t]*([!#$%&'*+\-.^_`|~[:alnum:]]+)[ \t]*=[ \t]*"(.*?)";?
+    """x)
+    Parsers.init!(r)
+end
 
-In the case of a flag the first value of the tuple is false the second value
-is the flag and the third value is nothing.
-
-In the case of a key/value argument the first value is true, the second is the
-key, and the third is the value (or nothing if no value was specified).
-"""
-function content_disposition_extract(str)
-    retval = Vector{Tuple{Bool, SubString, Union{SubString,Nothing}}}()
-    tokens = content_disposition_tokenize(str)
-    total  = length(tokens)
-
-    function strip_quotes(val)
-        if val[1] == '"' && val[end] == '"'
-            SubString(val, 2, lastindex(val) - 1)
-        else
-            val
-        end
-    end
-
-    i = 1
-    while i < total
-        if tokens[i] != ';'
-            pair  = (i + 1 <= total && tokens[i + 1] == "=")
-            key   = strip_quotes(tokens[i])
-            value = (pair && i + 2 <= total && tokens[i + 2] != ";" ? strip_quotes(tokens[i + 2]) : nothing)
-
-            push!(retval, (pair, key, value))
-
-            if pair
-                i += 3
-            else
-                i += 1
-            end
-        else
-            i += 1
-        end
-    end
-    return retval
+const content_type_regex = Parsers.RegexAndMatchData[]
+function content_type_regex_f()
+    r = Parsers.RegexAndMatchData(r"(?i)Content-Type: (\S*[^;\s])"x)
+    Parsers.init!(r)
 end
 
 """
@@ -199,33 +155,46 @@ Parse a single multi-part chunk into a Multipart object.  This will decode
 the header and extract the contents from the byte array.
 """
 function parse_multipart_chunk(chunk)
-    (startIndex, end_index) = find_header_boundary(chunk)
-
-    headers = String(view(chunk, startIndex:end_index))
+    startIndex, end_index = find_header_boundary(chunk)
+    header = SubString(unsafe_string(pointer(chunk, startIndex), end_index - startIndex + 1))
     content = view(chunk, end_index+1:lastindex(chunk))
 
-    disposition = match(r"(?i)Content-Disposition: form-data(.*)\r\n", headers)
-
-    if disposition === nothing
-        @warn "Content disposition is not specified dropping the chunk." chunk
-        return # Specifying content disposition is mandatory
+    # find content disposition
+    re = access_threaded(content_disposition_regex_f, content_disposition_regex)
+    if !Parsers.exec(re, header)
+        @warn "Content disposition is not specified dropping the chunk." String(chunk)
+        return nothing # Specifying content disposition is mandatory
     end
+    content_disposition = Parsers.group(1, re, header)
 
+    re_flag = access_threaded(content_disposition_flag_regex_f, content_disposition_flag_regex)
+    re_pair = access_threaded(content_disposition_pair_regex_f, content_disposition_pair_regex)
     name = nothing
     filename = nothing
-
-    for (pair, key, value) in content_disposition_extract(disposition[1])
-        if pair && key == "name"
-            name = value
-        elseif pair && key == "filename"
-            filename = value
+    while !isempty(content_disposition)
+        if Parsers.exec(re_pair, content_disposition)
+            key = Parsers.group(1, re_pair, content_disposition)
+            value = Parsers.group(2, re_pair, content_disposition)
+            if key == "name"
+                name = value
+            elseif key == "filename"
+                filename = value
+            else
+                # do stuff with other content disposition key-value pairs
+            end
+            content_disposition = Parsers.nextbytes(re_pair, content_disposition)
+        elseif Parsers.exec(re_flag, content_disposition)
+            # do stuff with content disposition flags
+            content_disposition = Parsers.nextbytes(re_flag, content_disposition)
+        else
+            break
         end
     end
 
     name === nothing && return
 
-    match_contenttype = match(r"(?i)Content-Type: (\S*[^;\s])", headers)
-    contenttype = match_contenttype !== nothing ? match_contenttype[1] : "text/plain" # if content_type is not specified, the default text/plain is assumed
+    re_ct = access_threaded(content_type_regex_f, content_type_regex)
+    contenttype = Parsers.exec(re_ct, header) ? Parsers.group(1, re_ct, header) : "text/plain"
 
     return Multipart(filename, IOBuffer(content), contenttype, "", name)
 end
@@ -238,7 +207,7 @@ chunks which are returned as an array of Multipart objects.
 """
 function parse_multipart_body(body::AbstractVector{UInt8}, boundary::AbstractString)::Vector{Multipart}
     multiparts = Multipart[]
-    idxs = find_multipart_boundaries(body, Vector{UInt8}("--$(boundary)"))
+    idxs = find_multipart_boundaries(body, codeunits(boundary))
     length(idxs) > 1 || (return multiparts)
 
     for i in 1:length(idxs)-1
@@ -275,3 +244,13 @@ function parse_multipart_form(req::Request)::Union{Vector{Multipart}, Nothing}
 
     return parse_multipart_body(payload(req), boundary_delimiter)
 end
+
+function __init__()
+    resize!(empty!(content_disposition_regex), Threads.nthreads())
+    resize!(empty!(content_disposition_flag_regex), Threads.nthreads())
+    resize!(empty!(content_disposition_pair_regex), Threads.nthreads())
+    resize!(empty!(content_type_regex), Threads.nthreads())
+    return
+end
+
+end # module MultiPartParsing
