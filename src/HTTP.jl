@@ -626,4 +626,7 @@ function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
     return m
 end
 
+include("precompile.jl")
+_precompile_()
+
 end # module
