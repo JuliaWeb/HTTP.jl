@@ -29,7 +29,7 @@ end
 Find the first and last index of the next boundary delimiting a part, and if
 the discovered boundary is the terminating boundary.
 """
-@inline function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::AbstractVector{UInt8}; start::Int=1)
+function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::AbstractVector{UInt8}; start::Int=1)
     # The boundary delimiter line is prepended with two '-' characters
     # The boundary delimiter line starts on a new line, so must be preceded by a \r\n.
     # The boundary delimiter line ends with \r\n, and can have "optional linear whitespace" between
