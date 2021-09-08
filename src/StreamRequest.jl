@@ -146,7 +146,6 @@ function readbody(http::Stream, res::Response, response_stream, reached_redirect
         if reached_redirect_limit || !isredirect(res)
             res.body = body_was_streamed
             write(response_stream, http)
-            close(response_stream)
         end
     end
 end
