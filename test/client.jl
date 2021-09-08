@@ -69,8 +69,9 @@ end
         a = [JSON.parse(l) for l in split(chomp(String(bytes)), "\n")]
         totallen = length(bytes) # number of bytes to expect
 
-        io = Base.BufferStream()
+        io = IOBuffer()
         r = HTTP.get("$sch://httpbin.org/stream/100"; response_stream=io)
+        seekstart(io)
         @test status(r) == 200
 
         b = [JSON.parse(l) for l in eachline(io)]
