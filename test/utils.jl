@@ -69,3 +69,14 @@ import HTTP.URIs
         @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == "http://user:pass@server:80"
     end
 end # testset
+
+
+@testset "debug.jl" begin
+    function foo(x, y)
+        HTTP.@require x > 10
+        HTTP.@ensure y > 10
+    end
+
+    @test_throws ArgumentError("foo() requires `x > 10`") foo(1, 11)
+    @test_throws AssertionError("foo() failed to ensure `y > 10`\ny = 1\n10 = 10") foo(11, 1)
+end

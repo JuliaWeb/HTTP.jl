@@ -25,22 +25,15 @@ end
 sprintcompact(x) = sprint(show, x; context=:compact => true)
 printlncompact(x) = println(sprintcompact(x))
 
-
-function method_name(bt)
-    for f in bt
-        for i in StackTraces.lookup(f)
-            n = sprint(StackTraces.show_spec_linfo, i)
-            if n != "macro expansion"
-                return n
-            end
-        end
-    end
-    return "unknown method"
+# Get the calling function. See https://github.com/JuliaLang/julia/issues/6733
+# (The macro form @__FUNCTION__ is hard to escape correctly, so just us a function.)
+function _funcname_expr()
+    return :($(esc(Expr(:isdefined, Symbol("#self#")))) ? nameof($(esc(Symbol("#self#")))) : nothing)
 end
 
-@noinline function precondition_error(msg, bt)
-    msg = string(method_name(bt), " requires ", msg)
-    return ArgumentError(msg)
+@noinline function precondition_error(msg, calling_funcname)
+    calling_funcname = calling_funcname === nothing ? "unknown" : calling_funcname
+    return ArgumentError("$calling_funcname() requires $msg")
 end
 
 
@@ -48,13 +41,13 @@ end
     @require precondition [message]
 Throw `ArgumentError` if `precondition` is false.
 """
-macro require(condition, msg = string(condition))
-    esc(:(if ! $condition throw(precondition_error($msg, backtrace())) end))
+macro require(condition, msg = "`$condition`")
+    :(if ! $(esc(condition)) throw(precondition_error($(esc(msg)), $(_funcname_expr()))) end)
 end
 
-
-@noinline function postcondition_error(msg, bt, ls="", l="", rs="", r="")
-    msg = string(method_name(bt), " failed to ensure ", msg)
+@noinline function postcondition_error(msg, calling_funcname, ls="", l="", rs="", r="")
+    calling_funcname = calling_funcname === nothing ? "unknown" : calling_funcname
+    msg = "$calling_funcname() failed to ensure $msg"
     if ls != ""
         msg = string(msg, "\n", ls, " = ", sprint(show, l),
                           "\n", rs, " = ", sprint(show, r))
@@ -79,7 +72,7 @@ iscondition(ex) = isa(ex, Expr) &&
     @ensure postcondition [message]
 Throw `ArgumentError` if `postcondition` is false.
 """
-macro ensure(condition, msg = string(condition))
+macro ensure(condition, msg = "`$condition`")
 
     if DEBUG_LEVEL[] < 0
         return :()
@@ -88,14 +81,14 @@ macro ensure(condition, msg = string(condition))
     if iscondition(condition)
         l,r = condition.args[2], condition.args[3]
         ls, rs = string(l), string(r)
-        return esc(quote
-            if ! $condition
+        return quote
+            if ! $(esc(condition))
                 # FIXME double-execution of condition l and r!
-                throw(postcondition_error($msg, backtrace(),
-                                          $ls, $l, $rs, $r))
+                throw(postcondition_error($(esc(msg)), $(_funcname_expr()),
+                                          $ls, $(esc(l)), $rs, $(esc(r))))
             end
-        end)
+        end
     end
 
-    esc(:(if ! $condition throw(postcondition_error($msg, backtrace())) end))
+    :(if ! $(esc(condition)) throw(postcondition_error($(esc(msg)), $(_funcname_expr()))) end)
 end
