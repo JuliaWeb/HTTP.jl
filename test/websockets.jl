@@ -20,7 +20,7 @@ using Sockets
         end
     end
 
-    if haskey(ENV, "PIE_SOCKET_API_KEY")
+    if !isempty(get(ENV, "PIE_SOCKET_API_KEY", ""))
         println("found pie socket api key, running External Host websocket tests")
         pie_socket_api_key = ENV["PIE_SOCKET_API_KEY"]
         @testset "External Host - $s" for s in socket_type
