@@ -179,6 +179,9 @@ end
 end
 
 if haskey(ENV, "PIE_SOCKET_API_KEY")
+    @info "" haskey(ENV, "PIE_SOCKET_API_KEY")
+    @info "" length(ENV["PIE_SOCKET_API_KEY"])
+    @info "" length(strip(ENV["PIE_SOCKET_API_KEY"]))
     println("found pie socket api key, running websocket tests")
     pie_socket_api_key = ENV["PIE_SOCKET_API_KEY"]
     @testset "openraw client method - $socket_protocol" for socket_protocol in ["wss", "ws"]
