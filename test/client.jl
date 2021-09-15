@@ -178,9 +178,13 @@ end
     end
 end
 
+@show ENV["PIE_SOCKET_API_KEY"]
+@show Base64.base64encode(ENV["PIE_SOCKET_API_KEY"])
+
 if !isempty(strip(get(ENV, "PIE_SOCKET_API_KEY", "")))
     println("found pie socket api key, running websocket tests")
     pie_socket_api_key = ENV["PIE_SOCKET_API_KEY"]
+    error("fast fail")
     @testset "openraw client method - $socket_protocol" for socket_protocol in ["wss", "ws"]
         # WebSockets require valid headers.
         headers = Dict(
