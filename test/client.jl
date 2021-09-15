@@ -179,6 +179,8 @@ end
 end
 
 @show ENV["PIE_SOCKET_API_KEY"]
+@show Vector{UInt8}(ENV["PIE_SOCKET_API_KEY"])
+import Base64
 @show Base64.base64encode(ENV["PIE_SOCKET_API_KEY"])
 
 if !isempty(strip(get(ENV, "PIE_SOCKET_API_KEY", "")))
