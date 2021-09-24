@@ -4,6 +4,7 @@ import ..Dates
 import ..Layer, ..request
 using URIs
 using ..Cookies
+using ..Messages: ascii_lc_isequal
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL, ..access_threaded
 
@@ -72,7 +73,8 @@ function getcookies(cookies, url)
 end
 
 function setcookies(cookies, host, headers)
-    for (k,v) in filter(x->x[1]=="Set-Cookie", headers)
+    for (k, v) in headers
+        ascii_lc_isequal(k, "set-cookie") || continue
         @debug 1 "Set-Cookie: $v (from $host)"
         push!(cookies, Cookies.readsetcookie(host, v))
     end
