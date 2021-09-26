@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.9.15] - 2021-09-27
 ### Changed
 - HTTP.jl no longer calls `close` on streams given with the `response_stream` keyword
   argument to `HTTP.request` and friends. If it is required to close the stream
@@ -140,7 +142,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.14...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.15...HEAD
+[0.9.15]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.14...v0.9.15
 [0.9.14]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.13...v0.9.14
 [0.9.13]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.12...v0.9.13
 [0.9.12]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.11...v0.9.12
