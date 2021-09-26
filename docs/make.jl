@@ -83,4 +83,7 @@ makedocs(
     ],
 )
 
-deploydocs(repo = "github.com/JuliaWeb/HTTP.jl.git")
+deploydocs(
+    repo = "github.com/JuliaWeb/HTTP.jl.git",
+    push_preview = true,
+)
