@@ -53,6 +53,7 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
         env:
           PIE_SOCKET_API_KEY: ${{ secrets.PIE_SOCKET_API_KEY }}
+          JULIA_VERSION: ${{ matrix.version }}
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v1
         with:
