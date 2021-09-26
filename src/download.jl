@@ -16,9 +16,8 @@ function safer_joinpath(basepart, parts...)
     joinpath(basepart, parts...)
 end
 
-function try_get_filename_from_headers(resp)
-    content_disp = header(resp, "Content-Disposition")
-    if content_disp != ""
+function try_get_filename_from_headers(hdrs)
+    for content_disp in hdrs
         # extract out of Content-Disposition line
         # rough version of what is needed in https://github.com/JuliaWeb/HTTP.jl/issues/179
         filename_part = match(r"filename\s*=\s*(.*)", content_disp)
@@ -55,16 +54,16 @@ function try_get_filename_from_request(req)
 end
 
 
-determine_file(::Nothing, resp) = determine_file(tempdir(), resp)
+determine_file(::Nothing, resp, hdrs) = determine_file(tempdir(), resp, hdrs)
 # ^ We want to the filename if possible because extension is useful for FileIO.jl
 
-function determine_file(path, resp)
+function determine_file(path, resp, hdrs)
     # get the name
     name = if isdir(path)
         # we have been given a path to a directory
         # got to to workout what file to put there
         filename = something(
-                        try_get_filename_from_headers(resp),
+                        try_get_filename_from_headers(hdrs),
                         try_get_filename_from_request(resp.request),
                         basename(tempname())  # fallback, basically a random string
                     )
@@ -107,11 +106,15 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
 
     @debug 1 "downloading $url"
     local file
+    hdrs = String[]
     HTTP.open("GET", url, headers; kw...) do stream
         resp = startread(stream)
+        # Store intermediate header from redirects to use for filename detection
+        content_disp = header(resp, "Content-Disposition")
+        !isempty(content_disp) && push!(hdrs, content_disp)
         eof(stream) && return  # don't do anything for streams we can't read (yet)
 
-        file = determine_file(local_path, resp)
+        file = determine_file(local_path, resp, hdrs)
         total_bytes = parse(Float64, header(resp, "Content-Length", "NaN"))
         downloaded_bytes = 0
         start_time = now()
