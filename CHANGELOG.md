@@ -5,6 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- HTTP.jl no longer calls `close` on streams given with the `response_stream` keyword
+  argument to `HTTP.request` and friends. If it is required to close the stream
+  after the request you now have to do it manually, e.g.
+  ```julia
+  io = ...
+  HTTP.request(...; response_stream = io)
+  close(io)
+  ```
+  ([#543], [#752]).
+- The `Content-Type` header for requests with `HTTP.Form` bodies is now automatically
+  set also for `PUT` requests (just like `POST` requests) ([#770], [#740]).
+### Fixed
+- Fix faulty error messages from an internal macro ([#753]).
+- Silence ECONNRESET errors on more systems ([#547], [#763], [#764]).
+- Use `Content-Disposition` from original request in case of a 3xx response ([#760], [#761]).
+- Fix cookie handling to be case-insensitive for `Set-Cookie` headers ([#765], [#766]).
 
 ## [0.9.14] - 2021-08-31
 ### Changed
@@ -141,7 +158,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.9.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.8.19...v0.9.0
 
 
+[#543]: https://github.com/JuliaWeb/HTTP.jl/pull/543
 [#546]: https://github.com/JuliaWeb/HTTP.jl/pull/546
+[#547]: https://github.com/JuliaWeb/HTTP.jl/pull/547
 [#599]: https://github.com/JuliaWeb/HTTP.jl/pull/599
 [#601]: https://github.com/JuliaWeb/HTTP.jl/pull/601
 [#602]: https://github.com/JuliaWeb/HTTP.jl/pull/602
@@ -178,7 +197,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#725]: https://github.com/JuliaWeb/HTTP.jl/pull/725
 [#727]: https://github.com/JuliaWeb/HTTP.jl/pull/727
 [#730]: https://github.com/JuliaWeb/HTTP.jl/pull/730
-[#737]: https://github.com/JuliaWeb/HTTP.jl/pull/737
 [#734]: https://github.com/JuliaWeb/HTTP.jl/pull/734
+[#737]: https://github.com/JuliaWeb/HTTP.jl/pull/737
+[#740]: https://github.com/JuliaWeb/HTTP.jl/pull/740
 [#742]: https://github.com/JuliaWeb/HTTP.jl/pull/742
 [#745]: https://github.com/JuliaWeb/HTTP.jl/pull/745
+[#752]: https://github.com/JuliaWeb/HTTP.jl/pull/752
+[#753]: https://github.com/JuliaWeb/HTTP.jl/pull/753
+[#760]: https://github.com/JuliaWeb/HTTP.jl/pull/760
+[#761]: https://github.com/JuliaWeb/HTTP.jl/pull/761
+[#763]: https://github.com/JuliaWeb/HTTP.jl/pull/763
+[#764]: https://github.com/JuliaWeb/HTTP.jl/pull/764
+[#765]: https://github.com/JuliaWeb/HTTP.jl/pull/765
+[#766]: https://github.com/JuliaWeb/HTTP.jl/pull/766
+[#770]: https://github.com/JuliaWeb/HTTP.jl/pull/770
