@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.14] - 2021-08-31
+### Changed
+- Improved memory use and performance of multipart parsing ([#745]).
+### Fixed
+- `HTTP.Response` now accept any `Integer` as the return status (not just `Int`) ([#734], [#742]).
+
 ## [0.9.13] - 2021-08-01
 ### Changed
 - The call stack now has a `TopLayer` inserted at the top to simplify adding new layers at
@@ -117,7 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.13...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.14...HEAD
+[0.9.14]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.13...v0.9.14
 [0.9.13]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.12...v0.9.13
 [0.9.12]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.11...v0.9.12
 [0.9.11]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.10...v0.9.11
@@ -172,3 +179,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#727]: https://github.com/JuliaWeb/HTTP.jl/pull/727
 [#730]: https://github.com/JuliaWeb/HTTP.jl/pull/730
 [#737]: https://github.com/JuliaWeb/HTTP.jl/pull/737
+[#734]: https://github.com/JuliaWeb/HTTP.jl/pull/734
+[#742]: https://github.com/JuliaWeb/HTTP.jl/pull/742
+[#745]: https://github.com/JuliaWeb/HTTP.jl/pull/745
