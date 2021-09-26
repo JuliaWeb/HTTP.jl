@@ -314,6 +314,11 @@ Optional keyword arguments:
     per client IP address; excess connections are immediately closed. e.g. 5//1.
  - `stream::Bool=false`, the handler will operate on an `HTTP.Stream` instead of `HTTP.Request`
  - `verbose::Bool=false`, log connection information to `stdout`.
+ - `on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing`, one or
+    more functions to be run if the server is closed (for example by an
+    `InterruptException`). Note, shutdown function(s) will not run if an
+    `IOServer` object is supplied to the `server` keyword argument and closed
+    by `close(server)`.
 
 # Examples
 ```julia

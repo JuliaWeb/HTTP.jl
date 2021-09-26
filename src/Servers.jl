@@ -152,8 +152,9 @@ Optional keyword arguments:
     from. See also [`@logfmt_str`](@ref).
  - `on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing`, one or
     more functions to be run if the server is closed (for example by an
-    `InterruptException`). Note, shutdown function(s) will not run if a
-    `IOServer` object is supplied and closed by `close(server)`.
+    `InterruptException`). Note, shutdown function(s) will not run if an
+    `IOServer` object is supplied to the `server` keyword argument and closed
+    by `close(server)`.
 
 e.g.
 ```julia
