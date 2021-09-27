@@ -2,8 +2,10 @@
     headers = Dict("User-Agent" => "HTTP.jl")
     body = HTTP.Form(Dict())
     uri = "https://httpbin.org/post"
+    uri_put = "https://httpbin.org/put"
     @testset "Setting of Content-Type" begin
-        for r in (HTTP.request("POST", uri, headers, body), HTTP.post(uri, headers, body))
+        for r in (HTTP.request("POST", uri, headers, body), HTTP.post(uri, headers, body),
+                  HTTP.request("PUT", uri_put, headers, body), HTTP.put(uri_put, headers, body))
             @test r.status == 200
             json = JSON.parse(IOBuffer(HTTP.payload(r)))
             @test startswith(json["headers"]["Content-Type"], "multipart/form-data; boundary=")

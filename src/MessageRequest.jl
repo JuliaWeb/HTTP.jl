@@ -55,7 +55,7 @@ function request(::Type{MessageLayer{Next}},
             setheader(headers, "Content-Length" => "0")
         end
     end
-    if !hasheader(headers, "Content-Type") && body isa Form && method == "POST"
+    if !hasheader(headers, "Content-Type") && body isa Form && method in ("POST", "PUT")
         # "Content-Type" => "multipart/form-data; boundary=..."
         setheader(headers, content_type(body))
     end
