@@ -117,11 +117,10 @@ using JSON
         @test r.status == 200
         r1 = JSON.parse(String(r.body))
 
-        io = IOBuffer()
+        io = Base.BufferStream()
         r = request(method, uri, response_stream=io, verbose=1)
-        seekstart(io)
         @test r.status == 200
-        r2 = JSON.parse(io)
+        r2 = JSON.parse(IOBuffer(read(io)))
         for (k, v) in r1
             if k == "headers"
                 for (k2, v2) in r1[k]
@@ -137,7 +136,7 @@ using JSON
 
     @testset "Body - JSON Parse" for protocol in protocols, method in http_writes
         uri = "$protocol://httpbin.org/$(lowercase(method))"
-        io = IOBuffer()
+        io = Base.BufferStream()
         r = request(method, uri, response_stream=io, verbose=1)
         @test r.status == 200
 
