@@ -6,11 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.16] - 2021-09-29
+See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverted.
+[#752] might be included in a future breaking release instead, see [#774].
+
 ## [0.9.15] - 2021-09-27
+**Note:** This release have been pulled back since [#752] turned out to be breaking.
 ### Changed
-- HTTP.jl no longer calls `close` on streams given with the `response_stream` keyword
-  argument to `HTTP.request` and friends. If it is required to close the stream
-  after the request you now have to do it manually, e.g.
+- **Reverted in 0.9.16**
+  HTTP.jl no longer calls `close` on streams given with the `response_stream` keyword
+  argument to `HTTP.request` and friends. If it is required to close the stream after the
+  request you now have to do it manually, e.g.
   ```julia
   io = ...
   HTTP.request(...; response_stream = io)
@@ -142,7 +148,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.15...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.16...HEAD
+[0.9.16]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.15...v0.9.16
 [0.9.15]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.14...v0.9.15
 [0.9.14]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.13...v0.9.14
 [0.9.13]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.12...v0.9.13
@@ -214,3 +221,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#765]: https://github.com/JuliaWeb/HTTP.jl/pull/765
 [#766]: https://github.com/JuliaWeb/HTTP.jl/pull/766
 [#770]: https://github.com/JuliaWeb/HTTP.jl/pull/770
+[#774]: https://github.com/JuliaWeb/HTTP.jl/pull/774
