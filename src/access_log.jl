@@ -3,7 +3,7 @@
 
 Parse an [NGINX-style log format string](https://nginx.org/en/docs/http/ngx_http_log_module.html#log_format)
 and return a function mapping `(io::IO, http::HTTP.Stream) -> body` suitable for passing to
-[`HTTP.listen`](@ref) using the `access_logfmt` keyword argument.
+[`HTTP.listen`](@ref) using the `access_log` keyword argument.
 
 The following variables are currently supported:
 
