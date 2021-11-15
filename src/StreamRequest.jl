@@ -145,7 +145,13 @@ function readbody(http::Stream, res::Response, response_stream, reached_redirect
     else
         if reached_redirect_limit || !isredirect(res)
             res.body = body_was_streamed
-            write(response_stream, read(http)) # use read(http) to ensure ntoread is respected
+            if Streams.ntoread(http) == unknown_length
+                write(response_stream, http)
+            else
+                while http.ntoread > 0
+                    readbytes!(http, response_stream, http.ntoread)
+                end
+            end
             close(response_stream)
         end
     end
