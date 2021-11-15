@@ -79,11 +79,12 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
         end
 
     catch e
-        if write_error !== nothing
-            throw(write_error)
-        else
+        if write_error === nothing
             rethrow(e)
         end
+    end
+    if write_error !== nothing
+        throw(write_error)
     end
 
     # Suppress errors from closing
