@@ -303,8 +303,6 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
     nothing
 end
 
-Base.readbytes!(http::Stream, buf::Base.BufferStream, n=bytesavailable(http)) = Base.readbytes!(http, buf.buffer, n)
-
 function Base.readbytes!(http::Stream, buf::IOBuffer, n=bytesavailable(http))
     Base.ensureroom(buf, n)
     unsafe_read(http, pointer(buf.data, buf.size + 1), n)
