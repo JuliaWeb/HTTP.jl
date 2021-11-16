@@ -311,8 +311,7 @@ function Base.readbytes!(http::Stream, buf::IOBuffer, n=bytesavailable(http))
     buf.size += n
 end
 
-# used in julia v1.0
-function Base.readbytes!(http::Stream, buf::IOStream, n=bytesavailable(http))
+function Base.readbytes!(http::Stream, buf::IO, n=bytesavailable(http))
     nread = 0
     while nread < n
         nread += write(buf, readavailable(http, n - nread))
