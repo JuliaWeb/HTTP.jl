@@ -303,21 +303,10 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
     nothing
 end
 
-Base.readbytes!(http::Stream, buf::Base.BufferStream, n=bytesavailable(http)) = Base.readbytes!(http, buf.buffer, n)
-
 function Base.readbytes!(http::Stream, buf::IOBuffer, n=bytesavailable(http))
     Base.ensureroom(buf, n)
     unsafe_read(http, pointer(buf.data, buf.size + 1), n)
     buf.size += n
-end
-
-# used in julia v1.0
-function Base.readbytes!(http::Stream, buf::IOStream, n=bytesavailable(http))
-    nread = 0
-    while nread < n
-        nread += write(buf, readavailable(http, n - nread))
-    end
-    nread
 end
 
 function Base.read(http::Stream)
