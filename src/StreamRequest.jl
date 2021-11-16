@@ -139,22 +139,16 @@ end
 writechunk(http, req, body::IO) = writebodystream(http, req, body)
 writechunk(http, req, body) = write(http, body)
 
-function readbody(http::Stream, res::Response, ::Nothing, ::Bool)
-    res.body = read(http)
-    return
-end
-
-function readbody(http::Stream, res::Response, response_stream, reached_redirect_limit::Bool)
-    if reached_redirect_limit || !isredirect(res)
-        res.body = body_was_streamed
-        if http.ntoread == unknown_length
+function readbody(http::Stream, res::Response, response_stream, reached_redirect_limit)
+    if response_stream === nothing
+        res.body = read(http)
+    else
+        if reached_redirect_limit || !isredirect(res)
+            res.body = body_was_streamed
             write(response_stream, http)
-        else
-            readbytes!(http, response_stream, http.ntoread)
+            close(response_stream)
         end
-        close(response_stream)
     end
-    return
 end
 
 end # module StreamRequest
