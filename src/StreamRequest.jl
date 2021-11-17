@@ -92,7 +92,8 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
         closewrite(http)
         @debug 2 "client closeread"
         closeread(http)
-    catch;
+    catch e
+        e isa EOFError && rethrow()
     end
 
     verbose == 1 && printlncompact(response)

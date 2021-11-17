@@ -205,10 +205,7 @@ function Base.eof(http::Stream)
     if http.ntoread == 0
         return true
     end
-    if eof(http.stream)
-        return true
-    end
-    return false
+    return eof(http.stream)
 end
 
 @inline function ntoread(http::Stream)
@@ -355,6 +352,8 @@ function IOExtras.closeread(http::Stream{Response})
         # Close conncetion if server sent "Connection: close"...
         @debug 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
+        # Error if Message is not complete...
+        incomplete(http) && throw(EOFError())
     else
 
         # Discard body bytes that were not read...
