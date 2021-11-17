@@ -122,6 +122,30 @@ end
         @test status(HTTP.post("$sch://httpbin.org/post"; body=f, #=chunksize=2=#)) == 200
     end
 
+    @testset "Incomplete response with known content length" begin
+        server = Sockets.listen(ip"0.0.0.0", 8080)
+        task = @async HTTP.listen("0.0.0.0", 8080; server=server) do http
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Length" => "64") # Promise 64 bytes...
+            HTTP.startwrite(http)
+            HTTP.write(http, rand(UInt8, 63)) # ...but only send 63 bytes.
+            # Close the stream so that eof(stream) is true and the client isn't
+            # waiting forever for the last byte.
+            HTTP.close(http.stream)
+        end
+
+        err = try
+            HTTP.get("http://localhost:8080"; retry=false)
+        catch err
+            err
+        end
+        @test err isa HTTP.IOError
+        @test err.e isa EOFError
+
+        # Shutdown
+        try; close(server); wait(task); catch; end
+    end
+
     @testset "ASync Client Request Body" begin
         f = Base.BufferStream()
         write(f, "hey")
