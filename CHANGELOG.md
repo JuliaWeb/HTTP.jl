@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.17] - 2021-11-17
+### Fixed
+- Correctly throw an `EOFError` if the connection is closed with remaining bytes
+  to be transferred ([#778], [#781]).
+
 ## [0.9.16] - 2021-09-29
 See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverted.
 [#752] might be included in a future breaking release instead, see [#774].
@@ -148,7 +153,8 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.16...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.17...HEAD
+[0.9.17]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.16...v0.9.17
 [0.9.16]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.15...v0.9.16
 [0.9.15]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.14...v0.9.15
 [0.9.14]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.13...v0.9.14
@@ -222,3 +228,5 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#766]: https://github.com/JuliaWeb/HTTP.jl/pull/766
 [#770]: https://github.com/JuliaWeb/HTTP.jl/pull/770
 [#774]: https://github.com/JuliaWeb/HTTP.jl/pull/774
+[#778]: https://github.com/JuliaWeb/HTTP.jl/pull/778
+[#781]: https://github.com/JuliaWeb/HTTP.jl/pull/781
