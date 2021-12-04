@@ -61,14 +61,19 @@ end
 # check if an idle `Connection` is still valid to be reused
 function isvalid(pod::Pod{C}, conn::ConnectionTracker{C}) where {C}
     if (time() - conn.idle) > pod.idle
+        println("connection idle timeout")
         # if the connection has been idle too long, close it
         close(conn.conn)
     elseif conn.count >= pod.reuse
+        println("connection over reuse limit")
         # if the connection has been used too many times, close it
         close(conn.conn)
     elseif isopen(conn.conn)
+        println("found a valid connection to reuse")
         # otherwise, if the connection is open, this is a valid connection we can use!
         return true
+    else
+        println("connection no longer open")
     end
     return false
 end
@@ -89,20 +94,26 @@ function acquire(f, pod::Pod)
         # returned, let's check if they're still valid and can be used directly
         while !isempty(pod.conns)
             # Pod connections are FIFO, so grab the earliest returned connection
+            println("checking idle connections for reuse")
             conn = popfirst!(pod.conns)
             if isvalid(pod, conn)
                 # connection is valid! increment its usage count
                 # and move the ConnectionTracker to the `active` Dict tracker
                 conn.count += 1
-                pod.active[connectionid(conn.conn)] = conn
+                id = connectionid(conn.conn)
+                println("returning connection (id='$(id)')")
+                pod.active[id] = conn
                 return conn.conn
             end
         end
         # There were no existing connections able to be reused
         # If there are not too many already-active connections, create new
         if length(pod.active) < pod.max
+            println("no idle connections to reuse; creating new")
             conn = ConnectionTracker(f())
-            pod.active[connectionid(conn.conn)] = conn
+            id = connectionid(conn.conn)
+            println("returning connection (id='$(id)')")
+            pod.active[id] = conn
             return conn.conn
         end
         # If we reach here, there were no valid idle connections and too many
@@ -114,18 +125,24 @@ function acquire(f, pod::Pod)
             # is notified
             conn = wait(pod.lock)
             if conn !== nothing
+                println("connection pool maxxed out; checking recently returned connection validity for reuse")
                 if isvalid(pod, conn)
-                    # connection just returned to the Pod is valid and can be reused
+                    println("connection just returned to the Pod is valid and can be reused")
                     conn.count += 1
-                    pod.active[connectionid(conn.conn)] = conn
+                    id = connectionid(conn.conn)
+                    println("returning connection (id='$(id)')")
+                    pod.active[id] = conn
                     return conn.conn
                 end
             end
             # if the Connection just returned to the Pod wasn't valid, the active
             # count at least went down, so we should be able to create a new one
             if length(pod.active) < pod.max
+                println("connection just returned wasn't valid; creating new")
                 conn = ConnectionTracker(f())
-                pod.active[connectionid(conn.conn)] = conn
+                id = connectionid(conn.conn)
+                println("returning connection (id='$(id)')")
+                pod.active[id] = conn
                 return conn.conn
             end
             # If for some reason there were still too many active connections, let's
@@ -156,12 +173,13 @@ function release(pod::Pod{C}, conn::C; return_for_reuse::Bool=true) where {C}
             # reset the idle timestamp of the ConnectionTracker
             cp_conn.idle = time()
             # now we put the connection back in the pod idle queue
+            println("returning connection (id='$(id)') to pod for reuse")
             push!(pod.conns, cp_conn)
             # and notify our Pod condition that a connection has been returned
             # in order to "wake up" any `wait`ers looking for a new connection
-            notify(pod.lock, cp_conn)
+            notify(pod.lock, cp_conn; all=false)
         else
-            notify(pod.lock, nothing)
+            notify(pod.lock, nothing; all=false)
         end
     finally
         unlock(pod.lock)

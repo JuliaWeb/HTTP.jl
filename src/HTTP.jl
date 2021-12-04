@@ -6,7 +6,7 @@ export startwrite, startread, closewrite, closeread, stack, insert, insert_defau
     RetryLayer, StreamLayer, TimeoutLayer, TopLayer,
     @logfmt_str, common_logfmt, combined_logfmt
 
-const DEBUG_LEVEL = Ref(0)
+const DEBUG_LEVEL = Ref(2)
 
 Base.@deprecate escape escapeuri
 
@@ -613,14 +613,14 @@ include("Handlers.jl")                 ;using .Handlers; using .Handlers: serve
 include("parsemultipart.jl")           ;using .MultiPartParsing: parse_multipart_form
 include("WebSockets.jl")               ;using .WebSockets
 
-import .ConnectionPool: Transaction, Connection
+import .ConnectionPool: Connection
 
 function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
     buffer = Base.BufferStream()
     write(buffer, str)
     close(buffer)
     m = T()
-    http = Stream(m, Transaction(Connection(buffer)))
+    http = Stream(m, Connection(buffer))
     m.body = read(http)
     closeread(http)
     return m
