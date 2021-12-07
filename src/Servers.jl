@@ -411,9 +411,8 @@ function handle_transaction(f, c::Connection, server; final_transaction::Bool=fa
         setheader(request.response, "Connection" => "close")
     end
 
-    @async try
+    try
         f(http)
-
         # If `startwrite()` was never called, throw an error so we send a 500 and log this
         if isopen(http) && !iswritable(http)
             error("Server never wrote a response")
@@ -437,7 +436,7 @@ function handle_transaction(f, c::Connection, server; final_transaction::Bool=fa
         final_transaction = true
     finally
         if server.access_log !== nothing
-            try @info sprint(server.access_log, http) _group=:access; catch end
+            try; @info sprint(server.access_log, http) _group=:access; catch; end
         end
         final_transaction && close(c.io)
     end

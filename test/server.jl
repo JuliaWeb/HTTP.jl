@@ -316,6 +316,7 @@ end # @testset
         sleep(1) # necessary to properly forget the closed connection from the previous call
         try HTTP.get("http://localhost:1234/close"; retry=false) catch end
         HTTP.get("http://localhost:1234", ["Connection" => "close"])
+        sleep(1) # we want to make sure the server has time to finish logging before checking logs
     end
     @test length(logs) == 7
     @test all(x -> x.group === :access, logs)

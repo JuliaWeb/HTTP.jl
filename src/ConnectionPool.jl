@@ -265,6 +265,16 @@ function IOExtras.startread(c::Connection)
 end
 
 """
+Wait for `c` to receive data or reach EOF.
+Close `c` on EOF or if response data arrives when no request was sent.
+"""
+function monitor_idle_connection(c::Connection)
+    if eof(c.io)                                  ;@debug 2 "💀  Closed:     $c"
+        close(c.io)
+    end
+end
+
+"""
     closeread(::Connection)
 
 Signal that an entire Response Message has been read from the `Transaction`.
@@ -273,7 +283,10 @@ function IOExtras.closeread(c::Connection)
     @require isreadable(c)
     c.readable = false
     @debug 2 "✉️  Read done:  $c"
-    c.clientconnection && release(POOL, hashconn(c), c)
+    if c.clientconnection
+        release(POOL, hashconn(c), c)
+        !(c.io isa SSLContext) && @async monitor_idle_connection(c)
+    end
     return
 end
 

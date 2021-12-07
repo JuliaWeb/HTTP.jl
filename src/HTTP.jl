@@ -6,7 +6,7 @@ export startwrite, startread, closewrite, closeread, stack, insert, insert_defau
     RetryLayer, StreamLayer, TimeoutLayer, TopLayer,
     @logfmt_str, common_logfmt, combined_logfmt
 
-const DEBUG_LEVEL = Ref(2)
+const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
 
