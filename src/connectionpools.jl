@@ -34,9 +34,9 @@ A threadsafe object for managing a pool of and the reuse of `Connection` objects
 
 A Pod manages a collection of `Connection`s and the following keyword arguments allow configuring the management thereof:
 
-  * `max::Int=typemax(Int64)`: controls the max # of currently acquired `Connection`s allowed
-  * `idle::Int=typemax(Int64)`: controls the max # of seconds a `Connection` may be idle before it should be closed and not reused
-  * `reuse::Int=typemax(Int64)`: controls the max # of times a `Connection` may be reused before it should be closed
+  * `max::Int=typemax(Int)`: controls the max # of currently acquired `Connection`s allowed
+  * `idle::Int=typemax(Int)`: controls the max # of seconds a `Connection` may be idle before it should be closed and not reused
+  * `reuse::Int=typemax(Int)`: controls the max # of times a `Connection` may be reused before it should be closed
 
 After creating a `Pod`, `Connection`s can be acquired by calling [`acquire`](@ref) and MUST
 be subsequently released by calling [`release`](@ref).
@@ -52,7 +52,7 @@ struct Pod{T}
     reuse::Int
 end
 
-const MAX = typemax(Int64)
+const MAX = typemax(Int)
 
 function Pod(T; max::Int=MAX, idle::Int=MAX, reuse::Int=MAX)
     return Pod(Threads.Condition(), ConnectionTracker{T}[], Dict{Any, ConnectionTracker{T}}(), max, idle, reuse)
