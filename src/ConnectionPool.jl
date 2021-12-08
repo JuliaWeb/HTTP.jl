@@ -333,9 +333,9 @@ function newconnection(::Type{T},
     return acquire(
             POOL,
             hashconn(T, host, port, require_ssl_verification, true);
-            max=connection_limit,
-            idle=idle_timeout,
-            reuse=reuse_limit) do
+            max=Int(connection_limit),
+            idle=Int(idle_timeout),
+            reuse=Int(reuse_limit)) do
         Connection(host, port,
             idle_timeout, require_ssl_verification,
             getconnection(T, host, port;
