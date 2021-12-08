@@ -1,26 +1,21 @@
 """
-This module provides the [`getconnection`](@ref) function with support for:
+This module provides the [`newconnection`](@ref) function with support for:
 - Opening TCP and SSL connections.
-- Reusing connections for multiple Request/Response Messages,
-- Pipelining Request/Response Messages. i.e. allowing a new Request to be
-  sent before previous Responses have been read.
+- Reusing connections for multiple Request/Response Messages
 
 This module defines a [`Connection`](@ref)
-struct to manage pipelining and connection reuse and a
-[`Transaction`](@ref)`<: IO` struct to manage a single
-pipelined request. Methods are provided for `eof`, `readavailable`,
+struct to manage the lifetime of a connection and its reuse.
+Methods are provided for `eof`, `readavailable`,
 `unsafe_write` and `close`.
-This allows the `Transaction` object to act as a proxy for the
+This allows the `Connection` object to act as a proxy for the
 `TCPSocket` or `SSLContext` that it wraps.
 
 The [`POOL`](@ref) is used to manage connection pooling. Connections
-are identified by their host, port, pipeline limit, whether they require
+are identified by their host, port, whether they require
 ssl verification, and whether they are a client or server connection.
 If a subsequent request matches these properties of a previous connection
 and limits are respected (reuse limit, idle timeout), and it wasn't otherwise
-remotely closed, a connection will be reused. Transactions pipeline their
-requests and responses concurrently on a Connection by calling `startwrite`
-and `closewrite`, with corresponding `startread` and `closeread`.
+remotely closed, a connection will be reused.
 """
 module ConnectionPool
 
@@ -40,24 +35,6 @@ const nolimit = typemax(Int)
 include("connectionpools.jl")
 using .ConnectionPools
 
-# certain operations, like locking Channels and Conditions
-# is only supported in >= 1.3
-macro v1_3(expr, elses=nothing)
-    esc(quote
-        @static if VERSION >= v"1.3"
-            $expr
-        else
-            $elses
-        end
-    end)
-end
-
-@static if VERSION >= v"1.3"
-    const Cond = Threads.Condition
-else
-    const Cond = Condition
-end
-
 """
     Connection{T <: IO}
 
@@ -66,7 +43,7 @@ A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 Fields:
 - `host::String`
 - `port::String`, exactly as specified in the URI (i.e. may be empty).
-- `idle_timeout`, No. of seconds to maintain connection after last transaction.
+- `idle_timeout`, No. of seconds to maintain connection after last request/response.
 - `peerip`, remote IP adress (used for debug/log messages).
 - `peerport`, remote TCP port number (used for debug/log messages).
 - `localport`, local TCP port number (used for debug messages).
@@ -277,7 +254,7 @@ end
 """
     closeread(::Connection)
 
-Signal that an entire Response Message has been read from the `Transaction`.
+Signal that an entire Response Message has been read from the `Connection`.
 """
 function IOExtras.closeread(c::Connection)
     @require isreadable(c)
@@ -347,10 +324,10 @@ or create a new `Connection` if required.
 function newconnection(::Type{T},
                        host::AbstractString,
                        port::AbstractString;
-                       connection_limit::Int=default_connection_limit,
-                       pipeline_limit::Int=default_pipeline_limit,
-                       idle_timeout::Int=typemax(Int64),
-                       reuse_limit::Int=nolimit,
+                       connection_limit=default_connection_limit,
+                       pipeline_limit=default_pipeline_limit,
+                       idle_timeout=typemax(Int64),
+                       reuse_limit=nolimit,
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        kw...)::Connection where {T <: IO}
     return acquire(

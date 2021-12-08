@@ -548,7 +548,7 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 │┌───────────────────────────║────────┼──║────────────────────────────────────┐
 └▶ HTTP.ConnectionPool       ║        │  ║                                    │
  │                     ┌──────────────▼────────┐ ┌───────────────────────┐    │
- │ getconnection() ->  │ HTTP.Transaction <:IO │ │ HTTP.Transaction <:IO │    │
+ │ getconnection() ->  │ HTTP.Connection <:IO │ │ HTTP.Connection <:IO │    │
  │                     └───────────────────────┘ └───────────────────────┘    │
  │                           ║    ╲│╱    ║                  ╲│╱               │
  │                           ║     │     ║                   │                │

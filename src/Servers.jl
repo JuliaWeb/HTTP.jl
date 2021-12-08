@@ -331,9 +331,10 @@ end
 
 """
 Start a `check_readtimeout` task to close the `Connection` if it is inactive.
-Create a `Transaction` object for each HTTP Request received.
+Passes the `Connection` object to handle a single request/response transaction
+for each HTTP Request received.
 After `reuse_limit + 1` transactions, signal `final_transaction` to the
-transaction handler.
+transaction handler, which will close the connection.
 """
 function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
     if readtimeout > 0
@@ -376,7 +377,7 @@ function check_readtimeout(c, readtimeout, wait_for_timeout)
 end
 
 """
-Create a `HTTP.Stream` and parse the Request headers from a `HTTP.Transaction`
+Create a `HTTP.Stream` and parse the Request headers from a `HTTP.Connection`
 (by calling `startread(::Stream`).
 If there is a parse error, send an error Response.
 Otherwise, execute stream processing function `f`.

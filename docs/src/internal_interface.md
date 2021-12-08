@@ -55,11 +55,10 @@ HTTP.Streams.isaborted
 
 ```@docs
 HTTP.ConnectionPool.Connection
-HTTP.ConnectionPool.Transaction
-HTTP.ConnectionPool.getconnection
+HTTP.ConnectionPool.newconnection
 HTTP.ConnectionPool.POOL
-HTTP.IOExtras.startwrite(::HTTP.ConnectionPool.Transaction)
-HTTP.IOExtras.closewrite(::HTTP.ConnectionPool.Transaction)
-HTTP.IOExtras.startread(::HTTP.ConnectionPool.Transaction)
-HTTP.IOExtras.closeread(::HTTP.ConnectionPool.Transaction)
+HTTP.IOExtras.startwrite(::HTTP.ConnectionPool.Connection)
+HTTP.IOExtras.closewrite(::HTTP.ConnectionPool.Connection)
+HTTP.IOExtras.startread(::HTTP.ConnectionPool.Connection)
+HTTP.IOExtras.closeread(::HTTP.ConnectionPool.Connection)
 ```
