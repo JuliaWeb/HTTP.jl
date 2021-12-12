@@ -29,7 +29,7 @@ export Connection, Transaction,
 
 using ..IOExtras, ..Sockets
 
-import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
+import ..@debug, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 import NetworkOptions

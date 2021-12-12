@@ -23,7 +23,7 @@ import MbedTLS
 
 using Dates
 
-import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid, ..access_threaded
+import ..@debug, ..DEBUG_LEVEL, ..taskid, ..access_threaded
 
 # rate limiting
 mutable struct RateLimit
