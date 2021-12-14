@@ -15,28 +15,27 @@ A `Connection` object must support the following interface:
   * `close(x)`: close a `Connection` object; `isopen(x)` should return false after calling `close`
   * `ConnectionPools.connectionid(x)`: optional method to distinguish `Connection` objects from each other; by default, calls `objectid(x)`, which is valid for `mutable struct` objects
 
-The `idle` field is a timestamp to track when a `Connection` was returned to a `Pod` and became idle.
+The `idle_timestamp` field is a timestamp to track when a `Connection` was returned to a `Pod` and became idle_timestamp.
 
-The `count` field keeps track of how many times the connection has been used.
+The `times_used` field keeps track of how many times the connection has been "used" (i.e. acquired then released).
 """
 mutable struct ConnectionTracker{T}
     conn::T
-    idle::Float64
-    count::Int
+    idle_timestamp::Float64
+    times_used::Int
 end
 
-ConnectionTracker(conn::T) where {T} = ConnectionTracker(conn, time(), 1)
+ConnectionTracker(conn::T) where {T} = ConnectionTracker(conn, time(), 0)
 
 """
-    Pod(T; max::Int, idle::Int, reuse::Int)
+    Pod(T; max_concurrent_connections::Int, idle_timeout::Int)
 
 A threadsafe object for managing a pool of and the reuse of `Connection` objects (see [`ConnectionTracker`](@ref)).
 
 A Pod manages a collection of `Connection`s and the following keyword arguments allow configuring the management thereof:
 
-  * `max::Int=typemax(Int)`: controls the max # of currently acquired `Connection`s allowed
-  * `idle::Int=typemax(Int)`: controls the max # of seconds a `Connection` may be idle before it should be closed and not reused
-  * `reuse::Int=typemax(Int)`: controls the max # of times a `Connection` may be reused before it should be closed
+  * `max_concurrent_connections::Int=typemax(Int)`: controls the max # of currently acquired `Connection`s allowed
+  * `idle_timeout::Int=typemax(Int)`: controls the max # of seconds a `Connection` may be idle_timeout before it should be closed and not reused
 
 After creating a `Pod`, `Connection`s can be acquired by calling [`acquire`](@ref) and MUST
 be subsequently released by calling [`release`](@ref).
@@ -47,26 +46,21 @@ struct Pod{T}
     lock::Threads.Condition
     conns::Vector{ConnectionTracker{T}}
     active::Dict{Any, ConnectionTracker{T}}
-    max::Int
-    idle::Int
-    reuse::Int
+    max_concurrent_connections::Int
+    idle_timeout::Int
 end
 
 const MAX = typemax(Int)
 
-function Pod(T; max::Int=MAX, idle::Int=MAX, reuse::Int=MAX)
-    return Pod(Threads.Condition(), ConnectionTracker{T}[], Dict{Any, ConnectionTracker{T}}(), max, idle, reuse)
+function Pod(T; max_concurrent_connections::Int=MAX, idle_timeout::Int=MAX)
+    return Pod(Threads.Condition(), ConnectionTracker{T}[], Dict{Any, ConnectionTracker{T}}(), max_concurrent_connections, idle_timeout)
 end
 
-# check if an idle `Connection` is still valid to be reused
+# check if an idle_timeout `Connection` is still valid to be reused
 function isvalid(pod::Pod{C}, conn::ConnectionTracker{C}) where {C}
-    if (time() - conn.idle) > pod.idle
-        # println("connection idle timeout")
-        # if the connection has been idle too long, close it
-        close(conn.conn)
-    elseif conn.count >= pod.reuse
-        # println("connection over reuse limit")
-        # if the connection has been used too many times, close it
+    if (time() - conn.idle_timestamp) > pod.idle_timeout
+        # println("connection idle_timeout timeout")
+        # if the connection has been idle_timeout too long, close it
         close(conn.conn)
     elseif isopen(conn.conn)
         # println("found a valid connection to reuse")
@@ -77,6 +71,16 @@ function isvalid(pod::Pod{C}, conn::ConnectionTracker{C}) where {C}
         # println("connection no longer open")
     end
     return false
+end
+
+function trackconnection!(pod::Pod{C}, conn::ConnectionTracker{C}) where {C}
+    conn.times_used += 1
+    id = connectionid(conn.conn)
+    if haskey(pod.active, id)
+        error("connection to be acquired is already an active, tracked connection from the pod according to the `connectionid(conn)`")
+    end
+    pod.active[id] = conn
+    return conn.conn
 end
 
 """
@@ -91,35 +95,29 @@ after use by calling `release(pod, conn)`.
 function acquire(f, pod::Pod)
     lock(pod.lock)
     try
-        # if there are already connections in the pod that have been
-        # returned, let's check if they're still valid and can be used directly
+        # if there are idle connections in the pod,
+        # let's check if they're still valid and can be used again
         while !isempty(pod.conns)
             # Pod connections are FIFO, so grab the earliest returned connection
-            # println("checking idle connections for reuse")
+            # println("checking idle_timeout connections for reuse")
             conn = popfirst!(pod.conns)
             if isvalid(pod, conn)
-                # connection is valid! increment its usage count
-                # and move the ConnectionTracker to the `active` Dict tracker
-                conn.count += 1
-                id = connectionid(conn.conn)
-                # println("returning connection (id='$(id)')")
-                pod.active[id] = conn
-                return conn.conn
+                return trackconnection!(pod, conn)
+            else
+                # nothing, let the non-valid connection fall into GC oblivion
             end
         end
-        # There were no existing connections able to be reused
+        # There were no idle connections able to be reused
         # If there are not too many already-active connections, create new
-        if length(pod.active) < pod.max
-            # println("no idle connections to reuse; creating new")
-            conn = ConnectionTracker(f())
-            id = connectionid(conn.conn)
-            # println("returning connection (id='$(id)')")
-            pod.active[id] = conn
-            return conn.conn
+        if length(pod.active) < pod.max_concurrent_connections
+            # println("no idle_timeout connections to reuse; creating new")
+            return trackconnection!(pod, ConnectionTracker(f()))
         end
         # If we reach here, there were no valid idle connections and too many
-        # currently-active connections, so we need to wait until a connection
-        # is released back to the Pod
+        # currently-active connections, so we need to wait until for a "release"
+        # event, which will mean a connection has been returned that can be reused,
+        # or a "slot" has opened up so we can create a new connection, otherwise,
+        # we'll just need to start the loop back over and wait again
         while true
             # this `wait` call will block on our Pod `lock` condition
             # until a connection is `release`ed and the condition
@@ -129,27 +127,42 @@ function acquire(f, pod::Pod)
             if conn !== nothing
                 # println("checking recently released connection validity for reuse")
                 if isvalid(pod, conn)
-                    # println("connection just released to the Pod is valid and can be reused")
-                    conn.count += 1
-                    id = connectionid(conn.conn)
-                    # println("returning connection (id='$(id)')")
-                    pod.active[id] = conn
-                    return conn.conn
+                    return trackconnection!(pod, conn)
                 end
             end
             # if the Connection just returned to the Pod wasn't valid, the active
-            # count at least went down, so we should be able to create a new one
-            if length(pod.active) < pod.max
-                # println("connection just returned wasn't valid; creating new")
-                conn = ConnectionTracker(f())
-                id = connectionid(conn.conn)
-                # println("returning connection (id='$(id)')")
-                pod.active[id] = conn
-                return conn.conn
+            # count should have at least went down, so we should be able to create a new one
+            if length(pod.active) < pod.max_concurrent_connections
+                return trackconnection!(pod, ConnectionTracker(f()))
             end
             # If for some reason there were still too many active connections, let's
-            # start the loop back over waiting for idle connections to be returned
-            # Hey, we get it, writing threadsafe code can be hard
+            # start the loop back over waiting for connections to be returned
+        end
+    finally
+        unlock(pod.lock)
+    end
+end
+
+# ability to provide an already created connection object to insert into the Pod
+# if Pod is already at max_concurrent_connections, acquire will wait until an
+# active connection is released back to the pod
+# it will be tracked among active connections and must be released
+function acquire(pod::Pod{C}, c::C) where {C}
+    lock(pod.lock)
+    try
+        if length(pod.active) < pod.max_concurrent_connections
+            return trackconnection!(pod, ConnectionTracker(c))
+        else
+            while true
+                # wait until pod gets a connection released
+                conn = wait(pod.lock)
+                if conn !== nothing
+                    push!(pod.conns, conn)
+                else
+                    conn = ConnectionTracker(c)
+                end
+                return trackconnection!(pod, conn)
+            end
         end
     finally
         unlock(pod.lock)
@@ -159,33 +172,41 @@ end
 function release(pod::Pod{C}, conn::C; return_for_reuse::Bool=true) where {C}
     lock(pod.lock)
     try
-        # We first want to look up this connection object in our
+        # We first want to look up the corresponding ConnectionTracker object in our
         # Pod `active` Dict that tracks active connections
         id = connectionid(conn)
         # if, for some reason, it's not in our `active` tracking Dict
         # then something is wrong; you're trying to release a `Connection`
         # that this Pod currently doesn't think is active
         if !haskey(pod.active, id)
-            error("invalid connection pool release call; each acquired connection should be `release`ed ONLY once")
+            error("couldn't find connection id in pod's current list of active connections; invalid release call; each acquired connection should be `release`ed ONLY once")
         end
-        cp_conn = pod.active[id]
+        conn_tracker = pod.active[id]
         # remove the ConnectionTracker from our `active` Dict tracker
         delete!(pod.active, id)
         if return_for_reuse && isopen(conn)
-            # reset the idle timestamp of the ConnectionTracker
-            cp_conn.idle = time()
-            # check if there are any tasks waiting on a connection
+            # reset the idle_timestamp of the ConnectionTracker
+            conn_tracker.idle_timestamp = time()
+            # check if there are any tasks waiting to acquire a connection
             if isempty(pod.lock)
                 # if not, we put the connection back in the pod idle queue
-                # println("returning connection (id='$(id)') to pod idle queue for reuse")
-                push!(pod.conns, cp_conn)
+                # in this case, there's no need to notify the pod lock/condition
+                # since there's no one waiting to be notified anyway
+                # println("returning connection (id='$(id)') to pod idle_timeout queue for reuse")
+                push!(pod.conns, conn_tracker)
             else
-                # and notify our Pod condition that a connection has been returned
-                # in order to "wake up" any `wait`ers looking for a new connection
+                # if there are waiters, we notify the pod condition and pass the
+                # ConnectionTracker object in the notification; we ensure to pass
+                # all=false, so only one waiter is woken up and receives the
+                # ConnectionTracker
                 # println("returning connection (id='$(id)') to a waiting task for reuse")
-                notify(pod.lock, cp_conn; all=false)
+                notify(pod.lock, conn_tracker; all=false)
             end
         else
+            # if the user has, for whatever reason, requested this connection not be reused
+            # anymore by passing `return_for_reuse=false`, then we've still removed it from
+            # the `active` tracking and want to notify the pod in case there are waiting
+            # acquire tasks that can now create a new connection
             # println("connection not reuseable; notifying pod that a connection has been released though")
             notify(pod.lock, nothing; all=false)
         end
@@ -209,11 +230,11 @@ end
 Pool(C) = Pool(ReentrantLock(), Dict{Any, Pod{C}}())
 
 """
-    acquire(f, pool::Pool{C}, key; max::Int, idle::Int, reuse::Int) -> C
+    acquire(f, pool::Pool{C}, key; max_concurrent_connections::Int, idle_timeout::Int, reuse::Int) -> C
 
 Get a connection from a `pool`, looking up a `Pod` of reuseable connections
 by the provided `key`. If no `Pod` exists for the given key yet, one will be
-created and passed the `max`, `idle`, and `reuse` keyword arguments if provided.
+created and passed the `max`, `idle_timeout`, and `reuse` keyword arguments if provided.
 The provided function `f` must create a new connection instance of type `C`.
 The acquired connection MUST be returned to the pool by calling `release(pool, key, conn)` exactly once.
 """
@@ -222,6 +243,13 @@ function acquire(f, pool::Pool{C}, key; kw...) where {C}
         get!(() -> Pod(C; kw...), pool.pods, key)
     end
     return acquire(f, pod)
+end
+
+function acquire(pool::Pool{C}, key, conn::C; kw...) where {C}
+    pod = lock(pool.lock) do
+        get!(() -> Pod(C; kw...), pool.pods, key)
+    end
+    return acquire(pod, conn)
 end
 
 """

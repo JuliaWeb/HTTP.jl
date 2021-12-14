@@ -71,27 +71,23 @@ mutable struct Connection <: IO
 end
 
 """
-    hashconn
+    connectionkey
 
 Used for "hashing" a Connection object on just the key properties necessary for determining
-connection re-useability. That is, when a new request calls `getconnection`, we take the
+connection re-useability. That is, when a new request calls `newconnection`, we take the
 request parameters of what socket type, the host and port, and if ssl
 verification is required, and if an existing Connection was already created with the exact
 same parameters, we can re-use it (as long as it's not already being used, obviously).
 """
-function hashconn end
-
-hashconn(x::Connection) = hashconn(typeof(x.io), x.host, x.port, x.require_ssl_verification, x.clientconnection)
-hashconn(T, host, port, require_ssl_verification, client) = hash(T, hash(host, hash(port, hash(require_ssl_verification, hash(client, UInt(0))))))
+connectionkey(x::Connection) = (typeof(x.io), x.host, x.port, x.require_ssl_verification, x.clientconnection)
 
 Connection(host::AbstractString, port::AbstractString,
            idle_timeout::Int,
            require_ssl_verification::Bool, io::IO, client=true) =
-    Connection(host, port,
-                  idle_timeout,
-                  require_ssl_verification,
-                  safe_getpeername(io)..., localport(io),
-                  io, client, PipeBuffer(), time(), false, false)
+    Connection(host, port, idle_timeout,
+                require_ssl_verification,
+                safe_getpeername(io)..., localport(io),
+                io, client, PipeBuffer(), time(), false, false)
 
 Connection(io; require_ssl_verification::Bool=true) =
     Connection("", "", 0, require_ssl_verification, io, false)
@@ -142,7 +138,7 @@ Base.bytesavailable(c::Connection) = bytesavailable(c.buffer) +
 function Base.read(c::Connection, nb::Int)
     nb = min(nb, bytesavailable(c))
     bytes = Base.StringVector(nb)
-    unsafe_read(c, pointer(bytes), nb)
+    GC.@preserve bytes unsafe_read(c, pointer(bytes), nb)
     return bytes
 end
 
@@ -187,7 +183,7 @@ function read_to_buffer(c::Connection, sizehint=4096)
     n = min(sizehint, bytesavailable(c.io))
     buf = c.buffer
     Base.ensureroom(buf, n)
-    unsafe_read(c.io, pointer(buf.data, buf.size + 1), n)
+    GC.@preserve buf unsafe_read(c.io, pointer(buf.data, buf.size + 1), n)
     buf.size += n
 end
 
@@ -261,7 +257,8 @@ function IOExtras.closeread(c::Connection)
     c.readable = false
     @debug 2 "✉️  Read done:  $c"
     if c.clientconnection
-        release(POOL, hashconn(c), c)
+        release(POOL, connectionkey(c), c)
+        # Ignore SSLContext as it already monitors idle connections for TLS close_notify messages
         !(c.io isa SSLContext) && @async monitor_idle_connection(c)
     end
     return
@@ -332,10 +329,9 @@ function newconnection(::Type{T},
                        kw...)::Connection where {T <: IO}
     return acquire(
             POOL,
-            hashconn(T, host, port, require_ssl_verification, true);
-            max=Int(connection_limit),
-            idle=Int(idle_timeout),
-            reuse=Int(reuse_limit)) do
+            (T, host, port, require_ssl_verification, true);
+            max_concurrent_connections=Int(connection_limit),
+            idle_timeout=Int(idle_timeout)) do
         Connection(host, port,
             idle_timeout, require_ssl_verification,
             getconnection(T, host, port;
@@ -465,13 +461,13 @@ function sslupgrade(c::Connection,
                     kw...)::Connection
     # first we release the original connection, but we don't want it to be
     # reused in the pool, because we're hijacking the TCPSocket
-    release(POOL, hashconn(c), c; return_for_reuse=false)
+    release(POOL, connectionkey(c), c; return_for_reuse=false)
     # now we hijack the TCPSocket and upgrade to SSLContext
     tls = sslconnection(c.io, host;
                         require_ssl_verification=require_ssl_verification,
                         kw...)
     conn = Connection(host, "", 0, require_ssl_verification, tls)
-    return acquire(() -> conn, POOL, hashconn(conn))
+    return acquire(POOL, connectionkey(conn), conn)
 end
 
 function Base.show(io::IO, c::Connection)

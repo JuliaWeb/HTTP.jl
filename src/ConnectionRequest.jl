@@ -62,8 +62,7 @@ export ConnectionPoolLayer
 
 function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
                  proxy=getproxy(url.scheme, url.host),
-                 socket_type::Type=TCPSocket,
-                 reuse_limit::Int=ConnectionPool.nolimit, kw...) where Next
+                 socket_type::Type=TCPSocket, kw...) where Next
 
     if proxy !== nothing
         target_url = url
@@ -82,8 +81,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
     IOType = sockettype(url, socket_type)
     local io
     try
-        io = newconnection(IOType, url.host, url.port;
-                           reuse_limit=reuse_limit, kw...)
+        io = newconnection(IOType, url.host, url.port; kw...)
     catch e
         rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
     end

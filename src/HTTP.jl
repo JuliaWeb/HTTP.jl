@@ -114,9 +114,6 @@ Connection Pool options
  - `connect_timeout = 0`, close the connection after this many seconds if it
    is still attempting to connect. Use `connect_timeout = 0` to disable.
  - `connection_limit = 8`, number of concurrent connections to each host:port.
- - `pipeline_limit = 16`, number of concurrent requests per connection.
- - `reuse_limit = nolimit`, number of times a connection is reused after the
-                            first request.
  - `socket_type = TCPSocket`
 
 
@@ -548,7 +545,7 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 │┌───────────────────────────║────────┼──║────────────────────────────────────┐
 └▶ HTTP.ConnectionPool       ║        │  ║                                    │
  │                     ┌──────────────▼────────┐ ┌───────────────────────┐    │
- │ getconnection() ->  │ HTTP.Connection <:IO │ │ HTTP.Connection <:IO │    │
+ │ getconnection() ->  │ HTTP.Connection  <:IO │ │ HTTP.Connection  <:IO │    │
  │                     └───────────────────────┘ └───────────────────────┘    │
  │                           ║    ╲│╱    ║                  ╲│╱               │
  │                           ║     │     ║                   │                │
