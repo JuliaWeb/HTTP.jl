@@ -18,7 +18,7 @@ using BufferedStreams
 
     t = @async HTTP.listen("127.0.0.1", port) do http
         startwrite(http)
-        tcp = http.stream.c.io
+        tcp = http.stream.io
 
         write(tcp, encoded_data[1:split1])
         flush(tcp)

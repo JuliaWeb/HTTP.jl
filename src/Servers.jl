@@ -331,9 +331,10 @@ end
 
 """
 Start a `check_readtimeout` task to close the `Connection` if it is inactive.
-Create a `Transaction` object for each HTTP Request received.
+Passes the `Connection` object to handle a single request/response transaction
+for each HTTP Request received.
 After `reuse_limit + 1` transactions, signal `final_transaction` to the
-transaction handler.
+transaction handler, which will close the connection.
 """
 function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
     if readtimeout > 0
@@ -344,7 +345,7 @@ function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
         count = 0
         # if the connection socket or original server close, we stop taking requests
         while isopen(c) && isopen(server) && count <= reuse_limit
-            handle_transaction(f, Transaction(c), server;
+            handle_transaction(f, c, server;
                                final_transaction=(count == reuse_limit))
             count += 1
         end
@@ -376,21 +377,21 @@ function check_readtimeout(c, readtimeout, wait_for_timeout)
 end
 
 """
-Create a `HTTP.Stream` and parse the Request headers from a `HTTP.Transaction`
+Create a `HTTP.Stream` and parse the Request headers from a `HTTP.Connection`
 (by calling `startread(::Stream`).
 If there is a parse error, send an error Response.
 Otherwise, execute stream processing function `f`.
 If `f` throws an exception, send an error Response and close the connection.
 """
-function handle_transaction(f, t::Transaction, server; final_transaction::Bool=false)
+function handle_transaction(f, c::Connection, server; final_transaction::Bool=false)
     request = Request()
-    http = Stream(request, t)
+    http = Stream(request, c)
 
     try
         @debug 2 "server startread"
         startread(http)
         if !isopen(server)
-            close(t)
+            close(c)
             return
         end
     catch e
@@ -398,8 +399,8 @@ function handle_transaction(f, t::Transaction, server; final_transaction::Bool=f
             return
         elseif e isa ParseError
             status = e.code == :HEADER_SIZE_EXCEEDS_LIMIT  ? 413 : 400
-            write(t, Response(status, body = string(e.code)))
-            close(t)
+            write(c, Response(status, body = string(e.code)))
+            close(c)
             return
         else
             rethrow(e)
@@ -411,9 +412,8 @@ function handle_transaction(f, t::Transaction, server; final_transaction::Bool=f
         setheader(request.response, "Connection" => "close")
     end
 
-    @async try
+    try
         f(http)
-
         # If `startwrite()` was never called, throw an error so we send a 500 and log this
         if isopen(http) && !iswritable(http)
             error("Server never wrote a response")
@@ -437,9 +437,9 @@ function handle_transaction(f, t::Transaction, server; final_transaction::Bool=f
         final_transaction = true
     finally
         if server.access_log !== nothing
-            try @info sprint(server.access_log, http) _group=:access; catch end
+            try; @info sprint(server.access_log, http) _group=:access; catch; end
         end
-        final_transaction && close(t.c.io)
+        final_transaction && close(c.io)
     end
     return
 end

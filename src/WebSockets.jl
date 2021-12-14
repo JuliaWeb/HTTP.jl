@@ -102,7 +102,7 @@ function open(f::Function, url; binary=false, verbose=false, headers = [], kw...
     ]
 
     HTTP.open("GET", url, headers;
-              reuse_limit=0, verbose=verbose ? 2 : 0, kw...) do http
+              verbose=verbose ? 2 : 0, kw...) do http
 
         startread(http)
 
