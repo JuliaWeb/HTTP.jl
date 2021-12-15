@@ -21,6 +21,7 @@ using Sockets
         err = try
             HTTP.get("http://localhost:8080"; retry=false)
         catch err
+            @error "error" exception=(err, catch_backtrace())
             err
         end
         @test err isa HTTP.IOError
