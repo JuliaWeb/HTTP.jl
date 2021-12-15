@@ -33,22 +33,17 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
  - `startwrite(::Stream)` sends the `Request` headers to the `IO` stream.
  - `write(::Stream, body)` sends the `body` (or a chunk of the body).
  - `closewrite(::Stream)` sends the final `0` chunk (if needed) and calls
-   `closewrite` on the `IO` stream. When the `IO` stream is a
-   [`HTTP.ConnectionPool.Transaction`](@ref), calling `closewrite` releases
-   the [`HTTP.ConnectionPool.Connection`](@ref) back into the pool for use by the
-   next pipelined request.
+   `closewrite` on the `IO` stream.
 
  - `startread(::Stream)` calls `startread` on the `IO` stream then
-    reads and parses the `Response` headers.  When the `IO` stream is a
-   [`HTTP.ConnectionPool.Transaction`](@ref), calling `startread` waits for other
-   pipelined responses to be read from the [`HTTP.ConnectionPool.Connection`](@ref).
+    reads and parses the `Response` headers.
  - `eof(::Stream)` and `readavailable(::Stream)` parse the body from the `IO`
     stream.
  - `closeread(::Stream)` reads the trailers and calls `closeread` on the `IO`
-    stream.  When the `IO` stream is a [`HTTP.ConnectionPool.Transaction`](@ref),
-    calling `closeread` releases the readlock and allows the next pipelined
-    response to be read by another `Stream` that is waiting in `startread`.
-    If a complete response has not been received, `closeread` throws `EOFError`.
+    stream.  When the `IO` stream is a [`HTTP.ConnectionPool.Connection`](@ref),
+    calling `closeread` releases the connection back to the connection pool
+    for reuse. If a complete response has not been received, `closeread` throws
+    `EOFError`.
 """
 Stream(r::M, io::S) where {M, S} = Stream{M,S}(r, io, false, false, true, 0, 0)
 
@@ -205,10 +200,7 @@ function Base.eof(http::Stream)
     if http.ntoread == 0
         return true
     end
-    if eof(http.stream)
-        return true
-    end
-    return false
+    return eof(http.stream)
 end
 
 @inline function ntoread(http::Stream)
@@ -355,6 +347,8 @@ function IOExtras.closeread(http::Stream{Response})
         # Close conncetion if server sent "Connection: close"...
         @debug 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
+        # Error if Message is not complete...
+        incomplete(http) && throw(EOFError())
     else
 
         # Discard body bytes that were not read...

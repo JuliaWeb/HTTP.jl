@@ -7,21 +7,6 @@ macro debug(n::Int, s)
                          :()
 end
 
-macro debugshow(n::Int, s)
-    DEBUG_LEVEL[] >= n ? :(println(debug_header(),
-                                   $(sprint(Base.show_unquoted, s)), " = ",
-                                   sprint(io->show(io, "text/plain",
-                                                   begin value=$(esc(s)) end)))) :
-                         :()
-
-end
-
-macro debugshort(n::Int, s)
-    DEBUG_LEVEL[] >= n ? :(println(debug_header(),
-                                   sprintcompact($(esc(s))))) :
-                         :()
-end
-
 sprintcompact(x) = sprint(show, x; context=:compact => true)
 printlncompact(x) = println(sprintcompact(x))
 

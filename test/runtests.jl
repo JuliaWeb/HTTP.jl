@@ -1,7 +1,7 @@
 using Test, HTTP, JSON
 
 const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
-include("resources/TestRequest.jl")
+include(joinpath(dir, "resources/TestRequest.jl"))
 
 @testset "HTTP" begin
     for f in [

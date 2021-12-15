@@ -62,8 +62,7 @@ export ConnectionPoolLayer
 
 function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
                  proxy=getproxy(url.scheme, url.host),
-                 socket_type::Type=TCPSocket,
-                 reuse_limit::Int=ConnectionPool.nolimit, kw...) where Next
+                 socket_type::Type=TCPSocket, kw...) where Next
 
     if proxy !== nothing
         target_url = url
@@ -79,17 +78,12 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
         end
     end
 
-    IOType = ConnectionPool.Transaction{sockettype(url, socket_type)}
+    IOType = sockettype(url, socket_type)
     local io
     try
-        io = getconnection(IOType, url.host, url.port;
-                           reuse_limit=reuse_limit, kw...)
+        io = newconnection(IOType, url.host, url.port; kw...)
     catch e
         rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
-    end
-
-    if io.sequence >= reuse_limit
-        defaultheader!(req, "Connection" => "close")
     end
 
     try
@@ -107,8 +101,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
 
         r =  request(Next, io, req, body; kw...)
 
-        if (io.sequence >= reuse_limit
-            || (proxy !== nothing && target_url.scheme == "https"))
+        if proxy !== nothing && target_url.scheme == "https"
             close(io)
         end
 
@@ -132,7 +125,6 @@ function connect_tunnel(io, target_url, req)
     end
     request = Request("CONNECT", target, headers)
     writeheaders(io, request)
-    startread(io)
     readheaders(io, request.response)
     return request.response
 end

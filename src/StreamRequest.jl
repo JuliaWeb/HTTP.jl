@@ -43,26 +43,18 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
         end
     end
 
-    if !isidempotent(req)
-        # Wait for pipelined reads to complete
-        # before sending non-idempotent request body.
-        @debug 2 "non-idempotent client startread"
-        startread(io)
-    end
-
-    aborted = false
     write_error = nothing
     try
-
         @sync begin
             if iofunction === nothing
                 @async try
                     writebody(http, req, body)
+                    @debug 2 "client closewrite"
+                    closewrite(http)
                 catch e
                     write_error = e
                     isopen(io) && try; close(io); catch; end
                 end
-                yield()
                 @debug 2 "client startread"
                 startread(http)
                 readbody(http, response, response_stream, reached_redirect_limit)
@@ -74,10 +66,8 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
                 # The server may have closed the connection.
                 # Don't propagate such errors.
                 try; close(io); catch; end
-                aborted = true
             end
         end
-
     catch e
         if write_error !== nothing
             throw(write_error)
@@ -86,14 +76,10 @@ function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
         end
     end
 
-    # Suppress errors from closing
-    try
-        @debug 2 "client closewrite"
-        closewrite(http)
-        @debug 2 "client closeread"
-        closeread(http)
-    catch;
-    end
+    @debug 2 "client closewrite"
+    closewrite(http)
+    @debug 2 "client closeread"
+    closeread(http)
 
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)
@@ -111,18 +97,7 @@ function writebody(http::Stream, req::Request, body)
     end
 
     req.txcount += 1
-
-    if isidempotent(req)
-        @debug 2 "client closewrite"
-        closewrite(http)
-    else
-        @debug 2 "🔒  $(req.method) non-idempotent, " *
-                 "holding write lock: $(http.stream)"
-        # "A user agent SHOULD NOT pipeline requests after a
-        #  non-idempotent method, until the final response
-        #  status code for that method has been received"
-        # https://tools.ietf.org/html/rfc7230#section-6.3.2
-    end
+    return
 end
 
 function writebodystream(http, req, body)
