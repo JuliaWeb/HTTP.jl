@@ -23,16 +23,16 @@ jobs:
           - 'nightly'
         os:
           - ubuntu-latest
-          - macOS-latest
+          # - macOS-latest
           - windows-latest
         arch:
-          - x64
+          # - x64
           - x86
-        exclude:
-          - os: macOS-latest
-            arch: x86
-          - os: windows-latest
-            version: 'nightly'
+        # exclude:
+        #   - os: macOS-latest
+        #     arch: x86
+        #   - os: windows-latest
+        #     version: 'nightly'
     steps:
       - uses: actions/checkout@v2
       - uses: julia-actions/setup-julia@v1
@@ -58,25 +58,25 @@ jobs:
       - uses: codecov/codecov-action@v1
         with:
           file: lcov.info
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: '1'
-      - run: |
-          julia --project=docs -e '
-            using Pkg
-            Pkg.develop(PackageSpec(path=pwd()))
-            Pkg.instantiate()'
-      - run: |
-          julia --project=docs -e '
-            using Documenter: doctest
-            using HTTP
-            doctest(HTTP)'
-      - run: julia --project=docs docs/make.jl
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
+  # docs:
+  #   name: Documentation
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #     - uses: julia-actions/setup-julia@v1
+  #       with:
+  #         version: '1'
+  #     - run: |
+  #         julia --project=docs -e '
+  #           using Pkg
+  #           Pkg.develop(PackageSpec(path=pwd()))
+  #           Pkg.instantiate()'
+  #     - run: |
+  #         julia --project=docs -e '
+  #           using Documenter: doctest
+  #           using HTTP
+  #           doctest(HTTP)'
+  #     - run: julia --project=docs docs/make.jl
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #         DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
