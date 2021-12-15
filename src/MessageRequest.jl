@@ -23,14 +23,17 @@ resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
 
 Construct a [`Request`](@ref) object and set mandatory headers.
 """
-struct MessageLayer{Next <: Layer} <: Layer{Next} end
+struct MessageLayer{Next <: Layer} <: RequestLayer
+    next::Next
+end
 export MessageLayer
+MessageLayer(next; kw...) = MessageLayer(next)
 
-function request(::Type{MessageLayer{Next}},
+function request(layer::MessageLayer,
                  method::String, url::URI, headers::Headers, body;
                  http_version=v"1.1",
                  target=resource(url),
-                 parent=nothing, iofunction=nothing, kw...) where Next
+                 parent=nothing, iofunction=nothing, kw...)
 
     if isempty(url.port) ||
               (url.scheme == "http" && url.port == "80") ||
@@ -63,7 +66,7 @@ function request(::Type{MessageLayer{Next}},
     req = Request(method, target, headers, bodybytes(body);
                   parent=parent, version=http_version)
 
-    return request(Next, url, req, body; iofunction=iofunction, kw...)
+    return request(layer.next, url, req, body; iofunction=iofunction, kw...)
 end
 
 const USER_AGENT = Ref{Union{String, Nothing}}("HTTP.jl/$VERSION")

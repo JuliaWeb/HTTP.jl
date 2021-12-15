@@ -1,64 +1,29 @@
 module Layers
-export Layer, next, top_layer, insert, insert_default!, remove_default!
+export Layer, keywordforlayer
 
-const EXTRA_LAYERS = Set{Tuple{Union{UnionAll, Type{Union{}}}, UnionAll}}()
+struct LayerNotFoundException <: Exception
+    var::String
+end
 
-include("exceptions.jl")
+function Base.showerror(io::IO, e::LayerNotFoundException)
+    println(io, typeof(e), ": ", e.var)
+end
 
-"""
-## Request Execution Stack
-
-The Request Execution Stack is separated into composable layers.
-
-Each layer is defined by a nested type `Layer{Next}` where the `Next`
-parameter defines the next layer in the stack.
-The `request` method for each layer takes a `Layer{Next}` type as
-its first argument and dispatches the request to the next layer
-using `request(Next, ...)`.
-
-The example below defines three layers and three stacks each with
-a different combination of layers.
-
-
-```julia
 abstract type Layer end
-abstract type Layer1{Next <: Layer} <: Layer end
-abstract type Layer2{Next <: Layer} <: Layer end
-abstract type Layer3 <: Layer end
 
-request(::Type{Layer1{Next}}, data) where Next = "L1", request(Next, data)
-request(::Type{Layer2{Next}}, data) where Next = "L2", request(Next, data)
-request(::Type{Layer3}, data) = "L3", data
+abstract type InitialLayer <: Layer end
+abstract type RequestLayer <: Layer end
+abstract type ConnectionLayer <: Layer end
 
-const stack1 = Layer1{Layer2{Layer3}}
-const stack2 = Layer2{Layer1{Layer3}}
-const stack3 = Layer1{Layer3}
-```
+function keywordforlayer end
 
-```julia
-julia> request(stack1, "foo")
-("L1", ("L2", ("L3", "foo")))
-
-julia> request(stack2, "bar")
-("L2", ("L1", ("L3", "bar")))
-
-julia> request(stack3, "boo")
-("L1", ("L3", "boo"))
-```
-
-This stack definition pattern gives the user flexibility in how layers are
-combined but still allows Julia to do whole-stack compile time optimisations.
-
-e.g. the `request(stack1, "foo")` call above is optimised down to a single
-function:
-```julia
-julia> code_typed(request, (Type{stack1}, String))[1].first
-CodeInfo(:(begin
-    return (Core.tuple)("L1", (Core.tuple)("L2", (Core.tuple)("L3", data)))
-end))
-```
-"""
-abstract type Layer{Next} end
+keywordforlayer(kw) = nothing
+# custom layers must subtype one of above
+# must register a keyword arg for layer
+# must have a layer constructor like: Layer(next; kw...)
+# must have a field to store `next` layer
+# must overload: request(layer::MyLayer, args...; kw...)
+# in `request` overload, must call: request(layer.next, args...; kw...)
 
 """
     next(::Type{S}) where {T, S<:Layer{T}}

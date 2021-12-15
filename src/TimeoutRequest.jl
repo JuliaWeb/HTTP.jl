@@ -17,12 +17,17 @@ end
 
 Close `IO` if no data has been received for `timeout` seconds.
 """
-abstract type TimeoutLayer{Next <: Layer} <: Layer{Next} end
+struct TimeoutLayer{Next <: Layer} <: ConnectionLayer
+    next::Next
+    readtimeout::Int
+end
 export TimeoutLayer
+Layers.keywordforlayer(::Val{:readtimeout}) = TimeoutLayer
 
-function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
-                 readtimeout::Int=0, kw...) where Next
+TimeoutLayer(next; readtimeout::Int=0, kw...) = TimeoutLayer(next, readtimeout)
 
+function request(layer::TimeoutLayer, io::IO, req, body; kw...)
+    readtimeout = layer.readtimeout
     wait_for_timeout = Ref{Bool}(true)
     timedout = Ref{Bool}(false)
 
@@ -37,7 +42,7 @@ function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
     end
 
     try
-        return request(Next, io, req, body; kw...)
+        return request(layer.next, io, req, body; kw...)
     catch e
         if timedout[]
            throw(ReadTimeoutError(readtimeout))

@@ -57,12 +57,16 @@ Otherwise leave it open so that it can be reused.
 `IO` related exceptions from `Base` are wrapped in `HTTP.IOError`.
 See [`isioerror`](@ref).
 """
-abstract type ConnectionPoolLayer{Next <: Layer} <: Layer{Next} end
+struct ConnectionPoolLayer{Next <: Layer} <: RequestLayer
+    next::Next
+    pool::ConnectionPools.Pool
+end
 export ConnectionPoolLayer
+ConnectionPoolLayer(next; connectionpool=ConnectionPool.POOL) = ConnectionPoolLayer(next, connectionpool)
 
-function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
+function request(layer::ConnectionPoolLayer, url::URI, req, body;
                  proxy=getproxy(url.scheme, url.host),
-                 socket_type::Type=TCPSocket, kw...) where Next
+                 socket_type::Type=TCPSocket, kw...)
 
     if proxy !== nothing
         target_url = url
@@ -99,7 +103,7 @@ function request(::Type{ConnectionPoolLayer{Next}}, url::URI, req, body;
             req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
         end
 
-        r =  request(Next, io, req, body; kw...)
+        r =  request(layer.next, io, req, body; kw...)
 
         if proxy !== nothing && target_url.scheme == "https"
             close(io)

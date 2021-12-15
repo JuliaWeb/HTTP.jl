@@ -452,7 +452,6 @@ include("ConnectionRequest.jl");        using .ConnectionRequest
 include("DebugRequest.jl");             using .DebugRequest
 include("StreamRequest.jl");            using .StreamRequest
 include("ContentTypeRequest.jl");       using .ContentTypeDetection
-include("exceptions.jl")
 
 """
 The `stack()` function returns the default HTTP Layer-stack type.
@@ -568,39 +567,23 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 ```
 *See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
 """
-function stack(;redirect=true,
-                aws_authorization=false,
-                cookies=false,
-                canonicalize_headers=false,
-                retry=true,
-                status_exception=true,
-                readtimeout=0,
-                detect_content_type=false,
-                verbose=0,
-                kw...)
+function stack(; kw...)
 
-    NoLayer = Union
-    stack =                 TopLayer{
-    (redirect             ? RedirectLayer             : NoLayer){
-                            BasicAuthLayer{
-    (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
-    (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
-                            CookieLayer               : NoLayer){
-    (canonicalize_headers ? CanonicalizeLayer         : NoLayer){
-                            MessageLayer{
-    (aws_authorization    ? AWS4AuthLayer             : NoLayer){
-    (retry                ? RetryLayer                : NoLayer){
-    (status_exception     ? ExceptionLayer            : NoLayer){
-                            ConnectionPoolLayer{
-    (verbose >= 3 ||
-     DEBUG_LEVEL[] >= 3   ? DebugLayer                : NoLayer){
-    (readtimeout > 0      ? TimeoutLayer              : NoLayer){
-                            StreamLayer{Union{}}
-    }}}}}}}}}}}}}
+    layers = stacklayertypes(Layers.ConnectionLayer, StreamLayer(); kw...)
+    layers = ConnectionPoolLayer(layers; kw...)
+    layers = stacklayertypes(Layers.RequestLayer, layers; kw...)
+    layers = MessageLayer(layers; kw...)
+    return stacklayertypes(Layers.InitialLayer, layers; kw...)
+end
 
-    reduce(Layers.EXTRA_LAYERS; init=stack) do stack, (before, custom)
-        insert(stack, before, custom)
+function stacklayertypes(::Type{T}, layers; kw...) where {T}
+    for (k, _) in pairs(kw)
+        layer = Layers.keywordforlayer(Val(k))
+        if layer !== nothing && layer <: T
+            layers = layer(layers; kw...)
+        end
     end
+    return layers
 end
 
 include("download.jl")
