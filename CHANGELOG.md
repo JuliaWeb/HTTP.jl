@@ -5,6 +5,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- HTTP.jl no longer calls `close` on streams given with the `response_stream` keyword
+  argument to `HTTP.request` and friends. If you relied on this behavior you now have
+  to do it manually, e.g.
+  ```julia
+  io = ...
+  HTTP.request(...; response_stream = io)
+  close(io)
+  ```
+  ([#543], [#752], [#775]).
+### Removed
+- Support for "pipelined requests" have been removed in the client implementation. The
+  keyword arguments to `HTTP.request` related to this feature (`pipeline_limit` and
+  `reuse_limit`) are now ignored ([#783]).
 
 ## [0.9.17] - 2021-11-17
 ### Fixed
@@ -228,5 +242,7 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#766]: https://github.com/JuliaWeb/HTTP.jl/pull/766
 [#770]: https://github.com/JuliaWeb/HTTP.jl/pull/770
 [#774]: https://github.com/JuliaWeb/HTTP.jl/pull/774
+[#775]: https://github.com/JuliaWeb/HTTP.jl/pull/775
 [#778]: https://github.com/JuliaWeb/HTTP.jl/pull/778
 [#781]: https://github.com/JuliaWeb/HTTP.jl/pull/781
+[#783]: https://github.com/JuliaWeb/HTTP.jl/pull/783
