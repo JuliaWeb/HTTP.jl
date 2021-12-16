@@ -550,7 +550,6 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 """
 function stack(;
     basicauth=true,
-    redirect=true,
     cookies=false,
     canonicalize_headers=false,
     retry=true,
@@ -558,18 +557,17 @@ function stack(;
     readtimeout=0,
     detect_content_type=false,
     verbose=0,
+    redirect=true,
     kw...)
 
-    kwargs = Dict{Symbol, Any}(kw)
-    kwargs[:basicauth] = basicauth
-    kwargs[:redirect] = redirect
-    kwargs[:cookies] = cookies
-    kwargs[:canonicalize_headers] = canonicalize_headers
-    kwargs[:retry] = retry
-    kwargs[:status_exception] = status_exception
-    kwargs[:readtimeout] = readtimeout
-    kwargs[:detect_content_type] = detect_content_type
-    kwargs[:verbose] = verbose
+    kwargs = merge(
+        (;
+            basicauth, cookies, canonicalize_headers,
+            retry, status_exception, readtimeout,
+            detect_content_type, verbose, redirect
+        ),
+        kw
+    )
     layers = stacklayertypes(Layers.ConnectionLayer, StreamLayer(), kwargs)
     layers = ConnectionPoolLayer(layers; kw...)
     layers = stacklayertypes(Layers.RequestLayer, layers, kwargs)
