@@ -20,8 +20,6 @@ include(joinpath(dir, "resources/TestRequest.jl"))
               "handlers.jl",
               "server.jl",
               "async.jl",
-              "aws4.jl",
-              "insert_layers.jl",
               "mwe.jl",
              ]
         file = joinpath(dir, f)

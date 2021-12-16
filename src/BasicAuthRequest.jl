@@ -1,22 +1,25 @@
 module BasicAuthRequest
 
 using ..Base64
-
-import ..Layer, ..request
+using ..Layers
 using URIs
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL
 
 """
-    request(BasicAuthLayer, method, ::URI, headers, body) -> HTTP.Response
+    Layers.request(BasicAuthLayer, method, ::URI, headers, body) -> HTTP.Response
 
 Add `Authorization: Basic` header using credentials from url userinfo.
 """
-abstract type BasicAuthLayer{Next <: Layer} <: Layer{Next} end
+struct BasicAuthLayer{Next <: Layer} <: InitialLayer
+    next::Next
+end
 export BasicAuthLayer
+Layers.keywordforlayer(::Val{:basicauth}) = BasicAuthLayer
+BasicAuthLayer(next; kw...) = BasicAuthLayer(next)
 
-function request(::Type{BasicAuthLayer{Next}},
-                 method::String, url::URI, headers, body; kw...) where Next
+function Layers.request(layer::BasicAuthLayer,
+                 method::String, url::URI, headers, body; kw...)
 
     userinfo = unescapeuri(url.userinfo)
 
@@ -25,7 +28,7 @@ function request(::Type{BasicAuthLayer{Next}},
         setkv(headers, "Authorization", "Basic $(base64encode(userinfo))")
     end
 
-    return request(Next, method, url, headers, body; kw...)
+    return Layers.request(layer.next, method, url, headers, body; kw...)
 end
 
 

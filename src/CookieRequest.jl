@@ -1,7 +1,7 @@
 module CookieRequest
 
 import ..Dates
-import ..Layer, ..request
+using ..Layers
 using URIs
 using ..Cookies
 using ..Messages: ascii_lc_isequal
@@ -16,20 +16,26 @@ function __init__()
 end
 
 """
-    request(CookieLayer, method, ::URI, headers, body) -> HTTP.Response
+    Layers.request(CookieLayer, method, ::URI, headers, body) -> HTTP.Response
 
 Add locally stored Cookies to the request headers.
 Store new Cookies found in the response headers.
 """
-abstract type CookieLayer{Next <: Layer} <: Layer{Next} end
+struct CookieLayer{Next <: Layer} <: InitialLayer
+    next::Next
+    cookiejar::Dict{String, Set{Cookie}}
+end
 export CookieLayer
+Layers.keywordforlayer(::Val{:cookies}) = CookieLayer
+CookieLayer(next; cookies::Union{Bool, AbstractDict}=true, cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar), kw...) =
+    (cookies === true || (cookies isa AbstractDict && !isempty(cookies))) ? CookieLayer(next, cookiejar) : nothing
 
-function request(::Type{CookieLayer{Next}},
+function Layers.request(layer::CookieLayer,
                  method::String, url::URI, headers, body;
                  cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}}=Dict{String, String}(),
-                 cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar),
-                 kw...) where {Next}
+                 kw...)
 
+    cookiejar = layer.cookiejar
     hostcookies = get!(cookiejar, url.host, Set{Cookie}())
 
     cookiestosend = getcookies(hostcookies, url)
@@ -42,7 +48,7 @@ function request(::Type{CookieLayer{Next}},
         setkv(headers, "Cookie", stringify(getkv(headers, "Cookie", ""), cookiestosend))
     end
 
-    res = request(Next, method, url, headers, body; kw...)
+    res = Layers.request(layer.next, method, url, headers, body; kw...)
 
     setcookies(hostcookies, url.host, res.headers)
 

@@ -8,10 +8,10 @@ using URIs
 status(r) = r.status
 @testset "Custom HTTP Stack" begin
    @testset "Low-level Request" begin
-        custom_stack = insert(stack(), StreamLayer, TestLayer)
-        result = request(custom_stack, "GET", "https://httpbin.org/ip")
-
+        wasincluded = Ref(false)
+        result = HTTP.request("GET", "https://httpbin.org/ip"; httptestlayer=wasincluded)
         @test status(result) == 200
+        @test wasincluded[]
     end
 end
 

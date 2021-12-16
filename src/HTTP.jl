@@ -1,9 +1,6 @@
 module HTTP
 
-export startwrite, startread, closewrite, closeread, stack, insert, insert_default!,
-    remove_default!, AWS4AuthLayer, BasicAuthLayer, CanonicalizeLayer, ConnectionPoolLayer,
-    ContentTypeDetectionLayer, DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer,
-    RetryLayer, StreamLayer, TimeoutLayer, TopLayer,
+export startwrite, startread, closewrite, closeread,
     @logfmt_str, common_logfmt, combined_logfmt
 
 const DEBUG_LEVEL = Ref(0)
@@ -86,7 +83,7 @@ e.g.
 ```julia
 HTTP.request("GET", "http://httpbin.org/ip"; retries=4, cookies=true)
 
-HTTP.get("http://s3.us-east-1.amazonaws.com/"; aws_authorization=true)
+HTTP.get("http://s3.us-east-1.amazonaws.com/")
 
 conf = (readtimeout = 10,
         retry = false,
@@ -153,19 +150,7 @@ SSLContext options
 Basic Authentication options
 
  - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)
-   and adds the `Authorization: Basic` header
-
-
-AWS Authentication options
-
- - `aws_authorization = false`, enable AWS4 Authentication.
- - `aws_service = split(url.host, ".")[1]`
- - `aws_region = split(url.host, ".")[2]`
- - `aws_access_key_id = ENV["AWS_ACCESS_KEY_ID"]`
- - `aws_secret_access_key = ENV["AWS_SECRET_ACCESS_KEY"]`
- - `aws_session_token = get(ENV, "AWS_SESSION_TOKEN", "")`
- - `body_sha256 = digest(MD_SHA256, body)`,
- - `body_md5 = digest(MD_MD5, body)`,
+   and adds the `Authorization: Basic` header; this can be disabled by passing `basicauth=false`
 
 
 Cookie options
@@ -325,9 +310,9 @@ function request(method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
     return request(HTTP.stack(;kw...), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
-function request(stack::Type{<:Layer}, method, url, h=Header[], b=nobody;
+function request(stack::Layer, method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
-    return request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+    return Layers.request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
 
 request(::Type{Union{}}, resp::Response) = resp
@@ -437,10 +422,8 @@ Shorthand for `HTTP.request("DELETE", ...)`. See [`HTTP.request`](@ref).
 """
 delete(a...; kw...) = request("DELETE", a...; kw...)
 
-include("TopRequest.jl");               using .TopRequest
 include("RedirectRequest.jl");          using .RedirectRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
-include("AWS4AuthRequest.jl");          using .AWS4AuthRequest
 include("CookieRequest.jl");            using .CookieRequest
 include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
 include("TimeoutRequest.jl");           using .TimeoutRequest
@@ -499,8 +482,6 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
  │   │ request(CanonicalizeLayer, method, ::URI, ::Headers, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
  │   │ request(MessageLayer,      method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(AWS4AuthLayer,             ::URI, ::Request, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
  │   │ request(RetryLayer,                ::URI, ::Request, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
@@ -567,20 +548,43 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 ```
 *See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
 """
-function stack(; kw...)
+function stack(;
+    basicauth=true,
+    redirect=true,
+    cookies=false,
+    canonicalize_headers=false,
+    retry=true,
+    status_exception=true,
+    readtimeout=0,
+    detect_content_type=false,
+    verbose=0,
+    kw...)
 
-    layers = stacklayertypes(Layers.ConnectionLayer, StreamLayer(); kw...)
+    kwargs = Dict{Symbol, Any}(kw)
+    kwargs[:basicauth] = basicauth
+    kwargs[:redirect] = redirect
+    kwargs[:cookies] = cookies
+    kwargs[:canonicalize_headers] = canonicalize_headers
+    kwargs[:retry] = retry
+    kwargs[:status_exception] = status_exception
+    kwargs[:readtimeout] = readtimeout
+    kwargs[:detect_content_type] = detect_content_type
+    kwargs[:verbose] = verbose
+    layers = stacklayertypes(Layers.ConnectionLayer, StreamLayer(), kwargs)
     layers = ConnectionPoolLayer(layers; kw...)
-    layers = stacklayertypes(Layers.RequestLayer, layers; kw...)
+    layers = stacklayertypes(Layers.RequestLayer, layers, kwargs)
     layers = MessageLayer(layers; kw...)
-    return stacklayertypes(Layers.InitialLayer, layers; kw...)
+    return stacklayertypes(Layers.InitialLayer, layers, kwargs)
 end
 
-function stacklayertypes(::Type{T}, layers; kw...) where {T}
-    for (k, _) in pairs(kw)
+function stacklayertypes(::Type{T}, layers, kwargs) where {T}
+    for (k, _) in pairs(kwargs)
         layer = Layers.keywordforlayer(Val(k))
         if layer !== nothing && layer <: T
-            layers = layer(layers; kw...)
+            newlayers = layer(layers; kwargs...)
+            if newlayers !== nothing
+                layers = newlayers
+            end
         end
     end
     return layers
