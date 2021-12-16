@@ -1,20 +1,37 @@
 module HTTP
 
-export startwrite, startread, closewrite, closeread
+export startwrite, startread, closewrite, closeread, stack, insert, insert_default!,
+    remove_default!, AWS4AuthLayer, BasicAuthLayer, CanonicalizeLayer, ConnectionPoolLayer,
+    ContentTypeDetectionLayer, DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer,
+    RetryLayer, StreamLayer, TimeoutLayer, TopLayer,
+    @logfmt_str, common_logfmt, combined_logfmt
 
 const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
-Base.@deprecate URL URI
 
 using Base64, Sockets, Dates
+using URIs
+
+function access_threaded(f, v::Vector)
+    tid = Threads.threadid()
+    0 < tid <= length(v) || _length_assert()
+    if @inbounds isassigned(v, tid)
+        @inbounds x = v[tid]
+    else
+        x = f()
+        @inbounds v[tid] = x
+    end
+    return x
+end
+@noinline _length_assert() =  @assert false "0 < tid <= v"
 
 include("debug.jl")
+include("access_log.jl")
 
 include("Pairs.jl")                    ;using .Pairs
 include("IOExtras.jl")                 ;using .IOExtras
 include("Strings.jl")
-include("URIs.jl")                     ;using .URIs
 include("sniff.jl")
 include("multipart.jl")
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,
@@ -23,12 +40,15 @@ include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
+include("layers.jl")                   ;using .Layers
+
+const nobody = UInt8[]
 
 """
 
     HTTP.request(method, url [, headers [, body]]; <keyword arguments>]) -> HTTP.Response
 
-Send a HTTP Request Message and recieve a HTTP Response Message.
+Send a HTTP Request Message and receive a HTTP Response Message.
 
 e.g.
 ```julia
@@ -73,8 +93,8 @@ conf = (readtimeout = 10,
         retry = false,
         redirect = false)
 
-HTTP.get("http://httpbin.org/ip"; conf..)
-HTTP.put("http://httpbin.org/put", [], "Hello"; conf..)
+HTTP.get("http://httpbin.org/ip"; conf...)
+HTTP.put("http://httpbin.org/put", [], "Hello"; conf...)
 ```
 
 
@@ -91,16 +111,15 @@ Streaming options
 
 Connection Pool options
 
+ - `connect_timeout = 0`, close the connection after this many seconds if it
+   is still attempting to connect. Use `connect_timeout = 0` to disable.
  - `connection_limit = 8`, number of concurrent connections to each host:port.
- - `pipeline_limit = 16`, number of concurrent requests per connection.
- - `reuse_limit = nolimit`, number of times a connection is reused after the
-                            first request.
  - `socket_type = TCPSocket`
 
 
 Timeout options
 
- - `readtimeout = 60`, close the connection if no data is recieved for this many
+ - `readtimeout = 0`, close the connection if no data is received for this many
    seconds. Use `readtimeout = 0` to disable.
 
 
@@ -125,20 +144,20 @@ Status Exception options
 
 SSLContext options
 
- - `require_ssl_verification = false`, pass `MBEDTLS_SSL_VERIFY_REQUIRED` to
+ - `require_ssl_verification = NetworkOptions.verify_host(host)`, pass `MBEDTLS_SSL_VERIFY_REQUIRED` to
    the mbed TLS library.
    ["... peer must present a valid certificate, handshake is aborted if
      verification failed."](https://tls.mbed.org/api/ssl_8h.html#a5695285c9dbfefec295012b566290f37)
  - `sslconfig = SSLConfig(require_ssl_verification)`
 
 
-Basic Authenticaiton options
+Basic Authentication options
 
- - basic_authorization=false, add `Authorization: Basic` header using credentials
-   from url userinfo.
+ - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)
+   and adds the `Authorization: Basic` header
 
 
-AWS Authenticaiton options
+AWS Authentication options
 
  - `aws_authorization = false`, enable AWS4 Authentication.
  - `aws_service = split(url.host, ".")[1]`
@@ -152,15 +171,22 @@ AWS Authenticaiton options
 
 Cookie options
 
- - `cookies = false`, enable cookies.
- - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`
+ - `cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}} = false`, enable cookies, or alternatively,
+        pass a `Dict{AbstractString, AbstractString}` of name-value pairs to manually pass cookies
+ - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`,
 
 
-Cananoincalization options
+Canonicalization options
 
  - `canonicalize_headers = false`, rewrite request and response headers in
    Canonical-Camel-Dash-Format.
 
+Proxy options
+
+ - `proxy = proxyurl`, pass request through a proxy given as a url
+
+Alternatively, HTTP.jl also respects the `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, and `no_proxy`
+environment variables; if set, they will be used automatically when making requests.
 
 ## Request Body Examples
 
@@ -217,7 +243,7 @@ Stream body through buffer:
 ```julia
 io = Base.BufferStream()
 @async while !eof(io)
-    bytes = readavailable(io))
+    bytes = readavailable(io)
     println("GET data: \$bytes")
 end
 r = HTTP.request("GET", "http://httpbin.org/get", response_stream=io)
@@ -237,7 +263,7 @@ using HTTP.IOExtras
 HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
     n = 0
     r = startread(http)
-    l = parse(Int, header(r, "Content-Length"))
+    l = parse(Int, HTTP.header(r, "Content-Length"))
     open(`vlc -q --play-and-exit --intf dummy -`, "w") do vlc
         while !eof(http)
             bytes = readavailable(http)
@@ -290,28 +316,25 @@ HTTP.open("POST", "http://music.com/play") do io
     r = startread(io)
     @show r.status
     while !eof(io)
-        bytes = readavailable(io))
+        bytes = readavailable(io)
         play_audio(bytes)
     end
 end
 ```
 """
-request(method::String, url::URI, headers::Headers, body; kw...)::Response =
-    request(HTTP.stack(;kw...), method, url, headers, body; kw...)
-#FIXME consider @nospecialize for `body` ? (other places? in ConnectionPool?)
-
-
-const nobody = UInt8[]
-
 function request(method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
-
-    uri = URI(url)
-    if query !== nothing
-        uri = merge(uri, query=query)
-    end
-    return request(string(method), uri, mkheaders(headers), body; kw...)
+    return request(HTTP.stack(;kw...), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
+function request(stack::Type{<:Layer}, method, url, h=Header[], b=nobody;
+                 headers=h, body=b, query=nothing, kw...)::Response
+    return request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+end
+
+request(::Type{Union{}}, resp::Response) = resp
+
+request_uri(url, query) = URI(URI(url); query=query)
+request_uri(url, ::Nothing) = URI(url)
 
 """
     HTTP.open(method, url, [,headers]) do io
@@ -328,15 +351,15 @@ Response Body to be read from) an `IO` stream.
 
 e.g. Streaming an audio file to the `vlc` player:
 ```julia
-HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
+HTTP.open(:GET, "https://tinyurl.com/bach-cello-suite-1-ogg") do http
     open(`vlc -q --play-and-exit --intf dummy -`, "w") do vlc
         write(vlc, http)
     end
 end
 ```
 """
-open(f::Function, method::String, url, headers=Header[]; kw...)::Response =
-    request(method, url, headers, nothing; iofunction=f, kw...)
+open(f::Function, method::Union{String,Symbol}, url, headers=Header[]; kw...)::Response =
+    request(string(method), url, headers, nothing; iofunction=f, kw...)
 
 """
     HTTP.openraw(method, url, [, headers])::Tuple{TCPSocket, Response, ByteView}
@@ -360,7 +383,7 @@ frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
 write(socket, frame)
 ```
 """
-function openraw(method::String, url, headers=Header[]; kw...)::Tuple{IO, Response}
+function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tuple{IO, Response}
     socketready = Channel{Tuple{IO, Response}}(0)
     @async HTTP.open(method, url, headers; kw...) do http
         HTTP.startread(http)
@@ -415,61 +438,7 @@ Shorthand for `HTTP.request("DELETE", ...)`. See [`HTTP.request`](@ref).
 """
 delete(a...; kw...) = request("DELETE", a...; kw...)
 
-"""
-
-## Request Execution Stack
-
-The Request Execution Stack is separated into composable layers.
-
-Each layer is defined by a nested type `Layer{Next}` where the `Next`
-parameter defines the next layer in the stack.
-The `request` method for each layer takes a `Layer{Next}` type as
-its first argument and dispatches the request to the next layer
-using `request(Next, ...)`.
-
-The example below defines three layers and three stacks each with
-a different combination of layers.
-
-
-```julia
-abstract type Layer end
-abstract type Layer1{Next <: Layer} <: Layer end
-abstract type Layer2{Next <: Layer} <: Layer end
-abstract type Layer3 <: Layer end
-
-request(::Type{Layer1{Next}}, data) where Next = "L1", request(Next, data)
-request(::Type{Layer2{Next}}, data) where Next = "L2", request(Next, data)
-request(::Type{Layer3}, data) = "L3", data
-
-const stack1 = Layer1{Layer2{Layer3}}
-const stack2 = Layer2{Layer1{Layer3}}
-const stack3 = Layer1{Layer3}
-```
-
-```julia
-julia> request(stack1, "foo")
-("L1", ("L2", ("L3", "foo")))
-
-julia> request(stack2, "bar")
-("L2", ("L1", ("L3", "bar")))
-
-julia> request(stack3, "boo")
-("L1", ("L3", "boo"))
-```
-
-This stack definition pattern gives the user flexibility in how layers are
-combined but still allows Julia to do whole-stack comiple time optimistations.
-
-e.g. the `request(stack1, "foo")` call above is optimised down to a single
-function:
-```julia
-julia> code_typed(request, (Type{stack1}, String))[1].first
-CodeInfo(:(begin
-    return (Core.tuple)("L1", (Core.tuple)("L2", (Core.tuple)("L3", data)))
-end))
-```
-"""
-abstract type Layer end
+include("TopRequest.jl");               using .TopRequest
 include("RedirectRequest.jl");          using .RedirectRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
 include("AWS4AuthRequest.jl");          using .AWS4AuthRequest
@@ -484,6 +453,7 @@ include("ConnectionRequest.jl");        using .ConnectionRequest
 include("DebugRequest.jl");             using .DebugRequest
 include("StreamRequest.jl");            using .StreamRequest
 include("ContentTypeRequest.jl");       using .ContentTypeDetection
+include("exceptions.jl")
 
 """
 The `stack()` function returns the default HTTP Layer-stack type.
@@ -491,7 +461,7 @@ This type is passed as the first parameter to the [`HTTP.request`](@ref) functio
 
 `stack()` accepts optional keyword arguments to enable/disable specific layers
 in the stack:
-`request(method, args...; kw...) request(stack(;kw...), args...; kw...)`
+`request(method, args...; kw...) request(stack(; kw...), args...; kw...)`
 
 
 The minimal request execution stack is:
@@ -500,7 +470,7 @@ The minimal request execution stack is:
 stack = MessageLayer{ConnectionPoolLayer{StreamLayer}}
 ```
 
-The figure below illustrates the full request exection stack and its
+The figure below illustrates the full request execution stack and its
 relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 [`HTTP.Stream`](@ref) and the [`HTTP.ConnectionPool`](@ref).
 
@@ -520,7 +490,9 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
  │             ──────────────────────────     └─────────▲─────────┘      │  │ │
  │                           ║                          ║             │       │
  │   ┌────────────────────────────────────────────────────────────┐      │  │ │
- │   │ request(RedirectLayer,     method, ::URI, ::Headers, body) │   │       │
+ │   │ request(TopLayer,          method, ::URI, ::Headers, body) │   │       │
+ │   ├────────────────────────────────────────────────────────────┤      │  │ │
+ │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
  │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
  │   ├────────────────────────────────────────────────────────────┤      │  │ │
@@ -545,7 +517,7 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 ││   │ request(StreamLayer,               ::IO,  ::Request, body) │           │
 ││   └──────────────┬───────────────────┬─────────────────────────┘         │ │
 │└──────────────────┼────────║──────────┼───────────────║─────────────────────┘
-│                   │        ║          │               ║                   │  
+│                   │        ║          │               ║                   │
 │┌──────────────────▼───────────────┐   │  ┌──────────────────────────────────┐
 ││ HTTP.Request                     │   │  │ HTTP.Response                  │ │
 ││                                  │   │  │                                  │
@@ -569,11 +541,11 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 ││ writestartline(::IO, ::Request)  │ │  ║ │ parse_status_line(bytes, ::Req') │
 ││ writeheaders(::IO, ::Request)    │ │  ║ │ parse_header_field(bytes, ::Req')│
 │└──────────────────────────────────┘ │  ║ └──────────────────────────────────┘
-│                            ║        │  ║                                     
+│                            ║        │  ║
 │┌───────────────────────────║────────┼──║────────────────────────────────────┐
 └▶ HTTP.ConnectionPool       ║        │  ║                                    │
  │                     ┌──────────────▼────────┐ ┌───────────────────────┐    │
- │ getconnection() ->  │ HTTP.Transaction <:IO │ │ HTTP.Transaction <:IO │    │
+ │ getconnection() ->  │ HTTP.Connection  <:IO │ │ HTTP.Connection  <:IO │    │
  │                     └───────────────────────┘ └───────────────────────┘    │
  │                           ║    ╲│╱    ║                  ╲│╱               │
  │                           ║     │     ║                   │                │
@@ -589,7 +561,7 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
  │                           ║           ║       │ Base.TCPSocket <:IO   │    │
  │                           ║           ║       └───────────────────────┘    │
  └───────────────────────────║───────────║────────────────────────────────────┘
-                             ║           ║                                     
+                             ║           ║
  ┌───────────────────────────║───────────║──────────────┐  ┏━━━━━━━━━━━━━━━━━━┓
  │ HTTP Server               ▼                          │  ┃ data flow: ════▶ ┃
  │                        Request     Response          │  ┃ reference: ────▶ ┃
@@ -598,7 +570,6 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 *See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
 """
 function stack(;redirect=true,
-                basic_authorization=false,
                 aws_authorization=false,
                 cookies=false,
                 canonicalize_headers=false,
@@ -610,11 +581,12 @@ function stack(;redirect=true,
                 kw...)
 
     NoLayer = Union
-
+    stack =                 TopLayer{
     (redirect             ? RedirectLayer             : NoLayer){
-    (basic_authorization  ? BasicAuthLayer            : NoLayer){
+                            BasicAuthLayer{
     (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
-    (cookies              ? CookieLayer               : NoLayer){
+    (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
+                            CookieLayer               : NoLayer){
     (canonicalize_headers ? CanonicalizeLayer         : NoLayer){
                             MessageLayer{
     (aws_authorization    ? AWS4AuthLayer             : NoLayer){
@@ -624,24 +596,28 @@ function stack(;redirect=true,
     (verbose >= 3 ||
      DEBUG_LEVEL[] >= 3   ? DebugLayer                : NoLayer){
     (readtimeout > 0      ? TimeoutLayer              : NoLayer){
-                            StreamLayer
-    }}}}}}}}}}}}
+                            StreamLayer{Union{}}
+    }}}}}}}}}}}}}
+
+    reduce(Layers.EXTRA_LAYERS; init=stack) do stack, (before, custom)
+        insert(stack, before, custom)
+    end
 end
 
 include("download.jl")
-
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
 include("Handlers.jl")                 ;using .Handlers; using .Handlers: serve
+include("parsemultipart.jl")           ;using .MultiPartParsing: parse_multipart_form
 include("WebSockets.jl")               ;using .WebSockets
 
-import .ConnectionPool: Transaction, Connection
+import .ConnectionPool: Connection
 
 function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
     buffer = Base.BufferStream()
     write(buffer, str)
     close(buffer)
     m = T()
-    http = Stream(m, Transaction(Connection(buffer)))
+    http = Stream(m, Connection(buffer))
     m.body = read(http)
     closeread(http)
     return m

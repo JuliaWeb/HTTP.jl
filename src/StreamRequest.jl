@@ -19,61 +19,55 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-abstract type StreamLayer <: Layer end
+abstract type StreamLayer{Next <: Layer} <: Layer{Next} end
 export StreamLayer
 
-function request(::Type{StreamLayer}, io::IO, request::Request, body;
+function request(::Type{StreamLayer{Next}}, io::IO, req::Request, body;
+                 reached_redirect_limit=false,
                  response_stream=nothing,
                  iofunction=nothing,
                  verbose::Int=0,
-                 kw...)::Response
+                 kw...)::Response where Next
 
-    verbose == 1 && printlncompact(request)
+    verbose == 1 && printlncompact(req)
 
-    response = request.response
+    response = req.response
     http = Stream(response, io)
+    @debug 2 "client startwrite"
     startwrite(http)
 
     if verbose == 2
-        println(request)
-        if iofunction === nothing && request.body === body_is_a_stream
-            println("$(typeof(request)).body: $(sprintcompact(body))")
+        println(req)
+        if iofunction === nothing && req.body === body_is_a_stream
+            println("$(typeof(req)).body: $(sprintcompact(body))")
         end
     end
 
-    if !isidempotent(request)
-        # Wait for pipelined reads to complete
-        # before sending non-idempotent request body.
-        startread(io)
-    end
-
-    aborted = false
     write_error = nothing
     try
-
         @sync begin
             if iofunction === nothing
                 @async try
-                    writebody(http, request, body)
+                    writebody(http, req, body)
+                    @debug 2 "client closewrite"
+                    closewrite(http)
                 catch e
                     write_error = e
-                    @warn("Error in @async writebody task",
-                          exception=(write_error, catch_backtrace()))
-                    close(io)
+                    isopen(io) && try; close(io); catch; end
                 end
-                yield()
+                @debug 2 "client startread"
                 startread(http)
-                readbody(http, response, response_stream)
+                readbody(http, response, response_stream, reached_redirect_limit)
             else
                 iofunction(http)
             end
 
             if isaborted(http)
-                close(io)
-                aborted = true
+                # The server may have closed the connection.
+                # Don't propagate such errors.
+                try; close(io); catch; end
             end
         end
-
     catch e
         if write_error !== nothing
             throw(write_error)
@@ -82,13 +76,15 @@ function request(::Type{StreamLayer}, io::IO, request::Request, body;
         end
     end
 
+    @debug 2 "client closewrite"
     closewrite(http)
+    @debug 2 "client closeread"
     closeread(http)
 
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)
 
-    return response
+    return request(Next, response)
 end
 
 function writebody(http::Stream, req::Request, body)
@@ -101,17 +97,7 @@ function writebody(http::Stream, req::Request, body)
     end
 
     req.txcount += 1
-
-    if isidempotent(req)
-        closewrite(http)
-    else
-        @debug 2 "🔒  $(req.method) non-idempotent, " *
-                 "holding write lock: $(http.stream)"
-        # "A user agent SHOULD NOT pipeline requests after a
-        #  non-idempotent method, until the final response
-        #  status code for that method has been received"
-        # https://tools.ietf.org/html/rfc7230#section-6.3.2
-    end
+    return
 end
 
 function writebodystream(http, req, body)
@@ -128,13 +114,14 @@ end
 writechunk(http, req, body::IO) = writebodystream(http, req, body)
 writechunk(http, req, body) = write(http, body)
 
-function readbody(http::Stream, res::Response, response_stream)
-    if response_stream == nothing
+function readbody(http::Stream, res::Response, response_stream, reached_redirect_limit)
+    if response_stream === nothing
         res.body = read(http)
     else
-        res.body = body_was_streamed
-        write(response_stream, http)
-        close(response_stream)
+        if reached_redirect_limit || !isredirect(res)
+            res.body = body_was_streamed
+            write(response_stream, http)
+        end
     end
 end
 

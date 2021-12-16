@@ -1,26 +1,35 @@
-using Distributed
-addprocs(5)
+using Test, HTTP, JSON
 
-using Test
-using HTTP
+const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
+include(joinpath(dir, "resources/TestRequest.jl"))
 
 @testset "HTTP" begin
-    for f in ["ascii.jl",
-              "issue_288.jl",
+    for f in [
+              "ascii.jl",
+              "chunking.jl",
               "utils.jl",
+              "client.jl",
+              "multipart.jl",
+              "parsemultipart.jl",
               "sniff.jl",
-              "uri.jl",
-              "url.jl",
               "cookies.jl",
               "parser.jl",
               "loopback.jl",
-              "WebSockets.jl",
+              "websockets.jl",
               "messages.jl",
               "handlers.jl",
               "server.jl",
-              "async.jl"]
-
-        println("Running $f tests...")
-        include(f)
+              "async.jl",
+              "aws4.jl",
+              "insert_layers.jl",
+              "mwe.jl",
+             ]
+        file = joinpath(dir, f)
+        println("Running $file tests...")
+        if isfile(file)
+            include(file)
+        else
+            @show readdir(dirname(file))
+        end
     end
 end

@@ -1,46 +1,39 @@
 """
-This module provides the [`getconnection`](@ref) function with support for:
+This module provides the [`newconnection`](@ref) function with support for:
 - Opening TCP and SSL connections.
-- Reusing connections for multiple Request/Response Messages,
-- Pipelining Request/Response Messages. i.e. allowing a new Request to be
-  sent before previous Responses have been read.
+- Reusing connections for multiple Request/Response Messages
 
 This module defines a [`Connection`](@ref)
-struct to manage pipelining and connection reuse and a
-[`Transaction`](@ref)`<: IO` struct to manage a single
-pipelined request. Methods are provided for `eof`, `readavailable`,
+struct to manage the lifetime of a connection and its reuse.
+Methods are provided for `eof`, `readavailable`,
 `unsafe_write` and `close`.
-This allows the `Transaction` object to act as a proxy for the
+This allows the `Connection` object to act as a proxy for the
 `TCPSocket` or `SSLContext` that it wraps.
 
-The [`pool`](@ref) is a collection of open
-`Connection`s.  The `request` function calls `getconnection` to
-retrieve a connection from the `pool`.  When the `request` function
-has written a Request Message it calls `closewrite` to signal that
-the `Connection` can be reused for writing (to send the next Request).
-When the `request` function has read the Response Message it calls
-`closeread` to signal that the `Connection` can be reused for
-reading.
+The [`POOL`](@ref) is used to manage connection pooling. Connections
+are identified by their host, port, whether they require
+ssl verification, and whether they are a client or server connection.
+If a subsequent request matches these properties of a previous connection
+and limits are respected (reuse limit, idle timeout), and it wasn't otherwise
+remotely closed, a connection will be reused.
 """
 module ConnectionPool
 
-export Connection, Transaction,
-       getconnection, getrawstream, inactiveseconds
+export Connection, newconnection, getrawstream, inactiveseconds
 
 using ..IOExtras, ..Sockets
 
-import ..ByteView
-import ..@debug, ..@debugshow, ..DEBUG_LEVEL, ..taskid
+import ..@debug, ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
+import NetworkOptions
 
 const default_connection_limit = 8
 const default_pipeline_limit = 16
 const nolimit = typemax(Int)
 
-const nobytes = view(UInt8[], 1:0)
-byteview(bytes::ByteView) = bytes
-byteview(bytes)::ByteView = view(bytes, 1:length(bytes))
+include("connectionpools.jl")
+using .ConnectionPools
 
 """
     Connection{T <: IO}
@@ -50,263 +43,197 @@ A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 Fields:
 - `host::String`
 - `port::String`, exactly as specified in the URI (i.e. may be empty).
-- `pipeline_limit`, number of requests to send before waiting for responses.
-- `idle_timeout`, No. of sconds to maintain connection after last transaction.
-- `peerport`, remote TCP port number (used for debug messages).
+- `idle_timeout`, No. of seconds to maintain connection after last request/response.
+- `peerip`, remote IP adress (used for debug/log messages).
+- `peerport`, remote TCP port number (used for debug/log messages).
 - `localport`, local TCP port number (used for debug messages).
 - `io::T`, the `TCPSocket` or `SSLContext.
-- `excess::ByteView`, left over bytes read from the connection after
-   the end of a response message. These bytes are probably the start of the
-   next response message.
-- `sequence`, number of most recent `Transaction`.
-- `writecount`, number of Messages that have been written.
-- `writedone`, signal that `writecount` was incremented.
-- `readcount`, number of Messages that have been read.
-- `readdone`, signal that `readcount` was incremented.
-- `timestamp`, time data was last recieved.
+- `clientconnection::Bool`, whether the Connection was created from client code (as opposed to server code)
+- `buffer::IOBuffer`, left over bytes read from the connection after
+   the end of a response header (or chunksize). These bytes are usually
+   part of the response body.
+- `timestamp`, time data was last received.
 """
-mutable struct Connection{T <: IO}
+mutable struct Connection <: IO
     host::String
     port::String
-    pipeline_limit::Int
     idle_timeout::Int
     require_ssl_verification::Bool
-    peerport::UInt16 # debug only
+    peerip::IPAddr # for debugging/logging
+    peerport::UInt16 # for debugging/logging
     localport::UInt16 # debug only
-    io::T
-    excess::ByteView
-    sequence::Int
-    writecount::Int
-    writebusy::Bool
-    writedone::Condition
-    readcount::Int
-    readbusy::Bool
-    readdone::Condition
+    io::IO
+    clientconnection::Bool
+    buffer::IOBuffer
     timestamp::Float64
+    readable::Bool
+    writable::Bool
 end
 
 """
-A single pipelined HTTP Request/Response transaction`.
+    connectionkey
 
-Fields:
- - `c`, the shared [`Connection`](@ref) used for this `Transaction`.
- - `sequence::Int`, identifies this `Transaction` among the others that share `c`.
+Used for "hashing" a Connection object on just the key properties necessary for determining
+connection re-useability. That is, when a new request calls `newconnection`, we take the
+request parameters of what socket type, the host and port, and if ssl
+verification is required, and if an existing Connection was already created with the exact
+same parameters, we can re-use it (as long as it's not already being used, obviously).
 """
-struct Transaction{T <: IO} <: IO
-    c::Connection{T}
-    sequence::Int
-end
+connectionkey(x::Connection) = (typeof(x.io), x.host, x.port, x.require_ssl_verification, x.clientconnection)
 
 Connection(host::AbstractString, port::AbstractString,
-           pipeline_limit::Int, idle_timeout::Int,
-           require_ssl_verification::Bool, io::T) where T <: IO =
-    Connection{T}(host, port,
-                  pipeline_limit, idle_timeout,
-                  require_ssl_verification,
-                  peerport(io), localport(io),
-                  io, nobytes,
-                  -1,
-                  0, false, Condition(),
-                  0, false, Condition(),
-                  time())
+           idle_timeout::Int,
+           require_ssl_verification::Bool, io::IO, client=true) =
+    Connection(host, port, idle_timeout,
+                require_ssl_verification,
+                safe_getpeername(io)..., localport(io),
+                io, client, PipeBuffer(), time(), false, false)
 
 Connection(io; require_ssl_verification::Bool=true) =
-    Connection("", "", default_pipeline_limit, 0, require_ssl_verification, io)
+    Connection("", "", 0, require_ssl_verification, io, false)
 
-Transaction(c::Connection{T}) where T <: IO =
-    Transaction{T}(c, (c.sequence += 1))
+getrawstream(c::Connection) = c.io
 
-function client_transaction(c)
-    t = Transaction(c)
-    startwrite(t)
-    return t
-end
+inactiveseconds(c::Connection)::Float64 = time() - c.timestamp
 
-getrawstream(t::Transaction) = t.c.io
-
-inactiveseconds(t::Transaction) = inactiveseconds(t.c)
-
-function inactiveseconds(c::Connection)::Float64
-    if !c.readbusy && !c.writebusy
-        return 0.0
-    end
-    return time() - c.timestamp
-end
-
-Base.unsafe_write(t::Transaction, p::Ptr{UInt8}, n::UInt) =
-    unsafe_write(t.c.io, p, n)
+Base.unsafe_write(c::Connection, p::Ptr{UInt8}, n::UInt) =
+    unsafe_write(c.io, p, n)
 
 Base.isopen(c::Connection) = isopen(c.io)
 
-Base.isopen(t::Transaction) = isopen(t.c) &&
-                              t.c.readcount <= t.sequence &&
-                              t.c.writecount <= t.sequence
-
 """
-Is `c` currently in use or expecting a response to request already sent?
-"""
-isbusy(c::Connection) = isopen(c) && (c.writebusy || c.readbusy ||
-                                      c.writecount > c.readcount)
+    flush(c::Connection)
 
-function Base.eof(t::Transaction)
-    @require isreadable(t) || !isopen(t)
-    if bytesavailable(t) > 0
-        return false
-    end             ;@debug 4 "eof(::Transaction) -> eof($(typeof(t.c.io))): $t"
-    return eof(t.c.io)
+Flush a TCP buffer by toggling the Nagle algorithm off and on again for a socket.
+This forces the socket to send whatever data is within its buffer immediately,
+rather than waiting 10's of milliseconds for the buffer to fill more.
+"""
+function Base.flush(c::Connection)
+    # Flushing the TCP buffer requires support for `Sockets.nagle()`
+    # which was only added in Julia v1.3
+    @static if VERSION >= v"1.3"
+        sock = tcpsocket(c.io)
+        # I don't understand why uninitializd sockets can get here, but they can
+        if sock.status ∉ (Base.StatusInit, Base.StatusUninit) && isopen(sock)
+            Sockets.nagle(sock, false)
+            Sockets.nagle(sock, true)
+        end
+    end
 end
 
-Base.bytesavailable(t::Transaction) = bytesavailable(t.c)
-Base.bytesavailable(c::Connection) =
-    !isempty(c.excess) ? length(c.excess) : bytesavailable(c.io)
+Base.isreadable(c::Connection) = c.readable
+Base.iswritable(c::Connection) = c.writable
 
-Base.isreadable(t::Transaction) = t.c.readbusy && t.c.readcount == t.sequence
-
-Base.iswritable(t::Transaction) = t.c.writebusy && t.c.writecount == t.sequence
-
-function Base.readavailable(t::Transaction)::ByteView
-    @require isreadable(t)
-    if !isempty(t.c.excess)
-        bytes = t.c.excess
-        @debug 4 "↩️  read $(length(bytes))-bytes from excess buffer."
-        t.c.excess = nobytes
-    else
-        bytes = byteview(readavailable(t.c.io))
-        @debug 4 "⬅️  read $(length(bytes))-bytes from $(typeof(t.c.io))"
+function Base.eof(c::Connection)
+    @require isreadable(c) || !isopen(c)
+    if bytesavailable(c) > 0
+        return false
     end
-    t.c.timestamp = time()
+    return eof(c.io)
+end
+
+Base.bytesavailable(c::Connection) = bytesavailable(c.buffer) +
+                                     bytesavailable(c.io)
+
+function Base.read(c::Connection, nb::Int)
+    nb = min(nb, bytesavailable(c))
+    bytes = Base.StringVector(nb)
+    GC.@preserve bytes unsafe_read(c, pointer(bytes), nb)
     return bytes
 end
 
-function Base.read(t::Transaction, nb::Integer)::ByteView
-    bytes = t.c.excess
-    l = length(bytes)
-    if l > 0
-        if l > nb
-            t.c.excess = view(bytes, nb+1:l)
-            return view(bytes, 1:nb)
-        else
-            t.c.excess = nobytes
-            return bytes
-        end
+function Base.read(c::Connection, ::Type{UInt8})
+    if bytesavailable(c.buffer) == 0
+        read_to_buffer(c)
     end
-    v = Base.StringVector(min(nb, bytesavailable(t.c.io)))
-    unsafe_read(t.c.io, pointer(v), length(v))
-    return byteview(v)
+    return read(c.buffer, UInt8)
 end
 
-function Base.unsafe_read(t::Transaction, p::Ptr{UInt8}, n::UInt)
-    bytes = t.c.excess
-    l = length(bytes)
+function Base.unsafe_read(c::Connection, p::Ptr{UInt8}, n::UInt)
+    l = bytesavailable(c.buffer)
     if l > 0
-        nb = min(l,n)
-        unsafe_copyto!(p, pointer(bytes), nb)
-        p += nb;
+        nb = min(l, n)
+        unsafe_read(c.buffer, p, nb)
+        p += nb
         n -= nb
-        if nb == l
-            t.c.excess = nobytes
-        else
-            t.c.excess = view(bytes, nb+1:l)
-        end
+        c.timestamp = time()
     end
     if n > 0
-        unsafe_read(t.c.io, p, n)
+        unsafe_read(c.io, p, n)
+        c.timestamp = time()
     end
     return nothing
 end
 
+function read_to_buffer(c::Connection, sizehint=4096)
+    buf = c.buffer
 
-"""
-    unread!(::Transaction, bytes)
-
-Push bytes back into a connection's `excess` buffer
-(to be returned by the next read).
-"""
-function IOExtras.unread!(t::Transaction, bytes::ByteView)
-    @require isreadable(t)
-    @require !isempty(bytes)
-    @require t.c.excess === nobytes || bytes.parent == t.c.excess.parent &&
-                                       bytes.indices[1].stop + 1 ==
-                                       t.c.excess.indices[1].start
-    if t.c.excess === nobytes
-        t.c.excess = bytes
-    else
-        t.c.excess = view(bytes.parent,
-                          bytes.indices[1].start:t.c.excess.indices[1].stop)
-    end
-    return
-end
-
-"""
-    startwrite(::Transaction)
-
-Wait for prior pending writes to complete.
-"""
-function IOExtras.startwrite(t::Transaction)
-    @require !iswritable(t)                     ;t.c.writecount != t.sequence &&
-                                                   @debug 1 "⏳  Wait write: $t"
-    while t.c.writecount != t.sequence
-        wait(t.c.writedone)
-    end                                           ;@debug 2 "👁  Start write:$t"
-    t.c.writebusy = true
-    @ensure iswritable(t)
-    return
-end
-
-"""
-    closewrite(::Transaction)
-
-Signal that an entire Request Message has been written to the `Transaction`.
-"""
-function IOExtras.closewrite(t::Transaction)
-    @require iswritable(t)
-
-    t.c.writebusy = false
-    t.c.writecount += 1                           ;@debug 2 "🗣  Write done: $t"
-    notify(t.c.writedone)
-    notify(poolcondition)
-
-    @ensure !iswritable(t)
-    return
-end
-
-"""
-    startread(::Transaction)
-
-Wait for prior pending reads to complete.
-"""
-function IOExtras.startread(t::Transaction)
-    @require !isreadable(t)                      ;t.c.readcount != t.sequence &&
-                                                   @debug 1 "⏳  Wait read:  $t"
-    t.c.timestamp = time()
-    while t.c.readcount != t.sequence
-        wait(t.c.readdone)
-    end                                           ;@debug 2 "👁  Start read: $t"
-    t.c.readbusy = true
-    @ensure isreadable(t)
-    return
-end
-
-"""
-    closeread(::Transaction)
-
-Signal that an entire Response Message has been read from the `Transaction`.
-
-Increment `readcount` and wake up tasks waiting in `startread`.
-"""
-function IOExtras.closeread(t::Transaction)
-    @require isreadable(t)
-
-    t.c.readbusy = false
-    t.c.readcount += 1
-    notify(t.c.readdone)                          ;@debug 2 "✉️  Read done:  $t"
-    notify(poolcondition)
-
-    if !isbusy(t.c)
-        @async monitor_idle_connection(t.c)
+    # Reset the buffer if it is empty.
+    if bytesavailable(buf) == 0
+        buf.size = 0
+        buf.ptr = 1
     end
 
-    @ensure !isreadable(t)
+    # Wait for data.
+    if eof(c.io)
+        throw(EOFError())
+    end
+
+    # Read from stream into buffer.
+    n = min(sizehint, bytesavailable(c.io))
+    buf = c.buffer
+    Base.ensureroom(buf, n)
+    GC.@preserve buf unsafe_read(c.io, pointer(buf.data, buf.size + 1), n)
+    buf.size += n
+end
+
+"""
+Read until `find_delimiter(bytes)` returns non-zero.
+Return view of bytes up to the delimiter.
+"""
+function Base.readuntil(c::Connection, f::Function #=Vector{UInt8} -> Int=#,
+                                        sizehint=4096)::ByteView
+    buf = c.buffer
+    if bytesavailable(buf) == 0
+        read_to_buffer(c, sizehint)
+    end
+    while (bytes = readuntil(buf, f)) === nobytes
+        read_to_buffer(c, sizehint)
+    end
+    return bytes
+end
+
+"""
+    startwrite(::Connection)
+"""
+function IOExtras.startwrite(c::Connection)
+    @require !iswritable(c)
+    c.writable = true
+    @debug 2 "👁  Start write:$c"
+    return
+end
+
+"""
+    closewrite(::Connection)
+
+Signal that an entire Request Message has been written to the `Connection`.
+"""
+function IOExtras.closewrite(c::Connection)
+    @require iswritable(c)
+    c.writable = false
+    @debug 2 "🗣  Write done: $c"
+    flush(c)
+    return
+end
+
+"""
+    startread(::Connection)
+"""
+function IOExtras.startread(c::Connection)
+    @require !isreadable(c)
+    c.timestamp = time()
+    c.readable = true
+    @debug 2 "👁  Start read: $c"
     return
 end
 
@@ -317,35 +244,39 @@ Close `c` on EOF or if response data arrives when no request was sent.
 function monitor_idle_connection(c::Connection)
     if eof(c.io)                                  ;@debug 2 "💀  Closed:     $c"
         close(c.io)
-    elseif !isbusy(c)                             ;@debug 1 "😈  Idle RX!!:  $c"
-        close(c.io)
     end
 end
 
-function monitor_idle_connection(c::Connection{SSLContext})
-    # MbedTLS.jl monitors idle connections for TLS close_notify messages.
-    # https://github.com/JuliaWeb/MbedTLS.jl/pull/145
-end
+"""
+    closeread(::Connection)
 
-Base.wait_close(t::Transaction) = Base.wait_close(tcpsocket(t.c.io))
-
-function Base.close(t::Transaction)
-    close(t.c)
-    if iswritable(t)
-        closewrite(t)
-    end
-    if isreadable(t)
-        closeread(t)
+Signal that an entire Response Message has been read from the `Connection`.
+"""
+function IOExtras.closeread(c::Connection)
+    @require isreadable(c)
+    c.readable = false
+    @debug 2 "✉️  Read done:  $c"
+    if c.clientconnection
+        release(POOL, connectionkey(c), c)
+        # Ignore SSLContext as it already monitors idle connections for TLS close_notify messages
+        !(c.io isa SSLContext) && @async monitor_idle_connection(c)
     end
     return
 end
 
+Base.wait_close(c::Connection) = Base.wait_close(tcpsocket(c.io))
+
 function Base.close(c::Connection)
+    if iswritable(c)
+        closewrite(c)
+    end
+    if isreadable(c)
+        closeread(c)
+    end
     close(c.io)
     if bytesavailable(c) > 0
         purge(c)
     end
-    notify(poolcondition)
     return
 end
 
@@ -359,22 +290,10 @@ function purge(c::Connection)
     while !eof(c.io)
         readavailable(c.io)
     end
-    c.excess = nobytes
+    c.buffer.size = 0
+    c.buffer.ptr = 1
     @ensure bytesavailable(c) == 0
 end
-
-"""
-The `pool` is a collection of open `Connection`s.  The `request`
-function calls `getconnection` to retrieve a connection from the
-`pool`.  When the `request` function has written a Request Message
-it calls `closewrite` to signal that the `Connection` can be reused
-for writing (to send the next Request). When the `request` function
-has read the Response Message it calls `closeread` to signal that
-the `Connection` can be reused for reading.
-"""
-const pool = Vector{Connection}()
-const poollock = ReentrantLock()
-const poolcondition = Condition()
 
 """
     closeall()
@@ -382,96 +301,16 @@ const poolcondition = Condition()
 Close all connections in `pool`.
 """
 function closeall()
-    lock(poollock)
-    for c in pool
-        close(c)
-    end
-    empty!(pool)
-    unlock(poollock)
-    notify(poolcondition)
+    ConnectionPools.reset!(POOL)
     return
 end
 
 """
-    findwritable(type, host, port) -> Vector{Connection}
+    POOL
 
-Find `Connections` in the `pool` that are ready for writing.
+Global connection pool keeping track of active connections.
 """
-function findwritable(T::Type,
-                      host::AbstractString,
-                      port::AbstractString,
-                      pipeline_limit::Int,
-                      require_ssl_verification::Bool,
-                      reuse_limit::Int)
-
-    filter(c->(!c.writebusy &&
-               typeof(c.io) == T &&
-               c.host == host &&
-               c.port == port &&
-               c.pipeline_limit == pipeline_limit &&
-               c.require_ssl_verification == require_ssl_verification &&
-               c.writecount < reuse_limit &&
-               c.writecount - c.readcount < pipeline_limit + 1 &&
-               isopen(c.io)), pool)
-end
-
-"""
-    findoverused(type, host, port, reuse_limit) -> Vector{Connection}
-
-Find `Connections` in the `pool` that are over the reuse limit
-and have no more active readers.
-"""
-function findoverused(T::Type,
-                      host::AbstractString,
-                      port::AbstractString,
-                      reuse_limit::Int)
-
-    filter(c->(typeof(c.io) == T &&
-               c.host == host &&
-               c.port == port &&
-               c.readcount >= reuse_limit &&
-               !c.readbusy &&
-               isopen(c.io)), pool)
-end
-
-"""
-    findall(type, host, port) -> Vector{Connection}
-
-Find all `Connections` in the `pool` for `host` and `port`.
-"""
-function findall(T::Type,
-                 host::AbstractString,
-                 port::AbstractString,
-                 pipeline_limit::Int,
-                 require_ssl_verification::Bool)
-
-    filter(c->(typeof(c.io) == T &&
-               c.host == host &&
-               c.port == port &&
-               c.pipeline_limit == pipeline_limit &&
-               c.require_ssl_verification == require_ssl_verification &&
-               isopen(c.io)), pool)
-end
-
-"""
-    purge()
-
-Remove closed connections from `pool`.
-"""
-function purge()
-    for c in pool
-        if c.idle_timeout > 0 &&
-          !c.readbusy &&
-          !c.writebusy &&
-           time() - c.timestamp > c.idle_timeout
-
-            close(c.io)                       ;@debug 1 "⌛️  Timeout:        $c"
-        end
-    end
-
-    isdeletable(c) = !isopen(c.io) && (@debug 1 "🗑  Deleted:        $c"; true)
-    deleteat!(pool, map(isdeletable, pool))
-end
+const POOL = Pool(Connection)
 
 """
     getconnection(type, host, port) -> Connection
@@ -479,69 +318,25 @@ end
 Find a reusable `Connection` in the `pool`,
 or create a new `Connection` if required.
 """
-function getconnection(::Type{Transaction{T}},
+function newconnection(::Type{T},
                        host::AbstractString,
                        port::AbstractString;
-                       connection_limit::Int=default_connection_limit,
-                       pipeline_limit::Int=default_pipeline_limit,
-                       idle_timeout::Int=0,
-                       reuse_limit::Int=nolimit,
-                       require_ssl_verification::Bool=true,
-                       kw...)::Transaction{T} where T <: IO
-
-    while true
-
-        lock(poollock)
-        try
-
-            # Close connections that have reached the reuse limit...
-            if reuse_limit != nolimit
-                for c in findoverused(T, host, port, reuse_limit)
-                    close(c)
-                end
-            end
-
-            # Remove closed connections from `pool`...
-            purge()
-
-            # Try to find a connection with no active readers or writers...
-            writable = findwritable(T, host, port, pipeline_limit,
-                                                   require_ssl_verification,
-                                                   reuse_limit)
-            idle = filter(c->!c.readbusy, writable)
-            if !isempty(idle)
-                c = rand(idle)                 ;@debug 2 "♻️  Idle:           $c"
-                return client_transaction(c)
-            end
-
-            # If there are not too many connections to this host:port,
-            # create a new connection...
-            busy = findall(T, host, port, pipeline_limit,
-                                          require_ssl_verification)
-            if length(busy) < connection_limit
-                io = getconnection(T, host, port; require_ssl_verification=
-                                                  require_ssl_verification,
-                                                  kw...)
-                c = Connection(host, port,
-                               pipeline_limit, idle_timeout,
-                               require_ssl_verification,
-                               io)
-                push!(pool, c)                ;@debug 1 "🔗  New:            $c"
-                return client_transaction(c)
-            end
-
-            # Share a connection that has active readers...
-            if !isempty(writable)
-                c = rand(writable)             ;@debug 2 "⇆  Shared:         $c"
-                return client_transaction(c)
-            end
-
-        finally
-            unlock(poollock)
-        end
-
-        # Wait for `closewrite` or `close` to signal that a connection is ready.
-        wait(poolcondition)
+                       connection_limit=default_connection_limit,
+                       pipeline_limit=default_pipeline_limit,
+                       idle_timeout=typemax(Int),
+                       reuse_limit=nolimit,
+                       require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
+                       kw...)::Connection where {T <: IO}
+    return acquire(
+            POOL,
+            (T, host, port, require_ssl_verification, true);
+            max_concurrent_connections=Int(connection_limit),
+            idle_timeout=Int(idle_timeout)) do
+        Connection(host, port,
+            idle_timeout, require_ssl_verification,
+            getconnection(T, host, port;
+                require_ssl_verification=require_ssl_verification, kw...)
+        )
     end
 end
 
@@ -563,42 +358,59 @@ function getconnection(::Type{TCPSocket},
                        port::AbstractString;
                        keepalive::Bool=false,
                        connect_timeout::Int=0,
+                       readtimeout::Int=0,
                        kw...)::TCPSocket
 
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
 
     @debug 2 "TCP connect: $host:$p..."
 
-    if connect_timeout == 0
-        tcp = Sockets.connect(Sockets.getaddrinfo(host), p)
-        keepalive && keepalive!(tcp)
-        return tcp
-    end
+    addrs = Sockets.getalladdrinfo(host)
 
-    tcp = Sockets.TCPSocket()
-    Base.connect!(tcp, Sockets.getaddrinfo(host), p)
+    connect_timeout = connect_timeout == 0 && readtimeout > 0 ? readtimeout : connect_timeout
 
-    timeout = Ref{Bool}(false)
-    @async begin
-        sleep(connect_timeout)
-        if tcp.status == Base.StatusConnecting
-            timeout[] = true
-            tcp.status = Base.StatusClosing
-            ccall(:jl_forceclose_uv, Nothing, (Ptr{Nothing},), tcp.handle)
-            #close(tcp)
+    lasterr = ErrorException("unknown connection error")
+
+    for addr in addrs
+        if connect_timeout == 0
+            try
+                tcp = Sockets.connect(addr, p)
+                keepalive && keepalive!(tcp)
+                return tcp
+            catch err
+                lasterr = err
+                continue # to next ip addr
+            end
+        else
+            tcp = Sockets.TCPSocket()
+            Sockets.connect!(tcp, addr, p)
+
+            timeout = Ref{Bool}(false)
+            @async begin
+                sleep(connect_timeout)
+                if tcp.status == Base.StatusConnecting
+                    timeout[] = true
+                    tcp.status = Base.StatusClosing
+                    ccall(:jl_forceclose_uv, Nothing, (Ptr{Nothing},), tcp.handle)
+                    #close(tcp)
+                end
+            end
+            try
+                Sockets.wait_connected(tcp)
+                keepalive && keepalive!(tcp)
+                return tcp
+            catch err
+                if timeout[]
+                    lasterr = ConnectTimeout(host, port)
+                else
+                    lasterr = err
+                end
+                continue # to next ip addr
+            end
         end
     end
-    try
-        Base.wait_connected(tcp)
-    catch e
-        if timeout[]
-            throw(ConnectTimeout(host, port))
-        end
-        rethrow(e)
-    end
-
-    keepalive && keepalive!(tcp)
-    return tcp
+    # If no connetion could be set up, to any address, throw last error
+    throw(lasterr)
 end
 
 const nosslconfig = SSLConfig()
@@ -627,7 +439,7 @@ function getconnection(::Type{SSLContext},
 end
 
 function sslconnection(tcp::TCPSocket, host::AbstractString;
-                       require_ssl_verification::Bool=true,
+                       require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        sslconfig::SSLConfig=nosslconfig,
                        kw...)::SSLContext
 
@@ -643,15 +455,19 @@ function sslconnection(tcp::TCPSocket, host::AbstractString;
     return io
 end
 
-function sslupgrade(t::Transaction{TCPSocket},
+function sslupgrade(c::Connection,
                     host::AbstractString;
-                    require_ssl_verification::Bool=true,
-                    kw...)::Transaction{SSLContext}
-    tls = sslconnection(t.c.io, host;
+                    require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
+                    kw...)::Connection
+    # first we release the original connection, but we don't want it to be
+    # reused in the pool, because we're hijacking the TCPSocket
+    release(POOL, connectionkey(c), c; return_for_reuse=false)
+    # now we hijack the TCPSocket and upgrade to SSLContext
+    tls = sslconnection(c.io, host;
                         require_ssl_verification=require_ssl_verification,
                         kw...)
-    c = Connection(tls; require_ssl_verification=require_ssl_verification)
-    return client_transaction(c)
+    conn = Connection(host, "", 0, require_ssl_verification, tls)
+    return acquire(POOL, connectionkey(conn), conn)
 end
 
 function Base.show(io::IO, c::Connection)
@@ -659,19 +475,15 @@ function Base.show(io::IO, c::Connection)
     print(
         io,
         tcpstatus(c), " ",
-        lpad(c.writecount,3),"↑", c.writebusy ? "🔒  " : "   ",
-        lpad(c.readcount,3), "↓", c.readbusy ? "🔒 " : "  ",
         "$(lpad(round(Int, time() - c.timestamp), 3))s ",
         c.host, ":",
         c.port != "" ? c.port : Int(c.peerport), ":", Int(c.localport),
-        " ≣", c.pipeline_limit,
-        length(c.excess) > 0 ? " $(length(c.excess))-byte excess" : "",
+        bytesavailable(c.buffer) > 0 ?
+            " $(bytesavailable(c.buffer))-byte excess" : "",
         nwaiting > 0 ? " $nwaiting bytes waiting" : "",
         DEBUG_LEVEL[] > 1 && applicable(tcpsocket, c.io) ?
             " $(Base._fd(tcpsocket(c.io)))" : "")
 end
-
-Base.show(io::IO, t::Transaction) = print(io, "T$(rpad(t.sequence,2)) ", t.c)
 
 function tcpstatus(c::Connection)
     if !applicable(tcpsocket, c.io)
@@ -687,30 +499,6 @@ function tcpstatus(c::Connection)
     else
         return s
     end
-end
-
-function showpool(io::IO)
-    lock(poollock)
-    println(io, "ConnectionPool[")
-    for c in pool
-        println(io, "   $c")
-    end
-    println(io, "]\n")
-    unlock(poollock)
-end
-
-function showpoolhtml(io::IO)
-    lock(poollock)
-    println(io, "<table>")
-    for c in pool
-        print(io, "<tr>")
-        for x in split("$c")
-            print(io, "<td>$x</td>")
-        end
-        println(io, "<tr>")
-    end
-    println(io, "</table>")
-    unlock(poollock)
 end
 
 end # module ConnectionPool

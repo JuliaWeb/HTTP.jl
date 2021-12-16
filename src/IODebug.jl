@@ -10,7 +10,6 @@ import ..debug_header
 
     logwrite(iod::IODebug, f, x) = show_io_debug(stdout, "➡️ ", f, x)
     logread(iod::IODebug, f, x) = show_io_debug(stdout, "⬅️ ", f, x)
-    logunread(iod::IODebug, f, x) = show_io_debug(stdout, "♻️ ", f, x)
 
 else
 
@@ -23,10 +22,9 @@ else
 
     logwrite(iod::IODebug, f, x) = push!(iod.log, ("➡️ ", f, x))
     logread(iod::IODebug, f, x) = push!(iod.log, ("⬅️ ", f, x))
-    logunread(iod::IODebug, f, x) = push!(iod.log, ("♻️ ", f, x))
 
 end
- 
+
 Base.wait_close(iod::IODebug) = Base.wait_close(iod.io)
 
 Base.write(iod::IODebug, a...) =
@@ -57,9 +55,13 @@ Base.readavailable(iod::IODebug) =
     (r = readavailable(iod.io);
      logread(iod, :readavailable, String(copy(r))); r)
 
-IOExtras.unread!(iod::IODebug, bytes) =
-    (logunread(iod, :unread!, String(copy(bytes)));
-     unread!(iod.io, bytes))
+Base.readuntil(iod::IODebug, f) =
+    (r = readuntil(iod.io, f);
+     logread(iod, :readuntil, String(copy(r))); r)
+
+Base.readuntil(iod::IODebug, f, h) =
+    (r = readuntil(iod.io, f, h);
+     logread(iod, :readuntil, String(copy(r))); r)
 
 Base.eof(iod::IODebug) = eof(iod.io)
 Base.close(iod::IODebug) = close(iod.io)

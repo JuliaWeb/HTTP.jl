@@ -1,3 +1,6 @@
-Julia 0.6.2 
-HTTP.jl 0.X.X 
-MbedTLS.jl 0.X.X -- Please specify versions
+<!--
+Please specify the following versions when submitting a bug report:
+ - Julia 1.X.X
+ - HTTP.jl 0.X.X
+ - MbedTLS.jl 1.X.X
+-->

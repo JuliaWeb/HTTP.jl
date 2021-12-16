@@ -16,51 +16,60 @@ function safer_joinpath(basepart, parts...)
     joinpath(basepart, parts...)
 end
 
-function try_get_filename_from_headers(headers)
-    content_disp = getkv(headers, "Content-Disposition")
-    if content_disp != nothing
+function try_get_filename_from_headers(hdrs)
+    for content_disp in hdrs
         # extract out of Content-Disposition line
         # rough version of what is needed in https://github.com/JuliaWeb/HTTP.jl/issues/179
         filename_part = match(r"filename\s*=\s*(.*)", content_disp)
-        if filename_part != nothing
+        if filename_part !== nothing
             filename = filename_part[1]
             quoted_filename = match(r"\"(.*)\"", filename)
-            if quoted_filename != nothing
+            if quoted_filename !== nothing
                 # It was in quotes, so it will be double escaped
                 filename = unescape_string(quoted_filename[1])
             end
-            return filename
+            return filename == "" ? nothing : filename
         end
     end
     return nothing
 end
 
-function try_get_filename_from_remote_path(target)
-    target == "" && return nothing
-    filename = basename(target)
-    if filename == ""
-        try_get_filename_from_remote_path(dirname(target))
-    else
-        filename
+function try_get_filename_from_request(req)
+    function file_from_target(t)
+        t == "" && return nothing
+        f = basename(URI(t).path) # URI(...).path to strip out e.g. query parts
+        return (f == "" ? file_from_target(dirname(t)) : f)
     end
+
+    # First try to get file from the original request URI
+    oreq = req
+    while oreq.parent !== nothing
+        oreq = oreq.parent.request
+    end
+    f = file_from_target(oreq.target)
+    f !== nothing && return f
+
+    # Secondly try to get file from the last request URI
+    return file_from_target(req.target)
 end
 
 
-determine_file(::Nothing, resp) = determine_file(tempdir(), resp)
+determine_file(::Nothing, resp, hdrs) = determine_file(tempdir(), resp, hdrs)
 # ^ We want to the filename if possible because extension is useful for FileIO.jl
 
-function determine_file(path, resp)
+function determine_file(path, resp, hdrs)
     # get the name
     name = if isdir(path)
+        # we have been given a path to a directory
         # got to to workout what file to put there
         filename = something(
-                        try_get_filename_from_headers(resp.headers),
-                        try_get_filename_from_remote_path(resp.request.target),
-                        basename(tempname()) # fallback, basically a random string
+                        try_get_filename_from_headers(hdrs),
+                        try_get_filename_from_request(resp.request),
+                        basename(tempname())  # fallback, basically a random string
                     )
         safer_joinpath(path, filename)
     else
-        # It is a file, we are done.
+        # We have been given a full filepath
         path
     end
 
@@ -90,21 +99,27 @@ from the rules of the HTTP.
 """
 function download(url::AbstractString, local_path=nothing, headers=Header[]; update_period=1, kw...)
     format_progress(x) = round(x, digits=4)
-    format_bytes(x) = !isfinite(x) ? "∞ B" : Base.format_bytes(x)
+    format_bytes(x) = !isfinite(x) ? "∞ B" : Base.format_bytes(round(Int, x))
     format_seconds(x) = "$(round(x; digits=2)) s"
     format_bytes_per_second(x) = format_bytes(x) * "/s"
 
 
     @debug 1 "downloading $url"
     local file
+    hdrs = String[]
     HTTP.open("GET", url, headers; kw...) do stream
         resp = startread(stream)
-        file = determine_file(local_path, resp)
-        total_bytes = parse(Float64, getkv(resp.headers, "Content-Length", "NaN"))
+        # Store intermediate header from redirects to use for filename detection
+        content_disp = header(resp, "Content-Disposition")
+        !isempty(content_disp) && push!(hdrs, content_disp)
+        eof(stream) && return  # don't do anything for streams we can't read (yet)
+
+        file = determine_file(local_path, resp, hdrs)
+        total_bytes = parse(Float64, header(resp, "Content-Length", "NaN"))
         downloaded_bytes = 0
         start_time = now()
         prev_time = now()
-        
+
         function report_callback()
             prev_time = now()
             taken_time = (prev_time - start_time).value / 1000 # in seconds
@@ -112,7 +127,7 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
             remaining_bytes = total_bytes - downloaded_bytes
             remaining_time = remaining_bytes / average_speed
             completion_progress = downloaded_bytes / total_bytes
-        
+
             @info("Downloading",
                   source=url,
                   dest = file,
@@ -129,14 +144,16 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
         Base.open(file, "w") do fh
             while(!eof(stream))
                 downloaded_bytes += write(fh, readavailable(stream))
-                if now() - prev_time > Millisecond(1000update_period)
-                    report_callback()
+                if !isinf(update_period)
+                    if now() - prev_time > Millisecond(round(1000update_period))
+                        report_callback()
+                    end
                 end
             end
         end
-        report_callback()
-        
+        if !isinf(update_period)
+            report_callback()
+        end
     end
     file
 end
-

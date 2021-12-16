@@ -1,7 +1,16 @@
 """
     statustext(::Int) -> String
 
-`String` representation of a HTTP status code. e.g. `200 => "OK"`.
+`String` representation of a HTTP status code.
+
+## Examples
+```julia
+julia> statustext(200)
+"OK"
+
+julia> statustext(404)
+"Not Found"
+```
 """
 statustext(status) = Base.get(STATUS_MESSAGES, status, "Unknown Code")
 
@@ -10,6 +19,7 @@ const STATUS_MESSAGES = (()->begin
     v[100] = "Continue"
     v[101] = "Switching Protocols"
     v[102] = "Processing"                            # RFC 2518 => obsoleted by RFC 4918
+    v[103] = "Early Hints"
     v[200] = "OK"
     v[201] = "Created"
     v[202] = "Accepted"
@@ -18,6 +28,8 @@ const STATUS_MESSAGES = (()->begin
     v[205] = "Reset Content"
     v[206] = "Partial Content"
     v[207] = "Multi-Status"                          # RFC 4918
+    v[208] = "Already Reported"                      # RFC5842
+    v[226] = "IM Used"                               # RFC3229
     v[300] = "Multiple Choices"
     v[301] = "Moved Permanently"
     v[302] = "Moved Temporarily"
@@ -25,6 +37,7 @@ const STATUS_MESSAGES = (()->begin
     v[304] = "Not Modified"
     v[305] = "Use Proxy"
     v[307] = "Temporary Redirect"
+    v[308] = "Permanent Redirect"                    # RFC7238
     v[400] = "Bad Request"
     v[401] = "Unauthorized"
     v[402] = "Payment Required"
@@ -44,6 +57,7 @@ const STATUS_MESSAGES = (()->begin
     v[416] = "Requested Range Not Satisfiable"
     v[417] = "Expectation Failed"
     v[418] = "I'm a teapot"                        # RFC 2324
+    v[421] = "Misdirected Request"                 # RFC 7540
     v[422] = "Unprocessable Entity"                # RFC 4918
     v[423] = "Locked"                              # RFC 4918
     v[424] = "Failed Dependency"                   # RFC 4918
@@ -54,6 +68,7 @@ const STATUS_MESSAGES = (()->begin
     v[431] = "Request Header Fields Too Large"     # RFC 6585
     v[440] = "Login Timeout"
     v[444] = "nginx error: No Response"
+    v[451] = "Unavailable For Legal Reasons"       # RFC7725
     v[495] = "nginx error: SSL Certificate Error"
     v[496] = "nginx error: SSL Certificate Required"
     v[497] = "nginx error: HTTP -> HTTPS"
@@ -66,6 +81,7 @@ const STATUS_MESSAGES = (()->begin
     v[505] = "HTTP Version Not Supported"
     v[506] = "Variant Also Negotiates"             # RFC 2295
     v[507] = "Insufficient Storage"                # RFC 4918
+    v[508] = "Loop Detected"                       # RFC5842
     v[509] = "Bandwidth Limit Exceeded"
     v[510] = "Not Extended"                        # RFC 2774
     v[511] = "Network Authentication Required"     # RFC 6585

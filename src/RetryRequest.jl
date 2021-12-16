@@ -21,7 +21,7 @@ Methods of `isrecoverable(e)` define which exception types lead to a retry.
 e.g. `HTTP.IOError`, `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 (if status is ``5xx`).
 """
-abstract type RetryLayer{Next <: Layer} <: Layer end
+abstract type RetryLayer{Next <: Layer} <: Layer{Next} end
 export RetryLayer
 
 function request(::Type{RetryLayer{Next}}, url, req, body;

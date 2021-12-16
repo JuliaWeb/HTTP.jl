@@ -30,9 +30,6 @@ Messages are parsed from `IO` stream data by
 This function calls [`HTTP.Parsers.parse_header_field`](@ref) and passes each
 header-field to [`HTTP.Messages.appendheader`](@ref).
 
-`readheaders` relies on [`HTTP.IOExtras.unread!`](@ref) to push excess
-data back to the input stream.
-
 
 ### Headers
 
@@ -57,15 +54,15 @@ Streaming of request and response bodies is handled by the
 """
 module Messages
 
-export Message, Request, Response, HeaderSizeError,
+export Message, Request, Response,
        reset!, status, method, headers, uri, body,
        iserror, isredirect, ischunked, issafe, isidempotent,
-       header, hasheader, headercontains, setheader, defaultheader, appendheader,
+       header, hasheader, headercontains, setheader, defaultheader!, appendheader,
        mkheaders, readheaders, headerscomplete,
        readchunksize,
        writeheaders, writestartline,
        bodylength, unknown_length,
-       payload
+       payload, statustext
 
 import ..HTTP
 
@@ -102,6 +99,9 @@ Represents a HTTP Response Message.
    [RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
 
 - `request`, the `Request` that yielded this `Response`.
+
+You can get each data with [`HTTP.status`](@ref), [`HTTP.headers`](@ref), and [`HTTP.body`](@ref).
+
 """
 mutable struct Response <: Message
     version::VersionNumber
@@ -110,7 +110,10 @@ mutable struct Response <: Message
     body::Vector{UInt8}
     request::Message
 
-    function Response(status::Int, headers=[]; body=UInt8[], request=nothing)
+    @doc """
+        Response(status::Int, headers=[]; body=UInt8[], request=nothing) -> HTTP.Response
+    """
+    function Response(status::Integer, headers=[]; body=UInt8[], request=nothing)
         r = new()
         r.version = v"1.1"
         r.status = status
@@ -123,6 +126,17 @@ mutable struct Response <: Message
     end
 end
 
+"""
+    HTTP.Response(status::Int, body) -> HTTP.Response
+
+## Examples
+```julia
+HTTP.Response(200, "Hello")
+
+headers = ["Server" => "Apache"]
+HTTP.Response(200, headers; body = "Hello")
+```
+"""
 Response() = Request().response
 
 Response(s::Int, body::AbstractVector{UInt8}) = Response(s; body=body)
@@ -143,9 +157,26 @@ function reset!(r::Response)
     end
 end
 
-@deprecate status(r::Response) getfield(r, :status)
-@deprecate headers(r::Response) getfield(r, :headers)
-@deprecate body(r::Response) getfield(r, :body)
+"""
+    status(r::Response)
+
+Get status from a response.
+"""
+status(r::Response) = getfield(r, :status)
+
+"""
+    headers(r::Response)
+
+Get headers from a response.
+"""
+headers(r::Response) = getfield(r, :headers)
+
+"""
+    body(r::Response)
+
+Get body from a response.
+"""
+body(r::Response) = getfield(r, :body)
 
 # HTTP Request
 
@@ -176,6 +207,9 @@ Represents a HTTP Request Message.
 - `parent`, the `Response` (if any) that led to this request
   (e.g. in the case of a redirect).
    [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
+
+You can get each data with [`HTTP.method`](@ref), [`HTTP.headers`](@ref), [`HTTP.uri`](@ref), and [`HTTP.body`](@ref).
+
 """
 mutable struct Request <: Message
     method::String
@@ -190,6 +224,12 @@ end
 
 Request() = Request("", "")
 
+"""
+    HTTP.Request(method, target, headers, body; version, parent) -> HTTP.Request
+
+Constructor for `HTTP.Request`.
+For daily use, see [`HTTP.request`](@ref).
+"""
 function Request(method::String, target, headers=[], body=UInt8[];
                  version=v"1.1", parent=nothing)
     r = Request(method,
@@ -207,10 +247,33 @@ end
 mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
 
-@deprecate method(r::Request) getfield(r, :method)
-@deprecate uri(r::Request) getfield(r, :target)
-@deprecate headers(r::Request) getfield(r, :headers)
-@deprecate body(r::Request) getfield(r, :body)
+"""
+    method(r::Request)
+
+Get method from a request.
+"""
+method(r::Request) = getfield(r, :method)
+
+"""
+    uri(r::Request)
+
+Get URI from a request.
+"""
+uri(r::Request) = getfield(r, :target)
+
+"""
+    headers(r::Request)
+
+Get headers from a request.
+"""
+headers(r::Request) = getfield(r, :headers)
+
+"""
+    body(r::Request)
+
+Get body from a request.
+"""
+body(r::Request) = getfield(r, :body)
 
 # HTTP Message state and type queries
 
@@ -349,16 +412,17 @@ setheader(h::Headers, v::Pair) =
                field_name_isequal)
 
 """
-    defaultheader(::Message, key => value)
+    defaultheader!(::Message, key => value)
 
-Set header `value` for `key` if it is not already set.
+Set header `value` in message for `key` if it is not already set.
 """
-function defaultheader(m, v::Pair)
+function defaultheader!(m, v::Pair)
     if header(m, first(v)) == ""
         setheader(m, v)
     end
     return
 end
+Base.@deprecate defaultheader defaultheader!
 
 """
     appendheader(::Message, key => value)
@@ -495,7 +559,7 @@ Read chunk-size from an `IO` stream.
 After the final zero size chunk, read trailers into a `Message` struct.
 """
 function readchunksize(io::IO, message::Message)::Int
-    n = parse_chunk_size(readuntil(io, find_end_of_line))
+    n = parse_chunk_size(readuntil(io, find_end_of_chunk_size))
     if n == 0
         bytes = readuntil(io, find_end_of_trailer)
         if bytes[2] != UInt8('\n')
@@ -528,6 +592,10 @@ function compactstartline(m::Message)
     strip(String(take!(b)))
 end
 
+# temporary replacement for isvalid(String, s), until the
+# latter supports subarrays (JuliaLang/julia#36047):
+isvalidstr(s) = ccall(:u8_isvalid, Int32, (Ptr{UInt8}, Int), s, sizeof(s)) ≠ 0
+
 function Base.show(io::IO, m::Message)
     if get(io, :compact, false)
         print(io, compactstartline(m))
@@ -540,8 +608,9 @@ function Base.show(io::IO, m::Message)
     println(io, "\"\"\"")
     writeheaders(io, m)
     summary = bodysummary(m.body)
-    write(io, summary)
-    if length(m.body) > length(summary)
+    validsummary = isvalidstr(summary)
+    validsummary && write(io, summary)
+    if !validsummary || length(m.body) > length(summary)
         println(io, "\n⋮\n$(length(m.body))-byte body")
     end
     print(io, "\"\"\"")

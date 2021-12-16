@@ -30,7 +30,7 @@
 
 module Cookies
 
-export Cookie, cookies
+export Cookie, cookies, stringify
 
 import Base: ==
 using ..Dates
@@ -119,7 +119,7 @@ function Base.String(c::Cookie, isrequest::Bool=true)
     return String(take!(io))
 end
 
-function Base.string(cookiestring::String, cookies::Vector{Cookie}, isrequest::Bool=true)
+function stringify(cookiestring::AbstractString, cookies::Vector{Cookie}, isrequest::Bool=true)
     io = IOBuffer()
     !isempty(cookiestring) && write(io, cookiestring, cookiestring[end] == ';' ? "" : ";")
     len = length(cookies)
@@ -231,7 +231,7 @@ end
 function pathmatch(cookie::Cookie, requestpath)
     requestpath == cookie.path && return true
     if startswith(requestpath, cookie.path)
-        if cookie.path[end] == '/'
+        if length(cookie.path) > 0 && cookie.path[end] == '/'
             return true # The "/any/" matches "/any/path" case.
         elseif length(requestpath) >= length(cookie.path) + 1 && requestpath[length(cookie.path)+1] == '/'
             return true # The "/any" matches "/any/path" case.

@@ -9,14 +9,14 @@ using ..Strings: tocameldash
 
 Rewrite request and response headers in Canonical-Camel-Dash-Format.
 """
-abstract type CanonicalizeLayer{Next <: Layer} <: Layer end
+abstract type CanonicalizeLayer{Next <: Layer} <: Layer{Next} end
 export CanonicalizeLayer
 
 function request(::Type{CanonicalizeLayer{Next}},
                  method::String, url, headers, body; kw...) where Next
 
     headers = canonicalizeheaders(headers)
-    
+
     res = request(Next, method, url, headers, body; kw...)
 
     res.headers = canonicalizeheaders(res.headers)

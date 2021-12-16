@@ -24,6 +24,18 @@ const WHITESPACE = Set{UInt8}([UInt8('\t'),UInt8('\n'),UInt8('\u0c'),UInt8('\r')
 If a mimetype can't be determined appropriately, `"application/octet-stream"` is returned.
 
 Supports JSON detection through the `HTTP.isjson(content)` function.
+
+## Examples
+```julia
+julia> HTTP.sniff("Hello world!!")
+"text/plain; charset=utf-8"
+
+julia> HTTP.sniff("<html><body>Hello world!!</body></html>")
+"text/html; charset=utf-8"
+
+julia> HTTP.sniff("{\"a\": -1.0}")
+"application/json; charset=utf-8"
+```
 """
 function sniff end
 
@@ -269,6 +281,7 @@ const DOUBLE_QUOTE  = UInt8('"')
 const ESCAPE        = UInt8('\\')
 const COMMA = UInt8(',')
 const COLON = UInt8(':')
+const MINUS = UInt8('-')
 const ZERO = UInt8('0')
 const NINE = UInt8('9')
 const LITTLE_N = UInt8('n')
@@ -323,7 +336,7 @@ function isjson(bytes, i=0, maxlen=min(length(bytes), MAXSNIFFLENGTH))
         # '"' start of string
         # must read until end of string w/ potential escaped '"'
         i = restofstring(bytes, i, maxlen)
-    elseif ZERO <= b <= NINE
+    elseif (ZERO <= b <= NINE) || (b == MINUS)
         # must read until end of number
         v = zero(Float64)
         ptr = pointer(bytes) + i - 1

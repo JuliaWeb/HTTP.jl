@@ -1,6 +1,7 @@
 """
+    IOExtras
+
 This module defines extensions to the `Base.IO` interface to support:
- - an `unread!` function for pushing excess bytes back into a stream,
  - `startwrite`, `closewrite`, `startread` and `closeread` for streams
     with transactional semantics.
 """
@@ -9,10 +10,9 @@ module IOExtras
 using ..Sockets
 using MbedTLS: MbedException
 
-export bytes, ByteView, CodeUnits, IOError, isioerror,
-       unread!,
+export bytes, ByteView, nobytes, CodeUnits, IOError, isioerror,
        startwrite, closewrite, startread, closeread,
-       tcpsocket, localport, peerport
+       tcpsocket, localport, safe_getpeername
 
 
 """
@@ -43,6 +43,8 @@ isioerror(::MbedException) = true
 
 
 """
+    IOError <: Exception
+
 The request terminated with due to an IO-related error.
 
 Fields:
@@ -56,42 +58,6 @@ end
 Base.show(io::IO, e::IOError) = print(io, "IOError(", e.e, " ", e.message, ")\n")
 
 
-"""
-    unread!(::IO, bytes)
-
-Push bytes back into a connection (to be returned by the next read).
-"""
-function unread!(io::IOBuffer, bytes)
-    l = length(bytes)
-    if l == 0
-        return
-    end
-
-    @assert bytes == io.data[io.ptr - l:io.ptr-1]
-
-    if io.seekable
-        seek(io, io.ptr - (l + 1))
-        return
-    end
-
-    println("WARNING: Can't unread! non-seekable IOBuffer")
-    println("         Discarding $(length(bytes)) bytes!")
-    @assert false
-    return
-end
-
-
-function unread!(io, bytes)
-    if length(bytes) == 0
-        return
-    end
-    println("WARNING: No unread! method for $(typeof(io))!")
-    println("         Discarding $(length(bytes)) bytes!")
-    return
-end
-
-
-
 _doc = """
     startwrite(::IO)
     closewrite(::IO)
@@ -100,14 +66,37 @@ _doc = """
 
 Signal start/end of write or read operations.
 """
-"$_doc"
-startwrite(io) = nothing
-"$_doc"
-closewrite(io) = nothing
-"$_doc"
-startread(io) = nothing
-"$_doc"
-closeread(io) = nothing
+if isdefined(Base, :startwrite)
+    "$_doc"
+    Base.startwrite(io) = nothing
+else
+    "$_doc"
+    startwrite(io) = nothing
+end
+
+if isdefined(Base, :closewrite)
+    "$_doc"
+    Base.closewrite(io) = nothing
+else
+    "$_doc"
+    closewrite(io) = nothing
+end
+
+if isdefined(Base, :startread)
+    "$_doc"
+    Base.startread(io) = nothing
+else
+    "$_doc"
+    startread(io) = nothing
+end
+
+if isdefined(Base, :closeread)
+    "$_doc"
+    Base.closeread(io) = nothing
+else
+    "$_doc"
+    closeread(io) = nothing
+end
 
 using MbedTLS: SSLContext
 tcpsocket(io::SSLContext)::TCPSocket = io.bio
@@ -119,51 +108,35 @@ localport(io) = try !isopen(tcpsocket(io)) ? 0 :
                     0
                 end
 
-peerport(io) = try !isopen(tcpsocket(io)) ? 0 :
-                  Sockets.getpeername(tcpsocket(io))[2]
-               catch
-                   0
-               end
-
+function safe_getpeername(io)
+    try
+        if isopen(tcpsocket(io))
+            return Sockets.getpeername(tcpsocket(io))
+        end
+    catch
+    end
+    return IPv4(0), UInt16(0)
 end
 
 
 const ByteView = typeof(view(UInt8[], 1:0))
-
+const nobytes = view(UInt8[], 1:0)
 
 """
 Read from an `IO` stream until `find_delimiter(bytes)` returns non-zero.
 Return view of bytes up to the delimiter.
 """
-function Base.readuntil(io::IO,
-                        find_delimiter::Function #= Vector{UInt8} -> Int =#
-                       )::ByteView
+function Base.readuntil(buf::IOBuffer,
+                    find_delimiter::Function #= Vector{UInt8} -> Int =#
+                   )::ByteView
 
-    # Fast path, buffer already contains delimiter...
-    if !eof(io)
-        bytes = readavailable(io)
-        if (l = find_delimiter(bytes)) > 0
-            if l < length(bytes)
-                unread!(io, view(bytes, l+1:length(bytes)))
-            end
-            return view(bytes, 1:l)
-        end
-
-        # Otherwise, wait for delimiter...
-        buf = Vector{UInt8}(bytes)
-        while !eof(io)
-            bytes = readavailable(io)
-            append!(buf, bytes)
-            if (l = find_delimiter(buf)) > 0
-                if l < length(buf)
-                    n = length(buf) - l
-                    bl = length(bytes)
-                    unread!(io, view(bytes, 1+bl-n:bl))
-                end
-                return view(buf, 1:l)
-            end
-        end
+    l = find_delimiter(view(buf.data, buf.ptr:buf.size))
+    if l == 0
+        return nobytes
     end
+    bytes = view(buf.data, buf.ptr:buf.ptr + l - 1)
+    buf.ptr += l
+    return bytes
+end
 
-    throw(EOFError())
 end

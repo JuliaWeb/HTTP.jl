@@ -20,8 +20,19 @@ const WS_PONG = 0x0A
 
 const WS_MASK = 0x80
 
+"Status codes according to RFC 6455 7.4.1"
+const STATUS_CODE_DESCRIPTION = Dict{Int, String}(
+    1000=>"Normal",                     1001=>"Going Away",
+    1002=>"Protocol Error",             1003=>"Unsupported Data",
+    1004=>"Reserved",                   1005=>"No Status Recvd- reserved",
+    1006=>"Abnormal Closure- reserved", 1007=>"Invalid frame payload data",
+    1008=>"Policy Violation",           1009=>"Message too big",
+    1010=>"Missing Extension",          1011=>"Internal Error",
+    1012=>"Service Restart",            1013=>"Try Again Later",
+    1014=>"Bad Gateway",                1015=>"TLS Handshake")
+
 struct WebSocketError <: Exception
-    status::Int16
+    status::UInt16
     message::String
 end
 
@@ -41,11 +52,12 @@ mutable struct WebSocket{T <: IO} <: IO
     txpayload::Vector{UInt8}
     txclosed::Bool
     rxclosed::Bool
+    request::Union{Nothing,HTTP.Request}
 end
 
-function WebSocket(io::T; server=false, binary=false) where T <: IO
+function WebSocket(io::T; server=false, binary=false, request=nothing) where T <: IO
    WebSocket{T}(io, binary ? WS_BINARY : WS_TEXT, server,
-                UInt8[], UInt8[], false, false)
+                UInt8[], UInt8[], false, false, request)
 end
 
 # Handshake
@@ -53,7 +65,8 @@ end
 function is_upgrade(r::HTTP.Message)
     ((r isa HTTP.Request && r.method == "GET") ||
      (r isa HTTP.Response && r.status == 101)) &&
-    HTTP.headercontains(r, "Connection", "upgrade") &&
+    (HTTP.hasheader(r, "Connection", "upgrade") ||
+     HTTP.hasheader(r, "Connection", "keep-alive, upgrade")) &&
     HTTP.hasheader(r, "Upgrade", "websocket")
 end
 
@@ -64,7 +77,8 @@ function check_upgrade(http)
                                 "$(http.message)"))
     end
 
-    if !headercontains(http, "Connection", "upgrade")
+    if !(hasheader(http, "Connection", "upgrade") ||
+         hasheader(http, "Connection", "keep-alive, upgrade"))
         throw(WebSocketError(0, "Expected \"Connection: upgrade\"!\n" *
                                 "$(http.message)"))
     end
@@ -75,7 +89,7 @@ function accept_hash(key)
     return base64encode(digest(MD_SHA1, hashkey))
 end
 
-function open(f::Function, url; binary=false, verbose=false, kw...)
+function open(f::Function, url; binary=false, verbose=false, headers = [], kw...)
 
     key = base64encode(rand(UInt8, 16))
 
@@ -83,11 +97,12 @@ function open(f::Function, url; binary=false, verbose=false, kw...)
         "Upgrade" => "websocket",
         "Connection" => "Upgrade",
         "Sec-WebSocket-Key" => key,
-        "Sec-WebSocket-Version" => "13"
+        "Sec-WebSocket-Version" => "13",
+        headers...
     ]
 
     HTTP.open("GET", url, headers;
-              reuse_limit=0, verbose=verbose ? 2 : 0, kw...) do http
+              verbose=verbose ? 2 : 0, kw...) do http
 
         startread(http)
 
@@ -115,9 +130,9 @@ end
 
 function listen(f::Function,
                 host::String="localhost", port::UInt16=UInt16(8081);
-                binary=false, verbose=false)
+                binary=false, verbose=false, kw...)
 
-    HTTP.listen(host, port; verbose=verbose) do http
+    HTTP.listen(host, port; verbose=verbose, kw...) do http
         upgrade(f, http; binary=binary)
     end
 end
@@ -139,7 +154,8 @@ function upgrade(f::Function, http::HTTP.Stream; binary=false)
     startwrite(http)
 
     io = http.stream
-    ws = WebSocket(io; binary=binary, server=true)
+    req = http.message
+    ws = WebSocket(io; binary=binary, server=true, request=req)
     try
         f(ws)
     finally
@@ -216,13 +232,17 @@ end
 
 function Base.close(ws::WebSocket; statuscode::Union{Int, Nothing}=nothing)
     if !ws.txclosed
-        closewrite(ws; statuscode=statuscode)
+        try
+            closewrite(ws; statuscode=statuscode)
+        catch e
+            e isa Base.IOError || rethrow(e)
+        end
     end
     while !eof(ws) # FIXME Timeout in case other end does not send CLOSE?
         try
             readframe(ws)
         catch e
-            e isa WebSocketError || rethrow(e)
+            e isa WebSocketError || e isa Base.IOError || rethrow(e)
         end
     end
     close(ws.io)
@@ -234,7 +254,18 @@ Base.isopen(ws::WebSocket) = !ws.rxclosed
 
 Base.eof(ws::WebSocket) = ws.rxclosed || eof(ws.io)
 
-Base.readavailable(ws::WebSocket) = collect(readframe(ws))
+Base.readavailable(ws::WebSocket) = readmessage(ws)
+
+function readmessage(ws::WebSocket)
+    payload, header = _readframe(ws)
+    bytes = collect(payload)
+    while !(header.final)
+        payload, header = _readframe(ws)
+        @assert header.opcode == WS_CONTINUATION
+        append!(bytes, payload)
+    end
+    return bytes
+end
 
 function readheader(io::IO)
     b = UInt8[0,0]
@@ -249,38 +280,45 @@ function readheader(io::IO)
         b[2] & WS_MASK > 0 ? read(io, UInt32) : UInt32(0))
 end
 
-function readframe(ws::WebSocket)
+readframe(ws::WebSocket) = first(_readframe(ws))
+
+function _readframe(ws::WebSocket)
     h = readheader(ws.io)
     @debug 1 "WebSocket ➡️  $h"
 
-    if h.length > 0
-        if length(ws.rxpayload) < h.length
-            resize!(ws.rxpayload, h.length)
+    len = Int(h.length)
+
+    if len > 0
+        if length(ws.rxpayload) < len
+            resize!(ws.rxpayload, len)
         end
-        unsafe_read(ws.io, pointer(ws.rxpayload), h.length)
-        @debug 2 "          ➡️  \"$(String(ws.rxpayload[1:h.length]))\""
+        unsafe_read(ws.io, pointer(ws.rxpayload), len)
+        @debug 2 "          ➡️  \"$(String(ws.rxpayload[1:len]))\""
+    end
+    
+    if h.hasmask
+        mask!(ws.rxpayload, ws.rxpayload, len, reinterpret(UInt8, [h.mask]))
     end
 
     if h.opcode == WS_CLOSE
         ws.rxclosed = true
-        if h.length >= 2
+        if len >= 2
             status = UInt16(ws.rxpayload[1]) << 8 | ws.rxpayload[2]
             if status != 1000
-                message = String(ws.rxpayload[3:h.length])
-                throw(WebSocketError(status, message))
+                message = String(ws.rxpayload[3:len])
+                status_descr = get(STATUS_CODE_DESCRIPTION, Int(status), "")
+                msg = "Status: $(status_descr), Internal Code: $(message)"
+                throw(WebSocketError(status, msg))
             end
         end
-        return UInt8[]
+        return view(ws.rxpayload, 1:0), h
+    elseif h.opcode == WS_PING
+        wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload[1:len])
+        return _readframe(ws)
+    elseif h.opcode == WS_PONG
+        return _readframe(ws)
     else
-        l = Int(h.length)
-        if h.hasmask
-            mask!(ws.rxpayload, ws.rxpayload, l, reinterpret(UInt8, [h.mask]))
-        end
-        if h.opcode == WS_PING
-            wswrite(ws, WS_FINAL | WS_PONG, ws.rxpayload[1:l])
-            return readframe(ws)
-        end
-        return view(ws.rxpayload, 1:l)
+        return view(ws.rxpayload, 1:len), h
     end
 end
 

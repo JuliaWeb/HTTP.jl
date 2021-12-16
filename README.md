@@ -3,29 +3,29 @@
 
 *HTTP client and server functionality for Julia*
 
-| **Documentation**                                                               | **PackageEvaluator**                                            | **Build Status**                                                                                |
-|:-------------------------------------------------------------------------------:|:---------------------------------------------------------------:|:-----------------------------------------------------------------------------------------------:|
-| [![][docs-stable-img]][docs-stable-url] [![][docs-dev-img]][docs-dev-url] | [![][pkg-0.6-img]][pkg-0.6-url] | [![][travis-img]][travis-url] [![][appveyor-img]][appveyor-url] [![][codecov-img]][codecov-url] |
+| **Documentation**                                                         | **Build Status**                                                                                |
+|:-------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------------------:|
+| [![][docs-stable-img]][docs-stable-url] [![][docs-dev-img]][docs-dev-url] | [![][github-actions-ci-img]][github-actions-ci-url] [![][codecov-img]][codecov-url] |
 
 
 ## Installation
 
-The package is registered in `METADATA.jl` and so can be installed with `Pkg.add`.
-```julia
-julia> Pkg.add("HTTP")
+The package can be installed with Julia's package manager,
+either by using the Pkg REPL mode (press `]` to enter):
 ```
-
-<!-- ## Documentation
-
-- [**STABLE**][docs-stable-url] &mdash; **most recently tagged version of the documentation.**
-- [**LATEST**][docs-latest-url] &mdash; *in-development version of the documentation.* -->
+pkg> add HTTP
+```
+or by using Pkg functions
+```julia
+julia> using Pkg; Pkg.add("HTTP")
+```
 
 ## Project Status
 
-The package is new and not yet tested in production systems.
-Please try it out and report your experience.
+The package has matured and is used in many production systems.
+But as with all open-source software, please try it out and report your experience.
 
-The package is tested against Julia 0.6.2 & current master on Linux, macOS, and Windows.
+The package is tested against Julia 1.0, 1.3 & current master on Linux, macOS, and Windows.
 
 ## Contributing and Questions
 
@@ -49,7 +49,7 @@ sends a HTTP Request Message and
 opens an `IO` stream from which the Response can be read.
 
 ```julia
-HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
+HTTP.open(:GET, "https://tinyurl.com/bach-cello-suite-1-ogg") do http
     open(`vlc -q --play-and-exit --intf dummy -`, "w") do vlc
         write(vlc, http)
     end
@@ -60,16 +60,20 @@ end
 
 [`HTTP.Servers.listen`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.Servers.listen):
 
+The server will start listening on 127.0.0.1:8081 by default.
+
 ```julia
+using HTTP
+
 HTTP.listen() do http::HTTP.Stream
     @show http.message
     @show HTTP.header(http, "Content-Type")
     while !eof(http)
         println("body data: ", String(readavailable(http)))
     end
-    setstatus(http, 404)
-    setheader(http, "Foo-Header" => "bar")
-    startwrite(http)
+    HTTP.setstatus(http, 404)
+    HTTP.setheader(http, "Foo-Header" => "bar")
+    HTTP.startwrite(http)
     write(http, "response body")
     write(http, "more response body")
 end
@@ -77,6 +81,8 @@ end
 
 [`HTTP.Handlers.serve`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.Handlers.serve):
 ```julia
+using HTTP
+
 HTTP.serve() do request::HTTP.Request
    @show request
    @show request.method
@@ -110,22 +116,68 @@ x = UInt8[0x48, 0x65, 0x6c, 0x6c, 0x6f]
 Hello
 ```
 
+## Custom HTTP Layer Examples
+##### Notes:
+- There is no enforcement of a "well-defined" stack, you can insert a layer anywhere in the stack even if it logically
+does not make sense
+- When creating a custom layer, you need to create a `request()`, see below for an example
+- Custom layers is only implemented with the "low-level" `request()` calls, not the "convenience" functions such as
+`HTTP.get()`, `HTTP.put()`, etc.
+
+```julia
+julia> module TestRequest
+               import HTTP: Layer, request, Response
+
+               abstract type TestLayer{Next <: Layer} <: Layer{Next} end
+               export TestLayer, request
+
+               function request(::Type{TestLayer{Next}}, io::IO, req, body; kw...)::Response where Next
+                       println("Insert your custom layer logic here!")
+                       return request(Next, io, req, body; kw...)
+               end
+       end
+
+julia> using HTTP
+julia> using ..TestRequest
+
+julia> custom_stack = insert(stack(), StreamLayer, TestLayer)
+
+julia> result = request(custom_stack, "GET", "https://httpbin.org/ip")
+
+Insert your custom layer logic here!
+HTTP.Messages.Response:
+"""
+HTTP/1.1 200 OK
+Access-Control-Allow-Credentials: true
+Access-Control-Allow-Origin: *
+Content-Type: application/json
+Date: Fri, 30 Aug 2019 14:13:17 GMT
+Referrer-Policy: no-referrer-when-downgrade
+Server: nginx
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+X-XSS-Protection: 1; mode=block
+Content-Length: 45
+Connection: keep-alive
+
+{
+  "origin": "--Redacted--"
+}
+"""
+
+julia> 
+```
+
 [docs-dev-img]: https://img.shields.io/badge/docs-dev-blue.svg
 [docs-dev-url]: https://JuliaWeb.github.io/HTTP.jl/dev
 
 [docs-stable-img]: https://img.shields.io/badge/docs-stable-blue.svg
 [docs-stable-url]: https://JuliaWeb.github.io/HTTP.jl/stable
 
-[travis-img]: https://travis-ci.org/JuliaWeb/HTTP.jl.svg?branch=master
-[travis-url]: https://travis-ci.org/JuliaWeb/HTTP.jl
-
-[appveyor-img]: https://ci.appveyor.com/api/projects/status/qdy0vfps9gne3sd7?svg=true
-[appveyor-url]: https://ci.appveyor.com/project/quinnj/http-jl
+[github-actions-ci-img]: https://github.com/JuliaWeb/HTTP.jl/workflows/CI/badge.svg
+[github-actions-ci-url]: https://github.com/JuliaWeb/HTTP.jl/actions?query=workflow%3ACI
 
 [codecov-img]: https://codecov.io/gh/JuliaWeb/HTTP.jl/branch/master/graph/badge.svg
 [codecov-url]: https://codecov.io/gh/JuliaWeb/HTTP.jl
 
 [issues-url]: https://github.com/JuliaWeb/HTTP.jl/issues
-
-[pkg-0.6-img]: http://pkg.julialang.org/badges/HTTP_0.6.svg
-[pkg-0.6-url]: http://pkg.julialang.org/?pkg=HTTP

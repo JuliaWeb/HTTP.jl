@@ -1,5 +1,8 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 
 [compat]
-Documenter = "~0.20"
+Documenter = "0.27"

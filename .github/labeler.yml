@@ -1,0 +1,9 @@
+📖 documentation: 
+- "docs/*"
+
+test:
+- "test/*"
+
+CI:
+- "**/*.yml"
+- ".github/workflows/**/*"

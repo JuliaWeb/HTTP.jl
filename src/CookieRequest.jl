@@ -2,12 +2,18 @@ module CookieRequest
 
 import ..Dates
 import ..Layer, ..request
-using ..URIs
+using URIs
 using ..Cookies
+using ..Messages: ascii_lc_isequal
 using ..Pairs: getkv, setkv
-import ..@debug, ..DEBUG_LEVEL
+import ..@debug, ..DEBUG_LEVEL, ..access_threaded
 
-const default_cookiejar = Dict{String, Set{Cookie}}()
+const default_cookiejar = Dict{String, Set{Cookie}}[]
+
+function __init__()
+    resize!(empty!(default_cookiejar), Threads.nthreads())
+    return
+end
 
 """
     request(CookieLayer, method, ::URI, headers, body) -> HTTP.Response
@@ -15,19 +21,25 @@ const default_cookiejar = Dict{String, Set{Cookie}}()
 Add locally stored Cookies to the request headers.
 Store new Cookies found in the response headers.
 """
-abstract type CookieLayer{Next <: Layer} <: Layer end
+abstract type CookieLayer{Next <: Layer} <: Layer{Next} end
 export CookieLayer
 
 function request(::Type{CookieLayer{Next}},
                  method::String, url::URI, headers, body;
-                 cookiejar::Dict{String, Set{Cookie}}=default_cookiejar,
-                 kw...) where Next
+                 cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}}=Dict{String, String}(),
+                 cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar),
+                 kw...) where {Next}
 
     hostcookies = get!(cookiejar, url.host, Set{Cookie}())
 
-    cookies = getcookies(hostcookies, url)
-    if !isempty(cookies)
-        setkv(headers, "Cookie", string(getkv(headers, "Cookie", ""), cookies))
+    cookiestosend = getcookies(hostcookies, url)
+    if !(cookies isa Bool)
+        for (name, value) in cookies
+            push!(cookiestosend, Cookie(name, value))
+        end
+    end
+    if !isempty(cookiestosend)
+        setkv(headers, "Cookie", stringify(getkv(headers, "Cookie", ""), cookiestosend))
     end
 
     res = request(Next, method, url, headers, body; kw...)
@@ -61,7 +73,8 @@ function getcookies(cookies, url)
 end
 
 function setcookies(cookies, host, headers)
-    for (k,v) in filter(x->x[1]=="Set-Cookie", headers)
+    for (k, v) in headers
+        ascii_lc_isequal(k, "set-cookie") || continue
         @debug 1 "Set-Cookie: $v (from $host)"
         push!(cookies, Cookies.readsetcookie(host, v))
     end

@@ -2,7 +2,6 @@ module DebugRequest
 
 import ..Layer, ..request
 using ..IOExtras
-import ..ConnectionPool: ByteView, byteview
 
 const live_mode = true
 
@@ -13,7 +12,7 @@ include("IODebug.jl")
 
 Wrap the `IO` stream in an `IODebug` stream and print Message data.
 """
-abstract type DebugLayer{Next <:Layer} <: Layer end
+abstract type DebugLayer{Next <:Layer} <: Layer{Next} end
 export DebugLayer
 
 function request(::Type{DebugLayer{Next}}, io::IO, req, body; kw...) where Next

@@ -1,7 +1,7 @@
 module RedirectRequest
 
 import ..Layer, ..request
-using ..URIs
+using URIs
 using ..Messages
 using ..Pairs: setkv
 import ..Header
@@ -12,7 +12,7 @@ import ..@debug, ..DEBUG_LEVEL
 
 Redirects the request in the case of 3xx response status.
 """
-abstract type RedirectLayer{Next <: Layer} <: Layer end
+abstract type RedirectLayer{Next <: Layer} <: Layer{Next} end
 export RedirectLayer
 
 function request(::Type{RedirectLayer{Next}},
@@ -20,20 +20,24 @@ function request(::Type{RedirectLayer{Next}},
                  redirect_limit=3, forwardheaders=true, kw...) where Next
     count = 0
     while true
-    
-        res = request(Next, method, url, headers, body; kw...)
+
+        # Verify the url before making the request. Verification is done in
+        # the redirect loop to also catch bad redirect URLs.
+        verify_url(url)
+
+        res = request(Next, method, url, headers, body; reached_redirect_limit=(count == redirect_limit), kw...)
 
         if (count == redirect_limit
         ||  !isredirect(res)
         ||  (location = header(res, "Location")) == "")
             return res
         end
-            
+
 
         kw = merge(merge(NamedTuple(), kw), (parent = res,))
         oldurl = url
-        url = absuri(location, url)
-        if forwardheaders 
+        url = resolvereference(url, location)
+        if forwardheaders
             headers = filter(headers) do h
                 # false return values are filtered out
                 header, value = h
@@ -69,6 +73,15 @@ function isdomainorsubdomain(sub, parent)
     sub == parent && return true
     endswith(sub, parent) || return false
     return sub[length(sub)-length(parent)] == '.'
+end
+
+function verify_url(url::URI)
+    if !(url.scheme in ("http", "https", "ws", "wss"))
+        throw(ArgumentError("missing or unsupported scheme in URL (expected http(s) or ws(s)): $(url)"))
+    end
+    if isempty(url.host)
+        throw(ArgumentError("missing host in URL: $(url)"))
+    end
 end
 
 end # module RedirectRequest

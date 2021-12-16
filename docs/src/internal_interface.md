@@ -4,7 +4,7 @@
 
 ```@docs
 HTTP.Parsers.find_end_of_header
-HTTP.Parsers.find_end_of_line
+HTTP.Parsers.find_end_of_chunk_size
 HTTP.Parsers.find_end_of_trailer
 HTTP.Parsers.parse_status_line!
 HTTP.Parsers.parse_request_line!
@@ -15,8 +15,6 @@ HTTP.Parsers.parse_chunk_size
 ## Messages Interface
 
 ```@docs
-HTTP.Messages.Request
-HTTP.Messages.Response
 HTTP.Messages.iserror
 HTTP.Messages.isredirect
 HTTP.Messages.ischunked
@@ -25,7 +23,7 @@ HTTP.Messages.isidempotent
 HTTP.Messages.header
 HTTP.Messages.hasheader
 HTTP.Messages.setheader
-HTTP.Messages.defaultheader
+HTTP.Messages.defaultheader!
 HTTP.Messages.appendheader
 HTTP.Messages.readheaders
 HTTP.MessageRequest.setuseragent!
@@ -40,7 +38,6 @@ Base.write(::IO,::HTTP.Messages.Message)
 
 ```@docs
 HTTP.IOExtras
-HTTP.IOExtras.unread!
 HTTP.IOExtras.startwrite(::IO)
 HTTP.IOExtras.isioerror
 ```
@@ -58,12 +55,10 @@ HTTP.Streams.isaborted
 
 ```@docs
 HTTP.ConnectionPool.Connection
-HTTP.ConnectionPool.Transaction
-HTTP.ConnectionPool.pool
-HTTP.ConnectionPool.getconnection
-HTTP.IOExtras.unread!(::HTTP.ConnectionPool.Transaction,::SubArray{UInt8,1,Array{UInt8,1},Tuple{UnitRange{Int64}},true})
-HTTP.IOExtras.startwrite(::HTTP.ConnectionPool.Transaction)
-HTTP.IOExtras.closewrite(::HTTP.ConnectionPool.Transaction)
-HTTP.IOExtras.startread(::HTTP.ConnectionPool.Transaction)
-HTTP.IOExtras.closeread(::HTTP.ConnectionPool.Transaction)
+HTTP.ConnectionPool.newconnection
+HTTP.ConnectionPool.POOL
+HTTP.IOExtras.startwrite(::HTTP.ConnectionPool.Connection)
+HTTP.IOExtras.closewrite(::HTTP.ConnectionPool.Connection)
+HTTP.IOExtras.startread(::HTTP.ConnectionPool.Connection)
+HTTP.IOExtras.closeread(::HTTP.ConnectionPool.Connection)
 ```

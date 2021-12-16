@@ -4,7 +4,7 @@ using ..Base64
 using ..Dates
 using MbedTLS: digest, MD_SHA256, MD_MD5
 import ..Layer, ..request, ..Headers
-using ..URIs
+using URIs
 using ..Pairs: getkv, setkv, rmkv
 import ..@debug, ..DEBUG_LEVEL
 
@@ -18,7 +18,7 @@ Add a [AWS Signature Version 4](http://docs.aws.amazon.com/general/latest/gr/sig
 Credentials are read from environment variables `AWS_ACCESS_KEY_ID`,
 `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`.
 """
-abstract type AWS4AuthLayer{Next <: Layer} <: Layer end
+abstract type AWS4AuthLayer{Next <: Layer} <: Layer{Next} end
 export AWS4AuthLayer
 
 function request(::Type{AWS4AuthLayer{Next}},
@@ -34,6 +34,19 @@ function request(::Type{AWS4AuthLayer{Next}},
     return request(Next, url, req, body; kw...)
 end
 
+# Normalize whitespace to the form required in the canonical headers.
+# Note that the expected format for multiline headers seems not to be explicitly
+# documented, but Amazon provides a test case for it, so we'll match that behavior.
+# We replace each `\n` with a `,` and remove all whitespace around the newlines,
+# then any remaining contiguous whitespace is replaced with a single space.
+function _normalize_ws(s::AbstractString)
+    if any(isequal('\n'), s)
+        join(map(_normalize_ws, split(s, '\n')), ',')
+    else
+        replace(strip(s), r"\s+" => " ")
+    end
+end
+
 function sign_aws4!(method::String,
                     url::URI,
                     headers::Headers,
@@ -47,6 +60,9 @@ function sign_aws4!(method::String,
                     aws_access_key_id::String=ENV["AWS_ACCESS_KEY_ID"],
                     aws_secret_access_key::String=ENV["AWS_SECRET_ACCESS_KEY"],
                     aws_session_token::String=get(ENV, "AWS_SESSION_TOKEN", ""),
+                    token_in_signature=true,
+                    include_md5=true,
+                    include_sha256=true,
                     kw...)
     if t !== nothing
         Base.depwarn("The `t` keyword argument to `sign_aws4!` is deprecated; use " *
@@ -75,25 +91,55 @@ function sign_aws4!(method::String,
 
     # HTTP headers...
     rmkv(headers, "Authorization")
-    setkv(headers, "x-amz-content-sha256",  content_hash)
-    setkv(headers, "x-amz-date",  datetime)
-    setkv(headers, "Content-MD5", base64encode(body_md5))
+    setkv(headers, "host", url.host)
+    setkv(headers, "x-amz-date", datetime)
+    include_md5 && setkv(headers, "Content-MD5", base64encode(body_md5))
+    if (aws_service == "s3" && method == "PUT") || include_sha256
+        # This header is required for S3 PUT requests. See the documentation at
+        # https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html
+        setkv(headers, "x-amz-content-sha256", content_hash)
+    end
     if aws_session_token != ""
         setkv(headers, "x-amz-security-token", aws_session_token)
     end
 
     # Sort and lowercase() Headers to produce canonical form...
-    canonical_headers = sort!(map(headers) do (k, v)
-        string(lowercase(k), ':', replace(strip(v), r"\s+" => " "))
-    end)
-    signed_headers = join(sort!(map(lowercase∘first, headers)), ";")
+    unique_header_keys = Vector{String}()
+    normalized_headers = Dict{String,Vector{String}}()
+    for (k, v) in sort!([lowercase(k) => v for (k, v) in headers], by=first)
+        # Some services want the token included as part of the signature
+        if k == "x-amz-security-token" && !token_in_signature
+            continue
+        end
+        # In Amazon's examples, they exclude Content-Length from signing. This does not
+        # appear to be addressed in the documentation, so we'll just mimic the example.
+        if k == "content-length"
+            continue
+        end
+        if !haskey(normalized_headers, k)
+            normalized_headers[k] = Vector{String}()
+            push!(unique_header_keys, k)
+        end
+        push!(normalized_headers[k], _normalize_ws(v))
+    end
+    canonical_headers = map(unique_header_keys) do k
+        string(k, ':', join(normalized_headers[k], ','))
+    end
+    signed_headers = join(unique_header_keys, ';')
 
     # Sort Query String...
     query = sort!(collect(queryparams(url.query)), by=first)
 
+    # Paths for requests to S3 should be escaped but not normalized. See
+    # http://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html#canonical-request
+    # Note that escapepath escapes ~ per RFC 1738, but Amazon includes an example in their
+    # signature v4 test suite where ~ remains unescaped. We follow the spec here and thus
+    # deviate from Amazon's example in this case.
+    path = escapepath(aws_service == "s3" ? url.path : URIs.normpath(url.path))
+
     # Create hash of canonical request...
     canonical_form = join([method,
-                           aws_service == "s3" ? url.path : escapepath(url.path),
+                           path,
                            escapeuri(query),
                            join(canonical_headers, "\n"),
                            "",
