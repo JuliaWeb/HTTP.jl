@@ -307,8 +307,8 @@ end
 ```
 """
 function request(method, url, h=Header[], b=nobody;
-                 headers=h, body=b, query=nothing, kw...)::Response
-    return request(HTTP.stack(;kw...), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+                 headers=h, body=b, kw...)::Response
+    return request(HTTP.stack(;kw...), method, url, headers, body; kw...)
 end
 function request(stack::Layer, method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
