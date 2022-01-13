@@ -19,16 +19,26 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-struct StreamLayer <: ConnectionLayer end
+struct StreamLayer{Next <: Layer} <: ConnectionLayer
+    next::Next
+    reached_redirect_limit::Bool
+    response_stream
+    iofunction
+    verbose
+end
 export StreamLayer
+StreamLayer(next;
+    reached_redirect_limit=false,
+    response_stream=nothing,
+    iofunction=nothing,
+    verbose::Int=0,
+    kw...) = StreamLayer(next, reached_redirect_limit, response_stream, iofunction, verbose)
 
-function Layers.request(::StreamLayer, io::IO, req::Request, body;
-                 reached_redirect_limit=false,
-                 response_stream=nothing,
-                 iofunction=nothing,
-                 verbose::Int=0,
-                 kw...)::Response
-
+function Layers.request(layer::StreamLayer, io::IO, req::Request, body)::Response
+    reached_redirect_limit = layer.reached_redirect_limit
+    response_stream = layer.response_stream
+    iofunction = layer.iofunction
+    verbose = layer.verbose
     verbose == 1 && printlncompact(req)
 
     response = req.response
@@ -84,7 +94,7 @@ function Layers.request(::StreamLayer, io::IO, req::Request, body;
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)
 
-    return response
+    return Layers.request(layer.next, response)
 end
 
 function writebody(http::Stream, req::Request, body)

@@ -18,17 +18,17 @@ struct DebugLayer{Next <:Layer} <: ConnectionLayer
 end
 export DebugLayer
 Layers.keywordforlayer(::Val{:verbose}) = DebugLayer
-DebugLayer(next; verbose=0, kw...) =
-    (verbose >= 3 || DEBUG_LEVEL[] >= 3) ? DebugLayer(next) : nothing
+Layers.shouldinclude(::Type{DebugLayer}; verbose=0, kw...) = (verbose >= 3 || DEBUG_LEVEL[] >= 3)
+DebugLayer(next; kw...) = DebugLayer(next)
 
-function Layers.request(layer::DebugLayer, io::IO, req, body; kw...)
+function Layers.request(layer::DebugLayer, io::IO, req, body)
 
     @static if live_mode
-        return Layers.request(layer.next, IODebug(io), req, body; kw...)
+        return Layers.request(layer.next, IODebug(io), req, body)
     else
         iod = IODebug(io)
         try
-            return Layers.request(layer.next, iod, req, body; kw...)
+            return Layers.request(layer.next, iod, req, body)
         finally
             show_log(stdout, iod)
         end

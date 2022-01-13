@@ -25,15 +25,19 @@ Construct a [`Request`](@ref) object and set mandatory headers.
 """
 struct MessageLayer{Next <: Layer} <: RequestLayer
     next::Next
+    http_version::VersionNumber
+    target::String
+    parent::Union{Nothing, Request}
+    iofunction
 end
 export MessageLayer
-MessageLayer(next; kw...) = MessageLayer(next)
+MessageLayer(next;
+    http_version=v"1.1",
+    target=resource(url),
+    parent=nothing, iofunction=nothing,
+    kw...) = MessageLayer(next, http_version, target, parent, iofunction)
 
-function Layers.request(layer::MessageLayer,
-                 method::String, url::URI, headers::Headers, body;
-                 http_version=v"1.1",
-                 target=resource(url),
-                 parent=nothing, iofunction=nothing, kw...)
+function Layers.request(layer::MessageLayer, method::String, url::URI, headers::Headers, body)
 
     if isempty(url.port) ||
               (url.scheme == "http" && url.port == "80") ||
@@ -66,7 +70,7 @@ function Layers.request(layer::MessageLayer,
     req = Request(method, target, headers, bodybytes(body);
                   parent=parent, version=http_version)
 
-    return Layers.request(layer.next, url, req, body; iofunction=iofunction, kw...)
+    return Layers.request(layer.next, url, req, body)
 end
 
 const USER_AGENT = Ref{Union{String, Nothing}}("HTTP.jl/$VERSION")

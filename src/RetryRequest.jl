@@ -23,15 +23,15 @@ e.g. `HTTP.IOError`, `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 """
 struct RetryLayer{Next <: Layer} <: RequestLayer
     next::Next
+    retries::Int
+    retry_non_idempotent::Bool
 end
 export RetryLayer
 Layers.keywordforlayer(::Val{:retry}) = RetryLayer
-RetryLayer(next; retry::Bool=true, kw...) =
-    retry ? RetryLayer(next) : nothing
+RetryLayer(next; retry::Bool=true, retries::int=4, retry_non_idempotent=false, kw...) =
+    retry ? RetryLayer(next, retries, retry_non_idempotent) : nothing
 
-function Layers.request(layer::RetryLayer, url, req, body;
-                 retries::Int=4, retry_non_idempotent::Bool=false,
-                 kw...)
+function Layers.request(layer::RetryLayer, url, req, body)
 
     retry_request = Base.retry(Layers.request,
         delays=ExponentialBackOff(n = retries),
@@ -46,7 +46,7 @@ function Layers.request(layer::RetryLayer, url, req, body;
             return s, retry
         end)
 
-    retry_request(layer.next, url, req, body; kw...)
+    retry_request(layer.next, url, req, body)
 end
 
 isrecoverable(e) = false

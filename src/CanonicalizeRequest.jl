@@ -14,14 +14,15 @@ struct CanonicalizeLayer{Next <: Layer} <: InitialLayer
 end
 export CanonicalizeLayer
 Layers.keywordforlayer(::Val{:canonicalize_headers}) = CanonicalizeLayer
-CanonicalizeLayer(next; canonicalize_headers::Bool=true, kw...) =
-    canonicalize_headers ? CanonicalizeLayer(next) : nothing
+Layers.shouldinclude(::Type{CanonicalizeLayer}; canonicalize_headers::Bool=true, kw...) =
+    canonicalize_headers
+CanonicalizeLayer(next; kw...) = CanonicalizeLayer(next)
 
-function Layers.request(layer::CanonicalizeLayer, method::String, url, headers, body; kw...)
+function Layers.request(layer::CanonicalizeLayer, method::String, url, headers, body)
 
     headers = canonicalizeheaders(headers)
 
-    res = Layers.request(layer.next, method, url, headers, body; kw...)
+    res = Layers.request(layer.next, method, url, headers, body)
 
     res.headers = canonicalizeheaders(res.headers)
 

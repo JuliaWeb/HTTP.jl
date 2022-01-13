@@ -311,8 +311,8 @@ function request(method, url, h=Header[], b=nobody;
     return request(HTTP.stack(;kw...), method, url, headers, body; kw...)
 end
 function request(stack::Layer, method, url, h=Header[], b=nobody;
-                 headers=h, body=b, query=nothing, kw...)::Response
-    return Layers.request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+                 headers=h, body=b, query=nothing)::Response
+    return Layers.request(stack, string(method), request_uri(url, query), mkheaders(headers), body)
 end
 
 request(::Type{Union{}}, resp::Response) = resp
@@ -568,7 +568,9 @@ function stack(;
         ),
         kw
     )
-    layers = stacklayertypes(Layers.ConnectionLayer, StreamLayer(), kwargs)
+    layers = stacklayertypes(Layers.ResponseLayer, Union{}, kwargs)
+    layers = StreamLayer(layers; kw...)
+    layers = stacklayertypes(Layers.ConnectionLayer, layers, kwargs)
     layers = ConnectionPoolLayer(layers; kw...)
     layers = stacklayertypes(Layers.RequestLayer, layers, kwargs)
     layers = MessageLayer(layers; kw...)

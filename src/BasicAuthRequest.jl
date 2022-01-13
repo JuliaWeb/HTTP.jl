@@ -18,9 +18,7 @@ export BasicAuthLayer
 Layers.keywordforlayer(::Val{:basicauth}) = BasicAuthLayer
 BasicAuthLayer(next; kw...) = BasicAuthLayer(next)
 
-function Layers.request(layer::BasicAuthLayer,
-                 method::String, url::URI, headers, body; kw...)
-
+function Layers.request(layer::BasicAuthLayer, method::String, url::URI, headers, body)
     userinfo = unescapeuri(url.userinfo)
 
     if !isempty(userinfo) && getkv(headers, "Authorization", "") == ""
@@ -28,7 +26,7 @@ function Layers.request(layer::BasicAuthLayer,
         setkv(headers, "Authorization", "Basic $(base64encode(userinfo))")
     end
 
-    return Layers.request(layer.next, method, url, headers, body; kw...)
+    return Layers.request(layer.next, method, url, headers, body)
 end
 
 

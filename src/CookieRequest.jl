@@ -23,17 +23,19 @@ Store new Cookies found in the response headers.
 """
 struct CookieLayer{Next <: Layer} <: InitialLayer
     next::Next
+    cookies
     cookiejar::Dict{String, Set{Cookie}}
 end
 export CookieLayer
 Layers.keywordforlayer(::Val{:cookies}) = CookieLayer
-CookieLayer(next; cookies::Union{Bool, AbstractDict}=true, cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar), kw...) =
-    (cookies === true || (cookies isa AbstractDict && !isempty(cookies))) ? CookieLayer(next, cookiejar) : nothing
+Layers.shouldinclude(::Type{CookieLayer}; cookies=true, kw...) =
+    cookies === true || (cookies isa AbstractDict && !isempty(cookies))
+CookieLayer(next;
+    cookies=true,
+    cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar), kw...) =
+    CookieLayer(next, cookies, cookiejar)
 
-function Layers.request(layer::CookieLayer,
-                 method::String, url::URI, headers, body;
-                 cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}}=Dict{String, String}(),
-                 kw...)
+function Layers.request(layer::CookieLayer, method::String, url::URI, headers, body)
 
     cookiejar = layer.cookiejar
     hostcookies = get!(cookiejar, url.host, Set{Cookie}())
@@ -48,7 +50,7 @@ function Layers.request(layer::CookieLayer,
         setkv(headers, "Cookie", stringify(getkv(headers, "Cookie", ""), cookiestosend))
     end
 
-    res = Layers.request(layer.next, method, url, headers, body; kw...)
+    res = Layers.request(layer.next, method, url, headers, body)
 
     setcookies(hostcookies, url.host, res.headers)
 

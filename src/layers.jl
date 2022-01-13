@@ -1,5 +1,5 @@
 module Layers
-export Layer, InitialLayer, RequestLayer, ConnectionLayer
+export Layer, InitialLayer, RequestLayer, ConnectionLayer, ResponseLayer
 
 struct LayerNotFoundException <: Exception
     var::String
@@ -14,10 +14,15 @@ abstract type Layer end
 abstract type InitialLayer <: Layer end
 abstract type RequestLayer <: Layer end
 abstract type ConnectionLayer <: Layer end
+abstract type ResponseLayer <: Layer end
 
 function keywordforlayer end
 
 keywordforlayer(kw) = nothing
+
+function shouldinclude end
+
+shouldinclude(T; kw...) = true
 # custom layers must subtype one of above
 # must register a keyword arg for layer
 # must have a layer constructor like: Layer(next; kw...)

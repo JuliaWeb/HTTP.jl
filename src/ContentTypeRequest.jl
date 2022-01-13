@@ -14,11 +14,11 @@ struct ContentTypeDetectionLayer{Next <: Layer} <: InitialLayer
 end
 export ContentTypeDetectionLayer
 Layers.keywordforlayer(::Val{:detect_content_type}) = ContentTypeDetectionLayer
-ContentTypeDetectionLayer(next; detect_content_type::Bool=true, kw...) =
-    detect_content_type ? ContentTypeDetectionLayer(netx) : nothing
+Layers.shouldinclude(::Type{ContentTypeDetectionLayer};
+    detect_content_type::Bool=true) = detect_content_type
+ContentTypeDetectionLayer(next; kw...) = ContentTypeDetectionLayer(netx)
 
-function Layers.request(layer::ContentTypeDetectionLayer,
-                 method::String, url::URI, headers, body; kw...)
+function Layers.request(layer::ContentTypeDetectionLayer, method::String, url::URI, headers, body)
 
     if (getkv(headers, "Content-Type", "") == ""
     &&  !isa(body, Form)
@@ -29,7 +29,7 @@ function Layers.request(layer::ContentTypeDetectionLayer,
         setkv(headers, "Content-Type", sn)
         @debug 1 "setting Content-Type header to: $sn"
     end
-    return Layers.request(layer.next, method, url, headers, body; kw...)
+    return Layers.request(layer.next, method, url, headers, body)
 end
 
 end # module

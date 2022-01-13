@@ -59,14 +59,17 @@ See [`isioerror`](@ref).
 """
 struct ConnectionPoolLayer{Next <: Layer} <: RequestLayer
     next::Next
+    proxy::String
+    socket_type::Any
 end
 export ConnectionPoolLayer
-ConnectionPoolLayer(next; kw...) = ConnectionPoolLayer(next)
+ConnectionPoolLayer(next;
+    proxy=getproxy(url.scheme, url.host),
+    socket_type::Type=TCPSocket,
+    kw...) = ConnectionPoolLayer(next, proxy, socket_type)
 
-function Layers.request(layer::ConnectionPoolLayer, url::URI, req, body;
-                 proxy=getproxy(url.scheme, url.host),
-                 socket_type::Type=TCPSocket, kw...)
-
+function Layers.request(layer::ConnectionPoolLayer, url::URI, req, body)
+    proxy, socket_type = layer.proxy, layer.socket_type
     if proxy !== nothing
         target_url = url
         url = URI(proxy)
@@ -102,7 +105,7 @@ function Layers.request(layer::ConnectionPoolLayer, url::URI, req, body;
             req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
         end
 
-        r =  Layers.request(layer.next, io, req, body; kw...)
+        r =  Layers.request(layer.next, io, req, body)
 
         if proxy !== nothing && target_url.scheme == "https"
             close(io)

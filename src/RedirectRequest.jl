@@ -14,22 +14,29 @@ Redirects the request in the case of 3xx response status.
 """
 struct RedirectLayer{Next <: Layer} <: InitialLayer
     next::Next
+    redirect_limit::Int
+    forwardheaders::Bool
 end
-export RedirectLayer
-Layers.keywordforlayer(::Val{:redirect}) = RedirectLayer
-RedirectLayer(next; redirect::Bool=true, kw...) =
-    redirect ? RedirectLayer(next) : nothing
 
-function Layers.request(layer::RedirectLayer,
-                 method::String, url::URI, headers, body;
-                 redirect_limit=3, forwardheaders=true, kw...)
+export RedirectLayer
+
+Layers.keywordforlayer(::Val{:redirect}) = RedirectLayer
+
+Layers.shouldinclude(::Type{RedirectLayer}; redirect::Bool=true, kw...) = redirect
+
+RedirectLayer(next; redirect_limit=3, forwardheaders=true, kw...) =
+    RedirectLayer(next, redirect_limit, forwardheaders)
+
+function Layers.request(layer::RedirectLayer, method::String, url::URI, headers, body)
+    redirect_limit = layer.redirect_limit
+    forwardheaders = layer.forwardheaders
     count = 0
     while true
 
         # Verify the url before making the request. Verification is done in
         # the redirect loop to also catch bad redirect URLs.
         verify_url(url)
-
+        # FIXME: can't pass keywords to other layers?
         res = Layers.request(layer.next, method, url, headers, body; reached_redirect_limit=(count == redirect_limit), kw...)
 
         if (count == redirect_limit
