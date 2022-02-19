@@ -285,9 +285,13 @@ function Base.close(c::Connection)
     if isreadable(c)
         closeread(c)
     end
-    close(c.io)
-    if bytesavailable(c) > 0
-        purge(c)
+    try
+        close(c.io)
+        if bytesavailable(c) > 0
+            purge(c)
+        end
+    catch
+        # ignore errors closing underlying socket
     end
     return
 end
