@@ -159,8 +159,20 @@ function Base.unsafe_read(c::Connection, p::Ptr{UInt8}, n::UInt)
         c.timestamp = time()
     end
     if n > 0
-        unsafe_read(c.io, p, n)
-        c.timestamp = time()
+        # try-catch underlying errors here
+        # as the Connection object, we don't really care
+        # if the underlying socket was closed/terminated
+        # or just plain reached EOF, so we wrap any
+        # Base.IOErrors and just throw as EOFError
+        # that way we get more consistent errors thrown
+        # at the headers/body parsing level
+        try
+            unsafe_read(c.io, p, n)
+            c.timestamp = time()
+        catch e
+            e isa Base.IOError && throw(EOFError())
+            rethrow(e)
+        end
     end
     return nothing
 end
