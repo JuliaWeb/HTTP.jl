@@ -16,9 +16,7 @@ abstract type RequestLayer <: Layer end
 abstract type ConnectionLayer <: Layer end
 abstract type ResponseLayer <: Layer end
 
-function keywordforlayer end
-
-keywordforlayer(kw) = nothing
+const LAYERS = Dict
 
 function shouldinclude end
 

@@ -307,15 +307,51 @@ end
 ```
 """
 function request(method, url, h=Header[], b=nobody;
-                 headers=h, body=b, kw...)::Response
-    return request(HTTP.stack(;kw...), method, url, headers, body; kw...)
-end
-function request(stack::Layer, method, url, h=Header[], b=nobody;
-                 headers=h, body=b, query=nothing)::Response
-    return Layers.request(stack, string(method), request_uri(url, query), mkheaders(headers), body)
+                 headers=h, body=b, query=nothing, kw...)::Response
+    return Layers.request(HTTP.stack(; kw...), string(method), request_uri(url, query), mkheaders(headers), body)
 end
 
-request(::Type{Union{}}, resp::Response) = resp
+"""
+    HTTP.get(url [, headers]; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("GET", ...)`. See [`HTTP.request`](@ref).
+"""
+get(a...; kw...) = request("GET", a...; kw...)
+
+"""
+    HTTP.put(url, headers, body; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("PUT", ...)`. See [`HTTP.request`](@ref).
+"""
+put(a...; kw...) = request("PUT", a...; kw...)
+
+"""
+    HTTP.post(url, headers, body; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("POST", ...)`. See [`HTTP.request`](@ref).
+"""
+post(a...; kw...) = request("POST", a...; kw...)
+
+"""
+    HTTP.patch(url, headers, body; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("PATCH", ...)`. See [`HTTP.request`](@ref).
+"""
+patch(a...; kw...) = request("PATCH", a...; kw...)
+
+"""
+    HTTP.head(url; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("HEAD", ...)`. See [`HTTP.request`](@ref).
+"""
+head(u; kw...) = request("HEAD", u; kw...)
+
+"""
+    HTTP.delete(url [, headers]; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("DELETE", ...)`. See [`HTTP.request`](@ref).
+"""
+delete(a...; kw...) = request("DELETE", a...; kw...)
 
 request_uri(url, query) = URI(URI(url); query=query)
 request_uri(url, ::Nothing) = URI(url)
@@ -379,48 +415,6 @@ function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tu
     end
     take!(socketready)
 end
-
-"""
-    HTTP.get(url [, headers]; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("GET", ...)`. See [`HTTP.request`](@ref).
-"""
-get(a...; kw...) = request("GET", a...; kw...)
-
-"""
-    HTTP.put(url, headers, body; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("PUT", ...)`. See [`HTTP.request`](@ref).
-"""
-put(u, h=[], b=""; kw...) = request("PUT", u, h, b; kw...)
-
-"""
-    HTTP.post(url, headers, body; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("POST", ...)`. See [`HTTP.request`](@ref).
-"""
-post(u, h=[], b=""; kw...) = request("POST", u, h, b; kw...)
-
-"""
-    HTTP.patch(url, headers, body; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("PATCH", ...)`. See [`HTTP.request`](@ref).
-"""
-patch(u, h=[], b=""; kw...) = request("PATCH", u, h, b; kw...)
-
-"""
-    HTTP.head(url; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("HEAD", ...)`. See [`HTTP.request`](@ref).
-"""
-head(u; kw...) = request("HEAD", u; kw...)
-
-"""
-    HTTP.delete(url [, headers]; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("DELETE", ...)`. See [`HTTP.request`](@ref).
-"""
-delete(a...; kw...) = request("DELETE", a...; kw...)
 
 include("RedirectRequest.jl");          using .RedirectRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
