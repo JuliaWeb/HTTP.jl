@@ -21,21 +21,18 @@ indicates that the server does not wish to receive the message body.
 """
 struct StreamLayer{Next <: Layer} <: ConnectionLayer
     next::Next
-    reached_redirect_limit::Bool
     response_stream
     iofunction
     verbose
 end
 export StreamLayer
 StreamLayer(next;
-    reached_redirect_limit=false,
     response_stream=nothing,
     iofunction=nothing,
     verbose::Int=0,
-    kw...) = StreamLayer(next, reached_redirect_limit, response_stream, iofunction, verbose)
+    kw...) = StreamLayer(next, response_stream, iofunction, verbose)
 
-function Layers.request(layer::StreamLayer, io::IO, req::Request, body)::Response
-    reached_redirect_limit = layer.reached_redirect_limit
+function Layers.request(layer::StreamLayer, ctx, io::IO, req::Request, body)::Response
     response_stream = layer.response_stream
     iofunction = layer.iofunction
     verbose = layer.verbose
@@ -47,6 +44,7 @@ function Layers.request(layer::StreamLayer, io::IO, req::Request, body)::Respons
     startwrite(http)
 
     if verbose == 2
+        println("printing req")
         println(req)
         if iofunction === nothing && req.body === body_is_a_stream
             println("$(typeof(req)).body: $(sprintcompact(body))")
@@ -58,7 +56,7 @@ function Layers.request(layer::StreamLayer, io::IO, req::Request, body)::Respons
         @sync begin
             if iofunction === nothing
                 @async try
-                    writebody(http, req, body)
+                    writebody(http, ctx, req, body)
                     @debug 2 "client closewrite"
                     closewrite(http)
                 catch e
@@ -67,7 +65,7 @@ function Layers.request(layer::StreamLayer, io::IO, req::Request, body)::Respons
                 end
                 @debug 2 "client startread"
                 startread(http)
-                readbody(http, response, response_stream, reached_redirect_limit)
+                readbody(http, response, response_stream, get(ctx, :redirectlimitreached, false))
             else
                 iofunction(http)
             end
@@ -94,10 +92,10 @@ function Layers.request(layer::StreamLayer, io::IO, req::Request, body)::Respons
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)
 
-    return Layers.request(layer.next, response)
+    return Layers.request(layer.next, ctx, response)
 end
 
-function writebody(http::Stream, req::Request, body)
+function writebody(http::Stream, ctx, req::Request, body)
 
     if req.body === body_is_a_stream
         writebodystream(http, req, body)
@@ -105,8 +103,7 @@ function writebody(http::Stream, req::Request, body)
     else
         write(http, req.body)
     end
-
-    req.txcount += 1
+    ctx[:retrycount] = get(ctx, :retrycount, 0) + 1
     return
 end
 
@@ -124,11 +121,11 @@ end
 writechunk(http, req, body::IO) = writebodystream(http, req, body)
 writechunk(http, req, body) = write(http, body)
 
-function readbody(http::Stream, res::Response, response_stream, reached_redirect_limit)
+function readbody(http::Stream, res::Response, response_stream, redirectlimitreached)
     if response_stream === nothing
         res.body = read(http)
     else
-        if reached_redirect_limit || !isredirect(res)
+        if redirectlimitreached || !isredirect(res)
             res.body = body_was_streamed
             write(response_stream, http)
         end

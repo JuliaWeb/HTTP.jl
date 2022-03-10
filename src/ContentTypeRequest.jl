@@ -11,16 +11,14 @@ import ..@debug, ..DEBUG_LEVEL
 
 struct ContentTypeDetectionLayer{Next <: Layer} <: InitialLayer
     next::Next
+    detect_content_type::Bool
 end
 export ContentTypeDetectionLayer
-Layers.keywordforlayer(::Val{:detect_content_type}) = ContentTypeDetectionLayer
-Layers.shouldinclude(::Type{ContentTypeDetectionLayer};
-    detect_content_type::Bool=true) = detect_content_type
-ContentTypeDetectionLayer(next; kw...) = ContentTypeDetectionLayer(netx)
+ContentTypeDetectionLayer(next; detect_content_type::Bool=false, kw...) = ContentTypeDetectionLayer(next, detect_content_type)
 
-function Layers.request(layer::ContentTypeDetectionLayer, method::String, url::URI, headers, body)
+function Layers.request(layer::ContentTypeDetectionLayer, ctx, method::String, url::URI, headers, body)
 
-    if (getkv(headers, "Content-Type", "") == ""
+    if layer.detect_content_type && (getkv(headers, "Content-Type", "") == ""
     &&  !isa(body, Form)
     &&  bodylength(body) != unknown_length
     &&  bodylength(body) > 0)
@@ -29,7 +27,7 @@ function Layers.request(layer::ContentTypeDetectionLayer, method::String, url::U
         setkv(headers, "Content-Type", sn)
         @debug 1 "setting Content-Type header to: $sn"
     end
-    return Layers.request(layer.next, method, url, headers, body)
+    return Layers.request(layer.next, ctx, method, url, headers, body)
 end
 
 end # module

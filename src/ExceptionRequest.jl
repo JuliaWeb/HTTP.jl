@@ -13,22 +13,18 @@ Throw a `StatusError` if the request returns an error response status.
 """
 struct ExceptionLayer{Next <: Layer} <: ResponseLayer
     next::Next
+    status_exception::Bool
 end
 export ExceptionLayer
-Layers.keywordforlayer(::Val{:status_exception}) = ExceptionLayer
-Layers.shouldinclude(::Type{<:ExceptionLayer}; status_exception::Bool=true) =
-    status_exception
-ExceptionLayer(next; kw...) = ExceptionLayer(next)
+ExceptionLayer(next; status_exception::Bool=true) = ExceptionLayer(next, status_exception)
 
-function Layers.request(layer::ExceptionLayer, resp)
-
-    res = Layers.request(layer.next, resp)
-
-    if iserror(res)
+function Layers.request(layer::ExceptionLayer, ctx, resp)
+    res = Layers.request(layer.next, ctx, resp)
+    if layer.status_exception && iserror(res)
         throw(StatusError(res.status, res.request.method, res.request.target, res))
+    else
+        return res
     end
-
-    return res
 end
 
 """

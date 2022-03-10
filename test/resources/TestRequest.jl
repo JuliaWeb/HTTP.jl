@@ -8,25 +8,26 @@ struct TestLayer{Next <: Layer} <: InitialLayer
     next::Next
     wasincluded::Ref{Bool}
 end
-Layers.keywordforlayer(::Val{:httptestlayer}) = TestLayer
 TestLayer(next; httptestlayer=Ref(false), kw...) = TestLayer(next, httptestlayer)
 
-function Layers.request(layer::TestLayer, meth, url, headers, body; kw...)
+function Layers.request(layer::TestLayer, ctx, meth, url, headers, body)
     layer.wasincluded[] = true
-    return Layers.request(layer.next, meth, url, headers, body; kw...)
+    return Layers.request(layer.next, ctx, meth, url, headers, body)
 end
 
-struct LastLayer{Next <: Layer} <: ConnectionLayer
-    next::Next
-    wasincluded::Ref{Bool}
-end
-Layers.keywordforlayer(::Val{:httplastlayer}) = LastLayer
-LastLayer(next; httplastlayer=Ref(false), kw...) = LastLayer(next, httplastlayer)
+HTTP.@client TestLayer
 
-function Layers.request(layer::LastLayer, io::IO, req, body; kw...)
-    resp = Layers.request(layer.next, io, req, body; kw...)
-    layer.wasincluded[] = true
-    return resp
-end
+# struct LastLayer{Next <: Layer} <: ConnectionLayer
+#     next::Next
+#     wasincluded::Ref{Bool}
+# end
+# Layers.keywordforlayer(::Val{:httplastlayer}) = LastLayer
+# LastLayer(next; httplastlayer=Ref(false), kw...) = LastLayer(next, httplastlayer)
+
+# function Layers.request(layer::LastLayer, io::IO, req, body; kw...)
+#     resp = Layers.request(layer.next, io, req, body; kw...)
+#     layer.wasincluded[] = true
+#     return resp
+# end
 
 end

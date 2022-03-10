@@ -14,21 +14,23 @@ Redirects the request in the case of 3xx response status.
 """
 struct RedirectLayer{Next <: Layer} <: InitialLayer
     next::Next
+    redirect::Bool
     redirect_limit::Int
     forwardheaders::Bool
 end
 
 export RedirectLayer
 
-Layers.keywordforlayer(::Val{:redirect}) = RedirectLayer
+RedirectLayer(next; redirect::Bool=true, redirect_limit=3, forwardheaders=true, kw...) =
+    RedirectLayer(next, redirect, redirect_limit, forwardheaders)
 
-Layers.shouldinclude(::Type{RedirectLayer}; redirect::Bool=true, kw...) = redirect
-
-RedirectLayer(next; redirect_limit=3, forwardheaders=true, kw...) =
-    RedirectLayer(next, redirect_limit, forwardheaders)
-
-function Layers.request(layer::RedirectLayer, method::String, url::URI, headers, body)
+function Layers.request(layer::RedirectLayer, ctx, method, url, headers, body)
     redirect_limit = layer.redirect_limit
+    if !layer.redirect || layer.redirect_limit == 0
+        # no redirecting
+        return Layers.request(layer.next, ctx, method, url, headers, body)
+    end
+
     forwardheaders = layer.forwardheaders
     count = 0
     while true
@@ -36,8 +38,10 @@ function Layers.request(layer::RedirectLayer, method::String, url::URI, headers,
         # Verify the url before making the request. Verification is done in
         # the redirect loop to also catch bad redirect URLs.
         verify_url(url)
-        # FIXME: can't pass keywords to other layers?
-        res = Layers.request(layer.next, method, url, headers, body; reached_redirect_limit=(count == redirect_limit), kw...)
+        if count == redirect_limit
+            ctx[:redirectlimitreached] = true
+        end
+        res = Layers.request(layer.next, ctx, method, url, headers, body)
 
         if (count == redirect_limit
         ||  !isredirect(res)
@@ -45,18 +49,16 @@ function Layers.request(layer::RedirectLayer, method::String, url::URI, headers,
             return res
         end
 
-
-        kw = merge(merge(NamedTuple(), kw), (parent = res,))
+        # follow redirect
+        ctx[:parentrequest] = res.request
         oldurl = url
-        url = resolvereference(url, location)
+        url = resolvereference(oldurl, location)
         if forwardheaders
-            headers = filter(headers) do h
+            headers = filter(headers) do (header, _)
                 # false return values are filtered out
-                header, value = h
                 if header == "Host"
                     return false
-                elseif (header in SENSITIVE_HEADERS
-                    && !isdomainorsubdomain(url.host, oldurl.host))
+                elseif (header in SENSITIVE_HEADERS && !isdomainorsubdomain(url.host, url.host))
                     return false
                 else
                     return true

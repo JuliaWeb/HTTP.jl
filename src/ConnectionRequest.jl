@@ -5,10 +5,12 @@ using URIs, ..Sockets
 using ..Messages
 using ..IOExtras
 using ..ConnectionPool
-using MbedTLS: SSLContext
+using MbedTLS: SSLContext, SSLConfig
 using ..Pairs: getkv, setkv
 using Base64: base64encode
 import ..@debug, ..DEBUG_LEVEL
+
+const nosslconfig = SSLConfig()
 
 # hasdotsuffix reports whether s ends in "."+suffix.
 hasdotsuffix(s, suffix) = endswith(s, "." * suffix)
@@ -61,17 +63,19 @@ struct ConnectionPoolLayer{Next <: Layer} <: RequestLayer
     next::Next
     proxy::String
     socket_type::Any
+    kw
 end
 export ConnectionPoolLayer
 ConnectionPoolLayer(next;
-    proxy=getproxy(url.scheme, url.host),
+    proxy="",
     socket_type::Type=TCPSocket,
-    kw...) = ConnectionPoolLayer(next, proxy, socket_type)
+    kw...) = ConnectionPoolLayer(next, proxy, socket_type, kw)
 
-function Layers.request(layer::ConnectionPoolLayer, url::URI, req, body)
-    proxy, socket_type = layer.proxy, layer.socket_type
+function Layers.request(layer::ConnectionPoolLayer, ctx, req, body)
+    proxy = layer.proxy != "" ? layer.proxy : getproxy(req.url.scheme, req.url.host)
+    socket_type = layer.socket_type
     if proxy !== nothing
-        target_url = url
+        target_url = req.url
         url = URI(proxy)
         if target_url.scheme == "http"
             req.target = string(target_url)
@@ -82,12 +86,14 @@ function Layers.request(layer::ConnectionPoolLayer, url::URI, req, body)
             @debug 1 "Adding Proxy-Authorization: Basic header."
             setkv(req.headers, "Proxy-Authorization", "Basic $(base64encode(userinfo))")
         end
+    else
+        url = req.url
     end
 
     IOType = sockettype(url, socket_type)
     local io
     try
-        io = newconnection(IOType, url.host, url.port; kw...)
+        io = newconnection(IOType, url.host, url.port; layer.kw...)
     catch e
         rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
     end
@@ -101,11 +107,11 @@ function Layers.request(layer::ConnectionPoolLayer, url::URI, req, body)
                 close(io)
                 return r
             end
-            io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+            io = ConnectionPool.sslupgrade(io, target_url.host; layer.kw...)
             req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
         end
 
-        r =  Layers.request(layer.next, io, req, body)
+        r =  Layers.request(layer.next, ctx, io, req, body)
 
         if proxy !== nothing && target_url.scheme == "https"
             close(io)

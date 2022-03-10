@@ -12,13 +12,6 @@ import ..Headers
 import ..Form, ..content_type
 
 """
-"request-target" per https://tools.ietf.org/html/rfc7230#section-5.3
-"""
-resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
-                            !isempty(uri.query)    ? "?" : "", uri.query,
-                            !isempty(uri.fragment) ? "#" : "", uri.fragment)
-
-"""
     Layers.request(MessageLayer, method, ::URI, headers, body) -> HTTP.Response
 
 Construct a [`Request`](@ref) object and set mandatory headers.
@@ -26,18 +19,15 @@ Construct a [`Request`](@ref) object and set mandatory headers.
 struct MessageLayer{Next <: Layer} <: RequestLayer
     next::Next
     http_version::VersionNumber
-    target::String
-    parent::Union{Nothing, Request}
     iofunction
 end
 export MessageLayer
 MessageLayer(next;
     http_version=v"1.1",
-    target=resource(url),
-    parent=nothing, iofunction=nothing,
-    kw...) = MessageLayer(next, http_version, target, parent, iofunction)
+    iofunction=nothing,
+    kw...) = MessageLayer(next, http_version, iofunction)
 
-function Layers.request(layer::MessageLayer, method::String, url::URI, headers::Headers, body)
+function Layers.request(layer::MessageLayer, ctx, method::String, url::URI, headers::Headers, body)
 
     if isempty(url.port) ||
               (url.scheme == "http" && url.port == "80") ||
@@ -58,7 +48,7 @@ function Layers.request(layer::MessageLayer, method::String, url::URI, headers::
         l = bodylength(body)
         if l != unknown_length
             setheader(headers, "Content-Length" => string(l))
-        elseif method == "GET" && iofunction isa Function
+        elseif method == "GET" && layer.iofunction isa Function
             setheader(headers, "Content-Length" => "0")
         end
     end
@@ -66,11 +56,10 @@ function Layers.request(layer::MessageLayer, method::String, url::URI, headers::
         # "Content-Type" => "multipart/form-data; boundary=..."
         setheader(headers, content_type(body))
     end
+    parent = get(ctx, :parentrequest, nothing)
+    req = Request(method, resource(url), headers, bodybytes(body); url=url, version=layer.http_version, parent=parent)
 
-    req = Request(method, target, headers, bodybytes(body);
-                  parent=parent, version=http_version)
-
-    return Layers.request(layer.next, url, req, body)
+    return Layers.request(layer.next, ctx, req, body)
 end
 
 const USER_AGENT = Ref{Union{String, Nothing}}("HTTP.jl/$VERSION")

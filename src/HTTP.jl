@@ -308,7 +308,27 @@ end
 """
 function request(method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
-    return Layers.request(HTTP.stack(; kw...), string(method), request_uri(url, query), mkheaders(headers), body)
+    return request(HTTP.stack(; kw...), method, url, headers, body, query)
+end
+
+const Context = Dict{Symbol, Any}
+
+function request(stack::Layers.Layer, method, url, h=Header[], b=nobody, q=nothing;
+                 headers=h, body=b, query=q)::Response
+    return Layers.request(stack, Context(), string(method), request_uri(url, query), mkheaders(headers), body)
+end
+
+macro client(layertypes...)
+    esc(quote
+        get(a...; kw...) = request("GET", a...; kw...)
+        put(a...; kw...) = request("PUT", a...; kw...)
+        post(a...; kw...) = request("POST", a...; kw...)
+        patch(a...; kw...) = request("PATCH", a...; kw...)
+        head(u; kw...) = request("HEAD", u; kw...)
+        delete(a...; kw...) = request("DELETE", a...; kw...)
+        request(method, url, h=HTTP.Header[], b=HTTP.nobody; headers=h, body=b, query=nothing, kw...)::HTTP.Response =
+            HTTP.request(HTTP.stack($(layertypes...); kw...), method, url, headers, body, query)
+    end)
 end
 
 """
@@ -542,7 +562,8 @@ relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
 ```
 *See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
 """
-function stack(;
+function stack(layertypes::Type{<:Layers.Layer}...;
+    # default keyword arg values
     basicauth=true,
     cookies=false,
     canonicalize_headers=false,
@@ -554,31 +575,31 @@ function stack(;
     redirect=true,
     kw...)
 
-    kwargs = merge(
-        (;
-            basicauth, cookies, canonicalize_headers,
-            retry, status_exception, readtimeout,
-            detect_content_type, verbose, redirect
-        ),
-        kw
-    )
-    layers = stacklayertypes(Layers.ResponseLayer, Union{}, kwargs)
-    layers = StreamLayer(layers; kw...)
-    layers = stacklayertypes(Layers.ConnectionLayer, layers, kwargs)
+    # ResponseLayers
+    layers = ExceptionLayer(BottomLayer(); status_exception=status_exception)
+    layers = stacklayertypes(Layers.ResponseLayer, layers, layertypes; kw...)
+    # transition ConnectionLayer => ResponseLayer
+    layers = StreamLayer(layers; verbose=verbose, kw...)
+    # ConnectionLayers
+    layers = DebugLayer(TimeoutLayer(layers; readtimeout=readtimeout); verbose=verbose)
+    layers = stacklayertypes(Layers.ConnectionLayer, layers, layertypes; kw...)
+    # transition RequestLayer => ConnectionLayer
     layers = ConnectionPoolLayer(layers; kw...)
-    layers = stacklayertypes(Layers.RequestLayer, layers, kwargs)
+    # RequestLayers
+    layers = RetryLayer(layers; retry=retry, kw...)
+    layers = stacklayertypes(Layers.RequestLayer, layers, layertypes; kw...)
+    # transition InitialLayer => RequestLayer
     layers = MessageLayer(layers; kw...)
-    return stacklayertypes(Layers.InitialLayer, layers, kwargs)
+    layers = BasicAuthLayer(CanonicalizeLayer(ContentTypeDetectionLayer(RedirectLayer(CookieLayer(layers;
+        cookies=cookies, kw...); redirect=redirect, kw...); detect_content_type=detect_content_type, kw...);
+        canonicalize_headers=canonicalize_headers, kw...); basicauth=basicauth, kw...)
+    return stacklayertypes(Layers.InitialLayer, layers, layertypes; kw...)
 end
 
-function stacklayertypes(::Type{T}, layers, kwargs) where {T}
-    for (k, _) in pairs(kwargs)
-        layer = Layers.keywordforlayer(Val(k))
-        if layer !== nothing && layer <: T
-            newlayers = layer(layers; kwargs...)
-            if newlayers !== nothing
-                layers = newlayers
-            end
+function stacklayertypes(::Type{T}, layers::Layers.Layer, layertypes; kw...) where {T}
+    for LayerType in layertypes
+        if LayerType <: T
+            layers = LayerType(layers; kw...)
         end
     end
     return layers

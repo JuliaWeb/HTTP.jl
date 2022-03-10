@@ -22,12 +22,14 @@ struct TimeoutLayer{Next <: Layer} <: ConnectionLayer
     readtimeout::Int
 end
 export TimeoutLayer
-Layers.keywordforlayer(::Val{:readtimeout}) = TimeoutLayer
-Layers.shouldinclude(::Type{<:TimeoutLayer}; readtimeout::Int=0, kw...) = readtimeout > 0
 TimeoutLayer(next; readtimeout::Int=0, kw...) = TimeoutLayer(next, readtimeout)
 
-function Layers.request(layer::TimeoutLayer, io::IO, req, body)
+function Layers.request(layer::TimeoutLayer, ctx, io::IO, req, body)
     readtimeout = layer.readtimeout
+    if readtimeout <= 0
+        # skip
+        return Layers.request(layer.next, ctx, io, req, body)
+    end
     wait_for_timeout = Ref{Bool}(true)
     timedout = Ref{Bool}(false)
 
@@ -42,7 +44,7 @@ function Layers.request(layer::TimeoutLayer, io::IO, req, body)
     end
 
     try
-        return Layers.request(layer.next, io, req, body)
+        return Layers.request(layer.next, ctx, io, req, body)
     catch e
         if timedout[]
            throw(ReadTimeoutError(readtimeout))

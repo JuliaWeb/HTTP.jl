@@ -15,20 +15,22 @@ Wrap the `IO` stream in an `IODebug` stream and print Message data.
 """
 struct DebugLayer{Next <:Layer} <: ConnectionLayer
     next::Next
+    verbose::Int
 end
 export DebugLayer
-Layers.keywordforlayer(::Val{:verbose}) = DebugLayer
-Layers.shouldinclude(::Type{DebugLayer}; verbose=0, kw...) = (verbose >= 3 || DEBUG_LEVEL[] >= 3)
-DebugLayer(next; kw...) = DebugLayer(next)
+DebugLayer(next; verbose=0, kw...) = DebugLayer(next, verbose)
 
-function Layers.request(layer::DebugLayer, io::IO, req, body)
-
+function Layers.request(layer::DebugLayer, ctx, io::IO, req, body)
+    # if not debugging, just call to next layer
+    if !(layer.verbose >= 3 || DEBUG_LEVEL[] >= 3)
+        return Layers.request(layer.next, ctx, io, req, body)
+    end
     @static if live_mode
-        return Layers.request(layer.next, IODebug(io), req, body)
+        return Layers.request(layer.next, ctx, IODebug(io), req, body)
     else
         iod = IODebug(io)
         try
-            return Layers.request(layer.next, iod, req, body)
+            return Layers.request(layer.next, ctx, iod, req, body)
         finally
             show_log(stdout, iod)
         end

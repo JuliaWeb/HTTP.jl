@@ -11,21 +11,20 @@ Rewrite request and response headers in Canonical-Camel-Dash-Format.
 """
 struct CanonicalizeLayer{Next <: Layer} <: InitialLayer
     next::Next
+    canonicalize_headers::Bool
 end
 export CanonicalizeLayer
-Layers.keywordforlayer(::Val{:canonicalize_headers}) = CanonicalizeLayer
-Layers.shouldinclude(::Type{CanonicalizeLayer}; canonicalize_headers::Bool=true, kw...) =
-    canonicalize_headers
-CanonicalizeLayer(next; kw...) = CanonicalizeLayer(next)
+CanonicalizeLayer(next; canonicalize_headers::Bool=false, kw...) = CanonicalizeLayer(next, canonicalize_headers)
 
-function Layers.request(layer::CanonicalizeLayer, method::String, url, headers, body)
+function Layers.request(layer::CanonicalizeLayer, ctx, method::String, url, headers, body)
 
-    headers = canonicalizeheaders(headers)
-
-    res = Layers.request(layer.next, method, url, headers, body)
-
-    res.headers = canonicalizeheaders(res.headers)
-
+    if layer.canonicalize_headers
+        headers = canonicalizeheaders(headers)
+    end
+    res = Layers.request(layer.next, ctx, method, url, headers, body)
+    if layer.canonicalize_headers
+        res.headers = canonicalizeheaders(res.headers)
+    end
     return res
 end
 

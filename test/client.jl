@@ -9,7 +9,7 @@ status(r) = r.status
 @testset "Custom HTTP Stack" begin
    @testset "Low-level Request" begin
         wasincluded = Ref(false)
-        result = HTTP.request("GET", "https://httpbin.org/ip"; httptestlayer=wasincluded)
+        result = TestRequest.get("https://httpbin.org/ip"; httptestlayer=wasincluded)
         @test status(result) == 200
         @test wasincluded[]
     end
@@ -377,7 +377,7 @@ import NetworkOptions, MbedTLS
     # Set up server with self-signed cert
     server = listen(IPv4(0), 8443)
     try
-        cert, key = joinpath.(@__DIR__, "resources", ("cert.pem", "key.pem"))
+        cert, key = joinpath.(dirname(pathof(HTTP)), "../test", "resources", ("cert.pem", "key.pem"))
         sslconfig = MbedTLS.SSLConfig(cert, key)
         tsk = @async HTTP.listen("0.0.0.0", 8443; server=server, sslconfig=sslconfig) do http
             HTTP.setstatus(http, 200)

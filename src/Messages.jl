@@ -55,7 +55,7 @@ Streaming of request and response bodies is handled by the
 module Messages
 
 export Message, Request, Response,
-       reset!, status, method, headers, uri, body,
+       reset!, status, method, headers, uri, body, resource,
        iserror, isredirect, ischunked, issafe, isidempotent,
        header, hasheader, headercontains, setheader, defaultheader!, appendheader,
        mkheaders, readheaders, headerscomplete,
@@ -66,6 +66,7 @@ export Message, Request, Response,
 
 import ..HTTP
 
+using ..URIs
 using ..Pairs
 using ..IOExtras
 using ..Parsers
@@ -202,8 +203,6 @@ Represents a HTTP Request Message.
 
 - `response`, the `Response` to this `Request`
 
-- `txcount`, number of times this `Request` has been sent (see RetryRequest.jl).
-
 - `parent`, the `Response` (if any) that led to this request
   (e.g. in the case of a redirect).
    [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
@@ -218,7 +217,7 @@ mutable struct Request <: Message
     headers::Headers
     body::Vector{UInt8}
     response::Response
-    txcount::Int
+    url::URI
     parent
 end
 
@@ -231,18 +230,25 @@ Constructor for `HTTP.Request`.
 For daily use, see [`HTTP.request`](@ref).
 """
 function Request(method::String, target, headers=[], body=UInt8[];
-                 version=v"1.1", parent=nothing)
+                 version=v"1.1", url::URI=URI(), parent=nothing)
     r = Request(method,
                 target == "" ? "/" : target,
                 version,
                 mkheaders(headers),
                 bytes(body),
                 Response(0),
-                0,
+                url,
                 parent)
     r.response.request = r
     return r
 end
+
+"""
+"request-target" per https://tools.ietf.org/html/rfc7230#section-5.3
+"""
+resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
+                            !isempty(uri.query)    ? "?" : "", uri.query,
+                            !isempty(uri.fragment) ? "#" : "", uri.fragment)
 
 mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]

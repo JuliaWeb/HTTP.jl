@@ -13,21 +13,20 @@ Add `Authorization: Basic` header using credentials from url userinfo.
 """
 struct BasicAuthLayer{Next <: Layer} <: InitialLayer
     next::Next
+    basicauth::Bool
 end
 export BasicAuthLayer
-Layers.keywordforlayer(::Val{:basicauth}) = BasicAuthLayer
-BasicAuthLayer(next; kw...) = BasicAuthLayer(next)
+BasicAuthLayer(next; basicauth::Bool=true, kw...) = BasicAuthLayer(next, basicauth)
 
-function Layers.request(layer::BasicAuthLayer, method::String, url::URI, headers, body)
-    userinfo = unescapeuri(url.userinfo)
-
-    if !isempty(userinfo) && getkv(headers, "Authorization", "") == ""
-        @debug 1 "Adding Authorization: Basic header."
-        setkv(headers, "Authorization", "Basic $(base64encode(userinfo))")
+function Layers.request(layer::BasicAuthLayer, ctx, method::String, url::URI, headers, body)
+    if layer.basicauth
+        userinfo = unescapeuri(url.userinfo)
+        if !isempty(userinfo) && getkv(headers, "Authorization", "") == ""
+            @debug 1 "Adding Authorization: Basic header."
+            setkv(headers, "Authorization", "Basic $(base64encode(userinfo))")
+        end
     end
-
-    return Layers.request(layer.next, method, url, headers, body)
+    return Layers.request(layer.next, ctx, method, url, headers, body)
 end
-
 
 end # module BasicAuthRequest

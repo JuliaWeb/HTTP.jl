@@ -23,20 +23,23 @@ e.g. `HTTP.IOError`, `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 """
 struct RetryLayer{Next <: Layer} <: RequestLayer
     next::Next
+    retry::Bool
     retries::Int
     retry_non_idempotent::Bool
 end
 export RetryLayer
-Layers.keywordforlayer(::Val{:retry}) = RetryLayer
-RetryLayer(next; retry::Bool=true, retries::int=4, retry_non_idempotent=false, kw...) =
-    retry ? RetryLayer(next, retries, retry_non_idempotent) : nothing
+RetryLayer(next; retry::Bool=true, retries::Int=4, retry_non_idempotent=false, kw...) =
+    RetryLayer(next, retry, retries, retry_non_idempotent)
 
-function Layers.request(layer::RetryLayer, url, req, body)
-
+function Layers.request(layer::RetryLayer, ctx, req::Request, body)
+    if !layer.retry || layer.retries == 0
+        # no retry
+        return Layers.request(layer.next, ctx, req, body)
+    end
     retry_request = Base.retry(Layers.request,
-        delays=ExponentialBackOff(n = retries),
+        delays=ExponentialBackOff(n = layer.retries),
         check=(s,ex)->begin
-            retry = isrecoverable(ex, req, retry_non_idempotent)
+            retry = isrecoverable(ex, req, layer.retry_non_idempotent, get(ctx, :retrycount, 0))
             if retry
                 @debug 1 "🔄  Retry $ex: $(sprintcompact(req))"
                 reset!(req.response)
@@ -46,7 +49,7 @@ function Layers.request(layer::RetryLayer, url, req, body)
             return s, retry
         end)
 
-    retry_request(layer.next, url, req, body)
+    return retry_request(layer.next, ctx, req, body)
 end
 
 isrecoverable(e) = false
@@ -56,11 +59,11 @@ isrecoverable(e::HTTP.StatusError) = e.status == 403 || # Forbidden
                                      e.status == 408 || # Timeout
                                      e.status >= 500    # Server Error
 
-isrecoverable(e, req, retry_non_idempotent) =
+isrecoverable(e, req, retry_non_idempotent, retrycount) =
     isrecoverable(e) &&
     !(req.body === body_was_streamed) &&
     !(req.response.body === body_was_streamed) &&
-    (retry_non_idempotent || req.txcount == 0 || isidempotent(req))
+    (retry_non_idempotent || retrycount == 0 || isidempotent(req))
     # "MUST NOT automatically retry a request with a non-idempotent method"
     # https://tools.ietf.org/html/rfc7230#section-6.3.1
 
