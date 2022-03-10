@@ -1,0 +1,40 @@
+name: Regenerate precompile statements
+on:
+  workflow_dispatch:
+permissions: # Permissions for the `GITHUB_TOKEN` token
+  contents: write
+  pull-requests: write
+concurrency:
+  # Skip intermediate builds: all builds except for builds on the `master` or `release-*` branches
+  # Cancel intermediate builds: only pull request builds
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref != 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release-') || github.run_number }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+jobs:
+  regenerate_precompile_statements:
+    name: Regenerate precompile statements
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: 'nightly' # TODO: delete this line once Julia 1.9 is releease
+          # version: '1'     # TODO: uncomment this line once Julia 1.9 is releease
+      - name: Instantiate
+        run: julia --project -e 'import Pkg; Pkg.instantiate(); Pkg.update(); Pkg.precompile()'
+      - name: Run the `contrib/precompile_generate.jl` script
+        run: julia --project contrib/precompile_generate.jl
+      - name: Create (or update) the pull request
+        uses: peter-evans/create-pull-request@18f7dc018cc2cd597073088f7c7591b9d1c02672 # v3.14.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: "bot/regenerate-precompile-statements"
+          delete-branch: true
+          commit-message: "🤖 Regenerate the precompile statements"
+          title: "🤖 Regenerate the precompile statements"
+          body: |
+            This PR regenerates the precompile statements.
+            Note: CI will not automatically run on this PR. To run CI, please
+            close and reopen the PR.
