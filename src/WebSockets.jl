@@ -85,7 +85,7 @@ function check_upgrade(http)
 end
 
 function accept_hash(key)
-    hashkey = "$(key)258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    hashkey = "$(strip(key))258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     return base64encode(digest(MD_SHA1, hashkey))
 end
 
