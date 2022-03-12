@@ -42,13 +42,20 @@ hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin
         end
     end
 
-    try
+    success = try
         # Run our client tests using Deno
         # this throws error if the Deno tests fail
         run(`$(Deno_jll.deno()) test --allow-net`)
+        true
+    catch e
+        if e isa ProcessFailedException
+            false
+        else
+            rethrow(e)
+        end
     finally
         close_it()
         wait(server_task_ref[])
     end
-    @test true
+    @test success
 end
