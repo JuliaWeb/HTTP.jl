@@ -16,6 +16,7 @@ include(joinpath(dir, "resources/TestRequest.jl"))
               "parser.jl",
               "loopback.jl",
               "websockets.jl",
+              "websockets/deno_client/server.jl",
               "messages.jl",
               "handlers.jl",
               "server.jl",
