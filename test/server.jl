@@ -17,7 +17,7 @@ end
     port = 8087 # rand(8000:8999)
 
     # echo response
-    handler = (http) -> begin
+    local handler = (http) -> begin
         request::HTTP.Request = http.message
         request.body = read(http)
         closeread(http)
@@ -289,7 +289,7 @@ end
 end # @testset
 
 @testset "access logging" begin
-    function handler(http)
+    local handler = (http) -> begin
         if http.message.target == "/internal-error"
             error("internal error")
         end
@@ -308,11 +308,11 @@ end # @testset
         end
     end
     function with_testserver(f, fmt)
-        l = Sockets.listen(ip"0.0.0.0", 1234)
+        l = Sockets.listen(ip"0.0.0.0", 32612)
         logger = Test.TestLogger()
         tsk = @async begin
             Base.CoreLogging.with_logger(logger) do
-                HTTP.listen(handler, Sockets.localhost, 1234; server=l, access_log=fmt)
+                HTTP.listen(handler, Sockets.localhost, 32612; server=l, access_log=fmt)
             end
         end
         try
@@ -325,14 +325,14 @@ end # @testset
 
     # Common Log Format
     logs = with_testserver(common_logfmt) do
-        HTTP.get("http://localhost:1234")
-        HTTP.get("http://localhost:1234/index.html")
-        HTTP.get("http://localhost:1234/index.html?a=b")
-        HTTP.head("http://localhost:1234")
-        HTTP.get("http://localhost:1234/internal-error"; status_exception=false)
+        HTTP.get("http://localhost:32612")
+        HTTP.get("http://localhost:32612/index.html")
+        HTTP.get("http://localhost:32612/index.html?a=b")
+        HTTP.head("http://localhost:32612")
+        HTTP.get("http://localhost:32612/internal-error"; status_exception=false)
         sleep(1) # necessary to properly forget the closed connection from the previous call
-        try HTTP.get("http://localhost:1234/close"; retry=false) catch end
-        HTTP.get("http://localhost:1234", ["Connection" => "close"])
+        try HTTP.get("http://localhost:32612/close"; retry=false) catch end
+        HTTP.get("http://localhost:32612", ["Connection" => "close"])
         sleep(1) # we want to make sure the server has time to finish logging before checking logs
     end
     @test length(logs) == 7
@@ -347,13 +347,13 @@ end # @testset
 
     # Combined Log Format
     logs = with_testserver(combined_logfmt) do
-        HTTP.get("http://localhost:1234", ["Referer" => "julialang.org"])
-        HTTP.get("http://localhost:1234/index.html")
+        HTTP.get("http://localhost:32612", ["Referer" => "julialang.org"])
+        HTTP.get("http://localhost:32612/index.html")
         useragent = HTTP.MessageRequest.USER_AGENT[]
         HTTP.setuseragent!(nothing)
-        HTTP.get("http://localhost:1234/index.html?a=b")
+        HTTP.get("http://localhost:32612/index.html?a=b")
         HTTP.setuseragent!(useragent)
-        HTTP.head("http://localhost:1234")
+        HTTP.head("http://localhost:32612")
     end
     @test length(logs) == 4
     @test all(x -> x.group === :access, logs)
@@ -365,10 +365,10 @@ end # @testset
     # Custom log format
     fmt = logfmt"$http_accept $sent_http_content_type $request $request_method $request_uri $remote_addr $remote_port $remote_user $server_protocol $time_iso8601 $time_local $status $body_bytes_sent"
     logs = with_testserver(fmt) do
-        HTTP.get("http://localhost:1234", ["Accept" => "application/json"])
-        HTTP.get("http://localhost:1234/index.html")
-        HTTP.get("http://localhost:1234/index.html?a=b")
-        HTTP.head("http://localhost:1234")
+        HTTP.get("http://localhost:32612", ["Accept" => "application/json"])
+        HTTP.get("http://localhost:32612/index.html")
+        HTTP.get("http://localhost:32612/index.html?a=b")
+        HTTP.head("http://localhost:32612")
     end
     @test length(logs) == 4
     @test all(x -> x.group === :access, logs)
