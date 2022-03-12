@@ -26,12 +26,11 @@ hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin
             while isopen(ws.io)
                 data = readavailable(ws)
                 msg = String(data)
-                # @info "Message received!" string(msg)
+                push!(server_received_messages, msg)
                 if msg == "close"
                     close(ws.io)
                     close_it()
                 else
-                    push!(server_received_messages, msg)
                     response = "Hello, " * msg
                     write(ws, response)
                 end
@@ -63,5 +62,5 @@ hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin
     end
     @test success
     
-    @test server_received_messages == ["one", "two", "three"]
+    @test server_received_messages == ["one", "two", "three", "close"]
 end

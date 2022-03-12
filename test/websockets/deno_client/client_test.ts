@@ -6,14 +6,17 @@ Deno.test("WebSocket client basics", async (t) => {
     
     /** A promise that resolves when the connection is closed */
     const close_promise = new Promise((r) => {
-        ws.addEventListener("close", () => r(null));
+        ws.addEventListener("close", () => {
+            // short grace period
+            setTimeout(() => r(null), 250);
+        });
     })
     
     /** The list of all received messages */
-    const responses: any[] = []
+    const client_received_messages: any[] = []
     ws.addEventListener("message", (e) => {
         // console.debug("Message from server!", e.data)
-        responses.push(e.data);
+        client_received_messages.push(e.data);
     })
     
     // Send some messages to the server
@@ -29,5 +32,5 @@ Deno.test("WebSocket client basics", async (t) => {
     await close_promise
     
     
-    assertEquals(responses, to_send.map(msg => `Hello, ${msg}`))
+    assertEquals(client_received_messages, to_send.map(msg => `Hello, ${msg}`))
   });
