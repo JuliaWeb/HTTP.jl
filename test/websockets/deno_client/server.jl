@@ -17,6 +17,9 @@ hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin
         close(server)
     end
     
+    # Will contain a list of received messages
+    server_received_messages = Any[]
+    
     # Start the server async
     server_task_ref[] = @async try
         HTTP.WebSockets.listen("127.0.0.1", UInt16(36984); server=server) do ws
@@ -28,6 +31,7 @@ hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin
                     close(ws.io)
                     close_it()
                 else
+                    push!(server_received_messages, msg)
                     response = "Hello, " * msg
                     write(ws, response)
                 end
@@ -58,4 +62,6 @@ hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin
         wait(server_task_ref[])
     end
     @test success
+    
+    @test server_received_messages == ["one", "two", "three"]
 end
