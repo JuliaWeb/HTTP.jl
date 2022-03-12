@@ -3,7 +3,9 @@ import HTTP
 using Test
 using Sockets
 
-@testset "WebSocket server" begin
+
+# Not all architectures have a Deno_jll
+hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin
     
     # Set up the references needed for a clean shutdown
     server_task_ref = Ref{Any}(nothing)
