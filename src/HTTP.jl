@@ -89,7 +89,6 @@ HTTP.request("GET", "http://httpbin.org/ip"; retries=4, cookies=true)
 HTTP.get("http://s3.us-east-1.amazonaws.com/"; aws_authorization=true)
 
 conf = (readtimeout = 10,
-        pipeline_limit = 4,
         retry = false,
         redirect = false)
 
