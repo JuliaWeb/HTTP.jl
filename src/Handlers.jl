@@ -409,16 +409,18 @@ gh(s::String) = isempty(s) ? Any : Val{Symbol(s)}
 gh(s::Symbol) = Val{s}
 
 function generate_gethandler(router, method, scheme, host, path, handler)
-    vals = :(HTTP.Handlers.newsplitsegments(map(String, split($path, '/'; keepempty=false)))...)
+    vals = newsplitsegments(map(String, split(path, '/'; keepempty=false)))
+    route = Route(string(method), string(scheme), string(host), string(path))
     q = esc(quote
-        $(router).routes[HTTP.Handlers.Route(string($method), string($scheme), string($host), string($path))] = $handler
-        @eval function HTTP.Handlers.gethandler(r::$(Expr(:$, :(typeof($router)))),
-            ::(HTTP.Handlers.gh($method)),
-            ::(HTTP.Handlers.gh($scheme)),
-            ::(HTTP.Handlers.gh($host)),
-            $(Expr(:$, vals)),
+        $(router).routes[$route] = $handler
+        function HTTP.Handlers.gethandler(r::typeof($router),
+            ::$(gh(method)),
+            ::$(gh(scheme)),
+            ::$(gh(host)),
+            $(vals...),
             args...)
-            return $(Expr(:$, handler)) isa HTTP.Handler ? $(Expr(:$, handler)) : HTTP.Handlers.RequestHandlerFunction($(Expr(:$, handler)))
+            handler = $handler
+            return handler isa HTTP.Handler ? handler : HTTP.Handlers.RequestHandlerFunction(handler)
         end
     end)
     # @show q
@@ -472,41 +474,5 @@ end
 handle(r::Router, stream::Stream, args...) = handle(gethandler(r, stream.message), stream, args...)
 handle(r::Router, req::Request, args...) = handle(gethandler(r, req), req, args...)
 
-# deprecated
-register!(r::Router, url, handler) = register!(r, "", url, handler)
-function register!(r::Router, method::String, url, handler)
-    m = isempty(method) ? Any : Val{Symbol(method)}
-    # get scheme, host, split path into strings & vals
-    uri = url isa String ? URI(url) : url
-    s = uri.scheme
-    sch = !isempty(s) ? typeof(get!(SCHEMES, s, Val(s))) : Any
-    h = !isempty(uri.host) ? Val{Symbol(uri.host)} : Any
-    hand = handler isa Handler ? handler : RequestHandlerFunction(handler)
-    register!(r, m, sch, h, uri.path, hand)
-end
-function splitsegments(r::Router, segments)
-    vals = Expr[]
-    for s in segments
-        if s == "*" #TODO: or variable, keep track of variable types and store in handler
-            T = Any
-        else
-            v = Val(Symbol(s))
-            r.segments[s] = v
-            T = typeof(v)
-        end
-        push!(vals, Expr(:(::), T))
-    end
-    return vals
-end
-function register!(r::Router{id}, method, scheme, host, path, handler) where {id}
-    Base.depwarn("`HTTP.register!(r::Router, ...)` is deprecated, use `HTTP.@register r ...` instead", nothing)
-    # save string => Val mappings in r.segments
-    segments = map(String, split(path, '/'; keepempty=false))
-    vals = splitsegments(r, segments)
-    # return a method to get dispatched to
-    #TODO: detect whether defining this method will create ambiguity?
-    @eval gethandler(r::Router{$(Meta.QuoteNode(id))}, ::$method, ::$scheme, ::$host, $(vals...), args...) = $handler
-    return
-end
 
 end # module
