@@ -411,7 +411,6 @@ gh(s::Symbol) = Val{s}
 function generate_gethandler(router, method, scheme, host, path, handler)
     vals = newsplitsegments(map(String, split(path, '/'; keepempty=false)))
     route = Route(string(method), string(scheme), string(host), string(path))
-    @show vals
     q = esc(quote
         $(router).routes[$route] = $handler
         function HTTP.Handlers.gethandler(r::typeof($router),
@@ -469,7 +468,6 @@ function gethandler(r::Router, req::Request)
     segments = split(p, '/'; keepempty=false)
     # dispatch to the most specific handler, given the path
     vals = (get(r.segments, s, Val(Symbol(s))) for s in segments)
-    @show collect(vals)
     return gethandler(r, m, s, h, vals...)
 end
 
