@@ -151,10 +151,4 @@ struct BottomLayer <: ResponseLayer end
 # bottom layer just returns the response
 request(::BottomLayer, ctx, resp) = resp
 
-# custom layers must subtype one of above
-# must have a layer constructor like: Layer(next; kw...)
-# must have a field to store `next` layer
-# must overload: request(layer::MyLayer, args...; kw...)
-# in `request` overload, must call: request(layer.next, args...; kw...)
-
 end

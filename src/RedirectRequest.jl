@@ -50,7 +50,7 @@ function Layers.request(layer::RedirectLayer, ctx, method, url, headers, body)
         end
 
         # follow redirect
-        ctx[:parentrequest] = res.request
+        ctx[:parentrequest] = res
         oldurl = url
         url = resolvereference(oldurl, location)
         if forwardheaders
