@@ -1,39 +1,25 @@
 module DebugRequest
 
-using ..Layers
 import ..DEBUG_LEVEL
 using ..IOExtras
-
-const live_mode = true
+import ..Streams: Stream
 
 include("IODebug.jl")
 
+export debuglayer
+
 """
-    Layers.request(DebugLayer, ::IO, ::Request, body) -> HTTP.Response
+    debuglayer(ctx, stream::Stream) -> HTTP.Response
 
 Wrap the `IO` stream in an `IODebug` stream and print Message data.
 """
-struct DebugLayer{Next <:Layer} <: ConnectionLayer
-    next::Next
-    verbose::Int
-end
-export DebugLayer
-DebugLayer(next; verbose=0, kw...) = DebugLayer(next, verbose)
-
-function Layers.request(layer::DebugLayer, ctx, io::IO, req, body)
-    # if not debugging, just call to next layer
-    if !(layer.verbose >= 3 || DEBUG_LEVEL[] >= 3)
-        return Layers.request(layer.next, ctx, io, req, body)
-    end
-    @static if live_mode
-        return Layers.request(layer.next, ctx, IODebug(io), req, body)
-    else
-        iod = IODebug(io)
-        try
-            return Layers.request(layer.next, ctx, iod, req, body)
-        finally
-            show_log(stdout, iod)
+function debuglayer(handler)
+    return function(ctx, stream::Stream; verbose::Int=0, kw...)
+        # if debugging, wrap stream.stream in IODebug
+        if verbose >= 3 || DEBUG_LEVEL[] >= 3
+            stream = Stream(stream.message, IODebug(stream.stream))
         end
+        return handler(ctx, stream; verbose=verbose, kw...)
     end
 end
 

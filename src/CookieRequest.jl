@@ -1,10 +1,9 @@
 module CookieRequest
 
 import ..Dates
-using ..Layers
 using URIs
 using ..Cookies
-using ..Messages: ascii_lc_isequal
+using ..Messages: Request, ascii_lc_isequal
 using ..Pairs: getkv, setkv
 import ..@debug, ..DEBUG_LEVEL, ..access_threaded
 
@@ -15,45 +14,38 @@ function __init__()
     return
 end
 
+export cookielayer
+
 """
-    Layers.request(CookieLayer, method, ::URI, headers, body) -> HTTP.Response
+    cookielayer(ctx, method, ::URI, headers, body) -> HTTP.Response
 
 Add locally stored Cookies to the request headers.
 Store new Cookies found in the response headers.
 """
-struct CookieLayer{Next <: Layer} <: InitialLayer
-    next::Next
-    cookies
-    cookiejar::Dict{String, Set{Cookie}}
-end
-export CookieLayer
-CookieLayer(next;
-    cookies=true,
-    cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar), kw...) =
-    CookieLayer(next, cookies, cookiejar)
-
-function Layers.request(layer::CookieLayer, ctx, method::String, url::URI, headers, body)
-    cookies = layer.cookies
-    if cookies === true || (cookies isa AbstractDict && !isempty(cookies))
-        cookiejar = layer.cookiejar
-        hostcookies = get!(cookiejar, url.host, Set{Cookie}())
-
-        cookiestosend = getcookies(hostcookies, url)
-        if !(cookies isa Bool)
-            for (name, value) in cookies
-                push!(cookiestosend, Cookie(name, value))
+function cookielayer(handler)
+    return function(ctx, req::Request; cookies=true, cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar), kw...)
+        println("cookielayer")
+        if cookies === true || (cookies isa AbstractDict && !isempty(cookies))
+            url = req.url
+            hostcookies = get!(cookiejar, url.host, Set{Cookie}())
+            cookiestosend = getcookies(hostcookies, url)
+            if !(cookies isa Bool)
+                for (name, value) in cookies
+                    push!(cookiestosend, Cookie(name, value))
+                end
             end
+            if !isempty(cookiestosend)
+                setkv(req.headers, "Cookie", stringify(getkv(req.headers, "Cookie", ""), cookiestosend))
+            end
+            @show cookiestosend
+            res = handler(ctx, req; kw...)
+            setcookies(hostcookies, url.host, res.headers)
+            @show hostcookies
+            return res
+        else
+            # skip
+            return handler(ctx, req; kw...)
         end
-        if !isempty(cookiestosend)
-            setkv(headers, "Cookie", stringify(getkv(headers, "Cookie", ""), cookiestosend))
-        end
-
-        res = Layers.request(layer.next, ctx, method, url, headers, body)
-        setcookies(hostcookies, url.host, res.headers)
-        return res
-    else
-        # skip
-        return Layers.request(layer.next, ctx, method, url, headers, body)
     end
 end
 

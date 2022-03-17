@@ -1,6 +1,5 @@
 module StreamRequest
 
-using ..Layers
 using ..IOExtras
 using ..Messages
 using ..Streams
@@ -8,8 +7,10 @@ import ..ConnectionPool
 using ..MessageRequest
 import ..@debug, ..DEBUG_LEVEL, ..printlncompact, ..sprintcompact
 
+export streamlayer
+
 """
-    Layers.request(StreamLayer, ::IO, ::Request, body) -> HTTP.Response
+    streamlayer(ctx, stream) -> HTTP.Response
 
 Create a [`Stream`](@ref) to send a `Request` and `body` to an `IO`
 stream and read the response.
@@ -19,35 +20,18 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-struct StreamLayer{Next <: Layer} <: ConnectionLayer
-    next::Next
-    response_stream
-    iofunction
-    verbose
-end
-export StreamLayer
-StreamLayer(next;
-    response_stream=nothing,
-    iofunction=nothing,
-    verbose::Int=0,
-    kw...) = StreamLayer(next, response_stream, iofunction, verbose)
-
-function Layers.request(layer::StreamLayer, ctx, io::IO, req::Request, body)::Response
-    response_stream = layer.response_stream
-    iofunction = layer.iofunction
-    verbose = layer.verbose
+function streamlayer(ctx, stream::Stream; iofunction=nothing, verbose=0, kw...)::Response
+    response = stream.message
+    req = response.request
     verbose == 1 && printlncompact(req)
-
-    response = req.response
-    http = Stream(response, io)
     @debug 2 "client startwrite"
-    startwrite(http)
+    startwrite(stream)
 
     if verbose == 2
         println("printing req")
         println(req)
-        if iofunction === nothing && req.body === body_is_a_stream
-            println("$(typeof(req)).body: $(sprintcompact(body))")
+        if iofunction === nothing && req.body isa IO
+            println("$(typeof(req)).body: $(sprintcompact(req.body))")
         end
     end
 
@@ -56,21 +40,21 @@ function Layers.request(layer::StreamLayer, ctx, io::IO, req::Request, body)::Re
         @sync begin
             if iofunction === nothing
                 @async try
-                    writebody(http, ctx, req, body)
+                    writebody(stream, ctx, req)
                     @debug 2 "client closewrite"
-                    closewrite(http)
+                    closewrite(stream)
                 catch e
                     write_error = e
                     isopen(io) && try; close(io); catch; end
                 end
                 @debug 2 "client startread"
-                startread(http)
-                readbody(http, response, response_stream, get(ctx, :redirectlimitreached, false))
+                startread(stream)
+                readbody(stream, response, get(ctx, :redirectlimitreached, false))
             else
-                iofunction(http)
+                iofunction(stream)
             end
 
-            if isaborted(http)
+            if isaborted(stream)
                 # The server may have closed the connection.
                 # Don't propagate such errors.
                 try; close(io); catch; end
@@ -85,49 +69,47 @@ function Layers.request(layer::StreamLayer, ctx, io::IO, req::Request, body)::Re
     end
 
     @debug 2 "client closewrite"
-    closewrite(http)
+    closewrite(stream)
     @debug 2 "client closeread"
-    closeread(http)
+    closeread(stream)
 
     verbose == 1 && printlncompact(response)
     verbose == 2 && println(response)
 
-    return Layers.request(layer.next, ctx, response)
+    return response
 end
 
-function writebody(http::Stream, ctx, req::Request, body)
+function writebody(stream::Stream, ctx, req::Request)
 
-    if req.body === body_is_a_stream
-        writebodystream(http, req, body)
-        closebody(http)
+    if !isbytes(req.body)
+        writebodystream(stream, req.body)
+        closebody(stream)
     else
-        write(http, req.body)
+        write(stream, req.body)
     end
     ctx[:retrycount] = get(ctx, :retrycount, 0) + 1
     return
 end
 
-function writebodystream(http, req, body)
+function writebodystream(stream, body)
     for chunk in body
-        writechunk(http, req, chunk)
+        writechunk(stream, chunk)
     end
 end
 
-function writebodystream(http, req, body::IO)
-    req.body = body_was_streamed
-    write(http, body)
+function writebodystream(stream, body::IO)
+    write(stream, body)
 end
 
-writechunk(http, req, body::IO) = writebodystream(http, req, body)
-writechunk(http, req, body) = write(http, body)
+writechunk(stream, body::IO) = writebodystream(stream, body)
+writechunk(stream, body) = write(stream, body)
 
-function readbody(http::Stream, res::Response, response_stream, redirectlimitreached)
-    if response_stream === nothing
-        res.body = read(http)
+function readbody(stream::Stream, res::Response, redirectlimitreached)
+    if isbytes(res.body)
+        res.body = read(stream)
     else
         if redirectlimitreached || !isredirect(res)
-            res.body = body_was_streamed
-            write(response_stream, http)
+            write(res.body, stream)
         end
     end
 end

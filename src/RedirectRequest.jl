@@ -1,79 +1,65 @@
 module RedirectRequest
 
-using ..Layers
 using URIs
 using ..Messages
 using ..Pairs: setkv
 import ..Header
 import ..@debug, ..DEBUG_LEVEL
 
+export redirectlayer
+
 """
-    Layers.request(RedirectLayer, method, ::URI, headers, body) -> HTTP.Response
+    redirectlayer(ctx, method, ::URI, headers, body) -> HTTP.Response
 
 Redirects the request in the case of 3xx response status.
 """
-struct RedirectLayer{Next <: Layer} <: InitialLayer
-    next::Next
-    redirect::Bool
-    redirect_limit::Int
-    forwardheaders::Bool
-end
-
-export RedirectLayer
-
-RedirectLayer(next; redirect::Bool=true, redirect_limit=3, forwardheaders=true, kw...) =
-    RedirectLayer(next, redirect, redirect_limit, forwardheaders)
-
-function Layers.request(layer::RedirectLayer, ctx, method, url, headers, body)
-    redirect_limit = layer.redirect_limit
-    if !layer.redirect || layer.redirect_limit == 0
-        # no redirecting
-        return Layers.request(layer.next, ctx, method, url, headers, body)
-    end
-
-    forwardheaders = layer.forwardheaders
-    count = 0
-    while true
-
-        # Verify the url before making the request. Verification is done in
-        # the redirect loop to also catch bad redirect URLs.
-        verify_url(url)
-        if count == redirect_limit
-            ctx[:redirectlimitreached] = true
-        end
-        res = Layers.request(layer.next, ctx, method, url, headers, body)
-
-        if (count == redirect_limit
-        ||  !isredirect(res)
-        ||  (location = header(res, "Location")) == "")
-            return res
+function redirectlayer(handler)
+    return function(ctx, method, url, headers, body; redirect::Bool=true, redirect_limit::Int=3, forwardheaders::Bool=true, kw...)
+        println("redirectlayer")
+        if !redirect || redirect_limit == 0
+            # no redirecting
+            return handler(ctx, method, url, headers, body; kw...)
         end
 
-        # follow redirect
-        ctx[:parentrequest] = res
-        oldurl = url
-        url = resolvereference(oldurl, location)
-        if forwardheaders
-            headers = filter(headers) do (header, _)
-                # false return values are filtered out
-                if header == "Host"
-                    return false
-                elseif (header in SENSITIVE_HEADERS && !isdomainorsubdomain(url.host, url.host))
-                    return false
-                else
-                    return true
-                end
+        count = 0
+        while true
+            # Verify the url before making the request. Verification is done in
+            # the redirect loop to also catch bad redirect URLs.
+            verify_url(url)
+            if count == redirect_limit
+                ctx[:redirectlimitreached] = true
             end
-        else
-            headers = Header[]
+            res = handler(ctx, method, url, headers, body; kw...)
+
+            if (count == redirect_limit ||  !isredirect(res)
+                ||  (location = header(res, "Location")) == "")
+                return res
+            end
+
+            # follow redirect
+            ctx[:parentrequest] = res
+            oldurl = url
+            url = resolvereference(oldurl, location)
+            if forwardheaders
+                headers = filter(headers) do (header, _)
+                    # false return values are filtered out
+                    if header == "Host"
+                        return false
+                    elseif (header in SENSITIVE_HEADERS && !isdomainorsubdomain(url.host, oldurl.host))
+                        return false
+                    else
+                        return true
+                    end
+                end
+            else
+                headers = Header[]
+            end
+            @show 1 "➡️  Redirect: $url"
+            @show headers
+            count += 1
         end
-
-        @debug 1 "➡️  Redirect: $url"
-
-        count += 1
+        @assert false "Unreachable!"
     end
-
-    @assert false "Unreachable!"
 end
 
 const SENSITIVE_HEADERS = Set([

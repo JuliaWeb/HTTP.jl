@@ -1,33 +1,28 @@
 module TestRequest
 
-export TestLayer, LastLayer
+using HTTP
 
-using HTTP, HTTP.Layers
-
-struct TestLayer{Next <: Layer} <: InitialLayer
-    next::Next
-    wasincluded::Ref{Bool}
-end
-TestLayer(next; httptestlayer=Ref(false), kw...) = TestLayer(next, httptestlayer)
-
-function Layers.request(layer::TestLayer, ctx, meth, url, headers, body)
-    layer.wasincluded[] = true
-    return Layers.request(layer.next, ctx, meth, url, headers, body)
+function testinitiallayer(handler)
+    return function(ctx, m, url, h, b; httptestlayer=Ref(false), kw...)
+        httptestlayer[] = true
+        return handler(ctx, m, url, h, b; kw...)
+    end
 end
 
-HTTP.@client TestLayer
+function testrequestlayer(handler)
+    return function(ctx, req; httptestlayer=Ref(false), kw...)
+        httptestlayer[] = true
+        return handler(ctx, req; kw...)
+    end
+end
 
-# struct LastLayer{Next <: Layer} <: ConnectionLayer
-#     next::Next
-#     wasincluded::Ref{Bool}
-# end
-# Layers.keywordforlayer(::Val{:httplastlayer}) = LastLayer
-# LastLayer(next; httplastlayer=Ref(false), kw...) = LastLayer(next, httplastlayer)
+function teststreamlayer(handler)
+    return function(ctx, stream; httptestlayer=Ref(false), kw...)
+        httptestlayer[] = true
+        return handler(ctx, stream; kw...)
+    end
+end
 
-# function Layers.request(layer::LastLayer, io::IO, req, body; kw...)
-#     resp = Layers.request(layer.next, io, req, body; kw...)
-#     layer.wasincluded[] = true
-#     return resp
-# end
+HTTP.@client (testinitiallayer,) (testrequestlayer,) (teststreamlayer,)
 
 end

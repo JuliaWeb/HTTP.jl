@@ -1,5 +1,8 @@
-using ..TestRequest
+module TestClient
+
 using HTTP
+include(joinpath(dirname(pathof(HTTP)), "../test/resources/TestRequest.jl"))
+using .TestRequest
 using Sockets
 using JSON
 using Test
@@ -489,3 +492,5 @@ end
         end
     end
 end
+
+end # module

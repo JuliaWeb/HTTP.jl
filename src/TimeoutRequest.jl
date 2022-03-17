@@ -1,8 +1,8 @@
 module TimeoutRequest
 
-using ..Layers
 using ..ConnectionPool
 import ..@debug, ..DEBUG_LEVEL
+import ..Streams: Stream
 
 struct ReadTimeoutError <:Exception
     readtimeout::Int
@@ -12,46 +12,43 @@ function Base.showerror(io::IO, e::ReadTimeoutError)
     print(io, "ReadTimeoutError: Connection closed after $(e.readtimeout) seconds")
 end
 
+export timeoutlayer
+
 """
-    Layers.request(TimeoutLayer, ::IO, ::Request, body) -> HTTP.Response
+    timeoutlayer(ctx, stream) -> HTTP.Response
 
 Close `IO` if no data has been received for `timeout` seconds.
 """
-struct TimeoutLayer{Next <: Layer} <: ConnectionLayer
-    next::Next
-    readtimeout::Int
-end
-export TimeoutLayer
-TimeoutLayer(next; readtimeout::Int=0, kw...) = TimeoutLayer(next, readtimeout)
-
-function Layers.request(layer::TimeoutLayer, ctx, io::IO, req, body)
-    readtimeout = layer.readtimeout
-    if readtimeout <= 0
-        # skip
-        return Layers.request(layer.next, ctx, io, req, body)
-    end
-    wait_for_timeout = Ref{Bool}(true)
-    timedout = Ref{Bool}(false)
-
-    @async while wait_for_timeout[]
-        if isreadable(io) && inactiveseconds(io) > readtimeout
-            timedout[] = true
-            close(io)
-            @debug 1 "💥  Read inactive > $(readtimeout)s: $io"
-            break
+function timeoutlayer(handler)
+    return function(ctx, stream::Stream; readtimeout::Int=0, kw...)
+        if readtimeout <= 0
+            # skip
+            return handler(ctx, stream; kw...)
         end
-        sleep(readtimeout / 10)
-    end
+        io = stream.stream
+        wait_for_timeout = Ref{Bool}(true)
+        timedout = Ref{Bool}(false)
 
-    try
-        return Layers.request(layer.next, ctx, io, req, body)
-    catch e
-        if timedout[]
-           throw(ReadTimeoutError(readtimeout))
+        @async while wait_for_timeout[]
+            if isreadable(io) && inactiveseconds(io) > readtimeout
+                timedout[] = true
+                close(io)
+                @debug 1 "💥  Read inactive > $(readtimeout)s: $io"
+                break
+            end
+            sleep(readtimeout / 10)
         end
-        rethrow(e)
-    finally
-        wait_for_timeout[] = false
+
+        try
+            return handler(ctx, stream; kw...)
+        catch e
+            if timedout[]
+            throw(ReadTimeoutError(readtimeout))
+            end
+            rethrow(e)
+        finally
+            wait_for_timeout[] = false
+        end
     end
 end
 

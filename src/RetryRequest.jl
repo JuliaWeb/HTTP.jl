@@ -1,15 +1,16 @@
 module RetryRequest
 
 import ..HTTP
-using ..Layers
 using ..Sockets
 using ..IOExtras
 using ..MessageRequest
 using ..Messages
 import ..@debug, ..DEBUG_LEVEL, ..sprintcompact
 
+export retrylayer
+
 """
-    Layers.request(RetryLayer, ::URI, ::Request, body) -> HTTP.Response
+    retrylayer(ctx, req) -> HTTP.Response
 
 Retry the request if it throws a recoverable exception.
 
@@ -21,35 +22,27 @@ Methods of `isrecoverable(e)` define which exception types lead to a retry.
 e.g. `HTTP.IOError`, `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 (if status is ``5xx`).
 """
-struct RetryLayer{Next <: Layer} <: RequestLayer
-    next::Next
-    retry::Bool
-    retries::Int
-    retry_non_idempotent::Bool
-end
-export RetryLayer
-RetryLayer(next; retry::Bool=true, retries::Int=4, retry_non_idempotent=false, kw...) =
-    RetryLayer(next, retry, retries, retry_non_idempotent)
+function retrylayer(handler)
+    return function(ctx, req::Request; retry::Bool=true, retries::Int=4, retry_non_idempotent::Bool=false, kw...)
+        if !retry || retries == 0
+            # no retry
+            return handler(ctx, req; kw...)
+        end
+        retry_request = Base.retry(handler,
+            delays=ExponentialBackOff(n = retries),
+            check=(s, ex)->begin
+                retry = isrecoverable(ex, req, retry_non_idempotent, get(ctx, :retrycount, 0))
+                if retry
+                    @debug 1 "🔄  Retry $ex: $(sprintcompact(req))"
+                    reset!(req.response)
+                else
+                    @debug 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
+                end
+                return s, retry
+            end)
 
-function Layers.request(layer::RetryLayer, ctx, req::Request, body)
-    if !layer.retry || layer.retries == 0
-        # no retry
-        return Layers.request(layer.next, ctx, req, body)
+        return retry_request(ctx, req; kw...)
     end
-    retry_request = Base.retry(Layers.request,
-        delays=ExponentialBackOff(n = layer.retries),
-        check=(s,ex)->begin
-            retry = isrecoverable(ex, req, layer.retry_non_idempotent, get(ctx, :retrycount, 0))
-            if retry
-                @debug 1 "🔄  Retry $ex: $(sprintcompact(req))"
-                reset!(req.response)
-            else
-                @debug 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
-            end
-            return s, retry
-        end)
-
-    return retry_request(layer.next, ctx, req, body)
 end
 
 isrecoverable(e) = false

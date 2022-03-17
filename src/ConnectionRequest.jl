@@ -1,6 +1,5 @@
 module ConnectionRequest
 
-using ..Layers
 using URIs, ..Sockets
 using ..Messages
 using ..IOExtras
@@ -9,6 +8,7 @@ using MbedTLS: SSLContext, SSLConfig
 using ..Pairs: getkv, setkv
 using Base64: base64encode
 import ..@debug, ..DEBUG_LEVEL
+import ..Streams: Stream
 
 const nosslconfig = SSLConfig()
 
@@ -48,8 +48,10 @@ function getproxy(scheme, host)
     return nothing
 end
 
+export connectionlayer
+
 """
-    Layers.request(ConnectionPoolLayer, ::URI, ::Request, body) -> HTTP.Response
+    connectionlayer(ctx, ::Request, body) -> HTTP.Response
 
 Retrieve an `IO` connection from the [`ConnectionPool`](@ref).
 
@@ -59,71 +61,59 @@ Otherwise leave it open so that it can be reused.
 `IO` related exceptions from `Base` are wrapped in `HTTP.IOError`.
 See [`isioerror`](@ref).
 """
-struct ConnectionPoolLayer{Next <: Layer} <: RequestLayer
-    next::Next
-    proxy::String
-    socket_type::Any
-    kw
-end
-export ConnectionPoolLayer
-ConnectionPoolLayer(next;
-    proxy="",
-    socket_type::Type=TCPSocket,
-    kw...) = ConnectionPoolLayer(next, proxy, socket_type, kw)
-
-function Layers.request(layer::ConnectionPoolLayer, ctx, req, body)
-    proxy = layer.proxy != "" ? layer.proxy : getproxy(req.url.scheme, req.url.host)
-    socket_type = layer.socket_type
-    if proxy !== nothing
-        target_url = req.url
-        url = URI(proxy)
-        if target_url.scheme == "http"
-            req.target = string(target_url)
-        end
-
-        userinfo = unescapeuri(url.userinfo)
-        if !isempty(userinfo) && getkv(req.headers, "Proxy-Authorization", "") == ""
-            @debug 1 "Adding Proxy-Authorization: Basic header."
-            setkv(req.headers, "Proxy-Authorization", "Basic $(base64encode(userinfo))")
-        end
-    else
-        url = req.url
-    end
-
-    IOType = sockettype(url, socket_type)
-    local io
-    try
-        io = newconnection(IOType, url.host, url.port; layer.kw...)
-    catch e
-        rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
-    end
-
-    try
-        if proxy !== nothing && target_url.scheme == "https"
-            # tunnel request
-            target_url = URI(target_url, port=443)
-            r = connect_tunnel(io, target_url, req)
-            if r.status != 200
-                close(io)
-                return r
+function connectionlayer(handler)
+    return function(ctx, req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, kw...)
+        if proxy !== nothing
+            target_url = req.url
+            url = URI(proxy)
+            if target_url.scheme == "http"
+                req.target = string(target_url)
             end
-            io = ConnectionPool.sslupgrade(io, target_url.host; layer.kw...)
-            req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
+
+            userinfo = unescapeuri(url.userinfo)
+            if !isempty(userinfo) && getkv(req.headers, "Proxy-Authorization", "") == ""
+                @debug 1 "Adding Proxy-Authorization: Basic header."
+                setkv(req.headers, "Proxy-Authorization", "Basic $(base64encode(userinfo))")
+            end
+        else
+            url = req.url
         end
 
-        r =  Layers.request(layer.next, ctx, io, req, body)
-
-        if proxy !== nothing && target_url.scheme == "https"
-            close(io)
+        IOType = sockettype(url, socket_type)
+        local io
+        try
+            io = newconnection(IOType, url.host, url.port; kw...)
+        catch e
+            rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
         end
 
-        return r
-    catch e
-        @debug 1 "❗️  ConnectionLayer $e. Closing: $io"
-        try; close(io); catch; end
-        rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
+        try
+            if proxy !== nothing && target_url.scheme == "https"
+                # tunnel request
+                target_url = URI(target_url, port=443)
+                r = connect_tunnel(io, target_url, req)
+                if r.status != 200
+                    close(io)
+                    return r
+                end
+                io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+                req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
+            end
+
+            stream = Stream(req.response, io)
+            resp = handler(ctx, stream; kw...)
+
+            if proxy !== nothing && target_url.scheme == "https"
+                close(io)
+            end
+
+            return resp
+        catch e
+            @debug 1 "❗️  ConnectionLayer $e. Closing: $io"
+            try; close(io); catch; end
+            rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
+        end
     end
-
 end
 
 sockettype(url::URI, default) = url.scheme in ("wss", "https") ? SSLContext : default

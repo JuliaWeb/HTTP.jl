@@ -10,7 +10,7 @@ module IOExtras
 using ..Sockets
 using MbedTLS: MbedException
 
-export bytes, ByteView, nobytes, CodeUnits, IOError, isioerror,
+export bytes, isbytes, ByteView, nobytes, CodeUnits, IOError, isioerror,
        startwrite, closewrite, startread, closeread,
        tcpsocket, localport, safe_getpeername
 
@@ -29,6 +29,8 @@ bytes(s::String) = codeunits(s)
 bytes(s::SubString{String}) = codeunits(s)
 
 bytes(s::Vector{UInt8}) = s
+
+isbytes(x) = x isa AbstractVector{UInt8}
 
 """
     isioerror(exception)

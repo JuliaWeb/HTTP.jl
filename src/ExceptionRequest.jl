@@ -2,28 +2,24 @@ module ExceptionRequest
 
 export StatusError
 
-using ..Layers
 import ..HTTP
 using ..Messages: iserror
 
+export exceptionlayer
+
 """
-    Layers.request(ExceptionLayer, ::Response) -> HTTP.Response
+    exceptionlayer(ctx, stream) -> HTTP.Response
 
 Throw a `StatusError` if the request returns an error response status.
 """
-struct ExceptionLayer{Next <: Layer} <: ResponseLayer
-    next::Next
-    status_exception::Bool
-end
-export ExceptionLayer
-ExceptionLayer(next; status_exception::Bool=true) = ExceptionLayer(next, status_exception)
-
-function Layers.request(layer::ExceptionLayer, ctx, resp)
-    res = Layers.request(layer.next, ctx, resp)
-    if layer.status_exception && iserror(res)
-        throw(StatusError(res.status, res.request.method, res.request.target, res))
-    else
-        return res
+function exceptionlayer(handler)
+    return function(ctx, stream; status_exception::Bool=true, kw...)
+        res = handler(ctx, stream; kw...)
+        if status_exception && iserror(res)
+            throw(StatusError(res.status, res.request.method, res.request.target, res))
+        else
+            return res
+        end
     end
 end
 

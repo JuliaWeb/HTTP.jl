@@ -75,6 +75,7 @@ import ..bytes
 
 include("ascii.jl")
 
+const nobody = UInt8[]
 const unknown_length = typemax(Int)
 
 abstract type Message end
@@ -104,26 +105,25 @@ Represents a HTTP Response Message.
 You can get each data with [`HTTP.status`](@ref), [`HTTP.headers`](@ref), and [`HTTP.body`](@ref).
 
 """
-mutable struct Response <: Message
+mutable struct Response{T} <: Message
     version::VersionNumber
     status::Int16
     headers::Headers
-    body::Vector{UInt8}
-    request::Message
+    body::T # Vector{UInt8} or IO
+    request::Union{Message, Nothing}
 
     @doc """
         Response(status::Int, headers=[]; body=UInt8[], request=nothing) -> HTTP.Response
     """
-    function Response(status::Integer, headers=[]; body=UInt8[], request=nothing)
-        r = new()
-        r.version = v"1.1"
-        r.status = status
-        r.headers = mkheaders(headers)
-        r.body = bytes(body)
-        if request !== nothing
-            r.request = request
-        end
-        return r
+    function Response(status::Integer, headers=[]; body=nobody, request=nothing)
+        b = body isa IO ? body : bytes(body)
+        return new{typeof(b)}(
+            v"1.1",
+            status,
+            mkheaders(headers),
+            b,
+            request
+        )
     end
 end
 
@@ -145,7 +145,7 @@ Response(s::Int, body::AbstractString) = Response(s, bytes(body))
 
 Response(body) = Response(200, body)
 
-Base.convert(::Type{Response},s::AbstractString) = Response(s)
+Base.convert(::Type{Response}, s::AbstractString) = Response(s)
 
 function reset!(r::Response)
     r.version = v"1.1"
@@ -153,7 +153,7 @@ function reset!(r::Response)
     if !isempty(r.headers)
         empty!(r.headers)
     end
-    if !isempty(r.body)
+    if r.body isa Vector{UInt8} && !isempty(r.body)
         empty!(r.body)
     end
 end
@@ -198,7 +198,7 @@ Represents a HTTP Request Message.
 - `headers::Vector{Pair{String,String}}`
    [RFC7230 3.2](https://tools.ietf.org/html/rfc7230#section-3.2)
 
-- `body::Vector{UInt8}`
+- `body::Union{Vector{UInt8}, IO}`
    [RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
 
 - `response`, the `Response` to this `Request`
@@ -210,12 +210,12 @@ Represents a HTTP Request Message.
 You can get each data with [`HTTP.method`](@ref), [`HTTP.headers`](@ref), [`HTTP.uri`](@ref), and [`HTTP.body`](@ref).
 
 """
-mutable struct Request <: Message
+mutable struct Request{T} <: Message
     method::String
     target::String
     version::VersionNumber
     headers::Headers
-    body::Vector{UInt8}
+    body::T # Vector{UInt8} or some kind of IO
     response::Response
     url::URI
     parent
@@ -229,14 +229,15 @@ Request() = Request("", "")
 Constructor for `HTTP.Request`.
 For daily use, see [`HTTP.request`](@ref).
 """
-function Request(method::String, target, headers=[], body=UInt8[];
-                 version=v"1.1", url::URI=URI(), parent=nothing)
-    r = Request(method,
+function Request(method::String, target, headers=[], body=nobody;
+                 version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing)
+    b = body isa IO ? body : bytes(something(body, nobody))
+    r = Request{typeof(b)}(method,
                 target == "" ? "/" : target,
                 version,
                 mkheaders(headers),
-                bytes(body),
-                Response(0),
+                b,
+                Response(0; body=something(responsebody, nobody)),
                 url,
                 parent)
     r.response.request = r

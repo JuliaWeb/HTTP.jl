@@ -37,7 +37,6 @@ include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
-include("layers.jl")                   ;using .Layers
 
 const nobody = UInt8[]
 
@@ -308,17 +307,38 @@ end
 """
 function request(method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
-    return request(HTTP.stack(; kw...), method, url, headers, body, query)
+    return request(HTTP.stack(), method, url, headers, body, query; kw...)
 end
 
 const Context = Dict{Symbol, Any}
 
-function request(stack::Layers.Layer, method, url, h=Header[], b=nobody, q=nothing;
-                 headers=h, body=b, query=q)::Response
-    return Layers.request(stack, Context(), string(method), request_uri(url, query), mkheaders(headers), body)
+struct Stack
+    stack
 end
 
-macro client(layertypes...)
+function stack(
+    # custom layers
+    initiallayers=(),
+    requestlayers=(),
+    streamlayers=())
+
+    # stream layers
+    slayers = (timeoutlayer, exceptionlayer, debuglayer, streamlayers...)
+    layers = foldl((x, y) -> y(x), slayers, init=streamlayer)
+    # transition to stream and request layers
+    rlayers = (cookielayer, retrylayer, requestlayers...)
+    layers2 = foldl((x, y) -> y(x), rlayers; init=connectionlayer(layers))
+    # transition to request and initial layers
+    ilayers = (redirectlayer, basicauthlayer, contenttypedetectionlayer, canonicalizelayer, initiallayers...)
+    return Stack(foldl((x, y) -> y(x), ilayers; init=messagelayer(layers2)))
+end
+
+function request(stack::Stack, method, url, h=Header[], b=nobody, q=nothing;
+                 headers=h, body=b, query=q, kw...)::Response
+    return stack.stack(Context(), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+end
+
+macro client(initiallayers, requestlayers, streamlayers)
     esc(quote
         get(a...; kw...) = request("GET", a...; kw...)
         put(a...; kw...) = request("PUT", a...; kw...)
@@ -327,7 +347,7 @@ macro client(layertypes...)
         head(u; kw...) = request("HEAD", u; kw...)
         delete(a...; kw...) = request("DELETE", a...; kw...)
         request(method, url, h=HTTP.Header[], b=HTTP.nobody; headers=h, body=b, query=nothing, kw...)::HTTP.Response =
-            HTTP.request(HTTP.stack($(layertypes...); kw...), method, url, headers, body, query)
+            HTTP.request(HTTP.stack($initiallayers, $requestlayers, $streamlayers), method, url, headers, body, query; kw...)
     end)
 end
 
@@ -449,161 +469,6 @@ include("ConnectionRequest.jl");        using .ConnectionRequest
 include("DebugRequest.jl");             using .DebugRequest
 include("StreamRequest.jl");            using .StreamRequest
 include("ContentTypeRequest.jl");       using .ContentTypeDetection
-
-"""
-The `stack()` function returns the default HTTP Layer-stack type.
-This type is passed as the first parameter to the [`HTTP.request`](@ref) function.
-
-`stack()` accepts optional keyword arguments to enable/disable specific layers
-in the stack:
-`request(method, args...; kw...) request(stack(; kw...), args...; kw...)`
-
-
-The minimal request execution stack is:
-
-```julia
-stack = MessageLayer{ConnectionPoolLayer{StreamLayer}}
-```
-
-The figure below illustrates the full request execution stack and its
-relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
-[`HTTP.Stream`](@ref) and the [`HTTP.ConnectionPool`](@ref).
-
-```
- ┌────────────────────────────────────────────────────────────────────────────┐
- │                                            ┌───────────────────┐           │
- │  HTTP.jl Request Execution Stack           │ HTTP.ParsingError ├ ─ ─ ─ ─ ┐ │
- │                                            └───────────────────┘           │
- │                                            ┌───────────────────┐         │ │
- │                                            │ HTTP.IOError      ├ ─ ─ ─     │
- │                                            └───────────────────┘      │  │ │
- │                                            ┌───────────────────┐           │
- │                                            │ HTTP.StatusError  │─ ─   │  │ │
- │                                            └───────────────────┘   │       │
- │                                            ┌───────────────────┐      │  │ │
- │     request(method, url, headers, body) -> │ HTTP.Response     │   │       │
- │             ──────────────────────────     └─────────▲─────────┘      │  │ │
- │                           ║                          ║             │       │
- │   ┌────────────────────────────────────────────────────────────┐      │  │ │
- │   │ request(TopLayer,          method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(CookieLayer,       method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(CanonicalizeLayer, method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(MessageLayer,      method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(RetryLayer,                ::URI, ::Request, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(ExceptionLayer,            ::URI, ::Request, body) ├ ─ ┘       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
-┌┼───┤ request(ConnectionPoolLayer,       ::URI, ::Request, body) ├ ─ ─ ─     │
-││   ├────────────────────────────────────────────────────────────┤         │ │
-││   │ request(DebugLayer,                ::IO,  ::Request, body) │           │
-││   ├────────────────────────────────────────────────────────────┤         │ │
-││   │ request(TimeoutLayer,              ::IO,  ::Request, body) │           │
-││   ├────────────────────────────────────────────────────────────┤         │ │
-││   │ request(StreamLayer,               ::IO,  ::Request, body) │           │
-││   └──────────────┬───────────────────┬─────────────────────────┘         │ │
-│└──────────────────┼────────║──────────┼───────────────║─────────────────────┘
-│                   │        ║          │               ║                   │
-│┌──────────────────▼───────────────┐   │  ┌──────────────────────────────────┐
-││ HTTP.Request                     │   │  │ HTTP.Response                  │ │
-││                                  │   │  │                                  │
-││ method::String                   ◀───┼──▶ status::Int                    │ │
-││ target::String                   │   │  │ headers::Vector{Pair}            │
-││ headers::Vector{Pair}            │   │  │ body::Vector{UInt8}            │ │
-││ body::Vector{UInt8}              │   │  │                                  │
-│└──────────────────▲───────────────┘   │  └───────────────▲────────────────┼─┘
-│┌──────────────────┴────────║──────────▼───────────────║──┴──────────────────┐
-││ HTTP.Stream <:IO          ║           ╔══════╗       ║                   │ │
-││   ┌───────────────────────────┐       ║   ┌──▼─────────────────────────┐   │
-││   │ startwrite(::Stream)      │       ║   │ startread(::Stream)        │ │ │
-││   │ write(::Stream, body)     │       ║   │ read(::Stream) -> body     │   │
-││   │ ...                       │       ║   │ ...                        │ │ │
-││   │ closewrite(::Stream)      │       ║   │ closeread(::Stream)        │   │
-││   └───────────────────────────┘       ║   └────────────────────────────┘ │ │
-│└───────────────────────────║────────┬──║──────║───────║──┬──────────────────┘
-│┌──────────────────────────────────┐ │  ║ ┌────▼───────║──▼────────────────┴─┐
-││ HTTP.Messages                    │ │  ║ │ HTTP.Parsers                     │
-││                                  │ │  ║ │                                  │
-││ writestartline(::IO, ::Request)  │ │  ║ │ parse_status_line(bytes, ::Req') │
-││ writeheaders(::IO, ::Request)    │ │  ║ │ parse_header_field(bytes, ::Req')│
-│└──────────────────────────────────┘ │  ║ └──────────────────────────────────┘
-│                            ║        │  ║
-│┌───────────────────────────║────────┼──║────────────────────────────────────┐
-└▶ HTTP.ConnectionPool       ║        │  ║                                    │
- │                     ┌──────────────▼────────┐ ┌───────────────────────┐    │
- │ getconnection() ->  │ HTTP.Connection  <:IO │ │ HTTP.Connection  <:IO │    │
- │                     └───────────────────────┘ └───────────────────────┘    │
- │                           ║    ╲│╱    ║                  ╲│╱               │
- │                           ║     │     ║                   │                │
- │                     ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
- │              pool: [│ HTTP.Connection       │,│ HTTP.Connection       │...]│
- │                     └───────────┬───────────┘ └───────────┬───────────┘    │
- │                           ║     │     ║                   │                │
- │                     ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
- │                     │ Base.TCPSocket <:IO   │ │MbedTLS.SSLContext <:IO│    │
- │                     └───────────────────────┘ └───────────┬───────────┘    │
- │                           ║           ║                   │                │
- │                           ║           ║       ┌───────────▼───────────┐    │
- │                           ║           ║       │ Base.TCPSocket <:IO   │    │
- │                           ║           ║       └───────────────────────┘    │
- └───────────────────────────║───────────║────────────────────────────────────┘
-                             ║           ║
- ┌───────────────────────────║───────────║──────────────┐  ┏━━━━━━━━━━━━━━━━━━┓
- │ HTTP Server               ▼                          │  ┃ data flow: ════▶ ┃
- │                        Request     Response          │  ┃ reference: ────▶ ┃
- └──────────────────────────────────────────────────────┘  ┗━━━━━━━━━━━━━━━━━━┛
-```
-*See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
-"""
-function stack(layertypes::Type{<:Layers.Layer}...;
-    # default keyword arg values
-    basicauth=true,
-    cookies=false,
-    canonicalize_headers=false,
-    retry=true,
-    status_exception=true,
-    readtimeout=0,
-    detect_content_type=false,
-    verbose=0,
-    redirect=true,
-    kw...)
-
-    # ResponseLayers
-    layers = ExceptionLayer(BottomLayer(); status_exception=status_exception)
-    layers = stacklayertypes(Layers.ResponseLayer, layers, layertypes; kw...)
-    # transition ConnectionLayer => ResponseLayer
-    layers = StreamLayer(layers; verbose=verbose, kw...)
-    # ConnectionLayers
-    layers = DebugLayer(TimeoutLayer(layers; readtimeout=readtimeout); verbose=verbose)
-    layers = stacklayertypes(Layers.ConnectionLayer, layers, layertypes; kw...)
-    # transition RequestLayer => ConnectionLayer
-    layers = ConnectionPoolLayer(layers; kw...)
-    # RequestLayers
-    layers = RetryLayer(layers; retry=retry, kw...)
-    layers = stacklayertypes(Layers.RequestLayer, layers, layertypes; kw...)
-    # transition InitialLayer => RequestLayer
-    layers = MessageLayer(layers; kw...)
-    layers = BasicAuthLayer(CanonicalizeLayer(ContentTypeDetectionLayer(RedirectLayer(CookieLayer(layers;
-        cookies=cookies, kw...); redirect=redirect, kw...); detect_content_type=detect_content_type, kw...);
-        canonicalize_headers=canonicalize_headers, kw...); basicauth=basicauth, kw...)
-    return stacklayertypes(Layers.InitialLayer, layers, layertypes; kw...)
-end
-
-function stacklayertypes(::Type{T}, layers::Layers.Layer, layertypes; kw...) where {T}
-    for LayerType in layertypes
-        if LayerType <: T
-            layers = LayerType(layers; kw...)
-        end
-    end
-    return layers
-end
 
 include("download.jl")
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
