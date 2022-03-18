@@ -13,8 +13,8 @@ export exceptionlayer
 Throw a `StatusError` if the request returns an error response status.
 """
 function exceptionlayer(handler)
-    return function(ctx, stream; status_exception::Bool=true, kw...)
-        res = handler(ctx, stream; kw...)
+    return function(stream; status_exception::Bool=true, kw...)
+        res = handler(stream; kw...)
         if status_exception && iserror(res)
             throw(StatusError(res.status, res.request.method, res.request.target, res))
         else

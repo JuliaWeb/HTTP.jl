@@ -15,15 +15,15 @@ end
 export timeoutlayer
 
 """
-    timeoutlayer(ctx, stream) -> HTTP.Response
+    timeoutlayer(stream) -> HTTP.Response
 
 Close `IO` if no data has been received for `timeout` seconds.
 """
 function timeoutlayer(handler)
-    return function(ctx, stream::Stream; readtimeout::Int=0, kw...)
+    return function(stream::Stream; readtimeout::Int=0, kw...)
         if readtimeout <= 0
             # skip
-            return handler(ctx, stream; kw...)
+            return handler(stream; kw...)
         end
         io = stream.stream
         wait_for_timeout = Ref{Bool}(true)
@@ -40,7 +40,7 @@ function timeoutlayer(handler)
         end
 
         try
-            return handler(ctx, stream; kw...)
+            return handler(stream; kw...)
         catch e
             if timedout[]
             throw(ReadTimeoutError(readtimeout))

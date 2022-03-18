@@ -1,7 +1,6 @@
 module ContentTypeDetection
 
 using URIs
-using ..Pairs: getkv, setkv
 import ..sniff
 import ..Form
 using ..Messages
@@ -9,18 +8,18 @@ import ..IOExtras
 import ..@debug, ..DEBUG_LEVEL
 
 export contenttypedetectionlayer
-# f(::Handler) -> Handler
-function contenttypedetectionlayer(handler)
-    return function(ctx, method, url, headers, body; detect_content_type::Bool=false, kw...)
-        if detect_content_type && (getkv(headers, "Content-Type", "") == ""
-            &&  !isa(body, Form)
-            &&  isbytes(body))
 
-            sn = sniff(bytes(body))
-            setkv(headers, "Content-Type", sn)
+function contenttypedetectionlayer(handler)
+    return function(req; detect_content_type::Bool=false, kw...)
+        if detect_content_type && (!hasheader(req.headers, "Content-Type")
+            && !isa(req.body, Form)
+            && isbytes(req.body))
+
+            sn = sniff(bytes(req.body))
+            setheader(req.headers, "Content-Type" => sn)
             @debug 1 "setting Content-Type header to: $sn"
         end
-        return handler(ctx, method, url, headers, body; kw...)
+        return handler(req; kw...)
     end
 end
 

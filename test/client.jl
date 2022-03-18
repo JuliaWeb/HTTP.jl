@@ -53,7 +53,7 @@ end
         body = String(r.body)
         @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{\"foo\":\"bar\",\"hey\":\"sailor\"}}"
 
-        r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
+        r = HTTP.get("$sch://httpbin.org/cookies/delete?hey"; verbose=2)
         cookies = JSON.parse(String(r.body))["cookies"]
         @test length(cookies) == 1
         @test cookies["foo"] == "bar"
@@ -350,7 +350,7 @@ end
             HTTP.startwrite(http)
             HTTP.write(http, sprint(JSON.print, data))
         end
-        old_user_agent = HTTP.MessageRequest.USER_AGENT[]
+        old_user_agent = HTTP.DefaultHeadersRequest.USER_AGENT[]
         default_user_agent = "HTTP.jl/$VERSION"
         # Default values
         HTTP.setuseragent!(default_user_agent)

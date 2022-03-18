@@ -310,35 +310,26 @@ function request(method, url, h=Header[], b=nobody;
     return request(HTTP.stack(), method, url, headers, body, query; kw...)
 end
 
-const Context = Dict{Symbol, Any}
-
-struct Stack
-    stack
-end
-
 function stack(
     # custom layers
-    initiallayers=(),
     requestlayers=(),
     streamlayers=())
 
     # stream layers
     slayers = (timeoutlayer, exceptionlayer, debuglayer, streamlayers...)
-    layers = foldl((x, y) -> y(x), slayers, init=streamlayer)
-    # transition to stream and request layers
-    rlayers = (cookielayer, retrylayer, requestlayers...)
-    layers2 = foldl((x, y) -> y(x), rlayers; init=connectionlayer(layers))
-    # transition to request and initial layers
-    ilayers = (redirectlayer, basicauthlayer, contenttypedetectionlayer, canonicalizelayer, initiallayers...)
-    return Stack(foldl((x, y) -> y(x), ilayers; init=messagelayer(layers2)))
+    layers = foldr((x, y) -> x(y), slayers, init=streamlayer)
+    # request layers
+    # messagelayer must be the 1st/outermost layer to convert initial args to Request
+    rlayers = (messagelayer, redirectlayer, defaultheaderslayer, basicauthlayer, contenttypedetectionlayer, cookielayer, retrylayer, canonicalizelayer, requestlayers...)
+    return foldr((x, y) -> x(y), rlayers; init=connectionlayer(layers))
 end
 
-function request(stack::Stack, method, url, h=Header[], b=nobody, q=nothing;
+function request(stack::Base.Callable, method, url, h=Header[], b=nobody, q=nothing;
                  headers=h, body=b, query=q, kw...)::Response
-    return stack.stack(Context(), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+    return stack(string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
 
-macro client(initiallayers, requestlayers, streamlayers)
+macro client(requestlayers, streamlayers=[])
     esc(quote
         get(a...; kw...) = request("GET", a...; kw...)
         put(a...; kw...) = request("PUT", a...; kw...)
@@ -347,7 +338,7 @@ macro client(initiallayers, requestlayers, streamlayers)
         head(u; kw...) = request("HEAD", u; kw...)
         delete(a...; kw...) = request("DELETE", a...; kw...)
         request(method, url, h=HTTP.Header[], b=HTTP.nobody; headers=h, body=b, query=nothing, kw...)::HTTP.Response =
-            HTTP.request(HTTP.stack($initiallayers, $requestlayers, $streamlayers), method, url, headers, body, query; kw...)
+            HTTP.request(HTTP.stack($requestlayers, $streamlayers), method, url, headers, body, query; kw...)
     end)
 end
 
@@ -456,12 +447,13 @@ function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tu
     take!(socketready)
 end
 
+include("MessageRequest.jl");           using .MessageRequest
 include("RedirectRequest.jl");          using .RedirectRequest
+include("DefaultHeadersRequest.jl");    using .DefaultHeadersRequest
 include("BasicAuthRequest.jl");         using .BasicAuthRequest
 include("CookieRequest.jl");            using .CookieRequest
 include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
 include("TimeoutRequest.jl");           using .TimeoutRequest
-include("MessageRequest.jl");           using .MessageRequest
 include("ExceptionRequest.jl");         using .ExceptionRequest
                                         import .ExceptionRequest.StatusError
 include("RetryRequest.jl");             using .RetryRequest

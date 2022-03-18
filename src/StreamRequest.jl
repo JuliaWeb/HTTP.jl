@@ -5,6 +5,7 @@ using ..Messages
 using ..Streams
 import ..ConnectionPool
 using ..MessageRequest
+import ..RedirectRequest: nredirects
 import ..@debug, ..DEBUG_LEVEL, ..printlncompact, ..sprintcompact
 
 export streamlayer
@@ -20,7 +21,8 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-function streamlayer(ctx, stream::Stream; iofunction=nothing, verbose=0, kw...)::Response
+function streamlayer(stream::Stream; iofunction=nothing, verbose=0, redirect_limit::Int=3, kw...)::Response
+    @show iofunction
     response = stream.message
     req = response.request
     io = stream.stream
@@ -29,7 +31,6 @@ function streamlayer(ctx, stream::Stream; iofunction=nothing, verbose=0, kw...):
     startwrite(stream)
 
     if verbose == 2
-        println("printing req")
         println(req)
         if iofunction === nothing && req.body isa IO
             println("$(typeof(req)).body: $(sprintcompact(req.body))")
@@ -41,7 +42,7 @@ function streamlayer(ctx, stream::Stream; iofunction=nothing, verbose=0, kw...):
         @sync begin
             if iofunction === nothing
                 @async try
-                    writebody(stream, ctx, req)
+                    writebody(stream, req)
                     @debug 2 "client closewrite"
                     closewrite(stream)
                 catch e
@@ -50,7 +51,7 @@ function streamlayer(ctx, stream::Stream; iofunction=nothing, verbose=0, kw...):
                 end
                 @debug 2 "client startread"
                 startread(stream)
-                readbody(stream, response, get(ctx, :redirectlimitreached, false))
+                readbody(stream, response, redirect_limit == nredirects(req))
             else
                 iofunction(stream)
             end
@@ -79,7 +80,7 @@ function streamlayer(ctx, stream::Stream; iofunction=nothing, verbose=0, kw...):
     return response
 end
 
-function writebody(stream::Stream, ctx, req::Request)
+function writebody(stream::Stream, req::Request)
 
     if !isbytes(req.body)
         writebodystream(stream, req.body)
@@ -87,7 +88,7 @@ function writebody(stream::Stream, ctx, req::Request)
     else
         write(stream, req.body)
     end
-    ctx[:retrycount] = get(ctx, :retrycount, 0) + 1
+    req.context[:retrycount] = get(req.context, :retrycount, 0) + 1
     return
 end
 

@@ -10,7 +10,7 @@ import ..@debug, ..DEBUG_LEVEL, ..sprintcompact
 export retrylayer
 
 """
-    retrylayer(ctx, req) -> HTTP.Response
+    retrylayer(req) -> HTTP.Response
 
 Retry the request if it throws a recoverable exception.
 
@@ -23,15 +23,15 @@ e.g. `HTTP.IOError`, `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 (if status is ``5xx`).
 """
 function retrylayer(handler)
-    return function(ctx, req::Request; retry::Bool=true, retries::Int=4, retry_non_idempotent::Bool=false, kw...)
+    return function(req::Request; retry::Bool=true, retries::Int=4, retry_non_idempotent::Bool=false, kw...)
         if !retry || retries == 0
             # no retry
-            return handler(ctx, req; kw...)
+            return handler(req; kw...)
         end
         retry_request = Base.retry(handler,
             delays=ExponentialBackOff(n = retries),
             check=(s, ex)->begin
-                retry = isrecoverable(ex, req, retry_non_idempotent, get(ctx, :retrycount, 0))
+                retry = isrecoverable(ex, req, retry_non_idempotent, get(req.context, :retrycount, 0))
                 if retry
                     @debug 1 "🔄  Retry $ex: $(sprintcompact(req))"
                     reset!(req.response)
@@ -41,7 +41,7 @@ function retrylayer(handler)
                 return s, retry
             end)
 
-        return retry_request(ctx, req; kw...)
+        return retry_request(req; kw...)
     end
 end
 

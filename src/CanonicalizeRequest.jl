@@ -6,16 +6,16 @@ using ..Strings: tocameldash
 export canonicalizelayer
 
 """
-    canonicalizelayer(ctx, method, ::URI, headers, body) -> HTTP.Response
+    canonicalizelayer(req) -> HTTP.Response
 
 Rewrite request and response headers in Canonical-Camel-Dash-Format.
 """
 function canonicalizelayer(handler)
-    return function(ctx, method, url, headers, body; canonicalize_headers::Bool=false, kw...)
+    return function(req; canonicalize_headers::Bool=false, kw...)
         if canonicalize_headers
-            headers = canonicalizeheaders(headers)
+            req.headers = canonicalizeheaders(req.headers)
         end
-        res = handler(ctx, method, url, headers, body; kw...)
+        res = handler(req; kw...)
         if canonicalize_headers
             res.headers = canonicalizeheaders(res.headers)
         end

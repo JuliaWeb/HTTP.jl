@@ -94,6 +94,7 @@ function on_body(f::Function, lb::Loopback)
     req = nothing
 
     try
+        @show s
         req = parse(HTTP.Request, s)
     catch e
         if !(e isa EOFError || e isa HTTP.ParseError)
@@ -137,14 +138,20 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
         l = length(req.body)
         response = HTTP.Response(200, ["Content-Length" => l],
                                       body = req.body; request=req)
+        @show req
+        @show response
         if req.target == "/echo"
             push!(server_events, "Response: $(HTTP.sprintcompact(response))")
             write(lb.io, response)
         elseif (m = match(r"^/delay([0-9]*)$", req.target)) !== nothing
             t = parse(Int, first(m.captures))
+            println("sleeping")
             sleep(t/10)
+            println("done sleeping")
             push!(server_events, "Response: $(HTTP.sprintcompact(response))")
+            println("writing response")
             write(lb.io, response)
+            println("done writing response")
         else
             response = HTTP.Response(403,
                                      ["Connection" => "close",
@@ -155,6 +162,13 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
     end
 
     return n
+end
+
+function HTTP.ConnectionPool.getconnection(::Type{Loopback},
+    host::AbstractString,
+    port::AbstractString;
+    kw...)::Loopback
+    return Loopback()
 end
 
 function async_test(m=["GET","GET","GET","GET","GET"];kw...)
@@ -186,13 +200,6 @@ function async_test(m=["GET","GET","GET","GET","GET"];kw...)
     @test String(r5.body) == "Hello World! 5"
 
     return t2 - t1
-end
-
-function HTTP.ConnectionPool.getconnection(::Type{Loopback},
-                                           host::AbstractString,
-                                           port::AbstractString;
-                                           kw...)::Loopback
-    return Loopback()
 end
 
 @testset "loopback" begin
@@ -233,21 +240,27 @@ end
     end
 
     @testset "lbopen - Body - Delay" begin
-        body = nothing
-        body_sent = false
+        body = Ref{Any}(nothing)
+        body_sent = Ref(false)
         r = lbopen("delay10", []) do http
             @sync begin
                 @async begin
+                    println("writing")
                     write(http, "Hello World!")
+                    println("done writing")
                     closewrite(http)
-                    body_sent = true
+                    println("setting body_sent")
+                    body_sent[] = true
                 end
+                println("startread")
                 startread(http)
-                body = read(http)
+                println("calling read")
+                body[] = read(http)
+                println("done reading")
                 closeread(http)
             end
         end
-        @test String(body) == "Hello World!"
+        @test String(body[]) == "Hello World!"
     end
 
     # "If [the response] indicates the server does not wish to receive the

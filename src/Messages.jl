@@ -180,6 +180,7 @@ Get body from a response.
 body(r::Response) = getfield(r, :body)
 
 # HTTP Request
+const Context = Dict{Symbol, Any}
 
 """
     Request <: Message
@@ -207,6 +208,8 @@ Represents a HTTP Request Message.
   (e.g. in the case of a redirect).
    [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
 
+- `context`, a `Dict{Symbol, Any}` store used by middleware to share state
+
 You can get each data with [`HTTP.method`](@ref), [`HTTP.headers`](@ref), [`HTTP.uri`](@ref), and [`HTTP.body`](@ref).
 
 """
@@ -218,7 +221,8 @@ mutable struct Request{T} <: Message
     body::T # Vector{UInt8} or some kind of IO
     response::Response
     url::URI
-    parent
+    parent::Union{Response, Nothing}
+    context::Context
 end
 
 Request() = Request("", "")
@@ -230,7 +234,7 @@ Constructor for `HTTP.Request`.
 For daily use, see [`HTTP.request`](@ref).
 """
 function Request(method::String, target, headers=[], body=nobody;
-                 version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing)
+                 version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=Context())
     b = isbytes(body) ? bytes(body) : something(body, nobody)
     r = Request{typeof(b)}(method,
                 target == "" ? "/" : target,
@@ -239,7 +243,8 @@ function Request(method::String, target, headers=[], body=nobody;
                 b,
                 Response(0; body=responsebody),
                 url,
-                parent)
+                parent,
+                context)
     r.response.request = r
     return r
 end

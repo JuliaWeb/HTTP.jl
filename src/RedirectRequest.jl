@@ -6,29 +6,26 @@ using ..Pairs: setkv
 import ..Header
 import ..@debug, ..DEBUG_LEVEL
 
-export redirectlayer
+export redirectlayer, nredirects
 
 """
-    redirectlayer(ctx, method, ::URI, headers, body) -> HTTP.Response
+    redirectlayer(req) -> HTTP.Response
 
 Redirects the request in the case of 3xx response status.
 """
 function redirectlayer(handler)
-    return function(ctx, method, url, headers, body; redirect::Bool=true, redirect_limit::Int=3, forwardheaders::Bool=true, kw...)
+    return function(req; redirect::Bool=true, redirect_limit::Int=3, forwardheaders::Bool=true, response_stream=nothing, kw...)
         if !redirect || redirect_limit == 0
             # no redirecting
-            return handler(ctx, method, url, headers, body; kw...)
+            return handler(req; redirect_limit=redirect_limit, kw...)
         end
 
         count = 0
         while true
             # Verify the url before making the request. Verification is done in
             # the redirect loop to also catch bad redirect URLs.
-            verify_url(url)
-            if count == redirect_limit
-                ctx[:redirectlimitreached] = true
-            end
-            res = handler(ctx, method, url, headers, body; kw...)
+            verify_url(req.url)
+            res = handler(req; redirect_limit=redirect_limit, kw...)
 
             if (count == redirect_limit ||  !isredirect(res)
                 ||  (location = header(res, "Location")) == "")
@@ -36,11 +33,12 @@ function redirectlayer(handler)
             end
 
             # follow redirect
-            ctx[:parentrequest] = res
-            oldurl = url
-            url = resolvereference(oldurl, location)
+            oldurl = req.url
+            url = resolvereference(req.url, location)
+            req = Request(req.method, resource(url), copy(req.headers), req.body;
+                url=url, version=req.version, responsebody=response_stream, parent=res, context=req.context)
             if forwardheaders
-                headers = filter(headers) do (header, _)
+                req.headers = filter(req.headers) do (header, _)
                     # false return values are filtered out
                     if header == "Host"
                         return false
@@ -51,13 +49,17 @@ function redirectlayer(handler)
                     end
                 end
             else
-                headers = Header[]
+                req.headers = Header[]
             end
             @debug 1 "➡️  Redirect: $url"
             count += 1
         end
         @assert false "Unreachable!"
     end
+end
+
+function nredirects(req)
+    return req.parent === nothing ? 0 : (1 + nredirects(req.parent.request))
 end
 
 const SENSITIVE_HEADERS = Set([

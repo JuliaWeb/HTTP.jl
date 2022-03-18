@@ -5,7 +5,6 @@ using ..Messages
 using ..IOExtras
 using ..ConnectionPool
 using MbedTLS: SSLContext, SSLConfig
-using ..Pairs: getkv, setkv
 using Base64: base64encode
 import ..@debug, ..DEBUG_LEVEL
 import ..Streams: Stream
@@ -62,7 +61,7 @@ Otherwise leave it open so that it can be reused.
 See [`isioerror`](@ref).
 """
 function connectionlayer(handler)
-    return function(ctx, req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, kw...)
+    return function(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, kw...)
         if proxy !== nothing
             target_url = req.url
             url = URI(proxy)
@@ -71,9 +70,9 @@ function connectionlayer(handler)
             end
 
             userinfo = unescapeuri(url.userinfo)
-            if !isempty(userinfo) && getkv(req.headers, "Proxy-Authorization", "") == ""
+            if !isempty(userinfo) && !hasheader(req.headers, "Proxy-Authorization")
                 @debug 1 "Adding Proxy-Authorization: Basic header."
-                setkv(req.headers, "Proxy-Authorization", "Basic $(base64encode(userinfo))")
+                setheader(req.headers, "Proxy-Authorization" => "Basic $(base64encode(userinfo))")
             end
         else
             url = req.url
@@ -101,7 +100,7 @@ function connectionlayer(handler)
             end
 
             stream = Stream(req.response, io)
-            resp = handler(ctx, stream; kw...)
+            resp = handler(stream; kw...)
 
             if proxy !== nothing && target_url.scheme == "https"
                 close(io)
