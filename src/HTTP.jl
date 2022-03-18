@@ -37,6 +37,26 @@ include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
+include("MessageRequest.jl");           using .MessageRequest
+include("RedirectRequest.jl");          using .RedirectRequest
+include("DefaultHeadersRequest.jl");    using .DefaultHeadersRequest
+include("BasicAuthRequest.jl");         using .BasicAuthRequest
+include("CookieRequest.jl");            using .CookieRequest
+include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
+include("TimeoutRequest.jl");           using .TimeoutRequest
+include("ExceptionRequest.jl");         using .ExceptionRequest
+                                        import .ExceptionRequest.StatusError
+include("RetryRequest.jl");             using .RetryRequest
+include("ConnectionRequest.jl");        using .ConnectionRequest
+include("DebugRequest.jl");             using .DebugRequest
+include("StreamRequest.jl");            using .StreamRequest
+include("ContentTypeRequest.jl");       using .ContentTypeDetection
+
+include("download.jl")
+include("Servers.jl")                  ;using .Servers; using .Servers: listen
+include("Handlers.jl")                 ;using .Handlers; using .Handlers: serve
+include("parsemultipart.jl")           ;using .MultiPartParsing: parse_multipart_form
+include("WebSockets.jl")               ;using .WebSockets
 
 const nobody = UInt8[]
 
@@ -310,18 +330,26 @@ function request(method, url, h=Header[], b=nobody;
     return request(HTTP.stack(), method, url, headers, body, query; kw...)
 end
 
+const STREAM_LAYERS = [timeoutlayer, exceptionlayer, debuglayer]
+const REQUEST_LAYERS = [messagelayer, redirectlayer, defaultheaderslayer, basicauthlayer, contenttypedetectionlayer, cookielayer, retrylayer, canonicalizelayer]
+
+pushlayer!(layer; request::Bool=true) = push!(request ? REQUEST_LAYERS : STREAM_LAYERS, layer)
+pushfirstlayer!(layer; request::Bool=true) = pushfirst!(request ? REQUEST_LAYERS : STREAM_LAYERS, layer)
+poplayer!(; request::Bool=true) = pop!(request ? REQUEST_LAYERS : STREAM_LAYERS)
+popfirstlayer!(; request::Bool=true) = popfirst!(request ? REQUEST_LAYERS : STREAM_LAYERS)
+
 function stack(
     # custom layers
     requestlayers=(),
     streamlayers=())
 
     # stream layers
-    slayers = (timeoutlayer, exceptionlayer, debuglayer, streamlayers...)
-    layers = foldr((x, y) -> x(y), slayers, init=streamlayer)
+    layers = foldr((x, y) -> x(y), streamlayers, init=streamlayer)
+    layers2 = foldr((x, y) -> x(y), STREAM_LAYERS, init=layers)
     # request layers
     # messagelayer must be the 1st/outermost layer to convert initial args to Request
-    rlayers = (messagelayer, redirectlayer, defaultheaderslayer, basicauthlayer, contenttypedetectionlayer, cookielayer, retrylayer, canonicalizelayer, requestlayers...)
-    return foldr((x, y) -> x(y), rlayers; init=connectionlayer(layers))
+    layers3 = foldr((x, y) -> x(y), requestlayers; init=connectionlayer(layers2))
+    return foldr((x, y) -> x(y), REQUEST_LAYERS; init=layers3)
 end
 
 function request(stack::Base.Callable, method, url, h=Header[], b=nobody, q=nothing;
@@ -446,27 +474,6 @@ function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tu
     end
     take!(socketready)
 end
-
-include("MessageRequest.jl");           using .MessageRequest
-include("RedirectRequest.jl");          using .RedirectRequest
-include("DefaultHeadersRequest.jl");    using .DefaultHeadersRequest
-include("BasicAuthRequest.jl");         using .BasicAuthRequest
-include("CookieRequest.jl");            using .CookieRequest
-include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
-include("TimeoutRequest.jl");           using .TimeoutRequest
-include("ExceptionRequest.jl");         using .ExceptionRequest
-                                        import .ExceptionRequest.StatusError
-include("RetryRequest.jl");             using .RetryRequest
-include("ConnectionRequest.jl");        using .ConnectionRequest
-include("DebugRequest.jl");             using .DebugRequest
-include("StreamRequest.jl");            using .StreamRequest
-include("ContentTypeRequest.jl");       using .ContentTypeDetection
-
-include("download.jl")
-include("Servers.jl")                  ;using .Servers; using .Servers: listen
-include("Handlers.jl")                 ;using .Handlers; using .Handlers: serve
-include("parsemultipart.jl")           ;using .MultiPartParsing: parse_multipart_form
-include("WebSockets.jl")               ;using .WebSockets
 
 import .ConnectionPool: Connection
 
