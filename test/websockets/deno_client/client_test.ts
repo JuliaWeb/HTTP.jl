@@ -21,7 +21,7 @@ Deno.test("WebSocket client basics", async (t) => {
     
     // Send some messages to the server
     const to_send = [
-        "one", "two", "three"
+        "world" //, "two", "three"
     ]
     ws.addEventListener("open", () => {
         to_send.forEach(msg => ws.send(msg))

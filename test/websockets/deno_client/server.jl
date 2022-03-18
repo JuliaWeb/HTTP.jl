@@ -62,5 +62,5 @@ hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin
     end
     @test success
     
-    @test server_received_messages == ["one", "two", "three", "close"]
+    @test server_received_messages == ["world", "close"]
 end
