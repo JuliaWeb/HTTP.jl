@@ -115,7 +115,7 @@ mutable struct Response{T} <: Message
     @doc """
         Response(status::Int, headers=[]; body=UInt8[], request=nothing) -> HTTP.Response
     """
-    function Response(status::Integer, headers=[]; body=nothing, request=nothing)
+    function Response(status::Integer, headers=[]; body=nobody, request=nothing)
         b = isbytes(body) ? bytes(body) : something(body, nobody)
         return new{typeof(b)}(
             v"1.1",
@@ -235,8 +235,8 @@ For daily use, see [`HTTP.request`](@ref).
 """
 function Request(method::String, target, headers=[], body=nobody;
                  version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=Context())
-    b = isbytes(body) ? bytes(body) : something(body, nobody)
-    r = Request{typeof(b)}(method,
+    b = isbytes(body) ? bytes(body) : body
+    r = Request{b === nothing ? Any : typeof(b)}(method,
                 target == "" ? "/" : target,
                 version,
                 mkheaders(headers),

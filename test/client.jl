@@ -53,7 +53,7 @@ end
         body = String(r.body)
         @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{\"foo\":\"bar\",\"hey\":\"sailor\"}}"
 
-        r = HTTP.get("$sch://httpbin.org/cookies/delete?hey"; verbose=2)
+        r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
         cookies = JSON.parse(String(r.body))["cookies"]
         @test length(cookies) == 1
         @test cookies["foo"] == "bar"

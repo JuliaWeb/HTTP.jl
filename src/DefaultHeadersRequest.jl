@@ -21,7 +21,7 @@ function defaultheaderslayer(handler)
         else
             hostheader = req.url.host * ":" * req.url.port
         end
-        setheader(headers, "Host" => hostheader)
+        defaultheader!(headers, "Host" => hostheader)
         defaultheader!(headers, "Accept" => "*/*")
         if USER_AGENT[] !== nothing
             defaultheader!(headers, "User-Agent" => USER_AGENT[])
@@ -31,7 +31,6 @@ function defaultheaderslayer(handler)
         !hasheader(headers, "Transfer-Encoding") &&
         !hasheader(headers, "Upgrade")
             l = nbytes(req.body)
-            @show nbytes(req.body)
             if l !== nothing
                 setheader(headers, "Content-Length" => string(l))
             elseif req.method == "GET" && iofunction isa Function

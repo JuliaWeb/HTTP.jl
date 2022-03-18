@@ -22,7 +22,6 @@ indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
 function streamlayer(stream::Stream; iofunction=nothing, verbose=0, redirect_limit::Int=3, kw...)::Response
-    @show iofunction
     response = stream.message
     req = response.request
     io = stream.stream
