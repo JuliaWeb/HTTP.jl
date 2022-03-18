@@ -23,6 +23,7 @@ indicates that the server does not wish to receive the message body.
 function streamlayer(ctx, stream::Stream; iofunction=nothing, verbose=0, kw...)::Response
     response = stream.message
     req = response.request
+    io = stream.stream
     verbose == 1 && printlncompact(req)
     @debug 2 "client startwrite"
     startwrite(stream)
@@ -53,7 +54,6 @@ function streamlayer(ctx, stream::Stream; iofunction=nothing, verbose=0, kw...):
             else
                 iofunction(stream)
             end
-
             if isaborted(stream)
                 # The server may have closed the connection.
                 # Don't propagate such errors.

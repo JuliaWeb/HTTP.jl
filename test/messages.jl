@@ -1,16 +1,11 @@
-using ..Test
+using Test
 
 using HTTP.Messages
 import HTTP.Messages.appendheader
 import HTTP.URI
 import HTTP.request
-import HTTP: bytes
-
+import HTTP: bytes, nbytes
 using HTTP: StatusError
-
-using HTTP.MessageRequest: bodylength
-using HTTP.MessageRequest: bodybytes
-using HTTP.MessageRequest: unknown_length
 
 using JSON
 
@@ -23,29 +18,29 @@ using JSON
     http_writes = ["POST", "PUT", "DELETE", "PATCH"]
 
     @testset "Body Length" begin
-        @test bodylength(7) == unknown_length
-        @test bodylength(UInt8[1,2,3]) == 3
-        @test bodylength(view(UInt8[1,2,3], 1:2)) == 2
-        @test bodylength("Hello") == 5
-        @test bodylength(SubString("World!",1,5)) == 5
-        @test bodylength(["Hello", " ", "World!"]) == 12
-        @test bodylength(["Hello", " ", SubString("World!",1,5)]) == 11
-        @test bodylength([SubString("Hello", 1,5), " ", SubString("World!",1,5)]) == 11
-        @test bodylength([UInt8[1,2,3], UInt8[4,5,6]]) == 6
-        @test bodylength([UInt8[1,2,3], view(UInt8[4,5,6],1:2)]) == 5
-        @test bodylength([view(UInt8[1,2,3],1:2), view(UInt8[4,5,6],1:2)]) == 4
-        @test bodylength(IOBuffer("foo")) == 3
-        @test bodylength([IOBuffer("foo"), IOBuffer("bar")]) == 6
+        @test nbytes(7) === nothing
+        @test nbytes(UInt8[1,2,3]) == 3
+        @test nbytes(view(UInt8[1,2,3], 1:2)) == 2
+        @test nbytes("Hello") == 5
+        @test nbytes(SubString("World!",1,5)) == 5
+        @test nbytes(["Hello", " ", "World!"]) == 12
+        @test nbytes(["Hello", " ", SubString("World!",1,5)]) == 11
+        @test nbytes([SubString("Hello", 1,5), " ", SubString("World!",1,5)]) == 11
+        @test nbytes([UInt8[1,2,3], UInt8[4,5,6]]) == 6
+        @test nbytes([UInt8[1,2,3], view(UInt8[4,5,6],1:2)]) == 5
+        @test nbytes([view(UInt8[1,2,3],1:2), view(UInt8[4,5,6],1:2)]) == 4
+        @test nbytes(IOBuffer("foo")) == 3
+        @test nbytes([IOBuffer("foo"), IOBuffer("bar")]) == 6
     end
 
     @testset "Body Bytes" begin
-        @test bodybytes(7) == UInt8[]
-        @test bodybytes(UInt8[1,2,3]) == UInt8[1,2,3]
-        @test bodybytes(view(UInt8[1,2,3], 1:2)) == UInt8[1,2]
-        @test bodybytes("Hello") == bytes("Hello")
-        @test bodybytes(SubString("World!",1,5)) == bytes("World")
-        @test bodybytes(["Hello", " ", "World!"]) == UInt8[]
-        @test bodybytes([UInt8[1,2,3], UInt8[4,5,6]]) == UInt8[]
+        @test bytes(7) == 7
+        @test bytes(UInt8[1,2,3]) == UInt8[1,2,3]
+        @test bytes(view(UInt8[1,2,3], 1:2)) == UInt8[1,2]
+        @test bytes("Hello") == codeunits("Hello")
+        @test bytes(SubString("World!",1,5)) == codeunits("World")
+        @test bytes(["Hello", " ", "World!"]) == ["Hello", " ", "World!"]
+        @test bytes([UInt8[1,2,3], UInt8[4,5,6]]) == [UInt8[1,2,3], UInt8[4,5,6]]
     end
 
     @testset "Request" begin
@@ -176,15 +171,15 @@ using JSON
     end
 
     @testset "Display" begin
-        @test repr(Response(200, []; body="Hello world.")) == "Response:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\nHello world.\"\"\""
+        @test repr(Response(200, []; body="Hello world.")) == "Response{Base.CodeUnits{UInt8, String}}:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\nHello world.\"\"\""
 
         # truncation of long bodies
         for body_show_max in (Messages.body_show_max, 100)
             Messages.set_show_max(body_show_max)
-            @test repr(Response(200, []; body="Hello world.\n"*'x'^10000)) == "Response:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\nHello world.\n"*'x'^(body_show_max-13)*"\n⋮\n10013-byte body\n\"\"\""
+            @test repr(Response(200, []; body="Hello world.\n"*'x'^10000)) == "Response{Base.CodeUnits{UInt8, String}}:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\nHello world.\n"*'x'^(body_show_max-13)*"\n⋮\n10013-byte body\n\"\"\""
         end
 
         # don't display raw binary (non-Unicode) data:
-        @test repr(Response(200, []; body=String([0xde,0xad,0xc1,0x71,0x1c]))) == "Response:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\n\n⋮\n5-byte body\n\"\"\""
+        @test repr(Response(200, []; body=String([0xde,0xad,0xc1,0x71,0x1c]))) == "Response{Base.CodeUnits{UInt8, String}}:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\n\n⋮\n5-byte body\n\"\"\""
     end
 end

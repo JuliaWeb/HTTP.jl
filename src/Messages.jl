@@ -115,8 +115,8 @@ mutable struct Response{T} <: Message
     @doc """
         Response(status::Int, headers=[]; body=UInt8[], request=nothing) -> HTTP.Response
     """
-    function Response(status::Integer, headers=[]; body=nobody, request=nothing)
-        b = body isa IO ? body : bytes(body)
+    function Response(status::Integer, headers=[]; body=nothing, request=nothing)
+        b = isbytes(body) ? bytes(body) : something(body, nobody)
         return new{typeof(b)}(
             v"1.1",
             status,
@@ -141,9 +141,9 @@ HTTP.Response(200, headers; body = "Hello")
 Response() = Request().response
 
 Response(s::Int, body::AbstractVector{UInt8}) = Response(s; body=body)
-Response(s::Int, body::AbstractString) = Response(s, bytes(body))
+Response(s::Int, body::AbstractString) = Response(s; body=bytes(body))
 
-Response(body) = Response(200, body)
+Response(body) = Response(200; body=body)
 
 Base.convert(::Type{Response}, s::AbstractString) = Response(s)
 
@@ -231,13 +231,13 @@ For daily use, see [`HTTP.request`](@ref).
 """
 function Request(method::String, target, headers=[], body=nobody;
                  version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing)
-    b = body isa IO ? body : bytes(something(body, nobody))
+    b = isbytes(body) ? bytes(body) : something(body, nobody)
     r = Request{typeof(b)}(method,
                 target == "" ? "/" : target,
                 version,
                 mkheaders(headers),
                 b,
-                Response(0; body=something(responsebody, nobody)),
+                Response(0; body=responsebody),
                 url,
                 parent)
     r.response.request = r
@@ -591,7 +591,7 @@ body_show_max = 1000
 
 The first chunk of the Message Body (for display purposes).
 """
-bodysummary(bytes) = view(bytes, 1:min(length(bytes), body_show_max))
+bodysummary(body) = isbytes(body) ? view(bytes(body), 1:min(nbytes(body), body_show_max)) : "[Message Body was streamed]"
 
 function compactstartline(m::Message)
     b = IOBuffer()
@@ -617,8 +617,8 @@ function Base.show(io::IO, m::Message)
     summary = bodysummary(m.body)
     validsummary = isvalidstr(summary)
     validsummary && write(io, summary)
-    if !validsummary || length(m.body) > length(summary)
-        println(io, "\n⋮\n$(length(m.body))-byte body")
+    if !validsummary || something(nbytes(m.body), 0) > length(summary)
+        println(io, "\n⋮\n$(nbytes(m.body))-byte body")
     end
     print(io, "\"\"\"")
     return

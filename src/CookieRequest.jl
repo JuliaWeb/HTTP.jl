@@ -24,7 +24,6 @@ Store new Cookies found in the response headers.
 """
 function cookielayer(handler)
     return function(ctx, req::Request; cookies=true, cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar), kw...)
-        println("cookielayer")
         if cookies === true || (cookies isa AbstractDict && !isempty(cookies))
             url = req.url
             hostcookies = get!(cookiejar, url.host, Set{Cookie}())
@@ -35,12 +34,21 @@ function cookielayer(handler)
                 end
             end
             if !isempty(cookiestosend)
-                setkv(req.headers, "Cookie", stringify(getkv(req.headers, "Cookie", ""), cookiestosend))
+                existingcookie = getkv(req.headers, "Cookie", "")
+                if existingcookie != "" && get(ctx, :includedCookies, nothing) !== nothing
+                    # this is a redirect where we previously included cookies
+                    # we want to filter those out to avoid duplicate cookie sending
+                    # and the case where a cookie was set to expire from the 1st request
+                    previouscookies = Cookies.readcookies(req.headers, "")
+                    previouslyincluded = ctx[:includedCookies]
+                    filtered = filter(x -> !(x.name in previouslyincluded), previouscookies)
+                    existingcookie = stringify("", filtered)
+                end
+                setkv(req.headers, "Cookie", stringify(existingcookie, cookiestosend))
+                ctx[:includedCookies] = map(x -> x.name, cookiestosend)
             end
-            @show cookiestosend
             res = handler(ctx, req; kw...)
             setcookies(hostcookies, url.host, res.headers)
-            @show hostcookies
             return res
         else
             # skip

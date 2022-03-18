@@ -15,7 +15,6 @@ Redirects the request in the case of 3xx response status.
 """
 function redirectlayer(handler)
     return function(ctx, method, url, headers, body; redirect::Bool=true, redirect_limit::Int=3, forwardheaders::Bool=true, kw...)
-        println("redirectlayer")
         if !redirect || redirect_limit == 0
             # no redirecting
             return handler(ctx, method, url, headers, body; kw...)
@@ -54,8 +53,7 @@ function redirectlayer(handler)
             else
                 headers = Header[]
             end
-            @show 1 "➡️  Redirect: $url"
-            @show headers
+            @debug 1 "➡️  Redirect: $url"
             count += 1
         end
         @assert false "Unreachable!"

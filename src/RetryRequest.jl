@@ -54,8 +54,8 @@ isrecoverable(e::HTTP.StatusError) = e.status == 403 || # Forbidden
 
 isrecoverable(e, req, retry_non_idempotent, retrycount) =
     isrecoverable(e) &&
-    !(req.body === body_was_streamed) &&
-    !(req.response.body === body_was_streamed) &&
+    isbytes(req.body) &&
+    isbytes(req.response.body) &&
     (retry_non_idempotent || retrycount == 0 || isidempotent(req))
     # "MUST NOT automatically retry a request with a non-idempotent method"
     # https://tools.ietf.org/html/rfc7230#section-6.3.1
@@ -67,8 +67,8 @@ function no_retry_reason(ex, req)
     print(buf, ", ",
         ex isa HTTP.StatusError ? "HTTP $(ex.status): " :
         !isrecoverable(ex) ?  "$ex not recoverable, " : "",
-        (req.body === body_was_streamed) ? "request streamed, " : "",
-        (req.response.body === body_was_streamed) ? "response streamed, " : "",
+        !isbytes(req.body) ? "request streamed, " : "",
+        !isbytes(req.response.body) ? "response streamed, " : "",
         !isidempotent(req) ? "$(req.method) non-idempotent" : "")
     return String(take!(buf))
 end

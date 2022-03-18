@@ -1,3 +1,8 @@
+module TestCookies
+
+using HTTP
+using Sockets, Test
+
 @testset "Cookies" begin
     c = HTTP.Cookies.Cookie()
     @test c.name == ""
@@ -173,3 +178,5 @@
         @test istaskdone(tsk)
     end
 end
+
+end # module

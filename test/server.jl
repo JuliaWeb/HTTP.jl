@@ -66,7 +66,6 @@ end
     # large headers
     tcp = Sockets.connect(ip"127.0.0.1", port)
     x = "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n";
-    @show length(x)
     write(tcp, "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n")
     sleep(0.1)
     try

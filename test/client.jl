@@ -54,7 +54,9 @@ end
         @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{\"foo\":\"bar\",\"hey\":\"sailor\"}}"
 
         r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
-        @test isempty(JSON.parse(String(r.body))["cookies"])
+        cookies = JSON.parse(String(r.body))["cookies"]
+        @test length(cookies) == 1
+        @test cookies["foo"] == "bar"
     end
 
     @testset "Client Streaming Test" begin

@@ -1,10 +1,11 @@
+module TestLoopback
+
 using Test
 using HTTP
 using HTTP.IOExtras
 using HTTP.Parsers
 using HTTP.Messages
 using HTTP.Sockets
-using HTTP.MessageRequest: bodylength
 
 mutable struct FunctionIO <: IO
     f::Function
@@ -289,21 +290,20 @@ end
             FunctionIO(()->(sleep(0.1); " World!"))])
         @test String(r.body) == "Hello World!"
 
-        hello_sent = false
-        world_sent = false
+        hello_sent = Ref(false)
+        world_sent = Ref(false)
         @test_throws HTTP.StatusError begin
             r = lbreq("abort", [], [
-                FunctionIO(()->(hello_sent = true; sleep(0.1); "Hello")),
-                FunctionIO(()->(world_sent = true; " World!"))])
+                FunctionIO(()->(println("hello_sent"); hello_sent[] = true; sleep(0.5); "Hello")),
+                FunctionIO(()->(println("world_sent"); world_sent[] = true; " World!"))])
         end
-        @test hello_sent
-        @test !world_sent
+        @test hello_sent[]
+        @test !world_sent[]
     end
 
     @testset "ASync - Pipeline limit = 0" begin
         server_events = []
         t = async_test(;pipeline_limit=0)
-        @show t
         if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
             @test server_events == [
                 "Request: GET /delay1 HTTP/1.1",
@@ -322,7 +322,6 @@ end
     @testset "ASync - " begin
         server_events = []
         t = async_test()
-        @show t
         if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
             @test server_events == [
                 "Request: GET /delay1 HTTP/1.1",
@@ -350,3 +349,5 @@ end
             "Response: HTTP/1.1 200 OK <= (POST /delay1 HTTP/1.1)"]
     end
 end
+
+end # module

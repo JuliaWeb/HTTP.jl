@@ -6,7 +6,6 @@ using ..Base64
 using ..IOExtras
 using URIs
 using ..Messages
-import ..Messages: bodylength
 import ..Headers
 import ..Form, ..content_type
 
@@ -35,8 +34,8 @@ function messagelayer(handler)
         if !hasheader(headers, "Content-Length") &&
         !hasheader(headers, "Transfer-Encoding") &&
         !hasheader(headers, "Upgrade")
-            l = bodylength(body)
-            if l != unknown_length
+            l = nbytes(body)
+            if l !== nothing
                 setheader(headers, "Content-Length" => string(l))
             elseif method == "GET" && iofunction isa Function
                 setheader(headers, "Content-Length" => "0")
@@ -47,7 +46,7 @@ function messagelayer(handler)
             setheader(headers, content_type(body))
         end
         parent = get(ctx, :parentrequest, nothing)
-        req = Request(method, resource(url), headers, bodybytes(body); url=url, version=http_version, responsebody=response_stream, parent=parent)
+        req = Request(method, resource(url), headers, body; url=url, version=http_version, responsebody=response_stream, parent=parent)
 
         return handler(ctx, req; iofunction=iofunction, kw...)
     end
@@ -66,21 +65,5 @@ function setuseragent!(x::Union{String, Nothing})
     USER_AGENT[] = x
     return
 end
-
-bodylength(body) = unknown_length
-bodylength(body::AbstractVector{UInt8}) = length(body)
-bodylength(body::AbstractString) = sizeof(body)
-bodylength(body::Form) = length(body)
-bodylength(body::Vector{T}) where T <: AbstractString = sum(sizeof, body)
-bodylength(body::Vector{T}) where T <: AbstractArray{UInt8,1} = sum(length, body)
-bodylength(body::IOBuffer) = bytesavailable(body)
-bodylength(body::Vector{IOBuffer}) = sum(bytesavailable, body)
-
-bodybytes(body) = body
-bodybytes(body::Vector{UInt8}) = body
-bodybytes(body::IOBuffer) = read(body)
-bodybytes(body::AbstractVector{UInt8}) = Vector{UInt8}(body)
-bodybytes(body::AbstractString) = bytes(body)
-bodybytes(body::Vector) = length(body) == 1 ? bodybytes(body[1]) : body
 
 end # module MessageRequest
