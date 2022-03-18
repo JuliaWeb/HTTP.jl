@@ -8,7 +8,7 @@ using ..Messages: iserror
 export exceptionlayer
 
 """
-    exceptionlayer(ctx, stream) -> HTTP.Response
+    exceptionlayer(stream) -> HTTP.Response
 
 Throw a `StatusError` if the request returns an error response status.
 """

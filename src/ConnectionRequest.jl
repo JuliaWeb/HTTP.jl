@@ -9,8 +9,6 @@ using Base64: base64encode
 import ..@debug, ..DEBUG_LEVEL
 import ..Streams: Stream
 
-const nosslconfig = SSLConfig()
-
 # hasdotsuffix reports whether s ends in "."+suffix.
 hasdotsuffix(s, suffix) = endswith(s, "." * suffix)
 
@@ -50,7 +48,7 @@ end
 export connectionlayer
 
 """
-    connectionlayer(ctx, ::Request, body) -> HTTP.Response
+    connectionlayer(req) -> HTTP.Response
 
 Retrieve an `IO` connection from the [`ConnectionPool`](@ref).
 

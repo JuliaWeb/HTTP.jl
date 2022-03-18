@@ -11,7 +11,7 @@ import ..@debug, ..DEBUG_LEVEL, ..printlncompact, ..sprintcompact
 export streamlayer
 
 """
-    streamlayer(ctx, stream) -> HTTP.Response
+    streamlayer(stream) -> HTTP.Response
 
 Create a [`Stream`](@ref) to send a `Request` and `body` to an `IO`
 stream and read the response.
@@ -31,7 +31,7 @@ function streamlayer(stream::Stream; iofunction=nothing, verbose=0, redirect_lim
 
     if verbose == 2
         println(req)
-        if iofunction === nothing && req.body isa IO
+        if iofunction === nothing && !isbytes(req.body)
             println("$(typeof(req)).body: $(sprintcompact(req.body))")
         end
     end

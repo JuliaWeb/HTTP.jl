@@ -1,7 +1,5 @@
 module MessageRequest
 
-export setuseragent!
-
 using URIs
 import ..Headers
 using ..Messages
