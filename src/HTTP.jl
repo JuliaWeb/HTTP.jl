@@ -1,9 +1,6 @@
 module HTTP
 
-export startwrite, startread, closewrite, closeread, stack, insert, insert_default!,
-    remove_default!, AWS4AuthLayer, BasicAuthLayer, CanonicalizeLayer, ConnectionPoolLayer,
-    ContentTypeDetectionLayer, DebugLayer, ExceptionLayer, MessageLayer, RedirectLayer,
-    RetryLayer, StreamLayer, TimeoutLayer, TopLayer,
+export startwrite, startread, closewrite, closeread,
     @logfmt_str, common_logfmt, combined_logfmt
 
 const DEBUG_LEVEL = Ref(0)
@@ -40,7 +37,26 @@ include("ConnectionPool.jl")
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
-include("layers.jl")                   ;using .Layers
+include("MessageRequest.jl");           using .MessageRequest
+include("RedirectRequest.jl");          using .RedirectRequest
+include("DefaultHeadersRequest.jl");    using .DefaultHeadersRequest
+include("BasicAuthRequest.jl");         using .BasicAuthRequest
+include("CookieRequest.jl");            using .CookieRequest
+include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
+include("TimeoutRequest.jl");           using .TimeoutRequest
+include("ExceptionRequest.jl");         using .ExceptionRequest
+                                        import .ExceptionRequest.StatusError
+include("RetryRequest.jl");             using .RetryRequest
+include("ConnectionRequest.jl");        using .ConnectionRequest
+include("DebugRequest.jl");             using .DebugRequest
+include("StreamRequest.jl");            using .StreamRequest
+include("ContentTypeRequest.jl");       using .ContentTypeDetection
+
+include("download.jl")
+include("Servers.jl")                  ;using .Servers; using .Servers: listen
+include("Handlers.jl")                 ;using .Handlers; using .Handlers: serve
+include("parsemultipart.jl")           ;using .MultiPartParsing: parse_multipart_form
+include("WebSockets.jl")               ;using .WebSockets
 
 const nobody = UInt8[]
 
@@ -86,7 +102,7 @@ e.g.
 ```julia
 HTTP.request("GET", "http://httpbin.org/ip"; retries=4, cookies=true)
 
-HTTP.get("http://s3.us-east-1.amazonaws.com/"; aws_authorization=true)
+HTTP.get("http://s3.us-east-1.amazonaws.com/")
 
 conf = (readtimeout = 10,
         retry = false,
@@ -153,19 +169,7 @@ SSLContext options
 Basic Authentication options
 
  - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)
-   and adds the `Authorization: Basic` header
-
-
-AWS Authentication options
-
- - `aws_authorization = false`, enable AWS4 Authentication.
- - `aws_service = split(url.host, ".")[1]`
- - `aws_region = split(url.host, ".")[2]`
- - `aws_access_key_id = ENV["AWS_ACCESS_KEY_ID"]`
- - `aws_secret_access_key = ENV["AWS_SECRET_ACCESS_KEY"]`
- - `aws_session_token = get(ENV, "AWS_SESSION_TOKEN", "")`
- - `body_sha256 = digest(MD_SHA256, body)`,
- - `body_md5 = digest(MD_MD5, body)`,
+   and adds the `Authorization: Basic` header; this can be disabled by passing `basicauth=false`
 
 
 Cookie options
@@ -323,14 +327,90 @@ end
 """
 function request(method, url, h=Header[], b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
-    return request(HTTP.stack(;kw...), string(method), request_uri(url, query), mkheaders(headers), body; kw...)
-end
-function request(stack::Type{<:Layer}, method, url, h=Header[], b=nobody;
-                 headers=h, body=b, query=nothing, kw...)::Response
-    return request(stack, string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+    return request(HTTP.stack(), method, url, headers, body, query; kw...)
 end
 
-request(::Type{Union{}}, resp::Response) = resp
+const STREAM_LAYERS = [timeoutlayer, exceptionlayer, debuglayer]
+const REQUEST_LAYERS = [messagelayer, redirectlayer, defaultheaderslayer, basicauthlayer, contenttypedetectionlayer, cookielayer, retrylayer, canonicalizelayer]
+
+pushlayer!(layer; request::Bool=true) = push!(request ? REQUEST_LAYERS : STREAM_LAYERS, layer)
+pushfirstlayer!(layer; request::Bool=true) = pushfirst!(request ? REQUEST_LAYERS : STREAM_LAYERS, layer)
+poplayer!(; request::Bool=true) = pop!(request ? REQUEST_LAYERS : STREAM_LAYERS)
+popfirstlayer!(; request::Bool=true) = popfirst!(request ? REQUEST_LAYERS : STREAM_LAYERS)
+
+function stack(
+    # custom layers
+    requestlayers=(),
+    streamlayers=())
+
+    # stream layers
+    layers = foldr((x, y) -> x(y), streamlayers, init=streamlayer)
+    layers2 = foldr((x, y) -> x(y), STREAM_LAYERS, init=layers)
+    # request layers
+    # messagelayer must be the 1st/outermost layer to convert initial args to Request
+    layers3 = foldr((x, y) -> x(y), requestlayers; init=connectionlayer(layers2))
+    return foldr((x, y) -> x(y), REQUEST_LAYERS; init=layers3)
+end
+
+function request(stack::Base.Callable, method, url, h=Header[], b=nobody, q=nothing;
+                 headers=h, body=b, query=q, kw...)::Response
+    return stack(string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+end
+
+macro client(requestlayers, streamlayers=[])
+    esc(quote
+        get(a...; kw...) = request("GET", a...; kw...)
+        put(a...; kw...) = request("PUT", a...; kw...)
+        post(a...; kw...) = request("POST", a...; kw...)
+        patch(a...; kw...) = request("PATCH", a...; kw...)
+        head(u; kw...) = request("HEAD", u; kw...)
+        delete(a...; kw...) = request("DELETE", a...; kw...)
+        request(method, url, h=HTTP.Header[], b=HTTP.nobody; headers=h, body=b, query=nothing, kw...)::HTTP.Response =
+            HTTP.request(HTTP.stack($requestlayers, $streamlayers), method, url, headers, body, query; kw...)
+    end)
+end
+
+"""
+    HTTP.get(url [, headers]; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("GET", ...)`. See [`HTTP.request`](@ref).
+"""
+get(a...; kw...) = request("GET", a...; kw...)
+
+"""
+    HTTP.put(url, headers, body; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("PUT", ...)`. See [`HTTP.request`](@ref).
+"""
+put(a...; kw...) = request("PUT", a...; kw...)
+
+"""
+    HTTP.post(url, headers, body; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("POST", ...)`. See [`HTTP.request`](@ref).
+"""
+post(a...; kw...) = request("POST", a...; kw...)
+
+"""
+    HTTP.patch(url, headers, body; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("PATCH", ...)`. See [`HTTP.request`](@ref).
+"""
+patch(a...; kw...) = request("PATCH", a...; kw...)
+
+"""
+    HTTP.head(url; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("HEAD", ...)`. See [`HTTP.request`](@ref).
+"""
+head(u; kw...) = request("HEAD", u; kw...)
+
+"""
+    HTTP.delete(url [, headers]; <keyword arguments>) -> HTTP.Response
+
+Shorthand for `HTTP.request("DELETE", ...)`. See [`HTTP.request`](@ref).
+"""
+delete(a...; kw...) = request("DELETE", a...; kw...)
 
 request_uri(url, query) = URI(URI(url); query=query)
 request_uri(url, ::Nothing) = URI(url)
@@ -394,220 +474,6 @@ function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tu
     end
     take!(socketready)
 end
-
-"""
-    HTTP.get(url [, headers]; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("GET", ...)`. See [`HTTP.request`](@ref).
-"""
-get(a...; kw...) = request("GET", a...; kw...)
-
-"""
-    HTTP.put(url, headers, body; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("PUT", ...)`. See [`HTTP.request`](@ref).
-"""
-put(u, h=[], b=""; kw...) = request("PUT", u, h, b; kw...)
-
-"""
-    HTTP.post(url, headers, body; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("POST", ...)`. See [`HTTP.request`](@ref).
-"""
-post(u, h=[], b=""; kw...) = request("POST", u, h, b; kw...)
-
-"""
-    HTTP.patch(url, headers, body; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("PATCH", ...)`. See [`HTTP.request`](@ref).
-"""
-patch(u, h=[], b=""; kw...) = request("PATCH", u, h, b; kw...)
-
-"""
-    HTTP.head(url; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("HEAD", ...)`. See [`HTTP.request`](@ref).
-"""
-head(u; kw...) = request("HEAD", u; kw...)
-
-"""
-    HTTP.delete(url [, headers]; <keyword arguments>) -> HTTP.Response
-
-Shorthand for `HTTP.request("DELETE", ...)`. See [`HTTP.request`](@ref).
-"""
-delete(a...; kw...) = request("DELETE", a...; kw...)
-
-include("TopRequest.jl");               using .TopRequest
-include("RedirectRequest.jl");          using .RedirectRequest
-include("BasicAuthRequest.jl");         using .BasicAuthRequest
-include("AWS4AuthRequest.jl");          using .AWS4AuthRequest
-include("CookieRequest.jl");            using .CookieRequest
-include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
-include("TimeoutRequest.jl");           using .TimeoutRequest
-include("MessageRequest.jl");           using .MessageRequest
-include("ExceptionRequest.jl");         using .ExceptionRequest
-                                        import .ExceptionRequest.StatusError
-include("RetryRequest.jl");             using .RetryRequest
-include("ConnectionRequest.jl");        using .ConnectionRequest
-include("DebugRequest.jl");             using .DebugRequest
-include("StreamRequest.jl");            using .StreamRequest
-include("ContentTypeRequest.jl");       using .ContentTypeDetection
-include("exceptions.jl")
-
-"""
-The `stack()` function returns the default HTTP Layer-stack type.
-This type is passed as the first parameter to the [`HTTP.request`](@ref) function.
-
-`stack()` accepts optional keyword arguments to enable/disable specific layers
-in the stack:
-`request(method, args...; kw...) request(stack(; kw...), args...; kw...)`
-
-
-The minimal request execution stack is:
-
-```julia
-stack = MessageLayer{ConnectionPoolLayer{StreamLayer}}
-```
-
-The figure below illustrates the full request execution stack and its
-relationship with [`HTTP.Response`](@ref), [`HTTP.Parsers`](@ref),
-[`HTTP.Stream`](@ref) and the [`HTTP.ConnectionPool`](@ref).
-
-```
- ┌────────────────────────────────────────────────────────────────────────────┐
- │                                            ┌───────────────────┐           │
- │  HTTP.jl Request Execution Stack           │ HTTP.ParsingError ├ ─ ─ ─ ─ ┐ │
- │                                            └───────────────────┘           │
- │                                            ┌───────────────────┐         │ │
- │                                            │ HTTP.IOError      ├ ─ ─ ─     │
- │                                            └───────────────────┘      │  │ │
- │                                            ┌───────────────────┐           │
- │                                            │ HTTP.StatusError  │─ ─   │  │ │
- │                                            └───────────────────┘   │       │
- │                                            ┌───────────────────┐      │  │ │
- │     request(method, url, headers, body) -> │ HTTP.Response     │   │       │
- │             ──────────────────────────     └─────────▲─────────┘      │  │ │
- │                           ║                          ║             │       │
- │   ┌────────────────────────────────────────────────────────────┐      │  │ │
- │   │ request(TopLayer,          method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(BasicAuthLayer,    method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(CookieLayer,       method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(CanonicalizeLayer, method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(MessageLayer,      method, ::URI, ::Headers, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(AWS4AuthLayer,             ::URI, ::Request, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(RetryLayer,                ::URI, ::Request, body) │   │       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
- │   │ request(ExceptionLayer,            ::URI, ::Request, body) ├ ─ ┘       │
- │   ├────────────────────────────────────────────────────────────┤      │  │ │
-┌┼───┤ request(ConnectionPoolLayer,       ::URI, ::Request, body) ├ ─ ─ ─     │
-││   ├────────────────────────────────────────────────────────────┤         │ │
-││   │ request(DebugLayer,                ::IO,  ::Request, body) │           │
-││   ├────────────────────────────────────────────────────────────┤         │ │
-││   │ request(TimeoutLayer,              ::IO,  ::Request, body) │           │
-││   ├────────────────────────────────────────────────────────────┤         │ │
-││   │ request(StreamLayer,               ::IO,  ::Request, body) │           │
-││   └──────────────┬───────────────────┬─────────────────────────┘         │ │
-│└──────────────────┼────────║──────────┼───────────────║─────────────────────┘
-│                   │        ║          │               ║                   │
-│┌──────────────────▼───────────────┐   │  ┌──────────────────────────────────┐
-││ HTTP.Request                     │   │  │ HTTP.Response                  │ │
-││                                  │   │  │                                  │
-││ method::String                   ◀───┼──▶ status::Int                    │ │
-││ target::String                   │   │  │ headers::Vector{Pair}            │
-││ headers::Vector{Pair}            │   │  │ body::Vector{UInt8}            │ │
-││ body::Vector{UInt8}              │   │  │                                  │
-│└──────────────────▲───────────────┘   │  └───────────────▲────────────────┼─┘
-│┌──────────────────┴────────║──────────▼───────────────║──┴──────────────────┐
-││ HTTP.Stream <:IO          ║           ╔══════╗       ║                   │ │
-││   ┌───────────────────────────┐       ║   ┌──▼─────────────────────────┐   │
-││   │ startwrite(::Stream)      │       ║   │ startread(::Stream)        │ │ │
-││   │ write(::Stream, body)     │       ║   │ read(::Stream) -> body     │   │
-││   │ ...                       │       ║   │ ...                        │ │ │
-││   │ closewrite(::Stream)      │       ║   │ closeread(::Stream)        │   │
-││   └───────────────────────────┘       ║   └────────────────────────────┘ │ │
-│└───────────────────────────║────────┬──║──────║───────║──┬──────────────────┘
-│┌──────────────────────────────────┐ │  ║ ┌────▼───────║──▼────────────────┴─┐
-││ HTTP.Messages                    │ │  ║ │ HTTP.Parsers                     │
-││                                  │ │  ║ │                                  │
-││ writestartline(::IO, ::Request)  │ │  ║ │ parse_status_line(bytes, ::Req') │
-││ writeheaders(::IO, ::Request)    │ │  ║ │ parse_header_field(bytes, ::Req')│
-│└──────────────────────────────────┘ │  ║ └──────────────────────────────────┘
-│                            ║        │  ║
-│┌───────────────────────────║────────┼──║────────────────────────────────────┐
-└▶ HTTP.ConnectionPool       ║        │  ║                                    │
- │                     ┌──────────────▼────────┐ ┌───────────────────────┐    │
- │ getconnection() ->  │ HTTP.Connection  <:IO │ │ HTTP.Connection  <:IO │    │
- │                     └───────────────────────┘ └───────────────────────┘    │
- │                           ║    ╲│╱    ║                  ╲│╱               │
- │                           ║     │     ║                   │                │
- │                     ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
- │              pool: [│ HTTP.Connection       │,│ HTTP.Connection       │...]│
- │                     └───────────┬───────────┘ └───────────┬───────────┘    │
- │                           ║     │     ║                   │                │
- │                     ┌───────────▼───────────┐ ┌───────────▼───────────┐    │
- │                     │ Base.TCPSocket <:IO   │ │MbedTLS.SSLContext <:IO│    │
- │                     └───────────────────────┘ └───────────┬───────────┘    │
- │                           ║           ║                   │                │
- │                           ║           ║       ┌───────────▼───────────┐    │
- │                           ║           ║       │ Base.TCPSocket <:IO   │    │
- │                           ║           ║       └───────────────────────┘    │
- └───────────────────────────║───────────║────────────────────────────────────┘
-                             ║           ║
- ┌───────────────────────────║───────────║──────────────┐  ┏━━━━━━━━━━━━━━━━━━┓
- │ HTTP Server               ▼                          │  ┃ data flow: ════▶ ┃
- │                        Request     Response          │  ┃ reference: ────▶ ┃
- └──────────────────────────────────────────────────────┘  ┗━━━━━━━━━━━━━━━━━━┛
-```
-*See `docs/src/layers`[`.monopic`](http://monodraw.helftone.com).*
-"""
-function stack(;redirect=true,
-                aws_authorization=false,
-                cookies=false,
-                canonicalize_headers=false,
-                retry=true,
-                status_exception=true,
-                readtimeout=0,
-                detect_content_type=false,
-                verbose=0,
-                kw...)
-
-    NoLayer = Union
-    stack =                 TopLayer{
-    (redirect             ? RedirectLayer             : NoLayer){
-                            BasicAuthLayer{
-    (detect_content_type  ? ContentTypeDetectionLayer : NoLayer){
-    (cookies === true || (cookies isa AbstractDict && !isempty(cookies)) ?
-                            CookieLayer               : NoLayer){
-    (canonicalize_headers ? CanonicalizeLayer         : NoLayer){
-                            MessageLayer{
-    (aws_authorization    ? AWS4AuthLayer             : NoLayer){
-    (retry                ? RetryLayer                : NoLayer){
-    (status_exception     ? ExceptionLayer            : NoLayer){
-                            ConnectionPoolLayer{
-    (verbose >= 3 ||
-     DEBUG_LEVEL[] >= 3   ? DebugLayer                : NoLayer){
-    (readtimeout > 0      ? TimeoutLayer              : NoLayer){
-                            StreamLayer{Union{}}
-    }}}}}}}}}}}}}
-
-    reduce(Layers.EXTRA_LAYERS; init=stack) do stack, (before, custom)
-        insert(stack, before, custom)
-    end
-end
-
-include("download.jl")
-include("Servers.jl")                  ;using .Servers; using .Servers: listen
-include("Handlers.jl")                 ;using .Handlers; using .Handlers: serve
-include("parsemultipart.jl")           ;using .MultiPartParsing: parse_multipart_form
-include("WebSockets.jl")               ;using .WebSockets
 
 import .ConnectionPool: Connection
 

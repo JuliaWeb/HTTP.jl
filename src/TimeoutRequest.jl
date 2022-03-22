@@ -1,8 +1,8 @@
 module TimeoutRequest
 
-import ..Layer, ..request
 using ..ConnectionPool
 import ..@debug, ..DEBUG_LEVEL
+import ..Streams: Stream
 
 struct ReadTimeoutError <:Exception
     readtimeout::Int
@@ -12,39 +12,43 @@ function Base.showerror(io::IO, e::ReadTimeoutError)
     print(io, "ReadTimeoutError: Connection closed after $(e.readtimeout) seconds")
 end
 
+export timeoutlayer
+
 """
-    request(TimeoutLayer, ::IO, ::Request, body) -> HTTP.Response
+    timeoutlayer(stream) -> HTTP.Response
 
 Close `IO` if no data has been received for `timeout` seconds.
 """
-abstract type TimeoutLayer{Next <: Layer} <: Layer{Next} end
-export TimeoutLayer
-
-function request(::Type{TimeoutLayer{Next}}, io::IO, req, body;
-                 readtimeout::Int=0, kw...) where Next
-
-    wait_for_timeout = Ref{Bool}(true)
-    timedout = Ref{Bool}(false)
-
-    @async while wait_for_timeout[]
-        if isreadable(io) && inactiveseconds(io) > readtimeout
-            timedout[] = true
-            close(io)
-            @debug 1 "💥  Read inactive > $(readtimeout)s: $io"
-            break
+function timeoutlayer(handler)
+    return function(stream::Stream; readtimeout::Int=0, kw...)
+        if readtimeout <= 0
+            # skip
+            return handler(stream; kw...)
         end
-        sleep(readtimeout / 10)
-    end
+        io = stream.stream
+        wait_for_timeout = Ref{Bool}(true)
+        timedout = Ref{Bool}(false)
 
-    try
-        return request(Next, io, req, body; kw...)
-    catch e
-        if timedout[]
-           throw(ReadTimeoutError(readtimeout))
+        @async while wait_for_timeout[]
+            if isreadable(io) && inactiveseconds(io) > readtimeout
+                timedout[] = true
+                close(io)
+                @debug 1 "💥  Read inactive > $(readtimeout)s: $io"
+                break
+            end
+            sleep(readtimeout / 10)
         end
-        rethrow(e)
-    finally
-        wait_for_timeout[] = false
+
+        try
+            return handler(stream; kw...)
+        catch e
+            if timedout[]
+            throw(ReadTimeoutError(readtimeout))
+            end
+            rethrow(e)
+        finally
+            wait_for_timeout[] = false
+        end
     end
 end
 

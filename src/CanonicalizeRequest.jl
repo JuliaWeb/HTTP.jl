@@ -1,27 +1,26 @@
 module CanonicalizeRequest
 
-import ..Layer, ..request
 using ..Messages
 using ..Strings: tocameldash
 
+export canonicalizelayer
+
 """
-    request(CanonicalizeLayer, method, ::URI, headers, body) -> HTTP.Response
+    canonicalizelayer(req) -> HTTP.Response
 
 Rewrite request and response headers in Canonical-Camel-Dash-Format.
 """
-abstract type CanonicalizeLayer{Next <: Layer} <: Layer{Next} end
-export CanonicalizeLayer
-
-function request(::Type{CanonicalizeLayer{Next}},
-                 method::String, url, headers, body; kw...) where Next
-
-    headers = canonicalizeheaders(headers)
-
-    res = request(Next, method, url, headers, body; kw...)
-
-    res.headers = canonicalizeheaders(res.headers)
-
-    return res
+function canonicalizelayer(handler)
+    return function(req; canonicalize_headers::Bool=false, kw...)
+        if canonicalize_headers
+            req.headers = canonicalizeheaders(req.headers)
+        end
+        res = handler(req; kw...)
+        if canonicalize_headers
+            res.headers = canonicalizeheaders(res.headers)
+        end
+        return res
+    end
 end
 
 canonicalizeheaders(h::T) where {T} = T([tocameldash(k) => v for (k,v) in h])

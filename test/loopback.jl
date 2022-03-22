@@ -1,10 +1,11 @@
+module TestLoopback
+
 using Test
 using HTTP
 using HTTP.IOExtras
 using HTTP.Parsers
 using HTTP.Messages
 using HTTP.Sockets
-using HTTP.MessageRequest: bodylength
 
 mutable struct FunctionIO <: IO
     f::Function
@@ -156,6 +157,13 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
     return n
 end
 
+function HTTP.ConnectionPool.getconnection(::Type{Loopback},
+    host::AbstractString,
+    port::AbstractString;
+    kw...)::Loopback
+    return Loopback()
+end
+
 function async_test(m=["GET","GET","GET","GET","GET"];kw...)
     r1 = r2 = r3 = r4 = r5 = nothing
     t1 = time()
@@ -185,13 +193,6 @@ function async_test(m=["GET","GET","GET","GET","GET"];kw...)
     @test String(r5.body) == "Hello World! 5"
 
     return t2 - t1
-end
-
-function HTTP.ConnectionPool.getconnection(::Type{Loopback},
-                                           host::AbstractString,
-                                           port::AbstractString;
-                                           kw...)::Loopback
-    return Loopback()
 end
 
 @testset "loopback" begin
@@ -232,21 +233,21 @@ end
     end
 
     @testset "lbopen - Body - Delay" begin
-        body = nothing
-        body_sent = false
+        body = Ref{Any}(nothing)
+        body_sent = Ref(false)
         r = lbopen("delay10", []) do http
             @sync begin
                 @async begin
                     write(http, "Hello World!")
                     closewrite(http)
-                    body_sent = true
+                    body_sent[] = true
                 end
                 startread(http)
-                body = read(http)
+                body[] = read(http)
                 closeread(http)
             end
         end
-        @test String(body) == "Hello World!"
+        @test String(body[]) == "Hello World!"
     end
 
     # "If [the response] indicates the server does not wish to receive the
@@ -289,21 +290,20 @@ end
             FunctionIO(()->(sleep(0.1); " World!"))])
         @test String(r.body) == "Hello World!"
 
-        hello_sent = false
-        world_sent = false
+        hello_sent = Ref(false)
+        world_sent = Ref(false)
         @test_throws HTTP.StatusError begin
             r = lbreq("abort", [], [
-                FunctionIO(()->(hello_sent = true; sleep(0.1); "Hello")),
-                FunctionIO(()->(world_sent = true; " World!"))])
+                FunctionIO(()->(hello_sent[] = true; sleep(0.5); "Hello")),
+                FunctionIO(()->(world_sent[] = true; " World!"))])
         end
-        @test hello_sent
-        @test !world_sent
+        @test hello_sent[]
+        @test !world_sent[]
     end
 
     @testset "ASync - Pipeline limit = 0" begin
         server_events = []
         t = async_test(;pipeline_limit=0)
-        @show t
         if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
             @test server_events == [
                 "Request: GET /delay1 HTTP/1.1",
@@ -322,7 +322,6 @@ end
     @testset "ASync - " begin
         server_events = []
         t = async_test()
-        @show t
         if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
             @test server_events == [
                 "Request: GET /delay1 HTTP/1.1",
@@ -350,3 +349,5 @@ end
             "Response: HTTP/1.1 200 OK <= (POST /delay1 HTTP/1.1)"]
     end
 end
+
+end # module

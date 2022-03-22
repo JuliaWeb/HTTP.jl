@@ -45,7 +45,7 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
     for reuse. If a complete response has not been received, `closeread` throws
     `EOFError`.
 """
-Stream(r::M, io::S) where {M, S} = Stream{M,S}(r, io, false, false, true, 0, 0)
+Stream(r::M, io::S) where {M, S} = Stream{M, S}(r, io, false, false, true, 0, 0)
 
 header(http::Stream, a...) = header(http.message, a...)
 setstatus(http::Stream, status) = (http.message.response.status = status)
@@ -65,8 +65,8 @@ IOExtras.isopen(http::Stream) = isopen(http.stream)
 
 # Writing HTTP Messages
 
-messagetowrite(http::Stream{Response}) = http.message.request
-messagetowrite(http::Stream{Request}) = http.message.response
+messagetowrite(http::Stream{<:Response}) = http.message.request
+messagetowrite(http::Stream{<:Request}) = http.message.response
 
 IOExtras.iswritable(http::Stream) = iswritable(http.stream)
 
@@ -124,7 +124,7 @@ function closebody(http::Stream)
     end
 end
 
-function IOExtras.closewrite(http::Stream{Response})
+function IOExtras.closewrite(http::Stream{<:Response})
     if !iswritable(http)
         return
     end
@@ -132,7 +132,7 @@ function IOExtras.closewrite(http::Stream{Response})
     closewrite(http.stream)
 end
 
-function IOExtras.closewrite(http::Stream{Request})
+function IOExtras.closewrite(http::Stream{<:Request})
 
     if iswritable(http)
         closebody(http)
@@ -176,14 +176,14 @@ end
 https://tools.ietf.org/html/rfc7230#section-5.6
 https://tools.ietf.org/html/rfc7231#section-6.2.1
 """
-function handle_continue(http::Stream{Response})
+function handle_continue(http::Stream{<:Response})
     if http.message.status == 100
         @debug 1 "✅  Continue:   $(http.stream)"
         readheaders(http.stream, http.message)
     end
 end
 
-function handle_continue(http::Stream{Request})
+function handle_continue(http::Stream{<:Request})
     if hasheader(http.message, "Expect", "100-continue")
         if !iswritable(http.stream)
             startwrite(http.stream)
@@ -316,7 +316,7 @@ function Base.read(http::Stream)
 end
 
 """
-    isaborted(::Stream{Response})
+    isaborted(::Stream{<:Response})
 
 Has the server signaled that it does not wish to receive the message body?
 
@@ -325,7 +325,7 @@ Has the server signaled that it does not wish to receive the message body?
  immediately cease transmitting the body and close the connection."
 [RFC7230, 6.5](https://tools.ietf.org/html/rfc7230#section-6.5)
 """
-function isaborted(http::Stream{Response})
+function isaborted(http::Stream{<:Response})
 
     if iswritable(http.stream) &&
        iserror(http.message) &&
@@ -341,7 +341,7 @@ end
 incomplete(http::Stream) =
     http.ntoread > 0 && (http.readchunked || http.ntoread != unknown_length)
 
-function IOExtras.closeread(http::Stream{Response})
+function IOExtras.closeread(http::Stream{<:Response})
 
     if hasheader(http.message, "Connection", "close")
         # Close conncetion if server sent "Connection: close"...
@@ -368,7 +368,7 @@ function IOExtras.closeread(http::Stream{Response})
     return http.message
 end
 
-function IOExtras.closeread(http::Stream{Request})
+function IOExtras.closeread(http::Stream{<:Request})
     if incomplete(http)
         # Error if Message is not complete...
         close(http.stream)

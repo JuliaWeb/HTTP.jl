@@ -1,18 +1,21 @@
 module TestRequest
-import HTTP: Layer, request, Response
 
-abstract type TestLayer{Next <: Layer} <: Layer{Next} end
-abstract type LastLayer{Next <: Layer} <: Layer{Next} end
-export TestLayer, LastLayer, request
+using HTTP
 
-function request(::Type{TestLayer{Next}}, io::IO, req, body; kw...)::Response where Next
-		return request(Next, io, req, body; kw...)
+function testrequestlayer(handler)
+    return function(req; httptestlayer=Ref(false), kw...)
+        httptestlayer[] = true
+        return handler(req; kw...)
+    end
 end
 
-const FLAG = Ref(false)
-function request(::Type{LastLayer{Next}}, resp)::Response where Next
-    FLAG[] = true
-		return request(Next, resp)
+function teststreamlayer(handler)
+    return function(stream; httptestlayer=Ref(false), kw...)
+        httptestlayer[] = true
+        return handler(stream; kw...)
+    end
 end
+
+HTTP.@client (testrequestlayer,) (teststreamlayer,)
 
 end

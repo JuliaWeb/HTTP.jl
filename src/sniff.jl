@@ -1,3 +1,5 @@
+const CodeUnits = Union{Vector{UInt8}, Base.CodeUnits}
+
 # compression detection
 const ZIP = UInt8[0x50, 0x4b, 0x03, 0x04]
 const GZIP = UInt8[0x1f, 0x8b, 0x08]

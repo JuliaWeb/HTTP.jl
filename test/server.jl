@@ -27,7 +27,7 @@ end
         write(http, request.response.body)
     end
 
-    server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
+    server = Sockets.listen(ip"127.0.0.1", port)
     tsk = @async HTTP.listen(handler, "127.0.0.1", port; server=server)
     sleep(3.0)
     @test !istaskdone(tsk)
@@ -37,12 +37,12 @@ end
     sleep(0.5)
     @test istaskdone(tsk)
 
-    server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
+    server = Sockets.listen(ip"127.0.0.1", port)
     tsk = @async HTTP.listen(handler, "127.0.0.1", port; server=server)
 
     handler2 = HTTP.Handlers.RequestHandlerFunction(req->HTTP.Response(200, req.body))
 
-    server2 = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port+100))
+    server2 = Sockets.listen(ip"127.0.0.1", port+100)
     tsk2 = @async HTTP.serve(handler2, "127.0.0.1", port+100; server=server2)
     sleep(0.5)
     @test !istaskdone(tsk)
@@ -66,7 +66,6 @@ end
     # large headers
     tcp = Sockets.connect(ip"127.0.0.1", port)
     x = "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n";
-    @show length(x)
     write(tcp, "GET / HTTP/1.1\r\n$(repeat("Foo: Bar\r\n", 10000))\r\n")
     sleep(0.1)
     try
@@ -129,7 +128,7 @@ end
 
     # keep-alive vs. close: issue #81
     port += 1
-    server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), port))
+    server = Sockets.listen(ip"127.0.0.1", port)
     tsk = @async HTTP.listen(hello, "127.0.0.1", port; server=server, verbose=true)
     sleep(0.5)
     @test !istaskdone(tsk)
@@ -267,7 +266,7 @@ end
 @testset "on_shutdown" begin
     @test HTTP.Servers.shutdown(nothing) === nothing
 
-    IOserver = Sockets.listen(Sockets.InetAddr(parse(IPAddr, "127.0.0.1"), 8052))
+    IOserver = Sockets.listen(ip"127.0.0.1", 8052)
 
     # Shutdown adds 1
     TEST_COUNT = Ref(0)
@@ -349,7 +348,7 @@ end # @testset
     logs = with_testserver(combined_logfmt) do
         HTTP.get("http://localhost:32612", ["Referer" => "julialang.org"])
         HTTP.get("http://localhost:32612/index.html")
-        useragent = HTTP.MessageRequest.USER_AGENT[]
+        useragent = HTTP.DefaultHeadersRequest.USER_AGENT[]
         HTTP.setuseragent!(nothing)
         HTTP.get("http://localhost:32612/index.html?a=b")
         HTTP.setuseragent!(useragent)

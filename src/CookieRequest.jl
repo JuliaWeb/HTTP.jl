@@ -1,11 +1,9 @@
 module CookieRequest
 
 import ..Dates
-import ..Layer, ..request
 using URIs
 using ..Cookies
-using ..Messages: ascii_lc_isequal
-using ..Pairs: getkv, setkv
+using ..Messages: Request, ascii_lc_isequal, header, setheader
 import ..@debug, ..DEBUG_LEVEL, ..access_threaded
 
 const default_cookiejar = Dict{String, Set{Cookie}}[]
@@ -15,38 +13,47 @@ function __init__()
     return
 end
 
+export cookielayer
+
 """
-    request(CookieLayer, method, ::URI, headers, body) -> HTTP.Response
+    cookielayer(req) -> HTTP.Response
 
 Add locally stored Cookies to the request headers.
 Store new Cookies found in the response headers.
 """
-abstract type CookieLayer{Next <: Layer} <: Layer{Next} end
-export CookieLayer
-
-function request(::Type{CookieLayer{Next}},
-                 method::String, url::URI, headers, body;
-                 cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}}=Dict{String, String}(),
-                 cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar),
-                 kw...) where {Next}
-
-    hostcookies = get!(cookiejar, url.host, Set{Cookie}())
-
-    cookiestosend = getcookies(hostcookies, url)
-    if !(cookies isa Bool)
-        for (name, value) in cookies
-            push!(cookiestosend, Cookie(name, value))
+function cookielayer(handler)
+    return function(req::Request; cookies=true, cookiejar::Dict{String, Set{Cookie}}=access_threaded(Dict{String, Set{Cookie}}, default_cookiejar), kw...)
+        if cookies === true || (cookies isa AbstractDict && !isempty(cookies))
+            url = req.url
+            hostcookies = get!(cookiejar, url.host, Set{Cookie}())
+            cookiestosend = getcookies(hostcookies, url)
+            if !(cookies isa Bool)
+                for (name, value) in cookies
+                    push!(cookiestosend, Cookie(name, value))
+                end
+            end
+            if !isempty(cookiestosend)
+                existingcookie = header(req.headers, "Cookie")
+                if existingcookie != "" && get(req.context, :includedCookies, nothing) !== nothing
+                    # this is a redirect where we previously included cookies
+                    # we want to filter those out to avoid duplicate cookie sending
+                    # and the case where a cookie was set to expire from the 1st request
+                    previouscookies = Cookies.readcookies(req.headers, "")
+                    previouslyincluded = req.context[:includedCookies]
+                    filtered = filter(x -> !(x.name in previouslyincluded), previouscookies)
+                    existingcookie = stringify("", filtered)
+                end
+                setheader(req.headers, "Cookie" => stringify(existingcookie, cookiestosend))
+                req.context[:includedCookies] = map(x -> x.name, cookiestosend)
+            end
+            res = handler(req; kw...)
+            setcookies(hostcookies, url.host, res.headers)
+            return res
+        else
+            # skip
+            return handler(req; kw...)
         end
     end
-    if !isempty(cookiestosend)
-        setkv(headers, "Cookie", stringify(getkv(headers, "Cookie", ""), cookiestosend))
-    end
-
-    res = request(Next, method, url, headers, body; kw...)
-
-    setcookies(hostcookies, url.host, res.headers)
-
-    return res
 end
 
 function getcookies(cookies, url)

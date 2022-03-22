@@ -1,5 +1,8 @@
-using ..TestRequest
+module TestClient
+
 using HTTP
+include(joinpath(dirname(pathof(HTTP)), "../test/resources/TestRequest.jl"))
+using .TestRequest
 using Sockets
 using JSON
 using Test
@@ -8,10 +11,10 @@ using URIs
 status(r) = r.status
 @testset "Custom HTTP Stack" begin
    @testset "Low-level Request" begin
-        custom_stack = insert(stack(), StreamLayer, TestLayer)
-        result = request(custom_stack, "GET", "https://httpbin.org/ip")
-
+        wasincluded = Ref(false)
+        result = TestRequest.get("https://httpbin.org/ip"; httptestlayer=wasincluded)
         @test status(result) == 200
+        @test wasincluded[]
     end
 end
 
@@ -51,7 +54,9 @@ end
         @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{\"foo\":\"bar\",\"hey\":\"sailor\"}}"
 
         r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
-        @test isempty(JSON.parse(String(r.body))["cookies"])
+        cookies = JSON.parse(String(r.body))["cookies"]
+        @test length(cookies) == 1
+        @test cookies["foo"] == "bar"
     end
 
     @testset "Client Streaming Test" begin
@@ -345,7 +350,7 @@ end
             HTTP.startwrite(http)
             HTTP.write(http, sprint(JSON.print, data))
         end
-        old_user_agent = HTTP.MessageRequest.USER_AGENT[]
+        old_user_agent = HTTP.DefaultHeadersRequest.USER_AGENT[]
         default_user_agent = "HTTP.jl/$VERSION"
         # Default values
         HTTP.setuseragent!(default_user_agent)
@@ -377,7 +382,7 @@ import NetworkOptions, MbedTLS
     # Set up server with self-signed cert
     server = listen(IPv4(0), 8443)
     try
-        cert, key = joinpath.(@__DIR__, "resources", ("cert.pem", "key.pem"))
+        cert, key = joinpath.(dirname(pathof(HTTP)), "../test", "resources", ("cert.pem", "key.pem"))
         sslconfig = MbedTLS.SSLConfig(cert, key)
         tsk = @async HTTP.listen("0.0.0.0", 8443; server=server, sslconfig=sslconfig) do http
             HTTP.setstatus(http, 200)
@@ -489,3 +494,5 @@ end
         end
     end
 end
+
+end # module
