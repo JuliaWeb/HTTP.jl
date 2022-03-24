@@ -3,7 +3,26 @@ using HTTP
 import HTTP.MultiPartParsing: find_multipart_boundary, find_multipart_boundaries, find_header_boundary, parse_multipart_chunk, parse_multipart_body, parse_multipart_form
 
 function generate_test_body()
-    Vector{UInt8}("----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"namevalue\"; filename=\"multipart.txt\"\r\nContent-Type: text/plain\r\n\r\nnot much to say\n\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"key1\"\r\n\r\n1\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"key2\"\r\n\r\nkey the second\r\n----------------------------918073721150061572809433\r\nContent-Disposition: form-data; name=\"namevalue2\"; filename=\"multipart-leading-newline.txt\"\r\nContent-Type: text/plain\r\n\r\n\nfile with leading newline\n\r\n----------------------------918073721150061572809433--\r\n")
+    Vector{UInt8}("""----------------------------918073721150061572809433\r
+    Content-Disposition: form-data; name="namevalue"; filename="multipart.txt"\r
+    Content-Type: text/plain\r
+    \r
+    not much to say\n\r
+    ----------------------------918073721150061572809433\r
+    Content-Disposition: form-data; name="key1"\r
+    \r
+    1\r
+    ----------------------------918073721150061572809433\r
+    Content-Disposition: form-data; name="key2"\r
+    \r
+    key the second\r
+    ----------------------------918073721150061572809433\r
+    Content-Disposition: form-data; name="namevalue2"; filename="multipart-leading-newline.txt"\r
+    Content-Type: text/plain\r
+    \r
+    \nfile with leading newline\n\r
+    ----------------------------918073721150061572809433--\r
+    """)
 end
 
 function generate_test_request()
@@ -83,7 +102,7 @@ end
 
     @testset "parse_multipart_form" begin
         @test HTTP.parse_multipart_form(generate_non_multi_test_request()) === nothing
-        
+
         multiparts = HTTP.parse_multipart_form(generate_test_request())
         @test 4 == length(multiparts)
 
