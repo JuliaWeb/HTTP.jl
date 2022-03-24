@@ -21,6 +21,11 @@ function generate_test_body()
     Content-Type: text/plain\r
     \r
     \nfile with leading newline\n\r
+    ----------------------------918073721150061572809433\r
+    Content-Disposition: form-data; name="json_file1"; filename="my-json-file-1.json"\r
+    Content-Type: application/json\r
+    \r
+    {"data": ["this is json data"]}\r
     ----------------------------918073721150061572809433--\r
     """)
 end
@@ -93,8 +98,13 @@ end
         @test (startIndex + endIndexOffset) == endIndex
 
         (isTerminatingDelimiter, startIndex, endIndex) = find_multipart_boundary(body, delimiter, start = startIndex + 3)
-        @test isTerminatingDelimiter
+        @test !isTerminatingDelimiter
         @test 600 == startIndex
+        @test (startIndex + endIndexOffset) == endIndex
+
+        (isTerminatingDelimiter, startIndex, endIndex) = find_multipart_boundary(body, delimiter, start = startIndex + 3)
+        @test isTerminatingDelimiter
+        @test 804 == startIndex
         # +2 because of the two additional '--' characters
         @test (startIndex + endIndexOffset + 2) == endIndex
     end
@@ -104,7 +114,7 @@ end
         @test HTTP.parse_multipart_form(generate_non_multi_test_request()) === nothing
 
         multiparts = HTTP.parse_multipart_form(generate_test_request())
-        @test 4 == length(multiparts)
+        @test 5 == length(multiparts)
 
         @test "multipart.txt" === multiparts[1].filename
         @test "namevalue" === multiparts[1].name
@@ -125,5 +135,10 @@ end
         @test "namevalue2" === multiparts[4].name
         @test "text/plain" === multiparts[4].contenttype
         @test "\nfile with leading newline\n" === String(read(multiparts[4].data))
+
+        @test "my-json-file-1.json" === multiparts[5].filename
+        @test "json_file1" === multiparts[5].name
+        @test_broken "application/json" === multiparts[5].contenttype
+        @test """{"data": ["this is json data"]}""" === String(read(multiparts[5].data))
     end
 end
