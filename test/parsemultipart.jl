@@ -42,7 +42,7 @@ function generate_test_request()
         "Accept-Encoding" => "gzip, deflate",
         "Accept-Encoding" => "gzip, deflate",
         "Content-Type" => "multipart/form-data; boundary=--------------------------918073721150061572809433",
-        "Content-Length" => "657",
+        "Content-Length" => "861",
         "Connection" => "keep-alive",
     ]
 
@@ -58,12 +58,25 @@ function generate_non_multi_test_request()
         "Host" => "localhost:8888",
         "Accept-Encoding" => "gzip, deflate",
         "Accept-Encoding" => "gzip, deflate",
-        "Content-Length" => "657",
+        "Content-Length" => "0",
         "Connection" => "keep-alive",
     ]
 
     HTTP.Request("POST", "/", headers, Vector{UInt8}())
 end
+
+function generate_test_response()
+    headers = [
+        "Date" => "Fri, 25 Mar 2022 14:16:21 GMT",
+        "Transfer-Encoding" => "chunked",
+        "Content-Type" => "multipart/form-data; boundary=--------------------------918073721150061572809433",
+        "Content-Length" => "861",
+        "Connection" => "keep-alive",
+    ]
+
+    HTTP.Response(200, headers, body=generate_test_body())
+end
+
 
 @testset "parse multipart form-data" begin
     @testset "find_multipart_boundary" begin
@@ -112,10 +125,40 @@ end
     end
 
 
-    @testset "parse_multipart_form" begin
+    @testset "parse_multipart_form request" begin
         @test HTTP.parse_multipart_form(generate_non_multi_test_request()) === nothing
 
         multiparts = HTTP.parse_multipart_form(generate_test_request())
+        @test 5 == length(multiparts)
+
+        @test "multipart.txt" === multiparts[1].filename
+        @test "namevalue" === multiparts[1].name
+        @test "text/plain" === multiparts[1].contenttype
+        @test "not much to say\n" === String(read(multiparts[1].data))
+
+        @test multiparts[2].filename === nothing
+        @test "key1" === multiparts[2].name
+        @test "text/plain" === multiparts[2].contenttype
+        @test "1" === String(read(multiparts[2].data))
+
+        @test multiparts[3].filename === nothing
+        @test "key2" === multiparts[3].name
+        @test "text/plain" === multiparts[3].contenttype
+        @test "key the second" === String(read(multiparts[3].data))
+
+        @test "multipart-leading-newline.txt" === multiparts[4].filename
+        @test "namevalue2" === multiparts[4].name
+        @test "text/plain" === multiparts[4].contenttype
+        @test "\nfile with leading newline\n" === String(read(multiparts[4].data))
+
+        @test "my-json-file-1.json" === multiparts[5].filename
+        @test "json_file1" === multiparts[5].name
+        @test_broken "application/json" === multiparts[5].contenttype
+        @test """{"data": ["this is json data"]}""" === String(read(multiparts[5].data))
+    end
+
+    @testset "parse_multipart_form response" begin
+        multiparts = HTTP.parse_multipart_form(generate_test_response())
         @test 5 == length(multiparts)
 
         @test "multipart.txt" === multiparts[1].filename
