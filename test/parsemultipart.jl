@@ -3,31 +3,33 @@ using HTTP
 import HTTP.MultiPartParsing: find_multipart_boundary, find_multipart_boundaries, find_header_boundary, parse_multipart_chunk, parse_multipart_body, parse_multipart_form
 
 function generate_test_body()
-    Vector{UInt8}("""----------------------------918073721150061572809433\r
-    Content-Disposition: form-data; name="namevalue"; filename="multipart.txt"\r
-    Content-Type: text/plain\r
-    \r
-    not much to say\n\r
-    ----------------------------918073721150061572809433\r
-    Content-Disposition: form-data; name="key1"\r
-    \r
-    1\r
-    ----------------------------918073721150061572809433\r
-    Content-Disposition: form-data; name="key2"\r
-    \r
-    key the second\r
-    ----------------------------918073721150061572809433\r
-    Content-Disposition: form-data; name="namevalue2"; filename="multipart-leading-newline.txt"\r
-    Content-Type: text/plain\r
-    \r
-    \nfile with leading newline\n\r
-    ----------------------------918073721150061572809433\r
-    Content-Disposition: form-data; name="json_file1"; filename="my-json-file-1.json"\r
-    Content-Type: application/json\r
-    \r
-    {"data": ["this is json data"]}\r
-    ----------------------------918073721150061572809433--\r
-    """)
+    Vector{UInt8}(join([
+        "----------------------------918073721150061572809433",
+        "Content-Disposition: form-data; name=\"namevalue\"; filename=\"multipart.txt\"",
+        "Content-Type: text/plain",
+        "",
+        "not much to say\n",
+        "----------------------------918073721150061572809433",
+        "Content-Disposition: form-data; name=\"key1\"",
+        "",
+        "1",
+        "----------------------------918073721150061572809433",
+        "Content-Disposition: form-data; name=\"key2\"",
+        "",
+        "key the second",
+        "----------------------------918073721150061572809433",
+        "Content-Disposition: form-data; name=\"namevalue2\"; filename=\"multipart-leading-newline.txt\"",
+        "Content-Type: text/plain",
+        "",
+        "\nfile with leading newline\n",
+        "----------------------------918073721150061572809433",
+        "Content-Disposition: form-data; name=\"json_file1\"; filename=\"my-json-file-1.json\"",
+        "Content-Type: application/json",
+        "",
+        "{\"data\": [\"this is json data\"]}",
+        "----------------------------918073721150061572809433--",
+        "",
+    ], "\r\n"))
 end
 
 function generate_test_request()
