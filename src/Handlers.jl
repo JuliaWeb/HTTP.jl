@@ -5,6 +5,13 @@ export serve, Router, register!
 using URIs
 using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets
 
+"""
+    streamhandler(request_handler) -> stream handler
+
+Middleware that takes a request handler and returns a stream handler. Used by default
+in `HTTP.serve` to take the user-provided request handler and process the `Stream`
+from `HTTP.listen` and pass the parsed `Request` to the handler.
+"""
 function streamhandler(handler)
     return function(stream::Stream)
         request::Request = stream.message
@@ -18,6 +25,21 @@ function streamhandler(handler)
     end
 end
 
+"""
+    HTTP.serve(f, host, port; stream::Bool=false, kw...)
+
+Start a server on the given host and port; for each incoming request, call the
+given handler function `f`, which should be of the form `req::HTTP.Request -> HTTP.Response`.
+If `stream` is true, the handler function should be of the form `stream::HTTP.Stream -> Nothing`.
+Accepts all the same keyword arguments (and passes them along) to [`HTTP.listen`](@ref), including:
+  * `sslconfig`: custom `SSLConfig` to support ssl connections
+  * `tcpisvalid`: custom function to validate tcp connections
+  * `server`: a server `Socket` that a user can manage (closing listening, etc.)
+  * `reuseaddr`: whether another server can listen on the same host/port (unix only)
+  * `max_connections`: max number of simultaneous connections allowed
+  * `connection_count`: a `Ref{Int}` to keep track of currently open connections
+  * `readtimeout`: time in seconds (integer) that the server should wait for a request to be sent
+"""
 function serve(f, host=Sockets.localhost, port=8081; stream::Bool=false, kw...)
     return Servers.listen(stream ? f : streamhandler(f), host, port; kw...)
 end
@@ -206,6 +228,17 @@ function Base.match(node::Node, params, method, segments, i)
     return anymissing ? missing : nothing
 end
 
+"""
+    HTTP.Router(_404, _405)
+
+Define a router object that maps incoming requests by path to registered routes and
+associated handlers. Paths can be registered using [`HTTP.register!`](@ref). The router
+object itself is a "request handler" that can be called like:
+```
+r = HTTP.Router()
+resp = r(reqest)
+```
+"""
 struct Router{T, S}
     _404::T
     _405::S
@@ -213,6 +246,21 @@ struct Router{T, S}
 end
 
 Router(_404=req -> Response(404), _405=req -> Response(405)) = Router(_404, _405, Node())
+
+"""
+    HTTP.register!(r::Router, [method,] path, handler)
+
+Register a handler function that should be called when an incoming request matches `path`
+and the optionally provided `method` (if not provided, any method is allowed). Can be used
+to dynamically register routes.
+The following path types are allowed for matching:
+  * `/api/widgets`: exact match of static strings
+  * `/api/*/owner`: single `*` to wildcard match any string for a single segment
+  * `/api/widget/{id}`: Define a path variable `id` that matches any valued provided for this segment; path variables are available in the request context like `req.context[:params]["id"]`
+  * `/api/widget/{id:[0-9]+}`: Define a path variable `id` that only matches integers for this segment
+  * `/api/**`: double wildcard matches any number of trailing segments in the request path; must be the last segment in the path
+"""
+function register! end
 
 function register!(r::Router, method, path, handler)
     segments = map(segment, split(path, '/'; keepempty=false))
