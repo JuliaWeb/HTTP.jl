@@ -331,7 +331,7 @@ function request(method, url, h=Header[], b=nobody;
 end
 
 const STREAM_LAYERS = [timeoutlayer, exceptionlayer, debuglayer]
-const REQUEST_LAYERS = [messagelayer, redirectlayer, defaultheaderslayer, basicauthlayer, contenttypedetectionlayer, cookielayer, retrylayer, canonicalizelayer]
+const REQUEST_LAYERS = [redirectlayer, defaultheaderslayer, basicauthlayer, contenttypedetectionlayer, cookielayer, retrylayer, canonicalizelayer]
 
 pushlayer!(layer; request::Bool=true) = push!(request ? REQUEST_LAYERS : STREAM_LAYERS, layer)
 pushfirstlayer!(layer; request::Bool=true) = pushfirst!(request ? REQUEST_LAYERS : STREAM_LAYERS, layer)
@@ -349,7 +349,7 @@ function stack(
     # request layers
     # messagelayer must be the 1st/outermost layer to convert initial args to Request
     layers3 = foldr((x, y) -> x(y), requestlayers; init=connectionlayer(layers2))
-    return foldr((x, y) -> x(y), REQUEST_LAYERS; init=layers3)
+    return messagelayer(foldr((x, y) -> x(y), REQUEST_LAYERS; init=layers3))
 end
 
 function request(stack::Base.Callable, method, url, h=Header[], b=nobody, q=nothing;
