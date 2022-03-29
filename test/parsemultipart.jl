@@ -33,6 +33,8 @@ function generate_test_body()
 end
 
 function generate_test_request()
+    body = generate_test_body()
+    
     headers = [
         "User-Agent" => "PostmanRuntime/7.15.2",
         "Accept" => "*/*",
@@ -42,11 +44,11 @@ function generate_test_request()
         "Accept-Encoding" => "gzip, deflate",
         "Accept-Encoding" => "gzip, deflate",
         "Content-Type" => "multipart/form-data; boundary=--------------------------918073721150061572809433",
-        "Content-Length" => "861",
+        "Content-Length" => string(length(body)),
         "Connection" => "keep-alive",
     ]
 
-    HTTP.Request("POST", "/", headers, generate_test_body())
+    HTTP.Request("POST", "/", headers, body)
 end
 
 function generate_non_multi_test_request()
@@ -66,15 +68,17 @@ function generate_non_multi_test_request()
 end
 
 function generate_test_response()
+    body = generate_test_body()
+
     headers = [
         "Date" => "Fri, 25 Mar 2022 14:16:21 GMT",
         "Transfer-Encoding" => "chunked",
         "Content-Type" => "multipart/form-data; boundary=--------------------------918073721150061572809433",
-        "Content-Length" => "861",
+        "Content-Length" => string(length(body)),
         "Connection" => "keep-alive",
     ]
 
-    HTTP.Response(200, headers, body=generate_test_body())
+    HTTP.Response(200, headers, body=body)
 end
 
 
