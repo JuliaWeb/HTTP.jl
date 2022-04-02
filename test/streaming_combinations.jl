@@ -33,7 +33,7 @@ data_producers = [
     :random_packets_and_delays => http -> begin
         for i in 1:packet_count
             sleep(rand(1:300)/1000)
-            send_chunk(http, rand(10:10000)
+            send_chunk(http, rand(10:10000))
         end
     end
 ]
@@ -92,7 +92,7 @@ end
 send_small_chunk(http, 10)
 send_large_chunk(http, 1000)
 
-send_chunk(http, size)
+send_chunk(http, size) = begin
     chunk = IOBuffer()
     write(chunk, timestamp(), "\n")
     while size > 0
