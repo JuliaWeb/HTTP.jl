@@ -92,7 +92,7 @@ end
 send_small_chunk(http, 10)
 send_large_chunk(http, 1000)
 
-send_chunk(http, size) = begin
+function send_chunk(http, size)
     chunk = IOBuffer()
     write(chunk, timestamp(), "\n")
     while size > 0
