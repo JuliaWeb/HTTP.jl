@@ -77,7 +77,7 @@ HTTP.listen("127.0.0.1", 8080) do http::HTTP.Stream
     in, idlef,
     cn, closef = popfirst!(combinations)
 
-    name = "$p1n, $p2n, $in and $cn")
+    name = "$p1n, $p2n, $in and $cn"
     println(name)
 
     HTTP.setheader(http, "x-test-cobination" => name)
