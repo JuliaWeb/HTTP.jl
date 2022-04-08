@@ -386,7 +386,7 @@ field_name_isequal(a, b) = ascii_lc_isequal(a, b)
 Get header value for `key` (case-insensitive).
 """
 header(m::Message, k, d="") = header(m.headers, k, d)
-header(h::Headers, k::AbstractString, d::AbstractString="") =
+header(h::Headers, k::AbstractString, d="") =
     getbyfirst(h, k, k => d, field_name_isequal)[2]
 
 """

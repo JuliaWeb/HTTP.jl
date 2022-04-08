@@ -83,6 +83,12 @@ using JSON
         @test filter(x->first(x) == "Set-Cookie", req.headers) == ["Set-Cookie" => "A", "Set-Cookie" => "B"]
     end
 
+    @testset "Header default" begin
+        @test !hasheader(req, "Null")
+        @test header(req, "Null") == ""
+        @test header(req, "Null", nothing) === nothing
+    end
+
     @testset "HTTP Version" begin
         @test Messages.httpversion(req) == "HTTP/1.1"
         @test Messages.httpversion(res) == "HTTP/1.1"
