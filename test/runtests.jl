@@ -1,7 +1,7 @@
 using Test, HTTP, JSON
 
 const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
-include("resources/TestRequest.jl")
+include(joinpath(dir, "resources/TestRequest.jl"))
 
 @testset "HTTP" begin
     for f in [
@@ -15,13 +15,12 @@ include("resources/TestRequest.jl")
               "cookies.jl",
               "parser.jl",
               "loopback.jl",
-              "websockets.jl",
+              "websockets/deno_client/server.jl",
+              "websockets/websockets.jl",
               "messages.jl",
               "handlers.jl",
               "server.jl",
               "async.jl",
-              "aws4.jl",
-              "insert_layers.jl",
               "mwe.jl",
              ]
         file = joinpath(dir, f)

@@ -1,3 +1,8 @@
+module TestCookies
+
+using HTTP
+using Sockets, Test
+
 @testset "Cookies" begin
     c = HTTP.Cookies.Cookie()
     @test c.name == ""
@@ -133,4 +138,45 @@
             @test HTTP.Cookies.readcookies(h, filter) == cookies
         end
     end
+    @testset "Set-Cookie casing" begin
+        server = Sockets.listen(Sockets.localhost, 8080)
+        tsk = @async HTTP.listen(Sockets.localhost, 8080; server=server) do http
+            t = http.message.target
+            HTTP.setstatus(http, 200)
+            if t == "/set-cookie"
+                HTTP.setheader(http, "set-cookie" => "cookie=lc_cookie")
+            elseif t == "/Set-Cookie"
+                HTTP.setheader(http, "Set-Cookie" => "cookie=cc_cookie")
+            elseif t == "/SET-COOKIE"
+                HTTP.setheader(http, "SET-COOKIE" => "cookie=uc_cookie")
+            elseif t == "/SeT-CooKiE"
+                HTTP.setheader(http, "SeT-CooKiE" => "cookie=spongebob_cookie")
+            elseif t =="/cookie"
+                HTTP.setheader(http, "X-Cookie" => HTTP.header(http, "Cookie"))
+            end
+            HTTP.startwrite(http)
+        end
+
+        cookiejar = Dict{String,Set{HTTP.Cookies.Cookie}}()
+        HTTP.get("http://localhost:8080/set-cookie"; cookies=true, cookiejar=cookiejar)
+        r = HTTP.get("http://localhost:8080/cookie"; cookies=true, cookiejar=cookiejar)
+        @test HTTP.header(r, "X-Cookie") == "cookie=lc_cookie"
+        empty!(cookiejar)
+        HTTP.get("http://localhost:8080/Set-Cookie"; cookies=true, cookiejar=cookiejar)
+        r = HTTP.get("http://localhost:8080/cookie"; cookies=true, cookiejar=cookiejar)
+        @test HTTP.header(r, "X-Cookie") == "cookie=cc_cookie"
+        empty!(cookiejar)
+        HTTP.get("http://localhost:8080/SET-COOKIE"; cookies=true, cookiejar=cookiejar)
+        r = HTTP.get("http://localhost:8080/cookie"; cookies=true, cookiejar=cookiejar)
+        @test HTTP.header(r, "X-Cookie") == "cookie=uc_cookie"
+        empty!(cookiejar)
+        HTTP.get("http://localhost:8080/SeT-CooKiE"; cookies=true, cookiejar=cookiejar)
+        r = HTTP.get("http://localhost:8080/cookie"; cookies=true, cookiejar=cookiejar)
+        @test HTTP.header(r, "X-Cookie") == "cookie=spongebob_cookie"
+        close(server)
+        try; wait(tsk); catch e; end
+        @test istaskdone(tsk)
+    end
 end
+
+end # module

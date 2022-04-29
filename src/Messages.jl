@@ -55,7 +55,7 @@ Streaming of request and response bodies is handled by the
 module Messages
 
 export Message, Request, Response,
-       reset!, status, method, headers, uri, body,
+       reset!, status, method, headers, uri, body, resource,
        iserror, isredirect, ischunked, issafe, isidempotent,
        header, hasheader, headercontains, setheader, defaultheader!, appendheader,
        mkheaders, readheaders, headerscomplete,
@@ -66,6 +66,7 @@ export Message, Request, Response,
 
 import ..HTTP
 
+using ..URIs
 using ..Pairs
 using ..IOExtras
 using ..Parsers
@@ -74,6 +75,7 @@ import ..bytes
 
 include("ascii.jl")
 
+const nobody = UInt8[]
 const unknown_length = typemax(Int)
 
 abstract type Message end
@@ -103,26 +105,25 @@ Represents a HTTP Response Message.
 You can get each data with [`HTTP.status`](@ref), [`HTTP.headers`](@ref), and [`HTTP.body`](@ref).
 
 """
-mutable struct Response <: Message
+mutable struct Response{T} <: Message
     version::VersionNumber
     status::Int16
     headers::Headers
-    body::Vector{UInt8}
-    request::Message
+    body::T # Vector{UInt8} or IO
+    request::Union{Message, Nothing}
 
     @doc """
         Response(status::Int, headers=[]; body=UInt8[], request=nothing) -> HTTP.Response
     """
-    function Response(status::Integer, headers=[]; body=UInt8[], request=nothing)
-        r = new()
-        r.version = v"1.1"
-        r.status = status
-        r.headers = mkheaders(headers)
-        r.body = bytes(body)
-        if request !== nothing
-            r.request = request
-        end
-        return r
+    function Response(status::Integer, headers=[]; body=nobody, request=nothing)
+        b = isbytes(body) ? bytes(body) : something(body, nobody)
+        return new{typeof(b)}(
+            v"1.1",
+            status,
+            mkheaders(headers),
+            b,
+            request
+        )
     end
 end
 
@@ -140,11 +141,11 @@ HTTP.Response(200, headers; body = "Hello")
 Response() = Request().response
 
 Response(s::Int, body::AbstractVector{UInt8}) = Response(s; body=body)
-Response(s::Int, body::AbstractString) = Response(s, bytes(body))
+Response(s::Int, body::AbstractString) = Response(s; body=bytes(body))
 
-Response(body) = Response(200, body)
+Response(body) = Response(200; body=body)
 
-Base.convert(::Type{Response},s::AbstractString) = Response(s)
+Base.convert(::Type{Response}, s::AbstractString) = Response(s)
 
 function reset!(r::Response)
     r.version = v"1.1"
@@ -152,7 +153,7 @@ function reset!(r::Response)
     if !isempty(r.headers)
         empty!(r.headers)
     end
-    if !isempty(r.body)
+    if r.body isa Vector{UInt8} && !isempty(r.body)
         empty!(r.body)
     end
 end
@@ -179,6 +180,7 @@ Get body from a response.
 body(r::Response) = getfield(r, :body)
 
 # HTTP Request
+const Context = Dict{Symbol, Any}
 
 """
     Request <: Message
@@ -197,29 +199,30 @@ Represents a HTTP Request Message.
 - `headers::Vector{Pair{String,String}}`
    [RFC7230 3.2](https://tools.ietf.org/html/rfc7230#section-3.2)
 
-- `body::Vector{UInt8}`
+- `body::Union{Vector{UInt8}, IO}`
    [RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
 
 - `response`, the `Response` to this `Request`
-
-- `txcount`, number of times this `Request` has been sent (see RetryRequest.jl).
 
 - `parent`, the `Response` (if any) that led to this request
   (e.g. in the case of a redirect).
    [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
 
+- `context`, a `Dict{Symbol, Any}` store used by middleware to share state
+
 You can get each data with [`HTTP.method`](@ref), [`HTTP.headers`](@ref), [`HTTP.uri`](@ref), and [`HTTP.body`](@ref).
 
 """
-mutable struct Request <: Message
+mutable struct Request{T} <: Message
     method::String
     target::String
     version::VersionNumber
     headers::Headers
-    body::Vector{UInt8}
+    body::T # Vector{UInt8} or some kind of IO
     response::Response
-    txcount::Int
-    parent
+    url::URI
+    parent::Union{Response, Nothing}
+    context::Context
 end
 
 Request() = Request("", "")
@@ -230,19 +233,28 @@ Request() = Request("", "")
 Constructor for `HTTP.Request`.
 For daily use, see [`HTTP.request`](@ref).
 """
-function Request(method::String, target, headers=[], body=UInt8[];
-                 version=v"1.1", parent=nothing)
-    r = Request(method,
+function Request(method::String, target, headers=[], body=nobody;
+                 version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=Context())
+    b = isbytes(body) ? bytes(body) : body
+    r = Request{b === nothing ? Any : typeof(b)}(method,
                 target == "" ? "/" : target,
                 version,
                 mkheaders(headers),
-                bytes(body),
-                Response(0),
-                0,
-                parent)
+                b,
+                Response(0; body=responsebody),
+                url,
+                parent,
+                context)
     r.response.request = r
     return r
 end
+
+"""
+"request-target" per https://tools.ietf.org/html/rfc7230#section-5.3
+"""
+resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
+                            !isempty(uri.query)    ? "?" : "", uri.query,
+                            !isempty(uri.fragment) ? "#" : "", uri.fragment)
 
 mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
@@ -374,7 +386,7 @@ field_name_isequal(a, b) = ascii_lc_isequal(a, b)
 Get header value for `key` (case-insensitive).
 """
 header(m::Message, k, d="") = header(m.headers, k, d)
-header(h::Headers, k::AbstractString, d::AbstractString="") =
+header(h::Headers, k::AbstractString, d="") =
     getbyfirst(h, k, k => d, field_name_isequal)[2]
 
 """
@@ -584,7 +596,7 @@ body_show_max = 1000
 
 The first chunk of the Message Body (for display purposes).
 """
-bodysummary(bytes) = view(bytes, 1:min(length(bytes), body_show_max))
+bodysummary(body) = isbytes(body) ? view(bytes(body), 1:min(nbytes(body), body_show_max)) : "[Message Body was streamed]"
 
 function compactstartline(m::Message)
     b = IOBuffer()
@@ -610,8 +622,8 @@ function Base.show(io::IO, m::Message)
     summary = bodysummary(m.body)
     validsummary = isvalidstr(summary)
     validsummary && write(io, summary)
-    if !validsummary || length(m.body) > length(summary)
-        println(io, "\n⋮\n$(length(m.body))-byte body")
+    if !validsummary || something(nbytes(m.body), 0) > length(summary)
+        println(io, "\n⋮\n$(nbytes(m.body))-byte body")
     end
     print(io, "\"\"\"")
     return

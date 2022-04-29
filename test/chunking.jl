@@ -1,4 +1,6 @@
-using Test
+module TestChunking
+
+using Test, Sockets
 using HTTP, HTTP.IOExtras
 using BufferedStreams
 
@@ -15,10 +17,10 @@ using BufferedStreams
                    "data: 3$(repeat("x", sz))\n\n"
     split1 = 106
     split2 = 300
-
-    t = @async HTTP.listen("127.0.0.1", port) do http
+    server = Sockets.listen(ip"127.0.0.1", port)
+    t = @async HTTP.listen("127.0.0.1", port; server=server) do http
         startwrite(http)
-        tcp = http.stream.c.io
+        tcp = http.stream.io
 
         write(tcp, encoded_data[1:split1])
         flush(tcp)
@@ -59,4 +61,7 @@ using BufferedStreams
 
         @test r == decoded_data
     end
+    close(server)
 end
+
+end # module

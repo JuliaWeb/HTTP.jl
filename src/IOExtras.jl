@@ -10,25 +10,37 @@ module IOExtras
 using ..Sockets
 using MbedTLS: MbedException
 
-export bytes, ByteView, nobytes, CodeUnits, IOError, isioerror,
+export bytes, isbytes, nbytes, ByteView, nobytes, IOError, isioerror,
        startwrite, closewrite, startread, closeread,
        tcpsocket, localport, safe_getpeername
 
-
 """
-    bytes(s::String)
+    bytes(x)
 
-Get a `Vector{UInt8}`, a vector of bytes of a string.
+If `x` is "castable" to an `AbstractVector{UInt8}`, then an
+`AbstractVector{UInt8}` is returned; otherwise `x` is returned.
 """
 function bytes end
-bytes(s::SubArray{UInt8}) = unsafe_wrap(Array, pointer(s), length(s))
+bytes(s::AbstractVector{UInt8}) = s
+bytes(s::AbstractString) = codeunits(s)
+bytes(x) = x
 
-const CodeUnits = Union{Vector{UInt8}, Base.CodeUnits}
-bytes(s::Base.CodeUnits) = bytes(String(s))
-bytes(s::String) = codeunits(s)
-bytes(s::SubString{String}) = codeunits(s)
+"""whether `x` is "castable" to an `AbstractVector{UInt8}`; i.e. you can call `bytes(x)` if `isbytes(x)` === true"""
+isbytes(x) = x isa AbstractVector{UInt8} || x isa AbstractString
 
-bytes(s::Vector{UInt8}) = s
+"""
+    nbytes(x) -> Int
+
+Length in bytes of `x` if `x` is `isbytes(x)`.
+"""
+function nbytes end
+nbytes(x) = nothing
+nbytes(x::AbstractVector{UInt8}) = length(x)
+nbytes(x::AbstractString) = sizeof(x)
+nbytes(x::Vector{T}) where T <: AbstractString = sum(sizeof, x)
+nbytes(x::Vector{T}) where T <: AbstractVector{UInt8} = sum(length, x)
+nbytes(x::IOBuffer) = bytesavailable(x)
+nbytes(x::Vector{IOBuffer}) = sum(bytesavailable, x)
 
 """
     isioerror(exception)

@@ -1,15 +1,16 @@
 module RetryRequest
 
 import ..HTTP
-import ..Layer, ..request
 using ..Sockets
 using ..IOExtras
 using ..MessageRequest
 using ..Messages
 import ..@debug, ..DEBUG_LEVEL, ..sprintcompact
 
+export retrylayer
+
 """
-    request(RetryLayer, ::URI, ::Request, body) -> HTTP.Response
+    retrylayer(req) -> HTTP.Response
 
 Retry the request if it throws a recoverable exception.
 
@@ -21,27 +22,27 @@ Methods of `isrecoverable(e)` define which exception types lead to a retry.
 e.g. `HTTP.IOError`, `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 (if status is ``5xx`).
 """
-abstract type RetryLayer{Next <: Layer} <: Layer{Next} end
-export RetryLayer
+function retrylayer(handler)
+    return function(req::Request; retry::Bool=true, retries::Int=4, retry_non_idempotent::Bool=false, kw...)
+        if !retry || retries == 0
+            # no retry
+            return handler(req; kw...)
+        end
+        retry_request = Base.retry(handler,
+            delays=ExponentialBackOff(n = retries),
+            check=(s, ex)->begin
+                retry = isrecoverable(ex, req, retry_non_idempotent, get(req.context, :retrycount, 0))
+                if retry
+                    @debug 1 "🔄  Retry $ex: $(sprintcompact(req))"
+                    reset!(req.response)
+                else
+                    @debug 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
+                end
+                return s, retry
+            end)
 
-function request(::Type{RetryLayer{Next}}, url, req, body;
-                 retries::Int=4, retry_non_idempotent::Bool=false,
-                 kw...) where Next
-
-    retry_request = Base.retry(request,
-        delays=ExponentialBackOff(n = retries),
-        check=(s,ex)->begin
-            retry = isrecoverable(ex, req, retry_non_idempotent)
-            if retry
-                @debug 1 "🔄  Retry $ex: $(sprintcompact(req))"
-                reset!(req.response)
-            else
-                @debug 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
-            end
-            return s, retry
-        end)
-
-    retry_request(Next, url, req, body; kw...)
+        return retry_request(req; kw...)
+    end
 end
 
 isrecoverable(e) = false
@@ -51,11 +52,11 @@ isrecoverable(e::HTTP.StatusError) = e.status == 403 || # Forbidden
                                      e.status == 408 || # Timeout
                                      e.status >= 500    # Server Error
 
-isrecoverable(e, req, retry_non_idempotent) =
+isrecoverable(e, req, retry_non_idempotent, retrycount) =
     isrecoverable(e) &&
-    !(req.body === body_was_streamed) &&
-    !(req.response.body === body_was_streamed) &&
-    (retry_non_idempotent || req.txcount == 0 || isidempotent(req))
+    isbytes(req.body) &&
+    isbytes(req.response.body) &&
+    (retry_non_idempotent || retrycount == 0 || isidempotent(req))
     # "MUST NOT automatically retry a request with a non-idempotent method"
     # https://tools.ietf.org/html/rfc7230#section-6.3.1
 
@@ -66,8 +67,8 @@ function no_retry_reason(ex, req)
     print(buf, ", ",
         ex isa HTTP.StatusError ? "HTTP $(ex.status): " :
         !isrecoverable(ex) ?  "$ex not recoverable, " : "",
-        (req.body === body_was_streamed) ? "request streamed, " : "",
-        (req.response.body === body_was_streamed) ? "response streamed, " : "",
+        !isbytes(req.body) ? "request streamed, " : "",
+        !isbytes(req.response.body) ? "response streamed, " : "",
         !isidempotent(req) ? "$(req.method) non-idempotent" : "")
     return String(take!(buf))
 end

@@ -1,34 +1,28 @@
 module DebugRequest
 
-import ..Layer, ..request
+import ..DEBUG_LEVEL
 using ..IOExtras
-
-const live_mode = true
+import ..Streams: Stream
 
 include("IODebug.jl")
 
+export debuglayer
+
 """
-    request(DebugLayer, ::IO, ::Request, body) -> HTTP.Response
+    debuglayer(stream::Stream) -> HTTP.Response
 
 Wrap the `IO` stream in an `IODebug` stream and print Message data.
 """
-abstract type DebugLayer{Next <:Layer} <: Layer{Next} end
-export DebugLayer
-
-function request(::Type{DebugLayer{Next}}, io::IO, req, body; kw...) where Next
-    if !debug_mode_enabled()
-        error("""To enable debugging, set the environment variable "HTTP_DEBUG" to "true" and restart HTTP.jl""")
-    end
-
-    @static if live_mode
-        return request(Next, IODebug(io), req, body; kw...)
-    else
-        iod = IODebug(io)
-        try
-            return request(Next, iod, req, body; kw...)
-        finally
-            show_log(stdout, iod)
+function debuglayer(handler)
+    return function(stream::Stream; verbose::Int=0, kw...)
+        # if debugging, wrap stream.stream in IODebug
+        if verbose >= 3 || DEBUG_LEVEL[] >= 3
+            if !debug_mode_enabled()
+                error("""To enable debugging, set the environment variable "HTTP_DEBUG" to "true" and restart HTTP.jl""")
+            end
+            stream = Stream(stream.message, IODebug(stream.stream))
         end
+        return handler(stream; verbose=verbose, kw...)
     end
 end
 

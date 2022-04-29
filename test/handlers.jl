@@ -1,136 +1,67 @@
-using HTTP
-using Test
-import Base.==
-
-include("resources/FooRouter.jl")
-
-==(a::HTTP.Response,b::HTTP.Response) = (a.status  == b.status)    &&
-                                        (a.version == b.version)   &&
-                                        (a.headers == b.headers)   &&
-                                        (a.body    == b.body)
+using HTTP, Test
 
 @testset "Handlers" begin
-    @testset "FooRouter" begin
-        req = HTTP.Request()
-        req.target = "/test"
-        @test HTTP.handle(FooRouter.r, req) == HTTP.Response(200)
-    end
 
-    @testset "HTTP Router" begin
-        f = HTTP.Handlers.RequestHandlerFunction((req) -> HTTP.Response(200))
-        @test HTTP.handle(f, HTTP.Request()) == HTTP.Response(200)
+    r = HTTP.Router(_ -> 0, _ -> -1)
+    HTTP.register!(r, "/test", _ -> 1)
+    @test r(HTTP.Request("GET", "/test")) == 1
 
-        r = HTTP.Router()
-        @test isempty(r.routes)
-        @test HTTP.handle(r, HTTP.Request()) == HTTP.Response(404)
+    HTTP.register!(r, "/path/to/greatness", _ -> 2)
+    @test r(HTTP.Request("GET", "/path/to/greatness")) == 2
 
-        HTTP.@register(r, "/path/to/greatness", f)
-        req = HTTP.Request()
-        req.target = "/path/to/greatness"
-        @test HTTP.handle(r, req) == HTTP.Response(200)
+    HTTP.register!(r, "/next/path/to/greatness", _ -> 3)
+    @test r(HTTP.Request("GET", "/next/path/to/greatness")) == 3
 
-        p = "/next/path/to/greatness"
-        f2 = HTTP.Handlers.RequestHandlerFunction((req) -> HTTP.Response(201))
-        HTTP.@register(r, p, f2)
-        req = HTTP.Request()
-        req.target = "/next/path/to/greatness"
-        @test HTTP.handle(r, req) == HTTP.Response(201)
+    HTTP.register!(r, "GET", "/sget", _ -> 4)
+    HTTP.register!(r, "POST", "/spost", _ -> 5)
+    HTTP.register!(r, "POST", "/tpost", _ -> 6)
+    HTTP.register!(r, "GET", "/tpost", _ -> 7)
+    @test r(HTTP.Request("GET", "/sget")) == 4
+    @test r(HTTP.Request("POST", "/sget")) == -1
+    @test r(HTTP.Request("GET", "/spost")) == -1
+    @test r(HTTP.Request("POST", "/spost")) == 5
+    @test r(HTTP.Request("POST", "/tpost")) == 6
+    @test r(HTTP.Request("GET", "/tpost")) == 7
 
-        r = HTTP.Router()
-        HTTP.@register(r, "GET", "/sget", f)
-        HTTP.@register(r, "POST", "/spost", f)
-        HTTP.@register(r, "POST", "/tpost", f)
-        req = HTTP.Request("GET", "/sget")
-        @test HTTP.handle(r, req) == HTTP.Response(200)
-        req = HTTP.Request("POST", "/sget")
-        @test HTTP.handle(r, req) == HTTP.Response(404)
-        req = HTTP.Request("GET", "/spost")
-        @test HTTP.handle(r, req) == HTTP.Response(404)
-        req = HTTP.Request("POST", "/spost")
-        @test HTTP.handle(r, req) == HTTP.Response(200)
-        req = HTTP.Request("GET", "/tpost")
-        @test HTTP.handle(r, req) == HTTP.Response(404)
-        req = HTTP.Request("POST", "/tpost")
-        @test HTTP.handle(r, req) == HTTP.Response(200)
+    HTTP.register!(r, "/test/*", _ -> 8)
+    HTTP.register!(r, "/test/sarv/ghotra", _ -> 9)
+    HTTP.register!(r, "/test/*/ghotra/seven", _ -> 10)
 
-        r = HTTP.Router()
-        HTTP.@register(r, "/test", f)
-        HTTP.@register(r, "/test/*", f2)
-        f3 = HTTP.Handlers.RequestHandlerFunction((req) -> HTTP.Response(202))
-        HTTP.@register(r, "/test/sarv/ghotra", f3)
-        f4 = HTTP.Handlers.RequestHandlerFunction((req) -> HTTP.Response(203))
-        HTTP.@register(r, "/test/*/ghotra/seven", f4)
+    @test r(HTTP.Request("GET", "/test/sarv")) == 8
+    @test r(HTTP.Request("GET", "/test/sarv/ghotra")) == 9
+    @test r(HTTP.Request("GET", "/test/sarv/ghotra/seven")) == 10
+    @test r(HTTP.Request("GET", "/test/foo")) == 8
 
-        req = HTTP.Request()
-        req.target = "/test"
-        @test HTTP.handle(r, req) == HTTP.Response(200)
+    HTTP.register!(r, "/api/widgets/{id}", req -> req.context[:params]["id"])
+    @test r(HTTP.Request("GET", "/api/widgets/11")) == "11"
 
-        req.target = "/test/sarv"
-        @test HTTP.handle(r, req) == HTTP.Response(201)
+    HTTP.register!(r, "/api/widgets/{name}", req -> req.context[:params]["name"])
+    @test r(HTTP.Request("GET", "/api/widgets/11")) == "11"
 
-        req.target = "/test/sarv/ghotra"
-        @test HTTP.handle(r, req) == HTTP.Response(202)
+    HTTP.register!(r, "/api/widgets/acme/{id:[a-z]+}", req -> req.context[:params]["id"])
+    @test r(HTTP.Request("GET", "/api/widgets/acme/11")) == 0
+    @test r(HTTP.Request("GET", "/api/widgets/acme/abc")) == "abc"
 
-        req.target = "/test/sar/ghotra/seven"
-        @test HTTP.handle(r, req) == HTTP.Response(203)
-    end
+    HTTP.register!(r, "/test/**", _ -> 11)
+    @test r(HTTP.Request("GET", "/test/sarv")) == 8
+    @test r(HTTP.Request("GET", "/test/sarv/ghotra")) == 9
+    @test r(HTTP.Request("GET", "/test/sarv/ghotra/seven")) == 10
+    @test r(HTTP.Request("GET", "/test/foo")) == 8
+    @test r(HTTP.Request("GET", "/test/foo/foobar")) == 11
+    @test r(HTTP.Request("GET", "/test/foo/foobar/baz")) == 11
+    @test r(HTTP.Request("GET", "/test/foo/foobar/baz/sailor")) == 11
 
-    @testset "Deprecation tests" begin
-        f = HTTP.Handlers.RequestHandlerFunction((req) -> HTTP.Response(200))
-        @test HTTP.handle(f, HTTP.Request()) == HTTP.Response(200)
+    @test_throws ErrorException HTTP.register!(r, "/test/**/foo", _ -> 11)
 
-        r = HTTP.Router()
-        @test isempty(r.routes)
-        @test HTTP.handle(r, HTTP.Request()) == HTTP.Response(404)
+    HTTP.register!(r, "/api/widgets/{name:[a-z]+}/subwidgetsbyname", _ -> 12)
+    HTTP.register!(r, "/api/widgets/{id:[0-9]+}/subwidgetsbyid", _ -> 13)
+    HTTP.register!(r, "/api/widgets/{id}", _ -> 14)
+    HTTP.register!(r, "/api/widgets/{subId}/subwidget", _ -> 15)
+    HTTP.register!(r, "/api/widgets/{subName}/subwidgetname", _ -> 16)
+    @test r(HTTP.Request("GET", "/api/widgets/abc/subwidgetsbyname")) == 12
+    @test r(HTTP.Request("GET", "/api/widgets/123/subwidgetsbyid")) == 13
+    @test r(HTTP.Request("GET", "/api/widgets/234")) == 14
+    @test r(HTTP.Request("GET", "/api/widgets/abc/subwidget")) == 15
+    @test r(HTTP.Request("GET", "/api/widgets/abc/subwidgetname")) == 16
 
-        HTTP.@register(r, "/path/to/greatness", f)
-        req = HTTP.Request()
-        req.target = "/path/to/greatness"
-        @test HTTP.handle(r, req) == HTTP.Response(200)
-
-        p = "/next/path/to/greatness"
-        f2 = HTTP.Handlers.RequestHandlerFunction((req) -> HTTP.Response(201))
-        HTTP.@register(r, p, f2)
-        req = HTTP.Request()
-        req.target = "/next/path/to/greatness"
-        @test HTTP.handle(r, req) == HTTP.Response(201)
-
-        r = HTTP.Router()
-        HTTP.@register(r, "GET", "/sget", f)
-        HTTP.@register(r, "POST", "/spost", f)
-        HTTP.@register(r, "POST", "/tpost", f)
-        req = HTTP.Request("GET", "/sget")
-        @test HTTP.handle(r, req) == HTTP.Response(200)
-        req = HTTP.Request("POST", "/sget")
-        @test HTTP.handle(r, req) == HTTP.Response(404)
-        req = HTTP.Request("GET", "/spost")
-        @test HTTP.handle(r, req) == HTTP.Response(404)
-        req = HTTP.Request("POST", "/spost")
-        @test HTTP.handle(r, req) == HTTP.Response(200)
-        req = HTTP.Request("GET", "/tpost")
-        @test HTTP.handle(r, req) == HTTP.Response(404)
-        req = HTTP.Request("POST", "/tpost")
-        @test HTTP.handle(r, req) == HTTP.Response(200)
-
-        r = HTTP.Router()
-        HTTP.@register(r, "/test", f)
-        HTTP.@register(r, "/test/*", f2)
-        f3 = HTTP.Handlers.RequestHandlerFunction((req) -> HTTP.Response(202))
-        HTTP.@register(r, "/test/sarv/ghotra", f3)
-        f4 = HTTP.Handlers.RequestHandlerFunction((req) -> HTTP.Response(203))
-        HTTP.@register(r, "/test/*/ghotra/seven", f4)
-
-        req = HTTP.Request()
-        req.target = "/test"
-        @test HTTP.handle(r, req) == HTTP.Response(200)
-
-        req.target = "/test/sarv"
-        @test HTTP.handle(r, req) == HTTP.Response(201)
-
-        req.target = "/test/sarv/ghotra"
-        @test HTTP.handle(r, req) == HTTP.Response(202)
-
-        req.target = "/test/sar/ghotra/seven"
-        @test HTTP.handle(r, req) == HTTP.Response(203)
-    end
 end

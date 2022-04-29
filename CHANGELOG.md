@@ -5,6 +5,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- HTTP.jl no longer calls `close` on streams given with the `response_stream` keyword
+  argument to `HTTP.request` and friends. If you relied on this behavior you now have
+  to do it manually, e.g.
+  ```julia
+  io = ...
+  HTTP.request(...; response_stream = io)
+  close(io)
+  ```
+  ([#543], [#752], [#775]).
+### Removed
+- Support for "pipelined requests" have been removed in the client implementation. The
+  keyword arguments to `HTTP.request` related to this feature (`pipeline_limit` and
+  `reuse_limit`) are now ignored ([#783]).
+
+## [0.9.17] - 2021-11-17
+### Fixed
+- Correctly throw an `EOFError` if the connection is closed with remaining bytes
+  to be transferred ([#778], [#781]).
+
+## [0.9.16] - 2021-09-29
+See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverted.
+[#752] might be included in a future breaking release instead, see [#774].
+
+## [0.9.15] - 2021-09-27
+**Note:** This release have been pulled back since [#752] turned out to be breaking.
+### Changed
+- **Reverted in 0.9.16**
+  HTTP.jl no longer calls `close` on streams given with the `response_stream` keyword
+  argument to `HTTP.request` and friends. If it is required to close the stream after the
+  request you now have to do it manually, e.g.
+  ```julia
+  io = ...
+  HTTP.request(...; response_stream = io)
+  close(io)
+  ```
+  ([#543], [#752]).
+- The `Content-Type` header for requests with `HTTP.Form` bodies is now automatically
+  set also for `PUT` requests (just like `POST` requests) ([#770], [#740]).
+### Fixed
+- Fix faulty error messages from an internal macro ([#753]).
+- Silence ECONNRESET errors on more systems ([#547], [#763], [#764]).
+- Use `Content-Disposition` from original request in case of a 3xx response ([#760], [#761]).
+- Fix cookie handling to be case-insensitive for `Set-Cookie` headers ([#765], [#766]).
+
+## [0.9.14] - 2021-08-31
+### Changed
+- Improved memory use and performance of multipart parsing ([#745]).
+### Fixed
+- `HTTP.Response` now accept any `Integer` as the return status (not just `Int`) ([#734], [#742]).
+
+## [0.9.13] - 2021-08-01
+### Changed
+- The call stack now has a `TopLayer` inserted at the top to simplify adding new layers at
+  the top ([#737]).
 
 ## [0.9.12] - 2021-07-01
 ### Fixed
@@ -112,7 +167,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.12...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.17...HEAD
+[0.9.17]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.16...v0.9.17
+[0.9.16]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.15...v0.9.16
+[0.9.15]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.14...v0.9.15
+[0.9.14]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.13...v0.9.14
+[0.9.13]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.12...v0.9.13
 [0.9.12]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.11...v0.9.12
 [0.9.11]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.10...v0.9.11
 [0.9.10]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.9.9...v0.9.10
@@ -128,7 +188,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.9.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v0.8.19...v0.9.0
 
 
+[#543]: https://github.com/JuliaWeb/HTTP.jl/pull/543
 [#546]: https://github.com/JuliaWeb/HTTP.jl/pull/546
+[#547]: https://github.com/JuliaWeb/HTTP.jl/pull/547
 [#599]: https://github.com/JuliaWeb/HTTP.jl/pull/599
 [#601]: https://github.com/JuliaWeb/HTTP.jl/pull/601
 [#602]: https://github.com/JuliaWeb/HTTP.jl/pull/602
@@ -165,3 +227,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#725]: https://github.com/JuliaWeb/HTTP.jl/pull/725
 [#727]: https://github.com/JuliaWeb/HTTP.jl/pull/727
 [#730]: https://github.com/JuliaWeb/HTTP.jl/pull/730
+[#734]: https://github.com/JuliaWeb/HTTP.jl/pull/734
+[#737]: https://github.com/JuliaWeb/HTTP.jl/pull/737
+[#740]: https://github.com/JuliaWeb/HTTP.jl/pull/740
+[#742]: https://github.com/JuliaWeb/HTTP.jl/pull/742
+[#745]: https://github.com/JuliaWeb/HTTP.jl/pull/745
+[#752]: https://github.com/JuliaWeb/HTTP.jl/pull/752
+[#753]: https://github.com/JuliaWeb/HTTP.jl/pull/753
+[#760]: https://github.com/JuliaWeb/HTTP.jl/pull/760
+[#761]: https://github.com/JuliaWeb/HTTP.jl/pull/761
+[#763]: https://github.com/JuliaWeb/HTTP.jl/pull/763
+[#764]: https://github.com/JuliaWeb/HTTP.jl/pull/764
+[#765]: https://github.com/JuliaWeb/HTTP.jl/pull/765
+[#766]: https://github.com/JuliaWeb/HTTP.jl/pull/766
+[#770]: https://github.com/JuliaWeb/HTTP.jl/pull/770
+[#774]: https://github.com/JuliaWeb/HTTP.jl/pull/774
+[#775]: https://github.com/JuliaWeb/HTTP.jl/pull/775
+[#778]: https://github.com/JuliaWeb/HTTP.jl/pull/778
+[#781]: https://github.com/JuliaWeb/HTTP.jl/pull/781
+[#783]: https://github.com/JuliaWeb/HTTP.jl/pull/783

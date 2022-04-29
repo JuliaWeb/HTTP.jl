@@ -1,6 +1,6 @@
 module MultiPartParsing
 
-import ..access_threaded, ..Request, ..Multipart, ..payload
+import ..access_threaded, ..Message, ..Request, ..Multipart, ..payload
 using ..Parsers
 
 export parse_multipart_form
@@ -29,7 +29,7 @@ end
 Find the first and last index of the next boundary delimiting a part, and if
 the discovered boundary is the terminating boundary.
 """
-@inline function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::AbstractVector{UInt8}; start::Int=1)
+function find_multipart_boundary(bytes::AbstractVector{UInt8}, boundaryDelimiter::AbstractVector{UInt8}; start::Int=1)
     # The boundary delimiter line is prepended with two '-' characters
     # The boundary delimiter line starts on a new line, so must be preceded by a \r\n.
     # The boundary delimiter line ends with \r\n, and can have "optional linear whitespace" between
@@ -232,9 +232,9 @@ that the boundary delimiter does not need to have '-' characters, but a line usi
 the boundary delimiter will start with '--' and end in \r\n.
 [RFC2046 5.1](https://tools.ietf.org/html/rfc2046#section-5.1.1)
 """
-function parse_multipart_form(req::Request)::Union{Vector{Multipart}, Nothing}
+function parse_multipart_form(msg::Message)::Union{Vector{Multipart}, Nothing}
     # parse boundary from Content-Type
-    m = match(r"multipart/form-data; boundary=(.*)$", req["Content-Type"])
+    m = match(r"multipart/form-data; boundary=(.*)$", msg["Content-Type"])
     m === nothing && return nothing
 
     boundary_delimiter = m[1]
@@ -242,7 +242,7 @@ function parse_multipart_form(req::Request)::Union{Vector{Multipart}, Nothing}
     # [RFC2046 5.1.1](https://tools.ietf.org/html/rfc2046#section-5.1.1)
     length(boundary_delimiter) > 70 && error("boundary delimiter must not be greater than 70 characters")
 
-    return parse_multipart_body(payload(req), boundary_delimiter)
+    return parse_multipart_body(payload(msg), boundary_delimiter)
 end
 
 function __init__()

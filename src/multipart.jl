@@ -10,6 +10,7 @@ Base.eof(f::Form) = f.index > length(f.data)
 Base.isopen(f::Form) = false
 Base.close(f::Form) = nothing
 Base.length(f::Form) = sum(x->isa(x, IOStream) ? filesize(x) - position(x) : bytesavailable(x), f.data)
+IOExtras.nbytes(x::Form) = length(x)
 function Base.position(f::Form)
     index = f.index
     foreach(mark, f.data)

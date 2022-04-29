@@ -1,10 +1,11 @@
+module TestLoopback
+
 using Test
 using HTTP
 using HTTP.IOExtras
 using HTTP.Parsers
 using HTTP.Messages
 using HTTP.Sockets
-using HTTP.MessageRequest: bodylength
 
 mutable struct FunctionIO <: IO
     f::Function
@@ -42,7 +43,6 @@ Base.readavailable(lb::Loopback) = readavailable(lb.io)
 Base.unsafe_read(lb::Loopback, p::Ptr, n::Integer) = unsafe_read(lb.io, p, n)
 
 HTTP.IOExtras.tcpsocket(::Loopback) = Sockets.TCPSocket()
-HTTP.ConnectionPool.tcpstatus(c::HTTP.ConnectionPool.Connection{Loopback}) = "🤖 "
 
 lbreq(req, headers, body; method="GET", kw...) =
       HTTP.request(method, "http://test/$req", headers, body; config..., kw...)
@@ -157,6 +157,13 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
     return n
 end
 
+function HTTP.ConnectionPool.getconnection(::Type{Loopback},
+    host::AbstractString,
+    port::AbstractString;
+    kw...)::Loopback
+    return Loopback()
+end
+
 function async_test(m=["GET","GET","GET","GET","GET"];kw...)
     r1 = r2 = r3 = r4 = r5 = nothing
     t1 = time()
@@ -186,13 +193,6 @@ function async_test(m=["GET","GET","GET","GET","GET"];kw...)
     @test String(r5.body) == "Hello World! 5"
 
     return t2 - t1
-end
-
-function HTTP.ConnectionPool.getconnection(::Type{Loopback},
-                                           host::AbstractString,
-                                           port::AbstractString;
-                                           kw...)::Loopback
-    return Loopback()
 end
 
 @testset "loopback" begin
@@ -233,21 +233,21 @@ end
     end
 
     @testset "lbopen - Body - Delay" begin
-        body = nothing
-        body_sent = false
+        body = Ref{Any}(nothing)
+        body_sent = Ref(false)
         r = lbopen("delay10", []) do http
             @sync begin
                 @async begin
                     write(http, "Hello World!")
                     closewrite(http)
-                    body_sent = true
+                    body_sent[] = true
                 end
                 startread(http)
-                body = read(http)
+                body[] = read(http)
                 closeread(http)
             end
         end
-        @test String(body) == "Hello World!"
+        @test String(body[]) == "Hello World!"
     end
 
     # "If [the response] indicates the server does not wish to receive the
@@ -290,21 +290,20 @@ end
             FunctionIO(()->(sleep(0.1); " World!"))])
         @test String(r.body) == "Hello World!"
 
-        hello_sent = false
-        world_sent = false
+        hello_sent = Ref(false)
+        world_sent = Ref(false)
         @test_throws HTTP.StatusError begin
             r = lbreq("abort", [], [
-                FunctionIO(()->(hello_sent = true; sleep(0.1); "Hello")),
-                FunctionIO(()->(world_sent = true; " World!"))])
+                FunctionIO(()->(hello_sent[] = true; sleep(0.5); "Hello")),
+                FunctionIO(()->(world_sent[] = true; " World!"))])
         end
-        @test hello_sent
-        @test !world_sent
+        @test hello_sent[]
+        @test !world_sent[]
     end
 
     @testset "ASync - Pipeline limit = 0" begin
         server_events = []
         t = async_test(;pipeline_limit=0)
-        @show t
         if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
             @test server_events == [
                 "Request: GET /delay1 HTTP/1.1",
@@ -316,61 +315,6 @@ end
                 "Request: GET /delay4 HTTP/1.1",
                 "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
                 "Request: GET /delay5 HTTP/1.1",
-                "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
-        end
-    end
-
-    @testset "ASync - Pipeline limit = 1" begin
-        server_events = []
-        t = async_test(;pipeline_limit=1)
-        if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
-            @test server_events == [
-                "Request: GET /delay1 HTTP/1.1",
-                "Request: GET /delay2 HTTP/1.1",
-                "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
-                "Request: GET /delay3 HTTP/1.1",
-                "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
-                "Request: GET /delay4 HTTP/1.1",
-                "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
-                "Request: GET /delay5 HTTP/1.1",
-                "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
-                "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
-        end
-    end
-
-    @testset "ASync - Pipeline limit = 2" begin
-        server_events = []
-        t = async_test(;pipeline_limit=2)
-        if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
-            @test server_events == [
-                "Request: GET /delay1 HTTP/1.1",
-                "Request: GET /delay2 HTTP/1.1",
-                "Request: GET /delay3 HTTP/1.1",
-                "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
-                "Request: GET /delay4 HTTP/1.1",
-                "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
-                "Request: GET /delay5 HTTP/1.1",
-                "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
-                "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
-                "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
-        end
-    end
-
-    @testset "ASync - Pipeline limit = 3" begin
-        server_events = []
-        t = async_test(;pipeline_limit=3)
-        @show t
-        if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
-            @test server_events == [
-                "Request: GET /delay1 HTTP/1.1",
-                "Request: GET /delay2 HTTP/1.1",
-                "Request: GET /delay3 HTTP/1.1",
-                "Request: GET /delay4 HTTP/1.1",
-                "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
-                "Request: GET /delay5 HTTP/1.1",
-                "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
-                "Response: HTTP/1.1 200 OK <= (GET /delay3 HTTP/1.1)",
-                "Response: HTTP/1.1 200 OK <= (GET /delay4 HTTP/1.1)",
                 "Response: HTTP/1.1 200 OK <= (GET /delay5 HTTP/1.1)"]
         end
     end
@@ -378,7 +322,6 @@ end
     @testset "ASync - " begin
         server_events = []
         t = async_test()
-        @show t
         if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
             @test server_events == [
                 "Request: GET /delay1 HTTP/1.1",
@@ -405,47 +348,6 @@ end
             "Request: POST /delay1 HTTP/1.1",
             "Response: HTTP/1.1 200 OK <= (POST /delay1 HTTP/1.1)"]
     end
-# there were issues in travis testing for windows 32-bit where
-# the slowness causes these tests to be pretty unreliable; i.e.
-# the requests were still pipelined fine and in the correct order
-# but we just didn't see the right order of the server receiving all
-# three requests first then sending the 3 responses
-@static if Sys.WORD_SIZE == 64
-    @testset "ASync - " begin
-        server_events = []
-        t = async_test(["GET","GET","POST", "GET","GET"])
-        if !(server_events[1:6] == [
-            "Request: GET /delay1 HTTP/1.1",
-            "Request: GET /delay2 HTTP/1.1",
-            "Request: POST /delay3 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
-            "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
-            "Response: HTTP/1.1 200 OK <= (POST /delay3 HTTP/1.1)"] ||
-        server_events[1:6] == [
-            "Request: GET /delay1 HTTP/1.1",
-            "Request: GET /delay2 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
-            "Request: POST /delay3 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
-            "Response: HTTP/1.1 200 OK <= (POST /delay3 HTTP/1.1)"])
-            @show server_events
-        end
-        @test server_events[1:6] == [
-            "Request: GET /delay1 HTTP/1.1",
-            "Request: GET /delay2 HTTP/1.1",
-            "Request: POST /delay3 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
-            "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
-            "Response: HTTP/1.1 200 OK <= (POST /delay3 HTTP/1.1)"] ||
-        server_events[1:6] == [
-            "Request: GET /delay1 HTTP/1.1",
-            "Request: GET /delay2 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay1 HTTP/1.1)",
-            "Request: POST /delay3 HTTP/1.1",
-            "Response: HTTP/1.1 200 OK <= (GET /delay2 HTTP/1.1)",
-            "Response: HTTP/1.1 200 OK <= (POST /delay3 HTTP/1.1)"]
-    end
-
-    HTTP.ConnectionPool.closeall()
-end # @static
 end
+
+end # module
