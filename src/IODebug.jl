@@ -25,10 +25,10 @@ else
 
 end
 
-const DEBUG_MODE = get(ENV, "HTTP_DEBUG", "") == "true"
+debug_mode()::Bool = get(ENV, "HTTP_DEBUG", "") == "true"
 
 # Only enabling these overrides when `ENV["HTTP_DEBUG"] == "true"` to avoid many method invalidations.
-if DEBUG_MODE
+if debug_mode()
     Base.wait_close(iod::IODebug) = Base.wait_close(iod.io)
 
     Base.write(iod::IODebug, a...) =

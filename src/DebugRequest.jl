@@ -17,7 +17,7 @@ function debuglayer(handler)
     return function(stream::Stream; verbose::Int=0, kw...)
         # if debugging, wrap stream.stream in IODebug
         if verbose >= 3 || DEBUG_LEVEL[] >= 3
-            if !DEBUG_MODE
+            if !debug_mode()
                 error("""To enable debugging, set the environment variable "HTTP_DEBUG" to "true" and restart HTTP.jl""")
             end
             stream = Stream(stream.message, IODebug(stream.stream))
