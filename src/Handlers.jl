@@ -1,6 +1,6 @@
 module Handlers
 
-export serve, Router, register!
+export serve, Router, register!, App
 
 using URIs
 using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets
@@ -290,5 +290,29 @@ function (r::Router)(req)
         return handler(req)
     end
 end
+
+mutable struct App
+    router::Router
+    middleware::Any
+end
+
+App() = App(Router(), nothing)
+
+ismethod(x) = x in (:get, :post, :put, :delete, :head, :options, :patch)
+
+function Base.getproperty(app::App, x::Symbol)
+    if x === :use
+        return function(handler)
+            app.middleware = handler(app.middleware)
+        end
+    elseif ismethod(x)
+        return function(path, handler)
+            register!(app.router, uppercase(String(x)), path, handler)
+        end
+    else
+        return getfield(app, x)
+    end
+end
+
 
 end # module
