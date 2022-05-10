@@ -1,31 +1,16 @@
-const live_mode = true
 
 import ..debug_header
 
-@static if live_mode
-
-    struct IODebug{T <: IO} <: IO
-        io::T
-    end
-
-    logwrite(iod::IODebug, f, x) = show_io_debug(stdout, "➡️ ", f, x)
-    logread(iod::IODebug, f, x) = show_io_debug(stdout, "⬅️ ", f, x)
-
-else
-
-    struct IODebug{T <: IO} <: IO
-        io::T
-        log::Vector{Tuple{String,String}}
-    end
-
-    IODebug(io::T) where T <: IO = IODebug{T}(io, [])
-
-    logwrite(iod::IODebug, f, x) = push!(iod.log, ("➡️ ", f, x))
-    logread(iod::IODebug, f, x) = push!(iod.log, ("⬅️ ", f, x))
-
+struct IODebug{T <: IO} <: IO
+    io::T
 end
 
 debug_mode()::Bool = get(ENV, "HTTP_DEBUG", "") == "true"
+
+logwrite(iod::IODebug, f, x) = show_io_debug(stdout, "➡️ ", f, x)
+logread(iod::IODebug, f, x) = show_io_debug(stdout, "⬅️ ", f, x)
+
+Base.wait_close(iod::IODebug) = Base.wait_close(iod.io)
 
 # Only enabling these overrides when `ENV["HTTP_DEBUG"] == "true"` to avoid many method invalidations.
 if debug_mode()
