@@ -22,8 +22,9 @@ module ConnectionPool
 export Connection, newconnection, getrawstream, inactiveseconds
 
 using ..IOExtras, ..Sockets
+using LoggingExtras
 
-import ..@debug, ..DEBUG_LEVEL, ..taskid
+import ..DEBUG_LEVEL, ..taskid
 import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 import NetworkOptions
@@ -221,7 +222,7 @@ end
 function IOExtras.startwrite(c::Connection)
     @require !iswritable(c)
     c.writable = true
-    @debug 2 "👁  Start write:$c"
+    @debugv 2 "👁  Start write:$c"
     return
 end
 
@@ -233,7 +234,7 @@ Signal that an entire Request Message has been written to the `Connection`.
 function IOExtras.closewrite(c::Connection)
     @require iswritable(c)
     c.writable = false
-    @debug 2 "🗣  Write done: $c"
+    @debugv 2 "🗣  Write done: $c"
     flush(c)
     return
 end
@@ -245,7 +246,7 @@ function IOExtras.startread(c::Connection)
     @require !isreadable(c)
     c.timestamp = time()
     c.readable = true
-    @debug 2 "👁  Start read: $c"
+    @debugv 2 "👁  Start read: $c"
     return
 end
 
@@ -254,7 +255,7 @@ Wait for `c` to receive data or reach EOF.
 Close `c` on EOF or if response data arrives when no request was sent.
 """
 function monitor_idle_connection(c::Connection)
-    if eof(c.io)                                  ;@debug 2 "💀  Closed:     $c"
+    if eof(c.io)                                  ;@debugv 2 "💀  Closed:     $c"
         close(c.io)
     end
 end
@@ -267,7 +268,7 @@ Signal that an entire Response Message has been read from the `Connection`.
 function IOExtras.closeread(c::Connection)
     @require isreadable(c)
     c.readable = false
-    @debug 2 "✉️  Read done:  $c"
+    @debugv 2 "✉️  Read done:  $c"
     if c.clientconnection
         release(POOL, connectionkey(c), c)
         # Ignore SSLContext as it already monitors idle connections for TLS close_notify messages
@@ -357,7 +358,7 @@ function newconnection(::Type{T},
 end
 
 function keepalive!(tcp)
-    @debug 2 "setting keepalive on tcp socket"
+    @debugv 2 "setting keepalive on tcp socket"
     err = ccall(:uv_tcp_keepalive, Cint, (Ptr{Nothing}, Cint, Cuint),
                                           tcp.handle, 1, 1)
     err != 0 && error("error setting keepalive on socket")
@@ -379,7 +380,7 @@ function getconnection(::Type{TCPSocket},
 
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
 
-    @debug 2 "TCP connect: $host:$p..."
+    @debugv 2 "TCP connect: $host:$p..."
 
     addrs = Sockets.getalladdrinfo(host)
 
@@ -449,7 +450,7 @@ function getconnection(::Type{SSLContext},
                        kw...)::SSLContext
 
     port = isempty(port) ? "443" : port
-    @debug 2 "SSL connect: $host:$port..."
+    @debugv 2 "SSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
     return sslconnection(tcp, host; kw...)
 end

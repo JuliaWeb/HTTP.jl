@@ -5,7 +5,7 @@ import ..sniff
 import ..Form
 using ..Messages
 import ..IOExtras
-import ..@debug, ..DEBUG_LEVEL
+using LoggingExtras
 
 export contenttypedetectionlayer
 
@@ -17,7 +17,7 @@ function contenttypedetectionlayer(handler)
 
             sn = sniff(bytes(req.body))
             setheader(req.headers, "Content-Type" => sn)
-            @debug 1 "setting Content-Type header to: $sn"
+            @debugv 1 "setting Content-Type header to: $sn"
         end
         return handler(req; kw...)
     end

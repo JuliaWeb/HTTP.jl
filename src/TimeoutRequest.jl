@@ -1,7 +1,7 @@
 module TimeoutRequest
 
 using ..ConnectionPool
-import ..@debug, ..DEBUG_LEVEL
+using LoggingExtras
 import ..Streams: Stream
 
 struct ReadTimeoutError <:Exception
@@ -33,7 +33,7 @@ function timeoutlayer(handler)
             if isreadable(io) && inactiveseconds(io) > readtimeout
                 timedout[] = true
                 close(io)
-                @debug 1 "💥  Read inactive > $(readtimeout)s: $io"
+                @debugv 1 "💥  Read inactive > $(readtimeout)s: $io"
                 break
             end
             sleep(readtimeout / 10)

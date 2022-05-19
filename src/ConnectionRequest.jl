@@ -6,7 +6,7 @@ using ..IOExtras
 using ..ConnectionPool
 using MbedTLS: SSLContext, SSLConfig
 using Base64: base64encode
-import ..@debug, ..DEBUG_LEVEL
+using LoggingExtras
 import ..Streams: Stream
 
 islocalhost(host) = host == "localhost" || host == "127.0.0.1" || host == "127.0.0.1"
@@ -71,7 +71,7 @@ function connectionlayer(handler)
 
             userinfo = unescapeuri(url.userinfo)
             if !isempty(userinfo) && !hasheader(req.headers, "Proxy-Authorization")
-                @debug 1 "Adding Proxy-Authorization: Basic header."
+                @debugv 1 "Adding Proxy-Authorization: Basic header."
                 setheader(req.headers, "Proxy-Authorization" => "Basic $(base64encode(userinfo))")
             end
         else
@@ -114,7 +114,7 @@ function connectionlayer(handler)
 
             return resp
         catch e
-            @debug 1 "❗️  ConnectionLayer $e. Closing: $io"
+            @debugv 1 "❗️  ConnectionLayer $e. Closing: $io"
             try; close(io); catch; end
             rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
         end
@@ -125,7 +125,7 @@ sockettype(url::URI, default) = url.scheme in ("wss", "https") ? SSLContext : de
 
 function connect_tunnel(io, target_url, req)
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
-    @debug 1 "📡  CONNECT HTTPS tunnel to $target"
+    @debugv 1 "📡  CONNECT HTTPS tunnel to $target"
     headers = Dict("Host" => target)
     if (auth = header(req, "Proxy-Authorization"); !isempty(auth))
         headers["Proxy-Authorization"] = auth

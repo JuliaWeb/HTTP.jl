@@ -1,10 +1,11 @@
 module CookieRequest
 
 import ..Dates
+using LoggingExtras
 using URIs
 using ..Cookies
 using ..Messages: Request, ascii_lc_isequal, header, setheader
-import ..@debug, ..DEBUG_LEVEL, ..access_threaded
+import ..access_threaded
 
 # default global cookie jar
 const COOKIEJAR = CookieJar()

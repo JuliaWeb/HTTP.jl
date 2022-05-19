@@ -13,7 +13,7 @@ import ..Messages: header, hasheader, setheader,
 import ..ConnectionPool: getrawstream
 import ..@require, ..precondition_error
 import ..@ensure, ..postcondition_error
-import ..@debug, ..DEBUG_LEVEL
+using LoggingExtras
 
 mutable struct Stream{M <: Message, S <: IO} <: IO
     message::M
@@ -144,7 +144,7 @@ function IOExtras.closewrite(http::Stream{<:Request})
        http.message.version < v"1.1" &&
       !hasheader(http.message, "Connection", "keep-alive")
 
-        @debug 1 "✋  \"Connection: close\": $(http.stream)"
+        @debugv 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
     end
 end
@@ -178,7 +178,7 @@ https://tools.ietf.org/html/rfc7231#section-6.2.1
 """
 function handle_continue(http::Stream{<:Response})
     if http.message.status == 100
-        @debug 1 "✅  Continue:   $(http.stream)"
+        @debugv 1 "✅  Continue:   $(http.stream)"
         readheaders(http.stream, http.message)
     end
 end
@@ -188,7 +188,7 @@ function handle_continue(http::Stream{<:Request})
         if !iswritable(http.stream)
             startwrite(http.stream)
         end
-        @debug 1 "✅  Continue:   $(http.stream)"
+        @debugv 1 "✅  Continue:   $(http.stream)"
         writeheaders(http.stream, Response(100))
     end
 end
@@ -251,7 +251,7 @@ function Base.read(http::Stream, ::Type{UInt8})
     if http.warn_not_to_read_one_byte_at_a_time
         @warn "Reading one byte at a time from HTTP.Stream is inefficient.\n" *
               "Use: io = BufferedInputStream(http::HTTP.Stream) instead.\n" *
-              "See: https://github.com/BioJulia/BufferedStreams.jl" stacktrace()
+              "See: https://github.com/BioJulia/BufferedStreams.jl"
         http.warn_not_to_read_one_byte_at_a_time = false
     end
 
@@ -330,9 +330,9 @@ function isaborted(http::Stream{<:Response})
     if iswritable(http.stream) &&
        iserror(http.message) &&
        hasheader(http.message, "Connection", "close")
-        @debug 1 "✋  Abort on $(sprint(writestartline, http.message)): " *
+        @debugv 1 "✋  Abort on $(sprint(writestartline, http.message)): " *
                  "$(http.stream)"
-        @debug 2 "✋  $(http.message)"
+        @debugv 2 "✋  $(http.message)"
         return true
     end
     return false
@@ -345,7 +345,7 @@ function IOExtras.closeread(http::Stream{<:Response})
 
     if hasheader(http.message, "Connection", "close")
         # Close conncetion if server sent "Connection: close"...
-        @debug 1 "✋  \"Connection: close\": $(http.stream)"
+        @debugv 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
         # Error if Message is not complete...
         incomplete(http) && throw(EOFError())
