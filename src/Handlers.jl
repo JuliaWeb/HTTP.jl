@@ -1,9 +1,9 @@
 module Handlers
 
-export serve, Router, register!
+export serve, Router, register!, getparams, getcookies
 
 using URIs
-using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets
+using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
 
 """
     streamhandler(request_handler) -> stream handler
@@ -290,5 +290,18 @@ function (r::Router)(req)
         return handler(req)
     end
 end
+
+getparams(req) = get(req.context, :params, nothing)
+
+function cookie_middleware(handler)
+    function (req)
+        if !haskey(req.context, :cookies)
+            req.context[:cookies] = Cookies.cookies(req)
+        end
+        return handler(req)
+    end
+end
+
+getcookies(req) = get(() => Cookie[], req.context, :cookies)
 
 end # module
