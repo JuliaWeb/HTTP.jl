@@ -429,7 +429,9 @@ setheader(h::Headers, v::Pair) =
 Set header `value` in message for `key` if it is not already set.
 """
 function defaultheader!(m, v::Pair)
-    if header(m, first(v)) == ""
+    # return nothing as default to allow users passing "" as empty header
+    # and not being overwritten by default headers
+    if header(m, first(v), nothing) === nothing
         setheader(m, v)
     end
     return
@@ -514,7 +516,8 @@ a line for each "name: value" pair and a trailing blank line.
 function writeheaders(io::IO, m::Message)
     writestartline(io, m)
     for (name, value) in m.headers
-        write(io, "$name: $value\r\n")
+        # match curl convention of not writing empty headers
+        !isempty(value) && write(io, "$name: $value\r\n")
     end
     write(io, "\r\n")
     return

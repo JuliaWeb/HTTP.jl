@@ -76,6 +76,8 @@ println(String(r.body))
 `headers` can be any collection where
 `[string(k) => string(v) for (k,v) in headers]` yields `Vector{Pair}`.
 e.g. a `Dict()`, a `Vector{Tuple}`, a `Vector{Pair}` or an iterator.
+By convention, if a header _value_ is the empty string, it will not be written
+when sending a request.
 
 `body` can take a number of forms:
 
