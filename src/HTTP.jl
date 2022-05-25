@@ -149,6 +149,11 @@ Redirect options
 
  - `redirect = true`, follow 3xx redirect responses.
  - `redirect_limit = 3`, number of times to redirect.
+ - `redirect_method = nothing`, the method to use for the redirected request; by default,
+    GET will be used, only responses with 307/308 will use the same original request method.
+    Pass `:same` to pass the same method as the orginal request though note that some servers
+    may not response/accept the same method. It's also valid to pass the exact method to use
+    as a string, like `redirect_method="PUT"`.
  - `forwardheaders = true`, forward original headers on redirect.
 
 
