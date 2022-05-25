@@ -221,6 +221,7 @@ function parse_header_field(bytes::SubString{String})::Tuple{Header,SubString{St
     # "malformed headers" and ignores them. we attempt to re-encode
     # these from latin-1 => utf-8 and then try to parse.
     if !isvalid(bytes)
+        @warn "malformed HTTP header detected; attempting to re-encode from Latin-1 to UTF8"
         rawbytes = codeunits(bytes)
         buf = Base.StringVector(length(rawbytes) + count(≥(0x80), rawbytes))
         i = 0
@@ -232,8 +233,8 @@ function parse_header_field(bytes::SubString{String})::Tuple{Header,SubString{St
                 buf[i += 1] = byte
             end
         end
-        @warn "malformed HTTP header detected; attempting to re-encode from Latin-1 to UTF8"
         bytes = SubString(String(buf))
+        !isvalid(bytes) && @goto error
     end
 
     # First look for: field-name ":" field-value
@@ -256,6 +257,7 @@ function parse_header_field(bytes::SubString{String})::Tuple{Header,SubString{St
         return (group(1, re, bytes) => unfold), nextbytes(re, bytes)
     end
 
+@label error
     throw(ParseError(:INVALID_HEADER_FIELD, bytes))
 end
 
