@@ -190,6 +190,6 @@ using JSON
 
         # https://github.com/JuliaWeb/HTTP.jl/issues/828
         # don't include empty headers in request when writing
-        @test repr(Request("GET", "/", ["Accept" => ""])) == "HTTP.Messages.Request{Vector{UInt8}}:\n\"\"\"\nGET / HTTP/1.1\r\n\r\n\"\"\""
+        @test repr(Request("GET", "/", ["Accept" => ""])) == "Request{Vector{UInt8}}:\n\"\"\"\nGET / HTTP/1.1\r\n\r\n\"\"\""
     end
 end
