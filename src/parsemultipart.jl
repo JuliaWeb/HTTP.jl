@@ -122,7 +122,7 @@ end
 
 const content_disposition_regex = Parsers.RegexAndMatchData[]
 function content_disposition_regex_f()
-    r = Parsers.RegexAndMatchData(r"^Content-Disposition:[ \t]*form-data;[ \t]*(.*)\r\n")
+    r = Parsers.RegexAndMatchData(r"^Content-Disposition:[ \t]*form-data;[ \t]*(.*)\r\n"x)
     Parsers.init!(r)
 end
 
@@ -130,7 +130,7 @@ const content_disposition_flag_regex = Parsers.RegexAndMatchData[]
 function content_disposition_flag_regex_f()
     r = Parsers.RegexAndMatchData(r"""^
     [ \t]*([!#$%&'*+\-.^_`|~[:alnum:]]+);?
-    """)
+    """x)
     Parsers.init!(r)
 end
 
@@ -138,7 +138,7 @@ const content_disposition_pair_regex = Parsers.RegexAndMatchData[]
 function content_disposition_pair_regex_f()
     r = Parsers.RegexAndMatchData(r"""^
     [ \t]*([!#$%&'*+\-.^_`|~[:alnum:]]+)[ \t]*=[ \t]*"(.*?)";?
-    """)
+    """x)
     Parsers.init!(r)
 end
 
