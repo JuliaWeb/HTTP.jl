@@ -71,7 +71,7 @@ using ..Pairs
 using ..IOExtras
 using ..Parsers
 import ..@require, ..precondition_error
-import ..bytes
+import ..bytes, ..Form
 
 include("ascii.jl")
 
@@ -597,6 +597,12 @@ body_show_max = 1000
 The first chunk of the Message Body (for display purposes).
 """
 bodysummary(body) = isbytes(body) ? view(bytes(body), 1:min(nbytes(body), body_show_max)) : "[Message Body was streamed]"
+function bodysummary(body::Form)
+    if length(body.data) == 1 && isa(body.data[1], IOBuffer)
+        return body.data[1].data[1:body.data[1].ptr-1]
+    end
+    return "[Message Body was streamed]"
+end
 
 function compactstartline(m::Message)
     b = IOBuffer()

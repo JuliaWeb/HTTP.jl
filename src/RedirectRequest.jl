@@ -14,7 +14,7 @@ export redirectlayer, nredirects
 Redirects the request in the case of 3xx response status.
 """
 function redirectlayer(handler)
-    return function(req; redirect::Bool=true, redirect_limit::Int=3, forwardheaders::Bool=true, response_stream=nothing, kw...)
+    return function(req; redirect::Bool=true, redirect_limit::Int=3, redirect_method=nothing, forwardheaders::Bool=true, response_stream=nothing, kw...)
         if !redirect || redirect_limit == 0
             # no redirecting
             return handler(req; redirect_limit=redirect_limit, kw...)
@@ -35,7 +35,9 @@ function redirectlayer(handler)
             # follow redirect
             oldurl = req.url
             url = resolvereference(req.url, location)
-            req = Request(req.method, resource(url), copy(req.headers), req.body;
+            method = newmethod(req.method, res.status, redirect_method)
+            body = method == "GET" ? UInt8[] : req.body
+            req = Request(method, resource(url), copy(req.headers), body;
                 url=url, version=req.version, responsebody=response_stream, parent=res, context=req.context)
             if forwardheaders
                 req.headers = filter(req.headers) do (header, _)
@@ -43,6 +45,8 @@ function redirectlayer(handler)
                     if header == "Host"
                         return false
                     elseif (header in SENSITIVE_HEADERS && !isdomainorsubdomain(url.host, oldurl.host))
+                        return false
+                    elseif method == "GET" && header in ("Content-Type", "Content-Length")
                         return false
                     else
                         return true
@@ -82,6 +86,23 @@ function verify_url(url::URI)
     if isempty(url.host)
         throw(ArgumentError("missing host in URL: $(url)"))
     end
+end
+
+function newmethod(request_method, response_status, redirect_method)
+    # using https://everything.curl.dev/http/redirects#get-or-post as a reference
+    # also reference: https://github.com/curl/curl/issues/5237#issuecomment-618293609
+    if response_status == 307 || response_status == 308
+        # specific status codes that indicate an identical request should be made to new location
+        return request_method
+    elseif response_status == 303
+        # 303 means it's a new/different URI, so only GET allowed
+        return "GET"
+    elseif redirect_method == :same
+        return request_method
+    elseif redirect_method !== nothing && redirect_method in ("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH")
+        return redirect_method
+    end
+    return "GET"
 end
 
 end # module RedirectRequest
