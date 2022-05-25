@@ -376,6 +376,16 @@ end
                     @test length(r.headers) == 1
                 end
             end
+
+            # https://github.com/JuliaWeb/HTTP.jl/issues/796
+            @testset "Latin-1 values in header" begin
+                reqstr = "GET / HTTP/1.1\r\n" * "link: <http://dx.doi.org/10.1016/j.cma.2021.114093>; rel=\"canonical\", <https://api.elsevier.com/content/article/PII:S0045782521004242?httpAccept=text/xml>; version=\"vor\"; type=\"text/xml\"; rel=\"item\", <https://api.elsevier.com/content/article/PII:S0045782521004242?httpAccept=text/plain>; version=\"vor\"; type=\"text/plain\"; rel=\"item\", <https://www.elsevier.com/tdm/userlicense/1.0/>; version=\"tdm\"; rel=\"license\", <http://orcid.org/0000-0003-2391-4086>; title=\"Santiago Badia\"; rel=\"author\", <http://orcid.org/0000-0001-5751-4561>; title=\"Alberto F. Mart\xedn\"; rel=\"author\"\r\n\r\n"
+                r = parse(HTTP.Messages.Request, reqstr)
+                @test r.method == "GET"
+                @test r.target == "/"
+                @test length(r.headers) == 1
+                @test r.headers[1][2] == "<http://dx.doi.org/10.1016/j.cma.2021.114093>; rel=\"canonical\", <https://api.elsevier.com/content/article/PII:S0045782521004242?httpAccept=text/xml>; version=\"vor\"; type=\"text/xml\"; rel=\"item\", <https://api.elsevier.com/content/article/PII:S0045782521004242?httpAccept=text/plain>; version=\"vor\"; type=\"text/plain\"; rel=\"item\", <https://www.elsevier.com/tdm/userlicense/1.0/>; version=\"tdm\"; rel=\"license\", <http://orcid.org/0000-0003-2391-4086>; title=\"Santiago Badia\"; rel=\"author\", <http://orcid.org/0000-0001-5751-4561>; title=\"Alberto F. Martín\"; rel=\"author\""
+            end
         end
 
         @testset "Responses" begin

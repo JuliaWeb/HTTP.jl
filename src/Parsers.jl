@@ -215,6 +215,28 @@ Return `Pair(field-name => field-value)` and
 a `SubString` containing the remaining header-field lines.
 """
 function parse_header_field(bytes::SubString{String})::Tuple{Header,SubString{String}}
+    # https://github.com/JuliaWeb/HTTP.jl/issues/796
+    # there may be certain scenarios where non-ascii characters are
+    # included (illegally) in the headers; curl warns on these
+    # "malformed headers" and ignores them. we attempt to re-encode
+    # these from latin-1 => utf-8 and then try to parse.
+    if !isvalid(bytes)
+        @warn "malformed HTTP header detected; attempting to re-encode from Latin-1 to UTF8"
+        rawbytes = codeunits(bytes)
+        buf = Base.StringVector(length(rawbytes) + count(≥(0x80), rawbytes))
+        i = 0
+        for byte in rawbytes
+            if byte ≥ 0x80
+                buf[i += 1] = 0xc0 | (byte >> 6)
+                buf[i += 1] = 0x80 | (byte & 0x3f)
+            else
+                buf[i += 1] = byte
+            end
+        end
+        bytes = SubString(String(buf))
+        !isvalid(bytes) && @goto error
+    end
+
     # First look for: field-name ":" field-value
     re = access_threaded(header_field_regex_f, header_field_regex)
     if exec(re, bytes)
@@ -235,6 +257,7 @@ function parse_header_field(bytes::SubString{String})::Tuple{Header,SubString{St
         return (group(1, re, bytes) => unfold), nextbytes(re, bytes)
     end
 
+@label error
     throw(ParseError(:INVALID_HEADER_FIELD, bytes))
 end
 
