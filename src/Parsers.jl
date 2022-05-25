@@ -235,6 +235,28 @@ function parse_header_field(bytes::SubString{String})::Tuple{Header,SubString{St
         return (group(1, re, bytes) => unfold), nextbytes(re, bytes)
     end
 
+    # https://github.com/JuliaWeb/HTTP.jl/issues/796
+    # there may be legacy values encoded in latin-1 that will fail
+    # the utf8-expecting regexes above, before throwing the error here,
+    # we can do the ascii check and potentially re-encode the headers and
+    # try again
+    rawbytes= codeunits(bytes)
+    n = count(≥(0x80), rawbytes)
+    if n > 0
+        buf = Base.StringVector(length(rawbytes) + n)
+        i = 0
+        for byte in rawbytes
+            if byte ≥ 0x80
+                buf[i += 1] = 0xc0 | (byte >> 6)
+                buf[i += 1] = 0x80 | (byte & 0x3f)
+            else
+                buf[i += 1] = byte
+            end
+        end
+        @warn "malformed HTTP header; attempting to re-encode from Latin-1 to UTF8"
+        return parse_header_field(SubString(String(buf)))
+    end
+
     throw(ParseError(:INVALID_HEADER_FIELD, bytes))
 end
 
