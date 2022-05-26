@@ -9,6 +9,8 @@ using Base64: base64encode
 import ..@debug, ..DEBUG_LEVEL
 import ..Streams: Stream
 
+islocalhost(host) = host == "localhost" || host == "127.0.0.1" || host == "127.0.0.1"
+
 # hasdotsuffix reports whether s ends in "."+suffix.
 hasdotsuffix(s, suffix) = endswith(s, "." * suffix)
 
@@ -32,7 +34,7 @@ function __init__()
 end
 
 function getproxy(scheme, host)
-    isnoproxy(host) && return nothing
+    (isnoproxy(host) || islocalhost(host)) && return nothing
     if scheme == "http" && (p = get(ENV, "http_proxy", ""); !isempty(p))
         return p
     elseif scheme == "http" && (p = get(ENV, "HTTP_PROXY", ""); !isempty(p))
