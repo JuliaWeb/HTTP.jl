@@ -9,6 +9,8 @@ using Base64: base64encode
 import ..@debug, ..DEBUG_LEVEL
 import ..Streams: Stream
 
+islocalhost(host) = host == "localhost" || host == "127.0.0.1" || host == "127.0.0.1"
+
 # hasdotsuffix reports whether s ends in "."+suffix.
 hasdotsuffix(s, suffix) = endswith(s, "." * suffix)
 
@@ -32,7 +34,7 @@ function __init__()
 end
 
 function getproxy(scheme, host)
-    isnoproxy(host) && return nothing
+    (isnoproxy(host) || islocalhost(host)) && return nothing
     if scheme == "http" && (p = get(ENV, "http_proxy", ""); !isempty(p))
         return p
     elseif scheme == "http" && (p = get(ENV, "HTTP_PROXY", ""); !isempty(p))
@@ -85,22 +87,28 @@ function connectionlayer(handler)
         end
 
         try
-            if proxy !== nothing && target_url.scheme == "https"
+            if proxy !== nothing && target_url.scheme in ("https", "wss", "ws")
                 # tunnel request
-                target_url = URI(target_url, port=443)
+                if target_url.scheme in ("https", "wss")
+                    target_url = merge(target_url, port=443)
+                elseif target_url.scheme in ("ws", ) && target_url.port == ""
+                    target_url = merge(target_url, port=80) # if there is no port info, connect_tunnel will fail
+                end
                 r = connect_tunnel(io, target_url, req)
                 if r.status != 200
                     close(io)
                     return r
                 end
-                io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+                if target_url.scheme in ("https", "wss")
+                    io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+                end
                 req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
             end
 
             stream = Stream(req.response, io)
             resp = handler(stream; kw...)
 
-            if proxy !== nothing && target_url.scheme == "https"
+            if proxy !== nothing && target_url.scheme in ("https", "wss")
                 close(io)
             end
 
