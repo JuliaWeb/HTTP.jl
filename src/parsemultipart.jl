@@ -144,7 +144,7 @@ end
 
 const content_type_regex = Parsers.RegexAndMatchData[]
 function content_type_regex_f()
-    r = Parsers.RegexAndMatchData(r"(?i)Content-Type: (\S*[^;\s])"x)
+    r = Parsers.RegexAndMatchData(r"(?i)Content-Type: (\S*[^;\s])")
     Parsers.init!(r)
 end
 

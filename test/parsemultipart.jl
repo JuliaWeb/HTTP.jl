@@ -157,7 +157,7 @@ end
 
         @test "my-json-file-1.json" === multiparts[5].filename
         @test "json_file1" === multiparts[5].name
-        @test_broken "application/json" === multiparts[5].contenttype
+        @test "application/json" === multiparts[5].contenttype
         @test """{"data": ["this is json data"]}""" === String(read(multiparts[5].data))
     end
 
@@ -187,7 +187,7 @@ end
 
         @test "my-json-file-1.json" === multiparts[5].filename
         @test "json_file1" === multiparts[5].name
-        @test_broken "application/json" === multiparts[5].contenttype
+        @test "application/json" === multiparts[5].contenttype
         @test """{"data": ["this is json data"]}""" === String(read(multiparts[5].data))
     end
 end
