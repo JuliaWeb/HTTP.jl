@@ -19,7 +19,7 @@ function debuglayer(handler)
                 handler(request; verbose=verbose, kw...)
             end
         else
-            return handler(request; verbose=verbose, kw...)
+            return handler(request; verbose, kw...)
         end
     end
 end
