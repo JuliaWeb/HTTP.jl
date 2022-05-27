@@ -29,11 +29,11 @@ using Sockets, Test
 
         # The "special" cookies have values containing commas or spaces which
         # are disallowed by RFC 6265 but are common in the wild.
-        (HTTP.Cookie("special-1", "a z"), "special-1=a z"),
+        (HTTP.Cookie("special-1", "a z"), "special-1=\"a z\""),
         (HTTP.Cookie("special-2", " z"), "special-2=\" z\""),
         (HTTP.Cookie("special-3", "a "), "special-3=\"a \""),
         (HTTP.Cookie("special-4", " "), "special-4=\" \""),
-        (HTTP.Cookie("special-5", "a,z"), "special-5=a,z"),
+        (HTTP.Cookie("special-5", "a,z"), "special-5=\"a,z\""),
         (HTTP.Cookie("special-6", ",z"), "special-6=\",z\""),
         (HTTP.Cookie("special-7", "a,"), "special-7=\"a,\""),
         (HTTP.Cookie("special-8", ","), "special-8=\",\""),
@@ -56,43 +56,48 @@ using Sockets, Test
 
     @testset "readsetcookies" begin
         cookietests = [
-            (Dict(["Set-Cookie"=> "Cookie-1=v\$1"]), [HTTP.Cookie("Cookie-1", "v\$1")]),
-            (Dict(["Set-Cookie"=> "NID=99=YsDT5i3E-CXax-; expires=Wed, 23-Nov-2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly"]),
-            [HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain="google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))]),
-            (Dict(["Set-Cookie"=> ".ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly"]),
+            (["Set-Cookie" => "Cookie-1=v\$1"], [HTTP.Cookie("Cookie-1", "v\$1")]),
+            (["Set-Cookie" => "NID=99=YsDT5i3E-CXax-; expires=Wed, 23-Nov-2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly"],
+            [HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain=".google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))]),
+            (["Set-Cookie" => ".ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly"],
             [HTTP.Cookie(".ASPXAUTH", "7E3AA"; path="/", expires=HTTP.Dates.DateTime(2012, 3, 7, 14, 25, 6, 0), httponly=true)]),
-            (Dict(["Set-Cookie"=> "ASP.NET_SessionId=foo; path=/; HttpOnly"]),
+            (["Set-Cookie" => "ASP.NET_SessionId=foo; path=/; HttpOnly"],
             [HTTP.Cookie("ASP.NET_SessionId", "foo"; path="/", httponly=true)]),
-            (Dict(["Set-Cookie"=> "special-1=a z"]),  [HTTP.Cookie("special-1", "a z")]),
-            (Dict(["Set-Cookie"=> "special-2=\" z\""]), [HTTP.Cookie("special-2", " z")]),
-            (Dict(["Set-Cookie"=> "special-3=\"a \""]), [HTTP.Cookie("special-3", "a ")]),
-            (Dict(["Set-Cookie"=> "special-4=\" \""]),  [HTTP.Cookie("special-4", " ")]),
-            (Dict(["Set-Cookie"=> "special-5=a,z"]),  [HTTP.Cookie("special-5", "a,z")]),
-            (Dict(["Set-Cookie"=> "special-6=\",z\""]), [HTTP.Cookie("special-6", ",z")]),
-            (Dict(["Set-Cookie"=> "special-7=a,"]),   [HTTP.Cookie("special-7", "a,")]),
-            (Dict(["Set-Cookie"=> "special-8=\",\""]),  [HTTP.Cookie("special-8", ",")]),
+            (["Set-Cookie" => "samesitedefault=foo; SameSite"], [HTTP.Cookie("samesitedefault", "foo"; samesite=HTTP.Cookies.SameSiteDefaultMode)]),
+            (["Set-Cookie" => "samesiteinvalidisdefault=foo; SameSite=invalid"], [HTTP.Cookie("samesiteinvalidisdefault", "foo"; samesite=HTTP.Cookies.SameSiteDefaultMode)]),
+            (["Set-Cookie" => "samesitelax=foo; SameSite=Lax"], [HTTP.Cookie("samesitelax", "foo"; samesite=HTTP.Cookies.SameSiteLaxMode)]),
+            (["Set-Cookie" => "samesitestrict=foo; SameSite=Strict"], [HTTP.Cookie("samesitestrict", "foo"; samesite=HTTP.Cookies.SameSiteStrictMode)]),
+            (["Set-Cookie" => "samesitenone=foo; SameSite=None"], [HTTP.Cookie("samesitenone", "foo"; samesite=HTTP.Cookies.SameSiteNoneMode)]),
+            (["Set-Cookie" => "special-1=a z"],  [HTTP.Cookie("special-1", "a z")]),
+            (["Set-Cookie" => "special-2=\" z\""], [HTTP.Cookie("special-2", " z")]),
+            (["Set-Cookie" => "special-3=\"a \""], [HTTP.Cookie("special-3", "a ")]),
+            (["Set-Cookie" => "special-4=\" \""],  [HTTP.Cookie("special-4", " ")]),
+            (["Set-Cookie" => "special-5=a,z"],  [HTTP.Cookie("special-5", "a,z")]),
+            (["Set-Cookie" => "special-6=\",z\""], [HTTP.Cookie("special-6", ",z")]),
+            (["Set-Cookie" => "special-7=a,"],   [HTTP.Cookie("special-7", "a,")]),
+            (["Set-Cookie" => "special-8=\",\""],  [HTTP.Cookie("special-8", ",")]),
         ]
 
         for (h, c) in cookietests
-            @test HTTP.Cookies.readsetcookies("", [Dict(h)["Set-Cookie"]]) == c
+            @test HTTP.Cookies.readsetcookies(h) == c
         end
     end
 
     @testset "SetCookieDoubleQuotes" begin
         cookiestrings = [
-            "quoted0=none; max-age=30",
-            "quoted1=\"cookieValue\"; max-age=31",
-            "quoted2=cookieAV; max-age=\"32\"",
-            "quoted3=\"both\"; max-age=\"33\"",
+            ["Set-Cookie" => "quoted0=none; max-age=30"],
+            ["Set-Cookie" => "quoted1=\"cookieValue\"; max-age=31"],
+            ["Set-Cookie" => "quoted2=cookieAV; max-age=\"32\""],
+            ["Set-Cookie" => "quoted3=\"both\"; max-age=\"33\""],
         ]
 
         want = [
-            HTTP.Cookie("quoted0", "none", maxage=30),
-            HTTP.Cookie("quoted1", "cookieValue", maxage=31),
-            HTTP.Cookie("quoted2", "cookieAV"),
-            HTTP.Cookie("quoted3", "both"),
+            [HTTP.Cookie("quoted0", "none", maxage=30)],
+            [HTTP.Cookie("quoted1", "cookieValue", maxage=31)],
+            [HTTP.Cookie("quoted2", "cookieAV")],
+            [HTTP.Cookie("quoted3", "both")],
         ]
-        @test all(HTTP.Cookies.readsetcookies("", cookiestrings) .== want)
+        @test all(HTTP.Cookies.readsetcookies.(cookiestrings) .== want)
     end
 
     @testset "Cookie sanitize value" begin
@@ -103,9 +108,12 @@ using Sockets, Test
             "foo\"bar" => "foobar",
             String(UInt8[0x00, 0x7e, 0x7f, 0x80]) => String(UInt8[0x7e]),
             "\"withquotes\"" => "withquotes",
-            "a z" => "a z",
+            "a z" => "\"a z\"",
             " z" => "\" z\"",
             "a " => "\"a \"",
+            "a,z" => "\"a,z\"",
+            ",z" => "\",z\"",
+            "a," => "\"a,\"",
         )
 
         for (k, v) in values
@@ -138,6 +146,7 @@ using Sockets, Test
             @test HTTP.Cookies.readcookies(h, filter) == cookies
         end
     end
+
     @testset "Set-Cookie casing" begin
         server = Sockets.listen(Sockets.localhost, 8080)
         tsk = @async HTTP.listen(Sockets.localhost, 8080; server=server) do http
@@ -157,7 +166,7 @@ using Sockets, Test
             HTTP.startwrite(http)
         end
 
-        cookiejar = Dict{String,Set{HTTP.Cookies.Cookie}}()
+        cookiejar = HTTP.Cookies.CookieJar()
         HTTP.get("http://localhost:8080/set-cookie"; cookies=true, cookiejar=cookiejar)
         r = HTTP.get("http://localhost:8080/cookie"; cookies=true, cookiejar=cookiejar)
         @test HTTP.header(r, "X-Cookie") == "cookie=lc_cookie"
@@ -176,6 +185,86 @@ using Sockets, Test
         close(server)
         try; wait(tsk); catch e; end
         @test istaskdone(tsk)
+    end
+
+    @testset "splithostport" begin
+        testcases = [
+        # Host name
+        ("localhost:http", "localhost", "http"),
+        ("localhost:80", "localhost", "80"),
+
+        # Go-specific host name with zone identifier
+        ("localhost%lo0:http", "localhost%lo0", "http"),
+        ("localhost%lo0:80", "localhost%lo0", "80"),
+        ("[localhost%lo0]:http", "localhost%lo0", "http"), # Go 1 behavior
+        ("[localhost%lo0]:80", "localhost%lo0", "80"),     # Go 1 behavior
+
+        # IP literal
+        ("127.0.0.1:http", "127.0.0.1", "http"),
+        ("127.0.0.1:80", "127.0.0.1", "80"),
+        ("[::1]:http", "::1", "http"),
+        ("[::1]:80", "::1", "80"),
+
+        # IP literal with zone identifier
+        ("[::1%lo0]:http", "::1%lo0", "http"),
+        ("[::1%lo0]:80", "::1%lo0", "80"),
+
+        # Go-specific wildcard for host name
+        (":http", "", "http"), # Go 1 behavior
+        (":80", "", "80"),     # Go 1 behavior
+
+        # Go-specific wildcard for service name or transport port number
+        ("golang.org:", "golang.org", ""), # Go 1 behavior
+        ("127.0.0.1:", "127.0.0.1", ""),   # Go 1 behavior
+        ("[::1]:", "::1", ""),             # Go 1 behavior
+
+        # Opaque service name
+        ("golang.org:https%foo", "golang.org", "https%foo"), # Go 1 behavior
+        ]
+        for (hostport, host, port) in testcases
+            @test HTTP.Cookies.splithostport(hostport) == (host, port, false)
+        end
+        errorcases = [
+            ("golang.org", "missing port in address"),
+            ("127.0.0.1", "missing port in address"),
+            ("[::1]", "missing port in address"),
+            ("[fe80::1%lo0]", "missing port in address"),
+            ("[localhost%lo0]", "missing port in address"),
+            ("localhost%lo0", "missing port in address"),
+
+            ("::1", "too many colons in address"),
+            ("fe80::1%lo0", "too many colons in address"),
+            ("fe80::1%lo0:80", "too many colons in address"),
+
+            # Test cases that didn't fail in Go 1
+            ("[foo:bar]", "missing port in address"),
+            ("[foo:bar]baz", "missing port in address"),
+            ("[foo]bar:baz", "missing port in address"),
+
+            ("[foo]:[bar]:baz", "too many colons in address"),
+
+            ("[foo]:[bar]baz", "unexpected '[' in address"),
+            ("foo[bar]:baz", "unexpected '[' in address"),
+
+            ("foo]bar:baz", "unexpected ']' in address"),
+        ]
+        for (hostport, err) in errorcases
+            @test HTTP.Cookies.splithostport(hostport) == ("", "", true)
+        end
+    end
+
+    @testset "addcookie!" begin
+        r = HTTP.Request("GET", "/")
+        c = HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain=".google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))
+        HTTP.addcookie!(r, c)
+        @test HTTP.header(r, "Cookie") == "NID=99=YsDT5i3E-CXax-"
+        HTTP.addcookie!(r, c)
+        @test HTTP.header(r, "Cookie") == "NID=99=YsDT5i3E-CXax-; NID=99=YsDT5i3E-CXax-"
+        r = HTTP.Response(200)
+        HTTP.addcookie!(r, c)
+        @test HTTP.header(r, "Set-Cookie") == "NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly"
+        HTTP.addcookie!(r, c)
+        @test HTTP.headers(r, "Set-Cookie") == ["NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly", "NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly"]
     end
 end
 

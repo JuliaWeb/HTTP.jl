@@ -183,7 +183,7 @@ Cookie options
 
  - `cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}} = false`, enable cookies, or alternatively,
         pass a `Dict{AbstractString, AbstractString}` of name-value pairs to manually pass cookies
- - `cookiejar::Dict{String, Set{Cookie}}=default_cookiejar`,
+ - `cookiejar::HTTP.CookieJar=HTTP.COOKIEJAR`: threadsafe cookie jar struct for keeping track of cookies per host
 
 
 Canonicalization options
