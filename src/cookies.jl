@@ -40,6 +40,20 @@ using ..Messages: Request, Response, mkheaders, hasheader, header, headers
 
 import ..IPAddr
 
+if !isdefined(Base, Symbol("@lock"))
+    macro lock(l, expr)
+        quote
+            temp = $(esc(l))
+            lock(temp)
+            try
+                $(esc(expr))
+            finally
+                unlock(temp)
+            end
+        end
+    end
+end
+
 @enum SameSite SameSiteDefaultMode=1 SameSiteLaxMode SameSiteStrictMode SameSiteNoneMode
 
 """
