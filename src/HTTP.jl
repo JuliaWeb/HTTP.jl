@@ -10,6 +10,20 @@ Base.@deprecate escape escapeuri
 using Base64, Sockets, Dates
 using URIs
 
+if !isdefined(Base, Symbol("@lock"))
+    macro lock(l, expr)
+        quote
+            temp = $(esc(l))
+            lock(temp)
+            try
+                $(esc(expr))
+            finally
+                unlock(temp)
+            end
+        end
+    end
+end
+
 function access_threaded(f, v::Vector)
     tid = Threads.threadid()
     0 < tid <= length(v) || _length_assert()
