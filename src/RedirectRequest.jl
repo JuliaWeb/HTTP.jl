@@ -4,7 +4,7 @@ using URIs
 using ..Messages
 using ..Pairs: setkv
 import ..Header
-import ..@debug, ..DEBUG_LEVEL
+using LoggingExtras
 
 export redirectlayer, nredirects
 
@@ -55,7 +55,7 @@ function redirectlayer(handler)
             else
                 req.headers = Header[]
             end
-            @debug 1 "➡️  Redirect: $url"
+            @debugv 1 "➡️  Redirect: $url"
             count += 1
         end
         @assert false "Unreachable!"

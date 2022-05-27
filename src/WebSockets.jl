@@ -7,7 +7,8 @@ using ..IOExtras
 using ..Streams
 import ..ConnectionPool
 using HTTP: header, headercontains
-import ..@debug, ..DEBUG_LEVEL, ..@require, ..precondition_error
+import ..@require, ..precondition_error
+using LoggingExtras
 import ..string
 
 const WS_FINAL = 0x80
@@ -183,7 +184,7 @@ end
 function IOExtras.closewrite(ws::WebSocket; statuscode=nothing)
     @require !ws.txclosed
     opcode = WS_FINAL | WS_CLOSE
-    @debug 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, 0x00))"
+    @debugv 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, 0x00))"
     if statuscode === nothing
         write(ws.io, [opcode, 0x00])
     else
@@ -213,10 +214,10 @@ function wswrite(ws::WebSocket, opcode::UInt8, bytes::AbstractVector{UInt8})
         txpayload = ws.txpayload
     end
 
-    @debug 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, len, extended_len, mask))"
+    @debugv 1 "WebSocket ⬅️  $(WebSocketHeader(opcode, len, extended_len, mask))"
     write(ws.io, vcat(opcode, len, extended_len, mask))
 
-    @debug 2 "          ⬅️  $(txpayload[1:n])"
+    @debugv 2 "          ⬅️  $(txpayload[1:n])"
     unsafe_write(ws.io, pointer(txpayload), n)
 end
 
@@ -284,7 +285,7 @@ readframe(ws::WebSocket) = first(_readframe(ws))
 
 function _readframe(ws::WebSocket)
     h = readheader(ws.io)
-    @debug 1 "WebSocket ➡️  $h"
+    @debugv 1 "WebSocket ➡️  $h"
 
     len = Int(h.length)
 
@@ -293,7 +294,7 @@ function _readframe(ws::WebSocket)
             resize!(ws.rxpayload, len)
         end
         unsafe_read(ws.io, pointer(ws.rxpayload), len)
-        @debug 2 "          ➡️  \"$(String(ws.rxpayload[1:len]))\""
+        @debugv 2 "          ➡️  \"$(String(ws.rxpayload[1:len]))\""
     end
     
     if h.hasmask

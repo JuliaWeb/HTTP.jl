@@ -6,7 +6,8 @@ using ..Streams
 import ..ConnectionPool
 using ..MessageRequest
 import ..RedirectRequest: nredirects
-import ..@debug, ..DEBUG_LEVEL, ..printlncompact, ..sprintcompact
+import ..sprintcompact
+using LoggingExtras
 
 export streamlayer
 
@@ -21,19 +22,17 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-function streamlayer(stream::Stream; iofunction=nothing, verbose=0, redirect_limit::Int=3, kw...)::Response
+function streamlayer(stream::Stream; iofunction=nothing, redirect_limit::Int=3, kw...)::Response
     response = stream.message
     req = response.request
     io = stream.stream
-    verbose == 1 && printlncompact(req)
-    @debug 2 "client startwrite"
+    @debugv 1 sprintcompact(req)
+    @debugv 2 "client startwrite"
     startwrite(stream)
 
-    if verbose == 2
-        println(req)
-        if iofunction === nothing && !isbytes(req.body)
-            println("$(typeof(req)).body: $(sprintcompact(req.body))")
-        end
+    @debugv 2 sprint(show, req)
+    if iofunction === nothing && !isbytes(req.body)
+        @debugv 2 "$(typeof(req)).body: $(sprintcompact(req.body))"
     end
 
     write_error = nothing
@@ -42,13 +41,13 @@ function streamlayer(stream::Stream; iofunction=nothing, verbose=0, redirect_lim
             if iofunction === nothing
                 @async try
                     writebody(stream, req)
-                    @debug 2 "client closewrite"
+                    @debugv 2 "client closewrite"
                     closewrite(stream)
                 catch e
                     write_error = e
                     isopen(io) && try; close(io); catch; end
                 end
-                @debug 2 "client startread"
+                @debugv 2 "client startread"
                 startread(stream)
                 readbody(stream, response, redirect_limit == nredirects(req))
             else
@@ -68,13 +67,13 @@ function streamlayer(stream::Stream; iofunction=nothing, verbose=0, redirect_lim
         end
     end
 
-    @debug 2 "client closewrite"
+    @debugv 2 "client closewrite"
     closewrite(stream)
-    @debug 2 "client closeread"
+    @debugv 2 "client closeread"
     closeread(stream)
 
-    verbose == 1 && printlncompact(response)
-    verbose == 2 && println(response)
+    @debugv 1 sprintcompact(response)
+    @debugv 2 sprint(show, response)
 
     return response
 end

@@ -9,6 +9,7 @@ Base.@deprecate escape escapeuri
 
 using Base64, Sockets, Dates
 using URIs
+using LoggingExtras
 
 function access_threaded(f, v::Vector)
     tid = Threads.threadid()
@@ -337,7 +338,7 @@ function request(method, url, h=Header[], b=nobody;
     return request(HTTP.stack(), method, url, headers, body, query; kw...)
 end
 
-const STREAM_LAYERS = [timeoutlayer, exceptionlayer, debuglayer]
+const STREAM_LAYERS = [timeoutlayer, exceptionlayer]
 const REQUEST_LAYERS = [redirectlayer, defaultheaderslayer, basicauthlayer, contenttypedetectionlayer, cookielayer, retrylayer, canonicalizelayer]
 
 pushlayer!(layer; request::Bool=true) = push!(request ? REQUEST_LAYERS : STREAM_LAYERS, layer)
@@ -355,8 +356,9 @@ function stack(
     layers2 = foldr((x, y) -> x(y), STREAM_LAYERS, init=layers)
     # request layers
     # messagelayer must be the 1st/outermost layer to convert initial args to Request
+    # we also want debuglayer to be early to ensure any debug logging is handled correctly in other layers
     layers3 = foldr((x, y) -> x(y), requestlayers; init=connectionlayer(layers2))
-    return messagelayer(foldr((x, y) -> x(y), REQUEST_LAYERS; init=layers3))
+    return messagelayer(debuglayer(foldr((x, y) -> x(y), REQUEST_LAYERS; init=layers3)))
 end
 
 function request(stack::Base.Callable, method, url, h=Header[], b=nobody, q=nothing;

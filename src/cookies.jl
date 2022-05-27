@@ -33,7 +33,7 @@ module Cookies
 export Cookie, CookieJar, cookies, stringify, getcookies!, setcookies!, addcookie!
 
 import Base: ==
-using ..Dates, ..URIs
+using ..Dates, ..URIs, ..LoggingExtras
 using ..IOExtras: bytes
 using ..Parsers: Headers
 using ..Messages: Request, Response, mkheaders, hasheader, header, headers, setheader, appendheader

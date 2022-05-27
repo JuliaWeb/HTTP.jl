@@ -23,7 +23,8 @@ import MbedTLS
 
 using Dates
 
-import ..@debug, ..DEBUG_LEVEL, ..taskid, ..access_threaded
+import ..taskid, ..access_threaded
+using LoggingExtras
 
 # rate limiting
 mutable struct RateLimit
@@ -388,7 +389,7 @@ function handle_transaction(f, c::Connection, server; final_transaction::Bool=fa
     http = Stream(request, c)
 
     try
-        @debug 2 "server startread"
+        @debugv 2 "server startread"
         startread(http)
         if !isopen(server)
             close(c)
@@ -418,9 +419,9 @@ function handle_transaction(f, c::Connection, server; final_transaction::Bool=fa
         if isopen(http) && !iswritable(http)
             error("Server never wrote a response")
         end
-        @debug 2 "server closeread"
+        @debugv 2 "server closeread"
         closeread(http)
-        @debug 2 "server closewrite"
+        @debugv 2 "server closewrite"
         closewrite(http)
     catch e
         # The remote can close the stream whenever it wants to, but there's nothing

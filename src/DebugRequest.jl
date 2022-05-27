@@ -1,25 +1,26 @@
 module DebugRequest
 
+using Logging, LoggingExtras
 import ..DEBUG_LEVEL
-using ..IOExtras
-import ..Streams: Stream
-
-include("IODebug.jl")
 
 export debuglayer
 
 """
     debuglayer(stream::Stream) -> HTTP.Response
 
-Wrap the `IO` stream in an `IODebug` stream and print Message data.
+If `verbose` keyword arg is > 0, or the HTTP.jl global `DEBUG_LEVEL[]` is > 0,
+then enabled debug logging with verbosity `verbose` for the lifetime of the request.
 """
 function debuglayer(handler)
-    return function(stream::Stream; verbose::Int=0, kw...)
-        # if debugging, wrap stream.stream in IODebug
-        if verbose >= 3 || DEBUG_LEVEL[] >= 3
-            stream = Stream(stream.message, IODebug(stream.stream))
+    return function(request; verbose::Int=0, kw...)
+        # if debugging, enable by wrapping request in custom logger logic
+        if verbose >= 0 || DEBUG_LEVEL[] >= 0
+            LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
+                handler(request; verbose=verbose, kw...)
+            end
+        else
+            return handler(request; verbose, kw...)
         end
-        return handler(stream; verbose=verbose, kw...)
     end
 end
 

@@ -5,7 +5,8 @@ using ..Sockets
 using ..IOExtras
 using ..MessageRequest
 using ..Messages
-import ..@debug, ..DEBUG_LEVEL, ..sprintcompact
+import ..sprintcompact
+using LoggingExtras
 
 export retrylayer
 
@@ -33,10 +34,10 @@ function retrylayer(handler)
             check=(s, ex)->begin
                 retry = isrecoverable(ex, req, retry_non_idempotent, get(req.context, :retrycount, 0))
                 if retry
-                    @debug 1 "🔄  Retry $ex: $(sprintcompact(req))"
+                    @debugv 1 "🔄  Retry $ex: $(sprintcompact(req))"
                     reset!(req.response)
                 else
-                    @debug 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
+                    @debugv 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
                 end
                 return s, retry
             end)
