@@ -414,7 +414,10 @@ function handle_transaction(f, c::Connection, server; final_transaction::Bool=fa
     end
 
     try
+        # https://github.com/JuliaWeb/HTTP.jl/issues/629
+        Sockets.nagle(http.stream.c.io, true)
         f(http)
+        Sockets.nagle(http.stream.c.io, false)
         # If `startwrite()` was never called, throw an error so we send a 500 and log this
         if isopen(http) && !iswritable(http)
             error("Server never wrote a response")
