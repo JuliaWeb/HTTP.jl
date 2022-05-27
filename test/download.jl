@@ -65,8 +65,19 @@ using HTTP
     end
 
     @testset "Content-Encoding" begin
+        # Add gz extension if we are determining the filename
         gzip_content_encoding_fn = HTTP.download("https://httpbin.org/gzip")
         @test isfile(gzip_content_encoding_fn)
         @test last(splitext(gzip_content_encoding_fn)) == ".gz"
+
+        # But not if the local name is fully given. HTTP#573
+        mktempdir() do dir
+            name = joinpath(dir, "foo")
+            downloaded_name = HTTP.download(
+                "https://pkg.julialang.org/registry/23338594-aafe-5451-b93e-139f81909106/7858451b7a520344eb60354f69809d30a44e7dae",
+                name,
+            )
+            @test name == downloaded_name
+        end
     end
 end

@@ -58,8 +58,7 @@ determine_file(::Nothing, resp, hdrs) = determine_file(tempdir(), resp, hdrs)
 # ^ We want to the filename if possible because extension is useful for FileIO.jl
 
 function determine_file(path, resp, hdrs)
-    # get the name
-    name = if isdir(path)
+    if isdir(path)
         # we have been given a path to a directory
         # got to to workout what file to put there
         filename = something(
@@ -67,17 +66,19 @@ function determine_file(path, resp, hdrs)
                         try_get_filename_from_request(resp.request),
                         basename(tempname())  # fallback, basically a random string
                     )
+
+        
+        # get the extension, if we are going to save it in encoded form.
+        # unlike a web-browser we don't automatically decompress
+        if header(resp, "Content-Encoding") == "gzip"
+            filename *= ".gz"
+        end
+        
         safer_joinpath(path, filename)
     else
         # We have been given a full filepath
         path
     end
-
-    # get the extension, if we are going to save it in encoded form.
-    if header(resp, "Content-Encoding") == "gzip"
-        name *= ".gz"
-    end
-    name
 end
 
 """
