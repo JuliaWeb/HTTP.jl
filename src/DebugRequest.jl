@@ -15,7 +15,7 @@ function debuglayer(handler)
     return function(request; verbose::Int=0, kw...)
         # if debugging, enable by wrapping request in custom logger logic
         if verbose >= 0 || DEBUG_LEVEL[] >= 0
-            LoggingExtras.withlevel(Debug; verbosity=verbose) do
+            LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
                 handler(request; verbose=verbose, kw...)
             end
         else
