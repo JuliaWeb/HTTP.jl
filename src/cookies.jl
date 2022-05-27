@@ -30,13 +30,13 @@
 
 module Cookies
 
-export Cookie, CookieJar, cookies, stringify, getcookies!, setcookies!
+export Cookie, CookieJar, cookies, stringify, getcookies!, setcookies!, addcookie!
 
 import Base: ==
 using ..Dates, ..URIs
 using ..IOExtras: bytes
 using ..Parsers: Headers
-using ..Messages: Request, Response, mkheaders, hasheader, header, headers
+using ..Messages: Request, Response, mkheaders, hasheader, header, headers, setheader, appendheader
 
 import ..IPAddr
 
@@ -156,6 +156,22 @@ function stringify(cookiestring::AbstractString, cookies::Vector{Cookie}, isrequ
     return String(take!(io))
 end
 
+function addcookie!(r::Request, c::Cookie)
+    cstr = String(c)
+    chead = header(r, "Cookie", nothing)
+    if chead !== nothing
+        setheader(r, "Cookie" => "$chead; $cstr")
+    else
+        appendheader(r, SubString("Cookie") => SubString(cstr))
+    end
+    return r
+end
+
+function addcookie!(r::Response, c::Cookie)
+    appendheader(r, SubString("Set-Cookie") => SubString(String(c, false)))
+    return r
+end
+
 validcookiepathbyte(b) = (' ' <= b < '\x7f') && b != ';'
 validcookievaluebyte(b) = (' ' <= b < '\x7f') && b != '"' && b != ';' && b != '\\'
 
@@ -177,7 +193,7 @@ const AlternateRFC1123Format = Dates.DateFormat("e, dd-uuu-yyyy HH:MM:SS G\\MT")
 # the header h and returns the successfully parsed Cookies.
 function readsetcookies(h::Headers)
     result = Cookie[]
-    for (_, line) in headers(h, "Set-Cookie")
+    for line in headers(h, "Set-Cookie")
         parts = split(strip(line), ';'; keepempty=false)
         if length(parts) == 1 && parts[1] == ""
             continue
@@ -282,7 +298,7 @@ cookies(r::Request) = readcookies(r.headers, "")
 # if filter isn't empty, only cookies of that name are returned
 function readcookies(h::Headers, filter::String="")
     result = Cookie[]
-    for (_, line) in headers(h, "Cookie")
+    for line in headers(h, "Cookie")
         for part in split(strip(line), ';'; keepempty=false)
             part = strip(part)
             length(part) <= 1 && continue

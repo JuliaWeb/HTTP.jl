@@ -391,7 +391,9 @@ header(h::Headers, k::AbstractString, d="") =
 
 "get all headers with key `k` or empty if none"
 headers(h::Headers, k::AbstractString) =
-    filter(x -> field_name_isequal(x[1], k), h)
+    map(x -> x[2], filter(x -> field_name_isequal(x[1], k), h))
+headers(m::Message, k::AbstractString) =
+    headers(headers(m), k)
 
 """
     hasheader(::Message, key) -> Bool
