@@ -30,15 +30,17 @@
 
 module Cookies
 
-export Cookie, cookies, stringify
+export Cookie, CookieJar, cookies, stringify, getcookies!, setcookies!
 
 import Base: ==
-using ..Dates
+using ..Dates, ..URIs
 using ..IOExtras: bytes
 using ..Parsers: Headers
-using ..Messages: Request, mkheaders, hasheader, header
+using ..Messages: Request, Response, mkheaders, hasheader, header, headers
 
 import ..IPAddr
+
+@enum SameSite SameSiteDefaultMode=1 SameSiteLaxMode SameSiteStrictMode SameSiteNoneMode
 
 """
     Cookie()
@@ -58,6 +60,7 @@ HTTP response or the Cookie header of an HTTP request. Supported fields
   * `secure::Bool`: secure cookie attribute
   * `httponly::Bool`: httponly cookie attribute
   * `hostonly::Bool`: hostonly cookie attribute
+  * `samesite::Bool`: SameSite cookie attribute
 
 See http:#tools.ietf.org/html/rfc6265 for details.
 """
@@ -68,6 +71,9 @@ mutable struct Cookie
     path::String      # optional
     domain::String    # optional
     expires::Dates.DateTime # optional
+    rawexpires::String # for reading cookies only
+    creation::Dates.DateTime
+    lastaccess::Dates.DateTime
 
     # MaxAge=0 means no 'Max-Age' attribute specified.
     # MaxAge<0 means delete cookie now, equivalently 'Max-Age: 0'
@@ -75,7 +81,10 @@ mutable struct Cookie
     maxage::Int
     secure::Bool
     httponly::Bool
+    persistent::Bool
     hostonly::Bool
+    samesite::SameSite
+    raw::String
     unparsed::Vector{String} # Raw text of unparsed attribute-value pairs
 end
 
@@ -85,36 +94,54 @@ function Cookie(cookie::Cookie; kwargs...)
     end
     return cookie
 end
-Cookie(; kwargs...) = Cookie(Cookie("", ""); kwargs...)
+Cookie(; kwargs...) = Cookie(Cookie("", "", ""); kwargs...)
 
-Cookie(name, value; args...) = Cookie(Cookie(name, value, "", "", Dates.DateTime(1), 0, false, false, false, String[]); args...)
+Cookie(name, value, raw=""; args...) =
+    Cookie(Cookie(
+        String(name), String(value), "", "",
+        Dates.DateTime(1), "", Dates.DateTime(1), Dates.DateTime(1), 0,
+        false, false, false, false, SameSiteDefaultMode, String(raw), String[]); args...)
 
 Base.isequal(a::Cookie, b::Cookie) = a.name == b.name && a.path == b.path && a.domain == b.domain
 Base.hash(x::Cookie, h::UInt) = hash(x.name, hash(x.path, hash(x.domain, h)))
+id(c::Cookie) = "$(c.domain);$(c.path);$(c.name)"
 
-==(a::Cookie,b::Cookie) = (a.name     == b.name)    &&
-                          (a.value    == b.value)   &&
-                          (a.path     == b.path)    &&
-                          (a.domain   == b.domain)  &&
-                          (a.expires  == b.expires) &&
-                          (a.maxage   == b.maxage)  &&
-                          (a.secure   == b.secure)  &&
-                          (a.httponly == b.httponly)
+==(a::Cookie,b::Cookie) = (a.name     == b.name)         &&
+                          (a.value    == b.value)        &&
+                          (a.path     == b.path)         &&
+                          (a.domain   == b.domain)       &&
+                          (a.expires  == b.expires)      &&
+                          (a.creation == b.creation)     &&
+                          (a.lastaccess == b.lastaccess) &&
+                          (a.maxage   == b.maxage)       &&
+                          (a.secure   == b.secure)       &&
+                          (a.httponly == b.httponly)     &&
+                          (a.persistent == b.persistent) &&
+                          (a.hostonly == b.hostonly)     &&
+                          (a.samesite == b.samesite)
 
-# request cookie stringify-ing
+# cookie stringify-ing
 function Base.String(c::Cookie, isrequest::Bool=true)
-    io = IOBuffer()
     nm = strip(c.name)
     !iscookienamevalid(nm) && return ""
+    io = IOBuffer()
     write(io, sanitizeCookieName(nm), '=', sanitizeCookieValue(c.value))
     if !isrequest
         length(c.path) > 0 && write(io, "; Path=", sanitizeCookiePath(c.path))
-        length(c.domain) > 0 && validCookieDomain(c.domain) && write(io, "; Domain=", c.domain[1] == '.' ? c.domain[2:end] : c.domain)
+        length(c.domain) > 0 && validCookieDomain(c.domain) && write(io, "; Domain=", c.domain[1] == '.' ? SubString(c.domain, 2) : c.domain)
         validCookieExpires(c.expires) && write(io, "; Expires=", Dates.format(c.expires, Dates.RFC1123Format), " GMT")
         c.maxage > 0 && write(io, "; Max-Age=", string(c.maxage))
         c.maxage < 0 && write(io, "; Max-Age=0")
         c.httponly && write(io, "; HttpOnly")
+        # c.hostonly && write(io, "; HostOnly")
         c.secure && write(io, "; Secure")
+        if c.samesite == SameSiteLaxMode
+            write(io, "; SameSite=Lax")
+        elseif c.samesite == SameSiteStrictMode
+            write(io, "; SameSite=Strict")
+        elseif c.samesite == SameSiteNoneMode
+            write(io, "; SameSite=None")
+        end
     end
     return String(take!(io))
 end
@@ -148,97 +175,94 @@ const AlternateRFC1123Format = Dates.DateFormat("e, dd-uuu-yyyy HH:MM:SS G\\MT")
 
 # readSetCookies parses all "Set-Cookie" values from
 # the header h and returns the successfully parsed Cookies.
-readsetcookies(host, cookies) = Cookie[readsetcookie(host, c) for c in cookies]
-
-function readsetcookie(host, cookie)
-    parts = split(strip(cookie), ';')
-    length(parts) == 1 && parts[1] == "" && return Cookie()
-    parts[1] = strip(parts[1])
-    j = findfirst(isequal('='), parts[1])
-    j === nothing && return Cookie()
-    name, value = parts[1][1:j-1], parts[1][j+1:end]
-    iscookienamevalid(name) || return Cookie()
-    value, ok = parsecookievalue(value, true)
-    ok || return Cookie()
-    c = Cookie(name, value)
-    for x = 2:length(parts)
-        parts[x] = strip(parts[x])
-        length(parts[x]) == 0 && continue
-        attr, val = parts[x], ""
-        j = findfirst(isequal('='), parts[x])
-        if j !== nothing
-            attr, val = attr[1:j-1], attr[j+1:end]
-        end
-        lowerattr = lowercase(attr)
-        val, ok = parsecookievalue(val, false)
-        if !ok
-            push!(c.unparsed, parts[x])
+function readsetcookies(h::Headers)
+    result = Cookie[]
+    for (_, line) in headers(h, "Set-Cookie")
+        parts = split(strip(line), ';'; keepempty=false)
+        if length(parts) == 1 && parts[1] == ""
             continue
         end
-        if lowerattr == "secure"
-            c.secure = true
-        elseif lowerattr == "httponly"
-            c.httponly = true
-        elseif lowerattr == "domain"
-            c.domain = val
-        elseif lowerattr == "max-age"
-            try
-                secs = parse(Int, val)
-                val[1] == '0' && continue
-                c.maxage = max(secs, -1)
-            catch
+        part = strip(parts[1])
+        j = findfirst(isequal('='), part)
+        if j !== nothing
+            name, val = SubString(part, 1:j-1), SubString(part, j+1)
+        else
+            name, val = part, ""
+        end
+        !iscookienamevalid(name) && continue
+        val, ok = parsecookievalue(val, true)
+        !ok && continue
+        c = Cookie(name, val, line)
+        for i = 2:length(parts)
+            part = strip(parts[i])
+            isempty(part) && continue
+            j = findfirst(isequal('='), part)
+            if j !== nothing
+                attr, val = SubString(part, 1:j-1), SubString(part, j+1)
+            else
+                attr, val = part, ""
+            end
+            !isascii(attr) && continue
+            lowerattr = lowercase(attr)
+            val, ok = parsecookievalue(val, false)
+            if !ok
+                push!(c.unparsed, part)
                 continue
             end
-        elseif lowerattr == "expires"
-            try
-                c.expires = Dates.DateTime(val, Dates.RFC1123Format)
-            catch
+            if lowerattr == "samesite"
+                if !isascii(val)
+                    c.samesite = SameSiteDefaultMode
+                    continue
+                end
+                val = lowercase(val)
+                if val == "lax"
+                    c.samesite = SameSiteLaxMode
+                elseif val == "strict"
+                    c.samesite = SameSiteStrictMode
+                elseif val == "none"
+                    c.samesite = SameSiteNoneMode
+                else
+                    c.samesite = SameSiteDefaultMode
+                end
+            elseif lowerattr == "secure"
+                c.secure = true
+            elseif lowerattr == "httponly"
+                c.httponly = true
+            # elseif lowerattr == "hostonly"
+            #     c.hostonly = true
+            elseif lowerattr == "domain"
+                c.domain = val
+            elseif lowerattr == "max-age"
                 try
-                    c.expires = Dates.DateTime(val, AlternateRFC1123Format)
+                    secs = parse(Int, val)
+                    val[1] == '0' && continue
+                    c.maxage = max(secs, -1)
                 catch
                     continue
                 end
+            elseif lowerattr == "expires"
+                c.rawexpires = val
+                try
+                    c.expires = Dates.DateTime(val, Dates.RFC1123Format)
+                catch
+                    try
+                        c.expires = Dates.DateTime(val, AlternateRFC1123Format)
+                    catch
+                        continue
+                    end
+                end
+            elseif lowerattr == "path"
+                c.path = val
+            else
+                push!(c.unparsed, parts[x])
             end
-        elseif lowerattr == "path"
-            c.path = val
-        else
-            push!(c.unparsed, parts[x])
         end
+        push!(result, c)
     end
-    c.domain, c.hostonly = domainandtype(host == "" ? c.domain : host, c.domain)
-    return c
+    return result
 end
 
-# shouldsend determines whether e's cookie qualifies to be included in a
-# request to host/path. It is the caller's responsibility to check if the
-# cookie is expired.
-function shouldsend(cookie::Cookie, https::Bool, host, path)
-    return domainmatch(cookie, host) && pathmatch(cookie, path) && (https || !cookie.secure)
-end
-
-# domainMatch implements "domain-match" of RFC 6265 section 5.1.3.
-function domainmatch(cookie::Cookie, host)
-    cookie.domain == host && return true
-    return !cookie.hostonly && hasdotsuffix(host, cookie.domain)
-end
-
-# hasdotsuffix reports whether s ends in "."+suffix.
-function hasdotsuffix(s, suffix)
-    return length(s) > length(suffix) && s[length(s)-length(suffix)] == '.' && s[length(s)-length(suffix)+1:end] == suffix
-end
-
-# pathMatch implements "path-match" according to RFC 6265 section 5.1.4.
-function pathmatch(cookie::Cookie, requestpath)
-    requestpath == cookie.path && return true
-    if startswith(requestpath, cookie.path)
-        if length(cookie.path) > 0 && cookie.path[end] == '/'
-            return true # The "/any/" matches "/any/path" case.
-        elseif length(requestpath) >= length(cookie.path) + 1 && requestpath[length(cookie.path)+1] == '/'
-            return true # The "/any" matches "/any/path" case.
-        end
-    end
-    return false
-end
+readsetcookies(h) = readsetcookies(mkheaders(h))
 
 function isIP(host)
     try
@@ -250,96 +274,35 @@ function isIP(host)
     end
 end
 
-# domainAndType determines the cookie's domain and hostOnly attribute.
-function domainandtype(host, domain)
-    if domain == ""
-        # No domain attribute in the SetCookie header indicates a
-        # host cookie.
-        return host, true
-    end
-
-    if isIP(host)
-        # According to RFC 6265 domain-matching includes not being
-        # an IP address.
-        # TODO: This might be relaxed as in common browsers.
-        return "", false
-    end
-
-    # From here on: If the cookie is valid, it is a domain cookie (with
-    # the one exception of a public suffix below).
-    # See RFC 6265 section 5.2.3.
-    if domain[1] == '.'
-        domain = domain[2:end]
-    end
-
-    if length(domain) == 0 || domain[1] == '.'
-        # Received either "Domain=." or "Domain=..some.thing",
-        # both are illegal.
-        return "", false
-    end
-    domain = lowercase(domain)
-
-    if domain[end] == '.'
-        # We received stuff like "Domain=www.example.com.".
-        # Browsers do handle such stuff (actually differently) but
-        # RFC 6265 seems to be clear here (e.g. section 4.1.2.3) in
-        # requiring a reject.  4.1.2.3 is not normative, but
-        # "Domain Matching" (5.1.3) and "Canonicalized Host Names"
-        # (5.1.2) are.
-        return "", false
-    end
-
-    #TODO:
-    # See RFC 6265 section 5.3 #5.
-    # if j.psList != nil
-    #     if ps := j.psList.PublicSuffix(domain); ps != "" && !hasDotSuffix(domain, ps)
-    #         if host == domain
-    #             # This is the one exception in which a cookie
-    #             # with a domain attribute is a host cookie.
-    #             return host, true, nil
-    #         end
-    #         return "", false
-    #     end
-    # end
-
-    # The domain must domain-match host: www.mycompany.com cannot
-    # set cookies for .ourcompetitors.com.
-    if host != domain && !hasdotsuffix(host, domain)
-        return "", false
-    end
-
-    return domain, false
-end
-
+cookies(r::Response) = readsetcookies(r.headers)
 cookies(r::Request) = readcookies(r.headers, "")
 
 # readCookies parses all "Cookie" values from the header h and
 # returns the successfully parsed Cookies.
 # if filter isn't empty, only cookies of that name are returned
 function readcookies(h::Headers, filter::String)
-
     result = Cookie[]
-
-    for part in split(header(h, "Cookie", ""), ';')
-        part = strip(part)
-        length(part) <= 1 && continue
-        j = findfirst(isequal('='), part)
-        if j !== nothing
-            name, val = part[1:j-1], part[j+1:end]
-        else
-            name, val = part, ""
+    for (_, line) in headers(h, "Cookie")
+        for part in split(strip(line), ';'; keepempty=false)
+            part = strip(part)
+            length(part) <= 1 && continue
+            j = findfirst(isequal('='), part)
+            if j !== nothing
+                name, val = part[1:j-1], part[j+1:end]
+            else
+                name, val = part, ""
+            end
+            !iscookienamevalid(name) && continue
+            filter != "" && filter != name && continue
+            val, ok = parsecookievalue(val, true)
+            !ok && continue
+            push!(result, Cookie(name, val, line))
         end
-        !iscookienamevalid(name) && continue
-        filter != "" && filter != name && continue
-        val, ok = parsecookievalue(val, true)
-        !ok && continue
-        push!(result, Cookie(name, val))
     end
     return result
 end
 
 readcookies(h, f) = readcookies(mkheaders(h), f)
-
 
 # validCookieExpires returns whether v is a valid cookie expires-value.
 function validCookieExpires(dt)
@@ -402,7 +365,7 @@ sanitizeCookieName(n) = sanitizeCookieName(String(n))
 function sanitizeCookieValue(v::String)
     v = String(filter(validcookievaluebyte, [Char(b) for b in bytes(v)]))
     length(v) == 0 && return v
-    if v[1] == ' ' || v[1] == ',' || v[end] == ' ' || v[end] == ','
+    if contains(v, ' ') || contains(v, ',')
         return string('"', v, '"')
     end
     return v
@@ -446,5 +409,7 @@ const normal_url_char = Bool[
 ]
 
 @inline isurlchar(c) =  c > '\u80' ? true : normal_url_char[Int(c) + 1]
+
+include("cookiejar.jl")
 
 end # module

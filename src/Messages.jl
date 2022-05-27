@@ -389,6 +389,10 @@ header(m::Message, k, d="") = header(m.headers, k, d)
 header(h::Headers, k::AbstractString, d="") =
     getbyfirst(h, k, k => d, field_name_isequal)[2]
 
+"get all headers with key `k` or empty if none"
+headers(h::Headers, k::AbstractString) =
+    filter(x -> field_name_isequal(x[1], k), h)
+
 """
     hasheader(::Message, key) -> Bool
 

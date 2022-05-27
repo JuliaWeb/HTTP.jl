@@ -41,7 +41,7 @@ end
     end
 
     @testset "Cookie Requests" begin
-        empty!(HTTP.access_threaded(Dict{String, Set{HTTP.Cookie}}, HTTP.CookieRequest.default_cookiejar))
+        empty!(HTTP.COOKIEJAR)
         r = HTTP.get("$sch://httpbin.org/cookies", cookies=true)
 
         body = String(r.body)
@@ -168,12 +168,12 @@ end
     end
 
     @testset "Client Redirect Following - $read_method" for read_method in ["GET", "HEAD"]
-        @test_skip status(HTTP.request(read_method, "$sch://httpbin.org/redirect/1")) ==200
-        @test_skip status(HTTP.request(read_method, "$sch://httpbin.org/redirect/1", redirect=false)) == 302
-        @test_skip status(HTTP.request(read_method, "$sch://httpbin.org/redirect/6")) == 302 #over max number of redirects
-        @test_skip status(HTTP.request(read_method, "$sch://httpbin.org/relative-redirect/1")) == 200
-        @test_skip status(HTTP.request(read_method, "$sch://httpbin.org/absolute-redirect/1")) == 200
-        @test_skip status(HTTP.request(read_method, "$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fgoogle.com")) == 200
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/1")) ==200
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/1", redirect=false)) == 302
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/6")) == 302 #over max number of redirects
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/relative-redirect/1")) == 200
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/absolute-redirect/1")) == 200
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fgoogle.com")) == 200
     end
 
     @testset "Client Basic Auth" begin
