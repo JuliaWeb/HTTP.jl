@@ -46,7 +46,7 @@ function getcookies!(jar::CookieJar, url::URI, now::DateTime=Dates.now(Dates.UTC
     end
     host = canonicalhost(url.host)
     host == "" && return cookies
-    @lock jar.lock begin
+    Base.@lock jar.lock begin
         !haskey(jar.entries, host) && return cookies
         entries = jar.entries[host]
         https = url.scheme == "https"
@@ -95,7 +95,7 @@ function setcookies!(jar::CookieJar, url::URI, headers::Headers)
     host == "" && return
     defPath = defaultPath(url.path)
     now = Dates.now(Dates.UTC)
-    @lock jar.lock begin
+    Base.@lock jar.lock begin
         entries = get!(() -> Dict{String, Cookie}(), jar.entries, host)
         for c in cookies
             if c.path == "" || c.path[1] != '/'

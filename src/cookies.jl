@@ -40,20 +40,6 @@ using ..Messages: Request, Response, mkheaders, hasheader, header, headers
 
 import ..IPAddr
 
-if !isdefined(Base, Symbol("@lock"))
-    macro lock(l, expr)
-        quote
-            temp = $(esc(l))
-            lock(temp)
-            try
-                $(esc(expr))
-            finally
-                unlock(temp)
-            end
-        end
-    end
-end
-
 @enum SameSite SameSiteDefaultMode=1 SameSiteLaxMode SameSiteStrictMode SameSiteNoneMode
 
 """
@@ -294,7 +280,7 @@ cookies(r::Request) = readcookies(r.headers, "")
 # readCookies parses all "Cookie" values from the header h and
 # returns the successfully parsed Cookies.
 # if filter isn't empty, only cookies of that name are returned
-function readcookies(h::Headers, filter::String)
+function readcookies(h::Headers, filter::String="")
     result = Cookie[]
     for (_, line) in headers(h, "Cookie")
         for part in split(strip(line), ';'; keepempty=false)
