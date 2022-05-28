@@ -7,7 +7,7 @@ import ..ConnectionPool
 using ..MessageRequest
 import ..RedirectRequest: nredirects
 import ..sprintcompact
-using LoggingExtras
+using LoggingExtras, CodecZlib
 
 export streamlayer
 
@@ -22,7 +22,7 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-function streamlayer(stream::Stream; iofunction=nothing, redirect_limit::Int=3, kw...)::Response
+function streamlayer(stream::Stream; iofunction=nothing, redirect_limit::Int=3, decompress::Bool=true, kw...)::Response
     response = stream.message
     req = response.request
     io = stream.stream
@@ -49,7 +49,7 @@ function streamlayer(stream::Stream; iofunction=nothing, redirect_limit::Int=3, 
                 end
                 @debugv 2 "client startread"
                 startread(stream)
-                readbody(stream, response, redirect_limit == nredirects(req))
+                readbody(stream, response, redirect_limit == nredirects(req), decompress)
             else
                 iofunction(stream)
             end
@@ -103,9 +103,13 @@ end
 writechunk(stream, body::IO) = writebodystream(stream, body)
 writechunk(stream, body) = write(stream, body)
 
-function readbody(stream::Stream, res::Response, redirectlimitreached)
+function readbody(stream::Stream, res::Response, redirectlimitreached, decompress)
     if isbytes(res.body)
-        res.body = read(stream)
+        if decompress && header(res, "Content-Encoding") == "gzip"
+            res.body = transcode(GzipDecompressor, read(stream))
+        else
+            res.body = read(stream)
+        end
     else
         if redirectlimitreached || !isredirect(res)
             write(res.body, stream)

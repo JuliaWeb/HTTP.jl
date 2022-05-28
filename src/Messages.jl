@@ -483,9 +483,8 @@ payload(m::Message, ::Type{String}) =
 
 function decode(m::Message, encoding::String)::Vector{UInt8}
     if encoding == "gzip"
-        # Use https://github.com/bicycle1885/TranscodingStreams.jl ?
+        return transcode(GzipDecompressor, m.body)
     end
-    @warn "Decoding of HTTP Transfer-Encoding is not implemented yet!"
     return m.body
 end
 
