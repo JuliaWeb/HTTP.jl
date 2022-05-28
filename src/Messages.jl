@@ -62,11 +62,12 @@ export Message, Request, Response,
        readchunksize,
        writeheaders, writestartline,
        bodylength, unknown_length,
-       payload, statustext
+       payload, decode, statustext
 
 import ..HTTP
 
 using ..URIs
+using CodecZlib
 using ..Pairs
 using ..IOExtras
 using ..Parsers
@@ -483,9 +484,8 @@ payload(m::Message, ::Type{String}) =
 
 function decode(m::Message, encoding::String)::Vector{UInt8}
     if encoding == "gzip"
-        # Use https://github.com/bicycle1885/TranscodingStreams.jl ?
+        return transcode(GzipDecompressor, m.body)
     end
-    @warn "Decoding of HTTP Transfer-Encoding is not implemented yet!"
     return m.body
 end
 

@@ -54,14 +54,14 @@ tocameldash(s::AbstractString) = tocameldash(String(s))
 
 Convert from ISO8859_1 to UTF8.
 """
-function iso8859_1_to_utf8(bytes::Vector{UInt8})
+function iso8859_1_to_utf8(bytes::AbstractVector{UInt8})
     io = IOBuffer()
     for b in bytes
         if b < 0x80
             write(io, b)
         else
-            write(io, 0xc0 | b >> 6)
-            write(io, 0x80 | b & 0x3f)
+            write(io, 0xc0 | (b >> 6))
+            write(io, 0x80 | (b & 0x3f))
         end
     end
     return String(take!(io))
