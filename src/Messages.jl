@@ -62,7 +62,7 @@ export Message, Request, Response,
        readchunksize,
        writeheaders, writestartline,
        bodylength, unknown_length,
-       payload, statustext
+       payload, decode, statustext
 
 import ..HTTP
 
