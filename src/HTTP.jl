@@ -29,7 +29,7 @@ include("access_log.jl")
 
 include("Pairs.jl")                    ;using .Pairs
 include("IOExtras.jl")                 ;using .IOExtras
-include("Strings.jl")
+include("Strings.jl")                  ;using .Strings
 include("sniff.jl")
 include("multipart.jl")
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,
