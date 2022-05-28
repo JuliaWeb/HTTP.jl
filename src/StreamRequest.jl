@@ -104,12 +104,11 @@ writechunk(stream, body::IO) = writebodystream(stream, body)
 writechunk(stream, body) = write(stream, body)
 
 function readbody(stream::Stream, res::Response, redirectlimitreached, decompress)
+    if decompress && header(res, "Content-Encoding") == "gzip"
+        stream = GzipDecompressorStream(stream)
+    end
     if isbytes(res.body)
-        if decompress && header(res, "Content-Encoding") == "gzip"
-            res.body = transcode(GzipDecompressor, read(stream))
-        else
-            res.body = read(stream)
-        end
+        res.body = read(stream)
     else
         if redirectlimitreached || !isredirect(res)
             write(res.body, stream)

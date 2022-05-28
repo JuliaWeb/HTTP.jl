@@ -36,6 +36,7 @@ end
         r = HTTP.get("$sch://httpbin.org/gzip"; decompress=false)
         @test status(r) == 200
         @test !isascii(String(r.body))
+        r = HTTP.get("$sch://httpbin.org/gzip"; decompress=false)
         @test isascii(String(HTTP.decode(r, "gzip")))
     end
 
