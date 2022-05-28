@@ -66,7 +66,7 @@ export Message, Request, Response,
 
 import ..HTTP
 
-using ..URIs
+using ..URIs, ..CodecZlib
 using ..Pairs
 using ..IOExtras
 using ..Parsers
