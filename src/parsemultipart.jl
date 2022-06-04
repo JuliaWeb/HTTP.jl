@@ -1,7 +1,7 @@
 module MultiPartParsing
 
-import ..access_threaded, ..Message, ..Request, ..Multipart, ..payload
-using ..Parsers
+import ..access_threaded
+using ..Messages, ..Forms, ..Parsers
 
 export parse_multipart_form
 

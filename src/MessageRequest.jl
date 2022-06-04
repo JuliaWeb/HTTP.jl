@@ -1,8 +1,7 @@
 module MessageRequest
 
 using URIs
-import ..Headers
-using ..Messages
+using ..Messages, ..Parsers
 
 export messagelayer
 

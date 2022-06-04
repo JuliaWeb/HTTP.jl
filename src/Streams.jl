@@ -1,19 +1,9 @@
 module Streams
 
-export Stream, closebody, isaborted,
-       header, hasheader,
-       setstatus, setheader
+export Stream, closebody, isaborted, setstatus
 
-import ..HTTP
-using ..Sockets
-using ..IOExtras
-using ..Messages
-import ..Messages: header, hasheader, setheader,
-                   writeheaders, writestartline
-import ..ConnectionPool: getrawstream
-import ..@require, ..precondition_error
-import ..@ensure, ..postcondition_error
-using LoggingExtras
+using Sockets, LoggingExtras
+using ..IOExtras, ..Messages, ..ConnectionPool, ..Conditions
 
 mutable struct Stream{M <: Message, S <: IO} <: IO
     message::M
@@ -47,10 +37,10 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
 """
 Stream(r::M, io::S) where {M, S} = Stream{M, S}(r, io, false, false, true, 0, 0)
 
-header(http::Stream, a...) = header(http.message, a...)
+Messages.header(http::Stream, a...) = header(http.message, a...)
 setstatus(http::Stream, status) = (http.message.response.status = status)
-setheader(http::Stream, a...) = setheader(http.message.response, a...)
-getrawstream(http::Stream) = getrawstream(http.stream)
+Messages.setheader(http::Stream, a...) = setheader(http.message.response, a...)
+ConnectionPool.getrawstream(http::Stream) = getrawstream(http.stream)
 
 Sockets.getsockname(http::Stream) = Sockets.getsockname(getrawstream(http))
 function Sockets.getpeername(http::Stream)

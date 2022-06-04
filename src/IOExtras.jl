@@ -7,7 +7,7 @@ This module defines extensions to the `Base.IO` interface to support:
 """
 module IOExtras
 
-using ..Sockets
+using Sockets
 using MbedTLS: MbedException
 
 export bytes, isbytes, nbytes, ByteView, nobytes, IOError, isioerror,

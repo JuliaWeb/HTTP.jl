@@ -11,6 +11,8 @@ using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
 Middleware that takes a request handler and returns a stream handler. Used by default
 in `HTTP.serve` to take the user-provided request handler and process the `Stream`
 from `HTTP.listen` and pass the parsed `Request` to the handler.
+
+Is included by default in `HTTP.serve` as the base "middleware" when `stream=false` is passed.
 """
 function streamhandler(handler)
     return function(stream::Stream)
@@ -238,6 +240,16 @@ object itself is a "request handler" that can be called like:
 r = HTTP.Router()
 resp = r(reqest)
 ```
+
+Which will inspect the `request`, find the matching, registered handler from the url,
+and pass the request on to be handled further.
+
+See [`HTTP.register!`](@ref) for additional information on registering handlers based on routes.
+
+If a request doesn't have a matching, registered handler, the `_404` handler is called which,
+by default, returns a `HTTP.Response(404)`. If a route matches the path, but not the method/verb
+(e.g. there's a registerd route for "GET /api", but the request is "POST /api"), then the `_405`
+handler is called, which by default returns `HTTP.Response(405)` (method not allowed).
 """
 struct Router{T, S}
     _404::T
@@ -255,10 +267,10 @@ and the optionally provided `method` (if not provided, any method is allowed). C
 to dynamically register routes.
 The following path types are allowed for matching:
   * `/api/widgets`: exact match of static strings
-  * `/api/*/owner`: single `*` to wildcard match any string for a single segment
-  * `/api/widget/{id}`: Define a path variable `id` that matches any valued provided for this segment; path variables are available in the request context like `req.context[:params]["id"]`
-  * `/api/widget/{id:[0-9]+}`: Define a path variable `id` that only matches integers for this segment
-  * `/api/**`: double wildcard matches any number of trailing segments in the request path; must be the last segment in the path
+  * `/api/*/owner`: single `*` to wildcard match anything for a single segment
+  * `/api/widget/{id}`: Define a path variable `id` that matches any valued provided for this segment; path variables are available in the request context like `HTTP.getparams(req)["id"]`
+  * `/api/widget/{id:[0-9]+}`: Define a path variable `id` that does a regex match for integers for this segment
+  * `/api/**`: double wildcard matches any number of trailing segments in the request path; the double wildcard must be the last segment in the path
 """
 function register! end
 
@@ -293,6 +305,13 @@ end
 
 getparams(req) = get(req.context, :params, nothing)
 
+"""
+    HTTP.Handlers.cookie_middleware(handler) -> handler
+
+Middleware that parses and stores any cookies in the incoming
+request in the request context. Cookies can then be retrieved by calling
+[`HTTP.getcookies(req)`](@ref) in subsequent middlewares/handlers.
+"""
 function cookie_middleware(handler)
     function (req)
         if !haskey(req.context, :cookies)
@@ -302,6 +321,14 @@ function cookie_middleware(handler)
     end
 end
 
+"""
+    HTTP.getcookies(req) -> Vector{Cookie}
+
+Retrieve any parsed cookies from a request context. Cookies
+are expected to be stored in the `req.context[:cookies]` of the
+request context as implemented in the [`HTTP.Handlers.cookie_middleware`](@ref)
+middleware.
+"""
 getcookies(req) = get(() => Cookie[], req.context, :cookies)
 
 end # module

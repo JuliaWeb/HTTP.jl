@@ -7,9 +7,7 @@ const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
 
-using Base64, Sockets, Dates
-using URIs
-using LoggingExtras
+using Base64, Sockets, Dates, URIs, LoggingExtras
 
 function access_threaded(f, v::Vector)
     tid = Threads.threadid()
@@ -24,14 +22,16 @@ function access_threaded(f, v::Vector)
 end
 @noinline _length_assert() =  @assert false "0 < tid <= v"
 
-include("debug.jl")
+function open end
+
+include("Conditions.jl")               ;using .Conditions
 include("access_log.jl")
 
 include("Pairs.jl")                    ;using .Pairs
 include("IOExtras.jl")                 ;using .IOExtras
 include("Strings.jl")                  ;using .Strings
-include("sniff.jl")
-include("multipart.jl")
+include("sniff.jl")                    ;using .Sniff
+include("multipart.jl")                ;using .Forms
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,
                                                          ParseError
 include("ConnectionPool.jl")

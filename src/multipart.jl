@@ -1,3 +1,9 @@
+module Forms
+
+export Form, Multipart, content_type
+
+using ..IOExtras, ..Sniff, ..Conditions
+
 # Form request body
 mutable struct Form <: IO
     data::Vector{IO}
@@ -104,7 +110,7 @@ end
 
 function writemultipartheader(io::IOBuffer, i::IOStream)
     write(io, "; filename=\"$(basename(i.name[7:end-1]))\"\r\n")
-    write(io, "Content-Type: $(HTTP.sniff(i))\r\n\r\n")
+    write(io, "Content-Type: $(sniff(i))\r\n\r\n")
     return
 end
 function writemultipartheader(io::IOBuffer, i::IO)
@@ -186,7 +192,7 @@ function writemultipartheader(io::IOBuffer, i::Multipart)
     else
         write(io, "; filename=\"$(i.filename)\"\r\n")
     end
-    contenttype = i.contenttype == "" ? HTTP.sniff(i.data) : i.contenttype
+    contenttype = i.contenttype == "" ? sniff(i.data) : i.contenttype
     write(io, "Content-Type: $(contenttype)\r\n")
     write(io, i.contenttransferencoding == "" ? "\r\n" : "Content-Transfer-Encoding: $(i.contenttransferencoding)\r\n\r\n")
     return
@@ -195,5 +201,4 @@ end
 content_type(f::Form) = "Content-Type" =>
                         "multipart/form-data; boundary=$(f.boundary)"
 
-# Deprecation can be removed in HTTP 0.10.0 (or 1.0.0).
-@deprecate post(url, f::Form; kw...) post(url, [], f; kw...)
+end # module

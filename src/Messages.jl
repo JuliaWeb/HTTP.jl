@@ -62,22 +62,15 @@ export Message, Request, Response,
        readchunksize,
        writeheaders, writestartline,
        bodylength, unknown_length,
-       payload, decode, statustext
+       payload, decode, statustext, sprintcompact
 
-import ..HTTP
-
-using ..URIs
-using CodecZlib
-using ..Pairs
-using ..IOExtras
-using ..Parsers
-import ..@require, ..precondition_error
-import ..bytes, ..Form
-
-include("ascii.jl")
+using URIs, CodecZlib
+using ..Pairs, ..IOExtras, ..Parsers, ..Strings, ..Forms, ..Conditions
 
 const nobody = UInt8[]
 const unknown_length = typemax(Int)
+
+sprintcompact(x) = sprint(show, x; context=:compact => true)
 
 abstract type Message end
 

@@ -6,7 +6,7 @@ import ..DEBUG_LEVEL
 export debuglayer
 
 """
-    debuglayer(stream::Stream) -> HTTP.Response
+    debuglayer(handler) -> handler
 
 If `verbose` keyword arg is > 0, or the HTTP.jl global `DEBUG_LEVEL[]` is > 0,
 then enabled debug logging with verbosity `verbose` for the lifetime of the request.

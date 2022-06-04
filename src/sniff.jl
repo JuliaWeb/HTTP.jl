@@ -1,3 +1,7 @@
+module Sniff
+
+export sniff, isjson
+
 const CodeUnits = Union{Vector{UInt8}, Base.CodeUnits}
 
 # compression detection
@@ -5,7 +9,7 @@ const ZIP = UInt8[0x50, 0x4b, 0x03, 0x04]
 const GZIP = UInt8[0x1f, 0x8b, 0x08]
 
 iscompressed(bytes::CodeUnits) = length(bytes) > 3 && (all(bytes[1:4] .== ZIP) || all(bytes[1:3] .== GZIP))
-iscompressed(str::String) = iscompressed(bytes(str))
+iscompressed(str::String) = iscompressed(codeunits(str))
 iscompressed(d::Dict) = false
 iscompressed(d) = false
 
@@ -44,13 +48,13 @@ function sniff end
 function sniff(body::IO)
     alreadymarked = ismarked(body)
     mark(body)
-    data = bytes(read(body, MAXSNIFFLENGTH))
+    data = read(body, MAXSNIFFLENGTH)
     reset(body)
     alreadymarked && mark(body)
     return sniff(data)
 end
 
-sniff(str::String) = sniff(bytes(str)[1:min(length(bytes(str)), MAXSNIFFLENGTH)])
+sniff(str::String) = sniff(codeunits(str)[1:min(length(codeunits(str)), MAXSNIFFLENGTH)])
 
 function sniff(data::CodeUnits)
     firstnonws = 1
@@ -102,7 +106,7 @@ end
 
 struct HTMLSig
     html::CodeUnits
-    HTMLSig(str::String) = new(bytes(str))
+    HTMLSig(str::String) = new(codeunits(str))
 end
 
 contenttype(h::HTMLSig) = "text/html; charset=utf-8"
@@ -128,8 +132,8 @@ function byteequal(data1, ind, data2)
     return true
 end
 
-const mp4ftype = bytes("ftyp")
-const mp4 = bytes("mp4")
+const mp4ftype = codeunits("ftyp")
+const mp4 = codeunits("mp4")
 
 # Byte swap int
 bigend(b) = UInt32(b[4]) | UInt32(b[3])<<8 | UInt32(b[2])<<16 | UInt32(b[1])<<24
@@ -193,20 +197,20 @@ const SNIFF_SIGNATURES = [
     HTMLSig("<BR"),
     HTMLSig("<P"),
     HTMLSig("<!--"),
-    Masked([0xff,0xff,0xff,0xff,0xff], bytes("<?xml"), true, "text/xml; charset=utf-8"),
-    Exact(bytes("%PDF-"), "application/pdf"),
-    Exact(bytes("%!PS-Adobe-"), "application/postscript"),
+    Masked([0xff,0xff,0xff,0xff,0xff], codeunits("<?xml"), true, "text/xml; charset=utf-8"),
+    Exact(codeunits("%PDF-"), "application/pdf"),
+    Exact(codeunits("%!PS-Adobe-"), "application/postscript"),
 
     # UTF BOMs.
     Masked([0xFF,0xFF,0x00,0x00], [0xFE,0xFF,0x00,0x00], "text/plain; charset=utf-16be"),
     Masked([0xFF,0xFF,0x00,0x00], [0xFF,0xFE,0x00,0x00], "text/plain; charset=utf-16le"),
     Masked([0xFF,0xFF,0xFF,0x00], [0xEF,0xBB,0xBF,0x00], "text/plain; charset=utf-8"),
 
-    Exact(bytes("GIF87a"), "image/gif"),
-    Exact(bytes("GIF89a"), "image/gif"),
+    Exact(codeunits("GIF87a"), "image/gif"),
+    Exact(codeunits("GIF89a"), "image/gif"),
     Exact([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A], "image/png"),
     Exact([0xFF,0xD8,0xFF], "image/jpeg"),
-    Exact(bytes("BM"), "image/bmp"),
+    Exact(codeunits("BM"), "image/bmp"),
     Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF],
            UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'W','E','B','P','V','P'],
            "image/webp"),
@@ -218,7 +222,7 @@ const SNIFF_SIGNATURES = [
            UInt8['F','O','R','M',0x00,0x00,0x00,0x00,'A','I','F','F'],
            "audio/aiff"),
     Masked([0xFF,0xFF,0xFF,0xFF],
-           bytes(".snd"),
+           codeunits(".snd"),
            "audio/basic"),
     Masked(UInt8['O','g','g','S',0x00],
            UInt8[0x4F,0x67,0x67,0x53,0x00],
@@ -227,7 +231,7 @@ const SNIFF_SIGNATURES = [
            UInt8['M','T','h','d',0x00,0x00,0x00,0x06],
            "audio/midi"),
     Masked([0xFF,0xFF,0xFF],
-            bytes("ID3"),
+            codeunits("ID3"),
            "audio/mpeg"),
     Masked([0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF],
            UInt8['R','I','F','F',0x00,0x00,0x00,0x00,'A','V','I',' '],
@@ -365,3 +369,5 @@ function isjson(bytes, i=0, maxlen=min(length(bytes), MAXSNIFFLENGTH))
     end
     return true, i
 end
+
+end # module

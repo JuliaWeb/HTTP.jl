@@ -1,13 +1,12 @@
 module BasicAuthRequest
 
-using ..Base64
-using URIs
+using Base64, URIs, LoggingExtras
 import ..Messages: setheader, hasheader
-using LoggingExtras
 
 export basicauthlayer
+
 """
-    basicauthlayer(req) -> HTTP.Response
+    basicauthlayer(handler) -> handler
 
 Add `Authorization: Basic` header using credentials from url userinfo.
 """

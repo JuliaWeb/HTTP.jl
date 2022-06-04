@@ -2,12 +2,10 @@ module DefaultHeadersRequest
 
 export defaultheaderslayer, setuseragent!
 
-using ..Messages
-using ..IOExtras
-import ..Form, ..content_type
+using ..Messages, ..Forms, ..IOExtras
 
 """
-    defaultheaderslayer(req) -> Response
+    defaultheaderslayer(handler) -> handler
 
 Sets default expected headers.
 """

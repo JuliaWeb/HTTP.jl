@@ -1,8 +1,7 @@
 module TimeoutRequest
 
-using ..ConnectionPool
+using ..ConnectionPool, ..Streams
 using LoggingExtras
-import ..Streams: Stream
 
 struct ReadTimeoutError <:Exception
     readtimeout::Int

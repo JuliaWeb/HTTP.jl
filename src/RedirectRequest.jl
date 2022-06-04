@@ -1,10 +1,7 @@
 module RedirectRequest
 
-using URIs
-using ..Messages
-using ..Pairs: setkv
-import ..Header
-using LoggingExtras
+using URIs, LoggingExtras
+using ..Messages, ..Pairs
 
 export redirectlayer, nredirects
 

@@ -1,12 +1,7 @@
 module RetryRequest
 
-import ..HTTP
-using ..Sockets
-using ..IOExtras
-using ..MessageRequest
-using ..Messages
-import ..sprintcompact
-using LoggingExtras
+using Sockets, LoggingExtras
+using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest
 
 export retrylayer
 
@@ -49,7 +44,7 @@ end
 isrecoverable(e) = false
 isrecoverable(e::IOError) = true
 isrecoverable(e::Sockets.DNSError) = true
-isrecoverable(e::HTTP.StatusError) = e.status == 403 || # Forbidden
+isrecoverable(e::StatusError) = e.status == 403 || # Forbidden
                                      e.status == 408 || # Timeout
                                      e.status >= 500    # Server Error
 
@@ -66,7 +61,7 @@ function no_retry_reason(ex, req)
     buf = IOBuffer()
     show(IOContext(buf, :compact => true), req)
     print(buf, ", ",
-        ex isa HTTP.StatusError ? "HTTP $(ex.status): " :
+        ex isa StatusError ? "HTTP $(ex.status): " :
         !isrecoverable(ex) ?  "$ex not recoverable, " : "",
         !isbytes(req.body) ? "request streamed, " : "",
         !isbytes(req.response.body) ? "response streamed, " : "",

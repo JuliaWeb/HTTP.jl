@@ -71,7 +71,7 @@ import HTTP.URIs
 end # testset
 
 
-@testset "debug.jl" begin
+@testset "Conditions" begin
     function foo(x, y)
         HTTP.@require x > 10
         HTTP.@ensure y > 10

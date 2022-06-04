@@ -1,14 +1,15 @@
 module ContentTypeDetection
 
-using URIs
-import ..sniff
-import ..Form
-using ..Messages
-import ..IOExtras
-using LoggingExtras
+using URIs, LoggingExtras
+using ..Sniff, ..Forms, ..Messages, ..IOExtras
 
 export contenttypedetectionlayer
 
+"""
+    contenttypedetectionlayer(handler) -> handler
+
+Try and detect the content type of the request body and add the "Content-Type" header.
+"""
 function contenttypedetectionlayer(handler)
     return function(req; detect_content_type::Bool=false, kw...)
         if detect_content_type && (!hasheader(req.headers, "Content-Type")

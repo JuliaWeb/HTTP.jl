@@ -265,6 +265,11 @@ function release(pool::Pool{C}, key, conn::C; kw...) where {C}
     return
 end
 
+"""
+    reset!(pool) -> nothing
+
+Close all connections in a `Pool`.
+"""
 function reset!(pool::Pool)
     lock(pool.lock) do
         for pod in values(pool.pods)

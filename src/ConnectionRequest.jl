@@ -1,13 +1,8 @@
 module ConnectionRequest
 
-using URIs, ..Sockets
-using ..Messages
-using ..IOExtras
-using ..ConnectionPool
+using URIs, Sockets, Base64, LoggingExtras
 using MbedTLS: SSLContext, SSLConfig
-using Base64: base64encode
-using LoggingExtras
-import ..Streams: Stream
+using ..Messages, ..IOExtras, ..ConnectionPool, ..Streams
 
 islocalhost(host) = host == "localhost" || host == "127.0.0.1" || host == "127.0.0.1"
 
@@ -50,7 +45,7 @@ end
 export connectionlayer
 
 """
-    connectionlayer(req) -> HTTP.Response
+    connectionlayer(handler) -> handler
 
 Retrieve an `IO` connection from the [`ConnectionPool`](@ref).
 
