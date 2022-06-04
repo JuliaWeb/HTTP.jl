@@ -17,7 +17,8 @@ have field names compatible with those expected by the `parse_status_line!` and
 """
 module Parsers
 
-import ..access_threaded, ..Strings
+import ..access_threaded
+using ..Strings
 
 export Header, Headers,
        find_end_of_header, find_end_of_chunk_size, find_end_of_trailer,
