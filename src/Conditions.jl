@@ -1,17 +1,9 @@
-taskid(t=current_task()) = string(hash(t) & 0xffff, base=16, pad=4)
 
-debug_header() = string("DEBUG: ", rpad(Dates.now(), 24), taskid(), " ")
+module Conditions
 
-macro debug(n::Int, s)
-    quote
-        if DEBUG_LEVEL[] >= $n
-            println(debug_header(), $(esc(s)))
-        end
-    end
-end
+export @require, @ensure, precondition_error, postcondition_error
 
-sprintcompact(x) = sprint(show, x; context=:compact => true)
-printlncompact(x) = println(sprintcompact(x))
+import ..DEBUG_LEVEL
 
 # Get the calling function. See https://github.com/JuliaLang/julia/issues/6733
 # (The macro form @__FUNCTION__ is hard to escape correctly, so just us a function.)
@@ -80,3 +72,5 @@ macro ensure(condition, msg = "`$condition`")
 
     :(if ! $(esc(condition)) throw(postcondition_error($(esc(msg)), $(_funcname_expr()))) end)
 end
+
+end # module

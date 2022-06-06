@@ -7,8 +7,8 @@ This module defines extensions to the `Base.IO` interface to support:
 """
 module IOExtras
 
-using ..Sockets
-using MbedTLS: MbedException
+using Sockets
+using MbedTLS: SSLContext, MbedException
 
 export bytes, isbytes, nbytes, ByteView, nobytes, IOError, isioerror,
        startwrite, closewrite, startread, closeread,
@@ -110,7 +110,6 @@ else
     closeread(io) = nothing
 end
 
-using MbedTLS: SSLContext
 tcpsocket(io::SSLContext)::TCPSocket = io.bio
 tcpsocket(io::TCPSocket)::TCPSocket = io
 

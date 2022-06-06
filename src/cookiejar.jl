@@ -1,4 +1,15 @@
+"""
+    CookieJar()
 
+A thread-safe object for storing cookies returned in "Set-Cookie"
+response headers. Keyed by appropriate host from the original request made.
+Can be created manually and passed like `HTTP.get(url; cookiejar=mycookiejar)`
+to avoid using the default global `CookieJar`. The 2 main functions for
+interacting with a `CookieJar` are [`Cookies.getcookies!`](@ref), which
+returns a `Vector{Cookie}` for a given url (and will remove expired cookies
+from the jar), and [`Cookies.setcookies!`](@ref), which will store "Set-Cookie"
+response headers in the cookie jar.
+"""
 struct CookieJar
     lock::ReentrantLock
     # map of host to cookies mapped by id(::Cookie)
@@ -39,6 +50,15 @@ function pathmatch(cookie::Cookie, requestpath)
     return false
 end
 
+"""
+    Cookies.getcookies!(jar::CookieJar, url::URI)
+
+Retrieve valid `Cookie`s from the `CookieJar` according to the provided `url`.
+Cookies will be returned as a `Vector{Cookie}`. Only cookies for `http` or `https`
+scheme in the url will be returned. Cookies will be checked according to the canonical
+host of the url and any cookie max age or expiration will be accounted for. Expired
+cookies will not be returned and will be removed from the cookie jar.
+"""
 function getcookies!(jar::CookieJar, url::URI, now::DateTime=Dates.now(Dates.UTC))::Vector{Cookie}
     cookies = Cookie[]
     if url.scheme != "http" && url.scheme != "https"
@@ -85,6 +105,13 @@ function getcookies!(jar::CookieJar, url::URI, now::DateTime=Dates.now(Dates.UTC
     return cookies
 end
 
+"""
+    Cookies.setcookies!(jar::CookieJar, url::URI, headers::Headers)
+
+Identify, "Set-Cookie" response headers from `headers`, parse the `Cookie`s,
+and store valid entries in the cookie `jar` according to the canonical host
+in `url`. Cookies can be retrieved from the `jar` via [`Cookies.getcookies!`](@ref).
+"""
 function setcookies!(jar::CookieJar, url::URI, headers::Headers)
     cookies = readsetcookies(headers)
     isempty(cookies) && return

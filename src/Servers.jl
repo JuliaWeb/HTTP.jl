@@ -1,30 +1,20 @@
 """
-The `HTTP.Servers` module provides HTTP server functionality.
+The `HTTP.Servers` module provides core HTTP server functionality.
 
 The main entry point is `HTTP.listen(f, host, port; kw...)` which takes
 a `f(::HTTP.Stream)::Nothing` function argument, a `host`, a `port` and
 optional keyword arguments.  For full details, see `?HTTP.listen`.
 
-For server functionality operating on full requests, see `?HTTP.Handlers`
-module and `?HTTP.serve` function.
+For server functionality operating on full requests, see the `?HTTP.serve` function.
 """
 module Servers
 
 export listen
 
-using ..IOExtras
-using ..Streams
-using ..Messages
-using ..Parsers
-using ..ConnectionPool
-using Sockets, Logging
+using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
-import MbedTLS
-
-using Dates
-
-import ..taskid, ..access_threaded
-using LoggingExtras
+using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..ConnectionPool
+import ..access_threaded
 
 # rate limiting
 mutable struct RateLimit

@@ -1,12 +1,6 @@
-include("resources/HTTPMessages.jl")
-
-import Base.==
-using ..HTTP
-using ..HTTPMessages
-using HTTP.Messages
-using HTTP.Parsers
-using HTTP.Strings: tocameldash
-using ..Test
+using Test, HTTP, HTTP.Messages, HTTP.Parsers, HTTP.Strings
+include(joinpath(dirname(pathof(HTTP)), "../test/resources/HTTPMessages.jl"))
+using .HTTPMessages
 
 import Base.==
 

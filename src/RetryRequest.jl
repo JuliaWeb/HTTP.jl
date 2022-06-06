@@ -1,17 +1,12 @@
 module RetryRequest
 
-import ..HTTP
-using ..Sockets
-using ..IOExtras
-using ..MessageRequest
-using ..Messages
-import ..sprintcompact
-using LoggingExtras
+using Sockets, LoggingExtras
+using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest
 
 export retrylayer
 
 """
-    retrylayer(req) -> HTTP.Response
+    retrylayer(handler) -> handler
 
 Retry the request if it throws a recoverable exception.
 
@@ -49,7 +44,7 @@ end
 isrecoverable(e) = false
 isrecoverable(e::IOError) = true
 isrecoverable(e::Sockets.DNSError) = true
-isrecoverable(e::HTTP.StatusError) = e.status == 403 || # Forbidden
+isrecoverable(e::StatusError) = e.status == 403 || # Forbidden
                                      e.status == 408 || # Timeout
                                      e.status >= 500    # Server Error
 
@@ -61,12 +56,11 @@ isrecoverable(e, req, retry_non_idempotent, retrycount) =
     # "MUST NOT automatically retry a request with a non-idempotent method"
     # https://tools.ietf.org/html/rfc7230#section-6.3.1
 
-
 function no_retry_reason(ex, req)
     buf = IOBuffer()
     show(IOContext(buf, :compact => true), req)
     print(buf, ", ",
-        ex isa HTTP.StatusError ? "HTTP $(ex.status): " :
+        ex isa StatusError ? "HTTP $(ex.status): " :
         !isrecoverable(ex) ?  "$ex not recoverable, " : "",
         !isbytes(req.body) ? "request streamed, " : "",
         !isbytes(req.response.body) ? "response streamed, " : "",

@@ -1,15 +1,12 @@
 module RedirectRequest
 
-using URIs
-using ..Messages
-using ..Pairs: setkv
-import ..Header
-using LoggingExtras
+using URIs, LoggingExtras
+using ..Messages, ..Pairs
 
 export redirectlayer, nredirects
 
 """
-    redirectlayer(req) -> HTTP.Response
+    redirectlayer(handler) -> handler
 
 Redirects the request in the case of 3xx response status.
 """

@@ -7,9 +7,7 @@ const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
 
-using Base64, Sockets, Dates
-using URIs
-using LoggingExtras
+using Base64, Sockets, Dates, URIs, LoggingExtras
 
 function access_threaded(f, v::Vector)
     tid = Threads.threadid()
@@ -24,17 +22,19 @@ function access_threaded(f, v::Vector)
 end
 @noinline _length_assert() =  @assert false "0 < tid <= v"
 
-include("debug.jl")
+function open end
+
+include("Conditions.jl")               ;using .Conditions
 include("access_log.jl")
 
 include("Pairs.jl")                    ;using .Pairs
 include("IOExtras.jl")                 ;using .IOExtras
 include("Strings.jl")                  ;using .Strings
-include("sniff.jl")
-include("multipart.jl")
+include("sniff.jl")                    ;using .Sniff
+include("multipart.jl")                ;using .Forms
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,
                                                          ParseError
-include("ConnectionPool.jl")
+include("ConnectionPool.jl")           ;using .ConnectionPool
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
@@ -70,6 +70,7 @@ Send a HTTP Request Message and receive a HTTP Response Message.
 e.g.
 ```julia
 r = HTTP.request("GET", "http://httpbin.org/ip")
+r = HTTP.get("http://httpbin.org/ip") # equivalent shortcut
 println(r.status)
 println(String(r.body))
 ```
@@ -77,10 +78,10 @@ println(String(r.body))
 `headers` can be any collection where
 `[string(k) => string(v) for (k,v) in headers]` yields `Vector{Pair}`.
 e.g. a `Dict()`, a `Vector{Tuple}`, a `Vector{Pair}` or an iterator.
-By convention, if a header _value_ is the empty string, it will not be written
-when sending a request.
+By convention, if a header _value_ is an empty string, it will not be written
+when sending a request (following the curl convention).
 
-`body` can take a number of forms:
+`body` can be a variety of objects:
 
  - a `String`, a `Vector{UInt8}` or any `T` accepted by `write(::IO, ::T)`
  - a collection of `String` or `AbstractVector{UInt8}` or `IO` streams
@@ -93,111 +94,64 @@ The `HTTP.Response` struct contains:
  - `status::Int16` e.g. `200`
  - `headers::Vector{Pair{String,String}}`
     e.g. ["Server" => "Apache", "Content-Type" => "text/html"]
- - `body::Vector{UInt8}`, the Response Body bytes
-    (empty if a `response_stream` was specified in the `request`).
+ - `body::Vector{UInt8}` or `::IO`, the Response Body bytes or the `io` argument
+    provided via the `response_stream` keyword argument
 
 Functions `HTTP.get`, `HTTP.put`, `HTTP.post` and `HTTP.head` are defined as
 shorthand for `HTTP.request("GET", ...)`, etc.
 
-`HTTP.request` and `HTTP.open` also accept optional keyword parameters.
+Supported optional keyword arguments:
 
-e.g.
-```julia
-HTTP.request("GET", "http://httpbin.org/ip"; retries=4, cookies=true)
-
-HTTP.get("http://s3.us-east-1.amazonaws.com/")
-
-conf = (readtimeout = 10,
-        retry = false,
-        redirect = false)
-
-HTTP.get("http://httpbin.org/ip"; conf...)
-HTTP.put("http://httpbin.org/put", [], "Hello"; conf...)
-```
-
-
-URL options
-
- - `query = nothing`, replaces the query part of `url`.
-
-Streaming options
-
+ - `query = nothing`, a `Pair` or `Dict` of key => values to be included in the url
  - `response_stream = nothing`, a writeable `IO` stream or any `IO`-like
-    type `T` for which `write(T, AbstractVector{UInt8})` is defined.
- - `verbose = 0`, set to `1` or `2` for extra message logging.
-
-
-Connection Pool options
-
+    type `T` for which `write(T, AbstractVector{UInt8})` is defined. The response body
+    will be written to this stream instead of returned as a `Vector{UInt8}`.
+ - `verbose = 0`, set to `1` or `2` for increasingly verbose logging of the
+    request and response process
  - `connect_timeout = 0`, close the connection after this many seconds if it
    is still attempting to connect. Use `connect_timeout = 0` to disable.
- - `connection_limit = 8`, number of concurrent connections to each host:port.
- - `socket_type = TCPSocket`
-
-
-Timeout options
-
+ - `connection_limit = 8`, number of concurrent connections allowed to each host:port.
  - `readtimeout = 0`, close the connection if no data is received for this many
    seconds. Use `readtimeout = 0` to disable.
+ - `status_exception = true`, throw `HTTP.StatusError` for response status >= 300.
+ - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)
+   and adds the `Authorization: Basic` header; this can be disabled by passing `basicauth=false`
+ - `canonicalize_headers = false`, rewrite request and response headers in
+   Canonical-Camel-Dash-Format.
+ - `proxy = proxyurl`, pass request through a proxy given as a url; alternatively, the `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, and `no_proxy`
+   environment variables are also detected/used; if set, they will be used automatically when making requests.
+ - `detect_content_type = false`: if `true` and the request body is not a form or `IO`, it will be
+    inspected and the "Content-Type" header will be set to the detected content type.
+ - `decompress = true`, if `true`, decompress the response body if the response has a
+    "Content-Encoding" header set to "gzip".
 
-
-Retry options
-
+Retry arguments:
  - `retry = true`, retry idempotent requests in case of error.
  - `retries = 4`, number of times to retry.
  - `retry_non_idempotent = false`, retry non-idempotent requests too. e.g. POST.
 
-
-Redirect options
-
- - `redirect = true`, follow 3xx redirect responses.
- - `redirect_limit = 3`, number of times to redirect.
+Redirect arguments:
+ - `redirect = true`, follow 3xx redirect responses; i.e. additional requests will be made to the redirected location
+ - `redirect_limit = 3`, maximum number of times a redirect will be followed
  - `redirect_method = nothing`, the method to use for the redirected request; by default,
     GET will be used, only responses with 307/308 will use the same original request method.
-    Pass `:same` to pass the same method as the orginal request though note that some servers
-    may not response/accept the same method. It's also valid to pass the exact method to use
+    Pass `redirect_method=:same` to pass the same method as the orginal request though note that some servers
+    may not respond/accept the same method. It's also valid to pass the exact method to use
     as a string, like `redirect_method="PUT"`.
  - `forwardheaders = true`, forward original headers on redirect.
 
-
-Status Exception options
-
- - `status_exception = true`, throw `HTTP.StatusError` for response status >= 300.
-
-
-SSLContext options
-
+SSL arguments:
  - `require_ssl_verification = NetworkOptions.verify_host(host)`, pass `MBEDTLS_SSL_VERIFY_REQUIRED` to
    the mbed TLS library.
    ["... peer must present a valid certificate, handshake is aborted if
      verification failed."](https://tls.mbed.org/api/ssl_8h.html#a5695285c9dbfefec295012b566290f37)
  - `sslconfig = SSLConfig(require_ssl_verification)`
 
-
-Basic Authentication options
-
- - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)
-   and adds the `Authorization: Basic` header; this can be disabled by passing `basicauth=false`
-
-
-Cookie options
-
- - `cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}} = false`, enable cookies, or alternatively,
-        pass a `Dict{AbstractString, AbstractString}` of name-value pairs to manually pass cookies
- - `cookiejar::HTTP.CookieJar=HTTP.COOKIEJAR`: threadsafe cookie jar struct for keeping track of cookies per host
-
-
-Canonicalization options
-
- - `canonicalize_headers = false`, rewrite request and response headers in
-   Canonical-Camel-Dash-Format.
-
-Proxy options
-
- - `proxy = proxyurl`, pass request through a proxy given as a url
-
-Alternatively, HTTP.jl also respects the `http_proxy`, `HTTP_PROXY`, `https_proxy`, `HTTPS_PROXY`, and `no_proxy`
-environment variables; if set, they will be used automatically when making requests.
+Cookie arguments:
+ - `cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}} = true`, enable cookies, or alternatively,
+        pass a `Dict{AbstractString, AbstractString}` of name-value pairs to manually pass cookies in the request "Cookie" header
+ - `cookiejar::HTTP.CookieJar=HTTP.COOKIEJAR`: threadsafe cookie jar struct for keeping track of cookies per host;
+    a global cookie jar is used by default.
 
 ## Request Body Examples
 
@@ -233,7 +187,6 @@ HTTP.open("POST", "http://httpbin.org/post") do io
 end
 ```
 
-
 ## Response Body Examples
 
 String body:
@@ -252,13 +205,8 @@ println(read("get_data.txt"))
 
 Stream body through buffer:
 ```julia
-io = Base.BufferStream()
-@async while !eof(io)
-    bytes = readavailable(io)
-    println("GET data: \$bytes")
-end
-r = HTTP.request("GET", "http://httpbin.org/get", response_stream=io)
-close(io)
+r = HTTP.get("http://httpbin.org/get", response_stream=IOBuffer())
+println(String(take!(r.body)))
 ```
 
 Stream body through `open() do io`:
@@ -268,8 +216,6 @@ r = HTTP.open("GET", "http://httpbin.org/stream/10") do io
        println(String(readavailable(io)))
    end
 end
-
-using HTTP.IOExtras
 
 HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
     n = 0
@@ -286,25 +232,12 @@ HTTP.open("GET", "https://tinyurl.com/bach-cello-suite-1-ogg") do http
 end
 ```
 
-
-## Request and Response Body Examples
-
-String bodies:
-```julia
-r = HTTP.request("POST", "http://httpbin.org/post", [], "post body data")
-println(String(r.body))
-```
-
 Interfacing with RESTful JSON APIs:
 ```julia
 using JSON
 params = Dict("user"=>"RAO...tjN", "token"=>"NzU...Wnp", "message"=>"Hello!")
-base_url = "http://api.domain.com"
-endpoint = "/1/messages.json"
-url = base_url * endpoint
-r = HTTP.request("POST", url,
-             ["Content-Type" => "application/json"],
-             JSON.json(params))
+url = "http://api.domain.com/1/messages.json"
+r = HTTP.post(url, body=JSON.json(params))
 println(JSON.parse(String(r.body)))
 ```
 
@@ -317,8 +250,6 @@ HTTP.request("POST", "http://convert.com/png2jpg", [], in, response_stream=out)
 
 Stream bodies through: `open() do io`:
 ```julia
-using HTTP.IOExtras
-
 HTTP.open("POST", "http://music.com/play") do io
     write(io, JSON.json([
         "auth" => "12345XXXX",
@@ -341,9 +272,100 @@ end
 const STREAM_LAYERS = [timeoutlayer, exceptionlayer]
 const REQUEST_LAYERS = [redirectlayer, defaultheaderslayer, basicauthlayer, contenttypedetectionlayer, cookielayer, retrylayer, canonicalizelayer]
 
+"""
+    Layer
+
+Abstract type to represent a client-side middleware that exists for documentation purposes.
+A layer is any function of the form `f(::Handler) -> Handler`, where [`Handler`](@ref) is
+a function of the form `f(::Request) -> Response`. Note that the `Handler` definition is from
+the server-side documentation, and is "hard-coded" on the client side. It may also be apparent
+that a `Layer` is the same as the [`Middleware`](@ref) interface from server-side, which is true, but
+we define `Layer` to clarify the client-side distinction and its unique usage. Custom layers can be
+deployed in one of two ways:
+  * [`HTTP.@client`](@ref): Create a custom "client" with shorthand verb definitions, but which
+    include custom layers; only these new verb methods will use the custom layers.
+  * [`HTTP.pushlayer!`](@ref)/[`HTTP.poplayer!`](@ref): Allows globally adding and removing
+    layers from the default HTTP.jl layer stack; *all* http requests will then use the custom layers
+
+### Quick Examples
+```julia
+module Auth
+
+using HTTP
+
+function auth_layer(handler)
+    # returns a `Handler` function; check for a custom keyword arg `authcreds` that
+    # a user would pass like `HTTP.get(...; authcreds=creds)`.
+    # We also accept trailing keyword args `kw...` and pass them along later.
+    return function(req; authcreds=nothing, kw...)
+        # only apply the auth layer if the user passed `authcreds`
+        if authcreds !== nothing
+            # we add a custom header with stringified auth creds
+            HTTP.setheader(req, "X-Auth-Creds" => string(authcreds))
+        end
+        # pass the request along to the next layer by calling `auth_layer` arg `handler`
+        # also pass along the trailing keyword args `kw...`
+        return handler(req; kw...)
+    end
+end
+
+# Create a new client with the auth layer added
+HTTP.@client [auth_layer]
+
+end # module
+
+# Can now use custom client like:
+Auth.get(url; authcreds=creds) # performs GET request with auth_layer layer included
+
+# Or can include layer globally in all HTTP.jl requests
+HTTP.pushlayer!(Auth.auth_layer)
+
+# Now can use normal HTTP.jl methods and auth_layer will be included
+HTTP.get(url; authcreds=creds)
+```
+"""
+abstract type Layer end
+
+"""
+    HTTP.pushlayer!(layer; request=true)
+
+Push a layer onto the stack of layers that will be applied to all requests.
+The "layer" is expected to be a function that takes and returns a `Handler` function.
+See [`Layer`](@ref) for more details.
+If `request=false`, the layer is expected to take and return a "stream" handler function.
+The custom `layer` will be put on the top of the stack, so it will be the first layer
+executed. To add a layer at the bottom of the stack, see [`HTTP.pushfirstlayer!`](@ref).
+"""
 pushlayer!(layer; request::Bool=true) = push!(request ? REQUEST_LAYERS : STREAM_LAYERS, layer)
+
+"""
+    HTTP.pushfirstlayer!(layer; request=true)
+
+Push a layer to the start of the stack of layers that will be applied to all requests.
+The "layer" is expected to be a function that takes and returns a `Handler` function.
+See [`Layer`](@ref) for more details.
+If `request=false`, the layer is expected to take and return a "stream" handler function.
+The custom `layer` will be put on the bottom of the stack, so it will be the last layer
+executed. To add a layer at the top of the stack, see [`HTTP.pushlayer!`](@ref).
+"""
 pushfirstlayer!(layer; request::Bool=true) = pushfirst!(request ? REQUEST_LAYERS : STREAM_LAYERS, layer)
+
+"""
+    HTTP.poplayer!(layer; request=true)
+
+Inverse of [`HTTP.pushlayer!`](@ref), removes the top layer of the global HTTP.jl layer stack.
+Can be used to "cleanup" after a custom layer has been added.
+If `request=false`, will remove the top "stream" layer as opposed to top "request" layer.
+"""
 poplayer!(; request::Bool=true) = pop!(request ? REQUEST_LAYERS : STREAM_LAYERS)
+
+"""
+    HTTP.popfirstlayer!(layer; request=true)
+
+Inverse of [`HTTP.pushfirstlayer!`](@ref), removes the bottom layer of the global HTTP.jl layer stack.
+Can be used to "cleanup" after a custom layer has been added.
+If `request=false`, will remove the bottom "stream" layer as opposed to bottom "request" layer.
+"""
 popfirstlayer!(; request::Bool=true) = popfirst!(request ? REQUEST_LAYERS : STREAM_LAYERS)
 
 function stack(
@@ -366,6 +388,17 @@ function request(stack::Base.Callable, method, url, h=Header[], b=nobody, q=noth
     return stack(string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
 
+"""
+    HTTP.@client [requestlayers]
+    HTTP.@client [requestlayers] [streamlayers]
+
+Convenience macro for creating a custom HTTP.jl client that will include custom layers when
+performing requests. It's common to want to define a custom [`Layer`](@ref) to enhance a
+specific category of requests, such as custom authentcation for a web API. Instead of affecting
+the global HTTP.jl request stack via [`HTTP.pushlayer!`](@ref), a custom wrapper client can be
+defined with convenient shorthand methods. See [`Layer`](@ref) for an example of defining a custom
+layer and creating a new client that includes the layer.
+"""
 macro client(requestlayers, streamlayers=[])
     esc(quote
         get(a...; kw...) = request("GET", a...; kw...)
@@ -433,9 +466,8 @@ request_uri(url, ::Nothing) = URI(url)
         end
     end -> HTTP.Response
 
-The `HTTP.open` API allows the Request Body to be written to (and/or the
-Response Body to be read from) an `IO` stream.
-
+The `HTTP.open` API allows the request body to be written to (and/or the
+response body to be read from) an `IO` stream.
 
 e.g. Streaming an audio file to the `vlc` player:
 ```julia
@@ -483,8 +515,6 @@ function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tu
     end
     take!(socketready)
 end
-
-import .ConnectionPool: Connection
 
 function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
     buffer = Base.BufferStream()

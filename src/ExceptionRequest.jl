@@ -1,14 +1,11 @@
 module ExceptionRequest
 
-export StatusError
+export StatusError, exceptionlayer
 
-import ..HTTP
-using ..Messages: iserror
-
-export exceptionlayer
+using ..Messages
 
 """
-    exceptionlayer(stream) -> HTTP.Response
+    exceptionlayer(handler) -> handler
 
 Throw a `StatusError` if the request returns an error response status.
 """
@@ -36,10 +33,10 @@ struct StatusError <: Exception
     status::Int16
     method::String
     target::String
-    response::HTTP.Response
+    response::Response
 end
 
 # for backwards compatibility
-StatusError(status, response::HTTP.Response) = StatusError(status, response.request.method, response.request.target, response)
+StatusError(status, response::Response) = StatusError(status, response.request.method, response.request.target, response)
 
 end # module ExceptionRequest

@@ -1,6 +1,8 @@
+using HTTP.Strings
+
 @testset "ascii.jl" begin
-    lc = HTTP.Messages.ascii_lc
-    lceq = HTTP.Messages.ascii_lc_isequal
+    lc = HTTP.Strings.ascii_lc
+    lceq = HTTP.Strings.ascii_lc_isequal
 
     @testset "UInt8" begin
         for c in UInt8(1):UInt8(127)

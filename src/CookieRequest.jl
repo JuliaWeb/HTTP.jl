@@ -1,11 +1,7 @@
 module CookieRequest
 
-import ..Dates
-using LoggingExtras
-using URIs
-using ..Cookies
-using ..Messages: Request, ascii_lc_isequal, header, setheader
-import ..access_threaded
+using Dates, LoggingExtras, URIs
+using ..Cookies, ..Messages, ..Strings
 
 # default global cookie jar
 const COOKIEJAR = CookieJar()
@@ -13,10 +9,11 @@ const COOKIEJAR = CookieJar()
 export cookielayer, COOKIEJAR
 
 """
-    cookielayer(req) -> HTTP.Response
+    cookielayer(handler) -> handler
 
-Add locally stored Cookies to the request headers.
-Store new Cookies found in the response headers.
+Check for host-appropriate cookies to include in the outgoing request
+from the `cookiejar` keyword argument (by default, a global cookiejar is used).
+Store "Set-Cookie" cookies from the response headers.
 """
 function cookielayer(handler)
     return function(req::Request; cookies=true, cookiejar::CookieJar=COOKIEJAR, kw...)

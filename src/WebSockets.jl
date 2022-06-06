@@ -1,15 +1,9 @@
 module WebSockets
 
-using ..Base64
+using Base64, LoggingExtras
 using MbedTLS: digest, MD_SHA1, SSLContext
-import ..HTTP
-using ..IOExtras
-using ..Streams
-import ..ConnectionPool
-using HTTP: header, headercontains
-import ..@require, ..precondition_error
-using LoggingExtras
-import ..string
+using ..IOExtras, ..Streams, ..ConnectionPool, ..Messages, ..Conditions, ..Servers
+import ..open
 
 const WS_FINAL = 0x80
 const WS_CONTINUATION = 0x00
@@ -53,7 +47,7 @@ mutable struct WebSocket{T <: IO} <: IO
     txpayload::Vector{UInt8}
     txclosed::Bool
     rxclosed::Bool
-    request::Union{Nothing,HTTP.Request}
+    request::Union{Nothing,Messages.Request}
 end
 
 function WebSocket(io::T; server=false, binary=false, request=nothing) where T <: IO
@@ -63,12 +57,12 @@ end
 
 # Handshake
 
-function is_upgrade(r::HTTP.Message)
-    ((r isa HTTP.Request && r.method == "GET") ||
-     (r isa HTTP.Response && r.status == 101)) &&
-    (HTTP.hasheader(r, "Connection", "upgrade") ||
-     HTTP.hasheader(r, "Connection", "keep-alive, upgrade")) &&
-    HTTP.hasheader(r, "Upgrade", "websocket")
+function is_upgrade(r::Messages.Message)
+    ((r isa Messages.Request && r.method == "GET") ||
+     (r isa Messages.Response && r.status == 101)) &&
+    (Messages.hasheader(r, "Connection", "upgrade") ||
+     Messages.hasheader(r, "Connection", "keep-alive, upgrade")) &&
+    Messages.hasheader(r, "Upgrade", "websocket")
 end
 
 function check_upgrade(http)
@@ -101,8 +95,8 @@ function open(f::Function, url; binary=false, verbose=false, headers = [], kw...
         "Sec-WebSocket-Version" => "13",
         headers...
     ]
-
-    HTTP.open("GET", url, headers;
+    # HTTP.open
+    open("GET", url, headers;
               verbose=verbose ? 2 : 0, kw...) do http
 
         startread(http)
@@ -132,13 +126,12 @@ end
 function listen(f::Function,
                 host::String="localhost", port::UInt16=UInt16(8081);
                 binary=false, verbose=false, kw...)
-
-    HTTP.listen(host, port; verbose=verbose, kw...) do http
+    Servers.listen(host, port; verbose=verbose, kw...) do http
         upgrade(f, http; binary=binary)
     end
 end
 
-function upgrade(f::Function, http::HTTP.Stream; binary=false)
+function upgrade(f::Function, http::Streams.Stream; binary=false)
 
     check_upgrade(http)
     if !hasheader(http, "Sec-WebSocket-Version", "13")

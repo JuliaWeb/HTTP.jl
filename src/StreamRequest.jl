@@ -1,12 +1,6 @@
 module StreamRequest
 
-using ..IOExtras
-using ..Messages
-using ..Streams
-import ..ConnectionPool
-using ..MessageRequest
-import ..RedirectRequest: nredirects
-import ..sprintcompact
+using ..IOExtras, ..Messages, ..Streams, ..ConnectionPool, ..Strings, ..RedirectRequest
 using LoggingExtras, CodecZlib
 
 export streamlayer

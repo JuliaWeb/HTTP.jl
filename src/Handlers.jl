@@ -1,9 +1,44 @@
 module Handlers
 
-export serve, Router, register!, getparams, getcookies
+export Handler, Middleware, serve, Router, register!, getparams, getcookies
 
 using URIs
 using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
+
+"""
+    Handler
+
+Abstract type for the handler interface that exists for documentation purposes.
+A `Handler` is any function of the form `f(req::HTTP.Request) -> HTTP.Response`.
+There is no requirement to subtype `Handler` and users should not rely on or dispatch
+on `Handler`. A `Handler` function `f` can be passed to [`HTTP.serve(f, ...)`](@ref)
+wherein a server will pass each incoming request to `f` to be handled and a response
+to be returned. Handler functions are also the inputs to [`Middleware`](@ref) functions
+which are functions of the form `f(::Handler) -> Handler`, i.e. they take a `Handler`
+function as input, and return a "modified" or enhanced `Handler` function.
+
+For advanced cases, a `Handler` function can also be of the form `f(stream::HTTP.Stream) -> Nothing`.
+In this case, the server would be run like `HTTP.serve(f, ...; stream=true)`. For this use-case,
+the handler function reads the request and writes the response to the stream directly. Note that
+any middleware used with a stream handler also needs to be of the form `f(stream_handler) -> stream_handler`,
+i.e. it needs to accept a stream `Handler` function and return a stream `Handler` function.
+"""
+abstract type Handler end
+
+"""
+    Middleware
+
+Abstract type for the middleware interface that exists for documentation purposes.
+A `Middleware` is any function of the form `f(::Handler) -> Handler` (ref: [`Handler`](@ref)).
+There is no requirement to subtype `Middleware` and users should not rely on or dispatch
+on the `Middleware` type. While `HTTP.serve(f, ...)` requires a _handler_ function `f` to be
+passed, middleware can be "stacked" to create a chain of functions that are called in sequence,
+like `HTTP.serve(base_handler |> cookie_middleware |> auth_middlware, ...)`, where the
+`base_handler` `Handler` function is passed to `cookie_middleware`, which takes the handler
+and returns a "modified" handler (that parses and stores cookies). This "modified" handler is
+then an input to the `auth_middlware`, which further enhances/modifies the handler.
+"""
+abstract type Middleware end
 
 """
     streamhandler(request_handler) -> stream handler
@@ -11,6 +46,8 @@ using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
 Middleware that takes a request handler and returns a stream handler. Used by default
 in `HTTP.serve` to take the user-provided request handler and process the `Stream`
 from `HTTP.listen` and pass the parsed `Request` to the handler.
+
+Is included by default in `HTTP.serve` as the base "middleware" when `stream=false` is passed.
 """
 function streamhandler(handler)
     return function(stream::Stream)
@@ -29,8 +66,8 @@ end
     HTTP.serve(f, host, port; stream::Bool=false, kw...)
 
 Start a server on the given host and port; for each incoming request, call the
-given handler function `f`, which should be of the form `req::HTTP.Request -> HTTP.Response`.
-If `stream` is true, the handler function should be of the form `stream::HTTP.Stream -> Nothing`.
+given handler function `f`, which should be of the form `f(req::HTTP.Request) -> HTTP.Response`.
+If `stream` is true, the handler function should be of the form `f(stream::HTTP.Stream) -> Nothing`.
 Accepts all the same keyword arguments (and passes them along) to [`HTTP.listen`](@ref), including:
   * `sslconfig`: custom `SSLConfig` to support ssl connections
   * `tcpisvalid`: custom function to validate tcp connections
@@ -238,6 +275,16 @@ object itself is a "request handler" that can be called like:
 r = HTTP.Router()
 resp = r(reqest)
 ```
+
+Which will inspect the `request`, find the matching, registered handler from the url,
+and pass the request on to be handled further.
+
+See [`HTTP.register!`](@ref) for additional information on registering handlers based on routes.
+
+If a request doesn't have a matching, registered handler, the `_404` handler is called which,
+by default, returns a `HTTP.Response(404)`. If a route matches the path, but not the method/verb
+(e.g. there's a registerd route for "GET /api", but the request is "POST /api"), then the `_405`
+handler is called, which by default returns `HTTP.Response(405)` (method not allowed).
 """
 struct Router{T, S}
     _404::T
@@ -248,17 +295,18 @@ end
 Router(_404=req -> Response(404), _405=req -> Response(405)) = Router(_404, _405, Node())
 
 """
-    HTTP.register!(r::Router, [method,] path, handler)
+    HTTP.register!(r::Router, method, path, handler)
+    HTTP.register!(r::Router, path, handler)
 
 Register a handler function that should be called when an incoming request matches `path`
 and the optionally provided `method` (if not provided, any method is allowed). Can be used
 to dynamically register routes.
 The following path types are allowed for matching:
   * `/api/widgets`: exact match of static strings
-  * `/api/*/owner`: single `*` to wildcard match any string for a single segment
-  * `/api/widget/{id}`: Define a path variable `id` that matches any valued provided for this segment; path variables are available in the request context like `req.context[:params]["id"]`
-  * `/api/widget/{id:[0-9]+}`: Define a path variable `id` that only matches integers for this segment
-  * `/api/**`: double wildcard matches any number of trailing segments in the request path; must be the last segment in the path
+  * `/api/*/owner`: single `*` to wildcard match anything for a single segment
+  * `/api/widget/{id}`: Define a path variable `id` that matches any valued provided for this segment; path variables are available in the request context like `HTTP.getparams(req)["id"]`
+  * `/api/widget/{id:[0-9]+}`: Define a path variable `id` that does a regex match for integers for this segment
+  * `/api/**`: double wildcard matches any number of trailing segments in the request path; the double wildcard must be the last segment in the path
 """
 function register! end
 
@@ -291,8 +339,23 @@ function (r::Router)(req)
     end
 end
 
+"""
+    HTTP.getparams(req) -> Dict{String, String}
+
+Retrieve any matched path parameters from the request context.
+If a path was registered with a router via `HTTP.register!` like
+"/api/widget/{id}", then the path parameters are available in the request context
+and can be retrieved like `id = HTTP.getparams(req)["id"]`.
+"""
 getparams(req) = get(req.context, :params, nothing)
 
+"""
+    HTTP.Handlers.cookie_middleware(handler) -> handler
+
+Middleware that parses and stores any cookies in the incoming
+request in the request context. Cookies can then be retrieved by calling
+[`HTTP.getcookies(req)`](@ref) in subsequent middlewares/handlers.
+"""
 function cookie_middleware(handler)
     function (req)
         if !haskey(req.context, :cookies)
@@ -302,6 +365,14 @@ function cookie_middleware(handler)
     end
 end
 
+"""
+    HTTP.getcookies(req) -> Vector{Cookie}
+
+Retrieve any parsed cookies from a request context. Cookies
+are expected to be stored in the `req.context[:cookies]` of the
+request context as implemented in the [`HTTP.Handlers.cookie_middleware`](@ref)
+middleware.
+"""
 getcookies(req) = get(() => Cookie[], req.context, :cookies)
 
 end # module

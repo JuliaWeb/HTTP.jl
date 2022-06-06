@@ -21,17 +21,15 @@ module ConnectionPool
 
 export Connection, newconnection, getrawstream, inactiveseconds
 
-using ..IOExtras, ..Sockets
-using LoggingExtras
-
-import ..DEBUG_LEVEL, ..taskid
-import ..@require, ..precondition_error, ..@ensure, ..postcondition_error
+using Sockets, LoggingExtras, NetworkOptions
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
-import NetworkOptions
+using ..IOExtras, ..Conditions
 
 const default_connection_limit = 8
 const default_pipeline_limit = 16
 const nolimit = typemax(Int)
+
+taskid(t=current_task()) = string(hash(t) & 0xffff, base=16, pad=4)
 
 include("connectionpools.jl")
 using .ConnectionPools
@@ -45,6 +43,7 @@ Fields:
 - `host::String`
 - `port::String`, exactly as specified in the URI (i.e. may be empty).
 - `idle_timeout`, No. of seconds to maintain connection after last request/response.
+- `require_ssl_verification`, whether ssl verification is required for an ssl connection
 - `peerip`, remote IP adress (used for debug/log messages).
 - `peerport`, remote TCP port number (used for debug/log messages).
 - `localport`, local TCP port number (used for debug messages).
@@ -54,6 +53,8 @@ Fields:
    the end of a response header (or chunksize). These bytes are usually
    part of the response body.
 - `timestamp`, time data was last received.
+- `readable`, whether the Connection object is readable
+- `writeable`, whether the Connection object is writable
 """
 mutable struct Connection <: IO
     host::String
@@ -315,7 +316,7 @@ end
 """
     closeall()
 
-Close all connections in `pool`.
+Close all connections in`pool`.
 """
 function closeall()
     ConnectionPools.reset!(POOL)
@@ -330,7 +331,7 @@ Global connection pool keeping track of active connections.
 const POOL = Pool(Connection)
 
 """
-    getconnection(type, host, port) -> Connection
+    newconnection(type, host, port) -> Connection
 
 Find a reusable `Connection` in the `pool`,
 or create a new `Connection` if required.
@@ -498,8 +499,7 @@ function Base.show(io::IO, c::Connection)
         bytesavailable(c.buffer) > 0 ?
             " $(bytesavailable(c.buffer))-byte excess" : "",
         nwaiting > 0 ? " $nwaiting bytes waiting" : "",
-        DEBUG_LEVEL[] > 1 && applicable(tcpsocket, c.io) ?
-            " $(Base._fd(tcpsocket(c.io)))" : "")
+        applicable(tcpsocket, c.io) ? " $(Base._fd(tcpsocket(c.io)))" : "")
 end
 
 function tcpstatus(c::Connection)

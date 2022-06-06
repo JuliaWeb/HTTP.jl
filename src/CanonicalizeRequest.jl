@@ -1,12 +1,11 @@
 module CanonicalizeRequest
 
-using ..Messages
-using ..Strings: tocameldash
+using ..Messages, ..Strings
 
 export canonicalizelayer
 
 """
-    canonicalizelayer(req) -> HTTP.Response
+    canonicalizelayer(handler) -> handler
 
 Rewrite request and response headers in Canonical-Camel-Dash-Format.
 """
