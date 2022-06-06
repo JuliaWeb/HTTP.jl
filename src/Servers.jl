@@ -1,12 +1,11 @@
 """
-The `HTTP.Servers` module provides HTTP server functionality.
+The `HTTP.Servers` module provides core HTTP server functionality.
 
 The main entry point is `HTTP.listen(f, host, port; kw...)` which takes
 a `f(::HTTP.Stream)::Nothing` function argument, a `host`, a `port` and
 optional keyword arguments.  For full details, see `?HTTP.listen`.
 
-For server functionality operating on full requests, see `?HTTP.Handlers`
-module and `?HTTP.serve` function.
+For server functionality operating on full requests, see the `?HTTP.serve` function.
 """
 module Servers
 

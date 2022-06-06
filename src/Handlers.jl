@@ -1,9 +1,44 @@
 module Handlers
 
-export serve, Router, register!, getparams, getcookies
+export Handler, Middleware, serve, Router, register!, getparams, getcookies
 
 using URIs
 using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
+
+"""
+    Handler
+
+Abstract type for the handler interface that exists for documentation purposes.
+A `Handler` is any function of the form `f(req::HTTP.Request) -> HTTP.Response`.
+There is no requirement to subtype `Handler` and users should not rely on or dispatch
+on `Handler`. A `Handler` function `f` can be passed to [`HTTP.serve(f, ...)`](@ref)
+wherein a server will pass each incoming request to `f` to be handled and a response
+to be returned. Handler functions are also the inputs to [`Middleware`](@ref) functions
+which are functions of the form `f(::Handler) -> Handler`, i.e. they take a `Handler`
+function as input, and return a "modified" or enhanced `Handler` function.
+
+For advanced cases, a `Handler` function can also be of the form `f(stream::HTTP.Stream) -> Nothing`.
+In this case, the server would be run like `HTTP.serve(f, ...; stream=true)`. For this use-case,
+the handler function reads the request and writes the response to the stream directly. Note that
+any middleware used with a stream handler also needs to be of the form `f(stream_handler) -> stream_handler`,
+i.e. it needs to accept a stream `Handler` function and return a stream `Handler` function.
+"""
+abstract type Handler end
+
+"""
+    Middleware
+
+Abstract type for the middleware interface that exists for documentation purposes.
+A `Middleware` is any function of the form `f(::Handler) -> Handler` (ref: [`Handler`](@ref)).
+There is no requirement to subtype `Middleware` and users should not rely on or dispatch
+on the `Middleware` type. While `HTTP.serve(f, ...)` requires a _handler_ function `f` to be
+passed, middleware can be "stacked" to create a chain of functions that are called in sequence,
+like `HTTP.serve(base_handler |> cookie_middleware |> auth_middlware, ...)`, where the
+`base_handler` `Handler` function is passed to `cookie_middleware`, which takes the handler
+and returns a "modified" handler (that parses and stores cookies). This "modified" handler is
+then an input to the `auth_middlware`, which further enhances/modifies the handler.
+"""
+abstract type Middleware end
 
 """
     streamhandler(request_handler) -> stream handler
@@ -31,8 +66,8 @@ end
     HTTP.serve(f, host, port; stream::Bool=false, kw...)
 
 Start a server on the given host and port; for each incoming request, call the
-given handler function `f`, which should be of the form `req::HTTP.Request -> HTTP.Response`.
-If `stream` is true, the handler function should be of the form `stream::HTTP.Stream -> Nothing`.
+given handler function `f`, which should be of the form `f(req::HTTP.Request) -> HTTP.Response`.
+If `stream` is true, the handler function should be of the form `f(stream::HTTP.Stream) -> Nothing`.
 Accepts all the same keyword arguments (and passes them along) to [`HTTP.listen`](@ref), including:
   * `sslconfig`: custom `SSLConfig` to support ssl connections
   * `tcpisvalid`: custom function to validate tcp connections
@@ -260,7 +295,8 @@ end
 Router(_404=req -> Response(404), _405=req -> Response(405)) = Router(_404, _405, Node())
 
 """
-    HTTP.register!(r::Router, [method,] path, handler)
+    HTTP.register!(r::Router, method, path, handler)
+    HTTP.register!(r::Router, path, handler)
 
 Register a handler function that should be called when an incoming request matches `path`
 and the optionally provided `method` (if not provided, any method is allowed). Can be used
@@ -303,6 +339,14 @@ function (r::Router)(req)
     end
 end
 
+"""
+    HTTP.getparams(req) -> Dict{String, String}
+
+Retrieve any matched path parameters from the request context.
+If a path was registered with a router via `HTTP.register!` like
+"/api/widget/{id}", then the path parameters are available in the request context
+and can be retrieved like `id = HTTP.getparams(req)["id"]`.
+"""
 getparams(req) = get(req.context, :params, nothing)
 
 """

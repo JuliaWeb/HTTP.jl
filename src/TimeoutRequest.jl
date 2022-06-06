@@ -14,9 +14,9 @@ end
 export timeoutlayer
 
 """
-    timeoutlayer(stream) -> HTTP.Response
+    timeoutlayer(handler) -> handler
 
-Close `IO` if no data has been received for `timeout` seconds.
+Close the `HTTP.Stream` if no data has been received for `readtimeout` seconds.
 """
 function timeoutlayer(handler)
     return function(stream::Stream; readtimeout::Int=0, kw...)
@@ -50,6 +50,5 @@ function timeoutlayer(handler)
         end
     end
 end
-
 
 end # module TimeoutRequest

@@ -5,8 +5,7 @@ and [`HTTP.Response`](@ref) Messages.
 The `Response` struct has a `request` field that points to the corresponding
 `Request`; and the `Request` struct has a `response` field.
 The `Request` struct also has a `parent` field that points to a `Response`
-in the case of HTTP Redirect.
-
+in the case of HTTP redirects that occur and are followed.
 
 The Messages module defines `IO` `read` and `write` methods for Messages
 but it does not deal with URIs, creating connections, or executing requests.
@@ -15,13 +14,11 @@ The `read` methods throw `EOFError` exceptions if input data is incomplete.
 and call parser functions that may throw `HTTP.ParsingError` exceptions.
 The `read` and `write` methods may also result in low level `IO` exceptions.
 
-
 ### Sending Messages
 
 Messages are formatted and written to an `IO` stream by
-[`Base.write(::IO,::HTTP.Messages.Message)`](@ref) and or
+[`Base.write(::IO,::HTTP.Messages.Message)`](@ref) and/or
 [`HTTP.Messages.writeheaders`](@ref).
-
 
 ### Receiving Messages
 
@@ -30,7 +27,6 @@ Messages are parsed from `IO` stream data by
 This function calls [`HTTP.Parsers.parse_header_field`](@ref) and passes each
 header-field to [`HTTP.Messages.appendheader`](@ref).
 
-
 ### Headers
 
 Headers are represented by `Vector{Pair{String,String}}`. As compared to
@@ -38,19 +34,18 @@ Headers are represented by `Vector{Pair{String,String}}`. As compared to
 order](https://tools.ietf.org/html/rfc7230#section-3.2.2).
 
 Header values can be accessed by name using
-[`HTTP.Messages.header`](@ref) and
-[`HTTP.Messages.setheader`](@ref) (case-insensitive).
+[`HTTP.header`](@ref) and
+[`HTTP.setheader`](@ref) (case-insensitive).
 
-The [`HTTP.Messages.appendheader`](@ref) function handles combining
+The [`HTTP.appendheader`](@ref) function handles combining
 multi-line values, repeated header fields and special handling of
 multiple `Set-Cookie` headers.
 
 ### Bodies
 
-The `HTTP.Message` structs represent the Message Body as `Vector{UInt8}`.
-
-Streaming of request and response bodies is handled by the
-[`HTTP.StreamLayer`](@ref) and the [`HTTP.Stream`](@ref) `<: IO` stream.
+The `HTTP.Message` structs represent the message body by default as `Vector{UInt8}`.
+If `IO` or iterator objects are passed as the body, they will be stored as is
+in the `Request`/`Response` `body` field.
 """
 module Messages
 
@@ -75,11 +70,12 @@ sprintcompact(x) = sprint(show, x; context=:compact => true)
 abstract type Message end
 
 # HTTP Response
-
 """
-    Response <: Message
+    HTTP.Response(status, headers::HTTP.Headers; body=nothing, request=nothing)
+    HTTP.Response(status, body)
+    HTTP.Response(body)
 
-Represents a HTTP Response Message.
+Represents an HTTP response message with field:
 
 - `version::VersionNumber`
    [RFC7230 2.6](https://tools.ietf.org/html/rfc7230#section-2.6)
@@ -91,13 +87,12 @@ Represents a HTTP Response Message.
 - `headers::Vector{Pair{String,String}}`
    [RFC7230 3.2](https://tools.ietf.org/html/rfc7230#section-3.2)
 
-- `body::Vector{UInt8}`
+- `body::Vector{UInt8}` or `body::IO`
    [RFC7230 3.3](https://tools.ietf.org/html/rfc7230#section-3.3)
 
 - `request`, the `Request` that yielded this `Response`.
 
-You can get each data with [`HTTP.status`](@ref), [`HTTP.headers`](@ref), and [`HTTP.body`](@ref).
-
+Accessors are provided in [`HTTP.status`](@ref), [`HTTP.headers`](@ref), and [`HTTP.body`](@ref).
 """
 mutable struct Response{T} <: Message
     version::VersionNumber
@@ -121,22 +116,9 @@ mutable struct Response{T} <: Message
     end
 end
 
-"""
-    HTTP.Response(status::Int, body) -> HTTP.Response
-
-## Examples
-```julia
-HTTP.Response(200, "Hello")
-
-headers = ["Server" => "Apache"]
-HTTP.Response(200, headers; body = "Hello")
-```
-"""
 Response() = Request().response
-
 Response(s::Int, body::AbstractVector{UInt8}) = Response(s; body=body)
 Response(s::Int, body::AbstractString) = Response(s; body=bytes(body))
-
 Response(body) = Response(200; body=body)
 
 Base.convert(::Type{Response}, s::AbstractString) = Response(s)
@@ -153,23 +135,24 @@ function reset!(r::Response)
 end
 
 """
-    status(r::Response)
+    HTTP.status(r::Response) -> Int16
 
 Get status from a response.
 """
 status(r::Response) = getfield(r, :status)
 
 """
-    headers(r::Response)
+    HTTP.headers(r::Response) -> HTTP.Headers
 
 Get headers from a response.
 """
 headers(r::Response) = getfield(r, :headers)
 
 """
-    body(r::Response)
+    HTTP.body(r::Response{T}) -> T
 
-Get body from a response.
+Get body from a response. Typically will be `Vector{UInt8}`.
+If a request was made `response_stream=io::IO` then the body will be `io::IO`.
 """
 body(r::Response) = getfield(r, :body)
 
@@ -177,7 +160,8 @@ body(r::Response) = getfield(r, :body)
 const Context = Dict{Symbol, Any}
 
 """
-    Request <: Message
+    HTTP.Request(method, target, headers=[], body=nobody;
+        version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=HTTP.Context())
 
 Represents a HTTP Request Message.
 
@@ -190,7 +174,7 @@ Represents a HTTP Request Message.
 - `version::VersionNumber`
    [RFC7230 2.6](https://tools.ietf.org/html/rfc7230#section-2.6)
 
-- `headers::Vector{Pair{String,String}}`
+- `headers::HTTP.Headers`
    [RFC7230 3.2](https://tools.ietf.org/html/rfc7230#section-3.2)
 
 - `body::Union{Vector{UInt8}, IO}`
@@ -221,12 +205,6 @@ end
 
 Request() = Request("", "")
 
-"""
-    HTTP.Request(method, target, headers, body; version, parent) -> HTTP.Request
-
-Constructor for `HTTP.Request`.
-For daily use, see [`HTTP.request`](@ref).
-"""
 function Request(method::String, target, headers=[], body=nobody;
                  version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=Context())
     b = isbytes(body) ? bytes(body) : body
@@ -254,35 +232,41 @@ mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
 
 """
-    method(r::Request)
+    HTTP.method(r::Request)
 
 Get method from a request.
 """
 method(r::Request) = getfield(r, :method)
 
 """
-    uri(r::Request)
+    HTTP.target(r::Request)
 
-Get URI from a request.
+Get target path from a request.
 """
-uri(r::Request) = getfield(r, :target)
+target(r::Request) = getfield(r, :target)
 
 """
-    headers(r::Request)
+    HTTP.url(r::Request)
+
+Get URL from a request.
+"""
+url(r::Request) = getfield(r, :url)
+
+"""
+    HTTP.headers(r::Request)
 
 Get headers from a request.
 """
 headers(r::Request) = getfield(r, :headers)
 
 """
-    body(r::Request)
+    HTTP.body(r::Request)
 
 Get body from a request.
 """
 body(r::Request) = getfield(r, :body)
 
 # HTTP Message state and type queries
-
 """
     issafe(::Request)
 
@@ -363,7 +347,6 @@ bodylength(r::Request)::Int =
                    parse(Int, header(r, "Content-Length", "0"))
 
 # HTTP header-fields
-
 Base.getindex(m::Message, k) = header(m, k)
 
 """
@@ -375,7 +358,7 @@ are ASCII-only and case-insensitive.
 field_name_isequal(a, b) = ascii_lc_isequal(a, b)
 
 """
-    header(::Message, key [, default=""]) -> String
+    HTTP.header(::Message, key [, default=""]) -> String
 
 Get header value for `key` (case-insensitive).
 """
@@ -383,21 +366,25 @@ header(m::Message, k, d="") = header(m.headers, k, d)
 header(h::Headers, k::AbstractString, d="") =
     getbyfirst(h, k, k => d, field_name_isequal)[2]
 
-"get all headers with key `k` or empty if none"
+"""
+    HTTP.headers(m::Message, key) -> Vector{String}
+
+Get all headers with key `k` or empty if none
+"""
 headers(h::Headers, k::AbstractString) =
     map(x -> x[2], filter(x -> field_name_isequal(x[1], k), h))
 headers(m::Message, k::AbstractString) =
     headers(headers(m), k)
 
 """
-    hasheader(::Message, key) -> Bool
+    HTTP.hasheader(::Message, key) -> Bool
 
 Does header value for `key` exist (case-insensitive)?
 """
 hasheader(m, k::AbstractString) = header(m, k) != ""
 
 """
-    hasheader(::Message, key, value) -> Bool
+    HTTP.hasheader(::Message, key, value) -> Bool
 
 Does header for `key` match `value` (both case-insensitive)?
 """
@@ -405,7 +392,7 @@ hasheader(m, k::AbstractString, v::AbstractString) =
     field_name_isequal(header(m, k), lowercase(v))
 
 """
-    headercontains(::Message, key, value) -> Bool
+    HTTP.headercontains(::Message, key, value) -> Bool
 
 Does the header for `key` (interpreted as comma-separated list) contain `value` (both case-insensitive)?
 """
@@ -413,7 +400,7 @@ headercontains(m, k::AbstractString, v::AbstractString) =
     any(field_name_isequal.(strip.(split(header(m, k), ",")), v))
 
 """
-    setheader(::Message, key => value)
+    HTTP.setheader(::Message, key => value)
 
 Set header `value` for `key` (case-insensitive).
 """
@@ -436,10 +423,9 @@ function defaultheader!(m, v::Pair)
     end
     return
 end
-Base.@deprecate defaultheader defaultheader!
 
 """
-    appendheader(::Message, key => value)
+    HTTP.appendheader(::Message, key => value)
 
 Append a header value to `message.headers`.
 
@@ -462,10 +448,6 @@ function appendheader(m::Message, header::Header)
 end
 
 # HTTP payload body
-
-#Like https://github.com/JuliaIO/FileIO.jl/blob/v0.6.1/src/FileIO.jl#L19 ?
-@deprecate load(m::Message) payload(m, String)
-
 function payload(m::Message)::Vector{UInt8}
     enc = lowercase(first(split(header(m, "Transfer-Encoding"), ", ")))
     return enc in ["", "identity", "chunked"] ? m.body : decode(m, enc)
@@ -483,9 +465,8 @@ function decode(m::Message, encoding::String)::Vector{UInt8}
 end
 
 # Writing HTTP Messages to IO streams
-
 """
-    httpversion(::Message)
+    HTTP.httpversion(::Message)
 
 e.g. `"HTTP/1.1"`
 """
@@ -590,15 +571,15 @@ end
 
 Set the maximum number of body bytes to be displayed by `show(::IO, ::Message)`
 """
-set_show_max(x) = global body_show_max = x
-body_show_max = 1000
+set_show_max(x) = BODY_SHOW_MAX[] = x
+const BODY_SHOW_MAX = Ref(1000)
 
 """
     bodysummary(bytes)
 
 The first chunk of the Message Body (for display purposes).
 """
-bodysummary(body) = isbytes(body) ? view(bytes(body), 1:min(nbytes(body), body_show_max)) : "[Message Body was streamed]"
+bodysummary(body) = isbytes(body) ? view(bytes(body), 1:min(nbytes(body), BODY_SHOW_MAX[])) : "[Message Body was streamed]"
 function bodysummary(body::Form)
     if length(body.data) == 1 && isa(body.data[1], IOBuffer)
         return body.data[1].data[1:body.data[1].ptr-1]

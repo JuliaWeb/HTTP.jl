@@ -180,7 +180,7 @@ using JSON
         @test repr(Response(200, []; body="Hello world.")) == "Response{Base.CodeUnits{UInt8, String}}:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\nHello world.\"\"\""
 
         # truncation of long bodies
-        for body_show_max in (Messages.body_show_max, 100)
+        for body_show_max in (Messages.BODY_SHOW_MAX[], 100)
             Messages.set_show_max(body_show_max)
             @test repr(Response(200, []; body="Hello world.\n"*'x'^10000)) == "Response{Base.CodeUnits{UInt8, String}}:\n\"\"\"\nHTTP/1.1 200 OK\r\n\r\nHello world.\n"*'x'^(body_show_max-13)*"\n⋮\n10013-byte body\n\"\"\""
         end

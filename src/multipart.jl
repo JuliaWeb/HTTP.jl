@@ -52,7 +52,7 @@ function Base.read(f::Form, n::Integer)
 end
 
 """
-    Form(data; boundary=string(rand(UInt128), base=16))
+    HTTP.Form(data; boundary=string(rand(UInt128), base=16))
 
 Construct a request body for multipart/form-data encoding from `data`.
 
@@ -119,7 +119,7 @@ function writemultipartheader(io::IOBuffer, i::IO)
 end
 
 """
-    Multipart(filename::String, data::IO, content_type=HTTP.sniff(data), content_transfer_encoding="")
+    HTTP.Multipart(filename::String, data::IO, content_type=HTTP.sniff(data), content_transfer_encoding="")
 
 A type to represent a single multipart upload chunk for a file. This type would be used as the value in a
 key-value pair when constructing a [`HTTP.Form`](@ref) for a request body (see example below).

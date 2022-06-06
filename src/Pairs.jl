@@ -20,7 +20,6 @@ function setbyfirst(c, item, eq = ==)
     return item
 end
 
-
 """
     getbyfirst(collection, key [, default]) -> item
 
@@ -30,7 +29,6 @@ function getbyfirst(c, k, default=nothing, eq = ==)
     i = findfirst(x->eq(first(x), k), c)
     return i === nothing ? default : c[i]
 end
-
 
 """
     defaultbyfirst(collection, item)
@@ -46,14 +44,12 @@ function defaultbyfirst(c, item, eq = ==)
     return
 end
 
-
 """
     setkv(collection, key, value)
 
 Set `value` for `key` in collection of key/value `Pairs`.
 """
 setkv(c, k, v) = setbyfirst(c, k => v)
-
 
 """
     getkv(collection, key [, default]) -> value
@@ -65,7 +61,6 @@ function getkv(c, k, default=nothing)
     i = findfirst(x->first(x) == k, c)
     return i === nothing ? default : c[i][2]
 end
-
 
 """
     rmkv(collection, key)

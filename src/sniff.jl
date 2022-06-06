@@ -24,7 +24,7 @@ const MAXSNIFFLENGTH = 512
 const WHITESPACE = Set{UInt8}([UInt8('\t'),UInt8('\n'),UInt8('\u0c'),UInt8('\r'),UInt8(' ')])
 
 """
-`HTTP.sniff(content::Union{Vector{UInt8}, String, IO})` => `String` (mimetype)
+    `HTTP.sniff(content::Union{Vector{UInt8}, String, IO})` => `String` (mimetype)
 
 `HTTP.sniff` will look at the first 512 bytes of `content` to try and determine a valid mimetype.
 If a mimetype can't be determined appropriately, `"application/octet-stream"` is returned.
