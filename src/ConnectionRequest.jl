@@ -4,12 +4,12 @@ using URIs, Sockets, Base64, LoggingExtras
 using MbedTLS: SSLContext, SSLConfig
 using ..Messages, ..IOExtras, ..ConnectionPool, ..Streams
 
-islocalhost(host) = host == "localhost" || host == "127.0.0.1" || host == "127.0.0.1"
+islocalhost(host::AbstractString) = host == "localhost" || host == "127.0.0.1" || host == "::1"
 
 # hasdotsuffix reports whether s ends in "."+suffix.
 hasdotsuffix(s, suffix) = endswith(s, "." * suffix)
 
-function isnoproxy(host)
+function isnoproxy(host::AbstractString)
     for x in NO_PROXY
         (hasdotsuffix(host, x) || (host == x)) && return true
     end
