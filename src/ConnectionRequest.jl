@@ -4,7 +4,7 @@ using URIs, Sockets, Base64, LoggingExtras
 using MbedTLS: SSLContext, SSLConfig
 using ..Messages, ..IOExtras, ..ConnectionPool, ..Streams
 
-islocalhost(host::AbstractString) = host == "localhost" || host == "127.0.0.1" || host == "::1"
+islocalhost(host::AbstractString) = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0000:0000:0000:0000:0000:0000:0000:0001" || host == "0:0:0:0:0:0:0:1"
 
 # hasdotsuffix reports whether s ends in "."+suffix.
 hasdotsuffix(s, suffix) = endswith(s, "." * suffix)
