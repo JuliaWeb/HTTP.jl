@@ -42,10 +42,7 @@ jobs:
           with:
             python-version: "2.x"
             architecture: ${{ matrix.arch }}
-        run: python -m pip install --upgrade pip virtualenv
-        run: virtualenv ~/wstest
-        run: source ~/wstest/bin/activate
-        run: pip install autobahntestsuite
+        run: python -m pip install --upgrade pip autobahntestsuite
       - uses: julia-actions/setup-julia@v1
         with:
           version: ${{ matrix.version }}
