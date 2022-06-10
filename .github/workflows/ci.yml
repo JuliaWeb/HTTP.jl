@@ -11,6 +11,20 @@ defaults:
   run:
     shell: bash
 jobs:
+  autobahn_websocket_tests:
+    runs-on: ubuntu-latest
+    container:
+      image: crossbario/autobahn-testsuite:latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: julia-actions/setup-julia@v1
+        with:
+          version: '1'
+          arch: ubuntu-latest
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
+        env:
+          AUTOBAHN_WEBSOCKETS_TEST: true
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
@@ -51,9 +65,6 @@ jobs:
             ${{ runner.os }}-test-
             ${{ runner.os }}-
       - uses: julia-actions/julia-buildpkg@v1
-      - name: docker pull
-        if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: docker pull crossbario/autobahn-testsuite:latest
       - uses: julia-actions/julia-runtest@v1
         env:
           PIE_SOCKET_API_KEY: ${{ secrets.PIE_SOCKET_API_KEY }}
