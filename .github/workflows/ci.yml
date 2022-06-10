@@ -52,7 +52,7 @@ jobs:
             ${{ runner.os }}-
       - uses: julia-actions/julia-buildpkg@v1
       - name: docker pull
-        if: ${{ matrix.os == 'ubuntu-latest' || matrix.os == 'windows-latest' }}
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         run: docker pull crossbario/autobahn-testsuite:latest
       - uses: julia-actions/julia-runtest@v1
         env:

@@ -7,7 +7,7 @@ const DIR = joinpath(dirname(pathof(HTTP)), "../test/websockets")
 @testset "WebSockets" begin
 
 @show success(`which docker`)
-if success(`which docker`)
+if success(`which docker`) && !Sys.iswindows()
     @testset "Autobahn testsuite" begin
         p = run(Cmd(`docker run -d --rm --name abserver -v "$DIR/config:/config" -v "$DIR/reports:/reports" -p 9001:9001 crossbario/autobahn-testsuite`; dir=DIR); wait=false)
         sleep(5) # give time for server to get setup
@@ -50,7 +50,7 @@ if success(`which docker`)
     @testset "Autobahn testsuite server" begin
         server = Sockets.listen(Sockets.localhost, 9002)
         ready_to_accept = Ref(false)
-        @async WebSockets.listen(Sockets.localhost, 9002; server, ready_to_accept) do ws
+        @async WebSockets.listen(Sockets.localhost, 9002; server, ready_to_accept, suppress_close_error=true) do ws
             for msg in ws
                 send(ws, msg)
             end
