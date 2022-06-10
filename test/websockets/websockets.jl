@@ -49,12 +49,15 @@ if success(`which docker`)
 
     @testset "Autobahn testsuite server" begin
         server = Sockets.listen(Sockets.localhost, 9002)
-        tsk = @async WebSockets.listen(Sockets.localhost, 9002; server=server) do ws
+        ready_to_accept = Ref(false)
+        @async WebSockets.listen(Sockets.localhost, 9002; server, ready_to_accept) do ws
             for msg in ws
                 send(ws, msg)
             end
         end
-        sleep(2) # make sure server is up
+        while !ready_to_accept[]
+            sleep(0.5)
+        end
         rm(joinpath(DIR, "reports/server/index.json"); force=true)
         @test success(run(Cmd(`docker run -d --rm --name abclient -v "$DIR/config:/config" -v "$DIR/reports:/reports" --network="host" crossbario/autobahn-testsuite wstest -m fuzzingclient -s config/fuzzingclient.json`; dir=DIR)))
         @test success(run(`docker wait abclient`))

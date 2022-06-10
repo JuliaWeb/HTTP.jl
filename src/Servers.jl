@@ -233,9 +233,10 @@ function listen(f,
                 reuse_limit::Int=nolimit,
                 readtimeout::Int=0,
                 verbose=false,
+                ready_to_accept::Ref{Bool}=Ref(false),
                 access_log::Union{Function,Nothing}=nothing,
                 on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing)
-
+    ready_to_accept[] = false
     inet = getinet(host, port)
     if server !== nothing
         tcpserver = server
@@ -266,11 +267,11 @@ function listen(f,
     if verbose > 0
         LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
             listenloop(f, s, tcpisvalid, connection_count, max_connections,
-                         reuse_limit, readtimeout, verbose)
+                         reuse_limit, readtimeout, ready_to_accept, verbose)
         end
     else
         return listenloop(f, s, tcpisvalid, connection_count, max_connections,
-                         reuse_limit, readtimeout, verbose)
+                         reuse_limit, readtimeout, ready_to_accept, verbose)
     end
 end
 
@@ -279,9 +280,10 @@ Main server loop.
 Accepts new tcp connections and spawns async tasks to handle them."
 """
 function listenloop(f, server, tcpisvalid, connection_count,
-                       max_connections, reuse_limit, readtimeout, verbose)
+                       max_connections, reuse_limit, readtimeout, ready_to_accept, verbose)
     sem = Base.Semaphore(max_connections)
     count = 1
+    ready_to_accept[] = true
     while isopen(server)
         try
             Base.acquire(sem)
