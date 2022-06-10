@@ -11,20 +11,6 @@ defaults:
   run:
     shell: bash
 jobs:
-  autobahn_websocket_tests:
-    runs-on: ubuntu-latest
-    container:
-      image: crossbario/autobahn-testsuite:latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@v1
-        with:
-          version: '1'
-          arch: ubuntu-latest
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
-        env:
-          AUTOBAHN_WEBSOCKETS_TEST: true
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
@@ -50,6 +36,14 @@ jobs:
             version: 'nightly'
     steps:
       - uses: actions/checkout@v2
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "2.x"
+          architecture: ${{ matrix.arch }}
+      - run: python -m pip install --upgrade pip virtualenv
+      - run: virtualenv ~/wstest
+      - run: source ~/wstest/bin/activate
+      - run: pip install autobahntestsuite
       - uses: julia-actions/setup-julia@v1
         with:
           version: ${{ matrix.version }}
