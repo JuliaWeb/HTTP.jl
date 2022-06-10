@@ -1,6 +1,6 @@
 module TestWebSockets
 
-using Test, HTTP, HTTP.WebSockets, JSON
+using Test, Sockets, HTTP, HTTP.WebSockets, JSON
 
 const DIR = joinpath(dirname(pathof(HTTP)), "../test/websockets")
 
@@ -8,9 +8,9 @@ const DIR = joinpath(dirname(pathof(HTTP)), "../test/websockets")
 
 @show success(`which docker`)
 if success(`which docker`)
-    p = run(Cmd(`docker run -d --rm -v "$DIR/config:/config" -v "$DIR/reports:/reports" -p 9001:9001 crossbario/autobahn-testsuite`; dir=DIR), devnull, stdout, stdout; wait=false)
-    sleep(5) # give time for server to get setup
     @testset "Autobahn testsuite" begin
+        p = run(Cmd(`docker run -d --rm --name abserver -v "$DIR/config:/config" -v "$DIR/reports:/reports" -p 9001:9001 crossbario/autobahn-testsuite`; dir=DIR); wait=false)
+        sleep(5) # give time for server to get setup
         cases = Ref(0)
         WebSockets.open("ws://127.0.0.1:9001/getCaseCount") do ws
             for msg in ws
@@ -19,10 +19,10 @@ if success(`which docker`)
         end
 
         for i = 1:cases[]
-            println("Running test case = $i")
+            # println("Running test case = $i")
             verbose = false
             try
-                WebSockets.open("ws://127.0.0.1:9001/runCase?case=$(i)&agent=main"; verbose) do ws
+                WebSockets.open("ws://127.0.0.1:9001/runCase?case=$(i)&agent=main"; verbose, suppress_close_error=true) do ws
                     for msg in ws
                         send(ws, msg)
                     end
@@ -32,6 +32,7 @@ if success(`which docker`)
             end
         end
 
+        rm(joinpath(DIR, "reports/clients/index.json"); force=true)
         WebSockets.open("ws://127.0.0.1:9001/updateReports?agent=main") do ws
             for msg in ws
                 send(ws, msg)
@@ -42,22 +43,28 @@ if success(`which docker`)
         for (k, v) in pairs(report["main"])
             @test v["behavior"] in ("OK", "NON-STRICT", "INFORMATIONAL")
         end
+        # stop/remove docker server container
+        run(Cmd(`docker rm -f abserver`; ignorestatus=true))
     end # @testset "Autobahn testsuite"
 
     @testset "Autobahn testsuite server" begin
-        server = HTTP.Sockets.listen(HTTP.Sockets.localhost, 9002)
-        tsk = @async WebSockets.listen(HTTP.Sockets.localhost, 9002; server=server) do ws
+        server = Sockets.listen(Sockets.localhost, 9002)
+        tsk = @async WebSockets.listen(Sockets.localhost, 9002; server=server) do ws
             for msg in ws
                 send(ws, msg)
             end
         end
-        @test success(run(Cmd(`docker run -it --rm -v "$DIR/config:/config" -v "$DIR/reports:/reports" --network="host" crossbario/autobahn-testsuite wstest -m fuzzingclient -s config/fuzzingclient.json`; dir=DIR)))
+        sleep(2) # make sure server is up
+        rm(joinpath(DIR, "reports/server/index.json"); force=true)
+        @test success(run(Cmd(`docker run -d --rm --name abclient -v "$DIR/config:/config" -v "$DIR/reports:/reports" --network="host" crossbario/autobahn-testsuite wstest -m fuzzingclient -s config/fuzzingclient.json`; dir=DIR)))
+        @test success(run(`docker wait abclient`))
         close(server)
         report = JSON.parsefile(joinpath(DIR, "reports/server/index.json"))
         for (k, v) in pairs(report["main"])
             @test v["behavior"] in ("OK", "NON-STRICT", "INFORMATIONAL", "UNIMPLEMENTED")
         end
     end
+    
 end
 
 end # @testset "WebSockets"

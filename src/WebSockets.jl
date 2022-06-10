@@ -243,7 +243,7 @@ function hashedkey(key)
     return base64encode(digest(MD_SHA1, hashkey))
 end
 
-function open(f::Function, url; verbose=false, headers=[], maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...)
+function open(f::Function, url; suppress_close_error::Bool=false, verbose=false, headers=[], maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...)
     key = base64encode(rand(UInt8, 16))
     headers = [
         "Upgrade" => "websocket",
@@ -266,7 +266,7 @@ function open(f::Function, url; verbose=false, headers=[], maxframesize::Integer
             f(ws)
         catch e
             if !isok(e)
-                @error "$(ws.id): error" (e, catch_backtrace())
+                suppress_close_error || @error "$(ws.id): error" (e, catch_backtrace())
             end
             if !isclosed(ws)
                 if e isa WebSocketError && e.message isa CloseFrameBody
@@ -289,7 +289,7 @@ function listen(f::Function, host="localhost", port::Integer=UInt16(8081); verbo
     end
 end
 
-function upgrade(f::Function, http::Streams.Stream; maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...)
+function upgrade(f::Function, http::Streams.Stream; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...)
     @debugv 2 "Server websocket upgrade requested"
     isupgrade(http.message) || handshakeerror()
     if !hasheader(http, "Sec-WebSocket-Version", "13")
@@ -312,7 +312,7 @@ function upgrade(f::Function, http::Streams.Stream; maxframesize::Integer=typema
         f(ws)
     catch e
         if !isok(e)
-            @error "$(ws.id): Unexpected websocket server error" (e, catch_backtrace())
+            suppress_close_error || @error "$(ws.id): Unexpected websocket server error" (e, catch_backtrace())
         end
         if !isclosed(ws)
             if e isa WebSocketError && e.message isa CloseFrameBody
