@@ -20,7 +20,7 @@ end
                 sslconfig = MbedTLS.SSLConfig(joinpath(dir, "resources/cert.pem"),
                                               joinpath(dir, "resources/key.pem"))) do http
 
-        if HTTP.WebSockets.is_upgrade(http.message)
+        if HTTP.WebSockets.isupgrade(http.message)
             HTTP.WebSockets.upgrade(http) do client
                 count = 1
                 while !eof(client);

@@ -1,100 +1,119 @@
-using Test
-using HTTP
-using HTTP.IOExtras, HTTP.Sockets, HTTP.WebSockets
-using Sockets
+module TestWebSockets
+
+using Test, HTTP, HTTP.WebSockets, JSON
+
+const DIR = joinpath(dirname(pathof(HTTP)), "../test/websockets")
 
 @testset "WebSockets" begin
-    p = 8085 # rand(8000:8999)
-    socket_type = ["wss", "ws"]
 
-    function listen_localhost()
-        @async HTTP.listen(Sockets.localhost, p) do http
-            if WebSockets.is_upgrade(http.message)
-                WebSockets.upgrade(http) do ws
-                    while !eof(ws)
-                        data = readavailable(ws)
-                        write(ws, data)
+@show success(`which docker`)
+if success(`which docker`)
+    p = run(Cmd(`docker run -d --rm -v "$DIR/config:/config" -v "$DIR/reports:/reports" -p 9001:9001 crossbario/autobahn-testsuite`; dir=DIR), devnull, stdout, stdout; wait=false)
+    sleep(5) # give time for server to get setup
+    @testset "Autobahn testsuite" begin
+        cases = Ref(0)
+        WebSockets.open("ws://127.0.0.1:9001/getCaseCount") do ws
+            for msg in ws
+                cases[] = parse(Int, msg)
+            end
+        end
+
+        for i = 1:cases[]
+            println("Running test case = $i")
+            verbose = false
+            try
+                WebSockets.open("ws://127.0.0.1:9001/runCase?case=$(i)&agent=main"; verbose) do ws
+                    for msg in ws
+                        send(ws, msg)
                     end
                 end
+            catch
+                # ignore errors here since we want to run all cases + some are expected to throw
             end
         end
-    end
 
-    if !isempty(get(ENV, "PIE_SOCKET_API_KEY", "")) && get(ENV, "JULIA_VERSION", "") == "1"
-        println("found pie socket api key, running External Host websocket tests")
-        pie_socket_api_key = ENV["PIE_SOCKET_API_KEY"]
-        @testset "External Host - $s" for s in socket_type
-            WebSockets.open("$s://free3.piesocket.com/v3/http_test_channel?api_key=$pie_socket_api_key&notify_self") do ws
-                write(ws, "Foo")
-                @test !eof(ws)
-                @test String(readavailable(ws)) == "Foo"
-
-                write(ws, "Foo"," Bar")
-                @test !eof(ws)
-                @test String(readavailable(ws)) == "Foo Bar"
-
-                # send fragmented message manually with ping in between frames
-                WebSockets.wswrite(ws, ws.frame_type, "Hello ")
-                WebSockets.wswrite(ws, WebSockets.WS_FINAL | WebSockets.WS_PING, "things")
-                WebSockets.wswrite(ws, WebSockets.WS_FINAL, "again!")
-                @test String(readavailable(ws)) == "Hello again!"
-
-                write(ws, "Hello")
-                write(ws, " There")
-                write(ws, " World", "!")
-                IOExtras.closewrite(ws)
-
-                buf = IOBuffer()
-                # write(buf, ws)
-                @test_skip String(take!(buf)) == "Hello There World!"
+        WebSockets.open("ws://127.0.0.1:9001/updateReports?agent=main") do ws
+            for msg in ws
+                send(ws, msg)
             end
         end
-    end
-
-    @testset "Localhost" begin
-        listen_localhost()
-
-        WebSockets.open("ws://127.0.0.1:$(p)") do ws
-            write(ws, "Foo")
-            @test String(readavailable(ws)) == "Foo"
-
-            write(ws, "Bar")
-            @test String(readavailable(ws)) == "Bar"
-
-            write(ws, "This", " is", " a", " fragmented", " message.")
-            @test String(readavailable(ws)) == "This is a fragmented message."
-
-            # send fragmented message manually with ping in between frames
-            WebSockets.wswrite(ws, ws.frame_type, "Ping ")
-            WebSockets.wswrite(ws, WebSockets.WS_FINAL | WebSockets.WS_PING, "stuff")
-            WebSockets.wswrite(ws, WebSockets.WS_FINAL, "pong!")
-            @test String(readavailable(ws)) == "Ping pong!"
+        
+        report = JSON.parsefile(joinpath(DIR, "reports/clients/index.json"))
+        for (k, v) in pairs(report["main"])
+            @test v["behavior"] in ("OK", "NON-STRICT", "INFORMATIONAL")
         end
-    end
+    end # @testset "Autobahn testsuite"
 
-    @testset "Extended feature support for listen" begin
-        port=UInt16(8086)
-        tcpserver = listen(port)
-        target = "/query?k1=v1&k2=v2"
-
-        servertask =  @async WebSockets.listen("127.0.0.1", port; server=tcpserver) do ws
-            @test ws.request isa HTTP.Request
-            write(ws, ws.request.target)
-            while !eof(ws)
-                write(ws, readavailable(ws))
+    @testset "Autobahn testsuite server" begin
+        server = HTTP.Sockets.listen(HTTP.Sockets.localhost, 9002)
+        tsk = @async WebSockets.listen(HTTP.Sockets.localhost, 9002; server=server) do ws
+            for msg in ws
+                send(ws, msg)
             end
-            close(ws)
         end
-
-        WebSockets.open("ws://127.0.0.1:$(port)$(target)") do ws
-            @test String(readavailable(ws)) == target
-            @test write(ws, "Bye!") == 4
-            @test String(readavailable(ws)) == "Bye!"
-            close(ws)
+        @test success(run(Cmd(`docker run -it --rm -v "$DIR/config:/config" -v "$DIR/reports:/reports" --network="host" crossbario/autobahn-testsuite wstest -m fuzzingclient -s config/fuzzingclient.json`; dir=DIR)))
+        close(server)
+        report = JSON.parsefile(joinpath(DIR, "reports/server/index.json"))
+        for (k, v) in pairs(report["main"])
+            @test v["behavior"] in ("OK", "NON-STRICT", "INFORMATIONAL", "UNIMPLEMENTED")
         end
-
-        close(tcpserver)
-        @test timedwait(()->servertask.state === :failed, 5.0) === :ok
-        @test_throws Exception wait(servertask)
     end
 end
+
+end # @testset "WebSockets"
+
+# @testset "WebSockets" begin
+#     p = 8085 # rand(8000:8999)
+#     socket_type = ["wss", "ws"]
+
+#     function listen_localhost()
+#         server = Sockets.listen(Sockets.localhost, p)
+#         tsk = @async HTTP.listen(Sockets.localhost, p; server=server) do http
+#             if WebSockets.isupgrade(http.message)
+#                 WebSockets.upgrade(http) do ws
+#                     while !eof(ws)
+#                         data = readavailable(ws)
+#                         println("Received: $(String(copy(data))), echoing back")
+#                         write(ws, data)
+#                     end
+#                 end
+#             end
+#         end
+#         return server
+#     end
+
+#     if !isempty(get(ENV, "PIE_SOCKET_API_KEY", "")) && get(ENV, "JULIA_VERSION", "") == "1"
+#         println("found pie socket api key, running External Host websocket tests")
+#         pie_socket_api_key = ENV["PIE_SOCKET_API_KEY"]
+#         @testset "External Host - $s" for s in socket_type
+#             WebSockets.open("$s://free3.piesocket.com/v3/http_test_channel?api_key=$pie_socket_api_key&notify_self") do ws
+#                 println("opened websocket; writing Foo")
+#                 write(ws, "Foo")
+#                 @test !eof(ws)
+#                 @test String(readavailable(ws)) == "Foo"
+#             end
+
+#                 write(ws, "Foo"," Bar")
+#                 @test !eof(ws)
+#                 @test String(readavailable(ws)) == "Foo Bar"
+
+#                 # send fragmented message manually with ping in between frames
+#                 # WebSockets.wswrite(ws, ws.frame_type, "Hello ")
+#                 # WebSockets.wswrite(ws, WebSockets.WS_FINAL | WebSockets.WS_PING, "things")
+#                 # WebSockets.wswrite(ws, WebSockets.WS_FINAL, "again!")
+#                 # @test String(readavailable(ws)) == "Hello again!"
+
+#                 write(ws, "Hello")
+#                 write(ws, " There")
+#                 write(ws, " World", "!")
+#                 IOExtras.closewrite(ws)
+
+#                 buf = IOBuffer()
+#                 # write(buf, ws)
+#                 @test_skip String(take!(buf)) == "Hello There World!"
+#             end
+#         end
+#     end
+# end
+
+end # module

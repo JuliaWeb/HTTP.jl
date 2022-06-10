@@ -232,7 +232,7 @@ function listen(f,
                 rate_limit::Union{Rational{Int}, Nothing}=nothing,
                 reuse_limit::Int=nolimit,
                 readtimeout::Int=0,
-                verbose::Bool=false,
+                verbose=false,
                 access_log::Union{Function,Nothing}=nothing,
                 on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing)
 
@@ -244,7 +244,7 @@ function listen(f,
         tcpserver = Sockets.TCPServer(; delay=false)
         if Sys.isunix()
             if Sys.isapple()
-                verbose && @warn "note that `reuseaddr=true` allows multiple processes to bind to the same addr/port, but only one process will accept new connections (if that process exits, another process listening will start accepting)"
+                verbose > 0 && @warn "note that `reuseaddr=true` allows multiple processes to bind to the same addr/port, but only one process will accept new connections (if that process exits, another process listening will start accepting)"
             end
             rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
             Sockets.bind(tcpserver, inet.host, inet.port; reuseaddr=true)
@@ -256,15 +256,22 @@ function listen(f,
     else
         tcpserver = Sockets.listen(inet)
     end
-    verbose && @info "Listening on: $host:$port"
+    verbose > 0 && @info "Listening on: $host:$port"
 
     tcpisvalid = let f=tcpisvalid
         x -> f(x) && check_rate_limit(x, rate_limit)
     end
 
     s = Server(sslconfig, tcpserver, string(host), string(port), on_shutdown, access_log)
-    return listenloop(f, s, tcpisvalid, connection_count, max_connections,
+    if verbose > 0
+        LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
+            listenloop(f, s, tcpisvalid, connection_count, max_connections,
                          reuse_limit, readtimeout, verbose)
+        end
+    else
+        return listenloop(f, s, tcpisvalid, connection_count, max_connections,
+                         reuse_limit, readtimeout, verbose)
+    end
 end
 
 """"
@@ -280,10 +287,10 @@ function listenloop(f, server, tcpisvalid, connection_count,
             Base.acquire(sem)
             io = accept(server)
             if io === nothing
-                verbose && @warn "unable to accept new connection"
+                verbose > 0 && @warn "unable to accept new connection"
                 continue
             elseif !tcpisvalid(io)
-                verbose && @info "Accept-Reject:  $io"
+                verbose > 0 && @info "Accept-Reject:  $io"
                 close(io)
                 continue
             end
@@ -291,13 +298,13 @@ function listenloop(f, server, tcpisvalid, connection_count,
             conn = Connection(io)
             conn.host, conn.port = server.hostname, server.hostport
             @async try
-                # verbose && @info "Accept ($count):  $conn"
+                # verbose > 0 && @info "Accept ($count):  $conn"
                 handle_connection(f, conn, server, reuse_limit, readtimeout)
-                # verbose && @info "Closed ($count):  $conn"
+                # verbose > 0 && @info "Closed ($count):  $conn"
             catch e
                 if e isa Base.IOError &&
                     (e.code == -54 || e.code == -4077 || e.code == -104 || e.code == -131 || e.code == -232)
-                    verbose && @warn "connection reset by peer (ECONNRESET)"
+                    verbose > 0 && @warn "connection reset by peer (ECONNRESET)"
                 else
                     @error "" exception=(e, stacktrace(catch_backtrace()))
                 end
