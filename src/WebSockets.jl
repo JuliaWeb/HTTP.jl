@@ -62,6 +62,7 @@ Base.getindex(x::Mask, i::Int) = (UInt32(x) >> (8 * ((i - 1) % 4))) % UInt8
 Base.rand(::Type{Mask}) = Mask(rand(UInt32))
 const EMPTY_MASK = Mask(UInt32(0))
 
+# representation of a single websocket frame
 struct Frame
     flags::FrameFlags
     extendedlen::Union{Nothing, UInt16, UInt64}
@@ -75,10 +76,12 @@ struct Frame
     payload::Any
 end
 
+# given a payload total length, split into 7-bit length + 16-bit or 64-bit extended length
 wslength(l) = l < 0x7E ? (UInt8(l), nothing) :
               l <= 0xFFFF ? (0x7E, UInt16(l)) :
                             (0x7F, UInt64(l))
 
+# give a mutable byte payload + mask, perform client websocket masking
 function mask!(bytes::Vector{UInt8}, mask)
     for i in 1:length(bytes)
         @inbounds bytes[i] = bytes[i] ⊻ mask[i]
@@ -102,11 +105,22 @@ Base.show(io::IO, x::Frame) =
     print(io, "Frame(", "flags=", x.flags, ", ", "extendedlen=", x.extendedlen, ", ", "mask=", x.mask, ", ", "payload=", x.payload, ")")
 
 # reading a single frame
+
 # If _The WebSocket Connection is Closed_ and no Close control frame was received by the
 # endpoint (such as could occur if the underlying transport connection
 # is lost), _The WebSocket Connection Close Code_ is considered to be 1006.
 @noinline iocheck(io) = isopen(io) || throw(WebSocketError(CloseFrameBody(1006, "WebSocket connection is closed")))
 
+"""
+    WebSockets.readframe(ws) -> WebSockets.Frame
+    WebSockets.readframe(io, Frame, buffer, first_fragment_opcode) -> WebSockets.Frame
+
+Read a single websocket frame from a `WebSocket` or `IO` stream.
+Frame may be a control frame with `PING`, `PONG`, or `CLOSE` opcode.
+Frame may also be part of fragmented message, with opcdoe `CONTINUATION`;
+`first_fragment_opcode` should be passed from the 1st frame of a fragmented message
+to ensure each subsequent frame payload is converted correctly (String or Vector{UInt8}).
+"""
 function readframe(io::IO, ::Type{Frame}, buffer::Vector{UInt8}=UInt8[], first_fragment_opcode::OpCode=CONTINUATION)
     iocheck(io)
     flags = FrameFlags(ntoh(read(io, UInt16)))
@@ -121,6 +135,7 @@ function readframe(io::IO, ::Type{Frame}, buffer::Vector{UInt8}=UInt8[], first_f
         len = UInt64(flags.len)
     end
     mask = flags.masked ? Mask(read(io, UInt32)) : EMPTY_MASK
+    # even if len is 0, we need to resize! so previously filled buffers aren't erroneously reused
     resize!(buffer, len)
     if len > 0
         # NOTE: we could support a pure streaming case by allowing the caller to pass
@@ -140,6 +155,7 @@ function readframe(io::IO, ::Type{Frame}, buffer::Vector{UInt8}=UInt8[], first_f
     end
     op = flags.opcode == CONTINUATION ? first_fragment_opcode : flags.opcode
     if op == TEXT
+        # TODO: possible avoid the double copy from read!(io, buffer) + unsafe_string?
         payload = unsafe_string(pointer(buffer), len)
     elseif op == CLOSE
         if len == 1
@@ -183,7 +199,6 @@ function writeframe(io::IO, x::Frame)
 end
 
 "Status codes according to RFC 6455 7.4.1"
-@noinline validclosecheck(x) = (1000 <= x < 5000 && !(x in (1004, 1005, 1006, 1016, 1100, 2000, 2999))) || throw(WebSocketError(CloseFrameBody(1002, "Invalid close status code")))
 const STATUS_CODE_DESCRIPTION = Dict{Int, String}(
     1000=>"Normal",                     1001=>"Going Away",
     1002=>"Protocol Error",             1003=>"Unsupported Data",
@@ -194,6 +209,15 @@ const STATUS_CODE_DESCRIPTION = Dict{Int, String}(
     1012=>"Service Restart",            1013=>"Try Again Later",
     1014=>"Bad Gateway",                1015=>"TLS Handshake")
 
+@noinline validclosecheck(x) = (1000 <= x < 5000 && !(x in (1004, 1005, 1006, 1016, 1100, 2000, 2999))) || throw(WebSocketError(CloseFrameBody(1002, "Invalid close status code")))
+
+"""
+    WebSockets.CloseFrameBody(status, message)
+
+Represents the payload of a CLOSE control websocket frame.
+For error close `status`, it can be wrapped in a `WebSocketError`
+and thrown.
+"""
 struct CloseFrameBody
     status::Int
     message::String
@@ -203,9 +227,58 @@ struct WebSocketError <: Exception
     message::Union{String, CloseFrameBody}
 end
 
-# Close frame status codes that are "ok"
+"""
+    WebSockets.isok(x::WebSocketError) -> Bool
+
+Returns true if the `WebSocketError` has a non-error status code.
+When calling `receive(websocket)`, if a CLOSE frame is received,
+the CLOSE frame body is parsed and thrown inside the `WebSocketError`,
+but if the CLOSE frame has a non-error status code, it's safe to
+ignore the error and return from the `WebSockets.open` or `WebSockets.listen`
+calls without throwing.
+"""
 isok(x) = x isa WebSocketError && x.message isa CloseFrameBody && (x.message.status == 1000 || x.message.status == 1001 || x.message.status == 1005)
 
+"""
+    WebSocket(io::HTTP.Connection, req, resp; client=true)
+
+Representation of a websocket connection.
+Use `WebSockets.open` to open a websocket connection, passing a
+handler function `f(ws)` to send and receive messages.
+Use `WebSockets.listen` to listen for incoming websocket connections,
+passing a handler function `f(ws)` to send and receive messages.
+
+Call `send(ws, msg)` to send a message; if `msg` is an `AbstractString`,
+a TEXT websocket message will be sent; if `msg` is an `AbstractVector{UInt8}`,
+a BINARY websocket message will be sent. Otherwise, `msg` should be an iterable
+of either `AbstractString` or `AbstractVector{UInt8}`, and a fragmented message
+will be sent, one frame for each iterated element.
+
+Control frames can be sent by calling `ping(ws[, data])`, `pong(ws[, data])`,
+or `close(ws[, body::WebSockets.CloseFrameBody])`. Calling `close` will initiate
+the close sequence and close the underlying connection.
+
+To receive messages, call `receive(ws)`, which will block until a non-control,
+full message is received. PING messages will automatically be responded to when
+received. CLOSE messages will also be acknowledged and then a `WebSocketError`
+will be thrown with the `WebSockets.CloseFrameBody` payload, which may include
+a non-error CLOSE frame status code. `WebSockets.isok(err)` can be called to
+check if the CLOSE was normal or unexpected. Fragmented messages will be
+received until the final frame is received and the full concatenated payload
+can be returned. `receive(ws)` returns a `Vector{UInt8}` for BINARY messages,
+and a `String` for TEXT messages.
+
+For convenience, `WebSocket`s support the iteration protocol, where each iteration
+will `receive` a non-control message, with iteration terminating when the connection
+is closed. E.g.:
+```julia
+WebSockets.open(url) do ws
+    for msg in ws
+        # do cool stuff with msg
+    end
+end
+```
+"""
 mutable struct WebSocket
     id::UUID
     io::Connection
@@ -225,9 +298,15 @@ const DEFAULT_MAX_FRAG = 1024
 WebSocket(io::Connection, req=Request(), resp=Response(); client::Bool=true, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG) =
     WebSocket(uuid4(), io, req, resp, maxframesize, maxfragmentation, client, UInt8[], UInt8[], false, false)
 
+"""
+    WebSockets.isclosed(ws) -> Bool
+
+Check whether a `WebSocket` has sent and received CLOSE frames.
+"""
 isclosed(ws::WebSocket) = ws.readclosed && ws.writeclosed
 
 # Handshake
+"Check whether a HTTP.Request or HTTP.Response is a websocket upgrade request/response"
 function isupgrade(r::Message)
     ((r isa Request && r.method == "GET") ||
      (r isa Response && r.status == 101)) &&
@@ -243,6 +322,26 @@ function hashedkey(key)
     return base64encode(digest(MD_SHA1, hashkey))
 end
 
+"""
+    WebSockets.open(handler, url; verbose=false, kw...)
+
+Initiate a websocket connection to `url` (which should have schema like `ws://` or `wss://`),
+and call `handler(ws)` with the websocket connection. Passing `verbose=true` or `verbose=2`
+will enable debug logging for the life of the websocket connection.
+`handler` should be a function of the form `f(ws) -> nothing`, where `ws` is a [`WebSocket`](@ref).
+Supported keyword arguments are the same as supported by [`HTTP.request`](@ref).
+Typical websocket usage is:
+```julia
+WebSockets.open(url) do ws
+    # iterate incoming websocket messages
+    for msg in ws
+        # send message back to server or do other logic here
+        send(ws, msg)
+    end
+    # iteration ends when the websocket connection is closed by server or error
+end
+```
+"""
 function open(f::Function, url; suppress_close_error::Bool=false, verbose=false, headers=[], maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...)
     key = base64encode(rand(UInt8, 16))
     headers = [
@@ -283,6 +382,24 @@ function open(f::Function, url; suppress_close_error::Bool=false, verbose=false,
     end
 end
 
+"""
+    WebSockets.listen(handler, host, port; verbose=false, kw...)
+
+Listen for websocket connections on `host` and `port`, and call `handler(ws)`,
+which should be a function taking a single `WebSocket` argument.
+Keyword arguments `kw...` are the same as supported by [`HTTP.listen`](@ref).
+Typical usage is like:
+```julia
+WebSockets.listen(host, port) do ws
+    # iterate incoming websocket messages
+    for msg in ws
+        # send message back to client or do other logic here
+        send(ws, msg)
+    end
+    # iteration ends when the websocket connection is closed by client or error
+end
+
+"""
 function listen(f::Function, host="localhost", port::Integer=UInt16(8081); verbose=false, kw...)
     Servers.listen(host, port; verbose=verbose, kw...) do http
         upgrade(f, http; kw...)
@@ -347,6 +464,19 @@ function payload(ws, x)
     end
 end
 
+"""
+    send(ws::WebSocket, msg)
+
+Send a message on a websocket connection. If `msg` is an `AbstractString`,
+a TEXT websocket message will be sent; if `msg` is an `AbstractVector{UInt8}`,
+a BINARY websocket message will be sent. Otherwise, `msg` should be an iterable
+of either `AbstractString` or `AbstractVector{UInt8}`, and a fragmented message
+will be sent, one frame for each iterated element.
+
+Control frames can be sent by calling `ping(ws[, data])`, `pong(ws[, data])`,
+or `close(ws[, body::WebSockets.CloseFrameBody])`. Calling `close` will initiate
+the close sequence and close the underlying connection.
+"""
 function Sockets.send(ws::WebSocket, x)
     @debugv 2 "$(ws.id): Writing non-control message"
     @require !ws.writeclosed
@@ -381,18 +511,44 @@ function Sockets.send(ws::WebSocket, x)
 end
 
 # control frames
+"""
+    ping(ws, data=[])
+
+Send a PING control frame on a websocket connection. `data` is an optional
+body to send with the message. PONG messages are automatically responded
+to when a PING message is received by a websocket connection.
+"""
 function ping(ws::WebSocket, data=UInt8[])
     @require !ws.writeclosed
     @debugv 2 "$(ws.id): sending ping"
     return writeframe(ws.io, Frame(true, PING, ws.client, payload(ws, data)))
 end
 
+"""
+    pong(ws, data=[])
+
+Send a PONG control frame on a websocket connection. `data` is an optional
+body to send with the message. Note that PING messages are automatically
+responded to internally by the websocket connection with a corresponding
+PONG message, but in certain cases, a unidirectional PONG message can be
+used as a one-way heartbeat.
+"""
 function pong(ws::WebSocket, data=UInt8[])
     @require !ws.writeclosed
     @debugv 2 "$(ws.id): sending pong"
     return writeframe(ws.io, Frame(true, PONG, ws.client, payload(ws, data)))
 end
 
+"""
+    close(ws, body::WebSockets.CloseFrameBody=nothing)
+
+Initiate a close sequence on a websocket connection. `body` is an optional
+`WebSockets.CloseFrameBody` with a status code and optional reason message.
+If a CLOSE frame has already been received, then a responding CLOSE frame is sent
+and the connection is closed. If a CLOSE frame hasn't already been received, the
+CLOSE frame is sent and `receive` is attempted to receive the responding CLOSE
+frame.
+"""
 function Base.close(ws::WebSocket, body::CloseFrameBody=CloseFrameBody(1000, ""))
     isclosed(ws) && return
     @debugv 2 "$(ws.id): Closing websocket"
@@ -471,6 +627,22 @@ _append(x::String, y::String) = string(x, y)
 # low-level for reading a single frame
 readframe(ws::WebSocket) = readframe(ws.io, Frame, ws.readbuffer)
 
+"""
+    receive(ws::WebSocket) -> Union{String, Vector{UInt8}}
+
+Receive a message from a websocket connection. Returns a `String` if
+the message was TEXT, or a `Vector{UInt8}` if the message was BINARY.
+If control frames (ping or pong) are received, they are handled
+automatically and a non-control message is waited for. If a CLOSE
+message is received, it is responded to and a `WebSocketError` is thrown
+with the `WebSockets.CloseFrameBody` as the error value. This error can
+be checked with `WebSockets.isok(err)` to see if the closing was "normal"
+or if an actual error occurred. For fragmented messages, the incoming
+frames will continue to be read until the final fragment is received.
+The bodies of each fragment are concatenated into the final message
+returned by `receive`. Note that `WebSocket` objects can be iterated,
+where each iteration yields a message until the connection is closed.
+"""
 function receive(ws::WebSocket)
     @debugv 2 "$(ws.id): Reading message"
     @require !ws.readclosed
@@ -498,7 +670,18 @@ function receive(ws::WebSocket)
     return payload
 end
 
-# convenience construct for iterating over messages for lifetime of websocket
+"""
+    iterate(ws)
+
+Continuously call `receive(ws)` on a `WebSocket` connection, with
+each iteration yielding a message until the connection is closed.
+E.g.
+```julia
+for msg in ws
+    # do something with msg
+end
+```
+"""
 function Base.iterate(ws::WebSocket, st=nothing)
     isclosed(ws) && return nothing
     try
