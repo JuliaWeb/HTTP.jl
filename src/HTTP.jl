@@ -1,7 +1,7 @@
 module HTTP
 
 export startwrite, startread, closewrite, closeread,
-    @logfmt_str, common_logfmt, combined_logfmt
+    @logfmt_str, common_logfmt, combined_logfmt, WebSockets
 
 const DEBUG_LEVEL = Ref(0)
 
