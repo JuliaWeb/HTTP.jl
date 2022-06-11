@@ -9,7 +9,7 @@ export WebSocket, send, receive, ping, pong
 
 # 1st 2 bytes of a frame
 primitive type FrameFlags 16 end
-Base.UInt16(x::FrameFlags) = Base.bitcast(UInt16, x)
+uint16(x::FrameFlags) = Base.bitcast(UInt16, x)
 FrameFlags(x::UInt16) = Base.bitcast(FrameFlags, x)
 
 const WS_FINAL =  0b1000000000000000
@@ -26,20 +26,21 @@ iscontrol(opcode::OpCode) = opcode > BINARY
 
 Base.propertynames(x::FrameFlags) = (:final, :rsv1, :rsv2, :rsv3, :opcode, :mask, :len)
 function Base.getproperty(x::FrameFlags, nm::Symbol)
+    ux = uint16(x)
     if nm == :final
-        return UInt16(x) & WS_FINAL > 0
+        return ux & WS_FINAL > 0
     elseif nm == :rsv1
-        return UInt16(x) & WS_RSV1 > 0
+        return ux & WS_RSV1 > 0
     elseif nm == :rsv2
-        return UInt16(x) & WS_RSV2 > 0
+        return ux & WS_RSV2 > 0
     elseif nm == :rsv3
-        return UInt16(x) & WS_RSV3 > 0
+        return ux & WS_RSV3 > 0
     elseif nm == :opcode
-        return OpCode(((UInt16(x) & WS_OPCODE) >> 8) % UInt8)
+        return OpCode(((ux & WS_OPCODE) >> 8) % UInt8)
     elseif nm == :masked
-        return UInt16(x) & WS_MASK > 0
+        return ux & WS_MASK > 0
     elseif nm == :len
-        return UInt16(x) & WS_LEN
+        return ux & WS_LEN
     end
 end
 
@@ -179,7 +180,7 @@ end
 
 # writing a single frame
 function writeframe(io::IO, x::Frame)
-    n = write(io.io, hton(UInt16(x.flags)))
+    n = write(io.io, hton(uint16(x.flags)))
     if x.extendedlen !== nothing
         n += write(io.io, hton(x.extendedlen))
     end
