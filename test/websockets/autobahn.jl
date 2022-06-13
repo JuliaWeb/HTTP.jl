@@ -8,9 +8,8 @@ if Int === Int64 && !Sys.iswindows()
 @testset "Autobahn WebSocket Tests" begin
 
 @testset "Client" begin
-    serverproc = run(Cmd(`wstest -m fuzzingserver -s config/fuzzingserver.json`; dir=DIR), stdin, stdout, stdout; wait=false)
+    serverproc = run(Cmd(`wstest -u 0 -m fuzzingserver -s config/fuzzingserver.json`; dir=DIR), stdin, stdout, stdout; wait=false)
     sleep(1) # give time for server to get setup
-    @show serverproc
     cases = Ref(0)
     WebSockets.open("ws://127.0.0.1:9001/getCaseCount") do ws
         for msg in ws
@@ -33,8 +32,15 @@ if Int === Int64 && !Sys.iswindows()
     end
 
     rm(joinpath(DIR, "reports/clients/index.json"); force=true)
-    WebSockets.open("ws://127.0.0.1:9001/updateReports?agent=main") do ws
-        receive(ws)
+    sleep(1)
+    try
+        WebSockets.open("ws://127.0.0.1:9001/updateReports?agent=main") do ws
+            receive(ws)
+        end
+    catch
+        WebSockets.open("ws://127.0.0.1:9001/updateReports?agent=main") do ws
+            receive(ws)
+        end
     end
     
     report = JSON.parsefile(joinpath(DIR, "reports/clients/index.json"))
@@ -57,7 +63,7 @@ end # @testset "Autobahn testsuite"
         sleep(0.5)
     end
     rm(joinpath(DIR, "reports/server/index.json"); force=true)
-    @test success(run(Cmd(`wstest -m fuzzingclient -s config/fuzzingclient.json`; dir=DIR)))
+    @test success(run(Cmd(`wstest -u 0 -m fuzzingclient -s config/fuzzingclient.json`; dir=DIR)))
     close(server)
     report = JSON.parsefile(joinpath(DIR, "reports/server/index.json"))
     for (k, v) in pairs(report["main"])
