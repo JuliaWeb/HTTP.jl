@@ -3,10 +3,10 @@
     "servers": [
         {
              "agent": "main",
-             "url": "ws://host.docker.internal:9002"
+             "url": "ws://127.0.0.1:9002"
         }
     ],
     "cases": ["*"],
-    "exclude-cases": [],
+    "exclude-cases": ["9.*"],
     "exclude-agent-cases": {}
 }
