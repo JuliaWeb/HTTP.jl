@@ -358,6 +358,11 @@ function open(f::Function, url; suppress_close_error::Bool=false, verbose=false,
         if header(http, "Sec-WebSocket-Accept") != hashedkey(key)
             throw(WebSocketError("Invalid Sec-WebSocket-Accept\n" * "$(http.message)"))
         end
+        # later stream logic checks to see if the HTTP message is "complete"
+        # by seeing if ntoread is 0, which is typemax(Int) for websockets by default
+        # so set it to 0 so it's correctly viewed as "complete" once we're done
+        # doing websocket things
+        http.ntoread = 0
         io = http.stream
         ws = WebSocket(io, http.message.request, http.message; maxframesize, maxfragmentation)
         @debugv 2 "$(ws.id): WebSocket opened"
