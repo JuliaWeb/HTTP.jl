@@ -3,6 +3,7 @@
     "outdir": "./reports/clients",
     "cases": ["*"],
     "exclude-cases": [
+        "9.*",
         "12.*",
         "13.*"
     ],

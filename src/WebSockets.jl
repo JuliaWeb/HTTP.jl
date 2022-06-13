@@ -1,6 +1,6 @@
 module WebSockets
 
-using Base64, LoggingExtras, UUIDs, Sockets
+using Base64, LoggingExtras, UUIDs, Sockets, Random
 using MbedTLS: digest, MD_SHA1, SSLContext
 using ..IOExtras, ..Streams, ..ConnectionPool, ..Messages, ..Conditions, ..Servers
 import ..open
@@ -59,7 +59,7 @@ primitive type Mask 32 end
 Base.UInt32(x::Mask) = Base.bitcast(UInt32, x)
 Mask(x::UInt32) = Base.bitcast(Mask, x)
 Base.getindex(x::Mask, i::Int) = (UInt32(x) >> (8 * ((i - 1) % 4))) % UInt8
-Base.rand(::Type{Mask}) = Mask(rand(UInt32))
+mask() = Mask(rand(Random.RandomDevice(), UInt32))
 const EMPTY_MASK = Mask(UInt32(0))
 
 # representation of a single websocket frame
@@ -93,12 +93,12 @@ end
 function Frame(final::Bool, opcode::OpCode, client::Bool, payload::AbstractVector{UInt8}; rsv1::Bool=false, rsv2::Bool=false, rsv3::Bool=false)
     len, extlen = wslength(length(payload))
     if client
-        mask = Base.rand(Mask)
-        mask!(payload, mask)
+        msk = mask()
+        mask!(payload, msk)
     else
-        mask = EMPTY_MASK
+        msk = EMPTY_MASK
     end
-    return Frame(FrameFlags(final, opcode, client, len; rsv1, rsv2, rsv3), extlen, mask, payload)
+    return Frame(FrameFlags(final, opcode, client, len; rsv1, rsv2, rsv3), extlen, msk, payload)
 end
 
 Base.show(io::IO, x::Frame) =
@@ -343,7 +343,7 @@ end
 ```
 """
 function open(f::Function, url; suppress_close_error::Bool=false, verbose=false, headers=[], maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...)
-    key = base64encode(rand(UInt8, 16))
+    key = base64encode(rand(Random.RandomDevice(), UInt8, 16))
     headers = [
         "Upgrade" => "websocket",
         "Connection" => "Upgrade",
@@ -400,9 +400,9 @@ WebSockets.listen(host, port) do ws
 end
 
 """
-function listen(f::Function, host="localhost", port::Integer=UInt16(8081); verbose=false, kw...)
+function listen(f::Function, host="localhost", port::Integer=UInt16(8081); verbose=false, suppress_close_error::Bool=false, kw...)
     Servers.listen(host, port; verbose=verbose, kw...) do http
-        upgrade(f, http; kw...)
+        upgrade(f, http; suppress_close_error, kw...)
     end
 end
 
