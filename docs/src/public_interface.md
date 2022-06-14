@@ -23,12 +23,10 @@ HTTP.Multipart
 Request functions may throw the following exceptions:
 
 ```@docs
+HTTP.ConnectError
+HTTP.TimeoutError
 HTTP.StatusError
-HTTP.ParseError
-HTTP.IOError
-```
-```@docs
-Sockets.DNSError
+HTTP.RequestError
 ```
 
 ## URIs

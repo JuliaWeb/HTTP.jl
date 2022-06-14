@@ -178,10 +178,10 @@ end
     @test !istaskdone(t1)
 
     # test that an Authorization header is **not** forwarded to a domain different than initial request
-    @test_skip !HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:8090", ["Authorization"=>"auth"]), "Authorization")
+    @test !HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:8090", ["Authorization"=>"auth"]), "Authorization")
 
     # test that an Authorization header **is** forwarded to redirect in same domain
-    @test_skip HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=https://httpbin.org/response-headers?Authorization=auth"), "Authorization")
+    @test HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=https://httpbin.org/response-headers?Authorization=auth"), "Authorization")
 
     # 318
     dir = joinpath(dirname(pathof(HTTP)), "../test")
@@ -203,7 +203,7 @@ end
         require_ssl_verification = false,
     )
     r = HTTP.request("GET", "https://127.0.0.1:8092"; clientoptions...)
-    @test_throws HTTP.IOError HTTP.request("GET", "http://127.0.0.1:8092"; clientoptions...)
+    @test_throws HTTP.RequestError HTTP.request("GET", "http://127.0.0.1:8092"; clientoptions...)
 
 end # @testset
 
@@ -232,7 +232,7 @@ end # @testset
             @test r.status == 200
         end
     catch e
-        @test e isa HTTP.IOExtras.IOError
+        @test e isa HTTP.RequestError
     end
 
     close(server)
@@ -309,10 +309,14 @@ end # @testset
     function with_testserver(f, fmt)
         l = Sockets.listen(ip"0.0.0.0", 32612)
         logger = Test.TestLogger()
+        ready_to_accept = Ref(false)
         tsk = @async begin
             Base.CoreLogging.with_logger(logger) do
-                HTTP.listen(handler, Sockets.localhost, 32612; server=l, access_log=fmt)
+                HTTP.listen(handler, Sockets.localhost, 32612; server=l, ready_to_accept, access_log=fmt)
             end
+        end
+        while !ready_to_accept[]
+            sleep(0.1)
         end
         try
             f()

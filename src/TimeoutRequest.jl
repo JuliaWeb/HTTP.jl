@@ -1,15 +1,7 @@
 module TimeoutRequest
 
-using ..ConnectionPool, ..Streams
+using ..ConnectionPool, ..Streams, ..Exceptions
 using LoggingExtras
-
-struct ReadTimeoutError <:Exception
-    readtimeout::Int
-end
-
-function Base.showerror(io::IO, e::ReadTimeoutError)
-    print(io, "ReadTimeoutError: Connection closed after $(e.readtimeout) seconds")
-end
 
 export timeoutlayer
 
@@ -42,7 +34,7 @@ function timeoutlayer(handler)
             return handler(stream; kw...)
         catch e
             if timedout[]
-            throw(ReadTimeoutError(readtimeout))
+                throw(TimeoutError(readtimeout))
             end
             rethrow(e)
         finally

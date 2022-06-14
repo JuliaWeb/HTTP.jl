@@ -1,6 +1,6 @@
 module StreamRequest
 
-using ..IOExtras, ..Messages, ..Streams, ..ConnectionPool, ..Strings, ..RedirectRequest
+using ..IOExtras, ..Messages, ..Streams, ..ConnectionPool, ..Strings, ..RedirectRequest, ..Exceptions
 using LoggingExtras, CodecZlib
 
 export streamlayer
@@ -39,7 +39,7 @@ function streamlayer(stream::Stream; iofunction=nothing, redirect_limit::Int=3, 
                     closewrite(stream)
                 catch e
                     write_error = e
-                    isopen(io) && try; close(io); catch; end
+                    isopen(io) && @try close(io)
                 end
                 @debugv 2 "client startread"
                 startread(stream)
@@ -50,7 +50,7 @@ function streamlayer(stream::Stream; iofunction=nothing, redirect_limit::Int=3, 
             if isaborted(stream)
                 # The server may have closed the connection.
                 # Don't propagate such errors.
-                try; close(io); catch; end
+                @try close(io)
             end
         end
     catch e

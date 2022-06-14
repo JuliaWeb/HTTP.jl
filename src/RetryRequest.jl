@@ -1,7 +1,7 @@
 module RetryRequest
 
-using Sockets, LoggingExtras
-using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest
+using Sockets, LoggingExtras, MbedTLS
+using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest, ..Exceptions
 
 export retrylayer
 
@@ -15,7 +15,7 @@ increasing delay is introduced between attempts to avoid exacerbating network
 congestion.
 
 Methods of `isrecoverable(e)` define which exception types lead to a retry.
-e.g. `HTTP.IOError`, `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
+e.g. `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 (if status is ``5xx`).
 """
 function retrylayer(handler)
@@ -42,8 +42,11 @@ function retrylayer(handler)
 end
 
 isrecoverable(e) = false
-isrecoverable(e::IOError) = true
+isrecoverable(e::Union{Base.EOFError, Base.IOError, MbedTLS.MbedException}) = true
+isrecoverable(e::ArgumentError) = e.msg == "stream is closed or unusable"
 isrecoverable(e::Sockets.DNSError) = true
+isrecoverable(e::ConnectError) = true
+isrecoverable(e::RequestError) = isrecoverable(e.error)
 isrecoverable(e::StatusError) = e.status == 403 || # Forbidden
                                      e.status == 408 || # Timeout
                                      e.status >= 500    # Server Error

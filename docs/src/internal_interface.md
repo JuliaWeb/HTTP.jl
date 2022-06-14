@@ -39,7 +39,6 @@ Base.write(::IO,::HTTP.Messages.Message)
 ```@docs
 HTTP.IOExtras
 HTTP.IOExtras.startwrite(::IO)
-HTTP.IOExtras.isioerror
 ```
 
 
