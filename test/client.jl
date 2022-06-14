@@ -123,7 +123,6 @@ end
         #     Currently httpbin.org responds with 411 status and “Length Required”
         #     message to any POST/PUT requests that are sent using chunked encoding
         #     See https://github.com/kennethreitz/httpbin/issues/340#issuecomment-330176449
-        println("client transfer-encoding chunked")
         @test status(HTTP.post("$sch://httpbin.org/post"; body="hey", #=chunksize=2=#)) == 200
         @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], #=chunksize=2=#)) == 200
         io = IOBuffer("hey"); seekstart(io)
@@ -157,9 +156,8 @@ end
             catch err
                 err
             end
-            @test err isa HTTP.IOError
-            @test err.e isa EOFError
-
+            @test err isa HTTP.RequestError
+            @test err.error isa EOFError
         finally
             # Shutdown
             try; close(server); wait(task); catch; end
@@ -263,7 +261,7 @@ end
 end
 
 @testset "readtimeout" begin
-    @test_throws HTTP.TimeoutRequest.ReadTimeoutError begin
+    @test_throws HTTP.TimeoutError begin
         HTTP.get("http://httpbin.org/delay/5"; readtimeout=1, retry=false)
     end
     HTTP.get("http://httpbin.org/delay/1"; readtimeout=2, retry=false)
@@ -405,22 +403,22 @@ import NetworkOptions, MbedTLS
         withenv(env...) do
             @test NetworkOptions.verify_host(url)
             @test NetworkOptions.verify_host(url, "SSL")
-            @test_throws HTTP.IOError HTTP.get(url; retries=1)
-            @test_throws HTTP.IOError HTTP.get(url; require_ssl_verification=true, retries=1)
+            @test_throws HTTP.ConnectError HTTP.get(url; retries=1)
+            @test_throws HTTP.ConnectError HTTP.get(url; require_ssl_verification=true, retries=1)
             @test HTTP.get(url; require_ssl_verification=false).status == 200
         end
         withenv(env..., "JULIA_NO_VERIFY_HOSTS" => "localhost") do
             @test !NetworkOptions.verify_host(url)
             @test !NetworkOptions.verify_host(url, "SSL")
             @test HTTP.get(url).status == 200
-            @test_throws HTTP.IOError HTTP.get(url; require_ssl_verification=true, retries=1)
+            @test_throws HTTP.ConnectError HTTP.get(url; require_ssl_verification=true, retries=1)
             @test HTTP.get(url; require_ssl_verification=false).status == 200
         end
         withenv(env..., "JULIA_SSL_NO_VERIFY_HOSTS" => "localhost") do
             @test NetworkOptions.verify_host(url)
             @test !NetworkOptions.verify_host(url, "SSL")
             @test HTTP.get(url).status == 200
-            @test_throws HTTP.IOError HTTP.get(url; require_ssl_verification=true, retries=1)
+            @test_throws HTTP.ConnectError HTTP.get(url; require_ssl_verification=true, retries=1)
             @test HTTP.get(url; require_ssl_verification=false).status == 200
         end
     finally

@@ -2,7 +2,7 @@ module ConnectionRequest
 
 using URIs, Sockets, Base64, LoggingExtras
 using MbedTLS: SSLContext, SSLConfig
-using ..Messages, ..IOExtras, ..ConnectionPool, ..Streams
+using ..Messages, ..IOExtras, ..ConnectionPool, ..Streams, ..Exceptions
 
 islocalhost(host::AbstractString) = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0000:0000:0000:0000:0000:0000:0000:0001" || host == "0:0:0:0:0:0:0:1"
 
@@ -51,9 +51,6 @@ Retrieve an `IO` connection from the [`ConnectionPool`](@ref).
 
 Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.
-
-`IO` related exceptions from `Base` are wrapped in `HTTP.IOError`.
-See [`isioerror`](@ref).
 """
 function connectionlayer(handler)
     return function(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, kw...)
@@ -78,7 +75,7 @@ function connectionlayer(handler)
         try
             io = newconnection(IOType, url.host, url.port; kw...)
         catch e
-            rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
+            throw(ConnectError(string(url), e))
         end
 
         try
@@ -110,8 +107,9 @@ function connectionlayer(handler)
             return resp
         catch e
             @debugv 1 "❗️  ConnectionLayer $e. Closing: $io"
-            try; close(io); catch; end
-            rethrow(isioerror(e) ? IOError(e, "during request($url)") : e)
+            @try close(io)
+            e isa HTTPError || throw(RequestError(req, e))
+            rethrow(e)
         end
     end
 end

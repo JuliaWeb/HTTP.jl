@@ -10,7 +10,7 @@ module IOExtras
 using Sockets
 using MbedTLS: SSLContext, MbedException
 
-export bytes, isbytes, nbytes, ByteView, nobytes, IOError, isioerror,
+export bytes, isbytes, nbytes, ByteView, nobytes,
        startwrite, closewrite, startread, closeread,
        tcpsocket, localport, safe_getpeername
 
@@ -41,34 +41,6 @@ nbytes(x::Vector{T}) where T <: AbstractString = sum(sizeof, x)
 nbytes(x::Vector{T}) where T <: AbstractVector{UInt8} = sum(length, x)
 nbytes(x::IOBuffer) = bytesavailable(x)
 nbytes(x::Vector{IOBuffer}) = sum(bytesavailable, x)
-
-"""
-    isioerror(exception)
-
-Is `exception` caused by a possibly recoverable IO error.
-"""
-isioerror(e) = false
-isioerror(::Base.EOFError) = true
-isioerror(::Base.IOError) = true
-isioerror(e::ArgumentError) = e.msg == "stream is closed or unusable"
-isioerror(::MbedException) = true
-
-
-"""
-    IOError <: Exception
-
-The request terminated with due to an IO-related error.
-
-Fields:
- - `e`, the error.
-"""
-struct IOError <: Exception
-    e
-    message
-end
-
-Base.show(io::IO, e::IOError) = print(io, "IOError(", e.e, " ", e.message, ")\n")
-
 
 _doc = """
     startwrite(::IO)

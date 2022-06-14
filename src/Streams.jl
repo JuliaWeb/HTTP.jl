@@ -3,7 +3,7 @@ module Streams
 export Stream, closebody, isaborted, setstatus
 
 using Sockets, LoggingExtras
-using ..IOExtras, ..Messages, ..ConnectionPool, ..Conditions
+using ..IOExtras, ..Messages, ..ConnectionPool, ..Conditions, ..Exceptions
 
 mutable struct Stream{M <: Message, S <: IO} <: IO
     message::M
@@ -108,9 +108,7 @@ Write the final `0` chunk if needed.
 function closebody(http::Stream)
     if http.writechunked
         http.writechunked = false
-        try
-            write(http.stream, "0\r\n\r\n")
-        catch end
+        @try write(http.stream, "0\r\n\r\n")
     end
 end
 

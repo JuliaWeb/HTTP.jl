@@ -164,7 +164,7 @@ function Base.unsafe_read(c::Connection, p::Ptr{UInt8}, n::UInt)
         # try-catch underlying errors here
         # as the Connection object, we don't really care
         # if the underlying socket was closed/terminated
-        # or just plain reached EOF, so we wrap any
+        # or just plain reached EOF, so we catch any
         # Base.IOErrors and just throw as EOFError
         # that way we get more consistent errors thrown
         # at the headers/body parsing level

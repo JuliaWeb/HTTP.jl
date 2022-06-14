@@ -1,8 +1,8 @@
 module ExceptionRequest
 
-export StatusError, exceptionlayer
+export exceptionlayer
 
-using ..Messages
+using ..Messages, ..Exceptions
 
 """
     exceptionlayer(handler) -> handler
@@ -19,24 +19,5 @@ function exceptionlayer(handler)
         end
     end
 end
-
-"""
-    StatusError <: Exception
-
-The `Response` has a `4xx`, `5xx` or unrecognised status code.
-
-Fields:
- - `status::Int16`, the response status code.
- - `response` the [`HTTP.Response`](@ref)
-"""
-struct StatusError <: Exception
-    status::Int16
-    method::String
-    target::String
-    response::Response
-end
-
-# for backwards compatibility
-StatusError(status, response::Response) = StatusError(status, response.request.method, response.request.target, response)
 
 end # module ExceptionRequest

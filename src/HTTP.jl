@@ -30,6 +30,7 @@ include("access_log.jl")
 include("Pairs.jl")                    ;using .Pairs
 include("IOExtras.jl")                 ;using .IOExtras
 include("Strings.jl")                  ;using .Strings
+include("Exceptions.jl")               ;using .Exceptions
 include("sniff.jl")                    ;using .Sniff
 include("multipart.jl")                ;using .Forms
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,
@@ -46,7 +47,6 @@ include("CookieRequest.jl");            using .CookieRequest
 include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
 include("TimeoutRequest.jl");           using .TimeoutRequest
 include("ExceptionRequest.jl");         using .ExceptionRequest
-                                        import .ExceptionRequest.StatusError
 include("RetryRequest.jl");             using .RetryRequest
 include("ConnectionRequest.jl");        using .ConnectionRequest
 include("DebugRequest.jl");             using .DebugRequest
