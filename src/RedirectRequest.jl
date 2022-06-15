@@ -22,10 +22,10 @@ function redirectlayer(handler)
             # Verify the url before making the request. Verification is done in
             # the redirect loop to also catch bad redirect URLs.
             verify_url(req.url)
-            res = handler(req; redirect_limit=redirect_limit, kw...)
+            res = handler(req; kw...)
 
-            if (count == redirect_limit ||  !isredirect(res)
-                ||  (location = header(res, "Location")) == "")
+            if (count == redirect_limit || !isredirect(res)
+                || (location = header(res, "Location")) == "")
                 return res
             end
 
@@ -54,6 +54,9 @@ function redirectlayer(handler)
             end
             @debugv 1 "➡️  Redirect: $url"
             count += 1
+            if count == redirect_limit
+                req.context[:redirectlimitreached] = true
+            end
         end
         @assert false "Unreachable!"
     end

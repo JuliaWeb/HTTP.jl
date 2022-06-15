@@ -16,7 +16,7 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-function streamlayer(stream::Stream; iofunction=nothing, redirect_limit::Int=3, decompress::Bool=true, kw...)::Response
+function streamlayer(stream::Stream; iofunction=nothing, decompress::Bool=true, kw...)::Response
     response = stream.message
     req = response.request
     io = stream.stream
@@ -38,12 +38,13 @@ function streamlayer(stream::Stream; iofunction=nothing, redirect_limit::Int=3, 
                     @debugv 2 "client closewrite"
                     closewrite(stream)
                 catch e
+                    # @error "error" exception=(e, catch_backtrace())
                     write_error = e
                     isopen(io) && @try close(io)
                 end
                 @debugv 2 "client startread"
                 startread(stream)
-                readbody(stream, response, redirect_limit == nredirects(req), decompress)
+                readbody(stream, response, decompress)
             else
                 iofunction(stream)
             end
@@ -73,14 +74,12 @@ function streamlayer(stream::Stream; iofunction=nothing, redirect_limit::Int=3, 
 end
 
 function writebody(stream::Stream, req::Request)
-
     if !isbytes(req.body)
         writebodystream(stream, req.body)
         closebody(stream)
     else
         write(stream, req.body)
     end
-    req.context[:retrycount] = get(req.context, :retrycount, 0) + 1
     return
 end
 
@@ -97,16 +96,14 @@ end
 writechunk(stream, body::IO) = writebodystream(stream, body)
 writechunk(stream, body) = write(stream, body)
 
-function readbody(stream::Stream, res::Response, redirectlimitreached, decompress)
-    if decompress && header(res, "Content-Encoding") == "gzip"
-        stream = GzipDecompressorStream(stream)
-    end
+function readbody(stream::Stream, res::Response, decompress)
+    readstream = decompress && header(res, "Content-Encoding") == "gzip" ? GzipDecompressorStream(stream) : stream
     if isbytes(res.body)
-        res.body = read(stream)
-    else
-        if redirectlimitreached || !isredirect(res)
-            write(res.body, stream)
-        end
+        res.body = read(readstream)
+    elseif !isredirect(stream) && !retryable(stream)
+        # if the request/response pair are going to be redirected or retried,
+        # we want to avoid "contaminating" our response body stream
+        write(res.body, readstream)
     end
 end
 
