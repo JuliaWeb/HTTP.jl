@@ -326,6 +326,9 @@ function isaborted(http::Stream{<:Response})
     return false
 end
 
+Messages.isredirect(http::Stream{<:Response}) = isredirect(http.message) && isredirect(http.message.request)
+Messages.retryable(http::Stream{<:Response}) = retryable(http.message) && retryable(http.message.request)
+
 incomplete(http::Stream) =
     http.ntoread > 0 && (http.readchunked || http.ntoread != unknown_length)
 

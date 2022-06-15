@@ -16,7 +16,7 @@ congestion.
 
 Methods of `isrecoverable(e)` define which exception types lead to a retry.
 e.g. `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
-(if status is ``5xx`).
+(if status is `5xx`).
 """
 function retrylayer(handler)
     return function(req::Request; retry::Bool=true, retries::Int=4, retry_non_idempotent::Bool=false, kw...)
@@ -24,13 +24,32 @@ function retrylayer(handler)
             # no retry
             return handler(req; kw...)
         end
+        if retry_non_idempotent
+            req.context[:retry_non_idempotent] = true
+        end
+        req_body_is_marked = false
+        if req.body isa IO && supportsmark(req.body)
+            @debugv 2 "Marking request body stream"
+            req_body_is_marked = true
+            mark(req.body)
+        end
+        retrycount = Ref(0)
         retry_request = Base.retry(handler,
             delays=ExponentialBackOff(n = retries),
-            check=(s, ex)->begin
-                retry = isrecoverable(ex, req, retry_non_idempotent, get(req.context, :retrycount, 0))
+            check=(s, ex) -> begin
+                retrycount[] += 1
+                retry = isrecoverable(ex) && retryable(req)
+                if retrycount[] == retries
+                    req.context[:retrylimitreached] = true
+                end
                 if retry
                     @debugv 1 "🔄  Retry $ex: $(sprintcompact(req))"
                     reset!(req.response)
+                    if req_body_is_marked
+                        @debugv 2 "Resetting request body stream"
+                        reset(req.body)
+                        mark(req.body)
+                    end
                 else
                     @debugv 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
                 end
@@ -41,23 +60,16 @@ function retrylayer(handler)
     end
 end
 
+supportsmark(x) = false
+supportsmark(x::T) where {T <: IO} = length(Base.methods(mark, Tuple{T}, parentmodule(T))) > 0 || hasfield(T, :mark)
+
 isrecoverable(e) = false
 isrecoverable(e::Union{Base.EOFError, Base.IOError, MbedTLS.MbedException}) = true
 isrecoverable(e::ArgumentError) = e.msg == "stream is closed or unusable"
 isrecoverable(e::Sockets.DNSError) = true
 isrecoverable(e::ConnectError) = true
 isrecoverable(e::RequestError) = isrecoverable(e.error)
-isrecoverable(e::StatusError) = e.status == 403 || # Forbidden
-                                     e.status == 408 || # Timeout
-                                     e.status >= 500    # Server Error
-
-isrecoverable(e, req, retry_non_idempotent, retrycount) =
-    isrecoverable(e) &&
-    isbytes(req.body) &&
-    isbytes(req.response.body) &&
-    (retry_non_idempotent || retrycount == 0 || isidempotent(req))
-    # "MUST NOT automatically retry a request with a non-idempotent method"
-    # https://tools.ietf.org/html/rfc7230#section-6.3.1
+isrecoverable(e::StatusError) = retryable(e.status)
 
 function no_retry_reason(ex, req)
     buf = IOBuffer()

@@ -504,4 +504,30 @@ end
     end
 end
 
+@testset "Retry with request/response body streams" begin
+    server = listen(IPv4(0), 8080)
+    try
+        shouldfail = Ref(true)
+        tsk = @async HTTP.listen("0.0.0.0", 8080; server=server) do http
+            @assert !eof(http)
+            msg = String(readavailable(http))
+            if shouldfail[]
+                shouldfail[] = false
+                error("500 unexpected error")
+            end
+            HTTP.startwrite(http)
+            HTTP.write(http, msg)
+        end
+        req_body = IOBuffer("hey there sailor")
+        seekstart(req_body)
+        res_body = IOBuffer()
+        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, verbose=2)
+        @test resp.status == 200
+        @test String(take!(res_body)) == "hey there sailor"
+    finally
+        close(server)
+        HTTP.ConnectionPool.closeall()
+    end
+end
+
 end # module

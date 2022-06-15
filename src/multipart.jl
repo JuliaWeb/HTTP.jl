@@ -8,6 +8,7 @@ using ..IOExtras, ..Sniff, ..Conditions
 mutable struct Form <: IO
     data::Vector{IO}
     index::Int
+    mark::Int
     boundary::String
 end
 
@@ -17,6 +18,25 @@ Base.isopen(f::Form) = false
 Base.close(f::Form) = nothing
 Base.length(f::Form) = sum(x->isa(x, IOStream) ? filesize(x) - position(x) : bytesavailable(x), f.data)
 IOExtras.nbytes(x::Form) = length(x)
+
+function Base.mark(f::Form)
+    foreach(mark, f.data)
+    return
+end
+
+function Base.reset(f::Form)
+    foreach(reset, f.data)
+    f.index = f.mark
+    f.mark = -1
+    return
+end
+
+function Base.unmark(f::Form)
+    foreach(unmark, f.data)
+    f.mark = -1
+    return
+end
+
 function Base.position(f::Form)
     index = f.index
     foreach(mark, f.data)
@@ -105,7 +125,7 @@ function Form(d; boundary=string(rand(UInt128), base=16))
     end
     seekstart(io)
     push!(data, io)
-    return Form(data, 1, boundary)
+    return Form(data, 1, -1, boundary)
 end
 
 function writemultipartheader(io::IOBuffer, i::IOStream)
