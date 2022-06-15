@@ -16,7 +16,7 @@ congestion.
 
 Methods of `isrecoverable(e)` define which exception types lead to a retry.
 e.g. `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
-(if status is ``5xx`).
+(if status is `5xx`).
 """
 function retrylayer(handler)
     return function(req::Request; retry::Bool=true, retries::Int=4, retry_non_idempotent::Bool=false, kw...)
@@ -24,13 +24,29 @@ function retrylayer(handler)
             # no retry
             return handler(req; kw...)
         end
+        req_body_is_marked = false
+        if req.body isa IO && applicable(mark, req.body)
+            req_body_is_marked = true
+            mark(req.body)
+        end
+        resp_body_is_marked = false
+        if req.response.body isa IO && applicable(mark, req.response.body)
+            resp_body_is_marked = true
+            mark(req.response.body)
+        end
         retry_request = Base.retry(handler,
             delays=ExponentialBackOff(n = retries),
-            check=(s, ex)->begin
-                retry = isrecoverable(ex, req, retry_non_idempotent, get(req.context, :retrycount, 0))
+            check=(s, ex) -> begin
+                retry = isrecoverable(ex, req, retry_non_idempotent, get(req.context, :retrycount, 0), req_body_is_marked, resp_body_is_marked)
                 if retry
                     @debugv 1 "🔄  Retry $ex: $(sprintcompact(req))"
                     reset!(req.response)
+                    if req_body_is_marked
+                        reset(req.body)
+                    end
+                    if resp_body_is_marked
+                        reset(req.response.body)
+                    end
                 else
                     @debugv 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
                 end
@@ -51,10 +67,10 @@ isrecoverable(e::StatusError) = e.status == 403 || # Forbidden
                                      e.status == 408 || # Timeout
                                      e.status >= 500    # Server Error
 
-isrecoverable(e, req, retry_non_idempotent, retrycount) =
+isrecoverable(e, req, retry_non_idempotent, retrycount, req_body_is_marked, resp_body_is_marked) =
     isrecoverable(e) &&
-    isbytes(req.body) &&
-    isbytes(req.response.body) &&
+    (isbytes(req.body) || req_body_is_marked) &&
+    (isbytes(req.response.body) || resp_body_is_marked) &&
     (retry_non_idempotent || retrycount == 0 || isidempotent(req))
     # "MUST NOT automatically retry a request with a non-idempotent method"
     # https://tools.ietf.org/html/rfc7230#section-6.3.1
