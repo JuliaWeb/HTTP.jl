@@ -71,7 +71,7 @@ abstract type Message end
 
 # HTTP Response
 """
-    HTTP.Response(status, headers::HTTP.Headers; body=nothing, request=nothing)
+    HTTP.Response(status, headers::HTTP.Headers, body; request=nothing)
     HTTP.Response(status, body)
     HTTP.Response(body)
 
@@ -94,27 +94,23 @@ Represents an HTTP response message with field:
 
 Accessors are provided in [`HTTP.status`](@ref), [`HTTP.headers`](@ref), and [`HTTP.body`](@ref).
 """
-mutable struct Response{T} <: Message
+mutable struct Response <: Message
     version::VersionNumber
     status::Int16
     headers::Headers
-    body::T # Vector{UInt8} or IO
-    request::Union{Message, Nothing}
-
-    @doc """
-        Response(status::Int, headers=[]; body=UInt8[], request=nothing) -> HTTP.Response
-    """
-    function Response(status::Integer, headers=[]; body=nobody, request=nothing)
-        b = isbytes(body) ? bytes(body) : something(body, nobody)
-        return new{typeof(b)}(
-            v"1.1",
-            status,
-            mkheaders(headers),
-            b,
-            request
-        )
-    end
+    body::Any # Usually Vector{UInt8} or IO
+    request::Union{Message, Nothing} # Union{Request, Nothing}
 end
+
+function Response(status::Integer, headers, body; version::VersionNumber=v"1.1", request=nothing)
+    b = isbytes(body) ? bytes(body) : something(body, nobody)
+    @assert (request isa Request || request === nothing)
+    return Response(version, status, mkheaders(headers), b, request)
+end
+
+# legacy constructor
+Response(status::Integer, headers=[]; body=nobody, request=nothing) =
+    Response(status, headers, body; request)
 
 Response() = Request().response
 Response(s::Int, body::AbstractVector{UInt8}) = Response(s; body=body)
@@ -134,26 +130,8 @@ function reset!(r::Response)
     end
 end
 
-"""
-    HTTP.status(r::Response) -> Int16
-
-Get status from a response.
-"""
 status(r::Response) = getfield(r, :status)
-
-"""
-    HTTP.headers(r::Response) -> HTTP.Headers
-
-Get headers from a response.
-"""
 headers(r::Response) = getfield(r, :headers)
-
-"""
-    HTTP.body(r::Response{T}) -> T
-
-Get body from a response. Typically will be `Vector{UInt8}`.
-If a request was made `response_stream=io::IO` then the body will be `io::IO`.
-"""
 body(r::Response) = getfield(r, :body)
 
 # HTTP Request
@@ -191,12 +169,12 @@ Represents a HTTP Request Message.
 You can get each data with [`HTTP.method`](@ref), [`HTTP.headers`](@ref), [`HTTP.uri`](@ref), and [`HTTP.body`](@ref).
 
 """
-mutable struct Request{T} <: Message
+mutable struct Request <: Message
     method::String
     target::String
     version::VersionNumber
     headers::Headers
-    body::T # Vector{UInt8} or some kind of IO
+    body::Any # Usually Vector{UInt8} or some kind of IO
     response::Response
     url::URI
     parent::Union{Response, Nothing}
@@ -208,15 +186,9 @@ Request() = Request("", "")
 function Request(method::String, target, headers=[], body=nobody;
                  version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=Context())
     b = isbytes(body) ? bytes(body) : body
-    r = Request{b === nothing ? Any : typeof(b)}(method,
-                target == "" ? "/" : target,
-                version,
-                mkheaders(headers),
-                b,
-                Response(0; body=responsebody),
-                url,
-                parent,
-                context)
+    r = Request(method, target == "" ? "/" : target, version,
+                mkheaders(headers), b, Response(0; body=responsebody),
+                url, parent, context)
     r.response.request = r
     return r
 end
@@ -231,39 +203,10 @@ resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
 mkheaders(h::Headers) = h
 mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
 
-"""
-    HTTP.method(r::Request)
-
-Get method from a request.
-"""
 method(r::Request) = getfield(r, :method)
-
-"""
-    HTTP.target(r::Request)
-
-Get target path from a request.
-"""
 target(r::Request) = getfield(r, :target)
-
-"""
-    HTTP.url(r::Request)
-
-Get URL from a request.
-"""
 url(r::Request) = getfield(r, :url)
-
-"""
-    HTTP.headers(r::Request)
-
-Get headers from a request.
-"""
 headers(r::Request) = getfield(r, :headers)
-
-"""
-    HTTP.body(r::Request)
-
-Get body from a request.
-"""
 body(r::Request) = getfield(r, :body)
 
 # HTTP Message state and type queries

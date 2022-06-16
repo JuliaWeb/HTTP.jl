@@ -33,13 +33,13 @@ function retrylayer(handler)
             req_body_is_marked = true
             mark(req.body)
         end
-        retrycount = Ref(0)
+        retryattempt = Ref(0)
         retry_request = Base.retry(handler,
             delays=ExponentialBackOff(n = retries),
             check=(s, ex) -> begin
-                retrycount[] += 1
+                retryattempt[] += 1
                 retry = isrecoverable(ex) && retryable(req)
-                if retrycount[] == retries
+                if retryattempt[] == retries
                     req.context[:retrylimitreached] = true
                 end
                 if retry
