@@ -75,7 +75,7 @@ abstract type Message end
     HTTP.Response(status, body)
     HTTP.Response(body)
 
-Represents an HTTP response message with field:
+Represents an HTTP response message with fields:
 
 - `version::VersionNumber`
    [RFC7230 2.6](https://tools.ietf.org/html/rfc7230#section-2.6)
@@ -92,7 +92,6 @@ Represents an HTTP response message with field:
 
 - `request`, the `Request` that yielded this `Response`.
 
-Accessors are provided in [`HTTP.status`](@ref), [`HTTP.headers`](@ref), and [`HTTP.body`](@ref).
 """
 mutable struct Response <: Message
     version::VersionNumber
@@ -141,7 +140,7 @@ const Context = Dict{Symbol, Any}
     HTTP.Request(method, target, headers=[], body=nobody;
         version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=HTTP.Context())
 
-Represents a HTTP Request Message.
+Represents a HTTP Request Message with fields:
 
 - `method::String`
    [RFC7230 3.1.1](https://tools.ietf.org/html/rfc7230#section-3.1.1)
@@ -160,13 +159,13 @@ Represents a HTTP Request Message.
 
 - `response`, the `Response` to this `Request`
 
+- `url::URI`, the full URI of the request
+
 - `parent`, the `Response` (if any) that led to this request
   (e.g. in the case of a redirect).
    [RFC7230 6.4](https://tools.ietf.org/html/rfc7231#section-6.4)
 
 - `context`, a `Dict{Symbol, Any}` store used by middleware to share state
-
-You can get each data with [`HTTP.method`](@ref), [`HTTP.headers`](@ref), [`HTTP.uri`](@ref), and [`HTTP.body`](@ref).
 
 """
 mutable struct Request <: Message
@@ -422,7 +421,13 @@ payload(m::Message, ::Type{String}) =
     hasheader(m, "Content-Type", "ISO-8859-1") ? iso8859_1_to_utf8(payload(m)) :
                                                  String(payload(m))
 
-function decode(m::Message, encoding::String)::Vector{UInt8}
+"""
+    HTTP.decode(r::Union{Request, Response}) -> Vector{UInt8}
+
+For a gzip encoded request/response body, decompress it and return
+the decompressed body.
+"""
+function decode(m::Message, encoding::String="gzip")::Vector{UInt8}
     if encoding == "gzip"
         return transcode(GzipDecompressor, m.body)
     end

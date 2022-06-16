@@ -42,9 +42,9 @@ using Sockets, Test
         (HTTP.Cookie("\t", ""), ""),
     ]
 
-    @testset "String(::Cookie)" begin
+    @testset "stringify(::Cookie)" begin
         for (cookie, expected) in writesetcookietests
-            @test String(cookie, false) == expected
+            @test HTTP.stringify(cookie, false) == expected
         end
 
         cookies = [HTTP.Cookie("cookie-1", "v\$1"),

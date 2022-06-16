@@ -3,6 +3,7 @@ module Forms
 export Form, Multipart, content_type
 
 using ..IOExtras, ..Sniff, ..Conditions
+import ..HTTP # for doc references
 
 # Form request body
 mutable struct Form <: IO

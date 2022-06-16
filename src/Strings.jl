@@ -19,7 +19,6 @@ function escapehtml(i::AbstractString)
     return o
 end
 
-
 """
     tocameldash(s::String)
 
@@ -47,9 +46,8 @@ tocameldash(s::AbstractString) = tocameldash(String(s))
 @inline isupper(b::UInt8) = UInt8('A') <= b <= UInt8('Z')
 @inline lower(c::UInt8) = c | 0x20
 
-
 """
-    iso8859_1_to_utf8(bytes)
+    iso8859_1_to_utf8(bytes::AbstractVector{UInt8})
 
 Convert from ISO8859_1 to UTF8.
 """
@@ -77,6 +75,8 @@ Case insensitive ASCII character comparison.
 ascii_lc_isequal(a::UInt8, b::UInt8) = ascii_lc(a) == ascii_lc(b)
 
 """
+    HTTP.ascii_lc_isequal(a::String, b::String)
+
 Case insensitive ASCII string comparison.
 """
 function ascii_lc_isequal(a, b)
@@ -89,6 +89,5 @@ function ascii_lc_isequal(a, b)
     end
     return true
 end
-
 
 end # module Strings

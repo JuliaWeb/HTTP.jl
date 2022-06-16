@@ -4,6 +4,7 @@ export Stream, closebody, isaborted, setstatus
 
 using Sockets, LoggingExtras
 using ..IOExtras, ..Messages, ..ConnectionPool, ..Conditions, ..Exceptions
+import ..HTTP # for doc references
 
 mutable struct Stream{M <: Message, S <: IO} <: IO
     message::M

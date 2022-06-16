@@ -39,19 +39,19 @@ include("ConnectionPool.jl")           ;using .ConnectionPool
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
-include("MessageRequest.jl");           using .MessageRequest
-include("RedirectRequest.jl");          using .RedirectRequest
-include("DefaultHeadersRequest.jl");    using .DefaultHeadersRequest
-include("BasicAuthRequest.jl");         using .BasicAuthRequest
-include("CookieRequest.jl");            using .CookieRequest
-include("CanonicalizeRequest.jl");      using .CanonicalizeRequest
-include("TimeoutRequest.jl");           using .TimeoutRequest
-include("ExceptionRequest.jl");         using .ExceptionRequest
-include("RetryRequest.jl");             using .RetryRequest
-include("ConnectionRequest.jl");        using .ConnectionRequest
-include("DebugRequest.jl");             using .DebugRequest
-include("StreamRequest.jl");            using .StreamRequest
-include("ContentTypeRequest.jl");       using .ContentTypeDetection
+include("clientlayers/MessageRequest.jl");           using .MessageRequest
+include("clientlayers/RedirectRequest.jl");          using .RedirectRequest
+include("clientlayers/DefaultHeadersRequest.jl");    using .DefaultHeadersRequest
+include("clientlayers/BasicAuthRequest.jl");         using .BasicAuthRequest
+include("clientlayers/CookieRequest.jl");            using .CookieRequest
+include("clientlayers/CanonicalizeRequest.jl");      using .CanonicalizeRequest
+include("clientlayers/TimeoutRequest.jl");           using .TimeoutRequest
+include("clientlayers/ExceptionRequest.jl");         using .ExceptionRequest
+include("clientlayers/RetryRequest.jl");             using .RetryRequest
+include("clientlayers/ConnectionRequest.jl");        using .ConnectionRequest
+include("clientlayers/DebugRequest.jl");             using .DebugRequest
+include("clientlayers/StreamRequest.jl");            using .StreamRequest
+include("clientlayers/ContentTypeRequest.jl");       using .ContentTypeDetection
 
 include("download.jl")
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
@@ -482,7 +482,7 @@ open(f::Function, method::Union{String,Symbol}, url, headers=Header[]; kw...)::R
     request(string(method), url, headers, nothing; iofunction=f, kw...)
 
 """
-    HTTP.openraw(method, url, [, headers])::Tuple{TCPSocket, Response, ByteView}
+    HTTP.openraw(method, url, [, headers])::Tuple{Connection, Response}
 
 Open a raw socket that is unmanaged by HTTP.jl. Useful for doing HTTP upgrades
 to other protocols.  Any bytes of the body read from the socket when reading
@@ -516,6 +516,12 @@ function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tu
     take!(socketready)
 end
 
+"""
+    parse(Request, str)
+    parse(Response, str)
+
+Parse a string into a `Request` or `Response` object.
+"""
 function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
     buffer = Base.BufferStream()
     write(buffer, str)

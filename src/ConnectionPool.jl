@@ -35,7 +35,7 @@ include("connectionpools.jl")
 using .ConnectionPools
 
 """
-    Connection{T <: IO}
+    Connection
 
 A `TCPSocket` or `SSLContext` connection to a HTTP `host` and `port`.
 
@@ -223,7 +223,7 @@ end
 function IOExtras.startwrite(c::Connection)
     @require !iswritable(c)
     c.writable = true
-    @debugv 2 "👁  Start write:$c"
+    @debugv 3 "👁  Start write:$c"
     return
 end
 
@@ -235,7 +235,7 @@ Signal that an entire Request Message has been written to the `Connection`.
 function IOExtras.closewrite(c::Connection)
     @require iswritable(c)
     c.writable = false
-    @debugv 2 "🗣  Write done: $c"
+    @debugv 3 "🗣  Write done: $c"
     flush(c)
     return
 end
@@ -247,7 +247,7 @@ function IOExtras.startread(c::Connection)
     @require !isreadable(c)
     c.timestamp = time()
     c.readable = true
-    @debugv 2 "👁  Start read: $c"
+    @debugv 3 "👁  Start read: $c"
     return
 end
 
@@ -256,7 +256,7 @@ Wait for `c` to receive data or reach EOF.
 Close `c` on EOF or if response data arrives when no request was sent.
 """
 function monitor_idle_connection(c::Connection)
-    if eof(c.io)                                  ;@debugv 2 "💀  Closed:     $c"
+    if eof(c.io)                                  ;@debugv 3 "💀  Closed:     $c"
         close(c.io)
     end
 end
@@ -269,7 +269,7 @@ Signal that an entire Response Message has been read from the `Connection`.
 function IOExtras.closeread(c::Connection)
     @require isreadable(c)
     c.readable = false
-    @debugv 2 "✉️  Read done:  $c"
+    @debugv 3 "✉️  Read done:  $c"
     if c.clientconnection
         release(POOL, connectionkey(c), c)
         # Ignore SSLContext as it already monitors idle connections for TLS close_notify messages

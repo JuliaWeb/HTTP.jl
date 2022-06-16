@@ -76,9 +76,9 @@ makedocs(
     sitename = "HTTP.jl",
     pages = [
         "Home" => "index.md",
-        "public_interface.md",
-        "internal_architecture.md",
-        "internal_interface.md",
+        "client.md",
+        "server.md",
+        "reference.md",
         "examples.md",
     ],
 )
