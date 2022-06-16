@@ -25,7 +25,11 @@ println(resp.status)
 println(String(resp.body))
 
 # make a POST request, sending data via `body` keyword argument
-resp = HTTP.post("http://httpbin.org/body"; body="body")
+resp = HTTP.post("http://httpbin.org/body"; body="request body")
+
+# include query parameters in a request
+# and turn on verbose logging of the request/response process
+resp = HTTP.get("http://httpbin.org/anything"; query=["hello" => "world"], verbose=2)
 ```
 
 ### Handling requests (server)
@@ -67,10 +71,9 @@ Check out the client and server-specific documentation pages for more in-depth d
 and examples for the many configurations available.
 
 ```@contents
-Pages = ["public_interface.md", "internal_architecture.md", "internal_interface.md"]
+Pages = ["client.md", "server.md", "reference.md"]
 ```
 
-# quick start
 # manual
   # client
     # making requests
@@ -80,6 +83,3 @@ Pages = ["public_interface.md", "internal_architecture.md", "internal_interface.
     # running basic server
     # middleware/handlers framework
     # logfmt"..."
-    
-# examples
-# reference

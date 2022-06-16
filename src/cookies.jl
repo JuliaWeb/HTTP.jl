@@ -309,6 +309,13 @@ function isIP(host)
     end
 end
 
+"""
+    HTTP.cookies(r::Union{Request, Response}) -> Vector{Cookie}
+
+Return a list of cookies, if any, parsed from the request "Cookie"
+or response "Set-Cookie" headers.
+"""
+function cookies end
 cookies(r::Response) = readsetcookies(r.headers)
 cookies(r::Request) = readcookies(r.headers, "")
 
