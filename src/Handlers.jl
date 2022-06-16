@@ -1,6 +1,6 @@
 module Handlers
 
-export Handler, Middleware, serve, Router, register!, getparams, getcookies
+export Handler, Middleware, serve, Router, register!, getparams, getcookies, streamhandler
 
 using URIs
 using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
@@ -292,7 +292,12 @@ struct Router{T, S}
     routes::Node
 end
 
-Router(_404=req -> Response(404), _405=req -> Response(405)) = Router(_404, _405, Node())
+default404(::Request) = Response(404)
+default405(::Request) = Response(405)
+default404(s::Stream) = setstatus(s, 404)
+default405(s::Stream) = setstatus(s, 405)
+
+Router(_404=default404, _405=default405) = Router(_404, _405, Node())
 
 """
     HTTP.register!(r::Router, method, path, handler)
@@ -320,11 +325,33 @@ register!(r::Router, path, handler) = register!(r, "*", path, handler)
 
 const Params = Dict{String, String}
 
-function (r::Router)(req)
+function gethandler(r::Router, req::Request)
     url = URI(req.target)
     segments = split(url.path, '/'; keepempty=false)
     params = Params()
     handler = match(r.routes, params, req.method, segments, 1)
+    return handler, params
+end
+
+function (r::Router)(stream::Stream{<:Request})
+    req = stream.message
+    handler, params = gethandler(r, req)
+    if handler === nothing
+        # didn't match a registered route
+        return r._404(stream)
+    elseif handler === missing
+        # matched the path, but method not supported
+        return r._405(stream)
+    else
+        if !isempty(params)
+            req.context[:params] = params
+        end
+        return handler(stream)
+    end
+end
+
+function (r::Router)(req::Request)
+    handler, params = gethandler(r, req)
     if handler === nothing
         # didn't match a registered route
         return r._404(req)

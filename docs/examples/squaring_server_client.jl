@@ -41,7 +41,7 @@ Simple server in Julia and client code in JS.
 
 ### Server code:
 """
-using HTTP, JSON
+using HTTP
 
 const ROUTER = HTTP.Router()
 
@@ -54,11 +54,21 @@ function square(req::HTTP.Request)
     if HTTP.method(req) == "OPTIONS"
         return HTTP.Response(200, headers)
     end
-    body = parse(Float64, String(HTTP.body(req)))
+    body = parse(Float64, String(req.body))
     square = body^2
-    HTTP.Response(200, headers; body = string(square))
+    HTTP.Response(200, headers, string(square))
 end
 
-HTTP.@register(ROUTER, "POST", "/api/square", square)
+HTTP.register!(ROUTER, "POST", "/api/square", square)
 
-HTTP.serve(ROUTER, "127.0.0.1", 8080)
+socket = Sockets.listen(Sockets.localhost, 8080)
+servertask = @async HTTP.serve(ROUTER, Sockets.localhost, 8080; server=socket)
+
+# usage
+resp = HTTP.post("http://localhost:8080/api/square"; body="3")
+sq = parse(Float64, String(resp.body))
+@assert sq == 9.0
+
+# close the server socket which will stop the HTTP server
+close(socket)
+@assert istaskdone(servertask)

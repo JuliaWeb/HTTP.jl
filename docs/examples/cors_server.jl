@@ -3,18 +3,21 @@ Server example that takes after the simple server, however,
 handles dealing with CORS preflight headers when dealing with more
 than just a simple request
 """
-using HTTP
+using HTTP, JSON3, StructTypes, Sockets, UUIDs
 
 # modified Animal struct to associate with specific user
 mutable struct Animal
     id::Int
-    userId::Base.UUID
+    userId::UUID
     type::String
     name::String
+    Animal() = new()
 end
 
-# use a plain `Dict` as a "data store"
-const ANIMALS = Dict{Int, Animal}()
+StructTypes.StructType(::Type{Animal}) = StructTypes.Mutable()
+
+# use a plain `Dict` as a "data store", outer Dict maps userId to user-specific Animals
+const ANIMALS = Dict{UUID, Dict{Int, Animal}}()
 const NEXT_ID = Ref(0)
 function getNextId()
     id = NEXT_ID[]
@@ -23,75 +26,114 @@ function getNextId()
 end
 
 # CORS headers that show what kinds of complex requests are allowed to API
-headers = [
+const CORS_HEADERS = [
     "Access-Control-Allow-Origin" => "*",
     "Access-Control-Allow-Headers" => "*",
     "Access-Control-Allow-Methods" => "POST, GET, OPTIONS"
 ]
 
 #= 
-JSONHandler minimizes code by automatically converting the request body
-to JSON to pass to the other service functions automatically. JSONHandler
+JSONMiddleware minimizes code by automatically converting the request body
+to JSON to pass to the other service functions automatically. JSONMiddleware
 recieves the body of the response from the other service funtions and sends
 back a success response code
 =#
-function JSONHandler(req::HTTP.Request)
-    # first check if there's any request body
-    body = IOBuffer(HTTP.payload(req))
-    if eof(body)
-        # no request body
-        response_body = handle(ANIMAL_ROUTER, req)
-    else
-        # there's a body, so pass it on to the handler we dispatch to
-        response_body = handle(ANIMAL_ROUTER, req, JSON3.read(body, Animal))
+function JSONMiddleware(handler)
+    # Middleware functions return *Handler* functions
+    return function(req::HTTP.Request)
+        # first check if there's any request body
+        if isempty(req.body)
+            # we slightly change the Handler interface here because we know
+            # our handler methods will either return nothing or an Animal instance
+            ret = handler(req)
+        else
+            # replace request body with parsed Animal instance
+            req.body = JSON3.read(req.body, Animal)
+            ret = handler(req)
+        end
+        # return a Response, serializing any Animal as json string
+        return HTTP.Response(200, ret === nothing ? "" : JSON3.write(ret))
     end
-    return HTTP.Response(200, JSON3.write(response_body))
 end
 
-#= CorsHandler: handles preflight request with the OPTIONS flag
+#= CorsMiddleware: handles preflight request with the OPTIONS flag
 If a request was recieved with the correct headers, then a response will be 
 sent back with a 200 code, if the correct headers were not specified in the request,
 then a CORS error will be recieved on the client side
 
 Since each request passes throught the CORS Handler, then if the request is 
-not a preflight request, it will simply go to the JSONHandler to be passed to the
+not a preflight request, it will simply go to the JSONMiddleware to be passed to the
 correct service function =#
-function CorsHandler(req)
-    if HTTP.hasheader(req, "OPTIONS")
-        return HTTP.Response(200, headers = headers)
-    else 
-        return JSONHandler(req)
+function CorsMiddleware(handler)
+    return function(req::HTTP.Request)
+        if HTTP.hasheader(req, "OPTIONS")
+            return HTTP.Response(200, CORS_HEADERS)
+        else 
+            return handler(req)
+        end
     end
-
+end
 
 # **simplified** "service" functions
-function createAnimal(req::HTTP.Request, animal)
+function createAnimal(req::HTTP.Request)
+    animal = req.body
     animal.id = getNextId()
-    ANIMALS[animal.id] = animal
+    ANIMALS[animal.userId][animal.id] = animal
     return animal
 end
 
 function getAnimal(req::HTTP.Request)
-    animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
-    return ANIMALS[animalId]
+    # retrieve our matched path parameters from registered route
+    animalId = parse(Int, HTTP.getparams(req)["id"])
+    userId = UUID(HTTP.getparams(req)["userId"])
+    return ANIMALS[userId][animalId]
 end
 
-function updateAnimal(req::HTTP.Request, animal)
-    ANIMALS[animal.id] = animal
+function updateAnimal(req::HTTP.Request)
+    animal = req.body
+    ANIMALS[animal.userId][animal.id] = animal
     return animal
 end
 
 function deleteAnimal(req::HTTP.Request)
-    animalId = HTTP.URIs.splitpath(req.target)[5] # /api/zoo/v1/animals/10, get 10
-    delete!(ANIMALS, animal.id)
-    return ""
+    # retrieve our matched path parameters from registered route
+    animalId = parse(Int, HTTP.getparams(req)["id"])
+    userId = UUID(HTTP.getparams(req)["userId"])
+    delete!(ANIMALS[userId], animal.id)
+    return nothing
+end
+
+function createUser(req::HTTP.Request)
+    userId = uuid4()
+    ANIMALS[userId] = Dict{Int, Animal}()
+    return userId
 end
 
 # add an additional endpoint for user creation
-HTTP.@register(ANIMAL_ROUTER, "POST", "/api/zoo/v1/users", createUser)
+const ANIMAL_ROUTER = HTTP.Router()
+HTTP.register!(ANIMAL_ROUTER, "POST", "/api/zoo/v1/users", createUser)
 # modify service endpoints to have user pass UUID in
-HTTP.@register(ANIMAL_ROUTER, "GET", "/api/zoo/v1/users/*/animals/*", getAnimal)
-HTTP.@register(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/users/*/animals/*", deleteAnimal)
+HTTP.register!(ANIMAL_ROUTER, "POST", "/api/zoo/v1/users/{userId}/animals", createAnimal)
+HTTP.register!(ANIMAL_ROUTER, "GET", "/api/zoo/v1/users/{userId}/animals/{id}", getAnimal)
+HTTP.register!(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/users/{userId}/animals/{id}", deleteAnimal)
 
+socket = Sockets.listen(Sockets.localhost, 8080)
+servertask = @async HTTP.serve(ANIMAL_ROUTER |> JSONMiddleware |> CorsMiddleware, Sockets.localhost, 8080; server=socket)
 
-HTTP.serve(CorsHandler, ip"127.0.0.1", 8080)
+# using our server
+resp = HTTP.post("http://localhost:8080/api/zoo/v1/users")
+userId = JSON3.read(resp.body, UUID)
+x = Animal()
+x.userId = userId
+x.type = "cat"
+x.name = "pete"
+# create 1st animal
+resp = HTTP.post("http://localhost:8080/api/zoo/v1/users/$(userId)/animals", [], JSON3.write(x))
+x2 = JSON3.read(resp.body, Animal)
+# retrieve it back
+resp = HTTP.get("http://localhost:8080/api/zoo/v1/users/$(userId)/animals/$(x2.id)")
+x3 = JSON3.read(resp.body, Animal)
+
+# close the server socket which will stop the HTTP server
+close(socket)
+@assert istaskdone(servertask)
