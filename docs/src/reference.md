@@ -66,7 +66,7 @@ Base.isvalid(::URIs.URI)
 
 ```@docs
 HTTP.Cookie
-String(cookie::Cookie, isrequest)
+String(cookie::HTTP.Cookie, isrequest)
 HTTP.Cookies.addcookie!
 HTTP.Cookies.cookies
 ```
