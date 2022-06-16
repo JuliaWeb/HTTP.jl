@@ -1,18 +1,21 @@
 # API Reference
 
+```@contents
+Depth = 3
+```
+
 ## Client Requests
 
 ```@docs
 HTTP.request
-HTTP.open
 HTTP.get
 HTTP.put
 HTTP.post
 HTTP.head
 HTTP.patch
 HTTP.delete
+HTTP.open
 HTTP.download
-WebSockets.open
 ```
 
 ### Request/Response Objects
@@ -66,7 +69,7 @@ Base.isvalid(::URIs.URI)
 
 ```@docs
 HTTP.Cookie
-String(cookie::HTTP.Cookie, isrequest)
+HTTP.Cookies.stringify
 HTTP.Cookies.addcookie!
 HTTP.Cookies.cookies
 ```
@@ -133,7 +136,7 @@ HTTP.Messages.isidempotent
 HTTP.Messages.retryable
 HTTP.Messages.defaultheader!
 HTTP.Messages.readheaders
-HTTP.MessageRequest.setuseragent!
+HTTP.DefaultHeadersRequest.setuseragent!
 HTTP.Messages.readchunksize
 HTTP.Messages.headerscomplete(::HTTP.Messages.Response)
 HTTP.Messages.writestartline
@@ -160,19 +163,19 @@ HTTP.pushlayer!
 HTTP.pushfirstlayer!
 HTTP.poplayer!
 HTTP.popfirstlayer!
-HTTP.MessageRequest
-HTTP.RedirectRequest
-HTTP.DefaultHeadersRequest
-HTTP.BasicAuthRequest
-HTTP.CookieRequest
-HTTP.CanonicalizeRequest
-HTTP.TimeoutRequest
-HTTP.ExceptionRequest
-HTTP.RetryRequest
-HTTP.ConnectionRequest
-HTTP.DebugRequest
-HTTP.StreamRequest
-HTTP.ContentTypeDetection
+HTTP.MessageRequest.messagelayer
+HTTP.RedirectRequest.redirectlayer
+HTTP.DefaultHeadersRequest.defaultheaderslayer
+HTTP.BasicAuthRequest.basicauthlayer
+HTTP.CookieRequest.cookielayer
+HTTP.CanonicalizeRequest.canonicalizelayer
+HTTP.TimeoutRequest.timeoutlayer
+HTTP.ExceptionRequest.exceptionlayer
+HTTP.RetryRequest.retrylayer
+HTTP.ConnectionRequest.connectionlayer
+HTTP.DebugRequest.debuglayer
+HTTP.StreamRequest.streamlayer
+HTTP.ContentTypeDetection.contenttypedetectionlayer
 ```
 
 ### Raw Request Connection

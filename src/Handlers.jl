@@ -11,7 +11,7 @@ using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
 Abstract type for the handler interface that exists for documentation purposes.
 A `Handler` is any function of the form `f(req::HTTP.Request) -> HTTP.Response`.
 There is no requirement to subtype `Handler` and users should not rely on or dispatch
-on `Handler`. A `Handler` function `f` can be passed to [`HTTP.serve(f, ...)`](@ref)
+on `Handler`. A `Handler` function `f` can be passed to [`HTTP.serve`](@ref)
 wherein a server will pass each incoming request to `f` to be handled and a response
 to be returned. Handler functions are also the inputs to [`Middleware`](@ref) functions
 which are functions of the form `f(::Handler) -> Handler`, i.e. they take a `Handler`
