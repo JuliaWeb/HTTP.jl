@@ -47,7 +47,7 @@ export connectionlayer
 """
     connectionlayer(handler) -> handler
 
-Retrieve an `IO` connection from the [`ConnectionPool`](@ref).
+Retrieve an `IO` connection from the ConnectionPool.
 
 Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.

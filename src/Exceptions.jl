@@ -1,6 +1,7 @@
 module Exceptions
 
 export @try, HTTPError, ConnectError, TimeoutError, StatusError, RequestError
+import ..HTTP # for doc references
 
 @eval begin
 """

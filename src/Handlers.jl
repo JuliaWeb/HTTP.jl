@@ -4,6 +4,7 @@ export Handler, Middleware, serve, Router, register!, getparams, getcookies, str
 
 using URIs
 using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
+import ..HTTP # for doc references
 
 """
     Handler

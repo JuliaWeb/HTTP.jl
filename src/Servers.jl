@@ -15,6 +15,7 @@ using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
 using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..ConnectionPool
 import ..access_threaded
+import ..@logfmt_str
 
 # rate limiting
 mutable struct RateLimit
