@@ -35,7 +35,7 @@ The `headers` argument is an optional list of header name-value pairs to be incl
 ### Body
 
 The optional `body` argument makes up the "body" of the sent request and is only used for HTTP methods that expect a body, like POST and PUT. A variety of objects are supported:
-  * a `Dict` or `Vector{Pair{String, String}}` to be serialized as the "application/x-www-form-urlencoded" content type, so `Dict("nm" => "val")` will be sent in the request body like `nm=val`
+  * a `Dict` or `NamedTuple` to be serialized as the "application/x-www-form-urlencoded" content type, so `Dict("nm" => "val")` will be sent in the request body like `nm=val`
   * any `AbstractString` or `AbstractVector{UInt8}` which will be sent "as is" for the request body
   * a readable `IO` stream or any `IO`-like type `T` for which `eof(T)` and `readavailable(T)` are defined. This stream will be read and sent until `eof` is `true`. This object should support the `mark`/`reset` methods if request retires are desired (if not, no retries will be attempted).
   * Any collection or iterable of the above (`Dict`, `AbstractString`, `AbstractVector{UInt8}`, or `IO`) which will result in a "Transfer-Encoding=chunked" request body, where each iterated element will be sent as a separate chunk

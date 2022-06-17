@@ -102,7 +102,7 @@ end
         end
     end
 
-    @testset "Client Body Posting - Vector{UTF8}, String, IOStream, IOBuffer, BufferStream" begin
+    @testset "Client Body Posting - Vector{UTF8}, String, IOStream, IOBuffer, BufferStream, Dict, NamedTuple" begin
         @test status(HTTP.post("$sch://httpbin.org/post"; body="hey")) == 200
         @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'])) == 200
         io = IOBuffer("hey"); seekstart(io)
@@ -116,6 +116,14 @@ end
         write(f, "hey")
         close(f)
         @test status(HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false)) == 200
+        resp = HTTP.post("$sch://httpbin.org/post"; body=Dict("name" => "value"))
+        x = JSON.parse(IOBuffer(resp.body))
+        @test status(resp) == 200
+        @test x["form"] == Dict("name" => "value")
+        resp = HTTP.post("$sch://httpbin.org/post"; body=(name="value with spaces",))
+        x = JSON.parse(IOBuffer(resp.body))
+        @test status(resp) == 200
+        @test x["form"] == Dict("name" => "value with spaces")
     end
 
     @testset "Chunksize" begin

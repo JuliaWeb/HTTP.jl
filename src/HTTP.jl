@@ -83,7 +83,7 @@ when sending a request (following the curl convention).
 
 `body` can be a variety of objects:
 
- - a `Dict` or `Vector{Pair{String, String}}` to be serialized as the "application/x-www-form-urlencoded" content type
+ - a `Dict` or `NamedTuple` to be serialized as the "application/x-www-form-urlencoded" content type
  - any `AbstractString` or `AbstractVector{UInt8}` which will be sent "as is" for the request body
  - a readable `IO` stream or any `IO`-like type `T` for which
    `eof(T)` and `readavailable(T)` are defined. This stream will be read and sent until `eof` is `true`.
