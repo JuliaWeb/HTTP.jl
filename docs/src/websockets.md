@@ -33,12 +33,36 @@ end
 
 ## WebSocket Client
 
-```@docs
-HTTP.WebSockets.open
+To initiate a websocket client connection, the [`WebSockets.open`](@ref) function is provided, which operates similar to [`HTTP.open`](@ref), but the handler function should operate on a single `WebSocket` argument instead of an `HTTP.Stream`.
+
+### Example
+
+```julia
+# simple websocket client
+WebSockets.open("ws://websocket.org") do ws
+    # we can iterate the websocket
+    # where each iteration yields a received message
+    # iteration finishes when the websocket is closed
+    for msg in ws
+        # do stuff with msg
+        # send back message as String, Vector{UInt8}, or iterable of either
+        send(ws, resp)
+    end
+end
 ```
 
 ## WebSocket Server
 
-```@docs
-HTTP.WebSockets.listen
+To start a websocket server to listen for client connections, the [`WebSockets.listen`](@ref) function is provided, which mirrors the [`HTTP.listen`](@ref) function, but the provided handler should operate on a single `WebSocket` argument instead of an `HTTP.Stream`.
+
+### Example
+
+```julia
+# websocket server is very similar to client usage
+WebSockets.listen("0.0.0.0", 8080) do ws
+    for msg in ws
+        # simple echo server
+        send(ws, msg)
+    end
+end
 ```

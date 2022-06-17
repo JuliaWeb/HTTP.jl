@@ -213,9 +213,7 @@ Where the `io` argument provided to the function body is an `HTTP.Stream` object
 
 ### Download
 
-```@docs
-HTTP.download
-```
+A [`download`](@ref) function is provided for similar functionality to `Downloads.download`.
 
 ## Client-side Middleware (Layers)
 
