@@ -538,4 +538,19 @@ end
     end
 end
 
+findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
+
+@testset "readuntil on Stream" begin
+
+    HTTP.open(:GET, "http://httpbin.org/stream/5") do io
+        while !eof(io)
+            bytes = readuntil(io, findnewline)
+            isempty(bytes) && break
+            x = JSON.parse(IOBuffer(bytes))
+            @show x
+        end
+    end
+
+end
+
 end # module

@@ -305,9 +305,9 @@ function Base.read(http::Stream)
 end
 
 function Base.readuntil(http::Stream, f::Function)::ByteView
-    UInt(ntoread(http)) == 0 && return UInt8[]
+    UInt(ntoread(http)) == 0 && return ConnectionPool.nobytes
     try
-        bytes = readuntil(http, f)
+        bytes = readuntil(http.stream, f)
         update_ntoread(http, length(bytes))
         return bytes
     catch e
