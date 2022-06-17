@@ -83,7 +83,7 @@ HTTP.WebSockets.receive
 HTTP.WebSockets.close
 HTTP.WebSockets.ping
 HTTP.WebSockets.pong
-HTTP.WebSockets.iterate(::WebSocket, st)
+HTTP.WebSockets.iterate(::HTTP.WebSockets.WebSocket, st)
 HTTP.WebSockets.isclosed
 HTTP.WebSockets.isok
 ```
