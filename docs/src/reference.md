@@ -78,9 +78,9 @@ HTTP.Cookies.cookies
 ### WebSockets
 
 ```@docs
-HTTP.WebSockets.send
+HTTP.WebSockets.send(::HTTP.WebSockets.WebSocket, msg)
 HTTP.WebSockets.receive
-HTTP.WebSockets.close
+HTTP.WebSockets.close(::HTTP.WebSockets.WebSocket, body)
 HTTP.WebSockets.ping
 HTTP.WebSockets.pong
 HTTP.WebSockets.iterate(::HTTP.WebSockets.WebSocket, st)
@@ -91,7 +91,6 @@ HTTP.WebSockets.isok
 ## Utilities
 
 ```@docs
-HTTP.parse(::Type{HTTP.Request}, str)
 HTTP.sniff
 HTTP.Strings.escapehtml
 HTTP.Strings.tocameldash

@@ -67,7 +67,8 @@ end
     HTTP.serve(f, host, port; stream::Bool=false, kw...)
 
 Start a server on the given host and port; for each incoming request, call the
-given handler function `f`, which should be of the form `f(req::HTTP.Request) -> HTTP.Response`.
+given handler function `f`, which should be of the form `f(req::HTTP.Request) -> HTTP.Response`
+(see the [`Handler`](@ref) and [`Middleware`](@ref) interfaces for more details).
 If `stream` is true, the handler function should be of the form `f(stream::HTTP.Stream) -> Nothing`.
 Accepts all the same keyword arguments (and passes them along) to [`HTTP.listen`](@ref), including:
   * `sslconfig`: custom `SSLConfig` to support ssl connections

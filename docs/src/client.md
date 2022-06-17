@@ -1,4 +1,4 @@
-# HTTP Client Functionality
+# Client
 
 HTTP.jl provides a wide range of HTTP client functionality, mostly exposed through the [`HTTP.request`](@ref) family of functions. This document aims to walk through the various ways requests can be configured to accomplish whatever your goal may be.
 
