@@ -25,7 +25,7 @@ HTTP.download
 HTTP.Request
 HTTP.Response
 HTTP.Stream
-HTTP.WebSocket
+HTTP.WebSockets.WebSocket
 HTTP.Messages.header
 HTTP.Messages.headers
 HTTP.Messages.hasheader
