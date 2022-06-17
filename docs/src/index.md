@@ -45,7 +45,7 @@ end
 
 ### Handling requests (server)
 
-`HTTP.serve`(@ref) allows specifying middleware + handlers for how incoming requests should be processed.
+[`HTTP.serve`](@ref) allows specifying middleware + handlers for how incoming requests should be processed.
 
 ```julia
 # authentication middleware to ensure property security
@@ -92,13 +92,3 @@ and examples for the many configurations available.
 ```@contents
 Pages = ["client.md", "server.md", "websockets.md", "reference.md"]
 ```
-
-# manual
-  # client
-    # making requests
-    # sections for keyword args + links to examples
-    # utilities
-  # server
-    # running basic server
-    # middleware/handlers framework
-    # logfmt"..."

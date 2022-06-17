@@ -26,7 +26,7 @@ These methods operate identically to `HTTP.request`, except the `method` argumen
 
 ### Url
 
-For the request `url` argument, the [URIs.j](https://github.com/JuliaWeb/URIs.jl) package is used parse this `String` argument into a `URI` object, which detects the HTTP scheme, user info, host, port (if any), path, query parameters, fragment, etc. The host and port will be used to actually make a connection to the remote server and send data to and receive data from. Query parameters can be included in the `url` `String` itself, or passed as a separate [`query`](@ref) keyword argument to `HTTP.request`, which will be discussed in more detail later.
+For the request `url` argument, the [URIs.j](https://github.com/JuliaWeb/URIs.jl) package is used to parse this `String` argument into a `URI` object, which detects the HTTP scheme, user info, host, port (if any), path, query parameters, fragment, etc. The host and port will be used to actually make a connection to the remote server and send data to and receive data from. Query parameters can be included in the `url` `String` itself, or passed as a separate [`query`](@ref) keyword argument to `HTTP.request`, which will be discussed in more detail later.
 
 ### Headers
 
@@ -38,8 +38,7 @@ The optional `body` argument makes up the "body" of the sent request and is only
   * a `Dict` or `Vector{Pair{String, String}}` to be serialized as the "application/x-www-form-urlencoded" content type, so `Dict("nm" => "val")` will be sent in the request body like `nm=val`
   * any `AbstractString` or `AbstractVector{UInt8}` which will be sent "as is" for the request body
   * a readable `IO` stream or any `IO`-like type `T` for which `eof(T)` and `readavailable(T)` are defined. This stream will be read and sent until `eof` is `true`. This object should support the `mark`/`reset` methods if request retires are desired (if not, no retries will be attempted).
-  * Any collection or iterable of the above (`Dict`, `AbstractString`, `AbstractVector{UInt8}`, or `IO`)
-   which will result in a "Transfer-Encoding=chunked" request body, where each iterated element will be sent as a separate chunk
+  * Any collection or iterable of the above (`Dict`, `AbstractString`, `AbstractVector{UInt8}`, or `IO`) which will result in a "Transfer-Encoding=chunked" request body, where each iterated element will be sent as a separate chunk
   * a [`HTTP.Form`](@ref), which will be serialized as the "multipart/form-data" content-type
 
 ### Response
@@ -212,7 +211,7 @@ end -> HTTP.Response
 
 Where the `io` argument provided to the function body is an `HTTP.Stream` object, a custom `IO` that represents an open connection that is ready to be written to in order to send the request body, and/or read from to recieve the response body. Note that `startread(io)` should be called before calling `readavailable` to ensure the response statu line and headers are received and parsed appropriately. Calling `eof(io)` will return true until the response body has been completely received. Note that the returned `HTTP.Response` from `HTTP.open` will _not_ have a `.body` field since the body was read in the function body.
 
-### `HTTP.download`
+### Download
 
 ```@docs
 HTTP.download

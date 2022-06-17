@@ -10,7 +10,7 @@
 
 ## `HTTP.listen`
 
-## `logfmt"..."`
+## Log formatting
 
 ```@docs
 HTTP.@logfmt_str

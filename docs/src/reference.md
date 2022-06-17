@@ -1,6 +1,7 @@
 # API Reference
 
 ```@contents
+Pages = ["reference.md"]
 Depth = 3
 ```
 
@@ -82,7 +83,7 @@ HTTP.WebSockets.receive
 HTTP.WebSockets.close
 HTTP.WebSockets.ping
 HTTP.WebSockets.pong
-HTTP.WebSockets.iterate
+HTTP.WebSockets.iterate(::WebSocket, st)
 HTTP.WebSockets.isclosed
 HTTP.WebSockets.isok
 ```
@@ -90,7 +91,7 @@ HTTP.WebSockets.isok
 ## Utilities
 
 ```@docs
-parse(::Type{<:HTTP.Message}, str::AbstractString)
+HTTP.parse(::Type{HTTP.Request}, str)
 HTTP.sniff
 HTTP.Strings.escapehtml
 HTTP.Strings.tocameldash

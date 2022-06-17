@@ -78,6 +78,7 @@ makedocs(
         "Home" => "index.md",
         "client.md",
         "server.md",
+        "websockets.md",
         "reference.md",
         "examples.md",
     ],
