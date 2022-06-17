@@ -10,7 +10,7 @@ using ..Messages, ..Forms, ..IOExtras
 Sets default expected headers.
 """
 function defaultheaderslayer(handler)
-    return function(req; iofunction=nothing, kw...)
+    return function(req; iofunction=nothing, decompress=true, kw...)
         headers = req.headers
         if isempty(req.url.port) ||
             (req.url.scheme == "http" && req.url.port == "80") ||
@@ -39,7 +39,10 @@ function defaultheaderslayer(handler)
             # "Content-Type" => "multipart/form-data; boundary=..."
             setheader(headers, content_type(req.body))
         end
-        return handler(req; iofunction=iofunction, kw...)
+        if decompress
+            defaultheader!(headers, "Accept-Encoding" => "gzip")
+        end
+        return handler(req; iofunction, decompress, kw...)
     end
 end
 

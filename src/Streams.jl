@@ -304,6 +304,18 @@ function Base.read(http::Stream)
     return take!(buf)
 end
 
+function Base.readuntil(http::Stream, f::Function)::ByteView
+    UInt(ntoread(http)) == 0 && return UInt8[]
+    try
+        bytes = readuntil(http, f)
+        update_ntoread(http, length(bytes))
+        return bytes
+    catch e
+        # if we error, it means we didn't find what we were looking for
+        return UInt8[]
+    end
+end
+
 """
     isaborted(::Stream{<:Response})
 

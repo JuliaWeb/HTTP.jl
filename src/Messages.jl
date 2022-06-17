@@ -242,7 +242,7 @@ Does this `Response` have a redirect status?
 """
 isredirect(r::Response) = isredirect(r.status)
 isredirect(r::Request) = !redirectlimitreached(r)
-isredirect(status) = status in (301, 302, 307, 308)
+isredirect(status) = status in (301, 302, 303, 307, 308)
 
 # whether the redirect limit has been reached for a given request
 # set in the RedirectRequest layer once the limit is reached
@@ -262,7 +262,7 @@ function retryable end
 retryable(r::Request) = (isbytes(r.body) || ismarked(r.body)) &&
     (isidempotent(r) || retry_non_idempotent(r)) && !retrylimitreached(r)
 retryable(r::Response) = retryable(r.status)
-retryable(status) = status in (408, 409, 429, 500, 502, 503, 504, 599)
+retryable(status) = status in (403, 408, 409, 429, 500, 502, 503, 504, 599)
 
 """
     ischunked(::Message)

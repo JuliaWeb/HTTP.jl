@@ -1,7 +1,7 @@
 # API Reference
 
 ```@contents
-Depth = 4
+Depth = 3
 ```
 
 ## Client Requests
