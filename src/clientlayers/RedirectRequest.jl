@@ -99,7 +99,7 @@ function newmethod(request_method, response_status, redirect_method)
         return "GET"
     elseif redirect_method == :same
         return request_method
-    elseif redirect_method !== nothing && redirect_method in ("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH")
+    elseif redirect_method !== nothing && String(redirect_method) in ("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH")
         return redirect_method
     end
     return "GET"

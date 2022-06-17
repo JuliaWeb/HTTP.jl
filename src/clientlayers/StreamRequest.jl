@@ -1,7 +1,7 @@
 module StreamRequest
 
 using ..IOExtras, ..Messages, ..Streams, ..ConnectionPool, ..Strings, ..RedirectRequest, ..Exceptions
-using LoggingExtras, CodecZlib
+using LoggingExtras, CodecZlib, URIs
 
 export streamlayer
 
@@ -93,7 +93,13 @@ function writebodystream(stream, body::IO)
     write(stream, body)
 end
 
+function writebodystream(stream, body::Union{Dict, NamedTuple})
+    # application/x-www-form-urlencoded
+    write(stream, URIs.escapeuri(body))
+end
+
 writechunk(stream, body::IO) = writebodystream(stream, body)
+writechunk(stream, body::Union{Dict, NamedTuple}) = writebodystream(stream, body)
 writechunk(stream, body) = write(stream, body)
 
 function readbody(stream::Stream, res::Response, decompress)

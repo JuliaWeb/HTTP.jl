@@ -1,7 +1,8 @@
 # API Reference
 
 ```@contents
-Depth = 4
+Pages = ["reference.md"]
+Depth = 3
 ```
 
 ## Client Requests
@@ -24,7 +25,7 @@ HTTP.download
 HTTP.Request
 HTTP.Response
 HTTP.Stream
-HTTP.WebSocket
+HTTP.WebSockets.WebSocket
 HTTP.Messages.header
 HTTP.Messages.headers
 HTTP.Messages.hasheader
@@ -77,12 +78,12 @@ HTTP.Cookies.cookies
 ### WebSockets
 
 ```@docs
-HTTP.WebSockets.send
+HTTP.WebSockets.send(::HTTP.WebSockets.WebSocket, msg)
 HTTP.WebSockets.receive
-HTTP.WebSockets.close
+HTTP.WebSockets.close(::HTTP.WebSockets.WebSocket, body)
 HTTP.WebSockets.ping
 HTTP.WebSockets.pong
-HTTP.WebSockets.iterate
+HTTP.WebSockets.iterate(::HTTP.WebSockets.WebSocket, st)
 HTTP.WebSockets.isclosed
 HTTP.WebSockets.isok
 ```
@@ -90,7 +91,6 @@ HTTP.WebSockets.isok
 ## Utilities
 
 ```@docs
-parse(::Type{<:HTTP.Message}, str::AbstractString)
 HTTP.sniff
 HTTP.Strings.escapehtml
 HTTP.Strings.tocameldash

@@ -10,7 +10,7 @@ using ..Messages, ..Forms, ..IOExtras
 Sets default expected headers.
 """
 function defaultheaderslayer(handler)
-    return function(req; iofunction=nothing, kw...)
+    return function(req; iofunction=nothing, decompress=true, kw...)
         headers = req.headers
         if isempty(req.url.port) ||
             (req.url.scheme == "http" && req.url.port == "80") ||
@@ -35,11 +35,16 @@ function defaultheaderslayer(handler)
                 setheader(headers, "Content-Length" => "0")
             end
         end
-        if !hasheader(headers, "Content-Type") && req.body isa Form && req.method in ("POST", "PUT")
+        if !hasheader(headers, "Content-Type") && req.body isa Form && req.method in ("POST", "PUT", "PATCH")
             # "Content-Type" => "multipart/form-data; boundary=..."
             setheader(headers, content_type(req.body))
+        elseif !hasheader(headers, "Content-Type") && (req.body isa Dict || req.body isa NamedTuple) && req.method in ("POST", "PUT", "PATCH")
+            setheader(headers, "Content-Type" => "application/x-www-form-urlencoded")
         end
-        return handler(req; iofunction=iofunction, kw...)
+        if decompress
+            defaultheader!(headers, "Accept-Encoding" => "gzip")
+        end
+        return handler(req; iofunction, decompress, kw...)
     end
 end
 

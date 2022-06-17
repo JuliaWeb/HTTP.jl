@@ -2,8 +2,8 @@
 
 ## Overview
 
-HTTP.jl provides both client and server functionality for the [http](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) protocol. As a client, it provides the ability to make a wide range of
-request, including GET, POST, websocket upgrades, form data, multipart, chunking, and cookie handling.
+HTTP.jl provides both client and server functionality for the [http](https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol) and [websocket](https://en.wikipedia.org/wiki/WebSocket) protocols. As a client, it provides the ability to make a wide range of
+requests, including GET, POST, websocket upgrades, form data, multipart, chunking, and cookie handling. There is also advanced functionality to provide client-side middleware and generate your own customized HTTP client.
 On the server side, it provides the ability to listen, accept, and route http requests, with middleware and
 handler interfaces to provide flexibility in processing responses.
 
@@ -23,14 +23,29 @@ println(String(resp.body))
 # make a POST request, sending data via `body` keyword argument
 resp = HTTP.post("http://httpbin.org/body"; body="request body")
 
+# make a POST request, sending form-urlencoded body
+resp = HTTP.post("http://httpbin.org/body"; body=Dict("nm" => "val"))
+
 # include query parameters in a request
 # and turn on verbose logging of the request/response process
 resp = HTTP.get("http://httpbin.org/anything"; query=["hello" => "world"], verbose=2)
+
+# simple websocket client
+WebSockets.open("ws://websocket.org") do ws
+    # we can iterate the websocket
+    # where each iteration yields a received message
+    # iteration finishes when the websocket is closed
+    for msg in ws
+        # do stuff with msg
+        # send back message as String, Vector{UInt8}, or iterable of either
+        send(ws, resp)
+    end
+end
 ```
 
 ### Handling requests (server)
 
-`HTTP.serve`(@ref) allows specifying middleware + handlers for how incoming requests should be processed.
+[`HTTP.serve`](@ref) allows specifying middleware + handlers for how incoming requests should be processed.
 
 ```julia
 # authentication middleware to ensure property security
@@ -59,23 +74,21 @@ end
 # requests will first be handled by teh auth middleware before being passed to the `handler`
 # request handler function
 HTTP.serve(auth(handler))
+
+# websocket server is very similar to client usage
+WebSockets.listen("0.0.0.0", 8080) do ws
+    for msg in ws
+        # simple echo server
+        send(ws, msg)
+    end
+end
 ```
 
 ## Further Documentation
 
-Check out the client and server-specific documentation pages for more in-depth discussions
+Check out the client, server, and websocket-specific documentation pages for more in-depth discussions
 and examples for the many configurations available.
 
 ```@contents
-Pages = ["client.md", "server.md", "reference.md"]
+Pages = ["client.md", "server.md", "websockets.md", "reference.md"]
 ```
-
-# manual
-  # client
-    # making requests
-    # sections for keyword args + links to examples
-    # utilities
-  # server
-    # running basic server
-    # middleware/handlers framework
-    # logfmt"..."

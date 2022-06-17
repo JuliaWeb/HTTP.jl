@@ -102,7 +102,7 @@ end
         end
     end
 
-    @testset "Client Body Posting - Vector{UTF8}, String, IOStream, IOBuffer, BufferStream" begin
+    @testset "Client Body Posting - Vector{UTF8}, String, IOStream, IOBuffer, BufferStream, Dict, NamedTuple" begin
         @test status(HTTP.post("$sch://httpbin.org/post"; body="hey")) == 200
         @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'])) == 200
         io = IOBuffer("hey"); seekstart(io)
@@ -116,6 +116,14 @@ end
         write(f, "hey")
         close(f)
         @test status(HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false)) == 200
+        resp = HTTP.post("$sch://httpbin.org/post"; body=Dict("name" => "value"))
+        x = JSON.parse(IOBuffer(resp.body))
+        @test status(resp) == 200
+        @test x["form"] == Dict("name" => "value")
+        resp = HTTP.post("$sch://httpbin.org/post"; body=(name="value with spaces",))
+        x = JSON.parse(IOBuffer(resp.body))
+        @test status(resp) == 200
+        @test x["form"] == Dict("name" => "value with spaces")
     end
 
     @testset "Chunksize" begin
@@ -528,6 +536,21 @@ end
         close(server)
         HTTP.ConnectionPool.closeall()
     end
+end
+
+findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
+
+@testset "readuntil on Stream" begin
+
+    HTTP.open(:GET, "http://httpbin.org/stream/5") do io
+        while !eof(io)
+            bytes = readuntil(io, findnewline)
+            isempty(bytes) && break
+            x = JSON.parse(IOBuffer(bytes))
+            @show x
+        end
+    end
+
 end
 
 end # module
