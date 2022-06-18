@@ -51,16 +51,16 @@ function Listener(addr::Sockets.InetAddr, host::String, port::String;
             @warn "reuseaddr=true not supported on this platform: $(Sys.KERNEL)"
             @goto fallback
         end
-        server = TCPSocket(delay = false)
+        server = Sockets.TCPServer(delay = false)
         bindearly = Sys.islinux()
-        bindearly && Sockets.bind(server, addr.host, addr.port; reuseaddr=true)
+        bindearly && Sockets.bind(server, addr.host, addr.port)
         rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), server.handle)
         if rc < 0
             close(server)
             @warn "reuseaddr=true failed; falling back to regular listen: $(Sys.KERNEL)"
             @goto fallback
         end
-        bindearly || Sockets.bind(server, addr.host, addr.port; reuseaddr=true)
+        bindearly || Sockets.bind(server, addr.host, addr.port)
         Sockets.listen(server)
     else
 @label fallback
