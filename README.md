@@ -65,6 +65,7 @@ The server will start listening on 127.0.0.1:8081 by default.
 ```julia
 using HTTP
 
+# start a blocking server
 HTTP.listen() do http::HTTP.Stream
     @show http.message
     @show HTTP.header(http, "Content-Type")
@@ -83,7 +84,8 @@ end
 ```julia
 using HTTP
 
-HTTP.serve() do request::HTTP.Request
+# HTTP.listen! and HTTP.serve! are the non-blocking versions of HTTP.listen/HTTP.serve
+server = HTTP.serve!() do request::HTTP.Request
    @show request
    @show request.method
    @show HTTP.header(request, "Content-Type")
@@ -91,26 +93,31 @@ HTTP.serve() do request::HTTP.Request
    try
        return HTTP.Response("Hello")
    catch e
-       return HTTP.Response(404, "Error: $e")
+       return HTTP.Response(400, "Error: $e")
    end
 end
+# HTTP.serve! returns an `HTTP.Server` object that we can close manually
+close(server)
 ```
 
 ## WebSocket Examples
 
 ```julia
-julia> @async HTTP.WebSockets.listen("127.0.0.1", 8081) do ws
+julia> using HTTP.WebSockets
+julia> server = WebSockets.listen!("127.0.0.1", 8081) do ws
         for msg in ws
             send(ws, msg)
         end
     end
 
-julia> HTTP.WebSockets.open("ws://127.0.0.1:8081") do ws
+julia> WebSockets.open("ws://127.0.0.1:8081") do ws
            send(ws, "Hello")
            s = receive(ws)
-           println(x)
+           println(s)
        end;
 Hello
+
+julia> close(server)
 ```
 
 [docs-dev-img]: https://img.shields.io/badge/docs-dev-blue.svg

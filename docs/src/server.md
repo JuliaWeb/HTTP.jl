@@ -9,30 +9,30 @@ file.
 
 ## `HTTP.serve`
 
-`HTTP.serve` is the primary entrypoint for HTTP server functionality, while `HTTP.listen` is considered the lower-level core server loop that only operates directly with `HTTP.Stream`s. `HTTP.serve` is also built directly integrated with the `Handler` and `Middleware` interfaces and provides easy flexiblity by doing so. The signature is:
+`HTTP.serve`/`HTTP.serve!` are the primary entrypoints for HTTP server functionality, while `HTTP.listen`/`HTTP.listen!` are considered the lower-level core server loop methods that only operate directly with `HTTP.Stream`s. `HTTP.serve` is also built directly integrated with the `Handler` and `Middleware` interfaces and provides easy flexiblity by doing so. The signature is:
 
 ```julia
 HTTP.serve(f, host, port; kw...)
+HTTP.serve!(f, host, port; kw...) -> HTTP.Server
 ```
 
 Where `f` is a `Handler` function, typically of the form `f(::Request) -> Response`, but can also operate directly on an `HTTP.Stream` of the form `f(::Stream) -> Nothing` while also passing `stream=true` to the keyword arguments. The `host` argument should be a `String`, or `IPAddr`, created like `ip"0.0.0.0"`. `port` should be a valid port number as an `Integer`.
+`HTTP.serve` is the blocking server method, whereas `HTTP.serve!` is non-blocking and returns
+the listening `HTTP.Server` object that can be `close(server)`ed manually.
 
 Supported keyword arguments include:
  * `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl
     connections. Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl
-    verification (useful for testing), otherwise, the constructor is like
-    `MbedTLS.SSLConfig(certfile, keyfile)`
- * `reuse_limit = nolimit`, number of times a connection is allowed to be
-   reused after the first request.
- * `tcpisvalid = tcp->true`, function `f(::TCPSocket)::Bool` to, check accepted
-    connection before processing requests. e.g. to do source IP filtering.
+    verification (useful for testing). Construct a custom `SSLConfig` object
+    with `MbedTLS.SSLConfig(certfile, keyfile)`.
+ * `tcpisvalid = tcp->true`, function `f(::TCPSocket)::Bool` to check if accepted
+    connections are valid before processing requests. e.g. to do source IP filtering.
  * `readtimeout::Int=0`, close the connection if no data is received for this
     many seconds. Use readtimeout = 0 to disable.
  * `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
+    Not supported on some OS platforms. Can check `HTTP.Servers.supportsreuseaddr()`.
  * `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
-    allows closing the server when `HTTP.serve` is run via `@async`.
- * `connection_count::Ref{Int}`, reference to track the number of currently
-    open connections.
+    allows manually closing or configuring the server socket.
  * `verbose::Bool=false`, log connection information to `stdout`.
  * `access_log::Function`, function for formatting access log messages. The
     function should accept two arguments, `io::IO` to which the messages should
@@ -101,7 +101,7 @@ handler is called, which by default returns `HTTP.Response(405)` (method not all
 
 ## `HTTP.listen`
 
-Lower-level core server functionality that only operates on `HTTP.Stream`. Provides a level of separation from `HTTP.serve` and the `Handler` framework. Supports all the same arguments and keyword arguments as [`HTTP.serve`](@ref), but the handler function `f` _must_ take a single `HTTP.Stream` as argument.
+Lower-level core server functionality that only operates on `HTTP.Stream`. Provides a level of separation from `HTTP.serve` and the `Handler` framework. Supports all the same arguments and keyword arguments as [`HTTP.serve`](@ref), but the handler function `f` _must_ take a single `HTTP.Stream` as argument. `HTTP.listen!` is the non-blocking counterpart to `HTTP.serve!`.
 
 ## Log formatting
 

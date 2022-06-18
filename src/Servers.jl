@@ -183,35 +183,41 @@ function shutdown(fn::Function)
 end
 
 """
-    HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do http::HTTP.Stream
-        ...
-    end
+    HTTP.listen(handler, host=Sockets.localhost, port=8081; kw...)
+    HTTP.listen(handler, port::Integer=8081; kw...)
+    HTTP.listen(handler, server::Base.IOServer; kw...)
+    HTTP.listen!(args...; kw...) -> HTTP.Server
 
-Listen for HTTP connections and execute the `do` function for each request.
+Listen for HTTP connections and execute the `handler` function for each request.
+Listening details can be passed as `host`/`port` pair, a single `port` (`host` will
+default to `localhost`), or an already listening `server` object, as returned from
+`Sockets.listen`. To open up a server to external requests, the `host` argument is
+typically `"0.0.0.0"`.
 
-The `do` function should be of the form `f(::HTTP.Stream)::Nothing`, and should
+The `HTTP.listen!` form is non-blocking and returns an `HTTP.Server` object which can be
+`wait(server)`ed on manually, or `close(server)`ed to gracefully shut down the server.
+Calling `HTTP.forceclose(server)` will immediately force close the server and all active
+connections. `HTTP.listen` will block on the server listening loop until interrupted or
+and an irrecoverable error occurs.
+
+The `handler` function should be of the form `f(::HTTP.Stream)::Nothing`, and should
 at the minimum set a status via `setstatus()` and call `startwrite()` either
-explicitly or implicitly by writing out a response via `write()`.  Failure to
+explicitly or implicitly by writing out a response via `write()`. Failure to
 do this will result in an HTTP 500 error being transmitted to the client.
 
 Optional keyword arguments:
  - `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl
     connections. Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl
-    verification (useful for testing).
- - `reuse_limit = nolimit`, number of times a connection is allowed to be
-   reused after the first request.
- - `tcpisvalid = tcp->true`, function `f(::TCPSocket)::Bool` to, check accepted
-    connection before processing requests. e.g. to do source IP filtering.
+    verification (useful for testing). Construct a custom `SSLConfig` object
+    with `MbedTLS.SSLConfig(certfile, keyfile)`.
+ - `tcpisvalid = tcp->true`, function `f(::TCPSocket)::Bool` to check if accepted
+    connections are valid before processing requests. e.g. to do source IP filtering.
  - `readtimeout::Int=0`, close the connection if no data is received for this
     many seconds. Use readtimeout = 0 to disable.
  - `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
+    Not supported on some OS platforms. Can check `HTTP.Servers.supportsreuseaddr()`.
  - `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
-    allows closing the server.
- - `connection_count::Ref{Int}`, reference to track the number of currently
-    open connections.
- - `rate_limit::Rational{Int}=nothing"`, number of `connections//second`
-    allowed per client IP address; excess connections are immediately closed.
-    e.g. 5//1.
+    allows manually closing or configuring the server socket.
  - `verbose::Bool=false`, log connection information to `stdout`.
  - `access_log::Function`, function for formatting access log messages. The
     function should accept two arguments, `io::IO` to which the messages should
@@ -225,6 +231,7 @@ Optional keyword arguments:
 
 e.g.
 ```julia
+# start a blocking server
 HTTP.listen("127.0.0.1", 8081) do http
     HTTP.setheader(http, "Content-Type" => "text/html")
     write(http, "target uri: \$(http.message.target)<BR>")
@@ -234,7 +241,8 @@ HTTP.listen("127.0.0.1", 8081) do http
     return
 end
 
-HTTP.listen("127.0.0.1", 8081) do http
+# non-blocking server
+server = HTTP.listen!("127.0.0.1", 8081) do http
     @show http.message
     @show HTTP.header(http, "Content-Type")
     while !eof(http)
@@ -246,18 +254,7 @@ HTTP.listen("127.0.0.1", 8081) do http
     write(http, "response body")
     write(http, "more response body")
 end
-```
-
-The `server=` option can be used to pass an already listening socket to
-`HTTP.listen`. This allows manual control of server shutdown.
-
-e.g.
-```julia
-using Sockets
-server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
-@async HTTP.listen(f, host, port; server=server)
-
-# Closing server will stop HTTP.listen.
+# can gracefully close server manually
 close(server)
 ```
 

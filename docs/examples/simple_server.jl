@@ -58,8 +58,7 @@ HTTP.register!(ANIMAL_ROUTER, "GET", "/api/zoo/v1/animals/{id}", getAnimal)
 HTTP.register!(ANIMAL_ROUTER, "PUT", "/api/zoo/v1/animals", updateAnimal)
 HTTP.register!(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/animals/{id}", deleteAnimal)
 
-socket = Sockets.listen(Sockets.localhost, 8080)
-servertask = @async HTTP.serve(ANIMAL_ROUTER, Sockets.localhost, 8080; server=socket)
+server = HTTP.serve!(ANIMAL_ROUTER, Sockets.localhost, 8080)
 
 # using our server
 x = Animal()
@@ -72,6 +71,6 @@ x2 = JSON3.read(resp.body, Animal)
 resp = HTTP.get("http://localhost:8080/api/zoo/v1/animals/$(x2.id)")
 x3 = JSON3.read(resp.body, Animal)
 
-# close the server socket which will stop the HTTP server
-close(socket)
-@assert istaskdone(servertask)
+# close the server which will stop the HTTP server from listening
+close(server)
+@assert istaskdone(server.task)

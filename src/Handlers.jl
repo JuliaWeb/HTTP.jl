@@ -64,21 +64,65 @@ function streamhandler(handler)
 end
 
 """
-    HTTP.serve(f, host, port; stream::Bool=false, kw...)
-    HTTP.serve!(f, host, port; stream::Bool=false, kw...) -> HTTP.Server
+    HTTP.serve(handler, host=Sockets.localhost, port=8081; kw...)
+    HTTP.serve(handler, port::Integer=8081; kw...)
+    HTTP.serve(handler, server::Base.IOServer; kw...)
+    HTTP.serve!(args...; kw...) -> HTTP.Server
 
-Start a server on the given host and port; for each incoming request, call the
-given handler function `f`, which should be of the form `f(req::HTTP.Request) -> HTTP.Response`
-(see the [`Handler`](@ref) and [`Middleware`](@ref) interfaces for more details).
-If `stream` is true, the handler function should be of the form `f(stream::HTTP.Stream) -> Nothing`.
-Accepts all the same keyword arguments (and passes them along) to [`HTTP.listen`](@ref), including:
-  * `sslconfig`: custom `SSLConfig` to support ssl connections
-  * `tcpisvalid`: custom function to validate tcp connections
-  * `server`: a server `Socket` that a user can manage (closing listening, etc.)
-  * `reuseaddr`: whether another server can listen on the same host/port (unix only)
-  * `max_connections`: max number of simultaneous connections allowed
-  * `connection_count`: a `Ref{Int}` to keep track of currently open connections
-  * `readtimeout`: time in seconds (integer) that the server should wait for a request to be sent
+Listen for HTTP connections and execute the `handler` function for each request.
+Listening details can be passed as `host`/`port` pair, a single `port` (`host` will
+default to `localhost`), or an already listening `server` object, as returned from
+`Sockets.listen`. To open up a server to external requests, the `host` argument is
+typically `"0.0.0.0"`.
+
+The `HTTP.serve!` form is non-blocking and returns an `HTTP.Server` object which can be
+`wait(server)`ed on manually, or `close(server)`ed to gracefully shut down the server.
+Calling `HTTP.forceclose(server)` will immediately force close the server and all active
+connections. `HTTP.serve` will block on the server listening loop until interrupted or
+and an irrecoverable error occurs.
+
+The `handler` function should be of the form `f(req::HTTP.Request)::HTTP.Response`.
+Alternatively, passing `stream=true` requires the `handler` to be of the form
+`f(stream::HTTP.Stream) -> Nothing`. See [`HTTP.Router`](@ref) for details on using
+it as a request handler.
+
+Optional keyword arguments:
+- `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl
+connections. Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl
+verification (useful for testing). Construct a custom `SSLConfig` object
+with `MbedTLS.SSLConfig(certfile, keyfile)`.
+- `tcpisvalid = tcp->true`, function `f(::TCPSocket)::Bool` to check if accepted
+connections are valid before processing requests. e.g. to do source IP filtering.
+- `readtimeout::Int=0`, close the connection if no data is received for this
+many seconds. Use readtimeout = 0 to disable.
+- `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
+Not supported on some OS platforms. Can check `HTTP.Servers.supportsreuseaddr()`.
+- `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
+allows manually closing or configuring the server socket.
+- `verbose::Bool=false`, log connection information to `stdout`.
+- `access_log::Function`, function for formatting access log messages. The
+function should accept two arguments, `io::IO` to which the messages should
+be written, and `http::HTTP.Stream` which can be used to query information
+from. See also [`@logfmt_str`](@ref).
+- `on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing`, one or
+more functions to be run if the server is closed (for example by an
+`InterruptException`). Note, shutdown function(s) will not run if an
+`IOServer` object is supplied to the `server` keyword argument and closed
+by `close(server)`.
+
+```julia
+# start a blocking echo server
+HTTP.serve("127.0.0.1", 8081) do req
+    return HTTP.Response(200, req.body)
+end
+
+# non-blocking server
+server = HTTP.serve!(8081) do req
+    return HTTP.Response(200, "response body")
+end
+# can gracefully close server manually
+close(server)
+```
 """
 function serve end
 
