@@ -9,70 +9,153 @@ For server functionality operating on full requests, see the `?HTTP.serve` funct
 """
 module Servers
 
-export listen
+export listen, listen!, Server, forceclose
 
 using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
-using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..ConnectionPool
+using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..ConnectionPool, ..Exceptions
 import ..access_threaded
 import ..@logfmt_str
 
-# rate limiting
-mutable struct RateLimit
-    allowance::Float64
-    lastcheck::Dates.DateTime
+TRUE(x) = true
+getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
+getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
+
+struct Listener{S <: Union{SSLConfig, Nothing}, I <: Base.IOServer}
+    addr::Sockets.InetAddr
+    hostname::String
+    hostport::String
+    ssl::S
+    server::I
 end
 
-function update!(rl::RateLimit, rate_limit)
-    current = Dates.now()
-    timepassed = float(Dates.value(current - rl.lastcheck)) / 1000.0
-    rl.lastcheck = current
-    rl.allowance += timepassed * rate_limit
-    if rl.allowance > rate_limit
-        rl.allowance = rate_limit
-    end
-    return nothing
+function Listener(server::Base.IOServer; sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing, kw...)
+    host, port = getsockname(server)
+    addr = getinet(host, port)
+    return Listener(addr, host, port, sslconfig, server)
 end
 
-const RATE_LIMITS = Dict{IPAddr, RateLimit}[]
-check_rate_limit(tcp::Base.PipeEndpoint, rate_limit::Rational{Int}) = true
-check_rate_limit(tcp, ::Nothing) = true
-
-"""
-`check_rate_limit` takes a new connection (socket), and checks in
-the global RATE_LIMITS store for the last time a connection was
-seen for the same ip address. If the new connection has come too
-soon, it is closed and discarded, otherwise, the timestamp for the
-ip address is updated in the global cache.
-"""
-function check_rate_limit(tcp, rate_limit::Rational{Int})
-    ip = Sockets.getpeername(tcp)[1]
-    rl_d = access_threaded(Dict{IPAddr, RateLimit}, RATE_LIMITS)
-    rl = get!(rl_d, ip, RateLimit(rate_limit, Dates.DateTime(0)))
-    update!(rl, rate_limit)
-    if rl.allowance < 1.0
-        @warn "discarding connection from $ip due to rate limiting"
-        return false
+function Listener(addr::Sockets.InetAddr, host::String, port::String;
+    sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
+    reuseaddr::Bool=false,
+    backlog::Integer=Sockets.BACKLOG_DEFAULT, kw...)
+    if reuseaddr && 
+        if ccall(:jl_has_so_reuseport, Int32, ()) != 1
+            @warn "reuseaddr=true not supported on this platform: $(Sys.KERNEL)"
+            @goto fallback
+        end
+        server = TCPSocket(delay = false)
+        bindearly = Sys.islinux()
+        bindearly && Sockets.bind(server, addr.host, addr.port; reuseaddr=true)
+        rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), server.handle)
+        if rc < 0
+            close(server)
+            @warn "reuseaddr=true failed; falling back to regular listen: $(Sys.KERNEL)"
+            @goto fallback
+        end
+        bindearly || Sockets.bind(server, addr.host, addr.port; reuseaddr=true)
+        Sockets.listen(server)
     else
-        rl.allowance -= 1.0
+@label fallback
+        server = Sockets.listen(addr; backlog=backlog)
     end
-    return true
+    return Listener(addr, host, port, sslconfig, server)
+end
+
+Listener(host::Union{IPAddr, String}, port::Integer; kw...) = Listener(getinet(host, port), string(host), string(port); kw...)
+Listener(port::Integer; kw...) = Listener(Sockets.localhost, port; kw...)
+
+Base.isopen(l::Listener) = isopen(l.server)
+Base.close(l::Listener) = close(l.server)
+
+accept(s::Listener{Nothing}) = Sockets.accept(s.server)::TCPSocket
+accept(s::Listener{SSLConfig}) = getsslcontext(Sockets.accept(s.server), s.ssl)
+
+function getsslcontext(tcp, sslconfig)
+    try
+        ssl = MbedTLS.SSLContext()
+        MbedTLS.setup!(ssl, sslconfig)
+        MbedTLS.associate!(ssl, tcp)
+        MbedTLS.handshake!(ssl)
+        return ssl
+    catch e
+        return nothing
+    end
 end
 
 "Convenience object for passing around server details"
-struct Server{S <: Union{SSLConfig, Nothing}, I <: Base.IOServer}
-    ssl::S
-    server::I
-    hostname::String
-    hostport::String
+struct Server{L <: Listener}
+    # listener socket + details
+    listener::L
+    # optional function or vector of functions
+    # to call when closing server
     on_shutdown::Any
-    access_log::Union{Function,Nothing}
+    # list of currently acctive connections
+    connections::Set{Connection}
+    # server listenandserve loop task
+    task::Task
 end
-Server(ssl, server, hostname, hostport, on_shutdown) =
-    Server(ssl, server, hostname, hostport, on_shutdown, nothing)
 
-Base.isopen(s::Server) = isopen(s.server)
-Base.close(s::Server) = (shutdown(s.on_shutdown); close(s.server))
+Base.isopen(s::Server) = isopen(s.listener)
+Base.wait(s::Server) = wait(s.task)
+
+function forceclose(s::Server)
+    shutdown(s.on_shutdown)
+    close(s.listener)
+    for c in s.connections
+        close(c)
+    end
+    return wait(s.task)
+end
+
+"""
+    ConnectionState
+
+When a connection is first made, it immediately goes into IDLE state.
+Once startread(stream) returns, it's marked as ACTIVE.
+Once closewrite(stream) returns, it's put back in IDLE,
+unless it's been given the CLOSING state, then
+it will close(c) itself and mark itself as CLOSED.
+"""
+@enum ConnectionState IDLE ACTIVE CLOSING CLOSED
+closedorclosing(st) = st == CLOSING || st == CLOSED
+
+function requestclose!(c::Connection)
+    if c.state == IDLE
+        closewriteandwait(c)
+        close(c)
+        c.state = CLOSED
+    else
+        c.state = CLOSING
+    end
+    return
+end
+
+function closewriteandwait(c::Connection)
+    io = IOExtras.tcpsocket(ConnectionPool.getrawstream(c))
+    flush(io)
+    closewrite(io)
+    sleep(0.5) # give time for client to receive FIN
+    return
+end
+
+# graceful shutdown that waits for active connectiosn to finish being handled
+function Base.close(s::Server)
+    shutdown(s.on_shutdown)
+    close(s.listener)
+    # first pass to mark or request connections to close
+    for c in s.connections
+        requestclose!(c)
+    end
+    # second pass to wait for connections to close
+    # we wait for connections to empty because as
+    # connections close themselves, they are removed
+    # from our connections Set
+    while !isempty(s.connections)
+        sleep(0.5 + rand() * 0.1)
+    end
+    return wait(s.task)
+end
 
 """
     shutdown(fns::Vector{<:Function})
@@ -89,21 +172,6 @@ function shutdown(fn::Function)
         fn()
     catch e
         @error "shutdown function $fn failed" exception=(e, catch_backtrace())
-    end
-end
-
-Sockets.accept(s::Server{Nothing}) = accept(s.server)::TCPSocket
-Sockets.accept(s::Server{SSLConfig}) = getsslcontext(accept(s.server), s.ssl)
-
-function getsslcontext(tcp, sslconfig)
-    try
-        ssl = MbedTLS.SSLContext()
-        MbedTLS.setup!(ssl, sslconfig)
-        MbedTLS.associate!(ssl, tcp)
-        MbedTLS.handshake!(ssl)
-        return ssl
-    catch e
-        return nothing
     end
 end
 
@@ -215,117 +283,86 @@ end
 """
 function listen end
 
-const nolimit = typemax(Int)
+listen(f, args...; kw...) = listen(f, Listener(args...; kw...); kw...)
+listen!(f, args...; kw...) = listen!(f, Listener(args...; kw...); kw...)
 
-getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
-getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
-
-function listen(f,
-                host::Union{IPAddr, String}=Sockets.localhost,
-                port::Integer=8081
-                ;
-                sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
-                tcpisvalid::Function=tcp->true,
-                server::Union{Base.IOServer, Nothing}=nothing,
-                reuseaddr::Bool=false,
-                max_connections::Int=nolimit,
-                connection_count::Ref{Int}=Ref(0),
-                rate_limit::Union{Rational{Int}, Nothing}=nothing,
-                reuse_limit::Int=nolimit,
-                readtimeout::Int=0,
-                verbose=false,
-                ready_to_accept::Ref{Bool}=Ref(false),
-                access_log::Union{Function,Nothing}=nothing,
-                on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing)
-    ready_to_accept[] = false
-    inet = getinet(host, port)
-    if server !== nothing
-        tcpserver = server
-        host, port = getsockname(server)
-    elseif reuseaddr
-        tcpserver = Sockets.TCPServer(; delay=false)
-        if Sys.isunix()
-            if Sys.isapple()
-                verbose > 0 && @warn "note that `reuseaddr=true` allows multiple processes to bind to the same addr/port, but only one process will accept new connections (if that process exits, another process listening will start accepting)"
-            end
-            rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
-            Sockets.bind(tcpserver, inet.host, inet.port; reuseaddr=true)
-        else
-            @warn "reuseaddr=true may not be supported on this platform: $(Sys.KERNEL)"
-            Sockets.bind(tcpserver, inet.host, inet.port; reuseaddr=true)
-        end
-        Sockets.listen(tcpserver)
-    else
-        tcpserver = Sockets.listen(inet)
+function listen(f, listener::Listener; kw...)
+    server = listen!(f, listener; kw...)
+    # block on server task
+    try
+        wait(server)
+    finally
+        # try to gracefully close
+        close(server)
     end
-    verbose > 0 && @info "Listening on: $host:$port"
+    return server
+end
 
-    tcpisvalid = let f=tcpisvalid
-        x -> f(x) && check_rate_limit(x, rate_limit)
-    end
-
-    s = Server(sslconfig, tcpserver, string(host), string(port), on_shutdown, access_log)
+function listen!(f, listener::Listener;
+    on_shutdown=nothing,
+    tcpisvalid=TRUE,
+    max_connections::Integer=typemax(Int),
+    readtimeout::Integer=0,
+    access_log::Union{Function,Nothing}=nothing,
+    verbose=false)
+    conns = Set{Connection}()
+    ready_to_accept = Ref(false)
     if verbose > 0
-        LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
-            listenloop(f, s, tcpisvalid, connection_count, max_connections,
-                         reuse_limit, readtimeout, ready_to_accept, verbose)
+        tsk = @async LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
+            listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept)
         end
     else
-        return listenloop(f, s, tcpisvalid, connection_count, max_connections,
-                         reuse_limit, readtimeout, ready_to_accept, verbose)
+        tsk = @async listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept)
     end
+    # listen! is "semi-blocking" in that we only want
+    # to return when the server is absolutely ready to accept
+    # new connections; useful for testing purposes and local development
+    # it also provides an immediate yield so our listenloop task
+    # has the chance to be scheduled and get started
+    while !ready_to_accept[]
+        sleep(0.01)
+    end
+    return Server(listener, on_shutdown, conns, tsk)
 end
 
 """"
 Main server loop.
 Accepts new tcp connections and spawns async tasks to handle them."
 """
-function listenloop(f, server, tcpisvalid, connection_count,
-                       max_connections, reuse_limit, readtimeout, ready_to_accept, verbose)
+function listenloop(f, listener, conns, tcpisvalid,
+                       max_connections, readtimeout, access_log, ready_to_accept)
     sem = Base.Semaphore(max_connections)
-    count = 1
+    @infov 1 "Listening on: $(listener.hostname):$(listener.hostport)"
     ready_to_accept[] = true
-    while isopen(server)
+    while isopen(listener)
         try
             Base.acquire(sem)
-            io = accept(server)
+            io = accept(listener)
             if io === nothing
-                verbose > 0 && @warn "unable to accept new connection"
+                @warnv 1 "unable to accept new connection"
                 continue
             elseif !tcpisvalid(io)
-                verbose > 0 && @info "Accept-Reject:  $io"
+                @warnv 1 "!tcpisvalid: $io"
                 close(io)
                 continue
             end
-            connection_count[] += 1
             conn = Connection(io)
-            conn.host, conn.port = server.hostname, server.hostport
+            conn.state = IDLE
+            push!(conns, conn)
+            conn.host, conn.port = listener.hostname, listener.hostport
             @async try
-                # verbose > 0 && @info "Accept ($count):  $conn"
-                handle_connection(f, conn, server, reuse_limit, readtimeout)
-                # verbose > 0 && @info "Closed ($count):  $conn"
-            catch e
-                if e isa Base.IOError &&
-                    (e.code == -54 || e.code == -4077 || e.code == -104 || e.code == -131 || e.code == -232)
-                    verbose > 0 && @warn "connection reset by peer (ECONNRESET)"
-                else
-                    @error "" exception=(e, stacktrace(catch_backtrace()))
-                end
+                handle_connection(f, conn, listener, readtimeout, access_log)
             finally
-                connection_count[] -= 1
-                Base.release(sem)
                 # handle_connection is in charge of closing the underlying io
+                delete!(conns, conn)
+                Base.release(sem)
             end
         catch e
-            close(server)
-            if e isa InterruptException
-                @warn "Interrupted: listen($server)"
-                break
-            else
-                rethrow(e)
-            end
+            @errorv 2 "error in core listenloop" exception=(e, catch_backtrace())
+            # quick little sleep in case there's a temporary
+            # local error accepting and this might help avoid quickly re-erroring
+            sleep(0.05 + rand() * 0.05)
         end
-        count += 1
     end
     return
 end
@@ -337,19 +374,20 @@ for each HTTP Request received.
 After `reuse_limit + 1` transactions, signal `final_transaction` to the
 transaction handler, which will close the connection.
 """
-function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
+function handle_connection(f, c::Connection, listener, readtimeout, access_log)
     if readtimeout > 0
         wait_for_timeout = Ref{Bool}(true)
         @async check_readtimeout(c, readtimeout, wait_for_timeout)
     end
     try
-        count = 0
-        # if the connection socket or original server close, we stop taking requests
-        while isopen(c) && isopen(server) && count <= reuse_limit
-            handle_transaction(f, c, server;
-                               final_transaction=(count == reuse_limit))
-            count += 1
+        # if the connection socket or listener close, we stop taking requests
+        while isopen(c) && !closedorclosing(c.state) && isopen(listener)
+            handle_transaction(f, c, listener, access_log)
         end
+    catch e
+        # errors thrown here should only be peer closed
+        # the connection errors, so ignore and return
+        @errorv 2 "error while handling connection" exception=(e, catch_backtrace())
     finally
         if readtimeout > 0
             wait_for_timeout[] = false
@@ -364,15 +402,16 @@ If `c` is inactive for a more than `readtimeout` then close the `c`."
 function check_readtimeout(c, readtimeout, wait_for_timeout)
     while wait_for_timeout[]
         if inactiveseconds(c) > readtimeout
-            @warn "Connection Timeout: $c"
+            @warnv 2 "Connection Timeout: $c"
             try
                 writeheaders(c.io, Response(408, ["Connection" => "close"]))
             finally
+                closewriteandwait(c)
                 close(c)
             end
             break
         end
-        sleep(8 + rand() * 4)
+        sleep(readtimeout + rand() * readtimeout)
     end
     return
 end
@@ -384,10 +423,10 @@ If there is a parse error, send an error Response.
 Otherwise, execute stream processing function `f`.
 If `f` throws an exception, send an error Response and close the connection.
 """
-function handle_transaction(f, c::Connection, server; final_transaction::Bool=false)
+function handle_transaction(f, c::Connection, server, access_log)
     request = Request()
     http = Stream(request, c)
-
+    final_transaction = false
     try
         @debugv 2 "server startread"
         startread(http)
@@ -409,12 +448,13 @@ function handle_transaction(f, c::Connection, server; final_transaction::Bool=fa
     end
 
     request.response.status = 200
-    if final_transaction || hasheader(request, "Connection", "close")
+    if hasheader(request, "Connection", "close")
+        final_transaction = true
         setheader(request.response, "Connection" => "close")
     end
 
     try
-        f(http)
+        Base.invokelatest(f, http)
         # If `startwrite()` was never called, throw an error so we send a 500 and log this
         if isopen(http) && !iswritable(http)
             error("Server never wrote a response")
@@ -437,16 +477,11 @@ function handle_transaction(f, c::Connection, server; final_transaction::Bool=fa
         end
         final_transaction = true
     finally
-        if server.access_log !== nothing
-            try; @info sprint(server.access_log, http) _group=:access; catch; end
+        if access_log !== nothing
+            @try(@info sprint(access_log, http) _group=:access)
         end
         final_transaction && close(c.io)
     end
-    return
-end
-
-function __init__()
-    resize!(empty!(RATE_LIMITS), Threads.nthreads())
     return
 end
 

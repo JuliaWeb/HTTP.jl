@@ -513,10 +513,10 @@ end
 end
 
 @testset "Retry with request/response body streams" begin
-    server = listen(IPv4(0), 8080)
+    server = nothing
     try
         shouldfail = Ref(true)
-        tsk = @async HTTP.listen("0.0.0.0", 8080; server=server) do http
+        server = HTTP.listen!(8080) do http
             @assert !eof(http)
             msg = String(readavailable(http))
             if shouldfail[]
@@ -533,7 +533,9 @@ end
         @test resp.status == 200
         @test String(take!(res_body)) == "hey there sailor"
     finally
-        close(server)
+        if server !== nothing
+            close(server)
+        end
         HTTP.ConnectionPool.closeall()
     end
 end
