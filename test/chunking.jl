@@ -17,8 +17,7 @@ using BufferedStreams
                    "data: 3$(repeat("x", sz))\n\n"
     split1 = 106
     split2 = 300
-    server = Sockets.listen(ip"127.0.0.1", port)
-    t = @async HTTP.listen("127.0.0.1", port; server=server) do http
+    server = HTTP.listen!(port) do http
         startwrite(http)
         tcp = http.stream.io
 
@@ -33,9 +32,6 @@ using BufferedStreams
         write(tcp, encoded_data[split2+1:end])
         flush(tcp)
     end
-
-    sleep(1)
-    @assert !istaskdone(t)
 
     r = HTTP.get("http://127.0.0.1:$port")
 

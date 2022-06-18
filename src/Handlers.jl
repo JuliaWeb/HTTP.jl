@@ -1,6 +1,6 @@
 module Handlers
 
-export Handler, Middleware, serve, Router, register!, getparams, getcookies, streamhandler
+export Handler, Middleware, serve, serve!, Router, register!, getparams, getcookies, streamhandler
 
 using URIs
 using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
@@ -65,6 +65,7 @@ end
 
 """
     HTTP.serve(f, host, port; stream::Bool=false, kw...)
+    HTTP.serve!(f, host, port; stream::Bool=false, kw...) -> HTTP.Server
 
 Start a server on the given host and port; for each incoming request, call the
 given handler function `f`, which should be of the form `f(req::HTTP.Request) -> HTTP.Response`
@@ -79,9 +80,10 @@ Accepts all the same keyword arguments (and passes them along) to [`HTTP.listen`
   * `connection_count`: a `Ref{Int}` to keep track of currently open connections
   * `readtimeout`: time in seconds (integer) that the server should wait for a request to be sent
 """
-function serve(f, host=Sockets.localhost, port=8081; stream::Bool=false, kw...)
-    return Servers.listen(stream ? f : streamhandler(f), host, port; kw...)
-end
+function serve end
+
+serve(f, args...; stream::Bool=false, kw...) = Servers.listen(stream ? f : streamhandler(f), args...; kw...)
+serve!(f, args...; stream::Bool=false, kw...) = Servers.listen!(stream ? f : streamhandler(f), args...; kw...)
 
 # tree-based router handler
 mutable struct Variable

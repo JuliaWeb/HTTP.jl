@@ -341,9 +341,7 @@ function newconnection(::Type{T},
                        host::AbstractString,
                        port::AbstractString;
                        connection_limit=default_connection_limit,
-                       pipeline_limit=default_pipeline_limit,
                        idle_timeout=typemax(Int),
-                       reuse_limit=nolimit,
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        kw...)::Connection where {T <: IO}
     return acquire(

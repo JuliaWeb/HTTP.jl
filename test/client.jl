@@ -1,6 +1,6 @@
 module TestClient
 
-using HTTP
+using HTTP, HTTP.Exceptions
 include(joinpath(dirname(pathof(HTTP)), "../test/resources/TestRequest.jl"))
 using .TestRequest
 using Sockets
@@ -147,9 +147,9 @@ end
     end
 
     @testset "Incomplete response with known content length" begin
-        server = Sockets.listen(ip"0.0.0.0", 8080)
+        server = nothing
         try
-            task = @async HTTP.listen("0.0.0.0", 8080; server=server) do http
+            server = HTTP.listen!("0.0.0.0", 8080) do http
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Length" => "64") # Promise 64 bytes...
                 HTTP.startwrite(http)
@@ -168,7 +168,7 @@ end
             @test err.error isa EOFError
         finally
             # Shutdown
-            try; close(server); wait(task); catch; end
+            @try close(server)
             HTTP.ConnectionPool.closeall()
         end
     end
@@ -283,9 +283,9 @@ end
     alladdrs = getalladdrinfo("localhost")
     if ip"127.0.0.1" in alladdrs && ip"::1" in alladdrs
         for interface in (IPv4(0), IPv6(0))
-            server = listen(interface, 8080)
+            server = nothing
             try
-                @async HTTP.listen(string(interface), 8080; server=server) do http
+                server = HTTP.listen!(string(interface), 8080) do http
                     HTTP.setstatus(http, 200)
                     HTTP.startwrite(http)
                     HTTP.write(http, "hello, world")
@@ -294,7 +294,7 @@ end
                 @test req.status == 200
                 @test String(req.body) == "hello, world"
             finally
-                close(server)
+                @try close(server)
                 HTTP.ConnectionPool.closeall()
             end
         end
@@ -302,9 +302,9 @@ end
 end
 
 @testset "Sockets.get(sock|peer)name(::HTTP.Stream)" begin
-    server = listen(IPv4(0), 8080)
+    server = nothing
     try
-        @async HTTP.listen("0.0.0.0", 8080; server=server) do http
+        server = HTTP.listen!("0.0.0.0", 8080) do http
             sock = Sockets.getsockname(http)
             peer = Sockets.getpeername(http)
             str = sprint() do io
@@ -332,7 +332,7 @@ end
             @test peer[2] == 8080
         end
     finally
-        close(server)
+        @try close(server)
         HTTP.ConnectionPool.closeall()
     end
 
@@ -359,9 +359,9 @@ end
 end
 
 @testset "Implicit request headers" begin
-    server = listen(IPv4(0), 8080)
+    server = nothing
     try
-        tsk = @async HTTP.listen("0.0.0.0", 8080; server=server) do http
+        server = HTTP.listen!("0.0.0.0", 8080) do http
             data = Dict{String,String}(http.message.headers)
             HTTP.setstatus(http, 200)
             HTTP.startwrite(http)
@@ -389,7 +389,7 @@ end
 
         HTTP.setuseragent!(old_user_agent)
     finally
-        close(server)
+        @try close(server)
         HTTP.ConnectionPool.closeall()
     end
 end
@@ -397,11 +397,11 @@ end
 import NetworkOptions, MbedTLS
 @testset "NetworkOptions for host verification" begin
     # Set up server with self-signed cert
-    server = listen(IPv4(0), 8443)
+    server = nothing
     try
         cert, key = joinpath.(dirname(pathof(HTTP)), "../test", "resources", ("cert.pem", "key.pem"))
         sslconfig = MbedTLS.SSLConfig(cert, key)
-        tsk = @async HTTP.listen("0.0.0.0", 8443; server=server, sslconfig=sslconfig) do http
+        server = HTTP.listen!("0.0.0.0", 8443; sslconfig=sslconfig) do http
             HTTP.setstatus(http, 200)
             HTTP.startwrite(http)
             HTTP.write(http, "hello, world")
@@ -430,7 +430,7 @@ import NetworkOptions, MbedTLS
             @test HTTP.get(url; require_ssl_verification=false).status == 200
         end
     finally
-        close(server)
+        @try close(server)
         HTTP.ConnectionPool.closeall()
     end
 end

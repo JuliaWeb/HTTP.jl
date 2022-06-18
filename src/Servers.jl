@@ -35,11 +35,18 @@ function Listener(server::Base.IOServer; sslconfig::Union{MbedTLS.SSLConfig, Not
     return Listener(addr, host, port, sslconfig, server)
 end
 
+supportsreuseaddr() = ccall(:jl_has_so_reuseport, Int32, ()) == 1
+
 function Listener(addr::Sockets.InetAddr, host::String, port::String;
     sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
     reuseaddr::Bool=false,
-    backlog::Integer=Sockets.BACKLOG_DEFAULT, kw...)
-    if reuseaddr && 
+    backlog::Integer=Sockets.BACKLOG_DEFAULT,
+    server::Union{Nothing, Base.IOServer}=nothing, # for backwards compat
+    kw...)
+    if server !== nothing
+        return Listener(server; sslconfig=sslconfig)
+    end
+    if reuseaddr && supportsreuseaddr()
         if ccall(:jl_has_so_reuseport, Int32, ()) != 1
             @warn "reuseaddr=true not supported on this platform: $(Sys.KERNEL)"
             @goto fallback
@@ -304,7 +311,7 @@ function listen!(f, listener::Listener;
     max_connections::Integer=typemax(Int),
     readtimeout::Integer=0,
     access_log::Union{Function,Nothing}=nothing,
-    verbose=false)
+    verbose=false, kw...)
     conns = Set{Connection}()
     ready_to_accept = Ref(false)
     if verbose > 0
@@ -358,10 +365,14 @@ function listenloop(f, listener, conns, tcpisvalid,
                 Base.release(sem)
             end
         catch e
-            @errorv 2 "error in core listenloop" exception=(e, catch_backtrace())
-            # quick little sleep in case there's a temporary
-            # local error accepting and this might help avoid quickly re-erroring
-            sleep(0.05 + rand() * 0.05)
+            if e.code == Base.UV_ECONNABORTED
+                @infov 1 "Server on $(listener.hostname):$(listener.hostport) closing"
+            else
+                @errorv 2 "Server on $(listener.hostname):$(listener.hostport) errored" exception=(e, catch_backtrace())
+                # quick little sleep in case there's a temporary
+                # local error accepting and this might help avoid quickly re-erroring
+                sleep(0.05 + rand() * 0.05)
+            end
         end
     end
     return
