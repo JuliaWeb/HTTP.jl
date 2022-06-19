@@ -421,7 +421,6 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
             http = Stream(request, c)
             # attempt to read request line and headers
             try
-                dump(http)
                 startread(http)
                 @debugv 1 "startread called"
                 c.state = ACTIVE # once we've started reading, set ACTIVE state

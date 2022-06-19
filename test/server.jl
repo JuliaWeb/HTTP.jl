@@ -51,7 +51,7 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
     sleep(0.1)
     try
         resp = String(readavailable(tcp))
-        @test occursin(r"HTTP/1.1 413 Request Entity Too Large", resp)
+        @test occursin(r"HTTP/1.1 431 Request Header Fields Too Large", resp)
     catch
         println("Failed reading bad request response")
     end
