@@ -32,7 +32,7 @@ end
 function Listener(server::Base.IOServer; sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing, kw...)
     host, port = getsockname(server)
     addr = getinet(host, port)
-    return Listener(addr, host, port, sslconfig, server)
+    return Listener(addr, string(host), string(port), sslconfig, server)
 end
 
 supportsreuseaddr() = ccall(:jl_has_so_reuseport, Int32, ()) == 1
