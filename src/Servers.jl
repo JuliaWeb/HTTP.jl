@@ -46,22 +46,20 @@ function Listener(addr::Sockets.InetAddr, host::String, port::String;
     if server !== nothing
         return Listener(server; sslconfig=sslconfig)
     end
-    if reuseaddr && supportsreuseaddr()
-        if ccall(:jl_has_so_reuseport, Int32, ()) != 1
+    if reuseaddr
+        if !supportsreuseaddr()
             @warn "reuseaddr=true not supported on this platform: $(Sys.KERNEL)"
             @goto fallback
         end
         server = Sockets.TCPServer(delay = false)
-        bindearly = Sys.islinux()
-        bindearly && Sockets.bind(server, addr.host, addr.port)
         rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), server.handle)
         if rc < 0
             close(server)
             @warn "reuseaddr=true failed; falling back to regular listen: $(Sys.KERNEL)"
             @goto fallback
         end
-        bindearly || Sockets.bind(server, addr.host, addr.port)
-        Sockets.listen(server)
+        Sockets.bind(server, addr.host, addr.port; reuseaddr=true)
+        Sockets.listen(server; backlog=backlog)
     else
 @label fallback
         server = Sockets.listen(addr; backlog=backlog)
