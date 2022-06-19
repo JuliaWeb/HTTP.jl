@@ -88,7 +88,18 @@ function getsslcontext(tcp, sslconfig)
     end
 end
 
-"Convenience object for passing around server details"
+"""
+    HTTP.Server
+
+Returned from `HTTP.listen!`/`HTTP.serve!` once a server is up listening
+and ready to accept connections. Internally keeps track of active connections.
+Also holds reference to any `on_shutdown` functions to be called when the server
+is closed. Also holds a reference to the listening loop `Task` that can be
+waited on via `wait(server)`, which provides similar functionality to `HTTP.listen`/
+`HTTP.serve`. Can initiate a graceful shutdown where active connections are allowed
+to finish being handled by calling `close(server)`. For a more forceful and immediate
+shutdown, use `HTTP.forceclose(server)`.
+"""
 struct Server{L <: Listener}
     # listener socket + details
     listener::L
@@ -138,9 +149,18 @@ end
 
 function closewriteandwait(c::Connection)
     io = IOExtras.tcpsocket(ConnectionPool.getrawstream(c))
-    flush(io)
-    closewrite(io)
-    sleep(0.5) # give time for client to receive FIN
+    @try begin
+        flush(io)
+        closewrite(io)
+        sleep(0.5) # give time for client to receive FIN
+    end
+    return
+end
+
+function closeconnection(c::Connection)
+    c.state = CLOSED
+    closewriteandwait(c)
+    close(c)
     return
 end
 
@@ -285,6 +305,13 @@ end
 """
 function listen end
 
+"""
+    HTTP.listen!(args...; kw...) -> HTTP.Server
+
+Non-blocking version of [`HTTP.listen`](@ref); see that function for details.
+"""
+function listen! end
+
 listen(f, args...; kw...) = listen(f, Listener(args...; kw...); kw...)
 listen!(f, args...; kw...) = listen!(f, Listener(args...; kw...); kw...)
 
@@ -388,16 +415,72 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
     try
         # if the connection socket or listener close, we stop taking requests
         while isopen(c) && !closedorclosing(c.state) && isopen(listener)
-            handle_transaction(f, c, listener, access_log)
+            # create new Request to be populated by parsing code
+            request = Request()
+            # wrap Request in Stream w/ Connection for request reading/response writing
+            http = Stream(request, c)
+            # attempt to read request line and headers
+            try
+                dump(http)
+                startread(http)
+                @debugv 1 "startread called"
+                c.state = ACTIVE # once we've started reading, set ACTIVE state
+            catch e
+                # for ParserErrors, try to inform client of the problem
+                if e isa ParseError
+                    write(c, Response(e.code == :HEADER_SIZE_EXCEEDS_LIMIT ? 431 : 400, string(e.code)))
+                end
+                @debugv 1 "handle_connection startread error" exception=(e, catch_backtrace())
+                break
+            end
+
+            if hasheader(request, "Connection", "close")
+                c.state = CLOSING # set CLOSING so no more requests are read
+                setheader(request.response, "Connection" => "close")
+            end
+            request.response.status = 200
+
+            try
+                # invokelatest becuase the perf is negligible, but this makes live-editing handlers more Revise friendly
+                @debugv 1 "invoking handler"
+                Base.invokelatest(f, http)
+                # If `startwrite()` was never called, throw an error so we send a 500 and log this
+                if isopen(http) && !iswritable(http)
+                    error("Server never wrote a response")
+                end
+                @debugv 1 "closeread"
+                closeread(http)
+                @debugv 1 "closewrite"
+                closewrite(http)
+                c.state = IDLE
+            catch e
+                # The remote can close the stream whenever it wants to, but there's nothing
+                # anyone can do about it on this side. No reason to log an error in that case.
+                level = e isa Base.IOError && !isopen(c) ? Logging.Debug : Logging.Error
+                @logmsgv 1 level "handle_connection handler error" exception=(e, stacktrace(catch_backtrace()))
+
+                if isopen(http) && !iswritable(http)
+                    request.response.status = 500
+                    startwrite(http)
+                    write(http, sprint(showerror, e))
+                    closewrite(http)
+                end
+                c.state = CLOSING
+            finally
+                if access_log !== nothing
+                    @try(@info sprint(access_log, http) _group=:access)
+                end
+            end
         end
     catch e
-        # errors thrown here should only be peer closed
-        # the connection errors, so ignore and return
-        @errorv 2 "error while handling connection" exception=(e, catch_backtrace())
+        # we should be catching everything inside the while loop, but just in case
+        @errorv 1 "error while handling connection" exception=(e, catch_backtrace())
     finally
         if readtimeout > 0
             wait_for_timeout[] = false
         end
+        # when we're done w/ the connection, ensure it's closed and state is properly set
+        closeconnection(c)
     end
     return
 end
@@ -412,81 +495,11 @@ function check_readtimeout(c, readtimeout, wait_for_timeout)
             try
                 writeheaders(c.io, Response(408, ["Connection" => "close"]))
             finally
-                closewriteandwait(c)
-                close(c)
+                closeconnection(c)
             end
             break
         end
         sleep(readtimeout + rand() * readtimeout)
-    end
-    return
-end
-
-"""
-Create a `HTTP.Stream` and parse the Request headers from a `HTTP.Connection`
-(by calling `startread(::Stream`).
-If there is a parse error, send an error Response.
-Otherwise, execute stream processing function `f`.
-If `f` throws an exception, send an error Response and close the connection.
-"""
-function handle_transaction(f, c::Connection, server, access_log)
-    request = Request()
-    http = Stream(request, c)
-    final_transaction = false
-    try
-        @debugv 2 "server startread"
-        startread(http)
-        if !isopen(server)
-            close(c)
-            return
-        end
-    catch e
-        if e isa EOFError && isempty(request.method)
-            return
-        elseif e isa ParseError
-            status = e.code == :HEADER_SIZE_EXCEEDS_LIMIT  ? 413 : 400
-            write(c, Response(status, body = string(e.code)))
-            close(c)
-            return
-        else
-            rethrow(e)
-        end
-    end
-
-    request.response.status = 200
-    if hasheader(request, "Connection", "close")
-        final_transaction = true
-        setheader(request.response, "Connection" => "close")
-    end
-
-    try
-        Base.invokelatest(f, http)
-        # If `startwrite()` was never called, throw an error so we send a 500 and log this
-        if isopen(http) && !iswritable(http)
-            error("Server never wrote a response")
-        end
-        @debugv 2 "server closeread"
-        closeread(http)
-        @debugv 2 "server closewrite"
-        closewrite(http)
-    catch e
-        # The remote can close the stream whenever it wants to, but there's nothing
-        # anyone can do about it on this side. No reason to log an error in that case.
-        level = e isa Base.IOError && !isopen(http) ? Logging.Debug : Logging.Error
-        @logmsg level "error handling request" exception=(e, stacktrace(catch_backtrace()))
-
-        if isopen(http) && !iswritable(http)
-            http.message.response.status = 500
-            startwrite(http)
-            write(http, sprint(showerror, e))
-            closewrite(http)
-        end
-        final_transaction = true
-    finally
-        if access_log !== nothing
-            @try(@info sprint(access_log, http) _group=:access)
-        end
-        final_transaction && close(c.io)
     end
     return
 end

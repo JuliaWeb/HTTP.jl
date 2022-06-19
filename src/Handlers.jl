@@ -126,6 +126,13 @@ close(server)
 """
 function serve end
 
+"""
+    HTTP.serve!(args...; kw...) -> HTTP.Server
+
+Non-blocking version of [`HTTP.serve`](@ref); see that function for details.
+"""
+function serve! end
+
 serve(f, args...; stream::Bool=false, kw...) = Servers.listen(stream ? f : streamhandler(f), args...; kw...)
 serve!(f, args...; stream::Bool=false, kw...) = Servers.listen!(stream ? f : streamhandler(f), args...; kw...)
 

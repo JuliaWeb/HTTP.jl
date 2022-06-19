@@ -244,6 +244,7 @@ function Base.read(http::Stream, ::Type{UInt8})
         http.warn_not_to_read_one_byte_at_a_time = false
     end
 
+    @show ntoread(http)
     if ntoread(http) == 0
         throw(EOFError())
     end
