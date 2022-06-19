@@ -63,6 +63,9 @@ function streamhandler(handler)
     end
 end
 
+# Interface change in HTTP@1
+@deprecate RequestHandlerFunction streamhandler
+
 """
     HTTP.serve(handler, host=Sockets.localhost, port=8081; kw...)
     HTTP.serve(handler, port::Integer=8081; kw...)

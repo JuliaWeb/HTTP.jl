@@ -317,6 +317,9 @@ function isupgrade(r::Message)
     hasheader(r, "Upgrade", "websocket")
 end
 
+# Renamed in HTTP@1
+@deprecate is_upgrade isupgrade
+
 @noinline handshakeerror() = throw(WebSocketError(CloseFrameBody(1002, "Websocket handshake failed")))
 
 function hashedkey(key)
