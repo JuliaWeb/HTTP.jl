@@ -162,6 +162,18 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
     r = HTTP.request("GET", "https://127.0.0.1:8092"; require_ssl_verification = false)
     @test_throws HTTP.RequestError HTTP.request("GET", "http://127.0.0.1:8092"; require_ssl_verification = false)
     close(server)
+
+    # HTTP.listen with server kwarg
+    let host = Sockets.localhost; port = 8093
+        server = Sockets.listen(host, port)
+        HTTP.listen!(Sockets.localhost, 8093; server=server) do http
+            HTTP.setstatus(http, 200)
+            HTTP.startwrite(http)
+        end
+        r = HTTP.get("http://$(host):$(port)/"; readtimeout=30)
+        @test r.status == 200
+        close(server)
+    end
 end # @testset
 
 @testset "on_shutdown" begin
