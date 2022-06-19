@@ -52,15 +52,10 @@ if Int === Int64 && !Sys.iswindows()
 end # @testset "Autobahn testsuite"
 
 @testset "Server" begin
-    server = Sockets.listen(Sockets.localhost, 9002)
-    ready_to_accept = Ref(false)
-    @async WebSockets.listen(Sockets.localhost, 9002; server, ready_to_accept, suppress_close_error=true) do ws
+    server = WebSockets.listen!(9002; suppress_close_error=true) do ws
         for msg in ws
             send(ws, msg)
         end
-    end
-    while !ready_to_accept[]
-        sleep(0.5)
     end
     rm(joinpath(DIR, "reports/server/index.json"); force=true)
     @test success(run(Cmd(`wstest -u 0 -m fuzzingclient -s config/fuzzingclient.json`; dir=DIR)))

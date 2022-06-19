@@ -9,70 +9,178 @@ For server functionality operating on full requests, see the `?HTTP.serve` funct
 """
 module Servers
 
-export listen
+export listen, listen!, Server, forceclose
 
 using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
-using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..ConnectionPool
+using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..ConnectionPool, ..Exceptions
 import ..access_threaded
 import ..@logfmt_str
 
-# rate limiting
-mutable struct RateLimit
-    allowance::Float64
-    lastcheck::Dates.DateTime
-end
+TRUE(x) = true
+getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
+getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
 
-function update!(rl::RateLimit, rate_limit)
-    current = Dates.now()
-    timepassed = float(Dates.value(current - rl.lastcheck)) / 1000.0
-    rl.lastcheck = current
-    rl.allowance += timepassed * rate_limit
-    if rl.allowance > rate_limit
-        rl.allowance = rate_limit
-    end
-    return nothing
-end
-
-const RATE_LIMITS = Dict{IPAddr, RateLimit}[]
-check_rate_limit(tcp::Base.PipeEndpoint, rate_limit::Rational{Int}) = true
-check_rate_limit(tcp, ::Nothing) = true
-
-"""
-`check_rate_limit` takes a new connection (socket), and checks in
-the global RATE_LIMITS store for the last time a connection was
-seen for the same ip address. If the new connection has come too
-soon, it is closed and discarded, otherwise, the timestamp for the
-ip address is updated in the global cache.
-"""
-function check_rate_limit(tcp, rate_limit::Rational{Int})
-    ip = Sockets.getpeername(tcp)[1]
-    rl_d = access_threaded(Dict{IPAddr, RateLimit}, RATE_LIMITS)
-    rl = get!(rl_d, ip, RateLimit(rate_limit, Dates.DateTime(0)))
-    update!(rl, rate_limit)
-    if rl.allowance < 1.0
-        @warn "discarding connection from $ip due to rate limiting"
-        return false
-    else
-        rl.allowance -= 1.0
-    end
-    return true
-end
-
-"Convenience object for passing around server details"
-struct Server{S <: Union{SSLConfig, Nothing}, I <: Base.IOServer}
-    ssl::S
-    server::I
+struct Listener{S <: Union{SSLConfig, Nothing}, I <: Base.IOServer}
+    addr::Sockets.InetAddr
     hostname::String
     hostport::String
-    on_shutdown::Any
-    access_log::Union{Function,Nothing}
+    ssl::S
+    server::I
 end
-Server(ssl, server, hostname, hostport, on_shutdown) =
-    Server(ssl, server, hostname, hostport, on_shutdown, nothing)
 
-Base.isopen(s::Server) = isopen(s.server)
-Base.close(s::Server) = (shutdown(s.on_shutdown); close(s.server))
+function Listener(server::Base.IOServer; sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing, kw...)
+    host, port = getsockname(server)
+    addr = getinet(host, port)
+    return Listener(addr, host, port, sslconfig, server)
+end
+
+supportsreuseaddr() = ccall(:jl_has_so_reuseport, Int32, ()) == 1
+
+function Listener(addr::Sockets.InetAddr, host::String, port::String;
+    sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
+    reuseaddr::Bool=false,
+    backlog::Integer=Sockets.BACKLOG_DEFAULT,
+    server::Union{Nothing, Base.IOServer}=nothing, # for backwards compat
+    kw...)
+    if server !== nothing
+        return Listener(server; sslconfig=sslconfig)
+    end
+    if reuseaddr
+        if !supportsreuseaddr()
+            @warn "reuseaddr=true not supported on this platform: $(Sys.KERNEL)"
+            @goto fallback
+        end
+        server = Sockets.TCPServer(delay = false)
+        rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), server.handle)
+        if rc < 0
+            close(server)
+            @warn "reuseaddr=true failed; falling back to regular listen: $(Sys.KERNEL)"
+            @goto fallback
+        end
+        Sockets.bind(server, addr.host, addr.port; reuseaddr=true)
+        Sockets.listen(server; backlog=backlog)
+    else
+@label fallback
+        server = Sockets.listen(addr; backlog=backlog)
+    end
+    return Listener(addr, host, port, sslconfig, server)
+end
+
+Listener(host::Union{IPAddr, String}, port::Integer; kw...) = Listener(getinet(host, port), string(host), string(port); kw...)
+Listener(port::Integer; kw...) = Listener(Sockets.localhost, port; kw...)
+
+Base.isopen(l::Listener) = isopen(l.server)
+Base.close(l::Listener) = close(l.server)
+
+accept(s::Listener{Nothing}) = Sockets.accept(s.server)::TCPSocket
+accept(s::Listener{SSLConfig}) = getsslcontext(Sockets.accept(s.server), s.ssl)
+
+function getsslcontext(tcp, sslconfig)
+    try
+        ssl = MbedTLS.SSLContext()
+        MbedTLS.setup!(ssl, sslconfig)
+        MbedTLS.associate!(ssl, tcp)
+        MbedTLS.handshake!(ssl)
+        return ssl
+    catch e
+        return nothing
+    end
+end
+
+"""
+    HTTP.Server
+
+Returned from `HTTP.listen!`/`HTTP.serve!` once a server is up listening
+and ready to accept connections. Internally keeps track of active connections.
+Also holds reference to any `on_shutdown` functions to be called when the server
+is closed. Also holds a reference to the listening loop `Task` that can be
+waited on via `wait(server)`, which provides similar functionality to `HTTP.listen`/
+`HTTP.serve`. Can initiate a graceful shutdown where active connections are allowed
+to finish being handled by calling `close(server)`. For a more forceful and immediate
+shutdown, use `HTTP.forceclose(server)`.
+"""
+struct Server{L <: Listener}
+    # listener socket + details
+    listener::L
+    # optional function or vector of functions
+    # to call when closing server
+    on_shutdown::Any
+    # list of currently acctive connections
+    connections::Set{Connection}
+    # server listenandserve loop task
+    task::Task
+end
+
+Base.isopen(s::Server) = isopen(s.listener)
+Base.wait(s::Server) = wait(s.task)
+
+function forceclose(s::Server)
+    shutdown(s.on_shutdown)
+    close(s.listener)
+    for c in s.connections
+        close(c)
+    end
+    return wait(s.task)
+end
+
+"""
+    ConnectionState
+
+When a connection is first made, it immediately goes into IDLE state.
+Once startread(stream) returns, it's marked as ACTIVE.
+Once closewrite(stream) returns, it's put back in IDLE,
+unless it's been given the CLOSING state, then
+it will close(c) itself and mark itself as CLOSED.
+"""
+@enum ConnectionState IDLE ACTIVE CLOSING CLOSED
+closedorclosing(st) = st == CLOSING || st == CLOSED
+
+function requestclose!(c::Connection)
+    if c.state == IDLE
+        closewriteandwait(c)
+        close(c)
+        c.state = CLOSED
+    else
+        c.state = CLOSING
+    end
+    return
+end
+
+function closewriteandwait(c::Connection)
+    io = IOExtras.tcpsocket(ConnectionPool.getrawstream(c))
+    @try begin
+        flush(io)
+        closewrite(io)
+        sleep(0.5) # give time for client to receive FIN
+    end
+    return
+end
+
+function closeconnection(c::Connection)
+    c.state = CLOSED
+    closewriteandwait(c)
+    close(c)
+    return
+end
+
+# graceful shutdown that waits for active connectiosn to finish being handled
+function Base.close(s::Server)
+    shutdown(s.on_shutdown)
+    close(s.listener)
+    # first pass to mark or request connections to close
+    for c in s.connections
+        requestclose!(c)
+    end
+    # second pass to wait for connections to close
+    # we wait for connections to empty because as
+    # connections close themselves, they are removed
+    # from our connections Set
+    while !isempty(s.connections)
+        sleep(0.5 + rand() * 0.1)
+    end
+    return wait(s.task)
+end
 
 """
     shutdown(fns::Vector{<:Function})
@@ -92,51 +200,42 @@ function shutdown(fn::Function)
     end
 end
 
-Sockets.accept(s::Server{Nothing}) = accept(s.server)::TCPSocket
-Sockets.accept(s::Server{SSLConfig}) = getsslcontext(accept(s.server), s.ssl)
-
-function getsslcontext(tcp, sslconfig)
-    try
-        ssl = MbedTLS.SSLContext()
-        MbedTLS.setup!(ssl, sslconfig)
-        MbedTLS.associate!(ssl, tcp)
-        MbedTLS.handshake!(ssl)
-        return ssl
-    catch e
-        return nothing
-    end
-end
-
 """
-    HTTP.listen([host=Sockets.localhost[, port=8081]]; kw...) do http::HTTP.Stream
-        ...
-    end
+    HTTP.listen(handler, host=Sockets.localhost, port=8081; kw...)
+    HTTP.listen(handler, port::Integer=8081; kw...)
+    HTTP.listen(handler, server::Base.IOServer; kw...)
+    HTTP.listen!(args...; kw...) -> HTTP.Server
 
-Listen for HTTP connections and execute the `do` function for each request.
+Listen for HTTP connections and execute the `handler` function for each request.
+Listening details can be passed as `host`/`port` pair, a single `port` (`host` will
+default to `localhost`), or an already listening `server` object, as returned from
+`Sockets.listen`. To open up a server to external requests, the `host` argument is
+typically `"0.0.0.0"`.
 
-The `do` function should be of the form `f(::HTTP.Stream)::Nothing`, and should
+The `HTTP.listen!` form is non-blocking and returns an `HTTP.Server` object which can be
+`wait(server)`ed on manually, or `close(server)`ed to gracefully shut down the server.
+Calling `HTTP.forceclose(server)` will immediately force close the server and all active
+connections. `HTTP.listen` will block on the server listening loop until interrupted or
+and an irrecoverable error occurs.
+
+The `handler` function should be of the form `f(::HTTP.Stream)::Nothing`, and should
 at the minimum set a status via `setstatus()` and call `startwrite()` either
-explicitly or implicitly by writing out a response via `write()`.  Failure to
+explicitly or implicitly by writing out a response via `write()`. Failure to
 do this will result in an HTTP 500 error being transmitted to the client.
 
 Optional keyword arguments:
  - `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl
     connections. Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl
-    verification (useful for testing).
- - `reuse_limit = nolimit`, number of times a connection is allowed to be
-   reused after the first request.
- - `tcpisvalid = tcp->true`, function `f(::TCPSocket)::Bool` to, check accepted
-    connection before processing requests. e.g. to do source IP filtering.
+    verification (useful for testing). Construct a custom `SSLConfig` object
+    with `MbedTLS.SSLConfig(certfile, keyfile)`.
+ - `tcpisvalid = tcp->true`, function `f(::TCPSocket)::Bool` to check if accepted
+    connections are valid before processing requests. e.g. to do source IP filtering.
  - `readtimeout::Int=0`, close the connection if no data is received for this
     many seconds. Use readtimeout = 0 to disable.
  - `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
+    Not supported on some OS platforms. Can check `HTTP.Servers.supportsreuseaddr()`.
  - `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
-    allows closing the server.
- - `connection_count::Ref{Int}`, reference to track the number of currently
-    open connections.
- - `rate_limit::Rational{Int}=nothing"`, number of `connections//second`
-    allowed per client IP address; excess connections are immediately closed.
-    e.g. 5//1.
+    allows manually closing or configuring the server socket.
  - `verbose::Bool=false`, log connection information to `stdout`.
  - `access_log::Function`, function for formatting access log messages. The
     function should accept two arguments, `io::IO` to which the messages should
@@ -150,6 +249,7 @@ Optional keyword arguments:
 
 e.g.
 ```julia
+# start a blocking server
 HTTP.listen("127.0.0.1", 8081) do http
     HTTP.setheader(http, "Content-Type" => "text/html")
     write(http, "target uri: \$(http.message.target)<BR>")
@@ -159,7 +259,8 @@ HTTP.listen("127.0.0.1", 8081) do http
     return
 end
 
-HTTP.listen("127.0.0.1", 8081) do http
+# non-blocking server
+server = HTTP.listen!("127.0.0.1", 8081) do http
     @show http.message
     @show HTTP.header(http, "Content-Type")
     while !eof(http)
@@ -171,18 +272,7 @@ HTTP.listen("127.0.0.1", 8081) do http
     write(http, "response body")
     write(http, "more response body")
 end
-```
-
-The `server=` option can be used to pass an already listening socket to
-`HTTP.listen`. This allows manual control of server shutdown.
-
-e.g.
-```julia
-using Sockets
-server = Sockets.listen(Sockets.InetAddr(parse(IPAddr, host), port))
-@async HTTP.listen(f, host, port; server=server)
-
-# Closing server will stop HTTP.listen.
+# can gracefully close server manually
 close(server)
 ```
 
@@ -215,117 +305,97 @@ end
 """
 function listen end
 
-const nolimit = typemax(Int)
+"""
+    HTTP.listen!(args...; kw...) -> HTTP.Server
 
-getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
-getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
+Non-blocking version of [`HTTP.listen`](@ref); see that function for details.
+"""
+function listen! end
 
-function listen(f,
-                host::Union{IPAddr, String}=Sockets.localhost,
-                port::Integer=8081
-                ;
-                sslconfig::Union{MbedTLS.SSLConfig, Nothing}=nothing,
-                tcpisvalid::Function=tcp->true,
-                server::Union{Base.IOServer, Nothing}=nothing,
-                reuseaddr::Bool=false,
-                max_connections::Int=nolimit,
-                connection_count::Ref{Int}=Ref(0),
-                rate_limit::Union{Rational{Int}, Nothing}=nothing,
-                reuse_limit::Int=nolimit,
-                readtimeout::Int=0,
-                verbose=false,
-                ready_to_accept::Ref{Bool}=Ref(false),
-                access_log::Union{Function,Nothing}=nothing,
-                on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing)
-    ready_to_accept[] = false
-    inet = getinet(host, port)
-    if server !== nothing
-        tcpserver = server
-        host, port = getsockname(server)
-    elseif reuseaddr
-        tcpserver = Sockets.TCPServer(; delay=false)
-        if Sys.isunix()
-            if Sys.isapple()
-                verbose > 0 && @warn "note that `reuseaddr=true` allows multiple processes to bind to the same addr/port, but only one process will accept new connections (if that process exits, another process listening will start accepting)"
-            end
-            rc = ccall(:jl_tcp_reuseport, Int32, (Ptr{Cvoid},), tcpserver.handle)
-            Sockets.bind(tcpserver, inet.host, inet.port; reuseaddr=true)
-        else
-            @warn "reuseaddr=true may not be supported on this platform: $(Sys.KERNEL)"
-            Sockets.bind(tcpserver, inet.host, inet.port; reuseaddr=true)
-        end
-        Sockets.listen(tcpserver)
-    else
-        tcpserver = Sockets.listen(inet)
+listen(f, args...; kw...) = listen(f, Listener(args...; kw...); kw...)
+listen!(f, args...; kw...) = listen!(f, Listener(args...; kw...); kw...)
+
+function listen(f, listener::Listener; kw...)
+    server = listen!(f, listener; kw...)
+    # block on server task
+    try
+        wait(server)
+    finally
+        # try to gracefully close
+        close(server)
     end
-    verbose > 0 && @info "Listening on: $host:$port"
+    return server
+end
 
-    tcpisvalid = let f=tcpisvalid
-        x -> f(x) && check_rate_limit(x, rate_limit)
-    end
-
-    s = Server(sslconfig, tcpserver, string(host), string(port), on_shutdown, access_log)
+function listen!(f, listener::Listener;
+    on_shutdown=nothing,
+    tcpisvalid=TRUE,
+    max_connections::Integer=typemax(Int),
+    readtimeout::Integer=0,
+    access_log::Union{Function,Nothing}=nothing,
+    verbose=false, kw...)
+    conns = Set{Connection}()
+    ready_to_accept = Ref(false)
     if verbose > 0
-        LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
-            listenloop(f, s, tcpisvalid, connection_count, max_connections,
-                         reuse_limit, readtimeout, ready_to_accept, verbose)
+        tsk = @async LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
+            listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept)
         end
     else
-        return listenloop(f, s, tcpisvalid, connection_count, max_connections,
-                         reuse_limit, readtimeout, ready_to_accept, verbose)
+        tsk = @async listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept)
     end
+    # listen! is "semi-blocking" in that we only want
+    # to return when the server is absolutely ready to accept
+    # new connections; useful for testing purposes and local development
+    # it also provides an immediate yield so our listenloop task
+    # has the chance to be scheduled and get started
+    while !ready_to_accept[]
+        sleep(0.01)
+    end
+    return Server(listener, on_shutdown, conns, tsk)
 end
 
 """"
 Main server loop.
 Accepts new tcp connections and spawns async tasks to handle them."
 """
-function listenloop(f, server, tcpisvalid, connection_count,
-                       max_connections, reuse_limit, readtimeout, ready_to_accept, verbose)
+function listenloop(f, listener, conns, tcpisvalid,
+                       max_connections, readtimeout, access_log, ready_to_accept)
     sem = Base.Semaphore(max_connections)
-    count = 1
+    @infov 1 "Listening on: $(listener.hostname):$(listener.hostport)"
     ready_to_accept[] = true
-    while isopen(server)
+    while isopen(listener)
         try
             Base.acquire(sem)
-            io = accept(server)
+            io = accept(listener)
             if io === nothing
-                verbose > 0 && @warn "unable to accept new connection"
+                @warnv 1 "unable to accept new connection"
                 continue
             elseif !tcpisvalid(io)
-                verbose > 0 && @info "Accept-Reject:  $io"
+                @warnv 1 "!tcpisvalid: $io"
                 close(io)
                 continue
             end
-            connection_count[] += 1
             conn = Connection(io)
-            conn.host, conn.port = server.hostname, server.hostport
+            conn.state = IDLE
+            push!(conns, conn)
+            conn.host, conn.port = listener.hostname, listener.hostport
             @async try
-                # verbose > 0 && @info "Accept ($count):  $conn"
-                handle_connection(f, conn, server, reuse_limit, readtimeout)
-                # verbose > 0 && @info "Closed ($count):  $conn"
-            catch e
-                if e isa Base.IOError &&
-                    (e.code == -54 || e.code == -4077 || e.code == -104 || e.code == -131 || e.code == -232)
-                    verbose > 0 && @warn "connection reset by peer (ECONNRESET)"
-                else
-                    @error "" exception=(e, stacktrace(catch_backtrace()))
-                end
+                handle_connection(f, conn, listener, readtimeout, access_log)
             finally
-                connection_count[] -= 1
-                Base.release(sem)
                 # handle_connection is in charge of closing the underlying io
+                delete!(conns, conn)
+                Base.release(sem)
             end
         catch e
-            close(server)
-            if e isa InterruptException
-                @warn "Interrupted: listen($server)"
-                break
+            if e.code == Base.UV_ECONNABORTED
+                @infov 1 "Server on $(listener.hostname):$(listener.hostport) closing"
             else
-                rethrow(e)
+                @errorv 2 "Server on $(listener.hostname):$(listener.hostport) errored" exception=(e, catch_backtrace())
+                # quick little sleep in case there's a temporary
+                # local error accepting and this might help avoid quickly re-erroring
+                sleep(0.05 + rand() * 0.05)
             end
         end
-        count += 1
     end
     return
 end
@@ -337,23 +407,79 @@ for each HTTP Request received.
 After `reuse_limit + 1` transactions, signal `final_transaction` to the
 transaction handler, which will close the connection.
 """
-function handle_connection(f, c::Connection, server, reuse_limit, readtimeout)
+function handle_connection(f, c::Connection, listener, readtimeout, access_log)
     if readtimeout > 0
         wait_for_timeout = Ref{Bool}(true)
         @async check_readtimeout(c, readtimeout, wait_for_timeout)
     end
     try
-        count = 0
-        # if the connection socket or original server close, we stop taking requests
-        while isopen(c) && isopen(server) && count <= reuse_limit
-            handle_transaction(f, c, server;
-                               final_transaction=(count == reuse_limit))
-            count += 1
+        # if the connection socket or listener close, we stop taking requests
+        while isopen(c) && !closedorclosing(c.state) && isopen(listener)
+            # create new Request to be populated by parsing code
+            request = Request()
+            # wrap Request in Stream w/ Connection for request reading/response writing
+            http = Stream(request, c)
+            # attempt to read request line and headers
+            try
+                startread(http)
+                @debugv 1 "startread called"
+                c.state = ACTIVE # once we've started reading, set ACTIVE state
+            catch e
+                # for ParserErrors, try to inform client of the problem
+                if e isa ParseError
+                    write(c, Response(e.code == :HEADER_SIZE_EXCEEDS_LIMIT ? 431 : 400, string(e.code)))
+                end
+                @debugv 1 "handle_connection startread error" exception=(e, catch_backtrace())
+                break
+            end
+
+            if hasheader(request, "Connection", "close")
+                c.state = CLOSING # set CLOSING so no more requests are read
+                setheader(request.response, "Connection" => "close")
+            end
+            request.response.status = 200
+
+            try
+                # invokelatest becuase the perf is negligible, but this makes live-editing handlers more Revise friendly
+                @debugv 1 "invoking handler"
+                Base.invokelatest(f, http)
+                # If `startwrite()` was never called, throw an error so we send a 500 and log this
+                if isopen(http) && !iswritable(http)
+                    error("Server never wrote a response")
+                end
+                @debugv 1 "closeread"
+                closeread(http)
+                @debugv 1 "closewrite"
+                closewrite(http)
+                c.state = IDLE
+            catch e
+                # The remote can close the stream whenever it wants to, but there's nothing
+                # anyone can do about it on this side. No reason to log an error in that case.
+                level = e isa Base.IOError && !isopen(c) ? Logging.Debug : Logging.Error
+                @logmsgv 1 level "handle_connection handler error" exception=(e, stacktrace(catch_backtrace()))
+
+                if isopen(http) && !iswritable(http)
+                    request.response.status = 500
+                    startwrite(http)
+                    write(http, sprint(showerror, e))
+                    closewrite(http)
+                end
+                c.state = CLOSING
+            finally
+                if access_log !== nothing
+                    @try(@info sprint(access_log, http) _group=:access)
+                end
+            end
         end
+    catch e
+        # we should be catching everything inside the while loop, but just in case
+        @errorv 1 "error while handling connection" exception=(e, catch_backtrace())
     finally
         if readtimeout > 0
             wait_for_timeout[] = false
         end
+        # when we're done w/ the connection, ensure it's closed and state is properly set
+        closeconnection(c)
     end
     return
 end
@@ -364,89 +490,16 @@ If `c` is inactive for a more than `readtimeout` then close the `c`."
 function check_readtimeout(c, readtimeout, wait_for_timeout)
     while wait_for_timeout[]
         if inactiveseconds(c) > readtimeout
-            @warn "Connection Timeout: $c"
+            @warnv 2 "Connection Timeout: $c"
             try
                 writeheaders(c.io, Response(408, ["Connection" => "close"]))
             finally
-                close(c)
+                closeconnection(c)
             end
             break
         end
-        sleep(8 + rand() * 4)
+        sleep(readtimeout + rand() * readtimeout)
     end
-    return
-end
-
-"""
-Create a `HTTP.Stream` and parse the Request headers from a `HTTP.Connection`
-(by calling `startread(::Stream`).
-If there is a parse error, send an error Response.
-Otherwise, execute stream processing function `f`.
-If `f` throws an exception, send an error Response and close the connection.
-"""
-function handle_transaction(f, c::Connection, server; final_transaction::Bool=false)
-    request = Request()
-    http = Stream(request, c)
-
-    try
-        @debugv 2 "server startread"
-        startread(http)
-        if !isopen(server)
-            close(c)
-            return
-        end
-    catch e
-        if e isa EOFError && isempty(request.method)
-            return
-        elseif e isa ParseError
-            status = e.code == :HEADER_SIZE_EXCEEDS_LIMIT  ? 413 : 400
-            write(c, Response(status, body = string(e.code)))
-            close(c)
-            return
-        else
-            rethrow(e)
-        end
-    end
-
-    request.response.status = 200
-    if final_transaction || hasheader(request, "Connection", "close")
-        setheader(request.response, "Connection" => "close")
-    end
-
-    try
-        f(http)
-        # If `startwrite()` was never called, throw an error so we send a 500 and log this
-        if isopen(http) && !iswritable(http)
-            error("Server never wrote a response")
-        end
-        @debugv 2 "server closeread"
-        closeread(http)
-        @debugv 2 "server closewrite"
-        closewrite(http)
-    catch e
-        # The remote can close the stream whenever it wants to, but there's nothing
-        # anyone can do about it on this side. No reason to log an error in that case.
-        level = e isa Base.IOError && !isopen(http) ? Logging.Debug : Logging.Error
-        @logmsg level "error handling request" exception=(e, stacktrace(catch_backtrace()))
-
-        if isopen(http) && !iswritable(http)
-            http.message.response.status = 500
-            startwrite(http)
-            write(http, sprint(showerror, e))
-            closewrite(http)
-        end
-        final_transaction = true
-    finally
-        if server.access_log !== nothing
-            try; @info sprint(server.access_log, http) _group=:access; catch; end
-        end
-        final_transaction && close(c.io)
-    end
-    return
-end
-
-function __init__()
-    resize!(empty!(RATE_LIMITS), Threads.nthreads())
     return
 end
 

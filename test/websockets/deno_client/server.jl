@@ -3,25 +3,18 @@ using Test, Sockets, Deno_jll, HTTP
 # Not all architectures have a Deno_jll
 hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin
     port = 36984
-    server = listen(Sockets.localhost, port)
     # Will contain a list of received messages
     server_received_messages = []
     # Start the server async
-    @async try
-        WebSockets.listen(Sockets.localhost, port; server=server) do ws
-            for msg in ws
-                push!(server_received_messages, msg)
-                if msg == "close"
-                    close(ws)
-                else
-                    response = "Hello, " * msg
-                    send(ws, response)
-                end
+    server = WebSockets.listen!(port) do ws
+        for msg in ws
+            push!(server_received_messages, msg)
+            if msg == "close"
+                close(ws)
+            else
+                send(ws, "Hello, " * msg)
             end
         end
-    catch e
-        @error "WebSocket server error" exception=(e,catch_backtrace())
-        rethrow(e)
     end
 
     try

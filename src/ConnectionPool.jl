@@ -54,7 +54,7 @@ Fields:
    part of the response body.
 - `timestamp`, time data was last received.
 - `readable`, whether the Connection object is readable
-- `writeable`, whether the Connection object is writable
+- `writable`, whether the Connection object is writable
 """
 mutable struct Connection <: IO
     host::String
@@ -70,6 +70,7 @@ mutable struct Connection <: IO
     timestamp::Float64
     readable::Bool
     writable::Bool
+    state::Any # populated & used by Servers code
 end
 
 """
@@ -89,7 +90,7 @@ Connection(host::AbstractString, port::AbstractString,
     Connection(host, port, idle_timeout,
                 require_ssl_verification,
                 safe_getpeername(io)..., localport(io),
-                io, client, PipeBuffer(), time(), false, false)
+                io, client, PipeBuffer(), time(), false, false, nothing)
 
 Connection(io; require_ssl_verification::Bool=true) =
     Connection("", "", 0, require_ssl_verification, io, false)
@@ -340,9 +341,7 @@ function newconnection(::Type{T},
                        host::AbstractString,
                        port::AbstractString;
                        connection_limit=default_connection_limit,
-                       pipeline_limit=default_pipeline_limit,
                        idle_timeout=typemax(Int),
-                       reuse_limit=nolimit,
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        kw...)::Connection where {T <: IO}
     return acquire(

@@ -148,8 +148,7 @@ using Sockets, Test
     end
 
     @testset "Set-Cookie casing" begin
-        server = Sockets.listen(Sockets.localhost, 8080)
-        tsk = @async HTTP.listen(Sockets.localhost, 8080; server=server) do http
+        server = HTTP.listen!(8080) do http
             t = http.message.target
             HTTP.setstatus(http, 200)
             if t == "/set-cookie"
@@ -183,8 +182,6 @@ using Sockets, Test
         r = HTTP.get("http://localhost:8080/cookie"; cookies=true, cookiejar=cookiejar)
         @test HTTP.header(r, "X-Cookie") == "cookie=spongebob_cookie"
         close(server)
-        try; wait(tsk); catch e; end
-        @test istaskdone(tsk)
     end
 
     @testset "splithostport" begin

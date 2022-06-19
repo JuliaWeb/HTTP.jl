@@ -391,6 +391,7 @@ end
 
 """
     WebSockets.listen(handler, host, port; verbose=false, kw...)
+    WebSockets.listen!(handler, host, port; verbose=false, kw...) -> HTTP.Server
 
 Listen for websocket connections on `host` and `port`, and call `handler(ws)`,
 which should be a function taking a single `WebSocket` argument.
@@ -407,11 +408,10 @@ WebSockets.listen(host, port) do ws
 end
 
 """
-function listen(f::Function, host="localhost", port::Integer=UInt16(8081); verbose=false, suppress_close_error::Bool=false, kw...)
-    Servers.listen(host, port; verbose=verbose, kw...) do http
-        upgrade(f, http; suppress_close_error, kw...)
-    end
-end
+function listen end
+
+listen(f, args...; kw...) = Servers.listen(http -> upgrade(f, http; kw...), args...; kw...)
+listen!(f, args...; kw...) = Servers.listen!(http -> upgrade(f, http; kw...), args...; kw...)
 
 function upgrade(f::Function, http::Streams.Stream; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...)
     @debugv 2 "Server websocket upgrade requested"

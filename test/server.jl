@@ -13,40 +13,21 @@ function testget(url, m=1)
     return r
 end
 
+const echohandler = req -> HTTP.Response(200, req.body)
+const echostreamhandler = HTTP.streamhandler(echohandler)
+
 @testset "HTTP.listen" begin
     port = 8087 # rand(8000:8999)
 
-    # echo response
-    local handler = (http) -> begin
-        request::HTTP.Request = http.message
-        request.body = read(http)
-        closeread(http)
-        request.response::HTTP.Response = HTTP.Response(request.body)
-        request.response.request = request
-        startwrite(http)
-        write(http, request.response.body)
-    end
-
-    server = Sockets.listen(ip"127.0.0.1", port)
-    tsk = @async HTTP.listen(handler, "127.0.0.1", port; server=server)
-    sleep(3.0)
-    @test !istaskdone(tsk)
+    server = HTTP.listen!(echostreamhandler, port)
     r = testget("http://127.0.0.1:$port")
     @test r[1].status == 200
     close(server)
     sleep(0.5)
-    @test istaskdone(tsk)
+    @test istaskdone(server.task)
 
-    server = Sockets.listen(ip"127.0.0.1", port)
-    tsk = @async HTTP.listen(handler, "127.0.0.1", port; server=server)
-
-    handler2 = req -> HTTP.Response(200, req.body)
-
-    server2 = Sockets.listen(ip"127.0.0.1", port+100)
-    tsk2 = @async HTTP.serve(handler2, "127.0.0.1", port+100; server=server2)
-    sleep(0.5)
-    @test !istaskdone(tsk)
-    @test !istaskdone(tsk2)
+    server = HTTP.listen!(echostreamhandler, port)
+    server2 = HTTP.serve!(echohandler, port+100)
 
     r = testget("http://127.0.0.1:$port")
     @test r[1].status == 200
@@ -70,7 +51,7 @@ end
     sleep(0.1)
     try
         resp = String(readavailable(tcp))
-        @test occursin(r"HTTP/1.1 413 Request Entity Too Large", resp)
+        @test occursin(r"HTTP/1.1 431 Request Header Fields Too Large", resp)
     catch
         println("Failed reading bad request response")
     end
@@ -114,24 +95,13 @@ end
     @test occursin("Transfer-Encoding: chunked\r\n", client)
     @test occursin("Body of Request", client)
 
-    hello = (http) -> begin
-        request::HTTP.Request = http.message
-        request.body = read(http)
-        closeread(http)
-        request.response::HTTP.Response = HTTP.Response("Hello")
-        request.response.request = request
-        startwrite(http)
-        write(http, request.response.body)
-    end
     close(server)
     close(server2)
 
     # keep-alive vs. close: issue #81
+    hello = HTTP.streamhandler(req -> HTTP.Response("Hello"))
     port += 1
-    server = Sockets.listen(ip"127.0.0.1", port)
-    tsk = @async HTTP.listen(hello, "127.0.0.1", port; server=server, verbose=true)
-    sleep(0.5)
-    @test !istaskdone(tsk)
+    server =  HTTP.listen!(hello, port; verbose=true)
     tcp = Sockets.connect(ip"127.0.0.1", port)
     write(tcp, "GET / HTTP/1.0\r\n\r\n")
     sleep(0.5)
@@ -143,28 +113,24 @@ end
     end
 
     # SO_REUSEPORT
-    println("Testing server port reuse")
-    t1 = @async HTTP.listen(hello, "127.0.0.1", 8089; reuseaddr=true)
-    sleep(0.5)
-    @test !istaskdone(t1)
-
-    println("Starting second server listening on same port")
-    t2 = @async HTTP.listen(hello, "127.0.0.1", 8089; reuseaddr=true)
-    sleep(0.5)
-    @test Sys.iswindows() ? istaskdone(t2) : !istaskdone(t2)
-
-    println("Starting server on same port without port reuse (throws error)")
-    try
-        HTTP.listen(hello, "127.0.0.1", 8089)
-    catch e
-        @test e isa Base.IOError
-        @test startswith(e.msg, "listen")
-        @test e.code == Base.UV_EADDRINUSE
+    if HTTP.Servers.supportsreuseaddr()
+        println("Testing server port reuse")
+        t1 = HTTP.listen!(hello, 8089; reuseaddr=true)
+        println("Starting second server listening on same port")
+        t2 = HTTP.listen!(hello, 8089; reuseaddr=true)
+        println("Starting server on same port without port reuse (throws error)")
+        try
+            HTTP.listen(hello, 8089)
+        catch e
+            @test e isa Base.IOError
+            @test startswith(e.msg, "listen")
+            @test e.code == Base.UV_EADDRINUSE
+        end
     end
 
     # test automatic forwarding of non-sensitive headers
     # this is a server that will "echo" whatever headers were sent to it
-    t1 = @async HTTP.listen("127.0.0.1", 8090) do http
+    t1 = HTTP.listen!(8090) do http
         request::HTTP.Request = http.message
         request.body = read(http)
         closeread(http)
@@ -174,115 +140,48 @@ end
         write(http, request.response.body)
     end
 
-    sleep(0.5)
-    @test !istaskdone(t1)
-
     # test that an Authorization header is **not** forwarded to a domain different than initial request
     @test !HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:8090", ["Authorization"=>"auth"]), "Authorization")
 
     # test that an Authorization header **is** forwarded to redirect in same domain
     @test HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=https://httpbin.org/response-headers?Authorization=auth"), "Authorization")
+    close(t1)
 
     # 318
     dir = joinpath(dirname(pathof(HTTP)), "../test")
     sslconfig = MbedTLS.SSLConfig(joinpath(dir, "resources/cert.pem"), joinpath(dir, "resources/key.pem"))
-    tsk = @async try
-        HTTP.listen("127.0.0.1", 8092; sslconfig = sslconfig, verbose=true) do http::HTTP.Stream
-            while !eof(http)
-                println("body data: ", String(readavailable(http)))
-            end
-            HTTP.setstatus(http, 200)
-            HTTP.startwrite(http)
-            write(http, "response body\n")
-            write(http, "more response body")
+    server = HTTP.listen!(8092; sslconfig = sslconfig, verbose=true) do http::HTTP.Stream
+        while !eof(http)
+            println("body data: ", String(readavailable(http)))
         end
-    catch err
-        @error err exception = (err, catch_backtrace())
+        HTTP.setstatus(http, 200)
+        HTTP.startwrite(http)
+        write(http, "response body\n")
+        write(http, "more response body")
     end
-    clientoptions = (;
-        require_ssl_verification = false,
-    )
-    r = HTTP.request("GET", "https://127.0.0.1:8092"; clientoptions...)
-    @test_throws HTTP.RequestError HTTP.request("GET", "http://127.0.0.1:8092"; clientoptions...)
-
-end # @testset
-
-@testset "HTTP.listen: rate_limit" begin
-    io = IOBuffer()
-    logger = Base.CoreLogging.SimpleLogger(io)
-    server = listen(IPv4(0), 8080)
-    @async Base.CoreLogging.with_logger(logger) do
-        HTTP.listen("0.0.0.0", 8080; server=server, rate_limit=2//1) do http
-            HTTP.setstatus(http, 200)
-            HTTP.setheader(http, "Content-Length" => "0")
-            HTTP.startwrite(http)
-            HTTP.close(http.stream) # close to force a new connection everytime
-        end
-    end
-    # Test requests from the same IP within the limit
-    for _ in 1:5
-        sleep(0.6) # rate limit allows 2 per second
-        @test HTTP.get("http://127.0.0.1:8080").status == 200
-    end
-    # Test requests from the same IP over the limit
-    try
-        for _ in 1:5
-            sleep(0.2) # rate limit allows 2 per second
-            r = HTTP.get("http://127.0.0.1:8080"; retry=false)
-            @test r.status == 200
-        end
-    catch e
-        @test e isa HTTP.RequestError
-    end
-
+    r = HTTP.request("GET", "https://127.0.0.1:8092"; require_ssl_verification = false)
+    @test_throws HTTP.RequestError HTTP.request("GET", "http://127.0.0.1:8092"; require_ssl_verification = false)
     close(server)
-    @test occursin("discarding connection from 127.0.0.1 due to rate limiting", String(take!(io)))
-
-    # # Tests to make sure the correct client IP is used (https://github.com/JuliaWeb/HTTP.jl/pull/701)
-    # # This test requires a second machine and thus commented out
-    #
-    # Machine 1
-    # @async HTTP.listen("0.0.0.0", 8080; rate_limit=2//1) do http
-    #     HTTP.setstatus(http, 200)
-    #     HTTP.setheader(http, "Content-Length" => "0")
-    #     HTTP.startwrite(http)
-    #     HTTP.close(http.stream) # close to force a new connection everytime
-    # end
-    # while true
-    #     sleep(0.6)
-    #     print("#") # to show some progress
-    #     HTTP.get("http://$(MACHINE_1_IPV4):8080"; retry=false)
-    # end
-    #
-    # # Machine 2
-    # while true
-    #     sleep(0.6)
-    #     print("#") # to show some progress
-    #     HTTP.get("http://$(MACHINE_1_IPV4):8080"; retry=false)
-    # end
-
-end
+end # @testset
 
 @testset "on_shutdown" begin
     @test HTTP.Servers.shutdown(nothing) === nothing
 
-    IOserver = Sockets.listen(ip"127.0.0.1", 8052)
-
     # Shutdown adds 1
     TEST_COUNT = Ref(0)
     shutdown_add() = TEST_COUNT[] += 1
-    server = HTTP.Servers.Server(nothing, IOserver, "host", "port", shutdown_add)
+    server = HTTP.listen!(x -> nothing, 8052; on_shutdown=shutdown_add)
     close(server)
 
     # Shutdown adds 1, performed twice
     @test TEST_COUNT[] == 1
-    server = HTTP.Servers.Server(nothing, IOserver, "host", "port", [shutdown_add, shutdown_add])
+    server = HTTP.listen!(x -> nothing, 8052; on_shutdown=[shutdown_add, shutdown_add])
     close(server)
     @test TEST_COUNT[] == 3
 
     # First shutdown function errors, second adds 1
     shutdown_throw() = throw(ErrorException("Broken"))
-    server = HTTP.Servers.Server(nothing, IOserver, "host", "port", [shutdown_throw, shutdown_add])
+    server = HTTP.listen!(x -> nothing, 8052; on_shutdown=[shutdown_throw, shutdown_add])
     @test_logs (:error, r"shutdown function .* failed") close(server)
     @test TEST_COUNT[] == 4
 end # @testset
@@ -307,21 +206,14 @@ end # @testset
         end
     end
     function with_testserver(f, fmt)
-        l = Sockets.listen(ip"0.0.0.0", 32612)
         logger = Test.TestLogger()
-        ready_to_accept = Ref(false)
-        tsk = @async begin
-            Base.CoreLogging.with_logger(logger) do
-                HTTP.listen(handler, Sockets.localhost, 32612; server=l, ready_to_accept, access_log=fmt)
-            end
-        end
-        while !ready_to_accept[]
-            sleep(0.1)
+        server = Base.CoreLogging.with_logger(logger) do
+            HTTP.listen!(handler, Sockets.localhost, 32612; access_log=fmt)
         end
         try
             f()
         finally
-            close(l)
+            close(server)
         end
         return filter!(x -> x.group == :access, logger.logs)
     end

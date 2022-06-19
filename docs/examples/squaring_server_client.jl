@@ -61,14 +61,13 @@ end
 
 HTTP.register!(ROUTER, "POST", "/api/square", square)
 
-socket = Sockets.listen(Sockets.localhost, 8080)
-servertask = @async HTTP.serve(ROUTER, Sockets.localhost, 8080; server=socket)
+server = HTTP.serve!(ROUTER, Sockets.localhost, 8080)
 
 # usage
 resp = HTTP.post("http://localhost:8080/api/square"; body="3")
 sq = parse(Float64, String(resp.body))
 @assert sq == 9.0
 
-# close the server socket which will stop the HTTP server
-close(socket)
-@assert istaskdone(servertask)
+# close the server which will stop the HTTP server from listening
+close(server)
+@assert istaskdone(server.task)

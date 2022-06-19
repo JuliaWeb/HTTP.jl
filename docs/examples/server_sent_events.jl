@@ -86,8 +86,7 @@ end
 HTTP.register!(ROUTER, "GET", "/api/getItems", HTTP.streamhandler(getItems))
 HTTP.register!(ROUTER, "/api/events", events)
 
-socket = Sockets.listen(Sockets.localhost, 8080)
-servertask = @async HTTP.serve(ROUTER, "127.0.0.1", 8080; server=socket, stream=true)
+server = HTTP.serve!(ROUTER, "127.0.0.1", 8080; stream=true)
 
 # Julia usage
 resp = HTTP.get("http://localhost:8080/api/getItems")
@@ -102,6 +101,6 @@ end
 # run the following to stop the streaming client request
 close[] = true
 
-# close the server socket which will stop the HTTP server
-close(socket)
-@assert istaskdone(servertask)
+# close the server which will stop the HTTP server from listening
+close(server)
+@assert istaskdone(server.task)
