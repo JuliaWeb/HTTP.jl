@@ -2,6 +2,7 @@ module StreamRequest
 
 using ..IOExtras, ..Messages, ..Streams, ..ConnectionPool, ..Strings, ..RedirectRequest, ..Exceptions
 using LoggingExtras, CodecZlib, URIs
+using SimpleBufferStream: BufferStream
 
 export streamlayer
 
@@ -103,13 +104,41 @@ writechunk(stream, body::Union{Dict, NamedTuple}) = writebodystream(stream, body
 writechunk(stream, body) = write(stream, body)
 
 function readbody(stream::Stream, res::Response, decompress)
-    readstream = decompress && header(res, "Content-Encoding") == "gzip" ? GzipDecompressorStream(stream) : stream
-    if isbytes(res.body)
-        res.body = read(readstream)
-    elseif !isredirect(stream) && !retryable(stream)
-        # if the request/response pair are going to be redirected or retried,
-        # we want to avoid "contaminating" our response body stream
-        write(res.body, readstream)
+    # Bail early if we are not going to read anything.
+    # If the request/response pair are going to be redirected or retried,
+    # we want to avoid "contaminating" our response body stream.
+    willread = isbytes(res.body) || (!isredirect(stream) && !retryable(stream))
+    willread || return
+
+    if decompress && header(res, "Content-Encoding") == "gzip"
+        # Plug in a buffer stream in between so that we can (i) read the http stream in
+        # chunks instead of byte-by-byte and (ii) make sure to stop reading the http stream
+        # at eof.
+        buf = BufferStream()
+        gzstream = GzipDecompressorStream(buf)
+        tsk = @async begin
+            try
+                write(gzstream, stream)
+            finally
+                # Close here to (i) deallocate resources in zlib and (ii) make sure that
+                # read(buf)/write(..., buf) below don't block forever. Note that this will
+                # close the stream wrapped by the decompressor (buf) but *not* the http
+                # stream, which should be left open.
+                close(gzstream)
+            end
+        end
+        if isbytes(res.body)
+            res.body = read(buf)
+        else
+            write(res.body, buf)
+        end
+        wait(tsk)
+    else
+        if isbytes(res.body)
+            res.body = read(stream)
+        else
+            write(res.body, stream)
+        end
     end
 end
 
