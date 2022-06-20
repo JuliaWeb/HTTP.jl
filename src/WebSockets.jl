@@ -409,7 +409,7 @@ WebSockets.listen(host, port) do ws
     end
     # iteration ends when the websocket connection is closed by client or error
 end
-
+```
 """
 function listen end
 
