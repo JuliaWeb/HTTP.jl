@@ -5,7 +5,7 @@ Loops through the files in the examples folder and adds them (with any header co
 markdown file. 
 """
 function generateExamples()
-    f = open(joinpath(@__DIR__, "src/examples.md"), "w")
+    f = IOBuffer()
     write(
         f,
         "```@meta
@@ -66,7 +66,14 @@ function generateExamples()
             close(opened)
         end
     end
-    close(f)
+    file = joinpath(@__DIR__, "src/examples.md")
+    current_content = isfile(file) ? read(file, String) : ""
+    updated_content = String(take!(f))
+    # Only update content if something changed so that the file watcher in
+    # LiveServer.jl isn't triggering itself when running make.jl.
+    if updated_content != current_content
+        write(file, updated_content)
+    end
 end
 
 generateExamples()
