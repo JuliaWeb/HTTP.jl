@@ -336,6 +336,7 @@ will enable debug logging for the life of the websocket connection.
 `handler` should be a function of the form `f(ws) -> nothing`, where `ws` is a [`WebSocket`](@ref).
 Supported keyword arguments are the same as supported by [`HTTP.request`](@ref).
 Typical websocket usage is:
+
 ```julia
 WebSockets.open(url) do ws
     # iterate incoming websocket messages
