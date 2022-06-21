@@ -532,6 +532,11 @@ end
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, verbose=2)
         @test resp.status == 200
         @test String(take!(res_body)) == "hey there sailor"
+        # ensure if retry=false, that we write the response body immediately
+        shouldfail[] = true
+        seekstart(req_body)
+        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry=false, status_exception=false)
+        @test String(take!(res_body)) == "500 unexpected error"
     finally
         if server !== nothing
             close(server)
