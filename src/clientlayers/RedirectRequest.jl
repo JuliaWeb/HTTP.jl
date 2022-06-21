@@ -14,9 +14,9 @@ function redirectlayer(handler)
     return function(req; redirect::Bool=true, redirect_limit::Int=3, redirect_method=nothing, forwardheaders::Bool=true, response_stream=nothing, kw...)
         if !redirect || redirect_limit == 0
             # no redirecting
-            return handler(req; redirect_limit=redirect_limit, kw...)
+            return handler(req; kw...)
         end
-
+        req.context[:allow_redirects] = true
         count = 0
         while true
             # Verify the url before making the request. Verification is done in

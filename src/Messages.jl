@@ -225,6 +225,7 @@ https://tools.ietf.org/html/rfc7231#section-4.2.2
 isidempotent(r::Request) = isidempotent(r.method)
 isidempotent(method) = issafe(method) || method in ["PUT", "DELETE"]
 retry_non_idempotent(r::Request) = get(r.context, :retry_non_idempotent, false)
+allow_retries(r::Request) = get(r.context, :allow_retries, false)
 
 """
     iserror(::Response)
@@ -241,12 +242,13 @@ iserror(status) = status != 0 && status != 100 && status != 101 &&
 Does this `Response` have a redirect status?
 """
 isredirect(r::Response) = isredirect(r.status)
-isredirect(r::Request) = !redirectlimitreached(r)
+isredirect(r::Request) = allow_redirects(r) && !redirectlimitreached(r)
 isredirect(status) = status in (301, 302, 303, 307, 308)
 
 # whether the redirect limit has been reached for a given request
 # set in the RedirectRequest layer once the limit is reached
 redirectlimitreached(r::Request) = get(r.context, :redirectlimitreached, false)
+allow_redirects(r::Request) = get(r.context, :allow_redirects, false)
 
 # whether the retry limit has been reached for a given request
 # set in the RetryRequest layer once the limit is reached
@@ -260,7 +262,7 @@ Whether a `Request` is eligible to be retried.
 function retryable end
 
 retryable(r::Request) = (isbytes(r.body) || (r.body !== nothing && ismarked(r.body))) &&
-    (isidempotent(r) || retry_non_idempotent(r)) && !retrylimitreached(r)
+    allow_retries(r) && (isidempotent(r) || retry_non_idempotent(r)) && !retrylimitreached(r)
 retryable(r::Response) = retryable(r.status)
 retryable(status) = status in (403, 408, 409, 429, 500, 502, 503, 504, 599)
 

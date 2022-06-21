@@ -24,6 +24,7 @@ function retrylayer(handler)
             # no retry
             return handler(req; kw...)
         end
+        req.context[:allow_retries] = true
         if retry_non_idempotent
             req.context[:retry_non_idempotent] = true
         end
