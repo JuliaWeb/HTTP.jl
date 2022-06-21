@@ -575,6 +575,7 @@ function Base.close(ws::WebSocket, body::CloseFrameBody=CloseFrameBody(1000, "")
     if !ws.readclosed
         Timer(5) do t
             ws.readclosed = true
+            !ws.client && isopen(ws.io) && close(ws.io)
         end
     end
     while !ws.readclosed
@@ -590,9 +591,7 @@ function Base.close(ws::WebSocket, body::CloseFrameBody=CloseFrameBody(1000, "")
     # or there was an error/timeout reading it; in any case, readclosed should be closed now
     @assert ws.readclosed
     # if we're the server, it's our job to close the underlying socket
-    if !ws.client
-        close(ws.io)
-    end
+    !ws.client && isopen(ws.io) && close(ws.io)
     return
 end
 

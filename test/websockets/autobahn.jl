@@ -11,41 +11,50 @@ if Int === Int64 && !Sys.iswindows()
     serverproc = run(Cmd(`wstest -u 0 -m fuzzingserver -s config/fuzzingserver.json`; dir=DIR), stdin, stdout, stdout; wait=false)
     sleep(5) # give time for server to get setup
     cases = Ref(0)
-    WebSockets.open("ws://127.0.0.1:9001/getCaseCount") do ws
-        for msg in ws
-            cases[] = parse(Int, msg)
+    runtests = Ref(true)
+    try
+        WebSockets.open("ws://127.0.0.1:9001/getCaseCount") do ws
+            for msg in ws
+                cases[] = parse(Int, msg)
+            end
         end
+    catch e
+        @error "problem getting autobahn case count" exception=(e, catch_backtrace())
+        @show serverproc
+        runtests[] = false
     end
 
-    for i = 1:cases[]
-        println("Running test case = $i")
-        verbose = false
-        try
-            WebSockets.open("ws://127.0.0.1:9001/runCase?case=$(i)&agent=main"; verbose, suppress_close_error=true) do ws
-                for msg in ws
-                    send(ws, msg)
+    if runtests[]
+        for i = 1:cases[]
+            println("Running test case = $i")
+            verbose = false
+            try
+                WebSockets.open("ws://127.0.0.1:9001/runCase?case=$(i)&agent=main"; verbose, suppress_close_error=true) do ws
+                    for msg in ws
+                        send(ws, msg)
+                    end
                 end
+            catch
+                # ignore errors here since we want to run all cases + some are expected to throw
+            end
+        end
+
+        rm(joinpath(DIR, "reports/clients/index.json"); force=true)
+        sleep(1)
+        try
+            WebSockets.open("ws://127.0.0.1:9001/updateReports?agent=main") do ws
+                receive(ws)
             end
         catch
-            # ignore errors here since we want to run all cases + some are expected to throw
+            WebSockets.open("ws://127.0.0.1:9001/updateReports?agent=main") do ws
+                receive(ws)
+            end
         end
-    end
-
-    rm(joinpath(DIR, "reports/clients/index.json"); force=true)
-    sleep(1)
-    try
-        WebSockets.open("ws://127.0.0.1:9001/updateReports?agent=main") do ws
-            receive(ws)
+        
+        report = JSON.parsefile(joinpath(DIR, "reports/clients/index.json"))
+        for (k, v) in pairs(report["main"])
+            @test v["behavior"] in ("OK", "NON-STRICT", "INFORMATIONAL")
         end
-    catch
-        WebSockets.open("ws://127.0.0.1:9001/updateReports?agent=main") do ws
-            receive(ws)
-        end
-    end
-    
-    report = JSON.parsefile(joinpath(DIR, "reports/clients/index.json"))
-    for (k, v) in pairs(report["main"])
-        @test v["behavior"] in ("OK", "NON-STRICT", "INFORMATIONAL")
     end
     # stop/remove server process
     kill(serverproc)
