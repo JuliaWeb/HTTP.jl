@@ -148,7 +148,7 @@ end
 const VARREGEX = r"^{([[:alnum:]]+):?(.*)}$"
 
 function Variable(pattern)
-    re = match(VARREGEX, pattern)
+    re = Base.match(VARREGEX, pattern)
     if re === nothing
         error("problem parsing path variable for route: `$pattern`")
     end
