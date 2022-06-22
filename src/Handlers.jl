@@ -190,7 +190,7 @@ function find(y, itr; by=identity, eq=(==))
     return nothing
 end
 
-function Base.insert!(node::Node, leaf, segments, i)
+function insert!(node::Node, leaf, segments, i)
     if i > length(segments)
         # time to insert leaf method match node
         j = find(leaf.method, node.methods; by=x->x.method, eq=(x, y) -> x == "*" || x == y)
@@ -254,7 +254,7 @@ function Base.insert!(node::Node, leaf, segments, i)
     end
 end
 
-function Base.match(node::Node, method, segments, i)
+function match(node::Node, method, segments, i)
     # @show node.segment, i, segments
     if i > length(segments)
         if isempty(node.methods)
@@ -287,7 +287,7 @@ function Base.match(node::Node, method, segments, i)
     # check for conditional matches
     for node in node.conditional
         # @show node.segment.pattern, segment
-        if match(node.segment.pattern, segment) !== nothing
+        if Base.match(node.segment.pattern, segment) !== nothing
             # matched a conditional node, recurse
             m = match(node, method, segments, i + 1)
             anymissing = m === missing
