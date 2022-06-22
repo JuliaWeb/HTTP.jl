@@ -35,8 +35,8 @@ using HTTP, Test
     HTTP.register!(r, "/api/widgets/{id}", req -> req.context[:params]["id"])
     @test r(HTTP.Request("GET", "/api/widgets/11")) == "11"
 
-    HTTP.register!(r, "/api/widgets/{name}", req -> req.context[:params]["name"])
-    @test r(HTTP.Request("GET", "/api/widgets/11")) == "11"
+    HTTP.register!(r, "/api/widgets/{name}", req -> (req.context[:params]["name"], req.context[:route]))
+    @test r(HTTP.Request("GET", "/api/widgets/11")) == ("11", "/api/widgets/{name}")
 
     HTTP.register!(r, "/api/widgets/acme/{id:[a-z]+}", req -> req.context[:params]["id"])
     @test r(HTTP.Request("GET", "/api/widgets/acme/11")) == 0

@@ -254,7 +254,7 @@ function Base.insert!(node::Node, leaf, segments, i)
     end
 end
 
-function Base.match(node::Node, params, method, segments, i)
+function Base.match(node::Node, method, segments, i)
     # @show node.segment, i, segments
     if i > length(segments)
         if isempty(node.methods)
@@ -266,15 +266,8 @@ function Base.match(node::Node, params, method, segments, i)
             # i.e. we matched the route, but there wasn't a matching method
             return missing
         else
-            leaf = node.methods[j]
-            # @show leaf.variables, segments
-            if !isempty(leaf.variables)
-                # we have variables to fill in
-                for (i, v) in leaf.variables
-                    params[v] = segments[i]
-                end
-            end
-            return leaf.handler
+            # return matched leaf node
+            return node.methods[j]
         end
     end
     segment = segments[i]
@@ -283,7 +276,7 @@ function Base.match(node::Node, params, method, segments, i)
     j = find(segment, node.exact; by=x->x.segment)
     if j !== nothing
         # found an exact match, recurse
-        m = match(node.exact[j], params, method, segments, i + 1)
+        m = match(node.exact[j], method, segments, i + 1)
         anymissing = m === missing
         m = coalesce(m, nothing)
         # @show :exact, m
@@ -296,7 +289,7 @@ function Base.match(node::Node, params, method, segments, i)
         # @show node.segment.pattern, segment
         if match(node.segment.pattern, segment) !== nothing
             # matched a conditional node, recurse
-            m = match(node, params, method, segments, i + 1)
+            m = match(node, method, segments, i + 1)
             anymissing = m === missing
             m = coalesce(m, nothing)
             if m !== nothing
@@ -305,7 +298,7 @@ function Base.match(node::Node, params, method, segments, i)
         end
     end
     if node.wildcard !== nothing
-        m = match(node.wildcard, params, method, segments, i + 1)
+        m = match(node.wildcard, method, segments, i + 1)
         anymissing = m === missing
         m = coalesce(m, nothing)
         if m !== nothing
@@ -313,7 +306,7 @@ function Base.match(node::Node, params, method, segments, i)
         end
     end
     if node.doublestar !== nothing
-        m = match(node.doublestar, params, method, segments, length(segments) + 1)
+        m = match(node.doublestar, method, segments, length(segments) + 1)
         anymissing = m === missing
         m = coalesce(m, nothing)
         if m !== nothing
@@ -363,7 +356,8 @@ Router(_404=default404, _405=default405) = Router(_404, _405, Node())
 
 Register a handler function that should be called when an incoming request matches `path`
 and the optionally provided `method` (if not provided, any method is allowed). Can be used
-to dynamically register routes.
+to dynamically register routes. When a registered route is matched, the original route string
+is stored in the `request.context[:route]` variable.
 The following path types are allowed for matching:
   * `/api/widgets`: exact match of static strings
   * `/api/*/owner`: single `*` to wildcard match anything for a single segment
@@ -386,14 +380,24 @@ const Params = Dict{String, String}
 function gethandler(r::Router, req::Request)
     url = URI(req.target)
     segments = split(url.path, '/'; keepempty=false)
+    leaf = match(r.routes, req.method, segments, 1)
     params = Params()
-    handler = match(r.routes, params, req.method, segments, 1)
-    return handler, params
+    if leaf isa Leaf
+        # @show leaf.variables, segments
+        if !isempty(leaf.variables)
+            # we have variables to fill in
+            for (i, v) in leaf.variables
+                params[v] = segments[i]
+            end
+        end
+        return leaf.handler, leaf.path, params
+    end
+    return leaf, "", params
 end
 
 function (r::Router)(stream::Stream{<:Request})
     req = stream.message
-    handler, params = gethandler(r, req)
+    handler, route, params = gethandler(r, req)
     if handler === nothing
         # didn't match a registered route
         return r._404(stream)
@@ -401,6 +405,7 @@ function (r::Router)(stream::Stream{<:Request})
         # matched the path, but method not supported
         return r._405(stream)
     else
+        req.context[:route] = route
         if !isempty(params)
             req.context[:params] = params
         end
@@ -409,7 +414,7 @@ function (r::Router)(stream::Stream{<:Request})
 end
 
 function (r::Router)(req::Request)
-    handler, params = gethandler(r, req)
+    handler, route, params = gethandler(r, req)
     if handler === nothing
         # didn't match a registered route
         return r._404(req)
@@ -417,6 +422,7 @@ function (r::Router)(req::Request)
         # matched the path, but method not supported
         return r._405(req)
     else
+        req.context[:route] = route
         if !isempty(params)
             req.context[:params] = params
         end
