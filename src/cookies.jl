@@ -289,7 +289,7 @@ function readsetcookies(h::Headers)
             elseif lowerattr == "path"
                 c.path = val
             else
-                push!(c.unparsed, parts[x])
+                push!(c.unparsed, parts[i])
             end
         end
         push!(result, c)
