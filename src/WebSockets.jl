@@ -93,21 +93,23 @@ end
 
 function compress(data::T) where T <: AbstractVector{UInt8}
     compressed = transcode(DeflateCompressor, data)
-    return vcat(compressed, 0x00)
+    push!(compressed, 0x00)
+    return compressed
 end
 
 function compress(data::String)
     compressed = transcode(DeflateCompressor, data)
-    return String(vcat(compressed, 0x00))
+    push!(compressed, 0x00)
+    return String(compressed)
 end
 
 function decompress(data::T) where T <: AbstractVector{UInt8}
-    decompressed = transcode(DeflateDecompressor, vcat(data, [0x00, 0x00, 0xff, 0xff, 0x03, 0x00]))
+    decompressed = transcode(DeflateDecompressor, append!(data, [0x00, 0x00, 0xff, 0xff, 0x03, 0x00]))
     return decompressed
 end
 
 function decompress(data::String)
-    decompressed = transcode(DeflateDecompressor, vcat(Vector{UInt8}(data), [0x00, 0x00, 0xff, 0xff, 0x03, 0x00]))
+    decompressed = transcode(DeflateDecompressor, append!(Vector{UInt8}(data), [0x00, 0x00, 0xff, 0xff, 0x03, 0x00]))
     return String(decompressed)
 end
 
