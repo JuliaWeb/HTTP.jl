@@ -32,6 +32,9 @@ using HTTP, Test
     @test r(HTTP.Request("GET", "/test/sarv/ghotra/seven")) == 10
     @test r(HTTP.Request("GET", "/test/foo")) == 8
 
+    HTTP.register!(r, "/api/issue/{issue_id}", req -> req.context[:params]["issue_id"])
+    @test r(HTTP.Request("GET", "/api/issue/871")) == "871"
+
     HTTP.register!(r, "/api/widgets/{id}", req -> req.context[:params]["id"])
     @test r(HTTP.Request("GET", "/api/widgets/11")) == "11"
 
