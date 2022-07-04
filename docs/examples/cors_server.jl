@@ -1,8 +1,9 @@
 """
 Server example that takes after the simple server, however,
 handles dealing with CORS preflight headers when dealing with more
-than just a simple request
+than just a simple request. For CORS details, see e.g. https://cors-errors.info/
 """
+
 using HTTP, JSON3, StructTypes, Sockets, UUIDs
 
 # modified Animal struct to associate with specific user
@@ -25,12 +26,15 @@ function getNextId()
     return id
 end
 
-# CORS headers that show what kinds of complex requests are allowed to API
-const CORS_HEADERS = [
+# CORS preflight headers that show what kinds of complex requests are allowed to API
+const CORS_OPT_HEADERS = [
     "Access-Control-Allow-Origin" => "*",
     "Access-Control-Allow-Headers" => "*",
     "Access-Control-Allow-Methods" => "POST, GET, OPTIONS"
 ]
+
+# CORS response headers that set access right of the recepient
+const CORS_RES_HEADERS = ["Access-Control-Allow-Origin" => "*"]
 
 #= 
 JSONMiddleware minimizes code by automatically converting the request body
@@ -52,7 +56,7 @@ function JSONMiddleware(handler)
             ret = handler(req)
         end
         # return a Response, serializing any Animal as json string
-        return HTTP.Response(200, ret === nothing ? "" : JSON3.write(ret))
+        return HTTP.Response(200, CORS_RES_HEADERS, ret === nothing ? "" : JSON3.write(ret))
     end
 end
 
@@ -67,7 +71,7 @@ correct service function =#
 function CorsMiddleware(handler)
     return function(req::HTTP.Request)
         if HTTP.hasheader(req, "OPTIONS")
-            return HTTP.Response(200, CORS_HEADERS)
+            return HTTP.Response(200, CORS_OPT_HEADERS)
         else 
             return handler(req)
         end
