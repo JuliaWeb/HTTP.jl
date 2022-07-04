@@ -145,7 +145,7 @@ mutable struct Variable
     pattern::Union{Nothing, Regex}
 end
 
-const VARREGEX = r"^{([[:alnum:]]+):?(.*)}$"
+const VARREGEX = r"^{([^:{}]+)(?::(.*))?}$"
 
 function Variable(pattern)
     re = Base.match(VARREGEX, pattern)
@@ -153,7 +153,7 @@ function Variable(pattern)
         error("problem parsing path variable for route: `$pattern`")
     end
     pat = re.captures[2]
-    return Variable(re.captures[1], pat == "" ? nothing : Regex(pat))
+    return Variable(re.captures[1], pat === nothing ? nothing : Regex(pat))
 end
 
 struct Leaf
@@ -178,7 +178,7 @@ end
 Base.show(io::IO, x::Node) = print(io, "Node($(x.segment))")
 
 isvariable(x) = startswith(x, "{") && endswith(x, "}")
-segment(x) = segment == "*" ? String(segment) : isvariable(x) ? Variable(x) : String(x)
+segment(x) = isvariable(x) ? Variable(x) : String(x)
 
 Node(x) = Node(x, Node[], Node[], nothing, nothing, Leaf[])
 Node() = Node("*")
