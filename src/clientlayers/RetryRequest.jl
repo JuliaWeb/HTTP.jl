@@ -5,6 +5,8 @@ using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest, ..Exceptions
 
 export retrylayer
 
+FALSE(args...) = false
+
 """
     retrylayer(handler) -> handler
 
@@ -19,7 +21,7 @@ e.g. `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 (if status is `5xx`).
 """
 function retrylayer(handler)
-    return function(req::Request; retry::Bool=true, retries::Int=4, retry_non_idempotent::Bool=false, kw...)
+    return function(req::Request; retry::Bool=true, retries::Int=4, retry_non_idempotent::Bool=false, retry_delays=ExponentialBackOff(n = retries), retry_check=FALSE, kw...)
         if !retry || retries == 0
             # no retry
             return handler(req; kw...)
@@ -36,10 +38,10 @@ function retrylayer(handler)
         end
         retryattempt = Ref(0)
         retry_request = Base.retry(handler,
-            delays=ExponentialBackOff(n = retries),
+            delays=retry_delays,
             check=(s, ex) -> begin
                 retryattempt[] += 1
-                retry = isrecoverable(ex) && retryable(req)
+                retry = (isrecoverable(ex) && retryable(req)) || (Messages.retryable_requestbody(req) && retry_check(req, req.resp, ex))
                 if retryattempt[] == retries
                     req.context[:retrylimitreached] = true
                 end

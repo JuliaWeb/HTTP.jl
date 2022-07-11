@@ -261,8 +261,9 @@ Whether a `Request` is eligible to be retried.
 """
 function retryable end
 
-retryable(r::Request) = (isbytes(r.body) || (r.body !== nothing && ismarked(r.body))) &&
-    allow_retries(r) && (isidempotent(r) || retry_non_idempotent(r)) && !retrylimitreached(r)
+retryable_requestbody(r::Request) = isbytes(r.body) || (r.body !== nothing && ismarked(r.body))
+retryable(r::Request) = retryable_requestbody(r) && allow_retries(r) &&
+    (isidempotent(r) || retry_non_idempotent(r)) && !retrylimitreached(r)
 retryable(r::Response) = retryable(r.status)
 retryable(status) = status in (403, 408, 409, 429, 500, 502, 503, 504, 599)
 
