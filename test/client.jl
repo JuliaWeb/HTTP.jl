@@ -537,6 +537,13 @@ end
         seekstart(req_body)
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry=false, status_exception=false)
         @test String(take!(res_body)) == "500 unexpected error"
+        # when retrying, we can still get access to the most recent failed response body in the response's request context
+        shouldfail[] = true
+        seekstart(req_body)
+        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
+        @test resp.status == 200
+        @test String(take!(res_body)) == "hey there sailor"
+        @test String(resp.request.context[:response_body]) == "500 unexpected error"
     finally
         if server !== nothing
             close(server)
