@@ -103,13 +103,7 @@ writechunk(stream, body::IO) = writebodystream(stream, body)
 writechunk(stream, body::Union{Dict, NamedTuple}) = writebodystream(stream, body)
 writechunk(stream, body) = write(stream, body)
 
-function readbody(stream::Stream, res::Response, decompress)
-    # Bail early if we are not going to read anything.
-    # If the request/response pair are going to be redirected or retried,
-    # we want to avoid "contaminating" our response body stream.
-    willread = isbytes(res.body) || (!isredirect(stream) && !retryable(stream))
-    willread || return
-
+function readbody(stream::Stream, res::Response, decompress::Bool)
     if decompress && header(res, "Content-Encoding") == "gzip"
         # Plug in a buffer stream in between so that we can (i) read the http stream in
         # chunks instead of byte-by-byte and (ii) make sure to stop reading the http stream
@@ -127,18 +121,24 @@ function readbody(stream::Stream, res::Response, decompress)
                 close(gzstream)
             end
         end
-        if isbytes(res.body)
-            res.body = read(buf)
-        else
-            write(res.body, buf)
-        end
+        readbody!(stream, res, buf)
         wait(tsk)
     else
-        if isbytes(res.body)
-            res.body = read(stream)
-        else
-            write(res.body, stream)
-        end
+        readbody!(stream, res, stream)
+    end
+end
+
+function readbody!(stream::Stream, res::Response, buf_or_stream)
+    if isbytes(res.body)
+        # normal response body path: read as Vector{UInt8} and store
+        res.body = read(buf_or_stream)
+    elseif isredirect(stream) || retryable(stream)
+        # if response body is a stream, but we're redirecting or
+        # retrying, store this "temporary" body in the request context
+        res.request.context[:response_body] = read(buf_or_stream)
+    else
+        # normal streaming response body path: write response body out directly
+        write(res.body, buf_or_stream)
     end
 end
 
