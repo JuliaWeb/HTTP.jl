@@ -55,8 +55,12 @@ function JSONMiddleware(handler)
             req.body = JSON3.read(req.body, Animal)
             ret = handler(req)
         end
-        # return a Response, serializing any Animal as json string
-        return HTTP.Response(200, CORS_RES_HEADERS, ret === nothing ? "" : JSON3.write(ret))
+        # return a Response, if its a response already (from 404 and 405 handlers)
+        if ret isa HTTP.Response
+            return ret
+        else # otherwise serialize any Animal as json string and wrap it in Response
+            return HTTP.Response(200, CORS_RES_HEADERS, ret === nothing ? "" : JSON3.write(ret))
+        end
     end
 end
 
@@ -113,8 +117,12 @@ function createUser(req::HTTP.Request)
     return userId
 end
 
+# CORS handlers for error responses
+cors404(::HTTP.Request) = HTTP.Response(404, CORS_RES_HEADERS, "")
+cors405(::HTTP.Request) = HTTP.Response(405, CORS_RES_HEADERS, "")
+
 # add an additional endpoint for user creation
-const ANIMAL_ROUTER = HTTP.Router()
+const ANIMAL_ROUTER = HTTP.Router(cors404, cors405)
 HTTP.register!(ANIMAL_ROUTER, "POST", "/api/zoo/v1/users", createUser)
 # modify service endpoints to have user pass UUID in
 HTTP.register!(ANIMAL_ROUTER, "POST", "/api/zoo/v1/users/{userId}/animals", createAnimal)
@@ -136,6 +144,8 @@ x2 = JSON3.read(resp.body, Animal)
 # retrieve it back
 resp = HTTP.get("http://localhost:8080/api/zoo/v1/users/$(userId)/animals/$(x2.id)")
 x3 = JSON3.read(resp.body, Animal)
+# try bad path
+resp = HTTP.get("http://localhost:8080/api/zoo/v1/badpath")
 
 # close the server which will stop the HTTP server from listening
 close(server)
