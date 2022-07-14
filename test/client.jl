@@ -543,7 +543,19 @@ end
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
         @test resp.status == 200
         @test String(take!(res_body)) == "hey there sailor"
-        @test String(resp.request.context[:response_body]) == "500 unexpected error"
+        @test String(resp.request.context[:ephemeral_response_body]) == "500 unexpected error"
+        # custom retry_delays and retry_check
+        shouldfail[] = true
+        seekstart(req_body)
+        chk = (req, resp, resp_body, ex) -> begin
+            @show resp_body
+            @test String(resp_body) == "500 unexpected error"
+            return true
+        end
+        # HTTP.post is non-idempotent, so shouldn't be retried, but our custom retry_check says retry
+        resp = HTTP.post("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry_non_idempotent=true, retry_check=chk)
+        @test resp.status == 200
+        @test String(take!(res_body)) == "hey there sailor"
     finally
         if server !== nothing
             close(server)

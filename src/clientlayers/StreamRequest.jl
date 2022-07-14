@@ -17,7 +17,7 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-function streamlayer(stream::Stream; iofunction=nothing, decompress::Bool=true, kw...)::Response
+function streamlayer(stream::Stream; iofunction=nothing, decompress::Bool=true, retry_status=nothing, kw...)::Response
     response = stream.message
     req = response.request
     io = stream.stream
@@ -45,7 +45,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Bool=true, 
                 end
                 @debugv 2 "client startread"
                 startread(stream)
-                readbody(stream, response, decompress)
+                readbody(stream, response, decompress, retry_status)
             else
                 iofunction(stream)
             end
@@ -103,7 +103,7 @@ writechunk(stream, body::IO) = writebodystream(stream, body)
 writechunk(stream, body::Union{Dict, NamedTuple}) = writebodystream(stream, body)
 writechunk(stream, body) = write(stream, body)
 
-function readbody(stream::Stream, res::Response, decompress::Bool)
+function readbody(stream::Stream, res::Response, decompress::Bool, retry_status)
     if decompress && header(res, "Content-Encoding") == "gzip"
         # Plug in a buffer stream in between so that we can (i) read the http stream in
         # chunks instead of byte-by-byte and (ii) make sure to stop reading the http stream
@@ -121,21 +121,21 @@ function readbody(stream::Stream, res::Response, decompress::Bool)
                 close(gzstream)
             end
         end
-        readbody!(stream, res, buf)
+        readbody!(stream, res, buf, retry_status)
         wait(tsk)
     else
-        readbody!(stream, res, stream)
+        readbody!(stream, res, stream, retry_status)
     end
 end
 
-function readbody!(stream::Stream, res::Response, buf_or_stream)
+function readbody!(stream::Stream, res::Response, buf_or_stream, retry_status)
     if isbytes(res.body)
         # normal response body path: read as Vector{UInt8} and store
         res.body = read(buf_or_stream)
-    elseif isredirect(stream) || retryable(stream)
+    elseif isredirect(stream) || retryable(stream) || (retry_status !== nothing && retry_status(res.status))
         # if response body is a stream, but we're redirecting or
         # retrying, store this "temporary" body in the request context
-        res.request.context[:response_body] = read(buf_or_stream)
+        res.request.context[:ephemeral_response_body] = read(buf_or_stream)
     else
         # normal streaming response body path: write response body out directly
         write(res.body, buf_or_stream)

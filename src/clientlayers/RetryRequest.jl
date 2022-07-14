@@ -41,7 +41,7 @@ function retrylayer(handler)
             delays=retry_delays,
             check=(s, ex) -> begin
                 retryattempt[] += 1
-                retry = (isrecoverable(ex) && retryable(req)) || (Messages.retryable_requestbody(req) && retry_check(req, req.resp, ex))
+                retry = (isrecoverable(ex) && retryable(req)) || (Messages.retryable_requestbody(req) && retry_check(req, req.response, get_maybe_ephemeral_response_body(req), ex))
                 if retryattempt[] == retries
                     req.context[:retrylimitreached] = true
                 end
@@ -62,6 +62,8 @@ function retrylayer(handler)
         return retry_request(req; kw...)
     end
 end
+
+get_maybe_ephemeral_response_body(req::Request) = isbytes(req.response.body) ? req.response.body : get(() -> UInt8[], req.context, :ephemeral_response_body)
 
 supportsmark(x) = false
 supportsmark(x::T) where {T <: IO} = length(Base.methods(mark, Tuple{T}, parentmodule(T))) > 0 || hasfield(T, :mark)
