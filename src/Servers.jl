@@ -69,6 +69,7 @@ end
 
 Listener(host::Union{IPAddr, String}, port::Integer; kw...) = Listener(getinet(host, port), string(host), string(port); kw...)
 Listener(port::Integer; kw...) = Listener(Sockets.localhost, port; kw...)
+Listener(; kw...) = Listener(Sockets.localhost, 8081; kw...)
 
 Base.isopen(l::Listener) = isopen(l.server)
 Base.close(l::Listener) = close(l.server)

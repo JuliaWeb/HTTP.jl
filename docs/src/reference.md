@@ -117,6 +117,7 @@ HTTP.Middleware
 HTTP.streamhandler
 HTTP.Router
 HTTP.register!
+HTTP.getparam
 HTTP.getparams
 HTTP.Handlers.cookie_middleware
 HTTP.getcookies

@@ -441,6 +441,19 @@ and can be retrieved like `id = HTTP.getparams(req)["id"]`.
 getparams(req) = get(req.context, :params, nothing)
 
 """
+    HTTP.getparam(req, name, default=nothing) -> String
+
+Retrieve a matched path parameter with name `name` from request context.
+If a path was registered with a router via `HTTP.register!` like
+"/api/widget/{id}", then the path parameter can be retrieved like `id = HTTP.getparam(req, "id").
+"""
+function getparam(req, name, default=nothing)
+    params = getparams(req)
+    params === nothing && return default
+    return get(params, name, default)
+end
+
+"""
     HTTP.Handlers.cookie_middleware(handler) -> handler
 
 Middleware that parses and stores any cookies in the incoming
