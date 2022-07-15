@@ -19,7 +19,7 @@ remotely closed, a connection will be reused.
 """
 module ConnectionPool
 
-export Connection, newconnection, getrawstream, inactiveseconds
+export Connection, newconnection, releaseconnection, getrawstream, inactiveseconds
 
 using Sockets, LoggingExtras, NetworkOptions
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
@@ -270,9 +270,8 @@ Signal that an entire Response Message has been read from the `Connection`.
 function IOExtras.closeread(c::Connection)
     @require isreadable(c)
     c.readable = false
-    @debugv 3 "✉️  Read done:  $c"
+    @debugv 3 "✉️  Read done: $c"
     if c.clientconnection
-        release(POOL, connectionkey(c), c)
         # Ignore SSLContext as it already monitors idle connections for TLS close_notify messages
         !(c.io isa SSLContext) && @async monitor_idle_connection(c)
     end
@@ -356,6 +355,9 @@ function newconnection(::Type{T},
         )
     end
 end
+
+releaseconnection(c::Connection) =
+    release(POOL, connectionkey(c), c)
 
 function keepalive!(tcp)
     @debugv 2 "setting keepalive on tcp socket"

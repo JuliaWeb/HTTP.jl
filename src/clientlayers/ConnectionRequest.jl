@@ -78,6 +78,7 @@ function connectionlayer(handler)
             throw(ConnectError(string(url), e))
         end
 
+        shouldrelease = true
         try
             if proxy !== nothing && target_url.scheme in ("https", "wss", "ws")
                 # tunnel request
@@ -92,6 +93,7 @@ function connectionlayer(handler)
                     return r
                 end
                 if target_url.scheme in ("https", "wss")
+                    shouldrelease = false
                     io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
                 end
                 req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
@@ -110,6 +112,8 @@ function connectionlayer(handler)
             @try close(io)
             e isa HTTPError || throw(RequestError(req, e))
             rethrow(e)
+        finally
+            shouldrelease && releaseconnection(io)
         end
     end
 end
