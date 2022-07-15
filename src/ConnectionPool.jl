@@ -22,7 +22,7 @@ module ConnectionPool
 export Connection, newconnection, getrawstream, inactiveseconds
 
 using Sockets, LoggingExtras, NetworkOptions
-using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
+using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!, MbedException
 using ..IOExtras, ..Conditions
 
 const default_connection_limit = 8
@@ -174,6 +174,7 @@ function Base.unsafe_read(c::Connection, p::Ptr{UInt8}, n::UInt)
             c.timestamp = time()
         catch e
             e isa Base.IOError && throw(EOFError())
+            e isa MbedException && throw(EOFError())
             rethrow(e)
         end
     end
@@ -293,8 +294,10 @@ function Base.close(c::Connection)
         if bytesavailable(c) > 0
             purge(c)
         end
-    catch
+    catch ex
         # ignore errors closing underlying socket
+        # TODO: this may violate the documented behavior of `Base.close`?
+        ex isa Base.IOError || rethrow()
     end
     return
 end
@@ -388,6 +391,7 @@ function getconnection(::Type{TCPSocket},
 
     lasterr = ErrorException("unknown connection error")
 
+    # n.b. this uses the naive (slow) algorithm, not the happyeyeballs (RFC 8305) standard
     for addr in addrs
         if connect_timeout == 0
             try
@@ -395,6 +399,7 @@ function getconnection(::Type{TCPSocket},
                 keepalive && keepalive!(tcp)
                 return tcp
             catch err
+                err isa Base.IOError || rethrow()
                 lasterr = err
                 continue # to next ip addr
             end
@@ -402,14 +407,13 @@ function getconnection(::Type{TCPSocket},
             tcp = Sockets.TCPSocket()
             Sockets.connect!(tcp, addr, p)
 
-            timeout = Ref{Bool}(false)
+            timeout = false
             @async begin
                 sleep(connect_timeout)
+                # TODO: this is a minor data race
                 if tcp.status == Base.StatusConnecting
-                    timeout[] = true
-                    tcp.status = Base.StatusClosing
-                    ccall(:jl_forceclose_uv, Nothing, (Ptr{Nothing},), tcp.handle)
-                    #close(tcp)
+                    timeout = true
+                    close(tcp)
                 end
             end
             try
@@ -417,7 +421,8 @@ function getconnection(::Type{TCPSocket},
                 keepalive && keepalive!(tcp)
                 return tcp
             catch err
-                if timeout[]
+                err isa Base.IOError || rethrow()
+                if timeout
                     lasterr = ConnectTimeout(host, port)
                 else
                     lasterr = err
@@ -426,7 +431,7 @@ function getconnection(::Type{TCPSocket},
             end
         end
     end
-    # If no connetion could be set up, to any address, throw last error
+    # If no connection could be set up, to any address, throw last error
     throw(lasterr)
 end
 

@@ -85,7 +85,10 @@ function getsslcontext(tcp, sslconfig)
         MbedTLS.handshake!(ssl)
         return ssl
     catch e
-        return nothing
+        @try close(tcp)
+        e isa Base.IOError && return nothing
+        e isa MbedTLS.MbedException && return nothing
+        rethrow()
     end
 end
 
@@ -139,38 +142,26 @@ closedorclosing(st) = st == CLOSING || st == CLOSED
 
 function requestclose!(c::Connection)
     if c.state == IDLE
-        closewriteandwait(c)
-        close(c)
         c.state = CLOSED
+        close(c)
     else
         c.state = CLOSING
     end
     return
 end
 
-function closewriteandwait(c::Connection)
-    io = IOExtras.tcpsocket(ConnectionPool.getrawstream(c))
-    @try begin
-        flush(io)
-        closewrite(io)
-        sleep(0.5) # give time for client to receive FIN
-    end
-    return
-end
-
 function closeconnection(c::Connection)
     c.state = CLOSED
-    closewriteandwait(c)
     close(c)
     return
 end
 
-# graceful shutdown that waits for active connectiosn to finish being handled
+# graceful shutdown that waits for active connections to finish being handled
 function Base.close(s::Server)
     shutdown(s.on_shutdown)
     close(s.listener)
     # first pass to mark or request connections to close
-    for c in s.connections
+    for c in collect(s.connections)
         requestclose!(c)
     end
     # second pass to wait for connections to close
@@ -178,7 +169,10 @@ function Base.close(s::Server)
     # connections close themselves, they are removed
     # from our connections Set
     while !isempty(s.connections)
-        sleep(0.5 + rand() * 0.1)
+        c = first(s.connections)
+        Base.wait_close(c)
+        # code flaw: wait for s.connections to cleanup by wishful thinking, and data races
+        sleep(0.1 + rand() * 0.1)
     end
     return wait(s.task)
 end
@@ -336,7 +330,7 @@ function listen!(f, listener::Listener;
     access_log::Union{Function,Nothing}=nothing,
     verbose=false, kw...)
     conns = Set{Connection}()
-    ready_to_accept = Ref(false)
+    ready_to_accept = Base.Event()
     if verbose > 0
         tsk = @async LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
             listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept)
@@ -344,14 +338,13 @@ function listen!(f, listener::Listener;
     else
         tsk = @async listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept)
     end
+    # This rationale is utter bullshit, but is our fake reason for this event to exist:
     # listen! is "semi-blocking" in that we only want
     # to return when the server is absolutely ready to accept
     # new connections; useful for testing purposes and local development
     # it also provides an immediate yield so our listenloop task
     # has the chance to be scheduled and get started
-    while !ready_to_accept[]
-        sleep(0.01)
-    end
+    wait(ready_to_accept)
     return Server(listener, on_shutdown, conns, tsk)
 end
 
@@ -363,7 +356,7 @@ function listenloop(f, listener, conns, tcpisvalid,
                        max_connections, readtimeout, access_log, ready_to_accept)
     sem = Base.Semaphore(max_connections)
     @infov 1 "Listening on: $(listener.hostname):$(listener.hostport)"
-    ready_to_accept[] = true
+    notify(ready_to_accept)
     while isopen(listener)
         try
             Base.acquire(sem)
@@ -424,7 +417,6 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
             try
                 startread(http)
                 @debugv 1 "startread called"
-                c.state = ACTIVE # once we've started reading, set ACTIVE state
             catch e
                 # for ParserErrors, try to inform client of the problem
                 if e isa ParseError
@@ -434,6 +426,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 break
             end
 
+            c.state = ACTIVE # once we've started reading, set ACTIVE state
             if hasheader(request, "Connection", "close")
                 c.state = CLOSING # set CLOSING so no more requests are read
                 setheader(request.response, "Connection" => "close")
