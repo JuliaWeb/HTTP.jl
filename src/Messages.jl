@@ -53,7 +53,7 @@ export Message, Request, Response,
        reset!, status, method, headers, uri, body, resource,
        iserror, isredirect, retryable, ischunked, issafe, isidempotent,
        header, hasheader, headercontains, setheader, defaultheader!, appendheader,
-       mkheaders, readheaders, headerscomplete,
+       removeheader, mkheaders, readheaders, headerscomplete,
        readchunksize,
        writeheaders, writestartline,
        bodylength, unknown_length,
@@ -412,6 +412,13 @@ function appendheader(m::Message, header::Header)
     end
     return
 end
+
+"""
+    HTTP.removeheader(::Message, key)
+
+Remove header for `key` (case-insensitive).
+"""
+removeheader(m::Message, header::String) = rmkv(m.headers, header, field_name_isequal)
 
 # HTTP payload body
 function payload(m::Message)::Vector{UInt8}

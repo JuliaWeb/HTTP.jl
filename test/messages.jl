@@ -55,6 +55,9 @@ using JSON
 
         setheader(req, "X" => "Y")
         @test header(req, "X") == "Y"
+        removeheader(req, "X")
+        @test header(req, "X") == ""
+        setheader(req, "X" => "Y")
     end
 
     @testset "Response" begin

@@ -32,6 +32,7 @@ HTTP.Messages.hasheader
 HTTP.Messages.headercontains
 HTTP.Messages.setheader
 HTTP.Messages.appendheader
+HTTP.Messages.removeheader
 HTTP.Messages.decode
 ```
 

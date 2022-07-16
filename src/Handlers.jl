@@ -1,6 +1,6 @@
 module Handlers
 
-export Handler, Middleware, serve, serve!, Router, register!, getparams, getcookies, streamhandler
+export Handler, Middleware, serve, serve!, Router, register!, getparams, getparam, getcookies, streamhandler
 
 using URIs
 using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
