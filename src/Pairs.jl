@@ -67,8 +67,8 @@ end
 
 Remove `key` from `collection` of key/value `Pairs`.
 """
-function rmkv(c, k, default=nothing)
-    i = findfirst(x->first(x) == k, c)
+function rmkv(c, k, eq = ==)
+    i = findfirst(x->eq(first(x), k), c)
     if !(i === nothing)
         deleteat!(c, i)
     end
