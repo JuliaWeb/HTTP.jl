@@ -356,8 +356,8 @@ function newconnection(::Type{T},
     end
 end
 
-releaseconnection(c::Connection) =
-    release(POOL, connectionkey(c), c)
+releaseconnection(c::Connection, reuse) =
+    release(POOL, connectionkey(c), c; return_for_reuse=reuse)
 
 function keepalive!(tcp)
     @debugv 2 "setting keepalive on tcp socket"
