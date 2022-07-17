@@ -3,6 +3,7 @@ module TestClient
 using HTTP, HTTP.Exceptions
 include(joinpath(dirname(pathof(HTTP)), "../test/resources/TestRequest.jl"))
 using .TestRequest
+using .TestRequest2
 using Sockets
 using JSON
 using Test
@@ -15,6 +16,10 @@ status(r) = r.status
         result = TestRequest.get("https://httpbin.org/ip"; httptestlayer=wasincluded)
         @test status(result) == 200
         @test wasincluded[]
+    end
+    @testset "Low-level Request" begin
+        TestRequest2.get("https://httpbin.org/ip")
+        # tests included in the layers themselves
     end
 end
 
