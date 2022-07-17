@@ -67,7 +67,7 @@ function connectionlayer(handler)
                 setheader(req.headers, "Proxy-Authorization" => "Basic $(base64encode(userinfo))")
             end
         else
-            url = req.url
+            url = target_url = req.url
         end
 
         IOType = sockettype(url, socket_type)
@@ -78,9 +78,10 @@ function connectionlayer(handler)
             throw(ConnectError(string(url), e))
         end
 
-        shouldrelease = true
+        shouldreuse = !(target_url.scheme in ("ws", "wss"))
         try
             if proxy !== nothing && target_url.scheme in ("https", "wss", "ws")
+                shouldreuse = false
                 # tunnel request
                 if target_url.scheme in ("https", "wss")
                     target_url = merge(target_url, port=443)
@@ -93,27 +94,23 @@ function connectionlayer(handler)
                     return r
                 end
                 if target_url.scheme in ("https", "wss")
-                    shouldrelease = false
                     io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
                 end
                 req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
             end
 
             stream = Stream(req.response, io)
-            resp = handler(stream; kw...)
-
-            if proxy !== nothing && target_url.scheme in ("https", "wss")
-                close(io)
-            end
-
-            return resp
+            return handler(stream; kw...)
         catch e
             @debugv 1 "❗️  ConnectionLayer $e. Closing: $io"
-            @try close(io)
+            shouldreuse = false
             e isa HTTPError || throw(RequestError(req, e))
             rethrow(e)
         finally
-            shouldrelease && releaseconnection(io)
+            if !shouldreuse
+                @try close(io)
+            end
+            releaseconnection(io, shouldreuse)
         end
     end
 end
