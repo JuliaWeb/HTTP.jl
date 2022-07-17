@@ -377,13 +377,34 @@ function stack(
     streamlayers=())
 
     # stream layers
-    layers = foldr((x, y) -> x(y), streamlayers, init=streamlayer)
+    if streamlayers isa NamedTuple
+        inner_stream_layers = haskey(streamlayers, :last) ? streamlayers.last : ()
+        outer_stream_layers = haskey(streamlayers, :first) ? streamlayers.first : ()
+    else
+        inner_stream_layers = streamlayers
+        outer_stream_layers = ()
+    end
+    layers = foldr((x, y) -> x(y), inner_stream_layers, init=streamlayer)
     layers2 = foldr((x, y) -> x(y), STREAM_LAYERS, init=layers)
+    if !isempty(outer_stream_layers)
+        layers2 = foldr((x, y) -> x(y), outer_stream_layers, init=layers2)
+    end
     # request layers
     # messagelayer must be the 1st/outermost layer to convert initial args to Request
     # we also want debuglayer to be early to ensure any debug logging is handled correctly in other layers
-    layers3 = foldr((x, y) -> x(y), requestlayers; init=connectionlayer(layers2))
-    return messagelayer(debuglayer(foldr((x, y) -> x(y), REQUEST_LAYERS; init=layers3)))
+    if requestlayers isa NamedTuple
+        inner_request_layers = haskey(requestlayers, :last) ? requestlayers.last : ()
+        outer_request_layers = haskey(requestlayers, :first) ? requestlayers.first : ()
+    else
+        inner_request_layers = requestlayers
+        outer_request_layers = ()
+    end
+    layers3 = foldr((x, y) -> x(y), inner_request_layers; init=connectionlayer(layers2))
+    layers4 = foldr((x, y) -> x(y), REQUEST_LAYERS; init=layers3)
+    if !isempty(outer_request_layers)
+        layers4 = foldr((x, y) -> x(y), outer_request_layers, init=layers4)
+    end
+    return messagelayer(debuglayer(layers4))
 end
 
 function request(stack::Base.Callable, method, url, h=Header[], b=nobody, q=nothing;
@@ -392,8 +413,9 @@ function request(stack::Base.Callable, method, url, h=Header[], b=nobody, q=noth
 end
 
 """
-    HTTP.@client [requestlayers]
-    HTTP.@client [requestlayers] [streamlayers]
+    HTTP.@client requestlayers
+    HTTP.@client requestlayers streamlayers
+    HTTP.@client (first=requestlayers, last=requestlayers) (first=streamlayers, last=streamlayers)
 
 Convenience macro for creating a custom HTTP.jl client that will include custom layers when
 performing requests. It's common to want to define a custom [`Layer`](@ref) to enhance a
@@ -401,6 +423,27 @@ specific category of requests, such as custom authentcation for a web API. Inste
 the global HTTP.jl request stack via [`HTTP.pushlayer!`](@ref), a custom wrapper client can be
 defined with convenient shorthand methods. See [`Layer`](@ref) for an example of defining a custom
 layer and creating a new client that includes the layer.
+
+Custom layer arguments can be provided as a collection of request or stream-based layers; alternatively,
+a NamedTuple with keys `first` and `last` can be provided with values being a collection of layers.
+The NamedTuple form provides finer control over the order in which the layers will be included in the default
+http layer stack: `first` request layers are executed before all other layers, `last` request layers
+are executed right before all stream layers, and similarly for stream layers.
+
+An empty collection can always be passed for request or stream layers when not needed.
+
+One use case for custom clients is to control the value of standard `HTTP.request` keyword arguments.
+This can be achieved by passing a `(first=[defaultkeywordlayer],)` where `defaultkeywordlayer` is defined
+like:
+
+```julia
+defaultkeywordlayer(handler) = (req; kw...) -> handler(req; retry=false, redirect=false, kw...)
+```
+
+This client-side layer is basically a no-op as it doesn't modify the request at all, except that it
+hard-codes the value of the `retry` and `redirect` keyword arguments. When we pass this layer as
+`(first=[defaultkeywordlayer],)` this ensures this layer will be executed before all other layers,
+effectively over-writing the default and any user-provided keyword arguments for `retry` or `redirect`.
 """
 macro client(requestlayers, streamlayers=[])
     esc(quote
