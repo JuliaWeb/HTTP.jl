@@ -330,21 +330,13 @@ function listen!(f, listener::Listener;
     access_log::Union{Function,Nothing}=nothing,
     verbose=false, kw...)
     conns = Set{Connection}()
-    ready_to_accept = Base.Event()
     if verbose > 0
         tsk = @async LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
-            listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept)
+            listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log)
         end
     else
-        tsk = @async listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept)
+        tsk = @async listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log)
     end
-    # This rationale is utter bullshit, but is our fake reason for this event to exist:
-    # listen! is "semi-blocking" in that we only want
-    # to return when the server is absolutely ready to accept
-    # new connections; useful for testing purposes and local development
-    # it also provides an immediate yield so our listenloop task
-    # has the chance to be scheduled and get started
-    wait(ready_to_accept)
     return Server(listener, on_shutdown, conns, tsk)
 end
 
@@ -353,10 +345,9 @@ Main server loop.
 Accepts new tcp connections and spawns async tasks to handle them."
 """
 function listenloop(f, listener, conns, tcpisvalid,
-                       max_connections, readtimeout, access_log, ready_to_accept)
+                       max_connections, readtimeout, access_log)
     sem = Base.Semaphore(max_connections)
     @infov 1 "Listening on: $(listener.hostname):$(listener.hostport)"
-    notify(ready_to_accept)
     while isopen(listener)
         try
             Base.acquire(sem)
