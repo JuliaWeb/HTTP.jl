@@ -1,6 +1,6 @@
 module Handlers
 
-export Handler, Middleware, serve, serve!, Router, register!, getparams, getparam, getcookies, streamhandler
+export Handler, Middleware, serve, serve!, Router, register!, getroute, getparams, getparam, getcookies, streamhandler
 
 using URIs
 using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
@@ -317,7 +317,7 @@ function match(node::Node, method, segments, i)
 end
 
 """
-    HTTP.Router(_404, _405)
+    HTTP.Router(_404, _405, middleware=nothing)
 
 Define a router object that maps incoming requests by path to registered routes and
 associated handlers. Paths can be registered using [`HTTP.register!`](@ref). The router
@@ -336,11 +336,18 @@ If a request doesn't have a matching, registered handler, the `_404` handler is 
 by default, returns a `HTTP.Response(404)`. If a route matches the path, but not the method/verb
 (e.g. there's a registerd route for "GET /api", but the request is "POST /api"), then the `_405`
 handler is called, which by default returns `HTTP.Response(405)` (method not allowed).
+
+A `middleware` ([`Middleware`](@ref)) can optionally be provided as well, which will be called
+after the router has matched the request to a route, but before the route's handler is called.
+This provides a "hook" for matched routes that can be helpful for metric tracking, logging, etc.
+Note that the middleware is only called if the route is matched; for the 404 and 405 cases,
+users should wrap those handlers in the `middleware` manually.
 """
-struct Router{T, S}
+struct Router{T, S, F}
     _404::T
     _405::S
     routes::Node
+    middleware::F
 end
 
 default404(::Request) = Response(404)
@@ -348,7 +355,7 @@ default405(::Request) = Response(405)
 default404(s::Stream) = setstatus(s, 404)
 default405(s::Stream) = setstatus(s, 405)
 
-Router(_404=default404, _405=default405) = Router(_404, _405, Node())
+Router(_404=default404, _405=default405, middleware=nothing) = Router(_404, _405, Node(), middleware)
 
 """
     HTTP.register!(r::Router, method, path, handler)
@@ -369,6 +376,9 @@ function register! end
 
 function register!(r::Router, method, path, handler)
     segments = map(segment, split(path, '/'; keepempty=false))
+    if r.middleware !== nothing
+        handler = r.middleware(handler)
+    end
     insert!(r.routes, Leaf(method, Tuple{Int, String}[], path, handler), segments, 1)
     return
 end
@@ -429,6 +439,15 @@ function (r::Router)(req::Request)
         return handler(req)
     end
 end
+
+"""
+    HTTP.getroute(req) -> String
+
+Retrieve the original route registration string for a request after its url has been
+matched against a router. Helpful for metric logging to ignore matched variables in
+a path and only see the registered routes.
+"""
+getroute(req) = get(req.context, :route, nothing)
 
 """
     HTTP.getparams(req) -> Dict{String, String}

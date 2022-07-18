@@ -2,9 +2,15 @@ using HTTP, Test
 
 @testset "Handlers" begin
 
-    r = HTTP.Router(_ -> 0, _ -> -1)
+    called = Ref{Bool}(false)
+    middle = handler -> req -> begin
+        called[] = true
+        return handler(req)
+    end
+    r = HTTP.Router(_ -> 0, _ -> -1, middle)
     HTTP.register!(r, "/test", _ -> 1)
     @test r(HTTP.Request("GET", "/test")) == 1
+    @test called[]
 
     HTTP.register!(r, "/path/to/greatness", _ -> 2)
     @test r(HTTP.Request("GET", "/path/to/greatness")) == 2
@@ -17,7 +23,9 @@ using HTTP, Test
     HTTP.register!(r, "POST", "/tpost", _ -> 6)
     HTTP.register!(r, "GET", "/tpost", _ -> 7)
     @test r(HTTP.Request("GET", "/sget")) == 4
+    called[] = false
     @test r(HTTP.Request("POST", "/sget")) == -1
+    @test !called[]
     @test r(HTTP.Request("GET", "/spost")) == -1
     @test r(HTTP.Request("POST", "/spost")) == 5
     @test r(HTTP.Request("POST", "/tpost")) == 6
@@ -38,11 +46,13 @@ using HTTP, Test
     HTTP.register!(r, "/api/widgets/{id}", req -> HTTP.getparam(req, "id"))
     @test r(HTTP.Request("GET", "/api/widgets/11")) == "11"
 
-    HTTP.register!(r, "/api/widgets/{name}", req -> (req.context[:params]["name"], req.context[:route]))
+    HTTP.register!(r, "/api/widgets/{name}", req -> (req.context[:params]["name"], HTTP.getroute(req)))
     @test r(HTTP.Request("GET", "/api/widgets/11")) == ("11", "/api/widgets/{name}")
 
     HTTP.register!(r, "/api/widgets/acme/{id:[a-z]+}", req -> req.context[:params]["id"])
+    called[] = false
     @test r(HTTP.Request("GET", "/api/widgets/acme/11")) == 0
+    @test !called[]
     @test r(HTTP.Request("GET", "/api/widgets/acme/abc")) == "abc"
 
     HTTP.register!(r, "/test/**", _ -> 11)
