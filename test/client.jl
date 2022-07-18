@@ -173,7 +173,7 @@ end
             @test err.error isa EOFError
         finally
             # Shutdown
-            @try close(server)
+            @try Base.IOError close(server)
             HTTP.ConnectionPool.closeall()
         end
     end
@@ -299,7 +299,7 @@ end
                 @test req.status == 200
                 @test String(req.body) == "hello, world"
             finally
-                @try close(server)
+                @try Base.IOError close(server)
                 HTTP.ConnectionPool.closeall()
             end
         end
@@ -337,7 +337,7 @@ end
             @test peer[2] == 8080
         end
     finally
-        @try close(server)
+        @try Base.IOError close(server)
         HTTP.ConnectionPool.closeall()
     end
 
@@ -394,7 +394,7 @@ end
 
         HTTP.setuseragent!(old_user_agent)
     finally
-        @try close(server)
+        @try Base.IOError close(server)
         HTTP.ConnectionPool.closeall()
     end
 end
@@ -435,7 +435,7 @@ import NetworkOptions, MbedTLS
             @test HTTP.get(url; require_ssl_verification=false).status == 200
         end
     finally
-        @try close(server)
+        @try Base.IOError close(server)
         HTTP.ConnectionPool.closeall()
     end
 end

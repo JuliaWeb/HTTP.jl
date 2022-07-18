@@ -109,7 +109,7 @@ Write the final `0` chunk if needed.
 function closebody(http::Stream)
     if http.writechunked
         http.writechunked = false
-        @try write(http.stream, "0\r\n\r\n")
+        @try Base.IOError write(http.stream, "0\r\n\r\n")
     end
 end
 

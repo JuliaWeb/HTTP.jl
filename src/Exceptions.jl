@@ -5,15 +5,20 @@ import ..HTTP # for doc references
 
 @eval begin
 """
-    @try expr
+    @try Permitted Error Types expr
 
 Convenience macro for wrapping an expression in a try/catch block
 where thrown exceptions are ignored.
 """
-macro $(:try)(ex)
+macro $(:try)(exes...)
+    errs = Any[exes...]
+    ex = pop!(errs)
+    isempty(errs) && error("no permitted errors")
     quote
         try $(esc(ex))
-        catch
+        catch e
+            e isa InterruptException && rethrow(e)
+            |($([:(e isa $(esc(err))) for err in errs]...)) || rethrow(e)
         end
     end
 end
