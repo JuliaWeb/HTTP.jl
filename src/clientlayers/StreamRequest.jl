@@ -41,7 +41,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Bool=true, 
                 catch e
                     # @error "error" exception=(e, catch_backtrace())
                     write_error = e
-                    isopen(io) && @try close(io)
+                    isopen(io) && @try Base.IOError close(io)
                 end
                 @debugv 2 "client startread"
                 startread(stream)
@@ -52,7 +52,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Bool=true, 
             if isaborted(stream)
                 # The server may have closed the connection.
                 # Don't propagate such errors.
-                @try close(io)
+                @try Base.IOError close(io)
             end
         end
     catch e

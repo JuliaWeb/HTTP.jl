@@ -85,7 +85,10 @@ function getsslcontext(tcp, sslconfig)
         MbedTLS.handshake!(ssl)
         return ssl
     catch e
-        return nothing
+        @try Base.IOError close(tcp)
+        e isa Base.IOError && return nothing
+        e isa MbedTLS.MbedException && return nothing
+        rethrow(e)
     end
 end
 
@@ -139,28 +142,16 @@ closedorclosing(st) = st == CLOSING || st == CLOSED
 
 function requestclose!(c::Connection)
     if c.state == IDLE
-        closewriteandwait(c)
-        close(c)
         c.state = CLOSED
+        close(c)
     else
         c.state = CLOSING
     end
     return
 end
 
-function closewriteandwait(c::Connection)
-    io = IOExtras.tcpsocket(ConnectionPool.getrawstream(c))
-    @try begin
-        flush(io)
-        closewrite(io)
-        sleep(0.5) # give time for client to receive FIN
-    end
-    return
-end
-
 function closeconnection(c::Connection)
     c.state = CLOSED
-    closewriteandwait(c)
     close(c)
     return
 end
@@ -468,7 +459,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 c.state = CLOSING
             finally
                 if access_log !== nothing
-                    @try(@info sprint(access_log, http) _group=:access)
+                    @try(Any, @info sprint(access_log, http) _group=:access)
                 end
             end
         end
