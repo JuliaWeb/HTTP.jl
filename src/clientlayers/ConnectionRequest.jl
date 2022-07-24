@@ -84,9 +84,9 @@ function connectionlayer(handler)
                 shouldreuse = false
                 # tunnel request
                 if target_url.scheme in ("https", "wss")
-                    target_url = merge(target_url, port=443)
+                    target_url = URI(target_url, port=443)
                 elseif target_url.scheme in ("ws", ) && target_url.port == ""
-                    target_url = merge(target_url, port=80) # if there is no port info, connect_tunnel will fail
+                    target_url = URI(target_url, port=80) # if there is no port info, connect_tunnel will fail
                 end
                 r = connect_tunnel(io, target_url, req)
                 if r.status != 200
