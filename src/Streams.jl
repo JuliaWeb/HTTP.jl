@@ -13,7 +13,8 @@ mutable struct Stream{M <: Message, S <: IO} <: IO
     readchunked::Bool
     warn_not_to_read_one_byte_at_a_time::Bool
     ntoread::Int
-    nwritten::Int
+    nread::Int    # number of read body bytes
+    nwritten::Int # number of written body bytes
 end
 
 """
@@ -36,7 +37,7 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
     for reuse. If a complete response has not been received, `closeread` throws
     `EOFError`.
 """
-Stream(r::M, io::S) where {M, S} = Stream{M, S}(r, io, false, false, true, 0, 0)
+Stream(r::M, io::S) where {M, S} = Stream{M, S}(r, io, false, false, true, 0, 0, 0)
 
 Messages.header(http::Stream, a...) = header(http.message, a...)
 setstatus(http::Stream, status) = (http.message.response.status = status)
@@ -207,6 +208,9 @@ end
 end
 
 @inline function update_ntoread(http::Stream, n)
+
+    # Record number of read bytes for logging
+    http.nread += n
 
     if http.ntoread != unknown_length
         http.ntoread -= n

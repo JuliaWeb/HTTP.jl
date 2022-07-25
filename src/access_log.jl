@@ -20,6 +20,7 @@ The following variables are currently supported:
  - `$time_local`: local time in Common Log Format
  - `$status`: response status code
  - `$body_bytes_sent`: number of bytes in response body
+ - `$body_bytes_received`: number of bytes read from client
 
 ## Examples
 ```julia
@@ -34,7 +35,6 @@ end
 
 function logfmt_parser(s)
     s = String(s)
-    vars = Symbol[]
     ex = Expr(:call, :print, :io)
     i = 1
     while i <= lastindex(s)
@@ -101,6 +101,8 @@ function symbol_mapping(s::Symbol)
         :(http.message.response.status)
     elseif s === :body_bytes_sent
         return :(http.nwritten)
+    elseif s === :body_bytes_received
+        return :(http.nread)
     else
         error("unknown variable in logfmt: $s")
     end
