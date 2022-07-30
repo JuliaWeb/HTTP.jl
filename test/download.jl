@@ -21,6 +21,9 @@ using HTTP
         # HTTP.jl#696
         file = HTTP.download("https://httpbingo.julialang.org/html?a=b")
         @test basename(file) == "html"
+        # HTTP.jl#896
+        file = HTTP.download("https://www.cryst.ehu.es/")
+        @test isfile(file) # just ensure it downloads and doesn't stack overflow
     end
 
     @testset "Content-Disposition" begin
