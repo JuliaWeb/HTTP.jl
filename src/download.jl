@@ -36,7 +36,7 @@ end
 
 function try_get_filename_from_request(req)
     function file_from_target(t)
-        (t == "" || t == "/") && return nothing
+        (t == "" || startswith(t, "/") && return nothing
         f = basename(URI(t).path) # URI(...).path to strip out e.g. query parts
         return (f == "" ? file_from_target(dirname(t)) : f)
     end
