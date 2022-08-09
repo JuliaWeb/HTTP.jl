@@ -254,12 +254,19 @@ end
 
 """
 Wait for `c` to receive data or reach EOF.
-Close `c` on EOF or if response data arrives when no request was sent.
+Close `c` on EOF.
+TODO: or if response data arrives when no request was sent (isreadable == false).
 """
 function monitor_idle_connection(c::Connection)
-    if eof(c.io)                                  ;@debugv 3 "💀  Closed:     $c"
+    try
+        if eof(c.io)                                  ;@debugv 3 "💀  Closed:     $c"
+            close(c.io)
+        end
+    catch ex
         close(c.io)
+        rethrow()
     end
+    nothing
 end
 
 """
@@ -272,8 +279,8 @@ function IOExtras.closeread(c::Connection)
     c.readable = false
     @debugv 3 "✉️  Read done: $c"
     if c.clientconnection
-        # Ignore SSLContext as it already monitors idle connections for TLS close_notify messages
-        !(c.io isa SSLContext) && @async monitor_idle_connection(c)
+        t = @async monitor_idle_connection(c)
+        @isdefined(errormonitor) && errormonitor(t)
     end
     return
 end
