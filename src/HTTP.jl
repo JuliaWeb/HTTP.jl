@@ -354,7 +354,7 @@ executed. To add a layer at the top of the stack, see [`HTTP.pushlayer!`](@ref).
 pushfirstlayer!(layer; request::Bool=true) = pushfirst!(request ? REQUEST_LAYERS : STREAM_LAYERS, layer)
 
 """
-    HTTP.poplayer!(layer; request=true)
+    HTTP.poplayer!(; request=true)
 
 Inverse of [`HTTP.pushlayer!`](@ref), removes the top layer of the global HTTP.jl layer stack.
 Can be used to "cleanup" after a custom layer has been added.
@@ -363,7 +363,7 @@ If `request=false`, will remove the top "stream" layer as opposed to top "reques
 poplayer!(; request::Bool=true) = pop!(request ? REQUEST_LAYERS : STREAM_LAYERS)
 
 """
-    HTTP.popfirstlayer!(layer; request=true)
+    HTTP.popfirstlayer!(; request=true)
 
 Inverse of [`HTTP.pushfirstlayer!`](@ref), removes the bottom layer of the global HTTP.jl layer stack.
 Can be used to "cleanup" after a custom layer has been added.
