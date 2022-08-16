@@ -125,8 +125,9 @@ Supported optional keyword arguments:
    environment variables are also detected/used; if set, they will be used automatically when making requests.
  - `detect_content_type = false`: if `true` and the request body is not a form or `IO`, it will be
     inspected and the "Content-Type" header will be set to the detected content type.
- - `decompress = true`, if `true`, decompress the response body if the response has a
-    "Content-Encoding" header set to "gzip".
+ - `decompress = nothing`, by default, decompress the response body if the response has a
+    "Content-Encoding" header set to "gzip". If `decompress=true`, decompress the response body
+    regardless of `Content-Encoding` header. If `decompress=false`, do not decompress the response body.
 
 Retry arguments:
  - `retry = true`, retry idempotent requests in case of error.
@@ -453,6 +454,7 @@ macro client(requestlayers, streamlayers=[])
         patch(a...; kw...) = request("PATCH", a...; kw...)
         head(u; kw...) = request("HEAD", u; kw...)
         delete(a...; kw...) = request("DELETE", a...; kw...)
+        open(f, a...; kw...) = request(a...; iofunction=f, kw...)
         request(method, url, h=HTTP.Header[], b=HTTP.nobody; headers=h, body=b, query=nothing, kw...)::HTTP.Response =
             HTTP.request(HTTP.stack($requestlayers, $streamlayers), method, url, headers, body, query; kw...)
     end)
