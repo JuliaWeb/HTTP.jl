@@ -9,7 +9,7 @@ For server functionality operating on full requests, see the `?HTTP.serve` funct
 """
 module Servers
 
-export listen, listen!, Server, forceclose
+export listen, listen!, Server, forceclose, port
 
 using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
@@ -42,11 +42,16 @@ function Listener(addr::Sockets.InetAddr, host::String, port::String;
     reuseaddr::Bool=false,
     backlog::Integer=Sockets.BACKLOG_DEFAULT,
     server::Union{Nothing, Base.IOServer}=nothing, # for backwards compat
+    listenany::Bool=false,
     kw...)
     if server !== nothing
         return Listener(server; sslconfig=sslconfig)
     end
-    if reuseaddr
+    if listenany
+        p, server = Sockets.listenany(addr.host, addr.port)
+        addr = getinet(addr.host, p)
+        port = string(p)
+    elseif reuseaddr
         if !supportsreuseaddr()
             @warn "reuseaddr=true not supported on this platform: $(Sys.KERNEL)"
             @goto fallback
@@ -113,6 +118,7 @@ struct Server{L <: Listener}
     task::Task
 end
 
+port(s::Server) = Int(s.listener.addr.port)
 Base.isopen(s::Server) = isopen(s.listener)
 Base.wait(s::Server) = wait(s.task)
 

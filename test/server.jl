@@ -17,22 +17,23 @@ const echohandler = req -> HTTP.Response(200, req.body)
 const echostreamhandler = HTTP.streamhandler(echohandler)
 
 @testset "HTTP.listen" begin
-    port = 8087 # rand(8000:8999)
-
-    server = HTTP.listen!(echostreamhandler, port)
+    server = HTTP.listen!(echostreamhandler; listenany=true)
+    port = HTTP.port(server)
     r = testget("http://127.0.0.1:$port")
     @test r[1].status == 200
     close(server)
     sleep(0.5)
     @test istaskdone(server.task)
 
-    server = HTTP.listen!(echostreamhandler, port)
-    server2 = HTTP.serve!(echohandler, port+100)
+    server = HTTP.listen!(echostreamhandler; listenany=true)
+    port = HTTP.port(server)
+    server2 = HTTP.serve!(echohandler; listenany=true)
+    port2 = HTTP.port(server2)
 
     r = testget("http://127.0.0.1:$port")
     @test r[1].status == 200
 
-    r = testget("http://127.0.0.1:$(port+100)")
+    r = testget("http://127.0.0.1:$(port2)")
     @test r[1].status == 200
 
     rs = testget("http://127.0.0.1:$port/", 20)
@@ -100,8 +101,8 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
 
     # keep-alive vs. close: issue #81
     hello = HTTP.streamhandler(req -> HTTP.Response("Hello"))
-    port += 1
-    server =  HTTP.listen!(hello, port; verbose=true)
+    server =  HTTP.listen!(hello; listenany=true, verbose=true)
+    port = HTTP.port(server)
     tcp = Sockets.connect(ip"127.0.0.1", port)
     write(tcp, "GET / HTTP/1.0\r\n\r\n")
     sleep(0.5)
@@ -111,26 +112,30 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
     catch
         println("Failed reading bad request response")
     end
+    close(server)
 
     # SO_REUSEPORT
     if HTTP.Servers.supportsreuseaddr()
         println("Testing server port reuse")
-        t1 = HTTP.listen!(hello, 8089; reuseaddr=true)
+        t1 = HTTP.listen!(hello; listeany=true, reuseaddr=true)
+        port = HTTP.port(t1)
         println("Starting second server listening on same port")
-        t2 = HTTP.listen!(hello, 8089; reuseaddr=true)
+        t2 = HTTP.listen!(hello, port; reuseaddr=true)
         println("Starting server on same port without port reuse (throws error)")
         try
-            HTTP.listen(hello, 8089)
+            HTTP.listen(hello, port)
         catch e
             @test e isa Base.IOError
             @test startswith(e.msg, "listen")
             @test e.code == Base.UV_EADDRINUSE
         end
+        close(t1)
+        close(t2)
     end
 
     # test automatic forwarding of non-sensitive headers
     # this is a server that will "echo" whatever headers were sent to it
-    t1 = HTTP.listen!(8090) do http
+    t1 = HTTP.listen!(; listenany=true) do http
         request::HTTP.Request = http.message
         request.body = read(http)
         closeread(http)
@@ -139,9 +144,10 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
         startwrite(http)
         write(http, request.response.body)
     end
+    port = HTTP.port(t1)
 
     # test that an Authorization header is **not** forwarded to a domain different than initial request
-    @test !HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:8090", ["Authorization"=>"auth"]), "Authorization")
+    @test !HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:$port", ["Authorization"=>"auth"]), "Authorization")
 
     # test that an Authorization header **is** forwarded to redirect in same domain
     @test HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=https://httpbin.org/response-headers?Authorization=auth"), "Authorization")
@@ -150,7 +156,7 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
     # 318
     dir = joinpath(dirname(pathof(HTTP)), "../test")
     sslconfig = MbedTLS.SSLConfig(joinpath(dir, "resources/cert.pem"), joinpath(dir, "resources/key.pem"))
-    server = HTTP.listen!(8092; sslconfig = sslconfig, verbose=true) do http::HTTP.Stream
+    server = HTTP.listen!(; listenany=true, sslconfig = sslconfig, verbose=true) do http::HTTP.Stream
         while !eof(http)
             println("body data: ", String(readavailable(http)))
         end
@@ -159,14 +165,15 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
         write(http, "response body\n")
         write(http, "more response body")
     end
-    r = HTTP.request("GET", "https://127.0.0.1:8092"; require_ssl_verification = false)
-    @test_throws HTTP.RequestError HTTP.request("GET", "http://127.0.0.1:8092"; require_ssl_verification = false)
+    port = HTTP.port(server)
+    r = HTTP.request("GET", "https://127.0.0.1:$port"; require_ssl_verification = false)
+    @test_throws HTTP.RequestError HTTP.request("GET", "http://127.0.0.1:$port"; require_ssl_verification = false)
     close(server)
 
     # HTTP.listen with server kwarg
     let host = Sockets.localhost; port = 8093
-        server = Sockets.listen(host, port)
-        HTTP.listen!(Sockets.localhost, 8093; server=server) do http
+        port, server = Sockets.listenany(host, port)
+        HTTP.listen!(Sockets.localhost, port; server=server) do http
             HTTP.setstatus(http, 200)
             HTTP.startwrite(http)
         end
@@ -182,18 +189,18 @@ end # @testset
     # Shutdown adds 1
     TEST_COUNT = Ref(0)
     shutdown_add() = TEST_COUNT[] += 1
-    server = HTTP.listen!(x -> nothing, 8052; on_shutdown=shutdown_add)
+    server = HTTP.listen!(x -> nothing; listenany=true, on_shutdown=shutdown_add)
     close(server)
 
     # Shutdown adds 1, performed twice
     @test TEST_COUNT[] == 1
-    server = HTTP.listen!(x -> nothing, 8052; on_shutdown=[shutdown_add, shutdown_add])
+    server = HTTP.listen!(x -> nothing; listenany=true, on_shutdown=[shutdown_add, shutdown_add])
     close(server)
     @test TEST_COUNT[] == 3
 
     # First shutdown function errors, second adds 1
     shutdown_throw() = throw(ErrorException("Broken"))
-    server = HTTP.listen!(x -> nothing, 8052; on_shutdown=[shutdown_throw, shutdown_add])
+    server = HTTP.listen!(x -> nothing; listenany=true, on_shutdown=[shutdown_throw, shutdown_add])
     @test_logs (:error, r"shutdown function .* failed") close(server)
     @test TEST_COUNT[] == 4
 end # @testset
