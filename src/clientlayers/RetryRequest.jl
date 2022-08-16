@@ -29,7 +29,7 @@ function retrylayer(handler)
             req.context[:retry_non_idempotent] = true
         end
         req_body_is_marked = false
-        if req.body isa IO && supportsmark(req.body)
+        if req.body isa IO && Messages.supportsmark(req.body)
             @debugv 2 "Marking request body stream"
             req_body_is_marked = true
             mark(req.body)
@@ -60,9 +60,6 @@ function retrylayer(handler)
         return retry_request(req; kw...)
     end
 end
-
-supportsmark(x) = false
-supportsmark(x::T) where {T <: IO} = length(Base.methods(mark, Tuple{T}, parentmodule(T))) > 0 || hasfield(T, :mark)
 
 isrecoverable(e) = false
 isrecoverable(e::Union{Base.EOFError, Base.IOError, MbedTLS.MbedException}) = true

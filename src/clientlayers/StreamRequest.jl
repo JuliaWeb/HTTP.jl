@@ -17,7 +17,7 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-function streamlayer(stream::Stream; iofunction=nothing, decompress::Bool=true, kw...)::Response
+function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothing, Bool}=nothing, kw...)::Response
     response = stream.message
     req = response.request
     io = stream.stream
@@ -103,8 +103,8 @@ writechunk(stream, body::IO) = writebodystream(stream, body)
 writechunk(stream, body::Union{Dict, NamedTuple}) = writebodystream(stream, body)
 writechunk(stream, body) = write(stream, body)
 
-function readbody(stream::Stream, res::Response, decompress::Bool)
-    if decompress && header(res, "Content-Encoding") == "gzip"
+function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool})
+    if decompress === true || (decompress === nothing && header(res, "Content-Encoding") == "gzip")
         # Plug in a buffer stream in between so that we can (i) read the http stream in
         # chunks instead of byte-by-byte and (ii) make sure to stop reading the http stream
         # at eof.
