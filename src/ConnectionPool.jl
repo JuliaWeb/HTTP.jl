@@ -263,8 +263,8 @@ function monitor_idle_connection(c::Connection)
             close(c.io)
         end
     catch ex
-        close(c.io)
-        rethrow()
+        @try Base.IOError close(c.io)
+        ex isa Base.IOError || rethrow()
     end
     nothing
 end
