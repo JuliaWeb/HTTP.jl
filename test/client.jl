@@ -520,11 +520,8 @@ end
 @testset "Retry with request/response body streams" begin
     shouldfail = Ref(true)
     server = HTTP.listen!(8080) do http
-        if VERSION < v"1.7"
-            yield()
-        end
         @assert !eof(http)
-        msg = String(readavailable(http))
+        msg = String(read(http))
         if shouldfail[]
             shouldfail[] = false
             error("500 unexpected error")
@@ -547,6 +544,7 @@ end
         # when retrying, we can still get access to the most recent failed response body in the response's request context
         shouldfail[] = true
         seekstart(req_body)
+        println("making 3rd request")
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
         @test resp.status == 200
         @test String(take!(res_body)) == "hey there sailor"
