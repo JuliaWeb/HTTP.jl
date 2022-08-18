@@ -23,7 +23,7 @@ export Connection, newconnection, releaseconnection, getrawstream, inactivesecon
 
 using Sockets, LoggingExtras, NetworkOptions
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
-using ..IOExtras, ..Conditions
+using ..IOExtras, ..Conditions, ..Exceptions
 
 const default_connection_limit = 8
 const default_pipeline_limit = 16
@@ -263,8 +263,8 @@ function monitor_idle_connection(c::Connection)
             close(c.io)
         end
     catch ex
-        close(c.io)
-        rethrow()
+        @try Base.IOError close(c.io)
+        ex isa Base.IOError || rethrow()
     end
     nothing
 end
