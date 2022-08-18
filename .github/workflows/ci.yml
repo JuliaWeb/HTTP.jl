@@ -27,15 +27,12 @@ jobs:
         os:
           - ubuntu-latest
           - macOS-latest
-          - windows-latest
         arch:
-          - x64
           - x86
-        exclude:
-          - os: macOS-latest
-            arch: x86
+        include:
           - os: windows-latest
-            version: 'nightly'
+            version: '1'
+            arch: x64
     steps:
       - uses: actions/checkout@v2
       - name: setup python
