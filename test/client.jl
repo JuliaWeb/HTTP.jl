@@ -518,23 +518,25 @@ end
 end
 
 @testset "Retry with request/response body streams" begin
-    server = nothing
-    try
-        shouldfail = Ref(true)
-        server = HTTP.listen!(8080) do http
-            @assert !eof(http)
-            msg = String(readavailable(http))
-            if shouldfail[]
-                shouldfail[] = false
-                error("500 unexpected error")
-            end
-            HTTP.startwrite(http)
-            HTTP.write(http, msg)
+    shouldfail = Ref(true)
+    server = HTTP.listen!(8080) do http
+        if VERSION < v"1.7"
+            yield()
         end
+        @assert !eof(http)
+        msg = String(readavailable(http))
+        if shouldfail[]
+            shouldfail[] = false
+            error("500 unexpected error")
+        end
+        HTTP.startwrite(http)
+        HTTP.write(http, msg)
+    end
+    try
         req_body = IOBuffer("hey there sailor")
         seekstart(req_body)
         res_body = IOBuffer()
-        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, verbose=2)
+        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
         @test resp.status == 200
         @test String(take!(res_body)) == "hey there sailor"
         # ensure if retry=false, that we write the response body immediately
@@ -550,9 +552,7 @@ end
         @test String(take!(res_body)) == "hey there sailor"
         @test String(resp.request.context[:response_body]) == "500 unexpected error"
     finally
-        if server !== nothing
-            close(server)
-        end
+        close(server)
         HTTP.ConnectionPool.closeall()
     end
 end
