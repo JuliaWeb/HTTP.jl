@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '~1.8.0-0' # 1.8 beta
+          - '1.6'
           - '1' # automatically expands to the latest stable 1.x release of Julia
           - 'nightly'
         os:
@@ -30,12 +30,10 @@ jobs:
           - windows-latest
         arch:
           - x64
-          - x86
-        exclude:
-          - os: macOS-latest
-            arch: x86
+        include:
           - os: windows-latest
-            version: 'nightly'
+            version: '1'
+            arch: x86
     steps:
       - uses: actions/checkout@v2
       - name: setup python

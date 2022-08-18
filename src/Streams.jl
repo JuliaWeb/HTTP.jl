@@ -109,7 +109,7 @@ Write the final `0` chunk if needed.
 function closebody(http::Stream)
     if http.writechunked
         http.writechunked = false
-        @try write(http.stream, "0\r\n\r\n")
+        @try Base.IOError write(http.stream, "0\r\n\r\n")
     end
 end
 
@@ -374,6 +374,7 @@ end
 
 function IOExtras.closeread(http::Stream{<:Request})
     if incomplete(http)
+        @show http.ntoread, http.readchunked, unknown_length
         # Error if Message is not complete...
         close(http.stream)
         throw(EOFError())

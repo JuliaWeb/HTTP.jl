@@ -570,7 +570,6 @@ function bodysummary(body::Form)
     end
     return "[Message Body was streamed]"
 end
-bodysummary(body::Union{Dict, NamedTuple}) = URIs.escapeuri(body)
 
 function compactstartline(m::Message)
     b = IOBuffer()

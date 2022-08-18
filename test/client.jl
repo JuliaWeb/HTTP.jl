@@ -173,7 +173,7 @@ end
             @test err.error isa EOFError
         finally
             # Shutdown
-            @try close(server)
+            @try Base.IOError close(server)
             HTTP.ConnectionPool.closeall()
         end
     end
@@ -299,7 +299,7 @@ end
                 @test req.status == 200
                 @test String(req.body) == "hello, world"
             finally
-                @try close(server)
+                @try Base.IOError close(server)
                 HTTP.ConnectionPool.closeall()
             end
         end
@@ -337,7 +337,7 @@ end
             @test peer[2] == 8080
         end
     finally
-        @try close(server)
+        @try Base.IOError close(server)
         HTTP.ConnectionPool.closeall()
     end
 
@@ -394,7 +394,7 @@ end
 
         HTTP.setuseragent!(old_user_agent)
     finally
-        @try close(server)
+        @try Base.IOError close(server)
         HTTP.ConnectionPool.closeall()
     end
 end
@@ -435,7 +435,7 @@ import NetworkOptions, MbedTLS
             @test HTTP.get(url; require_ssl_verification=false).status == 200
         end
     finally
-        @try close(server)
+        @try Base.IOError close(server)
         HTTP.ConnectionPool.closeall()
     end
 end
@@ -518,23 +518,22 @@ end
 end
 
 @testset "Retry with request/response body streams" begin
-    server = nothing
-    try
-        shouldfail = Ref(true)
-        server = HTTP.listen!(8080) do http
-            @assert !eof(http)
-            msg = String(readavailable(http))
-            if shouldfail[]
-                shouldfail[] = false
-                error("500 unexpected error")
-            end
-            HTTP.startwrite(http)
-            HTTP.write(http, msg)
+    shouldfail = Ref(true)
+    server = HTTP.listen!(8080) do http
+        @assert !eof(http)
+        msg = String(read(http))
+        if shouldfail[]
+            shouldfail[] = false
+            error("500 unexpected error")
         end
+        HTTP.startwrite(http)
+        HTTP.write(http, msg)
+    end
+    try
         req_body = IOBuffer("hey there sailor")
         seekstart(req_body)
         res_body = IOBuffer()
-        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, verbose=2)
+        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
         @test resp.status == 200
         @test String(take!(res_body)) == "hey there sailor"
         # ensure if retry=false, that we write the response body immediately
@@ -545,14 +544,13 @@ end
         # when retrying, we can still get access to the most recent failed response body in the response's request context
         shouldfail[] = true
         seekstart(req_body)
+        println("making 3rd request")
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
         @test resp.status == 200
         @test String(take!(res_body)) == "hey there sailor"
         @test String(resp.request.context[:response_body]) == "500 unexpected error"
     finally
-        if server !== nothing
-            close(server)
-        end
+        close(server)
         HTTP.ConnectionPool.closeall()
     end
 end
