@@ -19,7 +19,7 @@ remotely closed, a connection will be reused.
 """
 module ConnectionPool
 
-export Connection, newconnection, releaseconnection, getrawstream, inactiveseconds
+export Connection, newconnection, releaseconnection, getrawstream, inactiveseconds, shouldtimeout
 
 using Sockets, LoggingExtras, NetworkOptions
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
@@ -98,6 +98,13 @@ Connection(io; require_ssl_verification::Bool=true) =
 getrawstream(c::Connection) = c.io
 
 inactiveseconds(c::Connection)::Float64 = time() - c.timestamp
+
+function shouldtimeout(c::Connection, readtimeout)
+    # @debugv 2 isreadable(c), inactiveseconds(c), readtimeout
+    check = !isreadable(c) || inactiveseconds(c) > readtimeout
+    check && close(c)
+    return check
+end
 
 Base.unsafe_write(c::Connection, p::Ptr{UInt8}, n::UInt) =
     unsafe_write(c.io, p, n)
@@ -379,6 +386,14 @@ struct ConnectTimeout <: Exception
     port
 end
 
+function checkconnected(tcp)
+    if tcp.status == Base.StatusConnecting
+        close(tcp)
+        return false
+    end
+    return true
+end
+
 function getconnection(::Type{TCPSocket},
                        host::AbstractString,
                        port::AbstractString;
@@ -388,51 +403,29 @@ function getconnection(::Type{TCPSocket},
                        kw...)::TCPSocket
 
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
-
     @debugv 2 "TCP connect: $host:$p..."
-
     addrs = Sockets.getalladdrinfo(host)
-
     connect_timeout = connect_timeout == 0 && readtimeout > 0 ? readtimeout : connect_timeout
-
     lasterr = ErrorException("unknown connection error")
 
     for addr in addrs
-        if connect_timeout == 0
-            try
+        try
+            return if connect_timeout > 0
+                tcp = Sockets.TCPSocket()
+                Sockets.connect!(tcp, addr, p)
+                try_with_timeout(() -> checkconnected(tcp), connect_timeout) do
+                    Sockets.wait_connected(tcp)
+                    keepalive && keepalive!(tcp)
+                end
+                return tcp
+            else
                 tcp = Sockets.connect(addr, p)
                 keepalive && keepalive!(tcp)
-                return tcp
-            catch err
-                lasterr = err
-                continue # to next ip addr
+                tcp
             end
-        else
-            tcp = Sockets.TCPSocket()
-            Sockets.connect!(tcp, addr, p)
-
-            timeout = Ref{Bool}(false)
-            @async begin
-                sleep(connect_timeout)
-                if tcp.status == Base.StatusConnecting
-                    timeout[] = true
-                    tcp.status = Base.StatusClosing
-                    ccall(:jl_forceclose_uv, Nothing, (Ptr{Nothing},), tcp.handle)
-                    #close(tcp)
-                end
-            end
-            try
-                Sockets.wait_connected(tcp)
-                keepalive && keepalive!(tcp)
-                return tcp
-            catch err
-                if timeout[]
-                    lasterr = ConnectTimeout(host, port)
-                else
-                    lasterr = err
-                end
-                continue # to next ip addr
-            end
+        catch e
+            lasterr = e isa TimeoutError ? ConnectTimeout(host, port) : e
+            continue
         end
     end
     # If no connetion could be set up, to any address, throw last error
@@ -484,15 +477,23 @@ end
 function sslupgrade(c::Connection,
                     host::AbstractString;
                     require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
+                    readtimeout::Int=0,
                     kw...)::Connection
-    # first we release the original connection, but we don't want it to be
-    # reused in the pool, because we're hijacking the TCPSocket
-    release(POOL, connectionkey(c), c; return_for_reuse=false)
-    # now we hijack the TCPSocket and upgrade to SSLContext
-    tls = sslconnection(c.io, host;
-                        require_ssl_verification=require_ssl_verification,
-                        kw...)
+    # initiate the upgrade to SSL
+    # if the upgrade fails, an error will be thrown and the original c will be closed
+    # in ConnectionRequest
+    tls = if readtimeout > 0
+        try_with_timeout(() -> shouldtimeout(c, readtimeout), readtimeout) do
+            sslconnection(c.io, host; require_ssl_verification=require_ssl_verification, kw...)
+        end
+    else
+        sslconnection(c.io, host; require_ssl_verification=require_ssl_verification, kw...)
+    end
+    # success, now we turn it into a new Connection
     conn = Connection(host, "", 0, require_ssl_verification, tls)
+    # release the "old" one, but don't allow reuse since we're hijacking the socket
+    release(POOL, connectionkey(c), c; return_for_reuse=false)
+    # and return the new one
     return acquire(POOL, connectionkey(conn), conn)
 end
 
