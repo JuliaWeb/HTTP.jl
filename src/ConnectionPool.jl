@@ -99,12 +99,7 @@ getrawstream(c::Connection) = c.io
 
 inactiveseconds(c::Connection)::Float64 = time() - c.timestamp
 
-function shouldtimeout(c::Connection, readtimeout)
-    # @debugv 2 isreadable(c), inactiveseconds(c), readtimeout
-    check = !isreadable(c) || inactiveseconds(c) > readtimeout
-    check && close(c)
-    return check
-end
+shouldtimeout(c::Connection, readtimeout) = !isreadable(c) || inactiveseconds(c) > readtimeout
 
 Base.unsafe_write(c::Connection, p::Ptr{UInt8}, n::UInt) =
     unsafe_write(c.io, p, n)
@@ -413,7 +408,7 @@ function getconnection(::Type{TCPSocket},
             return if connect_timeout > 0
                 tcp = Sockets.TCPSocket()
                 Sockets.connect!(tcp, addr, p)
-                try_with_timeout(() -> checkconnected(tcp), connect_timeout) do
+                try_with_timeout(() -> checkconnected(tcp), connect_timeout, () -> close(tcp)) do
                     Sockets.wait_connected(tcp)
                     keepalive && keepalive!(tcp)
                 end
@@ -483,7 +478,7 @@ function sslupgrade(c::Connection,
     # if the upgrade fails, an error will be thrown and the original c will be closed
     # in ConnectionRequest
     tls = if readtimeout > 0
-        try_with_timeout(() -> shouldtimeout(c, readtimeout), readtimeout) do
+        try_with_timeout(() -> shouldtimeout(c, readtimeout), readtimeout, () -> close(c)) do
             sslconnection(c.io, host; require_ssl_verification=require_ssl_verification, kw...)
         end
     else

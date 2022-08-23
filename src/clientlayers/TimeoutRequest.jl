@@ -17,7 +17,7 @@ function timeoutlayer(handler)
             return handler(stream; kw...)
         end
         io = stream.stream
-        return try_with_timeout(() -> shouldtimeout(io, readtimeout), readtimeout) do
+        return try_with_timeout(() -> shouldtimeout(io, readtimeout), readtimeout, () -> close(io)) do
             handler(stream; kw...)
         end
     end

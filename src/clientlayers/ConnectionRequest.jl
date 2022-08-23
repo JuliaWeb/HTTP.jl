@@ -89,7 +89,7 @@ function connectionlayer(handler)
                     target_url = URI(target_url, port=80) # if there is no port info, connect_tunnel will fail
                 end
                 r = if readtimeout > 0
-                    try_with_timeout(() -> shouldtimeout(io, readtimeout), readtimeout) do
+                    try_with_timeout(() -> shouldtimeout(io, readtimeout, () -> close(io)), readtimeout) do
                         connect_tunnel(io, target_url, req)
                     end
                 else
