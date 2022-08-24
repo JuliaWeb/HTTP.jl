@@ -260,9 +260,13 @@ Close `c` on EOF.
 TODO: or if response data arrives when no request was sent (isreadable == false).
 """
 function monitor_idle_connection(c::Connection)
+    tcp = c.io
+    if tcp isa SSLContext
+        tcp = tcp.bio
+    end
     try
-        if eof(c.io)                                  ;@debugv 3 "💀  Closed:     $c"
-            close(c.io)
+        if eof(tcp)                                  ;@debugv 3 "💀  Closed:     $c"
+            isopen(c.io) && close(c.io)
         end
     catch ex
         @try Base.IOError close(c.io)
