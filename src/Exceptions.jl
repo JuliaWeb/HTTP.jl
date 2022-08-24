@@ -1,6 +1,7 @@
 module Exceptions
 
-export @try, HTTPError, ConnectError, TimeoutError, StatusError, RequestError
+export @try, try_with_timeout, HTTPError, ConnectError, TimeoutError, StatusError, RequestError
+using LoggingExtras
 import ..HTTP # for doc references
 
 @eval begin
@@ -23,6 +24,39 @@ macro $(:try)(exes...)
     end
 end
 end # @eval
+
+function try_with_timeout(f, shouldtimeout, delay, iftimeout=() -> nothing)
+    @assert delay > 0
+    cond = Condition()
+    # execute f async
+    t = @async try
+        notify(cond, f())
+    catch e
+        @debugv 1 "error executing f in try_with_timeout"
+        notify(cond, e)
+    end
+    # start a timer
+    timer = Timer(delay; interval=delay / 10) do tm
+        if shouldtimeout()
+            @debugv 1 "❗️  Timeout: $delay"
+            notify(cond, TimeoutError(delay))
+            iftimeout()
+            close(tm)
+        end
+    end
+    res = wait(cond)
+    @debugv 1 "try_with_timeout finished with: $res"
+    if res isa TimeoutError
+        # timedout
+        throw(res)
+    end
+    # didn't timeout
+    close(timer)
+    if res isa Exception
+        throw(res)
+    end
+    return res
+end
 
 abstract type HTTPError <: Exception end
 

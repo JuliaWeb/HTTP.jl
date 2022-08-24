@@ -53,7 +53,7 @@ Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.
 """
 function connectionlayer(handler)
-    return function(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, kw...)
+    return function(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, readtimeout::Int=0, kw...)
         if proxy !== nothing
             target_url = req.url
             url = URI(proxy)
@@ -73,7 +73,7 @@ function connectionlayer(handler)
         IOType = sockettype(url, socket_type)
         local io
         try
-            io = newconnection(IOType, url.host, url.port; kw...)
+            io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
         catch e
             throw(ConnectError(string(url), e))
         end
@@ -88,19 +88,25 @@ function connectionlayer(handler)
                 elseif target_url.scheme in ("ws", ) && target_url.port == ""
                     target_url = URI(target_url, port=80) # if there is no port info, connect_tunnel will fail
                 end
-                r = connect_tunnel(io, target_url, req)
+                r = if readtimeout > 0
+                    try_with_timeout(() -> shouldtimeout(io, readtimeout, () -> close(io)), readtimeout) do
+                        connect_tunnel(io, target_url, req)
+                    end
+                else
+                    connect_tunnel(io, target_url, req)
+                end
                 if r.status != 200
                     close(io)
                     return r
                 end
                 if target_url.scheme in ("https", "wss")
-                    io = ConnectionPool.sslupgrade(io, target_url.host; kw...)
+                    io = ConnectionPool.sslupgrade(io, target_url.host; readtimeout=readtimeout, kw...)
                 end
                 req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
             end
 
             stream = Stream(req.response, io)
-            return handler(stream; kw...)
+            return handler(stream; readtimeout=readtimeout, kw...)
         catch e
             @debugv 1 "❗️  ConnectionLayer $e. Closing: $io"
             shouldreuse = false
@@ -108,10 +114,10 @@ function connectionlayer(handler)
             e isa HTTPError || throw(RequestError(req, e))
             rethrow(e)
         finally
+            releaseconnection(io, shouldreuse)
             if !shouldreuse
                 @try Base.IOError close(io)
             end
-            releaseconnection(io, shouldreuse)
         end
     end
 end
@@ -126,8 +132,11 @@ function connect_tunnel(io, target_url, req)
         headers["Proxy-Authorization"] = auth
     end
     request = Request("CONNECT", target, headers)
+    # @debugv 2 "connect_tunnel: writing headers"
     writeheaders(io, request)
+    # @debugv 2 "connect_tunnel: reading headers"
     readheaders(io, request.response)
+    # @debugv 2 "connect_tunnel: done reading headers"
     return request.response
 end
 

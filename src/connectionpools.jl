@@ -103,6 +103,7 @@ function acquire(f, pod::Pod)
             # println("$(taskid()): checking idle_timeout connections for reuse")
             conn = popfirst!(pod.conns)
             if isvalid(pod, conn)
+                # println("$(taskid()): found a valid connection to reuse")
                 return trackconnection!(pod, conn)
             else
                 # nothing, let the non-valid connection fall into GC oblivion
