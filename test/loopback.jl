@@ -42,7 +42,7 @@ Base.readavailable(fio::FunctionIO) = (call(fio); readavailable(fio.buf))
 Base.readavailable(lb::Loopback) = readavailable(lb.io)
 Base.unsafe_read(lb::Loopback, p::Ptr, n::Integer) = unsafe_read(lb.io, p, n)
 
-HTTP.IOExtras.tcpsocket(::Loopback) = Sockets.TCPSocket()
+HTTP.IOExtras.tcpsocket(::Loopback) = Sockets.connect("httpbin.org", 80)
 
 lbreq(req, headers, body; method="GET", kw...) =
       HTTP.request(method, "http://test/$req", headers, body; config..., kw...)
