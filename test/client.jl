@@ -416,23 +416,23 @@ import NetworkOptions, MbedTLS
         withenv(env...) do
             @test NetworkOptions.verify_host(url)
             @test NetworkOptions.verify_host(url, "SSL")
-            @test_throws HTTP.ConnectError HTTP.get(url; retries=1)
-            @test_throws HTTP.ConnectError HTTP.get(url; require_ssl_verification=true, retries=1)
-            @test HTTP.get(url; require_ssl_verification=false).status == 200
+            @test_throws HTTP.ConnectError HTTP.get(url; socket_type_tls=MbedTLS.SSLContext, retries=1)
+            @test_throws HTTP.ConnectError HTTP.get(url; socket_type_tls=MbedTLS.SSLContext, require_ssl_verification=true, retries=1)
+            @test HTTP.get(url; socket_type_tls=MbedTLS.SSLContext, require_ssl_verification=false).status == 200
         end
         withenv(env..., "JULIA_NO_VERIFY_HOSTS" => "localhost") do
             @test !NetworkOptions.verify_host(url)
             @test !NetworkOptions.verify_host(url, "SSL")
-            @test HTTP.get(url).status == 200
-            @test_throws HTTP.ConnectError HTTP.get(url; require_ssl_verification=true, retries=1)
-            @test HTTP.get(url; require_ssl_verification=false).status == 200
+            @test HTTP.get(url; socket_type_tls=MbedTLS.SSLContext).status == 200
+            @test_throws HTTP.ConnectError HTTP.get(url; socket_type_tls=MbedTLS.SSLContext, require_ssl_verification=true, retries=1)
+            @test HTTP.get(url; socket_type_tls=MbedTLS.SSLContext, require_ssl_verification=false).status == 200
         end
         withenv(env..., "JULIA_SSL_NO_VERIFY_HOSTS" => "localhost") do
             @test NetworkOptions.verify_host(url)
             @test !NetworkOptions.verify_host(url, "SSL")
-            @test HTTP.get(url).status == 200
-            @test_throws HTTP.ConnectError HTTP.get(url; require_ssl_verification=true, retries=1)
-            @test HTTP.get(url; require_ssl_verification=false).status == 200
+            @test HTTP.get(url; socket_type_tls=MbedTLS.SSLContext).status == 200
+            @test_throws HTTP.ConnectError HTTP.get(url; socket_type_tls=MbedTLS.SSLContext, require_ssl_verification=true, retries=1)
+            @test HTTP.get(url; socket_type_tls=MbedTLS.SSLContext, require_ssl_verification=false).status == 200
         end
     finally
         @try Base.IOError close(server)

@@ -2,6 +2,7 @@ module ConnectionRequest
 
 using URIs, Sockets, Base64, LoggingExtras
 using MbedTLS: SSLContext, SSLConfig
+using OpenSSL: SSLStream
 using ..Messages, ..IOExtras, ..ConnectionPool, ..Streams, ..Exceptions
 
 islocalhost(host::AbstractString) = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0000:0000:0000:0000:0000:0000:0000:0001" || host == "0:0:0:0:0:0:0:1"
@@ -53,7 +54,7 @@ Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.
 """
 function connectionlayer(handler)
-    return function(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, readtimeout::Int=0, kw...)
+    return function(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SSLStream, readtimeout::Int=0, kw...)
         if proxy !== nothing
             target_url = req.url
             url = URI(proxy)
@@ -70,7 +71,7 @@ function connectionlayer(handler)
             url = target_url = req.url
         end
 
-        IOType = sockettype(url, socket_type)
+        IOType = sockettype(url, socket_type, socket_type_tls)
         local io
         try
             io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
@@ -122,7 +123,7 @@ function connectionlayer(handler)
     end
 end
 
-sockettype(url::URI, default) = url.scheme in ("wss", "https") ? SSLContext : default
+sockettype(url::URI, tcp, tls) = url.scheme in ("wss", "https") ? tls : tcp
 
 function connect_tunnel(io, target_url, req)
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"

@@ -43,7 +43,7 @@ setstatus(http::Stream, status) = (http.message.response.status = status)
 Messages.setheader(http::Stream, a...) = setheader(http.message.response, a...)
 ConnectionPool.getrawstream(http::Stream) = getrawstream(http.stream)
 
-Sockets.getsockname(http::Stream) = Sockets.getsockname(getrawstream(http))
+Sockets.getsockname(http::Stream) = Sockets.getsockname(IOExtras.tcpsocket(getrawstream(http)))
 function Sockets.getpeername(http::Stream)
     # TODO: MbedTLS only forwards getsockname(::SSLContext)
     # so we use IOExtras.tcpsocket to reach into the MbedTLS internals
