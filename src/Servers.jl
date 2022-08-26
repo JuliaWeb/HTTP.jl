@@ -420,14 +420,14 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
             # attempt to read request line and headers
             try
                 startread(http)
-                @debugv 1 "startread called"
+                @warn "startread called"
                 c.state = ACTIVE # once we've started reading, set ACTIVE state
             catch e
                 # for ParserErrors, try to inform client of the problem
                 if e isa ParseError
                     write(c, Response(e.code == :HEADER_SIZE_EXCEEDS_LIMIT ? 431 : 400, string(e.code)))
                 end
-                @debugv 1 "handle_connection startread error" exception=(e, catch_backtrace())
+                @warn "handle_connection startread error" exception=(e, catch_backtrace())
                 break
             end
 
@@ -439,22 +439,22 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
 
             try
                 # invokelatest becuase the perf is negligible, but this makes live-editing handlers more Revise friendly
-                @debugv 1 "invoking handler"
+                @warn "invoking handler"
                 Base.invokelatest(f, http)
                 # If `startwrite()` was never called, throw an error so we send a 500 and log this
                 if isopen(http) && !iswritable(http)
                     error("Server never wrote a response")
                 end
-                @debugv 1 "closeread"
+                @warn "closeread"
                 closeread(http)
-                @debugv 1 "closewrite"
+                @warn "closewrite"
                 closewrite(http)
                 c.state = IDLE
             catch e
                 # The remote can close the stream whenever it wants to, but there's nothing
                 # anyone can do about it on this side. No reason to log an error in that case.
                 level = e isa Base.IOError && !isopen(c) ? Logging.Debug : Logging.Error
-                @logmsgv 1 level "handle_connection handler error" exception=(e, stacktrace(catch_backtrace()))
+                @warn "handle_connection handler error" exception=(e, stacktrace(catch_backtrace()))
 
                 if isopen(http) && !iswritable(http)
                     request.response.status = 500
@@ -477,6 +477,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
             wait_for_timeout[] = false
         end
         # when we're done w/ the connection, ensure it's closed and state is properly set
+        @warn "closeconnection"
         closeconnection(c)
     end
     return
