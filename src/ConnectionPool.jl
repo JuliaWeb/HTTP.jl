@@ -461,10 +461,8 @@ function getconnection(::Type{SSLStream},
     port = isempty(port) ? "443" : port
     @debugv 2 "OpenSSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
-    ssl_ctx = OpenSSL.SSLContext(OpenSSL.TLSv12ClientMethod())
-    OpenSSL.ssl_set_options(ssl_ctx, OpenSSL.SSL_OP_NO_COMPRESSION)
     # Create SSL stream.
-    ssl_stream = SSLStream(ssl_ctx, tcp, tcp)
+    ssl_stream = SSLStream(tcp)
     OpenSSL.hostname!(ssl_stream, host)
     OpenSSL.connect(ssl_stream)
     return ssl_stream
