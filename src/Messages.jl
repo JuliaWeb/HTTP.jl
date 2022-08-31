@@ -200,7 +200,14 @@ resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
                             !isempty(uri.fragment) ? "#" : "", uri.fragment)
 
 mkheaders(h::Headers) = h
-mkheaders(h)::Headers = Header[string(k) => string(v) for (k,v) in h]
+function mkheaders(h)::Headers
+    # validation
+    foreach(h) do head
+        head isa String && throw(ArgumentError("header must be passed as key => value pair: `$head`"))
+        length(head) != 2 && throw(ArgumentError("invalid header key-value pair: $head"))
+    end
+    return Header[string(k) => string(v) for (k, v) in h]
+end
 
 method(r::Request) = getfield(r, :method)
 target(r::Request) = getfield(r, :target)
