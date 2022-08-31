@@ -1,7 +1,7 @@
 using Test
 
 using HTTP.Messages
-import HTTP.Messages.appendheader
+import HTTP.Messages: appendheader, mkheaders
 import HTTP.URI
 import HTTP.request
 import HTTP: bytes, nbytes
@@ -16,6 +16,13 @@ using JSON
     protocols = ["http", "https"]
     http_reads = ["GET", "HEAD", "OPTIONS"]
     http_writes = ["POST", "PUT", "DELETE", "PATCH"]
+
+    @testset "Invalid headers" begin
+        @test_throws ArgumentError mkheaders(["hello"])
+        @test_throws ArgumentError mkheaders([(1,2,3,4,5)])
+        @test_throws ArgumentError mkheaders([1, 2])
+        @test_throws ArgumentError mkheaders(["hello", "world"])
+    end
 
     @testset "Body Length" begin
         @test nbytes(7) === nothing
