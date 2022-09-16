@@ -374,7 +374,6 @@ end
 
 function IOExtras.closeread(http::Stream{<:Request})
     if incomplete(http)
-        @show http.ntoread, http.readchunked, unknown_length
         # Error if Message is not complete...
         close(http.stream)
         throw(EOFError())

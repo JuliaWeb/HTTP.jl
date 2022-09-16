@@ -452,7 +452,7 @@ macro client(requestlayers, streamlayers=[])
         put(a...; kw...) = request("PUT", a...; kw...)
         post(a...; kw...) = request("POST", a...; kw...)
         patch(a...; kw...) = request("PATCH", a...; kw...)
-        head(u; kw...) = request("HEAD", u; kw...)
+        head(a...; kw...) = request("HEAD", a...; kw...)
         delete(a...; kw...) = request("DELETE", a...; kw...)
         open(f, a...; kw...) = request(a...; iofunction=f, kw...)
         request(method, url, h=HTTP.Header[], b=HTTP.nobody; headers=h, body=b, query=nothing, kw...)::HTTP.Response =
