@@ -9,6 +9,7 @@ module IOExtras
 
 using Sockets
 using MbedTLS: SSLContext, MbedException
+using OpenSSL: SSLStream
 
 export bytes, isbytes, nbytes, ByteView, nobytes,
        startwrite, closewrite, startread, closeread,
@@ -83,6 +84,7 @@ else
 end
 
 tcpsocket(io::SSLContext)::TCPSocket = io.bio
+tcpsocket(io::SSLStream)::TCPSocket = io.bio_read_stream.io
 tcpsocket(io::TCPSocket)::TCPSocket = io
 
 localport(io) = try !isopen(tcpsocket(io)) ? 0 :

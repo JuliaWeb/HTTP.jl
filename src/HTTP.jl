@@ -7,7 +7,7 @@ const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
 
-using Base64, Sockets, Dates, URIs, LoggingExtras
+using Base64, Sockets, Dates, URIs, LoggingExtras, MbedTLS
 
 function access_threaded(f, v::Vector)
     tid = Threads.threadid()
@@ -23,6 +23,8 @@ end
 @noinline _length_assert() =  @assert false "0 < tid <= v"
 
 function open end
+
+const SOCKET_TYPE_TLS = Ref{Any}(MbedTLS.SSLContext)
 
 include("Conditions.jl")               ;using .Conditions
 include("access_log.jl")
@@ -150,6 +152,8 @@ SSL arguments:
    ["... peer must present a valid certificate, handshake is aborted if
      verification failed."](https://tls.mbed.org/api/ssl_8h.html#a5695285c9dbfefec295012b566290f37)
  - `sslconfig = SSLConfig(require_ssl_verification)`
+ - `socket_type_tls = MbedTLS.SSLContext`, the type of socket to use for TLS connections. Defaults to `MbedTLS.SSLContext`.
+    Also supported is passing `socket_type_tls = OpenSSL.SSLStream`. To change the global default, set `HTTP.SOCKET_TYPE_TLS[] = OpenSSL.SSLStream`.
 
 Cookie arguments:
  - `cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}} = true`, enable cookies, or alternatively,

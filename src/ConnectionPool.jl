@@ -23,6 +23,7 @@ export Connection, newconnection, releaseconnection, getrawstream, inactivesecon
 
 using Sockets, LoggingExtras, NetworkOptions
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
+using OpenSSL
 using ..IOExtras, ..Conditions, ..Exceptions
 
 const default_connection_limit = 8
@@ -450,6 +451,21 @@ function getconnection(::Type{SSLContext},
     @debugv 2 "SSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
     return sslconnection(tcp, host; kw...)
+end
+
+function getconnection(::Type{SSLStream},
+                        host::AbstractString,
+                        port::AbstractString;
+                        kw...)::SSLStream
+
+    port = isempty(port) ? "443" : port
+    @debugv 2 "OpenSSL connect: $host:$port..."
+    tcp = getconnection(TCPSocket, host, port; kw...)
+    # Create SSL stream.
+    ssl_stream = SSLStream(tcp)
+    OpenSSL.hostname!(ssl_stream, host)
+    OpenSSL.connect(ssl_stream)
+    return ssl_stream
 end
 
 function sslconnection(tcp::TCPSocket, host::AbstractString;

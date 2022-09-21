@@ -1,6 +1,6 @@
 module TestClient
 
-using HTTP, HTTP.Exceptions
+using HTTP, HTTP.Exceptions, MbedTLS, OpenSSL
 include(joinpath(dirname(pathof(HTTP)), "../test/resources/TestRequest.jl"))
 using .TestRequest
 using .TestRequest2
@@ -23,31 +23,31 @@ status(r) = r.status
     end
 end
 
-@testset "Client.jl - $sch" for sch in ["http", "https"]
+@testset "Client.jl - $sch" for sch in ["http", "https"], tls in [MbedTLS.SSLContext, OpenSSL.SSLStream]
     @testset "GET, HEAD, POST, PUT, DELETE, PATCH" begin
-        @test status(HTTP.get("$sch://httpbin.org/ip")) == 200
-        @test status(HTTP.head("$sch://httpbin.org/ip")) == 200
-        @test status(HTTP.post("$sch://httpbin.org/ip"; status_exception=false)) == 405
-        @test status(HTTP.post("$sch://httpbin.org/post")) == 200
-        @test status(HTTP.put("$sch://httpbin.org/put")) == 200
-        @test status(HTTP.delete("$sch://httpbin.org/delete")) == 200
-        @test status(HTTP.patch("$sch://httpbin.org/patch")) == 200
+        @test status(HTTP.get("$sch://httpbin.org/ip", socket_type_tls=tls)) == 200
+        @test status(HTTP.head("$sch://httpbin.org/ip", socket_type_tls=tls)) == 200
+        @test status(HTTP.post("$sch://httpbin.org/ip"; status_exception=false, socket_type_tls=tls)) == 405
+        @test status(HTTP.post("$sch://httpbin.org/post", socket_type_tls=tls)) == 200
+        @test status(HTTP.put("$sch://httpbin.org/put", socket_type_tls=tls)) == 200
+        @test status(HTTP.delete("$sch://httpbin.org/delete", socket_type_tls=tls)) == 200
+        @test status(HTTP.patch("$sch://httpbin.org/patch", socket_type_tls=tls)) == 200
     end
 
     @testset "decompress" begin
-        r = HTTP.get("$sch://httpbin.org/gzip")
+        r = HTTP.get("$sch://httpbin.org/gzip", socket_type_tls=tls)
         @test status(r) == 200
         @test isascii(String(r.body))
-        r = HTTP.get("$sch://httpbin.org/gzip"; decompress=false)
+        r = HTTP.get("$sch://httpbin.org/gzip"; decompress=false, socket_type_tls=tls)
         @test status(r) == 200
         @test !isascii(String(r.body))
-        r = HTTP.get("$sch://httpbin.org/gzip"; decompress=false)
+        r = HTTP.get("$sch://httpbin.org/gzip"; decompress=false, socket_type_tls=tls)
         @test isascii(String(HTTP.decode(r, "gzip")))
     end
 
     @testset "ASync Client Requests" begin
-        @test status(fetch(@async HTTP.get("$sch://httpbin.org/ip"))) == 200
-        @test status(HTTP.get("$sch://httpbin.org/encoding/utf8")) == 200
+        @test status(fetch(@async HTTP.get("$sch://httpbin.org/ip", socket_type_tls=tls))) == 200
+        @test status(HTTP.get("$sch://httpbin.org/encoding/utf8", socket_type_tls=tls)) == 200
     end
 
     @testset "Query to URI" begin
@@ -58,32 +58,32 @@ end
 
     @testset "Cookie Requests" begin
         empty!(HTTP.COOKIEJAR)
-        r = HTTP.get("$sch://httpbin.org/cookies", cookies=true)
+        r = HTTP.get("$sch://httpbin.org/cookies", cookies=true, socket_type_tls=tls)
 
         body = String(r.body)
         @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{}}"
 
-        r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor&foo=bar", cookies=true)
+        r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor&foo=bar", cookies=true, socket_type_tls=tls)
         @test status(r) == 200
 
         body = String(r.body)
         @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{\"foo\":\"bar\",\"hey\":\"sailor\"}}"
 
-        r = HTTP.get("$sch://httpbin.org/cookies/delete?hey")
+        r = HTTP.get("$sch://httpbin.org/cookies/delete?hey", socket_type_tls=tls)
         cookies = JSON.parse(String(r.body))["cookies"]
         @test length(cookies) == 1
         @test cookies["foo"] == "bar"
     end
 
     @testset "Client Streaming Test" begin
-        r = HTTP.post("$sch://httpbin.org/post"; body="hey")
+        r = HTTP.post("$sch://httpbin.org/post"; body="hey", socket_type_tls=tls)
         @test status(r) == 200
 
         # stream, but body is too small to actually stream
-        r = HTTP.post("$sch://httpbin.org/post"; body="hey", stream=true)
+        r = HTTP.post("$sch://httpbin.org/post"; body="hey", stream=true, socket_type_tls=tls)
         @test status(r) == 200
 
-        r = HTTP.get("$sch://httpbin.org/stream/100")
+        r = HTTP.get("$sch://httpbin.org/stream/100", socket_type_tls=tls)
         @test status(r) == 200
 
         bytes = r.body
@@ -91,7 +91,7 @@ end
         totallen = length(bytes) # number of bytes to expect
 
         io = IOBuffer()
-        r = HTTP.get("$sch://httpbin.org/stream/100"; response_stream=io)
+        r = HTTP.get("$sch://httpbin.org/stream/100"; response_stream=io, socket_type_tls=tls)
         seekstart(io)
         @test status(r) == 200
 
@@ -108,24 +108,24 @@ end
     end
 
     @testset "Client Body Posting - Vector{UTF8}, String, IOStream, IOBuffer, BufferStream, Dict, NamedTuple" begin
-        @test status(HTTP.post("$sch://httpbin.org/post"; body="hey")) == 200
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'])) == 200
+        @test status(HTTP.post("$sch://httpbin.org/post"; body="hey", socket_type_tls=tls)) == 200
+        @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], socket_type_tls=tls)) == 200
         io = IOBuffer("hey"); seekstart(io)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=io)) == 200
+        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, socket_type_tls=tls)) == 200
         tmp = tempname()
         open(f->write(f, "hey"), tmp, "w")
         io = open(tmp)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, enablechunked=false)) == 200
+        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, enablechunked=false, socket_type_tls=tls)) == 200
         close(io); rm(tmp)
         f = Base.BufferStream()
         write(f, "hey")
         close(f)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false)) == 200
-        resp = HTTP.post("$sch://httpbin.org/post"; body=Dict("name" => "value"))
+        @test status(HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false, socket_type_tls=tls)) == 200
+        resp = HTTP.post("$sch://httpbin.org/post"; body=Dict("name" => "value"), socket_type_tls=tls)
         x = JSON.parse(IOBuffer(resp.body))
         @test status(resp) == 200
         @test x["form"] == Dict("name" => "value")
-        resp = HTTP.post("$sch://httpbin.org/post"; body=(name="value with spaces",))
+        resp = HTTP.post("$sch://httpbin.org/post"; body=(name="value with spaces",), socket_type_tls=tls)
         x = JSON.parse(IOBuffer(resp.body))
         @test status(resp) == 200
         @test x["form"] == Dict("name" => "value with spaces")
@@ -136,52 +136,25 @@ end
         #     Currently httpbin.org responds with 411 status and “Length Required”
         #     message to any POST/PUT requests that are sent using chunked encoding
         #     See https://github.com/kennethreitz/httpbin/issues/340#issuecomment-330176449
-        @test status(HTTP.post("$sch://httpbin.org/post"; body="hey", #=chunksize=2=#)) == 200
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], #=chunksize=2=#)) == 200
+        @test status(HTTP.post("$sch://httpbin.org/post"; body="hey", socket_type_tls=tls, #=chunksize=2=#)) == 200
+        @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], socket_type_tls=tls, #=chunksize=2=#)) == 200
         io = IOBuffer("hey"); seekstart(io)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, #=chunksize=2=#)) == 200
+        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, socket_type_tls=tls, #=chunksize=2=#)) == 200
         tmp = tempname()
         open(f->write(f, "hey"), tmp, "w")
         io = open(tmp)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, #=chunksize=2=#)) == 200
+        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, socket_type_tls=tls, #=chunksize=2=#)) == 200
         close(io); rm(tmp)
         f = Base.BufferStream()
         write(f, "hey")
         close(f)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=f, #=chunksize=2=#)) == 200
-    end
-
-    @testset "Incomplete response with known content length" begin
-        server = nothing
-        try
-            server = HTTP.listen!("0.0.0.0", 8080) do http
-                HTTP.setstatus(http, 200)
-                HTTP.setheader(http, "Content-Length" => "64") # Promise 64 bytes...
-                HTTP.startwrite(http)
-                HTTP.write(http, rand(UInt8, 63)) # ...but only send 63 bytes.
-                # Close the stream so that eof(stream) is true and the client isn't
-                # waiting forever for the last byte.
-                HTTP.close(http.stream)
-            end
-
-            err = try
-                HTTP.get("http://localhost:8080"; retry=false)
-            catch err
-                err
-            end
-            @test err isa HTTP.RequestError
-            @test err.error isa EOFError
-        finally
-            # Shutdown
-            @try Base.IOError close(server)
-            HTTP.ConnectionPool.closeall()
-        end
+        @test status(HTTP.post("$sch://httpbin.org/post"; body=f, socket_type_tls=tls, #=chunksize=2=#)) == 200
     end
 
     @testset "ASync Client Request Body" begin
         f = Base.BufferStream()
         write(f, "hey")
-        t = @async HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false)
+        t = @async HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false, socket_type_tls=tls)
         #fetch(f) # fetch for the async call to write it's first data
         write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
         write(f, "sailor")
@@ -190,46 +163,73 @@ end
     end
 
     @testset "Client Redirect Following - $read_method" for read_method in ["GET", "HEAD"]
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/1")) ==200
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/1", redirect=false)) == 302
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/6")) == 302 #over max number of redirects
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/relative-redirect/1")) == 200
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/absolute-redirect/1")) == 200
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fgoogle.com")) == 200
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/1", socket_type_tls=tls)) ==200
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/1", redirect=false, socket_type_tls=tls)) == 302
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/6", socket_type_tls=tls)) == 302 #over max number of redirects
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/relative-redirect/1", socket_type_tls=tls)) == 200
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/absolute-redirect/1", socket_type_tls=tls)) == 200
+        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fgoogle.com", socket_type_tls=tls)) == 200
     end
 
     @testset "Client Basic Auth" begin
-        @test status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd")) == 200
-        @test status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd")) == 200
-        @test status(HTTP.get("$sch://test:%40test@httpbin.org/basic-auth/test/%40test")) == 200
+        @test status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd", socket_type_tls=tls)) == 200
+        @test status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd", socket_type_tls=tls)) == 200
+        @test status(HTTP.get("$sch://test:%40test@httpbin.org/basic-auth/test/%40test", socket_type_tls=tls)) == 200
     end
 
     @testset "Misc" begin
-        @test status(HTTP.post("$sch://httpbin.org/post"; body="√")) == 200
-        r = HTTP.request("GET", "$sch://httpbin.org/ip")
+        @test status(HTTP.post("$sch://httpbin.org/post"; body="√", socket_type_tls=tls)) == 200
+        r = HTTP.request("GET", "$sch://httpbin.org/ip", socket_type_tls=tls)
         @test status(r) == 200
 
         uri = HTTP.URI("$sch://httpbin.org/ip")
-        r = HTTP.request("GET", uri)
+        r = HTTP.request("GET", uri, socket_type_tls=tls)
         @test status(r) == 200
         r = HTTP.get(uri)
         @test status(r) == 200
 
-        r = HTTP.request("GET", "$sch://httpbin.org/ip")
+        r = HTTP.request("GET", "$sch://httpbin.org/ip", socket_type_tls=tls)
         @test status(r) == 200
 
         uri = HTTP.URI("$sch://httpbin.org/ip")
-        r = HTTP.request("GET", uri)
+        r = HTTP.request("GET", uri, socket_type_tls=tls)
         @test status(r) == 200
 
-        r = HTTP.get("$sch://httpbin.org/image/png")
+        r = HTTP.get("$sch://httpbin.org/image/png", socket_type_tls=tls)
         @test status(r) == 200
 
         # ensure we can use AbstractString for requests
-        r = HTTP.get(SubString("http://httpbin.org/ip",1))
+        r = HTTP.get(SubString("$sch://httpbin.org/ip",1), socket_type_tls=tls)
 
         # canonicalizeheaders
-        @test status(HTTP.get("$sch://httpbin.org/ip"; canonicalizeheaders=false)) == 200
+        @test status(HTTP.get("$sch://httpbin.org/ip"; canonicalizeheaders=false, socket_type_tls=tls)) == 200
+    end
+end
+
+@testset "Incomplete response with known content length" begin
+    server = nothing
+    try
+        server = HTTP.listen!("0.0.0.0", 8080) do http
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Length" => "64") # Promise 64 bytes...
+            HTTP.startwrite(http)
+            HTTP.write(http, rand(UInt8, 63)) # ...but only send 63 bytes.
+            # Close the stream so that eof(stream) is true and the client isn't
+            # waiting forever for the last byte.
+            HTTP.close(http.stream)
+        end
+
+        err = try
+            HTTP.get("http://localhost:8080"; retry=false)
+        catch err
+            err
+        end
+        @test err isa HTTP.RequestError
+        @test err.error isa EOFError
+    finally
+        # Shutdown
+        @try Base.IOError close(server)
+        HTTP.ConnectionPool.closeall()
     end
 end
 

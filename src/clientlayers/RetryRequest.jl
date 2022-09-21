@@ -1,6 +1,6 @@
 module RetryRequest
 
-using Sockets, LoggingExtras, MbedTLS
+using Sockets, LoggingExtras, MbedTLS, OpenSSL
 using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest, ..Exceptions
 
 export retrylayer
@@ -62,7 +62,7 @@ function retrylayer(handler)
 end
 
 isrecoverable(e) = false
-isrecoverable(e::Union{Base.EOFError, Base.IOError, MbedTLS.MbedException}) = true
+isrecoverable(e::Union{Base.EOFError, Base.IOError, MbedTLS.MbedException, OpenSSL.OpenSSLError}) = true
 isrecoverable(e::ArgumentError) = e.msg == "stream is closed or unusable"
 isrecoverable(e::Sockets.DNSError) = true
 isrecoverable(e::ConnectError) = true
