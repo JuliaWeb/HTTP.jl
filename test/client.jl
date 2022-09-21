@@ -23,7 +23,7 @@ status(r) = r.status
     end
 end
 
-@testset "Client.jl - $sch" for sch in ["http", "https"], tls in [MbedTLS.SSLContext, OpenSSL.SSLSTream]
+@testset "Client.jl - $sch" for sch in ["http", "https"], tls in [MbedTLS.SSLContext, OpenSSL.SSLStream]
     @testset "GET, HEAD, POST, PUT, DELETE, PATCH" begin
         @test status(HTTP.get("$sch://httpbin.org/ip", socket_type_tls=tls)) == 200
         @test status(HTTP.head("$sch://httpbin.org/ip", socket_type_tls=tls)) == 200
