@@ -182,8 +182,8 @@ end
         r = HTTP.request("GET", "$sch://httpbin.org/ip", socket_type_tls=tls)
         @test status(r) == 200
 
-        uri = HTTP.URI("$sch://httpbin.org/ip", socket_type_tls=tls)
-        r = HTTP.request("GET", uri)
+        uri = HTTP.URI("$sch://httpbin.org/ip")
+        r = HTTP.request("GET", uri, socket_type_tls=tls)
         @test status(r) == 200
         r = HTTP.get(uri)
         @test status(r) == 200
@@ -191,8 +191,8 @@ end
         r = HTTP.request("GET", "$sch://httpbin.org/ip", socket_type_tls=tls)
         @test status(r) == 200
 
-        uri = HTTP.URI("$sch://httpbin.org/ip", socket_type_tls=tls)
-        r = HTTP.request("GET", uri)
+        uri = HTTP.URI("$sch://httpbin.org/ip")
+        r = HTTP.request("GET", uri, socket_type_tls=tls)
         @test status(r) == 200
 
         r = HTTP.get("$sch://httpbin.org/image/png", socket_type_tls=tls)
