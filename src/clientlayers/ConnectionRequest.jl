@@ -43,7 +43,9 @@ function getproxy(scheme, host)
     return nothing
 end
 
-export connectionlayer
+export connectionlayer, SOCKET_TYPE_TLS
+
+const SOCKET_TYPE_TLS = Ref{Any}(SSLStream)
 
 """
     connectionlayer(handler) -> handler
@@ -54,7 +56,7 @@ Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.
 """
 function connectionlayer(handler)
-    return function(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SSLStream, readtimeout::Int=0, kw...)
+    return function(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SOCKET_TYPE_TLS[], readtimeout::Int=0, kw...)
         if proxy !== nothing
             target_url = req.url
             url = URI(proxy)
