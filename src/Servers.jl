@@ -14,8 +14,7 @@ export listen, listen!, Server, forceclose, port
 using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
 using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..ConnectionPool, ..Exceptions
-import ..access_threaded
-import ..@logfmt_str
+import ..access_threaded, ..SOCKET_TYPE_TLS, ..@logfmt_str
 
 TRUE(x) = true
 getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)

@@ -4,6 +4,7 @@ using URIs, Sockets, Base64, LoggingExtras
 using MbedTLS: SSLContext, SSLConfig
 using OpenSSL: SSLStream
 using ..Messages, ..IOExtras, ..ConnectionPool, ..Streams, ..Exceptions
+import ..SOCKET_TYPE_TLS
 
 islocalhost(host::AbstractString) = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0000:0000:0000:0000:0000:0000:0000:0001" || host == "0:0:0:0:0:0:0:1"
 
@@ -43,9 +44,7 @@ function getproxy(scheme, host)
     return nothing
 end
 
-export connectionlayer, SOCKET_TYPE_TLS
-
-const SOCKET_TYPE_TLS = Ref{Any}(SSLStream)
+export connectionlayer
 
 """
     connectionlayer(handler) -> handler

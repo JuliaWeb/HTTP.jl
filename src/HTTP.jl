@@ -7,7 +7,7 @@ const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
 
-using Base64, Sockets, Dates, URIs, LoggingExtras
+using Base64, Sockets, Dates, URIs, LoggingExtras, MbedTLS
 
 function access_threaded(f, v::Vector)
     tid = Threads.threadid()
@@ -23,6 +23,8 @@ end
 @noinline _length_assert() =  @assert false "0 < tid <= v"
 
 function open end
+
+const SOCKET_TYPE_TLS = Ref{Any}(MbedTLS.SSLContext)
 
 include("Conditions.jl")               ;using .Conditions
 include("access_log.jl")
