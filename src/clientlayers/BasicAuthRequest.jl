@@ -15,7 +15,7 @@ function basicauthlayer(handler)
         if basicauth
             userinfo = unescapeuri(req.url.userinfo)
             if !isempty(userinfo) && !hasheader(req.headers, "Authorization")
-                @debugv 1 "Adding Authorization: Basic header."
+                @warnv 1 "Adding Authorization: Basic header."
                 setheader(req.headers, "Authorization" => "Basic $(base64encode(userinfo))")
             end
         end

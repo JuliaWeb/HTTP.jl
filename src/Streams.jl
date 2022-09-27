@@ -133,7 +133,7 @@ function IOExtras.closewrite(http::Stream{<:Request})
        http.message.version < v"1.1" &&
       !hasheader(http.message, "Connection", "keep-alive")
 
-        @debugv 1 "✋  \"Connection: close\": $(http.stream)"
+        @warnv 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
     end
 end
@@ -167,7 +167,7 @@ https://tools.ietf.org/html/rfc7231#section-6.2.1
 """
 function handle_continue(http::Stream{<:Response})
     if http.message.status == 100
-        @debugv 1 "✅  Continue:   $(http.stream)"
+        @warnv 1 "✅  Continue:   $(http.stream)"
         readheaders(http.stream, http.message)
     end
 end
@@ -177,7 +177,7 @@ function handle_continue(http::Stream{<:Request})
         if !iswritable(http.stream)
             startwrite(http.stream)
         end
-        @debugv 1 "✅  Continue:   $(http.stream)"
+        @warnv 1 "✅  Continue:   $(http.stream)"
         writeheaders(http.stream, Response(100))
     end
 end
@@ -331,9 +331,9 @@ function isaborted(http::Stream{<:Response})
     if iswritable(http.stream) &&
        iserror(http.message) &&
        hasheader(http.message, "Connection", "close")
-        @debugv 1 "✋  Abort on $(sprint(writestartline, http.message)): " *
+        @warnv 1 "✋  Abort on $(sprint(writestartline, http.message)): " *
                  "$(http.stream)"
-        @debugv 2 "✋  $(http.message)"
+        @warnv 2 "✋  $(http.message)"
         return true
     end
     return false
@@ -349,7 +349,7 @@ function IOExtras.closeread(http::Stream{<:Response})
 
     if hasheader(http.message, "Connection", "close")
         # Close conncetion if server sent "Connection: close"...
-        @debugv 1 "✋  \"Connection: close\": $(http.stream)"
+        @warnv 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
         # Error if Message is not complete...
         incomplete(http) && throw(EOFError())

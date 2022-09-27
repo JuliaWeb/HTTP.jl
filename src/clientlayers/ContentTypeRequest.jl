@@ -18,7 +18,7 @@ function contenttypedetectionlayer(handler)
 
             sn = sniff(bytes(req.body))
             setheader(req.headers, "Content-Type" => sn)
-            @debugv 1 "setting Content-Type header to: $sn"
+            @warnv 1 "setting Content-Type header to: $sn"
         end
         return handler(req; kw...)
     end

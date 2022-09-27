@@ -65,7 +65,7 @@ function connectionlayer(handler)
 
             userinfo = unescapeuri(url.userinfo)
             if !isempty(userinfo) && !hasheader(req.headers, "Proxy-Authorization")
-                @debugv 1 "Adding Proxy-Authorization: Basic header."
+                @warnv 1 "Adding Proxy-Authorization: Basic header."
                 setheader(req.headers, "Proxy-Authorization" => "Basic $(base64encode(userinfo))")
             end
         else
@@ -110,7 +110,7 @@ function connectionlayer(handler)
             stream = Stream(req.response, io)
             return handler(stream; readtimeout=readtimeout, kw...)
         catch e
-            @debugv 1 "❗️  ConnectionLayer $e. Closing: $io"
+            @warnv 1 "❗️  ConnectionLayer $e. Closing: $io"
             shouldreuse = false
             @try Base.IOError close(io)
             e isa HTTPError || throw(RequestError(req, e))
@@ -128,17 +128,17 @@ sockettype(url::URI, tcp, tls) = url.scheme in ("wss", "https") ? tls : tcp
 
 function connect_tunnel(io, target_url, req)
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
-    @debugv 1 "📡  CONNECT HTTPS tunnel to $target"
+    @warnv 1 "📡  CONNECT HTTPS tunnel to $target"
     headers = Dict("Host" => target)
     if (auth = header(req, "Proxy-Authorization"); !isempty(auth))
         headers["Proxy-Authorization"] = auth
     end
     request = Request("CONNECT", target, headers)
-    # @debugv 2 "connect_tunnel: writing headers"
+    # @warnv 2 "connect_tunnel: writing headers"
     writeheaders(io, request)
-    # @debugv 2 "connect_tunnel: reading headers"
+    # @warnv 2 "connect_tunnel: reading headers"
     readheaders(io, request.response)
-    # @debugv 2 "connect_tunnel: done reading headers"
+    # @warnv 2 "connect_tunnel: done reading headers"
     return request.response
 end
 

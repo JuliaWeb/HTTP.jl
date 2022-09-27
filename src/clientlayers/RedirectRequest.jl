@@ -52,7 +52,7 @@ function redirectlayer(handler)
             else
                 req.headers = Header[]
             end
-            @debugv 1 "➡️  Redirect: $url"
+            @warnv 1 "➡️  Redirect: $url"
             count += 1
             if count == redirect_limit
                 req.context[:redirectlimitreached] = true

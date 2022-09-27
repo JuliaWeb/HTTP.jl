@@ -32,20 +32,20 @@ function try_with_timeout(f, shouldtimeout, delay, iftimeout=() -> nothing)
     t = @async try
         notify(cond, f())
     catch e
-        @debugv 1 "error executing f in try_with_timeout"
+        @warnv 1 "error executing f in try_with_timeout"
         notify(cond, e)
     end
     # start a timer
     timer = Timer(delay; interval=delay / 10) do tm
         if shouldtimeout()
-            @debugv 1 "❗️  Timeout: $delay"
+            @warnv 1 "❗️  Timeout: $delay"
             notify(cond, TimeoutError(delay))
             iftimeout()
             close(tm)
         end
     end
     res = wait(cond)
-    @debugv 1 "try_with_timeout finished with: $res"
+    @warnv 1 "try_with_timeout finished with: $res"
     if res isa TimeoutError
         # timedout
         throw(res)

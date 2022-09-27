@@ -21,13 +21,13 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
     response = stream.message
     req = response.request
     io = stream.stream
-    @debugv 1 sprintcompact(req)
-    @debugv 2 "client startwrite"
+    @warnv 1 sprintcompact(req)
+    @warnv 2 "client startwrite"
     startwrite(stream)
 
-    @debugv 2 sprint(show, req)
+    @warnv 2 sprint(show, req)
     if iofunction === nothing && !isbytes(req.body)
-        @debugv 2 "$(typeof(req)).body: $(sprintcompact(req.body))"
+        @warnv 2 "$(typeof(req)).body: $(sprintcompact(req.body))"
     end
 
     write_error = nothing
@@ -36,14 +36,14 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
             if iofunction === nothing
                 @async try
                     writebody(stream, req)
-                    @debugv 2 "client closewrite"
+                    @warnv 2 "client closewrite"
                     closewrite(stream)
                 catch e
                     # @error "error" exception=(e, catch_backtrace())
                     write_error = e
                     isopen(io) && @try Base.IOError close(io)
                 end
-                @debugv 2 "client startread"
+                @warnv 2 "client startread"
                 startread(stream)
                 readbody(stream, response, decompress)
             else
@@ -63,13 +63,13 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
         end
     end
 
-    @debugv 2 "client closewrite"
+    @warnv 2 "client closewrite"
     closewrite(stream)
-    @debugv 2 "client closeread"
+    @warnv 2 "client closeread"
     closeread(stream)
 
-    @debugv 1 sprintcompact(response)
-    @debugv 2 sprint(show, response)
+    @warnv 1 sprintcompact(response)
+    @warnv 2 sprint(show, response)
 
     return response
 end
