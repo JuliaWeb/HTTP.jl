@@ -112,13 +112,18 @@ function connectionlayer(handler)
         catch e
             @warnv 1 "❗️  ConnectionLayer $e. Closing: $io"
             shouldreuse = false
+            @warnv 1 "calling close on io"
             @try Base.IOError close(io)
+            @warnv 1 "closed io"
             e isa HTTPError || throw(RequestError(req, e))
             rethrow(e)
         finally
+            @warnv 1 "releaseconnection"
             releaseconnection(io, shouldreuse)
             if !shouldreuse
+                @warnv 1 "calling close on io - finally"
                 @try Base.IOError close(io)
+                @warnv 1 "closed io - finally"
             end
         end
     end
