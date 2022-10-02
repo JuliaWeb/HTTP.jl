@@ -8,9 +8,9 @@ export debuglayer
 """
     debuglayer(handler) -> handler
 
-If `verbose` keyword arg passed to the handler is > 0,
-or the HTTP.jl global `DEBUG_LEVEL[]` is > 0, then enable
+If the positive `verbose` keyword arg passed to the `handler`, then enable
 debug logging with verbosity `verbose` for the lifetime of the request.
+If no `verbose` is specified, it defaults to the *HTTP.jl* global `DEBUG_LEVEL[]`.
 """
 function debuglayer(handler)
     return function(request; verbose=DEBUG_LEVEL[], kw...)
