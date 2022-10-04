@@ -2,6 +2,7 @@ module BasicAuthRequest
 
 using Base64, URIs, LoggingExtras
 import ..Messages: setheader, hasheader
+import ..DEBUG_LOG
 
 export basicauthlayer
 
@@ -15,7 +16,7 @@ function basicauthlayer(handler)
         if basicauth
             userinfo = unescapeuri(req.url.userinfo)
             if !isempty(userinfo) && !hasheader(req.headers, "Authorization")
-                @warnv 1 "Adding Authorization: Basic header."
+                DEBUG_LOG[] && @warnv 1 "Adding Authorization: Basic header."
                 setheader(req.headers, "Authorization" => "Basic $(base64encode(userinfo))")
             end
         end

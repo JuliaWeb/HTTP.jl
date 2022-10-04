@@ -2,6 +2,7 @@ module RedirectRequest
 
 using URIs, LoggingExtras
 using ..Messages, ..Pairs
+import ..DEBUG_LOG
 
 export redirectlayer, nredirects
 
@@ -52,7 +53,7 @@ function redirectlayer(handler)
             else
                 req.headers = Header[]
             end
-            @warnv 1 "➡️  Redirect: $url"
+            DEBUG_LOG[] && @warnv 1 "➡️  Redirect: $url"
             count += 1
             if count == redirect_limit
                 req.context[:redirectlimitreached] = true

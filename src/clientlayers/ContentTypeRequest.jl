@@ -2,6 +2,7 @@ module ContentTypeDetection
 
 using URIs, LoggingExtras
 using ..Sniff, ..Forms, ..Messages, ..IOExtras
+import ..DEBUG_LOG
 
 export contenttypedetectionlayer
 
@@ -18,7 +19,7 @@ function contenttypedetectionlayer(handler)
 
             sn = sniff(bytes(req.body))
             setheader(req.headers, "Content-Type" => sn)
-            @warnv 1 "setting Content-Type header to: $sn"
+            DEBUG_LOG[] && @warnv 1 "setting Content-Type header to: $sn"
         end
         return handler(req; kw...)
     end

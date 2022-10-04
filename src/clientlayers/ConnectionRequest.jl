@@ -5,6 +5,7 @@ using MbedTLS: SSLContext, SSLConfig
 using OpenSSL: SSLStream
 using ..Messages, ..IOExtras, ..ConnectionPool, ..Streams, ..Exceptions
 import ..SOCKET_TYPE_TLS
+import ..DEBUG_LOG
 
 islocalhost(host::AbstractString) = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0000:0000:0000:0000:0000:0000:0000:0001" || host == "0:0:0:0:0:0:0:1"
 
@@ -65,7 +66,7 @@ function connectionlayer(handler)
 
             userinfo = unescapeuri(url.userinfo)
             if !isempty(userinfo) && !hasheader(req.headers, "Proxy-Authorization")
-                @warnv 1 "Adding Proxy-Authorization: Basic header."
+                DEBUG_LOG[] && @warnv 1 "Adding Proxy-Authorization: Basic header."
                 setheader(req.headers, "Proxy-Authorization" => "Basic $(base64encode(userinfo))")
             end
         else
@@ -110,22 +111,22 @@ function connectionlayer(handler)
             stream = Stream(req.response, io)
             return handler(stream; readtimeout=readtimeout, kw...)
         catch e
-            @warnv 1 "❗️  ConnectionLayer $e. Closing: $io"
+            DEBUG_LOG[] && @warnv 1 "❗️  ConnectionLayer $e. Closing: $io"
             shouldreuse = false
-            @warnv 1 "calling close on io"
+            DEBUG_LOG[] && @warnv 1 "calling close on io"
             @try Base.IOError close(io)
-            @warnv 1 "closed io"
+            DEBUG_LOG[] && @warnv 1 "closed io"
             e isa HTTPError || throw(RequestError(req, e))
-            @warnv 1 "throwing e"
+            DEBUG_LOG[] && @warnv 1 "throwing e"
             rethrow(e)
         finally
-            @warnv 1 "releaseconnection: shouldreuse: $shouldreuse"
+            DEBUG_LOG[] && @warnv 1 "releaseconnection: shouldreuse: $shouldreuse"
             releaseconnection(io, shouldreuse)
-            @warnv 1 "released connection"
+            DEBUG_LOG[] && @warnv 1 "released connection"
             if !shouldreuse
-                @warnv 1 "calling close on io - finally"
+                DEBUG_LOG[] && @warnv 1 "calling close on io - finally"
                 @try Base.IOError close(io)
-                @warnv 1 "closed io - finally"
+                DEBUG_LOG[] && @warnv 1 "closed io - finally"
             end
         end
     end
@@ -135,17 +136,17 @@ sockettype(url::URI, tcp, tls) = url.scheme in ("wss", "https") ? tls : tcp
 
 function connect_tunnel(io, target_url, req)
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
-    @warnv 1 "📡  CONNECT HTTPS tunnel to $target"
+    DEBUG_LOG[] && @warnv 1 "📡  CONNECT HTTPS tunnel to $target"
     headers = Dict("Host" => target)
     if (auth = header(req, "Proxy-Authorization"); !isempty(auth))
         headers["Proxy-Authorization"] = auth
     end
     request = Request("CONNECT", target, headers)
-    # @warnv 2 "connect_tunnel: writing headers"
+    # DEBUG_LOG[] && @warnv 2 "connect_tunnel: writing headers"
     writeheaders(io, request)
-    # @warnv 2 "connect_tunnel: reading headers"
+    # DEBUG_LOG[] && @warnv 2 "connect_tunnel: reading headers"
     readheaders(io, request.response)
-    # @warnv 2 "connect_tunnel: done reading headers"
+    # DEBUG_LOG[] && @warnv 2 "connect_tunnel: done reading headers"
     return request.response
 end
 

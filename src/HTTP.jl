@@ -4,6 +4,7 @@ export startwrite, startread, closewrite, closeread,
     @logfmt_str, common_logfmt, combined_logfmt, WebSockets
 
 const DEBUG_LEVEL = Ref(0)
+const DEBUG_LOG = Ref(false)
 
 Base.@deprecate escape escapeuri
 

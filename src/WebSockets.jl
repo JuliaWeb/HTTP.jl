@@ -5,6 +5,7 @@ using MbedTLS: digest, MD_SHA1, SSLContext
 using ..IOExtras, ..Streams, ..ConnectionPool, ..Messages, ..Conditions, ..Servers
 import ..open
 import ..HTTP # for doc references
+import ..DEBUG_LOG
 
 export WebSocket, send, receive, ping, pong
 
@@ -370,7 +371,7 @@ function open(f::Function, url; suppress_close_error::Bool=false, verbose=false,
         http.ntoread = 0
         io = http.stream
         ws = WebSocket(io, http.message.request, http.message; maxframesize, maxfragmentation)
-        @warnv 2 "$(ws.id): WebSocket opened"
+        DEBUG_LOG[] && @warnv 2 "$(ws.id): WebSocket opened"
         try
             f(ws)
         catch e
@@ -417,7 +418,7 @@ listen(f, args...; kw...) = Servers.listen(http -> upgrade(f, http; kw...), args
 listen!(f, args...; kw...) = Servers.listen!(http -> upgrade(f, http; kw...), args...; kw...)
 
 function upgrade(f::Function, http::Streams.Stream; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...)
-    @warnv 2 "Server websocket upgrade requested"
+    DEBUG_LOG[] && @warnv 2 "Server websocket upgrade requested"
     isupgrade(http.message) || handshakeerror()
     if !hasheader(http, "Sec-WebSocket-Version", "13")
         throw(WebSocketError("Expected \"Sec-WebSocket-Version: 13\"!\n" * "$(http.message)"))
@@ -434,7 +435,7 @@ function upgrade(f::Function, http::Streams.Stream; suppress_close_error::Bool=f
     io = http.stream
     req = http.message
     ws = WebSocket(io, req, req.response; client=false, maxframesize, maxfragmentation)
-    @warnv 2 "$(ws.id): WebSocket upgraded; connection established"
+    DEBUG_LOG[] && @warnv 2 "$(ws.id): WebSocket upgraded; connection established"
     try
         f(ws)
     catch e
@@ -488,7 +489,7 @@ or `close(ws[, body::WebSockets.CloseFrameBody])`. Calling `close` will initiate
 the close sequence and close the underlying connection.
 """
 function Sockets.send(ws::WebSocket, x)
-    @warnv 2 "$(ws.id): Writing non-control message"
+    DEBUG_LOG[] && @warnv 2 "$(ws.id): Writing non-control message"
     @require !ws.writeclosed
     if !isbinary(x) && !istext(x)
         # if x is not single binary or text, then assume it's an iterable of binary or text
@@ -501,7 +502,7 @@ function Sockets.send(ws::WebSocket, x)
             x = ""
             @goto write_single_frame
         end
-        @warnv 2 "$(ws.id): Writing fragmented message"
+        DEBUG_LOG[] && @warnv 2 "$(ws.id): Writing fragmented message"
         item, st = state
         # we prefetch next state so we know if we're on the last item or not
         # so we can appropriately set the FIN bit for the last fragmented frame
@@ -530,7 +531,7 @@ to when a PING message is received by a websocket connection.
 """
 function ping(ws::WebSocket, data=UInt8[])
     @require !ws.writeclosed
-    @warnv 2 "$(ws.id): sending ping"
+    DEBUG_LOG[] && @warnv 2 "$(ws.id): sending ping"
     return writeframe(ws.io, Frame(true, PING, ws.client, payload(ws, data)))
 end
 
@@ -545,7 +546,7 @@ used as a one-way heartbeat.
 """
 function pong(ws::WebSocket, data=UInt8[])
     @require !ws.writeclosed
-    @warnv 2 "$(ws.id): sending pong"
+    DEBUG_LOG[] && @warnv 2 "$(ws.id): sending pong"
     return writeframe(ws.io, Frame(true, PONG, ws.client, payload(ws, data)))
 end
 
@@ -561,7 +562,7 @@ frame.
 """
 function Base.close(ws::WebSocket, body::CloseFrameBody=CloseFrameBody(1000, ""))
     isclosed(ws) && return
-    @warnv 2 "$(ws.id): Closing websocket"
+    DEBUG_LOG[] && @warnv 2 "$(ws.id): Closing websocket"
     ws.writeclosed = true
     data = Vector{UInt8}(body.message)
     prepend!(data, reinterpret(UInt8, [hton(UInt16(body.status))]))
@@ -653,10 +654,10 @@ returned by `receive`. Note that `WebSocket` objects can be iterated,
 where each iteration yields a message until the connection is closed.
 """
 function receive(ws::WebSocket)
-    @warnv 2 "$(ws.id): Reading message"
+    DEBUG_LOG[] && @warnv 2 "$(ws.id): Reading message"
     @require !ws.readclosed
     frame = readframe(ws.io, Frame, ws.readbuffer)
-    @warnv 2 "$(ws.id): Received frame: $frame"
+    DEBUG_LOG[] && @warnv 2 "$(ws.id): Received frame: $frame"
     done = checkreadframe!(ws, frame)
     # common case of reading single non-control frame
     done && return frame.payload
@@ -666,16 +667,16 @@ function receive(ws::WebSocket)
     payload = frame.payload
     while true
         frame = readframe(ws.io, Frame, ws.readbuffer, opcode)
-        @warnv 2 "$(ws.id): Received frame: $frame"
+        DEBUG_LOG[] && @warnv 2 "$(ws.id): Received frame: $frame"
         done = checkreadframe!(ws, frame)
         if !iscontrol(frame.flags.opcode)
             payload = _append(payload, frame.payload)
-            @warnv 2 "$(ws.id): payload len = $(length(payload))"
+            DEBUG_LOG[] && @warnv 2 "$(ws.id): payload len = $(length(payload))"
         end
         done && break
     end
     payload isa String && utf8check(payload)
-    @warnv 2 "Read message: $(payload[1:min(1024, sizeof(payload))])"
+    DEBUG_LOG[] && @warnv 2 "Read message: $(payload[1:min(1024, sizeof(payload))])"
     return payload
 end
 

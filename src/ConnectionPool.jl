@@ -25,6 +25,7 @@ using Sockets, LoggingExtras, NetworkOptions
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 using OpenSSL
 using ..IOExtras, ..Conditions, ..Exceptions
+import ..DEBUG_LOG
 
 const default_connection_limit = 8
 const default_pipeline_limit = 16
@@ -227,7 +228,7 @@ end
 function IOExtras.startwrite(c::Connection)
     @require !iswritable(c)
     c.writable = true
-    @warnv 3 "👁  Start write:$c"
+    DEBUG_LOG[] && @warnv 3 "👁  Start write:$c"
     return
 end
 
@@ -239,7 +240,7 @@ Signal that an entire Request Message has been written to the `Connection`.
 function IOExtras.closewrite(c::Connection)
     @require iswritable(c)
     c.writable = false
-    @warnv 3 "🗣  Write done: $c"
+    DEBUG_LOG[] && @warnv 3 "🗣  Write done: $c"
     flush(c)
     return
 end
@@ -251,7 +252,7 @@ function IOExtras.startread(c::Connection)
     @require !isreadable(c)
     c.timestamp = time()
     c.readable = true
-    @warnv 3 "👁  Start read: $c"
+    DEBUG_LOG[] && @warnv 3 "👁  Start read: $c"
     return
 end
 
@@ -262,7 +263,7 @@ TODO: or if response data arrives when no request was sent (isreadable == false)
 """
 function monitor_idle_connection(c::Connection)
     try
-        if eof(c.io)                                  ;@warnv 3 "💀  Closed:     $c"
+        if eof(c.io)                                  ;DEBUG_LOG[] && @warnv 3 "💀  Closed:     $c"
             close(c.io)
         end
     catch ex
@@ -280,7 +281,7 @@ Signal that an entire Response Message has been read from the `Connection`.
 function IOExtras.closeread(c::Connection)
     @require isreadable(c)
     c.readable = false
-    @warnv 3 "✉️  Read done: $c"
+    DEBUG_LOG[] && @warnv 3 "✉️  Read done: $c"
     if c.clientconnection
         t = @async monitor_idle_connection(c)
         @isdefined(errormonitor) && errormonitor(t)
@@ -370,7 +371,7 @@ releaseconnection(c::Connection, reuse) =
     release(POOL, connectionkey(c), c; return_for_reuse=reuse)
 
 function keepalive!(tcp)
-    @warnv 2 "setting keepalive on tcp socket"
+    DEBUG_LOG[] && @warnv 2 "setting keepalive on tcp socket"
     err = ccall(:uv_tcp_keepalive, Cint, (Ptr{Nothing}, Cint, Cuint),
                                           tcp.handle, 1, 1)
     err != 0 && error("error setting keepalive on socket")
@@ -399,7 +400,7 @@ function getconnection(::Type{TCPSocket},
                        kw...)::TCPSocket
 
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
-    @warnv 2 "TCP connect: $host:$p..."
+    DEBUG_LOG[] && @warnv 2 "TCP connect: $host:$p..."
     addrs = Sockets.getalladdrinfo(host)
     connect_timeout = connect_timeout == 0 && readtimeout > 0 ? readtimeout : connect_timeout
     lasterr = ErrorException("unknown connection error")
@@ -448,7 +449,7 @@ function getconnection(::Type{SSLContext},
                        kw...)::SSLContext
 
     port = isempty(port) ? "443" : port
-    @warnv 2 "SSL connect: $host:$port..."
+    DEBUG_LOG[] && @warnv 2 "SSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
     return sslconnection(tcp, host; kw...)
 end
@@ -459,7 +460,7 @@ function getconnection(::Type{SSLStream},
                         kw...)::SSLStream
 
     port = isempty(port) ? "443" : port
-    @warnv 2 "OpenSSL connect: $host:$port..."
+    DEBUG_LOG[] && @warnv 2 "OpenSSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
     # Create SSL stream.
     ssl_stream = SSLStream(tcp)

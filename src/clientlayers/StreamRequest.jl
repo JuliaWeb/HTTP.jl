@@ -3,6 +3,7 @@ module StreamRequest
 using ..IOExtras, ..Messages, ..Streams, ..ConnectionPool, ..Strings, ..RedirectRequest, ..Exceptions
 using LoggingExtras, CodecZlib, URIs
 using SimpleBufferStream: BufferStream
+import ..DEBUG_LOG
 
 export streamlayer
 
@@ -21,13 +22,13 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
     response = stream.message
     req = response.request
     io = stream.stream
-    @warnv 1 sprintcompact(req)
-    @warnv 2 "client startwrite"
+    DEBUG_LOG[] && @warnv 1 sprintcompact(req)
+    DEBUG_LOG[] && @warnv 2 "client startwrite"
     startwrite(stream)
 
-    @warnv 2 sprint(show, req)
+    DEBUG_LOG[] && @warnv 2 sprint(show, req)
     if iofunction === nothing && !isbytes(req.body)
-        @warnv 2 "$(typeof(req)).body: $(sprintcompact(req.body))"
+        DEBUG_LOG[] && @warnv 2 "$(typeof(req)).body: $(sprintcompact(req.body))"
     end
 
     write_error = nothing
@@ -36,14 +37,14 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
             if iofunction === nothing
                 @async try
                     writebody(stream, req)
-                    @warnv 2 "client closewrite"
+                    DEBUG_LOG[] && @warnv 2 "client closewrite"
                     closewrite(stream)
                 catch e
                     # @error "error" exception=(e, catch_backtrace())
                     write_error = e
                     isopen(io) && @try Base.IOError close(io)
                 end
-                @warnv 2 "client startread"
+                DEBUG_LOG[] && @warnv 2 "client startread"
                 startread(stream)
                 readbody(stream, response, decompress)
             else
@@ -63,13 +64,13 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
         end
     end
 
-    @warnv 2 "client closewrite"
+    DEBUG_LOG[] && @warnv 2 "client closewrite"
     closewrite(stream)
-    @warnv 2 "client closeread"
+    DEBUG_LOG[] && @warnv 2 "client closeread"
     closeread(stream)
 
-    @warnv 1 sprintcompact(response)
-    @warnv 2 sprint(show, response)
+    DEBUG_LOG[] && @warnv 1 sprintcompact(response)
+    DEBUG_LOG[] && @warnv 2 sprint(show, response)
 
     return response
 end

@@ -15,6 +15,7 @@ using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
 using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..ConnectionPool, ..Exceptions
 import ..access_threaded, ..SOCKET_TYPE_TLS, ..@logfmt_str
+import ..DEBUG_LOG
 
 TRUE(x) = true
 getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
@@ -365,10 +366,10 @@ function listenloop(f, listener, conns, tcpisvalid,
             Base.acquire(sem)
             io = accept(listener)
             if io === nothing
-                @warnv 1 "unable to accept new connection"
+                DEBUG_LOG[] && @warnv 1 "unable to accept new connection"
                 continue
             elseif !tcpisvalid(io)
-                @warnv 1 "!tcpisvalid: $io"
+                DEBUG_LOG[] && @warnv 1 "!tcpisvalid: $io"
                 close(io)
                 continue
             end
@@ -419,14 +420,14 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
             # attempt to read request line and headers
             try
                 startread(http)
-                @warnv 1 "startread called"
+                DEBUG_LOG[] && @warnv 1 "startread called"
                 c.state = ACTIVE # once we've started reading, set ACTIVE state
             catch e
                 # for ParserErrors, try to inform client of the problem
                 if e isa ParseError
                     write(c, Response(e.code == :HEADER_SIZE_EXCEEDS_LIMIT ? 431 : 400, string(e.code)))
                 end
-                @warnv 1 "handle_connection startread error" exception=(e, catch_backtrace())
+                DEBUG_LOG[] && @warnv 1 "handle_connection startread error" exception=(e, catch_backtrace())
                 break
             end
 
@@ -438,15 +439,15 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
 
             try
                 # invokelatest becuase the perf is negligible, but this makes live-editing handlers more Revise friendly
-                @warnv 1 "invoking handler"
+                DEBUG_LOG[] && @warnv 1 "invoking handler"
                 Base.invokelatest(f, http)
                 # If `startwrite()` was never called, throw an error so we send a 500 and log this
                 if isopen(http) && !iswritable(http)
                     error("Server never wrote a response")
                 end
-                @warnv 1 "closeread"
+                DEBUG_LOG[] && @warnv 1 "closeread"
                 closeread(http)
-                @warnv 1 "closewrite"
+                DEBUG_LOG[] && @warnv 1 "closewrite"
                 closewrite(http)
                 c.state = IDLE
             catch e
@@ -487,7 +488,7 @@ If `c` is inactive for a more than `readtimeout` then close the `c`."
 function check_readtimeout(c, readtimeout, wait_for_timeout)
     while wait_for_timeout[]
         if inactiveseconds(c) > readtimeout
-            @warnv 2 "Connection Timeout: $c"
+            DEBUG_LOG[] && @warnv 2 "Connection Timeout: $c"
             try
                 writeheaders(c.io, Response(408, ["Connection" => "close"]))
             finally

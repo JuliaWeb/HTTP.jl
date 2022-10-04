@@ -1,3 +1,5 @@
+import ..DEBUG_LOG
+
 """
     CookieJar()
 
@@ -78,7 +80,7 @@ function getcookies!(jar::CookieJar, url::URI, now::DateTime=Dates.now(Dates.UTC
         expired = Cookie[]
         for (id, e) in entries
             if e.persistent && e.expires != DateTime(1) && e.expires < now
-                @warnv 1 "Deleting expired cookie: $(e.name)"
+                DEBUG_LOG[] && @warnv 1 "Deleting expired cookie: $(e.name)"
                 push!(expired, e)
                 continue
             end
@@ -86,7 +88,7 @@ function getcookies!(jar::CookieJar, url::URI, now::DateTime=Dates.now(Dates.UTC
                 continue
             end
             e.lastaccess = now
-            @warnv 1 "Including cookie in request: $(e.name) to $(url.host)"
+            DEBUG_LOG[] && @warnv 1 "Including cookie in request: $(e.name) to $(url.host)"
             push!(cookies, e)
         end
         for c in expired
@@ -141,7 +143,7 @@ function setcookies!(jar::CookieJar, url::URI, headers::Headers)
                     c.persistent = false
                 else
                     if c.expires < now
-                        @warnv 1 "Cookie expired: $(c.name)"
+                        DEBUG_LOG[] && @warnv 1 "Cookie expired: $(c.name)"
                         @goto remove
                     end
                     c.persistent = true

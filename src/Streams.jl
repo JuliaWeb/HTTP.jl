@@ -5,6 +5,7 @@ export Stream, closebody, isaborted, setstatus
 using Sockets, LoggingExtras
 using ..IOExtras, ..Messages, ..ConnectionPool, ..Conditions, ..Exceptions
 import ..HTTP # for doc references
+import ..DEBUG_LOG
 
 mutable struct Stream{M <: Message, S <: IO} <: IO
     message::M
@@ -133,7 +134,7 @@ function IOExtras.closewrite(http::Stream{<:Request})
        http.message.version < v"1.1" &&
       !hasheader(http.message, "Connection", "keep-alive")
 
-        @warnv 1 "✋  \"Connection: close\": $(http.stream)"
+        DEBUG_LOG[] && @warnv 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
     end
 end
@@ -167,7 +168,7 @@ https://tools.ietf.org/html/rfc7231#section-6.2.1
 """
 function handle_continue(http::Stream{<:Response})
     if http.message.status == 100
-        @warnv 1 "✅  Continue:   $(http.stream)"
+        DEBUG_LOG[] && @warnv 1 "✅  Continue:   $(http.stream)"
         readheaders(http.stream, http.message)
     end
 end
@@ -177,7 +178,7 @@ function handle_continue(http::Stream{<:Request})
         if !iswritable(http.stream)
             startwrite(http.stream)
         end
-        @warnv 1 "✅  Continue:   $(http.stream)"
+        DEBUG_LOG[] && @warnv 1 "✅  Continue:   $(http.stream)"
         writeheaders(http.stream, Response(100))
     end
 end
@@ -331,9 +332,9 @@ function isaborted(http::Stream{<:Response})
     if iswritable(http.stream) &&
        iserror(http.message) &&
        hasheader(http.message, "Connection", "close")
-        @warnv 1 "✋  Abort on $(sprint(writestartline, http.message)): " *
+        DEBUG_LOG[] && @warnv 1 "✋  Abort on $(sprint(writestartline, http.message)): " *
                  "$(http.stream)"
-        @warnv 2 "✋  $(http.message)"
+        DEBUG_LOG[] && @warnv 2 "✋  $(http.message)"
         return true
     end
     return false
@@ -349,7 +350,7 @@ function IOExtras.closeread(http::Stream{<:Response})
 
     if hasheader(http.message, "Connection", "close")
         # Close conncetion if server sent "Connection: close"...
-        @warnv 1 "✋  \"Connection: close\": $(http.stream)"
+        DEBUG_LOG[] && @warnv 1 "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
         # Error if Message is not complete...
         incomplete(http) && throw(EOFError())
