@@ -5,9 +5,12 @@ using SnoopPrecompile
     resize!(empty!(Parsers.header_field_regex),          Threads.nthreads())
     resize!(empty!(Parsers.obs_fold_header_field_regex), Threads.nthreads())
     resize!(empty!(Parsers.empty_header_field_regex),    Threads.nthreads())
-    port, server = listenany(ip"0.0.0.0", 8080)
     router = Router()
     register!(router, "GET", "/read/**", _ -> Response(200))
-    t = @async serve(router, "0.0.0.0", port, server=server)
-    resp = get("http://localhost:$port/read//$(homedir())")
+    server = HTTP.serve!(router, "0.0.0.0", 8080; listenany=true)
+    try
+        resp = get("http://localhost:$(port(server))/read//$(homedir())")
+    finally
+        close(server)
+    end
 end

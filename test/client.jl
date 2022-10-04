@@ -209,7 +209,7 @@ end
 @testset "Incomplete response with known content length" begin
     server = nothing
     try
-        server = HTTP.listen!("0.0.0.0", 8080) do http
+        server = HTTP.listen!("0.0.0.0", 8080; listenany=true) do http
             HTTP.setstatus(http, 200)
             HTTP.setheader(http, "Content-Length" => "64") # Promise 64 bytes...
             HTTP.startwrite(http)
@@ -220,7 +220,7 @@ end
         end
 
         err = try
-            HTTP.get("http://localhost:8080"; retry=false)
+            HTTP.get("http://localhost:$(HTTP.port(server))"; retry=false)
         catch err
             err
         end
@@ -290,12 +290,12 @@ end
         for interface in (IPv4(0), IPv6(0))
             server = nothing
             try
-                server = HTTP.listen!(string(interface), 8080) do http
+                server = HTTP.listen!(string(interface), 8080; listenay=true) do http
                     HTTP.setstatus(http, 200)
                     HTTP.startwrite(http)
                     HTTP.write(http, "hello, world")
                 end
-                req = HTTP.get("http://localhost:8080")
+                req = HTTP.get("http://localhost:$(HTTP.port(server))")
                 @test req.status == 200
                 @test String(req.body) == "hello, world"
             finally
@@ -309,7 +309,7 @@ end
 @testset "Sockets.get(sock|peer)name(::HTTP.Stream)" begin
     server = nothing
     try
-        server = HTTP.listen!("0.0.0.0", 8080) do http
+        server = HTTP.listen!("0.0.0.0", 8080; listenany=true) do http
             sock = Sockets.getsockname(http)
             peer = Sockets.getpeername(http)
             str = sprint() do io
@@ -334,7 +334,7 @@ end
             @test sock[2] == server_peerport
             peer = Sockets.getpeername(http)
             @test peer[1] == ip"127.0.0.1"
-            @test peer[2] == 8080
+            @test peer[2] == HTTP.port(server)
         end
     finally
         @try Base.IOError close(server)
@@ -366,7 +366,7 @@ end
 @testset "Implicit request headers" begin
     server = nothing
     try
-        server = HTTP.listen!("0.0.0.0", 8080) do http
+        server = HTTP.listen!("0.0.0.0", 8080; listenany=true) do http
             data = Dict{String,String}(http.message.headers)
             HTTP.setstatus(http, 200)
             HTTP.startwrite(http)
@@ -376,20 +376,20 @@ end
         default_user_agent = "HTTP.jl/$VERSION"
         # Default values
         HTTP.setuseragent!(default_user_agent)
-        d = JSON.parse(IOBuffer(HTTP.get("http://localhost:8080").body))
-        @test d["Host"] == "localhost:8080"
+        d = JSON.parse(IOBuffer(HTTP.get("http://localhost:$(HTTP.port(server))").body))
+        @test d["Host"] == "localhost:$(HTTP.port(server))"
         @test d["Accept"] == "*/*"
         @test d["User-Agent"] == default_user_agent
         # Overwriting behavior
         headers = ["Host" => "http.jl", "Accept" => "application/json"]
         HTTP.setuseragent!("HTTP.jl test")
-        d = JSON.parse(IOBuffer(HTTP.get("http://localhost:8080", headers).body))
+        d = JSON.parse(IOBuffer(HTTP.get("http://localhost:$(HTTP.port(server))", headers).body))
         @test d["Host"] == "http.jl"
         @test d["Accept"] == "application/json"
         @test d["User-Agent"] == "HTTP.jl test"
         # No User-Agent
         HTTP.setuseragent!(nothing)
-        d = JSON.parse(IOBuffer(HTTP.get("http://localhost:8080").body))
+        d = JSON.parse(IOBuffer(HTTP.get("http://localhost:$(HTTP.port(server))").body))
         @test !haskey(d, "User-Agent")
 
         HTTP.setuseragent!(old_user_agent)
@@ -492,7 +492,7 @@ end
         # Trivial implementation of a proxy server
         # We are only interested in the request passed in by the client
         # Returns 400 after reading the http request into req
-        proxy = listen(IPv4(0), 8082)
+        port, proxy = listenany(IPv4(0), 8082)
         try
             @async begin
                 sock = accept(proxy)
@@ -506,7 +506,7 @@ end
             end
 
             # Make the HTTP request
-            HTTP.get("https://example.com"; proxy="http://localhost:8082", retry=false, status_exception=false)
+            HTTP.get("https://example.com"; proxy="http://localhost:$port", retry=false, status_exception=false)
 
             # Test if the host header exist in the request
             @test "Host: example.com:443" in req
@@ -519,7 +519,7 @@ end
 
 @testset "Retry with request/response body streams" begin
     shouldfail = Ref(true)
-    server = HTTP.listen!(8080) do http
+    server = HTTP.listen!(8080; listenany=true) do http
         @assert !eof(http)
         msg = String(read(http))
         if shouldfail[]
@@ -533,19 +533,19 @@ end
         req_body = IOBuffer("hey there sailor")
         seekstart(req_body)
         res_body = IOBuffer()
-        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
+        resp = HTTP.get("http://localhost:$(HTTP.port(server))/retry"; body=req_body, response_stream=res_body)
         @test resp.status == 200
         @test String(take!(res_body)) == "hey there sailor"
         # ensure if retry=false, that we write the response body immediately
         shouldfail[] = true
         seekstart(req_body)
-        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry=false, status_exception=false)
+        resp = HTTP.get("http://localhost:$(HTTP.port(server))/retry"; body=req_body, response_stream=res_body, retry=false, status_exception=false)
         @test String(take!(res_body)) == "500 unexpected error"
         # when retrying, we can still get access to the most recent failed response body in the response's request context
         shouldfail[] = true
         seekstart(req_body)
         println("making 3rd request")
-        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
+        resp = HTTP.get("http://localhost:$(HTTP.port(server))/retry"; body=req_body, response_stream=res_body)
         @test resp.status == 200
         @test String(take!(res_body)) == "hey there sailor"
         @test String(resp.request.context[:response_body]) == "500 unexpected error"
