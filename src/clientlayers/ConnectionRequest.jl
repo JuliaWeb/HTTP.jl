@@ -111,7 +111,7 @@ function connectionlayer(handler)
             stream = Stream(req.response, io)
             return handler(stream; readtimeout=readtimeout, kw...)
         catch e
-            DEBUG_LOG[] && @warnv 1 "❗️  ConnectionLayer $e. Closing: $io"
+            DEBUG_LOG[] && @errorv 1 "❗️  ConnectionLayer $e. Closing: $io" exception=(e, catch_backtrace())
             shouldreuse = false
             DEBUG_LOG[] && @warnv 1 "calling close on io"
             @try Base.IOError close(io)
