@@ -76,7 +76,7 @@ contenttype(e::Exact) = e.contenttype
 
 function ismatch(e::Exact, data::CodeUnits, firstnonws)
     length(data) < length(e.sig) && return false
-    for i = 1:length(e.sig)
+    for i = eachindex(e.sig)
         e.sig[i] == data[i] || return false
     end
     return true
@@ -126,7 +126,7 @@ struct MP4Sig end
 contenttype(::Type{MP4Sig}) = "video/mp4"
 
 function byteequal(data1, ind, data2)
-    for i = 1:length(data2)
+    for i = eachindex(data2)
         @inbounds data1[ind+i-1] == data2[i] || return false
     end
     return true
