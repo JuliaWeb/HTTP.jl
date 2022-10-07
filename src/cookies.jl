@@ -198,7 +198,7 @@ function parsecookievalue(raw, allowdoublequote::Bool)
     if allowdoublequote && length(raw) > 1 && raw[1] == '"' && raw[end] == '"'
         raw = raw[2:end-1]
     end
-    for i = 1:length(raw)
+    for i = eachindex(raw)
         !validcookievaluebyte(raw[i]) && return "", false
     end
     return raw, true
