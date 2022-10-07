@@ -23,7 +23,7 @@ export Connection, newconnection, releaseconnection, getrawstream, inactivesecon
 
 using Sockets, LoggingExtras, NetworkOptions
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
-using OpenSSL
+using MbedTLS, OpenSSL
 using ..IOExtras, ..Conditions, ..Exceptions
 
 const default_connection_limit = 8
@@ -439,6 +439,11 @@ function global_sslconfig(require_ssl_verification::Bool)::SSLConfig
         default_sslconfig = SSLConfig(true)
         noverify_sslconfig = SSLConfig(false)
     end
+    if haskey(ENV, "HTTP_CA_BUNDLE")
+        MbedTLS.ca_chain!(default_sslconfig, MbedTLS.crt_parse(read(ENV["HTTP_CA_BUNDLE"], String)))
+    elseif haskey(ENV, "CURL_CA_BUNDLE")
+        MbedTLS.ca_chain!(default_sslconfig, MbedTLS.crt_parse(read(ENV["CURL_CA_BUNDLE"], String)))
+    end
     return require_ssl_verification ? default_sslconfig : noverify_sslconfig
 end
 
@@ -463,6 +468,13 @@ function getconnection(::Type{SSLStream},
     tcp = getconnection(TCPSocket, host, port; kw...)
     # Create SSL stream.
     ssl_stream = SSLStream(tcp)
+    if isdefined(OpenSSL, :ca_chain!)
+        if haskey(ENV, "HTTP_CA_BUNDLE")
+            OpenSSL.ca_chain!(ssl_stream.ssl_context, ENV["HTTP_CA_BUNDLE"])
+        elseif haskey(ENV, "CURL_CA_BUNDLE")
+            OpenSSL.ca_chain!(ssl_stream.ssl_context, ENV["CURL_CA_BUNDLE"])
+        end
+    end
     OpenSSL.hostname!(ssl_stream, host)
     OpenSSL.connect(ssl_stream)
     return ssl_stream
