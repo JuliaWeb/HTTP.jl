@@ -558,7 +558,6 @@ end
 findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
 
 @testset "readuntil on Stream" begin
-
     HTTP.open(:GET, "http://httpbin.org/stream/5") do io
         while !eof(io)
             bytes = readuntil(io, findnewline)
@@ -567,7 +566,17 @@ findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
             @show x
         end
     end
+end
 
+@testset "CA_BUNDEL env" begin
+    resp = withenv("HTTP_CA_BUNDLE" => HTTP.MbedTLS.MozillaCACerts_jll.cacert) do
+        HTTP.get("https://httpbin.org/ip"; socket_type_tls=SSLStream)
+    end
+    @test resp.status == 200
+    resp = withenv("HTTP_CA_BUNDLE" => HTTP.MbedTLS.MozillaCACerts_jll.cacert) do
+        HTTP.get("https://httpbin.org/ip")
+    end
+    @test resp.status == 200
 end
 
 end # module
