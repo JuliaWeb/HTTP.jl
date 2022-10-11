@@ -183,7 +183,7 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
     end
 
     # listen does not break with EOFError during ssl handshake
-    @test_warn "Server on 127.0.0.1:8081 errored" begin
+    let host = Sockets.localhost
         sslconfig = MbedTLS.SSLConfig(joinpath(dir, "resources/cert.pem"), joinpath(dir, "resources/key.pem"))
         server = HTTP.listen!(; listenany=true, sslconfig=sslconfig, verbose=true) do http::HTTP.Stream
             HTTP.setstatus(http, 200)
@@ -193,13 +193,12 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
     
         port = HTTP.port(server)
     
-        sock = connect("127.0.0.1", port)
+        sock = connect(host, port)
         close(sock)
     
-        let host = Sockets.localhost
-            r = HTTP.get("https://$(host):$(port)/"; readtimeout=30, require_ssl_verification = false)
-            @test r.status == 200
-        end
+        r = HTTP.get("https://$(host):$(port)/"; readtimeout=30, require_ssl_verification = false)
+        @test r.status == 200
+
         close(server)
     end    
 end # @testset
