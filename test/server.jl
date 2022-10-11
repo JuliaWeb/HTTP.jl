@@ -181,6 +181,26 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
         @test r.status == 200
         close(server)
     end
+
+    # listen does not break with EOFError during ssl handshake
+    let host = Sockets.localhost
+        sslconfig = MbedTLS.SSLConfig(joinpath(dir, "resources/cert.pem"), joinpath(dir, "resources/key.pem"))
+        server = HTTP.listen!(; listenany=true, sslconfig=sslconfig, verbose=true) do http::HTTP.Stream
+            HTTP.setstatus(http, 200)
+            HTTP.startwrite(http)
+            write(http, "response body\n")
+        end
+    
+        port = HTTP.port(server)
+    
+        sock = connect(host, port)
+        close(sock)
+    
+        r = HTTP.get("https://$(host):$(port)/"; readtimeout=30, require_ssl_verification = false)
+        @test r.status == 200
+
+        close(server)
+    end    
 end # @testset
 
 @testset "on_shutdown" begin
