@@ -102,7 +102,7 @@ function connectionlayer(handler)
                     return r
                 end
                 if target_url.scheme in ("https", "wss")
-                    io = ConnectionPool.sslupgrade(io, target_url.host; readtimeout=readtimeout, kw...)
+                    io = ConnectionPool.sslupgrade(IOType, io, target_url.host; readtimeout=readtimeout, kw...)
                 end
                 req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
             end
