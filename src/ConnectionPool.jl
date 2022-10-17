@@ -430,6 +430,7 @@ function getconnection(::Type{TCPSocket},
 end
 
 const nosslconfig = SSLConfig()
+const nosslcontext = Ref{OpenSSL.SSLContext}()
 default_sslconfig = nothing
 noverify_sslconfig = nothing
 
@@ -448,6 +449,21 @@ function global_sslconfig(require_ssl_verification::Bool)::SSLConfig
     return require_ssl_verification ? default_sslconfig : noverify_sslconfig
 end
 
+function global_sslcontext()::OpenSSL.SSLContext
+    if isdefined(OpenSSL, :ca_chain!)
+        if haskey(ENV, "HTTP_CA_BUNDLE")
+            sslcontext = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
+            OpenSSL.ca_chain!(sslcontext, ENV["HTTP_CA_BUNDLE"])
+            return sslcontext
+        elseif haskey(ENV, "CURL_CA_BUNDLE")
+            sslcontext = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
+            OpenSSL.ca_chain!(sslcontext, ENV["CURL_CA_BUNDLE"])
+            return sslcontext
+        end
+    end
+    return nosslcontext[]
+end
+
 function getconnection(::Type{SSLContext},
                        host::AbstractString,
                        port::AbstractString;
@@ -456,32 +472,35 @@ function getconnection(::Type{SSLContext},
     port = isempty(port) ? "443" : port
     @debugv 2 "SSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
-    return sslconnection(tcp, host; kw...)
+    return sslconnection(SSLContext, tcp, host; kw...)
 end
 
 function getconnection(::Type{SSLStream},
-                        host::AbstractString,
-                        port::AbstractString;
-                        kw...)::SSLStream
+    host::AbstractString,
+    port::AbstractString;
+    kw...)::SSLStream
 
     port = isempty(port) ? "443" : port
-    @debugv 2 "OpenSSL connect: $host:$port..."
+    @debugv 2 "SSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
-    # Create SSL stream.
-    ssl_stream = SSLStream(tcp)
-    if isdefined(OpenSSL, :ca_chain!)
-        if haskey(ENV, "HTTP_CA_BUNDLE")
-            OpenSSL.ca_chain!(ssl_stream.ssl_context, ENV["HTTP_CA_BUNDLE"])
-        elseif haskey(ENV, "CURL_CA_BUNDLE")
-            OpenSSL.ca_chain!(ssl_stream.ssl_context, ENV["CURL_CA_BUNDLE"])
-        end
+    return sslconnection(SSLStream, tcp, host; kw...)
+end
+
+function sslconnection(::Type{SSLStream}, tcp::TCPSocket, host::AbstractString;
+    require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
+    sslconfig::OpenSSL.SSLContext=nosslcontext[],
+    kw...)::SSLStream
+    if sslconfig === nosslcontext[]
+        sslconfig = global_sslcontext()
     end
+    # Create SSL stream.
+    ssl_stream = SSLStream(sslconfig, tcp)
     OpenSSL.hostname!(ssl_stream, host)
-    OpenSSL.connect(ssl_stream)
+    OpenSSL.connect(ssl_stream; require_ssl_verification)
     return ssl_stream
 end
 
-function sslconnection(tcp::TCPSocket, host::AbstractString;
+function sslconnection(::Type{SSLContext}, tcp::TCPSocket, host::AbstractString;
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        sslconfig::SSLConfig=nosslconfig,
                        kw...)::SSLContext
@@ -498,20 +517,20 @@ function sslconnection(tcp::TCPSocket, host::AbstractString;
     return io
 end
 
-function sslupgrade(c::Connection,
+function sslupgrade(::Type{IOType}, c::Connection,
                     host::AbstractString;
                     require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                     readtimeout::Int=0,
-                    kw...)::Connection
+                    kw...)::Connection where {IOType}
     # initiate the upgrade to SSL
     # if the upgrade fails, an error will be thrown and the original c will be closed
     # in ConnectionRequest
     tls = if readtimeout > 0
         try_with_timeout(() -> shouldtimeout(c, readtimeout), readtimeout, () -> close(c)) do
-            sslconnection(c.io, host; require_ssl_verification=require_ssl_verification, kw...)
+            sslconnection(IOType, c.io, host; require_ssl_verification=require_ssl_verification, kw...)
         end
     else
-        sslconnection(c.io, host; require_ssl_verification=require_ssl_verification, kw...)
+        sslconnection(IOType, c.io, host; require_ssl_verification=require_ssl_verification, kw...)
     end
     # success, now we turn it into a new Connection
     conn = Connection(host, "", 0, require_ssl_verification, tls)
@@ -549,6 +568,11 @@ function tcpstatus(c::Connection)
     else
         return s
     end
+end
+
+function __init__()
+    nosslcontext[] = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
+    return
 end
 
 end # module ConnectionPool
