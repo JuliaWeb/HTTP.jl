@@ -9,6 +9,9 @@ using JSON
 using Test
 using URIs
 
+# test we can adjust default_connection_limit
+HTTP.set_default_connection_limit!(12)
+
 status(r) = r.status
 @testset "Custom HTTP Stack" begin
    @testset "Low-level Request" begin

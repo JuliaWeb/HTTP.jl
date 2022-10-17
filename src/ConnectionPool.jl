@@ -19,16 +19,17 @@ remotely closed, a connection will be reused.
 """
 module ConnectionPool
 
-export Connection, newconnection, releaseconnection, getrawstream, inactiveseconds, shouldtimeout
+export Connection, newconnection, releaseconnection, getrawstream, inactiveseconds, shouldtimeout, set_default_connection_limit!
 
 using Sockets, LoggingExtras, NetworkOptions
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 using MbedTLS, OpenSSL
 using ..IOExtras, ..Conditions, ..Exceptions
 
-const default_connection_limit = 8
-const default_pipeline_limit = 16
+const default_connection_limit = Ref(8)
 const nolimit = typemax(Int)
+
+set_default_connection_limit!(n) = default_connection_limit[] = n
 
 taskid(t=current_task()) = string(hash(t) & 0xffff, base=16, pad=4)
 
