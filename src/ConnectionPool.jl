@@ -350,7 +350,7 @@ or create a new `Connection` if required.
 function newconnection(::Type{T},
                        host::AbstractString,
                        port::AbstractString;
-                       connection_limit=default_connection_limit,
+                       connection_limit=default_connection_limit[],
                        idle_timeout=typemax(Int),
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        kw...)::Connection where {T <: IO}
