@@ -26,7 +26,7 @@ These methods operate identically to `HTTP.request`, except the `method` argumen
 
 ### Url
 
-For the request `url` argument, the [URIs.j](https://github.com/JuliaWeb/URIs.jl) package is used to parse this `String` argument into a `URI` object, which detects the HTTP scheme, user info, host, port (if any), path, query parameters, fragment, etc. The host and port will be used to actually make a connection to the remote server and send data to and receive data from. Query parameters can be included in the `url` `String` itself, or passed as a separate [`query`](@ref) keyword argument to `HTTP.request`, which will be discussed in more detail later.
+For the request `url` argument, the [URIs.jl](https://github.com/JuliaWeb/URIs.jl) package is used to parse this `String` argument into a `URI` object, which detects the HTTP scheme, user info, host, port (if any), path, query parameters, fragment, etc. The host and port will be used to actually make a connection to the remote server and send data to and receive data from. Query parameters can be included in the `url` `String` itself, or passed as a separate [`query`](@ref) keyword argument to `HTTP.request`, which will be discussed in more detail later.
 
 ### Headers
 
