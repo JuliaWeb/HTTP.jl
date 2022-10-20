@@ -25,6 +25,7 @@ function retrylayer(handler)
             return handler(req; kw...)
         end
         req.context[:allow_retries] = true
+        req.context[:retryattempt] = 0
         if retry_non_idempotent
             req.context[:retry_non_idempotent] = true
         end
@@ -39,6 +40,7 @@ function retrylayer(handler)
             delays=ExponentialBackOff(n = retries),
             check=(s, ex) -> begin
                 retryattempt[] += 1
+                req.context[:retryattempt] = retryattempt[]
                 retry = isrecoverable(ex) && retryable(req)
                 if retryattempt[] == retries
                     req.context[:retrylimitreached] = true
