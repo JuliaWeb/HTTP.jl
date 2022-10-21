@@ -464,11 +464,11 @@ end
 
 # Writing HTTP Messages to IO streams
 """
-    HTTP.httpversion(::Message)
+    HTTP.writehttpversion(io, ::Message)
 
 e.g. `"HTTP/1.1"`
 """
-httpversion(m::Message) = "HTTP/$(m.version.major).$(m.version.minor)"
+writehttpversion(io, m::Message) = write(io, "HTTP/", m.version.major, ".", m.version.minor)
 
 """
     writestartline(::IO, ::Message)
@@ -476,12 +476,16 @@ httpversion(m::Message) = "HTTP/$(m.version.major).$(m.version.minor)"
 e.g. `"GET /path HTTP/1.1\\r\\n"` or `"HTTP/1.1 200 OK\\r\\n"`
 """
 function writestartline(io::IO, r::Request)
-    write(io, "$(r.method) $(r.target) $(httpversion(r))\r\n")
+    write(io, r.method, " ", r.target, " ")
+    writehttpversion(io, r)
+    write(io, "\r\n")
     return
 end
 
 function writestartline(io::IO, r::Response)
-    write(io, "$(httpversion(r)) $(r.status) $(statustext(r.status))\r\n")
+    writehttpversion(io, r)
+    write(io, string(r.status), " ", statustext(r.status))
+    write(io, "\r\n")
     return
 end
 
@@ -495,7 +499,7 @@ function writeheaders(io::IO, m::Message)
     writestartline(io, m)
     for (name, value) in m.headers
         # match curl convention of not writing empty headers
-        !isempty(value) && write(io, "$name: $value\r\n")
+        !isempty(value) && write(io, name, ": ", value, "\r\n")
     end
     write(io, "\r\n")
     return
