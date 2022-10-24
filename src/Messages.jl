@@ -77,7 +77,7 @@ abstract type Message end
 
 Represents an HTTP response message with fields:
 
-- `version::VersionNumber`
+- `version::HTTPVersion`
    [RFC7230 2.6](https://tools.ietf.org/html/rfc7230#section-2.6)
 
 - `status::Int16`
@@ -94,14 +94,14 @@ Represents an HTTP response message with fields:
 
 """
 mutable struct Response <: Message
-    version::VersionNumber
+    version::HTTPVersion
     status::Int16
     headers::Headers
     body::Any # Usually Vector{UInt8} or IO
     request::Union{Message, Nothing} # Union{Request, Nothing}
 end
 
-function Response(status::Integer, headers, body; version::VersionNumber=v"1.1", request=nothing)
+function Response(status::Integer, headers, body; version=HTTPVersion(1,1), request=nothing)
     b = isbytes(body) ? bytes(body) : something(body, nobody)
     @assert (request isa Request || request === nothing)
     return Response(version, status, mkheaders(headers), b, request)
@@ -119,7 +119,7 @@ Response(body) = Response(200; body=body)
 Base.convert(::Type{Response}, s::AbstractString) = Response(s)
 
 function reset!(r::Response)
-    r.version = v"1.1"
+    r.version = HTTPVersion(1, 1)
     r.status = 0
     if !isempty(r.headers)
         empty!(r.headers)
@@ -136,8 +136,10 @@ body(r::Response) = getfield(r, :body)
 const Context = Dict{Symbol, Any}
 
 """
-    HTTP.Request(method, target, headers=[], body=nobody;
-        version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=HTTP.Context())
+    HTTP.Request(
+        method, target, headers=[], body=nobody;
+        version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=HTTP.Context()
+    )
 
 Represents a HTTP Request Message with fields:
 
@@ -147,7 +149,7 @@ Represents a HTTP Request Message with fields:
 - `target::String`
    [RFC7230 5.3](https://tools.ietf.org/html/rfc7230#section-5.3)
 
-- `version::VersionNumber`
+- `version::HTTPVersion`
    [RFC7230 2.6](https://tools.ietf.org/html/rfc7230#section-2.6)
 
 - `headers::HTTP.Headers`
@@ -170,7 +172,7 @@ Represents a HTTP Request Message with fields:
 mutable struct Request <: Message
     method::String
     target::String
-    version::VersionNumber
+    version::HTTPVersion
     headers::Headers
     body::Any # Usually Vector{UInt8} or some kind of IO
     response::Response
@@ -181,8 +183,10 @@ end
 
 Request() = Request("", "")
 
-function Request(method::String, target, headers=[], body=nobody;
-                 version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=Context())
+function Request(
+    method::String, target, headers=[], body=nobody;
+    version=HTTPVersion(1,1), url::URI=URI(), responsebody=nothing, parent=nothing, context=Context()
+)
     b = isbytes(body) ? bytes(body) : body
     r = Request(method, target == "" ? "/" : target, version,
                 mkheaders(headers), b, Response(0; body=responsebody),
@@ -463,12 +467,7 @@ function decode(m::Message, encoding::String="gzip")::Vector{UInt8}
 end
 
 # Writing HTTP Messages to IO streams
-"""
-    HTTP.writehttpversion(io, ::Message)
-
-e.g. `"HTTP/1.1"`
-"""
-writehttpversion(io, m::Message) = write(io, "HTTP/", m.version.major, ".", m.version.minor)
+Base.write(io::IO, v::HTTPVersion) = write(io, "HTTP/", string(v.major), ".", string(v.minor))
 
 """
     writestartline(::IO, ::Message)
@@ -476,16 +475,12 @@ writehttpversion(io, m::Message) = write(io, "HTTP/", m.version.major, ".", m.ve
 e.g. `"GET /path HTTP/1.1\\r\\n"` or `"HTTP/1.1 200 OK\\r\\n"`
 """
 function writestartline(io::IO, r::Request)
-    write(io, r.method, " ", r.target, " ")
-    writehttpversion(io, r)
-    write(io, "\r\n")
+    write(io, r.method, " ", r.target, " ", r.version, "\r\n")
     return
 end
 
 function writestartline(io::IO, r::Response)
-    writehttpversion(io, r)
-    write(io, string(r.status), " ", statustext(r.status))
-    write(io, "\r\n")
+    write(io, r.version, " ", string(r.status), " ", statustext(r.status), "\r\n")
     return
 end
 
