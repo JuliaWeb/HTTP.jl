@@ -33,29 +33,33 @@ function try_with_timeout(f, shouldtimeout, delay, iftimeout=() -> nothing)
         notify(cond, f())
     catch e
         @debugv 1 "error executing f in try_with_timeout"
-        notify(cond, e)
+        isopen(timer) && notify(cond, e, error = true)
     end
     # start a timer
     timer = Timer(delay; interval=delay / 10) do tm
-        if shouldtimeout()
-            @debugv 1 "❗️  Timeout: $delay"
-            notify(cond, TimeoutError(delay))
-            iftimeout()
+        try
+            if shouldtimeout()
+                @debugv 1 "❗️  Timeout: $delay"
+                close(tm)
+                iftimeout()
+                notify(cond, TimeoutError(delay), error = true)
+            end
+        catch e
+            @debugv 1 "callback error in try_with_timeout"
             close(tm)
+            notify(cond, e, error = true)
         end
     end
-    res = wait(cond)
-    @debugv 1 "try_with_timeout finished with: $res"
-    if res isa TimeoutError
-        # timedout
-        throw(res)
+    try
+        res = wait(cond)
+        @debugv 1 "try_with_timeout finished with: $res"
+        res
+    catch e
+        @debugv 1 "try_with_timeout failed with: $e"
+        rethrow()
+    finally
+        close(timer)
     end
-    # didn't timeout
-    close(timer)
-    if res isa Exception
-        throw(res)
-    end
-    return res
 end
 
 abstract type HTTPError <: Exception end
