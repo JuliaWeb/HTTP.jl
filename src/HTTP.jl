@@ -585,4 +585,5 @@ function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
     return m
 end
 
+include("workload.jl")
 end # module
