@@ -101,7 +101,7 @@ mutable struct Response <: Message
     request::Union{Message, Nothing} # Union{Request, Nothing}
 end
 
-function Response(status::Integer, headers, body; version=HTTPVersion(1,1), request=nothing)
+function Response(status::Integer, headers, body; version=HTTPVersion(1, 1), request=nothing)
     b = isbytes(body) ? bytes(body) : something(body, nobody)
     @assert (request isa Request || request === nothing)
     return Response(version, status, mkheaders(headers), b, request)
