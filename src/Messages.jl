@@ -185,7 +185,7 @@ Request() = Request("", "")
 
 function Request(
     method::String, target, headers=[], body=nobody;
-    version=HTTPVersion(1,1), url::URI=URI(), responsebody=nothing, parent=nothing, context=Context()
+    version=HTTPVersion(1, 1), url::URI=URI(), responsebody=nothing, parent=nothing, context=Context()
 )
     b = isbytes(body) ? bytes(body) : body
     r = Request(method, target == "" ? "/" : target, version,
