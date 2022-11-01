@@ -11,6 +11,11 @@
 @test VersionNumber(HTTPVersion(1)) == v"1"
 @test VersionNumber(HTTPVersion(1, 1)) == v"1.1"
 
+# Important that we can parse a string into a `HTTPVersion` without allocations,
+# as we do this for every request/response. Similarly if we then want a `VersionNumber`.
+@test @allocated(HTTPVersion("1.1")) == 0
+@test @allocated(VersionNumber(HTTPVersion("1.1"))) == 0
+
 req = HTTP.Request("GET", "http://httpbin.org/anything")
 res = HTTP.Response(200)
 for r in (req, res)
