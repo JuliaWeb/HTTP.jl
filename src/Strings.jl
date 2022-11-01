@@ -83,16 +83,6 @@ function Base.tryparse(::Type{HTTPVersion}, v::AbstractString)
     return HTTPVersion(major, minor)
 end
 
-# const RE_HTTP_VERSION = r"(\d+)(?:\.(\d+))?"
-# function Base.tryparse(::Type{HTTPVersion}, v::AbstractString)
-#     m = match(RE_HTTP_VERSION, String(v)::String)
-#     m === nothing && return nothing
-#     major, minor = m.captures
-#     major = parse(UInt8, major)
-#     minor = minor !== nothing ? parse(UInt8, minor) : 0x00
-#     return HTTPVersion(major, minor)
-# end
-
 """
     escapehtml(i::String)
 
