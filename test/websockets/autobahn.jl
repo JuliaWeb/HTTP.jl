@@ -78,7 +78,7 @@ end # @testset "Autobahn testsuite"
         end
     end
     rm(joinpath(DIR, "reports/server/index.json"); force=true)
-    @test success(run(Cmd(`docker run --rm --add-host host.docker.internal:host-gateway -v "$DIR/config:/config" -v "$DIR/reports:/reports" -p 9002:9002 --name fuzzingclient crossbario/autobahn-testsuite wstest -m fuzzingclient -s /config/fuzzingclient.json`; dir=DIR), stdin, stdout, stdout; wait=false))
+    @test success(run(Cmd(`docker run --rm --network="host" --add-host host.docker.internal:host-gateway -v "$DIR/config:/config" -v "$DIR/reports:/reports" --name fuzzingclient crossbario/autobahn-testsuite wstest -m fuzzingclient -s /config/fuzzingclient.json`; dir=DIR), stdin, stdout, stdout; wait=false))
     close(server)
     report = JSON.parsefile(joinpath(DIR, "reports/server/index.json"))
     for (k, v) in pairs(report["main"])
