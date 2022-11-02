@@ -16,7 +16,7 @@ end
 
 @testset "Client" begin
     # Run the autobahn test suite in a docker container
-    serverproc = run(Cmd(`docker run -it --rm -v "$DIR/config:/config" -v "$DIR/reports:/reports" -p 9001:9001 --name fuzzingserver crossbario/autobahn-testsuite`; dir=DIR), stdin, stdout, stdout; wait=false)
+    serverproc = run(Cmd(`docker run --rm -v "$DIR/config:/config" -v "$DIR/reports:/reports" -p 9001:9001 --name fuzzingserver crossbario/autobahn-testsuite`; dir=DIR), stdin, stdout, stdout; wait=false)
     try
         sleep(5) # give time for server to get setup
         cases = Ref(0)
@@ -78,7 +78,7 @@ end # @testset "Autobahn testsuite"
         end
     end
     rm(joinpath(DIR, "reports/server/index.json"); force=true)
-    @test success(run(Cmd(`docker run -it --rm --add-host host.docker.internal:host-gateway -v "$DIR/config:/config" -v "$DIR/reports:/reports" --name fuzzingclient crossbario/autobahn-testsuite wstest -m fuzzingclient -s /config/fuzzingclient.json`; dir=DIR), stdin, stdout, stdout; wait=false))
+    @test success(run(Cmd(`docker run --rm --add-host host.docker.internal:host-gateway -v "$DIR/config:/config" -v "$DIR/reports:/reports" --name fuzzingclient crossbario/autobahn-testsuite wstest -m fuzzingclient -s /config/fuzzingclient.json`; dir=DIR), stdin, stdout, stdout; wait=false))
     close(server)
     report = JSON.parsefile(joinpath(DIR, "reports/server/index.json"))
     for (k, v) in pairs(report["main"])
