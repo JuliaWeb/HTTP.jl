@@ -324,6 +324,17 @@ function listen(f, listener::Listener; kw...)
     return server
 end
 
+# compat for `Threads.@spawn :interactive expr`
+@static if hasmethod(getfield(Threads, Symbol("@spawn")), Tuple{LineNumberNode, Module, Symbol, Expr})
+    macro _spawn_interactive(ex)
+        esc(:(Threads.@spawn :interactive $ex))
+    end
+else
+    macro _spawn_interactive(ex)
+        esc(:(Threads.@spawn $ex))
+    end
+end
+
 function listen!(f, listener::Listener;
     on_shutdown=nothing,
     tcpisvalid=TRUE,
@@ -332,22 +343,16 @@ function listen!(f, listener::Listener;
     access_log::Union{Function,Nothing}=nothing,
     verbose=false, kw...)
     conns = Set{Connection}()
-    ready_to_accept = Ref(false)
+    ready_to_accept = Threads.Event()
     if verbose > 0
-        tsk = @async LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
-            listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept)
+        tsk = @_spawn_interactive LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
+            listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, verbose)
         end
     else
-        tsk = @async listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept)
+        tsk = @_spawn_interactive listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, verbose)
     end
-    # listen! is "semi-blocking" in that we only want
-    # to return when the server is absolutely ready to accept
-    # new connections; useful for testing purposes and local development
-    # it also provides an immediate yield so our listenloop task
-    # has the chance to be scheduled and get started
-    while !ready_to_accept[]
-        sleep(0.01)
-    end
+    # wait until the listenloop enters the loop
+    wait(ready_to_accept)
     return Server(listener, on_shutdown, conns, tsk)
 end
 
@@ -356,10 +361,10 @@ Main server loop.
 Accepts new tcp connections and spawns async tasks to handle them."
 """
 function listenloop(f, listener, conns, tcpisvalid,
-                       max_connections, readtimeout, access_log, ready_to_accept)
+                       max_connections, readtimeout, access_log, ready_to_accept, verbose)
     sem = Base.Semaphore(max_connections)
-    @infov 1 "Listening on: $(listener.hostname):$(listener.hostport)"
-    ready_to_accept[] = true
+    verbose >= 0 && @infov 1 "Listening on: $(listener.hostname):$(listener.hostport)"
+    notify(ready_to_accept)
     while isopen(listener)
         try
             Base.acquire(sem)
