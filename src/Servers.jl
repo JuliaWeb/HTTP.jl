@@ -331,7 +331,7 @@ end
     end
 else
     macro _spawn_interactive(ex)
-        esc(:(Threads.@spawn $ex))
+        esc(:(@async $ex))
     end
 end
 
