@@ -233,6 +233,7 @@ isidempotent(r::Request) = isidempotent(r.method)
 isidempotent(method) = issafe(method) || method in ["PUT", "DELETE"]
 retry_non_idempotent(r::Request) = get(r.context, :retry_non_idempotent, false)
 allow_retries(r::Request) = get(r.context, :allow_retries, false)
+nothing_written(r::Request) = get(r.context, :nothingwritten, false)
 
 """
     iserror(::Response)
@@ -273,7 +274,8 @@ supportsmark(x::T) where {T <: IO} = length(Base.methods(mark, Tuple{T}, parentm
 
 retryable(r::Request) = (isbytes(r.body) || r.body isa Union{Dict, NamedTuple} || (r.body isa Vector && all(isbytes, r.body)) ||
     (supportsmark(r.body) && ismarked(r.body))) &&
-    allow_retries(r) && (isidempotent(r) || retry_non_idempotent(r)) && !retrylimitreached(r)
+    allow_retries(r) && !retrylimitreached(r) &&
+    (nothing_written(r) || isidempotent(r) || retry_non_idempotent(r))
 retryable(r::Response) = retryable(r.status)
 retryable(status) = status in (403, 408, 409, 429, 500, 502, 503, 504, 599)
 

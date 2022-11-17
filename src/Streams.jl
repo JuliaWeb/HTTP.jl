@@ -36,7 +36,7 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
     for reuse. If a complete response has not been received, `closeread` throws
     `EOFError`.
 """
-Stream(r::M, io::S) where {M, S} = Stream{M, S}(r, io, false, false, true, 0, 0)
+Stream(r::M, io::S) where {M, S} = Stream{M, S}(r, io, false, false, true, 0, -1)
 
 Messages.header(http::Stream, a...) = header(http.message, a...)
 setstatus(http::Stream, status) = (http.message.response.status = status)
@@ -79,6 +79,7 @@ function IOExtras.startwrite(http::Stream)
     buf = IOBuffer()
     writeheaders(buf, m)
     n = write(http.stream, take!(buf))
+    # nwritten starts at -1 so that we can tell if we've written anything yet
     http.nwritten = 0 # should not include headers
     return n
 end
@@ -258,7 +259,6 @@ function http_unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)::Int
     if ntr == 0
         return 0
     end
-
     unsafe_read(http.stream, p, min(n, ntr + (http.readchunked ? 2 : 0)))
                                              # If there is spare space in `p`
                                              # read two extra bytes
