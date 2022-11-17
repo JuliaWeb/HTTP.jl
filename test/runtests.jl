@@ -2,6 +2,10 @@ using Test, HTTP, JSON
 
 const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
 
+const httpbin = get(ENV, "JULIA_TEST_HTTPBINGO_SERVER", "httpbingo.julialang.org")
+
+isok(r) = r.status == 200
+
 include(joinpath(dir, "resources/TestRequest.jl"))
 @testset "HTTP" begin
     for f in [

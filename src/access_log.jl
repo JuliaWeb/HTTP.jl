@@ -100,7 +100,7 @@ function symbol_mapping(s::Symbol)
     elseif s === :status
         :(http.message.response.status)
     elseif s === :body_bytes_sent
-        return :(http.nwritten)
+        return :(max(0, http.nwritten))
     else
         error("unknown variable in logfmt: $s")
     end

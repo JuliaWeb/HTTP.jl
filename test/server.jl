@@ -1,5 +1,6 @@
 module test_server
 
+import ..httpbin
 using HTTP, HTTP.IOExtras, Sockets, Test, MbedTLS
 
 function testget(url, m=1)
@@ -147,10 +148,10 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
     port = HTTP.port(t1)
 
     # test that an Authorization header is **not** forwarded to a domain different than initial request
-    @test !HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=http://127.0.0.1:$port", ["Authorization"=>"auth"]), "Authorization")
+    @test !HTTP.hasheader(HTTP.get("https://$httpbin/redirect-to?url=http://127.0.0.1:$port", ["Authorization"=>"auth"]), "Authorization")
 
     # test that an Authorization header **is** forwarded to redirect in same domain
-    @test HTTP.hasheader(HTTP.get("http://httpbin.org/redirect-to?url=https://httpbin.org/response-headers?Authorization=auth"), "Authorization")
+    @test HTTP.hasheader(HTTP.get("https://$httpbin/redirect-to?url=https://$httpbin/response-headers?Authorization=auth"), "Authorization")
     close(t1)
 
     # 318

@@ -1,15 +1,19 @@
+function test_multipart(r, body)
+    @test isok(r)
+    json = JSON.parse(IOBuffer(HTTP.payload(r)))
+    @test startswith(json["headers"]["Content-Type"][1], "multipart/form-data; boundary=")
+    reset(body); mark(body)
+end
+
 @testset "HTTP.Form for multipart/form-data" begin
     headers = Dict("User-Agent" => "HTTP.jl")
     body = HTTP.Form(Dict())
-    uri = "https://httpbin.org/post"
-    uri_put = "https://httpbin.org/put"
+    mark(body)
     @testset "Setting of Content-Type" begin
-        for r in (HTTP.request("POST", uri, headers, body), HTTP.post(uri, headers, body),
-                  HTTP.request("PUT", uri_put, headers, body), HTTP.put(uri_put, headers, body))
-            @test r.status == 200
-            json = JSON.parse(IOBuffer(HTTP.payload(r)))
-            @test startswith(json["headers"]["Content-Type"], "multipart/form-data; boundary=")
-        end
+        test_multipart(HTTP.request("POST", "https://$httpbin/post", headers, body), body)
+        test_multipart(HTTP.post("https://$httpbin/post", headers, body), body)
+        test_multipart(HTTP.request("PUT", "https://$httpbin/put", headers, body), body)
+        test_multipart(HTTP.put("https://$httpbin/put", headers, body), body)
     end
     @testset "HTTP.Multipart ensure show() works correctly" begin
         # testing that there is no error in printing when nothing is set for filename

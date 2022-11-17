@@ -116,15 +116,4 @@ struct RequestError <: HTTPError
     error::Any
 end
 
-"""
-    HTTP.RequestWritingError
-
-Raised when an error occurs while physically sending a request to the remote server.
-To see the underlying error, see the `error` field.
-Used 
-"""
-struct RequestWritingError <: HTTPError
-    error::Any # underlying error
-end
-
 end # module Exceptions

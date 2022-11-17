@@ -2,6 +2,7 @@ module TestClient
 
 using HTTP, HTTP.Exceptions, MbedTLS, OpenSSL
 include(joinpath(dirname(pathof(HTTP)), "../test/resources/TestRequest.jl"))
+import ..isok, ..httpbin
 using .TestRequest
 using .TestRequest2
 using Sockets
@@ -12,91 +13,92 @@ using URIs
 # test we can adjust default_connection_limit
 HTTP.set_default_connection_limit!(12)
 
-status(r) = r.status
 @testset "Custom HTTP Stack" begin
    @testset "Low-level Request" begin
         wasincluded = Ref(false)
-        result = TestRequest.get("https://httpbin.org/ip"; httptestlayer=wasincluded)
-        @test status(result) == 200
+        result = TestRequest.get("https://$httpbin/ip"; httptestlayer=wasincluded)
+        @test isok(result)
         @test wasincluded[]
     end
     @testset "Low-level Request" begin
-        TestRequest2.get("https://httpbin.org/ip")
+        TestRequest2.get("https://$httpbin/ip")
         # tests included in the layers themselves
     end
 end
 
-@testset "Client.jl - $sch" for sch in ["http", "https"], tls in [MbedTLS.SSLContext, OpenSSL.SSLStream]
+@testset "Client.jl" for tls in [MbedTLS.SSLContext, OpenSSL.SSLStream]
     @testset "GET, HEAD, POST, PUT, DELETE, PATCH" begin
-        @test status(HTTP.get("$sch://httpbin.org/ip", socket_type_tls=tls)) == 200
-        @test status(HTTP.head("$sch://httpbin.org/ip", socket_type_tls=tls)) == 200
-        @test status(HTTP.post("$sch://httpbin.org/ip"; status_exception=false, socket_type_tls=tls)) == 405
-        @test status(HTTP.post("$sch://httpbin.org/post", socket_type_tls=tls)) == 200
-        @test status(HTTP.put("$sch://httpbin.org/put", socket_type_tls=tls)) == 200
-        @test status(HTTP.delete("$sch://httpbin.org/delete", socket_type_tls=tls)) == 200
-        @test status(HTTP.patch("$sch://httpbin.org/patch", socket_type_tls=tls)) == 200
+        @test isok(HTTP.get("https://$httpbin/ip", socket_type_tls=tls))
+        @test isok(HTTP.head("https://$httpbin/ip", socket_type_tls=tls))
+        @test HTTP.post("https://$httpbin/patch"; status_exception=false, socket_type_tls=tls).status == 405
+        @test isok(HTTP.post("https://$httpbin/post", socket_type_tls=tls))
+        @test isok(HTTP.put("https://$httpbin/put", socket_type_tls=tls))
+        @test isok(HTTP.delete("https://$httpbin/delete", socket_type_tls=tls))
+        @test isok(HTTP.patch("https://$httpbin/patch", socket_type_tls=tls))
     end
 
     @testset "decompress" begin
-        r = HTTP.get("$sch://httpbin.org/gzip", socket_type_tls=tls)
-        @test status(r) == 200
+        r = HTTP.get("https://$httpbin/gzip", socket_type_tls=tls)
+        @test isok(r)
         @test isascii(String(r.body))
-        r = HTTP.get("$sch://httpbin.org/gzip"; decompress=false, socket_type_tls=tls)
-        @test status(r) == 200
+        r = HTTP.get("https://$httpbin/gzip"; decompress=false, socket_type_tls=tls)
+        @test isok(r)
         @test !isascii(String(r.body))
-        r = HTTP.get("$sch://httpbin.org/gzip"; decompress=false, socket_type_tls=tls)
+        r = HTTP.get("https://$httpbin/gzip"; decompress=false, socket_type_tls=tls)
         @test isascii(String(HTTP.decode(r, "gzip")))
     end
 
     @testset "ASync Client Requests" begin
-        @test status(fetch(@async HTTP.get("$sch://httpbin.org/ip", socket_type_tls=tls))) == 200
-        @test status(HTTP.get("$sch://httpbin.org/encoding/utf8", socket_type_tls=tls)) == 200
+        @test isok(fetch(@async HTTP.get("https://$httpbin/ip", socket_type_tls=tls)))
+        @test isok(HTTP.get("https://$httpbin/encoding/utf8", socket_type_tls=tls))
     end
 
     @testset "Query to URI" begin
-        r = HTTP.get(URI(HTTP.URI("$sch://httpbin.org/response-headers"); query=Dict("hey"=>"dude")))
+        r = HTTP.get(URI(HTTP.URI("https://$httpbin/response-headers"); query=Dict("hey"=>"dude")))
         h = Dict(r.headers)
         @test (haskey(h, "Hey") ? h["Hey"] == "dude" : h["hey"] == "dude")
     end
 
     @testset "Cookie Requests" begin
         empty!(HTTP.COOKIEJAR)
-        r = HTTP.get("$sch://httpbin.org/cookies", cookies=true, socket_type_tls=tls)
+        url = "https://$httpbin/cookies"
+        r = HTTP.get(url, cookies=true, socket_type_tls=tls)
+        @test String(r.body) == "{}"
+        cookies = HTTP.Cookies.getcookies!(HTTP.COOKIEJAR, URI(url))
+        @test isempty(cookies)
 
-        body = String(r.body)
-        @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{}}"
+        url = "https://$httpbin/cookies/set?hey=sailor&foo=bar"
+        r = HTTP.get(url, cookies=true, socket_type_tls=tls)
+        @test isok(r)
+        cookies = HTTP.Cookies.getcookies!(HTTP.COOKIEJAR, URI(url))
+        @test length(cookies) == 2
 
-        r = HTTP.get("$sch://httpbin.org/cookies/set?hey=sailor&foo=bar", cookies=true, socket_type_tls=tls)
-        @test status(r) == 200
-
-        body = String(r.body)
-        @test replace(replace(body, " "=>""), "\n"=>"")  == "{\"cookies\":{\"foo\":\"bar\",\"hey\":\"sailor\"}}"
-
-        r = HTTP.get("$sch://httpbin.org/cookies/delete?hey", socket_type_tls=tls)
-        cookies = JSON.parse(String(r.body))["cookies"]
-        @test length(cookies) == 1
-        @test cookies["foo"] == "bar"
+        url = "https://$httpbin/cookies/delete?hey"
+        r = HTTP.get(url, socket_type_tls=tls)
+        cookies = HTTP.Cookies.getcookies!(HTTP.COOKIEJAR, URI(url))
+        @test length(cookies) == 2
+        @test cookies[2].value == ""
     end
 
     @testset "Client Streaming Test" begin
-        r = HTTP.post("$sch://httpbin.org/post"; body="hey", socket_type_tls=tls)
-        @test status(r) == 200
+        r = HTTP.post("https://$httpbin/post"; body="hey", socket_type_tls=tls)
+        @test isok(r)
 
         # stream, but body is too small to actually stream
-        r = HTTP.post("$sch://httpbin.org/post"; body="hey", stream=true, socket_type_tls=tls)
-        @test status(r) == 200
+        r = HTTP.post("https://$httpbin/post"; body="hey", stream=true, socket_type_tls=tls)
+        @test isok(r)
 
-        r = HTTP.get("$sch://httpbin.org/stream/100", socket_type_tls=tls)
-        @test status(r) == 200
+        r = HTTP.get("https://$httpbin/stream/100", socket_type_tls=tls)
+        @test isok(r)
 
         bytes = r.body
         a = [JSON.parse(l) for l in split(chomp(String(bytes)), "\n")]
         totallen = length(bytes) # number of bytes to expect
 
         io = IOBuffer()
-        r = HTTP.get("$sch://httpbin.org/stream/100"; response_stream=io, socket_type_tls=tls)
+        r = HTTP.get("https://$httpbin/stream/100"; response_stream=io, socket_type_tls=tls)
         seekstart(io)
-        @test status(r) == 200
+        @test isok(r)
 
         b = [JSON.parse(l) for l in eachline(io)]
         @test all(zip(a, b)) do (x, y)
@@ -111,101 +113,101 @@ end
     end
 
     @testset "Client Body Posting - Vector{UTF8}, String, IOStream, IOBuffer, BufferStream, Dict, NamedTuple" begin
-        @test status(HTTP.post("$sch://httpbin.org/post"; body="hey", socket_type_tls=tls)) == 200
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], socket_type_tls=tls)) == 200
+        @test isok(HTTP.post("https://$httpbin/post"; body="hey", socket_type_tls=tls))
+        @test isok(HTTP.post("https://$httpbin/post"; body=UInt8['h','e','y'], socket_type_tls=tls))
         io = IOBuffer("hey"); seekstart(io)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, socket_type_tls=tls)) == 200
+        @test isok(HTTP.post("https://$httpbin/post"; body=io, socket_type_tls=tls))
         tmp = tempname()
         open(f->write(f, "hey"), tmp, "w")
         io = open(tmp)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, enablechunked=false, socket_type_tls=tls)) == 200
+        @test isok(HTTP.post("https://$httpbin/post"; body=io, enablechunked=false, socket_type_tls=tls))
         close(io); rm(tmp)
         f = Base.BufferStream()
         write(f, "hey")
         close(f)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false, socket_type_tls=tls)) == 200
-        resp = HTTP.post("$sch://httpbin.org/post"; body=Dict("name" => "value"), socket_type_tls=tls)
+        @test isok(HTTP.post("https://$httpbin/post"; body=f, enablechunked=false, socket_type_tls=tls))
+        resp = HTTP.post("https://$httpbin/post"; body=Dict("name" => "value"), socket_type_tls=tls)
+        @test isok(resp)
         x = JSON.parse(IOBuffer(resp.body))
-        @test status(resp) == 200
-        @test x["form"] == Dict("name" => "value")
-        resp = HTTP.post("$sch://httpbin.org/post"; body=(name="value with spaces",), socket_type_tls=tls)
+        @test x["form"] == Dict("name" => ["value"])
+        resp = HTTP.post("https://$httpbin/post"; body=(name="value with spaces",), socket_type_tls=tls)
+        @test isok(resp)
         x = JSON.parse(IOBuffer(resp.body))
-        @test status(resp) == 200
-        @test x["form"] == Dict("name" => "value with spaces")
+        @test x["form"] == Dict("name" => ["value with spaces"])
     end
 
     @testset "Chunksize" begin
         #     https://github.com/JuliaWeb/HTTP.jl/issues/60
-        #     Currently httpbin.org responds with 411 status and “Length Required”
+        #     Currently $httpbin responds with 411 status and “Length Required”
         #     message to any POST/PUT requests that are sent using chunked encoding
         #     See https://github.com/kennethreitz/httpbin/issues/340#issuecomment-330176449
-        @test status(HTTP.post("$sch://httpbin.org/post"; body="hey", socket_type_tls=tls, #=chunksize=2=#)) == 200
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=UInt8['h','e','y'], socket_type_tls=tls, #=chunksize=2=#)) == 200
+        @test isok(HTTP.post("https://$httpbin/post"; body="hey", socket_type_tls=tls, #=chunksize=2=#))
+        @test isok(HTTP.post("https://$httpbin/post"; body=UInt8['h','e','y'], socket_type_tls=tls, #=chunksize=2=#))
         io = IOBuffer("hey"); seekstart(io)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, socket_type_tls=tls, #=chunksize=2=#)) == 200
+        @test isok(HTTP.post("https://$httpbin/post"; body=io, socket_type_tls=tls, #=chunksize=2=#))
         tmp = tempname()
         open(f->write(f, "hey"), tmp, "w")
         io = open(tmp)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=io, socket_type_tls=tls, #=chunksize=2=#)) == 200
+        @test isok(HTTP.post("https://$httpbin/post"; body=io, socket_type_tls=tls, #=chunksize=2=#))
         close(io); rm(tmp)
         f = Base.BufferStream()
         write(f, "hey")
         close(f)
-        @test status(HTTP.post("$sch://httpbin.org/post"; body=f, socket_type_tls=tls, #=chunksize=2=#)) == 200
+        @test isok(HTTP.post("https://$httpbin/post"; body=f, socket_type_tls=tls, #=chunksize=2=#))
     end
 
     @testset "ASync Client Request Body" begin
         f = Base.BufferStream()
         write(f, "hey")
-        t = @async HTTP.post("$sch://httpbin.org/post"; body=f, enablechunked=false, socket_type_tls=tls)
+        t = @async HTTP.post("https://$httpbin/post"; body=f, enablechunked=false, socket_type_tls=tls)
         #fetch(f) # fetch for the async call to write it's first data
         write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
         write(f, "sailor")
         close(f) # setting eof on f causes the async request to send a final chunk and return the response
-        @test status(fetch(t)) == 200
+        @test isok(fetch(t))
     end
 
     @testset "Client Redirect Following - $read_method" for read_method in ["GET", "HEAD"]
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/1", socket_type_tls=tls)) ==200
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/1", redirect=false, socket_type_tls=tls)) == 302
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect/6", socket_type_tls=tls)) == 302 #over max number of redirects
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/relative-redirect/1", socket_type_tls=tls)) == 200
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/absolute-redirect/1", socket_type_tls=tls)) == 200
-        @test status(HTTP.request(read_method, "$sch://httpbin.org/redirect-to?url=http%3A%2F%2Fgoogle.com", socket_type_tls=tls)) == 200
+        @test isok(HTTP.request(read_method, "https://$httpbin/redirect/1", socket_type_tls=tls))
+        @test HTTP.request(read_method, "https://$httpbin/redirect/1", redirect=false, socket_type_tls=tls).status == 302
+        @test HTTP.request(read_method, "https://$httpbin/redirect/6", socket_type_tls=tls).status == 302 #over max number of redirects
+        @test isok(HTTP.request(read_method, "https://$httpbin/relative-redirect/1", socket_type_tls=tls))
+        @test isok(HTTP.request(read_method, "https://$httpbin/absolute-redirect/1", socket_type_tls=tls))
+        @test isok(HTTP.request(read_method, "https://$httpbin/redirect-to?url=http%3A%2F%2Fgoogle.com", socket_type_tls=tls))
     end
 
     @testset "Client Basic Auth" begin
-        @test status(HTTP.get("$sch://user:pwd@httpbin.org/basic-auth/user/pwd", socket_type_tls=tls)) == 200
-        @test status(HTTP.get("$sch://user:pwd@httpbin.org/hidden-basic-auth/user/pwd", socket_type_tls=tls)) == 200
-        @test status(HTTP.get("$sch://test:%40test@httpbin.org/basic-auth/test/%40test", socket_type_tls=tls)) == 200
+        @test isok(HTTP.get("https://user:pwd@$httpbin/basic-auth/user/pwd", socket_type_tls=tls))
+        @test isok(HTTP.get("https://user:pwd@$httpbin/hidden-basic-auth/user/pwd", socket_type_tls=tls))
+        @test isok(HTTP.get("https://test:%40test@$httpbin/basic-auth/test/%40test", socket_type_tls=tls))
     end
 
     @testset "Misc" begin
-        @test status(HTTP.post("$sch://httpbin.org/post"; body="√", socket_type_tls=tls)) == 200
-        r = HTTP.request("GET", "$sch://httpbin.org/ip", socket_type_tls=tls)
-        @test status(r) == 200
+        @test isok(HTTP.post("https://$httpbin/post"; body="√", socket_type_tls=tls))
+        r = HTTP.request("GET", "https://$httpbin/ip", socket_type_tls=tls)
+        @test isok(r)
 
-        uri = HTTP.URI("$sch://httpbin.org/ip")
+        uri = HTTP.URI("https://$httpbin/ip")
         r = HTTP.request("GET", uri, socket_type_tls=tls)
-        @test status(r) == 200
+        @test isok(r)
         r = HTTP.get(uri)
-        @test status(r) == 200
+        @test isok(r)
 
-        r = HTTP.request("GET", "$sch://httpbin.org/ip", socket_type_tls=tls)
-        @test status(r) == 200
+        r = HTTP.request("GET", "https://$httpbin/ip", socket_type_tls=tls)
+        @test isok(r)
 
-        uri = HTTP.URI("$sch://httpbin.org/ip")
+        uri = HTTP.URI("https://$httpbin/ip")
         r = HTTP.request("GET", uri, socket_type_tls=tls)
-        @test status(r) == 200
+        @test isok(r)
 
-        r = HTTP.get("$sch://httpbin.org/image/png", socket_type_tls=tls)
-        @test status(r) == 200
+        r = HTTP.get("https://$httpbin/image/png", socket_type_tls=tls)
+        @test isok(r)
 
         # ensure we can use AbstractString for requests
-        r = HTTP.get(SubString("$sch://httpbin.org/ip",1), socket_type_tls=tls)
+        r = HTTP.get(SubString("https://$httpbin/ip",1), socket_type_tls=tls)
 
         # canonicalizeheaders
-        @test status(HTTP.get("$sch://httpbin.org/ip"; canonicalizeheaders=false, socket_type_tls=tls)) == 200
+        @test isok(HTTP.get("https://$httpbin/ip"; canonicalizeheaders=false, socket_type_tls=tls))
     end
 end
 
@@ -236,51 +238,15 @@ end
     end
 end
 
-if !isempty(get(ENV, "PIE_SOCKET_API_KEY", "")) && get(ENV, "JULIA_VERSION", "") == "1"
-    println("found pie socket api key, running websocket tests")
-    pie_socket_api_key = ENV["PIE_SOCKET_API_KEY"]
-    @testset "openraw client method - $socket_protocol" for socket_protocol in ["wss", "ws"]
-        # WebSockets require valid headers.
-        headers = Dict(
-            "Upgrade" => "websocket",
-            "Connection" => "Upgrade",
-            "Sec-WebSocket-Key" => "dGhlIHNhbXBsZSBub25jZQ==",
-            "Sec-WebSocket-Version" => "13")
-
-        socket, response = HTTP.openraw("GET", "$socket_protocol://free3.piesocket.com/v3/http_test_channel?api_key=$pie_socket_api_key&notify_self", headers)
-
-        @test response.status == 101
-
-        # This is an example text frame from RFC 6455, section 5.7. It sends the text "Hello" to the
-        # echo server, and so we expect "Hello" back, in an unmasked frame.
-        frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
-
-        write(socket, frame)
-
-        # The frame we expect back looks like `expectedframe`.
-        expectedframe = UInt8[0x81, 0x05, 0x48, 0x65, 0x6c, 0x6c, 0x6f]
-
-        # Note the spec for read says:
-        #     read(s::IO, nb=typemax(Int))
-        # Read at most nb bytes from s, returning a Vector{UInt8} of the bytes read.
-        # ... so read will return less than 7 bytes unless we wait first:
-        eof(socket)
-        actualframe = read(socket, 7)
-        @test expectedframe == actualframe
-
-        close(socket)
-    end
-end
-
 @testset "HTTP.open accepts method::Symbol" begin
-    @test status(HTTP.open(x -> x, :GET, "http://httpbin.org/ip")) == 200
+    @test isok(HTTP.open(x -> x, :GET, "http://$httpbin/ip"))
 end
 
 @testset "readtimeout" begin
     @test_throws HTTP.TimeoutError begin
-        HTTP.get("http://httpbin.org/delay/5"; readtimeout=1, retry=false)
+        HTTP.get("http://$httpbin/delay/5"; readtimeout=1, retry=false)
     end
-    HTTP.get("http://httpbin.org/delay/1"; readtimeout=2, retry=false)
+    HTTP.get("http://$httpbin/delay/1"; readtimeout=2, retry=false)
 end
 
 @testset "Retry all resolved IP addresses" begin
@@ -298,9 +264,9 @@ end
                     HTTP.startwrite(http)
                     HTTP.write(http, "hello, world")
                 end
-                req = HTTP.get("http://localhost:8080")
-                @test req.status == 200
-                @test String(req.body) == "hello, world"
+                resp = HTTP.get("http://localhost:8080")
+                @test isok(resp)
+                @test String(resp.body) == "hello, world"
             finally
                 @try Base.IOError close(server)
                 HTTP.ConnectionPool.closeall()
@@ -421,21 +387,21 @@ import NetworkOptions, MbedTLS
             @test NetworkOptions.verify_host(url, "SSL")
             @test_throws HTTP.ConnectError HTTP.get(url; retries=1)
             @test_throws HTTP.ConnectError HTTP.get(url; require_ssl_verification=true, retries=1)
-            @test HTTP.get(url; require_ssl_verification=false).status == 200
+            @test isok(HTTP.get(url; require_ssl_verification=false))
         end
         withenv(env..., "JULIA_NO_VERIFY_HOSTS" => "localhost") do
             @test !NetworkOptions.verify_host(url)
             @test !NetworkOptions.verify_host(url, "SSL")
-            @test HTTP.get(url).status == 200
+            @test isok(HTTP.get(url))
             @test_throws HTTP.ConnectError HTTP.get(url; require_ssl_verification=true, retries=1)
-            @test HTTP.get(url; require_ssl_verification=false).status == 200
+            @test isok(HTTP.get(url; require_ssl_verification=false))
         end
         withenv(env..., "JULIA_SSL_NO_VERIFY_HOSTS" => "localhost") do
             @test NetworkOptions.verify_host(url)
             @test !NetworkOptions.verify_host(url, "SSL")
-            @test HTTP.get(url).status == 200
+            @test isok(HTTP.get(url))
             @test_throws HTTP.ConnectError HTTP.get(url; require_ssl_verification=true, retries=1)
-            @test HTTP.get(url; require_ssl_verification=false).status == 200
+            @test isok(HTTP.get(url; require_ssl_verification=false))
         end
     finally
         @try Base.IOError close(server)
@@ -449,14 +415,13 @@ end
     body = UInt8[1, 2, 3]
     stack = HTTP.stack()
     function test(r, m)
-        @test r.status == 200
+        @test isok(r)
         d = JSON.parse(IOBuffer(HTTP.payload(r)))
-        @test d["headers"]["User-Agent"] == "HTTP.jl"
+        @test d["headers"]["User-Agent"] == ["HTTP.jl"]
         @test d["data"] == "\x01\x02\x03"
         @test endswith(d["url"], "?hello=world")
-        @test d["method"] == m
     end
-    for uri in ("https://httpbin.org/anything", HTTP.URI("https://httpbin.org/anything"))
+    for uri in ("https://$httpbin/anything", HTTP.URI("https://$httpbin/anything"))
         # HTTP.request
         test(HTTP.request("GET", uri; headers=headers, body=body, query=query), "GET")
         test(HTTP.request("GET", uri, headers; body=body, query=query), "GET")
@@ -537,7 +502,7 @@ end
         seekstart(req_body)
         res_body = IOBuffer()
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
-        @test resp.status == 200
+        @test isok(resp)
         @test String(take!(res_body)) == "hey there sailor"
         # ensure if retry=false, that we write the response body immediately
         shouldfail[] = true
@@ -549,7 +514,7 @@ end
         seekstart(req_body)
         println("making 3rd request")
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
-        @test resp.status == 200
+        @test isok(resp)
         @test String(take!(res_body)) == "hey there sailor"
         @test String(resp.request.context[:response_body]) == "500 unexpected error"
     finally
@@ -561,25 +526,24 @@ end
 findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
 
 @testset "readuntil on Stream" begin
-    HTTP.open(:GET, "http://httpbin.org/stream/5") do io
+    HTTP.open(:GET, "https://$httpbin/stream/5") do io
         while !eof(io)
             bytes = readuntil(io, findnewline)
             isempty(bytes) && break
             x = JSON.parse(IOBuffer(bytes))
-            @show x
         end
     end
 end
 
 @testset "CA_BUNDEL env" begin
     resp = withenv("HTTP_CA_BUNDLE" => HTTP.MbedTLS.MozillaCACerts_jll.cacert) do
-        HTTP.get("https://httpbin.org/ip"; socket_type_tls=SSLStream)
+        HTTP.get("https://$httpbin/ip"; socket_type_tls=SSLStream)
     end
-    @test resp.status == 200
+    @test isok(resp)
     resp = withenv("HTTP_CA_BUNDLE" => HTTP.MbedTLS.MozillaCACerts_jll.cacert) do
-        HTTP.get("https://httpbin.org/ip")
+        HTTP.get("https://$httpbin/ip")
     end
-    @test resp.status == 200
+    @test isok(resp)
 end
 
 end # module
