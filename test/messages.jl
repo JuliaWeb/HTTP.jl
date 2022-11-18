@@ -131,18 +131,16 @@ using JSON
         r = request(method, uri, response_stream=io, verbose=1)
         seekstart(io)
         @test isok(r)
-        if r.status == 200
-            r2 = JSON.parse(io)
-            for (k, v) in r1
-                if k == "headers"
-                    for (k2, v2) in r1[k]
-                        if k2 != "X-Amzn-Trace-Id"
-                            @test r1[k][k2] == r2[k][k2]
-                        end
+        r2 = JSON.parse(io)
+        for (k, v) in r1
+            if k == "headers"
+                for (k2, v2) in r1[k]
+                    if k2 != "X-Amzn-Trace-Id"
+                        @test r1[k][k2] == r2[k][k2]
                     end
-                else
-                    @test r1[k] == r2[k]
                 end
+            else
+                @test r1[k] == r2[k]
             end
         end
     end
