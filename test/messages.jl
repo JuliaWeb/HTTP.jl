@@ -1,6 +1,7 @@
 using Test
 
 using HTTP.Messages
+import ..isok, ..httpbin
 import HTTP.Messages: appendheader, mkheaders
 import HTTP.URI
 import HTTP.request
@@ -13,7 +14,6 @@ using JSON
     req = Request("GET", "/foo", ["Foo" => "Bar"])
     res = Response(200, ["Content-Length" => "5"]; body="Hello", request=req)
 
-    protocols = ["http", "https"]
     http_reads = ["GET", "HEAD", "OPTIONS"]
     http_writes = ["POST", "PUT", "DELETE", "PATCH"]
 
@@ -118,47 +118,48 @@ using JSON
         @test String(res) == raw
     end
 
-    @testset "Read methods" for protocol in protocols, method in http_reads
-        @test request(method, "$protocol://httpbin.org/ip", verbose=1).status == 200
+    @testset "Read methods" for method in http_reads
+        @test isok(request(method, "https://$httpbin/ip", verbose=1))
     end
 
-    @testset "Body - Response Stream" for protocol in protocols, method in http_writes
-        uri = "$protocol://httpbin.org/$(lowercase(method))"
+    @testset "Body - Response Stream" for method in http_writes
+        uri = "https://$httpbin/$(lowercase(method))"
         r = request(method, uri, verbose=1)
-        @test r.status == 200
+        @test isok(r)
         r1 = JSON.parse(String(r.body))
-
         io = IOBuffer()
         r = request(method, uri, response_stream=io, verbose=1)
         seekstart(io)
-        @test r.status == 200
-        r2 = JSON.parse(io)
-        for (k, v) in r1
-            if k == "headers"
-                for (k2, v2) in r1[k]
-                    if k2 != "X-Amzn-Trace-Id"
-                        @test r1[k][k2] == r2[k][k2]
+        @test isok(r)
+        if r.status == 200
+            r2 = JSON.parse(io)
+            for (k, v) in r1
+                if k == "headers"
+                    for (k2, v2) in r1[k]
+                        if k2 != "X-Amzn-Trace-Id"
+                            @test r1[k][k2] == r2[k][k2]
+                        end
                     end
+                else
+                    @test r1[k] == r2[k]
                 end
-            else
-                @test r1[k] == r2[k]
             end
         end
     end
 
-    @testset "Body - JSON Parse" for protocol in protocols, method in http_writes
-        uri = "$protocol://httpbin.org/$(lowercase(method))"
+    @testset "Body - JSON Parse" for method in http_writes
+        uri = "https://$httpbin/$(lowercase(method))"
         io = IOBuffer()
         r = request(method, uri, response_stream=io, verbose=1)
-        @test r.status == 200
+        @test isok(r)
 
         r = request("POST",
-            "$protocol://httpbin.org/post",
+            "https://$httpbin/post",
             ["Expect" => "100-continue"],
             "Hello",
             verbose=1)
 
-        @test r.status == 200
+        @test isok(r)
         r = JSON.parse(String(r.body))
         @test r["data"] == "Hello"
     end
@@ -168,12 +169,12 @@ using JSON
 
             line_count = 0
             num_lines = 50
-
             open("result_file", "w") do io
                 r = request("GET",
-                    "http://httpbin.org/stream/$num_lines",
+                    "https://$httpbin/stream/$num_lines",
                     response_stream=io,
                     verbose=1)
+                @test isok(r)
             end
 
             for line in readlines("result_file")

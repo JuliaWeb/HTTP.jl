@@ -56,6 +56,7 @@ Otherwise leave it open so that it can be reused.
 """
 function connectionlayer(handler)
     return function(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SOCKET_TYPE_TLS[], readtimeout::Int=0, kw...)
+        local io, stream
         if proxy !== nothing
             target_url = req.url
             url = URI(proxy)
@@ -73,7 +74,6 @@ function connectionlayer(handler)
         end
 
         IOType = sockettype(url, socket_type, socket_type_tls)
-        local io
         try
             io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
         catch e
@@ -113,8 +113,13 @@ function connectionlayer(handler)
             @debugv 1 "❗️  ConnectionLayer $e. Closing: $io"
             shouldreuse = false
             @try Base.IOError close(io)
+            if @isdefined(stream) && stream.nwritten == -1
+                # we didn't write anything, so don't need to worry about
+                # idempotency of the request
+                req.context[:nothingwritten] = true
+            end
             e isa HTTPError || throw(RequestError(req, e))
-            rethrow(e)
+            rethrow()
         finally
             releaseconnection(io, shouldreuse)
             if !shouldreuse

@@ -1,5 +1,7 @@
 using HTTP
 
+import ..httpbin
+
 @testset "HTTP.download" begin
     @testset "Update Period" begin
         @test_logs (:info, "Downloading") HTTP.download(
@@ -69,7 +71,7 @@ using HTTP
 
     @testset "Content-Encoding" begin
         # Add gz extension if we are determining the filename
-        gzip_content_encoding_fn = HTTP.download("https://httpbin.org/gzip")
+        gzip_content_encoding_fn = HTTP.download("https://$httpbin/gzip")
         @test isfile(gzip_content_encoding_fn)
         @test last(splitext(gzip_content_encoding_fn)) == ".gz"
 

@@ -22,6 +22,7 @@ IOExtras.nbytes(x::Form) = length(x)
 
 function Base.mark(f::Form)
     foreach(mark, f.data)
+    f.mark = f.index
     return
 end
 
@@ -122,8 +123,9 @@ function Form(d; boundary=string(rand(UInt128), base=16))
             write(io, "\r\n\r\n")
             write(io, v)
         end
-        i == len && write(io, "\r\n--" * boundary * "--" * "\r\n")
     end
+    # write final boundary
+    write(io, "\r\n--" * boundary * "--" * "\r\n")
     seekstart(io)
     push!(data, io)
     return Form(data, 1, -1, boundary)
