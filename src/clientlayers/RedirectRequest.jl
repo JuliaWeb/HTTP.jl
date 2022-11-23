@@ -91,7 +91,7 @@ end
 function newmethod(request_method, response_status, redirect_method)
     # using https://everything.curl.dev/http/redirects#get-or-post as a reference
     # also reference: https://github.com/curl/curl/issues/5237#issuecomment-618293609
-    if response_status == 307 || response_status == 308
+    if response_status == 307 || response_status == 308 
         # specific status codes that indicate an identical request should be made to new location
         return request_method
     elseif response_status == 303
@@ -101,6 +101,10 @@ function newmethod(request_method, response_status, redirect_method)
         return request_method
     elseif redirect_method !== nothing && String(redirect_method) in ("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH")
         return redirect_method
+    elseif request_method == "HEAD"
+        # special-case HEAD requests because we don't want to turn them into "GET"
+        # follows libcurl behavior
+        return "HEAD"
     end
     return "GET"
 end
