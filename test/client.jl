@@ -208,6 +208,15 @@ end
 
         # canonicalizeheaders
         @test isok(HTTP.get("https://$httpbin/ip"; canonicalizeheaders=false, socket_type_tls=tls))
+
+        # Ensure HEAD requests stay the same through redirects by default
+        r = HTTP.head("https://$httpbin/redirect/1")
+        @test r.request.method == "HEAD"
+        @test iszero(length(r.body))
+        # But if explicitly requested, GET can be used instead
+        r = HTTP.head("https://$httpbin/redirect/1"; redirect_method="GET")
+        @test r.request.method == "GET"
+        @test length(r.body) > 0
     end
 end
 
