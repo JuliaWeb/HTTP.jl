@@ -390,7 +390,7 @@ function listenloop(f, listener, conns, tcpisvalid,
             end
         catch e
             if e isa Base.IOError && e.code == Base.UV_ECONNABORTED
-                @infov 1 "Server on $(listener.hostname):$(listener.hostport) closing"
+                verbose >= 0 && @infov 1 "Server on $(listener.hostname):$(listener.hostport) closing"
             else
                 @errorv 2 "Server on $(listener.hostname):$(listener.hostport) errored" exception=(e, catch_backtrace())
                 # quick little sleep in case there's a temporary
