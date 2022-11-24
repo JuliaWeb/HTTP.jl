@@ -101,6 +101,16 @@ function newmethod(request_method, response_status, redirect_method)
         return request_method
     elseif redirect_method !== nothing && String(redirect_method) in ("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH")
         return redirect_method
+    elseif request_method == "HEAD"
+        # Unless otherwise specified (e.g. with `redirect_method`), be conservative and keep the
+        # same method, see:
+        #
+        # * <https://httpwg.org/specs/rfc9110.html#status.301>
+        # * <https://developer.mozilla.org/en-US/docs/Web/HTTP/Redirections#permanent_redirections>
+        #
+        # Turning a HEAD request through a redirect may be undesired:
+        # <https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/HEAD>.
+        return request_method
     end
     return "GET"
 end
