@@ -363,7 +363,7 @@ Accepts new tcp connections and spawns async tasks to handle them."
 function listenloop(f, listener, conns, tcpisvalid,
                        max_connections, readtimeout, access_log, ready_to_accept, verbose)
     sem = Base.Semaphore(max_connections)
-    verbose >= 0 && @infov 1 "Listening on: $(listener.hostname):$(listener.hostport)"
+    verbose >= 0 && @infov 1 "Listening on: $(listener.hostname):$(listener.hostport), thread id: $(Threads.threadid())"
     notify(ready_to_accept)
     while isopen(listener)
         try

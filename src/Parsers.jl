@@ -351,11 +351,12 @@ const unhex = Int8[
 function __init__()
     # FIXME Consider turing off `PCRE.UTF` in `Regex.compile_options`
     # https://github.com/JuliaLang/julia/pull/26731#issuecomment-380676770
-    resize!(empty!(status_line_regex),           Threads.nthreads())
-    resize!(empty!(request_line_regex),          Threads.nthreads())
-    resize!(empty!(header_field_regex),          Threads.nthreads())
-    resize!(empty!(obs_fold_header_field_regex), Threads.nthreads())
-    resize!(empty!(empty_header_field_regex),    Threads.nthreads())
+    nt = isdefined(Base.Threads, :maxthreadid) ? Threads.maxthreadid() : Threads.nthreads()
+    resize!(empty!(status_line_regex),           nt)
+    resize!(empty!(request_line_regex),          nt)
+    resize!(empty!(header_field_regex),          nt)
+    resize!(empty!(obs_fold_header_field_regex), nt)
+    resize!(empty!(empty_header_field_regex),    nt)
     return
 end
 
