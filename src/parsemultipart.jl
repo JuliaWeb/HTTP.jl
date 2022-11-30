@@ -246,10 +246,11 @@ function parse_multipart_form(msg::Message)::Union{Vector{Multipart}, Nothing}
 end
 
 function __init__()
-    resize!(empty!(content_disposition_regex), Threads.nthreads())
-    resize!(empty!(content_disposition_flag_regex), Threads.nthreads())
-    resize!(empty!(content_disposition_pair_regex), Threads.nthreads())
-    resize!(empty!(content_type_regex), Threads.nthreads())
+    nt = isdefined(Base.Threads, :maxthreadid) ? Threads.maxthreadid() : Threads.nthreads()
+    resize!(empty!(content_disposition_regex), nt)
+    resize!(empty!(content_disposition_flag_regex), nt)
+    resize!(empty!(content_disposition_pair_regex), nt)
+    resize!(empty!(content_type_regex), nt)
     return
 end
 
