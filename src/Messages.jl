@@ -51,7 +51,7 @@ module Messages
 
 export Message, Request, Response,
        reset!, status, method, headers, uri, body, resource,
-       iserror, isredirect, retryable, ischunked, issafe, isidempotent,
+       iserror, isredirect, retryablebody, retryable, ischunked, issafe, isidempotent,
        header, hasheader, headercontains, setheader, defaultheader!, appendheader,
        removeheader, mkheaders, readheaders, headerscomplete,
        readchunksize,
@@ -124,9 +124,8 @@ function reset!(r::Response)
     if !isempty(r.headers)
         empty!(r.headers)
     end
-    if r.body isa Vector{UInt8} && !isempty(r.body)
-        empty!(r.body)
-    end
+    delete!(r.request.context, :response_body)
+    return
 end
 
 status(r::Response) = getfield(r, :status)
@@ -225,17 +224,6 @@ issafe(r::Request) = issafe(r.method)
 issafe(method) = method in ["GET", "HEAD", "OPTIONS", "TRACE"]
 
 """
-    isidempotent(::Request)
-
-https://tools.ietf.org/html/rfc7231#section-4.2.2
-"""
-isidempotent(r::Request) = isidempotent(r.method)
-isidempotent(method) = issafe(method) || method in ["PUT", "DELETE"]
-retry_non_idempotent(r::Request) = get(r.context, :retry_non_idempotent, false)
-allow_retries(r::Request) = get(r.context, :allow_retries, false)
-nothing_written(r::Request) = get(r.context, :nothingwritten, false)
-
-"""
     iserror(::Response)
 
 Does this `Response` have an error status?
@@ -258,6 +246,17 @@ isredirect(status) = status in (301, 302, 303, 307, 308)
 redirectlimitreached(r::Request) = get(r.context, :redirectlimitreached, false)
 allow_redirects(r::Request) = get(r.context, :allow_redirects, false)
 
+"""
+    isidempotent(::Request)
+
+https://tools.ietf.org/html/rfc7231#section-4.2.2
+"""
+isidempotent(r::Request) = isidempotent(r.method)
+isidempotent(method) = issafe(method) || method in ["PUT", "DELETE"]
+retry_non_idempotent(r::Request) = get(r.context, :retry_non_idempotent, false)
+allow_retries(r::Request) = get(r.context, :allow_retries, false)
+nothing_written(r::Request) = get(r.context, :nothingwritten, false)
+
 # whether the retry limit has been reached for a given request
 # set in the RetryRequest layer once the limit is reached
 retrylimitreached(r::Request) = get(r.context, :retrylimitreached, false)
@@ -272,8 +271,15 @@ function retryable end
 supportsmark(x) = false
 supportsmark(x::T) where {T <: IO} = length(Base.methods(mark, Tuple{T}, parentmodule(T))) > 0 || hasfield(T, :mark)
 
-retryable(r::Request) = (isbytes(r.body) || r.body isa Union{Dict, NamedTuple} || (r.body isa Vector && all(isbytes, r.body)) ||
-    (supportsmark(r.body) && ismarked(r.body))) &&
+# request body is retryable if it was provided as "bytes", a Dict or NamedTuple,
+# or a chunked array of "bytes"; OR if it supports mark() and is marked
+retryablebody(r::Request) = (isbytes(r.body) || r.body isa Union{Dict, NamedTuple} ||
+    (r.body isa Vector && all(isbytes, r.body)) || (supportsmark(r.body) && ismarked(r.body)))
+
+# request is retryable if the body is retryable, the user is allowing retries at all,
+# we haven't reached the retry limit, and either nothing has been written yet or
+# the request is idempotent or the user has explicitly allowed non-idempotent retries
+retryable(r::Request) = retryablebody(r) &&
     allow_retries(r) && !retrylimitreached(r) &&
     (nothing_written(r) || isidempotent(r) || retry_non_idempotent(r))
 retryable(r::Response) = retryable(r.status)

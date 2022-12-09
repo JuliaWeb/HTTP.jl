@@ -2,7 +2,7 @@ module ExceptionRequest
 
 export exceptionlayer
 
-using ..Messages, ..Exceptions
+using ..IOExtras, ..Messages, ..Exceptions
 
 """
     exceptionlayer(handler) -> handler

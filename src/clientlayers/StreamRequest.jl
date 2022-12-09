@@ -129,16 +129,17 @@ function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool
 end
 
 function readbody!(stream::Stream, res::Response, buf_or_stream)
-    if isbytes(res.body)
-        # normal response body path: read as Vector{UInt8} and store
-        res.body = read(buf_or_stream)
-    elseif isredirect(stream) || retryable(stream)
-        # if response body is a stream, but we're redirecting or
-        # retrying, store this "temporary" body in the request context
-        res.request.context[:response_body] = read(buf_or_stream)
+    if !iserror(res)
+        if isbytes(res.body)
+            res.body = read(buf_or_stream)
+        else
+            write(res.body, buf_or_stream)
+        end
     else
-        # normal streaming response body path: write response body out directly
-        write(res.body, buf_or_stream)
+        # read the response body into the request context so that it can be
+        # read by the user if they want to or set later if
+        # we end up not retrying/redirecting/etc.
+        res.request.context[:response_body] = read(buf_or_stream)
     end
 end
 
