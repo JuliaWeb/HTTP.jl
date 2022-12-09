@@ -135,6 +135,9 @@ Retry arguments:
  - `retry = true`, retry idempotent requests in case of error.
  - `retries = 4`, number of times to retry.
  - `retry_non_idempotent = false`, retry non-idempotent requests too. e.g. POST.
+ - `retry_delay = ExponentialBackOff(n = retries)`, provide a custom `ExponentialBackOff` object to control the delay between retries.
+ - `retry_check = (s, ex, req, resp) -> Bool`, provide a custom function to control whether a retry should be attempted.
+    The function should accept 4 arguments: the delay state, exception, request, and response, and return `true` if a retry should be attempted.
 
 Redirect arguments:
  - `redirect = true`, follow 3xx redirect responses; i.e. additional requests will be made to the redirected location
