@@ -496,12 +496,19 @@ end
 
 @testset "Retry with request/response body streams" begin
     shouldfail = Ref(true)
+    status = Ref(200)
     server = HTTP.listen!(8080) do http
         @assert !eof(http)
         msg = String(read(http))
         if shouldfail[]
             shouldfail[] = false
             error("500 unexpected error")
+        end
+        HTTP.setstatus(http, status[])
+        if status[] != 200
+            HTTP.startwrite(http)
+            HTTP.write(http, "$(status[]) unexpected error")
+            status[] = 200
         end
         HTTP.startwrite(http)
         HTTP.write(http, msg)
@@ -518,14 +525,17 @@ end
         seekstart(req_body)
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry=false, status_exception=false)
         @test String(take!(res_body)) == "500 unexpected error"
-        # when retrying, we can still get access to the most recent failed response body in the response's request context
-        shouldfail[] = true
+        # don't throw a 500, but set status to status we don't retry by default
+        shouldfail[] = false
+        status[] = 404
         seekstart(req_body)
-        println("making 3rd request")
-        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body)
+        check = (s, ex, req, resp) -> begin
+            @test String(resp.body) == "404 unexpected error"
+            resp.status == 404
+        end
+        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry_check=(s, ex, req, resp) -> resp.status == 404)
         @test isok(resp)
         @test String(take!(res_body)) == "hey there sailor"
-        @test String(resp.request.context[:response_body]) == "500 unexpected error"
     finally
         close(server)
         HTTP.ConnectionPool.closeall()

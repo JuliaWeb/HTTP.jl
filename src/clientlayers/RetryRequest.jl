@@ -5,6 +5,8 @@ using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest, ..Exceptions
 
 export retrylayer
 
+FALSE(x...) = false
+
 """
     retrylayer(handler) -> handler
 
@@ -19,7 +21,9 @@ e.g. `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 (if status is `5xx`).
 """
 function retrylayer(handler)
-    return function(req::Request; retry::Bool=true, retries::Int=4, retry_non_idempotent::Bool=false, kw...)
+    return function(req::Request; retry::Bool=true, retries::Int=4,
+        retry_delays::ExponentialBackOff=ExponentialBackOff(n = retries), retry_check=FALSE,
+        retry_non_idempotent::Bool=false, kw...)
         if !retry || retries == 0
             # no retry
             return handler(req; kw...)
@@ -37,11 +41,11 @@ function retrylayer(handler)
         end
         retryattempt = Ref(0)
         retry_request = Base.retry(handler,
-            delays=ExponentialBackOff(n = retries),
+            delays=retry_delays,
             check=(s, ex) -> begin
                 retryattempt[] += 1
                 req.context[:retryattempt] = retryattempt[]
-                retry = isrecoverable(ex) && retryable(req)
+                retry = retryable(req) || retryablebody(req) && _retry_check(s, ex, req, retry_check)
                 if retryattempt[] == retries
                     req.context[:retrylimitreached] = true
                 end
@@ -63,20 +67,19 @@ function retrylayer(handler)
     end
 end
 
-isrecoverable(e) = false
-isrecoverable(e::Union{Base.EOFError, Base.IOError, MbedTLS.MbedException, OpenSSL.OpenSSLError}) = true
-isrecoverable(e::ArgumentError) = e.msg == "stream is closed or unusable"
-isrecoverable(e::Sockets.DNSError) = true
-isrecoverable(e::ConnectError) = true
-isrecoverable(e::RequestError) = isrecoverable(e.error)
-isrecoverable(e::StatusError) = retryable(e.status)
+function _retry_check(s, ex, req, check)
+    resp = req.response
+    if haskey(req.context, :response_body)
+        resp.body = req.context[:response_body]
+    end
+    return check(s, ex, req, resp)
+end
 
 function no_retry_reason(ex, req)
     buf = IOBuffer()
     show(IOContext(buf, :compact => true), req)
     print(buf, ", ",
         ex isa StatusError ? "HTTP $(ex.status): " :
-        !isrecoverable(ex) ?  "$ex not recoverable, " : "",
         !isbytes(req.body) ? "request streamed, " : "",
         !isbytes(req.response.body) ? "response streamed, " : "",
         !isidempotent(req) ? "$(req.method) non-idempotent" : "")
