@@ -20,9 +20,8 @@ function messagelayer(handler)
         catch e
             if e isa StatusError
                 resp = e.response
-            else
-                rethrow(e)
             end
+            rethrow(e)
         finally
             if @isdefined(resp) && iserror(resp) && haskey(resp.request.context, :response_body)
                 if isbytes(resp.body)
