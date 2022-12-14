@@ -93,12 +93,12 @@ call the provided function `f()`, which must return a new connection instance of
 This new connection instance will be tracked by the `Pod` and MUST be returned to the `Pod`
 after use by calling `release(pod, conn)`.
 """
-function acquire(f, pod::Pod)
+function acquire(f, pod::Pod, forcenew::Bool=false)
     lock(pod.lock)
     try
         # if there are idle connections in the pod,
         # let's check if they're still valid and can be used again
-        while !isempty(pod.conns)
+        while !forcenew && !isempty(pod.conns)
             # Pod connections are FIFO, so grab the earliest returned connection
             # println("$(taskid()): checking idle_timeout connections for reuse")
             conn = popfirst!(pod.conns)
@@ -126,7 +126,7 @@ function acquire(f, pod::Pod)
             # is notified
             # println("$(taskid()): connection pool maxxed out; waiting for connection to be released to the pod")
             conn = wait(pod.lock)
-            if conn !== nothing
+            if !forcenew && conn !== nothing
                 # println("$(taskid()): checking recently released connection validity for reuse")
                 if isvalid(pod, conn)
                     return trackconnection!(pod, conn)
@@ -242,11 +242,11 @@ created and passed the `max`, `idle_timeout`, and `reuse` keyword arguments if p
 The provided function `f` must create a new connection instance of type `C`.
 The acquired connection MUST be returned to the pool by calling `release(pool, key, conn)` exactly once.
 """
-function acquire(f, pool::Pool{C}, key; kw...) where {C}
+function acquire(f, pool::Pool{C}, key; forcenew::Bool=false, kw...) where {C}
     pod = lock(pool.lock) do
         get!(() -> Pod(C; kw...), pool.pods, key)
     end
-    return acquire(f, pod)
+    return acquire(f, pod, forcenew)
 end
 
 function acquire(pool::Pool{C}, key, conn::C; kw...) where {C}

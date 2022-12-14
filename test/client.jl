@@ -525,15 +525,30 @@ end
         seekstart(req_body)
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry=false, status_exception=false)
         @test String(take!(res_body)) == "500 unexpected error"
+        # even if status_exception=true, we should still get the right response body
+        shouldfail[] = true
+        seekstart(req_body)
+        try
+            resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry=false, forcenew=true)
+        catch e
+            @test e isa HTTP.StatusError
+            @test e.status == 500
+            @test String(take!(res_body)) == "500 unexpected error"
+        end
         # don't throw a 500, but set status to status we don't retry by default
         shouldfail[] = false
         status[] = 404
         seekstart(req_body)
         check = (s, ex, req, resp) -> begin
-            @test String(resp.body) == "404 unexpected error"
-            resp.status == 404
+            str = String(resp.body)
+            if str != "404 unexpected error" || resp.status != 404
+                @error "unexpected response body" str
+                return false
+            end
+            @test str == "404 unexpected error"
+            return resp.status == 404
         end
-        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry_check=(s, ex, req, resp) -> resp.status == 404)
+        resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry_check=check)
         @test isok(resp)
         @test String(take!(res_body)) == "hey there sailor"
     finally

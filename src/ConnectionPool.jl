@@ -351,6 +351,7 @@ function newconnection(::Type{T},
                        host::AbstractString,
                        port::AbstractString;
                        connection_limit=default_connection_limit[],
+                       forcenew::Bool=false,
                        idle_timeout=typemax(Int),
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        kw...)::Connection where {T <: IO}
@@ -358,6 +359,7 @@ function newconnection(::Type{T},
             POOL,
             (T, host, port, require_ssl_verification, true);
             max_concurrent_connections=Int(connection_limit),
+            forcenew=forcenew,
             idle_timeout=Int(idle_timeout)) do
         Connection(host, port,
             idle_timeout, require_ssl_verification,
