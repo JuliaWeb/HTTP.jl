@@ -1,7 +1,7 @@
 module MessageRequest
 
 using URIs
-using ..IOExtras, ..Messages, ..Parsers
+using ..IOExtras, ..Messages, ..Parsers, ..Exceptions
 
 export messagelayer
 
@@ -17,6 +17,11 @@ function messagelayer(handler)
         local resp
         try
             resp = handler(req; response_stream=response_stream, kw...)
+        catch e
+            if e isa StatusError
+                resp = e.response
+            end
+            rethrow(e)
         finally
             if @isdefined(resp) && iserror(resp) && haskey(resp.request.context, :response_body)
                 if isbytes(resp.body)
