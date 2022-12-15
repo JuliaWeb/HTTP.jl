@@ -539,8 +539,8 @@ end
         shouldfail[] = false
         status[] = 404
         seekstart(req_body)
-        check = (s, ex, req, resp) -> begin
-            str = String(resp.body)
+        check = (s, ex, req, resp, resp_body) -> begin
+            str = String(resp_body)
             if str != "404 unexpected error" || resp.status != 404
                 @error "unexpected response body" str
                 return false

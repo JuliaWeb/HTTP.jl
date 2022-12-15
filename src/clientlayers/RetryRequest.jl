@@ -69,10 +69,8 @@ end
 
 function _retry_check(s, ex, req, check)
     resp = req.response
-    if haskey(req.context, :response_body)
-        resp.body = req.context[:response_body]
-    end
-    return check(s, ex, req, resp)
+    resp_body = get(req.context, :response_body, nothing)
+    return check(s, ex, req, resp_body !== nothing ? resp : nothing, resp_body)
 end
 
 function no_retry_reason(ex, req)
