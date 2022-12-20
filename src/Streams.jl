@@ -76,9 +76,7 @@ function IOExtras.startwrite(http::Stream)
     else
         http.writechunked = ischunked(m)
     end
-    buf = IOBuffer()
-    writeheaders(buf, m)
-    n = write(http.stream, take!(buf))
+    n = writeheaders(http.stream, m)
     # nwritten starts at -1 so that we can tell if we've written anything yet
     http.nwritten = 0 # should not include headers
     return n
