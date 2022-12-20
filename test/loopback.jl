@@ -262,8 +262,9 @@ end
         @test_throws HTTP.StatusError begin
             r = lbopen("abort", []) do http
                 @sync begin
+                    event = Base.Event()
                     @async try
-                        sleep(0.1)
+                        wait(event)
                         write(http, "Hello World!")
                         closewrite(http)
                         body_sent = true
@@ -278,6 +279,7 @@ end
                     startread(http)
                     body = read(http)
                     closeread(http)
+                    notify(event)
                 end
             end
         end
