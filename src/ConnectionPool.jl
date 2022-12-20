@@ -72,6 +72,7 @@ mutable struct Connection <: IO
     timestamp::Float64
     readable::Bool
     writable::Bool
+    writebuffer::IOBuffer
     state::Any # populated & used by Servers code
 end
 
@@ -92,7 +93,7 @@ Connection(host::AbstractString, port::AbstractString,
     Connection(host, port, idle_timeout,
                 require_ssl_verification,
                 safe_getpeername(io)..., localport(io),
-                io, client, PipeBuffer(), time(), false, false, nothing)
+                io, client, PipeBuffer(), time(), false, false, IOBuffer(), nothing)
 
 Connection(io; require_ssl_verification::Bool=true) =
     Connection("", "", 0, require_ssl_verification, io, false)

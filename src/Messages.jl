@@ -61,6 +61,7 @@ export Message, Request, Response,
 
 using URIs, CodecZlib
 using ..Pairs, ..IOExtras, ..Parsers, ..Strings, ..Forms, ..Conditions
+using ..ConnectionPool
 
 const nobody = UInt8[]
 const unknown_length = typemax(Int)
@@ -475,13 +476,11 @@ Base.write(io::IO, v::HTTPVersion) = write(io, "HTTP/", string(v.major), ".", st
 e.g. `"GET /path HTTP/1.1\\r\\n"` or `"HTTP/1.1 200 OK\\r\\n"`
 """
 function writestartline(io::IO, r::Request)
-    write(io, r.method, " ", r.target, " ", r.version, "\r\n")
-    return
+    return write(io, r.method, " ", r.target, " ", r.version, "\r\n")
 end
 
 function writestartline(io::IO, r::Response)
-    write(io, r.version, " ", string(r.status), " ", statustext(r.status), "\r\n")
-    return
+    return write(io, r.version, " ", string(r.status), " ", statustext(r.status), "\r\n")
 end
 
 """
@@ -490,14 +489,18 @@ end
 Write `Message` start line and
 a line for each "name: value" pair and a trailing blank line.
 """
-function writeheaders(io::IO, m::Message)
-    writestartline(io, m)
+writeheaders(io::IO, m::Message) = writeheaders(io, m, IOBuffer())
+writeheaders(io::Connection, m::Message) = writeheaders(io, m, io.writebuffer)
+
+function writeheaders(io::IO, m::Message, buf::IOBuffer)
+    writestartline(buf, m)
     for (name, value) in m.headers
         # match curl convention of not writing empty headers
-        !isempty(value) && write(io, name, ": ", value, "\r\n")
+        !isempty(value) && write(buf, name, ": ", value, "\r\n")
     end
-    write(io, "\r\n")
-    return
+    write(buf, "\r\n")
+    nwritten = write(io, take!(buf))
+    return nwritten
 end
 
 """
@@ -506,15 +509,15 @@ end
 Write start line, headers and body of HTTP Message.
 """
 function Base.write(io::IO, m::Message)
-    writeheaders(io, m)
-    write(io, m.body)
-    return
+    nwritten = writeheaders(io, m)
+    nwritten += write(io, m.body)
+    return nwritten
 end
 
 function Base.String(m::Message)
     io = IOBuffer()
     write(io, m)
-    String(take!(io))
+    return String(take!(io))
 end
 
 # Reading HTTP Messages from IO streams
@@ -588,7 +591,7 @@ end
 function compactstartline(m::Message)
     b = IOBuffer()
     writestartline(b, m)
-    strip(String(take!(b)))
+    return strip(String(take!(b)))
 end
 
 # temporary replacement for isvalid(String, s), until the
