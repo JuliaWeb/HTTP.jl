@@ -27,6 +27,7 @@ include(joinpath(dir, "resources/TestRequest.jl"))
             "async.jl",
             "mwe.jl",
             "try_with_timeout.jl",
+            "httpversion.jl",
             ]
         file = joinpath(dir, f)
         println("Running $file tests...")

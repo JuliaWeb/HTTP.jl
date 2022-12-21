@@ -61,6 +61,7 @@ export Message, Request, Response,
 
 using URIs, CodecZlib
 using ..Pairs, ..IOExtras, ..Parsers, ..Strings, ..Forms, ..Conditions
+using ..ConnectionPool
 
 const nobody = UInt8[]
 const unknown_length = typemax(Int)
@@ -77,7 +78,7 @@ abstract type Message end
 
 Represents an HTTP response message with fields:
 
-- `version::VersionNumber`
+- `version::HTTPVersion`
    [RFC7230 2.6](https://tools.ietf.org/html/rfc7230#section-2.6)
 
 - `status::Int16`
@@ -94,14 +95,14 @@ Represents an HTTP response message with fields:
 
 """
 mutable struct Response <: Message
-    version::VersionNumber
+    version::HTTPVersion
     status::Int16
     headers::Headers
     body::Any # Usually Vector{UInt8} or IO
     request::Union{Message, Nothing} # Union{Request, Nothing}
 end
 
-function Response(status::Integer, headers, body; version::VersionNumber=v"1.1", request=nothing)
+function Response(status::Integer, headers, body; version=HTTPVersion(1, 1), request=nothing)
     b = isbytes(body) ? bytes(body) : something(body, nobody)
     @assert (request isa Request || request === nothing)
     return Response(version, status, mkheaders(headers), b, request)
@@ -119,7 +120,7 @@ Response(body) = Response(200; body=body)
 Base.convert(::Type{Response}, s::AbstractString) = Response(s)
 
 function reset!(r::Response)
-    r.version = v"1.1"
+    r.version = HTTPVersion(1, 1)
     r.status = 0
     if !isempty(r.headers)
         empty!(r.headers)
@@ -136,8 +137,10 @@ body(r::Response) = getfield(r, :body)
 const Context = Dict{Symbol, Any}
 
 """
-    HTTP.Request(method, target, headers=[], body=nobody;
-        version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=HTTP.Context())
+    HTTP.Request(
+        method, target, headers=[], body=nobody;
+        version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=HTTP.Context()
+    )
 
 Represents a HTTP Request Message with fields:
 
@@ -147,7 +150,7 @@ Represents a HTTP Request Message with fields:
 - `target::String`
    [RFC7230 5.3](https://tools.ietf.org/html/rfc7230#section-5.3)
 
-- `version::VersionNumber`
+- `version::HTTPVersion`
    [RFC7230 2.6](https://tools.ietf.org/html/rfc7230#section-2.6)
 
 - `headers::HTTP.Headers`
@@ -170,7 +173,7 @@ Represents a HTTP Request Message with fields:
 mutable struct Request <: Message
     method::String
     target::String
-    version::VersionNumber
+    version::HTTPVersion
     headers::Headers
     body::Any # Usually Vector{UInt8} or some kind of IO
     response::Response
@@ -181,8 +184,10 @@ end
 
 Request() = Request("", "")
 
-function Request(method::String, target, headers=[], body=nobody;
-                 version=v"1.1", url::URI=URI(), responsebody=nothing, parent=nothing, context=Context())
+function Request(
+    method::String, target, headers=[], body=nobody;
+    version=HTTPVersion(1, 1), url::URI=URI(), responsebody=nothing, parent=nothing, context=Context()
+)
     b = isbytes(body) ? bytes(body) : body
     r = Request(method, target == "" ? "/" : target, version,
                 mkheaders(headers), b, Response(0; body=responsebody),
@@ -463,12 +468,7 @@ function decode(m::Message, encoding::String="gzip")::Vector{UInt8}
 end
 
 # Writing HTTP Messages to IO streams
-"""
-    HTTP.httpversion(::Message)
-
-e.g. `"HTTP/1.1"`
-"""
-httpversion(m::Message) = "HTTP/$(m.version.major).$(m.version.minor)"
+Base.write(io::IO, v::HTTPVersion) = write(io, "HTTP/", string(v.major), ".", string(v.minor))
 
 """
     writestartline(::IO, ::Message)
@@ -476,13 +476,11 @@ httpversion(m::Message) = "HTTP/$(m.version.major).$(m.version.minor)"
 e.g. `"GET /path HTTP/1.1\\r\\n"` or `"HTTP/1.1 200 OK\\r\\n"`
 """
 function writestartline(io::IO, r::Request)
-    write(io, "$(r.method) $(r.target) $(httpversion(r))\r\n")
-    return
+    return write(io, r.method, " ", r.target, " ", r.version, "\r\n")
 end
 
 function writestartline(io::IO, r::Response)
-    write(io, "$(httpversion(r)) $(r.status) $(statustext(r.status))\r\n")
-    return
+    return write(io, r.version, " ", string(r.status), " ", statustext(r.status), "\r\n")
 end
 
 """
@@ -491,14 +489,18 @@ end
 Write `Message` start line and
 a line for each "name: value" pair and a trailing blank line.
 """
-function writeheaders(io::IO, m::Message)
-    writestartline(io, m)
+writeheaders(io::IO, m::Message) = writeheaders(io, m, IOBuffer())
+writeheaders(io::Connection, m::Message) = writeheaders(io, m, io.writebuffer)
+
+function writeheaders(io::IO, m::Message, buf::IOBuffer)
+    writestartline(buf, m)
     for (name, value) in m.headers
         # match curl convention of not writing empty headers
-        !isempty(value) && write(io, "$name: $value\r\n")
+        !isempty(value) && write(buf, name, ": ", value, "\r\n")
     end
-    write(io, "\r\n")
-    return
+    write(buf, "\r\n")
+    nwritten = write(io, take!(buf))
+    return nwritten
 end
 
 """
@@ -507,15 +509,15 @@ end
 Write start line, headers and body of HTTP Message.
 """
 function Base.write(io::IO, m::Message)
-    writeheaders(io, m)
-    write(io, m.body)
-    return
+    nwritten = writeheaders(io, m)
+    nwritten += write(io, m.body)
+    return nwritten
 end
 
 function Base.String(m::Message)
     io = IOBuffer()
     write(io, m)
-    String(take!(io))
+    return String(take!(io))
 end
 
 # Reading HTTP Messages from IO streams
@@ -589,7 +591,7 @@ end
 function compactstartline(m::Message)
     b = IOBuffer()
     writestartline(b, m)
-    strip(String(take!(b)))
+    return strip(String(take!(b)))
 end
 
 # temporary replacement for isvalid(String, s), until the

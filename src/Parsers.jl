@@ -191,7 +191,7 @@ function parse_request_line!(bytes::AbstractString, request)::SubString{String}
     end
     request.method = group(1, re, bytes)
     request.target = group(2, re, bytes)
-    request.version = VersionNumber(group(3, re, bytes))
+    request.version = HTTPVersion(group(3, re, bytes))
     return nextbytes(re, bytes)
 end
 
@@ -205,7 +205,7 @@ function parse_status_line!(bytes::AbstractString, response)::SubString{String}
     if !exec(re, bytes)
         throw(ParseError(:INVALID_STATUS_LINE, bytes))
     end
-    response.version = VersionNumber(group(1, re, bytes))
+    response.version = HTTPVersion(group(1, re, bytes))
     response.status = parse(Int, group(2, re, bytes))
     return nextbytes(re, bytes)
 end

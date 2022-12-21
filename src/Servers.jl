@@ -494,7 +494,7 @@ function check_readtimeout(c, readtimeout, wait_for_timeout)
         if inactiveseconds(c) > readtimeout
             @warnv 2 "Connection Timeout: $c"
             try
-                writeheaders(c.io, Response(408, ["Connection" => "close"]))
+                writeheaders(c, Response(408, ["Connection" => "close"]))
             finally
                 closeconnection(c)
             end

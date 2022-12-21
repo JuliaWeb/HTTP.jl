@@ -99,10 +99,7 @@ using JSON
         @test header(req, "Null", nothing) === nothing
     end
 
-    @testset "HTTP Version" begin
-        @test Messages.httpversion(req) == "HTTP/1.1"
-        @test Messages.httpversion(res) == "HTTP/1.1"
-
+    @testset "HTTP message parsing" begin
         raw = String(req)
         req = parse(Request,raw)
         @test String(req) == raw
