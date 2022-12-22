@@ -422,6 +422,10 @@ function request(stack::Base.Callable, method, url, h=Header[], b=nobody, q=noth
     return stack(string(method), request_uri(url, query), mkheaders(headers), body; kw...)
 end
 
+macro remove_linenums!(expr)
+    return esc(Base.remove_linenums!(expr))
+end
+
 """
     HTTP.@client requestlayers
     HTTP.@client requestlayers streamlayers
@@ -456,16 +460,18 @@ hard-codes the value of the `retry` and `redirect` keyword arguments. When we pa
 effectively over-writing the default and any user-provided keyword arguments for `retry` or `redirect`.
 """
 macro client(requestlayers, streamlayers=[])
-    esc(quote
-        get(a...; kw...) = request("GET", a...; kw...)
-        put(a...; kw...) = request("PUT", a...; kw...)
-        post(a...; kw...) = request("POST", a...; kw...)
-        patch(a...; kw...) = request("PATCH", a...; kw...)
-        head(a...; kw...) = request("HEAD", a...; kw...)
-        delete(a...; kw...) = request("DELETE", a...; kw...)
-        open(f, a...; kw...) = request(a...; iofunction=f, kw...)
-        request(method, url, h=HTTP.Header[], b=HTTP.nobody; headers=h, body=b, query=nothing, kw...)::HTTP.Response =
+    return @remove_linenums! esc(quote
+        get(a...; kw...) = ($__source__; request("GET", a...; kw...))
+        put(a...; kw...) = ($__source__; request("PUT", a...; kw...))
+        post(a...; kw...) = ($__source__; request("POST", a...; kw...))
+        patch(a...; kw...) = ($__source__; request("PATCH", a...; kw...))
+        head(a...; kw...) = ($__source__; request("HEAD", a...; kw...))
+        delete(a...; kw...) = ($__source__; request("DELETE", a...; kw...))
+        open(f, a...; kw...) = ($__source__; request(a...; iofunction=f, kw...))
+        function request(method, url, h=HTTP.Header[], b=HTTP.nobody; headers=h, body=b, query=nothing, kw...)::HTTP.Response
+            $__source__
             HTTP.request(HTTP.stack($requestlayers, $streamlayers), method, url, headers, body, query; kw...)
+        end
     end)
 end
 
