@@ -245,16 +245,9 @@ created and passed the `max`, `idle_timeout`, and `reuse` keyword arguments if p
 The provided function `f` must create a new connection instance of type `C`.
 The acquired connection MUST be returned to the pool by calling `release(pool, key, conn)` exactly once.
 """
-function acquire(f, pool::Pool{Connection{Sockets.TCPSocket}}, key; forcenew::Bool=false, kw...)
+function acquire(f, pool::Pool{C}, key; forcenew::Bool=false, kw...) where {C}
     pod = lock(pool.lock) do
-        get!(() -> Pod(Connection{Sockets.TCPSocket}; kw...), pool.pods, key)
-    end
-    return acquire(f, pod, forcenew)
-end
-
-function acquire(f, pool::Pool{Connection{MbedTLS.SSLContext}}, key; forcenew::Bool=false, kw...)
-    pod = lock(pool.lock) do
-        get!(() -> Pod(Connection{MbedTLS.SSLContext}; kw...), pool.pods, key)
+        get!(() -> Pod(C; kw...), pool.pods, key)
     end
     return acquire(f, pod, forcenew)
 end

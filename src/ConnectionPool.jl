@@ -90,7 +90,7 @@ connectionkey(x::Connection) = (typeof(x.io), x.host, x.port, x.require_ssl_veri
 Connection(host::AbstractString, port::AbstractString,
            idle_timeout::Int,
            require_ssl_verification::Bool, io::T, client=true) where {T}=
-    Connection{typeof(io)}(host, port, idle_timeout,
+    Connection{T}(host, port, idle_timeout,
                 require_ssl_verification,
                 safe_getpeername(io)..., localport(io),
                 io, client, PipeBuffer(), time(), false, false, IOBuffer(), nothing)
@@ -331,7 +331,9 @@ end
 Close all connections in`pool`.
 """
 function closeall()
-    ConnectionPools.reset!(POOL)
+    ConnectionPools.reset!(TCP_POOL)
+    ConnectionPools.reset!(MbedTLS_SSL_POOL)
+    ConnectionPools.reset!(OpenSSL_SSL_POOL)
     return
 end
 
@@ -341,9 +343,11 @@ end
 Global connection pool keeping track of active connections.
 """
 const TCP_POOL = Pool(Connection{Sockets.TCPSocket})
-const SSL_POOL = Pool(Connection{MbedTLS.SSLContext})
+const MbedTLS_SSL_POOL = Pool(Connection{MbedTLS.SSLContext})
+const OpenSSL_SSL_POOL = Pool(Connection{OpenSSL.SSLStream})
 getpool(::Type{Sockets.TCPSocket}) = TCP_POOL
-getpool(::Type{MbedTLS.SSLContext}) = SSL_POOL
+getpool(::Type{MbedTLS.SSLContext}) = MbedTLS_SSL_POOL
+getpool(::Type{OpenSSL.SSLStream}) = OpenSSL_SSL_POOL
 getpool(::Connection{T}) where T = getpool(T)
 
 """
