@@ -33,9 +33,6 @@ set_default_connection_limit!(n) = default_connection_limit[] = n
 
 taskid(t=current_task()) = string(hash(t) & 0xffff, base=16, pad=4)
 
-include("connectionpools.jl")
-using .ConnectionPools
-
 """
     Connection
 
@@ -58,7 +55,7 @@ Fields:
 - `readable`, whether the Connection object is readable
 - `writable`, whether the Connection object is writable
 """
-mutable struct Connection <: IO
+mutable struct Connection{IO_t <: IO} <: IO
     host::String
     port::String
     idle_timeout::Int
@@ -66,7 +63,7 @@ mutable struct Connection <: IO
     peerip::IPAddr # for debugging/logging
     peerport::UInt16 # for debugging/logging
     localport::UInt16 # debug only
-    io::IO
+    io::IO_t
     clientconnection::Bool
     buffer::IOBuffer
     timestamp::Float64
@@ -75,6 +72,9 @@ mutable struct Connection <: IO
     writebuffer::IOBuffer
     state::Any # populated & used by Servers code
 end
+
+include("connectionpools.jl")
+using .ConnectionPools
 
 """
     connectionkey
@@ -89,8 +89,8 @@ connectionkey(x::Connection) = (typeof(x.io), x.host, x.port, x.require_ssl_veri
 
 Connection(host::AbstractString, port::AbstractString,
            idle_timeout::Int,
-           require_ssl_verification::Bool, io::IO, client=true) =
-    Connection(host, port, idle_timeout,
+           require_ssl_verification::Bool, io::T, client=true) where {T}=
+    Connection{typeof(io)}(host, port, idle_timeout,
                 require_ssl_verification,
                 safe_getpeername(io)..., localport(io),
                 io, client, PipeBuffer(), time(), false, false, IOBuffer(), nothing)
@@ -340,7 +340,11 @@ end
 
 Global connection pool keeping track of active connections.
 """
-const POOL = Pool(Connection)
+const TCP_POOL = Pool(Connection{Sockets.TCPSocket})
+const SSL_POOL = Pool(Connection{MbedTLS.SSLContext})
+getpool(::Type{Sockets.TCPSocket}) = TCP_POOL
+getpool(::Type{MbedTLS.SSLContext}) = SSL_POOL
+getpool(::Connection{T}) where T = getpool(T)
 
 """
     newconnection(type, host, port) -> Connection
@@ -355,9 +359,9 @@ function newconnection(::Type{T},
                        forcenew::Bool=false,
                        idle_timeout=typemax(Int),
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
-                       kw...)::Connection where {T <: IO}
+                       kw...) where {T <: IO}
     return acquire(
-            POOL,
+            getpool(T),
             (T, host, port, require_ssl_verification, true);
             max_concurrent_connections=Int(connection_limit),
             forcenew=forcenew,
@@ -371,7 +375,7 @@ function newconnection(::Type{T},
 end
 
 releaseconnection(c::Connection, reuse) =
-    release(POOL, connectionkey(c), c; return_for_reuse=reuse)
+    release(getpool(c), connectionkey(c), c; return_for_reuse=reuse)
 
 function keepalive!(tcp)
     @debugv 2 "setting keepalive on tcp socket"
@@ -538,9 +542,9 @@ function sslupgrade(::Type{IOType}, c::Connection,
     # success, now we turn it into a new Connection
     conn = Connection(host, "", 0, require_ssl_verification, tls)
     # release the "old" one, but don't allow reuse since we're hijacking the socket
-    release(POOL, connectionkey(c), c; return_for_reuse=false)
+    release(getpool(conn), connectionkey(c), c; return_for_reuse=false)
     # and return the new one
-    return acquire(POOL, connectionkey(conn), conn)
+    return acquire(getpool(conn), connectionkey(conn), conn)
 end
 
 function Base.show(io::IO, c::Connection)
