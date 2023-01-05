@@ -281,7 +281,7 @@ end
         @test r.version.major == response.http_major
         @test r.version.minor == response.http_minor
         @test r.status == response.status_code
-        @test HTTP.Messages.statustext(r.status) == response.response_status
+        @test HTTP.StatusCodes.statustext(r.status) == response.response_status
         @test length(r.headers) == response.num_headers
         @test r_headers == response.headers
         @test String(r.body) == response.body

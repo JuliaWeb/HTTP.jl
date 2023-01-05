@@ -61,7 +61,7 @@ export Message, Request, Response,
 
 using URIs, CodecZlib
 using ..Pairs, ..IOExtras, ..Parsers, ..Strings, ..Forms, ..Conditions
-using ..ConnectionPool
+using ..ConnectionPool, ..StatusCodes
 
 const nobody = UInt8[]
 const unknown_length = typemax(Int)
@@ -480,7 +480,7 @@ function writestartline(io::IO, r::Request)
 end
 
 function writestartline(io::IO, r::Response)
-    return write(io, r.version, " ", string(r.status), " ", statustext(r.status), "\r\n")
+    return write(io, r.version, " ", string(r.status), " ", StatusCodes.statustext(r.status), "\r\n")
 end
 
 """
@@ -619,6 +619,9 @@ function Base.show(io::IO, m::Message)
     return
 end
 
-include("status_messages.jl")
+function statustext(status) 
+    Base.depwarn("`Messages.statustext` is deprecated, use `StatusCodes.statustext` instead.", :statustext)
+    return StatusCodes.statustext(status)
+end
 
 end # module Messages
