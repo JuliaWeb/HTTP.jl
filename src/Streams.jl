@@ -1,6 +1,6 @@
 module Streams
 
-export Stream, closebody, isaborted, setstatus
+export Stream, closebody, isaborted, setstatus, readall!
 
 using Sockets, LoggingExtras
 using ..IOExtras, ..Messages, ..ConnectionPool, ..Conditions, ..Exceptions
@@ -268,7 +268,7 @@ end
 function Base.readbytes!(http::Stream, buf::AbstractVector{UInt8},
                                        n=length(buf))
     @require n <= length(buf)
-    return http_unsafe_read(http, pointer(buf), UInt(n))
+    return GC.@preserve buf http_unsafe_read(http, pointer(buf), UInt(n))
 end
 
 function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
@@ -282,13 +282,20 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
     nothing
 end
 
-function Base.readbytes!(http::Stream, buf::IOBuffer, n=bytesavailable(http))
+@noinline bufcheck(buf, n) = ((buf.size + n) <= buf.maxsize) || throw(ArgumentError("Unable to grow response stream IOBuffer large enough for response body size"))
+
+function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailable(http))
     Base.ensureroom(buf, n)
-    unsafe_read(http, pointer(buf.data, buf.size + 1), n)
+    # check if there's enough room in buf to write n bytes
+    bufcheck(buf, n)
+    data = buf.data
+    GC.@preserve data unsafe_read(http, pointer(data, buf.size + 1), n)
     buf.size += n
 end
 
-function Base.read(http::Stream, buf::IOBuffer=PipeBuffer())
+Base.read(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer()) = take!(readall(http, buf))
+
+function readall!(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer())
     if ntoread(http) == unknown_length
         while !eof(http)
             readbytes!(http, buf)
@@ -298,7 +305,7 @@ function Base.read(http::Stream, buf::IOBuffer=PipeBuffer())
             readbytes!(http, buf, ntoread(http))
         end
     end
-    return take!(buf)
+    return buf
 end
 
 function Base.readuntil(http::Stream, f::Function)::ByteView

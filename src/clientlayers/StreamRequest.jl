@@ -128,6 +128,9 @@ function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool
     end
 end
 
+# 2 most common types of IOBuffers
+const IOBuffers = Union{IOBuffer, Base.GenericIOBuffer{SubArray{UInt8, 1, Vector{UInt8}, Tuple{UnitRange{Int64}}, true}}}
+
 function readbody!(stream::Stream, res::Response, buf_or_stream)
     if !iserror(res)
         if isbytes(res.body)
@@ -145,13 +148,16 @@ function readbody!(stream::Stream, res::Response, buf_or_stream)
                 elseif buf_or_stream isa Stream
                     # for HTTP.Stream, there's already an optimized read method
                     # that just needs an IOBuffer to write into
-                    res.body = read(buf_or_stream, body)
+                    readall!(buf_or_stream, body)
                 else
                     error("unreachable")
                 end
             else
                 res.body = read(buf_or_stream)
             end
+        elseif (res.body isa IOBuffers || res.body isa Base.GenericIOBuffer) && buf_or_stream isa Stream
+            # optimization for IOBuffer response_stream to avoid temporary allocations
+            readall!(buf_or_stream, res.body)
         else
             write(res.body, buf_or_stream)
         end

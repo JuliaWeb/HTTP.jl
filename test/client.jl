@@ -112,6 +112,34 @@ end
         seekstart(io)
         @test isok(r)
 
+        # pass pre-allocated buffer
+        body = zeros(UInt8, 100)
+        r = HTTP.get("https://$httpbin/bytes/100"; response_stream=body, socket_type_tls=tls)
+        @test body === r.body
+
+        # wrapping pre-allocated buffer in IOBuffer will write to buffer directly
+        io = IOBuffer(body; write=true)
+        r = HTTP.get("https://$httpbin/bytes/100"; response_stream=io, socket_type_tls=tls)
+        @test body === r.body.data
+
+        # if provided buffer is too small, we won't grow it for user
+        body = zeros(UInt8, 10)
+        @test_throws HTTP.RequestError HTTP.get("https://$httpbin/bytes/100"; response_stream=body, socket_type_tls=tls)
+
+        # also won't shrink it if buffer provided is larger than response body
+        body = zeros(UInt8, 10)
+        r = HTTP.get("https://$httpbin/bytes/5"; response_stream=body, socket_type_tls=tls)
+        @test body === r.body
+        @test length(body) == 10
+        @test HTTP.header(r, "Content-Length") == "5"
+
+        # but if you wrap it in a writable IOBuffer, we will grow it
+        io = IOBuffer(body; write=true)
+        r = HTTP.get("https://$httpbin/bytes/100"; response_stream=io, socket_type_tls=tls)
+        # same Array, though it was resized larger
+        @test body === r.body.data
+        @test length(body) == 100
+
         b = [JSON.parse(l) for l in eachline(io)]
         @test all(zip(a, b)) do (x, y)
             x["args"] == y["args"] &&

@@ -22,7 +22,7 @@ e.g. `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
 """
 function retrylayer(handler)
     return function(req::Request; retry::Bool=true, retries::Int=4,
-        retry_delays::ExponentialBackOff=ExponentialBackOff(n = retries), retry_check=FALSE,
+        retry_delays::ExponentialBackOff=ExponentialBackOff(n = retries, factor=3.0), retry_check=FALSE,
         retry_non_idempotent::Bool=false, kw...)
         if !retry || retries == 0
             # no retry
@@ -61,8 +61,8 @@ function retrylayer(handler)
                     @debugv 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
                 end
                 return s, retry
-            end)
-
+            end
+        )
         return retry_request(req; kw...)
     end
 end
