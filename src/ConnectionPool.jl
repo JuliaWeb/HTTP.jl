@@ -345,7 +345,12 @@ getpool(::Type{OpenSSL.SSLStream}) = OpenSSL_SSL_POOL
 # to opt out from locking, define your own `Pool` and add a `getpool` method for your IO type
 const POOLS_LOCK = Threads.ReentrantLock()
 function getpool(::Type{T}) where {T}
-    @lock POOLS_LOCK get!(POOLS, T, Pool(Connection{T}))::Pool{Connection{T}}
+    lock(POOLS_LOCK)
+    try
+        get!(POOLS, T, Pool(Connection{T}))::Pool{Connection{T}}
+    finally
+        unlock(POOLS_LOCK)
+    end
 end
 
 """
