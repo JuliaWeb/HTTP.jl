@@ -288,8 +288,7 @@ function Base.readbytes!(http::Stream, buf::IOBuffer, n=bytesavailable(http))
     buf.size += n
 end
 
-function Base.read(http::Stream)
-    buf = PipeBuffer()
+function Base.read(http::Stream, buf::IOBuffer=PipeBuffer())
     if ntoread(http) == unknown_length
         while !eof(http)
             readbytes!(http, buf)

@@ -131,7 +131,27 @@ end
 function readbody!(stream::Stream, res::Response, buf_or_stream)
     if !iserror(res)
         if isbytes(res.body)
-            res.body = read(buf_or_stream)
+            if length(res.body) > 0
+                # user-provided buffer to read response body into
+                # specify write=true to make the buffer writable
+                # but also specify maxsize, which means it won't be grown
+                # (we don't want to be changing the user's buffer for them)
+                body = IOBuffer(res.body; write=true, maxsize=length(res.body))
+                if buf_or_stream isa BufferStream
+                    # if it's a BufferStream, the response body was gzip encoded
+                    # so using the default write is fastest because it utilizes
+                    # readavailable under the hood, for which BufferStream is optimized
+                    write(body, buf_or_stream)
+                elseif buf_or_stream isa Stream
+                    # for HTTP.Stream, there's already an optimized read method
+                    # that just needs an IOBuffer to write into
+                    res.body = read(buf_or_stream, body)
+                else
+                    error("unreachable")
+                end
+            else
+                res.body = read(buf_or_stream)
+            end
         else
             write(res.body, buf_or_stream)
         end
