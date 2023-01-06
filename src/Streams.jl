@@ -291,7 +291,7 @@ function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailab
     buf.size += n
 end
 
-Base.read(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer()) = take!(readall(http, buf))
+Base.read(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer()) = take!(readall!(http, buf))
 
 function readall!(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer())
     if ntoread(http) == unknown_length
