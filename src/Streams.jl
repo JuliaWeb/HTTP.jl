@@ -252,15 +252,13 @@ function Base.read(http::Stream, ::Type{UInt8})
 end
 
 function http_unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)::Int
-
     ntr = UInt(ntoread(http))
-    if ntr == 0
-        return 0
-    end
-    unsafe_read(http.stream, p, min(n, ntr + (http.readchunked ? 2 : 0)))
-                                             # If there is spare space in `p`
-                                             # read two extra bytes
-    n = min(n, ntr)                          # (`\r\n` at end ofchunk).
+    ntr == 0 && return 0
+    # If there is spare space in `p`
+    # read two extra bytes
+    # (`\r\n` at end ofchunk).
+    n = min(n, ntr + (http.readchunked ? 2 : 0))
+    unsafe_read(http.stream, p, n)
     update_ntoread(http, n)
     return n
 end
@@ -282,10 +280,10 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
     nothing
 end
 
-@noinline bufcheck(buf, n) = ((buf.size + n) <= buf.maxsize) || throw(ArgumentError("Unable to grow response stream IOBuffer large enough for response body size"))
+@noinline bufcheck(buf, n) = ((buf.size + n) <= length(buf.data)) || throw(ArgumentError("Unable to grow response stream IOBuffer large enough for response body size"))
 
 function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailable(http))
-    Base.ensureroom(buf, n)
+    Base.ensureroom(buf, buf.size + n)
     # check if there's enough room in buf to write n bytes
     bufcheck(buf, n)
     data = buf.data

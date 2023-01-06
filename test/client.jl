@@ -124,7 +124,7 @@ end
 
         # if provided buffer is too small, we won't grow it for user
         body = zeros(UInt8, 10)
-        @test_throws HTTP.RequestError HTTP.get("https://$httpbin/bytes/100"; response_stream=body, socket_type_tls=tls)
+        @test_throws HTTP.RequestError HTTP.get("https://$httpbin/bytes/100"; response_stream=body, socket_type_tls=tls, retry=false)
 
         # also won't shrink it if buffer provided is larger than response body
         body = zeros(UInt8, 10)
