@@ -347,7 +347,7 @@ const POOLS_LOCK = Threads.ReentrantLock()
 function getpool(::Type{T}) where {T}
     lock(POOLS_LOCK)
     try
-        get!(POOLS, T, Pool(Connection{T}))::Pool{Connection{T}}
+        get!(() -> Pool(Connection{T}), POOLS, T)::Pool{Connection{T}}
     finally
         unlock(POOLS_LOCK)
     end
