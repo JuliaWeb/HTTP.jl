@@ -21,8 +21,6 @@ mutable struct Loopback <: IO
     io::Base.BufferStream
 end
 Loopback() = Loopback(false, IOBuffer(), Base.BufferStream())
-const Loopback_POOL = HTTP.ConnectionPool.Pool(HTTP.Connection{Loopback})
-HTTP.ConnectionPool.getpool(::Type{Loopback}) = Loopback_POOL
 
 config = [
     :socket_type => Loopback,

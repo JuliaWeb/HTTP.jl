@@ -3,9 +3,6 @@ module ConnectionPools
 export Pod, Pool, acquire, release
 
 import Base: acquire, release
-import Sockets
-import MbedTLS
-using ..ConnectionPool: Connection
 
 connectionid(x) = objectid(x)
 _id(x) = string(connectionid(x), base=16, pad=16)
