@@ -212,7 +212,7 @@ Read until `find_delimiter(bytes)` returns non-zero.
 Return view of bytes up to the delimiter.
 """
 function Base.readuntil(c::Connection, f::F #=Vector{UInt8} -> Int=#,
-                                        sizehint=4096)::ByteView where {F}
+                                        sizehint=4096)::ByteView where {F <: Function}
     buf = c.buffer
     if bytesavailable(buf) == 0
         read_to_buffer(c, sizehint)

@@ -113,7 +113,7 @@ Return view of bytes up to the delimiter.
 """
 function Base.readuntil(buf::IOBuffer,
                     find_delimiter::F #= Vector{UInt8} -> Int =#
-                   )::ByteView where {F}
+                   )::ByteView where {F <: Function}
     l = find_delimiter(view(buf.data, buf.ptr:buf.size))
     if l == 0
         return nobytes
