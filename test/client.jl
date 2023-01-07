@@ -112,6 +112,17 @@ end
         seekstart(io)
         @test isok(r)
 
+        b = [JSON.parse(l) for l in eachline(io)]
+        @test all(zip(a, b)) do (x, y)
+            x["args"] == y["args"] &&
+            x["id"] == y["id"] &&
+            x["url"] == y["url"] &&
+            x["origin"] == y["origin"] &&
+            x["headers"]["Content-Length"] == y["headers"]["Content-Length"] &&
+            x["headers"]["Host"] == y["headers"]["Host"] &&
+            x["headers"]["User-Agent"] == y["headers"]["User-Agent"]
+        end
+
         # pass pre-allocated buffer
         body = zeros(UInt8, 100)
         r = HTTP.get("https://$httpbin/bytes/100"; response_stream=body, socket_type_tls=tls)
@@ -139,17 +150,6 @@ end
         # same Array, though it was resized larger
         @test body === r.body.data
         @test length(body) == 100
-
-        b = [JSON.parse(l) for l in eachline(io)]
-        @test all(zip(a, b)) do (x, y)
-            x["args"] == y["args"] &&
-            x["id"] == y["id"] &&
-            x["url"] == y["url"] &&
-            x["origin"] == y["origin"] &&
-            x["headers"]["Content-Length"] == y["headers"]["Content-Length"] &&
-            x["headers"]["Host"] == y["headers"]["Host"] &&
-            x["headers"]["User-Agent"] == y["headers"]["User-Agent"]
-        end
     end
 
     @testset "Client Body Posting - Vector{UTF8}, String, IOStream, IOBuffer, BufferStream, Dict, NamedTuple" begin
