@@ -38,6 +38,7 @@ include("multipart.jl")                ;using .Forms
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,
                                                          ParseError
 include("ConnectionPool.jl")           ;using .ConnectionPool
+include("StatusCodes.jl")              ;using .StatusCodes
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
