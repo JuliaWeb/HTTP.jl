@@ -112,9 +112,8 @@ Read from an `IO` stream until `find_delimiter(bytes)` returns non-zero.
 Return view of bytes up to the delimiter.
 """
 function Base.readuntil(buf::IOBuffer,
-                    find_delimiter::Function #= Vector{UInt8} -> Int =#
-                   )::ByteView
-
+                    find_delimiter::F #= Vector{UInt8} -> Int =#
+                   )::ByteView where {F <: Function}
     l = find_delimiter(view(buf.data, buf.ptr:buf.size))
     if l == 0
         return nobytes
