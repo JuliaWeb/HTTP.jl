@@ -257,8 +257,8 @@ function http_unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)::Int
     # If there is spare space in `p`
     # read two extra bytes
     # (`\r\n` at end ofchunk).
-    n = min(n, ntr + (http.readchunked ? 2 : 0))
-    unsafe_read(http.stream, p, n)
+    unsafe_read(http.stream, p, min(n, ntr + (http.readchunked ? 2 : 0)))
+    n = min(n, ntr)
     update_ntoread(http, n)
     return n
 end
