@@ -1,6 +1,6 @@
 module Streams
 
-export Stream, closebody, isaborted, setstatus
+export Stream, closebody, isaborted, setstatus, readall!
 
 using Sockets, LoggingExtras
 using ..IOExtras, ..Messages, ..ConnectionPool, ..Conditions, ..Exceptions
@@ -252,15 +252,13 @@ function Base.read(http::Stream, ::Type{UInt8})
 end
 
 function http_unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)::Int
-
     ntr = UInt(ntoread(http))
-    if ntr == 0
-        return 0
-    end
+    ntr == 0 && return 0
+    # If there is spare space in `p`
+    # read two extra bytes
+    # (`\r\n` at end ofchunk).
     unsafe_read(http.stream, p, min(n, ntr + (http.readchunked ? 2 : 0)))
-                                             # If there is spare space in `p`
-                                             # read two extra bytes
-    n = min(n, ntr)                          # (`\r\n` at end ofchunk).
+    n = min(n, ntr)
     update_ntoread(http, n)
     return n
 end
@@ -268,7 +266,7 @@ end
 function Base.readbytes!(http::Stream, buf::AbstractVector{UInt8},
                                        n=length(buf))
     @require n <= length(buf)
-    return http_unsafe_read(http, pointer(buf), UInt(n))
+    return GC.@preserve buf http_unsafe_read(http, pointer(buf), UInt(n))
 end
 
 function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
@@ -282,14 +280,20 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
     nothing
 end
 
-function Base.readbytes!(http::Stream, buf::IOBuffer, n=bytesavailable(http))
-    Base.ensureroom(buf, n)
-    unsafe_read(http, pointer(buf.data, buf.size + 1), n)
+@noinline bufcheck(buf, n) = ((buf.size + n) <= length(buf.data)) || throw(ArgumentError("Unable to grow response stream IOBuffer large enough for response body size"))
+
+function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailable(http))
+    Base.ensureroom(buf, buf.size + n)
+    # check if there's enough room in buf to write n bytes
+    bufcheck(buf, n)
+    data = buf.data
+    GC.@preserve data unsafe_read(http, pointer(data, buf.size + 1), n)
     buf.size += n
 end
 
-function Base.read(http::Stream)
-    buf = PipeBuffer()
+Base.read(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer()) = take!(readall!(http, buf))
+
+function readall!(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer())
     if ntoread(http) == unknown_length
         while !eof(http)
             readbytes!(http, buf)
@@ -299,7 +303,7 @@ function Base.read(http::Stream)
             readbytes!(http, buf, ntoread(http))
         end
     end
-    return take!(buf)
+    return buf
 end
 
 function Base.readuntil(http::Stream, f::Function)::ByteView
