@@ -75,6 +75,11 @@ import ..httpbin
         @test isfile(gzip_content_encoding_fn)
         @test last(splitext(gzip_content_encoding_fn)) == ".gz"
 
+        # Check content auto decoding
+        open(gzip_content_encoding_fn, "r") do f
+            @test HTTP.sniff(read(f, String)) == "application/json; charset=utf-8"
+        end
+
         # But not if the local name is fully given. HTTP#573
         mktempdir() do dir
             name = joinpath(dir, "foo")
@@ -83,6 +88,11 @@ import ..httpbin
                 name,
             )
             @test name == downloaded_name
+
+            # Check content auto decoding
+            open(name, "r") do f
+                @test HTTP.sniff(read(f, String)) == "application/json; charset=utf-8"
+            end
         end
     end
 end

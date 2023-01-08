@@ -1,4 +1,6 @@
 using .Pairs
+using CodecZlib
+using TranscodingStreams
 
 """
     safer_joinpath(basepart, parts...)
@@ -120,6 +122,11 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
         downloaded_bytes = 0
         start_time = now()
         prev_time = now()
+
+        if header(resp, "Content-Encoding") == "gzip"
+            stream = TranscodingStream(GzipDecompressor(), stream) # auto decoding
+            total_bytes = NaN # We don't know actual total bytes if the content is zipped.
+        end
 
         function report_callback()
             prev_time = now()
