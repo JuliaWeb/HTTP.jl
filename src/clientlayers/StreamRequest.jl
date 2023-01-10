@@ -155,7 +155,7 @@ function readbody!(stream::Stream, res::Response, buf_or_stream)
             else
                 res.body = read(buf_or_stream)
             end
-        elseif (res.body isa IOBuffers || res.body isa Base.GenericIOBuffer) && buf_or_stream isa Stream
+        elseif res.body isa Base.GenericIOBuffer && buf_or_stream isa Stream
             # optimization for IOBuffer response_stream to avoid temporary allocations
             readall!(buf_or_stream, res.body)
         else
