@@ -410,7 +410,7 @@ end
 function getconnection(::Type{TCPSocket},
                        host::AbstractString,
                        port::AbstractString;
-                       keepalive::Bool=false,
+                       keepalive::Bool=true,
                        connect_timeout::Int=0,
                        readtimeout::Int=0,
                        kw...)::TCPSocket

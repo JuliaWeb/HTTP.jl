@@ -82,7 +82,10 @@ println(String(r.body))
 `[string(k) => string(v) for (k,v) in headers]` yields `Vector{Pair}`.
 e.g. a `Dict()`, a `Vector{Tuple}`, a `Vector{Pair}` or an iterator.
 By convention, if a header _value_ is an empty string, it will not be written
-when sending a request (following the curl convention).
+when sending a request (following the curl convention). By default, a copy of
+provided headers is made (since required headers are typically set during the request);
+to avoid this copy and have HTTP.jl mutate the provided headers array, pass `copyheaders=false`
+as an additional keyword argument to the request.
 
 `body` can be a variety of objects:
 
@@ -278,7 +281,7 @@ HTTP.open("POST", "http://music.com/play") do io
 end
 ```
 """
-function request(method, url, h=Header[], b=nobody;
+function request(method, url, h=nothing, b=nobody;
                  headers=h, body=b, query=nothing, kw...)::Response
     return request(HTTP.stack(), method, url, headers, body, query; kw...)
 end
@@ -418,9 +421,9 @@ function stack(
     return messagelayer(debuglayer(layers4))
 end
 
-function request(stack::Base.Callable, method, url, h=Header[], b=nobody, q=nothing;
+function request(stack::Base.Callable, method, url, h=nothing, b=nobody, q=nothing;
                  headers=h, body=b, query=q, kw...)::Response
-    return stack(string(method), request_uri(url, query), mkheaders(headers), body; kw...)
+    return stack(string(method), request_uri(url, query), headers, body; kw...)
 end
 
 macro remove_linenums!(expr)
