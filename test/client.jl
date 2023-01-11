@@ -599,7 +599,10 @@ end
         shouldfail[] = false
         status[] = 404
         seekstart(req_body)
+        checked = Ref(0)
+        @test !HTTP.retryable(404)
         check = (s, ex, req, resp, resp_body) -> begin
+            checked[] += 1
             str = String(resp_body)
             if str != "404 unexpected error" || resp.status != 404
                 @error "unexpected response body" str
@@ -611,6 +614,7 @@ end
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry_check=check)
         @test isok(resp)
         @test String(take!(res_body)) == "hey there sailor"
+        @test checked[] >= 1
     finally
         close(server)
         HTTP.ConnectionPool.closeall()

@@ -51,7 +51,7 @@ module Messages
 
 export Message, Request, Response,
        reset!, status, method, headers, uri, body, resource,
-       iserror, isredirect, retryablebody, retryable, ischunked, issafe, isidempotent,
+       iserror, isredirect, retryablebody, retryable, retrylimitreached, ischunked, issafe, isidempotent,
        header, hasheader, headercontains, setheader, defaultheader!, appendheader,
        removeheader, mkheaders, readheaders, headerscomplete,
        readchunksize,
