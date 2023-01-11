@@ -45,7 +45,10 @@ function retrylayer(handler)
             check=(s, ex) -> begin
                 retryattempt[] += 1
                 req.context[:retryattempt] = retryattempt[]
-                retry = (isrecoverable(ex) && retryable(req)) || (retryablebody(req) && _retry_check(s, ex, req, retry_check))
+                retry = (
+                    (isrecoverable(ex) && retryable(req)) ||
+                    (retryablebody(req) && !retrylimitreached(req) && _retry_check(s, ex, req, retry_check))
+                )
                 if retryattempt[] == retries
                     req.context[:retrylimitreached] = true
                 end
