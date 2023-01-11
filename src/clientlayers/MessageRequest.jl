@@ -7,6 +7,12 @@ using ..Strings: HTTPVersion
 
 export messagelayer
 
+# like Messages.mkheaders, but we want to make a copy of user-provided headers
+# and avoid double copy when no headers provided (very common)
+mkreqheaders(::Nothing, ch) = Header[]
+mkreqheaders(headers::Headers, ch) = ch ? copy(headers) : headers
+mkreqheaders(h, ch) = mkheaders(h)
+
 """
     messagelayer(handler) -> handler
 
@@ -14,8 +20,8 @@ Construct a [`Request`](@ref) object from method, url, headers, and body.
 Hard-coded as the first layer in the request pipeline.
 """
 function messagelayer(handler)
-    return function(method::String, url::URI, headers::Headers, body; response_stream=nothing, http_version=HTTPVersion(1, 1), kw...)
-        req = Request(method, resource(url), headers, body; url=url, version=http_version, responsebody=response_stream)
+    return function(method::String, url::URI, headers, body; copyheaders::Bool=true, response_stream=nothing, http_version=HTTPVersion(1, 1), kw...)
+        req = Request(method, resource(url), mkreqheaders(headers, copyheaders), body; url=url, version=http_version, responsebody=response_stream)
         local resp
         try
             resp = handler(req; response_stream=response_stream, kw...)

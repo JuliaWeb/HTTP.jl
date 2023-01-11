@@ -57,7 +57,7 @@ export Message, Request, Response,
        readchunksize,
        writeheaders, writestartline,
        bodylength, unknown_length,
-       payload, decode, statustext, sprintcompact
+       payload, decode, sprintcompact
 
 using URIs, CodecZlib
 using ..Pairs, ..IOExtras, ..Parsers, ..Strings, ..Forms, ..Conditions
@@ -204,13 +204,14 @@ resource(uri::URI) = string( isempty(uri.path)     ? "/" :     uri.path,
                             !isempty(uri.fragment) ? "#" : "", uri.fragment)
 
 mkheaders(h::Headers) = h
-function mkheaders(h)::Headers
+function mkheaders(h, headers=Vector{Header}(undef, length(h)))::Headers
     # validation
-    foreach(h) do head
+    for (i, head) in enumerate(h)
         head isa String && throw(ArgumentError("header must be passed as key => value pair: `$head`"))
         length(head) != 2 && throw(ArgumentError("invalid header key-value pair: $head"))
+        headers[i] = SubString(string(head[1])) => SubString(string(head[2]))
     end
-    return Header[string(k) => string(v) for (k, v) in h]
+    return headers
 end
 
 method(r::Request) = getfield(r, :method)
