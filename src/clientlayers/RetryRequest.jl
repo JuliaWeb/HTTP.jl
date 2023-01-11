@@ -16,9 +16,15 @@ Retry the request if it throws a recoverable exception.
 increasing delay is introduced between attempts to avoid exacerbating network
 congestion.
 
-Methods of `isrecoverable(e)` define which exception types lead to a retry.
-e.g. `Sockets.DNSError`, `Base.EOFError` and `HTTP.StatusError`
-(if status is `5xx`).
+By default, requests that have a retryable body, where the request wasn't written
+or is idempotent will be retries. If the request is made and a response is received
+with a status code of 403, 408, 409, 429, or 5xx, the request will be retried.
+
+`retries` controls the # of total retries that will be attempted.
+
+`retry_check` allows passing a custom retry check in the case where the default
+retry check _wouldn't_ retry, if `retry_check` returns true, then the request
+will be retried anyway.
 """
 function retrylayer(handler)
     return function(req::Request; retry::Bool=true, retries::Int=4,
