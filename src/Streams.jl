@@ -263,9 +263,8 @@ function http_unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)::Int
     return n
 end
 
-function Base.readbytes!(http::Stream, buf::AbstractVector{UInt8},
-                                       n=length(buf))
-    @require n <= length(buf)
+function Base.readbytes!(http::Stream, buf::AbstractVector{UInt8}, n=length(buf))
+    n > length(buf) && resize!(buf, n)
     return GC.@preserve buf http_unsafe_read(http, pointer(buf), UInt(n))
 end
 
@@ -280,15 +279,24 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
     nothing
 end
 
-@noinline bufcheck(buf, n) = ((buf.size + n) <= length(buf.data)) || throw(ArgumentError("Unable to grow response stream IOBuffer large enough for response body size"))
+@noinline function bufcheck(buf::Base.GenericIOBuffer, n)
+    requested_buffer_capacity = (buf.append ? buf.size : (buf.ptr - 1)) + n
+    requested_buffer_capacity > length(buf.data) && throw(ArgumentError("Unable to grow response stream IOBuffer large enough for response body size"))
+end
 
 function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailable(http))
-    Base.ensureroom(buf, buf.size + n)
+    Base.ensureroom(buf, n)
     # check if there's enough room in buf to write n bytes
     bufcheck(buf, n)
     data = buf.data
-    GC.@preserve data unsafe_read(http, pointer(data, buf.size + 1), n)
-    buf.size += n
+    GC.@preserve data unsafe_read(http, pointer(data, (buf.append ? buf.size + 1 : buf.ptr)), n)
+    if buf.append
+        buf.size += n
+    else
+        buf.ptr += n
+        buf.size = max(buf.size, buf.ptr - 1)
+    end
+    return n
 end
 
 Base.read(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer()) = take!(readall!(http, buf))

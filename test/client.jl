@@ -150,6 +150,26 @@ end
         # same Array, though it was resized larger
         @test body === r.body.data
         @test length(body) == 100
+
+        # and you can reuse it
+        seekstart(io)
+        r = HTTP.get("https://$httpbin/bytes/100"; response_stream=io, socket_type_tls=tls)
+        # same Array, though it was resized larger
+        @test body === r.body.data
+        @test length(body) == 100
+
+        # we respect ptr and size
+        body = zeros(UInt8, 100)
+        io = IOBuffer(body; write=true, append=true) # size=100, ptr=1
+        r = HTTP.get("https://$httpbin/bytes/100"; response_stream=io, socket_type_tls=tls)
+        @test length(body) == 200
+
+        body = zeros(UInt8, 100)
+        io = IOBuffer(body, write=true, append=false)
+        write(io, body) # size=100, ptr=101
+        r = HTTP.get("https://$httpbin/bytes/100"; response_stream=io, socket_type_tls=tls)
+        @test length(body) == 200
+
     end
 
     @testset "Client Body Posting - Vector{UTF8}, String, IOStream, IOBuffer, BufferStream, Dict, NamedTuple" begin
