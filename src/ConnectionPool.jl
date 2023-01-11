@@ -410,6 +410,9 @@ end
 function getconnection(::Type{TCPSocket},
                        host::AbstractString,
                        port::AbstractString;
+                       # set keepalive to true by default since it's cheap and helps keep long-running requests/responses
+                       # alive in the face of heavy workloads where Julia's task scheduler might take a while to
+                       # keep up with midflight requests
                        keepalive::Bool=true,
                        connect_timeout::Int=0,
                        readtimeout::Int=0,
