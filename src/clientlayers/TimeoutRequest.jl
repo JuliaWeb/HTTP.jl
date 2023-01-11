@@ -11,7 +11,7 @@ export timeoutlayer
 Close the `HTTP.Stream` if no data has been received for `readtimeout` seconds.
 """
 function timeoutlayer(handler)
-    return function(stream::Stream; readtimeout::Int=0, kw...)
+    return function(stream::Stream; readtimeout::Int=60, kw...)
         if readtimeout <= 0
             # skip
             return handler(stream; kw...)
