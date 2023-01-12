@@ -97,7 +97,7 @@ Many remote web services/APIs have rate limits or throttling in place to avoid b
 
 #### `readtimeout`
 
-After a connection is established and a request is sent, a response is expected. If a non-zero value is passed to the `readtimeout` keyword argument, `HTTP.request` will wait to receive a response that many seconds before throwing an error. Note that for chunked or streaming responses, each chunk/packet of bytes received causes the timeout to reset. Passing `readtimeout = 0` disables any timeout checking and is the default.
+After a connection is established and a request is sent, a response is expected. If a non-zero value is passed to the `readtimeout` keyword argument, `HTTP.request` will wait to receive a response that many seconds before throwing an error. Note that for chunked or streaming responses, each chunk/packet of bytes received causes the timeout to reset. Passing `readtimeout = 0` disables any timeout checking. The default value is 60 (seconds).
 
 ### `status_exception`
 
