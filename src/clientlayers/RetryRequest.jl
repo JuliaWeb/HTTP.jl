@@ -3,7 +3,7 @@ module RetryRequest
 using Sockets, LoggingExtras, MbedTLS, OpenSSL
 using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest, ..Exceptions
 
-export retrylayer, retry_check, isrecoverable
+export retrylayer, retry_check, isrecoverable, isstatuserror
 
 """
     retrylayer(handler) -> handler
@@ -58,19 +58,16 @@ function retrylayer(handler)
     end
 end
 
+isstatuserror(e, status) = e isa HTTP.StatusError && e.status in status
+isrecoverable(ex) = true
+isrecoverable(ex::StatusError) = retryable(ex.status)
+retry_check(s, ex, x...) = isrecoverable(ex)
+
 function _retry_check(s, ex, req, check)
     resp = req.response
     resp_body = get(req.context, :response_body, nothing)
     return check(s, ex, req, resp_body !== nothing ? resp : nothing, resp_body)
 end
-retry_check(s, ex, x...) = isrecoverable(ex)
-isrecoverable(e) = false
-isrecoverable(e::Union{Base.EOFError, Base.IOError, MbedTLS.MbedException, OpenSSL.OpenSSLError}) = true
-isrecoverable(e::ArgumentError) = e.msg == "stream is closed or unusable"
-isrecoverable(e::Sockets.DNSError) = true
-isrecoverable(e::ConnectError) = true
-isrecoverable(e::RequestError) = isrecoverable(e.error)
-isrecoverable(e::StatusError) = retryable(e.status)
 
 function no_retry_reason(ex, req)
     buf = IOBuffer()
