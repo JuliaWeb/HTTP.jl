@@ -28,7 +28,7 @@ will be retried anyway.
 """
 function retrylayer(handler)
     return function(req::Request; retry::Bool=true, retries::Int=4,
-        retry_delays::ExponentialBackOff=ExponentialBackOff(n = retries, factor=3.0), retry_check=FALSE,
+        retry_delays=ExponentialBackOff(n = retries, factor=3.0), retry_check=FALSE,
         retry_non_idempotent::Bool=false, kw...)
         if !retry || retries == 0
             # no retry
