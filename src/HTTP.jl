@@ -117,10 +117,10 @@ Supported optional keyword arguments:
     will be written to this stream instead of returned as a `Vector{UInt8}`.
  - `verbose = 0`, set to `1` or `2` for increasingly verbose logging of the
     request and response process
- - `connect_timeout = 60`, close the connection after this many seconds if it
+ - `connect_timeout = 10`, close the connection after this many seconds if it
    is still attempting to connect. Use `connect_timeout = 0` to disable.
  - `connection_limit = 8`, number of concurrent connections allowed to each host:port.
- - `readtimeout = 60`, close the connection if no data is received for this many
+ - `readtimeout = 0`, close the connection if no data is received for this many
    seconds. Use `readtimeout = 0` to disable.
  - `status_exception = true`, throw `HTTP.StatusError` for response status >= 300.
  - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)

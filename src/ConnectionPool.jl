@@ -414,8 +414,8 @@ function getconnection(::Type{TCPSocket},
                        # alive in the face of heavy workloads where Julia's task scheduler might take a while to
                        # keep up with midflight requests
                        keepalive::Bool=true,
-                       connect_timeout::Int=60,
-                       readtimeout::Int=60,
+                       connect_timeout::Int=10,
+                       readtimeout::Int=0,
                        kw...)::TCPSocket
 
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
@@ -539,7 +539,7 @@ end
 function sslupgrade(::Type{IOType}, c::Connection,
                     host::AbstractString;
                     require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
-                    readtimeout::Int=60,
+                    readtimeout::Int=0,
                     kw...)::Connection{IOType} where {IOType}
     # initiate the upgrade to SSL
     # if the upgrade fails, an error will be thrown and the original c will be closed
