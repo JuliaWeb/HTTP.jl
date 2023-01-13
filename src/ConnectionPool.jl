@@ -536,11 +536,11 @@ function sslconnection(::Type{SSLContext}, tcp::TCPSocket, host::AbstractString;
     return io
 end
 
-function sslupgrade(::Type{IOType}, c::Connection,
+function sslupgrade(::Type{IOType}, c::Connection{T},
                     host::AbstractString;
                     require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                     readtimeout::Int=0,
-                    kw...)::Connection{IOType} where {IOType}
+                    kw...)::Connection{IOType} where {T, IOType}
     # initiate the upgrade to SSL
     # if the upgrade fails, an error will be thrown and the original c will be closed
     # in ConnectionRequest
@@ -554,7 +554,7 @@ function sslupgrade(::Type{IOType}, c::Connection,
     # success, now we turn it into a new Connection
     conn = Connection(host, "", 0, require_ssl_verification, tls)
     # release the "old" one, but don't allow reuse since we're hijacking the socket
-    release(getpool(IOType), connectionkey(c), c; return_for_reuse=false)
+    release(getpool(T), connectionkey(c), c; return_for_reuse=false)
     # and return the new one
     return acquire(getpool(IOType), connectionkey(conn), conn)
 end
