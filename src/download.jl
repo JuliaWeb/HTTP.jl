@@ -1,4 +1,5 @@
 using .Pairs
+using CodecZlib
 
 """
     safer_joinpath(basepart, parts...)
@@ -68,12 +69,6 @@ function determine_file(path, resp, hdrs)
                     )
 
         
-        # get the extension, if we are going to save it in encoded form.
-        # unlike a web-browser we don't automatically decompress
-        if header(resp, "Content-Encoding") == "gzip"
-            filename *= ".gz"
-        end
-        
         safer_joinpath(path, filename)
     else
         # We have been given a full filepath
@@ -120,6 +115,11 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
         downloaded_bytes = 0
         start_time = now()
         prev_time = now()
+
+        if header(resp, "Content-Encoding") == "gzip"
+            stream = GzipDecompressorStream(stream) # auto decoding
+            total_bytes = NaN # We don't know actual total bytes if the content is zipped.
+        end
 
         function report_callback()
             prev_time = now()
