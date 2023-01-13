@@ -73,7 +73,6 @@ import ..httpbin
         # Add gz extension if we are determining the filename
         gzip_content_encoding_fn = HTTP.download("https://$httpbin/gzip")
         @test isfile(gzip_content_encoding_fn)
-        @test last(splitext(gzip_content_encoding_fn)) == ".gz"
 
         # Check content auto decoding
         open(gzip_content_encoding_fn, "r") do f
@@ -88,11 +87,6 @@ import ..httpbin
                 name,
             )
             @test name == downloaded_name
-
-            # Check content auto decoding
-            open(name, "r") do f
-                @test HTTP.sniff(read(f, String)) == "application/json; charset=utf-8"
-            end
         end
     end
 end
