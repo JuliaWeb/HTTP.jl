@@ -1,3 +1,5 @@
+@testitem "Autobahn WebSocket Tests" begin
+
 using Test, Sockets, HTTP, HTTP.WebSockets, JSON
 
 const DIR = abspath(joinpath(dirname(pathof(HTTP)), "../test/websockets"))
@@ -12,7 +14,6 @@ if length(split(read(`docker images crossbario/autobahn-testsuite`, String), '\n
     @assert success(`docker pull crossbario/autobahn-testsuite`)
 end
 
-@testset "Autobahn WebSocket Tests" begin
 
 @testset "Client" begin
     # Run the autobahn test suite in a docker container
@@ -69,7 +70,7 @@ end
         # stop/remove server process
         kill(serverproc)
     end
-end # @testset "Autobahn testsuite"
+end # @testset "Client"
 
 @testset "Server" begin
     server = WebSockets.listen!(9002; suppress_close_error=true) do ws
@@ -87,8 +88,8 @@ end # @testset "Autobahn testsuite"
     finally
         close(server)
     end
-end
-
-end # @testset "WebSockets"
+end # @testset "Server"
 
 end # 64-bit only
+
+end # @testitem

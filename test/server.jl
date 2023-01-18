@@ -1,7 +1,8 @@
-module test_server
+@testsetup module TestServer
 
-import ..httpbin
 using HTTP, HTTP.IOExtras, Sockets, Test, MbedTLS
+
+export testget, echohandler, echostreamhandler
 
 function testget(url, m=1)
     r = []
@@ -17,7 +18,11 @@ end
 const echohandler = req -> HTTP.Response(200, req.body)
 const echostreamhandler = HTTP.streamhandler(echohandler)
 
-@testset "HTTP.listen" begin
+end # testsetup
+
+
+@testitem "HTTP.listen" setup=[TestServer, HTTPBin] begin
+    using Sockets, MbedTLS
     server = HTTP.listen!(echostreamhandler; listenany=true)
     port = HTTP.port(server)
     r = testget("http://127.0.0.1:$port")
@@ -191,20 +196,20 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
             HTTP.startwrite(http)
             write(http, "response body\n")
         end
-    
+
         port = HTTP.port(server)
-    
+
         sock = connect(host, port)
         close(sock)
-    
+
         r = HTTP.get("https://$(host):$(port)/"; readtimeout=30, require_ssl_verification = false)
         @test r.status == 200
 
         close(server)
-    end    
-end # @testset
+    end
+end # HTTP.listen
 
-@testset "on_shutdown" begin
+@testitem "on_shutdown" begin
     @test HTTP.Servers.shutdown(nothing) === nothing
 
     # Shutdown adds 1
@@ -224,10 +229,11 @@ end # @testset
     server = HTTP.listen!(x -> nothing; listenany=true, on_shutdown=[shutdown_throw, shutdown_add])
     @test_logs (:error, r"shutdown function .* failed") close(server)
     @test TEST_COUNT[] == 4
-end # @testset
+end # on_shutdown
 
-@testset "access logging" begin
-    local handler = (http) -> begin
+@testitem "access logging" begin
+    using Sockets
+    handler = (http) -> begin
         if http.message.target == "/internal-error"
             error("internal error")
         end
@@ -311,6 +317,4 @@ end # @testset
     @test occursin(r"^\*/\* text/plain GET /index\.html HTTP/1\.1 GET /index\.html 127\.0\.0\.1 \d+ - HTTP/1\.1 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.* \d+/.*/\d{4}:\d{2}:\d{2}:\d{2}.* 200 12$", logs[2].message)
     @test occursin(r"^\*/\* text/plain GET /index\.html\?a=b HTTP/1\.1 GET /index\.html\?a=b 127\.0\.0\.1 \d+ - HTTP/1\.1 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.* \d+/.*/\d{4}:\d{2}:\d{2}:\d{2}.* 200 12$", logs[3].message)
     @test occursin(r"^\*/\* text/plain HEAD / HTTP/1\.1 HEAD / 127\.0\.0\.1 \d+ - HTTP/1\.1 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.* \d+/.*/\d{4}:\d{2}:\d{2}:\d{2}.* 200 0$", logs[4].message)
-end
-
-end # module
+end # access logging

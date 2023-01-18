@@ -1,7 +1,4 @@
-import HTTP.Parsers
-import HTTP.URIs
-
-@testset "utils.jl" begin
+@testitem "utils.jl" begin
     @test HTTP.Strings.escapehtml("&\"'<>") == "&amp;&quot;&#39;&lt;&gt;"
 
     @test HTTP.Cookies.isurlchar('\u81')
@@ -71,7 +68,7 @@ import HTTP.URIs
 end # testset
 
 
-@testset "Conditions" begin
+@testitem "Conditions" begin
     function foo(x, y)
         HTTP.@require x > 10
         HTTP.@ensure y > 10

@@ -1,4 +1,4 @@
-module TestLoopback
+@testsetup module TestLoopback
 
 using Test
 using HTTP
@@ -6,7 +6,10 @@ using HTTP.IOExtras
 using HTTP.Parsers
 using HTTP.Messages
 using HTTP.Sockets
-import ..httpbin
+
+export FunctionIO, Loopback
+export lbreq, lbopen
+export async_test
 
 mutable struct FunctionIO <: IO
     f::Function
@@ -56,17 +59,6 @@ lbopen(f, req, headers) =
 function reset(lb::Loopback)
     truncate(lb.buf, 0)
     lb.got_headers = false
-end
-
-"""
-    escapelines(string)
-
-Escape `string` and insert '\n' after escaped newline characters.
-"""
-function escapelines(s::String)
-    s = Base.escape_string(s)
-    s = replace(s, "\\n" => "\\n\n    ")
-    return string("    ", strip(s))
 end
 
 function on_headers(f::Function, lb::Loopback)
@@ -198,7 +190,10 @@ function async_test(m=["GET","GET","GET","GET","GET"];kw...)
     return t2 - t1
 end
 
-@testset "loopback" begin
+end # @testsetup module TestLoopback
+
+
+@testitem "loopback" setup=[TestLoopback] begin
     global server_events
 
     @testset "FunctionIO" begin
@@ -289,7 +284,7 @@ end
         @test body_sent == false
     end
 
-    @testset "libreq - Sleep" begin
+    @testset "lbreq - Sleep" begin
         r = lbreq("echo", [], [
             FunctionIO(()->(sleep(0.1); "Hello")),
             FunctionIO(()->(sleep(0.1); " World!"))])
@@ -305,6 +300,10 @@ end
         @test hello_sent[]
         @test !world_sent[]
     end
+end # @testitem Loopback
+
+
+@testitem "Async" setup=[TestLoopback] begin
 
     @testset "ASync - Pipeline limit = 0" begin
         server_events = []
@@ -324,7 +323,7 @@ end
         end
     end
 
-    @testset "ASync - " begin
+    @testset "ASync - A" begin
         server_events = []
         t = async_test()
         if haskey(ENV, "HTTP_JL_TEST_TIMING_SENSITIVE")
@@ -346,13 +345,11 @@ end
     #  non-idempotent method, until the final response
     #  status code for that method has been received"
     # https://tools.ietf.org/html/rfc7230#section-6.3.2
-    @testset "ASync - " begin
+    @testset "ASync - B" begin
         server_events = []
         t = async_test(["POST","GET","GET","GET","GET"])
         @test server_events[1:2] == [
             "Request: POST /delay1 HTTP/1.1",
             "Response: HTTP/1.1 200 OK <= (POST /delay1 HTTP/1.1)"]
     end
-end
-
-end # module
+end # @testitem Async

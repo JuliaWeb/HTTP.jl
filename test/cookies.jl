@@ -1,9 +1,6 @@
-module TestCookies
+@testitem "Cookies" begin
+    using Sockets
 
-using HTTP
-using Sockets, Test
-
-@testset "Cookies" begin
     c = HTTP.Cookies.Cookie()
     @test c.name == ""
     @test HTTP.Cookies.domainmatch(c, "")
@@ -282,6 +279,5 @@ using Sockets, Test
         @test HTTP.headers(r, "Set-Cookie") == ["NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly", "NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly"]
         @test [c_parsed, c_parsed] == HTTP.Cookies.readsetcookies(["Set-Cookie"] .=> HTTP.headers(r, "Set-Cookie"))
     end
-end
 
-end # module
+end # testitem

@@ -1,11 +1,9 @@
-module TestChunking
-
-using Test, Sockets
-using HTTP, HTTP.IOExtras
-using BufferedStreams
-
 # For more information see: https://github.com/JuliaWeb/HTTP.jl/pull/288
-@testset "Chunking" begin
+@testitem "Chunking" begin
+    using Sockets
+    using HTTP.IOExtras
+    using BufferedStreams
+
     sz = 90
     port = 8095
     hex(n) = string(n, base=16)
@@ -60,6 +58,5 @@ using BufferedStreams
     finally
         close(server)
     end
-end
 
-end # module
+end # testitem

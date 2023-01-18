@@ -1,3 +1,5 @@
+@testitem "Deno WebSocket tests" begin
+
 using Test, Sockets, Deno_jll, HTTP
 
 # Not all architectures have a Deno_jll
@@ -26,3 +28,5 @@ hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin
         close(server)
     end
 end
+
+end # @testitem

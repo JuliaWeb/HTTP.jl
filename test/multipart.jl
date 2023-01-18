@@ -1,15 +1,18 @@
-function test_multipart(r, body)
-    @test isok(r)
-    json = JSON.parse(IOBuffer(HTTP.payload(r)))
-    @test startswith(json["headers"]["Content-Type"][1], "multipart/form-data; boundary=")
-    reset(body); mark(body)
-end
+@testitem "HTTP.Form for multipart/form-data" setup=[HTTPBin] begin
+    using JSON
 
-@testset "HTTP.Form for multipart/form-data" begin
     headers = Dict("User-Agent" => "HTTP.jl")
     body = HTTP.Form(Dict())
     mark(body)
     @testset "Setting of Content-Type" begin
+
+        function test_multipart(r, body)
+            @test r.status == 200
+            json = JSON.parse(IOBuffer(HTTP.payload(r)))
+            @test startswith(json["headers"]["Content-Type"][1], "multipart/form-data; boundary=")
+            reset(body); mark(body)
+        end
+
         test_multipart(HTTP.request("POST", "https://$httpbin/post", headers, body), body)
         test_multipart(HTTP.post("https://$httpbin/post", headers, body), body)
         test_multipart(HTTP.request("PUT", "https://$httpbin/put", headers, body), body)

@@ -1,15 +1,12 @@
-module TestClient
+@testitem "TestClient" setup=[TestRequest, TestRequest2, HTTPBin] begin
 
-using HTTP, HTTP.Exceptions, MbedTLS, OpenSSL
-include(joinpath(dirname(pathof(HTTP)), "../test/resources/TestRequest.jl"))
-import ..isok, ..httpbin
-using .TestRequest
-using .TestRequest2
+using HTTP.Exceptions, MbedTLS, OpenSSL
 using Sockets
 using JSON
-using Test
 using URIs
 using InteractiveUtils: @which
+
+isok(r) = r.status == 200
 
 # test we can adjust default_connection_limit
 for x in (10, 12)
@@ -648,4 +645,4 @@ end
     @test isok(resp)
 end
 
-end # module
+end # testitem

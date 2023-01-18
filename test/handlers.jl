@@ -1,6 +1,4 @@
-using HTTP, Test
-
-@testset "Handlers" begin
+@testitem "Handlers" begin
 
     called = Ref{Bool}(false)
     middle = handler -> req -> begin
@@ -77,4 +75,4 @@ using HTTP, Test
     @test r(HTTP.Request("GET", "/api/widgets/abc/subwidget")) == 15
     @test r(HTTP.Request("GET", "/api/widgets/abc/subwidgetname")) == 16
 
-end
+end # testitem
