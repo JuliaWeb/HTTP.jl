@@ -1,41 +1,12 @@
-using Test, HTTP, JSON
+using TestItems, TestItemRunner
 
-const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
+@testsetup module Common
+    export httpbin
+    export isok
 
-const httpbin = get(ENV, "JULIA_TEST_HTTPBINGO_SERVER", "httpbingo.julialang.org")
+    const httpbin = get(ENV, "JULIA_TEST_HTTPBINGO_SERVER", "httpbingo.julialang.org")
 
-isok(r) = r.status == 200
-
-include(joinpath(dir, "resources/TestRequest.jl"))
-@testset "HTTP" begin
-    for f in [
-            "ascii.jl",
-            "chunking.jl",
-            "utils.jl",
-            "client.jl",
-            "download.jl",
-            "multipart.jl",
-            "parsemultipart.jl",
-            "sniff.jl",
-            "cookies.jl",
-            "parser.jl",
-            "loopback.jl",
-            "websockets/deno_client/server.jl",
-            "websockets/autobahn.jl",
-            "messages.jl",
-            "handlers.jl",
-            "server.jl",
-            "async.jl",
-            "mwe.jl",
-            "try_with_timeout.jl",
-            "httpversion.jl",
-            ]
-        file = joinpath(dir, f)
-        println("Running $file tests...")
-        if isfile(file)
-            include(file)
-        else
-            @show readdir(dirname(file))
-        end
-    end
+    isok(r) = r.status == 200
 end
+
+@run_package_tests

@@ -1,5 +1,4 @@
-module HTTPMessages
-export Message, requests, responses, Headers
+@testsetup module TestMessages
 
 const Headers = Vector{Pair{String,String}}
 
@@ -1358,4 +1357,4 @@ https://github.com/nodejs/http-parser/pull/64#issuecomment-2042429
 )
 ]
 
-end # module HTTPMessages
+end # @testsetup

@@ -1,3 +1,5 @@
+@testitem "MWE" begin
+
 using HTTP
 using HTTP: hasheader
 using MbedTLS
@@ -37,4 +39,6 @@ end
             HTTP.Handlers.handle(h, http)
         end
     end
+end
+
 end

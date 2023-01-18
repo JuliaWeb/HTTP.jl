@@ -1,6 +1,4 @@
-using HTTP.Strings
-
-@testset "ascii.jl" begin
+@testitem "ascii.jl" begin
     lc = HTTP.Strings.ascii_lc
     lceq = HTTP.Strings.ascii_lc_isequal
 

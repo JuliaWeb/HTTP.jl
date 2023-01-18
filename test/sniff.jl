@@ -1,4 +1,6 @@
-const test_cases = [
+@testitem "HTTP.sniff" begin
+
+test_cases = [
     ("Empty", UInt8[], "text/plain; charset=utf-8"),
     ("Binary", UInt8[1, 2, 3], "application/octet-stream"),
 
@@ -242,13 +244,11 @@ json_strings = [
 }}
 """
 ]
-
-@testset "sniff.jl" begin
     @testset "HTTP.sniff - $(case[1])" for case in test_cases
         @test HTTP.sniff(case[2]) == case[3]
     end
 
-    @testset "HTTP.isjson - $json_string" for json_string in json_strings
+    @testset "HTTP.isjson - $i" for (i, json_string) in enumerate(json_strings)
         @test HTTP.isjson(HTTP.bytes(json_string))[1]
     end
 

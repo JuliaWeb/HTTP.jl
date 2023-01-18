@@ -1,17 +1,16 @@
-module test_async
+@testsetup module AsyncSetup
+    export configs, dump_async_exception
 
-import ..httpbin
-using Test, HTTP, JSON
-
-@time @testset "ASync" begin
-    configs = [
+    const configs = [
         Pair{Symbol, Any}[:verbose => 0],
         Pair{Symbol, Any}[:verbose => 0, :reuse_limit => 200],
         Pair{Symbol, Any}[:verbose => 0, :reuse_limit => 50]
     ]
 
     dump_async_exception(e, st) = @error "async exception: " exception=(e, st)
+end
 
+@testitem "Async request headers" setup=[AsyncSetup] begin
     @testset "HTTP.request - Headers - $config - https" for config in configs
         result = []
 
@@ -34,7 +33,9 @@ using Test, HTTP, JSON
 
         HTTP.ConnectionPool.closeall()
     end
+end
 
+@testitem "Async request body" setup=[AsyncSetup] begin
     @testset "HTTP.request - Body - $config - https" for config in configs
         result = []
 
@@ -58,7 +59,9 @@ using Test, HTTP, JSON
 
         HTTP.ConnectionPool.closeall()
     end
+end
 
+@testitem "Async open" setup=[AsyncSetup] begin
     @testset "HTTP.open - $config - https" for config in configs
         result = []
 
@@ -87,7 +90,9 @@ using Test, HTTP, JSON
 
         HTTP.ConnectionPool.closeall()
     end
+end
 
+@testitem "Async request stream" setup=[AsyncSetup] begin
     @testset "HTTP.request - Response Stream - $config - https" for config in configs
         result = []
 
@@ -129,5 +134,3 @@ using Test, HTTP, JSON
         HTTP.ConnectionPool.closeall()
     end
 end
-
-end # module

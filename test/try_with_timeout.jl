@@ -1,4 +1,6 @@
-@testset "try_with_timeout $warmup" for warmup in [true, false]
+@testitem "try_with_timeout" begin
+
+@testset "try_with_timeout warmup=$warmup" for warmup in [true, false]
     nevertimeout() = false
     timeoutafterfirstdelay() = true
     throwerrorexception() = throw(ErrorException("error as expected"))
@@ -39,3 +41,5 @@
         end
     end
 end
+
+end # testitem

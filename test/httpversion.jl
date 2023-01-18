@@ -1,4 +1,6 @@
-@testset "HTTPVersion" begin
+@testitem "HTTPVersion" begin
+
+using HTTP.Strings: HTTPVersion
 
 # Constructors
 @test HTTPVersion(1) == HTTPVersion(1, 0)
@@ -28,4 +30,4 @@ for r in (req, res)
     @test r.version < v"1.2"
 end
 
-end # testset
+end # testitem

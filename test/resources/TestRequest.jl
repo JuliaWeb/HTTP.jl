@@ -1,4 +1,4 @@
-module TestRequest
+@testsetup module TestRequest
 
 using HTTP
 
@@ -18,9 +18,10 @@ end
 
 HTTP.@client (testrequestlayer,) (teststreamlayer,)
 
-end
+end # TestRequest
 
-module TestRequest2
+
+@testsetup module TestRequest2
 
 using HTTP, Test
 
@@ -54,4 +55,4 @@ end
 
 HTTP.@client (first=[testouterrequestlayer], last=[testinnerrequestlayer]) (first=[testouterstreamlayer], last=[testinnerstreamlayer])
 
-end
+end # TestRequest2

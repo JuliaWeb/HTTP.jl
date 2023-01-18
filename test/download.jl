@@ -1,8 +1,4 @@
-using HTTP
-
-import ..httpbin
-
-@testset "HTTP.download" begin
+@testitem "HTTP.download" setup=[Common] begin
     @testset "Update Period" begin
         @test_logs (:info, "Downloading") HTTP.download(
         "http://test.greenbytes.de/tech/tc2231/inlwithasciifilenamepdf.asis";)
@@ -15,7 +11,6 @@ import ..httpbin
     end
 
     @testset "filename from remote path" begin
-
         file = HTTP.download("https://httpbingo.julialang.org/html")
         @test basename(file) == "html"
         file = HTTP.download("https://httpbingo.julialang.org/redirect/2")

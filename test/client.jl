@@ -1,21 +1,12 @@
-module TestClient
+@testitem "default_connection_limit" begin
+    # test we can adjust default_connection_limit
+    HTTP.set_default_connection_limit!(12)
+end
 
-using HTTP, HTTP.Exceptions, MbedTLS, OpenSSL
-include(joinpath(dirname(pathof(HTTP)), "../test/resources/TestRequest.jl"))
-import ..isok, ..httpbin
-using .TestRequest
-using .TestRequest2
-using Sockets
-using JSON
-using Test
-using URIs
-using InteractiveUtils: @which
+@testitem "@client macro" begin
+    using InteractiveUtils: @which
 
-# test we can adjust default_connection_limit
-HTTP.set_default_connection_limit!(12)
-
-@testset "@client macro" begin
-    @eval module MyClient
+    module MyClient
         using HTTP
         HTTP.@client () ()
     end
@@ -25,7 +16,7 @@ HTTP.set_default_connection_limit!(12)
     @test file == @__FILE__
 end
 
-@testset "Custom HTTP Stack" begin
+@testitem "Custom HTTP Stack" setup=[Common, TestRequest, TestRequest2] begin
    @testset "Low-level Request" begin
         wasincluded = Ref(false)
         result = TestRequest.get("https://$httpbin/ip"; httptestlayer=wasincluded)
@@ -38,7 +29,13 @@ end
     end
 end
 
-@testset "Client.jl" for tls in [MbedTLS.SSLContext, OpenSSL.SSLStream]
+@testitem "Client" setup=[Common] begin
+using JSON
+using MbedTLS
+using OpenSSL
+using URIs: URI
+
+@testset for tls in [MbedTLS.SSLContext, OpenSSL.SSLStream]
     @testset "GET, HEAD, POST, PUT, DELETE, PATCH" begin
         @test isok(HTTP.get("https://$httpbin/ip", socket_type_tls=tls))
         @test isok(HTTP.head("https://$httpbin/ip", socket_type_tls=tls))
@@ -278,9 +275,10 @@ end
         @test r.request.method == "GET"
         @test length(r.body) > 0
     end
-end
+end # testset for...
+end # @testitem "Client"
 
-@testset "Incomplete response with known content length" begin
+@testitem "Incomplete response with known content length" begin
     server = nothing
     try
         server = HTTP.listen!("0.0.0.0", 8080) do http
@@ -302,23 +300,24 @@ end
         @test err.error isa EOFError
     finally
         # Shutdown
-        @try Base.IOError close(server)
+        HTTP.@try Base.IOError close(server)
         HTTP.ConnectionPool.closeall()
     end
 end
 
-@testset "HTTP.open accepts method::Symbol" begin
+@testitem "HTTP.open accepts method::Symbol" setup=[Common] begin
     @test isok(HTTP.open(x -> x, :GET, "http://$httpbin/ip"))
 end
 
-@testset "readtimeout" begin
+@testitem "readtimeout" setup=[Common] begin
     @test_throws HTTP.TimeoutError begin
         HTTP.get("http://$httpbin/delay/5"; readtimeout=1, retry=false)
     end
     HTTP.get("http://$httpbin/delay/1"; readtimeout=2, retry=false)
 end
 
-@testset "Retry all resolved IP addresses" begin
+@testitem "Retry all resolved IP addresses" setup=[Common] begin
+    using Sockets
     # See issue https://github.com/JuliaWeb/HTTP.jl/issues/672
     # Bit tricky to test, but can at least be tested if localhost
     # resolves to both IPv4 and IPv6 by listening to the respective
@@ -344,7 +343,8 @@ end
     end
 end
 
-@testset "Sockets.get(sock|peer)name(::HTTP.Stream)" begin
+@testitem "Sockets.get(sock|peer)name(::HTTP.Stream)" begin
+    using Sockets
     server = nothing
     try
         server = HTTP.listen!("0.0.0.0", 8080) do http
@@ -375,7 +375,7 @@ end
             @test peer[2] == 8080
         end
     finally
-        @try Base.IOError close(server)
+        HTTP.@try Base.IOError close(server)
         HTTP.ConnectionPool.closeall()
     end
 
@@ -391,7 +391,7 @@ end
     end
 end
 
-@testset "input verification of bad URLs" begin
+@testitem "input verification of bad URLs" begin
     # HTTP.jl#527, HTTP.jl#545
     url = "julialang.org"
     @test_throws ArgumentError("missing or unsupported scheme in URL (expected http(s) or ws(s)): $(url)") HTTP.get(url)
@@ -401,7 +401,7 @@ end
     @test_throws ArgumentError("missing host in URL: $(url)") HTTP.get(url)
 end
 
-@testset "Implicit request headers" begin
+@testitem "Implicit request headers" begin
     server = nothing
     try
         server = HTTP.listen!("0.0.0.0", 8080) do http
@@ -432,13 +432,13 @@ end
 
         HTTP.setuseragent!(old_user_agent)
     finally
-        @try Base.IOError close(server)
+        HTTP.@try Base.IOError close(server)
         HTTP.ConnectionPool.closeall()
     end
 end
 
-import NetworkOptions, MbedTLS
-@testset "NetworkOptions for host verification" begin
+@testitem "NetworkOptions for host verification" begin
+    import NetworkOptions, MbedTLS
     # Set up server with self-signed cert
     server = nothing
     try
@@ -478,7 +478,7 @@ import NetworkOptions, MbedTLS
     end
 end
 
-@testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
+@testitem "Public entry point of HTTP.request and friends (e.g. issue #463)" setup=[Common] begin
     headers = Dict("User-Agent" => "HTTP.jl")
     query = Dict("hello" => "world")
     body = UInt8[1, 2, 3]
@@ -521,8 +521,9 @@ end
     end
 end
 
-@testset "HTTP CONNECT Proxy" begin
+@testitem "HTTP CONNECT Proxy" begin
     @testset "Host header" begin
+        using Sockets
         # Stores the http request passed by the client
         req = String[]
 
@@ -554,7 +555,7 @@ end
     end
 end
 
-@testset "Retry with request/response body streams" begin
+@testitem "Retry with request/response body streams" setup=[Common] begin
     shouldfail = Ref(true)
     status = Ref(200)
     server = HTTP.listen!(8080) do http
@@ -621,9 +622,8 @@ end
     end
 end
 
-findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
-
-@testset "readuntil on Stream" begin
+@testitem "readuntil on Stream" setup=[Common] begin
+    findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
     HTTP.open(:GET, "https://$httpbin/stream/5") do io
         while !eof(io)
             bytes = readuntil(io, findnewline)
@@ -633,7 +633,7 @@ findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
     end
 end
 
-@testset "CA_BUNDEL env" begin
+@testitem "CA_BUNDEL env" setup=[Common] begin
     resp = withenv("HTTP_CA_BUNDLE" => HTTP.MbedTLS.MozillaCACerts_jll.cacert) do
         HTTP.get("https://$httpbin/ip"; socket_type_tls=SSLStream)
     end
@@ -643,5 +643,3 @@ end
     end
     @test isok(resp)
 end
-
-end # module
