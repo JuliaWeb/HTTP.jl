@@ -101,7 +101,7 @@ handler is called, which by default returns `HTTP.Response(405)` (method not all
 
 ## `HTTP.listen`
 
-Lower-level core server functionality that only operates on `HTTP.Stream`. Provides a level of separation from `HTTP.serve` and the `Handler` framework. Supports all the same arguments and keyword arguments as [`HTTP.serve`](@ref), but the handler function `f` _must_ take a single `HTTP.Stream` as argument. `HTTP.listen!` is the non-blocking counterpart to `HTTP.serve!`.
+Lower-level core server functionality that only operates on `HTTP.Stream`. Provides a level of separation from `HTTP.serve` and the `Handler` framework. Supports all the same arguments and keyword arguments as [`HTTP.serve`](@ref), but the handler function `f` _must_ take a single `HTTP.Stream` as argument. `HTTP.listen!` is the non-blocking counterpart to `HTTP.listen` (like `HTTP.serve!` is to `HTTP.serve`).
 
 ## Log formatting
 
