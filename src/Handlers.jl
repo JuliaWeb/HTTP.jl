@@ -91,27 +91,27 @@ it as a request handler.
 
 Optional keyword arguments:
 - `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl
-connections. Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl
-verification (useful for testing). Construct a custom `SSLConfig` object
-with `MbedTLS.SSLConfig(certfile, keyfile)`.
+  connections. Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl
+  verification (useful for testing). Construct a custom `SSLConfig` object
+  with `MbedTLS.SSLConfig(certfile, keyfile)`.
 - `tcpisvalid = tcp->true`, function `f(::TCPSocket)::Bool` to check if accepted
-connections are valid before processing requests. e.g. to do source IP filtering.
+  connections are valid before processing requests. e.g. to do source IP filtering.
 - `readtimeout::Int=0`, close the connection if no data is received for this
-many seconds. Use readtimeout = 0 to disable.
+  many seconds. Use readtimeout = 0 to disable.
 - `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
-Not supported on some OS platforms. Can check `HTTP.Servers.supportsreuseaddr()`.
+  Not supported on some OS platforms. Can check `HTTP.Servers.supportsreuseaddr()`.
 - `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
-allows manually closing or configuring the server socket.
+  allows manually closing or configuring the server socket.
 - `verbose::Bool=false`, log connection information to `stdout`.
 - `access_log::Function`, function for formatting access log messages. The
-function should accept two arguments, `io::IO` to which the messages should
-be written, and `http::HTTP.Stream` which can be used to query information
-from. See also [`@logfmt_str`](@ref).
+  function should accept two arguments, `io::IO` to which the messages should
+  be written, and `http::HTTP.Stream` which can be used to query information
+  from. See also [`@logfmt_str`](@ref).
 - `on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing`, one or
-more functions to be run if the server is closed (for example by an
-`InterruptException`). Note, shutdown function(s) will not run if an
-`IOServer` object is supplied to the `server` keyword argument and closed
-by `close(server)`.
+  more functions to be run if the server is closed (for example by an
+  `InterruptException`). Note, shutdown function(s) will not run if an
+  `IOServer` object is supplied to the `server` keyword argument and closed
+  by `close(server)`.
 
 ```julia
 # start a blocking echo server
