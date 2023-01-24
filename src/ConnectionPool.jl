@@ -388,6 +388,7 @@ releaseconnection(c::Connection{T}, reuse) where {T} =
 
 function keepalive!(tcp)
     Base.iolock_begin()
+    Base.check_open(tcp)
     err = ccall(:uv_tcp_keepalive, Cint, (Ptr{Nothing}, Cint, Cuint),
                                           tcp.handle, 1, 1)
     Base.uv_error("failed to set keepalive on tcp socket", err)
