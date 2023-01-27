@@ -482,7 +482,7 @@ function global_sslcontext()::OpenSSL.SSLContext
             return sslcontext
         end
     end
-    return nosslcontext[]
+    return OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
 end
 
 function getconnection(::Type{SSLContext},
