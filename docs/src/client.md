@@ -45,7 +45,7 @@ The optional `body` argument makes up the "body" of the sent request and is only
 
 Upon successful completion, `HTTP.request` returns a [`HTTP.Response`](@ref) object. It includes the following fields:
   * `status`: the HTTP status code of the response, e.g. `200` for normal response
-  * `headers`: a `Vector` of `String` `Pair`s for each name=value pair in the response headers. Convenience methods for working with headers include: `HTTP.hasheader(resp, key)` to check if header exists; `HTTP.header(resp, key)` retrive the value of a header with name `key`; `HTTP.headers(resp, key)` retrieve a list of all the headers with name `key`, since headers can have duplicate names
+  * `headers`: a `Vector` of `String` `Pair`s for each name=value pair in the response headers. Convenience methods for working with headers include: `HTTP.hasheader(resp, key)` to check if header exists; `HTTP.header(resp, key)` retrieve the value of a header with name `key`; `HTTP.headers(resp, key)` retrieve a list of all the headers with name `key`, since headers can have duplicate names
   * `body`: a `Vector{UInt8}` of the response body bytes. Alternatively, an `IO` object can be provided via the [`response_stream`](@ref) keyword argument to have the response body streamed as it is received.
 
 ## Keyword Arguments
@@ -61,7 +61,7 @@ Query parameters are included in the url of the request like `http://httpbin.org
 
 ### `response_stream`
 
-By default, the `HTTP.Response` body is returned as a `Vector{UInt8}`. There may be scenarios, however, where more control is desired, like downloading large files, where it's preferrable to stream the response body directly out to file or into some other `IO` object. By passing a writeable `IO` object to the `response_stream` keyword argument, the response body will not be fully materialized and will be written to as it is received from the remote connection. Note that in the presense of request redirects and retries, multiple requests end up being made in a single call to `HTTP.request` by default (configurable via the [`redirects`](@ref) and [`retry`](@ref) keyword arguments). If `response_stream` is provided and a request is redirected or retried, the `response_stream` is not written to until the *final* request is completed (either the redirect is successfully followed, or the request doesn't need to be retried, etc.).
+By default, the `HTTP.Response` body is returned as a `Vector{UInt8}`. There may be scenarios, however, where more control is desired, like downloading large files, where it's preferable to stream the response body directly out to file or into some other `IO` object. By passing a writeable `IO` object to the `response_stream` keyword argument, the response body will not be fully materialized and will be written to as it is received from the remote connection. Note that in the presence of request redirects and retries, multiple requests end up being made in a single call to `HTTP.request` by default (configurable via the [`redirects`](@ref) and [`retry`](@ref) keyword arguments). If `response_stream` is provided and a request is redirected or retried, the `response_stream` is not written to until the *final* request is completed (either the redirect is successfully followed, or the request doesn't need to be retried, etc.).
 
 #### Examples
 
@@ -200,7 +200,7 @@ If cookies are "enabled" (either by passing `cookies=true` or passing a non-empt
 Allows a potentially more convenient API when the request and/or response bodies need to be streamed. Works like:
 
 ```julia
-HTTP.open(method, url, [,headers]; kw...) do io
+HTTP.open(method, url, [, headers]; kw...) do io
     write(io, body)
     [startread(io) -> HTTP.Response]
     while !eof(io)
@@ -209,7 +209,7 @@ HTTP.open(method, url, [,headers]; kw...) do io
 end -> HTTP.Response
 ```
 
-Where the `io` argument provided to the function body is an `HTTP.Stream` object, a custom `IO` that represents an open connection that is ready to be written to in order to send the request body, and/or read from to recieve the response body. Note that `startread(io)` should be called before calling `readavailable` to ensure the response statu line and headers are received and parsed appropriately. Calling `eof(io)` will return true until the response body has been completely received. Note that the returned `HTTP.Response` from `HTTP.open` will _not_ have a `.body` field since the body was read in the function body.
+Where the `io` argument provided to the function body is an `HTTP.Stream` object, a custom `IO` that represents an open connection that is ready to be written to in order to send the request body, and/or read from to receive the response body. Note that `startread(io)` should be called before calling `readavailable` to ensure the response status line and headers are received and parsed appropriately. Calling `eof(io)` will return true until the response body has been completely received. Note that the returned `HTTP.Response` from `HTTP.open` will _not_ have a `.body` field since the body was read in the function body.
 
 ### Download
 
