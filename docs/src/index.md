@@ -102,14 +102,14 @@ The sections below outline a mix of breaking changes that were made, in addition
 ### Struct Changes
 
   * The `HTTP.Request` and `HTTP.Response` `body` fields are not restricted to `Vector{UInt8}`; if a `response_stream` is passed to `HTTP.request`, it will be set as the `resp.body` (previously the body was an empty `UInt8[]`). This simplified many codepaths so these "other body object types" didn't have to be held in some other state, but could be stored in the `Request`/`Response` directly. It also opens up the possibility, (as shown in the [Cors Server](@ref) example), where middleware can serialize/deserialize to/from the `body` field directly.
-  * In related news, a `Request` body can now be passed as a `Dict` or `NamedTuple` to have the key-value pairs serialized in the `appliction/x-www-form-urlencoded` Content-Type matching many other libaries functionality
+  * In related news, a `Request` body can now be passed as a `Dict` or `NamedTuple` to have the key-value pairs serialized in the `appliction/x-www-form-urlencoded` Content-Type matching many other libraries functionality
   * Responses with the `Transfer-Encoding: gzip` header will now also be automatically decompressed, and this behavior is configurable via the `decompress::Bool` keyword argument for `HTTP.request`
   * If a `response_stream` is provided for streaming a request's response body, `HTTP.request` will not call `close` before returning, leaving that up to the caller.
   In addition, in the face of redirects or retried requests, note the `response_stream` will not be written to until the *final* response is received.
   * If a streaming request `body` is provided, it should support the `mark`/`reset` methods in case the request needs to be retried.
   * Users are encouraged to access the publicly documented fields of `Request`/`Response` instead of the previously documented "accessor" functions; these fields are now committed as the public API, so feel free to do `resp.body` instead of `HTTP.body(resp)`. The accessor methods are still defined for backwards compat.
   * The `Request` object now stores the original `url` argument provided to `HTTP.request` as a parsed `URIs.URI` object, and accessed via the `req.url` field. This is commonly desired in handlers/middleware, so convenient to keep it around.
-  * The `Request` object also has a new `req.context` field of type `Dict{Symbol, Any}` for storing/sharing state between handler/middlware layers. For example, the `HTTP.Router` now parses and stores named path parameters with the `:params` key in the context for handlers to access. Another `HTTP.cookie_middleware` will parse and store any request `Cookie` header in the `:cookies` context key.
+  * The `Request` object also has a new `req.context` field of type `Dict{Symbol, Any}` for storing/sharing state between handler/middleware layers. For example, the `HTTP.Router` now parses and stores named path parameters with the `:params` key in the context for handlers to access. Another `HTTP.cookie_middleware` will parse and store any request `Cookie` header in the `:cookies` context key.
   * `HTTP.request` now throws more consistent and predictable error types, including (and restricted to): `HTTP.ConnectError`, `HTTP.StatusError`, `HTTP.TimeoutError`, and `HTTP.RequestError`. See the [Request exceptions](@ref) section for more details on each exception type.
   * Cookie persistence used to use a `Dict` per thread to store domain-specific cookie sessions. A new threadsafe `CookieJar` struct now globally manages cookie persistence by default. Users can still construct and pass their own `cookiejar` keyword argument to `HTTP.request` if desired.
 
@@ -132,7 +132,7 @@ There are also plans to either include some common useful middleware functions i
 
 ### WebSockets overhaul
 
-The WebSockets code was some of the oldeset and least maintained code in HTTP.jl. It was debated removing it entirely, but there aren't really other modern implementations that are well-maintained. So the WebSockets code was overhauled, modernized, and is now tested against the industry standard autobahn test suite (yay for 3rd party verification!). The API changed as well; while `WebSockets.open` and `WebSockets.listen` have stayed the same, the `WebSocket` object itself now doesn't subtype `IO` and has a restricted interface like:
+The WebSockets code was some of the oldest and least maintained code in HTTP.jl. It was debated removing it entirely, but there aren't really other modern implementations that are well-maintained. So the WebSockets code was overhauled, modernized, and is now tested against the industry standard autobahn test suite (yay for 3rd party verification!). The API changed as well; while `WebSockets.open` and `WebSockets.listen` have stayed the same, the `WebSocket` object itself now doesn't subtype `IO` and has a restricted interface like:
   * `ws.id` access a unique generated UUID id for this websocket connection
   * `receive(ws)` receive a single non-control message on a websocket, returning a `String` or `Vector{UInt8}` depending on whether the message was sent as TEXT or BINARY
   * `send(ws, msg)` send a message; supports TEXT and BINARY messages, and can provide an iterable for `msg` to send fragmented messages
@@ -145,7 +145,7 @@ While clever, the old `HTTP.Router` implementation relied on having routes regis
 
 The new `HTTP.Router` implementation uses a text-matching based trie data structure on incoming request path segments to find the right matching handler to process the request. It also supports parsing and storing path variables, like `/api/{id}` or double wildcards for matching trailing path segments, like `/api/**`.
 
-`HTTP.Router` now also supports complete unrestricted route registeration via `HTTP.register!`.
+`HTTP.Router` now also supports complete unrestricted route registration via `HTTP.register!`.
 
 ### Internal client-side layers overhaul
 

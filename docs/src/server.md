@@ -9,7 +9,7 @@ file.
 
 ## `HTTP.serve`
 
-`HTTP.serve`/`HTTP.serve!` are the primary entrypoints for HTTP server functionality, while `HTTP.listen`/`HTTP.listen!` are considered the lower-level core server loop methods that only operate directly with `HTTP.Stream`s. `HTTP.serve` is also built directly integrated with the `Handler` and `Middleware` interfaces and provides easy flexiblity by doing so. The signature is:
+`HTTP.serve`/`HTTP.serve!` are the primary entrypoints for HTTP server functionality, while `HTTP.listen`/`HTTP.listen!` are considered the lower-level core server loop methods that only operate directly with `HTTP.Stream`s. `HTTP.serve` is also built directly integrated with the `Handler` and `Middleware` interfaces and provides easy flexibility by doing so. The signature is:
 
 ```julia
 HTTP.serve(f, host, port; kw...)
@@ -86,7 +86,7 @@ associated handlers. Paths can be registered using [`HTTP.register!`](@ref). The
 object itself is a "request handler" that can be called like:
 ```
 r = HTTP.Router()
-resp = r(reqest)
+resp = r(request)
 ```
 
 Which will inspect the `request`, find the matching, registered handler from the url,
@@ -96,7 +96,7 @@ See [`HTTP.register!`](@ref) for additional information on registering handlers 
 
 If a request doesn't have a matching, registered handler, the `_404` handler is called which,
 by default, returns a `HTTP.Response(404)`. If a route matches the path, but not the method/verb
-(e.g. there's a registerd route for "GET /api", but the request is "POST /api"), then the `_405`
+(e.g. there's a registered route for "GET /api", but the request is "POST /api"), then the `_405`
 handler is called, which by default returns `HTTP.Response(405)` (method not allowed).
 
 ## `HTTP.listen`
