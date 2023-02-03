@@ -74,7 +74,7 @@ not a preflight request, it will simply go to the JSONMiddleware to be passed to
 correct service function =#
 function CorsMiddleware(handler)
     return function(req::HTTP.Request)
-        if HTTP.hasheader(req, "OPTIONS")
+        if HTTP.method(req)=="OPTIONS"
             return HTTP.Response(200, CORS_OPT_HEADERS)
         else 
             return handler(req)
