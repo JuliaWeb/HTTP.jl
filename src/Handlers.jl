@@ -324,7 +324,7 @@ associated handlers. Paths can be registered using [`HTTP.register!`](@ref). The
 object itself is a "request handler" that can be called like:
 ```
 r = HTTP.Router()
-resp = r(reqest)
+resp = r(request)
 ```
 
 Which will inspect the `request`, find the matching, registered handler from the url,
