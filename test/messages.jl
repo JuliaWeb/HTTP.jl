@@ -198,4 +198,15 @@ using JSON
         # don't include empty headers in request when writing
         @test repr(Request("GET", "/", ["Accept" => ""])) == "Request:\n\"\"\"\nGET / HTTP/1.1\r\n\r\n\"\"\""
     end
+
+    @testset "queryparams" begin
+        no_params = Request("GET", "http://google.com")
+        with_params = Request("GET", "http://google.com?q=123&l=345")
+
+        @test HTTP.queryparams(no_params) == Dict{String, String}()
+        @test HTTP.queryparams(with_params) == Dict("q" => "123", "l" => "345")
+
+        @test HTTP.queryparams(Response(200; body="", request=with_params)) == Dict("q" => "123", "l" => "345")
+        @test isnothing(HTTP.queryparams(Response(200; body="")))
+    end
 end
