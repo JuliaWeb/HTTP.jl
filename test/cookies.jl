@@ -58,8 +58,11 @@ using Sockets, Test
             @test HTTP.stringify("cookie-0", cookies) == "cookie-0; $expected"
             @test HTTP.stringify("cookie-0=", cookies) == "cookie-0=; $expected"
             @test HTTP.stringify("cookie-0=0", cookies) == "cookie-0=0; $expected"
-            @test HTTP.stringify("cookie-0=0;", cookies) == "cookie-0=0;; $expected"
+            @test HTTP.stringify("cookie-0=0 ", cookies) == "cookie-0=0 ; $expected"
+            @test HTTP.stringify("cookie-0=0  ", cookies) == "cookie-0=0  ; $expected"
+            @test HTTP.stringify("cookie-0=0;", cookies) == "cookie-0=0; $expected"
             @test HTTP.stringify("cookie-0=0; ", cookies) == "cookie-0=0; $expected"
+            @test HTTP.stringify("cookie-0=0;  ", cookies) == "cookie-0=0;  $expected"
         end
     end
 
