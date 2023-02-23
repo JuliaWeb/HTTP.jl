@@ -51,7 +51,16 @@ using Sockets, Test
                    HTTP.Cookie("cookie-2", "v\$2"),
                    HTTP.Cookie("cookie-3", "v\$3"),
                   ]
-        @test HTTP.stringify("", cookies) == "cookie-1=v\$1; cookie-2=v\$2; cookie-3=v\$3"
+        expected = "cookie-1=v\$1; cookie-2=v\$2; cookie-3=v\$3"
+        @test HTTP.stringify("", cookies) == expected
+
+        @testset "combine cookies with existing header" begin
+            @test HTTP.stringify("cookie-0", cookies) == "cookie-0; $expected"
+            @test HTTP.stringify("cookie-0=", cookies) == "cookie-0=; $expected"
+            @test HTTP.stringify("cookie-0=0", cookies) == "cookie-0=0; $expected"
+            @test HTTP.stringify("cookie-0=0;", cookies) == "cookie-0=0;; $expected"
+            @test HTTP.stringify("cookie-0=0; ", cookies) == "cookie-0=0; $expected"
+        end
     end
 
     @testset "readsetcookies" begin

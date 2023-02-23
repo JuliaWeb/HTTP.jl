@@ -158,7 +158,7 @@ end
 
 function stringify(cookiestring::AbstractString, cookies::Vector{Cookie}, isrequest::Bool=true)
     io = IOBuffer()
-    !isempty(cookiestring) && write(io, cookiestring, cookiestring[end] == ';' ? "" : ";")
+    !isempty(cookiestring) && write(io, cookiestring, endswith(cookiestring, "; ") ? "" : "; ")
     len = length(cookies)
     for (i, cookie) in enumerate(cookies)
         write(io, stringify(cookie, isrequest), ifelse(i == len, "", "; "))
