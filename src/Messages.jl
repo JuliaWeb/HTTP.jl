@@ -625,4 +625,7 @@ function statustext(status)
     return StatusCodes.statustext(status)
 end
 
+URIs.queryparams(r::Request) = URIs.queryparams(URI(r.target))
+URIs.queryparams(r::Response) = isnothing(r.request) ? nothing : URIs.queryparams(r.request)
+
 end # module Messages

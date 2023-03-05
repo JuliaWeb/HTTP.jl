@@ -12,3 +12,4 @@
 /test/coverage/Manifest.toml
 /test/websockets/reports/*
 .idea/*
+.vscode
