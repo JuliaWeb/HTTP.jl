@@ -452,26 +452,24 @@ end
 
 const nosslconfig = SSLConfig()
 const nosslcontext = Ref{OpenSSL.SSLContext}()
-default_sslconfig = nothing
-noverify_sslconfig = nothing
+const default_sslconfig = Ref{Union{Nothing, SSLConfig}}(nothing)
+const noverify_sslconfig = Ref{Union{Nothing, SSLConfig}}(nothing)
 
 function global_sslconfig(require_ssl_verification::Bool)::SSLConfig
-    global default_sslconfig
-    global noverify_sslconfig
-    if default_sslconfig === nothing
-        default_sslconfig = SSLConfig(true)
-        noverify_sslconfig = SSLConfig(false)
+    if default_sslconfig[] === nothing
+        default_sslconfig[] = SSLConfig(true)
+        noverify_sslconfig[] = SSLConfig(false)
     end
     if haskey(ENV, "HTTP_CA_BUNDLE")
-        MbedTLS.ca_chain!(default_sslconfig, MbedTLS.crt_parse(read(ENV["HTTP_CA_BUNDLE"], String)))
+        MbedTLS.ca_chain!(default_sslconfig[], MbedTLS.crt_parse(read(ENV["HTTP_CA_BUNDLE"], String)))
     elseif haskey(ENV, "CURL_CA_BUNDLE")
-        MbedTLS.ca_chain!(default_sslconfig, MbedTLS.crt_parse(read(ENV["CURL_CA_BUNDLE"], String)))
+        MbedTLS.ca_chain!(default_sslconfig[], MbedTLS.crt_parse(read(ENV["CURL_CA_BUNDLE"], String)))
     end
-    return require_ssl_verification ? default_sslconfig : noverify_sslconfig
+    return require_ssl_verification ? default_sslconfig[] : noverify_sslconfig[]
 end
 
 function global_sslcontext()::OpenSSL.SSLContext
-    if isdefined(OpenSSL, :ca_chain!)
+    @static if isdefined(OpenSSL, :ca_chain!)
         if haskey(ENV, "HTTP_CA_BUNDLE")
             sslcontext = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
             OpenSSL.ca_chain!(sslcontext, ENV["HTTP_CA_BUNDLE"])
