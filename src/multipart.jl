@@ -78,7 +78,7 @@ end
 
 Construct a request body for multipart/form-data encoding from `data`.
 
-`data` must iterate key-value pairs (e.g. `Dict` or `Vector{Pair}`) where the key/value of the
+`data` must iterate key-value pairs (e.g. `AbstractDict` or `Vector{Pair}`) where the key/value of the
 iterator is the key/value of each mutipart boundary chunk.
 Files and other large data arguments can be provided as values as IO arguments: either an `IOStream`
 such as returned via `open(file)`, or an `IOBuffer` for in-memory data.

@@ -89,12 +89,12 @@ as an additional keyword argument to the request.
 
 `body` can be a variety of objects:
 
- - a `Dict` or `NamedTuple` to be serialized as the "application/x-www-form-urlencoded" content type
+ - an `AbstractDict` or `NamedTuple` to be serialized as the "application/x-www-form-urlencoded" content type
  - any `AbstractString` or `AbstractVector{UInt8}` which will be sent "as is" for the request body
  - a readable `IO` stream or any `IO`-like type `T` for which
    `eof(T)` and `readavailable(T)` are defined. This stream will be read and sent until `eof` is `true`.
    This object should support the `mark`/`reset` methods if request retires are desired (if not, no retries will be attempted).
- - Any collection or iterable of the above (`Dict`, `AbstractString`, `AbstractVector{UInt8}`, or `IO`)
+ - Any collection or iterable of the above (`AbstractDict`, `AbstractString`, `AbstractVector{UInt8}`, or `IO`)
    which will result in a "chunked" request body, where each iterated element will be sent as a separate chunk
  - a [`HTTP.Form`](@ref), which will be serialized as the "multipart/form-data" content-type
 

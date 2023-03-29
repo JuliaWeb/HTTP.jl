@@ -94,13 +94,13 @@ function writebodystream(stream, body::IO)
     write(stream, body)
 end
 
-function writebodystream(stream, body::Union{Dict, NamedTuple})
+function writebodystream(stream, body::Union{AbstractDict, NamedTuple})
     # application/x-www-form-urlencoded
     write(stream, URIs.escapeuri(body))
 end
 
 writechunk(stream, body::IO) = writebodystream(stream, body)
-writechunk(stream, body::Union{Dict, NamedTuple}) = writebodystream(stream, body)
+writechunk(stream, body::Union{AbstractDict, NamedTuple}) = writebodystream(stream, body)
 writechunk(stream, body) = write(stream, body)
 
 function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool})
