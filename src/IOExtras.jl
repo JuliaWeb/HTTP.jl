@@ -51,7 +51,7 @@ _doc = """
 
 Signal start/end of write or read operations.
 """
-if isdefined(Base, :startwrite)
+@static if isdefined(Base, :startwrite)
     "$_doc"
     Base.startwrite(io) = nothing
 else
@@ -59,7 +59,7 @@ else
     startwrite(io) = nothing
 end
 
-if isdefined(Base, :closewrite)
+@static if isdefined(Base, :closewrite)
     "$_doc"
     Base.closewrite(io) = nothing
 else
@@ -67,7 +67,7 @@ else
     closewrite(io) = nothing
 end
 
-if isdefined(Base, :startread)
+@static if isdefined(Base, :startread)
     "$_doc"
     Base.startread(io) = nothing
 else
@@ -75,7 +75,7 @@ else
     startread(io) = nothing
 end
 
-if isdefined(Base, :closeread)
+@static if isdefined(Base, :closeread)
     "$_doc"
     Base.closeread(io) = nothing
 else

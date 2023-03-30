@@ -410,8 +410,8 @@ After `reuse_limit + 1` transactions, signal `final_transaction` to the
 transaction handler, which will close the connection.
 """
 function handle_connection(f, c::Connection, listener, readtimeout, access_log)
+    wait_for_timeout = Ref{Bool}(true)
     if readtimeout > 0
-        wait_for_timeout = Ref{Bool}(true)
         @async check_readtimeout(c, readtimeout, wait_for_timeout)
     end
     try
