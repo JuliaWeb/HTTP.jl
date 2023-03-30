@@ -38,7 +38,7 @@ function defaultheaderslayer(handler)
         if !hasheader(headers, "Content-Type") && req.body isa Form && req.method in ("POST", "PUT", "PATCH")
             # "Content-Type" => "multipart/form-data; boundary=..."
             setheader(headers, content_type(req.body))
-        elseif !hasheader(headers, "Content-Type") && (req.body isa Dict || req.body isa NamedTuple) && req.method in ("POST", "PUT", "PATCH")
+        elseif !hasheader(headers, "Content-Type") && (req.body isa Union{AbstractDict, NamedTuple}) && req.method in ("POST", "PUT", "PATCH")
             setheader(headers, "Content-Type" => "application/x-www-form-urlencoded")
         end
         if decompress === nothing || decompress

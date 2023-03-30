@@ -277,9 +277,9 @@ function retryable end
 supportsmark(x) = false
 supportsmark(x::T) where {T <: IO} = length(Base.methods(mark, Tuple{T}, parentmodule(T))) > 0 || hasfield(T, :mark)
 
-# request body is retryable if it was provided as "bytes", a Dict or NamedTuple,
+# request body is retryable if it was provided as "bytes", an AbstractDict or NamedTuple,
 # or a chunked array of "bytes"; OR if it supports mark() and is marked
-retryablebody(r::Request) = (isbytes(r.body) || r.body isa Union{Dict, NamedTuple} ||
+retryablebody(r::Request) = (isbytes(r.body) || r.body isa Union{AbstractDict, NamedTuple} ||
     (r.body isa Vector && all(isbytes, r.body)) || (supportsmark(r.body) && ismarked(r.body)))
 
 # request is retryable if the body is retryable, the user is allowing retries at all,
@@ -581,7 +581,7 @@ const BODY_SHOW_MAX = Ref(1000)
 The first chunk of the Message Body (for display purposes).
 """
 bodysummary(body) = isbytes(body) ? view(bytes(body), 1:min(nbytes(body), BODY_SHOW_MAX[])) : "[Message Body was streamed]"
-bodysummary(body::Union{Dict, NamedTuple}) = URIs.escapeuri(body)
+bodysummary(body::Union{AbstractDict, NamedTuple}) = URIs.escapeuri(body)
 function bodysummary(body::Form)
     if length(body.data) == 1 && isa(body.data[1], IOBuffer)
         return body.data[1].data[1:body.data[1].ptr-1]
