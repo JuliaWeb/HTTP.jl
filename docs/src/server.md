@@ -33,7 +33,8 @@ Supported keyword arguments include:
     Not supported on some OS platforms. Can check `HTTP.Servers.supportsreuseaddr()`.
  * `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
     allows manually closing or configuring the server socket.
- * `verbose::Bool=false`, log connection information to `stdout`.
+ * `verbose::Union{Int,Bool}=false`, log connection information to `stdout`. Use `-1`
+    to also silence the server start and stop logs.
  * `access_log::Function`, function for formatting access log messages. The
     function should accept two arguments, `io::IO` to which the messages should
     be written, and `http::HTTP.Stream` which can be used to query information
