@@ -27,13 +27,17 @@ end # @eval
 
 function try_with_timeout(f, shouldtimeout, delay, iftimeout=() -> nothing)
     @assert delay > 0
-    cond = Condition()
+    cond = Threads.Condition()
     # execute f async
-    t = @async try
-        notify(cond, f())
+    Threads.@spawn try
+        ret = $f()
+        isopen(timer) && @lock cond notify(cond, ret)
     catch e
-        @debugv 1 "error executing f in try_with_timeout"
-        isopen(timer) && notify(cond, e, error = true)
+        ex = CapturedException(e, catch_backtrace())
+        @error "error executing $f in try_with_timeout" exception=ex
+        isopen(timer) && @lock cond notify(cond, ex, error = true)
+    finally
+        close(timer)
     end
     # start a timer
     timer = Timer(delay; interval=delay / 10) do tm
@@ -42,16 +46,16 @@ function try_with_timeout(f, shouldtimeout, delay, iftimeout=() -> nothing)
                 @debugv 1 "❗️  Timeout: $delay"
                 close(tm)
                 iftimeout()
-                notify(cond, TimeoutError(delay), error = true)
+                @lock cond notify(cond, TimeoutError(delay), error = true)
             end
         catch e
             @debugv 1 "callback error in try_with_timeout"
             close(tm)
-            notify(cond, e, error = true)
+            @lock cond notify(cond, CapturedException(e, catch_backtrace()), error = true)
         end
     end
     try
-        res = wait(cond)
+        res = @lock cond wait(cond)
         @debugv 1 "try_with_timeout finished with: $res"
         res
     catch e
