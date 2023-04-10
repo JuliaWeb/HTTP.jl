@@ -3,7 +3,7 @@ module Streams
 export Stream, closebody, isaborted, setstatus, readall!
 
 using Sockets, LoggingExtras
-using ..IOExtras, ..Messages, ..ConnectionPool, ..Conditions, ..Exceptions
+using ..IOExtras, ..Messages, ..Connections, ..Conditions, ..Exceptions
 import ..HTTP # for doc references
 
 mutable struct Stream{M <: Message, S <: IO} <: IO
@@ -31,7 +31,7 @@ Creates a `HTTP.Stream` that wraps an existing `IO` stream.
  - `eof(::Stream)` and `readavailable(::Stream)` parse the body from the `IO`
     stream.
  - `closeread(::Stream)` reads the trailers and calls `closeread` on the `IO`
-    stream.  When the `IO` stream is a [`HTTP.ConnectionPool.Connection`](@ref),
+    stream.  When the `IO` stream is a [`HTTP.Connections.Connection`](@ref),
     calling `closeread` releases the connection back to the connection pool
     for reuse. If a complete response has not been received, `closeread` throws
     `EOFError`.
@@ -41,7 +41,7 @@ Stream(r::M, io::S) where {M, S} = Stream{M, S}(r, io, false, false, true, 0, -1
 Messages.header(http::Stream, a...) = header(http.message, a...)
 setstatus(http::Stream, status) = (http.message.response.status = status)
 Messages.setheader(http::Stream, a...) = setheader(http.message.response, a...)
-ConnectionPool.getrawstream(http::Stream) = getrawstream(http.stream)
+Connections.getrawstream(http::Stream) = getrawstream(http.stream)
 
 Sockets.getsockname(http::Stream) = Sockets.getsockname(IOExtras.tcpsocket(getrawstream(http)))
 function Sockets.getpeername(http::Stream)
@@ -281,7 +281,7 @@ end
 
 @noinline function bufcheck(buf::Base.GenericIOBuffer, n)
     requested_buffer_capacity = (buf.append ? buf.size : (buf.ptr - 1)) + n
-    requested_buffer_capacity > length(buf.data) && throw(ArgumentError("Unable to grow response stream IOBuffer large enough for response body size"))
+    requested_buffer_capacity > length(buf.data) && throw(ArgumentError("Unable to grow response stream IOBuffer $(length(buf.data)) large enough for response body size: $requested_buffer_capacity"))
 end
 
 function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailable(http))
@@ -299,23 +299,29 @@ function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailab
     return n
 end
 
-Base.read(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer()) = take!(readall!(http, buf))
+function Base.read(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer())
+    readall!(http, buf)
+    return take!(buf)
+end
 
 function readall!(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer())
+    n = 0
     if ntoread(http) == unknown_length
         while !eof(http)
-            readbytes!(http, buf)
+            n += readbytes!(http, buf)
         end
     else
+        # even if we know the length, we still need to read until eof
+        # because Transfer-Encoding: chunked comes in piece-by-piece
         while !eof(http)
             readbytes!(http, buf, ntoread(http))
         end
     end
-    return buf
+    return n
 end
 
 function Base.readuntil(http::Stream, f::Function)::ByteView
-    UInt(ntoread(http)) == 0 && return ConnectionPool.nobytes
+    UInt(ntoread(http)) == 0 && return Connections.nobytes
     try
         bytes = readuntil(http.stream, f)
         update_ntoread(http, length(bytes))

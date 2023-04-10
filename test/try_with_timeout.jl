@@ -1,39 +1,48 @@
 @testset "try_with_timeout $warmup" for warmup in [true, false]
-    nevertimeout() = false
-    timeoutafterfirstdelay() = true
     throwerrorexception() = throw(ErrorException("error as expected"))
     throwargumenterror() = throw(ArgumentError("unexpected error"))
 
     @testset "rethrow exceptions" begin
         t = @elapsed begin
-            @test_throws ErrorException HTTP.try_with_timeout(nevertimeout, 1) do
-                throwerrorexception()
+            err = try
+                HTTP.try_with_timeout(1) do
+                    throwerrorexception()
+                end
+            catch e
+                e
             end
+            @test err.ex isa ErrorException
         end
         if !warmup
             @test t < 1
         end
     end
 
-    @testset "rethrow exceptions from shouldtimeout callback" begin
+    @testset "TimeoutError is thrown" begin
         t = @elapsed begin
-            @test_throws ErrorException HTTP.try_with_timeout(throwerrorexception, 1) do
-                sleep(5)
-                throwargumenterror()
+            err = try
+                HTTP.try_with_timeout(1) do
+                    sleep(5)
+                    throwargumenterror()
+                end
+            catch e
+                e
             end
+            @test err isa HTTP.TimeoutError
         end
         if !warmup
             @test 1 < t < 2
         end
     end
 
-    @testset "rethrow exceptions from iftimeout callback" begin
+    @testset "value is successfully returned under timeout" begin
         t = @elapsed begin
-            @test_throws ErrorException HTTP.try_with_timeout(timeoutafterfirstdelay, 1, throwerrorexception) do
-                sleep(5)
-                throwargumenterror()
+            ret = HTTP.try_with_timeout(5) do
+                sleep(1)
+                return 1
             end
         end
+        @test ret == 1
         if !warmup
             @test 1 < t < 2
         end

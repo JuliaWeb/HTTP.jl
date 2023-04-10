@@ -303,7 +303,7 @@ end
     finally
         # Shutdown
         @try Base.IOError close(server)
-        HTTP.ConnectionPool.closeall()
+        HTTP.Connections.closeall()
     end
 end
 
@@ -338,7 +338,7 @@ end
                 @test String(resp.body) == "hello, world"
             finally
                 @try Base.IOError close(server)
-                HTTP.ConnectionPool.closeall()
+                HTTP.Connections.closeall()
             end
         end
     end
@@ -376,7 +376,7 @@ end
         end
     finally
         @try Base.IOError close(server)
-        HTTP.ConnectionPool.closeall()
+        HTTP.Connections.closeall()
     end
 
     # Tests for Stream{SSLContext}
@@ -410,7 +410,7 @@ end
             HTTP.startwrite(http)
             HTTP.write(http, sprint(JSON.print, data))
         end
-        old_user_agent = HTTP.DefaultHeadersRequest.USER_AGENT[]
+        old_user_agent = HTTP.HeadersRequest.USER_AGENT[]
         default_user_agent = "HTTP.jl/$VERSION"
         # Default values
         HTTP.setuseragent!(default_user_agent)
@@ -433,7 +433,7 @@ end
         HTTP.setuseragent!(old_user_agent)
     finally
         @try Base.IOError close(server)
-        HTTP.ConnectionPool.closeall()
+        HTTP.Connections.closeall()
     end
 end
 
@@ -474,7 +474,7 @@ import NetworkOptions, MbedTLS
         end
     finally
         @try Base.IOError close(server)
-        HTTP.ConnectionPool.closeall()
+        HTTP.Connections.closeall()
     end
 end
 
@@ -549,7 +549,7 @@ end
             @test "Host: example.com:443" in req
         finally
             close(proxy)
-            HTTP.ConnectionPool.closeall()
+            HTTP.Connections.closeall()
         end
     end
 end
@@ -585,7 +585,7 @@ end
         seekstart(req_body)
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry=false, status_exception=false)
         @test String(take!(res_body)) == "500 unexpected error"
-        # even if status_exception=true, we should still get the right response body
+        # even if StatusError, we should still get the right response body
         shouldfail[] = true
         seekstart(req_body)
         try
@@ -617,7 +617,7 @@ end
         @test checked[] >= 1
     finally
         close(server)
-        HTTP.ConnectionPool.closeall()
+        HTTP.Connections.closeall()
     end
 end
 

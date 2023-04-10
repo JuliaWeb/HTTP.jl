@@ -2,7 +2,7 @@ module WebSockets
 
 using Base64, LoggingExtras, UUIDs, Sockets, Random
 using MbedTLS: digest, MD_SHA1, SSLContext
-using ..IOExtras, ..Streams, ..ConnectionPool, ..Messages, ..Conditions, ..Servers
+using ..IOExtras, ..Streams, ..Connections, ..Messages, ..Conditions, ..Servers
 import ..open
 import ..HTTP # for doc references
 

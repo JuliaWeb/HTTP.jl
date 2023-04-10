@@ -27,7 +27,7 @@ retry check _wouldn't_ retry, if `retry_check` returns true, then the request
 will be retried anyway.
 """
 function retrylayer(handler)
-    return function(req::Request; retry::Bool=true, retries::Int=4,
+    return function manageretries(req::Request; retry::Bool=true, retries::Int=4,
         retry_delays=ExponentialBackOff(n = retries, factor=3.0), retry_check=FALSE,
         retry_non_idempotent::Bool=false, kw...)
         if !retry || retries == 0
@@ -76,7 +76,9 @@ function retrylayer(handler)
     end
 end
 
+const EAI_AGAIN = 2
 isrecoverable(ex) = true
+isrecoverable(ex::ConnectError) = ex.error isa Sockets.DNSError && ex.error.code == EAI_AGAIN ? false : true
 isrecoverable(ex::StatusError) = retryable(ex.status)
 
 function _retry_check(s, ex, req, check)

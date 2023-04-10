@@ -284,7 +284,7 @@ end # @testset
     logs = with_testserver(combined_logfmt) do
         HTTP.get("http://localhost:32612", ["Referer" => "julialang.org"])
         HTTP.get("http://localhost:32612/index.html")
-        useragent = HTTP.DefaultHeadersRequest.USER_AGENT[]
+        useragent = HTTP.HeadersRequest.USER_AGENT[]
         HTTP.setuseragent!(nothing)
         HTTP.get("http://localhost:32612/index.html?a=b")
         HTTP.setuseragent!(useragent)

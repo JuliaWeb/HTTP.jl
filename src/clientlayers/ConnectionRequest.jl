@@ -3,7 +3,7 @@ module ConnectionRequest
 using URIs, Sockets, Base64, LoggingExtras
 using MbedTLS: SSLContext, SSLConfig
 using OpenSSL: SSLStream
-using ..Messages, ..IOExtras, ..ConnectionPool, ..Streams, ..Exceptions
+using ..Messages, ..IOExtras, ..Connections, ..Streams, ..Exceptions
 import ..SOCKET_TYPE_TLS
 
 islocalhost(host::AbstractString) = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0000:0000:0000:0000:0000:0000:0000:0001" || host == "0:0:0:0:0:0:0:1"
@@ -49,13 +49,13 @@ export connectionlayer
 """
     connectionlayer(handler) -> handler
 
-Retrieve an `IO` connection from the ConnectionPool.
+Retrieve an `IO` connection from the Connections.
 
 Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.
 """
 function connectionlayer(handler)
-    return function(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SOCKET_TYPE_TLS[], readtimeout::Int=0, kw...)
+    return function connections(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SOCKET_TYPE_TLS[], readtimeout::Int=0, logerrors::Bool=false, kw...)
         local io, stream
         if proxy !== nothing
             target_url = req.url
@@ -74,10 +74,17 @@ function connectionlayer(handler)
         end
 
         IOType = sockettype(url, socket_type, socket_type_tls)
+        start_time = time()
         try
             io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
         catch e
+            if logerrors
+                @error "HTTP.ConnectError" exception=(e, catch_backtrace()) method=req.method url=req.url context=req.context
+            end
+            req.context[:connect_errors] = get(req.context, :connect_errors, 0) + 1
             throw(ConnectError(string(url), e))
+        finally
+            req.context[:connect_duration_ms] = get(req.context, :connect_duration_ms, 0.0) +  (time() - start_time) * 1000
         end
 
         shouldreuse = !(target_url.scheme in ("ws", "wss"))
@@ -91,7 +98,7 @@ function connectionlayer(handler)
                     target_url = URI(target_url, port=80) # if there is no port info, connect_tunnel will fail
                 end
                 r = if readtimeout > 0
-                    try_with_timeout(() -> shouldtimeout(io, readtimeout), readtimeout, () -> close(io)) do
+                    try_with_timeout(readtimeout) do
                         connect_tunnel(io, target_url, req)
                     end
                 else
@@ -102,26 +109,37 @@ function connectionlayer(handler)
                     return r
                 end
                 if target_url.scheme in ("https", "wss")
-                    io = ConnectionPool.sslupgrade(socket_type_tls, io, target_url.host; readtimeout=readtimeout, kw...)
+                    io = Connections.sslupgrade(socket_type_tls, io, target_url.host; readtimeout=readtimeout, kw...)
                 end
                 req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
             end
 
             stream = Stream(req.response, io)
-            return handler(stream; readtimeout=readtimeout, kw...)
+            return handler(stream; readtimeout=readtimeout, logerrors=logerrors, kw...)
         catch e
+            while true
+                if e isa CompositeException
+                    e = e.exceptions[1]
+                elseif e isa TaskFailedException
+                    e = e.task.result
+                else
+                    break
+                end
+            end
+            if logerrors && !(e isa StatusError || e isa TimeoutError)
+                @error "HTTP.ConnectionRequest" exception=(e, catch_backtrace()) method=req.method url=req.url context=req.context
+            end
             @debugv 1 "❗️  ConnectionLayer $e. Closing: $io"
             shouldreuse = false
-            @try Base.IOError close(io)
             if @isdefined(stream) && stream.nwritten == -1
                 # we didn't write anything, so don't need to worry about
                 # idempotency of the request
                 req.context[:nothingwritten] = true
             end
             e isa HTTPError || throw(RequestError(req, e))
-            rethrow()
+            rethrow(e)
         finally
-            releaseconnection(io, shouldreuse)
+            releaseconnection(io, shouldreuse; kw...)
             if !shouldreuse
                 @try Base.IOError close(io)
             end

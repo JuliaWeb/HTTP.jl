@@ -16,7 +16,7 @@ from the `cookiejar` keyword argument (by default, a global cookiejar is used).
 Store "Set-Cookie" cookies from the response headers.
 """
 function cookielayer(handler)
-    return function(req::Request; cookies=true, cookiejar::CookieJar=COOKIEJAR, kw...)
+    return function managecookies(req::Request; cookies=true, cookiejar::CookieJar=COOKIEJAR, kw...)
         if cookies === true || (cookies isa AbstractDict && !isempty(cookies))
             url = req.url
             cookiestosend = Cookies.getcookies!(cookiejar, url)

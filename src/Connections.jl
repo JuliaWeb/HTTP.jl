@@ -17,24 +17,28 @@ If a subsequent request matches these properties of a previous connection
 and limits are respected (reuse limit, idle timeout), and it wasn't otherwise
 remotely closed, a connection will be reused.
 """
-module ConnectionPool
+module Connections
 
-export Connection, newconnection, releaseconnection, getrawstream, inactiveseconds, shouldtimeout, set_default_connection_limit!
+export Connection, newconnection, releaseconnection, getrawstream, inactiveseconds, shouldtimeout, default_connection_limit, set_default_connection_limit!, Pool
 
 using Sockets, LoggingExtras, NetworkOptions
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
-using MbedTLS, OpenSSL
+using MbedTLS, OpenSSL, ConcurrentUtilities
 using ..IOExtras, ..Conditions, ..Exceptions
 
-const default_connection_limit = Ref(8)
 const nolimit = typemax(Int)
-
-set_default_connection_limit!(n) = default_connection_limit[] = n
 
 taskid(t=current_task()) = string(hash(t) & 0xffff, base=16, pad=4)
 
-include("connectionpools.jl")
-using .ConnectionPools
+const default_connection_limit = Ref(16)
+
+function __init__()
+    default_connection_limit[] = Threads.nthreads() * 2
+    nosslcontext[] = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
+    return
+end
+
+set_default_connection_limit!(n) = default_connection_limit[] = n
 
 """
     Connection
@@ -63,6 +67,7 @@ mutable struct Connection{IO_t <: IO} <: IO
     port::String
     idle_timeout::Int
     require_ssl_verification::Bool
+    keepalive::Bool
     peerip::IPAddr # for debugging/logging
     peerport::UInt16 # for debugging/logging
     localport::UInt16 # debug only
@@ -85,18 +90,20 @@ request parameters of what socket type, the host and port, and if ssl
 verification is required, and if an existing Connection was already created with the exact
 same parameters, we can re-use it (as long as it's not already being used, obviously).
 """
-connectionkey(x::Connection) = (typeof(x.io), x.host, x.port, x.require_ssl_verification, x.clientconnection)
+connectionkey(x::Connection) = (x.host, x.port, x.require_ssl_verification, x.keepalive, x.clientconnection)
+
+const ConnectionKeyType = Tuple{AbstractString, AbstractString, Bool, Bool, Bool}
 
 Connection(host::AbstractString, port::AbstractString,
            idle_timeout::Int,
-           require_ssl_verification::Bool, io::T, client=true) where {T}=
+           require_ssl_verification::Bool, keepalive::Bool, io::T, client=true) where {T}=
     Connection{T}(host, port, idle_timeout,
-                require_ssl_verification,
+                require_ssl_verification, keepalive,
                 safe_getpeername(io)..., localport(io),
                 io, client, PipeBuffer(), time(), false, false, IOBuffer(), nothing)
 
-Connection(io; require_ssl_verification::Bool=true) =
-    Connection("", "", 0, require_ssl_verification, io, false)
+Connection(io; require_ssl_verification::Bool=true, keepalive::Bool=true) =
+    Connection("", "", 0, require_ssl_verification, keepalive, io, false)
 
 getrawstream(c::Connection) = c.io
 
@@ -325,35 +332,82 @@ function purge(c::Connection)
     @ensure bytesavailable(c) == 0
 end
 
-const TCP_POOL = Pool(Connection{Sockets.TCPSocket})
-const MbedTLS_SSL_POOL = Pool(Connection{MbedTLS.SSLContext})
-const OpenSSL_SSL_POOL = Pool(Connection{OpenSSL.SSLStream})
-"""
-    POOLS
+const CPool{T} = ConcurrentUtilities.Pool{ConnectionKeyType, Connection{T}}
 
-A dict of global connection pools keeping track of active connections, split by their IO type.
 """
-const POOLS = Dict{DataType,Pool}(
-    Sockets.TCPSocket => TCP_POOL,
-    MbedTLS.SSLContext => MbedTLS_SSL_POOL,
-    OpenSSL.SSLStream => OpenSSL_SSL_POOL,
-)
-getpool(::Type{Sockets.TCPSocket}) = TCP_POOL
-getpool(::Type{MbedTLS.SSLContext}) = MbedTLS_SSL_POOL
-getpool(::Type{OpenSSL.SSLStream}) = OpenSSL_SSL_POOL
-# Fallback for custom connection io types
-# to opt out from locking, define your own `Pool` and add a `getpool` method for your IO type
-const POOLS_LOCK = Threads.ReentrantLock()
-function getpool(::Type{T}) where {T}
-    Base.@lock POOLS_LOCK get!(() -> Pool(Connection{T}), POOLS, T)::Pool{Connection{T}}
+    HTTP.Pool(; max::Int=HTTP.default_connection_limit[])
+
+Connection pool for managing the reuse of HTTP connections.
+`max` controls the maximum number of concurrent connections allowed
+and defaults to the `HTTP.default_connection_limit` value.
+
+A pool can be passed to any of the `HTTP.request` methods via the `pool` keyword argument.
+`HTTP.Connections.POOL` is a default connection pool used and managed by HTTP itself.
+"""
+mutable struct Pool
+    lock::ReentrantLock
+    tcp::CPool{Sockets.TCPSocket}
+    mbedtls::CPool{MbedTLS.SSLContext}
+    openssl::CPool{OpenSSL.SSLStream}
+    other::Dict{Type, CPool}
+    max::Union{Int, Nothing}
+
+    function Pool(; max::Union{Int, Nothing}=nothing)
+        x = new(ReentrantLock())
+        x.other = Dict{Type, CPool}()
+        x.max = max
+        return x
+    end
+end
+
+"Default HTTP global connection pool."
+const POOL = Pool()
+
+function get_or_set!(pool, field, ::Type{T}) where {T}
+    Base.@lock pool.lock begin
+        if isdefined(pool, field)
+            return getfield(pool, field)
+        else
+            return setfield!(pool, field, CPool{T}(; max=something(pool.max, default_connection_limit[])))
+        end
+    end
+end
+
+function getpool(pool::Pool, ::Type{T})::CPool{T} where {T}
+    if T === Sockets.TCPSocket
+        return get_or_set!(pool, :tcp, T)
+    elseif T === MbedTLS.SSLContext
+        return get_or_set!(pool, :mbedtls, T)
+    elseif T === OpenSSL.SSLStream
+        return get_or_set!(pool, :openssl, T)
+    else
+        return get!(pool.other, T) do
+            CPool{T}(; max=something(pool.max, default_connection_limit[]))
+        end
+    end
 end
 
 """
     closeall()
 
-Close all connections in `POOLS`.
+Close all connections in `POOL`.
 """
-closeall() = foreach(ConnectionPools.reset!, values(POOLS))
+function closeall()
+    empty!(POOL.tcp)
+    empty!(POOL.mbedtls)
+    empty!(POOL.openssl)
+    foreach(empty!, values(POOL.other))
+    return
+end
+
+function connection_isvalid(c, idle_timeout)
+    check = isopen(c) && (time() - c.timestamp) <= idle_timeout
+    check || close(c)
+    return check
+end
+
+@noinline connection_limit_warning(cl) = cl === nothing ||
+    @warn "connection_limit no longer supported as a keyword argument; use `HTTP.set_default_connection_limit!` or pass a connection pool like `pool=HTTP.Pool()` instead."
 
 """
     newconnection(type, host, port) -> Connection
@@ -364,35 +418,42 @@ or create a new `Connection` if required.
 function newconnection(::Type{T},
                        host::AbstractString,
                        port::AbstractString;
-                       connection_limit=default_connection_limit[],
+                       pool::Pool=POOL,
+                       connection_limit=nothing,
                        forcenew::Bool=false,
                        idle_timeout=typemax(Int),
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
+                       keepalive::Bool=true,
                        kw...) where {T <: IO}
+    connection_limit_warning(connection_limit)
     return acquire(
-            getpool(T),
-            (T, host, port, require_ssl_verification, true);
-            max_concurrent_connections=Int(connection_limit),
+            getpool(pool, T),
+            (host, port, require_ssl_verification, keepalive, true);
             forcenew=forcenew,
-            idle_timeout=Int(idle_timeout)) do
+            isvalid=c->connection_isvalid(c, Int(idle_timeout))) do
         Connection(host, port,
-            idle_timeout, require_ssl_verification,
+            idle_timeout, require_ssl_verification, keepalive,
             getconnection(T, host, port;
-                require_ssl_verification=require_ssl_verification, kw...)
+                require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
         )
     end
 end
 
-releaseconnection(c::Connection{T}, reuse) where {T} =
-    release(getpool(T), connectionkey(c), c; return_for_reuse=reuse)
+function releaseconnection(c::Connection{T}, reuse; pool::Pool=POOL, kw...) where {T}
+    c.timestamp = time()
+    release(getpool(pool, T), connectionkey(c), reuse ? c : nothing)
+end
 
 function keepalive!(tcp)
     Base.iolock_begin()
-    Base.check_open(tcp)
-    err = ccall(:uv_tcp_keepalive, Cint, (Ptr{Nothing}, Cint, Cuint),
-                                          tcp.handle, 1, 1)
-    Base.uv_error("failed to set keepalive on tcp socket", err)
-    Base.iolock_end()
+    try
+        Base.check_open(tcp)
+        err = ccall(:uv_tcp_keepalive, Cint, (Ptr{Nothing}, Cint, Cuint),
+                                            tcp.handle, 1, 1)
+        Base.uv_error("failed to set keepalive on tcp socket", err)
+    finally
+        Base.iolock_end()
+    end
     return
 end
 
@@ -425,25 +486,27 @@ function getconnection(::Type{TCPSocket},
     addrs = Sockets.getalladdrinfo(host)
     connect_timeout = connect_timeout == 0 && readtimeout > 0 ? readtimeout : connect_timeout
     lasterr = ErrorException("unknown connection error")
-
     for addr in addrs
         try
-            return if connect_timeout > 0
+            if connect_timeout > 0
                 tcp = Sockets.TCPSocket()
                 Sockets.connect!(tcp, addr, p)
-                try_with_timeout(() -> checkconnected(tcp), connect_timeout, () -> close(tcp)) do
-                    Sockets.wait_connected(tcp)
-                    keepalive && keepalive!(tcp)
+                try
+                    try_with_timeout(connect_timeout) do
+                        Sockets.wait_connected(tcp)
+                        keepalive && keepalive!(tcp)
+                    end
+                catch
+                    close(tcp)
+                    rethrow()
                 end
-                return tcp
             else
                 tcp = Sockets.connect(addr, p)
                 keepalive && keepalive!(tcp)
-                tcp
             end
+            return tcp
         catch e
             lasterr = e isa TimeoutError ? ConnectTimeout(host, port) : e
-            continue
         end
     end
     # If no connetion could be set up, to any address, throw last error
@@ -498,7 +561,6 @@ function getconnection(::Type{SSLStream},
     host::AbstractString,
     port::AbstractString;
     kw...)::SSLStream
-
     port = isempty(port) ? "443" : port
     @debugv 2 "SSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
@@ -523,11 +585,9 @@ function sslconnection(::Type{SSLContext}, tcp::TCPSocket, host::AbstractString;
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        sslconfig::SSLConfig=nosslconfig,
                        kw...)::SSLContext
-
     if sslconfig === nosslconfig
         sslconfig = global_sslconfig(require_ssl_verification)
     end
-
     io = SSLContext()
     setup!(io, sslconfig)
     associate!(io, tcp)
@@ -538,25 +598,27 @@ end
 
 function sslupgrade(::Type{IOType}, c::Connection{T},
                     host::AbstractString;
+                    pool::Pool=POOl,
                     require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
+                    keepalive::Bool=true,
                     readtimeout::Int=0,
                     kw...)::Connection{IOType} where {T, IOType}
     # initiate the upgrade to SSL
     # if the upgrade fails, an error will be thrown and the original c will be closed
     # in ConnectionRequest
     tls = if readtimeout > 0
-        try_with_timeout(() -> shouldtimeout(c, readtimeout), readtimeout, () -> close(c)) do
-            sslconnection(IOType, c.io, host; require_ssl_verification=require_ssl_verification, kw...)
+        try_with_timeout(readtimeout) do
+            sslconnection(IOType, c.io, host; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
         end
     else
-        sslconnection(IOType, c.io, host; require_ssl_verification=require_ssl_verification, kw...)
+        sslconnection(IOType, c.io, host; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
     end
     # success, now we turn it into a new Connection
-    conn = Connection(host, "", 0, require_ssl_verification, tls)
-    # release the "old" one, but don't allow reuse since we're hijacking the socket
-    release(getpool(T), connectionkey(c), c; return_for_reuse=false)
+    conn = Connection(host, "", 0, require_ssl_verification, keepalive, tls)
+    # release the "old" one, but don't return the connection since we're hijacking the socket
+    release(getpool(pool, T), connectionkey(c), nothing)
     # and return the new one
-    return acquire(getpool(IOType), connectionkey(conn), conn)
+    return acquire(() -> conn, getpool(pool, IOType), connectionkey(conn); forcenew=true)
 end
 
 function Base.show(io::IO, c::Connection)
@@ -589,9 +651,4 @@ function tcpstatus(c::Connection)
     end
 end
 
-function __init__()
-    nosslcontext[] = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
-    return
-end
-
-end # module ConnectionPool
+end # module Connections
