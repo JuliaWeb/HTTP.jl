@@ -35,6 +35,9 @@ const default_connection_limit = Ref(16)
 function __init__()
     default_connection_limit[] = Threads.nthreads() * 2
     nosslcontext[] = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
+    TCP_POOL[] = CPool{Sockets.TCPSocket}(default_connection_limit[])
+    MBEDTLS_POOL[] = CPool{MbedTLS.SSLContext}(default_connection_limit[])
+    OPENSSL_POOL[] = CPool{OpenSSL.SSLStream}(default_connection_limit[])
     return
 end
 
@@ -335,55 +338,56 @@ end
 const CPool{T} = ConcurrentUtilities.Pool{ConnectionKeyType, Connection{T}}
 
 """
-    HTTP.Pool(; max::Int=HTTP.default_connection_limit[])
+    HTTP.Pool(max::Int=HTTP.default_connection_limit[])
 
 Connection pool for managing the reuse of HTTP connections.
 `max` controls the maximum number of concurrent connections allowed
 and defaults to the `HTTP.default_connection_limit` value.
 
 A pool can be passed to any of the `HTTP.request` methods via the `pool` keyword argument.
-`HTTP.Connections.POOL` is a default connection pool used and managed by HTTP itself.
 """
 mutable struct Pool
     lock::ReentrantLock
     tcp::CPool{Sockets.TCPSocket}
     mbedtls::CPool{MbedTLS.SSLContext}
     openssl::CPool{OpenSSL.SSLStream}
-    other::Dict{Type, CPool}
-    max::Union{Int, Nothing}
-
-    function Pool(; max::Union{Int, Nothing}=nothing)
-        x = new(ReentrantLock())
-        x.other = Dict{Type, CPool}()
-        x.max = max
-        return x
-    end
+    other::IdDict{Type, CPool}
+    max::Int
 end
 
-"Default HTTP global connection pool."
-const POOL = Pool()
+function Pool(max::Union{Int, Nothing}=nothing)
+    max = something(max, default_connection_limit[])
+    return Pool(ReentrantLock(),
+        CPool{Sockets.TCPSocket}(max),
+        CPool{MbedTLS.SSLContext}(max),
+        CPool{OpenSSL.SSLStream}(max),
+        IdDict{Type, CPool}(),
+        max,
+    )
+end
 
-function get_or_set!(pool, field, ::Type{T}) where {T}
-    Base.@lock pool.lock begin
-        if isdefined(pool, field)
-            return getfield(pool, field)
-        else
-            return setfield!(pool, field, CPool{T}(; max=something(pool.max, default_connection_limit[])))
-        end
-    end
+# Default HTTP global connection pools
+const TCP_POOL = Ref{CPool{Sockets.TCPSocket}}()
+const MBEDTLS_POOL = Ref{CPool{MbedTLS.SSLContext}}()
+const OPENSSL_POOL = Ref{CPool{OpenSSL.SSLStream}}()
+const OTHER_POOL = Lockable(IdDict{Type, CPool}())
+
+getpool(::Nothing, ::Type{Sockets.TCPSocket}) = TCP_POOL[]
+getpool(::Nothing, ::Type{MbedTLS.SSLContext}) = MBEDTLS_POOL[]
+getpool(::Nothing, ::Type{OpenSSL.SSLStream}) = OPENSSL_POOL[]
+getpool(::Nothing, ::Type{T}) where {T} = Base.@lock OTHER_POOL get!(OTHER_POOL[], T) do
+    CPool{T}(default_connection_limit[])
 end
 
 function getpool(pool::Pool, ::Type{T})::CPool{T} where {T}
     if T === Sockets.TCPSocket
-        return get_or_set!(pool, :tcp, T)
+        return pool.tcp
     elseif T === MbedTLS.SSLContext
-        return get_or_set!(pool, :mbedtls, T)
+        return pool.mbedtls
     elseif T === OpenSSL.SSLStream
-        return get_or_set!(pool, :openssl, T)
+        return pool.openssl
     else
-        return get!(pool.other, T) do
-            CPool{T}(; max=something(pool.max, default_connection_limit[]))
-        end
+        return Base.@lock pool.lock get!(() -> CPool{T}(pool.max), pool.other, T)
     end
 end
 
@@ -393,10 +397,10 @@ end
 Close all connections in `POOL`.
 """
 function closeall()
-    empty!(POOL.tcp)
-    empty!(POOL.mbedtls)
-    empty!(POOL.openssl)
-    foreach(empty!, values(POOL.other))
+    drain!(TCP_POOL[])
+    drain!(MBEDTLS_POOL[])
+    drain!(OPENSSL_POOL[])
+    Base.@lock OTHER_POOL foreach(drain!, values(OTHER_POOL[]))
     return
 end
 
@@ -418,7 +422,7 @@ or create a new `Connection` if required.
 function newconnection(::Type{T},
                        host::AbstractString,
                        port::AbstractString;
-                       pool::Pool=POOL,
+                       pool::Union{Nothing, Pool}=nothing,
                        connection_limit=nothing,
                        forcenew::Bool=false,
                        idle_timeout=typemax(Int),
@@ -439,7 +443,7 @@ function newconnection(::Type{T},
     end
 end
 
-function releaseconnection(c::Connection{T}, reuse; pool::Pool=POOL, kw...) where {T}
+function releaseconnection(c::Connection{T}, reuse; pool::Union{Nothing, Pool}=nothing, kw...) where {T}
     c.timestamp = time()
     release(getpool(pool, T), connectionkey(c), reuse ? c : nothing)
 end
@@ -598,7 +602,7 @@ end
 
 function sslupgrade(::Type{IOType}, c::Connection{T},
                     host::AbstractString;
-                    pool::Pool=POOl,
+                    pool::Pool=POOL,
                     require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                     keepalive::Bool=true,
                     readtimeout::Int=0,

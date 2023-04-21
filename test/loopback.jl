@@ -22,7 +22,7 @@ mutable struct Loopback <: IO
 end
 Loopback() = Loopback(false, IOBuffer(), Base.BufferStream())
 
-pool = HTTP.Pool(; max=1)
+pool = HTTP.Pool(1)
 
 config = [
     :socket_type => Loopback,

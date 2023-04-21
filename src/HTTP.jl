@@ -46,6 +46,7 @@ include("Streams.jl")                  ;using .Streams
 getrequest(r::Request) = r
 getrequest(s::Stream) = s.message.request
 
+# Wraps client-side "layer" to track the amount of time spent in it as a request is processed.
 function observe_layer(f)
     function observelayer(req_or_stream; kw...)
         req = getrequest(req_or_stream)
@@ -136,9 +137,9 @@ Supported optional keyword arguments:
     request and response process
  - `connect_timeout = 10`, close the connection after this many seconds if it
    is still attempting to connect. Use `connect_timeout = 0` to disable.
- - `pool = HTTP.Connections.POOL`, an `HTTP.Pool` object to use for managing the reuse of connections between requests.
+ - `pool = nothing`, an `HTTP.Pool` object to use for managing the reuse of connections between requests.
     By default, a global pool is used, which is shared across all requests. To create a pool for a specific set of requests,
-    use `pool = HTTP.Pool(; max::Int)`, where `max` controls the maximum number of concurrent connections allowed to be used for requests at a given time.
+    use `pool = HTTP.Pool(max::Int)`, where `max` controls the maximum number of concurrent connections allowed to be used for requests at a given time.
  - `readtimeout = 0`, abort a request after this many seconds. Will trigger retries if applicable. Use `readtimeout = 0` to disable.
  - `status_exception = true`, throw `HTTP.StatusError` for response status >= 300.
  - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)

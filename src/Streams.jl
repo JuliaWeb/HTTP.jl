@@ -314,7 +314,7 @@ function readall!(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer())
         # even if we know the length, we still need to read until eof
         # because Transfer-Encoding: chunked comes in piece-by-piece
         while !eof(http)
-            readbytes!(http, buf, ntoread(http))
+            n += readbytes!(http, buf, ntoread(http))
         end
     end
     return n
