@@ -33,7 +33,7 @@ taskid(t=current_task()) = string(hash(t) & 0xffff, base=16, pad=4)
 const default_connection_limit = Ref(16)
 
 function __init__()
-    default_connection_limit[] = Threads.nthreads() * 2
+    default_connection_limit[] = Threads.nthreads() * 4
     nosslcontext[] = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
     TCP_POOL[] = CPool{Sockets.TCPSocket}(default_connection_limit[])
     MBEDTLS_POOL[] = CPool{MbedTLS.SSLContext}(default_connection_limit[])
@@ -392,15 +392,23 @@ function getpool(pool::Pool, ::Type{T})::CPool{T} where {T}
 end
 
 """
-    closeall()
+    closeall(pool::HTTP.Pool=nothing)
 
-Close all connections in `POOL`.
+Remove and close all connections in the `pool` to avoid any connection reuse.
+If `pool` is not specified, the default global pools are closed.
 """
-function closeall()
-    drain!(TCP_POOL[])
-    drain!(MBEDTLS_POOL[])
-    drain!(OPENSSL_POOL[])
-    Base.@lock OTHER_POOL foreach(drain!, values(OTHER_POOL[]))
+function closeall(pool::Union{Nothing, Pool}=nothing)
+    if pool === nothing
+        drain!(TCP_POOL[])
+        drain!(MBEDTLS_POOL[])
+        drain!(OPENSSL_POOL[])
+        Base.@lock OTHER_POOL foreach(drain!, values(OTHER_POOL[]))
+    else
+        drain!(pool.tcp)
+        drain!(pool.mbedtls)
+        drain!(pool.openssl)
+        Base.@lock pool.lock foreach(drain!, values(pool.other))
+    end
     return
 end
 
@@ -411,7 +419,7 @@ function connection_isvalid(c, idle_timeout)
 end
 
 @noinline connection_limit_warning(cl) = cl === nothing ||
-    @warn "connection_limit no longer supported as a keyword argument; use `HTTP.set_default_connection_limit!` or pass a connection pool like `pool=HTTP.Pool()` instead."
+    @warn "connection_limit no longer supported as a keyword argument; use `HTTP.set_default_connection_limit!($cl)` or pass a connection pool like `pool=HTTP.Pool($cl)` instead."
 
 """
     newconnection(type, host, port) -> Connection
@@ -602,7 +610,7 @@ end
 
 function sslupgrade(::Type{IOType}, c::Connection{T},
                     host::AbstractString;
-                    pool::Pool=POOL,
+                    pool::Union{Nothing, Pool}=nothing,
                     require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                     keepalive::Bool=true,
                     readtimeout::Int=0,
