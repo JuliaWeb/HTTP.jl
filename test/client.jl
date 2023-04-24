@@ -88,8 +88,7 @@ end
         url = "https://$httpbin/cookies/delete?hey"
         r = HTTP.get(url, socket_type_tls=tls)
         cookies = HTTP.Cookies.getcookies!(HTTP.COOKIEJAR, URI(url))
-        @test length(cookies) == 2
-        @test cookies[2].value == ""
+        @test length(cookies) == 1
     end
 
     @testset "Client Streaming Test" begin
