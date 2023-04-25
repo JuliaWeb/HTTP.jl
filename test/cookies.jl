@@ -268,7 +268,8 @@ using Sockets, Test
 
     @testset "addcookie!" begin
         r = HTTP.Request("GET", "/")
-        c = HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain=".google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))
+        c        = HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain=".google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))
+        c_parsed = HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain="google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))
         HTTP.addcookie!(r, c)
         @test HTTP.header(r, "Cookie") == "NID=99=YsDT5i3E-CXax-"
         HTTP.addcookie!(r, c)
@@ -276,8 +277,10 @@ using Sockets, Test
         r = HTTP.Response(200)
         HTTP.addcookie!(r, c)
         @test HTTP.header(r, "Set-Cookie") == "NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly"
+        @test [c_parsed] == HTTP.Cookies.readsetcookies(["Set-Cookie" => HTTP.header(r, "Set-Cookie")])
         HTTP.addcookie!(r, c)
         @test HTTP.headers(r, "Set-Cookie") == ["NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly", "NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly"]
+        @test [c_parsed, c_parsed] == HTTP.Cookies.readsetcookies(["Set-Cookie"] .=> HTTP.headers(r, "Set-Cookie"))
     end
 end
 
