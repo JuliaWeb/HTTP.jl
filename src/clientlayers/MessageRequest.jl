@@ -49,14 +49,6 @@ function messagelayer(handler)
                     write(resp.body, resp.request.context[:response_body])
                 end
             end
-            if @isdefined(resp)
-                end_time = time()
-                rbytes = Base.get(resp.request.context, :nbytes, 0)
-                wbytes = Base.get(resp.request.context, :nbytes_written, 0)
-                rgbits_per_second = rbytes == 0 ? 0 : (((8 * rbytes) / 1e9) / (end_time - start_time))
-                wgbits_per_second = wbytes == 0 ? 0 : (((8 * wbytes) / 1e9) / (end_time - start_time))
-                @debugv 1 "Request complete with bandwidth: $(wgbits_per_second) Gbps write, $(rgbits_per_second) Gbps read"
-            end
         end
     end
 end

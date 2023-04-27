@@ -37,7 +37,9 @@ include("sniff.jl")                    ;using .Sniff
 include("multipart.jl")                ;using .Forms
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,
                                                          ParseError
-include("Connections.jl")           ;using .Connections
+include("Connections.jl")              ;using .Connections
+# backwards compat
+const ConnectionPool = Connections
 include("StatusCodes.jl")              ;using .StatusCodes
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies

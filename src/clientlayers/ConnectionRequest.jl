@@ -117,15 +117,6 @@ function connectionlayer(handler)
             stream = Stream(req.response, io)
             return handler(stream; readtimeout=readtimeout, logerrors=logerrors, kw...)
         catch e
-            while true
-                if e isa CompositeException
-                    e = e.exceptions[1]
-                elseif e isa TaskFailedException
-                    e = e.task.result
-                else
-                    break
-                end
-            end
             if logerrors && !(e isa StatusError || e isa TimeoutError)
                 @error "HTTP.ConnectionRequest" exception=(e, catch_backtrace()) method=req.method url=req.url context=req.context
             end
