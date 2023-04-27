@@ -1,6 +1,6 @@
 module StreamRequest
 
-using ..IOExtras, ..Messages, ..Streams, ..ConnectionPool, ..Strings, ..RedirectRequest, ..Exceptions
+using ..IOExtras, ..Messages, ..Streams, ..Connections, ..Strings, ..RedirectRequest, ..Exceptions
 using LoggingExtras, CodecZlib, URIs
 using SimpleBufferStream: BufferStream
 
@@ -17,12 +17,12 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothing, Bool}=nothing, kw...)::Response
+function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothing, Bool}=nothing, logerrors::Bool=false, kw...)::Response
     response = stream.message
     req = response.request
-    io = stream.stream
     @debugv 1 sprintcompact(req)
     @debugv 2 "client startwrite"
+    write_start = time()
     startwrite(stream)
 
     @debugv 2 sprint(show, req)
@@ -30,7 +30,6 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
         @debugv 2 "$(typeof(req)).body: $(sprintcompact(req.body))"
     end
 
-    write_error = nothing
     try
         @sync begin
             if iofunction === nothing
@@ -38,29 +37,32 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                     writebody(stream, req)
                     @debugv 2 "client closewrite"
                     closewrite(stream)
-                catch e
-                    # @error "error" exception=(e, catch_backtrace())
-                    write_error = e
-                    isopen(io) && @try Base.IOError close(io)
+                finally
+                    req.context[:write_duration_ms] = get(req.context, :write_duration_ms, 0.0) + ((time() - write_start) * 1000)
                 end
-                @debugv 2 "client startread"
-                startread(stream)
-                readbody(stream, response, decompress)
+                read_start = time()
+                @async try
+                    @debugv 2 "client startread"
+                    startread(stream)
+                    if isaborted(stream)
+                        # The server may have closed the connection.
+                        # Don't propagate such errors.
+                        @try Base.IOError close(stream.stream)
+                    end
+                    readbody(stream, response, decompress)
+                finally
+                    req.context[:read_duration_ms] = get(req.context, :read_duration_ms, 0.0) + ((time() - read_start) * 1000)
+                end
             else
                 iofunction(stream)
             end
-            if isaborted(stream)
-                # The server may have closed the connection.
-                # Don't propagate such errors.
-                @try Base.IOError close(io)
-            end
         end
     catch e
-        if write_error !== nothing
-            throw(write_error)
-        else
-            rethrow(e)
+        if logerrors
+            @error "HTTP.IOError" exception=(e, catch_backtrace()) method=req.method url=req.url context=req.context
         end
+        req.context[:io_errors] = get(req.context, :io_errors, 0) + 1
+        rethrow()
     end
 
     @debugv 2 "client closewrite"
@@ -70,33 +72,35 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
 
     @debugv 1 sprintcompact(response)
     @debugv 2 sprint(show, response)
-
     return response
 end
 
 function writebody(stream::Stream, req::Request)
     if !isbytes(req.body)
-        writebodystream(stream, req.body)
+        n = writebodystream(stream, req.body)
         closebody(stream)
     else
-        write(stream, req.body)
+        n = write(stream, req.body)
     end
-    return
+    stream.message.request.context[:nbytes_written] = n
+    return n
 end
 
 function writebodystream(stream, body)
+    n = 0
     for chunk in body
-        writechunk(stream, chunk)
+        n += writechunk(stream, chunk)
     end
+    return n
 end
 
 function writebodystream(stream, body::IO)
-    write(stream, body)
+    return write(stream, body)
 end
 
 function writebodystream(stream, body::Union{AbstractDict, NamedTuple})
     # application/x-www-form-urlencoded
-    write(stream, URIs.escapeuri(body))
+    return write(stream, URIs.escapeuri(body))
 end
 
 writechunk(stream, body::IO) = writebodystream(stream, body)
@@ -132,6 +136,7 @@ end
 const IOBuffers = Union{IOBuffer, Base.GenericIOBuffer{SubArray{UInt8, 1, Vector{UInt8}, Tuple{UnitRange{Int64}}, true}}}
 
 function readbody!(stream::Stream, res::Response, buf_or_stream)
+    n = 0
     if !iserror(res)
         if isbytes(res.body)
             if length(res.body) > 0
@@ -144,22 +149,23 @@ function readbody!(stream::Stream, res::Response, buf_or_stream)
                     # if it's a BufferStream, the response body was gzip encoded
                     # so using the default write is fastest because it utilizes
                     # readavailable under the hood, for which BufferStream is optimized
-                    write(body, buf_or_stream)
+                    n = write(body, buf_or_stream)
                 elseif buf_or_stream isa Stream
                     # for HTTP.Stream, there's already an optimized read method
                     # that just needs an IOBuffer to write into
-                    readall!(buf_or_stream, body)
+                    n = readall!(buf_or_stream, body)
                 else
                     error("unreachable")
                 end
             else
                 res.body = read(buf_or_stream)
+                n = length(res.body)
             end
         elseif res.body isa Base.GenericIOBuffer && buf_or_stream isa Stream
             # optimization for IOBuffer response_stream to avoid temporary allocations
-            readall!(buf_or_stream, res.body)
+            n = readall!(buf_or_stream, res.body)
         else
-            write(res.body, buf_or_stream)
+            n = write(res.body, buf_or_stream)
         end
     else
         # read the response body into the request context so that it can be
@@ -167,6 +173,7 @@ function readbody!(stream::Stream, res::Response, buf_or_stream)
         # we end up not retrying/redirecting/etc.
         res.request.context[:response_body] = read(buf_or_stream)
     end
+    res.request.context[:nbytes] = n
 end
 
 end # module StreamRequest

@@ -25,41 +25,22 @@ macro $(:try)(exes...)
 end
 end # @eval
 
-function try_with_timeout(f, shouldtimeout, delay, iftimeout=() -> nothing)
-    @assert delay > 0
-    cond = Condition()
-    # execute f async
-    t = @async try
-        notify(cond, f())
-    catch e
-        @debugv 1 "error executing f in try_with_timeout"
-        isopen(timer) && notify(cond, e, error = true)
-    end
-    # start a timer
-    timer = Timer(delay; interval=delay / 10) do tm
+function try_with_timeout(f, timeout)
+    ch = Channel(0)
+    timer = Timer(tm -> close(ch, TimeoutError(timeout)), timeout)
+    @async begin
         try
-            if shouldtimeout()
-                @debugv 1 "❗️  Timeout: $delay"
-                close(tm)
-                iftimeout()
-                notify(cond, TimeoutError(delay), error = true)
-            end
+            put!(ch, $f())
         catch e
-            @debugv 1 "callback error in try_with_timeout"
-            close(tm)
-            notify(cond, e, error = true)
+            if !(e isa HTTPError)
+                e = CapturedException(e, catch_backtrace())
+            end
+            close(ch, e)
+        finally
+            close(timer)
         end
     end
-    try
-        res = wait(cond)
-        @debugv 1 "try_with_timeout finished with: $res"
-        res
-    catch e
-        @debugv 1 "try_with_timeout failed with: $e"
-        rethrow()
-    finally
-        close(timer)
-    end
+    return take!(ch)
 end
 
 abstract type HTTPError <: Exception end

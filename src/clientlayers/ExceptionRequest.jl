@@ -10,10 +10,16 @@ using ..IOExtras, ..Messages, ..Exceptions
 Throw a `StatusError` if the request returns an error response status.
 """
 function exceptionlayer(handler)
-    return function(stream; status_exception::Bool=true, kw...)
-        res = handler(stream; kw...)
+    return function exceptions(stream; status_exception::Bool=true, logerrors::Bool=false, kw...)
+        res = handler(stream; logerrors=logerrors, kw...)
         if status_exception && iserror(res)
-            throw(StatusError(res.status, res.request.method, res.request.target, res))
+            req = res.request
+            req.context[:status_errors] = get(req.context, :status_errors, 0) + 1
+            e = StatusError(res.status, req.method, req.target, res)
+            if logerrors
+                @error "HTTP.StatusError" exception=(e, catch_backtrace()) method=req.method url=req.url context=req.context
+            end
+            throw(e)
         else
             return res
         end

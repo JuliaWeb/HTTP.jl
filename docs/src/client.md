@@ -91,17 +91,25 @@ If you're running into a real head-scratcher, don't hesitate to [open an issue](
 
 When a connection is attempted to a remote host, sometimes the connection is unable to be established for whatever reason. Passing a non-zero `connect_timetout` value will cause `HTTP.request` to wait that many seconds before giving up and throwing an error.
 
-#### `connection_limit`
+#### `pool`
 
-Many remote web services/APIs have rate limits or throttling in place to avoid bad actors from abusing their service. They may prevent too many requests over a time period or they may prevent too many connections being simultaneously open from the same client. By default, when `HTTP.request` opens a remote connection, it remembers the exact host:port combination and will keep the connection open to be reused by subsequent requests to the same host:port. The `connection_limit` keyword argument controls how many concurrent connections are allowed to a single remote host.
+Many remote web services/APIs have rate limits or throttling in place to avoid bad actors from abusing their service. They may prevent too many requests over a time period or they may prevent too many connections being simultaneously open from the same client. By default, when `HTTP.request` opens a remote connection, it remembers the exact host:port combination and will keep the connection open to be reused by subsequent requests to the same host:port. The `pool` keyword argument specifies a specific `HTTP.Pool` object to be used for controlling the maximum number of concurrent connections allowed to be happening across the pool. It's constructed via `HTTP.Pool(; max::Int)`. Requests attempted when the maximum is already hit will block until previous requests finish. The `idle_timeout` keyword argument can be passed to `HTTP.request` to control how long it's been since a connection was lasted used in order to be considered 'valid'; otherwise, "stale" connections will be discarded.
 
 #### `readtimeout`
 
-After a connection is established and a request is sent, a response is expected. If a non-zero value is passed to the `readtimeout` keyword argument, `HTTP.request` will wait to receive a response that many seconds before throwing an error. Note that for chunked or streaming responses, each chunk/packet of bytes received causes the timeout to reset. Passing `readtimeout = 0` disables any timeout checking and is the default.
+After a connection is established and a request is sent, a response is expected. If a non-zero value is passed to the `readtimeout` keyword argument, `HTTP.request` will wait to receive a response that many seconds before throwing an error. Passing `readtimeout = 0` disables any timeout checking and is the default.
 
 ### `status_exception`
 
 When a non-2XX HTTP status code is received in a response, this is meant to convey some error condition. 3XX responses typically deal with "redirects" where the request should actually try a different url (these are followed automatically by default in `HTTP.request`, though up to a limit; see [`redirect`](@ref)). 4XX status codes typically mean the remote server thinks something is wrong in how the request is made. 5XX typically mean something went wrong on the server-side when responding. By default, as mentioned previously, `HTTP.request` will attempt to follow redirect responses, and retry "retryable" requests (where the status code and original request method allow). If, after redirects/retries, a response still has a non-2XX response code, the default behavior is to throw an `HTTP.StatusError` exception to signal that the request didn't succeed. This behavior can be disabled by passing `status_exception=false`, where the `HTTP.Response` object will be returned with the non-2XX status code intact.
+
+### `logerrors`
+
+If `true`, `HTTP.StatusError`, `HTTP.TimeoutError`, `HTTP.IOError`, and `HTTP.ConnectError` will be logged via `@error` as they happen, regardless of whether the request is then retried or not. Useful for debugging or monitoring requests where there's worry of certain errors happening but ignored because of retries.
+
+### `observelayers`
+
+If `true`, enables the `HTTP.observelayer` to wrap each client-side "layer" to track the amount of time spent in each layer as a request is processed. This can be useful for debugging performance issues. Note that when retries or redirects happen, the time spent in each layer is cumulative, as noted by the `[layer]_count`. The metrics are stored in the `Request.context` dictionary, and can be accessed like `HTTP.get(...).request.context`.
 
 ### `basicauth`
 
@@ -149,6 +157,16 @@ Controls the total number of retries that will be attempted. Can also disable al
 #### `retry_non_idempotent`
 
 By default, this keyword argument is `false`, which controls whether non-idempotent requests will be retried (POST or PATCH requests).
+
+#### `retry_delays`
+
+Allows providing a custom `ExponentialBackOff` object to control the delay between retries.
+Default is `ExponentialBackOff(n = retries)`.
+
+#### `retry_check`
+
+Allows providing a custom function to control whether a retry should be attempted.
+The function should accept 5 arguments: the delay state, exception, request, response (an `HTTP.Response` object *if* a request was successfully made, otherwise `nothing`), and `resp_body` response body (which may be `nothing` if there is no response yet, otherwise a `Vector{UInt8}`), and return `true` if a retry should be attempted. So in traditional nomenclature, the function would have the form `f(s, ex, req, resp, resp_body) -> Bool`.
 
 ### Redirect Arguments
 

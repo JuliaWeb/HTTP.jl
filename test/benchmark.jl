@@ -4,7 +4,7 @@ include("http_parser_benchmark.jl")
 
 using HTTP
 using HTTP.IOExtras
-using HTTP.ConnectionPool
+using HTTP.Connections
 using HTTP.Streams
 using HTTP.Messages
 

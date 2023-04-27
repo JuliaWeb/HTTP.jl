@@ -61,7 +61,7 @@ export Message, Request, Response,
 
 using URIs, CodecZlib
 using ..Pairs, ..IOExtras, ..Parsers, ..Strings, ..Forms, ..Conditions
-using ..ConnectionPool, ..StatusCodes
+using ..Connections, ..StatusCodes
 
 const nobody = UInt8[]
 const unknown_length = typemax(Int)

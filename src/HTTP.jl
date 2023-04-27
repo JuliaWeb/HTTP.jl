@@ -37,24 +37,44 @@ include("sniff.jl")                    ;using .Sniff
 include("multipart.jl")                ;using .Forms
 include("Parsers.jl")                  ;import .Parsers: Headers, Header,
                                                          ParseError
-include("ConnectionPool.jl")           ;using .ConnectionPool
+include("Connections.jl")              ;using .Connections
+# backwards compat
+const ConnectionPool = Connections
 include("StatusCodes.jl")              ;using .StatusCodes
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
+
+getrequest(r::Request) = r
+getrequest(s::Stream) = s.message.request
+
+# Wraps client-side "layer" to track the amount of time spent in it as a request is processed.
+function observelayer(f)
+    function observation(req_or_stream; kw...)
+        req = getrequest(req_or_stream)
+        nm = nameof(f)
+        cntnm = Symbol(nm, "_count")
+        durnm = Symbol(nm, "_duration_ms")
+        start_time = time()
+        req.context[cntnm] = Base.get(req.context, cntnm, 0) + 1
+        try
+            return f(req_or_stream; kw...)
+        finally
+            req.context[durnm] = Base.get(req.context, durnm, 0) + (time() - start_time) * 1000
+            # @info "observed layer = $f, count = $(req.context[cntnm]), duration = $(req.context[durnm])"
+        end
+    end
+end
+
 include("clientlayers/MessageRequest.jl");           using .MessageRequest
 include("clientlayers/RedirectRequest.jl");          using .RedirectRequest
-include("clientlayers/DefaultHeadersRequest.jl");    using .DefaultHeadersRequest
-include("clientlayers/BasicAuthRequest.jl");         using .BasicAuthRequest
+include("clientlayers/HeadersRequest.jl");           using .HeadersRequest
 include("clientlayers/CookieRequest.jl");            using .CookieRequest
-include("clientlayers/CanonicalizeRequest.jl");      using .CanonicalizeRequest
 include("clientlayers/TimeoutRequest.jl");           using .TimeoutRequest
 include("clientlayers/ExceptionRequest.jl");         using .ExceptionRequest
 include("clientlayers/RetryRequest.jl");             using .RetryRequest
 include("clientlayers/ConnectionRequest.jl");        using .ConnectionRequest
-include("clientlayers/DebugRequest.jl");             using .DebugRequest
 include("clientlayers/StreamRequest.jl");            using .StreamRequest
-include("clientlayers/ContentTypeRequest.jl");       using .ContentTypeDetection
 
 include("download.jl")
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
@@ -119,9 +139,10 @@ Supported optional keyword arguments:
     request and response process
  - `connect_timeout = 10`, close the connection after this many seconds if it
    is still attempting to connect. Use `connect_timeout = 0` to disable.
- - `connection_limit = 8`, number of concurrent connections allowed to each host:port.
- - `readtimeout = 0`, close the connection if no data is received for this many
-   seconds. Use `readtimeout = 0` to disable.
+ - `pool = nothing`, an `HTTP.Pool` object to use for managing the reuse of connections between requests.
+    By default, a global pool is used, which is shared across all requests. To create a pool for a specific set of requests,
+    use `pool = HTTP.Pool(max::Int)`, where `max` controls the maximum number of concurrent connections allowed to be used for requests at a given time.
+ - `readtimeout = 0`, abort a request after this many seconds. Will trigger retries if applicable. Use `readtimeout = 0` to disable.
  - `status_exception = true`, throw `HTTP.StatusError` for response status >= 300.
  - Basic authentication is detected automatically from the provided url's `userinfo` (in the form `scheme://user:password@host`)
    and adds the `Authorization: Basic` header; this can be disabled by passing `basicauth=false`
@@ -134,12 +155,19 @@ Supported optional keyword arguments:
  - `decompress = nothing`, by default, decompress the response body if the response has a
     "Content-Encoding" header set to "gzip". If `decompress=true`, decompress the response body
     regardless of `Content-Encoding` header. If `decompress=false`, do not decompress the response body.
+ - `logerrors = false`, if `true`, `HTTP.StatusError`, `HTTP.TimeoutError`, `HTTP.IOError`, and `HTTP.ConnectError` will be
+    logged via `@error` as they happen, regardless of whether the request is then retried or not. Useful for debugging or
+    monitoring requests where there's worry of certain errors happening but ignored because of retries.
+ - `observelayers = false`, if `true`, enables the `HTTP.observelayer` to wrap each client-side "layer" to track the amount of
+   time spent in each layer as a request is processed. This can be useful for debugging performance issues. Note that when retries
+   or redirects happen, the time spent in each layer is cumulative, as noted by the `[layer]_count`. The metrics are stored
+   in the `Request.context` dictionary, and can be accessed like `HTTP.get(...).request.context`
 
 Retry arguments:
  - `retry = true`, retry idempotent requests in case of error.
  - `retries = 4`, number of times to retry.
  - `retry_non_idempotent = false`, retry non-idempotent requests too. e.g. POST.
- - `retry_delay = ExponentialBackOff(n = retries)`, provide a custom `ExponentialBackOff` object to control the delay between retries.
+ - `retry_delays = ExponentialBackOff(n = retries)`, provide a custom `ExponentialBackOff` object to control the delay between retries.
  - `retry_check = (s, ex, req, resp, resp_body) -> Bool`, provide a custom function to control whether a retry should be attempted.
     The function should accept 5 arguments: the delay state, exception, request, response (an `HTTP.Response` object *if* a request was
     successfully made, otherwise `nothing`), and `resp_body` response body (which may be `nothing` if there is no response yet, otherwise
@@ -282,12 +310,13 @@ end
 ```
 """
 function request(method, url, h=nothing, b=nobody;
-                 headers=h, body=b, query=nothing, kw...)::Response
-    return request(HTTP.stack(), method, url, headers, body, query; kw...)
+                 headers=h, body=b, query=nothing, observelayers::Bool=false, kw...)::Response
+    return request(HTTP.stack(observelayers), method, url, headers, body, query; kw...)
 end
 
+# layers are applied from left to right, i.e. the first layer is the outermost that is called first, which then calls into the second layer, etc.
 const STREAM_LAYERS = [timeoutlayer, exceptionlayer]
-const REQUEST_LAYERS = [redirectlayer, defaultheaderslayer, basicauthlayer, contenttypedetectionlayer, cookielayer, retrylayer, canonicalizelayer]
+const REQUEST_LAYERS = [redirectlayer, headerslayer, cookielayer, retrylayer]
 
 """
     Layer
@@ -386,10 +415,12 @@ If `request=false`, will remove the bottom "stream" layer as opposed to bottom "
 popfirstlayer!(; request::Bool=true) = popfirst!(request ? REQUEST_LAYERS : STREAM_LAYERS)
 
 function stack(
+    observelayers::Bool=false,
     # custom layers
     requestlayers=(),
     streamlayers=())
 
+    obs = observelayers ? observelayer : identity
     # stream layers
     if streamlayers isa NamedTuple
         inner_stream_layers = haskey(streamlayers, :last) ? streamlayers.last : ()
@@ -398,14 +429,13 @@ function stack(
         inner_stream_layers = streamlayers
         outer_stream_layers = ()
     end
-    layers = foldr((x, y) -> x(y), inner_stream_layers, init=streamlayer)
-    layers2 = foldr((x, y) -> x(y), STREAM_LAYERS, init=layers)
+    layers = foldr((x, y) -> obs(x(y)), inner_stream_layers, init=obs(streamlayer))
+    layers2 = foldr((x, y) -> obs(x(y)), STREAM_LAYERS, init=layers)
     if !isempty(outer_stream_layers)
-        layers2 = foldr((x, y) -> x(y), outer_stream_layers, init=layers2)
+        layers2 = foldr((x, y) -> obs(x(y)), outer_stream_layers, init=layers2)
     end
     # request layers
     # messagelayer must be the 1st/outermost layer to convert initial args to Request
-    # we also want debuglayer to be early to ensure any debug logging is handled correctly in other layers
     if requestlayers isa NamedTuple
         inner_request_layers = haskey(requestlayers, :last) ? requestlayers.last : ()
         outer_request_layers = haskey(requestlayers, :first) ? requestlayers.first : ()
@@ -413,12 +443,12 @@ function stack(
         inner_request_layers = requestlayers
         outer_request_layers = ()
     end
-    layers3 = foldr((x, y) -> x(y), inner_request_layers; init=connectionlayer(layers2))
-    layers4 = foldr((x, y) -> x(y), REQUEST_LAYERS; init=layers3)
+    layers3 = foldr((x, y) -> obs(x(y)), inner_request_layers; init=obs(connectionlayer(layers2)))
+    layers4 = foldr((x, y) -> obs(x(y)), REQUEST_LAYERS; init=layers3)
     if !isempty(outer_request_layers)
-        layers4 = foldr((x, y) -> x(y), outer_request_layers, init=layers4)
+        layers4 = foldr((x, y) -> obs(x(y)), outer_request_layers, init=layers4)
     end
-    return messagelayer(debuglayer(layers4))
+    return messagelayer(layers4)
 end
 
 function request(stack::Base.Callable, method, url, h=nothing, b=nobody, q=nothing;
@@ -472,9 +502,9 @@ macro client(requestlayers, streamlayers=[])
         head(a...; kw...) = ($__source__; request("HEAD", a...; kw...))
         delete(a...; kw...) = ($__source__; request("DELETE", a...; kw...))
         open(f, a...; kw...) = ($__source__; request(a...; iofunction=f, kw...))
-        function request(method, url, h=HTTP.Header[], b=HTTP.nobody; headers=h, body=b, query=nothing, kw...)::HTTP.Response
+        function request(method, url, h=HTTP.Header[], b=HTTP.nobody; headers=h, body=b, query=nothing, observelayers::Bool=false, kw...)::HTTP.Response
             $__source__
-            HTTP.request(HTTP.stack($requestlayers, $streamlayers), method, url, headers, body, query; kw...)
+            HTTP.request(HTTP.stack(observelayers, $requestlayers, $streamlayers), method, url, headers, body, query; kw...)
         end
     end)
 end
@@ -572,7 +602,7 @@ write(socket, frame)
 """
 function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tuple{IO, Response}
     socketready = Channel{Tuple{IO, Response}}(0)
-    @async HTTP.open(method, url, headers; kw...) do http
+    Threads.@spawn HTTP.open(method, url, headers; kw...) do http
         HTTP.startread(http)
         socket = http.stream
         put!(socketready, (socket, http.message))

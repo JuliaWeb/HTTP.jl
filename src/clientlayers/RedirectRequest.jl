@@ -11,7 +11,7 @@ export redirectlayer, nredirects
 Redirects the request in the case of 3xx response status.
 """
 function redirectlayer(handler)
-    return function(req; redirect::Bool=true, redirect_limit::Int=3, redirect_method=nothing, forwardheaders::Bool=true, response_stream=nothing, kw...)
+    return function redirects(req; redirect::Bool=true, redirect_limit::Int=3, redirect_method=nothing, forwardheaders::Bool=true, response_stream=nothing, kw...)
         if !redirect || redirect_limit == 0
             # no redirecting
             return handler(req; kw...)

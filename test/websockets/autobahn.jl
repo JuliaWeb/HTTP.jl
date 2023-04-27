@@ -2,7 +2,7 @@ using Test, Sockets, HTTP, HTTP.WebSockets, JSON
 
 const DIR = abspath(joinpath(dirname(pathof(HTTP)), "../test/websockets"))
 
-havedocker = success(`which docker`)
+havedocker = success(`which docker`) && success(`docker images crossbario/autobahn-testsuite`)
 !havedocker && @warn "Docker not found, skipping Autobahn tests"
 
 # 32-bit not supported by autobahn

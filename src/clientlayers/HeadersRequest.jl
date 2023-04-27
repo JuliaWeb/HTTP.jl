@@ -1,17 +1,37 @@
-module DefaultHeadersRequest
+module HeadersRequest
 
-export defaultheaderslayer, setuseragent!
+export headerslayer, setuseragent!
 
-using ..Messages, ..Forms, ..IOExtras
+using Base64, URIs, LoggingExtras
+using ..Messages, ..Forms, ..IOExtras, ..Sniff, ..Forms, ..Strings
 
 """
-    defaultheaderslayer(handler) -> handler
+    headerslayer(handler) -> handler
 
 Sets default expected headers.
 """
-function defaultheaderslayer(handler)
-    return function(req; iofunction=nothing, decompress=nothing, kw...)
+function headerslayer(handler)
+    return function defaultheaders(req; iofunction=nothing, decompress=nothing,
+            basicauth::Bool=true, detect_content_type::Bool=false, canonicalize_headers::Bool=false, kw...)
         headers = req.headers
+        ## basicauth
+        if basicauth
+            userinfo = unescapeuri(req.url.userinfo)
+            if !isempty(userinfo) && !hasheader(headers, "Authorization")
+                @debugv 1 "Adding Authorization: Basic header."
+                setheader(headers, "Authorization" => "Basic $(base64encode(userinfo))")
+            end
+        end
+        ## content type detection
+        if detect_content_type && (!hasheader(headers, "Content-Type")
+            && !isa(req.body, Form)
+            && isbytes(req.body))
+
+            sn = sniff(bytes(req.body))
+            setheader(headers, "Content-Type" => sn)
+            @debugv 1 "setting Content-Type header to: $sn"
+        end
+        ## default headers
         if isempty(req.url.port) ||
             (req.url.scheme == "http" && req.url.port == "80") ||
             (req.url.scheme == "https" && req.url.port == "443")
@@ -44,9 +64,19 @@ function defaultheaderslayer(handler)
         if decompress === nothing || decompress
             defaultheader!(headers, "Accept-Encoding" => "gzip")
         end
-        return handler(req; iofunction, decompress, kw...)
+        ## canonicalize headers
+        if canonicalize_headers
+            req.headers = canonicalizeheaders(headers)
+        end
+        res = handler(req; iofunction, decompress, kw...)
+        if canonicalize_headers
+            res.headers = canonicalizeheaders(res.headers)
+        end
+        return res
     end
 end
+
+canonicalizeheaders(h::T) where {T} = T([tocameldash(k) => v for (k,v) in h])
 
 const USER_AGENT = Ref{Union{String, Nothing}}("HTTP.jl/$VERSION")
 

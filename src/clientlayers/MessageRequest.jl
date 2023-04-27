@@ -1,9 +1,10 @@
 module MessageRequest
 
-using URIs
+using URIs, LoggingExtras
 using ..IOExtras, ..Messages, ..Parsers, ..Exceptions
 using ..Messages, ..Parsers
 using ..Strings: HTTPVersion
+import ..DEBUG_LEVEL
 
 export messagelayer
 
@@ -20,17 +21,27 @@ Construct a [`Request`](@ref) object from method, url, headers, and body.
 Hard-coded as the first layer in the request pipeline.
 """
 function messagelayer(handler)
-    return function(method::String, url::URI, headers, body; copyheaders::Bool=true, response_stream=nothing, http_version=HTTPVersion(1, 1), kw...)
+    return function makerequest(method::String, url::URI, headers, body; copyheaders::Bool=true, response_stream=nothing, http_version=HTTPVersion(1, 1), verbose=DEBUG_LEVEL[], kw...)
         req = Request(method, resource(url), mkreqheaders(headers, copyheaders), body; url=url, version=http_version, responsebody=response_stream)
         local resp
+        start_time = time()
         try
-            resp = handler(req; response_stream=response_stream, kw...)
+            # if debugging, enable by wrapping request in custom logger logic
+            resp = if verbose > 0
+                LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
+                    handler(req; verbose, response_stream, kw...)
+                end
+            else
+                handler(req; verbose, response_stream, kw...)
+            end
         catch e
             if e isa StatusError
                 resp = e.response
             end
             rethrow(e)
         finally
+            dur = (time() - start_time) * 1000
+            req.context[:total_request_duration_ms] = dur
             if @isdefined(resp) && iserror(resp) && haskey(resp.request.context, :response_body)
                 if isbytes(resp.body)
                     resp.body = resp.request.context[:response_body]

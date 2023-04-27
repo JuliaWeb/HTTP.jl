@@ -32,7 +32,7 @@ using Test, HTTP, JSON
             @test a == b
         end
 
-        HTTP.ConnectionPool.closeall()
+        HTTP.Connections.closeall()
     end
 
     @testset "HTTP.request - Body - $config - https" for config in configs
@@ -56,7 +56,7 @@ using Test, HTTP, JSON
             @test a == b
         end
 
-        HTTP.ConnectionPool.closeall()
+        HTTP.Connections.closeall()
     end
 
     @testset "HTTP.open - $config - https" for config in configs
@@ -85,7 +85,7 @@ using Test, HTTP, JSON
             @test a == b
         end
 
-        HTTP.ConnectionPool.closeall()
+        HTTP.Connections.closeall()
     end
 
     @testset "HTTP.request - Response Stream - $config - https" for config in configs
@@ -126,7 +126,7 @@ using Test, HTTP, JSON
             @test a == b
         end
 
-        HTTP.ConnectionPool.closeall()
+        HTTP.Connections.closeall()
     end
 end
 

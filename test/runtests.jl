@@ -21,7 +21,6 @@ include(joinpath(dir, "resources/TestRequest.jl"))
             "parser.jl",
             "loopback.jl",
             "websockets/deno_client/server.jl",
-            "websockets/autobahn.jl",
             "messages.jl",
             "handlers.jl",
             "server.jl",
@@ -29,6 +28,7 @@ include(joinpath(dir, "resources/TestRequest.jl"))
             "mwe.jl",
             "try_with_timeout.jl",
             "httpversion.jl",
+            "websockets/autobahn.jl",
             ]
         file = joinpath(dir, f)
         println("Running $file tests...")

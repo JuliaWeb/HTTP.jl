@@ -13,7 +13,7 @@ export listen, listen!, Server, forceclose, port
 
 using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
-using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..ConnectionPool, ..Exceptions
+using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..Connections, ..Exceptions
 import ..access_threaded, ..SOCKET_TYPE_TLS, ..@logfmt_str
 
 TRUE(x) = true
@@ -282,7 +282,7 @@ Whatever you type on the client will be displayed on the server and vis-versa.
 using HTTP
 
 function chat(io::HTTP.Stream)
-    @async while !eof(io)
+    Threads.@spawn while !eof(io)
         write(stdout, readavailable(io), "\\n")
     end
     while isopen(io)

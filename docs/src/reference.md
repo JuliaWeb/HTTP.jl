@@ -138,7 +138,7 @@ HTTP.Messages.isidempotent
 HTTP.Messages.retryable
 HTTP.Messages.defaultheader!
 HTTP.Messages.readheaders
-HTTP.DefaultHeadersRequest.setuseragent!
+HTTP.HeadersRequest.setuseragent!
 HTTP.Messages.readchunksize
 HTTP.Messages.headerscomplete(::HTTP.Messages.Response)
 HTTP.Messages.writestartline
@@ -167,17 +167,13 @@ HTTP.poplayer!
 HTTP.popfirstlayer!
 HTTP.MessageRequest.messagelayer
 HTTP.RedirectRequest.redirectlayer
-HTTP.DefaultHeadersRequest.defaultheaderslayer
-HTTP.BasicAuthRequest.basicauthlayer
+HTTP.HeadersRequest.headerslayer
 HTTP.CookieRequest.cookielayer
-HTTP.CanonicalizeRequest.canonicalizelayer
 HTTP.TimeoutRequest.timeoutlayer
 HTTP.ExceptionRequest.exceptionlayer
 HTTP.RetryRequest.retrylayer
 HTTP.ConnectionRequest.connectionlayer
-HTTP.DebugRequest.debuglayer
 HTTP.StreamRequest.streamlayer
-HTTP.ContentTypeDetection.contenttypedetectionlayer
 ```
 
 ### Raw Request Connection

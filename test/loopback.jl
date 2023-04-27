@@ -22,10 +22,12 @@ mutable struct Loopback <: IO
 end
 Loopback() = Loopback(false, IOBuffer(), Base.BufferStream())
 
+pool = HTTP.Pool(1)
+
 config = [
     :socket_type => Loopback,
     :retry => false,
-    :connection_limit => 1
+    :pool => pool,
 ]
 
 server_events = []
@@ -158,7 +160,7 @@ function Base.unsafe_write(lb::Loopback, p::Ptr{UInt8}, n::UInt)
     return n
 end
 
-function HTTP.ConnectionPool.getconnection(::Type{Loopback},
+function HTTP.Connections.getconnection(::Type{Loopback},
     host::AbstractString,
     port::AbstractString;
     kw...)::Loopback
@@ -295,9 +297,9 @@ end
 
         hello_sent = Ref(false)
         world_sent = Ref(false)
-        @test_throws HTTP.StatusError begin
+        @test_throws HTTP.RequestError begin
             r = lbreq("abort", [], [
-                FunctionIO(()->(hello_sent[] = true; sleep(0.5); "Hello")),
+                FunctionIO(()->(hello_sent[] = true; sleep(1.0); "Hello")),
                 FunctionIO(()->(world_sent[] = true; " World!"))])
         end
         @test hello_sent[]
