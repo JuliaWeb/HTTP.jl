@@ -215,7 +215,9 @@ end
 
 iscookienamevalid(raw) = raw == "" ? false : any(isurlchar, raw)
 
-const AlternateRFC1123Format = Dates.DateFormat("e, dd-uuu-yyyy HH:MM:SS G\\MT")
+gmtformat(::DateFormat{S,T}) where {S,T} = Dates.DateFormat(string(S, " G\\MT"))
+const AlternateRFC1123GMTFormat = gmtformat(dateformat"e, dd-uuu-yyyy HH:MM:SS")
+const RFC1123GMTFormat = gmtformat(Dates.RFC1123Format)
 
 # readSetCookies parses all "Set-Cookie" values from
 # the header h and returns the successfully parsed Cookies.
@@ -287,10 +289,10 @@ function readsetcookies(h::Headers)
             elseif lowerattr == "expires"
                 c.rawexpires = val
                 try
-                    c.expires = Dates.DateTime(val, Dates.RFC1123Format)
+                    c.expires = Dates.DateTime(val, RFC1123GMTFormat)
                 catch
                     try
-                        c.expires = Dates.DateTime(val, AlternateRFC1123Format)
+                        c.expires = Dates.DateTime(val, AlternateRFC1123GMTFormat)
                     catch
                         continue
                     end

@@ -71,7 +71,11 @@ using Sockets, Test
             (["Set-Cookie" => "Cookie-1=v\$1"], [HTTP.Cookie("Cookie-1", "v\$1")]),
             (["Set-Cookie" => "NID=99=YsDT5i3E-CXax-; expires=Wed, 23-Nov-2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly"],
             [HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain=".google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))]),
+            (["Set-Cookie" => "NID=99=YsDT5i3E-CXax-; expires=Wed, 23 Nov 2011 01:05:03 GMT; path=/; domain=.google.ch; HttpOnly"],
+            [HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain=".google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))]),
             (["Set-Cookie" => ".ASPXAUTH=7E3AA; expires=Wed, 07-Mar-2012 14:25:06 GMT; path=/; HttpOnly"],
+            [HTTP.Cookie(".ASPXAUTH", "7E3AA"; path="/", expires=HTTP.Dates.DateTime(2012, 3, 7, 14, 25, 6, 0), httponly=true)]),
+            (["Set-Cookie" => ".ASPXAUTH=7E3AA; expires=Wed, 07 Mar 2012 14:25:06 GMT; path=/; HttpOnly"],
             [HTTP.Cookie(".ASPXAUTH", "7E3AA"; path="/", expires=HTTP.Dates.DateTime(2012, 3, 7, 14, 25, 6, 0), httponly=true)]),
             (["Set-Cookie" => "ASP.NET_SessionId=foo; path=/; HttpOnly"],
             [HTTP.Cookie("ASP.NET_SessionId", "foo"; path="/", httponly=true)]),
@@ -264,7 +268,8 @@ using Sockets, Test
 
     @testset "addcookie!" begin
         r = HTTP.Request("GET", "/")
-        c = HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain=".google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))
+        c        = HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain=".google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))
+        c_parsed = HTTP.Cookie("NID", "99=YsDT5i3E-CXax-"; path="/", domain="google.ch", httponly=true, expires=HTTP.Dates.DateTime(2011, 11, 23, 1, 5, 3, 0))
         HTTP.addcookie!(r, c)
         @test HTTP.header(r, "Cookie") == "NID=99=YsDT5i3E-CXax-"
         HTTP.addcookie!(r, c)
@@ -272,8 +277,10 @@ using Sockets, Test
         r = HTTP.Response(200)
         HTTP.addcookie!(r, c)
         @test HTTP.header(r, "Set-Cookie") == "NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly"
+        @test [c_parsed] == HTTP.Cookies.readsetcookies(["Set-Cookie" => HTTP.header(r, "Set-Cookie")])
         HTTP.addcookie!(r, c)
         @test HTTP.headers(r, "Set-Cookie") == ["NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly", "NID=99=YsDT5i3E-CXax-; Path=/; Domain=google.ch; Expires=Wed, 23 Nov 2011 01:05:03 GMT; HttpOnly"]
+        @test [c_parsed, c_parsed] == HTTP.Cookies.readsetcookies(["Set-Cookie"] .=> HTTP.headers(r, "Set-Cookie"))
     end
 end
 
