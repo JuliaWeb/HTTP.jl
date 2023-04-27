@@ -282,7 +282,7 @@ Whatever you type on the client will be displayed on the server and vis-versa.
 using HTTP
 
 function chat(io::HTTP.Stream)
-    @async while !eof(io)
+    Threads.@spawn while !eof(io)
         write(stdout, readavailable(io), "\\n")
     end
     while isopen(io)

@@ -30,10 +30,14 @@ const nolimit = typemax(Int)
 
 taskid(t=current_task()) = string(hash(t) & 0xffff, base=16, pad=4)
 
-const default_connection_limit = Ref(16)
+const default_connection_limit = Ref{Int}()
 
 function __init__()
-    default_connection_limit[] = Threads.nthreads() * 4
+    # default connection limit is 4x the number of threads
+    # this was chosen after some empircal benchmarking on aws/azure machines
+    # where, for non-data-intensive workloads, having at least 4x ensured
+    # there was no artificial restriction on overall throughput
+    default_connection_limit[] = max(16, Threads.nthreads() * 4)
     nosslcontext[] = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
     TCP_POOL[] = CPool{Sockets.TCPSocket}(default_connection_limit[])
     MBEDTLS_POOL[] = CPool{MbedTLS.SSLContext}(default_connection_limit[])
@@ -53,6 +57,7 @@ Fields:
 - `port::String`, exactly as specified in the URI (i.e. may be empty).
 - `idle_timeout`, No. of seconds to maintain connection after last request/response.
 - `require_ssl_verification`, whether ssl verification is required for an ssl connection
+- `keepalive`, whether the tcp socket should have keepalive enabled
 - `peerip`, remote IP adress (used for debug/log messages).
 - `peerport`, remote TCP port number (used for debug/log messages).
 - `localport`, local TCP port number (used for debug messages).
@@ -89,8 +94,8 @@ end
 
 Used for "hashing" a Connection object on just the key properties necessary for determining
 connection re-useability. That is, when a new request calls `newconnection`, we take the
-request parameters of what socket type, the host and port, and if ssl
-verification is required, and if an existing Connection was already created with the exact
+request parameters of host and port, and if ssl verification is required, if keepalive is enabled,
+and if an existing Connection was already created with the exact
 same parameters, we can re-use it (as long as it's not already being used, obviously).
 """
 connectionkey(x::Connection) = (x.host, x.port, x.require_ssl_verification, x.keepalive, x.clientconnection)
@@ -346,7 +351,7 @@ and defaults to the `HTTP.default_connection_limit` value.
 
 A pool can be passed to any of the `HTTP.request` methods via the `pool` keyword argument.
 """
-mutable struct Pool
+struct Pool
     lock::ReentrantLock
     tcp::CPool{Sockets.TCPSocket}
     mbedtls::CPool{MbedTLS.SSLContext}
@@ -413,7 +418,7 @@ function closeall(pool::Union{Nothing, Pool}=nothing)
 end
 
 function connection_isvalid(c, idle_timeout)
-    check = isopen(c) && (time() - c.timestamp) <= idle_timeout
+    check = isopen(c) && inactiveseconds(c) <= idle_timeout
     check || close(c)
     return check
 end
@@ -628,7 +633,7 @@ function sslupgrade(::Type{IOType}, c::Connection{T},
     # success, now we turn it into a new Connection
     conn = Connection(host, "", 0, require_ssl_verification, keepalive, tls)
     # release the "old" one, but don't return the connection since we're hijacking the socket
-    release(getpool(pool, T), connectionkey(c), nothing)
+    release(getpool(pool, T), connectionkey(c))
     # and return the new one
     return acquire(() -> conn, getpool(pool, IOType), connectionkey(conn); forcenew=true)
 end

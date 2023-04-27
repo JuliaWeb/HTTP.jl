@@ -21,7 +21,7 @@ Construct a [`Request`](@ref) object from method, url, headers, and body.
 Hard-coded as the first layer in the request pipeline.
 """
 function messagelayer(handler)
-    return function(method::String, url::URI, headers, body; copyheaders::Bool=true, response_stream=nothing, http_version=HTTPVersion(1, 1), verbose=DEBUG_LEVEL[], kw...)
+    return function makerequest(method::String, url::URI, headers, body; copyheaders::Bool=true, response_stream=nothing, http_version=HTTPVersion(1, 1), verbose=DEBUG_LEVEL[], kw...)
         req = Request(method, resource(url), mkreqheaders(headers, copyheaders), body; url=url, version=http_version, responsebody=response_stream)
         local resp
         start_time = time()

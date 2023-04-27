@@ -49,8 +49,8 @@ getrequest(r::Request) = r
 getrequest(s::Stream) = s.message.request
 
 # Wraps client-side "layer" to track the amount of time spent in it as a request is processed.
-function observe_layer(f)
-    function observelayer(req_or_stream; kw...)
+function observelayer(f)
+    function observation(req_or_stream; kw...)
         req = getrequest(req_or_stream)
         nm = nameof(f)
         cntnm = Symbol(nm, "_count")
@@ -158,7 +158,7 @@ Supported optional keyword arguments:
  - `logerrors = false`, if `true`, `HTTP.StatusError`, `HTTP.TimeoutError`, `HTTP.IOError`, and `HTTP.ConnectError` will be
     logged via `@error` as they happen, regardless of whether the request is then retried or not. Useful for debugging or
     monitoring requests where there's worry of certain errors happening but ignored because of retries.
- - `observelayers = false`, if `true`, enables the `HTTP.observe_layer` to wrap each client-side "layer" to track the amount of
+ - `observelayers = false`, if `true`, enables the `HTTP.observelayer` to wrap each client-side "layer" to track the amount of
    time spent in each layer as a request is processed. This can be useful for debugging performance issues. Note that when retries
    or redirects happen, the time spent in each layer is cumulative, as noted by the `[layer]_count`. The metrics are stored
    in the `Request.context` dictionary, and can be accessed like `HTTP.get(...).request.context`
@@ -420,7 +420,7 @@ function stack(
     requestlayers=(),
     streamlayers=())
 
-    obs = observelayers ? observe_layer : identity
+    obs = observelayers ? observelayer : identity
     # stream layers
     if streamlayers isa NamedTuple
         inner_stream_layers = haskey(streamlayers, :last) ? streamlayers.last : ()
@@ -602,7 +602,7 @@ write(socket, frame)
 """
 function openraw(method::Union{String,Symbol}, url, headers=Header[]; kw...)::Tuple{IO, Response}
     socketready = Channel{Tuple{IO, Response}}(0)
-    @async HTTP.open(method, url, headers; kw...) do http
+    Threads.@spawn HTTP.open(method, url, headers; kw...) do http
         HTTP.startread(http)
         socket = http.stream
         put!(socketready, (socket, http.message))
