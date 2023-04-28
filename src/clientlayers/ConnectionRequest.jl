@@ -1,6 +1,6 @@
 module ConnectionRequest
 
-using URIs, Sockets, Base64, LoggingExtras
+using URIs, Sockets, Base64, LoggingExtras, ConcurrentUtilities
 using MbedTLS: SSLContext, SSLConfig
 using OpenSSL: SSLStream
 using ..Messages, ..IOExtras, ..Connections, ..Streams, ..Exceptions
@@ -55,7 +55,7 @@ Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.
 """
 function connectionlayer(handler)
-    return function connections(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SOCKET_TYPE_TLS[], readtimeout::Int=0, logerrors::Bool=false, kw...)
+    return function connections(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SOCKET_TYPE_TLS[], readtimeout::Int=0, logerrors::Bool=false, logtag=nothing, kw...)
         local io, stream
         if proxy !== nothing
             target_url = req.url
@@ -79,7 +79,8 @@ function connectionlayer(handler)
             io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
         catch e
             if logerrors
-                @error "HTTP.ConnectError" exception=(e, catch_backtrace()) method=req.method url=req.url context=req.context
+                err = current_exceptions_to_string(CapturedException(e, catch_backtrace()))
+                @error err type=Symbol("HTTP.ConnectError") method=req.method url=req.url context=req.context logtag=logtag
             end
             req.context[:connect_errors] = get(req.context, :connect_errors, 0) + 1
             throw(ConnectError(string(url), e))
@@ -98,7 +99,7 @@ function connectionlayer(handler)
                     target_url = URI(target_url, port=80) # if there is no port info, connect_tunnel will fail
                 end
                 r = if readtimeout > 0
-                    try_with_timeout(readtimeout) do
+                    try_with_timeout(readtimeout) do _
                         connect_tunnel(io, target_url, req)
                     end
                 else
@@ -115,7 +116,7 @@ function connectionlayer(handler)
             end
 
             stream = Stream(req.response, io)
-            return handler(stream; readtimeout=readtimeout, logerrors=logerrors, kw...)
+            return handler(stream; readtimeout=readtimeout, logerrors=logerrors, logtag=logtag, kw...)
         catch e
             while true
                 if e isa CompositeException
@@ -126,8 +127,10 @@ function connectionlayer(handler)
                     break
                 end
             end
-            if logerrors && !(e isa StatusError || e isa TimeoutError)
-                @error "HTTP.ConnectionRequest" exception=(e, catch_backtrace()) method=req.method url=req.url context=req.context
+            root_err = e isa CapturedException ? e.ex : e
+            if logerrors && !(root_err isa StatusError || root_err isa Exceptions.TimeoutError || root_err isa Base.IOError)
+                err = current_exceptions_to_string(e)
+                @error err type=Symbol("HTTP.ConnectionRequest") method=req.method url=req.url context=req.context logtag=logtag
             end
             @debugv 1 "❗️  ConnectionLayer $e. Closing: $io"
             shouldreuse = false
@@ -136,7 +139,7 @@ function connectionlayer(handler)
                 # idempotency of the request
                 req.context[:nothingwritten] = true
             end
-            e isa HTTPError || throw(RequestError(req, e))
+            root_err isa HTTPError || throw(RequestError(req, e))
             rethrow(e)
         finally
             releaseconnection(io, shouldreuse; kw...)

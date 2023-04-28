@@ -56,7 +56,7 @@ IOExtras.isopen(http::Stream) = isopen(http.stream)
 
 # Writing HTTP Messages
 
-messagetowrite(http::Stream{<:Response}) = http.message.request
+messagetowrite(http::Stream{<:Response}) = http.message.request::Request
 messagetowrite(http::Stream{<:Request}) = http.message.response
 
 IOExtras.iswritable(http::Stream) = iswritable(http.stream)
@@ -372,7 +372,7 @@ function IOExtras.closeread(http::Stream{<:Response})
     else
 
         # Discard body bytes that were not read...
-        while !eof(http)
+        @try Base.IOError EOFError while !eof(http)
             readavailable(http)
         end
 

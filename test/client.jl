@@ -293,7 +293,7 @@ end
         end
 
         err = try
-            HTTP.get("http://localhost:8080"; retry=false)
+            HTTP.get("http://localhost:8080"; retry=false, verbose=3, logerrors=true)
         catch err
             err
         end

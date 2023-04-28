@@ -17,7 +17,7 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothing, Bool}=nothing, logerrors::Bool=false, kw...)::Response
+function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothing, Bool}=nothing, logerrors::Bool=false, logtag=nothing, timedout=nothing, kw...)::Response
     response = stream.message
     req = response.request
     @debugv 1 sprintcompact(req)
@@ -33,42 +33,44 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
     try
         @sync begin
             if iofunction === nothing
-                @async try
+                Threads.@spawn try
                     writebody(stream, req)
-                    @debugv 2 "client closewrite"
-                    closewrite(stream)
                 finally
                     req.context[:write_duration_ms] = get(req.context, :write_duration_ms, 0.0) + ((time() - write_start) * 1000)
+                    @debugv 2 "client closewrite"
+                    closewrite(stream)
                 end
                 read_start = time()
-                @async try
+                Threads.@spawn try
                     @debugv 2 "client startread"
                     startread(stream)
-                    if isaborted(stream)
-                        # The server may have closed the connection.
-                        # Don't propagate such errors.
-                        @try Base.IOError close(stream.stream)
+                    if !isaborted(stream)
+                        readbody(stream, response, decompress)
                     end
-                    readbody(stream, response, decompress)
                 finally
                     req.context[:read_duration_ms] = get(req.context, :read_duration_ms, 0.0) + ((time() - read_start) * 1000)
+                    @debugv 2 "client closeread"
+                    closeread(stream)
                 end
             else
-                iofunction(stream)
+                try
+                    iofunction(stream)
+                finally
+                    closewrite(stream)
+                    closeread(stream)
+                end
             end
         end
     catch e
-        if logerrors
-            @error "HTTP.IOError" exception=(e, catch_backtrace()) method=req.method url=req.url context=req.context
+        if timedout === nothing || !timedout[]
+            req.context[:io_errors] = get(req.context, :io_errors, 0) + 1
+            if logerrors
+                err = current_exceptions_to_string(CapturedException(e, catch_backtrace()))
+                @error err type=Symbol("HTTP.IOError") method=req.method url=req.url context=req.context logtag=logtag
+            end
         end
-        req.context[:io_errors] = get(req.context, :io_errors, 0) + 1
         rethrow()
     end
-
-    @debugv 2 "client closewrite"
-    closewrite(stream)
-    @debugv 2 "client closeread"
-    closeread(stream)
 
     @debugv 1 sprintcompact(response)
     @debugv 2 sprint(show, response)
@@ -150,7 +152,7 @@ function readbody!(stream::Stream, res::Response, buf_or_stream)
                     # so using the default write is fastest because it utilizes
                     # readavailable under the hood, for which BufferStream is optimized
                     n = write(body, buf_or_stream)
-                elseif buf_or_stream isa Stream
+                elseif buf_or_stream isa Stream{Response}
                     # for HTTP.Stream, there's already an optimized read method
                     # that just needs an IOBuffer to write into
                     n = readall!(buf_or_stream, body)
@@ -161,7 +163,7 @@ function readbody!(stream::Stream, res::Response, buf_or_stream)
                 res.body = read(buf_or_stream)
                 n = length(res.body)
             end
-        elseif res.body isa Base.GenericIOBuffer && buf_or_stream isa Stream
+        elseif res.body isa Base.GenericIOBuffer && buf_or_stream isa Stream{Response}
             # optimization for IOBuffer response_stream to avoid temporary allocations
             n = readall!(buf_or_stream, res.body)
         else

@@ -1,7 +1,7 @@
 module TimeoutRequest
 
-using ..Connections, ..Streams, ..Exceptions
-using LoggingExtras
+using ..Connections, ..Streams, ..Exceptions, ..Messages
+using LoggingExtras, ConcurrentUtilities
 
 export timeoutlayer
 
@@ -11,24 +11,26 @@ export timeoutlayer
 Close the `HTTP.Stream` if no data has been received for `readtimeout` seconds.
 """
 function timeoutlayer(handler)
-    return function timeouts(stream::Stream; readtimeout::Int=0, logerrors::Bool=false, kw...)
+    return function timeouts(stream::Stream; readtimeout::Int=0, logerrors::Bool=false, logtag=nothing, kw...)
         if readtimeout <= 0
             # skip
             return handler(stream; logerrors=logerrors, kw...)
         end
         return try
-            try_with_timeout(readtimeout) do
-                handler(stream; logerrors=logerrors, kw...)
+            try_with_timeout(readtimeout, Response) do timedout
+                handler(stream; logerrors=logerrors, logtag=logtag, timedout=timedout, kw...)
             end
         catch e
-            if e isa TimeoutError
+            if e isa ConcurrentUtilities.TimeoutException
                 req = stream.message.request
-                if logerrors
-                    @error "HTTP.TimeoutError" exception=(e, catch_backtrace()) method=req.method url=req.url context=req.context
-                end
                 req.context[:timeout_errors] = get(req.context, :timeout_errors, 0) + 1
+                if logerrors
+                    err = current_exceptions_to_string(CapturedException(e, catch_backtrace()))
+                    @error err type=Symbol("HTTP.TimeoutError") method=req.method url=req.url context=req.context timeout=readtimeout logtag=logtag
+                end
+                e = Exceptions.TimeoutError(readtimeout)
             end
-            rethrow()
+            rethrow(e)
         end
     end
 end

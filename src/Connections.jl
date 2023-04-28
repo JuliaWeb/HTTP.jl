@@ -95,7 +95,7 @@ end
 Used for "hashing" a Connection object on just the key properties necessary for determining
 connection re-useability. That is, when a new request calls `newconnection`, we take the
 request parameters of host and port, and if ssl verification is required, if keepalive is enabled,
-and if an existing Connection was already created with the exact
+and if an existing Connection was already created with the exact.
 same parameters, we can re-use it (as long as it's not already being used, obviously).
 """
 connectionkey(x::Connection) = (x.host, x.port, x.require_ssl_verification, x.keepalive, x.clientconnection)
@@ -299,7 +299,7 @@ function IOExtras.closeread(c::Connection)
     c.readable = false
     @debugv 3 "✉️  Read done: $c"
     if c.clientconnection
-        t = @async monitor_idle_connection(c)
+        t = Threads.@spawn monitor_idle_connection(c)
         @isdefined(errormonitor) && errormonitor(t)
     end
     return
@@ -424,7 +424,7 @@ function connection_isvalid(c, idle_timeout)
 end
 
 @noinline connection_limit_warning(cl) = cl === nothing ||
-    @warn "connection_limit no longer supported as a keyword argument; use `HTTP.set_default_connection_limit!($cl)` or pass a connection pool like `pool=HTTP.Pool($cl)` instead."
+    @warn "connection_limit no longer supported as a keyword argument; use `HTTP.set_default_connection_limit!($cl)` before any requests are made or construct a shared pool via `POOL = HTTP.Pool($cl)` and pass to each request like `pool=POOL` instead."
 
 """
     newconnection(type, host, port) -> Connection
@@ -509,7 +509,7 @@ function getconnection(::Type{TCPSocket},
                 tcp = Sockets.TCPSocket()
                 Sockets.connect!(tcp, addr, p)
                 try
-                    try_with_timeout(connect_timeout) do
+                    try_with_timeout(connect_timeout) do _
                         Sockets.wait_connected(tcp)
                         keepalive && keepalive!(tcp)
                     end
@@ -523,7 +523,7 @@ function getconnection(::Type{TCPSocket},
             end
             return tcp
         catch e
-            lasterr = e isa TimeoutError ? ConnectTimeout(host, port) : e
+            lasterr = e isa ConcurrentUtilities.TimeoutException ? ConnectTimeout(host, port) : e
         end
     end
     # If no connetion could be set up, to any address, throw last error
@@ -624,7 +624,7 @@ function sslupgrade(::Type{IOType}, c::Connection{T},
     # if the upgrade fails, an error will be thrown and the original c will be closed
     # in ConnectionRequest
     tls = if readtimeout > 0
-        try_with_timeout(readtimeout) do
+        try_with_timeout(readtimeout) do _
             sslconnection(IOType, c.io, host; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
         end
     else
