@@ -509,7 +509,7 @@ function getconnection(::Type{TCPSocket},
                 tcp = Sockets.TCPSocket()
                 Sockets.connect!(tcp, addr, p)
                 try
-                    try_with_timeout(connect_timeout) do
+                    Exceptions.try_with_timeout(connect_timeout) do
                         Sockets.wait_connected(tcp)
                         keepalive && keepalive!(tcp)
                     end
@@ -624,7 +624,7 @@ function sslupgrade(::Type{IOType}, c::Connection{T},
     # if the upgrade fails, an error will be thrown and the original c will be closed
     # in ConnectionRequest
     tls = if readtimeout > 0
-        try_with_timeout(readtimeout) do
+        Exceptions.try_with_timeout(readtimeout) do
             sslconnection(IOType, c.io, host; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
         end
     else
