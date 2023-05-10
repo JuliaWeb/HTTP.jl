@@ -43,7 +43,7 @@ Base.isopen(lb::Loopback) = isopen(lb.io)
 Base.read(fio::FunctionIO, a...) = (call(fio); read(fio.buf, a...))
 Base.readavailable(fio::FunctionIO) = (call(fio); readavailable(fio.buf))
 Base.readavailable(lb::Loopback) = readavailable(lb.io)
-Base.unsafe_read(lb::Loopback, p::Ptr, n::Integer) = unsafe_read(lb.io, p, n)
+Base.unsafe_read(lb::Loopback, p::Ptr{UInt8}, n::UInt) = unsafe_read(lb.io, p, n)
 
 HTTP.IOExtras.tcpsocket(::Loopback) = TCPSocket()
 

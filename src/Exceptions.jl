@@ -1,6 +1,6 @@
 module Exceptions
 
-export @try, try_with_timeout, HTTPError, ConnectError, TimeoutError, StatusError, RequestError
+export @try, HTTPError, ConnectError, TimeoutError, StatusError, RequestError, current_exceptions_to_string
 using LoggingExtras
 import ..HTTP # for doc references
 
@@ -24,24 +24,6 @@ macro $(:try)(exes...)
     end
 end
 end # @eval
-
-function try_with_timeout(f, timeout)
-    ch = Channel(0)
-    timer = Timer(tm -> close(ch, TimeoutError(timeout)), timeout)
-    @async begin
-        try
-            put!(ch, $f())
-        catch e
-            if !(e isa HTTPError)
-                e = CapturedException(e, catch_backtrace())
-            end
-            close(ch, e)
-        finally
-            close(timer)
-        end
-    end
-    return take!(ch)
-end
 
 abstract type HTTPError <: Exception end
 
@@ -95,6 +77,14 @@ or reading the response back. To see the underlying error, see the `error` field
 struct RequestError <: HTTPError
     request::Any
     error::Any
+end
+
+function current_exceptions_to_string(curr_exc)
+    buf = IOBuffer()
+    println(buf)
+    println(buf, "\n===========================\nHTTP Error message:\n")
+    Base.showerror(buf, curr_exc)
+    return String(take!(buf))
 end
 
 end # module Exceptions

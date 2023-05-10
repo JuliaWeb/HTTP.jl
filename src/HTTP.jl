@@ -7,7 +7,7 @@ const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
 
-using Base64, Sockets, Dates, URIs, LoggingExtras, MbedTLS
+using Base64, Sockets, Dates, URIs, LoggingExtras, MbedTLS, OpenSSL
 
 function access_threaded(f, v::Vector)
     tid = Threads.threadid()
@@ -24,7 +24,7 @@ end
 
 function open end
 
-const SOCKET_TYPE_TLS = Ref{Any}(MbedTLS.SSLContext)
+const SOCKET_TYPE_TLS = Ref{Any}(OpenSSL.SSLStream)
 
 include("Conditions.jl")               ;using .Conditions
 include("access_log.jl")
@@ -158,6 +158,7 @@ Supported optional keyword arguments:
  - `logerrors = false`, if `true`, `HTTP.StatusError`, `HTTP.TimeoutError`, `HTTP.IOError`, and `HTTP.ConnectError` will be
     logged via `@error` as they happen, regardless of whether the request is then retried or not. Useful for debugging or
     monitoring requests where there's worry of certain errors happening but ignored because of retries.
+ - `logtag = nothing`, if provided, will be used as the tag for error logging. Useful for debugging or monitoring requests.
  - `observelayers = false`, if `true`, enables the `HTTP.observelayer` to wrap each client-side "layer" to track the amount of
    time spent in each layer as a request is processed. This can be useful for debugging performance issues. Note that when retries
    or redirects happen, the time spent in each layer is cumulative, as noted by the `[layer]_count`. The metrics are stored

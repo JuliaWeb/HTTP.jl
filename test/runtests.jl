@@ -26,7 +26,6 @@ include(joinpath(dir, "resources/TestRequest.jl"))
             "server.jl",
             "async.jl",
             "mwe.jl",
-            "try_with_timeout.jl",
             "httpversion.jl",
             "websockets/autobahn.jl",
             ]

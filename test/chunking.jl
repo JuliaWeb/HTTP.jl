@@ -33,31 +33,33 @@ using BufferedStreams
         flush(tcp)
     end
 
-    r = HTTP.get("http://127.0.0.1:$port")
+    try
+        r = HTTP.get("http://127.0.0.1:$port")
+        @test String(r.body) == decoded_data
 
-    @test String(r.body) == decoded_data
+        for wrap in (identity, BufferedInputStream)
+            r = ""
 
-    for wrap in (identity, BufferedInputStream)
-        r = ""
+            # Ignore byte-by-byte read warning
+            CL = Base.CoreLogging
+            CL.with_logger(CL.SimpleLogger(stderr, CL.Error)) do
+                HTTP.open("GET", "http://127.0.0.1:$port") do io
+                    io = wrap(io)
+                    x = split(decoded_data, "\n")
 
-        # Ignore byte-by-byte read warning
-        CL = Base.CoreLogging
-        CL.with_logger(CL.SimpleLogger(stderr, CL.Error)) do
-            HTTP.open("GET", "http://127.0.0.1:$port") do io
-                io = wrap(io)
-                x = split(decoded_data, "\n")
-
-                for i in 1:6
-                    l = readline(io)
-                    @test l == x[i]
-                    r *= l * "\n"
+                    for i in 1:6
+                        l = readline(io)
+                        @test l == x[i]
+                        r *= l * "\n"
+                    end
                 end
             end
-        end
 
-        @test r == decoded_data
+            @test r == decoded_data
+        end
+    finally
+        close(server)
     end
-    close(server)
 end
 
 end # module

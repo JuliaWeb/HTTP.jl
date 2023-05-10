@@ -84,7 +84,7 @@ else
 end
 
 tcpsocket(io::SSLContext)::TCPSocket = io.bio
-tcpsocket(io::SSLStream)::TCPSocket = io.bio_read_stream.io
+tcpsocket(io::SSLStream)::TCPSocket = io.io
 tcpsocket(io::TCPSocket)::TCPSocket = io
 
 localport(io) = try !isopen(tcpsocket(io)) ? 0 :
