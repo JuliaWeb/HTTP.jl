@@ -128,7 +128,8 @@ function connectionlayer(handler)
                 end
             end
             root_err = e isa CapturedException ? e.ex : e
-            if logerrors && !(root_err isa StatusError || root_err isa Exceptions.TimeoutError || root_err isa Base.IOError)
+            # don't log if it's an HTTPError since we should have already logged it
+            if logerrors && !(root_err isa HTTPError)
                 err = current_exceptions_to_string(e)
                 @error err type=Symbol("HTTP.ConnectionRequest") method=req.method url=req.url context=req.context logtag=logtag
             end
