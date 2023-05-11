@@ -35,6 +35,9 @@ function messagelayer(handler)
                 handler(req; verbose, response_stream, kw...)
             end
         catch e
+            if e isa CapturedException
+                e = e.ex
+            end
             if e isa StatusError
                 resp = e.response
             end
