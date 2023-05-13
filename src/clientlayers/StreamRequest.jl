@@ -50,7 +50,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                     @debugv 2 "client startread"
                     startread(stream)
                     if !isaborted(stream)
-                        readbody(stream, response, decompress)
+                        readbody(stream, response, decompress, lock)
                     end
                 finally
                     Base.@lock lock begin
@@ -118,7 +118,7 @@ writechunk(stream, body::IO) = writebodystream(stream, body)
 writechunk(stream, body::Union{AbstractDict, NamedTuple}) = writebodystream(stream, body)
 writechunk(stream, body) = write(stream, body)
 
-function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool})
+function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool}, lock)
     if decompress === true || (decompress === nothing && header(res, "Content-Encoding") == "gzip")
         # Plug in a buffer stream in between so that we can (i) read the http stream in
         # chunks instead of byte-by-byte and (ii) make sure to stop reading the http stream
@@ -136,17 +136,17 @@ function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool
                 close(gzstream)
             end
         end
-        readbody!(stream, res, buf)
+        readbody!(stream, res, buf, lock)
         wait(tsk)
     else
-        readbody!(stream, res, stream)
+        readbody!(stream, res, stream, lock)
     end
 end
 
 # 2 most common types of IOBuffers
 const IOBuffers = Union{IOBuffer, Base.GenericIOBuffer{SubArray{UInt8, 1, Vector{UInt8}, Tuple{UnitRange{Int64}}, true}}}
 
-function readbody!(stream::Stream, res::Response, buf_or_stream)
+function readbody!(stream::Stream, res::Response, buf_or_stream, lock)
     n = 0
     if !iserror(res)
         if isbytes(res.body)
