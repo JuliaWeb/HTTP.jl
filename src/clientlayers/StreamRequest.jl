@@ -33,10 +33,15 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
     try
         @sync begin
             if iofunction === nothing
+                # use a lock here for request.context changes (this is currently the only places
+                # where multiple threads may modify/change context at the same time)
+                lock = ReentrantLock()
                 Threads.@spawn try
-                    writebody(stream, req)
+                    writebody(stream, req, lock)
                 finally
-                    req.context[:write_duration_ms] = get(req.context, :write_duration_ms, 0.0) + ((time() - write_start) * 1000)
+                    Base.@lock lock begin
+                        req.context[:write_duration_ms] = get(req.context, :write_duration_ms, 0.0) + ((time() - write_start) * 1000)
+                    end
                     @debugv 2 "client closewrite"
                     closewrite(stream)
                 end
@@ -48,7 +53,9 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                         readbody(stream, response, decompress)
                     end
                 finally
-                    req.context[:read_duration_ms] = get(req.context, :read_duration_ms, 0.0) + ((time() - read_start) * 1000)
+                    Base.@lock lock begin
+                        req.context[:read_duration_ms] = get(req.context, :read_duration_ms, 0.0) + ((time() - read_start) * 1000)
+                    end
                     @debugv 2 "client closeread"
                     closeread(stream)
                 end
@@ -77,14 +84,16 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
     return response
 end
 
-function writebody(stream::Stream, req::Request)
+function writebody(stream::Stream, req::Request, lock)
     if !isbytes(req.body)
         n = writebodystream(stream, req.body)
         closebody(stream)
     else
         n = write(stream, req.body)
     end
-    stream.message.request.context[:nbytes_written] = n
+    Base.@lock lock begin
+        req.context[:nbytes_written] = n
+    end
     return n
 end
 
