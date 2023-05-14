@@ -182,9 +182,13 @@ function readbody!(stream::Stream, res::Response, buf_or_stream, lock)
         # read the response body into the request context so that it can be
         # read by the user if they want to or set later if
         # we end up not retrying/redirecting/etc.
-        res.request.context[:response_body] = read(buf_or_stream)
+        Base.@lock lock begin
+            res.request.context[:response_body] = read(buf_or_stream)
+        end
     end
-    res.request.context[:nbytes] = n
+    Base.@lock lock begin
+        res.request.context[:nbytes] = n
+    end
 end
 
 end # module StreamRequest
