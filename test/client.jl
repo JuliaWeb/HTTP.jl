@@ -12,7 +12,12 @@ using URIs
 using InteractiveUtils: @which
 
 # test we can adjust default_connection_limit
-HTTP.set_default_connection_limit!(12)
+for x in (10, 12)
+    HTTP.set_default_connection_limit!(x)
+    @test HTTP.Connections.TCP_POOL[].max == x
+    @test HTTP.Connections.MBEDTLS_POOL[].max == x
+    @test HTTP.Connections.OPENSSL_POOL[].max == x
+end
 
 @testset "@client macro" begin
     @eval module MyClient
