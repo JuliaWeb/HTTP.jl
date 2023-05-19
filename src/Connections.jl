@@ -45,7 +45,14 @@ function __init__()
     return
 end
 
-set_default_connection_limit!(n) = default_connection_limit[] = n
+function set_default_connection_limit!(n)
+    default_connection_limit[] = n
+    # reinitialize the global connection pools
+    TCP_POOL[] = CPool{Sockets.TCPSocket}(n)
+    MBEDTLS_POOL[] = CPool{MbedTLS.SSLContext}(n)
+    OPENSSL_POOL[] = CPool{OpenSSL.SSLStream}(n)
+    return
+end
 
 """
     Connection

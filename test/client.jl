@@ -13,6 +13,7 @@ using InteractiveUtils: @which
 
 # test we can adjust default_connection_limit
 HTTP.set_default_connection_limit!(12)
+@test HTTP.Connections.TCP_POOL[].max == 12
 
 @testset "@client macro" begin
     @eval module MyClient
