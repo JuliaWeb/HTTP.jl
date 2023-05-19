@@ -232,7 +232,7 @@ function Base.readuntil(c::Connection, f::F #=Vector{UInt8} -> Int=#,
     if bytesavailable(buf) == 0
         read_to_buffer(c, sizehint)
     end
-    while (bytes = readuntil(buf, f)) === nobytes
+    while (bytes = readuntil(buf, f)) == nobytes
         read_to_buffer(c, sizehint)
     end
     return bytes
