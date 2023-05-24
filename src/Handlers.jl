@@ -54,6 +54,7 @@ function streamhandler(handler)
     return function(stream::Stream)
         request::Request = stream.message
         request.body = read(stream)
+        request.url = URI(request.target)
         closeread(stream)
         request.response::Response = handler(request)
         request.response.request = request
