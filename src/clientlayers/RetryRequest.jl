@@ -78,6 +78,7 @@ end
 
 const EAI_AGAIN = 2
 isrecoverable(ex) = true
+isrecoverable(ex::CapturedException) = isrecoverable(ex.ex)
 isrecoverable(ex::ConnectError) = ex.error isa Sockets.DNSError && ex.error.code == EAI_AGAIN ? false : true
 isrecoverable(ex::StatusError) = retryable(ex.status)
 
