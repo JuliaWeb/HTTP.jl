@@ -40,6 +40,11 @@ end
 
 ExceptionUnwrapping.unwrap_exception(e::ConnectError) = e.error
 
+function Base.showerror(io::IO, e::ConnectError)
+    print(io, "HTTP.ConnectError for url = `$(e.url)`: ")
+    Base.showerror(io, e.error)
+end
+
 """
     HTTP.TimeoutError
 
@@ -83,11 +88,19 @@ end
 
 ExceptionUnwrapping.unwrap_exception(e::RequestError) = e.error
 
-function current_exceptions_to_string(curr_exc)
+function Base.showerror(io::IO, e::RequestError)
+    println(io, "HTTP.RequestError:")
+    println(io, "HTTP.Request:")
+    Base.show(io, e.request)
+    println(io, "Underlying error:")
+    Base.showerror(io, e.error)
+end
+
+function current_exceptions_to_string()
     buf = IOBuffer()
     println(buf)
     println(buf, "\n===========================\nHTTP Error message:\n")
-    Base.showerror(buf, curr_exc)
+    Base.display_error(buf, Base.catch_stack())
     return String(take!(buf))
 end
 
