@@ -1,7 +1,7 @@
 module Exceptions
 
 export @try, HTTPError, ConnectError, TimeoutError, StatusError, RequestError, current_exceptions_to_string
-using LoggingExtras
+using LoggingExtras, ExceptionUnwrapping
 import ..HTTP # for doc references
 
 @eval begin
@@ -37,6 +37,8 @@ struct ConnectError <: HTTPError
     url::String # the URL of the request
     error::Any # underlying error
 end
+
+ExceptionUnwrapping.unwrap_exception(e::ConnectError) = e.error
 
 """
     HTTP.TimeoutError
@@ -78,6 +80,8 @@ struct RequestError <: HTTPError
     request::Any
     error::Any
 end
+
+ExceptionUnwrapping.unwrap_exception(e::RequestError) = e.error
 
 function current_exceptions_to_string(curr_exc)
     buf = IOBuffer()
