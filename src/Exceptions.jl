@@ -1,7 +1,7 @@
 module Exceptions
 
 export @try, HTTPError, ConnectError, TimeoutError, StatusError, RequestError, current_exceptions_to_string
-using LoggingExtras
+using LoggingExtras, ExceptionUnwrapping
 import ..HTTP # for doc references
 
 @eval begin
@@ -36,6 +36,13 @@ the remote server. To see the underlying error, see the `error` field.
 struct ConnectError <: HTTPError
     url::String # the URL of the request
     error::Any # underlying error
+end
+
+ExceptionUnwrapping.unwrap_exception(e::ConnectError) = e.error
+
+function Base.showerror(io::IO, e::ConnectError)
+    print(io, "HTTP.ConnectError for url = `$(e.url)`: ")
+    Base.showerror(io, e.error)
 end
 
 """
@@ -79,11 +86,21 @@ struct RequestError <: HTTPError
     error::Any
 end
 
-function current_exceptions_to_string(curr_exc)
+ExceptionUnwrapping.unwrap_exception(e::RequestError) = e.error
+
+function Base.showerror(io::IO, e::RequestError)
+    println(io, "HTTP.RequestError:")
+    println(io, "HTTP.Request:")
+    Base.show(io, e.request)
+    println(io, "Underlying error:")
+    Base.showerror(io, e.error)
+end
+
+function current_exceptions_to_string()
     buf = IOBuffer()
     println(buf)
     println(buf, "\n===========================\nHTTP Error message:\n")
-    Base.showerror(buf, curr_exc)
+    Base.display_error(buf, Base.catch_stack())
     return String(take!(buf))
 end
 

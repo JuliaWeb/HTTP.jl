@@ -1,6 +1,6 @@
 module ConnectionRequest
 
-using URIs, Sockets, Base64, LoggingExtras, ConcurrentUtilities
+using URIs, Sockets, Base64, LoggingExtras, ConcurrentUtilities, ExceptionUnwrapping
 using MbedTLS: SSLContext, SSLConfig
 using OpenSSL: SSLStream
 using ..Messages, ..IOExtras, ..Connections, ..Streams, ..Exceptions
@@ -79,7 +79,7 @@ function connectionlayer(handler)
             io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
         catch e
             if logerrors
-                err = current_exceptions_to_string(CapturedException(e, catch_backtrace()))
+                err = current_exceptions_to_string()
                 @error err type=Symbol("HTTP.ConnectError") method=req.method url=req.url context=req.context logtag=logtag
             end
             req.context[:connect_errors] = get(req.context, :connect_errors, 0) + 1
@@ -118,18 +118,17 @@ function connectionlayer(handler)
             stream = Stream(req.response, io)
             return handler(stream; readtimeout=readtimeout, logerrors=logerrors, logtag=logtag, kw...)
         catch e
-            while true
-                if e isa CompositeException
-                    e = e.exceptions[1]
-                elseif e isa TaskFailedException
-                    e = e.task.result
-                else
-                    break
-                end
+            # manually unwrap CompositeException since it's not defined as a "wrapper" exception by ExceptionUnwrapping
+            while e isa CompositeException
+                e = e.exceptions[1]
             end
-            root_err = e isa CapturedException ? e.ex : e
+            root_err = ExceptionUnwrapping.unwrap_exception_to_root(e)
             # don't log if it's an HTTPError since we should have already logged it
-            if logerrors && !(root_err isa HTTPError)
+            if logerrors && err isa StatusError
+                err = current_exceptions_to_string()
+                @error err type=Symbol("HTTP.StatusError") method=req.method url=req.url context=req.context logtag=logtag
+            end
+            if logerrors && !ExceptionUnwrapping.has_wrapped_exception(e, HTTPError)
                 err = current_exceptions_to_string(e)
                 @error err type=Symbol("HTTP.ConnectionRequest") method=req.method url=req.url context=req.context logtag=logtag
             end
@@ -140,8 +139,8 @@ function connectionlayer(handler)
                 # idempotency of the request
                 req.context[:nothingwritten] = true
             end
-            root_err isa HTTPError || throw(RequestError(req, e))
-            rethrow(e)
+            root_err isa HTTPError || throw(RequestError(req, root_err))
+            throw(root_err)
         finally
             releaseconnection(io, shouldreuse; kw...)
             if !shouldreuse
