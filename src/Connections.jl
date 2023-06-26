@@ -501,40 +501,29 @@ function getconnection(::Type{TCPSocket},
                        # alive in the face of heavy workloads where Julia's task scheduler might take a while to
                        # keep up with midflight requests
                        keepalive::Bool=true,
-                       connect_timeout::Int=10,
                        readtimeout::Int=0,
                        kw...)::TCPSocket
 
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
     @debugv 2 "TCP connect: $host:$p..."
     addrs = Sockets.getalladdrinfo(host)
-    connect_timeout = connect_timeout == 0 && readtimeout > 0 ? readtimeout : connect_timeout
-    lasterr = ErrorException("unknown connection error")
+    ch = Channel{TCPSocket}(1)
+    n = Ref(length(addrs))
     for addr in addrs
-        try
-            if connect_timeout > 0
-                tcp = Sockets.TCPSocket()
-                Sockets.connect!(tcp, addr, p)
-                try
-                    try_with_timeout(connect_timeout) do _
-                        Sockets.wait_connected(tcp)
-                        keepalive && keepalive!(tcp)
-                    end
-                catch
-                    close(tcp)
-                    rethrow()
-                end
-            else
-                tcp = Sockets.connect(addr, p)
+        Threads.@spawn begin
+            _addr = $addr
+            try
+                tcp = Sockets.connect($addr, p)
                 keepalive && keepalive!(tcp)
+                put!(ch, tcp)
+            catch e
+                @lock ch begin
+                    (n[] -= 1) == 0 && close(ch, e)
+                end
             end
-            return tcp
-        catch e
-            lasterr = e isa ConcurrentUtilities.TimeoutException ? ConnectTimeout(host, port) : e
         end
     end
-    # If no connetion could be set up, to any address, throw last error
-    throw(lasterr)
+    return take!(ch)
 end
 
 const nosslconfig = SSLConfig()
