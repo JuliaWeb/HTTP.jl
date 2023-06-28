@@ -511,19 +511,27 @@ function getconnection(::Type{TCPSocket},
     n = Ref(length(addrs))
     for addr in addrs
         Threads.@spawn begin
-            _addr = $addr
             try
+                isready(ch) && return
                 tcp = Sockets.connect($addr, p)
+                isready(ch) && return
                 keepalive && keepalive!(tcp)
-                put!(ch, tcp)
+                Base.@lock ch begin
+                    isready(ch) && return
+                    put!(ch, tcp)
+                end
             catch e
-                @lock ch begin
+                Base.@lock ch begin
+                    # if we're the last task to fail, and assuming
+                    # all other tasks also failed, then we close
+                    # the channel w/ our exception so the fetch call throws and
+                    # our error propagates
                     (n[] -= 1) == 0 && close(ch, e)
                 end
             end
         end
     end
-    return take!(ch)
+    return fetch(ch)
 end
 
 const nosslconfig = SSLConfig()
