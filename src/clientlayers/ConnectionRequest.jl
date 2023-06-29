@@ -55,7 +55,7 @@ Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.
 """
 function connectionlayer(handler)
-    return function connections(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SOCKET_TYPE_TLS[], readtimeout::Int=0, logerrors::Bool=false, logtag=nothing, kw...)
+    return function connections(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SOCKET_TYPE_TLS[], readtimeout::Int=0, connect_timeout::Int=10, logerrors::Bool=false, logtag=nothing, kw...)
         local io, stream
         if proxy !== nothing
             target_url = req.url
@@ -73,10 +73,17 @@ function connectionlayer(handler)
             url = target_url = req.url
         end
 
+        connect_timeout = connect_timeout == 0 && readtimeout > 0 ? readtimeout : connect_timeout
         IOType = sockettype(url, socket_type, socket_type_tls)
         start_time = time()
         try
-            io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
+            io = if connect_timeout > 0
+                try_with_timeout(connect_timeout) do _
+                    newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
+                end
+            else
+                newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
+            end
         catch e
             if logerrors
                 err = current_exceptions_to_string()
