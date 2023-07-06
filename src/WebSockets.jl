@@ -451,6 +451,9 @@ function upgrade(f::Function, http::Streams.Stream; suppress_close_error::Bool=f
                 close(ws, CloseFrameBody(1011, "Unexpected server websocket error"))
             end
         end
+        if !isok(e)
+            rethrow()
+        end
     finally
         if !isclosed(ws)
             close(ws, CloseFrameBody(1000, ""))
