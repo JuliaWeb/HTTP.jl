@@ -384,7 +384,9 @@ function open(f::Function, url; suppress_close_error::Bool=false, verbose=false,
                     close(ws, CloseFrameBody(1008, "Unexpected client websocket error"))
                 end
             end
-            rethrow()
+            if !isok(e)
+                rethrow()
+            end
         finally
             if !isclosed(ws)
                 close(ws, CloseFrameBody(1000, ""))
