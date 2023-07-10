@@ -517,7 +517,11 @@ function getconnection(::Type{TCPSocket},
                 isready(ch) && return
                 keepalive && keepalive!(tcp)
                 Base.@lock ch begin
-                    isready(ch) && return
+                    if isready(ch)
+                        # a valid connection was already made and returned, so close ours
+                        close(tcp)
+                        return
+                    end
                     put!(ch, tcp)
                 end
             catch e
