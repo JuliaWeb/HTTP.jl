@@ -446,7 +446,7 @@ function newconnection(::Type{T},
                        connection_limit=nothing,
                        forcenew::Bool=false,
                        idle_timeout=typemax(Int),
-                       connect_timeout::Int=10,
+                       connect_timeout::Int=30,
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        keepalive::Bool=true,
                        kw...) where {T <: IO}
