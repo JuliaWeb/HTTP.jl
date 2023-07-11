@@ -446,6 +446,7 @@ function newconnection(::Type{T},
                        connection_limit=nothing,
                        forcenew::Bool=false,
                        idle_timeout=typemax(Int),
+                       connect_timeout::Int=10,
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        keepalive::Bool=true,
                        kw...) where {T <: IO}
@@ -457,8 +458,13 @@ function newconnection(::Type{T},
             isvalid=c->connection_isvalid(c, Int(idle_timeout))) do
         Connection(host, port,
             idle_timeout, require_ssl_verification, keepalive,
-            getconnection(T, host, port;
-                require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
+            connect_timeout > 0 ?
+                try_with_timeout(_ ->
+                    getconnection(T, host, port;
+                        require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...),
+                    connect_timeout) :
+                getconnection(T, host, port;
+                    require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
         )
     end
 end

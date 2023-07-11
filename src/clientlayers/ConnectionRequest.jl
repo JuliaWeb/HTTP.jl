@@ -77,13 +77,7 @@ function connectionlayer(handler)
         IOType = sockettype(url, socket_type, socket_type_tls)
         start_time = time()
         try
-            io = if connect_timeout > 0
-                try_with_timeout(connect_timeout) do _
-                    newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
-                end
-            else
-                newconnection(IOType, url.host, url.port; readtimeout=readtimeout, kw...)
-            end
+            io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, connect_timeout=connect_timeout, kw...)
         catch e
             if logerrors
                 err = current_exceptions_to_string()
