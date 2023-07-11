@@ -137,7 +137,7 @@ Supported optional keyword arguments:
     will be written to this stream instead of returned as a `Vector{UInt8}`.
  - `verbose = 0`, set to `1` or `2` for increasingly verbose logging of the
     request and response process
- - `connect_timeout = 10`, close the connection after this many seconds if it
+ - `connect_timeout = 30`, close the connection after this many seconds if it
    is still attempting to connect. Use `connect_timeout = 0` to disable.
  - `pool = nothing`, an `HTTP.Pool` object to use for managing the reuse of connections between requests.
     By default, a global pool is used, which is shared across all requests. To create a pool for a specific set of requests,
