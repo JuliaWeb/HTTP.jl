@@ -513,36 +513,17 @@ function getconnection(::Type{TCPSocket},
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
     @debugv 2 "TCP connect: $host:$p..."
     addrs = Sockets.getalladdrinfo(host)
-    ch = Channel{TCPSocket}(1)
-    n = Ref(length(addrs))
+    err = ErrorException("failed to connect")
     for addr in addrs
-        Threads.@spawn begin
-            try
-                if !isready(ch)
-                    tcp = Sockets.connect($addr, p)
-                    Base.@lock ch begin
-                        if isready(ch)
-                            # a valid connection was already made and returned, so close ours
-                            close(tcp)
-                        else
-                            put!(ch, tcp)
-                        end
-                    end
-                end
-            catch e
-                Base.@lock ch begin
-                    # if we're the last task to fail, and assuming
-                    # all other tasks also failed, then we close
-                    # the channel w/ our exception so the fetch call throws and
-                    # our error propagates
-                    (n[] -= 1) == 0 && close(ch, e)
-                end
-            end
+        try
+            tcp = Sockets.connect(addr, p)
+            keepalive && keepalive!(tcp)
+            return tcp
+        catch e
+            err = e
         end
     end
-    sock = fetch(ch)
-    keepalive && keepalive!(sock)
-    return sock
+    throw(err)
 end
 
 const nosslconfig = SSLConfig()
