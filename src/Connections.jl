@@ -518,16 +518,16 @@ function getconnection(::Type{TCPSocket},
     for addr in addrs
         Threads.@spawn begin
             try
-                isready(ch) && return
-                tcp = Sockets.connect($addr, p)
-                Base.@lock ch begin
-                    if isready(ch)
-                        # a valid connection was already made and returned, so close ours
-                        close(tcp)
-                        return
+                if !isready(ch)
+                    tcp = Sockets.connect($addr, p)
+                    Base.@lock ch begin
+                        if isready(ch)
+                            # a valid connection was already made and returned, so close ours
+                            close(tcp)
+                        else
+                            put!(ch, tcp)
+                        end
                     end
-                    keepalive && keepalive!(tcp)
-                    put!(ch, tcp)
                 end
             catch e
                 Base.@lock ch begin
@@ -540,7 +540,9 @@ function getconnection(::Type{TCPSocket},
             end
         end
     end
-    return fetch(ch)
+    sock = fetch(ch)
+    keepalive && keepalive!(sock)
+    return sock
 end
 
 const nosslconfig = SSLConfig()
