@@ -456,16 +456,16 @@ function newconnection(::Type{T},
             (host, port, require_ssl_verification, keepalive, true);
             forcenew=forcenew,
             isvalid=c->connection_isvalid(c, Int(idle_timeout))) do
-        Connection(host, port,
-            idle_timeout, require_ssl_verification, keepalive,
-            connect_timeout > 0 ?
-                try_with_timeout(_ ->
-                    getconnection(T, host, port;
-                        require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...),
-                    connect_timeout) :
-                getconnection(T, host, port;
-                    require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
-        )
+                Connection(host, port,
+                    idle_timeout, require_ssl_verification, keepalive,
+                    connect_timeout > 0 ?
+                        try_with_timeout(_ ->
+                            getconnection(T, host, port;
+                                require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...),
+                            connect_timeout) :
+                        getconnection(T, host, port;
+                            require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
+            )
     end
 end
 
@@ -520,14 +520,13 @@ function getconnection(::Type{TCPSocket},
             try
                 isready(ch) && return
                 tcp = Sockets.connect($addr, p)
-                isready(ch) && return
-                keepalive && keepalive!(tcp)
                 Base.@lock ch begin
                     if isready(ch)
                         # a valid connection was already made and returned, so close ours
                         close(tcp)
                         return
                     end
+                    keepalive && keepalive!(tcp)
                     put!(ch, tcp)
                 end
             catch e
