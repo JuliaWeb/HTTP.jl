@@ -24,7 +24,7 @@ end
 
 function open end
 
-const SOCKET_TYPE_TLS = Ref{Any}(OpenSSL.SSLStream)
+const SOCKET_TYPE_TLS = Ref{Any}(OpenSSL.SSLStream{TCPSocket})
 
 include("Conditions.jl")               ;using .Conditions
 include("access_log.jl")
@@ -190,8 +190,8 @@ SSL arguments:
    ["... peer must present a valid certificate, handshake is aborted if
      verification failed."](https://tls.mbed.org/api/ssl_8h.html#a5695285c9dbfefec295012b566290f37)
  - `sslconfig = SSLConfig(require_ssl_verification)`
- - `socket_type_tls = MbedTLS.SSLContext`, the type of socket to use for TLS connections. Defaults to `MbedTLS.SSLContext`.
-    Also supported is passing `socket_type_tls = OpenSSL.SSLStream`. To change the global default, set `HTTP.SOCKET_TYPE_TLS[] = OpenSSL.SSLStream`.
+ - `socket_type_tls = OpenSSL.SSLStream{TCPSocket}`, the type of socket to use for TLS connections. Defaults to `OpenSSL.SSLStream{TCPSocket}`.
+    Also supported is passing `socket_type_tls = MbedTLS.SSLContext`. To change the global default, set `HTTP.SOCKET_TYPE_TLS[] = MbedTLS.SSLContext`.
 
 Cookie arguments:
  - `cookies::Union{Bool, Dict{<:AbstractString, <:AbstractString}} = true`, enable cookies, or alternatively,

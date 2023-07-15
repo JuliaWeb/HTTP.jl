@@ -14,9 +14,7 @@ using InteractiveUtils: @which
 # test we can adjust default_connection_limit
 for x in (10, 12)
     HTTP.set_default_connection_limit!(x)
-    @test HTTP.Connections.TCP_POOL[].max == x
-    @test HTTP.Connections.MBEDTLS_POOL[].max == x
-    @test HTTP.Connections.OPENSSL_POOL[].max == x
+    @test HTTP.Connections.default_connection_limit[] == x
 end
 
 @testset "@client macro" begin
@@ -43,7 +41,7 @@ end
     end
 end
 
-@testset "Client.jl" for tls in [MbedTLS.SSLContext, OpenSSL.SSLStream]
+@testset "Client.jl" for tls in [MbedTLS.SSLContext, OpenSSL.SSLStream{TCPSocket}]
     @testset "GET, HEAD, POST, PUT, DELETE, PATCH" begin
         @test isok(HTTP.get("https://$httpbin/ip", socket_type_tls=tls))
         @test isok(HTTP.head("https://$httpbin/ip", socket_type_tls=tls))
