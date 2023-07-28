@@ -530,7 +530,7 @@ Read headers (and startline) from an `IO` stream into a `Message` struct.
 Throw `EOFError` if input is incomplete.
 """
 function readheaders(io::IO, message::Message)
-    bytes = String(readuntil(io, find_end_of_header))
+    bytes = String(IOExtras.readuntil(io, find_end_of_header))
     bytes = parse_start_line!(bytes, message)
     parse_header_fields!(bytes, message)
     return
@@ -555,9 +555,9 @@ Read chunk-size from an `IO` stream.
 After the final zero size chunk, read trailers into a `Message` struct.
 """
 function readchunksize(io::IO, message::Message)::Int
-    n = parse_chunk_size(readuntil(io, find_end_of_chunk_size))
+    n = parse_chunk_size(IOExtras.readuntil(io, find_end_of_chunk_size))
     if n == 0
-        bytes = readuntil(io, find_end_of_trailer)
+        bytes = IOExtras.readuntil(io, find_end_of_trailer)
         if bytes[2] != UInt8('\n')
             parse_header_fields!(SubString(String(bytes)), message)
         end

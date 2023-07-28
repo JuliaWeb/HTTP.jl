@@ -320,10 +320,10 @@ function readall!(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer())
     return n
 end
 
-function Base.readuntil(http::Stream, f::Function)::ByteView
+function IOExtras.readuntil(http::Stream, f::Function)::ByteView
     UInt(ntoread(http)) == 0 && return Connections.nobytes
     try
-        bytes = readuntil(http.stream, f)
+        bytes = IOExtras.readuntil(http.stream, f)
         update_ntoread(http, length(bytes))
         return bytes
     catch e
