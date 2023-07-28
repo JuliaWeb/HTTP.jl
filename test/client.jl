@@ -1,6 +1,7 @@
 module TestClient
 
 using HTTP, HTTP.Exceptions, MbedTLS, OpenSSL
+using HTTP: IOExtras
 include(joinpath(dirname(pathof(HTTP)), "../test/resources/TestRequest.jl"))
 import ..isok, ..httpbin
 using .TestRequest
