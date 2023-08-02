@@ -12,6 +12,11 @@ if length(split(read(`docker images crossbario/autobahn-testsuite`, String), '\n
     @assert success(`docker pull crossbario/autobahn-testsuite`)
 end
 
+function _remove_report(DIR, report_file)
+    report_path = joinpath("/reports", report_file)
+    run(Cmd(`docker run --rm -v "$DIR/reports:/reports" crossbario/autobahn-testsuite /bin/bash -c 'rm -f $report_path'`; dir=DIR))
+end
+
 @testset "Autobahn WebSocket Tests" begin
 
 @testset "Client" begin
@@ -48,7 +53,7 @@ end
                 end
             end
 
-            rm(joinpath(DIR, "reports/clients/index.json"); force=true)
+            _remove_report(DIR, "clients/index.json")
             sleep(1)
             try
                 WebSockets.open("ws://127.0.0.1:9001/updateReports?agent=main") do ws
@@ -78,7 +83,7 @@ end # @testset "Autobahn testsuite"
         end
     end
     try
-        rm(joinpath(DIR, "reports/server/index.json"); force=true)
+        _remove_report(DIR, "server/index.json")
         @test success(run(Cmd(`docker run --rm --net="host" -v "$DIR/config:/config" -v "$DIR/reports:/reports" --name fuzzingclient crossbario/autobahn-testsuite wstest -m fuzzingclient -s /config/fuzzingclient.json`; dir=DIR), stdin, stdout, stdout; wait=false))
         report = JSON.parsefile(joinpath(DIR, "reports/server/index.json"))
         for (k, v) in pairs(report["main"])
