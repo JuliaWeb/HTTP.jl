@@ -78,15 +78,10 @@ end
 
 isrecoverable(ex) = true
 isrecoverable(ex::CapturedException) = isrecoverable(ex.ex)
+isrecoverable(ex::ConnectError) = isrecoverable(ex.error)
 # Treat all DNS errors except `EAI_AGAIN`` as non-recoverable
 # Ref: https://github.com/JuliaLang/julia/blob/ec8df3da3597d0acd503ff85ac84a5f8f73f625b/stdlib/Sockets/src/addrinfo.jl#L108-L112
-function isrecoverable(ex::ConnectError)
-    if ex.error isa Sockets.DNSError
-        return (ex.error.code == Base.UV_EAI_AGAIN) ? true : false
-    else
-        return true
-    end
-end
+isrecoverable(ex::Sockets.DNSError) = (ex.code == Base.UV_EAI_AGAIN)
 isrecoverable(ex::StatusError) = retryable(ex.status)
 
 function _retry_check(s, ex, req, check)
