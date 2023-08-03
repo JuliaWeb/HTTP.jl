@@ -626,6 +626,37 @@ end
     end
 end
 
+@testset "Retry with ConnectError" begin
+    mktemp() do path, io
+        redirect_stdout(io) do
+            redirect_stderr(io) do
+                try
+                    HTTP.request("GET", "http://n0nexist3nthost/"; verbose=true)
+                catch
+                    # ignore
+                end
+            end
+        end
+        close(io)
+        logs = read(path, String)
+
+        if occursin("EAI_NODATA", logs)
+            @test occursin("No Retry: GET / HTTP/1.1", logs)
+        elseif occursin("EAI_EAGAIN", logs)
+            # interestingly some environments also result in EAGAIN in these cases
+            @test occursin("Retry HTTP.Exceptions.ConnectError", logs)
+        end
+    end
+
+    # isrecoverable tests
+    @test HTTP.RetryRequest.isrecoverable(nothing)
+    @test HTTP.RetryRequest.isrecoverable(ErrorException(""))
+    @test HTTP.RetryRequest.isrecoverable(Sockets.DNSError("localhost", Base.UV_EAI_AGAIN))
+    @test !HTTP.RetryRequest.isrecoverable(Sockets.DNSError("localhost", Base.UV_EAI_NONAME))
+    @test HTTP.RetryRequest.isrecoverable(HTTP.Exceptions.ConnectError("http://localhost", Sockets.DNSError("localhost", Base.UV_EAI_AGAIN)))
+    @test !HTTP.RetryRequest.isrecoverable(HTTP.Exceptions.ConnectError("http://localhost", Sockets.DNSError("localhost", Base.UV_EAI_NONAME)))
+end
+
 findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
 
 @testset "IOExtras.readuntil on Stream" begin
