@@ -1,6 +1,7 @@
 module TestClient
 
 using HTTP, HTTP.Exceptions, MbedTLS, OpenSSL
+using HTTP: IOExtras
 include(joinpath(dirname(pathof(HTTP)), "../test/resources/TestRequest.jl"))
 import ..isok, ..httpbin
 using .TestRequest
@@ -658,10 +659,10 @@ end
 
 findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
 
-@testset "readuntil on Stream" begin
+@testset "IOExtras.readuntil on Stream" begin
     HTTP.open(:GET, "https://$httpbin/stream/5") do io
         while !eof(io)
-            bytes = readuntil(io, findnewline)
+            bytes = IOExtras.readuntil(io, findnewline)
             isempty(bytes) && break
             x = JSON.parse(IOBuffer(bytes))
         end
