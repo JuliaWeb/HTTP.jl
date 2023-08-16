@@ -11,6 +11,7 @@ using JSON
 using Test
 using URIs
 using InteractiveUtils: @which
+using ConcurrentUtilities
 
 # test we can adjust default_connection_limit
 for x in (10, 12)
@@ -321,6 +322,24 @@ end
         HTTP.get("http://$httpbin/delay/5"; readtimeout=1, retry=false)
     end
     HTTP.get("http://$httpbin/delay/1"; readtimeout=2, retry=false)
+end
+
+@testset "connect_timeout does not include the time needed to acquire a connection from the pool" begin
+    connection_limit = HTTP.Connections.TCP_POOL[].max
+    try
+        dummy_conn = HTTP.Connection(Sockets.TCPSocket())
+        HTTP.set_default_connection_limit!(1)
+        @assert HTTP.Connections.TCP_POOL[].max == 1
+        # drain the pool
+        acquire(()->dummy_conn, HTTP.Connections.TCP_POOL[], HTTP.Connections.connectionkey(dummy_conn))
+        # Put it back in 10 seconds
+        Timer(t->HTTP.Connections.releaseconnection(dummy_conn, false), 10; interval=0)
+        # If we count the time it takes to acquire the connection from the pool, we'll get a timeout error.
+        HTTP.get("https://$httpbin/get"; connection_timeout=5, retry=false, socket_type_tls=Sockets.TCPSocket)
+        @test true # if we get here, we didn't timeout
+    finally
+        HTTP.set_default_connection_limit!(connection_limit)
+    end
 end
 
 @testset "Retry all resolved IP addresses" begin
