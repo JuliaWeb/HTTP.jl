@@ -68,7 +68,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                 end
             end
         end
-    catch e
+    catch
         if timedout === nothing || !timedout[]
             req.context[:io_errors] = get(req.context, :io_errors, 0) + 1
             if logerrors

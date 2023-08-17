@@ -477,7 +477,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 end
             end
         end
-    catch e
+    catch
         # we should be catching everything inside the while loop, but just in case
         err = current_exceptions_to_string()
         @errorv 1 "error while handling connection. $err"
