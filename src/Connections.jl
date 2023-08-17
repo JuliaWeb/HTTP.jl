@@ -39,18 +39,11 @@ function __init__()
     # there was no artificial restriction on overall throughput
     default_connection_limit[] = max(16, Threads.nthreads() * 4)
     nosslcontext[] = OpenSSL.SSLContext(OpenSSL.TLSClientMethod())
-    TCP_POOL[] = CPool{Sockets.TCPSocket}(default_connection_limit[])
-    MBEDTLS_POOL[] = CPool{MbedTLS.SSLContext}(default_connection_limit[])
-    OPENSSL_POOL[] = CPool{OpenSSL.SSLStream}(default_connection_limit[])
     return
 end
 
 function set_default_connection_limit!(n)
     default_connection_limit[] = n
-    # reinitialize the global connection pools
-    TCP_POOL[] = CPool{Sockets.TCPSocket}(n)
-    MBEDTLS_POOL[] = CPool{MbedTLS.SSLContext}(n)
-    OPENSSL_POOL[] = CPool{OpenSSL.SSLStream}(n)
     return
 end
 
@@ -360,47 +353,27 @@ A pool can be passed to any of the `HTTP.request` methods via the `pool` keyword
 """
 struct Pool
     lock::ReentrantLock
-    tcp::CPool{Sockets.TCPSocket}
-    mbedtls::CPool{MbedTLS.SSLContext}
-    openssl::CPool{OpenSSL.SSLStream}
-    other::IdDict{Type, CPool}
+    pools::IdDict{Type, CPool}
     max::Int
 end
 
 function Pool(max::Union{Int, Nothing}=nothing)
     max = something(max, default_connection_limit[])
     return Pool(ReentrantLock(),
-        CPool{Sockets.TCPSocket}(max),
-        CPool{MbedTLS.SSLContext}(max),
-        CPool{OpenSSL.SSLStream}(max),
         IdDict{Type, CPool}(),
         max,
     )
 end
 
-# Default HTTP global connection pools
-const TCP_POOL = Ref{CPool{Sockets.TCPSocket}}()
-const MBEDTLS_POOL = Ref{CPool{MbedTLS.SSLContext}}()
-const OPENSSL_POOL = Ref{CPool{OpenSSL.SSLStream}}()
-const OTHER_POOL = Lockable(IdDict{Type, CPool}())
+# Default HTTP global connection pool
+const POOL = Lockable(IdDict{Type, CPool}())
 
-getpool(::Nothing, ::Type{Sockets.TCPSocket}) = TCP_POOL[]
-getpool(::Nothing, ::Type{MbedTLS.SSLContext}) = MBEDTLS_POOL[]
-getpool(::Nothing, ::Type{OpenSSL.SSLStream}) = OPENSSL_POOL[]
-getpool(::Nothing, ::Type{T}) where {T} = Base.@lock OTHER_POOL get!(OTHER_POOL[], T) do
+getpool(::Nothing, ::Type{T}) where {T} = Base.@lock POOL get!(POOL[], T) do
     CPool{T}(default_connection_limit[])
 end
 
 function getpool(pool::Pool, ::Type{T})::CPool{T} where {T}
-    if T === Sockets.TCPSocket
-        return pool.tcp
-    elseif T === MbedTLS.SSLContext
-        return pool.mbedtls
-    elseif T === OpenSSL.SSLStream
-        return pool.openssl
-    else
-        return Base.@lock pool.lock get!(() -> CPool{T}(pool.max), pool.other, T)
-    end
+    return Base.@lock pool.lock get!(() -> CPool{T}(pool.max), pool.pools, T)
 end
 
 """
@@ -411,15 +384,9 @@ If `pool` is not specified, the default global pools are closed.
 """
 function closeall(pool::Union{Nothing, Pool}=nothing)
     if pool === nothing
-        drain!(TCP_POOL[])
-        drain!(MBEDTLS_POOL[])
-        drain!(OPENSSL_POOL[])
-        Base.@lock OTHER_POOL foreach(drain!, values(OTHER_POOL[]))
+        Base.@lock POOL foreach(drain!, values(POOL[]))
     else
-        drain!(pool.tcp)
-        drain!(pool.mbedtls)
-        drain!(pool.openssl)
-        Base.@lock pool.lock foreach(drain!, values(pool.other))
+        Base.@lock pool.lock foreach(drain!, values(pool.pools))
     end
     return
 end
@@ -570,20 +537,20 @@ function getconnection(::Type{SSLContext},
     return sslconnection(SSLContext, tcp, host; kw...)
 end
 
-function getconnection(::Type{SSLStream},
+function getconnection(::Type{SSLStream{T}},
     host::AbstractString,
     port::AbstractString;
-    kw...)::SSLStream
+    kw...)::SSLStream{T} where {T}
     port = isempty(port) ? "443" : port
     @debugv 2 "SSL connect: $host:$port..."
-    tcp = getconnection(TCPSocket, host, port; kw...)
-    return sslconnection(SSLStream, tcp, host; kw...)
+    tcp = getconnection(T, host, port; kw...)
+    return sslconnection(SSLStream{T}, tcp, host; kw...)
 end
 
-function sslconnection(::Type{SSLStream}, tcp::TCPSocket, host::AbstractString;
+function sslconnection(::Type{SSLStream{T}}, tcp::T, host::AbstractString;
     require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
     sslconfig::OpenSSL.SSLContext=nosslcontext[],
-    kw...)::SSLStream
+    kw...)::SSLStream{T} where {T}
     if sslconfig === nosslcontext[]
         sslconfig = global_sslcontext()
     end
