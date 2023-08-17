@@ -439,7 +439,8 @@ function upgrade(f::Function, http::Streams.Stream; suppress_close_error::Bool=f
         f(ws)
     catch e
         if !isok(e)
-            suppress_close_error || @error "$(ws.id): Unexpected websocket server error" exception=(e, catch_backtrace())
+            err = current_exceptions_to_string()
+            suppress_close_error || @error "$(ws.id): Unexpected websocket server error. $err"
         end
         if !isclosed(ws)
             if e isa WebSocketError && e.message isa CloseFrameBody
