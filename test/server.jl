@@ -222,7 +222,7 @@ end # @testset
     # First shutdown function errors, second adds 1
     shutdown_throw() = throw(ErrorException("Broken"))
     server = HTTP.listen!(x -> nothing; listenany=true, on_shutdown=[shutdown_throw, shutdown_add])
-    @test_logs (:error, r"shutdown function .* failed .*ErrorException.*Broken.*") close(server)
+    @test_logs (:error, r"shutdown function .* failed .*ERROR: Broken.*") close(server)
     @test TEST_COUNT[] == 4
 end # @testset
 
