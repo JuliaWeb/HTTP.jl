@@ -381,7 +381,7 @@ function listenloop(f, listener, conns, tcpisvalid,
         try
             Base.acquire(sem)
             io = Sockets.accept(listener.server)
-            Threads.@spawn begin
+            @async begin
                 local conn = nothing
                 isssl = !isnothing(listener.ssl)
                 try
