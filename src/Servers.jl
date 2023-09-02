@@ -13,6 +13,7 @@ export listen, listen!, Server, forceclose, port
 
 using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
+using ConcurrentUtilities: Lockable, lock
 using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..Connections, ..Exceptions
 import ..access_threaded, ..SOCKET_TYPE_TLS, ..@logfmt_str
 
@@ -83,10 +84,19 @@ accept(s::Listener{SSLConfig}) = getsslcontext(Sockets.accept(s.server), s.ssl)
 
 function getsslcontext(tcp, sslconfig)
     try
+        handshake_done = Ref{Bool}(false)
         ssl = MbedTLS.SSLContext()
         MbedTLS.setup!(ssl, sslconfig)
         MbedTLS.associate!(ssl, tcp)
-        MbedTLS.handshake!(ssl)
+        handshake_task = @async begin
+            MbedTLS.handshake!(ssl)
+            handshake_done[] = true
+        end
+        timedwait(5.0) do
+            handshake_done[] || istaskdone(handshake_task)
+        end
+        !istaskdone(handshake_task) && wait(handshake_task)
+        handshake_done[] || throw(Base.IOError("SSL handshake timed out", Base.ETIMEDOUT))
         return ssl
     catch e
         @try Base.IOError close(tcp)
@@ -363,31 +373,46 @@ Accepts new tcp connections and spawns async tasks to handle them."
 function listenloop(f, listener, conns, tcpisvalid,
                        max_connections, readtimeout, access_log, ready_to_accept, verbose)
     sem = Base.Semaphore(max_connections)
+    ssl = Lockable(listener.ssl)
+    connections = Lockable(conns)
     verbose >= 0 && @infov 1 "Listening on: $(listener.hostname):$(listener.hostport), thread id: $(Threads.threadid())"
     notify(ready_to_accept)
     while isopen(listener)
         try
             Base.acquire(sem)
-            io = accept(listener)
-            if io === nothing
-                @warnv 1 "unable to accept new connection"
-                continue
-            elseif !tcpisvalid(io)
-                @warnv 1 "!tcpisvalid: $io"
-                close(io)
-                continue
-            end
-            conn = Connection(io)
-            conn.state = IDLE
-            push!(conns, conn)
-            conn.host, conn.port = listener.hostname, listener.hostport
-            @async try
-                handle_connection(f, conn, listener, readtimeout, access_log)
-            finally
-                # handle_connection is in charge of closing the underlying io
-                delete!(conns, conn)
-                Base.release(sem)
-            end
+            io = Sockets.accept(listener.server)
+            Threads.@spawn begin
+                local conn = nothing
+                isssl = !isnothing(listener.ssl)
+                try
+                    if io === nothing
+                        @warnv 1 "unable to accept new connection"
+                        return
+                    end
+                    if isssl
+                        io = lock(ssl) do ssl
+                            return getsslcontext(io, ssl)
+                        end
+                    end
+                    if !tcpisvalid(io)
+                        close(io)
+                        return
+                    end
+                    conn = Connection(io)
+                    conn.state = IDLE
+                    lock(connections) do conns
+                        push!(conns, conn)
+                    end
+                    conn.host, conn.port = listener.hostname, listener.hostport
+                    handle_connection(f, conn, listener, readtimeout, access_log)
+                finally
+                    # handle_connection is in charge of closing the underlying io, but it may not get there
+                    !isnothing(conn) && lock(connections) do conns
+                        delete!(conns, conn)
+                    end
+                    Base.release(sem)
+                end
+            end  # Task.@spawn
         catch e
             if e isa Base.IOError && e.code == Base.UV_ECONNABORTED
                 verbose >= 0 && @infov 1 "Server on $(listener.hostname):$(listener.hostport) closing"
@@ -442,7 +467,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
             request.response.status = 200
 
             try
-                # invokelatest becuase the perf is negligible, but this makes live-editing handlers more Revise friendly
+                # invokelatest because the perf is negligible, but this makes live-editing handlers more Revise friendly
                 @debugv 1 "invoking handler"
                 Base.invokelatest(f, http)
                 # If `startwrite()` was never called, throw an error so we send a 500 and log this
