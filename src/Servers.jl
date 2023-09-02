@@ -453,7 +453,7 @@ function listenloop(f, listener, conns, tcpisvalid,
                         end
                         max_connections < typemax(Int) && Base.release(sem)
                     end
-                end  # Task.@spawn
+                end  # @async
             end
         catch e
             if e isa Base.IOError && e.code == Base.UV_ECONNABORTED
