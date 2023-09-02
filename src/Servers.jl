@@ -13,7 +13,7 @@ export listen, listen!, Server, forceclose, port
 
 using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
-using ConcurrentUtilities: Lockable, lock
+using ConcurrentUtilities: ConcurrentUtilities, Lockable, lock
 using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..Connections, ..Exceptions
 import ..access_threaded, ..SOCKET_TYPE_TLS, ..@logfmt_str
 
@@ -366,6 +366,47 @@ function listen!(f, listener::Listener;
     return Server(listener, on_shutdown, conns, tsk)
 end
 
+using Base: iolock_begin, iolock_end, uv_error, preserve_handle, unpreserve_handle,
+    StatusClosing, StatusClosed, StatusActive, UV_EAGAIN, UV_ECONNABORTED
+using Sockets: accept_nonblock
+
+function acceptmany(server; MAXSIZE=Sockets.BACKLOG_DEFAULT)
+    result = Vector{TCPSocket}()
+    sizehint!(result, MAXSIZE)
+    iolock_begin()
+    if server.status != StatusActive && server.status != StatusClosing && server.status != StatusClosed
+        throw(ArgumentError("server not connected, make sure \"listen\" has been called"))
+    end
+    while isopen(server)
+        client = TCPSocket()
+        err = Sockets.accept_nonblock(server, client)
+        while err == 0 && length(result) < MAXSIZE  # Don't try to fill more than half the buffer
+            push!(result, client)
+            client = TCPSocket()
+            err = Sockets.accept_nonblock(server, client)
+        end
+        if length(result) > 0
+            iolock_end()
+            return result
+        end
+        if err != UV_EAGAIN
+            uv_error("accept", err)
+        end
+        preserve_handle(server)
+        lock(server.cond)
+        iolock_end()
+        try
+            wait(server.cond)
+        finally
+            unlock(server.cond)
+            unpreserve_handle(server)
+        end
+        iolock_begin()
+    end
+    uv_error("accept", UV_ECONNABORTED)
+    nothing
+end
+
 """"
 Main server loop.
 Accepts new tcp connections and spawns async tasks to handle them."
@@ -379,40 +420,41 @@ function listenloop(f, listener, conns, tcpisvalid,
     notify(ready_to_accept)
     while isopen(listener)
         try
-            Base.acquire(sem)
-            io = Sockets.accept(listener.server)
-            Threads.@spawn begin
-                local conn = nothing
-                isssl = !isnothing(listener.ssl)
-                try
-                    if io === nothing
-                        @warnv 1 "unable to accept new connection"
-                        return
-                    end
-                    if isssl
-                        io = lock(ssl) do ssl
-                            return getsslcontext(io, ssl)
+            for io in acceptmany(listener.server)
+                @async begin
+                    max_connections < typemax(Int) && Base.acquire(sem)
+                    local conn = nothing
+                    isssl = !isnothing(listener.ssl)
+                    try
+                        if io === nothing
+                            @warnv 1 "unable to accept new connection"
+                            return
                         end
+                        if isssl
+                            io = lock(ssl) do ssl
+                                return getsslcontext(io, ssl)
+                            end
+                        end
+                        if !tcpisvalid(io)
+                            close(io)
+                            return
+                        end
+                        conn = Connection(io)
+                        conn.state = IDLE
+                        lock(connections) do conns
+                            push!(conns, conn)
+                        end
+                        conn.host, conn.port = listener.hostname, listener.hostport
+                        handle_connection(f, conn, listener, readtimeout, access_log)
+                    finally
+                        # handle_connection is in charge of closing the underlying io, but it may not get there
+                        !isnothing(conn) && lock(connections) do conns
+                            delete!(conns, conn)
+                        end
+                        max_connections < typemax(Int) && Base.release(sem)
                     end
-                    if !tcpisvalid(io)
-                        close(io)
-                        return
-                    end
-                    conn = Connection(io)
-                    conn.state = IDLE
-                    lock(connections) do conns
-                        push!(conns, conn)
-                    end
-                    conn.host, conn.port = listener.hostname, listener.hostport
-                    handle_connection(f, conn, listener, readtimeout, access_log)
-                finally
-                    # handle_connection is in charge of closing the underlying io, but it may not get there
-                    !isnothing(conn) && lock(connections) do conns
-                        delete!(conns, conn)
-                    end
-                    Base.release(sem)
-                end
-            end  # Task.@spawn
+                end  # Task.@spawn
+            end
         catch e
             if e isa Base.IOError && e.code == Base.UV_ECONNABORTED
                 verbose >= 0 && @infov 1 "Server on $(listener.hostname):$(listener.hostport) closing"
