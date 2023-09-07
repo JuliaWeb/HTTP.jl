@@ -87,15 +87,18 @@ function getsslcontext(tcp, sslconfig)
         ssl = MbedTLS.SSLContext()
         MbedTLS.setup!(ssl, sslconfig)
         MbedTLS.associate!(ssl, tcp)
-        handshake_task = @async begin
-            MbedTLS.handshake!(ssl)
-            handshake_done[] = true
+        thistask = current_task()
+        # this task is meant to be super small while the handshake remains on the main task
+        @async begin
+            timedwait(2.0) do
+                handshake_done[] || istaskdone(thistask)
+            end
+            if !handshake_done[] && !istaskdone(thistask)
+                Base.throwto(thistask, Base.IOError("SSL handshake timed out", Base.ETIMEDOUT))
+            end
         end
-        timedwait(5.0) do
-            handshake_done[] || istaskdone(handshake_task)
-        end
-        !istaskdone(handshake_task) && wait(handshake_task)
-        handshake_done[] || throw(Base.IOError("SSL handshake timed out", Base.ETIMEDOUT))
+        MbedTLS.handshake!(ssl)
+        handshake_done[] = true
         return ssl
     catch e
         @try Base.IOError close(tcp)
@@ -386,7 +389,7 @@ function listenloop(f, listener, conns, tcpisvalid,
                         return
                     end
                     if !isnothing(listener.ssl)
-                        io = getsslcontext(io, ssl)
+                        io = getsslcontext(io, listener.ssl)
                     end
                     if !tcpisvalid(io)
                         close(io)
