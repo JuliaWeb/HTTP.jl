@@ -571,9 +571,10 @@ function getconnection(::Type{SSLContext},
 end
 
 function getconnection(::Type{SSLStream},
-    host::AbstractString,
-    port::AbstractString;
-    kw...)::SSLStream
+                       host::AbstractString,
+                       port::AbstractString;
+                       kw...)::SSLStream
+
     port = isempty(port) ? "443" : port
     @debugv 2 "SSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
