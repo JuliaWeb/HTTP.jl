@@ -1,12 +1,11 @@
 using Test, HTTP, JSON
 
-const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
-
+# See https://httpbingo.julialang.org/
 const httpbin = get(ENV, "JULIA_TEST_HTTPBINGO_SERVER", "httpbingo.julialang.org")
 
+# A convenient test helper used in a few test files.
 isok(r) = r.status == 200
 
-include(joinpath(dir, "resources/TestRequest.jl"))
 @testset "HTTP" begin
     testfiles = [
         "ascii.jl",
@@ -35,8 +34,7 @@ include(joinpath(dir, "resources/TestRequest.jl"))
         filter!(in(ARGS), testfiles)
     end
     for filename in testfiles
-        filepath = joinpath(dir, filename)
-        println("Running $filepath tests...")
-        include(filepath)
+        println("Running $filename tests...")
+        include(joinpath(@__DIR__, filename))
     end
 end
