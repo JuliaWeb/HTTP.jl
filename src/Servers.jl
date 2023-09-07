@@ -13,7 +13,6 @@ export listen, listen!, Server, forceclose, port
 
 using Sockets, Logging, LoggingExtras, MbedTLS, Dates
 using MbedTLS: SSLContext, SSLConfig
-using ConcurrentUtilities: Lockable, lock
 using ..IOExtras, ..Streams, ..Messages, ..Parsers, ..Connections, ..Exceptions
 import ..access_threaded, ..SOCKET_TYPE_TLS, ..@logfmt_str
 
@@ -373,8 +372,6 @@ Accepts new tcp connections and spawns async tasks to handle them."
 function listenloop(f, listener, conns, tcpisvalid,
                        max_connections, readtimeout, access_log, ready_to_accept, verbose)
     sem = Base.Semaphore(max_connections)
-    ssl = Lockable(listener.ssl)
-    connections = Lockable(conns)
     verbose >= 0 && @infov 1 "Listening on: $(listener.hostname):$(listener.hostport), thread id: $(Threads.threadid())"
     notify(ready_to_accept)
     while isopen(listener)
@@ -383,16 +380,13 @@ function listenloop(f, listener, conns, tcpisvalid,
             io = Sockets.accept(listener.server)
             @async begin
                 local conn = nothing
-                isssl = !isnothing(listener.ssl)
                 try
                     if io === nothing
                         @warnv 1 "unable to accept new connection"
                         return
                     end
-                    if isssl
-                        io = lock(ssl) do ssl
-                            return getsslcontext(io, ssl)
-                        end
+                    if !isnothing(listener.ssl)
+                        io = getsslcontext(io, ssl)
                     end
                     if !tcpisvalid(io)
                         close(io)
@@ -400,16 +394,12 @@ function listenloop(f, listener, conns, tcpisvalid,
                     end
                     conn = Connection(io)
                     conn.state = IDLE
-                    lock(connections) do conns
-                        push!(conns, conn)
-                    end
+                    push!(conns, conn)
                     conn.host, conn.port = listener.hostname, listener.hostport
                     handle_connection(f, conn, listener, readtimeout, access_log)
                 finally
                     # handle_connection is in charge of closing the underlying io, but it may not get there
-                    !isnothing(conn) && lock(connections) do conns
-                        delete!(conns, conn)
-                    end
+                    !isnothing(conn) && delete!(conns, conn)
                     Base.release(sem)
                 end
             end  # Task.@spawn
