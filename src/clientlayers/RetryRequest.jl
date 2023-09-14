@@ -77,6 +77,9 @@ function retrylayer(handler)
 end
 
 isrecoverable(ex) = true
+isrecoverable(ex::ArgumentError) = false
+isrecoverable(ex::ErrorException) = false
+isrecoverable(ex::RequestError) = isrecoverable(ex.error)
 isrecoverable(ex::CapturedException) = isrecoverable(ex.ex)
 isrecoverable(ex::ConnectError) = isrecoverable(ex.error)
 # Treat all DNS errors except `EAI_AGAIN`` as non-recoverable

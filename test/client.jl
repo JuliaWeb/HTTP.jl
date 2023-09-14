@@ -645,6 +645,53 @@ end
     end
 end
 
+@testset "Don't retry on internal exceptions" begin
+    kws = (retry_delays = [1, 2, 3], retries=3) # ~ 6 secs
+    max_wait = 3
+
+    function test_finish_within(f, secs)
+        timedout = Ref(false)
+        t = Timer((t)->(timedout[] = true), secs)
+        try
+            f()
+        finally
+            close(t)
+        end
+        @test !timedout[]
+    end
+
+    expected = ErrorException("request")
+    test_finish_within(max_wait) do
+        @test_throws expected ErrorRequest.get("https://$httpbin/ip"; request_exception=expected, kws...)
+    end
+    expected = ArgumentError("request")
+    test_finish_within(max_wait) do
+        @test_throws expected ErrorRequest.get("https://$httpbin/ip"; request_exception=expected, kws...)
+    end
+
+    test_finish_within(max_wait) do
+        expected = ErrorException("stream")
+        e = try
+            ErrorRequest.get("https://$httpbin/ip"; stream_exception=expected, kws...)
+        catch e
+            e
+        end
+        @assert e isa HTTP.RequestError
+        @test e.error == expected
+    end
+
+    test_finish_within(max_wait) do
+        expected = ArgumentError("stream")
+        e = try
+            ErrorRequest.get("https://$httpbin/ip"; stream_exception=expected, kws...)
+        catch e
+            e
+        end
+        @assert e isa HTTP.RequestError
+        @test e.error == expected
+    end
+end
+
 @testset "Retry with ConnectError" begin
     mktemp() do path, io
         redirect_stdout(io) do
