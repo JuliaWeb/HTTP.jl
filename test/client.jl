@@ -645,6 +645,53 @@ end
     end
 end
 
+@testset "Don't retry on internal exceptions" begin
+    kws = (retry_delays = [1, 2, 3], retries=3) # ~ 6 secs
+    max_wait = 3
+
+    function test_finish_within(f, secs)
+        timedout = Ref(false)
+        t = Timer((t)->(timedout[] = true), secs)
+        try
+            f()
+        finally
+            close(t)
+        end
+        @test !timedout[]
+    end
+
+    expected = ErrorException("request")
+    test_finish_within(max_wait) do
+        @test_throws expected ErrorRequest.get("https://$httpbin/ip"; request_exception=expected, kws...)
+    end
+    expected = ArgumentError("request")
+    test_finish_within(max_wait) do
+        @test_throws expected ErrorRequest.get("https://$httpbin/ip"; request_exception=expected, kws...)
+    end
+
+    test_finish_within(max_wait) do
+        expected = ErrorException("stream")
+        e = try
+            ErrorRequest.get("https://$httpbin/ip"; stream_exception=expected, kws...)
+        catch e
+            e
+        end
+        @assert e isa HTTP.RequestError
+        @test e.error == expected
+    end
+
+    test_finish_within(max_wait) do
+        expected = ArgumentError("stream")
+        e = try
+            ErrorRequest.get("https://$httpbin/ip"; stream_exception=expected, kws...)
+        catch e
+            e
+        end
+        @assert e isa HTTP.RequestError
+        @test e.error == expected
+    end
+end
+
 @testset "Retry with ConnectError" begin
     mktemp() do path, io
         redirect_stdout(io) do
@@ -668,12 +715,41 @@ end
     end
 
     # isrecoverable tests
-    @test HTTP.RetryRequest.isrecoverable(nothing)
-    @test HTTP.RetryRequest.isrecoverable(ErrorException(""))
-    @test HTTP.RetryRequest.isrecoverable(Sockets.DNSError("localhost", Base.UV_EAI_AGAIN))
-    @test !HTTP.RetryRequest.isrecoverable(Sockets.DNSError("localhost", Base.UV_EAI_NONAME))
-    @test HTTP.RetryRequest.isrecoverable(HTTP.Exceptions.ConnectError("http://localhost", Sockets.DNSError("localhost", Base.UV_EAI_AGAIN)))
-    @test !HTTP.RetryRequest.isrecoverable(HTTP.Exceptions.ConnectError("http://localhost", Sockets.DNSError("localhost", Base.UV_EAI_NONAME)))
+    @test !HTTP.RetryRequest.isrecoverable(nothing)
+
+    @test !HTTP.RetryRequest.isrecoverable(ErrorException(""))
+    @test !HTTP.RetryRequest.isrecoverable(ArgumentError("yikes"))
+    @test HTTP.RetryRequest.isrecoverable(ArgumentError("stream is closed or unusable"))
+
+    @test HTTP.RetryRequest.isrecoverable(HTTP.RequestError(nothing, ArgumentError("stream is closed or unusable")))
+    @test !HTTP.RetryRequest.isrecoverable(HTTP.RequestError(nothing, ArgumentError("yikes")))
+
+    @test HTTP.RetryRequest.isrecoverable(CapturedException(ArgumentError("stream is closed or unusable"), Any[]))
+
+    recoverable_dns_error = Sockets.DNSError("localhost", Base.UV_EAI_AGAIN)
+    unrecoverable_dns_error = Sockets.DNSError("localhost", Base.UV_EAI_NONAME)
+    @test HTTP.RetryRequest.isrecoverable(recoverable_dns_error)
+    @test !HTTP.RetryRequest.isrecoverable(unrecoverable_dns_error)
+    @test HTTP.RetryRequest.isrecoverable(HTTP.Exceptions.ConnectError("http://localhost", recoverable_dns_error))
+    @test !HTTP.RetryRequest.isrecoverable(HTTP.Exceptions.ConnectError("http://localhost", unrecoverable_dns_error))
+    @test HTTP.RetryRequest.isrecoverable(CompositeException([
+        recoverable_dns_error,
+        HTTP.Exceptions.ConnectError("http://localhost", recoverable_dns_error),
+    ]))
+    @test HTTP.RetryRequest.isrecoverable(CompositeException([
+        recoverable_dns_error,
+        HTTP.Exceptions.ConnectError("http://localhost", recoverable_dns_error),
+        CompositeException([recoverable_dns_error])
+    ]))
+    @test !HTTP.RetryRequest.isrecoverable(CompositeException([
+        recoverable_dns_error,
+        HTTP.Exceptions.ConnectError("http://localhost", unrecoverable_dns_error),
+    ]))
+    @test !HTTP.RetryRequest.isrecoverable(CompositeException([
+        recoverable_dns_error,
+        HTTP.Exceptions.ConnectError("http://localhost", recoverable_dns_error),
+        CompositeException([unrecoverable_dns_error])
+    ]))
 end
 
 findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
