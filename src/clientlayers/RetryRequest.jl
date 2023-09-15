@@ -67,7 +67,7 @@ function retrylayer(handler)
                         mark(req.body)
                     end
                 else
-                    @debugv 1 "🚷  No Retry: $(no_retry_reason(unwrapped_ex, req))"
+                    @debugv 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
                 end
                 return s, retry
             end
