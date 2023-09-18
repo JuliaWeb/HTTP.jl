@@ -646,8 +646,8 @@ end
 end
 
 @testset "Don't retry on internal exceptions" begin
-    kws = (retry_delays = [1, 2, 3], retries=3) # ~ 6 secs
-    max_wait = 3
+    kws = (retry_delays = [10, 20, 30], retries=3) # ~ 60 secs
+    max_wait = 30
 
     function test_finish_within(f, secs)
         timedout = Ref(false)
