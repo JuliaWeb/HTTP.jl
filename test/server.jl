@@ -191,17 +191,17 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
             HTTP.startwrite(http)
             write(http, "response body\n")
         end
-    
+
         port = HTTP.port(server)
-    
+
         sock = connect(host, port)
         close(sock)
-    
+
         r = HTTP.get("https://$(host):$(port)/"; readtimeout=30, require_ssl_verification = false)
         @test r.status == 200
 
         close(server)
-    end    
+    end
 end # @testset
 
 @testset "on_shutdown" begin
@@ -222,7 +222,7 @@ end # @testset
     # First shutdown function errors, second adds 1
     shutdown_throw() = throw(ErrorException("Broken"))
     server = HTTP.listen!(x -> nothing; listenany=true, on_shutdown=[shutdown_throw, shutdown_add])
-    @test_logs (:error, r"shutdown function .* failed") close(server)
+    @test_logs (:error, r"shutdown function .* failed.*ERROR: Broken.*"s) close(server)
     @test TEST_COUNT[] == 4
 end # @testset
 
