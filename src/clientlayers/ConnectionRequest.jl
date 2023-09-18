@@ -80,8 +80,8 @@ function connectionlayer(handler)
             io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, connect_timeout=connect_timeout, kw...)
         catch e
             if logerrors
-                err = current_exceptions_to_string()
-                @error err type=Symbol("HTTP.ConnectError") method=req.method url=req.url context=req.context logtag=logtag
+                msg = current_exceptions_to_string()
+                @error msg type=Symbol("HTTP.ConnectError") method=req.method url=req.url context=req.context logtag=logtag
             end
             req.context[:connect_errors] = get(req.context, :connect_errors, 0) + 1
             throw(ConnectError(string(url), e))
@@ -127,12 +127,12 @@ function connectionlayer(handler)
             root_err = ExceptionUnwrapping.unwrap_exception_to_root(e)
             # don't log if it's an HTTPError since we should have already logged it
             if logerrors && root_err isa StatusError
-                err = current_exceptions_to_string()
-                @error err type=Symbol("HTTP.StatusError") method=req.method url=req.url context=req.context logtag=logtag
+                msg = current_exceptions_to_string()
+                @error msg type=Symbol("HTTP.StatusError") method=req.method url=req.url context=req.context logtag=logtag
             end
             if logerrors && !ExceptionUnwrapping.has_wrapped_exception(e, HTTPError)
-                err = current_exceptions_to_string(e)
-                @error err type=Symbol("HTTP.ConnectionRequest") method=req.method url=req.url context=req.context logtag=logtag
+                msg = current_exceptions_to_string()
+                @error msg type=Symbol("HTTP.ConnectionRequest") method=req.method url=req.url context=req.context logtag=logtag
             end
             @debugv 1 "❗️  ConnectionLayer $root_err. Closing: $io"
             if @isdefined(stream) && stream.nwritten == -1

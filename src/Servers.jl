@@ -192,8 +192,9 @@ shutdown(::Nothing) = nothing
 function shutdown(fn::Function)
     try
         fn()
-    catch e
-        @error "shutdown function $fn failed" exception=(e, catch_backtrace())
+    catch
+        msg = current_exceptions_to_string()
+        @error "shutdown function $fn failed. $msg"
     end
 end
 
@@ -392,7 +393,8 @@ function listenloop(f, listener, conns, tcpisvalid,
             if e isa Base.IOError && e.code == Base.UV_ECONNABORTED
                 verbose >= 0 && @infov 1 "Server on $(listener.hostname):$(listener.hostport) closing"
             else
-                @errorv 2 "Server on $(listener.hostname):$(listener.hostport) errored" exception=(e, catch_backtrace())
+                msg = current_exceptions_to_string()
+                @errorv 2 "Server on $(listener.hostname):$(listener.hostport) errored. $msg"
                 # quick little sleep in case there's a temporary
                 # local error accepting and this might help avoid quickly re-erroring
                 sleep(0.05 + rand() * 0.05)
@@ -431,7 +433,8 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 if e isa ParseError
                     write(c, Response(e.code == :HEADER_SIZE_EXCEEDS_LIMIT ? 431 : 400, string(e.code)))
                 end
-                @debugv 1 "handle_connection startread error" exception=(e, catch_backtrace())
+                msg = current_exceptions_to_string()
+                @debugv 1 "handle_connection startread error. $msg"
                 break
             end
 
@@ -458,7 +461,8 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 # The remote can close the stream whenever it wants to, but there's nothing
                 # anyone can do about it on this side. No reason to log an error in that case.
                 level = e isa Base.IOError && !isopen(c) ? Logging.Debug : Logging.Error
-                @logmsgv 1 level "handle_connection handler error" exception=(e, stacktrace(catch_backtrace()))
+                msg = current_exceptions_to_string()
+                @logmsgv 1 level "handle_connection handler error. $msg"
 
                 if isopen(http) && !iswritable(http)
                     request.response.status = 500
@@ -473,9 +477,10 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 end
             end
         end
-    catch e
+    catch
         # we should be catching everything inside the while loop, but just in case
-        @errorv 1 "error while handling connection" exception=(e, catch_backtrace())
+        msg = current_exceptions_to_string()
+        @errorv 1 "error while handling connection. $msg"
     finally
         if readtimeout > 0
             wait_for_timeout[] = false

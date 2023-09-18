@@ -2,6 +2,7 @@ module TimeoutRequest
 
 using ..Connections, ..Streams, ..Exceptions, ..Messages
 using LoggingExtras, ConcurrentUtilities
+using ..Exceptions: current_exceptions_to_string
 
 export timeoutlayer
 
@@ -25,8 +26,8 @@ function timeoutlayer(handler)
                 req = stream.message.request
                 req.context[:timeout_errors] = get(req.context, :timeout_errors, 0) + 1
                 if logerrors
-                    err = current_exceptions_to_string()
-                    @error err type=Symbol("HTTP.TimeoutError") method=req.method url=req.url context=req.context timeout=readtimeout logtag=logtag
+                    msg = current_exceptions_to_string()
+                    @error msg type=Symbol("HTTP.TimeoutError") method=req.method url=req.url context=req.context timeout=readtimeout logtag=logtag
                 end
                 e = Exceptions.TimeoutError(readtimeout)
             end

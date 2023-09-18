@@ -100,7 +100,12 @@ function current_exceptions_to_string()
     buf = IOBuffer()
     println(buf)
     println(buf, "\n===========================\nHTTP Error message:\n")
-    Base.display_error(buf, Base.catch_stack())
+    exc = @static if VERSION >= v"1.8.0-"
+        Base.current_exceptions()
+    else
+        Base.catch_stack()
+    end
+    Base.display_error(buf, exc)
     return String(take!(buf))
 end
 
