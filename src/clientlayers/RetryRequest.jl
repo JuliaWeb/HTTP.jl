@@ -1,5 +1,6 @@
 module RetryRequest
 
+import ConcurrentUtilities
 using Sockets, LoggingExtras, MbedTLS, OpenSSL, ExceptionUnwrapping
 using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest, ..Exceptions
 
@@ -79,6 +80,7 @@ end
 isrecoverable(ex) = is_wrapped_exception(ex) ? isrecoverable(unwrap_exception(ex)) : false
 isrecoverable(::Union{Base.EOFError, Base.IOError, MbedTLS.MbedException, OpenSSL.OpenSSLError}) = true
 isrecoverable(ex::ArgumentError) = ex.msg == "stream is closed or unusable"
+isrecoverable(ex::ConcurrentUtilities.TimeoutException) = true
 isrecoverable(ex::CompositeException) = all(isrecoverable, ex.exceptions)
 # Treat all DNS errors except `EAI_AGAIN`` as non-recoverable
 # Ref: https://github.com/JuliaLang/julia/blob/ec8df3da3597d0acd503ff85ac84a5f8f73f625b/stdlib/Sockets/src/addrinfo.jl#L108-L112
