@@ -707,7 +707,7 @@ end
     try
         HTTP.pushlayer!(test_context_layer)
         # 10.0.0.0 is non-routeable and will result in a connection timeout
-        HTTP.get("http://10.0.0.0", connect_timeout=1, retries=3, retry_delays=[0.1, 0.1, 0.1], test_context=test_context)
+        HTTP.get("http://example.com:81", connect_timeout=1, retries=3, retry_delays=[0.1, 0.1, 0.1], test_context=test_context)
     catch e
         @assert e isa HTTP.ConnectError
         @test e.error isa ConcurrentUtilities.TimeoutException
