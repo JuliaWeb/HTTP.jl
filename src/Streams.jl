@@ -326,7 +326,7 @@ function IOExtras.readuntil(http::Stream, f::Function)::ByteView
         bytes = IOExtras.readuntil(http.stream, f)
         update_ntoread(http, length(bytes))
         return bytes
-    catch e
+    catch
         # if we error, it means we didn't find what we were looking for
         return UInt8[]
     end
