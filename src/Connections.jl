@@ -512,7 +512,7 @@ function newconnection(::Type{T},
     connection_limit_warning(connection_limit)
     function connect(timeout)
         if timeout > 0
-            try_with_timeout(timeout) do
+            try_with_timeout(timeout) do _
                 getconnection(T, host, port; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
             end
         else
