@@ -384,30 +384,64 @@ const MBEDTLS_POOL = Ref{CPool{MbedTLS.SSLContext}}()
 const OPENSSL_POOL = Ref{CPool{OpenSSL.SSLStream}}()
 const OTHER_POOL = Lockable(IdDict{Type, CPool}())
 
+"""
+    HTTP.Connections.metrics() -> IdDict{Type,Metrics}
+
+Return a dictionary of connection metrics for the default pool.
+These metrics are keyed by connection type.
+"""
 function metrics(pool::Nothing=nothing)
-    return Dict{Symbol,Dict{Symbol,Int}}(
-        :tcp => metrics(TCP_POOL[]),
-        :mbedtls => metrics(MBEDTLS_POOL[]),
-        :openssl => metrics(OPENSSL_POOL[]),
-        (Base.@lock OTHER_POOL.lock (Symbol(k) => metrics(v) for (k, v) in OTHER_POOL[]))...,
+    return IdDict{Type,Metrics}(
+        Sockets.TCPSocket => Metrics(TCP_POOL[]),
+        MbedTLS.SSLContext => Metrics(MBEDTLS_POOL[]),
+        OpenSSL.SSLStream => Metrics(OPENSSL_POOL[]),
+        (Base.@lock OTHER_POOL.lock (k => Metrics(v) for (k, v) in OTHER_POOL[]))...,
     )
 end
+
+"""
+    HTTP.Connections.metrics(pool::Pool) -> IdDict{Type,Metrics}
+
+Return a dictionary of connection metrics for the given `pool`, keyed by the connection
+"""
 function metrics(pool::Pool)
-    return Dict{Symbol,Dict{Symbol,Int}}(
-        :tcp => metrics(pool.tcp),
-        :mbedtls => metrics(pool.mbedtls),
-        :openssl => metrics(pool.openssl),
-        (Base.@lock pool.lock (Symbol(k) => metrics(v) for (k, v) in pool.other))...,
+    return IdDict{Type,Metrics}(
+        Sockets.TCPSocket => Metrics(pool.tcp),
+        MbedTLS.SSLContext => Metrics(pool.mbedtls),
+        OpenSSL.SSLStream => Metrics(pool.openssl),
+        (Base.@lock pool.lock (k => Metrics(v) for (k, v) in pool.other))...,
     )
 end
 
-function metrics(cpool::CPool)
-    return Dict{Symbol,Int}(
-        :in_use => ConcurrentUtilities.Pools.permits(cpool),
-        :in_pool => ConcurrentUtilities.Pools.depth(cpool)
+Base.@kwdef struct Metrics
+    limit::Int
+    in_use::Int
+    in_pool::Int
+end
+
+"""
+    Metrics(cpool::$CPool)
+
+Metrics for the given connection pool:
+- `limit`: the maximum number of connections allowed to be in-use at the same time.
+- `in_use`: the number of connections currently in use.
+- `in_pool`: the number of connections available for re-use.
+"""
+function Metrics(cpool::CPool)
+    return Metrics(
+        limit=ConcurrentUtilities.Pools.max(cpool),
+        in_use=ConcurrentUtilities.Pools.permits(cpool),
+        in_pool=ConcurrentUtilities.Pools.depth(cpool),
     )
 end
 
+function Base.show(io::IO, m::Metrics)
+    print(io, "Metrics(")
+    print(io, "limit=", m.limit)
+    print(io, ", in_use=", m.in_use)
+    print(io, ", in_pool=", m.in_pool)
+    print(io, ")")
+end
 
 getpool(::Nothing, ::Type{Sockets.TCPSocket}) = TCP_POOL[]
 getpool(::Nothing, ::Type{MbedTLS.SSLContext}) = MBEDTLS_POOL[]
