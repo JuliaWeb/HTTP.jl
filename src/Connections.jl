@@ -385,10 +385,9 @@ const OPENSSL_POOL = Ref{CPool{OpenSSL.SSLStream}}()
 const OTHER_POOL = Lockable(IdDict{Type, CPool}())
 
 """
-    HTTP.Connections.metrics() -> IdDict{Type,Metrics}
+    HTTP.Connections.metrics([nothing]) -> IdDict{Type,Metrics}
 
-Return a dictionary of connection metrics for the default pool.
-These metrics are keyed by connection type.
+Return a dictionary of connection metrics, keyed by the connection type, for the default global pool.
 """
 function metrics(pool::Nothing=nothing)
     return IdDict{Type,Metrics}(
@@ -402,7 +401,7 @@ end
 """
     HTTP.Connections.metrics(pool::Pool) -> IdDict{Type,Metrics}
 
-Return a dictionary of connection metrics for the given `pool`, keyed by the connection
+Return a dictionary of connection metrics, keyed by the connection type, for the given `pool`.
 """
 function metrics(pool::Pool)
     return IdDict{Type,Metrics}(
