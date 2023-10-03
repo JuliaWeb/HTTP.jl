@@ -384,6 +384,31 @@ const MBEDTLS_POOL = Ref{CPool{MbedTLS.SSLContext}}()
 const OPENSSL_POOL = Ref{CPool{OpenSSL.SSLStream}}()
 const OTHER_POOL = Lockable(IdDict{Type, CPool}())
 
+function metrics(pool::Nothing=nothing)
+    return Dict{Symbol,Dict{Symbol,Int}}(
+        :tcp => metrics(TCP_POOL[]),
+        :mbedtls => metrics(MBEDTLS_POOL[]),
+        :openssl => metrics(OPENSSL_POOL[]),
+        (Base.@lock OTHER_POOL.lock (Symbol(k) => metrics(v) for (k, v) in OTHER_POOL[]))...,
+    )
+end
+function metrics(pool::Pool)
+    return Dict{Symbol,Dict{Symbol,Int}}(
+        :tcp => metrics(pool.tcp),
+        :mbedtls => metrics(pool.mbedtls),
+        :openssl => metrics(pool.openssl),
+        (Base.@lock pool.lock (Symbol(k) => metrics(v) for (k, v) in pool.other))...,
+    )
+end
+
+function metrics(cpool::CPool)
+    return Dict{Symbol,Int}(
+        :in_use => ConcurrentUtilities.Pools.permits(cpool),
+        :in_pool => ConcurrentUtilities.Pools.depth(cpool)
+    )
+end
+
+
 getpool(::Nothing, ::Type{Sockets.TCPSocket}) = TCP_POOL[]
 getpool(::Nothing, ::Type{MbedTLS.SSLContext}) = MBEDTLS_POOL[]
 getpool(::Nothing, ::Type{OpenSSL.SSLStream}) = OPENSSL_POOL[]
