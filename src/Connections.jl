@@ -451,22 +451,21 @@ function newconnection(::Type{T},
                        keepalive::Bool=true,
                        kw...) where {T <: IO}
     connection_limit_warning(connection_limit)
-    return acquire(
-            getpool(pool, T),
-            (host, port, require_ssl_verification, keepalive, true);
-            forcenew=forcenew,
-            isvalid=c->connection_isvalid(c, Int(idle_timeout))) do
-                Connection(host, port,
-                    idle_timeout, require_ssl_verification, keepalive,
-                    connect_timeout > 0 ?
-                        try_with_timeout(_ ->
-                            getconnection(T, host, port;
-                                require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...),
-                            connect_timeout) :
-                        getconnection(T, host, port;
-                            require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
-            )
+    function connect(timeout)
+        if timeout > 0
+            try_with_timeout(timeout) do
+                getconnection(T, host, port; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
+            end
+        else
+            getconnection(T, host, port; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
+        end
     end
+    newconn() = Connection(host, port, idle_timeout, require_ssl_verification, keepalive, connect(connect_timeout))
+    key = (host, port, require_ssl_verification, keepalive, true)
+    return acquire(
+        newconn, getpool(pool, T), key;
+        forcenew=forcenew, isvalid=c->connection_isvalid(c, Int(idle_timeout)),
+    )
 end
 
 function releaseconnection(c::Connection{T}, reuse; pool::Union{Nothing, Pool}=nothing, kw...) where {T}
