@@ -342,6 +342,65 @@ end
     end
 end
 
+@testset "Connections.metrics" begin
+    # Test that `metrics` function returns the expected values as we use / release connections.
+    # Initialise a pool, and check that it is empty and has the expected limit
+    pool = HTTP.Pool(3)
+    for (T, v) in HTTP.Connections.metrics(pool)
+        @test v.limit == 3
+        @test v.in_pool == 0
+        @test v.in_use == 0
+    end
+
+    TCP = Sockets.TCPSocket
+    # After a request, check the connection is put in the pool for reuse
+    HTTP.get("https://$httpbin/get"; pool=pool, socket_type_tls=TCP)
+    metrics = HTTP.Connections.metrics(pool)
+    @test metrics[TCP].in_pool == 1
+    @test metrics[TCP].in_use == 0
+
+    # A second request should use this same connection and put it back again
+    HTTP.get("https://$httpbin/get"; pool=pool, socket_type_tls=TCP)
+    metrics = HTTP.Connections.metrics(pool)
+    @test metrics[TCP].in_pool == 1
+    @test metrics[TCP].in_use == 0
+
+    # Force a new connection -- the one in the pool should remain there.
+    c1 = HTTP.Connections.newconnection(TCP, httpbin, ""; forcenew=true, connect_timeout=3, pool=pool)
+    metrics = HTTP.Connections.metrics(pool)
+    @test metrics[TCP].in_pool == 1
+    @test metrics[TCP].in_use == 1
+
+    # Get another "new connection", since we didn't force new, this should use the one from the pool.
+    c2 = HTTP.Connections.newconnection(TCP, httpbin, ""; forcenew=false, connect_timeout=3, pool=pool)
+    metrics = HTTP.Connections.metrics(pool)
+    @test metrics[TCP].in_pool == 0
+    @test metrics[TCP].in_use == 2
+
+    # Release the first connection back to the pool
+    HTTP.Connections.releaseconnection(c1, true; pool=pool)
+    metrics = HTTP.Connections.metrics(pool)
+    @test metrics[TCP].in_pool == 1
+    @test metrics[TCP].in_use == 1
+
+    # Release the second connection but do not put back in the pool
+    HTTP.Connections.releaseconnection(c1, false; pool=pool)
+    metrics = HTTP.Connections.metrics(pool)
+    @test metrics[TCP].in_pool == 1
+    @test metrics[TCP].in_use == 0
+
+    # Test another connection type
+    SSL = MbedTLS.SSLContext
+    @test metrics[SSL].limit == 3
+    @test metrics[SSL].in_pool == 0
+    @test metrics[SSL].in_use == 0
+    HTTP.get("https://$httpbin/get"; pool=pool, socket_type_tls=SSL)
+    metrics = HTTP.Connections.metrics(pool)
+    @test metrics[SSL].limit == 3
+    @test metrics[SSL].in_pool == 1
+    @test metrics[SSL].in_use == 0
+end
+
 @testset "Retry all resolved IP addresses" begin
     # See issue https://github.com/JuliaWeb/HTTP.jl/issues/672
     # Bit tricky to test, but can at least be tested if localhost
