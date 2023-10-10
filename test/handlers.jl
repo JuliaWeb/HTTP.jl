@@ -77,4 +77,8 @@ using HTTP, Test
     @test r(HTTP.Request("GET", "/api/widgets/abc/subwidget")) == 15
     @test r(HTTP.Request("GET", "/api/widgets/abc/subwidgetname")) == 16
 
+    cookie = HTTP.Cookie("abc", "def")
+    req = HTTP.Request("GET", "/")
+    req.context[:cookies] = [cookie]
+    @test HTTP.getcookies(req)[1] == cookie
 end
