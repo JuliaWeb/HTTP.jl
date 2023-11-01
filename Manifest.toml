@@ -23,8 +23,8 @@ version = "0.7.1"
 
 [[deps.ConcurrentUtilities]]
 deps = ["Serialization", "Sockets"]
-git-tree-sha1 = "584a4f8d88293ad5eaa5de6dff3e5066b9d47b14"
-repo-rev = "npr-pool-size"
+git-tree-sha1 = "8cfa272e8bdedfa88b6aefbbca7c19f1befac519"
+repo-rev = "main"
 repo-url = "https://github.com/JuliaServices/ConcurrentUtilities.jl.git"
 uuid = "f0e56b4a-5159-44fe-b623-3e5288b988bb"
 version = "2.3.0"

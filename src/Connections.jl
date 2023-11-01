@@ -350,10 +350,10 @@ end
 const CPool{T} = ConcurrentUtilities.Pool{ConnectionKeyType, Connection{T}}
 
 """
-    HTTP.Pool(max::Int=HTTP.default_connection_limit[])
+    HTTP.Pool(limit::Int=HTTP.default_connection_limit[])
 
 Connection pool for managing the reuse of HTTP connections.
-`max` controls the maximum number of concurrent connections allowed
+`limit` controls the maximum number of concurrent connections allowed
 and defaults to the `HTTP.default_connection_limit` value.
 
 A pool can be passed to any of the `HTTP.request` methods via the `pool` keyword argument.
@@ -364,17 +364,17 @@ struct Pool
     mbedtls::CPool{MbedTLS.SSLContext}
     openssl::CPool{OpenSSL.SSLStream}
     other::IdDict{Type, CPool}
-    max::Int
+    limit::Int
 end
 
-function Pool(max::Union{Int, Nothing}=nothing)
-    max = something(max, default_connection_limit[])
+function Pool(limit::Union{Int, Nothing}=nothing)
+    limit = something(limit, default_connection_limit[])
     return Pool(ReentrantLock(),
-        CPool{Sockets.TCPSocket}(max),
-        CPool{MbedTLS.SSLContext}(max),
-        CPool{OpenSSL.SSLStream}(max),
+        CPool{Sockets.TCPSocket}(limit),
+        CPool{MbedTLS.SSLContext}(limit),
+        CPool{OpenSSL.SSLStream}(limit),
         IdDict{Type, CPool}(),
-        max,
+        limit,
     )
 end
 
@@ -428,9 +428,9 @@ Metrics for the given connection pool:
 """
 function Metrics(cpool::CPool)
     return Metrics(
-        limit=ConcurrentUtilities.Pools.max(cpool),
-        in_use=ConcurrentUtilities.Pools.permits(cpool),
-        in_pool=ConcurrentUtilities.Pools.depth(cpool),
+        limit=ConcurrentUtilities.Pools.limit(cpool),
+        in_use=ConcurrentUtilities.Pools.in_use(cpool),
+        in_pool=ConcurrentUtilities.Pools.in_pool(cpool),
     )
 end
 
@@ -457,7 +457,7 @@ function getpool(pool::Pool, ::Type{T})::CPool{T} where {T}
     elseif T === OpenSSL.SSLStream
         return pool.openssl
     else
-        return Base.@lock pool.lock get!(() -> CPool{T}(pool.max), pool.other, T)
+        return Base.@lock pool.lock get!(() -> CPool{T}(pool.limit), pool.other, T)
     end
 end
 
