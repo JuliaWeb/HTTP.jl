@@ -350,10 +350,10 @@ end
 const CPool{T} = ConcurrentUtilities.Pool{ConnectionKeyType, Connection{T}}
 
 """
-    HTTP.Pool(max::Int=HTTP.default_connection_limit[])
+    HTTP.Pool(limit::Int=HTTP.default_connection_limit[])
 
 Connection pool for managing the reuse of HTTP connections.
-`max` controls the maximum number of concurrent connections allowed
+`limit` controls the maximum number of concurrent connections allowed
 and defaults to the `HTTP.default_connection_limit` value.
 
 A pool can be passed to any of the `HTTP.request` methods via the `pool` keyword argument.
@@ -364,17 +364,17 @@ struct Pool
     mbedtls::CPool{MbedTLS.SSLContext}
     openssl::CPool{OpenSSL.SSLStream}
     other::IdDict{Type, CPool}
-    max::Int
+    limit::Int
 end
 
-function Pool(max::Union{Int, Nothing}=nothing)
-    max = something(max, default_connection_limit[])
+function Pool(limit::Union{Int, Nothing}=nothing)
+    limit = something(limit, default_connection_limit[])
     return Pool(ReentrantLock(),
-        CPool{Sockets.TCPSocket}(max),
-        CPool{MbedTLS.SSLContext}(max),
-        CPool{OpenSSL.SSLStream}(max),
+        CPool{Sockets.TCPSocket}(limit),
+        CPool{MbedTLS.SSLContext}(limit),
+        CPool{OpenSSL.SSLStream}(limit),
         IdDict{Type, CPool}(),
-        max,
+        limit,
     )
 end
 
@@ -383,6 +383,64 @@ const TCP_POOL = Ref{CPool{Sockets.TCPSocket}}()
 const MBEDTLS_POOL = Ref{CPool{MbedTLS.SSLContext}}()
 const OPENSSL_POOL = Ref{CPool{OpenSSL.SSLStream}}()
 const OTHER_POOL = Lockable(IdDict{Type, CPool}())
+
+"""
+    HTTP.Connections.metrics([nothing]) -> IdDict{Type,Metrics}
+
+Return a dictionary of connection metrics, keyed by the connection type, for the default global pool.
+"""
+function metrics(pool::Nothing=nothing)
+    return IdDict{Type,Metrics}(
+        Sockets.TCPSocket => Metrics(TCP_POOL[]),
+        MbedTLS.SSLContext => Metrics(MBEDTLS_POOL[]),
+        OpenSSL.SSLStream => Metrics(OPENSSL_POOL[]),
+        (Base.@lock OTHER_POOL.lock (k => Metrics(v) for (k, v) in OTHER_POOL[]))...,
+    )
+end
+
+"""
+    HTTP.Connections.metrics(pool::Pool) -> IdDict{Type,Metrics}
+
+Return a dictionary of connection metrics, keyed by the connection type, for the given `pool`.
+"""
+function metrics(pool::Pool)
+    return IdDict{Type,Metrics}(
+        Sockets.TCPSocket => Metrics(pool.tcp),
+        MbedTLS.SSLContext => Metrics(pool.mbedtls),
+        OpenSSL.SSLStream => Metrics(pool.openssl),
+        (Base.@lock pool.lock (k => Metrics(v) for (k, v) in pool.other))...,
+    )
+end
+
+Base.@kwdef struct Metrics
+    limit::Int
+    in_use::Int
+    in_pool::Int
+end
+
+"""
+    Metrics(cpool::$CPool)
+
+Metrics for the given connection pool:
+- `limit`: the maximum number of connections allowed to be in-use at the same time.
+- `in_use`: the number of connections currently in use.
+- `in_pool`: the number of connections available for re-use.
+"""
+function Metrics(cpool::CPool)
+    return Metrics(
+        limit=ConcurrentUtilities.Pools.limit(cpool),
+        in_use=ConcurrentUtilities.Pools.in_use(cpool),
+        in_pool=ConcurrentUtilities.Pools.in_pool(cpool),
+    )
+end
+
+function Base.show(io::IO, m::Metrics)
+    print(io, "Metrics(")
+    print(io, "limit=", m.limit)
+    print(io, ", in_use=", m.in_use)
+    print(io, ", in_pool=", m.in_pool)
+    print(io, ")")
+end
 
 getpool(::Nothing, ::Type{Sockets.TCPSocket}) = TCP_POOL[]
 getpool(::Nothing, ::Type{MbedTLS.SSLContext}) = MBEDTLS_POOL[]
@@ -399,7 +457,7 @@ function getpool(pool::Pool, ::Type{T})::CPool{T} where {T}
     elseif T === OpenSSL.SSLStream
         return pool.openssl
     else
-        return Base.@lock pool.lock get!(() -> CPool{T}(pool.max), pool.other, T)
+        return Base.@lock pool.lock get!(() -> CPool{T}(pool.limit), pool.other, T)
     end
 end
 
@@ -451,22 +509,21 @@ function newconnection(::Type{T},
                        keepalive::Bool=true,
                        kw...) where {T <: IO}
     connection_limit_warning(connection_limit)
-    return acquire(
-            getpool(pool, T),
-            (host, port, require_ssl_verification, keepalive, true);
-            forcenew=forcenew,
-            isvalid=c->connection_isvalid(c, Int(idle_timeout))) do
-                Connection(host, port,
-                    idle_timeout, require_ssl_verification, keepalive,
-                    connect_timeout > 0 ?
-                        try_with_timeout(_ ->
-                            getconnection(T, host, port;
-                                require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...),
-                            connect_timeout) :
-                        getconnection(T, host, port;
-                            require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
-            )
+    function connect(timeout)
+        if timeout > 0
+            try_with_timeout(timeout) do _
+                getconnection(T, host, port; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
+            end
+        else
+            getconnection(T, host, port; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
+        end
     end
+    newconn() = Connection(host, port, idle_timeout, require_ssl_verification, keepalive, connect(connect_timeout))
+    key = (host, port, require_ssl_verification, keepalive, true)
+    return acquire(
+        newconn, getpool(pool, T), key;
+        forcenew=forcenew, isvalid=c->connection_isvalid(c, Int(idle_timeout)),
+    )
 end
 
 function releaseconnection(c::Connection{T}, reuse; pool::Union{Nothing, Pool}=nothing, kw...) where {T}
