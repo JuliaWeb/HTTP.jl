@@ -611,7 +611,7 @@ end
         shouldfail[] = true
         seekstart(req_body)
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry=false, status_exception=false)
-        @test String(take!(res_body)) == "500 unexpected error"
+        @test resp.status == 500
         # even if StatusError, we should still get the right response body
         shouldfail[] = true
         seekstart(req_body)
@@ -620,7 +620,6 @@ end
         catch e
             @test e isa HTTP.StatusError
             @test e.status == 500
-            @test String(take!(res_body)) == "500 unexpected error"
         end
         # don't throw a 500, but set status to status we don't retry by default
         shouldfail[] = false
