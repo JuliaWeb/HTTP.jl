@@ -498,6 +498,6 @@ are expected to be stored in the `req.context[:cookies]` of the
 request context as implemented in the [`HTTP.Handlers.cookie_middleware`](@ref)
 middleware.
 """
-getcookies(req) = get(() => Cookie[], req.context, :cookies)
+getcookies(req) = get(() -> Cookie[], req.context, :cookies)
 
 end # module
