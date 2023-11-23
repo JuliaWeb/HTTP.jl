@@ -485,19 +485,30 @@ function writestartline(io::IO, r::Response)
 end
 
 """
-    writeheaders(::IO, ::Message)
+    writeheaders(::IO, ::Message; mask_authorization_header::Bool=false)
 
 Write `Message` start line and
 a line for each "name: value" pair and a trailing blank line.
+
+When `mask_authorization_header` is set to `true`, the value of
+Authorization header will not be written.
 """
-writeheaders(io::IO, m::Message) = writeheaders(io, m, IOBuffer())
+writeheaders(io::IO, m::Message; mask_authorization_header::Bool=false) =
+    writeheaders(io, m, IOBuffer(); mask_authorization_header=mask_authorization_header)
 writeheaders(io::Connection, m::Message) = writeheaders(io, m, io.writebuffer)
 
-function writeheaders(io::IO, m::Message, buf::IOBuffer)
+function writeheaders(io::IO, m::Message, buf::IOBuffer; mask_authorization_header::Bool=false)
     writestartline(buf, m)
     for (name, value) in m.headers
         # match curl convention of not writing empty headers
-        !isempty(value) && write(buf, name, ": ", value, "\r\n")
+        if !isempty(value)
+            if mask_authorization_header && name == "Authorization"
+                showvalue = "XXXXXXXXXX"
+            else
+                showvalue = value
+            end
+            write(buf, name, ": ", showvalue, "\r\n")
+        end
     end
     write(buf, "\r\n")
     nwritten = write(io, take!(buf))
@@ -609,7 +620,7 @@ function Base.show(io::IO, m::Message)
     end
     println(io, typeof(m), ":")
     println(io, "\"\"\"")
-    writeheaders(io, m)
+    writeheaders(io, m; mask_authorization_header=true)
     summary = bodysummary(m.body)
     validsummary = isvalidstr(summary)
     validsummary && write(io, summary)
