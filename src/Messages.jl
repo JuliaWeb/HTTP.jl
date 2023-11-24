@@ -617,9 +617,7 @@ function Base.show(io::IO, m::Message)
     # - Cookie
     # - Set-Cookie (in response)
     # We will show "**********" instead
-    ioh = IOBuffer()
-    writeheaders(ioh, m)
-    header_str = String(take!(ioh))
+    header_str = sprint(writeheaders, m)
     mask_headers = ["Authorization", "Cookie", "Set-Cookie"]
     for mh in mask_headers
         header_str = replace(header_str, Regex("($mh: ).*\$", "m") => s"\1******")
