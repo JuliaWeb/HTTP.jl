@@ -13,12 +13,15 @@ using URIs
 using InteractiveUtils: @which
 using ConcurrentUtilities
 
+# ConcurrentUtilities changed a fieldname from max to limit in 2.3.0
+const max_or_limit = :max in fieldnames(ConcurrentUtilities.Pool) ? (:max) : (:limit)
+
 # test we can adjust default_connection_limit
 for x in (10, 12)
     HTTP.set_default_connection_limit!(x)
-    @test HTTP.Connections.TCP_POOL[].max == x
-    @test HTTP.Connections.MBEDTLS_POOL[].max == x
-    @test HTTP.Connections.OPENSSL_POOL[].max == x
+    @test getfield(HTTP.Connections.TCP_POOL[], max_or_limit) == x
+    @test getfield(HTTP.Connections.MBEDTLS_POOL[], max_or_limit) == x
+    @test getfield(HTTP.Connections.OPENSSL_POOL[], max_or_limit) == x
 end
 
 @testset "@client macro" begin
@@ -325,11 +328,11 @@ end
 end
 
 @testset "connect_timeout does not include the time needed to acquire a connection from the pool" begin
-    connection_limit = HTTP.Connections.TCP_POOL[].max
+    connection_limit = getfield(HTTP.Connections.TCP_POOL[], max_or_limit)
     try
         dummy_conn = HTTP.Connection(Sockets.TCPSocket())
         HTTP.set_default_connection_limit!(1)
-        @assert HTTP.Connections.TCP_POOL[].max == 1
+        @assert getfield(HTTP.Connections.TCP_POOL[], max_or_limit) == 1
         # drain the pool
         acquire(()->dummy_conn, HTTP.Connections.TCP_POOL[], HTTP.Connections.connectionkey(dummy_conn))
         # Put it back in 10 seconds
