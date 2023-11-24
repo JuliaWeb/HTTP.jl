@@ -467,7 +467,6 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 if isopen(http) && !iswritable(http)
                     request.response.status = 500
                     startwrite(http)
-                    write(http, sprint(showerror, e))
                     closewrite(http)
                 end
                 c.state = CLOSING
