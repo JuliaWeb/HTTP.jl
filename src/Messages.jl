@@ -485,30 +485,19 @@ function writestartline(io::IO, r::Response)
 end
 
 """
-    writeheaders(::IO, ::Message; mask_authorization_header::Bool=false)
+    writeheaders(::IO, ::Message)
 
 Write `Message` start line and
 a line for each "name: value" pair and a trailing blank line.
-
-When `mask_authorization_header` is set to `true`, the value of
-Authorization header will not be written.
 """
-writeheaders(io::IO, m::Message; mask_authorization_header::Bool=false) =
-    writeheaders(io, m, IOBuffer(); mask_authorization_header=mask_authorization_header)
+writeheaders(io::IO, m::Message) = writeheaders(io, m, IOBuffer())
 writeheaders(io::Connection, m::Message) = writeheaders(io, m, io.writebuffer)
 
-function writeheaders(io::IO, m::Message, buf::IOBuffer; mask_authorization_header::Bool=false)
+function writeheaders(io::IO, m::Message, buf::IOBuffer)
     writestartline(buf, m)
     for (name, value) in m.headers
         # match curl convention of not writing empty headers
-        if !isempty(value)
-            if mask_authorization_header && name == "Authorization"
-                showvalue = "XXXXXXXXXX"
-            else
-                showvalue = value
-            end
-            write(buf, name, ": ", showvalue, "\r\n")
-        end
+        !isempty(value) && write(buf, name, ": ", value, "\r\n")
     end
     write(buf, "\r\n")
     nwritten = write(io, take!(buf))
@@ -620,7 +609,23 @@ function Base.show(io::IO, m::Message)
     end
     println(io, typeof(m), ":")
     println(io, "\"\"\"")
-    writeheaders(io, m; mask_authorization_header=true)
+
+    # Mask sensitive header values
+    # The following headers values contain sensitive information that
+    # we don't want to show
+    # - Authorization
+    # - Cookie
+    # - Set-Cookie (in response)
+    # We will show "**********" instead
+    ioh = IOBuffer()
+    writeheaders(ioh, m)
+    header_str = String(take!(ioh))
+    mask_headers = ["Authorization", "Cookie", "Set-Cookie"]
+    for mh in mask_headers
+        header_str = replace(header_str, Regex("($mh: ).*\$", "m") => s"\1******")
+    end
+    write(io, header_str)
+
     summary = bodysummary(m.body)
     validsummary = isvalidstr(summary)
     validsummary && write(io, summary)
