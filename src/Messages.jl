@@ -620,7 +620,7 @@ function Base.show(io::IO, m::Message)
     header_str = sprint(writeheaders, m)
     mask_headers = ["Authorization", "Cookie", "Set-Cookie"]
     for mh in mask_headers
-        header_str = replace(header_str, Regex("($mh: ).*\$", "m") => s"\1******")
+        header_str = replace(header_str, Regex("($mh: ).*\$", "mi") => s"\1******")
     end
     write(io, header_str)
 
