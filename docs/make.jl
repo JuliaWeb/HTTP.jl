@@ -1,4 +1,13 @@
-using Documenter, HTTP, Sockets, URIs
+using Documenter, HTTP, Sockets, URIs, Changelog
+
+# Generate Documenter-consumable changelog
+Changelog.generate(
+    Changelog.Documenter(),
+    joinpath(@__DIR__, "../CHANGELOG.md"),
+    joinpath(@__DIR__, "src/changelog.md");
+    repo = "JuliaWeb/HTTP.jl",
+)
+
 
 """
 Loops through the files in the examples folder and adds them (with any header comments) to the examples.md
@@ -88,6 +97,7 @@ makedocs(
         "websockets.md",
         "reference.md",
         "examples.md",
+        "changelog.md",
     ],
 )
 
