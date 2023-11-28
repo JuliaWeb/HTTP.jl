@@ -152,7 +152,6 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
 
     # test that an Authorization header **is** forwarded to redirect in same domain
     @test HTTP.hasheader(HTTP.get("https://$httpbin/redirect-to?url=https://$httpbin/response-headers?Authorization=auth"), "Authorization")
-
     close(t1)
 
     # 318
