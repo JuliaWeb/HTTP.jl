@@ -197,6 +197,18 @@ using JSON
         # https://github.com/JuliaWeb/HTTP.jl/issues/828
         # don't include empty headers in request when writing
         @test repr(Request("GET", "/", ["Accept" => ""])) == "Request:\n\"\"\"\nGET / HTTP/1.1\r\n\r\n\"\"\""
+
+        # Test that sensitive header values are masked when `show`ing HTTP.Request and HTTP.Response
+        for H in ["Authorization", "Cookie", "Set-Cookie"], h in (lowercase(H), H)
+            req = HTTP.Request("GET", "https://xyz.com", [h => "secret", "User-Agent" => "HTTP.jl"])
+            req_str = sprint(show, req)
+            @test !occursin("secret", req_str)
+            @test occursin("HTTP.jl", req_str)
+            resp = HTTP.Response(200, [h => "secret", "Server" => "HTTP.jl"])
+            resp_str = sprint(show, resp)
+            @test !occursin("secret", resp_str)
+            @test occursin("HTTP.jl", resp_str)
+        end
     end
 
     @testset "queryparams" begin

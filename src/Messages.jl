@@ -610,17 +610,14 @@ function Base.show(io::IO, m::Message)
     println(io, typeof(m), ":")
     println(io, "\"\"\"")
 
-    # Mask sensitive header values
-    # The following headers values contain sensitive information that
-    # we don't want to show
+    # Mask the following (potentially) sensitive headers with "******":
     # - Authorization
     # - Cookie
-    # - Set-Cookie (in response)
-    # We will show "**********" instead
+    # - Set-Cookie
     header_str = sprint(writeheaders, m)
-    mask_headers = ["Authorization", "Cookie", "Set-Cookie"]
-    for mh in mask_headers
-        header_str = replace(header_str, Regex("^($mh: ).*\$", "mi") => s"\1******")
+    masked_headers = ["Authorization", "Cookie", "Set-Cookie"]
+    for mh in masked_headers
+        header_str = replace(header_str, Regex("(*CRLF)^($mh: ).+\$", "mi") => s"\1******")
     end
     write(io, header_str)
 

@@ -153,19 +153,6 @@ const echostreamhandler = HTTP.streamhandler(echohandler)
     # test that an Authorization header **is** forwarded to redirect in same domain
     @test HTTP.hasheader(HTTP.get("https://$httpbin/redirect-to?url=https://$httpbin/response-headers?Authorization=auth"), "Authorization")
 
-    # test that sensitive header values are masked when `show`ing HTTP.Request
-    io = IOBuffer()
-    HTTP.show(io, HTTP.Request("GET", "https://xyz.com", ["Authorization" => "Basic secretauth", "Cookie" => "secretcookie", "User-Agent" => "computer"]))
-    headers = String(take!(io))
-    @test !occursin("secretauth", headers)
-    @test !occursin("secretcookie", headers)
-    @test occursin("computer", headers)
-
-    io = IOBuffer()
-    HTTP.show(io, HTTP.Response(200, ["Set-Cookie" => "setcookie"]))
-    headers = String(take!(io))
-    @test !occursin("setcookie", headers)
-
     close(t1)
 
     # 318
