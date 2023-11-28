@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Server errors are no longer serialized back to the client since this might leak sensitive
   information through the error message. ([#1126])
+- When `show`ing `HTTP.Request` and `HTTP.Response` the values for the headers
+  `Authorization`, `Proxy-Authorization`, `Cookie`, and `Set-Cookie` are masked with `*`s
+  since they might include sensitive information. ([#1127])
 ### Fixed
 - Restrict `HTTP.isredirect` to arguments of integer types. ([#1117])
 - Fix `HTTP.getcookies` error when key doesn't exist. ([#1119])

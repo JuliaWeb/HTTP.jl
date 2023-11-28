@@ -612,10 +612,11 @@ function Base.show(io::IO, m::Message)
 
     # Mask the following (potentially) sensitive headers with "******":
     # - Authorization
+    # - Proxy-Authorization
     # - Cookie
     # - Set-Cookie
     header_str = sprint(writeheaders, m)
-    header_str = replace(header_str, r"(*CRLF)^((?>Authorization|Cookie|Set-Cookie): ).+$"mi => s"\1******")
+    header_str = replace(header_str, r"(*CRLF)^((?>(?>Proxy-)?Authorization|(?>Set-)?Cookie): ).+$"mi => s"\1******")
     write(io, header_str)
 
     summary = bodysummary(m.body)

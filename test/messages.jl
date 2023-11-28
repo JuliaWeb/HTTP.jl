@@ -199,7 +199,7 @@ using JSON
         @test repr(Request("GET", "/", ["Accept" => ""])) == "Request:\n\"\"\"\nGET / HTTP/1.1\r\n\r\n\"\"\""
 
         # Test that sensitive header values are masked when `show`ing HTTP.Request and HTTP.Response
-        for H in ["Authorization", "Cookie", "Set-Cookie"], h in (lowercase(H), H)
+        for H in ["Authorization", "Proxy-Authorization", "Cookie", "Set-Cookie"], h in (lowercase(H), H)
             req = HTTP.Request("GET", "https://xyz.com", [h => "secret", "User-Agent" => "HTTP.jl"])
             req_str = sprint(show, req)
             @test !occursin("secret", req_str)
