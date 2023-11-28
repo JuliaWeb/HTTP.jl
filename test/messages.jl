@@ -203,10 +203,12 @@ using JSON
             req = HTTP.Request("GET", "https://xyz.com", [h => "secret", "User-Agent" => "HTTP.jl"])
             req_str = sprint(show, req)
             @test !occursin("secret", req_str)
+            @test occursin("$h: ******", req_str)
             @test occursin("HTTP.jl", req_str)
             resp = HTTP.Response(200, [h => "secret", "Server" => "HTTP.jl"])
             resp_str = sprint(show, resp)
             @test !occursin("secret", resp_str)
+            @test occursin("$h: ******", req_str)
             @test occursin("HTTP.jl", resp_str)
         end
     end

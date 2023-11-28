@@ -615,10 +615,7 @@ function Base.show(io::IO, m::Message)
     # - Cookie
     # - Set-Cookie
     header_str = sprint(writeheaders, m)
-    masked_headers = ["Authorization", "Cookie", "Set-Cookie"]
-    for mh in masked_headers
-        header_str = replace(header_str, Regex("(*CRLF)^($mh: ).+\$", "mi") => s"\1******")
-    end
+    header_str = replace(header_str, r"(*CRLF)^((?>Authorization|Cookie|Set-Cookie): ).+$"mi => s"\1******")
     write(io, header_str)
 
     summary = bodysummary(m.body)
