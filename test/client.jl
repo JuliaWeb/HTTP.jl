@@ -338,7 +338,7 @@ end
         # Put it back in 10 seconds
         Timer(t->HTTP.Connections.releaseconnection(dummy_conn, false), 10; interval=0)
         # If we count the time it takes to acquire the connection from the pool, we'll get a timeout error.
-        HTTP.get("https://$httpbin/get"; connection_timeout=5, retry=false, socket_type_tls=Sockets.TCPSocket)
+        HTTP.get("https://$httpbin/get"; connect_timeout=5, retry=false, socket_type_tls=Sockets.TCPSocket)
         @test true # if we get here, we didn't timeout
     finally
         HTTP.set_default_connection_limit!(connection_limit)
