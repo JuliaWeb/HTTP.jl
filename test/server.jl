@@ -226,6 +226,19 @@ end # @testset
     @test TEST_COUNT[] == 4
 end # @testset
 
+@testset "444" begin
+    server = HTTP.listen!() do http
+        HTTP.setstatus(http, 444)
+    end
+    port = server.listener.hostport
+    try
+        errr = try HTTP.get("http://localhost:$(port)", retry=false) catch e e end
+        @test errr isa HTTP.RequestError && errr.error isa EOFError
+    finally
+        close(server)
+    end
+end
+
 @testset "access logging" begin
     local handler = (http) -> begin
         if http.message.target == "/internal-error"

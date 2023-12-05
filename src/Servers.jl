@@ -448,15 +448,22 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 # invokelatest becuase the perf is negligible, but this makes live-editing handlers more Revise friendly
                 @debugv 1 "invoking handler"
                 Base.invokelatest(f, http)
-                # If `startwrite()` was never called, throw an error so we send a 500 and log this
-                if isopen(http) && !iswritable(http)
+                if request.response.status == 444
+                    # If the response code is set to 444 simply close the
+                    # connection similar to nginx
+                    close(c)
+                elseif isopen(http) && !iswritable(http)
+                    # If `startwrite()` was never called, throw an error so we send a 500 and log this
                     error("Server never wrote a response")
+                else
+                    @debugv 1 "closeread"
+                    closeread(http)
+                    @debugv 1 "closewrite"
+                    closewrite(http)
+                    if c.state != CLOSING
+                        c.state = IDLE
+                    end
                 end
-                @debugv 1 "closeread"
-                closeread(http)
-                @debugv 1 "closewrite"
-                closewrite(http)
-                c.state = IDLE
             catch e
                 # The remote can close the stream whenever it wants to, but there's nothing
                 # anyone can do about it on this side. No reason to log an error in that case.
