@@ -14,7 +14,7 @@ First, let's walk through the positional arguments.
 
 ### Method
 
-`method` refers to the HTTP method (sometimes known as "verb"), including GET, POST, PUT, DELETE, PATCH, TRACE, etc. It can be provided either as a `String` like `HTTP.request("GET", ...)`, or a `Symbol` like `HTTP.request(:GET, ...)`. There are also convenience methods for the most common methods, including:
+`method` refers to the HTTP method (sometimes known as "verb"), including GET, POST, PUT, DELETE, PATCH, TRACE, etc. It can be provided either as a `String` like `HTTP.request("GET", ...)`, or a `Symbol` like `HTTP.request(:GET, ...)`. There are also convenience methods for the most common methods:
   * `HTTP.get(...)`
   * `HTTP.post(...)`
   * `HTTP.put(...)`
