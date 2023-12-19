@@ -121,4 +121,61 @@ end
     end
 end
 
+function readwriteclose(src, dst)
+    try
+        readwrite(src, dst)
+    finally
+        close(src)
+        close(dst)
+    end
+end
+
+@testset "https pool with proxy" begin
+    connectcount = 0
+
+    # Simple implementation of a connect proxy server
+    proxy = HTTP.listen!(IPv4(0), 8082; stream = true) do http::HTTP.Stream
+        @assert http.message.method == "CONNECT"
+        connectcount += 1
+
+        hostport = split(http.message.target, ":")
+        targetstream = connect(hostport[1], parse(Int, get(hostport, 2, "443")))
+
+        HTTP.setstatus(http, 200)
+        HTTP.startwrite(http)
+        up = @async readwriteclose(http.stream.io, targetstream)
+        readwriteclose(targetstream, http.stream.io)
+        wait(up)
+    end
+
+    try
+        function https_request_ip_through_proxy()
+            r = HTTP.get("https://$httpbin/ip"; proxy="http://localhost:8082", retry=false, status_exception=true)
+            String(r.body)
+        end
+    
+        @testset "Only one tunnel should be established with sequential requests" begin
+            https_request_ip_through_proxy()
+            https_request_ip_through_proxy()
+            @test_broken connectcount == 1
+        end
+        
+        @testset "parallell tunnels should be established with parallell requests" begin
+            n_asyncgetters = 3
+            asyncgetters = [@async https_request_ip_through_proxy() for _ in 1:n_asyncgetters]
+            wait.(asyncgetters)
+            @test_broken connectcount == n_asyncgetters
+        end
+    
+    finally
+        # Close pooled connections explicitly so the proxy handler can finish
+        # Connections.closeall never closes anything
+        close.(pooledconnections(HTTP.SOCKET_TYPE_TLS[]))
+
+        HTTP.Connections.closeall()
+        close(proxy)
+        wait(proxy)
+    end
+end
+
 end # module
