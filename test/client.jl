@@ -13,12 +13,15 @@ using URIs
 using InteractiveUtils: @which
 using ConcurrentUtilities
 
+# ConcurrentUtilities changed a fieldname from max to limit in 2.3.0
+const max_or_limit = :max in fieldnames(ConcurrentUtilities.Pool) ? (:max) : (:limit)
+
 # test we can adjust default_connection_limit
 for x in (10, 12)
     HTTP.set_default_connection_limit!(x)
-    @test HTTP.Connections.TCP_POOL[].max == x
-    @test HTTP.Connections.MBEDTLS_POOL[].max == x
-    @test HTTP.Connections.OPENSSL_POOL[].max == x
+    @test getfield(HTTP.Connections.TCP_POOL[], max_or_limit) == x
+    @test getfield(HTTP.Connections.MBEDTLS_POOL[], max_or_limit) == x
+    @test getfield(HTTP.Connections.OPENSSL_POOL[], max_or_limit) == x
 end
 
 @testset "@client macro" begin
@@ -325,17 +328,17 @@ end
 end
 
 @testset "connect_timeout does not include the time needed to acquire a connection from the pool" begin
-    connection_limit = HTTP.Connections.TCP_POOL[].max
+    connection_limit = getfield(HTTP.Connections.TCP_POOL[], max_or_limit)
     try
         dummy_conn = HTTP.Connection(Sockets.TCPSocket())
         HTTP.set_default_connection_limit!(1)
-        @assert HTTP.Connections.TCP_POOL[].max == 1
+        @assert getfield(HTTP.Connections.TCP_POOL[], max_or_limit) == 1
         # drain the pool
         acquire(()->dummy_conn, HTTP.Connections.TCP_POOL[], HTTP.Connections.connectionkey(dummy_conn))
         # Put it back in 10 seconds
         Timer(t->HTTP.Connections.releaseconnection(dummy_conn, false), 10; interval=0)
         # If we count the time it takes to acquire the connection from the pool, we'll get a timeout error.
-        HTTP.get("https://$httpbin/get"; connection_timeout=5, retry=false, socket_type_tls=Sockets.TCPSocket)
+        HTTP.get("https://$httpbin/get"; connect_timeout=5, retry=false, socket_type_tls=Sockets.TCPSocket)
         @test true # if we get here, we didn't timeout
     finally
         HTTP.set_default_connection_limit!(connection_limit)
@@ -608,7 +611,7 @@ end
         shouldfail[] = true
         seekstart(req_body)
         resp = HTTP.get("http://localhost:8080/retry"; body=req_body, response_stream=res_body, retry=false, status_exception=false)
-        @test String(take!(res_body)) == "500 unexpected error"
+        @test resp.status == 500
         # even if StatusError, we should still get the right response body
         shouldfail[] = true
         seekstart(req_body)
@@ -617,7 +620,6 @@ end
         catch e
             @test e isa HTTP.StatusError
             @test e.status == 500
-            @test String(take!(res_body)) == "500 unexpected error"
         end
         # don't throw a 500, but set status to status we don't retry by default
         shouldfail[] = false
@@ -645,6 +647,53 @@ end
     end
 end
 
+@testset "Don't retry on internal exceptions" begin
+    kws = (retry_delays = [10, 20, 30], retries=3) # ~ 60 secs
+    max_wait = 30
+
+    function test_finish_within(f, secs)
+        timedout = Ref(false)
+        t = Timer((t)->(timedout[] = true), secs)
+        try
+            f()
+        finally
+            close(t)
+        end
+        @test !timedout[]
+    end
+
+    expected = ErrorException("request")
+    test_finish_within(max_wait) do
+        @test_throws expected ErrorRequest.get("https://$httpbin/ip"; request_exception=expected, kws...)
+    end
+    expected = ArgumentError("request")
+    test_finish_within(max_wait) do
+        @test_throws expected ErrorRequest.get("https://$httpbin/ip"; request_exception=expected, kws...)
+    end
+
+    test_finish_within(max_wait) do
+        expected = ErrorException("stream")
+        e = try
+            ErrorRequest.get("https://$httpbin/ip"; stream_exception=expected, kws...)
+        catch e
+            e
+        end
+        @assert e isa HTTP.RequestError
+        @test e.error == expected
+    end
+
+    test_finish_within(max_wait) do
+        expected = ArgumentError("stream")
+        e = try
+            ErrorRequest.get("https://$httpbin/ip"; stream_exception=expected, kws...)
+        catch e
+            e
+        end
+        @assert e isa HTTP.RequestError
+        @test e.error == expected
+    end
+end
+
 @testset "Retry with ConnectError" begin
     mktemp() do path, io
         redirect_stdout(io) do
@@ -668,12 +717,41 @@ end
     end
 
     # isrecoverable tests
-    @test HTTP.RetryRequest.isrecoverable(nothing)
-    @test HTTP.RetryRequest.isrecoverable(ErrorException(""))
-    @test HTTP.RetryRequest.isrecoverable(Sockets.DNSError("localhost", Base.UV_EAI_AGAIN))
-    @test !HTTP.RetryRequest.isrecoverable(Sockets.DNSError("localhost", Base.UV_EAI_NONAME))
-    @test HTTP.RetryRequest.isrecoverable(HTTP.Exceptions.ConnectError("http://localhost", Sockets.DNSError("localhost", Base.UV_EAI_AGAIN)))
-    @test !HTTP.RetryRequest.isrecoverable(HTTP.Exceptions.ConnectError("http://localhost", Sockets.DNSError("localhost", Base.UV_EAI_NONAME)))
+    @test !HTTP.RetryRequest.isrecoverable(nothing)
+
+    @test !HTTP.RetryRequest.isrecoverable(ErrorException(""))
+    @test !HTTP.RetryRequest.isrecoverable(ArgumentError("yikes"))
+    @test HTTP.RetryRequest.isrecoverable(ArgumentError("stream is closed or unusable"))
+
+    @test HTTP.RetryRequest.isrecoverable(HTTP.RequestError(nothing, ArgumentError("stream is closed or unusable")))
+    @test !HTTP.RetryRequest.isrecoverable(HTTP.RequestError(nothing, ArgumentError("yikes")))
+
+    @test HTTP.RetryRequest.isrecoverable(CapturedException(ArgumentError("stream is closed or unusable"), Any[]))
+
+    recoverable_dns_error = Sockets.DNSError("localhost", Base.UV_EAI_AGAIN)
+    unrecoverable_dns_error = Sockets.DNSError("localhost", Base.UV_EAI_NONAME)
+    @test HTTP.RetryRequest.isrecoverable(recoverable_dns_error)
+    @test !HTTP.RetryRequest.isrecoverable(unrecoverable_dns_error)
+    @test HTTP.RetryRequest.isrecoverable(HTTP.Exceptions.ConnectError("http://localhost", recoverable_dns_error))
+    @test !HTTP.RetryRequest.isrecoverable(HTTP.Exceptions.ConnectError("http://localhost", unrecoverable_dns_error))
+    @test HTTP.RetryRequest.isrecoverable(CompositeException([
+        recoverable_dns_error,
+        HTTP.Exceptions.ConnectError("http://localhost", recoverable_dns_error),
+    ]))
+    @test HTTP.RetryRequest.isrecoverable(CompositeException([
+        recoverable_dns_error,
+        HTTP.Exceptions.ConnectError("http://localhost", recoverable_dns_error),
+        CompositeException([recoverable_dns_error])
+    ]))
+    @test !HTTP.RetryRequest.isrecoverable(CompositeException([
+        recoverable_dns_error,
+        HTTP.Exceptions.ConnectError("http://localhost", unrecoverable_dns_error),
+    ]))
+    @test !HTTP.RetryRequest.isrecoverable(CompositeException([
+        recoverable_dns_error,
+        HTTP.Exceptions.ConnectError("http://localhost", recoverable_dns_error),
+        CompositeException([unrecoverable_dns_error])
+    ]))
 end
 
 findnewline(bytes) = something(findfirst(==(UInt8('\n')), bytes), 0)
