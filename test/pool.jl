@@ -157,14 +157,14 @@ end
         @testset "Only one tunnel should be established with sequential requests" begin
             https_request_ip_through_proxy()
             https_request_ip_through_proxy()
-            @test_broken connectcount == 1
+            @test connectcount == 1
         end
         
         @testset "parallell tunnels should be established with parallell requests" begin
             n_asyncgetters = 3
             asyncgetters = [@async https_request_ip_through_proxy() for _ in 1:n_asyncgetters]
             wait.(asyncgetters)
-            @test_broken connectcount == n_asyncgetters
+            @test connectcount == n_asyncgetters
         end
     
     finally
