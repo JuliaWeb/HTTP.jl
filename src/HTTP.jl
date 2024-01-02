@@ -107,7 +107,7 @@ provided headers is made (since required headers are typically set during the re
 to avoid this copy and have HTTP.jl mutate the provided headers array, pass `copyheaders=false`
 as an additional keyword argument to the request.
 
-`body` can be a variety of objects:
+The `body` argument can be a variety of objects:
 
  - an `AbstractDict` or `NamedTuple` to be serialized as the "application/x-www-form-urlencoded" content type
  - any `AbstractString` or `AbstractVector{UInt8}` which will be sent "as is" for the request body
