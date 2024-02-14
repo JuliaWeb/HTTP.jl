@@ -279,17 +279,10 @@ function Base.unsafe_read(http::Stream, p::Ptr{UInt8}, n::UInt)
     nothing
 end
 
-@noinline function bufcheck(buf::Base.GenericIOBuffer, n)
-    requested_buffer_capacity = (buf.append ? buf.size : (buf.ptr - 1)) + n
-    requested_buffer_capacity > length(buf.data) && throw(ArgumentError("Unable to grow response stream IOBuffer $(length(buf.data)) large enough for response body size: $requested_buffer_capacity"))
-end
-
 function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailable(http))
-    Base.ensureroom(buf, n)
-    # check if there's enough room in buf to write n bytes
-    bufcheck(buf, n)
-    data = buf.data
-    GC.@preserve data unsafe_read(http, pointer(data, (buf.append ? buf.size + 1 : buf.ptr)), n)
+    p, nbmax = Base.alloc_request(buf, n)
+    n = Int(GC.@preserve buf unsafe_read(http, p, min(nbmax, n)))
+    # TODO: use `Base.notify_filled(buf, n)` here, but only once it is identical to this:
     if buf.append
         buf.size += n
     else
@@ -326,7 +319,8 @@ function IOExtras.readuntil(http::Stream, f::Function)::ByteView
         bytes = IOExtras.readuntil(http.stream, f)
         update_ntoread(http, length(bytes))
         return bytes
-    catch
+    catch ex
+        ex isa EOFError() || rethrow()
         # if we error, it means we didn't find what we were looking for
         return UInt8[]
     end
