@@ -224,9 +224,10 @@ function read_to_buffer(c::Connection, sizehint=4096)
     # Read from stream into buffer.
     n = min(sizehint, bytesavailable(c.io))
     buf = c.buffer
-    Base.ensureroom(buf, n)
-    GC.@preserve buf unsafe_read(c.io, pointer(buf.data, buf.size + 1), n)
+    p, n = Base.alloc_request(buf, UInt(n))
+    GC.@preserve buf unsafe_read(c.io, p, min(n, bytesavailable(c.io)))
     buf.size += n
+    nothing
 end
 
 """
