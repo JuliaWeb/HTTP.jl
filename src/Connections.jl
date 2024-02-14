@@ -234,12 +234,12 @@ Read until `find_delimiter(bytes)` returns non-zero.
 Return view of bytes up to the delimiter.
 """
 function IOExtras.readuntil(c::Connection, f::F #=Vector{UInt8} -> Int=#,
-                                        sizehint=4096)::ByteView where {F <: Function}
+                            sizehint=4096) where {F <: Function}
     buf = c.buffer
     if bytesavailable(buf) == 0
         read_to_buffer(c, sizehint)
     end
-    while (bytes = IOExtras.readuntil(buf, f)) == nobytes
+    while isempty(begin bytes = IOExtras.readuntil(buf, f) end)
         read_to_buffer(c, sizehint)
     end
     return bytes
