@@ -143,9 +143,6 @@ function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool
     end
 end
 
-# 2 most common types of IOBuffers
-const IOBuffers = Union{IOBuffer, Base.GenericIOBuffer{SubArray{UInt8, 1, Vector{UInt8}, Tuple{UnitRange{Int64}}, true}}}
-
 function readbody!(stream::Stream, res::Response, buf_or_stream, lock)
     n = 0
     if !iserror(res)
