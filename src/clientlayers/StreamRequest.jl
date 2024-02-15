@@ -72,8 +72,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
         if timedout === nothing || !timedout[]
             req.context[:io_errors] = get(req.context, :io_errors, 0) + 1
             if logerrors
-                msg = current_exceptions_to_string()
-                @error msg type=Symbol("HTTP.IOError") method=req.method url=req.url context=req.context logtag=logtag
+                @error current_exceptions_to_string() type=Symbol("HTTP.IOError") method=req.method url=req.url context=req.context logtag=logtag
             end
         end
         rethrow()
