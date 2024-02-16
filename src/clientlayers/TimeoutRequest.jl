@@ -26,8 +26,7 @@ function timeoutlayer(handler)
                 req = stream.message.request
                 req.context[:timeout_errors] = get(req.context, :timeout_errors, 0) + 1
                 if logerrors
-                    msg = current_exceptions_to_string()
-                    @error msg type=Symbol("HTTP.TimeoutError") method=req.method url=req.url context=req.context timeout=readtimeout logtag=logtag
+                    @error current_exceptions_to_string() type=Symbol("HTTP.TimeoutError") method=req.method url=req.url context=req.context timeout=readtimeout logtag=logtag
                 end
                 e = Exceptions.TimeoutError(readtimeout)
             end
