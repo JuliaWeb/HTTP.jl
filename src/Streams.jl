@@ -281,12 +281,12 @@ end
 
 function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailable(http))
     p, nbmax = Base.alloc_request(buf, UInt(n))
-    n = Int(GC.@preserve buf unsafe_read(http, p, UInt(min(nbmax, n))))
+    GC.@preserve buf (n = unsafe_read(http, p, UInt(min(nbmax, n))))
     # TODO: use `Base.notify_filled(buf, n)` here, but only once it is identical to this:
     if buf.append
-        buf.size += n
+        buf.size += Int(n)
     else
-        buf.ptr += n
+        buf.ptr += Int(n)
         buf.size = max(buf.size, buf.ptr - 1)
     end
     return n
