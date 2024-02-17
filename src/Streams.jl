@@ -320,14 +320,15 @@ function readall!(http::Stream, buf::Base.GenericIOBuffer=PipeBuffer())
     return n
 end
 
-function IOExtras.readuntil(http::Stream, f::Function)::ByteView
+function IOExtras.readuntil(http::Stream, f::Function)
     UInt(ntoread(http)) == 0 && return Connections.nobytes
     try
         bytes = IOExtras.readuntil(http.stream, f)
         update_ntoread(http, length(bytes))
         return bytes
-    catch
+    catch ex
         # if we error, it means we didn't find what we were looking for
+        # TODO: this seems very sketchy
         return UInt8[]
     end
 end
