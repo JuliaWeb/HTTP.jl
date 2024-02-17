@@ -72,8 +72,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
         if timedout === nothing || !timedout[]
             req.context[:io_errors] = get(req.context, :io_errors, 0) + 1
             if logerrors
-                msg = current_exceptions_to_string()
-                @error msg type=Symbol("HTTP.IOError") method=req.method url=req.url context=req.context logtag=logtag
+                @error current_exceptions_to_string() type=Symbol("HTTP.IOError") method=req.method url=req.url context=req.context logtag=logtag
             end
         end
         rethrow()
@@ -142,9 +141,6 @@ function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool
         readbody!(stream, res, stream, lock)
     end
 end
-
-# 2 most common types of IOBuffers
-const IOBuffers = Union{IOBuffer, Base.GenericIOBuffer{SubArray{UInt8, 1, Vector{UInt8}, Tuple{UnitRange{Int64}}, true}}}
 
 function readbody!(stream::Stream, res::Response, buf_or_stream, lock)
     n = 0
