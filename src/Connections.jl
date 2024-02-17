@@ -219,7 +219,8 @@ function read_to_buffer(c::Connection, sizehint=4096)
     n = min(sizehint, bytesavailable(c.io))
     buf = c.buffer
     p, n = Base.alloc_request(buf, UInt(n))
-    GC.@preserve buf (n = unsafe_read(c.io, p, min(n, bytesavailable(c.io))))
+    n = min(n, bytesavailable(c.io))
+    GC.@preserve buf unsafe_read(c.io, p, UInt(n))
     Base.notify_filled(buf, Int(n))
     nothing
 end
