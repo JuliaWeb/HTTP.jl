@@ -281,7 +281,7 @@ end
 
 function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailable(http))
     p, nbmax = Base.alloc_request(buf, UInt(n))
-    n = min(nbmax, n)
+    nbmax < n && throw(ArgumentError("Unable to grow response stream IOBuffer $nbmax large enough for response body size: $n"))
     GC.@preserve buf unsafe_read(http, p, UInt(n))
     # TODO: use `Base.notify_filled(buf, Int(n))` here, but only once it is identical to this:
     if buf.append
@@ -321,7 +321,7 @@ function IOExtras.readuntil(http::Stream, f::Function)
         update_ntoread(http, length(bytes))
         return bytes
     catch ex
-        ex isa EOFError() || rethrow()
+        ex isa EOFError || rethrow()
         # if we error, it means we didn't find what we were looking for
         # TODO: this seems very sketchy
         return UInt8[]
