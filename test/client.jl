@@ -140,7 +140,7 @@ end
         # wrapping pre-allocated buffer in IOBuffer will write to buffer directly
         io = IOBuffer(body; write=true)
         r = HTTP.get("https://$httpbin/bytes/100"; response_stream=io, socket_type_tls=tls)
-        @test body === r.body.data
+        @test Base.mightalias(body, r.body.data)
 
         # if provided buffer is too small, we won't grow it for user
         body = zeros(UInt8, 10)
@@ -156,27 +156,30 @@ end
         # but if you wrap it in a writable IOBuffer, we will grow it
         io = IOBuffer(body; write=true)
         r = HTTP.get("https://$httpbin/bytes/100"; response_stream=io, socket_type_tls=tls)
-        # same Array, though it was resized larger
-        @test body === r.body.data
+        # might be a new Array, resized larger
+        body = take!(io)
         @test length(body) == 100
 
         # and you can reuse it
         seekstart(io)
         r = HTTP.get("https://$httpbin/bytes/100"; response_stream=io, socket_type_tls=tls)
-        # same Array, though it was resized larger
-        @test body === r.body.data
+        # `take!` should have given it a new Array
+        @test !Base.mightalias(body, r.body.data)
+        body = take!(io)
         @test length(body) == 100
 
         # we respect ptr and size
         body = zeros(UInt8, 100)
         io = IOBuffer(body; write=true, append=true) # size=100, ptr=1
         r = HTTP.get("https://$httpbin/bytes/100"; response_stream=io, socket_type_tls=tls)
+        body = take!(io)
         @test length(body) == 200
 
         body = zeros(UInt8, 100)
         io = IOBuffer(body, write=true, append=false)
         write(io, body) # size=100, ptr=101
         r = HTTP.get("https://$httpbin/bytes/100"; response_stream=io, socket_type_tls=tls)
+        body = take!(io)
         @test length(body) == 200
 
     end
