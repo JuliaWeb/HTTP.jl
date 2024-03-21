@@ -39,7 +39,7 @@ const CORS_RES_HEADERS = ["Access-Control-Allow-Origin" => "*"]
 #= 
 JSONMiddleware minimizes code by automatically converting the request body
 to JSON to pass to the other service functions automatically. JSONMiddleware
-recieves the body of the response from the other service funtions and sends
+receives the body of the response from the other service funtions and sends
 back a success response code
 =#
 function JSONMiddleware(handler)
@@ -65,9 +65,9 @@ function JSONMiddleware(handler)
 end
 
 #= CorsMiddleware: handles preflight request with the OPTIONS flag
-If a request was recieved with the correct headers, then a response will be 
+If a request was received with the correct headers, then a response will be 
 sent back with a 200 code, if the correct headers were not specified in the request,
-then a CORS error will be recieved on the client side
+then a CORS error will be received on the client side
 
 Since each request passes throught the CORS Handler, then if the request is 
 not a preflight request, it will simply go to the JSONMiddleware to be passed to the

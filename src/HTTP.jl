@@ -77,6 +77,7 @@ include("clientlayers/ConnectionRequest.jl");        using .ConnectionRequest
 include("clientlayers/StreamRequest.jl");            using .StreamRequest
 
 include("download.jl")
+include("accept.jl")
 include("Servers.jl")                  ;using .Servers; using .Servers: listen
 include("Handlers.jl")                 ;using .Handlers; using .Handlers: serve
 include("parsemultipart.jl")           ;using .MultiPartParsing: parse_multipart_form
