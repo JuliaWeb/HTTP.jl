@@ -3,7 +3,7 @@ module ConnectionRequest
 using URIs, Sockets, Base64, LoggingExtras, ConcurrentUtilities, ExceptionUnwrapping
 using MbedTLS: SSLContext, SSLConfig
 using OpenSSL: SSLStream
-using ..Messages, ..IOExtras, ..Connections, ..Streams, ..Exceptions
+using ..Messages, ..IOExtras, ..Connections, ..Streams, ..Exceptions, ..Tunnel
 import ..SOCKET_TYPE_TLS
 
 islocalhost(host::AbstractString) = host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "0000:0000:0000:0000:0000:0000:0000:0001" || host == "0:0:0:0:0:0:0:1"
@@ -77,8 +77,31 @@ function connectionlayer(handler)
         IOType = sockettype(url, socket_type, socket_type_tls)
         start_time = time()
         try
-            io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, connect_timeout=connect_timeout, kw...)
+            if !isnothing(proxy) && req.url.scheme in ("https", "wss", "ws")
+                target_IOType = sockettype(target_url, socket_type, socket_type_tls)
+
+                io = newtunnelconnection(;
+                    target_type=target_IOType,
+                    target_host=target_url.host,
+                    target_port=target_url.port,
+                    proxy_type=IOType,
+                    proxy_host=url.host,
+                    proxy_port=url.port,
+                    proxy_auth=header(req, "Proxy-Authorization"),
+                    connect_timeout,
+                    readtimeout,
+                    kw...
+                )
+
+                req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
+            else
+                io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, connect_timeout=connect_timeout, kw...)
+            end
         catch e
+            if e isa StatusError
+                return e.response
+            end
+
             if logerrors
                 @error current_exceptions_to_string() type=Symbol("HTTP.ConnectError") method=req.method url=req.url context=req.context logtag=logtag
             end
@@ -90,31 +113,6 @@ function connectionlayer(handler)
 
         shouldreuse = !(target_url.scheme in ("ws", "wss"))
         try
-            if proxy !== nothing && target_url.scheme in ("https", "wss", "ws")
-                shouldreuse = false
-                # tunnel request
-                if target_url.scheme in ("https", "wss")
-                    target_url = URI(target_url, port=443)
-                elseif target_url.scheme in ("ws", ) && target_url.port == ""
-                    target_url = URI(target_url, port=80) # if there is no port info, connect_tunnel will fail
-                end
-                r = if readtimeout > 0
-                    try_with_timeout(readtimeout) do _
-                        connect_tunnel(io, target_url, req)
-                    end
-                else
-                    connect_tunnel(io, target_url, req)
-                end
-                if r.status != 200
-                    close(io)
-                    return r
-                end
-                if target_url.scheme in ("https", "wss")
-                    io = Connections.sslupgrade(socket_type_tls, io, target_url.host; readtimeout=readtimeout, kw...)
-                end
-                req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
-            end
-
             stream = Stream(req.response, io)
             return handler(stream; readtimeout=readtimeout, logerrors=logerrors, logtag=logtag, kw...)
         catch e
@@ -149,21 +147,5 @@ function connectionlayer(handler)
 end
 
 sockettype(url::URI, tcp, tls) = url.scheme in ("wss", "https") ? tls : tcp
-
-function connect_tunnel(io, target_url, req)
-    target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
-    @debugv 1 "📡  CONNECT HTTPS tunnel to $target"
-    headers = Dict("Host" => target)
-    if (auth = header(req, "Proxy-Authorization"); !isempty(auth))
-        headers["Proxy-Authorization"] = auth
-    end
-    request = Request("CONNECT", target, headers)
-    # @debugv 2 "connect_tunnel: writing headers"
-    writeheaders(io, request)
-    # @debugv 2 "connect_tunnel: reading headers"
-    readheaders(io, request.response)
-    # @debugv 2 "connect_tunnel: done reading headers"
-    return request.response
-end
 
 end # module ConnectionRequest
