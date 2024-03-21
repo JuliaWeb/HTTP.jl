@@ -83,10 +83,22 @@ accept(s::Listener{SSLConfig}) = getsslcontext(Sockets.accept(s.server), s.ssl)
 
 function getsslcontext(tcp, sslconfig)
     try
+        handshake_done = Ref{Bool}(false)
         ssl = MbedTLS.SSLContext()
         MbedTLS.setup!(ssl, sslconfig)
         MbedTLS.associate!(ssl, tcp)
+        thistask = current_task()
+        # this task is meant to be super small while the handshake remains on the main task
+        @async begin
+            timedwait(2.0) do
+                handshake_done[] || istaskdone(thistask)
+            end
+            if !handshake_done[] && !istaskdone(thistask)
+                Base.throwto(thistask, Base.IOError("SSL handshake timed out", Base.ETIMEDOUT))
+            end
+        end
         MbedTLS.handshake!(ssl)
+        handshake_done[] = true
         return ssl
     catch e
         @try Base.IOError close(tcp)
@@ -371,26 +383,32 @@ function listenloop(f, listener, conns, tcpisvalid,
     while isopen(listener)
         try
             Base.acquire(sem)
-            io = accept(listener)
-            if io === nothing
-                @warnv 1 "unable to accept new connection"
-                continue
-            elseif !tcpisvalid(io)
-                @warnv 1 "!tcpisvalid: $io"
-                close(io)
-                continue
-            end
-            conn = Connection(io)
-            conn.state = IDLE
-            push!(conns, conn)
-            conn.host, conn.port = listener.hostname, listener.hostport
-            @async try
-                handle_connection(f, conn, listener, readtimeout, access_log)
-            finally
-                # handle_connection is in charge of closing the underlying io
-                delete!(conns, conn)
-                Base.release(sem)
-            end
+            io = Sockets.accept(listener.server)
+            @async begin
+                local conn = nothing
+                try
+                    if io === nothing
+                        @warnv 1 "unable to accept new connection"
+                        return
+                    end
+                    if !isnothing(listener.ssl)
+                        io = getsslcontext(io, listener.ssl)
+                    end
+                    if !tcpisvalid(io)
+                        close(io)
+                        return
+                    end
+                    conn = Connection(io)
+                    conn.state = IDLE
+                    push!(conns, conn)
+                    conn.host, conn.port = listener.hostname, listener.hostport
+                    handle_connection(f, conn, listener, readtimeout, access_log)
+                finally
+                    # handle_connection is in charge of closing the underlying io, but it may not get there
+                    !isnothing(conn) && delete!(conns, conn)
+                    Base.release(sem)
+                end
+            end  # Task.@spawn
         catch e
             if e isa Base.IOError && e.code == Base.UV_ECONNABORTED
                 verbose >= 0 && @infov 1 "Server on $(listener.hostname):$(listener.hostport) closing"
@@ -451,7 +469,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
             request.response.status = 200
 
             try
-                # invokelatest becuase the perf is negligible, but this makes live-editing handlers more Revise friendly
+                # invokelatest because the perf is negligible, but this makes live-editing handlers more Revise friendly
                 @debugv 1 "invoking handler"
                 Base.invokelatest(f, http)
                 # If `startwrite()` was never called, throw an error so we send a 500 and log this

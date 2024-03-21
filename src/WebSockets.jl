@@ -591,7 +591,7 @@ function Base.close(ws::WebSocket, body::CloseFrameBody=CloseFrameBody(1000, "")
             ws.readclosed = true
         end
     end
-    # we either recieved the responding CLOSE frame and readclosed was set
+    # we either received the responding CLOSE frame and readclosed was set
     # or there was an error/timeout reading it; in any case, readclosed should be closed now
     @assert ws.readclosed
     # if we're the server, it's our job to close the underlying socket
