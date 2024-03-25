@@ -118,6 +118,8 @@ struct Server{L <: Listener}
     connections::Set{Connection}
     # server listenandserve loop task
     task::Task
+    # Protects the connections Set which is mutated in the listenloop
+    # while potentially being accessed by the close method at the same time
     connections_lock::ReentrantLock
 end
 
