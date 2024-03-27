@@ -469,7 +469,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 Base.invokelatest(f, http)
                 # If `startwrite()` was never called, throw an error so we send a 500 and log this
                 if isopen(http) && !iswritable(http)
-                    error("Server never wrote a response")
+                    error("Server never wrote a response.\n\n$request")
                 end
                 @debugv 1 "closeread"
                 closeread(http)
@@ -483,7 +483,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 @logmsgv 1 level begin
                     msg = current_exceptions_to_string()
                     "handle_connection handler error. $msg"
-                end
+                end request
 
                 if isopen(http) && !iswritable(http)
                     request.response.status = 500
