@@ -13,6 +13,7 @@ include(joinpath(dir, "resources/TestRequest.jl"))
             "chunking.jl",
             "utils.jl",
             "client.jl",
+            "pool.jl",
             # "download.jl",
             "multipart.jl",
             "parsemultipart.jl",
