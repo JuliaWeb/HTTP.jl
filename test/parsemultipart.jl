@@ -27,6 +27,11 @@ function generate_test_body()
         "Content-Type: application/json",
         "",
         "{\"data\": [\"this is json data\"]}",
+        "----------------------------918073721150061572809433",
+        "content-type: text/plain",
+        "content-disposition: form-data; name=\"key3\"",
+        "",
+        "This file has lower-cased content- keys, and disposition comes second.",
         "----------------------------918073721150061572809433--",
         "",
     ], "\r\n"))
@@ -122,8 +127,13 @@ end
         @test (startIndex + endIndexOffset) == endIndex
 
         (isTerminatingDelimiter, startIndex, endIndex) = find_multipart_boundary(body, delimiter, start = startIndex + 3)
-        @test isTerminatingDelimiter
+        @test !isTerminatingDelimiter
         @test 804 == startIndex
+        @test (startIndex + endIndexOffset) == endIndex
+
+        (isTerminatingDelimiter, startIndex, endIndex) = find_multipart_boundary(body, delimiter, start = startIndex + 3)
+        @test isTerminatingDelimiter
+        @test 1003 == startIndex
         # +2 because of the two additional '--' characters
         @test (startIndex + endIndexOffset + 2) == endIndex
     end
@@ -133,7 +143,7 @@ end
         @test HTTP.parse_multipart_form(generate_non_multi_test_request()) === nothing
 
         multiparts = HTTP.parse_multipart_form(generate_test_request())
-        @test 5 == length(multiparts)
+        @test 6 == length(multiparts)
 
         @test "multipart.txt" === multiparts[1].filename
         @test "namevalue" === multiparts[1].name
@@ -159,11 +169,16 @@ end
         @test "json_file1" === multiparts[5].name
         @test "application/json" === multiparts[5].contenttype
         @test """{"data": ["this is json data"]}""" === String(read(multiparts[5].data))
+
+        @test multiparts[6].filename === nothing
+        @test "key3" === multiparts[6].name
+        @test "text/plain" === multiparts[6].contenttype
+        @test "This file has lower-cased content- keys, and disposition comes second." === String(read(multiparts[6].data))
     end
 
     @testset "parse_multipart_form response" begin
         multiparts = HTTP.parse_multipart_form(generate_test_response())
-        @test 5 == length(multiparts)
+        @test 6 == length(multiparts)
 
         @test "multipart.txt" === multiparts[1].filename
         @test "namevalue" === multiparts[1].name
@@ -189,5 +204,10 @@ end
         @test "json_file1" === multiparts[5].name
         @test "application/json" === multiparts[5].contenttype
         @test """{"data": ["this is json data"]}""" === String(read(multiparts[5].data))
+
+        @test multiparts[6].filename === nothing
+        @test "key3" === multiparts[6].name
+        @test "text/plain" === multiparts[6].contenttype
+        @test "This file has lower-cased content- keys, and disposition comes second." === String(read(multiparts[6].data))
     end
 end
