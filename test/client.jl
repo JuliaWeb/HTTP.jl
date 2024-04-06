@@ -24,6 +24,15 @@ for x in (10, 12)
     @test getfield(HTTP.Connections.OPENSSL_POOL[], max_or_limit) == x
 end
 
+@testset "sslconfig without explicit socket_type_tls #1104" begin
+    # this was supported before 8f35185
+    @test isok(HTTP.get("https://$httpbin/ip", sslconfig=MbedTLS.SSLConfig(false)))
+    # The OpenSSL package doesn't have enough docs, but this is a valid way to initialise an SSLContext.
+    @test isok(HTTP.get("https://$httpbin/ip", sslconfig=OpenSSL.SSLContext(OpenSSL.TLSClientMethod())))
+    # Incompatible socket_type_tls and sslconfig should throw an error.
+    @test_throws ArgumentError HTTP.get("https://$httpbin/ip", sslconfig=MbedTLS.SSLConfig(false), socket_type_tls=OpenSSL.SSLStream)
+end
+
 @testset "@client macro" begin
     @eval module MyClient
         using HTTP

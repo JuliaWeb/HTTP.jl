@@ -1,8 +1,8 @@
 module ConnectionRequest
 
 using URIs, Sockets, Base64, LoggingExtras, ConcurrentUtilities, ExceptionUnwrapping
-using MbedTLS: SSLContext, SSLConfig
-using OpenSSL: SSLStream
+import MbedTLS
+import OpenSSL
 using ..Messages, ..IOExtras, ..Connections, ..Streams, ..Exceptions
 import ..SOCKET_TYPE_TLS
 
@@ -55,7 +55,7 @@ Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.
 """
 function connectionlayer(handler)
-    return function connections(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Type=SOCKET_TYPE_TLS[], readtimeout::Int=0, connect_timeout::Int=30, logerrors::Bool=false, logtag=nothing, kw...)
+    return function connections(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Union{Nothing, Type}=nothing, readtimeout::Int=0, connect_timeout::Int=30, logerrors::Bool=false, logtag=nothing, kw...)
         local io, stream
         if proxy !== nothing
             target_url = req.url
@@ -74,7 +74,7 @@ function connectionlayer(handler)
         end
 
         connect_timeout = connect_timeout == 0 && readtimeout > 0 ? readtimeout : connect_timeout
-        IOType = sockettype(url, socket_type, socket_type_tls)
+        IOType = sockettype(url, socket_type, socket_type_tls, get(kw, :sslconfig, nothing))
         start_time = time()
         try
             io = newconnection(IOType, url.host, url.port; readtimeout=readtimeout, connect_timeout=connect_timeout, kw...)
@@ -148,7 +148,62 @@ function connectionlayer(handler)
     end
 end
 
-sockettype(url::URI, tcp, tls) = url.scheme in ("wss", "https") ? tls : tcp
+function sockettype(url::URI, socket_type_tcp, socket_type_tls, sslconfig)
+    if url.scheme in ("wss", "https")
+        tls_socket_type(socket_type_tls, sslconfig)
+    else
+        socket_type_tcp
+    end
+end
+
+"""
+    tls_socket_type(socket_type_tls, sslconfig)::Type
+
+Find the best TLS socket type, given the values of these keyword arguments.
+
+If both are `nothing` then we use the global default: `HTTP.SOCKET_TYPE_TLS[]`.
+If both are not `nothing` then they must agree:
+`sslconfig` must be of the right type to configure `socket_type_tls` or we throw an `ArgumentError`.
+"""
+function tls_socket_type(socket_type_tls::Union{Nothing, Type},
+                         sslconfig::Union{Nothing, MbedTLS.SSLConfig, OpenSSL.SSLContext}
+                         )::Type
+
+    socket_type_matching_sslconfig =
+        if sslconfig isa MbedTLS.SSLConfig
+            MbedTLS.SSLContext
+        elseif sslconfig isa OpenSSL.SSLContext
+            OpenSSL.SSLStream
+        else
+            nothing
+        end
+
+    if socket_type_tls === socket_type_matching_sslconfig
+        # Use the global default TLS socket if they're both nothing, or use
+        # what they both specify if they're not nothing.
+        isnothing(socket_type_tls) ? SOCKET_TYPE_TLS[] : socket_type_tls
+    # If either is nothing, use the other one.
+    elseif isnothing(socket_type_tls)
+        socket_type_matching_sslconfig
+    elseif isnothing(socket_type_matching_sslconfig)
+        socket_type_tls
+    else
+        # If they specify contradictory types, throw an error.
+        # Error thrown in noinline closure to avoid speed penalty in common case
+        @noinline function err(socket_type_tls, sslconfig)
+            msg = """
+                Incompatible values for keyword args `socket_type_tls` and `sslconfig`:
+                    socket_type_tls=$socket_type_tls
+                    typeof(sslconfig)=$(typeof(sslconfig))
+
+                Make them match or provide only one of them.
+                - the socket type MbedTLS.SSLContext is configured by MbedTLS.SSLConfig
+                - the socket type OpenSSL.SSLStream is configured by OpenSSL.SSLContext"""
+            throw(ArgumentError(msg))
+        end
+        err(socket_type_tls, sslconfig)
+    end
+end
 
 function connect_tunnel(io, target_url, req)
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
