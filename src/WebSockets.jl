@@ -385,6 +385,9 @@ function open(f::Function, url; suppress_close_error::Bool=false, verbose=false,
                     close(ws, CloseFrameBody(1008, "Unexpected client websocket error"))
                 end
             end
+            if !isok(e)
+                rethrow()
+            end
         finally
             if !isclosed(ws)
                 close(ws, CloseFrameBody(1000, ""))
@@ -451,6 +454,9 @@ function upgrade(f::Function, http::Streams.Stream; suppress_close_error::Bool=f
             else
                 close(ws, CloseFrameBody(1011, "Unexpected server websocket error"))
             end
+        end
+        if !isok(e)
+            rethrow()
         end
     finally
         if !isclosed(ws)
