@@ -1,5 +1,9 @@
 using Test, HTTP, JSON
 
+# Using this rather than @__DIR__ because then it's easier to run parts of the
+# file at the REPL, which is convenient when developing the package.
+const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
+
 # See https://httpbingo.julialang.org/
 const httpbin = get(ENV, "JULIA_TEST_HTTPBINGO_SERVER", "httpbingo.julialang.org")
 
@@ -35,6 +39,6 @@ isok(r) = r.status == 200
     end
     for filename in testfiles
         println("Running $filename tests...")
-        include(joinpath(@__DIR__, filename))
+        include(joinpath(dir, filename))
     end
 end
