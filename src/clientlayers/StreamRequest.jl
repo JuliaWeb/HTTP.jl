@@ -144,7 +144,7 @@ end
 
 function readbody!(stream::Stream, res::Response, buf_or_stream, lock)
     n = 0
-    if !iserror(res)
+    if !iserror(res) && !isredirect(res)
         if isbytes(res.body)
             if length(res.body) > 0
                 # user-provided buffer to read response body into
