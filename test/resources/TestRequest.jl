@@ -55,3 +55,25 @@ end
 HTTP.@client (first=[testouterrequestlayer], last=[testinnerrequestlayer]) (first=[testouterstreamlayer], last=[testinnerstreamlayer])
 
 end
+
+module ErrorRequest
+
+using HTTP
+
+function throwingrequestlayer(handler)
+    return function(req; request_exception=nothing, kw...)
+        !isnothing(request_exception) && throw(request_exception)
+        return handler(req; kw...)
+    end
+end
+
+function throwingstreamlayer(handler)
+    return function(stream; stream_exception=nothing, kw...)
+        !isnothing(stream_exception) && throw(stream_exception)
+        return handler(stream; kw...)
+    end
+end
+
+HTTP.@client (throwingrequestlayer,) (throwingstreamlayer,)
+
+end

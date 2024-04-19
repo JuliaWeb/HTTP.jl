@@ -234,12 +234,12 @@ Read until `find_delimiter(bytes)` returns non-zero.
 Return view of bytes up to the delimiter.
 """
 function IOExtras.readuntil(c::Connection, f::F #=Vector{UInt8} -> Int=#,
-                                        sizehint=4096)::ByteView where {F <: Function}
+                            sizehint=4096) where {F <: Function}
     buf = c.buffer
     if bytesavailable(buf) == 0
         read_to_buffer(c, sizehint)
     end
-    while (bytes = IOExtras.readuntil(buf, f)) == nobytes
+    while isempty(begin bytes = IOExtras.readuntil(buf, f) end)
         read_to_buffer(c, sizehint)
     end
     return bytes
@@ -478,9 +478,9 @@ function keepalive!(tcp)
     Base.iolock_begin()
     try
         Base.check_open(tcp)
-        err = ccall(:uv_tcp_keepalive, Cint, (Ptr{Nothing}, Cint, Cuint),
+        msg = ccall(:uv_tcp_keepalive, Cint, (Ptr{Nothing}, Cint, Cuint),
                                             tcp.handle, 1, 1)
-        Base.uv_error("failed to set keepalive on tcp socket", err)
+        Base.uv_error("failed to set keepalive on tcp socket", msg)
     finally
         Base.iolock_end()
     end
@@ -571,9 +571,10 @@ function getconnection(::Type{SSLContext},
 end
 
 function getconnection(::Type{SSLStream},
-    host::AbstractString,
-    port::AbstractString;
-    kw...)::SSLStream
+                       host::AbstractString,
+                       port::AbstractString;
+                       kw...)::SSLStream
+
     port = isempty(port) ? "443" : port
     @debugv 2 "SSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)

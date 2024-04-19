@@ -3,6 +3,7 @@ module StreamRequest
 using ..IOExtras, ..Messages, ..Streams, ..Connections, ..Strings, ..RedirectRequest, ..Exceptions
 using LoggingExtras, CodecZlib, URIs
 using SimpleBufferStream: BufferStream
+using ConcurrentUtilities: @samethreadpool_spawn
 
 export streamlayer
 
@@ -36,7 +37,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                 # use a lock here for request.context changes (this is currently the only places
                 # where multiple threads may modify/change context at the same time)
                 lock = ReentrantLock()
-                Threads.@spawn try
+                @samethreadpool_spawn try
                     writebody(stream, req, lock)
                 finally
                     Base.@lock lock begin
@@ -46,7 +47,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                     closewrite(stream)
                 end
                 read_start = time()
-                Threads.@spawn try
+                @samethreadpool_spawn try
                     @debugv 2 "client startread"
                     startread(stream)
                     if !isaborted(stream)
@@ -68,12 +69,11 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                 end
             end
         end
-    catch e
+    catch
         if timedout === nothing || !timedout[]
             req.context[:io_errors] = get(req.context, :io_errors, 0) + 1
             if logerrors
-                err = current_exceptions_to_string()
-                @error err type=Symbol("HTTP.IOError") method=req.method url=req.url context=req.context logtag=logtag
+                @error current_exceptions_to_string() type=Symbol("HTTP.IOError") method=req.method url=req.url context=req.context logtag=logtag
             end
         end
         rethrow()
@@ -142,9 +142,6 @@ function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool
         readbody!(stream, res, stream, lock)
     end
 end
-
-# 2 most common types of IOBuffers
-const IOBuffers = Union{IOBuffer, Base.GenericIOBuffer{SubArray{UInt8, 1, Vector{UInt8}, Tuple{UnitRange{Int64}}, true}}}
 
 function readbody!(stream::Stream, res::Response, buf_or_stream, lock)
     n = 0

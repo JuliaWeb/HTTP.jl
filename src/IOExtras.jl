@@ -11,7 +11,7 @@ using Sockets
 using MbedTLS: SSLContext, MbedException
 using OpenSSL: SSLStream
 
-export bytes, isbytes, nbytes, ByteView, nobytes,
+export bytes, isbytes, nbytes, nobytes,
        startwrite, closewrite, startread, closeread, readuntil,
        tcpsocket, localport, safe_getpeername
 
@@ -104,7 +104,6 @@ function safe_getpeername(io)
 end
 
 
-const ByteView = typeof(view(UInt8[], 1:0))
 const nobytes = view(UInt8[], 1:0)
 
 readuntil(args...) = Base.readuntil(args...)
@@ -114,8 +113,8 @@ Read from an `IO` stream until `find_delimiter(bytes)` returns non-zero.
 Return view of bytes up to the delimiter.
 """
 function readuntil(buf::IOBuffer,
-                    find_delimiter::F #= Vector{UInt8} -> Int =#
-                   )::ByteView where {F <: Function}
+                   find_delimiter::F #= Vector{UInt8} -> Int =#
+                   ) where {F <: Function}
     l = find_delimiter(view(buf.data, buf.ptr:buf.size))
     if l == 0
         return nobytes

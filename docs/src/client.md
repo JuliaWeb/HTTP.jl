@@ -14,7 +14,7 @@ First, let's walk through the positional arguments.
 
 ### Method
 
-`method` refers to the HTTP method (sometimes known as "verb"), including GET, POST, PUT, DELETE, PATCH, TRACE, etc. It can be provided either as a `String` like `HTTP.request("GET", ...)`, or a `Symbol` like `HTTP.request(:GET, ...)`. There are also convenience methods for the most common methods, including:
+`method` refers to the HTTP method (sometimes known as "verb"), including GET, POST, PUT, DELETE, PATCH, TRACE, etc. It can be provided either as a `String` like `HTTP.request("GET", ...)`, or a `Symbol` like `HTTP.request(:GET, ...)`. There are also convenience methods for the most common methods:
   * `HTTP.get(...)`
   * `HTTP.post(...)`
   * `HTTP.put(...)`
@@ -93,7 +93,7 @@ When a connection is attempted to a remote host, sometimes the connection is una
 
 #### `pool`
 
-Many remote web services/APIs have rate limits or throttling in place to avoid bad actors from abusing their service. They may prevent too many requests over a time period or they may prevent too many connections being simultaneously open from the same client. By default, when `HTTP.request` opens a remote connection, it remembers the exact host:port combination and will keep the connection open to be reused by subsequent requests to the same host:port. The `pool` keyword argument specifies a specific `HTTP.Pool` object to be used for controlling the maximum number of concurrent connections allowed to be happening across the pool. It's constructed via `HTTP.Pool(; max::Int)`. Requests attempted when the maximum is already hit will block until previous requests finish. The `idle_timeout` keyword argument can be passed to `HTTP.request` to control how long it's been since a connection was lasted used in order to be considered 'valid'; otherwise, "stale" connections will be discarded.
+Many remote web services/APIs have rate limits or throttling in place to avoid bad actors from abusing their service. They may prevent too many requests over a time period or they may prevent too many connections being simultaneously open from the same client. By default, when `HTTP.request` opens a remote connection, it remembers the exact host:port combination and will keep the connection open to be reused by subsequent requests to the same host:port. The `pool` keyword argument specifies a specific `HTTP.Pool` object to be used for controlling the maximum number of concurrent connections allowed to be happening across the pool. It's constructed via `HTTP.Pool(max::Int)`. Requests attempted when the maximum is already hit will block until previous requests finish. The `idle_timeout` keyword argument can be passed to `HTTP.request` to control how long it's been since a connection was lasted used in order to be considered 'valid'; otherwise, "stale" connections will be discarded.
 
 #### `readtimeout`
 

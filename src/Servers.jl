@@ -118,6 +118,9 @@ struct Server{L <: Listener}
     connections::Set{Connection}
     # server listenandserve loop task
     task::Task
+    # Protects the connections Set which is mutated in the listenloop
+    # while potentially being accessed by the close method at the same time
+    connections_lock::ReentrantLock
 end
 
 port(s::Server) = Int(s.listener.addr.port)
@@ -127,8 +130,10 @@ Base.wait(s::Server) = wait(s.task)
 function forceclose(s::Server)
     shutdown(s.on_shutdown)
     close(s.listener)
-    for c in s.connections
-        close(c)
+    Base.@lock s.connections_lock begin
+        for c in s.connections
+            close(c)
+        end
     end
     return wait(s.task)
 end
@@ -166,14 +171,19 @@ function Base.close(s::Server)
     shutdown(s.on_shutdown)
     close(s.listener)
     # first pass to mark or request connections to close
-    for c in s.connections
-        requestclose!(c)
+    Base.@lock s.connections_lock begin
+        for c in s.connections
+            requestclose!(c)
+        end
     end
     # second pass to wait for connections to close
     # we wait for connections to empty because as
     # connections close themselves, they are removed
     # from our connections Set
-    while !isempty(s.connections)
+    while true
+        Base.@lock s.connections_lock begin
+            isempty(s.connections) && break
+        end
         sleep(0.5 + rand() * 0.1)
     end
     return wait(s.task)
@@ -192,8 +202,11 @@ shutdown(::Nothing) = nothing
 function shutdown(fn::Function)
     try
         fn()
-    catch e
-        @error "shutdown function $fn failed" exception=(e, catch_backtrace())
+    catch
+        @error begin
+            msg = current_exceptions_to_string()
+            "shutdown function $fn failed. $msg"
+        end
     end
 end
 
@@ -343,25 +356,28 @@ function listen!(f, listener::Listener;
     access_log::Union{Function,Nothing}=nothing,
     verbose=false, kw...)
     conns = Set{Connection}()
+    conns_lock = ReentrantLock()
     ready_to_accept = Threads.Event()
     if verbose > 0
         tsk = @_spawn_interactive LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
-            listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, verbose)
+            listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, conns_lock, verbose)
         end
     else
-        tsk = @_spawn_interactive listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, verbose)
+        tsk = @_spawn_interactive listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, conns_lock, verbose)
     end
     # wait until the listenloop enters the loop
     wait(ready_to_accept)
-    return Server(listener, on_shutdown, conns, tsk)
+    return Server(listener, on_shutdown, conns, tsk, conns_lock)
 end
 
 """"
 Main server loop.
 Accepts new tcp connections and spawns async tasks to handle them."
 """
-function listenloop(f, listener, conns, tcpisvalid,
-                       max_connections, readtimeout, access_log, ready_to_accept, verbose)
+function listenloop(
+    f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept,
+    conns_lock, verbose
+)
     sem = Base.Semaphore(max_connections)
     verbose >= 0 && @infov 1 "Listening on: $(listener.hostname):$(listener.hostport), thread id: $(Threads.threadid())"
     notify(ready_to_accept)
@@ -379,20 +395,23 @@ function listenloop(f, listener, conns, tcpisvalid,
             end
             conn = Connection(io)
             conn.state = IDLE
-            push!(conns, conn)
+            Base.@lock conns_lock push!(conns, conn)
             conn.host, conn.port = listener.hostname, listener.hostport
             @async try
                 handle_connection(f, conn, listener, readtimeout, access_log)
             finally
                 # handle_connection is in charge of closing the underlying io
-                delete!(conns, conn)
+                Base.@lock conns_lock delete!(conns, conn)
                 Base.release(sem)
             end
         catch e
             if e isa Base.IOError && e.code == Base.UV_ECONNABORTED
                 verbose >= 0 && @infov 1 "Server on $(listener.hostname):$(listener.hostport) closing"
             else
-                @errorv 2 "Server on $(listener.hostname):$(listener.hostport) errored" exception=(e, catch_backtrace())
+                @errorv 2 begin
+                    msg = current_exceptions_to_string()
+                    "Server on $(listener.hostname):$(listener.hostport) errored. $msg"
+                end
                 # quick little sleep in case there's a temporary
                 # local error accepting and this might help avoid quickly re-erroring
                 sleep(0.05 + rand() * 0.05)
@@ -431,7 +450,10 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 if e isa ParseError
                     write(c, Response(e.code == :HEADER_SIZE_EXCEEDS_LIMIT ? 431 : 400, string(e.code)))
                 end
-                @debugv 1 "handle_connection startread error" exception=(e, catch_backtrace())
+                @debugv 1 begin
+                    msg = current_exceptions_to_string()
+                    "handle_connection startread error. $msg"
+                end
                 break
             end
 
@@ -447,7 +469,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 Base.invokelatest(f, http)
                 # If `startwrite()` was never called, throw an error so we send a 500 and log this
                 if isopen(http) && !iswritable(http)
-                    error("Server never wrote a response")
+                    error("Server never wrote a response.\n\n$request")
                 end
                 @debugv 1 "closeread"
                 closeread(http)
@@ -458,12 +480,14 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 # The remote can close the stream whenever it wants to, but there's nothing
                 # anyone can do about it on this side. No reason to log an error in that case.
                 level = e isa Base.IOError && !isopen(c) ? Logging.Debug : Logging.Error
-                @logmsgv 1 level "handle_connection handler error" exception=(e, stacktrace(catch_backtrace()))
+                @logmsgv 1 level begin
+                    msg = current_exceptions_to_string()
+                    "handle_connection handler error. $msg"
+                end request
 
                 if isopen(http) && !iswritable(http)
                     request.response.status = 500
                     startwrite(http)
-                    write(http, sprint(showerror, e))
                     closewrite(http)
                 end
                 c.state = CLOSING
@@ -473,9 +497,12 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                 end
             end
         end
-    catch e
+    catch
         # we should be catching everything inside the while loop, but just in case
-        @errorv 1 "error while handling connection" exception=(e, catch_backtrace())
+        @errorv 1 begin
+            msg = current_exceptions_to_string()
+            "error while handling connection. $msg"
+        end
     finally
         if readtimeout > 0
             wait_for_timeout[] = false

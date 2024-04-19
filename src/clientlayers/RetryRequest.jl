@@ -1,6 +1,6 @@
 module RetryRequest
 
-using Sockets, LoggingExtras, MbedTLS, OpenSSL
+using Sockets, LoggingExtras, MbedTLS, OpenSSL, ExceptionUnwrapping
 using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest, ..Exceptions
 
 export retrylayer
@@ -76,9 +76,10 @@ function retrylayer(handler)
     end
 end
 
-isrecoverable(ex) = true
-isrecoverable(ex::CapturedException) = isrecoverable(ex.ex)
-isrecoverable(ex::ConnectError) = isrecoverable(ex.error)
+isrecoverable(ex) = is_wrapped_exception(ex) ? isrecoverable(unwrap_exception(ex)) : false
+isrecoverable(::Union{Base.EOFError, Base.IOError, MbedTLS.MbedException, OpenSSL.OpenSSLError}) = true
+isrecoverable(ex::ArgumentError) = ex.msg == "stream is closed or unusable"
+isrecoverable(ex::CompositeException) = all(isrecoverable, ex.exceptions)
 # Treat all DNS errors except `EAI_AGAIN`` as non-recoverable
 # Ref: https://github.com/JuliaLang/julia/blob/ec8df3da3597d0acd503ff85ac84a5f8f73f625b/stdlib/Sockets/src/addrinfo.jl#L108-L112
 isrecoverable(ex::Sockets.DNSError) = (ex.code == Base.UV_EAI_AGAIN)
@@ -92,9 +93,11 @@ end
 
 function no_retry_reason(ex, req)
     buf = IOBuffer()
+    unwrapped_ex = unwrap_exception(ex)
     show(IOContext(buf, :compact => true), req)
     print(buf, ", ",
-        ex isa StatusError ? "HTTP $(ex.status): " :
+        unwrapped_ex isa StatusError ? "HTTP $(ex.status): " :
+        !isrecoverable(unwrapped_ex) ? "unrecoverable exception: " :
         !isbytes(req.body) ? "request streamed, " : "",
         !isbytes(req.response.body) ? "response streamed, " : "",
         !isidempotent(req) ? "$(req.method) non-idempotent" : "")

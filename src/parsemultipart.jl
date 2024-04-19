@@ -122,7 +122,7 @@ end
 
 const content_disposition_regex = Parsers.RegexAndMatchData[]
 function content_disposition_regex_f()
-    r = Parsers.RegexAndMatchData(r"^Content-Disposition:[ \t]*form-data;[ \t]*(.*)\r\n"x)
+    r = Parsers.RegexAndMatchData(r"^[Cc]ontent-[Dd]isposition:[ \t]*form-data;[ \t]*(.*)\r\n"mx)
     Parsers.init!(r)
 end
 

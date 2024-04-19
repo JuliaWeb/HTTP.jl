@@ -235,8 +235,8 @@ issafe(method) = method in ["GET", "HEAD", "OPTIONS", "TRACE"]
 Does this `Response` have an error status?
 """
 iserror(r::Response) = iserror(r.status)
-iserror(status) = status != 0 && status != 100 && status != 101 &&
-                 (status < 200 || status >= 300) && !isredirect(status)
+iserror(status::Integer) = status != 0 && status != 100 && status != 101 &&
+                          (status < 200 || status >= 300) && !isredirect(status)
 
 """
     isredirect(::Response)
@@ -245,7 +245,7 @@ Does this `Response` have a redirect status?
 """
 isredirect(r::Response) = isredirect(r.status)
 isredirect(r::Request) = allow_redirects(r) && !redirectlimitreached(r)
-isredirect(status) = status in (301, 302, 303, 307, 308)
+isredirect(status::Integer) = status in (301, 302, 303, 307, 308)
 
 # whether the redirect limit has been reached for a given request
 # set in the RedirectRequest layer once the limit is reached
@@ -609,7 +609,16 @@ function Base.show(io::IO, m::Message)
     end
     println(io, typeof(m), ":")
     println(io, "\"\"\"")
-    writeheaders(io, m)
+
+    # Mask the following (potentially) sensitive headers with "******":
+    # - Authorization
+    # - Proxy-Authorization
+    # - Cookie
+    # - Set-Cookie
+    header_str = sprint(writeheaders, m)
+    header_str = replace(header_str, r"(*CRLF)^((?>(?>Proxy-)?Authorization|(?>Set-)?Cookie): ).+$"mi => s"\1******")
+    write(io, header_str)
+
     summary = bodysummary(m.body)
     validsummary = isvalidstr(summary)
     validsummary && write(io, summary)
