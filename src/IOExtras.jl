@@ -119,7 +119,7 @@ function readuntil(buf::IOBuffer,
     if l == 0
         return nobytes
     end
-    bytes = view(buf.data, buf.ptr:buf.ptr + l - 1)
+    bytes = buf.data[buf.ptr:buf.ptr + l - 1]
     buf.ptr += l
     return bytes
 end
