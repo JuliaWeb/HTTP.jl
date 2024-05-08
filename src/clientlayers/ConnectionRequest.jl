@@ -110,7 +110,8 @@ function connectionlayer(handler)
                     return r
                 end
                 if target_url.scheme in ("https", "wss")
-                    io = Connections.sslupgrade(socket_type_tls, io, target_url.host; readtimeout=readtimeout, kw...)
+                    InnerIOType = sockettype(target_url, socket_type, socket_type_tls, get(kw, :sslconfig, nothing))
+                    io = Connections.sslupgrade(InnerIOType, io, target_url.host; readtimeout=readtimeout, kw...)
                 end
                 req.headers = filter(x->x.first != "Proxy-Authorization", req.headers)
             end

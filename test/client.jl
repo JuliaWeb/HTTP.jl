@@ -33,6 +33,36 @@ end
     @test_throws ArgumentError HTTP.get("https://$httpbin/ip", sslconfig=MbedTLS.SSLConfig(false), socket_type_tls=OpenSSL.SSLStream)
 end
 
+@testset "issue 1172" begin
+    # Connections through a proxy need to choose an IOType twice rather than
+    # just once.
+    # https://github.com/JuliaWeb/HTTP.jl/issues/1172
+
+    # This proxy accepts two requests, ignoring the content of the request and
+    # returning 200 each time.
+    proxy = listen(IPv4(0), 8082)
+    try
+        @async begin
+            sock = accept(proxy)
+            while isopen(sock)
+                line = readline(sock)
+                @show 1, line
+                isempty(line) && break
+            end
+            write(sock, "HTTP/1.1 200\r\n\r\n")
+            # Test that we receive something that looks like a client hello
+            # (indicating that we tried to upgrade the connection to TLS)
+            line = readline(sock)
+            @test startswith(line, "\x16")
+        end
+
+        @test_throws HTTP.RequestError HTTP.head("https://$httpbin.com"; proxy="http://localhost:8082", readtimeout=1, retry=false)
+    finally
+        close(proxy)
+        HTTP.Connections.closeall()
+    end
+end
+
 @testset "@client macro" begin
     @eval module MyClient
         using HTTP
