@@ -433,6 +433,8 @@ end
 @noinline connection_limit_warning(cl) = cl === nothing ||
     @warn "connection_limit no longer supported as a keyword argument; use `HTTP.set_default_connection_limit!($cl)` before any requests are made or construct a shared pool via `POOL = HTTP.Pool($cl)` and pass to each request like `pool=POOL` instead."
 
+const DEFAULT_CONNECT_TIMEOUT = Ref{Int}(30)
+
 """
     newconnection(type, host, port) -> Connection
 
@@ -446,7 +448,7 @@ function newconnection(::Type{T},
                        connection_limit=nothing,
                        forcenew::Bool=false,
                        idle_timeout=typemax(Int),
-                       connect_timeout::Int=30,
+                       connect_timeout::Int=DEFAULT_CONNECT_TIMEOUT[],
                        require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
                        keepalive::Bool=true,
                        kw...) where {T <: IO}

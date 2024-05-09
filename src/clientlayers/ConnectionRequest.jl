@@ -46,6 +46,8 @@ end
 
 export connectionlayer
 
+const CLOSE_IMMEDIATELY = Ref{Bool}(false)
+
 """
     connectionlayer(handler) -> handler
 
@@ -55,7 +57,7 @@ Close the connection if the request throws an exception.
 Otherwise leave it open so that it can be reused.
 """
 function connectionlayer(handler)
-    return function connections(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Union{Nothing, Type}=nothing, readtimeout::Int=0, connect_timeout::Int=30, logerrors::Bool=false, logtag=nothing, kw...)
+    return function connections(req; proxy=getproxy(req.url.scheme, req.url.host), socket_type::Type=TCPSocket, socket_type_tls::Union{Nothing, Type}=nothing, readtimeout::Int=0, connect_timeout::Int=30, logerrors::Bool=false, logtag=nothing, closeimmediately::Bool=CLOSE_IMMEDIATELY[], kw...)
         local io, stream
         if proxy !== nothing
             target_url = req.url
@@ -88,7 +90,7 @@ function connectionlayer(handler)
             req.context[:connect_duration_ms] = get(req.context, :connect_duration_ms, 0.0) +  (time() - start_time) * 1000
         end
 
-        shouldreuse = !(target_url.scheme in ("ws", "wss"))
+        shouldreuse = !(target_url.scheme in ("ws", "wss")) && !closeimmediately
         try
             if proxy !== nothing && target_url.scheme in ("https", "wss", "ws")
                 shouldreuse = false
