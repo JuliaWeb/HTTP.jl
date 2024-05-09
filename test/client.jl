@@ -51,8 +51,7 @@ end
 
             # Test that we receive something that looks like a TLS client hello
             # (indicating that we tried to upgrade the connection to TLS)
-            line = readline(sock)
-            @test startswith(line, "\x16")
+            @test read(sock, UInt8) == 0x16
             close(sock)
         end
 
