@@ -298,6 +298,8 @@ end
 
 const DEFAULT_MAX_FRAG = 1024
 
+IOExtras.tcpsocket(ws::WebSocket) = tcpsocket(ws.io)
+
 WebSocket(io::Connection, req=Request(), resp=Response(); client::Bool=true, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG) =
     WebSocket(uuid4(), io, req, resp, maxframesize, maxfragmentation, client, UInt8[], UInt8[], false, false)
 
@@ -420,7 +422,7 @@ function listen end
 listen(f, args...; kw...) = Servers.listen(http -> upgrade(f, http; kw...), args...; kw...)
 listen!(f, args...; kw...) = Servers.listen!(http -> upgrade(f, http; kw...), args...; kw...)
 
-function upgrade(f::Function, http::Streams.Stream; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...)
+function upgrade(f::Function, http::Streams.Stream; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, nagle=false, quickack=true, kw...)
     @debugv 2 "Server websocket upgrade requested"
     isupgrade(http.message) || handshakeerror()
     if !hasheader(http, "Sec-WebSocket-Version", "13")
@@ -437,6 +439,17 @@ function upgrade(f::Function, http::Streams.Stream; suppress_close_error::Bool=f
     startwrite(http)
     io = http.stream
     req = http.message
+
+    # tune websocket tcp connection for performance : https://github.com/JuliaWeb/HTTP.jl/issues/1140
+    @static if VERSION >= v"1.3"
+        sock = tcpsocket(io)
+        # I don't understand why uninitializd sockets can get here, but they can
+        if sock.status ∉ (Base.StatusInit, Base.StatusUninit) && isopen(sock)
+            Sockets.nagle(sock, nagle)
+            Sockets.quickack(sock, quickack)
+        end
+    end
+
     ws = WebSocket(io, req, req.response; client=false, maxframesize, maxfragmentation)
     @debugv 2 "$(ws.id): WebSocket upgraded; connection established"
     try
