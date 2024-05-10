@@ -96,6 +96,9 @@ mutable struct Connection{IO_t <: IO} <: IO
     state::Any # populated & used by Servers code
 end
 
+has_tcpsocket(c::Connection) = applicable(tcpsocket, c.io)
+IOExtras.tcpsocket(c::Connection) = tcpsocket(c.io)
+
 """
     connectionkey
 
@@ -142,7 +145,7 @@ function Base.flush(c::Connection)
     # Flushing the TCP buffer requires support for `Sockets.nagle()`
     # which was only added in Julia v1.3
     @static if VERSION >= v"1.3"
-        sock = tcpsocket(c.io)
+        sock = tcpsocket(c)
         # I don't understand why uninitializd sockets can get here, but they can
         if sock.status ∉ (Base.StatusInit, Base.StatusUninit) && isopen(sock)
             Sockets.nagle(sock, false)
@@ -312,7 +315,7 @@ function IOExtras.closeread(c::Connection)
     return
 end
 
-Base.wait_close(c::Connection) = Base.wait_close(tcpsocket(c.io))
+Base.wait_close(c::Connection) = Base.wait_close(tcpsocket(c))
 
 function Base.close(c::Connection)
     if iswritable(c)
@@ -638,7 +641,7 @@ function sslupgrade(::Type{IOType}, c::Connection{T},
 end
 
 function Base.show(io::IO, c::Connection)
-    nwaiting = applicable(tcpsocket, c.io) ? bytesavailable(tcpsocket(c.io)) : 0
+    nwaiting = has_tcpsocket(c) ? bytesavailable(tcpsocket(c)) : 0
     print(
         io,
         tcpstatus(c), " ",
@@ -648,14 +651,14 @@ function Base.show(io::IO, c::Connection)
         bytesavailable(c.buffer) > 0 ?
             " $(bytesavailable(c.buffer))-byte excess" : "",
         nwaiting > 0 ? " $nwaiting bytes waiting" : "",
-        applicable(tcpsocket, c.io) ? " $(Base._fd(tcpsocket(c.io)))" : "")
+        has_tcpsocket(c) ? " $(Base._fd(tcpsocket(c)))" : "")
 end
 
 function tcpstatus(c::Connection)
-    if !applicable(tcpsocket, c.io)
+    if !has_tcpsocket(c)
         return ""
     end
-    s = Base.uv_status_string(tcpsocket(c.io))
+    s = Base.uv_status_string(tcpsocket(c))
         if s == "connecting" return "🔜🔗"
     elseif s == "open"       return "🔗 "
     elseif s == "active"     return "🔁 "
