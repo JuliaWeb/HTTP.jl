@@ -736,6 +736,35 @@ end
     end
 end
 
+@testset "Connection TimeoutException is retried" begin
+    # Since our request fails and we don't get to see the response, we
+    # add this layer just after the retry layer to capture the context
+    # of the request which we can use to test that we attempted the retries
+    function test_context_layer(handler)
+        return function(req; test_context::Dict, kw...)
+            merge!(test_context, req.context)
+            return handler(req; kw...)
+        end
+    end
+
+    test_context = Dict{Symbol,Any}()
+    try
+        HTTP.pushlayer!(test_context_layer)
+        # 10.0.0.0 is non-routeable and will result in a connection timeout
+        HTTP.get("http://example.com:81", connect_timeout=1, retries=3, retry_delays=[0.1, 0.1, 0.1], test_context=test_context)
+    catch e
+        @assert e isa HTTP.ConnectError
+        @test e.error isa ConcurrentUtilities.TimeoutException
+    finally
+        HTTP.poplayer!()
+    end
+
+    @test test_context[:retrylimitreached]
+    @test test_context[:retryattempt] == 3
+    @test test_context[:connect_errors] == 3
+end
+
+
 @testset "Retry with ConnectError" begin
     mktemp() do path, io
         redirect_stdout(io) do
@@ -761,6 +790,7 @@ end
     # isrecoverable tests
     @test !HTTP.RetryRequest.isrecoverable(nothing)
 
+    @test HTTP.RetryRequest.isrecoverable(ConcurrentUtilities.TimeoutException(1.0))
     @test !HTTP.RetryRequest.isrecoverable(ErrorException(""))
     @test !HTTP.RetryRequest.isrecoverable(ArgumentError("yikes"))
     @test HTTP.RetryRequest.isrecoverable(ArgumentError("stream is closed or unusable"))
