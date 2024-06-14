@@ -224,6 +224,9 @@ const RFC1123GMTFormat = gmtformat(Dates.RFC1123Format)
 function readsetcookies(h::Headers)
     result = Cookie[]
     for line in headers(h, "Set-Cookie")
+        if length(line) == 0
+            continue
+        end
         parts = split(strip(line), ';'; keepempty=false)
         if length(parts) == 1 && parts[1] == ""
             continue
