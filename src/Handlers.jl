@@ -58,7 +58,9 @@ function streamhandler(handler)
         request.response::Response = handler(request)
         request.response.request = request
         startwrite(stream)
-        write(stream, request.response.body)
+        if request.method != "HEAD"
+            write(stream, request.response.body)
+        end
         return
     end
 end
