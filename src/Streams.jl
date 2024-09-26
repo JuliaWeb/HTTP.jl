@@ -281,11 +281,20 @@ end
 
 _alloc_request(buf::IOBuffer, recommended_size::UInt) = Base.alloc_request(buf, recommended_size)
 
-function _alloc_request(buffer::Base.GenericIOBuffer, recommended_size::UInt)
-    Base.ensureroom(buffer, Int(recommended_size))
-    ptr = buffer.append ? buffer.size + 1 : buffer.ptr
-    nb = min(length(buffer.data)-buffer.offset, buffer.maxsize) + buffer.offset - ptr + 1
-    return (Ptr{Cvoid}(pointer(buffer.data, ptr)), nb)
+@static if VERSION < v"1.11"
+    function _alloc_request(buffer::Base.GenericIOBuffer, recommended_size::UInt)
+        Base.ensureroom(buffer, Int(recommended_size))
+        ptr = buffer.append ? buffer.size + 1 : buffer.ptr
+        nb = min(length(buffer.data), buffer.maxsize) - ptr + 1
+        return (Ptr{Cvoid}(pointer(buffer.data, ptr)), nb)
+    end
+else
+    function _alloc_request(buffer::Base.GenericIOBuffer, recommended_size::UInt)
+        Base.ensureroom(buffer, Int(recommended_size))
+        ptr = buffer.append ? buffer.size + 1 : buffer.ptr
+        nb = min(length(buffer.data)-buffer.offset, buffer.maxsize) + buffer.offset - ptr + 1
+        return (Ptr{Cvoid}(pointer(buffer.data, ptr)), nb)
+    end
 end
 
 function Base.readbytes!(http::Stream, buf::Base.GenericIOBuffer, n=bytesavailable(http))
