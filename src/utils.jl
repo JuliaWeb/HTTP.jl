@@ -1,0 +1,130 @@
+"""
+    escapehtml(i::String)
+
+Returns a string with special HTML characters escaped: &, <, >, ", '
+"""
+function escapehtml(i::AbstractString)
+    # Refer to http://stackoverflow.com/a/7382028/3822752 for spec. links
+    o = replace(i, "&" =>"&amp;")
+    o = replace(o, "\""=>"&quot;")
+    o = replace(o, "'" =>"&#39;")
+    o = replace(o, "<" =>"&lt;")
+    o = replace(o, ">" =>"&gt;")
+    return o
+end
+
+"""
+    iso8859_1_to_utf8(bytes::AbstractVector{UInt8})
+
+Convert from ISO8859_1 to UTF8.
+"""
+function iso8859_1_to_utf8(bytes::AbstractVector{UInt8})
+    io = IOBuffer()
+    for b in bytes
+        if b < 0x80
+            write(io, b)
+        else
+            write(io, 0xc0 | (b >> 6))
+            write(io, 0x80 | (b & 0x3f))
+        end
+    end
+    return String(take!(io))
+end
+
+"""
+    tocameldash(s::String)
+
+Ensure the first character and characters that follow a '-' are uppercase.
+"""
+function tocameldash(s::String)
+    toUpper = UInt8('A') - UInt8('a')
+    v = Vector{UInt8}(bytes(s))
+    upper = true
+    for i = 1:length(v)
+        @inbounds b = v[i]
+        if upper
+            islower(b) && (v[i] = b + toUpper)
+        else
+            isupper(b) && (v[i] = lower(b))
+        end
+        upper = b == UInt8('-')
+    end
+    return String(v)
+end
+
+tocameldash(s::AbstractString) = tocameldash(String(s))
+
+@inline islower(b::UInt8) = UInt8('a') <= b <= UInt8('z')
+@inline isupper(b::UInt8) = UInt8('A') <= b <= UInt8('Z')
+@inline lower(c::UInt8) = c | 0x20
+
+ascii_lc(c::UInt8) = c in UInt8('A'):UInt8('Z') ? c + 0x20 : c
+ascii_lc_isequal(a::UInt8, b::UInt8) = ascii_lc(a) == ascii_lc(b)
+function ascii_lc_isequal(a, b)
+    acu = codeunits(a)
+    bcu = codeunits(b)
+    len = length(acu)
+    len != length(bcu) && return false
+    for i = 1:len
+        @inbounds !ascii_lc_isequal(acu[i], bcu[i]) && return false
+    end
+    return true
+end
+
+isbytes(x) = x isa AbstractVector{UInt8} || x isa AbstractString
+
+str(bc::aws_byte_cursor) = bc.ptr == C_NULL || bc.len == 0 ? "" : unsafe_string(bc.ptr, bc.len)
+
+function print_uri(io, uri::aws_uri)
+    print(io, "scheme: ", str(uri.scheme), "\n")
+    print(io, "userinfo: ", str(uri.userinfo), "\n")
+    print(io, "host_name: ", str(uri.host_name), "\n")
+    print(io, "port: ", uri.port, "\n")
+    print(io, "path: ", str(uri.path), "\n")
+    print(io, "query: ", str(uri.query_string), "\n")
+    return
+end
+
+const URI_SCHEME_HTTPS = "https"
+const URI_SCHEME_WSS = "wss"
+ishttps(uri::aws_uri) = aws_byte_cursor_eq_c_str_ignore_case(Ref(uri.scheme), URI_SCHEME_HTTPS)
+iswss(uri::aws_uri) = aws_byte_cursor_eq_c_str_ignore_case(Ref(uri.scheme), URI_SCHEME_WSS)
+function getport(uri::aws_uri)
+    sch = Ref(uri.scheme)
+    GC.@preserve sch begin
+        return UInt32(uri.port != 0 ? uri.port : (ishttps(uri) || iswss(uri)) ? 443 : 80)
+    end
+end
+
+function makeuri(u::aws_uri)
+    return URIs.URI(
+        scheme=str(u.scheme),
+        userinfo=isempty(str(u.userinfo)) ? URIs.absent : str(u.userinfo),
+        host=str(u.host_name),
+        port=u.port == 0 ? URIs.absent : u.port,
+        path=isempty(str(u.path)) ? URIs.absent : str(u.path),
+        query=isempty(str(u.query_string)) ? URIs.absent : str(u.query_string),
+    )
+end
+
+struct AWSError <: Exception
+    msg::String
+end
+
+aws_error() = AWSError(unsafe_string(aws_error_debug_str(aws_last_error())))
+aws_error(error_code) = AWSError(unsafe_string(aws_error_str(error_code)))
+aws_throw_error() = throw(aws_error())
+
+struct FieldRef{T, S}
+    x::T
+    field::Symbol
+end
+
+FieldRef(x::T, field::Symbol) where {T} = FieldRef{T, fieldtype(T, field)}(x, field)
+
+function Base.unsafe_convert(P::Union{Type{Ptr{T}},Type{Ptr{Cvoid}}}, x::FieldRef{S, T}) where {T, S}
+    @assert isconcretetype(S) && ismutabletype(S) "only fields of mutable types are supported with FieldRef"
+    return P(pointer_from_objref(x.x) + fieldoffset(S, Base.fieldindex(S, x.field)))
+end
+
+Base.pointer(x::FieldRef{S, T}) where {S, T} = Base.unsafe_convert(Ptr{T}, x)

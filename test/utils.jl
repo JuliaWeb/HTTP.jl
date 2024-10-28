@@ -1,5 +1,39 @@
-import HTTP.Parsers
-import HTTP.URIs
+@testset "ascii" begin
+    lc = HTTP.ascii_lc
+    lceq = HTTP.ascii_lc_isequal
+
+    @testset "UInt8" begin
+        for c in UInt8(1):UInt8(127)
+            @test lc(c) == UInt8(lowercase(Char(c)))
+            @test lceq(c, c)
+
+            @test !lceq(c, UInt8(c+1))
+            @test !lceq(c, UInt8(0))
+            @test !lceq(c, UInt8(128))
+        end
+    end
+
+    @testset "Strings" begin
+        @test lceq("", "")
+
+        @test lceq("123!", "123!")
+        @test lceq("Foo", "Foo")
+        @test lceq("Foo", "foo")
+        @test lceq("foo", "Foo")
+        @test lceq("foo", "FOO")
+
+        @test !lceq("",    "FOO")
+        @test !lceq("FOO", "")
+        @test !lceq("Foo", "Fo")
+        @test !lceq("Foo", "Foox")
+        @test !lceq("123",  "123!")
+    end
+
+    @testset "Emojis" begin
+        @test lceq("NotAscii: 😬", "NotAscii: 😬")
+        @test lceq("notascii: 😬", "NotAscii: 😬")
+    end
+end
 
 @testset "utils.jl" begin
     @test HTTP.Strings.escapehtml("&\"'<>") == "&amp;&quot;&#39;&lt;&gt;"
@@ -35,48 +69,4 @@ import HTTP.URIs
         )
         @test HTTP.Strings.iso8859_1_to_utf8(bytes) == utf8
     end
-
-    withenv("HTTPS_PROXY"=>nothing, "https_proxy"=>nothing) do
-        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") === nothing
-    end
-    withenv("HTTPS_PROXY"=>"") do
-        # to be compatible with Julia 1.0
-        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") === nothing
-    end
-    withenv("https_proxy"=>"") do
-        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") === nothing
-    end
-    withenv("HTTPS_PROXY"=>"https://user:pass@server:80") do
-        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == "https://user:pass@server:80"
-    end
-    withenv("https_proxy"=>"https://user:pass@server:80") do
-        @test HTTP.ConnectionRequest.getproxy("https", "https://julialang.org/") == "https://user:pass@server:80"
-    end
-
-    withenv("HTTP_PROXY"=>nothing, "http_proxy"=>nothing) do
-        @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") === nothing
-    end
-    withenv("HTTP_PROXY"=>"") do
-        @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") === nothing
-    end
-    withenv("http_proxy"=>"") do
-        @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") === nothing
-    end
-    withenv("HTTP_PROXY"=>"http://user:pass@server:80") do
-        @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == "http://user:pass@server:80"
-    end
-    withenv("http_proxy"=>"http://user:pass@server:80") do
-        @test HTTP.ConnectionRequest.getproxy("http", "http://julialang.org/") == "http://user:pass@server:80"
-    end
 end # testset
-
-
-@testset "Conditions" begin
-    function foo(x, y)
-        HTTP.@require x > 10
-        HTTP.@ensure y > 10
-    end
-
-    @test_throws ArgumentError("foo() requires `x > 10`") foo(1, 11)
-    @test_throws AssertionError("foo() failed to ensure `y > 10`\ny = 1\n10 = 10") foo(11, 1)
-end

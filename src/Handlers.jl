@@ -1,10 +1,6 @@
 module Handlers
 
-export Handler, Middleware, serve, serve!, Router, register!, getroute, getparams, getparam, getcookies, streamhandler
-
-using URIs
-using ..Messages, ..Streams, ..IOExtras, ..Servers, ..Sockets, ..Cookies
-import ..HTTP # for doc references
+import ..Request
 
 """
     Handler
@@ -41,104 +37,6 @@ then an input to the `auth_middlware`, which further enhances/modifies the handl
 """
 abstract type Middleware end
 
-"""
-    streamhandler(request_handler) -> stream handler
-
-Middleware that takes a request handler and returns a stream handler. Used by default
-in `HTTP.serve` to take the user-provided request handler and process the `Stream`
-from `HTTP.listen` and pass the parsed `Request` to the handler.
-
-Is included by default in `HTTP.serve` as the base "middleware" when `stream=false` is passed.
-"""
-function streamhandler(handler)
-    return function(stream::Stream)
-        request::Request = stream.message
-        request.body = read(stream)
-        closeread(stream)
-        request.response::Response = handler(request)
-        request.response.request = request
-        startwrite(stream)
-        write(stream, request.response.body)
-        return
-    end
-end
-
-# Interface change in HTTP@1
-@deprecate RequestHandlerFunction streamhandler
-
-"""
-    HTTP.serve(handler, host=Sockets.localhost, port=8081; kw...)
-    HTTP.serve(handler, port::Integer=8081; kw...)
-    HTTP.serve(handler, server::Base.IOServer; kw...)
-    HTTP.serve!(args...; kw...) -> HTTP.Server
-
-Listen for HTTP connections and execute the `handler` function for each request.
-Listening details can be passed as `host`/`port` pair, a single `port` (`host` will
-default to `localhost`), or an already listening `server` object, as returned from
-`Sockets.listen`. To open up a server to external requests, the `host` argument is
-typically `"0.0.0.0"`.
-
-The `HTTP.serve!` form is non-blocking and returns an `HTTP.Server` object which can be
-`wait(server)`ed on manually, or `close(server)`ed to gracefully shut down the server.
-Calling `HTTP.forceclose(server)` will immediately force close the server and all active
-connections. `HTTP.serve` will block on the server listening loop until interrupted or
-and an irrecoverable error occurs.
-
-The `handler` function should be of the form `f(req::HTTP.Request)::HTTP.Response`.
-Alternatively, passing `stream=true` requires the `handler` to be of the form
-`f(stream::HTTP.Stream) -> Nothing`. See [`HTTP.Router`](@ref) for details on using
-it as a request handler.
-
-Optional keyword arguments:
-- `sslconfig=nothing`, Provide an `MbedTLS.SSLConfig` object to handle ssl
-  connections. Pass `sslconfig=MbedTLS.SSLConfig(false)` to disable ssl
-  verification (useful for testing). Construct a custom `SSLConfig` object
-  with `MbedTLS.SSLConfig(certfile, keyfile)`.
-- `tcpisvalid = tcp->true`, function `f(::TCPSocket)::Bool` to check if accepted
-  connections are valid before processing requests. e.g. to do source IP filtering.
-- `readtimeout::Int=0`, close the connection if no data is received for this
-  many seconds. Use readtimeout = 0 to disable.
-- `reuseaddr::Bool=false`, allow multiple servers to listen on the same port.
-  Not supported on some OS platforms. Can check `HTTP.Servers.supportsreuseaddr()`.
-- `server::Base.IOServer=nothing`, provide an `IOServer` object to listen on;
-  allows manually closing or configuring the server socket.
-- `verbose::Bool=false`, log connection information to `stdout`.
-- `access_log::Function`, function for formatting access log messages. The
-  function should accept two arguments, `io::IO` to which the messages should
-  be written, and `http::HTTP.Stream` which can be used to query information
-  from. See also [`@logfmt_str`](@ref).
-- `on_shutdown::Union{Function, Vector{<:Function}, Nothing}=nothing`, one or
-  more functions to be run if the server is closed (for example by an
-  `InterruptException`). Note, shutdown function(s) will not run if an
-  `IOServer` object is supplied to the `server` keyword argument and closed
-  by `close(server)`.
-
-```julia
-# start a blocking echo server
-HTTP.serve("127.0.0.1", 8081) do req
-    return HTTP.Response(200, req.body)
-end
-
-# non-blocking server
-server = HTTP.serve!(8081) do req
-    return HTTP.Response(200, "response body")
-end
-# can gracefully close server manually
-close(server)
-```
-"""
-function serve end
-
-"""
-    HTTP.serve!(args...; kw...) -> HTTP.Server
-
-Non-blocking version of [`HTTP.serve`](@ref); see that function for details.
-"""
-function serve! end
-
-serve(f, args...; stream::Bool=false, kw...) = Servers.listen(stream ? f : streamhandler(f), args...; kw...)
-serve!(f, args...; stream::Bool=false, kw...) = Servers.listen!(stream ? f : streamhandler(f), args...; kw...)
-
 # tree-based router handler
 mutable struct Variable
     name::String
@@ -165,7 +63,6 @@ end
 
 Base.show(io::IO, x::Leaf) = print(io, "Leaf($(x.method))")
 
-export Node
 mutable struct Node
     segment::Union{String, Variable}
     exact::Vector{Node} # sorted alphabetically, all x.segment are String
@@ -352,8 +249,8 @@ end
 
 default404(::Request) = Response(404)
 default405(::Request) = Response(405)
-default404(s::Stream) = setstatus(s, 404)
-default405(s::Stream) = setstatus(s, 405)
+# default404(s::Stream) = setstatus(s, 404)
+# default405(s::Stream) = setstatus(s, 405)
 
 Router(_404=default404, _405=default405, middleware=nothing) = Router(_404, _405, Node(), middleware)
 
@@ -388,7 +285,7 @@ register!(r::Router, path, handler) = register!(r, "*", path, handler)
 const Params = Dict{String, String}
 
 function gethandler(r::Router, req::Request)
-    url = URI(req.target)
+    url = req.uri
     segments = split(url.path, '/'; keepempty=false)
     leaf = match(r.routes, req.method, segments, 1)
     params = Params()
@@ -405,23 +302,23 @@ function gethandler(r::Router, req::Request)
     return leaf, "", params
 end
 
-function (r::Router)(stream::Stream{<:Request})
-    req = stream.message
-    handler, route, params = gethandler(r, req)
-    if handler === nothing
-        # didn't match a registered route
-        return r._404(stream)
-    elseif handler === missing
-        # matched the path, but method not supported
-        return r._405(stream)
-    else
-        req.context[:route] = route
-        if !isempty(params)
-            req.context[:params] = params
-        end
-        return handler(stream)
-    end
-end
+# function (r::Router)(stream::Stream{<:Request})
+#     req = stream.message
+#     handler, route, params = gethandler(r, req)
+#     if handler === nothing
+#         # didn't match a registered route
+#         return r._404(stream)
+#     elseif handler === missing
+#         # matched the path, but method not supported
+#         return r._405(stream)
+#     else
+#         req.context[:route] = route
+#         if !isempty(params)
+#             req.context[:params] = params
+#         end
+#         return handler(stream)
+#     end
+# end
 
 function (r::Router)(req::Request)
     handler, route, params = gethandler(r, req)
@@ -447,7 +344,7 @@ Retrieve the original route registration string for a request after its url has 
 matched against a router. Helpful for metric logging to ignore matched variables in
 a path and only see the registered routes.
 """
-getroute(req) = get(req.context, :route, nothing)
+getroute(req) = Base.get(req.context, :route, nothing)
 
 """
     HTTP.getparams(req) -> Dict{String, String}
@@ -457,7 +354,7 @@ If a path was registered with a router via `HTTP.register!` like
 "/api/widget/{id}", then the path parameters are available in the request context
 and can be retrieved like `id = HTTP.getparams(req)["id"]`.
 """
-getparams(req) = get(req.context, :params, nothing)
+getparams(req) = Base.get(req.context, :params, nothing)
 
 """
     HTTP.getparam(req, name, default=nothing) -> String
@@ -469,7 +366,7 @@ If a path was registered with a router via `HTTP.register!` like
 function getparam(req, name, default=nothing)
     params = getparams(req)
     params === nothing && return default
-    return get(params, name, default)
+    return Base.get(params, name, default)
 end
 
 """
@@ -496,6 +393,6 @@ are expected to be stored in the `req.context[:cookies]` of the
 request context as implemented in the [`HTTP.Handlers.cookie_middleware`](@ref)
 middleware.
 """
-getcookies(req) = get(() -> Cookie[], req.context, :cookies)
+getcookies(req) = Base.get(() -> Cookie[], req.context, :cookies)
 
-end # module
+end # module Handlers

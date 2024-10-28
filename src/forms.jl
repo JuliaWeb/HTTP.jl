@@ -2,9 +2,6 @@ module Forms
 
 export Form, Multipart, content_type
 
-using ..IOExtras, ..Sniff, ..Conditions
-import ..HTTP # for doc references
-
 # Form request body
 mutable struct Form <: IO
     data::Vector{IO}
@@ -18,7 +15,6 @@ Base.eof(f::Form) = f.index > length(f.data)
 Base.isopen(f::Form) = false
 Base.close(f::Form) = nothing
 Base.length(f::Form) = sum(x->isa(x, IOStream) ? filesize(x) - position(x) : bytesavailable(x), f.data)
-IOExtras.nbytes(x::Form) = length(x)
 
 function Base.mark(f::Form)
     foreach(mark, f.data)
@@ -105,8 +101,8 @@ function Form(d; boundary=string(rand(UInt128), base=16))
     # https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
     bcharsnospace = raw"\w'\(\)\+,-\./:=\?"
     boundary_re = Regex("^[$bcharsnospace ]{0,69}[$bcharsnospace]\$")
-    @require match(boundary_re, boundary) !== nothing
-    @require eltype(d) <: Pair
+    @assert match(boundary_re, boundary) !== nothing
+    @assert eltype(d) <: Pair
     data = IO[]
     io = IOBuffer()
     len = length(d)
