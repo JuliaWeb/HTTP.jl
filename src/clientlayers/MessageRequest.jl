@@ -28,7 +28,7 @@ function messagelayer(handler)
         try
             # if debugging, enable by wrapping request in custom logger logic
             resp = if verbose > 0
-                LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
+                LoggingExtras.withlevel(Logging.Debug) do
                     handler(req; verbose, response_stream, kw...)
                 end
             else

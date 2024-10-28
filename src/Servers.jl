@@ -359,7 +359,7 @@ function listen!(f, listener::Listener;
     conns_lock = ReentrantLock()
     ready_to_accept = Threads.Event()
     if verbose > 0
-        tsk = @_spawn_interactive LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
+        tsk = @_spawn_interactive LoggingExtras.withlevel(Logging.Debug) do
             listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, conns_lock, verbose)
         end
     else
