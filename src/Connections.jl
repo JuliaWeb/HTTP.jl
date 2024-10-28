@@ -254,7 +254,7 @@ end
 function IOExtras.startwrite(c::Connection)
     @require !iswritable(c)
     c.writable = true
-    @debugv 3 "👁  Start write:$c"
+    @debug "👁  Start write:$c"
     return
 end
 
@@ -266,7 +266,7 @@ Signal that an entire Request Message has been written to the `Connection`.
 function IOExtras.closewrite(c::Connection)
     @require iswritable(c)
     c.writable = false
-    @debugv 3 "🗣  Write done: $c"
+    @debug "🗣  Write done: $c"
     flush(c)
     return
 end
@@ -278,7 +278,7 @@ function IOExtras.startread(c::Connection)
     @require !isreadable(c)
     c.timestamp = time()
     c.readable = true
-    @debugv 3 "👁  Start read: $c"
+    @debug "👁  Start read: $c"
     return
 end
 
@@ -289,7 +289,7 @@ TODO: or if response data arrives when no request was sent (isreadable == false)
 """
 function monitor_idle_connection(c::Connection)
     try
-        if eof(c.io)                                  ;@debugv 3 "💀  Closed:     $c"
+        if eof(c.io)                                  ;@debug "💀  Closed:     $c"
             close(c.io)
         end
     catch ex
@@ -307,7 +307,7 @@ Signal that an entire Response Message has been read from the `Connection`.
 function IOExtras.closeread(c::Connection)
     @require isreadable(c)
     c.readable = false
-    @debugv 3 "✉️  Read done: $c"
+    @debug "✉️  Read done: $c"
     if c.clientconnection
         t = Threads.@spawn monitor_idle_connection(c)
         @isdefined(errormonitor) && errormonitor(t)
@@ -516,7 +516,7 @@ function getconnection(::Type{TCPSocket},
                        kw...)::TCPSocket
 
     p::UInt = isempty(port) ? UInt(80) : parse(UInt, port)
-    @debugv 2 "TCP connect: $host:$p..."
+    @debug "TCP connect: $host:$p..."
     addrs = Sockets.getalladdrinfo(host)
     err = ErrorException("failed to connect")
     for addr in addrs
@@ -570,7 +570,7 @@ function getconnection(::Type{SSLContext},
                        kw...)::SSLContext
 
     port = isempty(port) ? "443" : port
-    @debugv 2 "SSL connect: $host:$port..."
+    @debug "SSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
     return sslconnection(SSLContext, tcp, host; kw...)
 end
@@ -581,7 +581,7 @@ function getconnection(::Type{SSLStream},
                        kw...)::SSLStream
 
     port = isempty(port) ? "443" : port
-    @debugv 2 "SSL connect: $host:$port..."
+    @debug "SSL connect: $host:$port..."
     tcp = getconnection(TCPSocket, host, port; kw...)
     return sslconnection(SSLStream, tcp, host; kw...)
 end

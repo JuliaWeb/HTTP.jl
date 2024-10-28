@@ -68,7 +68,7 @@ function connectionlayer(handler)
 
             userinfo = unescapeuri(url.userinfo)
             if !isempty(userinfo) && !hasheader(req.headers, "Proxy-Authorization")
-                @debugv 1 "Adding Proxy-Authorization: Basic header."
+                @debug "Adding Proxy-Authorization: Basic header."
                 setheader(req.headers, "Proxy-Authorization" => "Basic $(base64encode(userinfo))")
             end
         else
@@ -134,7 +134,7 @@ function connectionlayer(handler)
             if logerrors && !ExceptionUnwrapping.has_wrapped_exception(e, HTTPError)
                 @error current_exceptions_to_string() type=Symbol("HTTP.ConnectionRequest") method=req.method url=req.url context=req.context logtag=logtag
             end
-            @debugv 1 "❗️  ConnectionLayer $root_err. Closing: $io"
+            @debug "❗️  ConnectionLayer $root_err. Closing: $io"
             if @isdefined(stream) && stream.nwritten == -1
                 # we didn't write anything, so don't need to worry about
                 # idempotency of the request
@@ -210,17 +210,17 @@ end
 
 function connect_tunnel(io, target_url, req)
     target = "$(URIs.hoststring(target_url.host)):$(target_url.port)"
-    @debugv 1 "📡  CONNECT HTTPS tunnel to $target"
+    @debug "📡  CONNECT HTTPS tunnel to $target"
     headers = Dict("Host" => target)
     if (auth = header(req, "Proxy-Authorization"); !isempty(auth))
         headers["Proxy-Authorization"] = auth
     end
     request = Request("CONNECT", target, headers)
-    # @debugv 2 "connect_tunnel: writing headers"
+    # @debug "connect_tunnel: writing headers"
     writeheaders(io, request)
-    # @debugv 2 "connect_tunnel: reading headers"
+    # @debug "connect_tunnel: reading headers"
     readheaders(io, request.response)
-    # @debugv 2 "connect_tunnel: done reading headers"
+    # @debug "connect_tunnel: done reading headers"
     return request.response
 end
 

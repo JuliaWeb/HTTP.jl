@@ -100,7 +100,7 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
     format_bytes_per_second(x) = format_bytes(x) * "/s"
 
 
-    @debugv 1 "downloading $url"
+    @debug "downloading $url"
     local file
     hdrs = String[]
     HTTP.open("GET", url, headers; kw...) do stream

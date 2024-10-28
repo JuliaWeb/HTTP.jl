@@ -21,14 +21,14 @@ indicates that the server does not wish to receive the message body.
 function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothing, Bool}=nothing, logerrors::Bool=false, logtag=nothing, timedout=nothing, kw...)::Response
     response = stream.message
     req = response.request
-    @debugv 1 sprintcompact(req)
-    @debugv 2 "client startwrite"
+    @debug sprintcompact(req)
+    @debug "client startwrite"
     write_start = time()
     startwrite(stream)
 
-    @debugv 2 sprint(show, req)
+    @debug sprint(show, req)
     if iofunction === nothing && !isbytes(req.body)
-        @debugv 2 "$(typeof(req)).body: $(sprintcompact(req.body))"
+        @debug "$(typeof(req)).body: $(sprintcompact(req.body))"
     end
 
     try
@@ -43,12 +43,12 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                     Base.@lock lock begin
                         req.context[:write_duration_ms] = get(req.context, :write_duration_ms, 0.0) + ((time() - write_start) * 1000)
                     end
-                    @debugv 2 "client closewrite"
+                    @debug "client closewrite"
                     closewrite(stream)
                 end
                 read_start = time()
                 @samethreadpool_spawn try
-                    @debugv 2 "client startread"
+                    @debug "client startread"
                     startread(stream)
                     if !isaborted(stream)
                         readbody(stream, response, decompress, lock)
@@ -57,7 +57,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                     Base.@lock lock begin
                         req.context[:read_duration_ms] = get(req.context, :read_duration_ms, 0.0) + ((time() - read_start) * 1000)
                     end
-                    @debugv 2 "client closeread"
+                    @debug "client closeread"
                     closeread(stream)
                 end
             else
@@ -79,8 +79,8 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
         rethrow()
     end
 
-    @debugv 1 sprintcompact(response)
-    @debugv 2 sprint(show, response)
+    @debug sprintcompact(response)
+    @debug sprint(show, response)
     return response
 end
 
