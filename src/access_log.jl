@@ -34,7 +34,6 @@ end
 
 function logfmt_parser(s)
     s = String(s)
-    vars = Symbol[]
     ex = Expr(:call, :print, :io)
     i = 1
     while i <= lastindex(s)
@@ -60,14 +59,14 @@ function symbol_mapping(s::Symbol)
     str = string(s)
     if (m = match(r"^http_(.+)$", str); m !== nothing)
         hdr = replace(String(m[1]), '_' => '-')
-        :(HTTP.header(http.message, $hdr, "-"))
+        :(something(HTTP.getheader(http.request.headers, $hdr), "-"))
     elseif (m = match(r"^sent_http_(.+)$", str); m !== nothing)
         hdr = replace(String(m[1]), '_' => '-')
-        :(HTTP.header(http.message.response, $hdr, "-"))
+        :(something(HTTP.getheader(http.response.headers, $hdr), "-"))
     elseif s === :remote_addr
-        :(http.stream.peerip)
+        :(HTTP.remote_address(http.connection))
     elseif s === :remote_port
-        :(http.stream.peerport)
+        :(HTTP.remote_port(http.connection))
     elseif s === :remote_user
         :("-") # TODO: find from Basic auth...
     elseif s === :time_iso8601
@@ -90,17 +89,17 @@ function symbol_mapping(s::Symbol)
         m = symbol_mapping(:request_method)
         t = symbol_mapping(:request_uri)
         p = symbol_mapping(:server_protocol)
-        (m, " ", t, " ", p...)
+        (m, " ", t, " ", p)
     elseif s === :request_method
-        :(http.message.method)
+        :(http.request.method)
     elseif s === :request_uri
-        :(http.message.target)
+        :(http.request.target)
     elseif s === :server_protocol
-        ("HTTP/", :(http.message.version.major), ".", :(http.message.version.minor))
+        :(HTTP.http_version(http.connection))
     elseif s === :status
-        :(http.message.response.status)
+        :(http.response.status)
     elseif s === :body_bytes_sent
-        return :(max(0, http.nwritten))
+        :(HTTP.bodylen(http.response))
     else
         error("unknown variable in logfmt: $s")
     end

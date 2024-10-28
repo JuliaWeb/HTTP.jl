@@ -21,7 +21,7 @@ end
 
 @testset "Client" begin
     # Run the autobahn test suite in a docker container
-    serverproc = run(Cmd(`docker run --rm -v "$DIR/config:/config" -v "$DIR/reports:/reports" -p 9001:9001 --name fuzzingserver crossbario/autobahn-testsuite`; dir=DIR), stdin, stdout, stdout; wait=false)
+    serverproc = run(Cmd(`docker run --rm --platform linux/amd64 -v "$DIR/config:/config" -v "$DIR/reports:/reports" -p 9001:9001 --name fuzzingserver crossbario/autobahn-testsuite`; dir=DIR), stdin, stdout, stdout; wait=false)
     try
         sleep(5) # give time for server to get setup
         cases = Ref(0)
