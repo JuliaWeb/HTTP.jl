@@ -443,14 +443,14 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
             # attempt to read request line and headers
             try
                 startread(http)
-                @debugv 1 "startread called"
+                @debug "startread called"
                 c.state = ACTIVE # once we've started reading, set ACTIVE state
             catch e
                 # for ParserErrors, try to inform client of the problem
                 if e isa ParseError
                     write(c, Response(e.code == :HEADER_SIZE_EXCEEDS_LIMIT ? 431 : 400, string(e.code)))
                 end
-                @debugv 1 begin
+                @debug begin
                     msg = current_exceptions_to_string()
                     "handle_connection startread error. $msg"
                 end
@@ -465,15 +465,15 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
 
             try
                 # invokelatest becuase the perf is negligible, but this makes live-editing handlers more Revise friendly
-                @debugv 1 "invoking handler"
+                @debug "invoking handler"
                 Base.invokelatest(f, http)
                 # If `startwrite()` was never called, throw an error so we send a 500 and log this
                 if isopen(http) && !iswritable(http)
                     error("Server never wrote a response.\n\n$request")
                 end
-                @debugv 1 "closeread"
+                @debug "closeread"
                 closeread(http)
-                @debugv 1 "closewrite"
+                @debug "closewrite"
                 closewrite(http)
                 c.state = IDLE
             catch e

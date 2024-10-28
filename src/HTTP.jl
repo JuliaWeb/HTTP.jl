@@ -7,7 +7,7 @@ const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
 
-using Base64, Sockets, Dates, URIs, LoggingExtras, MbedTLS, OpenSSL
+using Base64, Sockets, Dates, URIs, MbedTLS, OpenSSL
 
 function access_threaded(f, v::Vector)
     tid = Threads.threadid()

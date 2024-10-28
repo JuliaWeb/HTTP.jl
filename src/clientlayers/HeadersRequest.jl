@@ -2,7 +2,7 @@ module HeadersRequest
 
 export headerslayer, setuseragent!
 
-using Base64, URIs, LoggingExtras
+using Base64, URIs
 using ..Messages, ..Forms, ..IOExtras, ..Sniff, ..Forms, ..Strings
 
 """
@@ -18,7 +18,7 @@ function headerslayer(handler)
         if basicauth
             userinfo = unescapeuri(req.url.userinfo)
             if !isempty(userinfo) && !hasheader(headers, "Authorization")
-                @debugv 1 "Adding Authorization: Basic header."
+                @debug "Adding Authorization: Basic header."
                 setheader(headers, "Authorization" => "Basic $(base64encode(userinfo))")
             end
         end
@@ -29,7 +29,7 @@ function headerslayer(handler)
 
             sn = sniff(bytes(req.body))
             setheader(headers, "Content-Type" => sn)
-            @debugv 1 "setting Content-Type header to: $sn"
+            @debug "setting Content-Type header to: $sn"
         end
         ## default headers
         if isempty(req.url.port) ||

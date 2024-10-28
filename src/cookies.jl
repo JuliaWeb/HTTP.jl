@@ -33,7 +33,7 @@ module Cookies
 export Cookie, CookieJar, cookies, stringify, getcookies!, setcookies!, addcookie!
 
 import Base: ==
-using Dates, URIs, LoggingExtras, Sockets
+using Dates, URIs, Sockets
 using ..IOExtras, ..Parsers, ..Messages
 
 @enum SameSite SameSiteDefaultMode=1 SameSiteLaxMode SameSiteStrictMode SameSiteNoneMode

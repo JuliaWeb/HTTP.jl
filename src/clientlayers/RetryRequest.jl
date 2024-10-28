@@ -1,6 +1,6 @@
 module RetryRequest
 
-using Sockets, LoggingExtras, MbedTLS, OpenSSL, ExceptionUnwrapping
+using Sockets, MbedTLS, OpenSSL, ExceptionUnwrapping
 using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest, ..Exceptions
 
 export retrylayer
@@ -41,7 +41,7 @@ function retrylayer(handler)
         end
         req_body_is_marked = false
         if req.body isa IO && Messages.supportsmark(req.body)
-            @debugv 2 "Marking request body stream"
+            @debug "Marking request body stream"
             req_body_is_marked = true
             mark(req.body)
         end
@@ -59,15 +59,15 @@ function retrylayer(handler)
                     req.context[:retrylimitreached] = true
                 end
                 if retry
-                    @debugv 1 "🔄  Retry $ex: $(sprintcompact(req))"
+                    @debug "🔄  Retry $ex: $(sprintcompact(req))"
                     reset!(req.response)
                     if req_body_is_marked
-                        @debugv 2 "Resetting request body stream"
+                        @debug "Resetting request body stream"
                         reset(req.body)
                         mark(req.body)
                     end
                 else
-                    @debugv 1 "🚷  No Retry: $(no_retry_reason(ex, req))"
+                    @debug "🚷  No Retry: $(no_retry_reason(ex, req))"
                 end
                 return s, retry
             end

@@ -1,6 +1,6 @@
 module CookieRequest
 
-using Dates, LoggingExtras, URIs
+using Dates, URIs
 using ..Cookies, ..Messages, ..Strings
 
 # default global cookie jar

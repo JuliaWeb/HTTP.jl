@@ -2,7 +2,7 @@ module Streams
 
 export Stream, closebody, isaborted, setstatus, readall!
 
-using Sockets, LoggingExtras
+using Sockets
 using ..IOExtras, ..Messages, ..Connections, ..Conditions, ..Exceptions
 import ..HTTP # for doc references
 
@@ -132,7 +132,7 @@ function IOExtras.closewrite(http::Stream{<:Request})
        http.message.version < v"1.1" &&
       !hasheader(http.message, "Connection", "keep-alive")
 
-        @debugv 1 "✋  \"Connection: close\": $(http.stream)"
+        @debug "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
     end
 end
@@ -166,7 +166,7 @@ https://tools.ietf.org/html/rfc7231#section-6.2.1
 """
 function handle_continue(http::Stream{<:Response})
     if http.message.status == 100
-        @debugv 1 "✅  Continue:   $(http.stream)"
+        @debug "✅  Continue:   $(http.stream)"
         readheaders(http.stream, http.message)
     end
 end
@@ -176,7 +176,7 @@ function handle_continue(http::Stream{<:Request})
         if !iswritable(http.stream)
             startwrite(http.stream)
         end
-        @debugv 1 "✅  Continue:   $(http.stream)"
+        @debug "✅  Continue:   $(http.stream)"
         writeheaders(http.stream, Response(100))
     end
 end
@@ -361,9 +361,9 @@ function isaborted(http::Stream{<:Response})
     if iswritable(http.stream) &&
        iserror(http.message) &&
        hasheader(http.message, "Connection", "close")
-        @debugv 1 "✋  Abort on $(sprint(writestartline, http.message)): " *
+        @debug "✋  Abort on $(sprint(writestartline, http.message)): " *
                  "$(http.stream)"
-        @debugv 2 "✋  $(http.message)"
+        @debug "✋  $(http.message)"
         return true
     end
     return false
@@ -379,7 +379,7 @@ function IOExtras.closeread(http::Stream{<:Response})
 
     if hasheader(http.message, "Connection", "close")
         # Close conncetion if server sent "Connection: close"...
-        @debugv 1 "✋  \"Connection: close\": $(http.stream)"
+        @debug "✋  \"Connection: close\": $(http.stream)"
         close(http.stream)
         # Error if Message is not complete...
         incomplete(http) && throw(EOFError())
