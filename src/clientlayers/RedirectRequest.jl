@@ -1,6 +1,6 @@
 module RedirectRequest
 
-using URIs, LoggingExtras
+using URIs
 using ..Messages, ..Pairs
 
 export redirectlayer, nredirects

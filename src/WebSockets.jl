@@ -1,6 +1,6 @@
 module WebSockets
 
-using Base64, LoggingExtras, UUIDs, Sockets, Random
+using Base64, UUIDs, Sockets, Random
 using MbedTLS: digest, MD_SHA1, SSLContext
 using ..IOExtras, ..Streams, ..Connections, ..Messages, ..Conditions, ..Servers
 using ..Exceptions: current_exceptions_to_string

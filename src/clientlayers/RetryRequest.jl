@@ -1,6 +1,6 @@
 module RetryRequest
 
-using Sockets, LoggingExtras, MbedTLS, OpenSSL, ExceptionUnwrapping
+using Sockets, MbedTLS, OpenSSL, ExceptionUnwrapping
 using ..IOExtras, ..Messages, ..Strings, ..ExceptionRequest, ..Exceptions
 
 export retrylayer

@@ -2,7 +2,7 @@ module Streams
 
 export Stream, closebody, isaborted, setstatus, readall!
 
-using Sockets, LoggingExtras
+using Sockets
 using ..IOExtras, ..Messages, ..Connections, ..Conditions, ..Exceptions
 import ..HTTP # for doc references
 

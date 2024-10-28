@@ -1,7 +1,7 @@
 module TimeoutRequest
 
 using ..Connections, ..Streams, ..Exceptions, ..Messages
-using LoggingExtras, ConcurrentUtilities
+using ConcurrentUtilities
 using ..Exceptions: current_exceptions_to_string
 
 export timeoutlayer

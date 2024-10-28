@@ -1,6 +1,6 @@
 module ConnectionRequest
 
-using URIs, Sockets, Base64, LoggingExtras, ConcurrentUtilities, ExceptionUnwrapping
+using URIs, Sockets, Base64, ConcurrentUtilities, ExceptionUnwrapping
 import MbedTLS
 import OpenSSL
 using ..Messages, ..IOExtras, ..Connections, ..Streams, ..Exceptions

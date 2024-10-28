@@ -1,7 +1,7 @@
 module StreamRequest
 
 using ..IOExtras, ..Messages, ..Streams, ..Connections, ..Strings, ..RedirectRequest, ..Exceptions
-using LoggingExtras, CodecZlib, URIs
+using CodecZlib, URIs
 using SimpleBufferStream: BufferStream
 using ConcurrentUtilities: @samethreadpool_spawn
 

@@ -1,7 +1,7 @@
 module Exceptions
 
 export @try, HTTPError, ConnectError, TimeoutError, StatusError, RequestError, current_exceptions_to_string
-using LoggingExtras, ExceptionUnwrapping
+using ExceptionUnwrapping
 import ..HTTP # for doc references
 
 @eval begin

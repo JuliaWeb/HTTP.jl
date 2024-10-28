@@ -21,7 +21,7 @@ module Connections
 
 export Connection, newconnection, releaseconnection, getrawstream, inactiveseconds, shouldtimeout, default_connection_limit, set_default_connection_limit!, Pool
 
-using Sockets, LoggingExtras, NetworkOptions
+using Sockets, NetworkOptions
 using MbedTLS: SSLConfig, SSLContext, setup!, associate!, hostname!, handshake!
 using MbedTLS, OpenSSL, ConcurrentUtilities
 using ..IOExtras, ..Conditions, ..Exceptions

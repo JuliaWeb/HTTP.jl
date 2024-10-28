@@ -2,7 +2,7 @@ module HeadersRequest
 
 export headerslayer, setuseragent!
 
-using Base64, URIs, LoggingExtras
+using Base64, URIs
 using ..Messages, ..Forms, ..IOExtras, ..Sniff, ..Forms, ..Strings
 
 """
