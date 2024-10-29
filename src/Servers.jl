@@ -190,23 +190,32 @@ function Base.close(s::Server)
 end
 
 """
-    shutdown(fns::Vector{<:Function})
-    shutdown(fn::Function)
-    shutdown(::Nothing)
+    shutdown(fns::Vector{<:Function}; error_handler=nothing)
+    shutdown(fn::Function; error_handler=nothing)
+    shutdown(::Nothing; error_handler=nothing)
 
 Runs function(s) in `on_shutdown` field of `Server` when
 `Server` is closed.
+
+If an error occurs during the shutdown
+`error_callback` is called with the `error_handler`, the exception
+and `:shutdown` as arguments.
 """
-shutdown(fns::Vector{<:Function}) = foreach(shutdown, fns)
-shutdown(::Nothing) = nothing
-function shutdown(fn::Function)
+function shutdown(fns::Vector{<:Function}; error_handler=nothing)
+    for f in fns
+        shutdown(f, error_handler)
+    end
+end
+shutdown(::Nothing; error_handler=nothing) = nothing
+function shutdown(fn::Function; error_handler=nothing)
     try
         fn()
-    catch
+    catch e
         @error begin
             msg = current_exceptions_to_string()
             "shutdown function $fn failed. $msg"
         end
+        error_callback(error_handler, e, :shutdown)
     end
 end
 
@@ -354,16 +363,17 @@ function listen!(f, listener::Listener;
     max_connections::Integer=typemax(Int),
     readtimeout::Integer=0,
     access_log::Union{Function,Nothing}=nothing,
-    verbose=false, kw...)
+    verbose=false,
+    error_handler=nothing, kw...)
     conns = Set{Connection}()
     conns_lock = ReentrantLock()
     ready_to_accept = Threads.Event()
     if verbose > 0
         tsk = @_spawn_interactive LoggingExtras.withlevel(Logging.Debug; verbosity=verbose) do
-            listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, conns_lock, verbose)
+            listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, conns_lock, verbose, error_handler)
         end
     else
-        tsk = @_spawn_interactive listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, conns_lock, verbose)
+        tsk = @_spawn_interactive listenloop(f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept, conns_lock, verbose, error_handler)
     end
     # wait until the listenloop enters the loop
     wait(ready_to_accept)
@@ -372,11 +382,11 @@ end
 
 """"
 Main server loop.
-Accepts new tcp connections and spawns async tasks to handle them."
+Accepts new tcp connections and spawns async tasks to handle them.
 """
 function listenloop(
     f, listener, conns, tcpisvalid, max_connections, readtimeout, access_log, ready_to_accept,
-    conns_lock, verbose
+    conns_lock, verbose, error_handler=nothing,
 )
     sem = Base.Semaphore(max_connections)
     verbose >= 0 && @infov 1 "Listening on: $(listener.hostname):$(listener.hostport), thread id: $(Threads.threadid())"
@@ -398,7 +408,7 @@ function listenloop(
             Base.@lock conns_lock push!(conns, conn)
             conn.host, conn.port = listener.hostname, listener.hostport
             @async try
-                handle_connection(f, conn, listener, readtimeout, access_log)
+                handle_connection(f, conn, listener, readtimeout, access_log, error_handler)
             finally
                 # handle_connection is in charge of closing the underlying io
                 Base.@lock conns_lock delete!(conns, conn)
@@ -416,6 +426,7 @@ function listenloop(
                 # local error accepting and this might help avoid quickly re-erroring
                 sleep(0.05 + rand() * 0.05)
             end
+            error_callback(error_handler, e, :listenloop)
         end
     end
     return
@@ -428,7 +439,7 @@ for each HTTP Request received.
 After `reuse_limit + 1` transactions, signal `final_transaction` to the
 transaction handler, which will close the connection.
 """
-function handle_connection(f, c::Connection, listener, readtimeout, access_log)
+function handle_connection(f, c::Connection, listener, readtimeout, access_log, error_handler=nothing)
     wait_for_timeout = Ref{Bool}(true)
     if readtimeout > 0
         @async check_readtimeout(c, readtimeout, wait_for_timeout)
@@ -454,6 +465,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                     msg = current_exceptions_to_string()
                     "handle_connection startread error. $msg"
                 end
+                error_callback(error_handler, e, :startread)
                 break
             end
 
@@ -491,18 +503,20 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
                     closewrite(http)
                 end
                 c.state = CLOSING
+                error_callback(error_handler, e, :handler)
             finally
                 if access_log !== nothing
                     @try(Any, @info sprint(access_log, http) _group=:access)
                 end
             end
         end
-    catch
+    catch e
         # we should be catching everything inside the while loop, but just in case
         @errorv 1 begin
             msg = current_exceptions_to_string()
             "error while handling connection. $msg"
         end
+        error_handler(error_handler, e, :handle_connection)
     finally
         if readtimeout > 0
             wait_for_timeout[] = false

@@ -1,6 +1,7 @@
 module Exceptions
 
 export @try, HTTPError, ConnectError, TimeoutError, StatusError, RequestError, current_exceptions_to_string
+export AbstractErrorHandler, error_callback
 using LoggingExtras, ExceptionUnwrapping
 import ..HTTP # for doc references
 
@@ -108,5 +109,8 @@ function current_exceptions_to_string()
     Base.display_error(buf, exc)
     return String(take!(buf))
 end
+
+abstract type AbstractErrorHandler end
+error_callback(::Union{<:AbstractErrorHandler,Nothing}, ::Exception, ::Symbol) = nothing
 
 end # module Exceptions
