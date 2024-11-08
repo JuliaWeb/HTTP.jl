@@ -379,17 +379,17 @@ function listenloop(
     conns_lock, verbose
 )
     sem = Base.Semaphore(max_connections)
-    verbose >= 0 && @infov 1 "Listening on: $(listener.hostname):$(listener.hostport), thread id: $(Threads.threadid())"
+    verbose >= 0 && @info "Listening on: $(listener.hostname):$(listener.hostport), thread id: $(Threads.threadid())"
     notify(ready_to_accept)
     while isopen(listener)
         try
             Base.acquire(sem)
             io = accept(listener)
             if io === nothing
-                @warnv 1 "unable to accept new connection"
+                verbose >= 0 && @warn "unable to accept new connection"
                 continue
             elseif !tcpisvalid(io)
-                @warnv 1 "!tcpisvalid: $io"
+                verbose >= 0 && @warn "!tcpisvalid: $io"
                 close(io)
                 continue
             end
@@ -398,7 +398,7 @@ function listenloop(
             Base.@lock conns_lock push!(conns, conn)
             conn.host, conn.port = listener.hostname, listener.hostport
             @async try
-                handle_connection(f, conn, listener, readtimeout, access_log)
+                handle_connection(f, conn, listener, readtimeout, access_log, verbose)
             finally
                 # handle_connection is in charge of closing the underlying io
                 Base.@lock conns_lock delete!(conns, conn)
@@ -406,9 +406,9 @@ function listenloop(
             end
         catch e
             if e isa Base.IOError && e.code == Base.UV_ECONNABORTED
-                verbose >= 0 && @infov 1 "Server on $(listener.hostname):$(listener.hostport) closing"
+                verbose >= 0 && @info "Server on $(listener.hostname):$(listener.hostport) closing"
             else
-                @errorv 2 begin
+                verbose >= 1 && @error begin
                     msg = current_exceptions_to_string()
                     "Server on $(listener.hostname):$(listener.hostport) errored. $msg"
                 end
@@ -428,10 +428,10 @@ for each HTTP Request received.
 After `reuse_limit + 1` transactions, signal `final_transaction` to the
 transaction handler, which will close the connection.
 """
-function handle_connection(f, c::Connection, listener, readtimeout, access_log)
+function handle_connection(f, c::Connection, listener, readtimeout, access_log, verbose)
     wait_for_timeout = Ref{Bool}(true)
     if readtimeout > 0
-        @async check_readtimeout(c, readtimeout, wait_for_timeout)
+        @async check_readtimeout(c, readtimeout, wait_for_timeout, verbose)
     end
     try
         # if the connection socket or listener close, we stop taking requests
@@ -499,7 +499,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log)
         end
     catch
         # we should be catching everything inside the while loop, but just in case
-        @errorv 1 begin
+        verbose >= 0 && @error begin
             msg = current_exceptions_to_string()
             "error while handling connection. $msg"
         end
@@ -516,10 +516,10 @@ end
 """
 If `c` is inactive for a more than `readtimeout` then close the `c`."
 """
-function check_readtimeout(c, readtimeout, wait_for_timeout)
+function check_readtimeout(c, readtimeout, wait_for_timeout, verbose)
     while wait_for_timeout[]
         if inactiveseconds(c) > readtimeout
-            @warnv 2 "Connection Timeout: $c"
+            verbose >= 0 && @warn "Connection Timeout: $c"
             try
                 writeheaders(c, Response(408, ["Connection" => "close"]))
             finally
