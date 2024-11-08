@@ -128,3 +128,51 @@ function Base.unsafe_convert(P::Union{Type{Ptr{T}},Type{Ptr{Cvoid}}}, x::FieldRe
 end
 
 Base.pointer(x::FieldRef{S, T}) where {S, T} = Base.unsafe_convert(Ptr{T}, x)
+
+mutable struct Future{T}
+    const notify::Threads.Condition
+    @atomic set::Int8 # if 0, result is undefined, 1 means result is T, 2 means result is an exception
+    result::Union{Exception, T} # undefined initially
+    Future{T}() where {T} = new{T}(Threads.Condition(), 0)
+end
+
+function Base.wait(f::Future{T}) where {T}
+    set = @atomic f.set
+    set == 1 && return f.result::T
+    set == 2 && throw(f.result::Exception)
+    lock(f.notify) # acquire barrier
+    try
+        set = f.set
+        set == 1 && return f.result::T
+        set == 2 && throw(f.result::Exception)
+        wait(f.notify)
+    finally
+        unlock(f.notify) # release barrier
+    end
+    if f.set == 1
+        return f.result::T
+    else
+        @assert isdefined(f, :result)
+        throw(f.result::Exception)
+    end
+end
+
+function Base.notify(f::Future{T}, x::Union{Exception, T}) where {T}
+    lock(f.notify) # acquire barrier
+    try
+        if f.set == Int8(0)
+            if x isa Exception
+                set = Int8(2)
+                f.result = x
+            else
+                set = Int8(1)
+                f.result = x
+            end
+            @atomic :release f.set = set
+            notify(f.notify)
+        end
+    finally
+        unlock(f.notify)
+    end
+    nothing
+end

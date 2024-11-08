@@ -8,151 +8,212 @@ export WebSockets
 include("utils.jl")
 include("types.jl")
 
-# we use finalizers only because Clients are meant to be global consts and never
-# short-lived, temporary objects that should clean themselves up efficiently
-mutable struct Client
-    scheme::SubString{String}
-    host::SubString{String}
+Base.@kwdef struct ClientSettings
+    scheme::String
+    host::String
     port::UInt32
-    allocator::Ptr{aws_allocator}
-    socket_options::Base.RefValue{aws_socket_options}
-    tls_options::Base.RefValue{aws_tls_connection_options}
-    retry_options::Base.RefValue{aws_standard_retry_options}
-    retry_strategy::Ptr{Cvoid}
-    retry_timeout_ms::Int
-    conn_manager_opts::Base.RefValue{aws_http_connection_manager_options}
-    connection_manager::Ptr{Cvoid}
-
-    function Client(scheme::SubString{String}, host::SubString{String}, port::UInt32, require_ssl_verification::Bool;
-        allocator=default_aws_allocator(),
-        bootstrap=default_aws_client_bootstrap(),
-        event_loop_group=default_aws_event_loop_group(),
-        # retry options
-        max_retries::Integer=10,
-        backoff_scale_factor_ms::Integer=25,
-        max_backoff_secs::Integer=20,
-        jitter_mode::aws_exponential_backoff_jitter_mode=AWS_EXPONENTIAL_BACKOFF_JITTER_DEFAULT,
-        retry_timeout_ms::Integer=60000,
-        initial_bucket_capacity::Integer=500,
-        # socket options
-        socket_domain=:ipv4,
-        connect_timeout_ms::Integer=3000,
-        keep_alive_interval_sec::Integer=0,
-        keep_alive_timeout_sec::Integer=0,
-        keep_alive_max_failed_probes::Integer=0,
-        keepalive::Bool=false,
-        # tls options
-        ssl_cert=nothing,
-        ssl_key=nothing,
-        ssl_capath=nothing,
-        ssl_cacert=nothing,
-        ssl_insecure=!require_ssl_verification,
-        ssl_alpn_list="h2;http/1.1",
-        # connection manager options
-        max_connections::Integer=512,
-        max_connection_idle_in_milliseconds::Integer=60000,
-        enable_read_back_pressure::Bool=false,
-        # other options
-        http2_prior_knowledge::Bool=false
-    )
-        # retry strategy
-        exp_back_opts = aws_exponential_backoff_retry_options(
-            event_loop_group,
-            max_retries,
-            backoff_scale_factor_ms,
-            max_backoff_secs,
-            jitter_mode,
-            C_NULL, # generate_random
-            C_NULL, # generate_random_impl
-            C_NULL, # generate_random_user_data
-            C_NULL, # shutdown_options::Ptr{aws_shutdown_callback_options}
-        )
-        retry_opts = Ref(aws_standard_retry_options(
-            exp_back_opts,
-            initial_bucket_capacity
-        ))
-        retry_strategy = aws_retry_strategy_new_standard(allocator, retry_opts)
-        retry_strategy == C_NULL && aws_throw_error()
-        # socket options
-        socket_options = Ref(aws_socket_options(
-            AWS_SOCKET_STREAM, # socket type
-            socket_domain == :ipv4 ? AWS_SOCKET_IPV4 : AWS_SOCKET_IPV6, # socket domain
-            connect_timeout_ms,
-            keep_alive_interval_sec,
-            keep_alive_timeout_sec,
-            keep_alive_max_failed_probes,
-            keepalive,
-            ntuple(x -> Cchar(0), 16) # network_interface_name
-        ))
-        # tls options
-        host_str = String(host)
-        if scheme == "https" || scheme == "wss"
-            tls_options = Ref(LibAwsIO.tlsoptions(host_str;
-                ssl_cert,
-                ssl_key,
-                ssl_capath,
-                ssl_cacert,
-                ssl_insecure,
-                ssl_alpn_list
-            ))
-        else
-            tls_options = Ref{aws_tls_connection_options}()
-        end
-        conn_manager_opts = Ref(aws_http_connection_manager_options(
-            bootstrap,
-            typemax(Csize_t), # initial_window_size::Csize_t
-            Base.unsafe_convert(Ptr{aws_socket_options}, socket_options),
-            scheme == "https" || scheme == "wss" ? Base.unsafe_convert(Ptr{aws_tls_connection_options}, tls_options) : C_NULL,
-            http2_prior_knowledge,
-            C_NULL, # monitoring_options::Ptr{aws_http_connection_monitoring_options}
-            aws_byte_cursor_from_c_str(host_str),
-            port % UInt32,
-            C_NULL, # initial_settings_array::Ptr{aws_http2_setting}
-            0, # num_initial_settings::Csize_t
-            0, # max_closed_streams::Csize_t
-            false, # http2_conn_manual_window_management::Bool
-            C_NULL, # proxy_options::Ptr{aws_http_proxy_options}
-            C_NULL, # proxy_ev_settings::Ptr{proxy_env_var_settings}
-            max_connections, # max_connections::Csize_t, 512
-            C_NULL, # shutdown_complete_user_data::Ptr{Cvoid}
-            C_NULL, # shutdown_complete_callback::Ptr{aws_http_connection_manager_shutdown_complete_fn}
-            enable_read_back_pressure, # enable_read_back_pressure::Bool
-            max_connection_idle_in_milliseconds,
-            C_NULL, # network_interface_names_array
-            0, # num_network_interface_names
-        ))
-        connection_manager = aws_http_connection_manager_new(allocator, conn_manager_opts)
-        connection_manager == C_NULL && aws_throw_error()
-        client = new(scheme, host, port, allocator, socket_options, tls_options, retry_opts, retry_strategy, retry_timeout_ms, conn_manager_opts, connection_manager)
-        finalizer(client) do x
-            if x.connection_manager != C_NULL
-                aws_http_connection_manager_release(x.connection_manager)
-                x.connection_manager = C_NULL
-            end
-            if x.retry_strategy != C_NULL
-                aws_retry_strategy_release(x.retry_strategy)
-                x.retry_strategy = C_NULL
-            end
-        end
-        return client
-    end
+    allocator::Ptr{aws_allocator} = default_aws_allocator()
+    bootstrap::Ptr{aws_client_bootstrap} = default_aws_client_bootstrap()
+    event_loop_group::Ptr{aws_event_loop_group} = default_aws_event_loop_group()
+    socket_domain::Symbol = :ipv4
+    connect_timeout_ms::Int = 3000
+    keep_alive_interval_sec::Int = 0
+    keep_alive_timeout_sec::Int = 0
+    keep_alive_max_failed_probes::Int = 0
+    keepalive::Bool = false
+    ssl_cert::Union{Nothing, String} = nothing
+    ssl_key::Union{Nothing, String} = nothing
+    ssl_capath::Union{Nothing, String} = nothing
+    ssl_cacert::Union{Nothing, String} = nothing
+    ssl_insecure::Bool = false
+    ssl_alpn_list::String = "h2;http/1.1"
+    proxy_allow_env_var::Bool = true
+    proxy_connection_type::Union{Nothing, Symbol} = nothing
+    proxy_host::Union{Nothing, String} = nothing
+    proxy_port::Union{Nothing, UInt32} = nothing
+    proxy_ssl_cert::Union{Nothing, String} = nothing
+    proxy_ssl_key::Union{Nothing, String} = nothing
+    proxy_ssl_capath::Union{Nothing, String} = nothing
+    proxy_ssl_cacert::Union{Nothing, String} = nothing
+    proxy_ssl_insecure::Bool = false
+    proxy_ssl_alpn_list::String = "h2;http/1.1"
+    retry_partition::Union{Nothing, String} = nothing
+    max_retries::Int = 10
+    backoff_scale_factor_ms::Int = 25
+    max_backoff_secs::Int = 20
+    jitter_mode::aws_exponential_backoff_jitter_mode = AWS_EXPONENTIAL_BACKOFF_JITTER_DEFAULT
+    retry_timeout_ms::Int = 60000
+    initial_bucket_capacity::Int = 500
+    max_connections::Int = 512
+    max_connection_idle_in_milliseconds::Int = 60000
+    enable_read_back_pressure::Bool = false
+    http2_prior_knowledge::Bool = false
 end
 
+ClientSettings(scheme::AbstractString, host::AbstractString, port::UInt32; kw...) = ClientSettings(scheme=String(scheme), host=String(host), port=port, kw...)
+
+# make a new ClientSettings object from an existing one w/ just different url values
+@generated function ClientSettings(cs::ClientSettings, scheme::AbstractString, host::AbstractString, port::Integer)
+    ex = :(ClientSettings(String(scheme), String(host), port % UInt32))
+    for i = 4:fieldcount(ClientSettings)
+        push!(ex.args, :(getfield(cs, $(Meta.quot(fieldname(ClientSettings, i))))))
+    end
+    return ex
+end
+
+mutable struct Client
+    settings::ClientSettings
+    socket_options::aws_socket_options
+    tls_options::Union{Nothing, aws_tls_connection_options}
+    # only 1 of proxy_options or proxy_env_settings is set
+    proxy_options::Union{Nothing, aws_http_proxy_options}
+    proxy_env_settings::Union{Nothing, proxy_env_var_settings}
+    retry_options::aws_standard_retry_options
+    retry_strategy::Ptr{aws_retry_strategy}
+    conn_manager_opts::aws_http_connection_manager_options
+    connection_manager::Ptr{aws_http_connection_manager}
+
+    Client() = new()
+end
+
+Client(scheme::AbstractString, host::AbstractString, port::UInt32; kw...) = Client(ClientSettings(scheme, host, port; kw...))
+
+function Client(cs::ClientSettings)
+    client = Client()
+    client.settings = cs
+    # socket options
+    client.socket_options = aws_socket_options(
+        AWS_SOCKET_STREAM, # socket type
+        cs.socket_domain == :ipv4 ? AWS_SOCKET_IPV4 : AWS_SOCKET_IPV6, # socket domain
+        cs.connect_timeout_ms,
+        cs.keep_alive_interval_sec,
+        cs.keep_alive_timeout_sec,
+        cs.keep_alive_max_failed_probes,
+        cs.keepalive,
+        ntuple(x -> Cchar(0), 16) # network_interface_name
+    )
+    # tls options
+    if cs.scheme == "https" || cs.scheme == "wss"
+        client.tls_options = LibAwsIO.tlsoptions(cs.host;
+            cs.ssl_cert,
+            cs.ssl_key,
+            cs.ssl_capath,
+            cs.ssl_cacert,
+            cs.ssl_insecure,
+            cs.ssl_alpn_list
+        )
+    else
+        client.tls_options = nothing
+    end
+    # proxy options
+    if cs.proxy_host !== nothing && cs.proxy_port !== nothing
+        client.proxy_options = aws_http_proxy_options(
+            cs.proxy_connection_type == :forward ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL,
+            aws_byte_cursor_from_c_str(cs.proxy_host),
+            cs.proxy_port % UInt32,
+            cs.proxy_ssl_cert === nothing ? C_NULL : LibAwsIO.tlsoptions(cs.proxy_host;
+                cs.proxy_ssl_cert,
+                cs.proxy_ssl_key,
+                cs.proxy_ssl_capath,
+                cs.proxy_ssl_cacert,
+                cs.proxy_ssl_insecure,
+                cs.proxy_ssl_alpn_list
+            ),
+            #TODO: support proxy_strategy
+            C_NULL, # proxy_strategy::Ptr{aws_http_proxy_strategy}
+            0, # auth_type::aws_http_proxy_authentication_type
+            aws_byte_cursor_from_c_str(""), # auth_username::aws_byte_cursor
+            aws_byte_cursor_from_c_str(""), # auth_password::aws_byte_cursor
+        )
+    elseif cs.proxy_allow_env_var
+        client.proxy_env_settings = proxy_env_var_settings(
+            AWS_HPEV_ENABLE,
+            cs.proxy_connection_type == :forward ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL,
+            cs.proxy_ssl_cert === nothing ? C_NULL : LibAwsIO.tlsoptions(cs.proxy_host;
+                cs.proxy_ssl_cert,
+                cs.proxy_ssl_key,
+                cs.proxy_ssl_capath,
+                cs.proxy_ssl_cacert,
+                cs.proxy_ssl_insecure,
+                cs.proxy_ssl_alpn_list
+            )
+        )
+    else
+        client.proxy_options = nothing
+    end
+    # retry strategy
+    exp_back_opts = aws_exponential_backoff_retry_options(
+        cs.event_loop_group,
+        cs.max_retries,
+        cs.backoff_scale_factor_ms,
+        cs.max_backoff_secs,
+        cs.jitter_mode,
+        C_NULL, # generate_random
+        C_NULL, # generate_random_impl
+        C_NULL, # generate_random_user_data
+        C_NULL, # shutdown_options::Ptr{aws_shutdown_callback_options}
+    )
+    client.retry_options = aws_standard_retry_options(
+        exp_back_opts,
+        cs.initial_bucket_capacity
+    )
+    client.retry_strategy = aws_retry_strategy_new_standard(cs.allocator, FieldRef(client, :retry_options))
+    client.retry_strategy == C_NULL && aws_throw_error()
+    client.conn_manager_opts = aws_http_connection_manager_options(
+        cs.bootstrap,
+        typemax(Csize_t), # initial_window_size::Csize_t
+        pointer(FieldRef(client, :socket_options)),
+        (cs.scheme == "https" || cs.scheme == "wss") ? pointer(FieldRef(client, :tls_options)) : C_NULL,
+        cs.http2_prior_knowledge,
+        C_NULL, # monitoring_options::Ptr{aws_http_connection_monitoring_options}
+        aws_byte_cursor_from_c_str(cs.host),
+        cs.port % UInt32,
+        C_NULL, # initial_settings_array::Ptr{aws_http2_setting}
+        0, # num_initial_settings::Csize_t
+        0, # max_closed_streams::Csize_t
+        false, # http2_conn_manual_window_management::Bool
+        client.proxy_options === nothing ? C_NULL : pointer(FieldRef(client, :proxy_options)), # proxy_options::Ptr{aws_http_proxy_options}
+        client.proxy_env_settings === nothing ? C_NULL : pointer(FieldRef(client, :proxy_env_settings)), # proxy_env_settings::Ptr{proxy_env_var_settings}
+        cs.max_connections, # max_connections::Csize_t, 512
+        C_NULL, # shutdown_complete_user_data::Ptr{Cvoid}
+        C_NULL, # shutdown_complete_callback::Ptr{aws_http_connection_manager_shutdown_complete_fn}
+        cs.enable_read_back_pressure, # enable_read_back_pressure::Bool
+        cs.max_connection_idle_in_milliseconds,
+        C_NULL, # network_interface_names_array
+        0, # num_network_interface_names
+    )
+    client.connection_manager = aws_http_connection_manager_new(cs.allocator, FieldRef(client, :conn_manager_opts))
+    client.connection_manager == C_NULL && aws_throw_error()
+
+    finalizer(client) do x
+        if x.connection_manager != C_NULL
+            aws_http_connection_manager_release(x.connection_manager)
+            x.connection_manager = C_NULL
+        end
+        if x.retry_strategy != C_NULL
+            aws_retry_strategy_release(x.retry_strategy)
+            x.retry_strategy = C_NULL
+        end
+    end
+    return client
+end
+
+#TODO: this should probably be a LRU cache to not grow indefinitely
 struct Clients
     lock::ReentrantLock
-    clients::Dict{Tuple{SubString{String}, SubString{String}, UInt32, Bool}, Client}
+    clients::Dict{ClientSettings, Client}
 end
 
-Clients() = Clients(ReentrantLock(), Dict{Tuple{SubString{String}, SubString{String}, UInt32, Bool}, Client}())
+Clients() = Clients(ReentrantLock(), Dict{ClientSettings, Client}())
 
 const CLIENTS = Clients()
 
-function getclient(key::Tuple{SubString{String}, SubString{String}, UInt32, Bool})
+function getclient(key::ClientSettings)
     Base.@lock CLIENTS.lock begin
         if haskey(CLIENTS.clients, key)
             return CLIENTS.clients[key]
         else
-            client = Client(key...)
+            client = Client(key)
             CLIENTS.clients[key] = client
             return client
         end
@@ -229,7 +290,9 @@ function setuseragent!(x::Union{String, Nothing})
 end
 
 include("forms.jl"); using .Forms
-include("redirects.jl"); 
+include("redirects.jl");
+include("retry.jl")
+include("connection.jl")
 include("client.jl")
 include("websockets.jl"); using .WebSockets
 include("server.jl")
@@ -258,16 +321,16 @@ function __init__()
     @assert aws_logger_init_standard(LOGGER[], allocator, LOGGER_OPTIONS) == 0
     aws_logger_set(LOGGER[])
     # intialize c functions
-    on_acquired[] = @cfunction(c_on_acquired, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}, Ptr{Cvoid}))
-    on_shutdown[] = @cfunction(c_on_shutdown, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
-    on_setup[] = @cfunction(c_on_setup, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
-    on_response_headers[] = @cfunction(c_on_response_headers, Cint, (Ptr{Cvoid}, Cint, Ptr{aws_http_header}, Csize_t, Ptr{Cvoid}))
-    on_response_header_block_done[] = @cfunction(c_on_response_header_block_done, Cint, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
-    on_response_body[] = @cfunction(c_on_response_body, Cint, (Ptr{Cvoid}, Ptr{aws_byte_cursor}, Ptr{Cvoid}))
-    on_metrics[] = @cfunction(c_on_metrics, Cvoid, (Ptr{Cvoid}, Ptr{StreamMetrics}, Ptr{Cvoid}))
-    on_complete[] = @cfunction(c_on_complete, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
-    on_destroy[] = @cfunction(c_on_destroy, Cvoid, (Ptr{Cvoid},))
-    retry_ready[] = @cfunction(c_retry_ready, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
+    on_acquired[] = @cfunction(c_on_acquired, Cvoid, (Ptr{Cvoid}, Cint, Ptr{aws_retry_token}, Ptr{Cvoid}))
+    # on_shutdown[] = @cfunction(c_on_shutdown, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
+    on_setup[] = @cfunction(c_on_setup, Cvoid, (Ptr{aws_http_connection}, Cint, Ptr{Cvoid}))
+    # on_response_headers[] = @cfunction(c_on_response_headers, Cint, (Ptr{Cvoid}, Cint, Ptr{aws_http_header}, Csize_t, Ptr{Cvoid}))
+    # on_response_header_block_done[] = @cfunction(c_on_response_header_block_done, Cint, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
+    # on_response_body[] = @cfunction(c_on_response_body, Cint, (Ptr{Cvoid}, Ptr{aws_byte_cursor}, Ptr{Cvoid}))
+    # on_metrics[] = @cfunction(c_on_metrics, Cvoid, (Ptr{Cvoid}, Ptr{StreamMetrics}, Ptr{Cvoid}))
+    # on_complete[] = @cfunction(c_on_complete, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
+    # on_destroy[] = @cfunction(c_on_destroy, Cvoid, (Ptr{Cvoid},))
+    retry_ready[] = @cfunction(c_retry_ready, Cvoid, (Ptr{aws_retry_token}, Cint, Ptr{Cvoid}))
     on_incoming_connection[] = @cfunction(c_on_incoming_connection, Cvoid, (Ptr{Cvoid}, Ptr{Cvoid}, Cint, Ptr{Cvoid}))
     on_connection_shutdown[] = @cfunction(c_on_connection_shutdown, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
     on_incoming_request[] = @cfunction(c_on_incoming_request, Ptr{aws_http_stream}, (Ptr{aws_http_connection}, Ptr{Cvoid}))
