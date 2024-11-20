@@ -631,4 +631,9 @@ function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
     return m
 end
 
+# only run if precompiling
+if ccall(:jl_generating_output, Cint, ()) == 1
+    include("precompile.jl")
+end
+
 end # module
