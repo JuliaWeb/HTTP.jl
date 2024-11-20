@@ -9,9 +9,14 @@ using PrecompileTools: @setup_workload, @compile_workload
 
     gzip_data(data::String) = read(GzipCompressorStream(IOBuffer(data)))
 
-    server = HTTP.serve!("0.0.0.0"; verbose = -1, listenany=true) do req
+    # random port in the dynamic/private range (49152–65535) which are are
+    # least likely to be used by well-known services
+    _port = 57813
+
+    server = HTTP.serve!("0.0.0.0", _port; verbose = -1, listenany=true) do req
         HTTP.Response(200,  ["Content-Encoding" => "gzip"], gzip_data("dummy response"))
     end
+    # listenany allows changing port if that one is already in use, so check the actual port
     _port = HTTP.port(server)
 
     @compile_workload begin
