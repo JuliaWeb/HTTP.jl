@@ -1,11 +1,13 @@
 using PrecompileTools: @setup_workload, @compile_workload
 
 @setup_workload begin
-    # TODO: Are these all safe to call here and bake into the pkgimage?
+    # These need to be safe to call here and bake into the pkgimage, i.e. called twice.
     Connections.__init__()
     MultiPartParsing.__init__()
     Parsers.__init__()
-    ConnectionRequest.__init__()
+
+    # Doesn't seem to be needed here, and might not be safe to call twice (here and during runtime)
+    # ConnectionRequest.__init__()
 
     gzip_data(data::String) = read(GzipCompressorStream(IOBuffer(data)))
 
