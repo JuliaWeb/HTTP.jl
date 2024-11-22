@@ -15,14 +15,23 @@ using PrecompileTools: @setup_workload, @compile_workload
     # least likely to be used by well-known services
     _port = 57813
 
-    server = HTTP.serve!("0.0.0.0", _port; verbose = -1, listenany=true) do req
+    cert, key = joinpath.(@__DIR__, "../test", "resources", ("cert.pem", "key.pem"))
+    sslconfig = MbedTLS.SSLConfig(cert, key)
+
+    server = HTTP.serve!("0.0.0.0", _port; verbose = -1, listenany=true, sslconfig=sslconfig) do req
         HTTP.Response(200,  ["Content-Encoding" => "gzip"], gzip_data("dummy response"))
     end
     # listenany allows changing port if that one is already in use, so check the actual port
     _port = HTTP.port(server)
+    url = "https://localhost:$_port"
 
-    @compile_workload begin
-        HTTP.get("http://localhost:$_port")
+    env = ["JULIA_NO_VERIFY_HOSTS" => "localhost",
+           "JULIA_SSL_NO_VERIFY_HOSTS" => nothing,
+           "JULIA_ALWAYS_VERIFY_HOSTS" => nothing]
+    withenv(env...) do
+        @compile_workload begin
+            HTTP.get(url);
+        end
     end
 
     HTTP.forceclose(server)
