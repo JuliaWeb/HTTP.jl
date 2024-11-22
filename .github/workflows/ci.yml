@@ -35,6 +35,9 @@ jobs:
           - os: windows-latest
             version: '1'
             arch: x86
+        exclude:
+          - os: macOS-latest
+            version: 'min' # no apple silicon support for Julia 1.6
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
