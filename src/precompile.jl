@@ -11,10 +11,6 @@ using PrecompileTools: @setup_workload, @compile_workload
 
     gzip_data(data::String) = read(GzipCompressorStream(IOBuffer(data)))
 
-    # random port in the dynamic/private range (49152–65535) which are are
-    # least likely to be used by well-known services
-    _port = 57813
-
     cert, key = joinpath.(@__DIR__, "../test", "resources", ("cert.pem", "key.pem"))
     sslconfig = MbedTLS.SSLConfig(cert, key)
 
