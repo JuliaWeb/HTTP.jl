@@ -631,8 +631,8 @@ function Base.parse(::Type{T}, str::AbstractString)::T where T <: Message
     return m
 end
 
-# only run if precompiling pkgimages
-if VERSION >= v"1.9.0-0" && Base.JLOptions().use_pkgimages != 0 && ccall(:jl_generating_output, Cint, ()) == 1
+# only run if precompiling
+if VERSION >= v"1.9.0-0" && ccall(:jl_generating_output, Cint, ()) == 1
     include("precompile.jl")
 end
 
