@@ -23,6 +23,7 @@ jobs:
         version:
           - 'min'
           - 'lts'
+          - '1.9' # test because we know there's a precompilation issue that should be fixed
           - '1' # automatically expands to the latest stable 1.x release of Julia
           - 'nightly'
         os:
