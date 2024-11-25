@@ -35,5 +35,6 @@ using PrecompileTools: @setup_workload, @compile_workload
     end
 
     HTTP.forceclose(server)
+    yield() # needed on 1.9 to avoid some issue where it seems a task doesn't stop before serialization
     server = nothing
 end
