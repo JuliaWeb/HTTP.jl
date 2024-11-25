@@ -1,5 +1,4 @@
 @testset "Client.jl" begin
-    isok(r) = r.status == 200
     @testset "GET, HEAD, POST, PUT, DELETE, PATCH: $scheme" for scheme in ["http", "https"]
         @test isok(HTTP.get("$scheme://$httpbin/ip"))
         @test isok(HTTP.head("$scheme://$httpbin/ip"))
@@ -23,7 +22,7 @@
     end
 
     @testset "ASync Client Requests" begin
-        @test isok(fetch(@async HTTP.get("https://$httpbin/ip")))
+        @test isok(fetch(Threads.@spawn HTTP.get("https://$httpbin/ip")))
         @test isok(HTTP.get("https://$httpbin/encoding/utf8"))
     end
 
@@ -33,90 +32,85 @@
         @test (haskey(h, "Hey") ? h["Hey"] == "dude" : h["hey"] == "dude")
     end
 
-    # @testset "Cookie Requests" begin
-    #     empty!(HTTP.COOKIEJAR)
-    #     url = "https://$httpbin/cookies"
-    #     r = HTTP.get(url, cookies=true)
-    #     @test String(r.body) == "{}"
-    #     cookies = HTTP.Cookies.getcookies!(HTTP.COOKIEJAR, URI(url))
-    #     @test isempty(cookies)
+    @testset "Cookie Requests" begin
+        empty!(HTTP.COOKIEJAR)
+        url = "https://$httpbin/cookies"
+        r = HTTP.get(url, cookies=true)
+        @test String(r.body) == "{}"
+        cookies = HTTP.Cookies.getcookies!(HTTP.COOKIEJAR, "https", httpbin, "/cookies")
+        @test isempty(cookies)
 
-    #     url = "https://$httpbin/cookies/set?hey=sailor&foo=bar"
-    #     r = HTTP.get(url, cookies=true)
-    #     @test isok(r)
-    #     cookies = HTTP.Cookies.getcookies!(HTTP.COOKIEJAR, URI(url))
-    #     @test length(cookies) == 2
+        url = "https://$httpbin/cookies/set?hey=sailor&foo=bar"
+        r = HTTP.get(url, cookies=true)
+        @test isok(r)
+        @test String(r.body) == "{\"foo\":\"bar\",\"hey\":\"sailor\"}"
+        cookies = HTTP.Cookies.getcookies!(HTTP.COOKIEJAR, "https", httpbin, "/cookies")
+        @test length(cookies) == 2
 
-    #     url = "https://$httpbin/cookies/delete?hey"
-    #     r = HTTP.get(url)
-    #     cookies = HTTP.Cookies.getcookies!(HTTP.COOKIEJAR, URI(url))
-    #     @test length(cookies) == 1
-    # end
+        url = "https://$httpbin/cookies/delete?hey"
+        r = HTTP.get(url)
+        @test isok(r)
+        @test String(r.body) == "{\"foo\":\"bar\"}"
+        cookies = HTTP.Cookies.getcookies!(HTTP.COOKIEJAR, "https", httpbin, "/cookies")
+        @test length(cookies) == 1
+    end
 
     @testset "Client Streaming Test" begin
-        r = HTTP.post("https://$httpbin/post"; body="hey")
+        r = HTTP.post("https://$httpbin/anything"; body="hey")
         @test isok(r)
-        # @test JSONBase.materialize(r.body)["data"] == "hey"
+        @test contains(String(r.body), "\"data\":\"hey\"")
 
         r = HTTP.get("https://$httpbin/stream/100")
         @test isok(r)
-
-        # x = JSONBase.materialize(r.body; jsonlines=true);
+        x = map(String, split(String(r.body), '\n'; keepempty=false))
+        @test length(x) == 100
 
         io = IOBuffer()
         r = HTTP.get("https://$httpbin/stream/100"; response_body=io)
-        seekstart(io)
         @test isok(r)
-
-        # x2 = JSONBase.materialize(io; jsonlines=true);
-        # @test x == x2
+        x2 = map(String, split(String(take!(io)), '\n'; keepempty=false))
+        @test x == x2
 
         # pass pre-allocated buffer
         body = zeros(UInt8, 100)
         r = HTTP.get("https://$httpbin/bytes/100"; response_body=body)
-        @test body === r.body
-
-        # wrapping pre-allocated buffer in IOBuffer will write to buffer directly
-        io = IOBuffer(body; write=true)
-        r = HTTP.get("https://$httpbin/bytes/100"; response_body=io)
-        @test body === r.body.data
+        @test length(body) == 100
+        @test all(x -> x != 0, body)
 
         # if provided buffer is too small, we won't grow it for user
         body = zeros(UInt8, 10)
-        @test_throws CapturedException HTTP.get("https://$httpbin/bytes/100"; response_body=body)
+        @test_throws BoundsError HTTP.get("https://$httpbin/bytes/100"; response_body=body)
 
         # also won't shrink it if buffer provided is larger than response body
         body = zeros(UInt8, 10)
         r = HTTP.get("https://$httpbin/bytes/5"; response_body=body)
-        @test body === r.body
         @test length(body) == 10
-        @test HTTP.getheader(r.headers, "Content-Length") == "5"
+        @test all(x -> x == 0, body[6:end])
 
         # but if you wrap it in a writable IOBuffer, we will grow it
         io = IOBuffer(body; write=true)
         r = HTTP.get("https://$httpbin/bytes/100"; response_body=io)
-        # same Array, though it was resized larger
-        @test body === r.body.data
-        @test length(body) == 100
+        @test length(take!(io)) == 100
 
         # and you can reuse it
         seekstart(io)
         r = HTTP.get("https://$httpbin/bytes/100"; response_body=io)
-        # same Array, though it was resized larger
-        @test body === r.body.data
-        @test length(body) == 100
+        @test length(take!(io)) == 100
 
         # we respect ptr and size
         body = zeros(UInt8, 100)
         io = IOBuffer(body; write=true, append=true) # size=100, ptr=1
         r = HTTP.get("https://$httpbin/bytes/100"; response_body=io)
-        @test length(body) == 200
+        @test length(take!(io)) == 200
 
         body = zeros(UInt8, 100)
         io = IOBuffer(body, write=true, append=false)
         write(io, body) # size=100, ptr=101
         r = HTTP.get("https://$httpbin/bytes/100"; response_body=io)
-        @test length(body) == 200
+        @test length(take!(io)) == 200
+
+        # status error response body handling
+        r = HTTP.post("https://$httpbin/status/404"; status_exception=false)
     end
 
     @testset "Client Body Posting - Vector{UTF8}, String, IOStream, IOBuffer, BufferStream, Dict, NamedTuple" begin
@@ -145,12 +139,14 @@
     @testset "ASync Client Request Body" begin
         f = Base.BufferStream()
         write(f, "hey")
-        t = @async HTTP.post("https://$httpbin/post"; body=f)
+        t = Threads.@spawn HTTP.post("https://$httpbin/post"; body=f)
         #fetch(f) # fetch for the async call to write it's first data
         write(f, " there ") # as we write to f, it triggers another chunk to be sent in our async request
         write(f, "sailor")
         close(f) # setting eof on f causes the async request to send a final chunk and return the response
-        @test isok(fetch(t))
+        r = fetch(t)
+        @test isok(r)
+        @test contains(String(r.body), "\"data\":\"hey there sailor\"")
     end
 
     @testset "Client Redirect Following - $read_method" for read_method in ["GET", "HEAD"]
@@ -162,46 +158,72 @@
         @test isok(HTTP.request(read_method, "https://$httpbin/redirect-to?url=http%3A%2F%2Fgoogle.com"))
     end
 
-    # @testset "Client Basic Auth" begin
-    #     @test isok(HTTP.get("https://user:pwd@$httpbin/basic-auth/user/pwd"))
-    #     @test isok(HTTP.get("https://user:pwd@$httpbin/hidden-basic-auth/user/pwd"))
-    #     @test isok(HTTP.get("https://test:%40test@$httpbin/basic-auth/test/%40test"))
-    # end
+    @testset "Client Basic Auth" begin
+        @test isok(HTTP.get("https://user:pwd@$httpbin/basic-auth/user/pwd"))
+        @test isok(HTTP.get("https://user:pwd@$httpbin/hidden-basic-auth/user/pwd"))
+        @test isok(HTTP.get("https://test:%40test@$httpbin/basic-auth/test/%40test"))
+        @test isok(HTTP.get("https://$httpbin/basic-auth/user/pwd"; username="user", password="pwd"))
+    end
 
-    # @testset "Misc" begin
-    #     @test isok(HTTP.post("https://$httpbin/post"; body="√"))
-    #     r = HTTP.request("GET", "https://$httpbin/ip")
-    #     @test isok(r)
+    @testset "Misc" begin
+        @test isok(HTTP.post("https://$httpbin/post"; body="√"))
+        r = HTTP.request("GET", "https://$httpbin/ip")
+        @test isok(r)
 
-    #     uri = HTTP.URI("https://$httpbin/ip")
-    #     r = HTTP.request("GET", uri)
-    #     @test isok(r)
-    #     r = HTTP.get(uri)
-    #     @test isok(r)
+        uri = HTTP.URI("https://$httpbin/ip")
+        r = HTTP.request("GET", uri)
+        @test isok(r)
+        r = HTTP.get(uri)
+        @test isok(r)
 
-    #     r = HTTP.request("GET", "https://$httpbin/ip")
-    #     @test isok(r)
+        # ensure we can use AbstractString for requests
+        r = HTTP.get(SubString("https://$httpbin/ip",1))
+        @test isok(r)
 
-    #     uri = HTTP.URI("https://$httpbin/ip")
-    #     r = HTTP.request("GET", uri)
-    #     @test isok(r)
+        # Ensure HEAD requests stay the same through redirects by default
+        r = HTTP.head("https://$httpbin/redirect/1")
+        @test r.request.method == "HEAD"
+        @test iszero(length(r.body))
+        # But if explicitly requested, GET can be used instead
+        r = HTTP.head("https://$httpbin/redirect/1"; redirect_method="GET")
+        @test r.request.method == "GET"
+        @test length(r.body) > 0
+    end
 
-    #     r = HTTP.get("https://$httpbin/image/png")
-    #     @test isok(r)
+    @testset "readtimeout" begin
+        @test_throws CapturedException HTTP.get("http://$httpbin/delay/5"; readtimeout=1, max_retries=0)
+        @test isok(HTTP.get("http://$httpbin/delay/1"; readtimeout=2, max_retries=0))
+    end
 
-    #     # ensure we can use AbstractString for requests
-    #     r = HTTP.get(SubString("https://$httpbin/ip",1))
-
-    #     # canonicalizeheaders
-    #     @test isok(HTTP.get("https://$httpbin/ip"; canonicalizeheaders=false))
-
-    #     # Ensure HEAD requests stay the same through redirects by default
-    #     r = HTTP.head("https://$httpbin/redirect/1")
-    #     @test r.request.method == "HEAD"
-    #     @test iszero(length(r.body))
-    #     # But if explicitly requested, GET can be used instead
-    #     r = HTTP.head("https://$httpbin/redirect/1"; redirect_method="GET")
-    #     @test r.request.method == "GET"
-    #     @test length(r.body) > 0
-    # end
+    @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
+        headers = Dict("User-Agent" => "HTTP.jl")
+        query = Dict("hello" => "world")
+        body = UInt8[1, 2, 3]
+        for uri in ("https://$httpbin/anything", HTTP.URI("https://$httpbin/anything"))
+            # HTTP.request
+            @test isok(HTTP.request("GET", uri; headers=headers, body=body, query=query))
+            @test isok(HTTP.request("GET", uri, headers; body=body, query=query))
+            @test isok(HTTP.request("GET", uri, headers, body; query=query))
+            # HTTP.get
+            @test isok(HTTP.get(uri; headers=headers, body=body, query=query))
+            @test isok(HTTP.get(uri, headers; body=body, query=query))
+            @test isok(HTTP.get(uri, headers, body; query=query))
+            # HTTP.put
+            @test isok(HTTP.put(uri; headers=headers, body=body, query=query))
+            @test isok(HTTP.put(uri, headers; body=body, query=query))
+            @test isok(HTTP.put(uri, headers, body; query=query))
+            # HTTP.post
+            @test isok(HTTP.post(uri; headers=headers, body=body, query=query))
+            @test isok(HTTP.post(uri, headers; body=body, query=query))
+            @test isok(HTTP.post(uri, headers, body; query=query))
+            # HTTP.patch
+            @test isok(HTTP.patch(uri; headers=headers, body=body, query=query))
+            @test isok(HTTP.patch(uri, headers; body=body, query=query))
+            @test isok(HTTP.patch(uri, headers, body; query=query))
+            # HTTP.delete
+            @test isok(HTTP.delete(uri; headers=headers, body=body, query=query))
+            @test isok(HTTP.delete(uri, headers; body=body, query=query))
+            @test isok(HTTP.delete(uri, headers, body; query=query))
+        end
+    end
 end

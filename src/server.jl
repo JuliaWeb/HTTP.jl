@@ -3,29 +3,26 @@ socket_endpoint(host, port) = aws_socket_endpoint(
     port % UInt32
 )
 
-mutable struct Connection{F, S}
-    const f::F
-    const server::S # Server
+mutable struct Connection{S}
+    const server::S # Server{F}
     const allocator::Ptr{aws_allocator}
     const connection::Ptr{aws_http_connection}
-    request_handler_options::aws_http_request_handler_options
-    current_response::Ptr{aws_http_message}
+    const streams_lock::ReentrantLock
+    const streams::Set{Stream}
     connection_options::aws_http_server_connection_options
-    current_request::Request
 
-    Connection{F, S}(
-        f::F,
+    Connection(
         server::S,
         allocator::Ptr{aws_allocator},
         connection::Ptr{aws_http_connection},
-    ) where {F, S} = new{F, S}(f, server, allocator, connection)
+    ) where {S} = new{S}(server, allocator, connection, ReentrantLock(), Set{Stream}())
 end
 
 Base.hash(c::Connection, h::UInt) = hash(c.connection, h)
 
 mutable struct Server{F}
     const f::F
-    const comm::Channel{Symbol}
+    const fut::Future{Symbol}
     const allocator::Ptr{aws_allocator}
     const endpoint::aws_socket_endpoint
     const socket_options::aws_socket_options
@@ -39,7 +36,7 @@ mutable struct Server{F}
 
     Server{F}(
         f::F,
-        comm::Channel{Symbol},
+        fut::Future{Symbol},
         allocator::Ptr{aws_allocator},
         endpoint::aws_socket_endpoint,
         socket_options::aws_socket_options,
@@ -48,7 +45,7 @@ mutable struct Server{F}
         connections::Set{Connection},
         closed::Threads.Event,
         state::Symbol,
-    ) where {F} = new{F}(f, comm, allocator, endpoint, socket_options, tls_options, connections_lock, connections, closed, state)
+    ) where {F} = new{F}(f, fut, allocator, endpoint, socket_options, tls_options, connections_lock, connections, closed, state)
 end
 
 Base.wait(s::Server) = wait(s.closed)
@@ -79,7 +76,7 @@ function serve!(f, host="127.0.0.1", port=8080;
     )
     server = Server{typeof(f)}(
         f, # RequestHandler
-        Channel{Symbol}(1), # comm
+        Future{Symbol}(),
         allocator,
         endpoint !== nothing ? endpoint : socket_endpoint(host, port),
         socket_options !== nothing ? socket_options : aws_socket_options(
@@ -89,7 +86,8 @@ function serve!(f, host="127.0.0.1", port=8080;
             keep_alive_interval_sec,
             keep_alive_timeout_sec,
             keep_alive_max_failed_probes,
-            keepalive
+            keepalive,
+            ntuple(x -> Cchar(0), 16) # network_interface_name
         ),
         tls_options !== nothing ? tls_options :
             any(x -> x !== nothing, (ssl_cert, ssl_key, ssl_capath, ssl_cacert)) ? LibAwsIO.tlsoptions(host;
@@ -104,7 +102,6 @@ function serve!(f, host="127.0.0.1", port=8080;
         Set{Connection}(), # connections
         Threads.Event(), # closed
         :initializing, # state
-        C_NULL # server
     )
     server.server_options = aws_http_server_options(
         1,
@@ -130,11 +127,10 @@ const on_incoming_connection = Ref{Ptr{Cvoid}}(C_NULL)
 function c_on_incoming_connection(aws_server, aws_conn, error_code, server_ptr)
     server = unsafe_pointer_to_objref(server_ptr)
     if error_code != 0
-        @error "incoming connection error" exception=(aws_error(), Base.backtrace())
+        @error "incoming connection error" exception=(aws_error(error_code), Base.backtrace())
         return
     end
     conn = Connection(
-        server.f,
         server,
         server.allocator,
         aws_conn,
@@ -145,24 +141,16 @@ function c_on_incoming_connection(aws_server, aws_conn, error_code, server_ptr)
         on_incoming_request[],
         on_connection_shutdown[]
     )
-    conn.request_handler_options = aws_http_request_handler_options(
-        1,
+    if aws_http_connection_configure_server(
         aws_conn,
-        pointer_from_objref(conn),
-        on_request_headers[],
-        on_request_header_block_done[],
-        on_request_body[],
-        on_request_done[],
-        on_server_complete[],
-        C_NULL # on_server_destroy[]
-    )
+        FieldRef(conn, :connection_options)
+    ) != 0
+        @error "failed to configure connection" exception=(aws_error(), Base.backtrace())
+        return
+    end
     @lock server.connections_lock begin
         push!(server.connections, conn)
     end
-    aws_http_connection_configure_server(
-        aws_conn,
-        FieldRef(conn, :connection_options)
-    )
     return
 end
 
@@ -170,6 +158,9 @@ const on_connection_shutdown = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_connection_shutdown(aws_conn, error_code, conn_ptr)
     conn = unsafe_pointer_to_objref(conn_ptr)
+    if error_code != 0
+        @error "connection shutdown error" exception=(aws_error(error_code), Base.backtrace())
+    end
     @lock conn.server.connections_lock begin
         delete!(conn.server.connections, conn)
     end
@@ -180,94 +171,109 @@ const on_incoming_request = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_incoming_request(aws_conn, conn_ptr)
     conn = unsafe_pointer_to_objref(conn_ptr)
-    conn.current_request = Request()
-    conn.current_request.headers = Headers()
-    conn.current_request.context = Context()
-    return aws_http_stream_new_server_request_handler(
-        FieldRef(conn, :request_handler_options)
+    stream = Stream{typeof(conn)}(
+        conn.allocator,
+        false, # decompress
+        aws_http_connection_get_version(aws_conn) == AWS_HTTP_VERSION_2 # http2
     )
+    stream.connection = conn
+    stream.request_handler_options = aws_http_request_handler_options(
+        1,
+        aws_conn,
+        pointer_from_objref(stream),
+        on_request_headers[],
+        on_request_header_block_done[],
+        on_request_body[],
+        on_request_done[],
+        on_server_stream_complete[],
+        on_destroy[]
+    )
+    stream.request = Request("", "")
+    stream.ptr = aws_http_stream_new_server_request_handler(
+        FieldRef(stream, :request_handler_options)
+    )
+    if stream.ptr == C_NULL
+        @error "failed to create stream" exception=(aws_error(), Base.backtrace())
+    else
+        @lock conn.streams_lock begin
+            push!(conn.streams, stream)
+        end
+    end
+    return stream.ptr
 end
 
 const on_request_headers = Ref{Ptr{Cvoid}}(C_NULL)
 
-function c_on_request_headers(stream, header_block, header_array::Ptr{aws_http_header}, num_headers, conn_ptr)
-    conn = unsafe_pointer_to_objref(conn_ptr)
-    for i = 1:num_headers
-        header = unsafe_load(header_array, i)
-        name = unsafe_string(header.name.ptr, header.name.len)
-        value = unsafe_string(header.value.ptr, header.value.len)
-        push!(conn.current_request.headers, name => value)
-    end
+function c_on_request_headers(aws_stream_ptr, header_block, header_array::Ptr{aws_http_header}, num_headers, stream_ptr)
+    stream = unsafe_pointer_to_objref(stream_ptr)
+    headers = stream.request.headers
+    addheaders(headers, header_array, num_headers)
     return Cint(0)
 end
 
 const on_request_header_block_done = Ref{Ptr{Cvoid}}(C_NULL)
 
-function c_on_request_header_block_done(stream, header_block, conn_ptr)
-    conn = unsafe_pointer_to_objref(conn_ptr)
-    method_ref = Ref{aws_byte_cursor}()
-    ret = aws_http_stream_get_incoming_request_method(stream, method_ref)
-    conn.current_request.method = str(method_ref[])
-    url_ref = Ref{aws_byte_cursor}()
-    ret = aws_http_stream_get_incoming_request_uri(stream, url_ref)
-    uri_ref = Ref{aws_uri}()
-    aws_uri_init_parse(uri_ref, conn.allocator, url_ref)
-    u = conn.current_request._uri = uri_ref[]
-    conn.current_request.uri = makeuri(u)
-    # prep request body
-    buf = Vector{UInt8}(undef, 0)
-    conn.current_request.body = writebuf(buf)
+function c_on_request_header_block_done(aws_stream_ptr, header_block, stream_ptr)
+    stream = unsafe_pointer_to_objref(stream_ptr)
+    ret = aws_http_stream_get_incoming_request_method(aws_stream_ptr, FieldRef(stream, :method))
+    ret != 0 && return ret
+    aws_http_message_set_request_method(stream.request.ptr, stream.method)
+    ret = aws_http_stream_get_incoming_request_uri(aws_stream_ptr, FieldRef(stream, :path))
+    ret != 0 && return ret
+    aws_http_message_set_request_path(stream.request.ptr, stream.path)
     return Cint(0)
 end
 
 const on_request_body = Ref{Ptr{Cvoid}}(C_NULL)
 
-function c_on_request_body(stream, data::Ptr{aws_byte_cursor}, conn_ptr)
-    conn = unsafe_pointer_to_objref(conn_ptr)
+#TODO: how could we allow for streaming request bodies?
+function c_on_request_body(aws_stream_ptr, data::Ptr{aws_byte_cursor}, stream_ptr)
+    stream = unsafe_pointer_to_objref(stream_ptr)
     bc = unsafe_load(data)
-    body = conn.current_request.body
-    try
-        @assert hasroom(body, bc.len) "body buffer too small"
-        unsafe_write(body, bc.ptr, bc.len)
-        return Cint(0)
-    catch
-        @error "failed to write request body" exception=(exception, Base.catch_stack())
-        return Cint(-1)
+    body = stream.request.body
+    if body === nothing
+        body = Vector{UInt8}(undef, bc.len)
+        GC.@preserve body unsafe_copyto!(pointer(body), bc.ptr, bc.len)
+        stream.request.body = body
+    else
+        newlen = length(body) + bc.len
+        resize!(body, newlen)
+        GC.@preserve body unsafe_copyto!(pointer(body, length(body) - bc.len + 1), bc.ptr, bc.len)
     end
+    return Cint(0)
 end
 
 const on_request_done = Ref{Ptr{Cvoid}}(C_NULL)
 
-function c_on_request_done(stream, conn_ptr)
-    conn = unsafe_pointer_to_objref(conn_ptr)
-    conn.current_request.body = take!(conn.current_request.body)
+function c_on_request_done(aws_stream_ptr, stream_ptr)
+    stream = unsafe_pointer_to_objref(stream_ptr)
     try
-        resp = fetch(Threads.@spawn(conn.f(conn.current_request)::Response))
-        aws_resp = conn.current_response = aws_http_message_new_response(conn.allocator)
-        aws_http_message_set_response_status(aws_resp, resp.status % Cint)
-        for (k, v) in resp.headers
-            header = aws_http_header(aws_byte_cursor_from_c_str(string(k)), aws_byte_cursor_from_c_str(string(v)), AWS_HTTP_HEADER_COMPRESSION_USE_CACHE)
-            aws_http_message_add_header(aws_resp, header)
+        stream.response = stream.connection.server.f(stream.request)::Response
+        #TODO: is it possible to stream the response body?
+        #TODO: support transfer-encoding: gzip
+        ret = aws_http_stream_send_response(aws_stream_ptr, stream.response.ptr)
+        if ret != 0
+            @error "failed to send response" exception=(aws_error(ret), Base.backtrace())
+            return Cint(-1)
         end
-        #TODO: handle other response body types
-        len = sizeof(resp.body)
-        cbody = Ref(aws_byte_cursor(len, pointer(resp.body)))
-        input_stream = aws_input_stream_new_from_cursor(conn.allocator, cbody)
-        aws_http_message_set_body_stream(aws_resp, input_stream)
-        aws_http_message_add_header(aws_resp, aws_http_header(aws_byte_cursor_from_c_str("content-length"), aws_byte_cursor_from_c_str(string(len)), AWS_HTTP_HEADER_COMPRESSION_USE_CACHE))
-        @assert aws_http_stream_send_response(stream, aws_resp) == 0
     catch e
         @error "failed to process request" exception=(e, catch_backtrace())
+        #TODO: send 500 here?
         return Cint(-1)
     end
     return Cint(0)
 end
 
-const on_server_complete = Ref{Ptr{Cvoid}}(C_NULL)
+const on_server_stream_complete = Ref{Ptr{Cvoid}}(C_NULL)
 
-function c_on_server_complete(stream, error_code, conn_ptr)
-    conn = unsafe_pointer_to_objref(conn_ptr)
-    aws_http_message_destroy(conn.current_response)
+function c_on_server_stream_complete(aws_stream_ptr, error_code, stream_ptr)
+    stream = unsafe_pointer_to_objref(stream_ptr)
+    if error_code != 0
+        @error "server complete error" exception=(aws_error(error_code), Base.backtrace())
+    end
+    @lock stream.connection.streams_lock begin
+        delete!(stream.connection.streams, stream)
+    end
     return Cint(0)
 end
 
@@ -275,7 +281,7 @@ const on_destroy_complete = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_destroy_complete(server_ptr)
     server = unsafe_pointer_to_objref(server_ptr)
-    put!(server.comm, :destroyed)
+    notify(server.fut, :destroyed)
     return
 end
 
@@ -283,7 +289,7 @@ function Base.close(server::Server)
     state = @atomicswap server.state = :closed
     if state == :running
         aws_http_server_release(server.server)
-        @assert take!(server.comm) == :destroyed
+        @assert wait(server.fut) == :destroyed
         notify(server.closed)
     end
     return

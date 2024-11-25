@@ -37,3 +37,42 @@ function newmethod(request_method, response_status, redirect_method)
     end
     return "GET"
 end
+
+function with_redirect(f, allocator, method, uri, headers=nothing, body=nothing, redirect::Bool=true, redirect_limit::Int=3, redirect_method=nothing, forwardheaders::Bool=true)
+    if !redirect || redirect_limit == 0
+        # no redirecting
+        return f(method, uri, headers, body)
+    end
+    count = 0
+    while true
+        resp = f(method, uri, headers, body)
+        if (count == redirect_limit || !isredirect(resp) || (location = getheader(resp.headers, "Location")) == "")
+            return resp
+        end
+
+        # follow redirect
+        olduri = uri
+        newuri = resolvereference(makeuri(uri), location)
+        uri = parseuri(newuri, nothing, allocator)
+        method = newmethod(method, resp.status, redirect_method)
+        body = method == "GET" ? nothing : body
+        if forwardheaders
+            headers = filter(headers) do (header, _)
+                # false return values are filtered out
+                if headereq(header, "host")
+                    return false
+                elseif any(x -> headereq(x, header), SENSITIVE_HEADERS) && !isdomainorsubdomain(host(uri), host(olduri))
+                    return false
+                elseif method == "GET" && (headereq(header, "content-type") || headereq(header, "content-length"))
+                    return false
+                else
+                    return true
+                end
+            end
+        else
+            headers = Header[]
+        end
+        count += 1
+    end
+    @assert false "Unreachable!"
+end

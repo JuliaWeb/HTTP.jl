@@ -318,7 +318,7 @@ end
 
 const on_metrics = Ref{Ptr{Cvoid}}(C_NULL)
 
-function c_on_metrics(stream, metrics::Ptr{StreamMetrics}, ctx_ptr)
+function c_on_metrics(stream, metrics::Ptr{aws_http_stream_metrics}, ctx_ptr)
     ctx = unsafe_pointer_to_objref(ctx_ptr)
     # println("on metrics")
     m = unsafe_load(metrics)

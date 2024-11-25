@@ -32,12 +32,12 @@ function with_retry_token(f::Function, client::Client)
     # If max_retries is 0, we don't need to bother with any retrying
     client.settings.max_retries == 0 && return f()
     retry_partition = client.settings.retry_partition === nothing ? C_NULL : aws_byte_cursor_from_c_str(client.settings.retry_partition)
-    tokenAcquired = Future{Ptr{aws_retry_token}}()
-    GC.@preserve tokenAcquired begin
-        if aws_retry_strategy_acquire_retry_token(client.retry_strategy, retry_partition, on_acquired[], pointer_from_objref(tokenAcquired), client.settings.retry_timeout_ms) != 0
+    fut = Future{Ptr{aws_retry_token}}()
+    GC.@preserve fut begin
+        if aws_retry_strategy_acquire_retry_token(client.retry_strategy, retry_partition, on_acquired[], pointer_from_objref(fut), client.settings.retry_timeout_ms) != 0
             aws_throw_error()
         end
-        token = wait(tokenAcquired)
+        token = wait(fut)
     end
     try
         while true
@@ -46,7 +46,15 @@ function with_retry_token(f::Function, client::Client)
                 aws_retry_token_record_success(token)
                 return ret
             catch e
-                e isa DontRetry && throw(e.error)
+                if e isa DontRetry
+                    #TODO: fixme: stream isn't defined here
+                    if @isdefined(ret) && iserror(ret.status) && stream.bufferstream !== nothing
+                        # for error responses, we need to commit the temporary body buffer
+                        ret.bodyref = readavailable(stream.bufferstream)
+                    end
+                    throw(e.error)
+                end
+                #TODO: check if request is retryable before retrying
                 retryReady = Future{Ptr{aws_retry_token}}()
                 GC.@preserve retryReady begin
                     if aws_retry_strategy_schedule_retry(
