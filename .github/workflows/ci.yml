@@ -22,6 +22,7 @@ jobs:
       matrix:
         version:
           - 'min'
+          - '1.9' # TODO: Delete this line when finished debugging.
           - 'lts'
           - '1' # automatically expands to the latest stable 1.x release of Julia
           - 'nightly'
