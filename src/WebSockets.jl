@@ -182,22 +182,24 @@ end
 
 # writing a single frame
 function writeframe(io::IO, x::Frame)
-    n = write(io.io, hton(uint16(x.flags)))
+    buff = IOBuffer()
+    n = write(buff, hton(uint16(x.flags)))
     if x.extendedlen !== nothing
-        n += write(io.io, hton(x.extendedlen))
+        n += write(buff, hton(x.extendedlen))
     end
     if x.mask != EMPTY_MASK
-        n += write(io.io, UInt32(x.mask))
+        n += write(buff, UInt32(x.mask))
     end
     pl = x.payload
     # manually unroll a few known type cases to help the compiler
     if pl isa Vector{UInt8}
-        n += write(io.io, pl)
-    elseif pl isa Base.CodeUnits{UInt8, String}
-        n += write(io.io, pl)
+        n += write(buff, pl)
+    elseif pl isa Base.CodeUnits{UInt8,String}
+        n += write(buff, pl)
     else
-        n += write(io.io, pl)
+        n += write(buff, pl)
     end
+    write(io.io, take!(buff))
     return n
 end
 
