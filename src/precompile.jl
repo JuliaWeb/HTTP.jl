@@ -40,5 +40,5 @@ try
         server = nothing
     end
 catch e
-    @warn "Ignoring an error that occurred during the precompilation workload" exception=(e, catch_backtrace())
+    @info "Ignoring an error that occurred during the precompilation workload" exception=(e, catch_backtrace())
 end
