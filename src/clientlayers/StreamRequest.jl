@@ -3,6 +3,7 @@ module StreamRequest
 using ..IOExtras, ..Messages, ..Streams, ..Connections, ..Strings, ..RedirectRequest, ..Exceptions
 using LoggingExtras, CodecZlib, URIs
 using SimpleBufferStream: BufferStream
+using ConcurrentUtilities: @samethreadpool_spawn
 
 export streamlayer
 
@@ -36,7 +37,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                 # use a lock here for request.context changes (this is currently the only places
                 # where multiple threads may modify/change context at the same time)
                 lock = ReentrantLock()
-                Threads.@spawn try
+                @samethreadpool_spawn try
                     writebody(stream, req, lock)
                 finally
                     Base.@lock lock begin
@@ -46,7 +47,7 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                     closewrite(stream)
                 end
                 read_start = time()
-                Threads.@spawn try
+                @samethreadpool_spawn try
                     @debugv 2 "client startread"
                     startread(stream)
                     if !isaborted(stream)
