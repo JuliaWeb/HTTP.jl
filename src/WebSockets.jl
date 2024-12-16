@@ -2,6 +2,7 @@ module WebSockets
 
 using Base64, UUIDs, Sockets, Random
 using MbedTLS: digest, MD_SHA1, SSLContext
+using TaskLocalValues
 using ..IOExtras, ..Streams, ..Connections, ..Messages, ..Conditions, ..Servers
 using ..Exceptions: current_exceptions_to_string
 import ..open
@@ -180,9 +181,14 @@ function readframe(io::IO, ::Type{Frame}, buffer::Vector{UInt8}=UInt8[], first_f
     return Frame(flags, extlen, mask, payload)
 end
 
+const frameio = TaskLocalValue{IOBuffer}(() -> IOBuffer())
+
 # writing a single frame
 function writeframe(io::IO, x::Frame)
-    buff = IOBuffer()
+    buff = frameio[]
+    buff.ptr = 1
+    buff.size = 0
+    buff.offset = 0
     n = write(buff, hton(uint16(x.flags)))
     if x.extendedlen !== nothing
         n += write(buff, hton(x.extendedlen))
@@ -199,7 +205,8 @@ function writeframe(io::IO, x::Frame)
     else
         n += write(buff, pl)
     end
-    write(io.io, take!(buff))
+    seekstart(buff)
+    write(io.io, buff)
     return n
 end
 
