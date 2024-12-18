@@ -4,6 +4,13 @@ end
 
 Base.showerror(io::IO, e::DontRetry) = print(io, e.error)
 
+struct StreamError{T} <: Exception
+    error::Exception
+    stream::T # Stream
+end
+
+Base.showerror(io::IO, e::StreamError) = print(io, e.error)
+
 const on_acquired = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_acquired(retry_strategy, error_code, retry_token, fut_ptr)
@@ -46,15 +53,19 @@ function with_retry_token(f::Function, client::Client)
                 aws_retry_token_record_success(token)
                 return ret
             catch e
+                stream = nothing
+                if e isa StreamError
+                    stream = e.stream
+                    e = e.error
+                end
                 if e isa DontRetry
-                    #TODO: fixme: stream isn't defined here
-                    if @isdefined(ret) && iserror(ret.status) && stream.bufferstream !== nothing
+                    if stream !== nothing && iserror(stream.response.status) && stream.bufferstream !== nothing
                         # for error responses, we need to commit the temporary body buffer
-                        ret.bodyref = readavailable(stream.bufferstream)
+                        stream.response.body = readavailable(stream.bufferstream)
                     end
                     throw(e.error)
                 end
-                #TODO: check if request is retryable before retrying
+                # note we assume any error that wasn't wrapped in DontRetry is retryable
                 retryReady = Future{Ptr{aws_retry_token}}()
                 GC.@preserve retryReady begin
                     if aws_retry_strategy_schedule_retry(
@@ -64,8 +75,10 @@ function with_retry_token(f::Function, client::Client)
                         retry_ready[],
                         pointer_from_objref(retryReady)
                     ) != 0
+                        #TODO: do we need to commit a previous error body to the response here?
                         aws_throw_error()
                     end
+                    #TODO: should we wrap this in try-catch to commit a previous stream bufferstream to the response body?
                     token = wait(retryReady)
                 end
             end

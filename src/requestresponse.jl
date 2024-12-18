@@ -44,6 +44,13 @@ addheader(headers::Headers, h::Header) = aws_http_headers_add_header(headers.ptr
 addheader(headers::Headers, k, v) = GC.@preserve k v aws_http_headers_add(headers.ptr, aws_byte_cursor_from_c_str(k), aws_byte_cursor_from_c_str(v)) != 0 && aws_throw_error()
 addheaders(headers::Headers, h::Vector{aws_http_header}) = GC.@preserve h aws_http_headers_add_array(headers.ptr, pointer(h), length(h)) != 0 && aws_throw_error()
 addheaders(headers::Headers, h::Ptr{aws_http_header}, count::Integer) = aws_http_headers_add_array(headers.ptr, h, count) != 0 && aws_throw_error()
+
+function addheaders(headers::Headers, h::Vector{Pair{String, String}})
+    for (k, v) in h
+        addheader(headers, k, v)
+    end
+end
+
 setheader(headers::Headers, k, v) = GC.@preserve k v aws_http_headers_set(headers.ptr, aws_byte_cursor_from_c_str(k), aws_byte_cursor_from_c_str(v)) != 0 && aws_throw_error()
 setscheme(headers::Headers, scheme) = GC.@preserve scheme aws_http2_headers_set_request_scheme(headers.ptr, aws_byte_cursor_from_c_str(scheme)) != 0 && aws_throw_error()
 setauthority(headers::Headers, authority) = GC.@preserve authority aws_http2_headers_set_request_authority(headers.ptr, aws_byte_cursor_from_c_str(authority)) != 0 && aws_throw_error()
@@ -388,3 +395,6 @@ Does this `Response` have a redirect status?
 """
 isredirect(r::Response) = isredirect(r.status)
 isredirect(status::Integer) = status in (301, 302, 303, 307, 308)
+
+
+Forms.parse_multipart_form(m::Message) = parse_multipart_form(getheader(m.headers, "content-type"), m.body)

@@ -155,8 +155,6 @@ mutable struct Future{T}
     Future{T}() where {T} = new{T}(Threads.Condition(), 0)
 end
 
-isset(f::Future) = @atomic f.set != 0
-
 function Base.wait(f::Future{T}) where {T}
     set = @atomic f.set
     set == 1 && return f.result::T

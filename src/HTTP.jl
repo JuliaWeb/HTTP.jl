@@ -6,17 +6,18 @@ using LibAwsCommon, LibAwsIO, LibAwsHTTP
 export WebSockets
 
 include("utils.jl")
-
-include("forms.jl"); using .Forms
+include("access_log.jl")
+include("Sniff.jl"); using .Sniff
+include("Forms.jl"); using .Forms
 include("requestresponse.jl")
 include("cookies.jl"); using .Cookies
-include("redirects.jl")
-include("client.jl")
-include("retry.jl")
-include("connection.jl")
-include("request.jl")
-include("stream.jl")
-include("makerequest.jl")
+include("client/redirects.jl")
+include("client/client.jl")
+include("client/retry.jl")
+include("client/connection.jl")
+include("client/request.jl")
+include("client/stream.jl")
+include("client/makerequest.jl")
 include("websockets.jl"); using .WebSockets
 include("server.jl")
 include("handlers.jl")

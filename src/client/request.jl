@@ -59,7 +59,11 @@ function with_request(f::Function, client::Client, method, path, headers=nothing
             setinputstream!(req, body)
         end
     elseif body !== nothing
-        setinputstream!(req, body)
+        try
+            setinputstream!(req, body)
+        catch e
+            @error "Failed to set input stream" exception=(e, catch_backtrace())
+        end
     end
     # call user function
     verbose > 0 && print_request(stdout, req)

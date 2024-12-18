@@ -221,13 +221,13 @@ Clients() = Clients(ReentrantLock(), Dict{ClientSettings, Client}())
 
 const CLIENTS = Clients()
 
-function getclient(key::ClientSettings)
-    Base.@lock CLIENTS.lock begin
-        if haskey(CLIENTS.clients, key)
-            return CLIENTS.clients[key]
+function getclient(key::ClientSettings, clients::Clients=CLIENTS)
+    Base.@lock clients.lock begin
+        if haskey(clients.clients, key)
+            return clients.clients[key]
         else
             client = Client(key)
-            CLIENTS.clients[key] = client
+            clients.clients[key] = client
             return client
         end
     end
