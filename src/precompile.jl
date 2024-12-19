@@ -22,22 +22,25 @@ try
         server = HTTP.serve!("0.0.0.0", _port; verbose = -1, listenany=true, sslconfig=sslconfig) do req
             HTTP.Response(200,  ["Content-Encoding" => "gzip"], gzip_data("dummy response"))
         end
-        # listenany allows changing port if that one is already in use, so check the actual port
-        _port = HTTP.port(server)
-        url = "https://localhost:$_port"
-
-        env = ["JULIA_NO_VERIFY_HOSTS" => "localhost",
-            "JULIA_SSL_NO_VERIFY_HOSTS" => nothing,
-            "JULIA_ALWAYS_VERIFY_HOSTS" => nothing]
-        withenv(env...) do
-            @compile_workload begin
-                HTTP.get(url);
+        try
+            # listenany allows changing port if that one is already in use, so check the actual port
+            _port = HTTP.port(server)
+            url = "https://localhost:$_port"
+    
+            env = ["JULIA_NO_VERIFY_HOSTS" => "localhost",
+                "JULIA_SSL_NO_VERIFY_HOSTS" => nothing,
+                "JULIA_ALWAYS_VERIFY_HOSTS" => nothing]
+        
+            withenv(env...) do
+                @compile_workload begin
+                    HTTP.get(url);
+                end
             end
+        finally
+            HTTP.forceclose(server)
+            yield() # needed on 1.9 to avoid some issue where it seems a task doesn't stop before serialization
+            server = nothing
         end
-
-        HTTP.forceclose(server)
-        yield() # needed on 1.9 to avoid some issue where it seems a task doesn't stop before serialization
-        server = nothing
     end
 catch e
     @info "Ignoring an error that occurred during the precompilation workload" exception=(e, catch_backtrace())
