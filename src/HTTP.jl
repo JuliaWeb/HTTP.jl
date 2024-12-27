@@ -633,7 +633,14 @@ end
 
 # only run if precompiling
 if VERSION >= v"1.9.0-0" && ccall(:jl_generating_output, Cint, ()) == 1
-    include("precompile.jl")
+    do_precompile = true
+    try
+        Sockets.getalladdrinfo("localhost")
+    catch ex
+        @debug "Skipping precompilation workload because localhost cannot be resolved. Check firewall settings" exception=(ex,catch_backtrace())
+        do_precompile = false
+    end
+    do_precompile && include("precompile.jl")
 end
 
 end # module

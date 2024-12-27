@@ -26,11 +26,11 @@ try
             # listenany allows changing port if that one is already in use, so check the actual port
             _port = HTTP.port(server)
             url = "https://localhost:$_port"
-    
+
             env = ["JULIA_NO_VERIFY_HOSTS" => "localhost",
                 "JULIA_SSL_NO_VERIFY_HOSTS" => nothing,
                 "JULIA_ALWAYS_VERIFY_HOSTS" => nothing]
-        
+
             withenv(env...) do
                 @compile_workload begin
                     HTTP.get(url);
