@@ -1,45 +1,30 @@
-using Test, HTTP, JSON
+using Test, HTTP, URIs, JSON
 
-# Using this rather than @__DIR__ because then it's easier to run parts of the
-# file at the REPL, which is convenient when developing the package.
-const dir = joinpath(dirname(pathof(HTTP)), "..", "test")
-
-# See https://httpbingo.julialang.org/
 const httpbin = get(ENV, "JULIA_TEST_HTTPBINGO_SERVER", "httpbingo.julialang.org")
-
-# A convenient test helper used in a few test files.
 isok(r) = r.status == 200
 
-@testset "HTTP" begin
-    testfiles = [
-        "ascii.jl",
-        "chunking.jl",
-        "utils.jl",
-        "client.jl",
-        # "download.jl",
-        "multipart.jl",
-        "parsemultipart.jl",
-        "sniff.jl",
-        "cookies.jl",
-        "parser.jl",
-        "loopback.jl",
-        "websockets/deno_client/server.jl",
-        "messages.jl",
-        "handlers.jl",
-        "server.jl",
-        "async.jl",
-        "mwe.jl",
-        "httpversion.jl",
-        "websockets/autobahn.jl",
-        "websockets/multiple_writers.jl",
-    ]
-    # ARGS can be most easily passed like this:
-    # import Pkg; Pkg.test("HTTP"; test_args=`ascii.jl parser.jl`)
-    if !isempty(ARGS)
-        filter!(in(ARGS), testfiles)
-    end
-    for filename in testfiles
-        println("Running $filename tests...")
-        include(joinpath(dir, filename))
-    end
-end
+# Core.eval(Base, :(function unsafe_copyto!(dest::Base.MemoryRef{T}, src::Base.MemoryRef{T}, n) where {T}
+#     Base.@_terminates_globally_notaskstate_meta
+#     n == 0 && return dest
+#     @show n
+#     @boundscheck Base.memoryref(dest, n), Base.memoryref(src, n)
+#     if isbitstype(T)
+#         tdest = Base.@_gc_preserve_begin dest
+#         tsrc = Base.@_gc_preserve_begin src
+#         pdest = unsafe_convert(Ptr{Cvoid}, dest)
+#         psrc = unsafe_convert(Ptr{Cvoid}, src)
+#         Base.memmove(pdest, psrc, Base.aligned_sizeof(T) * n)
+#         Base.@_gc_preserve_end tdest
+#         Base.@_gc_preserve_end tsrc
+#     else
+#         ccall(:jl_genericmemory_copyto, Cvoid, (Any, Ptr{Cvoid}, Any, Ptr{Cvoid}, Int), dest.mem, dest.ptr_or_offset, src.mem, src.ptr_or_offset, Int(n))
+#     end
+#     return dest
+# end))
+
+include("utils.jl")
+include("sniff.jl")
+include("multipart.jl")
+include("client.jl")
+include("handlers.jl")
+include("server.jl")
