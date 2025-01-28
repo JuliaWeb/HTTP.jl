@@ -38,25 +38,27 @@ end
     # just once.
     # https://github.com/JuliaWeb/HTTP.jl/issues/1172
 
-    # This proxy accepts two requests, ignoring the content of the request and
-    # returning 200 each time.
     proxy = listen(IPv4(0), 8082)
     try
         @async begin
             sock = accept(proxy)
+            # Accept the first request (the CONNECT request) unconditionally.
             while isopen(sock)
                 line = readline(sock)
-                @show 1, line
                 isempty(line) && break
             end
             write(sock, "HTTP/1.1 200\r\n\r\n")
-            # Test that we receive something that looks like a client hello
+
+            # Test that we receive something that looks like a TLS client hello
             # (indicating that we tried to upgrade the connection to TLS)
-            line = readline(sock)
-            @test startswith(line, "\x16")
+            @test read(sock, UInt8) == 0x16
+            close(sock)
         end
 
-        @test_throws HTTP.RequestError HTTP.head("https://$httpbin.com"; proxy="http://localhost:8082", readtimeout=1, retry=false)
+        @test_throws HTTP.RequestError HTTP.head("https://$httpbin.com";
+                                                 proxy="http://localhost:8082",
+                                                 readtimeout=1,
+                                                 retry=false)
     finally
         close(proxy)
         HTTP.Connections.closeall()
