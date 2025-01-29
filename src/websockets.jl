@@ -255,7 +255,7 @@ end
 """
     WebSockets.isclosed(ws) -> Bool
 
-Check whether a `WebSocket` has sent and received CLOSE frames.
+Check whether a `WebSocket` has sent and received CLOSE frames
 """
 isclosed(ws::WebSocket) = !isopen(ws.readchannel) && ws.writeclosed
 

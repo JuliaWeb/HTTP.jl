@@ -8,8 +8,8 @@ export WebSockets
 
 include("utils.jl")
 include("access_log.jl")
-include("Sniff.jl"); using .Sniff
-include("Forms.jl"); using .Forms
+include("sniff.jl"); using .Sniff
+include("forms.jl"); using .Forms
 include("requestresponse.jl")
 include("cookies.jl"); using .Cookies
 include("client/redirects.jl")
@@ -21,7 +21,7 @@ include("client/stream.jl")
 include("client/makerequest.jl")
 include("websockets.jl"); using .WebSockets
 include("server.jl")
-include("Handlers.jl"); using .Handlers
+include("handlers.jl"); using .Handlers
 include("statuses.jl")
 
 struct StatusError <: Exception
