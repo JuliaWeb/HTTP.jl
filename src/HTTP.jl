@@ -6,32 +6,7 @@ using LibAwsCommon, LibAwsIO, LibAwsHTTP
 export @logfmt_str, common_logfmt, combined_logfmt
 export WebSockets
 
-<<<<<<< HEAD
-Base.@deprecate escape escapeuri
-
-using Base64, Sockets, Dates, URIs, MbedTLS, OpenSSL
-
-function access_threaded(f, v::Vector)
-    tid = Threads.threadid()
-    0 < tid <= length(v) || _length_assert()
-    if @inbounds isassigned(v, tid)
-        @inbounds x = v[tid]
-    else
-        x = f()
-        @inbounds v[tid] = x
-    end
-    return x
-end
-@noinline _length_assert() =  @assert false "0 < tid <= v"
-
-function open end
-
-const SOCKET_TYPE_TLS = Ref{Any}(OpenSSL.SSLStream)
-
-include("Conditions.jl")               ;using .Conditions
-=======
 include("utils.jl")
->>>>>>> 8134ce3 (Start work to HTTP 2.0 (using aws-crt as primary internals))
 include("access_log.jl")
 include("Sniff.jl"); using .Sniff
 include("Forms.jl"); using .Forms
@@ -122,20 +97,4 @@ function __init__()
     return
 end
 
-<<<<<<< HEAD
-# only run if precompiling
-if VERSION >= v"1.9.0-0" && ccall(:jl_generating_output, Cint, ()) == 1
-    do_precompile = true
-    try
-        Sockets.getalladdrinfo("localhost")
-    catch ex
-        @debug "Skipping precompilation workload because localhost cannot be resolved. Check firewall settings" exception=(ex,catch_backtrace())
-        do_precompile = false
-    end
-    do_precompile && include("precompile.jl")
 end
-
-end # module
-=======
-end
->>>>>>> 8134ce3 (Start work to HTTP 2.0 (using aws-crt as primary internals))

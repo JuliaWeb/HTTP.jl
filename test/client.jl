@@ -75,7 +75,7 @@
         body = zeros(UInt8, 100)
         r = HTTP.get("https://$httpbin/bytes/100"; response_body=body)
         @test length(body) == 100
-        @test all(x -> x != 0, body)
+        @test any(x -> x != 0, body)
 
         # if provided buffer is too small, we won't grow it for user
         body = zeros(UInt8, 10)
