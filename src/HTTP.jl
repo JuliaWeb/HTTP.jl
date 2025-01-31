@@ -1,6 +1,6 @@
 module HTTP
 
-using CodecZlib, URIs, Mmap, Base64
+using CodecZlib, URIs, Mmap, Base64, Dates
 using LibAwsCommon, LibAwsIO, LibAwsHTTP
 
 export @logfmt_str, common_logfmt, combined_logfmt
