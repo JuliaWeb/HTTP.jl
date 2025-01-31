@@ -103,7 +103,10 @@ function serve!(f, host="127.0.0.1", port=8080;
     initial_window_size=typemax(UInt64),
     )
     if listenany
-        @warn "listenany not yet supported; only trying port = $port"
+        port, sock = Sockets.listenany(port)
+        # don't need the socket server, so immediately close
+        # (we were just looking for an open port)
+        close(sock)
     end
     server = Server{typeof(f)}(
         f, # RequestHandler

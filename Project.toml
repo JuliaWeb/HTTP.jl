@@ -13,17 +13,18 @@ LibAwsHTTP = "ce851869-0d7a-41e7-95ef-2d4cb63876dd"
 LibAwsIO = "a5388770-19df-4151-b103-3d71de896ddf"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Mmap = "a63ad114-7e13-5084-954f-fe012c677804"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 URIs = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
 
 [compat]
 JSON = "0.21.4"
+PrecompileTools = "1.2.1"
 julia = "1.10"
 
 [extras]
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
-NetworkOptions = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]

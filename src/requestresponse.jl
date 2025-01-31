@@ -411,5 +411,4 @@ Does this `Response` have a redirect status?
 isredirect(r::Response) = isredirect(r.status)
 isredirect(status::Integer) = status in (301, 302, 303, 307, 308)
 
-
 Forms.parse_multipart_form(m::Message) = parse_multipart_form(getheader(m.headers, "content-type"), m.body)

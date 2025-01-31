@@ -37,26 +37,17 @@ function c_on_response_body(aws_stream_ptr, data::Ptr{aws_byte_cursor}, stream_p
     if stream.decompress
         if stream.gzipstream === nothing
             stream.bufferstream = b = Base.BufferStream()
-            Core.println("gzip BufferStream: len = $(length(b.buffer.data)), size = $(b.buffer.size)")
             stream.gzipstream = g = CodecZlib.GzipDecompressorStream(b)
-            # @info "decompress 1" ptr=data len=bc.len
             unsafe_write(g, bc.ptr, bc.len)
-            Core.println("gzip BufferStream after write: len = $(length(b.buffer.data)), size = $(b.buffer.size)")
         else
-            # @info "decompress 2" ptr=data len=bc.len
             unsafe_write(stream.gzipstream, bc.ptr, bc.len)
         end
     else
         if stream.bufferstream === nothing
             stream.bufferstream = b = Base.BufferStream()
-            Core.println("BufferStream: len = $(length(b.buffer.data)), size = $(b.buffer.size)")
-            # @info "writebuf 1" ptr=data len=bc.len
             unsafe_write(b, bc.ptr, bc.len)
-            Core.println("BufferStream after write: len = $(length(b.buffer.data)), size = $(b.buffer.size)")
         else
-            # @info "writebuf 2" ptr=data len=bc.len
             unsafe_write(stream.bufferstream, bc.ptr, bc.len)
-            Core.println("after write: len = $(length(stream.bufferstream.buffer.data)), size = $(stream.bufferstream.buffer.size)")
         end
     end
     return Cint(0)

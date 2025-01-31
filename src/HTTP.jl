@@ -1,6 +1,6 @@
 module HTTP
 
-using CodecZlib, URIs, Mmap, Base64, Dates
+using CodecZlib, URIs, Mmap, Base64, Dates, Sockets
 using LibAwsCommon, LibAwsIO, LibAwsHTTP
 
 export @logfmt_str, common_logfmt, combined_logfmt
@@ -95,6 +95,18 @@ function __init__()
     on_server_stream_complete[] = @cfunction(c_on_server_stream_complete, Cint, (Ptr{aws_http_connection}, Cint, Ptr{Cvoid}))
     on_destroy_complete[] = @cfunction(c_on_destroy_complete, Cvoid, (Ptr{Cvoid},))
     return
+end
+
+# only run if precompiling
+if VERSION >= v"1.9.0-0" && ccall(:jl_generating_output, Cint, ()) == 1
+    do_precompile = true
+    try
+        Sockets.getalladdrinfo("localhost")
+    catch ex
+        @debug "Skipping precompilation workload because localhost cannot be resolved. Check firewall settings" exception=(ex,catch_backtrace())
+        do_precompile = false
+    end
+    do_precompile && include("precompile.jl")
 end
 
 end
