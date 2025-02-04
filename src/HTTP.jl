@@ -52,27 +52,37 @@ function Base.getproperty(e::StatusError, s::Symbol)
     end
 end
 
-const LOGGER_FILE_REF = Ref{Libc.FILE}()
-const LOGGER_OPTIONS = Ref{aws_logger_standard_options}()
-const LOGGER = Ref{Ptr{Cvoid}}(C_NULL)
-
 #NOTE: this is global process logging in the aws-crt libraries; not appropriate for request-level
 # logging, but more for debugging the library itself
-function set_log_level!(level::Integer)
+mutable struct AwsLogger
+    ptr::Ptr{aws_logger}
+    file_ref::Libc.FILE
+    options::aws_logger_standard_options
+    function AwsLogger(level::Integer, allocator::Ptr{aws_allocator})
+        fr = Libc.FILE(Libc.RawFD(1), "w")
+        opts = aws_logger_standard_options(aws_log_level(0), C_NULL, Ptr{Libc.FILE}(fr.ptr))
+        x = new(Ptr{aws_logger}(aws_mem_acquire(allocator, 64)), fr, opts)
+        aws_logger_init_standard(x.ptr, allocator, FieldRef(x, :options)) != 0 && aws_throw_error()
+        aws_logger_set(x.ptr)
+        return finalizer(x) do x
+            aws_logger_clean_up(x.ptr)
+            aws_mem_release(allocator, x.ptr)
+        end
+    end
+end
+
+const LOGGER = Ref{AwsLogger}()
+
+function set_log_level!(level::Integer, allocator::Ptr{aws_allocator}=default_aws_allocator())
     @assert 0 <= level <= 7 "log level must be between 0 and 7"
-    @assert aws_logger_set_log_level(LOGGER[], aws_log_level(level)) == 0
+    LOGGER[] = AwsLogger(level, allocator)
+    @assert aws_logger_set_log_level(LOGGER[].ptr, aws_log_level(level)) == 0
     return
 end
 
 function __init__()
     allocator = default_aws_allocator()
     LibAwsHTTP.init(allocator)
-    # initialize logger
-    LOGGER[] = aws_mem_acquire(allocator, 64)
-    LOGGER_FILE_REF[] = Libc.FILE(Libc.RawFD(1), "w")
-    LOGGER_OPTIONS[] = aws_logger_standard_options(aws_log_level(3), C_NULL, Ptr{Libc.FILE}(LOGGER_FILE_REF[].ptr))
-    @assert aws_logger_init_standard(LOGGER[], allocator, LOGGER_OPTIONS) == 0
-    aws_logger_set(LOGGER[])
     # intialize c functions
     on_acquired[] = @cfunction(c_on_acquired, Cvoid, (Ptr{Cvoid}, Cint, Ptr{aws_retry_token}, Ptr{Cvoid}))
     # on_shutdown[] = @cfunction(c_on_shutdown, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))

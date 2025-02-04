@@ -232,3 +232,12 @@ function getclient(key::ClientSettings, clients::Clients=CLIENTS)
         end
     end
 end
+
+function close_all_clients!(clients::Clients=CLIENTS)
+    Base.@lock clients.lock begin
+        for client in values(clients.clients)
+            finalize(client)
+        end
+        empty!(clients.clients)
+    end
+end

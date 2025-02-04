@@ -30,6 +30,11 @@ try
             @info "HTTP server shut down"
             yield() # needed on 1.9 to avoid some issue where it seems a task doesn't stop before serialization
             server = nothing
+            close_all_clients!()
+            close_default_aws_server_bootstrap!()
+            close_default_aws_client_bootstrap!()
+            close_default_aws_host_resolver!()
+            close_default_aws_event_loop_group!()
         end
     end
 catch e
