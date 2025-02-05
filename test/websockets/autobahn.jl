@@ -66,7 +66,7 @@ end
             end
 
             report = JSON.parsefile(joinpath(DIR, "reports/clients/index.json"))
-            for (k, v) in pairs(report["main"])
+            @testset "$k" for (k, v) in pairs(report["main"])
                 @test v["behavior"] in ("OK", "NON-STRICT", "INFORMATIONAL")
             end
         end
