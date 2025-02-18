@@ -3,6 +3,15 @@ module HTTP
 export startwrite, startread, closewrite, closeread,
     @logfmt_str, common_logfmt, combined_logfmt, WebSockets
 
+if VERSION >= v"1.11.0-DEV.469"
+    let str = """
+        public request, get, put, post, head, delete, patch, header, headers, setheader,
+            setstatus, download, status, open, listen, Request, Response, Stream
+        """
+        eval(Meta.parse(str))
+    end
+end
+
 const DEBUG_LEVEL = Ref(0)
 
 Base.@deprecate escape escapeuri
