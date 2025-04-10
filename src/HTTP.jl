@@ -42,6 +42,7 @@ include("Connections.jl")              ;using .Connections
 const ConnectionPool = Connections
 include("StatusCodes.jl")              ;using .StatusCodes
 include("Messages.jl")                 ;using .Messages
+include("Tunnel.jl")                   ;using .Tunnel
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
 

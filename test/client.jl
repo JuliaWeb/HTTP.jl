@@ -42,7 +42,7 @@ end
     # returning 200 each time.
     proxy = listen(IPv4(0), 8082)
     try
-        @async begin
+        proxytask = @async begin
             sock = accept(proxy)
             while isopen(sock)
                 line = readline(sock)
@@ -50,13 +50,16 @@ end
                 isempty(line) && break
             end
             write(sock, "HTTP/1.1 200\r\n\r\n")
-            # Test that we receive something that looks like a client hello
-            # (indicating that we tried to upgrade the connection to TLS)
-            line = readline(sock)
-            @test startswith(line, "\x16")
+            flush(sock)
+            readline(sock)
         end
 
-        @test_throws HTTP.RequestError HTTP.head("https://$httpbin.com"; proxy="http://localhost:8082", readtimeout=1, retry=false)
+        @test_throws HTTP.ConnectError HTTP.head("https://$httpbin.com"; proxy="http://localhost:8082", readtimeout=1, retry=false)
+
+        # Test that we receive something that looks like a client hello
+        # (indicating that we tried to upgrade the connection to TLS)
+        line = fetch(proxytask)
+        @test startswith(line, "\x16")
     finally
         close(proxy)
         HTTP.Connections.closeall()
