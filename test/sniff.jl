@@ -2,18 +2,18 @@ const test_cases = [
     ("Empty", UInt8[], "text/plain; charset=utf-8"),
     ("Binary", UInt8[1, 2, 3], "application/octet-stream"),
 
-    ("HTML document #1", HTTP.bytes("<HtMl><bOdY>blah blah blah</body></html>"), "text/html; charset=utf-8"),
-    ("HTML document #2", HTTP.bytes("<HTML></HTML>"), "text/html; charset=utf-8"),
-    ("HTML document #3 (leading whitespace)", HTTP.bytes("   <!DOCTYPE HTML>..."), "text/html; charset=utf-8"),
-    ("HTML document #4 (leading CRLF)", HTTP.bytes("\r\n<html>..."), "text/html; charset=utf-8"),
+    ("HTML document #1", b"<HtMl><bOdY>blah blah blah</body></html>", "text/html; charset=utf-8"),
+    ("HTML document #2", b"<HTML></HTML>", "text/html; charset=utf-8"),
+    ("HTML document #3 (leading whitespace)", b"   <!DOCTYPE HTML>...", "text/html; charset=utf-8"),
+    ("HTML document #4 (leading CRLF)", b"\r\n<html>...", "text/html; charset=utf-8"),
 
-    ("Plain text", HTTP.bytes("This is not HTML. It has ☃ though."), "text/plain; charset=utf-8"),
+    ("Plain text", b"This is not HTML. It has ☃ though.", "text/plain; charset=utf-8"),
 
-    ("XML", HTTP.bytes("\n<?xml!"), "text/xml; charset=utf-8"),
+    ("XML", b"\n<?xml!", "text/xml; charset=utf-8"),
 
     # Image types.
-    ("GIF 87a", HTTP.bytes("GIF87a"), "image/gif"),
-    ("GIF 89a", HTTP.bytes("GIF89a..."), "image/gif"),
+    ("GIF 87a", b"GIF87a", "image/gif"),
+    ("GIF 89a", b"GIF89a...", "image/gif"),
 
     # Audio types.
     ("MIDI audio", UInt8['M','T','h','d',0x00,0x00,0x00,0x06,0x00,0x01], "audio/midi"),
@@ -249,7 +249,7 @@ json_strings = [
     end
 
     @testset "HTTP.isjson - $json_string" for json_string in json_strings
-        @test HTTP.isjson(HTTP.bytes(json_string))[1]
+        @test HTTP.isjson(codeunits(json_string))[1]
     end
 
     @testset "Misc" begin

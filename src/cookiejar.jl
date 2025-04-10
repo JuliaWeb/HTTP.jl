@@ -51,7 +51,7 @@ function pathmatch(cookie::Cookie, requestpath)
 end
 
 """
-    Cookies.getcookies!(jar::CookieJar, url::URI)
+    Cookies.getcookies!(jar::CookieJar, scheme, host, path)
 
 Retrieve valid `Cookie`s from the `CookieJar` according to the provided `url`.
 Cookies will be returned as a `Vector{Cookie}`. Only cookies for `http` or `https`
@@ -59,18 +59,17 @@ scheme in the url will be returned. Cookies will be checked according to the can
 host of the url and any cookie max age or expiration will be accounted for. Expired
 cookies will not be returned and will be removed from the cookie jar.
 """
-function getcookies!(jar::CookieJar, url::URI, now::DateTime=Dates.now(Dates.UTC))::Vector{Cookie}
+function getcookies!(jar::CookieJar, scheme::String, host::String, path::String, now::DateTime=Dates.now(Dates.UTC))::Vector{Cookie}
     cookies = Cookie[]
-    if url.scheme != "http" && url.scheme != "https"
+    if scheme != "http" && scheme != "https"
         return cookies
     end
-    host = canonicalhost(url.host)
+    host = canonicalhost(host)
     host == "" && return cookies
     Base.@lock jar.lock begin
         !haskey(jar.entries, host) && return cookies
         entries = jar.entries[host]
-        https = url.scheme == "https"
-        path = url.path
+        https = scheme == "https"
         if path == ""
             path = "/"
         end
@@ -78,7 +77,6 @@ function getcookies!(jar::CookieJar, url::URI, now::DateTime=Dates.now(Dates.UTC
         expired = Cookie[]
         for (id, e) in entries
             if e.persistent && e.expires != DateTime(1) && e.expires < now
-                @debug "Deleting expired cookie: $(e.name)"
                 push!(expired, e)
                 continue
             end
@@ -86,7 +84,6 @@ function getcookies!(jar::CookieJar, url::URI, now::DateTime=Dates.now(Dates.UTC
                 continue
             end
             e.lastaccess = now
-            @debug "Including cookie in request: $(e.name) to $(url.host)"
             push!(cookies, e)
         end
         for c in expired
@@ -106,21 +103,21 @@ function getcookies!(jar::CookieJar, url::URI, now::DateTime=Dates.now(Dates.UTC
 end
 
 """
-    Cookies.setcookies!(jar::CookieJar, url::URI, headers::Headers)
+    Cookies.setcookies!(jar::CookieJar, scheme, host, path, headers::Headers)
 
 Identify, "Set-Cookie" response headers from `headers`, parse the `Cookie`s,
 and store valid entries in the cookie `jar` according to the canonical host
 in `url`. Cookies can be retrieved from the `jar` via [`Cookies.getcookies!`](@ref).
 """
-function setcookies!(jar::CookieJar, url::URI, headers::Headers)
+function setcookies!(jar::CookieJar, scheme::String, host::String, path::String, headers::Headers)
     cookies = readsetcookies(headers)
     isempty(cookies) && return
-    if url.scheme != "http" && url.scheme != "https"
+    if scheme != "http" && scheme != "https"
         return
     end
-    host = canonicalhost(url.host)
+    host = canonicalhost(host)
     host == "" && return
-    defPath = defaultPath(url.path)
+    defPath = defaultPath(path)
     now = Dates.now(Dates.UTC)
     Base.@lock jar.lock begin
         entries = get!(() -> Dict{String, Cookie}(), jar.entries, host)
@@ -141,7 +138,6 @@ function setcookies!(jar::CookieJar, url::URI, headers::Headers)
                     c.persistent = false
                 else
                     if c.expires < now
-                        @debug "Cookie expired: $(c.name)"
                         @goto remove
                     end
                     c.persistent = true
@@ -189,7 +185,7 @@ function defaultPath(path)
     if i === nothing || i == 1
         return "/"
     end
-    return path[1:i]
+    return path[1:(i - 1)]
 end
 
 const endOfTime = DateTime(9999, 12, 31, 23, 59, 59, 0)
