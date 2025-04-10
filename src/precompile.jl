@@ -31,8 +31,8 @@ try
                 "JULIA_SSL_NO_VERIFY_HOSTS" => nothing,
                 "JULIA_ALWAYS_VERIFY_HOSTS" => nothing]
 
-            withenv(env...) do
-                @compile_workload begin
+            @compile_workload begin
+                withenv(env...) do
                     HTTP.get(url);
                 end
             end
