@@ -33,8 +33,8 @@ module Cookies
 export Cookie, CookieJar, cookies, stringify, getcookies!, setcookies!, addcookie!
 
 import Base: ==
-using Dates, URIs, Sockets
-using ..IOExtras, ..Parsers, ..Messages
+using Dates, Sockets
+import ..addheader, ..headereq, ..Headers, ..Request, ..Response
 
 @enum SameSite SameSiteDefaultMode=1 SameSiteLaxMode SameSiteStrictMode SameSiteNoneMode
 
@@ -184,21 +184,8 @@ For requests, the cookie will be stringified and concatenated to any existing
 """
 function addcookie! end
 
-function addcookie!(r::Request, c::Cookie)
-    cstr = stringify(c)
-    chead = header(r, "Cookie", nothing)
-    if chead !== nothing
-        setheader(r, "Cookie" => "$chead; $cstr")
-    else
-        appendheader(r, SubString("Cookie") => SubString(cstr))
-    end
-    return r
-end
-
-function addcookie!(r::Response, c::Cookie)
-    appendheader(r, SubString("Set-Cookie") => SubString(stringify(c, false)))
-    return r
-end
+addcookie!(r::Request, c::Cookie) = addheader(r.headers, "Cookie", stringify(c))
+addcookie!(r::Response, c::Cookie) = addheader(r.headers, "Set-Cookie", stringify(c, false))
 
 validcookiepathbyte(b) = (' ' <= b < '\x7f') && b != ';'
 validcookievaluebyte(b) = (' ' <= b < '\x7f') && b != '"' && b != ';' && b != '\\'
@@ -221,9 +208,11 @@ const RFC1123GMTFormat = gmtformat(Dates.RFC1123Format)
 
 # readSetCookies parses all "Set-Cookie" values from
 # the header h and returns the successfully parsed Cookies.
-function readsetcookies(h::Headers)
+function readsetcookies(headers::Headers)
     result = Cookie[]
-    for line in headers(h, "Set-Cookie")
+    for h in headers
+        headereq(h.name, "Set-Cookie") || continue
+        line = h.value
         if length(line) == 0
             continue
         end
@@ -311,8 +300,6 @@ function readsetcookies(h::Headers)
     return result
 end
 
-readsetcookies(h) = readsetcookies(mkheaders(h))
-
 function isIP(host)
     try
         Base.parse(IPAddr, host)
@@ -336,9 +323,11 @@ cookies(r::Request) = readcookies(r.headers, "")
 # readCookies parses all "Cookie" values from the header h and
 # returns the successfully parsed Cookies.
 # if filter isn't empty, only cookies of that name are returned
-function readcookies(h::Headers, filter::String="")
+function readcookies(headers::Headers, filter::String="")
     result = Cookie[]
-    for line in headers(h, "Cookie")
+    for h in headers
+        headereq(h.name, "Cookie") || continue
+        line = h.value
         for part in split(strip(line), ';'; keepempty=false)
             part = strip(part)
             length(part) <= 1 && continue
@@ -357,8 +346,6 @@ function readcookies(h::Headers, filter::String="")
     end
     return result
 end
-
-readcookies(h, f) = readcookies(mkheaders(h), f)
 
 # validCookieExpires returns whether v is a valid cookie expires-value.
 function validCookieExpires(dt)
@@ -419,7 +406,7 @@ sanitizeCookieName(n) = sanitizeCookieName(String(n))
 # with a comma or space.
 # See https:#golang.org/issue/7243 for the discussion.
 function sanitizeCookieValue(v::String)
-    v = String(filter(validcookievaluebyte, [Char(b) for b in bytes(v)]))
+    v = String(filter(validcookievaluebyte, [c for c in v]))
     length(v) == 0 && return v
     if contains(v, ' ') || contains(v, ',')
         return string('"', v, '"')

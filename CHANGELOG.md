@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- ## [Unreleased] -->
 
+## [v2.0.0] - 2025-02-01
+### Changed
+
+
 ## [v1.10.1] - 2023-11-28
 ### Changed
 - Server errors are no longer serialized back to the client since this might leak sensitive
