@@ -183,14 +183,8 @@ function readframe(io::IO, ::Type{Frame}, buffer::Vector{UInt8}=UInt8[], first_f
     return Frame(flags, extlen, mask, payload)
 end
 
-const frameio = TaskLocalValue{IOBuffer}(() -> IOBuffer())
-
-# writing a single frame
 function writeframe(io::IO, x::Frame)
-    buff = frameio[]
-    buff.ptr = 1
-    buff.size = 0
-    buff.offset = 0
+    buff = IOBuffer()
     n = write(buff, hton(uint16(x.flags)))
     if x.extendedlen !== nothing
         n += write(buff, hton(x.extendedlen))
@@ -207,9 +201,8 @@ function writeframe(io::IO, x::Frame)
     else
         n += write(buff, pl)
     end
-    seekstart(buff)
     lock(write_lock) do
-        write(io.io, buff)
+        write(io.io, take!(buff))
     end
     return n
 end
