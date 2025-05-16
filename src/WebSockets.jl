@@ -10,6 +10,8 @@ import ..HTTP # for doc references
 
 export WebSocket, send, receive, ping, pong
 
+write_lock = ReentrantLock()
+
 # 1st 2 bytes of a frame
 primitive type FrameFlags 16 end
 uint16(x::FrameFlags) = Base.bitcast(UInt16, x)
@@ -206,7 +208,9 @@ function writeframe(io::IO, x::Frame)
         n += write(buff, pl)
     end
     seekstart(buff)
-    write(io.io, buff)
+    lock(write_lock) do
+        write(io.io, buff)
+    end
     return n
 end
 
