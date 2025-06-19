@@ -93,7 +93,7 @@ from the rules of the HTTP.
  - `headers` specifies headers to be used for the HTTP GET request
  - any additional keyword args (`kw...`) are passed on to the HTTP request.
 """
-function download(url::AbstractString, local_path=nothing, headers=Header[]; update_period=1, kw...)
+function download(url::Union{URI, AbstractString}, local_path=nothing, headers=Header[]; update_period=1, kw...)
     format_progress(x) = round(x, digits=4)
     format_bytes(x) = !isfinite(x) ? "∞ B" : Base.format_bytes(round(Int, x))
     format_seconds(x) = "$(round(x; digits=2)) s"
