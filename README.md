@@ -25,7 +25,7 @@ julia> using Pkg; Pkg.add("HTTP")
 The package has matured and is used in many production systems.
 But as with all open-source software, please try it out and report your experience.
 
-The package is tested against current Julia LTS (1.6), and current master on Linux, macOS, and Windows.
+The package is tested against current Julia LTS (1.10), and current master on Linux, macOS, and Windows.
 
 ## Contributing and Questions
 
