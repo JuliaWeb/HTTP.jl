@@ -19,7 +19,7 @@ try
         cert, key = joinpath.(@__DIR__, "../test", "resources", ("cert.pem", "key.pem"))
         sslconfig = MbedTLS.SSLConfig(cert, key)
 
-        server = HTTP.serve!("0.0.0.0", _port; verbose = -1, listenany=true, sslconfig=sslconfig) do req
+        server = HTTP.serve!(Sockets.localhost, _port; verbose = -1, listenany=true, sslconfig=sslconfig) do req
             HTTP.Response(200,  ["Content-Encoding" => "gzip"], gzip_data("dummy response"))
         end
         try
