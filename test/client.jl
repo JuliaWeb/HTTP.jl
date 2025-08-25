@@ -288,7 +288,7 @@ end
     end
 
     @testset "Client Redirect Response Stream" begin
-        # Test that redirect response bodies are not written to response_stream 
+        # Test that redirect response bodies are not written to response_stream
         # (Issue #1165: https://github.com/JuliaWeb/HTTP.jl/issues/1165)
         server = nothing
         try
