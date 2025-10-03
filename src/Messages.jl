@@ -209,7 +209,12 @@ function mkheaders(h, headers=Vector{Header}(undef, length(h)))::Headers
     for (i, head) in enumerate(h)
         head isa String && throw(ArgumentError("header must be passed as key => value pair: `$head`"))
         length(head) != 2 && throw(ArgumentError("invalid header key-value pair: $head"))
-        headers[i] = SubString(string(head[1])) => SubString(string(head[2]))
+        key = SubString(string(head[1]))
+        value = SubString(string(head[2]))
+        if !occursin(r"^[!#$%&'*+\-.^_`|~[:alnum:]]+$", key) || !occursin(r"^[!-~]+$", value)
+            throw(ArgumentError("Invalid header key or value"))
+        end
+        headers[i] = key => value
     end
     return headers
 end
