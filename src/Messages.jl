@@ -211,7 +211,7 @@ function mkheaders(h, headers=Vector{Header}(undef, length(h)))::Headers
         length(head) != 2 && throw(ArgumentError("invalid header key-value pair: $head"))
         key = SubString(string(head[1]))
         value = SubString(string(head[2]))
-        if !occursin(r"^[!#$%&'*+\-.^_`|~[:alnum:]]+$", key) || !occursin(r"^[!-~]+$", value)
+        if !occursin(r"^[!#$%&'*+\-.^_`|~[:alnum:]]+$", key) || !occursin(r"^[\t !-~\x80-\xff]*$", value)
             throw(ArgumentError("Invalid header key or value"))
         end
         headers[i] = key => value
