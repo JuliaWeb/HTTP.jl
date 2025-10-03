@@ -287,6 +287,73 @@ end
         @test isok(HTTP.request(read_method, "https://$httpbin/redirect-to?url=http%3A%2F%2Fgoogle.com", socket_type_tls=tls))
     end
 
+    @testset "Client Redirect Response Stream" begin
+        # Test that redirect response bodies are not written to response_stream
+        # (Issue #1165: https://github.com/JuliaWeb/HTTP.jl/issues/1165)
+        server = nothing
+        try
+            server = HTTP.listen!("127.0.0.1", 8123) do http
+                if http.message.target == "/final"
+                    HTTP.setstatus(http, 200)
+                    HTTP.startwrite(http)
+                    HTTP.write(http, "final_response")
+                else
+                    HTTP.setstatus(http, 301)
+                    HTTP.setheader(http, "Location" => "/final")
+                    HTTP.startwrite(http)
+                    HTTP.write(http, "redirect_response")
+                end
+                return
+            end
+
+            # Test with response_stream - should only contain final response
+            buffer = IOBuffer()
+            resp = HTTP.get("http://127.0.0.1:8123"; response_stream=buffer)
+            result = String(take!(buffer))
+            @test result == "final_response"
+            @test resp.status == 200
+
+            # Test multiple redirects - should only contain final response
+            server2 = HTTP.listen!("127.0.0.1", 8124) do http
+                if http.message.target == "/final"
+                    HTTP.setstatus(http, 200)
+                    HTTP.startwrite(http)
+                    HTTP.write(http, "final")
+                elseif http.message.target == "/redirect2"
+                    HTTP.setstatus(http, 302)
+                    HTTP.setheader(http, "Location" => "/final")
+                    HTTP.startwrite(http)
+                    HTTP.write(http, "second_redirect")
+                else
+                    HTTP.setstatus(http, 301)
+                    HTTP.setheader(http, "Location" => "/redirect2")
+                    HTTP.startwrite(http)
+                    HTTP.write(http, "first_redirect")
+                end
+                return
+            end
+
+            try
+                buffer2 = IOBuffer()
+                HTTP.get("http://127.0.0.1:8124"; response_stream=buffer2)
+                result2 = String(take!(buffer2))
+                @test result2 == "final"
+            finally
+                close(server2)
+            end
+
+            # Test with redirect=false - should include redirect body
+            buffer3 = IOBuffer()
+            resp3 = HTTP.get("http://127.0.0.1:8123"; response_stream=buffer3, redirect=false)
+            result3 = String(take!(buffer3))
+            @test result3 == "redirect_response"
+            @test resp3.status == 301
+
+        finally
+            server !== nothing && close(server)
+        end
+    end
+
     @testset "Client Basic Auth" begin
         @test isok(HTTP.get("https://user:pwd@$httpbin/basic-auth/user/pwd", socket_type_tls=tls))
         @test isok(HTTP.get("https://user:pwd@$httpbin/hidden-basic-auth/user/pwd", socket_type_tls=tls))

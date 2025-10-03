@@ -1,6 +1,7 @@
 module StreamRequest
 
 using ..IOExtras, ..Messages, ..Streams, ..Connections, ..Strings, ..RedirectRequest, ..Exceptions
+using ..Messages: isredirect, allow_redirects, redirectlimitreached, header
 using CodecZlib, URIs
 using SimpleBufferStream: BufferStream
 using ConcurrentUtilities: @samethreadpool_spawn
@@ -143,9 +144,21 @@ function readbody(stream::Stream, res::Response, decompress::Union{Nothing, Bool
     end
 end
 
+# Check if this redirect response will be followed
+# Based on the logic in RedirectRequest.redirectlayer
+function willredirect(res::Response)
+    req = res.request
+    return (
+        isredirect(res) &&
+        allow_redirects(req) &&
+        !redirectlimitreached(req) &&
+        header(res, "Location") != ""
+    )
+end
+
 function readbody!(stream::Stream, res::Response, buf_or_stream, lock)
     n = 0
-    if !iserror(res)
+    if !iserror(res) && !willredirect(res)
         if isbytes(res.body)
             if length(res.body) > 0
                 # user-provided buffer to read response body into
@@ -179,6 +192,7 @@ function readbody!(stream::Stream, res::Response, buf_or_stream, lock)
         # read the response body into the request context so that it can be
         # read by the user if they want to or set later if
         # we end up not retrying/redirecting/etc.
+        # This handles both error responses and redirect responses that will be followed
         Base.@lock lock begin
             res.request.context[:response_body] = read(buf_or_stream)
         end
