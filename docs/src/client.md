@@ -205,6 +205,8 @@ Controls whether the SSL configuration for a secure connection is verified in th
 
 Allows specifying a custom `MbedTLS.SSLConfig` configuration to be used in the secure connection handshake process to verify the connection. A custom cert and key file can be passed to construct a custom `SSLConfig` like `MbedTLS.SSLConfig(cert_file, key_file)`.
 
+> `MbedTLS` checks `ENV["HTTP_CA_BUNDLE"]` for a path to SSL certificates, not `ENV["JULIA_SSL_CA_ROOTS_PATH"]` like `NetworkOptions` in `stdlib`. To override the system's default certificates, set both environment variables. 
+
 ### Cookie Arguments
 
 #### `cookies`
