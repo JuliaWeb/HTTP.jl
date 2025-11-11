@@ -615,31 +615,6 @@ function sslconnection(::Type{SSLContext}, tcp::TCPSocket, host::AbstractString;
     return io
 end
 
-function sslupgrade(::Type{IOType}, c::Connection{T},
-                    host::AbstractString;
-                    pool::Union{Nothing, Pool}=nothing,
-                    require_ssl_verification::Bool=NetworkOptions.verify_host(host, "SSL"),
-                    keepalive::Bool=true,
-                    readtimeout::Int=0,
-                    kw...)::Connection{IOType} where {T, IOType}
-    # initiate the upgrade to SSL
-    # if the upgrade fails, an error will be thrown and the original c will be closed
-    # in ConnectionRequest
-    tls = if readtimeout > 0
-        try_with_timeout(readtimeout) do _
-            sslconnection(IOType, c.io, host; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
-        end
-    else
-        sslconnection(IOType, c.io, host; require_ssl_verification=require_ssl_verification, keepalive=keepalive, kw...)
-    end
-    # success, now we turn it into a new Connection
-    conn = Connection(host, "", 0, require_ssl_verification, keepalive, tls)
-    # release the "old" one, but don't return the connection since we're hijacking the socket
-    release(getpool(pool, T), connectionkey(c))
-    # and return the new one
-    return acquire(() -> conn, getpool(pool, IOType), connectionkey(conn); forcenew=true)
-end
-
 function Base.show(io::IO, c::Connection)
     nwaiting = has_tcpsocket(c) ? bytesavailable(tcpsocket(c)) : 0
     print(
