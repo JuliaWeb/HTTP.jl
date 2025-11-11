@@ -588,8 +588,17 @@ The first chunk of the Message Body (for display purposes).
 bodysummary(body) = isbytes(body) ? view(bytes(body), 1:min(nbytes(body), BODY_SHOW_MAX[])) : "[Message Body was streamed]"
 bodysummary(body::Union{AbstractDict, NamedTuple}) = URIs.escapeuri(body)
 function bodysummary(body::Form)
-    if length(body.data) == 1 && isa(body.data[1], IOBuffer)
-        return body.data[1].data[1:body.data[1].ptr-1]
+    if length(body.data) == 1
+        data = body.data[1]
+        if data isa Base.GenericIOBuffer && data.seekable
+            oldmark = data.mark
+            m = mark(data)
+            seekstart(data)
+            content = read(data, m)
+            reset(data)
+            data.mark = oldmark
+            return content
+        end
     end
     return "[Message Body was streamed]"
 end
