@@ -313,4 +313,23 @@ end # @testset
     @test occursin(r"^\*/\* text/plain HEAD / HTTP/1\.1 HEAD / 127\.0\.0\.1 \d+ - HTTP/1\.1 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.* \d+/.*/\d{4}:\d{2}:\d{2}:\d{2}.* 200 0$", logs[4].message)
 end
 
+@testset "HEAD request without body" begin
+    sometext = "This is a big body that we don't want returned during a head"
+    handler = req -> begin
+        return HTTP.Response(200, [], sometext)
+    end
+    server = HTTP.serve!(handler; listenany=true)
+    port = HTTP.port(server)
+
+    response = HTTP.head("http://localhost:$port")
+    @test response.status == 200
+    @test String(response.body) == ""
+
+    response = HTTP.get("http://localhost:$port")
+    @test response.status == 200
+    @test String(response.body) == sometext
+
+    close(server)
+end
+
 end # module
