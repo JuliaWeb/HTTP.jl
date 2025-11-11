@@ -213,12 +213,6 @@ end
 function read_to_buffer(c::Connection, sizehint=4096)
     buf = c.buffer
 
-    # Reset the buffer if it is empty.
-    if bytesavailable(buf) == 0
-        buf.size = 0
-        buf.ptr = 1
-    end
-
     # Wait for data.
     if eof(c.io)
         throw(EOFError())
@@ -227,9 +221,11 @@ function read_to_buffer(c::Connection, sizehint=4096)
     # Read from stream into buffer.
     n = min(sizehint, bytesavailable(c.io))
     buf = c.buffer
-    Base.ensureroom(buf, n)
-    GC.@preserve buf unsafe_read(c.io, pointer(buf.data, buf.size + 1), n)
-    buf.size += n
+    p, n = Base.alloc_request(buf, UInt(n))
+    n = min(n, bytesavailable(c.io))
+    GC.@preserve buf unsafe_read(c.io, p, UInt(n))
+    Base.notify_filled(buf, Int(n))
+    nothing
 end
 
 """
