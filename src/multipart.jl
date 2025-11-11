@@ -1,6 +1,6 @@
 module Forms
 
-export Form, Multipart, content_type
+export Form, Multipart, content_type, multipart_request
 
 using ..IOExtras, ..Sniff, ..Conditions
 import ..HTTP # for doc references
@@ -11,6 +11,7 @@ mutable struct Form <: IO
     index::Int
     mark::Int
     boundary::String
+    type::Symbol
 end
 
 Form(f::Form) = f
@@ -101,7 +102,9 @@ headers = []
 HTTP.post(url, headers, body)
 ```
 """
-function Form(d; boundary=string(rand(UInt128), base=16))
+function Form(d; boundary=string(rand(UInt128), base=16), type = :formdata)
+    @require type ∈ [:formdata, :mixed]
+
     # https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
     bcharsnospace = raw"\w'\(\)\+,-\./:=\?"
     boundary_re = Regex("^[$bcharsnospace ]{0,69}[$bcharsnospace]\$")
@@ -112,9 +115,9 @@ function Form(d; boundary=string(rand(UInt128), base=16))
     len = length(d)
     for (i, (k, v)) in enumerate(d)
         write(io, (i == 1 ? "" : "\r\n") * "--" * boundary * "\r\n")
-        write(io, "Content-Disposition: form-data; name=\"$k\"")
+        type == :mixed || write(io, "Content-Disposition: form-data; name=\"$k\"")
         if isa(v, IO)
-            writemultipartheader(io, v)
+            writemultipartheader(io, v, type)
             seekstart(io)
             push!(data, io)
             push!(data, v)
@@ -128,7 +131,7 @@ function Form(d; boundary=string(rand(UInt128), base=16))
     write(io, "\r\n--" * boundary * "--" * "\r\n")
     seekstart(io)
     push!(data, io)
-    return Form(data, 1, -1, boundary)
+    return Form(data, 1, -1, boundary, type)
 end
 
 function writemultipartheader(io::IOBuffer, i::IOStream)
@@ -195,6 +198,10 @@ function Multipart(f::Union{AbstractString, Nothing}, data::T, ct::AbstractStrin
     return Multipart{T}(f, data, String(ct), String(cte), String(name))
 end
 
+function Form(v::Vector{<:Multipart}; boundary=string(rand(UInt128), base=16))
+    Form(Pair[i => m for (i, m) in enumerate(v)]; boundary, type = :mixed)
+end
+
 function Base.show(io::IO, m::Multipart{T}) where {T}
     items = ["data=::$T", "contenttype=\"$(m.contenttype)\"", "contenttransferencoding=\"$(m.contenttransferencoding)\")"]
     m.filename === nothing || pushfirst!(items, "filename=\"$(m.filename)\"")
@@ -209,8 +216,10 @@ Base.mark(m::Multipart{T}) where {T} = mark(m.data)
 Base.reset(m::Multipart{T}) where {T} = reset(m.data)
 Base.seekstart(m::Multipart{T}) where {T} = seekstart(m.data)
 
-function writemultipartheader(io::IOBuffer, i::Multipart)
-    if i.filename === nothing
+function writemultipartheader(io::IOBuffer, i::Multipart, type = :formdata)
+    if type == :mixed
+        # don't write a new line
+    elseif i.filename === nothing
         write(io, "\r\n")
     else
         write(io, "; filename=\"$(i.filename)\"\r\n")
@@ -222,6 +231,18 @@ function writemultipartheader(io::IOBuffer, i::Multipart)
 end
 
 content_type(f::Form) = "Content-Type" =>
-                        "multipart/form-data; boundary=$(f.boundary)"
+                        "multipart/$(f.type == :formdata ? "form-data" : f.type); boundary=$(f.boundary)"
+
+function multipart_request(method, url, ct::AbstractString="", cte::AbstractString=""; body = HTTP.nobody, headers = [], query...)
+    target = HTTP.unescapeuri(string(HTTP.URI(HTTP.URI(url); query)))
+    header = HTTP.MessageRequest.mkreqheaders(headers, true)
+    req = HTTP.Messages.Request(uppercase("$method"), target, header, body)
+    
+    io = IOBuffer()
+    write(io, req)
+    seekstart(io)
+    
+    HTTP.Multipart(nothing, io, ct, cte)    
+end
 
 end # module

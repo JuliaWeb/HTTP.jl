@@ -3,7 +3,7 @@ module MultiPartParsing
 import ..access_threaded
 using ..Messages, ..Forms, ..Parsers
 
-export parse_multipart_form
+export parse_multipart, parse_multipart_form, parse_multipart_mixed
 
 const CR_BYTE = 0x0d # \r
 const LF_BYTE = 0x0a # \n
@@ -154,50 +154,100 @@ end
 Parse a single multi-part chunk into a Multipart object.  This will decode
 the header and extract the contents from the byte array.
 """
-function parse_multipart_chunk(chunk)
+function parse_multipart_chunk(chunk; require_contentdisposition::Bool=true)
     startIndex, end_index = find_header_boundary(chunk)
     header = SubString(unsafe_string(pointer(chunk, startIndex), end_index - startIndex + 1))
     content = view(chunk, end_index+1:lastindex(chunk))
 
     # find content disposition
     re = access_threaded(content_disposition_regex_f, content_disposition_regex)
-    if !Parsers.exec(re, header)
+    content_disposition_available = Parsers.exec(re, header)
+    if !content_disposition_available && require_contentdisposition
         @warn "Content disposition is not specified dropping the chunk." String(chunk)
-        return nothing # Specifying content disposition is mandatory
+        return nothing # Specifying content disposition is mandatory for form-data
     end
-    content_disposition = Parsers.group(1, re, header)
 
-    re_flag = access_threaded(content_disposition_flag_regex_f, content_disposition_flag_regex)
-    re_pair = access_threaded(content_disposition_pair_regex_f, content_disposition_pair_regex)
     name = nothing
     filename = nothing
-    while !isempty(content_disposition)
-        if Parsers.exec(re_pair, content_disposition)
-            key = Parsers.group(1, re_pair, content_disposition)
-            value = Parsers.group(2, re_pair, content_disposition)
-            if key == "name"
-                name = value
-            elseif key == "filename"
-                filename = value
+    if content_disposition_available
+        content_disposition = Parsers.group(1, re, header)
+
+        re_flag = access_threaded(content_disposition_flag_regex_f, content_disposition_flag_regex)
+        re_pair = access_threaded(content_disposition_pair_regex_f, content_disposition_pair_regex)
+        while !isempty(content_disposition)
+            if Parsers.exec(re_pair, content_disposition)
+                key = Parsers.group(1, re_pair, content_disposition)
+                value = Parsers.group(2, re_pair, content_disposition)
+                if key == "name"
+                    name = value
+                elseif key == "filename"
+                    filename = value
+                else
+                    # do stuff with other content disposition key-value pairs
+                end
+                content_disposition = Parsers.nextbytes(re_pair, content_disposition)
+            elseif Parsers.exec(re_flag, content_disposition)
+                # do stuff with content disposition flags
+                content_disposition = Parsers.nextbytes(re_flag, content_disposition)
             else
-                # do stuff with other content disposition key-value pairs
+                break
             end
-            content_disposition = Parsers.nextbytes(re_pair, content_disposition)
-        elseif Parsers.exec(re_flag, content_disposition)
-            # do stuff with content disposition flags
-            content_disposition = Parsers.nextbytes(re_flag, content_disposition)
-        else
-            break
         end
+
+        name === nothing && return
     end
-
-    name === nothing && return
-
     re_ct = access_threaded(content_type_regex_f, content_type_regex)
     contenttype = Parsers.exec(re_ct, header) ? Parsers.group(1, re_ct, header) : "text/plain"
 
-    return Multipart(filename, IOBuffer(content), contenttype, "", name)
+    return Multipart(filename, IOBuffer(content), contenttype, "", name === nothing ? "" : name)
 end
+
+"""
+    parse_multipart_data(::Type{Response}, m::Multipart)
+
+Parse data of a mixed multipart response into a HTTP.Response
+"""
+function parse_multipart_data(::Type{Response}, m::Multipart)
+    seekstart(m.data)
+    content = read(m.data)
+    startIndex, end_index = find_header_boundary(content)
+    
+    header = SubString(unsafe_string(pointer(content, startIndex), end_index - startIndex + 1))
+    response_content = view(content, end_index+1:lastindex(content))
+    response = Response(response_content)
+    header = Messages.parse_start_line!(header, response)
+    Messages.parse_header_fields!(header, response)
+    return response
+end
+
+"""
+    parse_multipart_data(f::Function, m::Multipart)
+
+Parse multipart data by parsing function `f`
+"""
+function parse_multipart_data(f::Function, m::Multipart)
+    seekstart(m.data)
+    content = read(m.data)
+
+    return f(content)
+end
+
+parse_multipart_data(::Type{Response}, mm::Vector{Multipart}) = parse_multipart_data.(Ref(Response), mm)
+
+"""
+    parse_multipart(::Type{T}, msg::Message) where T
+
+Parse multipart message into a type T. This function only forwards the type `T` to the 
+function `parse_multipart_data(::Type{T}, m::Multipart)`, which needs to be declared by the user.
+"""
+parse_multipart(::Type{T}, msg::Message) where T = parse_multipart_data(T, parse_multipart(msg))
+
+"""
+    parse_multipart(f::Function, msg::Message) where T
+
+Parse multipart message by applying a parsing function `f(content::Vector{UInt8})` to the multipart parts.
+"""
+parse_multipart(f::Function, msg::Message) where T = parse_multipart_data.(f, parse_multipart(msg))
 
 """
     parse_multipart_body(body, boundary)::Vector{Multipart}
@@ -205,14 +255,14 @@ end
 Parse the multipart body received from the client breaking it into the various
 chunks which are returned as an array of Multipart objects.
 """
-function parse_multipart_body(body::AbstractVector{UInt8}, boundary::AbstractString)::Vector{Multipart}
+function parse_multipart_body(body::AbstractVector{UInt8}, boundary::AbstractString; require_contentdisposition::Bool = true)::Vector{Multipart}
     multiparts = Multipart[]
     idxs = find_multipart_boundaries(body, codeunits(boundary))
     length(idxs) > 1 || (return multiparts)
 
     for i in 1:length(idxs)-1
         chunk = view(body, idxs[i][2]+1:idxs[i+1][1]-1)
-        push!(multiparts, parse_multipart_chunk(chunk))
+        push!(multiparts, parse_multipart_chunk(chunk; require_contentdisposition))
     end
     return multiparts
 end
@@ -232,18 +282,23 @@ that the boundary delimiter does not need to have '-' characters, but a line usi
 the boundary delimiter will start with '--' and end in \r\n.
 [RFC2046 5.1](https://tools.ietf.org/html/rfc2046#section-5.1.1)
 """
-function parse_multipart_form(msg::Message)::Union{Vector{Multipart}, Nothing}
-    # parse boundary from Content-Type
-    m = match(r"multipart/form-data; boundary=(.*)$", msg["Content-Type"])
+function parse_multipart(msg::Message, required_type = nothing)::Union{Vector{Multipart}, Nothing}
+    # parse multipart type and boundary from Content-Type
+    m = match(r"multipart/([^;]*); boundary=(.*)$", msg["Content-Type"])
     m === nothing && return nothing
 
-    boundary_delimiter = m[1]
+    type = Symbol(replace(m[1], '-' => ""))
+    boundary_delimiter = m[2]
+    required_type !== nothing && required_type != type && return nothing
 
     # [RFC2046 5.1.1](https://tools.ietf.org/html/rfc2046#section-5.1.1)
     length(boundary_delimiter) > 70 && error("boundary delimiter must not be greater than 70 characters")
 
-    return parse_multipart_body(payload(msg), boundary_delimiter)
+    return parse_multipart_body(payload(msg), boundary_delimiter; require_contentdisposition = (type == :formdata))
 end
+
+parse_multipart_form(msg::Message) = parse_multipart(msg, :formdata)
+parse_multipart_mixed(msg::Message) = parse_multipart(msg, :mixed)
 
 function __init__()
     nt = isdefined(Base.Threads, :maxthreadid) ? Threads.maxthreadid() : Threads.nthreads()
