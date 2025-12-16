@@ -233,6 +233,34 @@ end -> HTTP.Response
 
 Where the `io` argument provided to the function body is an `HTTP.Stream` object, a custom `IO` that represents an open connection that is ready to be written to in order to send the request body, and/or read from to receive the response body. Note that `startread(io)` should be called before calling `readavailable` to ensure the response status line and headers are received and parsed appropriately. Calling `eof(io)` will return true until the response body has been completely received. Note that the returned `HTTP.Response` from `HTTP.open` will _not_ have a `.body` field since the body was read in the function body.
 
+### Server-Sent Events
+
+HTTP.jl can parse [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events) streams directly via the `sse_callback` keyword on `HTTP.request`. When this keyword is supplied, HTTP.jl incrementally parses the incoming bytes as an event stream and invokes the callback with an `HTTP.SSEEvent` struct for every event:
+
+```julia
+using HTTP
+
+events = HTTP.SSEEvent[]
+HTTP.request("GET", "http://127.0.0.1:8080/events"; sse_callback = (stream, event) -> begin
+    @info "event" data=event.data id=event.id event_type=event.event retry_after=event.retry
+    push!(events, event)
+end)
+```
+
+The callback can be `f(event)` or `f(stream, event)`. The two-argument form allows cancelling the request by calling `close(stream)` (for example, in response to a specific event).
+
+Each callback receives a `SSEEvent` with the following fields:
+
+- `data::String`: newline-joined `data:` payload for the event (with the trailing newline removed).
+- `event::Union{Nothing,String}`: the most recent `event:` field, or `nothing` when not provided (equivalent to the default `"message"` type).
+- `id::Union{Nothing,String}`: the last `id:` value observed, automatically persisted between events per the SSE specification.
+- `retry::Union{Nothing,Int}`: the last `retry:` directive in milliseconds, propagated to subsequent events until another `retry:` value is parsed.
+- `fields::Dict{String,String}`: newline-joined string values for every field encountered since the previous event, including custom non-standard fields.
+
+Because HTTP.jl streams the response directly to the callback, the returned `HTTP.Response` will always have `response.body === HTTP.nobody`. The `sse_callback` keyword cannot be combined with `response_stream` or a custom `iofunction`. The callback is only invoked for non-error responses; error responses are read like a normal request, and `status_exception` behavior applies. Parsing or callback errors surface as regular request errors (`HTTP.RequestError`) with the underlying exception in `err.error`. Compressed streams are supported automatically unless `decompress=false` is explicitly set.
+
+For a full end-to-end example, see [`docs/examples/server_sent_events.jl`](https://github.com/JuliaWeb/HTTP.jl/blob/master/docs/examples/server_sent_events.jl).
+
 ### Download
 
 A [`download`](@ref) function is provided for similar functionality to `Downloads.download`.

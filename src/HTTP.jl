@@ -44,6 +44,7 @@ include("StatusCodes.jl")              ;using .StatusCodes
 include("Messages.jl")                 ;using .Messages
 include("cookies.jl")                  ;using .Cookies
 include("Streams.jl")                  ;using .Streams
+include("SSE.jl")                      ;using .SSE
 
 getrequest(r::Request) = r
 getrequest(s::Stream) = s.message.request
@@ -131,10 +132,17 @@ shorthand for `HTTP.request("GET", ...)`, etc.
 
 Supported optional keyword arguments:
 
- - `query = nothing`, a `Pair` or `Dict` of key => values to be included in the url
- - `response_stream = nothing`, a writeable `IO` stream or any `IO`-like
+- `query = nothing`, a `Pair` or `Dict` of key => values to be included in the url
+- `response_stream = nothing`, a writeable `IO` stream or any `IO`-like
     type `T` for which `write(T, AbstractVector{UInt8})` is defined. The response body
     will be written to this stream instead of returned as a `Vector{UInt8}`.
+- `sse_callback = nothing`, provide a function `f(event)` or `f(stream, event)` to incrementally
+    consume Server-Sent Events responses. When set, HTTP.jl parses the response body as an event
+    stream, invokes the callback for each `HTTP.SSEEvent`, and returns the final `HTTP.Response`
+    with `response.body === HTTP.nobody`. The two-argument form can cancel the request by calling
+    `close(stream)`. The callback is only invoked for non-error responses; error responses are read
+    normally and `status_exception` behavior applies. This keyword is mutually exclusive with custom
+    `iofunction` or `response_stream` handling.
  - `verbose = 0`, set to `1` or `2` for increasingly verbose logging of the
     request and response process
  - `connect_timeout = 30`, close the connection after this many seconds if it

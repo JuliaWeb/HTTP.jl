@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-<!-- ## [Unreleased] -->
+## [Unreleased]
+
+## [v1.11.0] - 2025-12-20
+### Added
+- Added full Server-Sent Events (SSE) support for both client and server:
+  - **Client-side**: `sse_callback` keyword argument for `HTTP.request` to parse SSE streams on
+    successful responses, invoking a callback with `HTTP.SSEEvent` for each event received.
+  - **Server-side**: `HTTP.sse_stream(response) do stream ... end` helper to write
+    `HTTP.SSEEvent`s and automatically close the stream when the block finishes (or use
+    `HTTP.sse_stream(response)` for manual management).
+  - `HTTP.SSEEvent` struct for representing SSE events with `data`, `event`, `id`, and `retry` fields.
 
 ## [v1.10.1] - 2023-11-28
 ### Changed

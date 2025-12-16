@@ -366,7 +366,8 @@ end
     @test_throws HTTP.TimeoutError begin
         HTTP.get("http://$httpbin/delay/5"; readtimeout=1, retry=false)
     end
-    HTTP.get("http://$httpbin/delay/1"; readtimeout=2, retry=false)
+    # allow extra slack for external server/network jitter
+    HTTP.get("http://$httpbin/delay/1"; readtimeout=10, retry=false)
 end
 
 @testset "connect_timeout does not include the time needed to acquire a connection from the pool" begin
