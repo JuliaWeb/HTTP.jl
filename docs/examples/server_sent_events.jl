@@ -38,6 +38,12 @@ loosely following [this tutorial](https://developer.mozilla.org/en-US/docs/Web/A
 ```julia
 using HTTP, JSON
 
+# Using sse_callback for automatic SSE parsing:
+HTTP.request("GET", "http://127.0.0.1:8080/api/events"; sse_callback = (stream, event) -> begin
+    @info "Received event" data=event.data event_type=event.event id=event.id
+end)
+
+# Or using HTTP.open for raw streaming:
 HTTP.open("GET", "http://127.0.0.1:8080/api/events") do io
     while !eof(io)
         println(String(readavailable(io)))
@@ -45,10 +51,37 @@ HTTP.open("GET", "http://127.0.0.1:8080/api/events") do io
 end
 ```
 
-### Server code:
+### Server code (using HTTP.sse_stream - recommended):
 """
 using HTTP, Sockets, JSON
 
+# Simple SSE server using the HTTP.sse_stream helper
+function simple_sse_server()
+    server = HTTP.serve!(listenany=true) do request
+        response = HTTP.Response(200)
+        # Add CORS headers for browser clients
+        HTTP.setheader(response, "Access-Control-Allow-Origin" => "*")
+
+        # Create SSE stream - automatically sets Content-Type and Cache-Control
+        HTTP.sse_stream(response) do stream
+            for i in 1:10
+                # Write a ping event with timestamp
+                write(stream, HTTP.SSEEvent(string(round(Int, time())); event="ping"))
+
+                # Occasionally write a data event
+                if rand(Bool)
+                    write(stream, HTTP.SSEEvent(string(rand())))
+                end
+                sleep(1)
+            end
+        end
+
+        return response
+    end
+    return server
+end
+
+# More complex example with Router
 const ROUTER = HTTP.Router()
 
 function getItems(req::HTTP.Request)
@@ -62,17 +95,41 @@ function getItems(req::HTTP.Request)
     return HTTP.Response(200, headers, JSON.json(rand(2)))
 end
 
-function events(stream::HTTP.Stream)
+# Using HTTP.sse_stream with a request handler
+function events_handler(req::HTTP.Request)
+    if HTTP.method(req) == "OPTIONS"
+        return HTTP.Response(200, [
+            "Access-Control-Allow-Origin" => "*",
+            "Access-Control-Allow-Methods" => "GET, OPTIONS"
+        ])
+    end
+
+    response = HTTP.Response(200)
+    HTTP.setheader(response, "Access-Control-Allow-Origin" => "*")
+    HTTP.sse_stream(response) do stream
+        while true
+            write(stream, HTTP.SSEEvent(string(round(Int, time())); event="ping"))
+            if rand(Bool)
+                write(stream, HTTP.SSEEvent(string(rand())))
+            end
+            sleep(1)
+        end
+    end
+
+    return response
+end
+
+# Alternative: manual SSE using stream handler (lower-level approach)
+function events_stream(stream::HTTP.Stream)
     HTTP.setheader(stream, "Access-Control-Allow-Origin" => "*")
     HTTP.setheader(stream, "Access-Control-Allow-Methods" => "GET, OPTIONS")
     HTTP.setheader(stream, "Content-Type" => "text/event-stream")
+    HTTP.setheader(stream, "Cache-Control" => "no-cache")
 
     if HTTP.method(stream.message) == "OPTIONS"
         return nothing
     end
 
-    HTTP.setheader(stream, "Content-Type" => "text/event-stream")
-    HTTP.setheader(stream, "Cache-Control" => "no-cache")
     while true
         write(stream, "event: ping\ndata: $(round(Int, time()))\n\n")
         if rand(Bool)
@@ -83,23 +140,30 @@ function events(stream::HTTP.Stream)
     return nothing
 end
 
-HTTP.register!(ROUTER, "GET", "/api/getItems", HTTP.streamhandler(getItems))
-HTTP.register!(ROUTER, "/api/events", events)
+HTTP.register!(ROUTER, "GET", "/api/getItems", getItems)
+HTTP.register!(ROUTER, "GET", "/api/events", events_handler)
 
-server = HTTP.serve!(ROUTER, "127.0.0.1", 8080; stream=true)
+# Start the server in the normal request-handler mode
+server = HTTP.serve!(ROUTER, "127.0.0.1", 8080)
 
-# Julia usage
-resp = HTTP.get("http://localhost:8080/api/getItems")
+# To run the manual stream-handler variant instead, start a separate server:
+# stream_server = HTTP.serve!(events_stream, "127.0.0.1", 8081; stream=true)
 
-close = Ref(false)
-@async HTTP.open("GET", "http://127.0.0.1:8080/api/events") do io
-    while !eof(io) && !close[]
-        println(String(readavailable(io)))
+# Julia client usage with sse_callback
+stop = Ref(false)
+@async begin
+    try
+        HTTP.request("GET", "http://127.0.0.1:8080/api/events"; sse_callback = (stream, event) -> begin
+            println("Event: ", event.event, " | Data: ", event.data)
+            stop[] && close(stream)
+        end)
+    catch e
+        # Connection closed or stopped
     end
 end
 
 # run the following to stop the streaming client request
-close[] = true
+stop[] = true
 
 # close the server which will stop the HTTP server from listening
 close(server)

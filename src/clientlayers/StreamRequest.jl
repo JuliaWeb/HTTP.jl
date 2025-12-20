@@ -1,6 +1,6 @@
 module StreamRequest
 
-using ..IOExtras, ..Messages, ..Streams, ..Connections, ..Strings, ..RedirectRequest, ..Exceptions
+using ..IOExtras, ..Messages, ..Streams, ..Connections, ..Strings, ..RedirectRequest, ..Exceptions, ..SSE
 using CodecZlib, URIs
 using SimpleBufferStream: BufferStream
 using ConcurrentUtilities: @samethreadpool_spawn
@@ -18,9 +18,13 @@ immediately so that the transmission can be aborted if the `Response` status
 indicates that the server does not wish to receive the message body.
 [RFC7230 6.5](https://tools.ietf.org/html/rfc7230#section-6.5).
 """
-function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothing, Bool}=nothing, logerrors::Bool=false, logtag=nothing, timedout=nothing, kw...)::Response
+function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothing, Bool}=nothing,
+        logerrors::Bool=false, logtag=nothing, timedout=nothing, sse_callback=nothing, kw...)::Response
     response = stream.message
     req = response.request
+    if sse_callback !== nothing && (iofunction !== nothing || !isbytes(response.body))
+        throw(ArgumentError("`sse_callback` cannot be combined with `response_stream` or a custom `iofunction`"))
+    end
     @debug sprintcompact(req)
     @debug "client startwrite"
     write_start = time()
@@ -51,7 +55,11 @@ function streamlayer(stream::Stream; iofunction=nothing, decompress::Union{Nothi
                     @debug "client startread"
                     startread(stream)
                     if !isaborted(stream)
-                        readbody(stream, response, decompress, lock)
+                        if sse_callback !== nothing && !iserror(stream.message)
+                            SSE.handle_sse_stream(stream, sse_callback; decompress=decompress, context_lock=lock)
+                        else
+                            readbody(stream, response, decompress, lock)
+                        end
                     end
                 finally
                     Base.@lock lock begin

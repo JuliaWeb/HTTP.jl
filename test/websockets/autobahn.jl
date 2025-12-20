@@ -77,20 +77,45 @@ end
 end # @testset "Autobahn testsuite"
 
 @testset "Server" begin
-    server = WebSockets.listen!(9002; suppress_close_error=true) do ws
+    server_host = Sys.islinux() ? Sockets.localhost : "0.0.0.0"
+    server_url = Sys.islinux() ? "ws://127.0.0.1:9002" : "ws://host.docker.internal:9002"
+    config_dir = Sys.islinux() ? joinpath(DIR, "config") : mktempdir()
+    config_path = joinpath(config_dir, "fuzzingclient.json")
+    if !Sys.islinux()
+        cfg = Dict(
+            "outdir" => "./reports/server",
+            "servers" => [Dict("agent" => "main", "url" => server_url)],
+            "cases" => ["*"],
+            "exclude-cases" => ["9.*"],
+            "exclude-agent-cases" => Dict{String,Any}()
+        )
+        write(config_path, JSON.json(cfg))
+    end
+    docker_net = Sys.islinux() ? ["--net=host"] : String[]
+    server = WebSockets.listen!(server_host, 9002; suppress_close_error=true) do ws
         for msg in ws
             send(ws, msg)
         end
     end
     try
         _remove_report(DIR, "server/index.json")
-        @test success(run(Cmd(`docker run --rm --net="host" -v "$DIR/config:/config" -v "$DIR/reports:/reports" --name fuzzingclient crossbario/autobahn-testsuite wstest -m fuzzingclient -s /config/fuzzingclient.json`; dir=DIR), stdin, stdout, stdout; wait=false))
+        docker_args = vcat(
+            "docker",
+            "run",
+            "--rm",
+            docker_net,
+            ["-v", "$config_dir:/config", "-v", "$DIR/reports:/reports", "--name", "fuzzingclient",
+             "crossbario/autobahn-testsuite", "wstest", "-m", "fuzzingclient", "-s", "/config/fuzzingclient.json"]
+        )
+        docker_cmd = Cmd(Cmd(docker_args); dir=DIR)
+        @test success(run(docker_cmd, stdin, stdout, stdout; wait=false))
         report = JSON.parsefile(joinpath(DIR, "reports/server/index.json"))
         for (k, v) in pairs(report["main"])
             @test v["behavior"] in ("OK", "NON-STRICT", "INFORMATIONAL", "UNIMPLEMENTED")
         end
     finally
         close(server)
+        Sys.islinux() || rm(config_dir; recursive=true, force=true)
     end
 end
 

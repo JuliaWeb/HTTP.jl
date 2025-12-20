@@ -108,6 +108,77 @@ Lower-level core server functionality that only operates on `HTTP.Stream`. Provi
 
 Nginx-style log formatting is supported via the [`HTTP.@logfmt_str`](@ref) macro and can be passed via the `access_log` keyword argument for [`HTTP.listen`](@ref) or [`HTTP.serve`](@ref).
 
+## Server-Sent Events (SSE)
+
+HTTP.jl provides built-in support for [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events), a standard for pushing real-time updates from server to client over HTTP.
+
+### Creating an SSE Response
+
+Use [`HTTP.sse_stream`](@ref) to create an SSE stream from a response object:
+
+```julia
+using HTTP
+
+HTTP.serve() do request
+    response = HTTP.Response(200)
+    HTTP.sse_stream(response) do stream
+        for i in 1:5
+            write(stream, HTTP.SSEEvent("Event $i"))
+            sleep(1)
+        end
+    end
+
+    return response
+end
+```
+
+The `sse_stream` function:
+1. Creates an `SSEStream` for writing events
+2. Sets the response body to the stream
+3. Adds required headers: `Content-Type: text/event-stream` and `Cache-Control: no-cache`
+4. Uses a bounded internal buffer (configurable via `max_len`, default 16 MiB) to provide backpressure if the client is slow to read
+5. Spawns a task to run the body of the do-block asynchronously
+6. Closes the stream when the do-block completes
+
+### Writing Events
+
+Write events using `write(stream, HTTP.SSEEvent(...))`:
+
+```julia
+# Simple data-only event
+write(stream, HTTP.SSEEvent("Hello, world!"))
+
+# Event with type (for client-side addEventListener)
+write(stream, HTTP.SSEEvent("User logged in"; event="login"))
+
+# Event with ID (for client reconnection tracking)
+write(stream, HTTP.SSEEvent("Message content"; id="msg-123"))
+
+# Event with retry hint (milliseconds)
+write(stream, HTTP.SSEEvent("Reconnect hint"; retry=5000))
+
+# Event with all fields
+write(stream, HTTP.SSEEvent("Full event"; event="update", id="42", retry=3000))
+
+# Multiline data is automatically handled
+write(stream, HTTP.SSEEvent("Line 1\nLine 2\nLine 3"))
+```
+
+### SSEEvent Fields
+
+The `HTTP.SSEEvent` struct supports:
+- `data::String`: The event payload (required)
+- `event::Union{Nothing,String}`: Event type name (maps to `addEventListener` on client)
+- `id::Union{Nothing,String}`: Event ID for reconnection tracking
+- `retry::Union{Nothing,Int}`: Suggested reconnection delay in milliseconds
+
+### Important Notes
+
+- The do-block spawns a task where events will be written asynchronously
+- The handler must return the response while events are written asynchronously
+- Events will not actually be sent to the client until the handler has returned the response
+- For client-side SSE consumption, see the [Client documentation](client.md#Server-Sent-Events)
+
 ## Serving on the interactive thead pool
 
 Beginning in Julia 1.9, the main server loop is spawned on the [interactive threadpool](https://docs.julialang.org/en/v1.9/manual/multi-threading/#man-threadpools) by default. If users do a Threads.@spawn from a handler, those threaded tasks should run elsewhere and not in the interactive threadpool, keeping the web server responsive.

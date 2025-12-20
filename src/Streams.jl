@@ -54,6 +54,12 @@ end
 
 IOExtras.isopen(http::Stream) = isopen(http.stream)
 
+function Base.close(http::Stream)
+    http.ntoread = 0
+    @try Base.IOError close(http.stream)
+    return
+end
+
 # Writing HTTP Messages
 
 messagetowrite(http::Stream{<:Response}) = http.message.request::Request

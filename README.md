@@ -56,6 +56,15 @@ HTTP.open(:GET, "https://tinyurl.com/bach-cello-suite-1-ogg") do http
 end
 ```
 
+Handle [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events) (SSE) streams by passing an `sse_callback` function to `HTTP.request`:
+
+```julia
+events = HTTP.SSEEvent[]
+HTTP.request("GET", "http://127.0.0.1:8080/events"; sse_callback = event -> push!(events, event))
+```
+
+Each callback receives an `HTTP.SSEEvent` with the parsed `data`, `event`, `id`, `retry`, and `fields` from the stream.
+
 ## Server Examples
 
 [`HTTP.Servers.listen`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.Servers.listen):

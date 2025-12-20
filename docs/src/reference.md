@@ -89,6 +89,14 @@ HTTP.WebSockets.isclosed
 HTTP.WebSockets.isok
 ```
 
+### Server-Sent Events
+
+```@docs
+HTTP.SSEEvent
+HTTP.SSEStream
+HTTP.sse_stream
+```
+
 ## Utilities
 
 ```@docs
