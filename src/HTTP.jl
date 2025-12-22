@@ -591,8 +591,7 @@ open(f::Function, method::Union{String,Symbol}, url, headers=Header[]; kw...)::R
     HTTP.openraw(method, url, [, headers])::Tuple{Connection, Response}
 
 Open a raw socket that is unmanaged by HTTP.jl. Useful for doing HTTP upgrades
-to other protocols.  Any bytes of the body read from the socket when reading
-headers, is returned as excess bytes in the last tuple argument.
+to other protocols.
 
 Example of a WebSocket upgrade:
 ```julia
@@ -602,7 +601,7 @@ headers = Dict(
     "Sec-WebSocket-Key" => "dGhlIHNhbXBsZSBub25jZQ==",
     "Sec-WebSocket-Version" => "13")
 
-socket, response, excess = HTTP.openraw("GET", "ws://echo.websocket.org", headers)
+socket, response = HTTP.openraw("GET", "ws://echo.websocket.org", headers)
 
 # Write a WebSocket frame
 frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
