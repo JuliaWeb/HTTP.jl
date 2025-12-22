@@ -601,7 +601,7 @@ headers = Dict(
     "Sec-WebSocket-Key" => "dGhlIHNhbXBsZSBub25jZQ==",
     "Sec-WebSocket-Version" => "13")
 
-socket, response = HTTP.openraw("GET", "ws://echo.websocket.org", headers)
+socket, response = HTTP.openraw("GET", "https://echo.websocket.org", headers)
 
 # Write a WebSocket frame
 frame = UInt8[0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]
