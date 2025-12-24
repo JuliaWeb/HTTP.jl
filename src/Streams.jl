@@ -294,11 +294,19 @@ _alloc_request(buf::IOBuffer, recommended_size::UInt) = Base.alloc_request(buf, 
         nb = min(length(buffer.data), buffer.maxsize) - ptr + 1
         return (Ptr{Cvoid}(pointer(buffer.data, ptr)), nb)
     end
-else
+elseif VERSION < v"1.12"
     function _alloc_request(buffer::Base.GenericIOBuffer, recommended_size::UInt)
         Base.ensureroom(buffer, Int(recommended_size))
         ptr = buffer.append ? buffer.size + 1 : buffer.ptr
         nb = min(length(buffer.data)-buffer.offset, buffer.maxsize) + buffer.offset - ptr + 1
+        return (Ptr{Cvoid}(pointer(buffer.data, ptr)), nb)
+    end
+else
+    function _alloc_request(buffer::Base.GenericIOBuffer, recommended_size::UInt)
+        Base.ensureroom(buffer, recommended_size)
+        ptr = buffer.append ? buffer.size + 1 : buffer.ptr
+        start_offset = ptr - 1
+        nb = max(0, min(length(buffer.data) - start_offset, buffer.maxsize - (start_offset - Base.get_offset(buffer))))
         return (Ptr{Cvoid}(pointer(buffer.data, ptr)), nb)
     end
 end
