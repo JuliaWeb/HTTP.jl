@@ -1,6 +1,64 @@
 const DEFAULT_CONNECT_TIMEOUT = 3000
 const DEFAULT_MAX_RETRIES = 4
 
+const on_statistics_observer = Ref{Ptr{Cvoid}}(C_NULL)
+
+mutable struct StatisticsObserver
+    cb::Function
+end
+
+function _decode_statistics(stats_list_ptr::Ptr{aws_array_list})
+    stats_list_ptr == C_NULL && return Any[]
+    stats_list = unsafe_load(stats_list_ptr)
+    len = Int(stats_list.length)
+    len == 0 && return Any[]
+    item_size = Int(stats_list.item_size)
+    data_ptr = Ptr{UInt8}(stats_list.data)
+    data_ptr == C_NULL && return Any[]
+    stats = Vector{Any}(undef, len)
+    for i in 1:len
+        item_ptr = data_ptr + (i - 1) * item_size
+        category = unsafe_load(Ptr{UInt32}(item_ptr))
+        if category == UInt32(AWSCRT_STAT_CAT_HTTP1_CHANNEL)
+            entry = unsafe_load(Ptr{aws_crt_statistics_http1_channel}(item_ptr))
+            stats[i] = (
+                category = :http1_channel,
+                pending_outgoing_stream_ms = entry.pending_outgoing_stream_ms,
+                pending_incoming_stream_ms = entry.pending_incoming_stream_ms,
+                current_outgoing_stream_id = entry.current_outgoing_stream_id,
+                current_incoming_stream_id = entry.current_incoming_stream_id,
+            )
+        elseif category == UInt32(AWSCRT_STAT_CAT_HTTP2_CHANNEL)
+            entry = unsafe_load(Ptr{aws_crt_statistics_http2_channel}(item_ptr))
+            stats[i] = (
+                category = :http2_channel,
+                pending_outgoing_stream_ms = entry.pending_outgoing_stream_ms,
+                pending_incoming_stream_ms = entry.pending_incoming_stream_ms,
+                was_inactive = entry.was_inactive,
+            )
+        else
+            raw = Vector{UInt8}(undef, item_size)
+            GC.@preserve raw unsafe_copyto!(pointer(raw), item_ptr, item_size)
+            stats[i] = (category = :unknown, raw = raw)
+        end
+    end
+    return stats
+end
+
+_decode_statistics(stats_list::Ref{aws_array_list}) =
+    _decode_statistics(Base.unsafe_convert(Ptr{aws_array_list}, stats_list))
+
+function c_on_statistics_observer(connection_nonce::Csize_t, stats_list::Ptr{aws_array_list}, observer_ptr::Ptr{Cvoid})
+    observer = unsafe_pointer_to_objref(observer_ptr)::StatisticsObserver
+    stats = _decode_statistics(stats_list)
+    try
+        Base.invokelatest(observer.cb, connection_nonce, stats)
+    catch e
+        @error "statistics observer error" exception=(e, catch_backtrace())
+    end
+    return
+end
+
 Base.@kwdef struct ClientSettings
     scheme::String
     host::String
@@ -43,6 +101,9 @@ Base.@kwdef struct ClientSettings
     connection_acquisition_timeout_ms::Int = 0
     max_pending_connection_acquisitions::Int = 0
     enable_read_back_pressure::Bool = false
+    monitoring_minimum_throughput_bytes_per_second::UInt64 = 0
+    monitoring_allowable_throughput_failure_interval_seconds::UInt32 = 0
+    monitoring_statistics_observer::Union{Nothing, Function} = nothing
     http2_prior_knowledge::Bool = false
     http2_stream_manager::Bool = false
 end
@@ -85,6 +146,8 @@ mutable struct Client
     # only 1 of proxy_options or proxy_env_settings is set
     proxy_options::Union{Nothing, aws_http_proxy_options}
     proxy_env_settings::Union{Nothing, proxy_env_var_settings}
+    monitoring_options::Union{Nothing, aws_http_connection_monitoring_options}
+    monitoring_observer::Union{Nothing, Any}
     retry_options::aws_standard_retry_options
     retry_strategy::Ptr{aws_retry_strategy}
     conn_manager_opts::aws_http_connection_manager_options
@@ -126,6 +189,8 @@ function Client(cs::ClientSettings)
         client.tls_options = nothing
     end
     # proxy options
+    client.proxy_options = nothing
+    client.proxy_env_settings = nothing
     if cs.proxy_host !== nothing && cs.proxy_port !== nothing
         client.proxy_options = aws_http_proxy_options(
             cs.proxy_connection_type == :forward ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL,
@@ -158,8 +223,24 @@ function Client(cs::ClientSettings)
                 cs.proxy_ssl_alpn_list
             )
         )
+    end
+    # connection monitoring options
+    monitoring_ptr = C_NULL
+    if cs.monitoring_statistics_observer !== nothing ||
+       cs.monitoring_minimum_throughput_bytes_per_second != 0 ||
+       cs.monitoring_allowable_throughput_failure_interval_seconds != 0
+        observer = cs.monitoring_statistics_observer === nothing ? nothing : StatisticsObserver(cs.monitoring_statistics_observer)
+        client.monitoring_observer = observer
+        client.monitoring_options = aws_http_connection_monitoring_options(
+            UInt64(cs.monitoring_minimum_throughput_bytes_per_second),
+            UInt32(cs.monitoring_allowable_throughput_failure_interval_seconds),
+            observer === nothing ? C_NULL : on_statistics_observer[],
+            observer === nothing ? C_NULL : pointer_from_objref(observer)
+        )
+        monitoring_ptr = pointer(FieldRef(client, :monitoring_options))
     else
-        client.proxy_options = nothing
+        client.monitoring_options = nothing
+        client.monitoring_observer = nothing
     end
     # retry strategy
     exp_back_opts = aws_exponential_backoff_retry_options(
@@ -186,7 +267,7 @@ function Client(cs::ClientSettings)
         cs.response_first_byte_timeout_ms,
         (cs.scheme == "https" || cs.scheme == "wss") ? pointer(FieldRef(client, :tls_options)) : C_NULL,
         cs.http2_prior_knowledge,
-        C_NULL, # monitoring_options::Ptr{aws_http_connection_monitoring_options}
+        monitoring_ptr, # monitoring_options::Ptr{aws_http_connection_monitoring_options}
         aws_byte_cursor_from_c_str(cs.host),
         cs.port % UInt32,
         C_NULL, # initial_settings_array::Ptr{aws_http2_setting}
@@ -223,7 +304,7 @@ function Client(cs::ClientSettings)
             false, # conn_manual_window_management
             cs.enable_read_back_pressure,
             typemax(Csize_t), # initial_window_size
-            C_NULL, # monitoring_options
+            monitoring_ptr, # monitoring_options
             client.proxy_options === nothing ? C_NULL : pointer(FieldRef(client, :proxy_options)),
             client.proxy_env_settings === nothing ? C_NULL : pointer(FieldRef(client, :proxy_env_settings)),
             C_NULL, # shutdown_complete_user_data

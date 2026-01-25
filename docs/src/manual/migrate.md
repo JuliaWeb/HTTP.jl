@@ -339,6 +339,7 @@ cookies = HTTP.getcookies(jar, "example.com")
 - **Trailing Headers**: Trailing headers are now captured on `Request.trailers` and `Response.trailers`, and can be sent with `HTTP.addtrailer` when streaming.
 - **HTTP/2 Controls**: HTTP/2 helpers (ping, settings, GOAWAY) are available for advanced connection management.
 - **Metrics**: Responses include `response.metrics` and clients expose `HTTP.manager_metrics` for connection manager stats.
+- **Monitoring**: Optional connection monitoring callbacks are available via `monitoring_statistics_observer`.
 
 ## Transitioning Tips
 

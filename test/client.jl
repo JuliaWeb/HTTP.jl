@@ -343,6 +343,45 @@
         finalize(client)
     end
 
+    @testset "HTTP connection monitoring stats" begin
+        list = Ref{HTTP.aws_array_list}()
+        HTTP.aws_array_list_init_dynamic(list, HTTP.default_aws_allocator(), 1, sizeof(HTTP.aws_crt_statistics_http1_channel))
+        stat1 = HTTP.aws_crt_statistics_http1_channel(HTTP.AWSCRT_STAT_CAT_HTTP1_CHANNEL, 10, 20, 1, 2)
+        HTTP.aws_array_list_push_back(list, Ref(stat1))
+        decoded = HTTP._decode_statistics(list)
+        @test length(decoded) == 1
+        @test decoded[1].category == :http1_channel
+        @test decoded[1].pending_outgoing_stream_ms == 10
+        @test decoded[1].pending_incoming_stream_ms == 20
+        @test decoded[1].current_outgoing_stream_id == 1
+        @test decoded[1].current_incoming_stream_id == 2
+        HTTP.aws_array_list_clean_up(list)
+
+        list = Ref{HTTP.aws_array_list}()
+        HTTP.aws_array_list_init_dynamic(list, HTTP.default_aws_allocator(), 1, sizeof(HTTP.aws_crt_statistics_http2_channel))
+        stat2 = HTTP.aws_crt_statistics_http2_channel(HTTP.AWSCRT_STAT_CAT_HTTP2_CHANNEL, 5, 6, true)
+        HTTP.aws_array_list_push_back(list, Ref(stat2))
+        decoded = HTTP._decode_statistics(list)
+        @test length(decoded) == 1
+        @test decoded[1].category == :http2_channel
+        @test decoded[1].pending_outgoing_stream_ms == 5
+        @test decoded[1].pending_incoming_stream_ms == 6
+        @test decoded[1].was_inactive == true
+        HTTP.aws_array_list_clean_up(list)
+
+        called = Ref(false)
+        cb = (nonce, stats) -> (called[] = true)
+        client = HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443); monitoring_statistics_observer=cb))
+        list = Ref{HTTP.aws_array_list}()
+        HTTP.aws_array_list_init_dynamic(list, HTTP.default_aws_allocator(), 1, sizeof(HTTP.aws_crt_statistics_http1_channel))
+        stat3 = HTTP.aws_crt_statistics_http1_channel(HTTP.AWSCRT_STAT_CAT_HTTP1_CHANNEL, 1, 1, 1, 1)
+        HTTP.aws_array_list_push_back(list, Ref(stat3))
+        HTTP.c_on_statistics_observer(Csize_t(0), Base.unsafe_convert(Ptr{HTTP.aws_array_list}, list), pointer_from_objref(client.monitoring_observer))
+        @test called[]
+        HTTP.aws_array_list_clean_up(list)
+        finalize(client)
+    end
+
     @testset "HTTP/2 control APIs" begin
         resp = HTTP.get("https://$httpbin/ip")
         if resp.version == HTTP.HTTPVersion(2, 0)

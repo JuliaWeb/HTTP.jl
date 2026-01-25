@@ -96,6 +96,10 @@ The following keyword arguments (which correspond to the non-`scheme`/`host`/`po
     - **max_pending_connection_acquisitions**: Maximum number of pending connection acquisitions. Default is 0 (no limit).
     - **enable_read_back_pressure**: If `true`, enable back pressure on reads to limit buffered data. Default `false`.
     - **response_first_byte_timeout_ms**: Maximum time in milliseconds to wait for the first response byte. Default is 0 (disabled). For per-request control, use `readtimeout`.
+  -- Monitoring options:
+    - **monitoring_minimum_throughput_bytes_per_second**: Minimum throughput to consider the connection healthy. Default is 0 (disabled).
+    - **monitoring_allowable_throughput_failure_interval_seconds**: Seconds of below-minimum throughput before the connection is closed. Default is 0 (disabled).
+    - **monitoring_statistics_observer**: Optional callback `(connection_nonce, stats) -> nothing` invoked with connection stats samples.
   -- HTTP/2 options:
     - **http2_prior_knowledge**: Default `false`. If `true`, assume HTTP/2 without ALPN negotiation.
     - **http2_stream_manager**: Default `false`. If `true`, enable the HTTP/2 stream manager for multiplexed requests.
@@ -223,6 +227,10 @@ Each response includes a `metrics` field:
 
 For connection-level metrics, use `HTTP.manager_metrics(client)`, which returns `aws_http_manager_metrics` with
 `available_concurrency`, `pending_concurrency_acquires`, and `leased_concurrency`.
+
+To enable periodic connection statistics callbacks, pass `monitoring_statistics_observer` in `ClientSettings`. The
+callback receives a `connection_nonce` and a vector of stats entries. Each entry has a `category` field
+(`:http1_channel` or `:http2_channel`) and category-specific fields like `pending_outgoing_stream_ms`.
 
 ## Under the Hood (Advanced)
 
