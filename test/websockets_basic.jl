@@ -97,3 +97,41 @@ end
         close(server)
     end
 end
+
+@testset "WebSockets max frame size" begin
+    server = WebSockets.listen!("127.0.0.1", 0; listenany=true) do ws
+        send(ws, "0123456789")
+    end
+    port = HTTP.port(server)
+    err = nothing
+    try
+        WebSockets.open("ws://127.0.0.1:$port"; maxframesize=5, suppress_close_error=true) do ws
+            receive(ws)
+        end
+    catch e
+        err = e
+    finally
+        close(server)
+    end
+    @test err isa WebSockets.WebSocketError
+    @test err.message.code == 1009
+end
+
+@testset "WebSockets max fragmentation" begin
+    server = WebSockets.listen!("127.0.0.1", 0; listenany=true) do ws
+        send(ws, ["a", "b", "c"])
+    end
+    port = HTTP.port(server)
+    err = nothing
+    try
+        WebSockets.open("ws://127.0.0.1:$port"; maxfragmentation=2, suppress_close_error=true) do ws
+            receive(ws)
+        end
+    catch e
+        err = e
+    finally
+        close(server)
+    end
+    @test err isa WebSockets.WebSocketError
+    @test err.message.code == 1009
+end

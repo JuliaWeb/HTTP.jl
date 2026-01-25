@@ -55,6 +55,8 @@ mutable struct WebSocket
     incoming_payload::Vector{UInt8}
     fragment_opcode::Union{Nothing, UInt8}
     fragment_payload::Vector{UInt8}
+    fragment_count::Int
+    drop_incoming::Bool
     closebody::Union{Nothing, CloseFrameBody}
 
     WebSocket(host::AbstractString, path::AbstractString; maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG) = new(
@@ -78,6 +80,8 @@ mutable struct WebSocket
         UInt8[],
         nothing,
         UInt8[],
+        0,
+        false,
         nothing,
     )
 end
@@ -181,6 +185,14 @@ function c_on_incoming_frame_begin(websocket::Ptr{aws_websocket}, frame::Ptr{aws
     ws.incoming_opcode = fr.opcode
     ws.incoming_fin = fr.fin
     empty!(ws.incoming_payload)
+    ws.drop_incoming = false
+    if fr.payload_length > ws.maxframesize
+        close_body = CloseFrameBody(1009, "frame too large")
+        _queue_close!(ws, close_body)
+        Threads.@spawn close(ws, close_body)
+        ws.drop_incoming = true
+        return true
+    end
     fr.payload_length > 0 && sizehint!(ws.incoming_payload, Int(fr.payload_length))
     return true
 end
@@ -189,6 +201,7 @@ const on_incoming_frame_payload = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_incoming_frame_payload(websocket::Ptr{aws_websocket}, frame::Ptr{aws_websocket_incoming_frame}, data::aws_byte_cursor, ws_ptr)
     ws = unsafe_pointer_to_objref(ws_ptr)
+    ws.drop_incoming && return true
     try
         n = Int(data.len)
         n == 0 && return true
@@ -211,6 +224,10 @@ function c_on_incoming_frame_complete(websocket::Ptr{aws_websocket}, frame::Ptr{
         close_body = CloseFrameBody(1006, "")
         _queue_close!(ws, close_body)
         Threads.@spawn close(ws, close_body)
+        return true
+    end
+    if ws.drop_incoming
+        ws.drop_incoming = false
         return true
     end
     fr = unsafe_load(frame)
@@ -255,12 +272,20 @@ function c_on_incoming_frame_complete(websocket::Ptr{aws_websocket}, frame::Ptr{
             Threads.@spawn close(ws, close_body)
             return true
         end
+        ws.fragment_count += 1
+        if ws.fragment_count > ws.maxfragmentation
+            close_body = CloseFrameBody(1009, "message too large")
+            _queue_close!(ws, close_body)
+            Threads.@spawn close(ws, close_body)
+            return true
+        end
         append!(ws.fragment_payload, payload)
         if fin
             msg_opcode = ws.fragment_opcode
             data = ws.fragment_payload
             ws.fragment_opcode = nothing
             ws.fragment_payload = UInt8[]
+            ws.fragment_count = 0
             if msg_opcode == UInt8(TEXT)
                 _enqueue_message!(ws, String(copy(data)))
             else
@@ -282,9 +307,17 @@ function c_on_incoming_frame_complete(websocket::Ptr{aws_websocket}, frame::Ptr{
             else
                 _enqueue_message!(ws, copy(payload))
             end
+            ws.fragment_count = 0
         else
             ws.fragment_opcode = opcode
             ws.fragment_payload = copy(payload)
+            ws.fragment_count = 1
+            if ws.fragment_count > ws.maxfragmentation
+                close_body = CloseFrameBody(1009, "message too large")
+                _queue_close!(ws, close_body)
+                Threads.@spawn close(ws, close_body)
+                return true
+            end
         end
     end
     return true
