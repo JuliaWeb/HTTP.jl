@@ -403,6 +403,30 @@ function closewrite(s::Stream)
     return
 end
 
+function closebody(s::Stream)
+    closewrite(s)
+    return
+end
+
+function readall!(s::Stream, buf::Base.GenericIOBuffer=PipeBuffer())
+    total = 0
+    while !eof(s)
+        bytes = readavailable(s)
+        total += length(bytes)
+        write(buf, bytes)
+    end
+    return total
+end
+
+function isaborted(s::Stream)
+    s.server_side && return false
+    if !isdefined(s, :response) || s.response === nothing
+        return false
+    end
+    resp = s.response
+    return iserror(resp) && hasheader(resp, "Connection", "close")
+end
+
 function startread(s::Stream)
     if s.server_side
         if s.read_started

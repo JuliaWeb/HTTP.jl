@@ -363,6 +363,46 @@
         end
     end
 
+    @testset "stream helpers" begin
+        server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+            body = String(read(http))
+            if http.request.method == "POST"
+                HTTP.setstatus(http, 200)
+                HTTP.startwrite(http)
+                write(http, body)
+            else
+                HTTP.setstatus(http, 500)
+                HTTP.setheader(http, "Connection" => "close")
+                HTTP.startwrite(http)
+                write(http, "error")
+            end
+        end
+        try
+            port = HTTP.port(server)
+            resp = HTTP.open("GET", "http://127.0.0.1:$port"; status_exception=false) do io
+                r = HTTP.startread(io)
+                @test r.status == 500
+                @test HTTP.isaborted(io)
+                buf = IOBuffer()
+                n = HTTP.readall!(io, buf)
+                @test n > 0
+                @test String(take!(buf)) == "error"
+            end
+            @test resp.status == 500
+
+            resp = HTTP.open("POST", "http://127.0.0.1:$port") do io
+                write(io, "hello")
+                HTTP.closebody(io)
+                r = HTTP.startread(io)
+                @test r.status == 200
+                @test String(read(io)) == "hello"
+            end
+            @test resp.status == 200
+        finally
+            close(server)
+        end
+    end
+
     @testset "HTTP.open streaming" begin
         resp = HTTP.open("GET", "https://$httpbin/stream/5") do io
             r = HTTP.startread(io)
