@@ -286,6 +286,16 @@ function getclient(key::ClientSettings, clients::Clients=CLIENTS)
     end
 end
 
+function manager_metrics(client::Client)
+    metrics = Ref{aws_http_manager_metrics}()
+    if client.http2_stream_manager != C_NULL
+        aws_http2_stream_manager_fetch_metrics(client.http2_stream_manager, metrics)
+    else
+        aws_http_connection_manager_fetch_metrics(client.connection_manager, metrics)
+    end
+    return metrics[]
+end
+
 getclient(key::ClientSettings, pool::Pool) = getclient(key, pool.clients)
 
 function close_all_clients!(clients::Clients=CLIENTS)

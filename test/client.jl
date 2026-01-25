@@ -327,6 +327,22 @@
         finalize(client)
     end
 
+    @testset "HTTP manager metrics" begin
+        client = HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443)))
+        metrics = HTTP.manager_metrics(client)
+        @test metrics.available_concurrency >= 0
+        @test metrics.pending_concurrency_acquires >= 0
+        @test metrics.leased_concurrency >= 0
+        finalize(client)
+
+        client = HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443); http2_stream_manager=true))
+        metrics = HTTP.manager_metrics(client)
+        @test metrics.available_concurrency >= 0
+        @test metrics.pending_concurrency_acquires >= 0
+        @test metrics.leased_concurrency >= 0
+        finalize(client)
+    end
+
     @testset "HTTP/2 control APIs" begin
         resp = HTTP.get("https://$httpbin/ip")
         if resp.version == HTTP.HTTPVersion(2, 0)
