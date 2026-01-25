@@ -124,7 +124,7 @@ function with_retry_token(
         end
         partition_ptr = partition_ref
     end
-    use_retry_strategy = retry_delays === nothing && client.retry_strategy != C_NULL
+    use_retry_strategy = retry_delays === nothing && partition !== nothing && client.retry_strategy != C_NULL
     # If max_retries is 0, we don't need to bother with any retrying
     max_retries = client.settings.max_retries
     if max_retries == 0

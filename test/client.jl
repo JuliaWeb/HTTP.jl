@@ -280,7 +280,7 @@
             @test attempts[] == 2
 
             reset_attempts!(1)
-            resp = HTTP.get("http://127.0.0.1:$port/"; retries=1, retry_delays=[0.0], retry_partition="test")
+            resp = HTTP.get("http://127.0.0.1:$port/"; retries=1, retry_partition="test")
             @test resp.status == 200
             @test resp.metrics.nretries == 1
             @test attempts[] == 2
@@ -627,7 +627,7 @@
                 @test HTTP.http2_get_received_goaway(io) === nothing
             end
         else
-            @test_skip "HTTP/2 not available for $httpbin"
+            @info "HTTP/2 not available for $httpbin"
         end
     end
 
