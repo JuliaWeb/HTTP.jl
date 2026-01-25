@@ -11,6 +11,16 @@ end
 
 Base.showerror(io::IO, e::StreamError) = print(io, e.error)
 
+retryable_status(status::Integer) = status in (403, 408, 409, 429, 500, 502, 503, 504, 599)
+
+isrecoverable(ex::StatusError) = retryable_status(ex.status)
+isrecoverable(::Union{Base.EOFError, Base.IOError}) = true
+isrecoverable(ex::ArgumentError) = ex.msg == "stream is closed or unusable"
+isrecoverable(ex::CompositeException) = all(isrecoverable, ex.exceptions)
+isrecoverable(ex::Sockets.DNSError) = (ex.code == Base.UV_EAI_AGAIN)
+isrecoverable(::AWSError) = true
+isrecoverable(::Exception) = false
+
 const on_acquired = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_acquired(retry_strategy, error_code, retry_token, fut_ptr)
@@ -35,6 +45,40 @@ function c_retry_ready(token, error_code::Cint, fut_ptr)
     return
 end
 
+function _default_retryable(method, err, retryable_body::Bool, retry_non_idempotent::Bool)
+    retryable_body || return false
+    method === nothing && return false
+    method_str = string(method)
+    if !(isidempotent(method_str) || retry_non_idempotent)
+        return false
+    end
+    if err isa StatusError
+        return retryable_status(err.status)
+    end
+    return isrecoverable(err)
+end
+
+function _normalize_retry_delays(retry_delays, max_retries::Int)
+    if retry_delays === nothing
+        return Base.ExponentialBackOff(n=max_retries, factor=3.0)
+    elseif retry_delays isa Number
+        return Iterators.repeated(retry_delays, max_retries)
+    else
+        return retry_delays
+    end
+end
+
+function _set_nretries!(x, nretries::Int)
+    if x isa Response
+        x.metrics.nretries = nretries
+    elseif x isa StatusError
+        x.response.metrics.nretries = nretries
+    elseif x isa StreamError && x.stream !== nothing
+        x.stream.response !== nothing && (x.stream.response.metrics.nretries = nretries)
+    end
+    return
+end
+
 function with_retry_token(
     f::Function,
     client::Client;
@@ -44,9 +88,13 @@ function with_retry_token(
     uri=nothing,
     retry_check=nothing,
     retry_delays=nothing,
+    retry_non_idempotent::Bool=false,
+    retryable_body::Bool=true,
+    req_ref=nothing,
 )
     # If max_retries is 0, we don't need to bother with any retrying
-    if client.settings.max_retries == 0
+    max_retries = client.settings.max_retries
+    if max_retries == 0
         try
             return f()
         catch e
@@ -57,57 +105,53 @@ function with_retry_token(
             rethrow()
         end
     end
-    retry_partition = client.settings.retry_partition === nothing ? C_NULL : aws_byte_cursor_from_c_str(client.settings.retry_partition)
-    fut = Future{Ptr{aws_retry_token}}()
-    GC.@preserve fut begin
-        if aws_retry_strategy_acquire_retry_token(client.retry_strategy, retry_partition, on_acquired[], pointer_from_objref(fut), client.settings.retry_timeout_ms) != 0
-            aws_throw_error()
-        end
-        token = wait(fut)
-    end
-    try
-        while true
-            try
-                ret = f()
-                aws_retry_token_record_success(token)
-                return ret
-            catch e
-                stream = nothing
-                if e isa StreamError
-                    stream = e.stream
-                    e = e.error
-                end
-                if logerrors
-                    log_err = e isa DontRetry ? e.error : e
-                    url = uri === nothing ? nothing : (uri isa aws_uri ? makeuri(uri) : uri)
-                    @error "HTTP request error" exception=(log_err, catch_backtrace()) method=method url=url logtag=logtag
-                end
-                if e isa DontRetry
-                    if stream !== nothing && iserror(stream.response.status) && stream.bufferstream !== nothing
-                        # for error responses, we need to commit the temporary body buffer
-                        stream.response.body = readavailable(stream.bufferstream)
-                    end
-                    throw(e.error)
-                end
-                # note we assume any error that wasn't wrapped in DontRetry is retryable
-                retryReady = Future{Ptr{aws_retry_token}}()
-                GC.@preserve retryReady begin
-                    if aws_retry_strategy_schedule_retry(
-                        token,
-                        #TODO: use different error types?
-                        AWS_RETRY_ERROR_TYPE_TRANSIENT,
-                        retry_ready[],
-                        pointer_from_objref(retryReady)
-                    ) != 0
-                        #TODO: do we need to commit a previous error body to the response here?
-                        aws_throw_error()
-                    end
-                    #TODO: should we wrap this in try-catch to commit a previous stream bufferstream to the response body?
-                    token = wait(retryReady)
-                end
+    retry_check_fn = retry_check === nothing ? nothing : retry_check
+    delays = _normalize_retry_delays(retry_delays, max_retries)
+    delay_state = nothing
+    nretries = 0
+    while true
+        try
+            ret = f()
+            _set_nretries!(ret, nretries)
+            return ret
+        catch e
+            stream = nothing
+            err = e
+            if err isa StreamError
+                stream = err.stream
+                err = err.error
             end
+            if logerrors
+                log_err = err isa DontRetry ? err.error : err
+                url = uri === nothing ? nothing : (uri isa aws_uri ? makeuri(uri) : uri)
+                @error "HTTP request error" exception=(log_err, catch_backtrace()) method=method url=url logtag=logtag
+            end
+            if err isa DontRetry
+                if stream !== nothing && iserror(stream.response.status) && stream.bufferstream !== nothing
+                    # for error responses, we need to commit the temporary body buffer
+                    stream.response.body = readavailable(stream.bufferstream)
+                end
+                err = err.error
+                _set_nretries!(err, nretries)
+                throw(err)
+            end
+            nretries >= max_retries && (_set_nretries!(err, nretries); throw(err))
+            delay_iter = delay_state === nothing ? iterate(delays) : iterate(delays, delay_state)
+            delay_iter === nothing && (_set_nretries!(err, nretries); throw(err))
+            delay, delay_state = delay_iter
+            req = req_ref === nothing ? nothing : req_ref[]
+            resp = err isa StatusError ? err.response : nothing
+            resp_body = resp === nothing ? nothing : resp.body
+            retry = _default_retryable(method, err, retryable_body, retry_non_idempotent)
+            if !retry && retry_check_fn !== nothing && retryable_body
+                retry = retry_check_fn(delay, err, req, resp, resp_body)
+            end
+            if !retry
+                _set_nretries!(err, nretries)
+                throw(err)
+            end
+            nretries += 1
+            sleep(delay)
         end
-    finally
-        aws_retry_token_release(token)
     end
 end

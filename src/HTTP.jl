@@ -13,20 +13,6 @@ include("access_log.jl")
 include("sniff.jl"); using .Sniff
 include("forms.jl"); using .Forms
 include("requestresponse.jl")
-include("cookies.jl"); using .Cookies
-include("client/redirects.jl")
-include("client/client.jl")
-include("client/retry.jl")
-include("client/connection.jl")
-include("client/request.jl")
-include("client/stream.jl")
-include("client/makerequest.jl")
-include("client/open.jl")
-include("websockets.jl"); using .WebSockets
-include("server.jl")
-include("handlers.jl"); using .Handlers
-include("statuses.jl")
-
 struct StatusError <: Exception
     request_method::String
     request_uri::aws_uri
@@ -54,6 +40,19 @@ function Base.getproperty(e::StatusError, s::Symbol)
         return getfield(e, s)
     end
 end
+include("cookies.jl"); using .Cookies
+include("client/redirects.jl")
+include("client/client.jl")
+include("client/retry.jl")
+include("client/connection.jl")
+include("client/request.jl")
+include("client/stream.jl")
+include("client/makerequest.jl")
+include("client/open.jl")
+include("websockets.jl"); using .WebSockets
+include("server.jl")
+include("handlers.jl"); using .Handlers
+include("statuses.jl")
 
 #NOTE: this is global process logging in the aws-crt libraries; not appropriate for request-level
 # logging, but more for debugging the library itself

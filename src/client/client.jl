@@ -1,5 +1,5 @@
 const DEFAULT_CONNECT_TIMEOUT = 3000
-const DEFAULT_MAX_RETRIES = 10
+const DEFAULT_MAX_RETRIES = 4
 
 Base.@kwdef struct ClientSettings
     scheme::String

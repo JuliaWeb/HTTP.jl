@@ -74,6 +74,14 @@ function request(method, url, h=Header[], b=nothing;
         chunkedbody = body
         body = nothing
     end
+    retryable_body = chunkedbody === nothing && (
+        body === nothing ||
+        body isa AbstractString ||
+        body isa AbstractVector{UInt8} ||
+        body isa AbstractDict ||
+        body isa NamedTuple ||
+        body isa Form
+    )
     headers = mkreqheaders(headers, copyheaders)
     uri = parseuri(url, query, allocator)
     proxy_kw = proxy_kwargs(proxy, scheme(uri))
@@ -93,7 +101,10 @@ function request(method, url, h=Header[], b=nothing;
                 getclient(ClientSettings(scheme(uri), host(uri), getport(uri); client_kw...)) :
                 getclient(ClientSettings(scheme(uri), host(uri), getport(uri); client_kw...), pool)
         )::Client
-        with_retry_token(reqclient; logerrors=logerrors, logtag=logtag, method=method, uri=uri, retry_check=retry_check, retry_delays=retry_delays) do
+        req_ref = Ref{Any}(nothing)
+        with_retry_token(reqclient; logerrors=logerrors, logtag=logtag, method=method, uri=uri,
+            retry_check=retry_check, retry_delays=retry_delays,
+            retry_non_idempotent=retry_non_idempotent, retryable_body=retryable_body, req_ref=req_ref) do
             resp = with_connection(reqclient) do conn
                 http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
                 path = resource(uri)
@@ -103,6 +114,7 @@ function request(method, url, h=Header[], b=nothing;
                     detect_content_type=detect_content_type,
                     basicauth=apply_basicauth,
                 ) do req
+                    req_ref[] = req
                     if response_body isa AbstractVector{UInt8}
                         ref = Ref(1)
                         GC.@preserve ref begin

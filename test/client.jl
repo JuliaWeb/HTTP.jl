@@ -198,6 +198,74 @@
         @test isok(HTTP.get("http://$httpbin/delay/1"; readtimeout=2, max_retries=0))
     end
 
+    @testset "Retry semantics" begin
+        attempts = Ref(0)
+        failures = Ref(1)
+        attempt_lock = ReentrantLock()
+        next_attempt() = Base.@lock attempt_lock begin
+            attempts[] += 1
+            return attempts[]
+        end
+        reset_attempts!(nfail) = Base.@lock attempt_lock begin
+            attempts[] = 0
+            failures[] = nfail
+            return
+        end
+
+        server = HTTP.serve!("127.0.0.1", 0; listenany=true) do req
+            n = next_attempt()
+            if n <= failures[]
+                return HTTP.Response(503, "fail")
+            end
+            return HTTP.Response(200, "ok")
+        end
+        port = HTTP.port(server)
+        try
+            reset_attempts!(1)
+            resp = HTTP.get("http://127.0.0.1:$port/"; retries=1, retry_delays=[0.0])
+            @test resp.status == 200
+            @test resp.metrics.nretries == 1
+            @test attempts[] == 2
+
+            reset_attempts!(1)
+            err = nothing
+            try
+                HTTP.post("http://127.0.0.1:$port/"; body="x", retries=1, retry_delays=[0.0])
+            catch e
+                err = e
+            end
+            @test err isa HTTP.StatusError
+            @test err.response.metrics.nretries == 0
+            @test attempts[] == 1
+
+            reset_attempts!(1)
+            resp = HTTP.post("http://127.0.0.1:$port/"; body="x", retries=1,
+                retry_non_idempotent=true, retry_delays=[0.0])
+            @test resp.status == 200
+            @test resp.metrics.nretries == 1
+            @test attempts[] == 2
+
+            reset_attempts!(1)
+            resp = HTTP.post("http://127.0.0.1:$port/"; body="x", retries=1,
+                retry_check=(s, ex, req, resp, resp_body) -> true, retry_delays=[0.0])
+            @test resp.status == 200
+            @test resp.metrics.nretries == 1
+            @test attempts[] == 2
+
+            reset_attempts!(2)
+            err = nothing
+            try
+                HTTP.get("http://127.0.0.1:$port/"; retries=3, retry_delays=[0.0])
+            catch e
+                err = e
+            end
+            @test err isa HTTP.StatusError
+            @test attempts[] == 2
+        finally
+            close(server)
+        end
+    end
+
     @testset "Request Options Parity" begin
         headers = ["X-Test" => "1"]
         HTTP.get("https://$httpbin/headers"; headers=headers, copyheaders=true)
