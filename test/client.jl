@@ -278,6 +278,12 @@
             end
             @test err isa HTTP.StatusError
             @test attempts[] == 2
+
+            reset_attempts!(1)
+            resp = HTTP.get("http://127.0.0.1:$port/"; retries=1, retry_delays=[0.0], retry_partition="test")
+            @test resp.status == 200
+            @test resp.metrics.nretries == 1
+            @test attempts[] == 2
         finally
             close(server)
         end
