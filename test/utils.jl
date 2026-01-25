@@ -40,6 +40,8 @@
     @test HTTP.nobody isa Vector{UInt8}
     @test isempty(HTTP.nobody)
 
+    @test_deprecated HTTP.escape("a b") == "a%20b"
+
     @testset "download" begin
         server = HTTP.serve!(req -> HTTP.Response(200, ["Content-Disposition" => "attachment; filename=\"hello.txt\""], "hello"); listenany=true)
         try

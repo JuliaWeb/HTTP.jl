@@ -11,6 +11,8 @@ export WebSockets
 
 const nobody = UInt8[]
 
+Base.@deprecate escape escapeuri
+
 include("utils.jl")
 include("access_log.jl")
 include("sniff.jl"); using .Sniff
