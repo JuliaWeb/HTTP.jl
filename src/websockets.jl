@@ -12,7 +12,7 @@ mutable struct WebSocket
     id::String
     host::String
     path::String
-    not::Future{Nothing}
+    connect_fut::Future{Nothing}
     readchannel::Channel{Union{String, Vector{UInt8}}}
     writebuffer::Vector{UInt8}
     writepos::Int
@@ -29,6 +29,11 @@ end
 
 getresponse(ws::WebSocket) = ws.handshake_response
 
+mutable struct SendState
+    ws::WebSocket
+    fut::Future{Nothing}
+end
+
 const on_connection_setup = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_connection_setup(connection_setup_data::Ptr{aws_websocket_on_connection_setup_data}, ws_ptr)
@@ -36,7 +41,7 @@ function c_on_connection_setup(connection_setup_data::Ptr{aws_websocket_on_conne
     data = unsafe_load(connection_setup_data)
     try
         if data.error_code != 0
-            notify(ws.not, CapturedException(aws_error(data.error_code), Base.backtrace()))
+            notify(ws.connect_fut, CapturedException(aws_error(data.error_code), Base.backtrace()))
         else
             ws.websocket_pointer = data.websocket
             ws.handshake_response.status = unsafe_load(data.handshake_response_status)
@@ -48,10 +53,10 @@ function c_on_connection_setup(connection_setup_data::Ptr{aws_websocket_on_conne
                 response_body = nothing
             end
             setinputstream!(ws.handshake_response, response_body)
-            notify(ws.not, nothing)
+            notify(ws.connect_fut, nothing)
         end
     catch e
-        notify(ws.not, CapturedException(e, Base.backtrace()))
+        notify(ws.connect_fut, CapturedException(e, Base.backtrace()))
     end
     return
 end
@@ -167,7 +172,7 @@ function open(f::Function, url;
                 aws_throw_error()
             end
             # wait until connected
-            wait(ws.not)
+            wait(ws.connect_fut)
             return ws
         end
     end
@@ -229,7 +234,8 @@ end
 const stream_outgoing_payload = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_stream_outgoing_payload(websocket::Ptr{aws_websocket}, out_buf::Ptr{aws_byte_buf}, ws_ptr::Ptr{Cvoid})
-    ws = unsafe_pointer_to_objref(ws_ptr)
+    state = unsafe_pointer_to_objref(ws_ptr)
+    ws = state.ws
     out = unsafe_load(out_buf)
     try
         space_available = out.capacity - out.len
@@ -247,31 +253,34 @@ end
 const on_complete = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_complete(websocket::Ptr{aws_websocket}, error_code::Cint, ws_ptr::Ptr{Cvoid})
-    ws = unsafe_pointer_to_objref(ws_ptr)
+    state = unsafe_pointer_to_objref(ws_ptr)
     if error_code != 0
-        notify(ws.not, CapturedException(aws_error(error_code), Base.backtrace()))
+        notify(state.fut, CapturedException(aws_error(error_code), Base.backtrace()))
     end
-    notify(ws.not, nothing)
+    notify(state.fut, nothing)
     return
 end
 
 function writeframe(ws::WebSocket, fin::Bool, opcode::OpCode, payload)
     n = sizeof(payload)
-    ws.websocket_send_frame_options = aws_websocket_send_frame_options(
-        n % UInt64,
-        Ptr{Cvoid}(pointer_from_objref(ws)), # user_data
-        stream_outgoing_payload[],
-        on_complete[],
-        UInt8(opcode),
-        fin
-    )
-    opts = pointer(FieldRef(ws, :websocket_send_frame_options))
-    if aws_websocket_send_frame(ws.websocket_pointer, opts) != 0
-        aws_throw_error()
+    state = SendState(ws, Future{Nothing}())
+    GC.@preserve state begin
+        ws.websocket_send_frame_options = aws_websocket_send_frame_options(
+            n % UInt64,
+            Ptr{Cvoid}(pointer_from_objref(state)), # user_data
+            stream_outgoing_payload[],
+            on_complete[],
+            UInt8(opcode),
+            fin
+        )
+        opts = pointer(FieldRef(ws, :websocket_send_frame_options))
+        if aws_websocket_send_frame(ws.websocket_pointer, opts) != 0
+            aws_throw_error()
+        end
+        # wait until frame sent
+        wait(state.fut)
+        return n
     end
-    # wait until frame sent
-    wait(ws.not)
-    return n
 end
 
 """
@@ -329,7 +338,7 @@ to when a PING message is received by a websocket connection.
 """
 function ping(ws::WebSocket, data=UInt8[])
     @assert !ws.writeclosed "WebSocket is closed"
-    return writeframe(ws.io, true, PING, payload(ws, data))
+    return writeframe(ws, true, PING, payload(ws, data))
 end
 
 """
@@ -343,7 +352,7 @@ used as a one-way heartbeat.
 """
 function pong(ws::WebSocket, data=UInt8[])
     @assert !ws.writeclosed "WebSocket is closed"
-    return writeframe(ws.io, true, PONG, payload(ws, data))
+    return writeframe(ws, true, PONG, payload(ws, data))
 end
 
 """

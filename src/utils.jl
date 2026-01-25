@@ -1,4 +1,72 @@
 """
+    HTTPVersion(major, minor)
+
+The HTTP version number consists of two digits separated by a ".". The first
+digit (`major`) indicates the HTTP messaging syntax, whereas the second digit
+(`minor`) indicates the highest minor version within that major version to which
+the sender is conformant and able to understand for future communication.
+"""
+struct HTTPVersion
+    major::UInt8
+    minor::UInt8
+end
+
+HTTPVersion(major::Integer) = HTTPVersion(major, 0x00)
+HTTPVersion(v::AbstractString) = parse(HTTPVersion, v)
+HTTPVersion(v::VersionNumber) = convert(HTTPVersion, v)
+Base.convert(::Type{HTTPVersion}, v::VersionNumber) = HTTPVersion(v.major, v.minor)
+Base.VersionNumber(v::HTTPVersion) = VersionNumber(v.major, v.minor)
+
+Base.show(io::IO, v::HTTPVersion) = print(io, "HTTPVersion(\"", string(v.major), ".", string(v.minor), "\")")
+Base.write(io::IO, v::HTTPVersion) = write(io, "HTTP/", string(v.major), ".", string(v.minor))
+
+Base.:(==)(va::VersionNumber, vb::HTTPVersion) = va == VersionNumber(vb)
+Base.:(==)(va::HTTPVersion, vb::VersionNumber) = VersionNumber(va) == vb
+Base.isless(va::VersionNumber, vb::HTTPVersion) = isless(va, VersionNumber(vb))
+Base.isless(va::HTTPVersion, vb::VersionNumber) = isless(VersionNumber(va), vb)
+function Base.isless(va::HTTPVersion, vb::HTTPVersion)
+    va.major < vb.major && return true
+    va.major > vb.major && return false
+    va.minor < vb.minor && return true
+    return false
+end
+
+function Base.parse(::Type{HTTPVersion}, v::AbstractString)
+    ver = tryparse(HTTPVersion, v)
+    ver === nothing && throw(ArgumentError("invalid HTTP version string: $(repr(v))"))
+    return ver
+end
+
+# We only support single-digits for major and minor versions.
+function Base.tryparse(::Type{HTTPVersion}, v::AbstractString)
+    isempty(v) && return nothing
+    len = ncodeunits(v)
+
+    i = firstindex(v)
+    d1 = v[i]
+    if isdigit(d1)
+        major = parse(UInt8, d1)
+    else
+        return nothing
+    end
+
+    i = nextind(v, i)
+    i > len && return HTTPVersion(major)
+    dot = v[i]
+    dot == '.' || return nothing
+
+    i = nextind(v, i)
+    i > len && return HTTPVersion(major)
+    d2 = v[i]
+    if isdigit(d2)
+        minor = parse(UInt8, d2)
+    else
+        return nothing
+    end
+    return HTTPVersion(major, minor)
+end
+
+"""
     escapehtml(i::String)
 
 Returns a string with special HTML characters escaped: &, <, >, ", '
@@ -69,7 +137,7 @@ function parseuri(url, query, allocator)
     end
     GC.@preserve url_str begin
         url_ref = Ref(aws_byte_cursor(sizeof(url_str), pointer(url_str)))
-        aws_uri_init_parse(uri_ref, allocator, url_ref)
+        aws_uri_init_parse(uri_ref, allocator, url_ref) != 0 && aws_throw_error()
     end
     return uri_ref[]
 end

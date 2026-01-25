@@ -35,9 +35,28 @@ function c_retry_ready(token, error_code::Cint, fut_ptr)
     return
 end
 
-function with_retry_token(f::Function, client::Client)
+function with_retry_token(
+    f::Function,
+    client::Client;
+    logerrors::Bool=false,
+    logtag=nothing,
+    method=nothing,
+    uri=nothing,
+    retry_check=nothing,
+    retry_delays=nothing,
+)
     # If max_retries is 0, we don't need to bother with any retrying
-    client.settings.max_retries == 0 && return f()
+    if client.settings.max_retries == 0
+        try
+            return f()
+        catch e
+            if logerrors
+                url = uri === nothing ? nothing : (uri isa aws_uri ? makeuri(uri) : uri)
+                @error "HTTP request error" exception=(e, catch_backtrace()) method=method url=url logtag=logtag
+            end
+            rethrow()
+        end
+    end
     retry_partition = client.settings.retry_partition === nothing ? C_NULL : aws_byte_cursor_from_c_str(client.settings.retry_partition)
     fut = Future{Ptr{aws_retry_token}}()
     GC.@preserve fut begin
@@ -57,6 +76,11 @@ function with_retry_token(f::Function, client::Client)
                 if e isa StreamError
                     stream = e.stream
                     e = e.error
+                end
+                if logerrors
+                    log_err = e isa DontRetry ? e.error : e
+                    url = uri === nothing ? nothing : (uri isa aws_uri ? makeuri(uri) : uri)
+                    @error "HTTP request error" exception=(log_err, catch_backtrace()) method=method url=url logtag=logtag
                 end
                 if e isa DontRetry
                     if stream !== nothing && iserror(stream.response.status) && stream.bufferstream !== nothing

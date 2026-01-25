@@ -30,6 +30,8 @@ mutable struct Headers <: AbstractVector{Header}
     Headers(ptr::Ptr{aws_http_headers}) = new(ptr)
 end
 
+abstract type Message end
+
 Base.size(h::Headers) = (Int(aws_http_headers_count(h.ptr)),)
 
 function Base.getindex(h::Headers, i::Int)
@@ -78,8 +80,136 @@ Base.empty!(h::Headers) = aws_http_headers_clear(h.ptr) != 0 && aws_throw_error(
 
 setheaderifabsent(headers, k, v) = !hasheader(headers, k) && setheader(headers, k, v)
 
+field_name_isequal(a, b) = headereq(String(a), String(b))
+
+Base.getindex(m::Message, k) = header(m, k)
+
+"""
+    HTTP.header(::Message, key [, default=""]) -> String
+
+Get header value for `key` (case-insensitive).
+"""
+header(m::Message, k, d="") = header(m.headers, k, d)
+header(h::Headers, k, d="") = (v = getheader(h, String(k)); v === nothing ? d : v)
+header(h::AbstractVector{<:Pair}, k, d="") = begin
+    for (name, value) in h
+        if field_name_isequal(name, k)
+            return String(value)
+        end
+    end
+    return d
+end
+
+"""
+    HTTP.headers(m::Message, key) -> Vector{String}
+
+Get all headers with key `k` or empty if none.
+"""
+headers(h::Headers, k) = [h2.value for h2 in h if field_name_isequal(h2.name, k)]
+headers(h::AbstractVector{<:Pair}, k) = [String(v) for (name, v) in h if field_name_isequal(name, k)]
+headers(m::Message, k) = headers(m.headers, k)
+
+"""
+    HTTP.hasheader(::Message, key) -> Bool
+
+Does header value for `key` exist (case-insensitive)?
+"""
+hasheader(m::Message, k) = header(m, k) != ""
+hasheader(m::Message, k, v) = field_name_isequal(header(m, k), v)
+
+"""
+    HTTP.headercontains(::Message, key, value) -> Bool
+
+Does the header for `key` (interpreted as comma-separated list) contain `value` (case-insensitive)?
+"""
+headercontains(m::Message, k, v) = any(field_name_isequal.(strip.(split(header(m, k), ",")), v))
+headercontains(h::Headers, k, v) = any(field_name_isequal.(strip.(split(header(h, k), ",")), v))
+headercontains(h::AbstractVector{<:Pair}, k, v) = any(field_name_isequal.(strip.(split(header(h, k), ",")), v))
+
+"""
+    HTTP.setheader(::Message, key => value)
+
+Set header `value` for `key` (case-insensitive).
+"""
+setheader(m::Message, v) = setheader(m.headers, v)
+setheader(h::Headers, v::Header) = setheader(h, v.name, v.value)
+setheader(h::Headers, v::Pair) = setheader(h, String(v.first), String(v.second))
+function setheader(h::AbstractVector{<:Pair}, v::Pair)
+    key = String(v.first)
+    value = String(v.second)
+    for i in eachindex(h)
+        if field_name_isequal(h[i].first, key)
+            h[i] = key => value
+            return h
+        end
+    end
+    push!(h, key => value)
+    return h
+end
+
+"""
+    defaultheader!(::Message, key => value)
+
+Set header `value` in message for `key` if it is not already set.
+"""
+function defaultheader!(m, v::Pair)
+    if header(m, first(v), nothing) === nothing
+        setheader(m, v)
+    end
+    return
+end
+
+function canonicalizeheaders!(h::Headers)
+    items = [(h2.name, h2.value) for h2 in h]
+    for i in length(h):-1:1
+        deleteat!(h, i)
+    end
+    for (k, v) in items
+        addheader(h, tocameldash(k), v)
+    end
+    return h
+end
+
+canonicalizeheaders(h::AbstractVector{<:Pair}) =
+    [tocameldash(String(k)) => String(v) for (k, v) in h]
+
+mkheaders(::Nothing) = Pair{String, String}[]
+mkheaders(h::Headers) = [h2.name => h2.value for h2 in h]
+mkheaders(h::AbstractVector{Header}) = begin
+    headers = Pair{String, String}[]
+    for head in h
+        push!(headers, String(head.name) => String(head.value))
+    end
+    return headers
+end
+mkheaders(h::AbstractVector{<:Pair}) = [String(k) => String(v) for (k, v) in h]
+function mkheaders(h)
+    headers = Pair{String, String}[]
+    for (k, v) in h
+        push!(headers, String(k) => String(v))
+    end
+    return headers
+end
+
+function mkreqheaders(h, copyheaders::Bool)
+    if h === nothing
+        return Pair{String, String}[]
+    elseif h isa AbstractVector{<:Pair} && !copyheaders
+        return h
+    else
+        return mkheaders(h)
+    end
+end
+
+function sync_headers!(dest::AbstractVector{<:Pair}, src::Headers)
+    empty!(dest)
+    for h in src
+        push!(dest, String(h.name) => String(h.value))
+    end
+    return dest
+end
+
 # request/response
-abstract type Message end
 
 mutable struct InputStream
     ptr::Ptr{aws_input_stream}
@@ -91,53 +221,52 @@ end
 
 ischunked(is::InputStream) = is.ptr == C_NULL && is.bodyref !== nothing
 
-const RequestBodyTypes = Union{AbstractString, AbstractVector{UInt8}, IO, AbstractDict, NamedTuple, Nothing}
+const RequestBodyTypes = Union{AbstractString, AbstractVector{UInt8}, IO, AbstractDict, NamedTuple, Form, Nothing}
 
-function InputStream(allocator::Ptr{aws_allocator}, body::RequestBodyTypes)
+function InputStream(allocator::Ptr{aws_allocator}, body)
     is = InputStream()
     if body !== nothing
-        if body isa RequestBodyTypes
-            if (body isa AbstractVector{UInt8}) || (body isa AbstractString)
-                is.bodyref = body
-                is.bodycursor = aws_byte_cursor(sizeof(body), pointer(body))
-                is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
-            elseif body isa Union{AbstractDict, NamedTuple}
-                # hold a reference to the request body in order to gc-preserve it
-                is.bodyref = URIs.escapeuri(body)
-                is.bodycursor = aws_byte_cursor_from_c_str(is.bodyref)
-                is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
-            elseif body isa IOStream
-                is.bodyref = body
-                is.ptr = aws_input_stream_new_from_open_file(allocator, Libc.FILE(body))
-            elseif body isa Form
-                # we set the request.body to the Form bytes in order to gc-preserve them
-                is.bodyref = read(body)
-                is.bodycursor = aws_byte_cursor(sizeof(is.bodyref), pointer(is.bodyref))
-                is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
-            elseif body isa IO
-                # we set the request.body to the IO bytes in order to gc-preserve them
-                bytes = readavailable(body)
-                while !eof(body)
-                    append!(bytes, readavailable(body))
-                end
-                is.bodyref = bytes
-                is.bodycursor = aws_byte_cursor(sizeof(is.bodyref), pointer(is.bodyref))
-                is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
-            else
-                throw(ArgumentError("request body must be a string, vector of UInt8, NamedTuple, AbstractDict, HTTP.Form, or IO"))
+        if (body isa AbstractVector{UInt8}) || (body isa AbstractString)
+            is.bodyref = body
+            is.bodycursor = aws_byte_cursor(sizeof(body), pointer(body))
+            is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
+        elseif body isa Union{AbstractDict, NamedTuple}
+            # hold a reference to the request body in order to gc-preserve it
+            is.bodyref = URIs.escapeuri(body)
+            is.bodycursor = aws_byte_cursor_from_c_str(is.bodyref)
+            is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
+        elseif body isa IOStream
+            is.bodyref = body
+            is.ptr = aws_input_stream_new_from_open_file(allocator, Libc.FILE(body))
+        elseif body isa Form
+            # we set the request.body to the Form bytes in order to gc-preserve them
+            is.bodyref = read(body)
+            is.bodycursor = aws_byte_cursor(sizeof(is.bodyref), pointer(is.bodyref))
+            is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
+        elseif body isa IO
+            # we set the request.body to the IO bytes in order to gc-preserve them
+            bytes = readavailable(body)
+            while !eof(body)
+                append!(bytes, readavailable(body))
             end
+            is.bodyref = bytes
+            is.bodycursor = aws_byte_cursor(sizeof(is.bodyref), pointer(is.bodyref))
+            is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
+        elseif Base.isiterable(typeof(body))
+            # assume a chunked request body; any kind of iterable where elements are RequestBodyTypes
+            is.bodyref = body
+        else
+            throw(ArgumentError("request body must be a string, vector of UInt8, NamedTuple, AbstractDict, HTTP.Form, IO, or an iterable of those"))
+        end
+        if is.ptr != C_NULL
             aws_input_stream_get_length(is.ptr, FieldRef(is, :bodylen)) != 0 && aws_throw_error()
             if !(is.bodylen > 0)
                 aws_input_stream_release(is.ptr)
                 is.ptr = C_NULL
             end
-        else
-            # assume a chunked request body; any kind of iterable where elements are RequestBodyTypes
-            @assert Base.isiterable(typeof(body)) "chunked request body must be an iterable"
-            is.bodyref = body
         end
     end
-    return finalizer(x -> aws_input_stream_release(x.ptr), is)
+    return finalizer(x -> x.ptr != C_NULL && aws_input_stream_release(x.ptr), is)
 end
 
 function setinputstream!(msg::Message, body)
@@ -216,7 +345,7 @@ function Base.getproperty(x::Request, s::Symbol)
     elseif s == :headers
         return Headers(aws_http_message_get_headers(ptr(x)))
     elseif s == :version
-        return aws_http_message_get_protocol_version(ptr(x)) == AWS_HTTP_VERSION_2 ? "2" : "1.1"
+        return aws_http_message_get_protocol_version(ptr(x)) == AWS_HTTP_VERSION_2 ? HTTPVersion(2, 0) : HTTPVersion(1, 1)
     else
         return getfield(x, s)
     end
@@ -255,7 +384,13 @@ end
 
 function print_request(io, method, version, path, headers, body)
     write(io, "\"\"\"\n")
-    write(io, string(method, " ", path, " HTTP/$version\r\n"))
+    write(io, string(method, " ", path, " "))
+    if version isa HTTPVersion
+        write(io, version)
+    else
+        write(io, "HTTP/", string(version))
+    end
+    write(io, "\r\n")
     for h in headers
         print_header(io, h)
     end
@@ -298,7 +433,7 @@ mutable struct Response <: Message
     inputstream::Union{Nothing, InputStream}
     body::Union{Nothing, Vector{UInt8}} # only set for client-side response body when no user-provided response_body
     metrics::RequestMetrics
-    request::Request
+    request::Union{Request, Nothing}
 
     function Response(status::Integer, headers, body, http2::Bool=false, allocator=default_aws_allocator())
         ptr = http2 ?
@@ -316,6 +451,8 @@ mutable struct Response <: Message
             resp = new(allocator, ptr)
             resp.body = nothing
             resp.inputstream = nothing
+            resp.metrics = RequestMetrics()
+            resp.request = nothing
             body !== nothing && setinputstream!(resp, body)
             return finalizer(_ -> aws_http_message_release(ptr), resp)
         catch
@@ -323,7 +460,7 @@ mutable struct Response <: Message
             rethrow()
         end
     end
-    Response() = new(C_NULL, C_NULL, nothing, nothing)
+    Response() = new(C_NULL, C_NULL, nothing, nothing, RequestMetrics(), nothing)
 end
 
 Response(status::Integer, body) = Response(status, nothing, Vector{UInt8}(string(body)))
@@ -341,7 +478,7 @@ function Base.getproperty(x::Response, s::Symbol)
     elseif s == :headers
         return Headers(aws_http_message_get_headers(x.ptr))
     elseif s == :version
-        return aws_http_message_get_protocol_version(x.ptr) == AWS_HTTP_VERSION_2 ? "2" : "1.1"
+        return aws_http_message_get_protocol_version(x.ptr) == AWS_HTTP_VERSION_2 ? HTTPVersion(2, 0) : HTTPVersion(1, 1)
     else
         return getfield(x, s)
     end
@@ -359,7 +496,12 @@ end
 
 function print_response(io, status, version, headers, body)
     write(io, "\"\"\"\n")
-    write(io, string("HTTP/$version ", status, "\r\n"))
+    if version isa HTTPVersion
+        write(io, version)
+    else
+        write(io, "HTTP/", string(version))
+    end
+    write(io, " ", string(status), "\r\n")
     for h in headers
         print_header(io, h)
     end

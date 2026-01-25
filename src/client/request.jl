@@ -1,4 +1,7 @@
-const USER_AGENT = Ref{Union{String, Nothing}}("HTTP.jl/$VERSION")
+const DEFAULT_USER_AGENT = let v = try Base.pkgversion(@__MODULE__) catch; nothing end
+    v === nothing ? "HTTP.jl/dev" : "HTTP.jl/$(v)"
+end
+const USER_AGENT = Ref{Union{String, Nothing}}(DEFAULT_USER_AGENT)
 
 """
     setuseragent!(x::Union{String, Nothing})
@@ -12,9 +15,31 @@ function setuseragent!(x::Union{String, Nothing})
     return
 end
 
-function with_request(f::Function, client::Client, method, path, headers=nothing, body=nothing, chunkedbody=nothing, decompress::Union{Nothing, Bool}=nothing, userinfo=nothing, bearer=nothing, modifier=nothing, http2::Bool=false, cookies=true, cookiejar=COOKIEJAR, verbose=false)
+function with_request(
+    f::Function,
+    client::Client,
+    method,
+    path,
+    headers=nothing,
+    body=nothing,
+    chunkedbody=nothing,
+    decompress::Union{Nothing, Bool}=nothing,
+    userinfo=nothing,
+    bearer=nothing,
+    modifier=nothing,
+    http2::Bool=false,
+    cookies=true,
+    cookiejar=COOKIEJAR,
+    verbose=false;
+    copyheaders::Bool=true,
+    canonicalize_headers::Bool=false,
+    detect_content_type::Bool=false,
+    basicauth::Bool=true,
+)
     # create request
-    req = Request(method, path, headers, nothing, http2, client.settings.allocator)
+    mutable_headers = (headers isa AbstractVector{<:Pair} && !copyheaders) ? headers : nothing
+    req_headers = mkreqheaders(headers, copyheaders)
+    req = Request(method, path, req_headers, nothing, http2, client.settings.allocator)
     # add headers to request
     h = req.headers
     if http2
@@ -24,11 +49,13 @@ function with_request(f::Function, client::Client, method, path, headers=nothing
         setheader(h, "host", client.settings.host)
     end
     setheaderifabsent(h, "accept", "*/*")
-    setheaderifabsent(h, "user-agent", something(USER_AGENT[], "-"))
+    if USER_AGENT[] !== nothing
+        setheaderifabsent(h, "user-agent", USER_AGENT[])
+    end
     if decompress === nothing || decompress
         setheaderifabsent(h, "accept-encoding", "gzip")
     end
-    if userinfo !== nothing
+    if basicauth && userinfo !== nothing && !isempty(userinfo)
         setheaderifabsent(h, "authorization", "Basic $(base64encode(unescapeuri(userinfo)))")
     end
     if bearer !== nothing
@@ -37,10 +64,8 @@ function with_request(f::Function, client::Client, method, path, headers=nothing
     if !http2 && chunkedbody !== nothing
         setheaderifabsent(h, "transfer-encoding", "chunked")
     end
-    if headers !== nothing
-        for (k, v) in headers
-            addheader(h, k, v)
-        end
+    if detect_content_type && !hasheader(h, "content-type") && !(body isa Form) && isbytes(body)
+        setheader(h, "content-type", sniff(body))
     end
     if cookies === true || (cookies isa AbstractDict && !isempty(cookies))
         cookiestosend = Cookies.getcookies!(cookiejar, client.settings.scheme, client.settings.host, req.path)
@@ -62,16 +87,21 @@ function with_request(f::Function, client::Client, method, path, headers=nothing
             setinputstream!(req, body)
         end
     elseif body !== nothing
-        try
-            setinputstream!(req, body)
-        catch e
-            @error "Failed to set input stream" exception=(e, catch_backtrace())
-        end
+        setinputstream!(req, body)
+    end
+    if canonicalize_headers && !http2
+        canonicalizeheaders!(h)
+    end
+    if mutable_headers !== nothing
+        sync_headers!(mutable_headers, h)
     end
     # call user function
     verbose > 0 && print_request(stdout, req)
     ret = f(req)
     resp = getresponse(ret)
+    if canonicalize_headers
+        canonicalizeheaders!(resp.headers)
+    end
     verbose > 0 && print_response(stdout, resp)
     cookies === false || Cookies.setcookies!(cookiejar, client.settings.scheme, client.settings.host, req.path, resp.headers)
     return ret

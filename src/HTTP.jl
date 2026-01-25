@@ -4,6 +4,7 @@ using CodecZlib, URIs, Mmap, Base64, Dates, Sockets
 using LibAwsCommon, LibAwsIO, LibAwsHTTPFork
 import LibAwsCommon: Future, FieldRef
 
+export HTTPVersion
 export @logfmt_str, common_logfmt, combined_logfmt
 export WebSockets
 

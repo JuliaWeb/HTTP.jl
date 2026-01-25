@@ -29,4 +29,6 @@
         )
         @test HTTP.iso8859_1_to_utf8(bytes) == utf8
     end
+
+    @test_throws HTTP.AWSError HTTP.parseuri("http://example.com:abc", nothing, HTTP.default_aws_allocator())
 end # testset

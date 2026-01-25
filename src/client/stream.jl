@@ -199,6 +199,7 @@ function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, 
                     while !eof(stream.bufferstream)
                         on_stream_response_body(resp, _readavailable(stream.bufferstream))
                     end
+                    wait(stream.fut)
                 catch e
                     rethrow(DontRetry(e))
                 end

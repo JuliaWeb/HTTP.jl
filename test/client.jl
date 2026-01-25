@@ -134,6 +134,9 @@
         @test isok(resp)
         # x = JSONBase.materialize(resp.body)
         # @test x["form"] == Dict("name" => ["value with spaces"])
+        resp = HTTP.post("https://$httpbin/post"; body=["hey", " there ", "sailor"])
+        @test isok(resp)
+        @test occursin("\"data\":\"hey there sailor\"", String(resp.body))
     end
 
     @testset "ASync Client Request Body" begin
@@ -193,6 +196,41 @@
     @testset "readtimeout" begin
         @test_throws CapturedException HTTP.get("http://$httpbin/delay/5"; readtimeout=1, max_retries=0)
         @test isok(HTTP.get("http://$httpbin/delay/1"; readtimeout=2, max_retries=0))
+    end
+
+    @testset "Request Options Parity" begin
+        headers = ["X-Test" => "1"]
+        HTTP.get("https://$httpbin/headers"; headers=headers, copyheaders=true)
+        @test headers == ["X-Test" => "1"]
+
+        headers2 = ["X-Test" => "1"]
+        HTTP.get("https://$httpbin/headers"; headers=headers2, copyheaders=false)
+        @test any(h -> lowercase(String(h.first)) == "accept", headers2)
+        @test any(h -> lowercase(String(h.first)) == "x-test", headers2)
+
+        resp = HTTP.get("https://user:pwd@$httpbin/headers"; basicauth=false)
+        @test HTTP.getheader(resp.request.headers, "authorization") === nothing
+
+        resp = HTTP.get("https://user:pwd@$httpbin/headers"; basicauth=true)
+        auth = HTTP.getheader(resp.request.headers, "authorization")
+        @test auth !== nothing && startswith(auth, "Basic ")
+
+        resp = HTTP.post("https://$httpbin/anything"; body="hello", detect_content_type=true)
+        @test HTTP.getheader(resp.request.headers, "content-type") == "text/plain; charset=utf-8"
+
+        orig_agent = HTTP.USER_AGENT[]
+        try
+            HTTP.setuseragent!(nothing)
+            resp = HTTP.get("https://$httpbin/headers")
+            @test HTTP.getheader(resp.request.headers, "user-agent") === nothing
+        finally
+            HTTP.setuseragent!(orig_agent)
+        end
+
+        pool = HTTP.Pool(1)
+        @test isempty(pool.clients.clients)
+        HTTP.get("https://$httpbin/ip"; pool=pool)
+        @test !isempty(pool.clients.clients)
     end
 
     @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin

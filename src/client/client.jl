@@ -226,6 +226,13 @@ end
 
 Clients() = Clients(ReentrantLock(), Dict{ClientSettings, Client}())
 
+struct Pool
+    clients::Clients
+    max_connections::Union{Nothing, Int}
+end
+
+Pool(max_connections::Union{Int, Nothing}=nothing) = Pool(Clients(), max_connections)
+
 const CLIENTS = Clients()
 
 function getclient(key::ClientSettings, clients::Clients=CLIENTS)
@@ -240,6 +247,8 @@ function getclient(key::ClientSettings, clients::Clients=CLIENTS)
     end
 end
 
+getclient(key::ClientSettings, pool::Pool) = getclient(key, pool.clients)
+
 function close_all_clients!(clients::Clients=CLIENTS)
     Base.@lock clients.lock begin
         for client in values(clients.clients)
@@ -248,3 +257,5 @@ function close_all_clients!(clients::Clients=CLIENTS)
         empty!(clients.clients)
     end
 end
+
+close_all_clients!(pool::Pool) = close_all_clients!(pool.clients)
