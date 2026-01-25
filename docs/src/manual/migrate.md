@@ -37,11 +37,12 @@ r = HTTP.request("GET", "http://example.com")
 # Accessing fields
 status = r.status
 body_text = String(r.body)  # Similar to v1.x
-header_value = HTTP.header(r.headers, "Content-Type")
+header_value = HTTP.header(r, "Content-Type")
+# or HTTP.header(r.headers, "Content-Type")
 ```
 
 Key differences:
-- Headers access has changed slightly to operate on the `headers` field
+- Headers access works directly on `Request`/`Response`, or on the `headers` field if you already have it
 - The `.body` field can now be any type, not just `Vector{UInt8}`
 - Context dictionary access is now through `.context` rather than request-specific fields
 
@@ -85,7 +86,7 @@ end
 
 # After (v2.0)
 HTTP.open("GET", "http://example.com") do http
-    # Start reading must be explicitly called
+    # Optional: call startread to access headers before reading the body
     startread(http)
     while !eof(http)
         data = readavailable(http)
@@ -134,7 +135,7 @@ end
 ```
 
 Key differences:
-- Most server functionality has been standardized around `serve`/`serve!` rather than `listen`/`listen!`
+- `serve`/`serve!` are the primary entry points; `listen`/`listen!` remain available for stream handlers and WebSockets
 - The handler typically works with `Request`/`Response` objects rather than `Stream` objects
 - The lifecycle management for servers has improved with clearer semantics for `isopen`, `close`, and `wait`
 
@@ -167,6 +168,7 @@ end
 ```
 
 Note the addition of the `stream=true` keyword argument to indicate you want to work with a stream handler.
+You can also use `HTTP.listen`/`HTTP.listen!` as shorthand for `stream=true`.
 
 ### Router and Middleware
 
@@ -271,7 +273,7 @@ close(server)
 using HTTP.WebSockets
 
 # Non-blocking server
-server = WebSockets.serve!("127.0.0.1", 8081) do ws
+server = WebSockets.listen!("127.0.0.1", 8081) do ws
     for msg in ws
         # Echo back any received message
         send(ws, msg)
@@ -282,7 +284,7 @@ end
 close(server)
 ```
 
-Note the change from `listen!` to `serve!` to maintain consistency with the HTTP server API.
+`listen!` and `serve!` are both supported in v2.0; `serve!` is an alias that matches the HTTP server naming.
 
 ## Error Handling
 

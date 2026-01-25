@@ -82,6 +82,40 @@ WebSockets.open("wss://echo.websocket.org") do ws
 end
 ```
 
+## Server-side WebSockets
+
+For a dedicated WebSocket server, use `WebSockets.listen` or `WebSockets.listen!`:
+
+```julia
+using HTTP
+using HTTP.WebSockets
+
+server = WebSockets.listen!("127.0.0.1", 8080) do ws
+    for msg in ws
+        send(ws, msg)
+    end
+end
+```
+
+To mix WebSockets and normal HTTP on the same port, use a stream handler with `HTTP.listen!` and
+upgrade the connection when requested:
+
+```julia
+using HTTP
+using HTTP.WebSockets
+
+server = HTTP.listen!("127.0.0.1", 8080) do stream
+    if WebSockets.isupgrade(stream)
+        WebSockets.upgrade(stream) do ws
+            send(ws, "hello")
+        end
+    else
+        HTTP.setstatus(stream, 200)
+        write(stream, "ok")
+    end
+end
+```
+
 ## Connection Lifecycle and Error Handling
 
 You can check whether a WebSocket is open using `WebSockets.isclosed(ws)` and close it with `close(ws)`. The API is designed to raise exceptions for connection issues or protocol errors, allowing you to handle errors using try‑catch blocks.
