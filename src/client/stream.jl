@@ -2,12 +2,26 @@ const on_response_headers = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_response_headers(aws_stream_ptr, header_block, header_array::Ptr{aws_http_header}, num_headers, stream_ptr)
     stream = unsafe_pointer_to_objref(stream_ptr)
-    headers = stream.response.headers
-    addheaders(headers, header_array, num_headers)
+    if header_block == AWS_HTTP_HEADER_BLOCK_TRAILING
+        trailers = stream.response.trailers
+        if trailers === nothing
+            trailers = Headers(stream.response.allocator)
+            stream.response.trailers = trailers
+        end
+        addheaders(trailers, header_array, num_headers)
+    else
+        headers = stream.response.headers
+        addheaders(headers, header_array, num_headers)
+    end
     return Cint(0)
 end
 
 writebuf(body, maxsize=length(body) == 0 ? typemax(Int64) : length(body)) = Base.GenericIOBuffer{AbstractVector{UInt8}}(body, true, true, true, false, maxsize)
+
+function aws_http2_stream_add_trailing_headers(http2_stream::Ptr{aws_http_stream}, trailing_headers::Ptr{aws_http_headers})
+    return ccall((:aws_http2_stream_add_trailing_headers, LibAwsHTTPFork.libaws_c_http_jq),
+        Cint, (Ptr{aws_http_stream}, Ptr{aws_http_headers}), http2_stream, trailing_headers)
+end
 
 const on_response_header_block_done = Ref{Ptr{Cvoid}}(C_NULL)
 
@@ -513,6 +527,30 @@ function setheaderifabsent(s::Stream, k, v)
     resp = _ensure_response!(s)
     setheaderifabsent(resp.headers, k, v)
     return
+end
+
+function addtrailer(s::Stream, headers::Headers)
+    s.ptr == C_NULL && error("stream is not initialized")
+    if s.http2
+        aws_http2_stream_add_trailing_headers(s.ptr, headers.ptr) != 0 && aws_throw_error()
+    else
+        aws_http1_stream_add_chunked_trailer(s.ptr, headers.ptr) != 0 && aws_throw_error()
+    end
+    return
+end
+
+function addtrailer(s::Stream, h::Pair)
+    trailers = Headers(s.allocator)
+    addheader(trailers, String(h.first), String(h.second))
+    return addtrailer(s, trailers)
+end
+
+function addtrailer(s::Stream, h::AbstractVector{<:Pair})
+    trailers = Headers(s.allocator)
+    for (k, v) in h
+        addheader(trailers, String(k), String(v))
+    end
+    return addtrailer(s, trailers)
 end
 
 function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)

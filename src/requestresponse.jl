@@ -293,6 +293,7 @@ mutable struct Request <: Message
     inputstream::Union{Nothing, InputStream} # used for outgoing request body
     # only set in server-side request handlers
     body::Union{Nothing, Vector{UInt8}}
+    trailers::Union{Nothing, Headers}
     route::Union{Nothing, String}
     params::Union{Nothing, Dict{String, String}}
     cookies::Any # actually Union{Nothing, Vector{Cookie}}
@@ -314,6 +315,7 @@ mutable struct Request <: Message
             req = new(allocator, ptr)
             req.body = nothing
             req.inputstream = nothing
+            req.trailers = nothing
             req.route = nothing
             req.params = nothing
             req.cookies = nothing
@@ -432,6 +434,7 @@ mutable struct Response <: Message
     ptr::Ptr{aws_http_message}
     inputstream::Union{Nothing, InputStream}
     body::Union{Nothing, Vector{UInt8}} # only set for client-side response body when no user-provided response_body
+    trailers::Union{Nothing, Headers}
     metrics::RequestMetrics
     request::Union{Request, Nothing}
 
@@ -451,6 +454,7 @@ mutable struct Response <: Message
             resp = new(allocator, ptr)
             resp.body = nothing
             resp.inputstream = nothing
+            resp.trailers = nothing
             resp.metrics = RequestMetrics()
             resp.request = nothing
             body !== nothing && setinputstream!(resp, body)
@@ -460,7 +464,7 @@ mutable struct Response <: Message
             rethrow()
         end
     end
-    Response() = new(C_NULL, C_NULL, nothing, nothing, RequestMetrics(), nothing)
+    Response() = new(C_NULL, C_NULL, nothing, nothing, nothing, RequestMetrics(), nothing)
 end
 
 Response(status::Integer, body) = Response(status, nothing, Vector{UInt8}(string(body)))

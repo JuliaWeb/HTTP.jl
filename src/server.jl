@@ -269,8 +269,17 @@ const on_request_headers = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_request_headers(aws_stream_ptr, header_block, header_array::Ptr{aws_http_header}, num_headers, stream_ptr)
     stream = unsafe_pointer_to_objref(stream_ptr)
-    headers = stream.request.headers
-    addheaders(headers, header_array, num_headers)
+    if header_block == AWS_HTTP_HEADER_BLOCK_TRAILING
+        trailers = stream.request.trailers
+        if trailers === nothing
+            trailers = Headers(stream.request.allocator)
+            stream.request.trailers = trailers
+        end
+        addheaders(trailers, header_array, num_headers)
+    else
+        headers = stream.request.headers
+        addheaders(headers, header_array, num_headers)
+    end
     return Cint(0)
 end
 
@@ -278,6 +287,9 @@ const on_request_header_block_done = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_request_header_block_done(aws_stream_ptr, header_block, stream_ptr)
     stream = unsafe_pointer_to_objref(stream_ptr)
+    if header_block != AWS_HTTP_HEADER_BLOCK_MAIN
+        return Cint(0)
+    end
     ret = aws_http_stream_get_incoming_request_method(aws_stream_ptr, FieldRef(stream, :method))
     ret != 0 && return ret
     aws_http_message_set_request_method(stream.request.ptr, stream.method)

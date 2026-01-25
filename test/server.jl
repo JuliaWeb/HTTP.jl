@@ -1,4 +1,5 @@
 using Test, HTTP, Logging
+import Sockets
 
 @testset "HTTP.serve" begin
     server = HTTP.serve!(req -> HTTP.Response(200, "Hello, World!"); listenany=true)
@@ -29,6 +30,30 @@ end
         resp = HTTP.post("http://127.0.0.1:$port"; body="echo")
         @test resp.status == 200
         @test String(resp.body) == "echo"
+    finally
+        close(server)
+    end
+end
+
+@testset "HTTP response trailers" begin
+    server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+        read(http)
+        HTTP.setstatus(http, 200)
+        HTTP.startwrite(http)
+        write(http, "hello")
+        HTTP.addtrailer(http, "X-Trailer" => "ok")
+    end
+    try
+        port = HTTP.port(server)
+        sock = Sockets.connect("127.0.0.1", port)
+        write(sock, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        flush(sock)
+        raw = String(read(sock))
+        close(sock)
+        lower_raw = lowercase(raw)
+        @test occursin("transfer-encoding: chunked", lower_raw)
+        @test occursin("hello", raw)
+        @test occursin("\r\n0\r\nx-trailer: ok\r\n\r\n", lower_raw)
     finally
         close(server)
     end
