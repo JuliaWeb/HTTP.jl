@@ -12,6 +12,28 @@ using Test, HTTP, Logging
     end
 end
 
+@testset "HTTP.listen stream handler" begin
+    server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+        body = String(read(http))
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Type" => "text/plain")
+        HTTP.startwrite(http)
+        write(http, isempty(body) ? "ping" : body)
+    end
+    try
+        port = HTTP.port(server)
+        resp = HTTP.get("http://127.0.0.1:$port")
+        @test resp.status == 200
+        @test String(resp.body) == "ping"
+
+        resp = HTTP.post("http://127.0.0.1:$port"; body="echo")
+        @test resp.status == 200
+        @test String(resp.body) == "echo"
+    finally
+        close(server)
+    end
+end
+
 @testset "access logging" begin
     local handler = (req) -> begin
         if req.target == "/internal-error"

@@ -57,6 +57,7 @@ mutable struct Server{F, C}
     const connections::Set{Connection}
     const closed::Threads.Event
     const access_log::Union{Nothing, Function}
+    const stream::Bool
     const logstate::Base.CoreLogging.LogState
     @atomic state::Symbol # :initializing, :running, :closed
     server::Ptr{aws_http_server}
@@ -74,9 +75,10 @@ mutable struct Server{F, C}
         connections::Set{Connection},
         closed::Threads.Event,
         access_log::Union{Nothing, Function},
+        stream::Bool,
         logstate::Base.CoreLogging.LogState,
         state::Symbol,
-    ) where {F, C} = new{F, C}(f, on_stream_complete, fut, allocator, endpoint, socket_options, tls_options, connections_lock, connections, closed, access_log, logstate, state)
+    ) where {F, C} = new{F, C}(f, on_stream_complete, fut, allocator, endpoint, socket_options, tls_options, connections_lock, connections, closed, access_log, stream, logstate, state)
 end
 
 Base.wait(s::Server) = wait(s.closed)
@@ -90,6 +92,7 @@ function serve!(f, host="127.0.0.1", port=8080;
     listenany::Bool=false,
     on_stream_complete=nothing,
     access_log::Union{Nothing, Function}=nothing,
+    stream::Bool=false,
     # socket options
     socket_options=nothing,
     socket_domain=:ipv4,
@@ -143,6 +146,7 @@ function serve!(f, host="127.0.0.1", port=8080;
         Set{Connection}(), # connections
         Threads.Event(), # closed
         access_log,
+        stream,
         Base.CoreLogging.current_logstate(),
         :initializing, # state
     )
@@ -164,6 +168,15 @@ function serve!(f, host="127.0.0.1", port=8080;
     @atomic server.state = :running
     return server
 end
+
+function serve(f, host="127.0.0.1", port=8080; stream::Bool=false, kw...)
+    server = serve!(f, host, port; stream=stream, kw...)
+    wait(server)
+    return server
+end
+
+listen!(f, host="127.0.0.1", port=8080; kw...) = serve!(f, host, port; stream=true, kw...)
+listen(f, host="127.0.0.1", port=8080; kw...) = serve(f, host, port; stream=true, kw...)
 
 const on_incoming_connection = Ref{Ptr{Cvoid}}(C_NULL)
 
@@ -222,7 +235,8 @@ function c_on_incoming_request(aws_conn, conn_ptr)
         stream = Stream{typeof(conn)}(
             conn.allocator,
             false, # decompress
-            aws_http_connection_get_version(aws_conn) == AWS_HTTP_VERSION_2 # http2
+            aws_http_connection_get_version(aws_conn) == AWS_HTTP_VERSION_2, # http2
+            true,
         )
         stream.connection = conn
         stream.request_handler_options = aws_http_request_handler_options(
@@ -270,6 +284,33 @@ function c_on_request_header_block_done(aws_stream_ptr, header_block, stream_ptr
     ret = aws_http_stream_get_incoming_request_uri(aws_stream_ptr, FieldRef(stream, :path))
     ret != 0 && return ret
     aws_http_message_set_request_path(stream.request.ptr, stream.path)
+    notify(stream.headers_ready)
+    if stream.connection.server.stream && !stream.handler_started
+        stream.handler_started = true
+        stream.bufferstream === nothing && (stream.bufferstream = Base.BufferStream())
+        Threads.@spawn begin
+            Base.CoreLogging.with_logstate(stream.connection.server.logstate) do
+                try
+                    Base.invokelatest(stream.connection.server.f, stream)
+                catch e
+                    @error "Request handler error; sending 500" exception=(e, catch_backtrace())
+                    if !stream.response_started
+                        try
+                            setstatus(stream, 500)
+                        catch err
+                            @error "failed to set 500 status" exception=(err, catch_backtrace())
+                        end
+                    end
+                finally
+                    try
+                        closewrite(stream)
+                    catch err
+                        @error "failed to close response stream" exception=(err, catch_backtrace())
+                    end
+                end
+            end
+        end
+    end
     return Cint(0)
 end
 
@@ -279,6 +320,11 @@ const on_request_body = Ref{Ptr{Cvoid}}(C_NULL)
 function c_on_request_body(aws_stream_ptr, data::Ptr{aws_byte_cursor}, stream_ptr)
     stream = unsafe_pointer_to_objref(stream_ptr)
     bc = unsafe_load(data)
+    if stream.connection.server.stream
+        stream.bufferstream === nothing && (stream.bufferstream = Base.BufferStream())
+        unsafe_write(stream.bufferstream, bc.ptr, bc.len)
+        return Cint(0)
+    end
     body = stream.request.body
     if body === nothing
         body = Vector{UInt8}(undef, bc.len)
@@ -297,6 +343,10 @@ const on_request_done = Ref{Ptr{Cvoid}}(C_NULL)
 function c_on_request_done(aws_stream_ptr, stream_ptr)
     stream = unsafe_pointer_to_objref(stream_ptr)
     Base.CoreLogging.with_logstate(stream.connection.server.logstate) do
+        if stream.connection.server.stream
+            stream.bufferstream !== nothing && close(stream.bufferstream)
+            return Cint(0)
+        end
         try
             stream.response = Base.invokelatest(stream.connection.server.f, stream.request)::Response
             if stream.request.method == "HEAD"
@@ -342,6 +392,7 @@ function c_on_server_stream_complete(aws_stream_ptr, error_code, stream_ptr)
         @lock stream.connection.streams_lock begin
             delete!(stream.connection.streams, stream)
         end
+        release_stream_ptr!(stream)
         return Cint(0)
     end
 end

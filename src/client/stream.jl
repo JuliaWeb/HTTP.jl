@@ -99,16 +99,21 @@ mutable struct Stream{T} <: IO
     allocator::Ptr{aws_allocator}
     decompress::Union{Nothing, Bool}
     http2::Bool
+    server_side::Bool
     status::Cint # used as a ref
     fut::Future{Nothing}
     chunk::Union{Nothing, InputStream}
     final_chunk_written::Bool
     bufferstream::Union{Nothing, Base.BufferStream}
     gzipstream::Union{Nothing, CodecZlib.GzipDecompressorStream}
+    responsebuf::Union{Nothing, IOBuffer}
     headers_ready::Threads.Event
     activated::Bool
     write_started::Bool
     read_started::Bool
+    response_started::Bool
+    handler_started::Bool
+    ignore_writes::Bool
     released::Bool
     # remaining fields are initially undefined
     ptr::Ptr{aws_http_stream}
@@ -122,17 +127,22 @@ mutable struct Stream{T} <: IO
     http2_stream_write_data_options::aws_http2_stream_write_data_options
     chunk_options::aws_http1_chunk_options
     websocket_options::aws_websocket_server_upgrade_options
-    Stream{T}(allocator, decompress, http2) where {T} = new{T}(
+    Stream{T}(allocator, decompress, http2, server_side::Bool=false) where {T} = new{T}(
         allocator,
         decompress,
         http2,
+        server_side,
         0,
         Future{Nothing}(),
         nothing,
         false,
         nothing,
         nothing,
+        nothing,
         Threads.Event(),
+        false,
+        false,
+        false,
         false,
         false,
         false,
@@ -187,7 +197,7 @@ function c_on_stream_write_on_complete(aws_stream_ptr, error_code, fut_ptr)
 end
 
 function writechunk(s::Stream, chunk::RequestBodyTypes)
-    if !(chunk isa AbstractString && isempty(chunk))
+    if !s.server_side && !(chunk isa AbstractString && isempty(chunk))
         @assert (isdefined(s, :response) &&
                  isdefined(s.response, :request) &&
                  s.response.request.method in ("POST", "PUT", "PATCH")) "write is only allowed for POST, PUT, and PATCH requests"
@@ -217,7 +227,88 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
     return s.chunk.bodylen
 end
 
+function _ensure_response!(s::Stream)
+    if !isdefined(s, :response) || s.response === nothing
+        s.response = Response(200, nothing, nothing, s.http2, s.allocator)
+    end
+    return s.response
+end
+
+function _send_response!(s::Stream)
+    if s.response_started
+        return s.response
+    end
+    resp = _ensure_response!(s)
+    aws_http_stream_send_response(s.ptr, resp.ptr) != 0 && aws_throw_error()
+    s.response_started = true
+    return resp
+end
+
+function _server_startwrite(s::Stream)
+    if s.write_started
+        return
+    end
+    resp = _ensure_response!(s)
+    if s.request.method == "HEAD"
+        s.ignore_writes = true
+        setinputstream!(resp, nothing)
+    end
+    if s.http2
+        s.write_started = true
+        return
+    end
+    if !s.ignore_writes &&
+       !hasheader(resp.headers, "transfer-encoding") &&
+       !hasheader(resp.headers, "upgrade")
+        hasheader(resp.headers, "content-length") && removeheader(resp.headers, "content-length")
+        setheader(resp.headers, "transfer-encoding", "chunked")
+    end
+    _send_response!(s)
+    s.write_started = true
+    return
+end
+
+function _server_closewrite(s::Stream)
+    if s.final_chunk_written
+        return
+    end
+    resp = _ensure_response!(s)
+    if s.http2
+        if !s.response_started
+            if s.ignore_writes
+                setinputstream!(resp, nothing)
+            else
+                body = s.responsebuf === nothing ? UInt8[] : take!(s.responsebuf)
+                setinputstream!(resp, body)
+            end
+            _send_response!(s)
+        end
+        s.final_chunk_written = true
+        return
+    end
+    if !s.response_started
+        if !s.ignore_writes &&
+           !hasheader(resp.headers, "transfer-encoding") &&
+           !hasheader(resp.headers, "upgrade")
+            hasheader(resp.headers, "content-length") && removeheader(resp.headers, "content-length")
+            setheader(resp.headers, "transfer-encoding", "chunked")
+        end
+        _send_response!(s)
+    end
+    if s.ignore_writes
+        s.final_chunk_written = true
+        return
+    end
+    writechunk(s, "")
+    s.final_chunk_written = true
+    return
+end
+
 function _activate_stream!(s::Stream)
+    if s.server_side
+        s.activated = true
+        return
+    end
     if !s.activated
         aws_http_stream_activate(s.ptr) != 0 && aws_throw_error()
         s.activated = true
@@ -226,6 +317,9 @@ function _activate_stream!(s::Stream)
 end
 
 function startwrite(s::Stream)
+    if s.server_side
+        return _server_startwrite(s)
+    end
     if s.write_started
         return
     end
@@ -241,6 +335,9 @@ function startwrite(s::Stream)
 end
 
 function closewrite(s::Stream)
+    if s.server_side
+        return _server_closewrite(s)
+    end
     if s.final_chunk_written
         return
     end
@@ -264,6 +361,14 @@ function closewrite(s::Stream)
 end
 
 function startread(s::Stream)
+    if s.server_side
+        if s.read_started
+            return s.request
+        end
+        wait(s.headers_ready)
+        s.read_started = true
+        return s.request
+    end
     if s.read_started
         return s.response
     end
@@ -316,12 +421,30 @@ end
 
 function Base.write(s::Stream, data::AbstractVector{UInt8})
     startwrite(s)
+    if s.server_side
+        if s.ignore_writes
+            return length(data)
+        elseif s.http2
+            s.responsebuf === nothing && (s.responsebuf = IOBuffer())
+            write(s.responsebuf, data)
+            return length(data)
+        end
+    end
     writechunk(s, data)
     return length(data)
 end
 
 function Base.write(s::Stream, data::Union{String, SubString{String}})
     startwrite(s)
+    if s.server_side
+        if s.ignore_writes
+            return sizeof(data)
+        elseif s.http2
+            s.responsebuf === nothing && (s.responsebuf = IOBuffer())
+            write(s.responsebuf, data)
+            return sizeof(data)
+        end
+    end
     writechunk(s, data)
     return sizeof(data)
 end
@@ -332,6 +455,15 @@ end
 
 function Base.write(s::Stream, b::UInt8)
     startwrite(s)
+    if s.server_side
+        if s.ignore_writes
+            return 1
+        elseif s.http2
+            s.responsebuf === nothing && (s.responsebuf = IOBuffer())
+            write(s.responsebuf, b)
+            return 1
+        end
+    end
     writechunk(s, UInt8[b])
     return 1
 end
@@ -355,8 +487,36 @@ function Base.close(s::Stream)
     return
 end
 
+function setstatus(s::Stream, status::Integer)
+    s.server_side || error("setstatus is only supported for server streams")
+    s.response_started && error("response already started")
+    resp = _ensure_response!(s)
+    resp.status = status
+    return
+end
+
+function setheader(s::Stream, v)
+    s.server_side || error("setheader is only supported for server streams")
+    s.response_started && error("response already started")
+    resp = _ensure_response!(s)
+    setheader(resp, v)
+    return
+end
+
+function setheader(s::Stream, k, v)
+    return setheader(s, k => v)
+end
+
+function setheaderifabsent(s::Stream, k, v)
+    s.server_side || error("setheaderifabsent is only supported for server streams")
+    s.response_started && error("response already started")
+    resp = _ensure_response!(s)
+    setheaderifabsent(resp.headers, k, v)
+    return
+end
+
 function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)
-    stream = Stream{Nothing}(allocator, decompress, http2)
+    stream = Stream{Nothing}(allocator, decompress, http2, false)
     if on_stream_response_body !== nothing
         stream.bufferstream = Base.BufferStream()
     end

@@ -1,6 +1,6 @@
 function _open_stream(conn::Ptr{aws_http_connection}, req::Request, decompress, readtimeout, allocator)
     http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
-    stream = Stream{Ptr{aws_http_connection}}(allocator, decompress, http2)
+    stream = Stream{Ptr{aws_http_connection}}(allocator, decompress, http2, false)
     stream.bufferstream = Base.BufferStream()
     stream.connection = conn
     stream.request = req
