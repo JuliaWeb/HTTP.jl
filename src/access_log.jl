@@ -68,7 +68,7 @@ function symbol_mapping(s::Symbol)
     elseif s === :remote_port
         :(HTTP.remote_port(http.connection))
     elseif s === :remote_user
-        :("-") # TODO: find from Basic auth...
+        :(HTTP._remote_user(http))
     elseif s === :time_iso8601
         if !Sys.iswindows()
             :(Libc.strftime("%FT%T%z", time()))
@@ -105,6 +105,30 @@ function symbol_mapping(s::Symbol)
     end
 end
 
+function _remote_user(http)
+    auth = HTTP.getheader(http.request.headers, "authorization")
+    auth === nothing && return "-"
+    parts = split(auth; limit=2)
+    length(parts) < 2 && return "-"
+    ascii_lc_isequal(parts[1], "basic") || return "-"
+    token = parts[2]
+    isempty(token) && return "-"
+    decoded = try
+        Base64.base64decode(token)
+    catch
+        return "-"
+    end
+    userpass = try
+        String(decoded)
+    catch
+        return "-"
+    end
+    colon = findfirst(==(':'), userpass)
+    user = colon === nothing ? userpass : userpass[1:prevind(userpass, colon)]
+    isempty(user) && return "-"
+    return user
+end
+
 """
     common_logfmt(io::IO, http::HTTP.Stream)
 
@@ -118,4 +142,3 @@ const common_logfmt = logfmt"$remote_addr - $remote_user [$time_local] \"$reques
 Format a log message in the Combined Log Format and write to `io`.
 """
 const combined_logfmt = logfmt"$remote_addr - $remote_user [$time_local] \"$request\" $status $body_bytes_sent \"$http_referer\" \"$http_user_agent\""
-

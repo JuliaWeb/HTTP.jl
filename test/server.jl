@@ -1,4 +1,4 @@
-using Test, HTTP, Logging
+using Test, HTTP, Logging, Base64
 import Sockets
 
 @testset "HTTP.serve" begin
@@ -224,11 +224,14 @@ end
         HTTP.get("http://127.0.0.1:$port/index.html")
         HTTP.get("http://127.0.0.1:$port/index.html?a=b")
         HTTP.head("http://127.0.0.1:$port")
+        auth = Base64.base64encode("alice:secret")
+        HTTP.get("http://127.0.0.1:$port/auth", ["Authorization" => "Basic $auth"])
     end
-    @test length(logs) == 4
+    @test length(logs) == 5
     @test all(x -> x.group === :access, logs)
     @test occursin(r"^application/json text/plain GET / HTTP/1\.1 GET / 127\.0\.0\.1 \d+ - HTTP/1\.1 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.* \d+/.*/\d{4}:\d{2}:\d{2}:\d{2}.* 200 12$", logs[1].message)
     @test occursin(r"^\*/\* text/plain GET /index\.html HTTP/1\.1 GET /index\.html 127\.0\.0\.1 \d+ - HTTP/1\.1 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.* \d+/.*/\d{4}:\d{2}:\d{2}:\d{2}.* 200 12$", logs[2].message)
     @test occursin(r"^\*/\* text/plain GET /index\.html\?a=b HTTP/1\.1 GET /index\.html\?a=b 127\.0\.0\.1 \d+ - HTTP/1\.1 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.* \d+/.*/\d{4}:\d{2}:\d{2}:\d{2}.* 200 12$", logs[3].message)
     @test occursin(r"^\*/\* text/plain HEAD / HTTP/1\.1 HEAD / 127\.0\.0\.1 \d+ - HTTP/1\.1 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.* \d+/.*/\d{4}:\d{2}:\d{2}:\d{2}.* 200 0$", logs[4].message)
+    @test occursin(r"^\*/\* text/plain GET /auth HTTP/1\.1 GET /auth 127\.0\.0\.1 \d+ alice HTTP/1\.1 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.* \d+/.*/\d{4}:\d{2}:\d{2}:\d{2}.* 200 12$", logs[5].message)
 end
