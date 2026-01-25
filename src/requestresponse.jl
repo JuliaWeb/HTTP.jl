@@ -1,4 +1,7 @@
-export Header, Headers, Message, Request, Response
+export Header, Headers, Message, Request, Response,
+    header, headers, hasheader, headercontains,
+    setheader, setheaderifabsent, defaultheader!, appendheader, removeheader,
+    canonicalizeheaders, canonicalizeheaders!, mkheaders
 
 # working with headers
 headereq(a::String, b::String) = GC.@preserve a b aws_http_header_name_eq(aws_byte_cursor_from_c_str(a), aws_byte_cursor_from_c_str(b))
@@ -81,6 +84,7 @@ Base.deleteat!(h::Headers, i::Int) = aws_http_headers_erase_index(h.ptr, i - 1) 
 Base.empty!(h::Headers) = aws_http_headers_clear(h.ptr) != 0 && aws_throw_error()
 
 setheaderifabsent(headers, k, v) = !hasheader(headers, k) && setheader(headers, k, v)
+setheaderifabsent(m::Message, k, v) = setheaderifabsent(m.headers, k, v)
 
 field_name_isequal(a, b) = headereq(String(a), String(b))
 
@@ -146,6 +150,28 @@ function setheader(h::AbstractVector{<:Pair}, v::Pair)
         end
     end
     push!(h, key => value)
+    return h
+end
+
+appendheader(m::Message, v) = appendheader(m.headers, v)
+appendheader(h::Headers, v::Header) = addheader(h, v)
+appendheader(h::Headers, v::Pair) = addheader(h, String(v.first), String(v.second))
+function appendheader(h::AbstractVector{<:Pair}, v::Pair)
+    push!(h, String(v.first) => String(v.second))
+    return h
+end
+
+removeheader(m::Message, k) = removeheader(m.headers, k)
+removeheader(m::Message, k, v) = removeheader(m.headers, k, v)
+function removeheader(h::AbstractVector{<:Pair}, k)
+    key = String(k)
+    filter!(kv -> !field_name_isequal(kv.first, key), h)
+    return h
+end
+function removeheader(h::AbstractVector{<:Pair}, k, v)
+    key = String(k)
+    val = String(v)
+    filter!(kv -> !(field_name_isequal(kv.first, key) && field_name_isequal(kv.second, val)), h)
     return h
 end
 

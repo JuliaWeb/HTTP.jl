@@ -79,6 +79,12 @@
     @test :Message in exported
     @test :Header in exported
     @test :Headers in exported
+    @test :header in exported
+    @test :headers in exported
+    @test :hasheader in exported
+    @test :setheader in exported
+    @test :appendheader in exported
+    @test :removeheader in exported
     @test :bytes in exported
     @test :nbytes in exported
     @test :nobytes in exported
@@ -86,6 +92,14 @@
     @test :tocameldash in exported
     @test :iso8859_1_to_utf8 in exported
     @test :ascii_lc_isequal in exported
+
+    req = HTTP.Request("GET", "/")
+    HTTP.setheader(req, "X-Test" => "a")
+    @test HTTP.header(req, "X-Test") == "a"
+    HTTP.appendheader(req, "X-Test" => "b")
+    @test HTTP.headers(req, "X-Test") == ["a", "b"]
+    HTTP.removeheader(req, "X-Test")
+    @test HTTP.header(req, "X-Test") == ""
     @test HTTP.nobody isa Vector{UInt8}
     @test isempty(HTTP.nobody)
     @test isdefined(HTTP, :streamhandler)
