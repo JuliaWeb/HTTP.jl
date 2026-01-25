@@ -37,6 +37,8 @@
     @test :startread in exported
     @test :closewrite in exported
     @test :closeread in exported
+    @test HTTP.nobody isa Vector{UInt8}
+    @test isempty(HTTP.nobody)
 
     @testset "download" begin
         server = HTTP.serve!(req -> HTTP.Response(200, ["Content-Disposition" => "attachment; filename=\"hello.txt\""], "hello"); listenany=true)

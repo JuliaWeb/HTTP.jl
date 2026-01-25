@@ -9,6 +9,8 @@ export startwrite, startread, closewrite, closeread
 export @logfmt_str, common_logfmt, combined_logfmt
 export WebSockets
 
+const nobody = UInt8[]
+
 include("utils.jl")
 include("access_log.jl")
 include("sniff.jl"); using .Sniff
