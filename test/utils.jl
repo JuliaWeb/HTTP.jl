@@ -37,4 +37,19 @@
     @test :startread in exported
     @test :closewrite in exported
     @test :closeread in exported
+
+    @testset "download" begin
+        server = HTTP.serve!(req -> HTTP.Response(200, ["Content-Disposition" => "attachment; filename=\"hello.txt\""], "hello"); listenany=true)
+        try
+            port = HTTP.port(server)
+            mktempdir() do dir
+                file = HTTP.download("http://127.0.0.1:$port/hello.txt", dir)
+                @test isfile(file)
+                @test basename(file) == "hello.txt"
+                @test String(read(file)) == "hello"
+            end
+        finally
+            close(server)
+        end
+    end
 end # testset

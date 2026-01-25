@@ -50,6 +50,7 @@ include("client/request.jl")
 include("client/stream.jl")
 include("client/makerequest.jl")
 include("client/open.jl")
+include("download.jl")
 include("websockets.jl"); using .WebSockets
 include("server.jl")
 include("handlers.jl"); using .Handlers
