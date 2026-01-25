@@ -222,6 +222,23 @@ end
 ischunked(is::InputStream) = is.ptr == C_NULL && is.bodyref !== nothing
 
 const RequestBodyTypes = Union{AbstractString, AbstractVector{UInt8}, IO, AbstractDict, NamedTuple, Form, Nothing}
+const DEFAULT_IO_CHUNK_SIZE = 64 * 1024
+
+struct IOChunkedBody{T<:IO}
+    io::T
+    chunk_size::Int
+    buf::Vector{UInt8}
+end
+
+IOChunkedBody(io::IO; chunk_size::Int=DEFAULT_IO_CHUNK_SIZE) =
+    IOChunkedBody{typeof(io)}(io, chunk_size, Vector{UInt8}(undef, chunk_size))
+
+function Base.iterate(it::IOChunkedBody, state=nothing)
+    eof(it.io) && return nothing
+    n = readbytes!(it.io, it.buf, it.chunk_size)
+    n == 0 && return nothing
+    return view(it.buf, 1:n), nothing
+end
 
 function InputStream(allocator::Ptr{aws_allocator}, body)
     is = InputStream()

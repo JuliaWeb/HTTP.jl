@@ -70,6 +70,10 @@ function request(method, url, h=Header[], b=nothing;
     verbose=0,
     # only client keywords in catch-all
     kw...)
+    if chunkedbody === nothing && body isa IO && !(body isa IOStream) && !(body isa Form)
+        chunkedbody = IOChunkedBody(body)
+        body = nothing
+    end
     if chunkedbody === nothing && body !== nothing && !(body isa RequestBodyTypes) && Base.isiterable(typeof(body))
         chunkedbody = body
         body = nothing

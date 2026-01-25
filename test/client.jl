@@ -301,6 +301,46 @@
         @test !isempty(pool.clients.clients)
     end
 
+    @testset "IO request body streaming" begin
+        mutable struct ChunkedTestIO <: IO
+            chunks::Vector{Vector{UInt8}}
+            readbytes_calls::Int
+            readavailable_calls::Int
+        end
+        ChunkedTestIO(chunks) = ChunkedTestIO(chunks, 0, 0)
+        Base.eof(io::ChunkedTestIO) = isempty(io.chunks)
+        function Base.readbytes!(io::ChunkedTestIO, buf::Vector{UInt8}, n::Integer)
+            io.readbytes_calls += 1
+            isempty(io.chunks) && return 0
+            chunk = popfirst!(io.chunks)
+            ncopy = min(n, length(chunk))
+            copyto!(buf, 1, chunk, 1, ncopy)
+            return ncopy
+        end
+        function Base.readavailable(io::ChunkedTestIO)
+            io.readavailable_calls += 1
+            error("readavailable should not be used for chunked IO")
+        end
+
+        server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+            body = String(read(http))
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "text/plain")
+            HTTP.startwrite(http)
+            write(http, body)
+        end
+        try
+            port = HTTP.port(server)
+            io = ChunkedTestIO([Vector{UInt8}("hello"), Vector{UInt8}(" "), Vector{UInt8}("world")])
+            resp = HTTP.post("http://127.0.0.1:$port/"; body=io)
+            @test String(resp.body) == "hello world"
+            @test io.readbytes_calls == 3
+            @test io.readavailable_calls == 0
+        finally
+            close(server)
+        end
+    end
+
     @testset "HTTP.open streaming" begin
         resp = HTTP.open("GET", "https://$httpbin/stream/5") do io
             r = HTTP.startread(io)
