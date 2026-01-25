@@ -310,6 +310,9 @@ function _server_startwrite(s::Stream)
         setinputstream!(resp, nothing)
     end
     if s.http2
+        if !s.response_started
+            _send_response!(s)
+        end
         s.write_started = true
         return
     end
@@ -333,12 +336,17 @@ function _server_closewrite(s::Stream)
         if !s.response_started
             if s.ignore_writes
                 setinputstream!(resp, nothing)
-            else
-                body = s.responsebuf === nothing ? UInt8[] : take!(s.responsebuf)
-                setinputstream!(resp, body)
             end
             _send_response!(s)
         end
+        if s.ignore_writes
+            s.final_chunk_written = true
+            return
+        end
+        if resp.trailers !== nothing
+            aws_http2_stream_add_trailing_headers(s.ptr, resp.trailers.ptr) != 0 && aws_throw_error()
+        end
+        writechunk(s, "")
         s.final_chunk_written = true
         return
     end
@@ -512,8 +520,7 @@ function Base.write(s::Stream, data::AbstractVector{UInt8})
         if s.ignore_writes
             return length(data)
         elseif s.http2
-            s.responsebuf === nothing && (s.responsebuf = IOBuffer())
-            write(s.responsebuf, data)
+            writechunk(s, data)
             return length(data)
         end
     end
@@ -527,8 +534,7 @@ function Base.write(s::Stream, data::StridedVector{UInt8})
         if s.ignore_writes
             return length(data)
         elseif s.http2
-            s.responsebuf === nothing && (s.responsebuf = IOBuffer())
-            write(s.responsebuf, data)
+            writechunk(s, data)
             return length(data)
         end
     end
@@ -542,8 +548,7 @@ function Base.write(s::Stream, data::Union{String, SubString{String}})
         if s.ignore_writes
             return sizeof(data)
         elseif s.http2
-            s.responsebuf === nothing && (s.responsebuf = IOBuffer())
-            write(s.responsebuf, data)
+            writechunk(s, data)
             return sizeof(data)
         end
     end
@@ -561,8 +566,7 @@ function Base.write(s::Stream, b::UInt8)
         if s.ignore_writes
             return 1
         elseif s.http2
-            s.responsebuf === nothing && (s.responsebuf = IOBuffer())
-            write(s.responsebuf, b)
+            writechunk(s, UInt8[b])
             return 1
         end
     end

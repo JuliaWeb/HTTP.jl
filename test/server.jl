@@ -82,6 +82,38 @@ end
     end
 end
 
+@testset "HTTP/2 stream handler writes" begin
+    cert = joinpath(@__DIR__, "fixtures", "http2.crt")
+    key = joinpath(@__DIR__, "fixtures", "http2.key")
+    saw_http2 = Threads.Atomic{Bool}(false)
+    buffered = Threads.Atomic{Bool}(false)
+    server = HTTP.serve!("127.0.0.1", 0; listenany=true, stream=true, ssl_cert=cert, ssl_key=key, ssl_alpn_list="h2") do stream
+        HTTP.startread(stream)
+        stream.http2 && (saw_http2[] = true)
+        HTTP.setstatus(stream, 200)
+        HTTP.startwrite(stream)
+        write(stream, "hello")
+        if stream.http2 && stream.responsebuf !== nothing
+            buffered[] = true
+        end
+        HTTP.closewrite(stream)
+    end
+    try
+        port = HTTP.port(server)
+        resp = HTTP.get("https://127.0.0.1:$(port)"; ssl_insecure=true, ssl_alpn_list="h2")
+        if resp.version == HTTP.HTTPVersion(2, 0)
+            @test saw_http2[]
+            @test !buffered[]
+            @test String(resp.body) == "hello"
+        else
+            @info "HTTP/2 not negotiated for stream handler test"
+            @test true
+        end
+    finally
+        close(server)
+    end
+end
+
 @testset "HTTP/2 server push promise" begin
     cert = joinpath(@__DIR__, "fixtures", "http2.crt")
     key = joinpath(@__DIR__, "fixtures", "http2.key")
