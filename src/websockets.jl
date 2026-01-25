@@ -555,7 +555,10 @@ returned by `receive`. Note that `WebSocket` objects can be iterated,
 where each iteration yields a message until the connection is closed.
 """
 function receive(ws::WebSocket)
-    @assert isopen(ws.readchannel) "WebSocket is closed"
+    if !isopen(ws.readchannel)
+        close_body = ws.closebody === nothing ? CloseFrameBody(1006, "") : ws.closebody
+        throw(WebSocketError(close_body))
+    end
     msg = take!(ws.readchannel)
     if msg isa WebSocketError
         throw(msg)
