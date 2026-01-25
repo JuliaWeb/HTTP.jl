@@ -8,26 +8,100 @@ export WebSocket, send, receive, ping, pong
 
 @enum OpCode::UInt8 CONTINUATION=0x00 TEXT=0x01 BINARY=0x02 CLOSE=0x08 PING=0x09 PONG=0x0A
 
+struct CloseFrameBody
+    code::Int
+    reason::String
+end
+
+struct WebSocketError <: Exception
+    message::CloseFrameBody
+end
+
+isok(e::WebSocketError) = e.message.code in (1000, 1001, 1005)
+
 mutable struct WebSocket
     id::String
     host::String
     path::String
     connect_fut::Future{Nothing}
-    readchannel::Channel{Union{String, Vector{UInt8}}}
+    readchannel::Channel{Union{String, Vector{UInt8}, WebSocketError}}
     writebuffer::Vector{UInt8}
     writepos::Int
     writeclosed::Bool
     closelock::ReentrantLock
-    handshake_request::Request
-    options::aws_websocket_client_connection_options
+    sendlock::ReentrantLock
+    handshake_request::Union{Nothing, Request}
     websocket_pointer::Ptr{aws_websocket}
-    handshake_response::Response
-    websocket_send_frame_options::aws_websocket_send_frame_options
+    handshake_response::Union{Nothing, Response}
+    incoming_opcode::UInt8
+    incoming_fin::Bool
+    incoming_payload::Vector{UInt8}
+    fragment_opcode::Union{Nothing, UInt8}
+    fragment_payload::Vector{UInt8}
+    closebody::Union{Nothing, CloseFrameBody}
 
-    WebSocket(host::AbstractString, path::AbstractString) = new(string(rand(UInt32); base=58), String(host), String(path), Future{Nothing}(), Channel{Union{String, Vector{UInt8}}}(Inf), UInt8[], 0, false, ReentrantLock())
+    WebSocket(host::AbstractString, path::AbstractString) = new(
+        string(rand(UInt32); base=58),
+        String(host),
+        String(path),
+        Future{Nothing}(),
+        Channel{Union{String, Vector{UInt8}, WebSocketError}}(Inf),
+        UInt8[],
+        0,
+        false,
+        ReentrantLock(),
+        ReentrantLock(),
+        nothing,
+        C_NULL,
+        nothing,
+        0x00,
+        false,
+        UInt8[],
+        nothing,
+        UInt8[],
+        nothing,
+    )
 end
 
 getresponse(ws::WebSocket) = ws.handshake_response
+
+function _queue_close!(ws::WebSocket, body::CloseFrameBody)
+    ws.closebody = body
+    if isopen(ws.readchannel)
+        try
+            put!(ws.readchannel, WebSocketError(body))
+        catch
+        end
+        Base.close(ws.readchannel)
+    end
+    return
+end
+
+function _close_channel!(ws::WebSocket)
+    isopen(ws.readchannel) && Base.close(ws.readchannel)
+    return
+end
+
+function _enqueue_message!(ws::WebSocket, msg)
+    if isopen(ws.readchannel)
+        try
+            put!(ws.readchannel, msg)
+        catch
+        end
+    end
+    return
+end
+
+function close_payload(body::CloseFrameBody)
+    reason_bytes = collect(codeunits(body.reason))
+    payload = Vector{UInt8}(undef, 2 + length(reason_bytes))
+    payload[1] = UInt8((body.code >> 8) & 0xff)
+    payload[2] = UInt8(body.code & 0xff)
+    if !isempty(reason_bytes)
+        copyto!(payload, 3, reason_bytes, 1, length(reason_bytes))
+    end
+    return payload
+end
 
 mutable struct SendState
     ws::WebSocket
@@ -44,15 +118,17 @@ function c_on_connection_setup(connection_setup_data::Ptr{aws_websocket_on_conne
             notify(ws.connect_fut, CapturedException(aws_error(data.error_code), Base.backtrace()))
         else
             ws.websocket_pointer = data.websocket
-            ws.handshake_response.status = unsafe_load(data.handshake_response_status)
-            addheaders(ws.handshake_response.headers, data.handshake_response_header_array, data.num_handshake_response_headers)
+            resp = ws.handshake_response
+            @assert resp !== nothing
+            resp.status = unsafe_load(data.handshake_response_status)
+            addheaders(resp.headers, data.handshake_response_header_array, data.num_handshake_response_headers)
             if data.handshake_response_body != C_NULL
                 handshake_response_body = unsafe_load(data.handshake_response_body)
                 response_body = str(handshake_response_body)
             else
                 response_body = nothing
             end
-            setinputstream!(ws.handshake_response, response_body)
+            setinputstream!(resp, response_body)
             notify(ws.connect_fut, nothing)
         end
     catch e
@@ -67,16 +143,26 @@ function c_on_connection_shutdown(websocket::Ptr{aws_websocket}, error_code::Cin
     ws = unsafe_pointer_to_objref(ws_ptr)
     if error_code != 0
         @error "$(ws.id): connection shutdown error" exception=(aws_error(error_code), Base.backtrace())
+        if ws.closebody === nothing
+            _queue_close!(ws, CloseFrameBody(1006, ""))
+        end
+    else
+        _close_channel!(ws)
     end
-    close(ws)
+    ws.websocket_pointer = C_NULL
+    ws.writeclosed = true
     return
 end
 
 const on_incoming_frame_begin = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_incoming_frame_begin(websocket::Ptr{aws_websocket}, frame::Ptr{aws_websocket_incoming_frame}, ws_ptr)
-    # ws = unsafe_pointer_to_objref(ws_ptr)
-    # fr = unsafe_load(frame)
+    ws = unsafe_pointer_to_objref(ws_ptr)
+    fr = unsafe_load(frame)
+    ws.incoming_opcode = fr.opcode
+    ws.incoming_fin = fr.fin
+    empty!(ws.incoming_payload)
+    fr.payload_length > 0 && sizehint!(ws.incoming_payload, Int(fr.payload_length))
     return true
 end
 
@@ -84,15 +170,13 @@ const on_incoming_frame_payload = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_incoming_frame_payload(websocket::Ptr{aws_websocket}, frame::Ptr{aws_websocket_incoming_frame}, data::aws_byte_cursor, ws_ptr)
     ws = unsafe_pointer_to_objref(ws_ptr)
-    fr = unsafe_load(frame)
     try
-        if fr.opcode == UInt8(TEXT)
-            put!(ws.readchannel, unsafe_string(data.ptr, data.len))
-        else
-            rec = Vector{UInt8}(undef, data.len)
-            Base.unsafe_copyto!(pointer(rec), data.ptr, data.len)
-            put!(ws.readchannel, rec)
-        end
+        n = Int(data.len)
+        n == 0 && return true
+        payload = ws.incoming_payload
+        start = length(payload) + 1
+        resize!(payload, length(payload) + n)
+        Base.unsafe_copyto!(pointer(payload, start), data.ptr, n)
     catch e
         @error "$(ws.id): incoming frame payload error" exception=(e, catch_backtrace())
     end
@@ -103,9 +187,86 @@ const on_incoming_frame_complete = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_incoming_frame_complete(websocket::Ptr{aws_websocket}, frame::Ptr{aws_websocket_incoming_frame}, error_code::Cint, ws_ptr)
     ws = unsafe_pointer_to_objref(ws_ptr)
-    fr = unsafe_load(frame)
     if error_code != 0
         @error "$(ws.id): incoming frame complete error" exception=(aws_error(error_code), Base.backtrace())
+        close_body = CloseFrameBody(1006, "")
+        _queue_close!(ws, close_body)
+        Threads.@spawn close(ws, close_body)
+        return true
+    end
+    fr = unsafe_load(frame)
+    opcode = fr.opcode
+    fin = fr.fin
+    payload = ws.incoming_payload
+    if opcode == UInt8(PING)
+        payload_copy = copy(payload)
+        Threads.@spawn begin
+            try
+                pong(ws, payload_copy)
+            catch e
+                @error "$(ws.id): failed to send pong" exception=(e, catch_backtrace())
+            end
+        end
+        return true
+    elseif opcode == UInt8(PONG)
+        return true
+    elseif opcode == UInt8(CLOSE)
+        body = payload
+        close_body = if length(body) >= 2
+            code = (Int(body[1]) << 8) | Int(body[2])
+            reason = length(body) > 2 ? String(copy(body[3:end])) : ""
+            CloseFrameBody(code, reason)
+        else
+            CloseFrameBody(1005, "")
+        end
+        Threads.@spawn begin
+            try
+                ws.writeclosed || close(ws, close_body)
+            catch e
+                @error "$(ws.id): failed to close websocket" exception=(e, catch_backtrace())
+            end
+        end
+        _queue_close!(ws, close_body)
+        return true
+    end
+    if opcode == UInt8(CONTINUATION)
+        if ws.fragment_opcode === nothing
+            close_body = CloseFrameBody(1002, "unexpected continuation")
+            _queue_close!(ws, close_body)
+            Threads.@spawn close(ws, close_body)
+            return true
+        end
+        append!(ws.fragment_payload, payload)
+        if fin
+            msg_opcode = ws.fragment_opcode
+            data = ws.fragment_payload
+            ws.fragment_opcode = nothing
+            ws.fragment_payload = UInt8[]
+            if msg_opcode == UInt8(TEXT)
+                _enqueue_message!(ws, String(copy(data)))
+            else
+                _enqueue_message!(ws, copy(data))
+            end
+        end
+        return true
+    end
+    if opcode == UInt8(TEXT) || opcode == UInt8(BINARY)
+        if ws.fragment_opcode !== nothing
+            close_body = CloseFrameBody(1002, "unexpected new data frame")
+            _queue_close!(ws, close_body)
+            Threads.@spawn close(ws, close_body)
+            return true
+        end
+        if fin
+            if opcode == UInt8(TEXT)
+                _enqueue_message!(ws, String(copy(payload)))
+            else
+                _enqueue_message!(ws, copy(payload))
+            end
+        else
+            ws.fragment_opcode = opcode
+            ws.fragment_payload = copy(payload)
+        end
     end
     return true
 end
@@ -148,7 +309,7 @@ function open(f::Function, url;
             ws = WebSocket(host, path)
             ws.handshake_request = req
             ws.handshake_response = Response(0, nothing, nothing, false, allocator)
-            ws.options = aws_websocket_client_connection_options(
+            options = aws_websocket_client_connection_options(
                 allocator,
                 reqclient.settings.bootstrap,
                 pointer(FieldRef(reqclient, :socket_options)),
@@ -168,7 +329,7 @@ function open(f::Function, url;
                 C_NULL, # requested_event_loop
                 C_NULL, # host_resolution_config
             )
-            if aws_websocket_client_connect(FieldRef(ws, :options)) != 0
+            if aws_websocket_client_connect(Ref(options)) != 0
                 aws_throw_error()
             end
             # wait until connected
@@ -195,18 +356,33 @@ function open(f::Function, url;
         # end
     finally
         # if !isclosed(ws)
-            close(ws)
+            ws.closebody === nothing && close(ws)
         # end
     end
 end
 
-function Base.close(ws::WebSocket)
+function Base.close(ws::WebSocket, body::Union{Nothing, CloseFrameBody}=nothing)
     @lock ws.closelock begin
+        if ws.writeclosed
+            _close_channel!(ws)
+            return
+        end
+        ws.writeclosed = true
         if ws.websocket_pointer != C_NULL
+            if body !== nothing
+                payload_bytes = close_payload(body)
+                @lock ws.sendlock begin
+                    try
+                        writeframe(ws, true, CLOSE, payload(ws, payload_bytes))
+                    catch
+                        # ignore errors while closing
+                    end
+                end
+            end
             aws_websocket_close(ws.websocket_pointer, false)
             ws.websocket_pointer = C_NULL
-            ws.writeclosed = true
         end
+        _close_channel!(ws)
     end
     return
 end
@@ -256,25 +432,25 @@ function c_on_complete(websocket::Ptr{aws_websocket}, error_code::Cint, ws_ptr::
     state = unsafe_pointer_to_objref(ws_ptr)
     if error_code != 0
         notify(state.fut, CapturedException(aws_error(error_code), Base.backtrace()))
+    else
+        notify(state.fut, nothing)
     end
-    notify(state.fut, nothing)
     return
 end
 
 function writeframe(ws::WebSocket, fin::Bool, opcode::OpCode, payload)
     n = sizeof(payload)
     state = SendState(ws, Future{Nothing}())
-    GC.@preserve state begin
-        ws.websocket_send_frame_options = aws_websocket_send_frame_options(
-            n % UInt64,
-            Ptr{Cvoid}(pointer_from_objref(state)), # user_data
-            stream_outgoing_payload[],
-            on_complete[],
-            UInt8(opcode),
-            fin
-        )
-        opts = pointer(FieldRef(ws, :websocket_send_frame_options))
-        if aws_websocket_send_frame(ws.websocket_pointer, opts) != 0
+    opts = aws_websocket_send_frame_options(
+        n % UInt64,
+        Ptr{Cvoid}(pointer_from_objref(state)), # user_data
+        stream_outgoing_payload[],
+        on_complete[],
+        UInt8(opcode),
+        fin
+    )
+    GC.@preserve state opts begin
+        if aws_websocket_send_frame(ws.websocket_pointer, Ref(opts)) != 0
             aws_throw_error()
         end
         # wait until frame sent
@@ -297,34 +473,37 @@ or `close(ws[, body::WebSockets.CloseFrameBody])`. Calling `close` will initiate
 the close sequence and close the underlying connection.
 """
 function send(ws::WebSocket, x)
-    @assert !ws.writeclosed "WebSocket is closed"
-    if !isbinary(x) && !istext(x)
-        # if x is not single binary or text, then assume it's an iterable of binary or text
-        # and we'll send fragmented message
-        first = true
-        n = 0
-        state = iterate(x)
-        if state === nothing
-            # x was not binary or text, but is an empty iterable, send single empty frame
-            x = ""
-            @goto write_single_frame
-        end
-        @debug "$(ws.id): Writing fragmented message"
-        item, st = state
-        # we prefetch next state so we know if we're on the last item or not
-        # so we can appropriately set the FIN bit for the last fragmented frame
-        nextstate = iterate(x, st)
-        while true
-            n += writeframe(ws, nextstate === nothing, first ? opcode(item) : CONTINUATION, payload(ws, item))
-            first = false
-            nextstate === nothing && break
-            item, st = nextstate
+    @lock ws.sendlock begin
+        @assert !ws.writeclosed "WebSocket is closed"
+        if !isbinary(x) && !istext(x)
+            # if x is not single binary or text, then assume it's an iterable of binary or text
+            # and we'll send fragmented message
+            first = true
+            n = 0
+            state = iterate(x)
+            if state === nothing
+                # x was not binary or text, but is an empty iterable, send single empty frame
+                x = ""
+                @goto write_single_frame
+            end
+            @debug "$(ws.id): Writing fragmented message"
+            item, st = state
+            # we prefetch next state so we know if we're on the last item or not
+            # so we can appropriately set the FIN bit for the last fragmented frame
             nextstate = iterate(x, st)
-        end
-    else
-        # single binary or text frame for message
+            while true
+                n += writeframe(ws, nextstate === nothing, first ? opcode(item) : CONTINUATION, payload(ws, item))
+                first = false
+                nextstate === nothing && break
+                item, st = nextstate
+                nextstate = iterate(x, st)
+            end
+            return n
+        else
+            # single binary or text frame for message
 @label write_single_frame
-        return writeframe(ws, true, opcode(x), payload(ws, x))
+            return writeframe(ws, true, opcode(x), payload(ws, x))
+        end
     end
 end
 
@@ -337,8 +516,10 @@ body to send with the message. PONG messages are automatically responded
 to when a PING message is received by a websocket connection.
 """
 function ping(ws::WebSocket, data=UInt8[])
-    @assert !ws.writeclosed "WebSocket is closed"
-    return writeframe(ws, true, PING, payload(ws, data))
+    @lock ws.sendlock begin
+        @assert !ws.writeclosed "WebSocket is closed"
+        return writeframe(ws, true, PING, payload(ws, data))
+    end
 end
 
 """
@@ -351,8 +532,10 @@ PONG message, but in certain cases, a unidirectional PONG message can be
 used as a one-way heartbeat.
 """
 function pong(ws::WebSocket, data=UInt8[])
-    @assert !ws.writeclosed "WebSocket is closed"
-    return writeframe(ws, true, PONG, payload(ws, data))
+    @lock ws.sendlock begin
+        @assert !ws.writeclosed "WebSocket is closed"
+        return writeframe(ws, true, PONG, payload(ws, data))
+    end
 end
 
 """
@@ -373,7 +556,11 @@ where each iteration yields a message until the connection is closed.
 """
 function receive(ws::WebSocket)
     @assert isopen(ws.readchannel) "WebSocket is closed"
-    return take!(ws.readchannel)
+    msg = take!(ws.readchannel)
+    if msg isa WebSocketError
+        throw(msg)
+    end
+    return msg
 end
 
 """
