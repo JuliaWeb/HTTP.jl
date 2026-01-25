@@ -233,6 +233,25 @@
         @test !isempty(pool.clients.clients)
     end
 
+    @testset "HTTP.open streaming" begin
+        resp = HTTP.open("GET", "https://$httpbin/stream/5") do io
+            r = HTTP.startread(io)
+            @test r.status == 200
+            data = String(read(io))
+            @test length(split(chomp(data), '\n')) == 5
+        end
+        @test resp.status == 200
+
+        resp = HTTP.open("POST", "https://$httpbin/anything") do io
+            write(io, "hello")
+            HTTP.closewrite(io)
+            r = HTTP.startread(io)
+            data = String(read(io))
+            @test occursin("\"data\":\"hello\"", data)
+        end
+        @test resp.status == 200
+    end
+
     @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
         headers = Dict("User-Agent" => "HTTP.jl")
         query = Dict("hello" => "world")

@@ -25,6 +25,7 @@ function c_on_response_header_block_done(aws_stream_ptr, header_block, stream_pt
         val = getheader(stream.response.headers, "content-encoding")
         stream.decompress = val !== nothing && val == "gzip"
     end
+    notify(stream.headers_ready)
     return Cint(0)
 end
 
@@ -79,6 +80,8 @@ function c_on_complete(aws_stream_ptr, error_code, stream_ptr)
     else
         notify(stream.fut, nothing)
     end
+    notify(stream.headers_ready)
+    release_stream!(stream)
     return
 end
 
@@ -92,7 +95,7 @@ if !@isdefined aws_websocket_server_upgrade_options
     const aws_websocket_server_upgrade_options = Ptr{Cvoid}
 end
 
-mutable struct Stream{T}
+mutable struct Stream{T} <: IO
     allocator::Ptr{aws_allocator}
     decompress::Union{Nothing, Bool}
     http2::Bool
@@ -102,6 +105,11 @@ mutable struct Stream{T}
     final_chunk_written::Bool
     bufferstream::Union{Nothing, Base.BufferStream}
     gzipstream::Union{Nothing, CodecZlib.GzipDecompressorStream}
+    headers_ready::Threads.Event
+    activated::Bool
+    write_started::Bool
+    read_started::Bool
+    released::Bool
     # remaining fields are initially undefined
     ptr::Ptr{aws_http_stream}
     connection::T # Connection{F, S} (in servers.jl)
@@ -114,10 +122,57 @@ mutable struct Stream{T}
     http2_stream_write_data_options::aws_http2_stream_write_data_options
     chunk_options::aws_http1_chunk_options
     websocket_options::aws_websocket_server_upgrade_options
-    Stream{T}(allocator, decompress, http2) where {T} = new{T}(allocator, decompress, http2, 0, Future{Nothing}(), nothing, false, nothing, nothing)
+    Stream{T}(allocator, decompress, http2) where {T} = new{T}(
+        allocator,
+        decompress,
+        http2,
+        0,
+        Future{Nothing}(),
+        nothing,
+        false,
+        nothing,
+        nothing,
+        Threads.Event(),
+        false,
+        false,
+        false,
+        false,
+    )
 end
 
 Base.hash(s::Stream, h::UInt) = hash(s.ptr, h)
+
+const ACTIVE_STREAMS_LOCK = ReentrantLock()
+const ACTIVE_STREAMS = IdDict{Stream, Bool}()
+
+function retain_stream!(s::Stream)
+    lock(ACTIVE_STREAMS_LOCK)
+    try
+        ACTIVE_STREAMS[s] = true
+    finally
+        unlock(ACTIVE_STREAMS_LOCK)
+    end
+    return
+end
+
+function release_stream!(s::Stream)
+    lock(ACTIVE_STREAMS_LOCK)
+    try
+        pop!(ACTIVE_STREAMS, s, nothing)
+    finally
+        unlock(ACTIVE_STREAMS_LOCK)
+    end
+    return
+end
+
+function release_stream_ptr!(s::Stream)
+    if isdefined(s, :ptr) && s.ptr != C_NULL && !s.released
+        aws_http_stream_release(s.ptr)
+        s.released = true
+        s.ptr = Ptr{aws_http_stream}(C_NULL)
+    end
+    return
+end
 
 const on_stream_write_on_complete = Ref{Ptr{Cvoid}}(C_NULL)
 
@@ -132,9 +187,11 @@ function c_on_stream_write_on_complete(aws_stream_ptr, error_code, fut_ptr)
 end
 
 function writechunk(s::Stream, chunk::RequestBodyTypes)
-    @assert (isdefined(s, :response) &&
-             isdefined(s.response, :request) &&
-             s.response.request.method in ("POST", "PUT", "PATCH")) "write is only allowed for POST, PUT, and PATCH requests"
+    if !(chunk isa AbstractString && isempty(chunk))
+        @assert (isdefined(s, :response) &&
+                 isdefined(s.response, :request) &&
+                 s.response.request.method in ("POST", "PUT", "PATCH")) "write is only allowed for POST, PUT, and PATCH requests"
+    end
     s.chunk = InputStream(s.allocator, chunk)
     fut = Future{Nothing}()
     if s.http2
@@ -158,6 +215,144 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
     end
     wait(fut)
     return s.chunk.bodylen
+end
+
+function _activate_stream!(s::Stream)
+    if !s.activated
+        aws_http_stream_activate(s.ptr) != 0 && aws_throw_error()
+        s.activated = true
+    end
+    return
+end
+
+function startwrite(s::Stream)
+    if s.write_started
+        return
+    end
+    if !s.http2 &&
+       !hasheader(s.request.headers, "content-length") &&
+       !hasheader(s.request.headers, "transfer-encoding") &&
+       !hasheader(s.request.headers, "upgrade")
+        setheader(s.request.headers, "transfer-encoding", "chunked")
+    end
+    _activate_stream!(s)
+    s.write_started = true
+    return
+end
+
+function closewrite(s::Stream)
+    if s.final_chunk_written
+        return
+    end
+    if s.http2
+        _activate_stream!(s)
+        writechunk(s, "")
+        s.final_chunk_written = true
+        return
+    end
+    if s.write_started
+        writechunk(s, "")
+        s.final_chunk_written = true
+    elseif hasheader(s.request.headers, "transfer-encoding")
+        _activate_stream!(s)
+        writechunk(s, "")
+        s.final_chunk_written = true
+    else
+        _activate_stream!(s)
+    end
+    return
+end
+
+function startread(s::Stream)
+    if s.read_started
+        return s.response
+    end
+    _activate_stream!(s)
+    s.http2 && !s.final_chunk_written && closewrite(s)
+    wait(s.headers_ready)
+    s.read_started = true
+    return s.response
+end
+
+function Base.readavailable(s::Stream, n::Int=typemax(Int))
+    startread(s)
+    if s.bufferstream === nothing
+        return UInt8[]
+    end
+    return _readavailable(s.bufferstream)
+end
+
+function Base.read(s::Stream, n::Integer)
+    startread(s)
+    s.bufferstream === nothing && return UInt8[]
+    return read(s.bufferstream, n)
+end
+
+function Base.read(s::Stream)
+    startread(s)
+    s.bufferstream === nothing && return UInt8[]
+    return read(s.bufferstream)
+end
+
+function Base.read(s::Stream, ::Type{UInt8})
+    data = Base.read(s, 1)
+    isempty(data) && throw(EOFError())
+    return data[1]
+end
+
+function Base.eof(s::Stream)
+    startread(s)
+    s.bufferstream === nothing && return true
+    return eof(s.bufferstream)
+end
+
+function Base.unsafe_write(s::Stream, p::Ptr{UInt8}, n::UInt)
+    n == 0 && return 0
+    buf = Vector{UInt8}(undef, n)
+    GC.@preserve buf unsafe_copyto!(pointer(buf), p, n)
+    Base.write(s, buf)
+    return n
+end
+
+function Base.write(s::Stream, data::AbstractVector{UInt8})
+    startwrite(s)
+    writechunk(s, data)
+    return length(data)
+end
+
+function Base.write(s::Stream, data::Union{String, SubString{String}})
+    startwrite(s)
+    writechunk(s, data)
+    return sizeof(data)
+end
+
+function Base.write(s::Stream, data::AbstractString)
+    return Base.write(s, String(data))
+end
+
+function Base.write(s::Stream, b::UInt8)
+    startwrite(s)
+    writechunk(s, UInt8[b])
+    return 1
+end
+
+function closeread(s::Stream)
+    startread(s)
+    try
+        wait(s.fut)
+    finally
+        release_stream_ptr!(s)
+    end
+    return s.response
+end
+
+function Base.close(s::Stream)
+    try
+        closewrite(s)
+    finally
+        closeread(s)
+    end
+    return
 end
 
 function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)
@@ -214,6 +409,8 @@ function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, 
             return resp
         finally
             aws_http_stream_release(stream_ptr)
+            stream.released = true
+            stream.ptr = Ptr{aws_http_stream}(C_NULL)
         end
     end # GC.@preserve
 end
