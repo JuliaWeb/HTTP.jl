@@ -35,10 +35,14 @@ The following keyword arguments (which correspond to the non-`scheme`/`host`/`po
   - **chunkedbody**: To send a request body in chunks, an iterable must be provided where each element is one of the valid types of request bodies mentioned above.
   - **modifier**: A function of the form `f(request, body) -> newbody`, i.e. that takes the HTTP request object and proposed request body, and can optionally return a new request body. If the modifer only modifies the request object, it should return `nothing`, which will ensure the original request body is sent unmodified.
 -- Response options:
-  - **response_body**: By default, response bodies are returned as `Vector{UInt8}`. Alternatively, a preallocated `AbstractVector{UInt8}` or any `IO` object can be provided for the response body to be written into.
+  - **response_body**: By default, response bodies are returned as `Vector{UInt8}`. Alternatively, a preallocated `AbstractVector{UInt8}` or any `IO` object can be provided for the response body to be written into. `response_stream` is a compatible alias.
   - **decompress**: If `true`, the response body will be decompressed if it is compressed. By default, response bodies with the `Content-Encoding: gzip` header are decompressed.
   - **status_exception**: Default `true`. If `true`, an exception will be thrown if the response status code is not in the 200-299 range.
   - **readtimeout**: The maximum time in seconds to wait for a response from the server. Only valid for HTTP/1.1 connections.
+-- Retry options (per request):
+  - **retry_non_idempotent**: Default `false`. If `true`, non-idempotent requests may be retried.
+  - **retry_check**: Optional function to override retry decisions. It is called as `retry_check(delay, err, req, resp, resp_body)` when a retry is being considered.
+  - **retry_delays**: Custom retry delays. Provide a number (seconds) or any iterator of delays; defaults to exponential backoff.
 -- Redirect options:
   - **redirect**: Default `true`. If `true`, the client will follow redirects.
   - **redirect_limit**: The maximum number of redirects to follow. Default is 3.
@@ -78,7 +82,7 @@ The following keyword arguments (which correspond to the non-`scheme`/`host`/`po
     - **proxy_ssl_insecure**: Default `false`. If `true`, SSL certificate verification will be disabled for the proxy.
     - **proxy_ssl_alpn_list**: A list of ALPN protocols to use for the proxy connection. Default is `"h2;http/1.1"`.
   -- Retry options:
-    - **max_retries**: The maximum number of times to retry a request. Default is 10.
+    - **max_retries**: The maximum number of times to retry a request. Default is 4.
     - **retry_partition**: Requests utilizing the same retry partition (an arbitrary string) will coordinate retries against each other to not overwhelm a temporarily unresponsive server.
     - **backoff_scale_factor_ms**: The factor by which to scale the backoff time between retries. Default is 25.
     - **max_backoff_secs**: The maximum time in seconds to wait between retries. Default is 20.
@@ -88,6 +92,13 @@ The following keyword arguments (which correspond to the non-`scheme`/`host`/`po
   -- Connection pool options:
     - **max_connections**: The maximum number of connections to keep open in the connection pool. Default is 512.
     - **max_connection_idle_in_milliseconds**: The maximum time in milliseconds to keep a connection open in the pool. Default is 60000.
+    - **connection_acquisition_timeout_ms**: The maximum time in milliseconds to wait for a connection from the pool. Default is 0 (no timeout).
+    - **max_pending_connection_acquisitions**: Maximum number of pending connection acquisitions. Default is 0 (no limit).
+    - **enable_read_back_pressure**: If `true`, enable back pressure on reads to limit buffered data. Default `false`.
+    - **response_first_byte_timeout_ms**: Maximum time in milliseconds to wait for the first response byte. Default is 0 (disabled). For per-request control, use `readtimeout`.
+  -- HTTP/2 options:
+    - **http2_prior_knowledge**: Default `false`. If `true`, assume HTTP/2 without ALPN negotiation.
+    - **http2_stream_manager**: Default `false`. If `true`, enable the HTTP/2 stream manager for multiplexed requests.
   -- AWS runtime options:
     - **allocator**: The allocator to use for AWS-allocated memory during the request.
     - **bootstrap**: The AWS client bootstrap to use for the request.
@@ -158,6 +169,61 @@ response = HTTP.get("https://api.example.com/data"; client = custom_client)
 println(String(response.body))
 \`\`\`
 
+## HTTP/2 Features (Advanced)
+
+### Stream Manager
+
+For high-concurrency HTTP/2 workloads, you can enable the HTTP/2 stream manager. This allows multiple in-flight
+streams to share pooled HTTP/2 connections.
+
+\`\`\`julia
+using HTTP
+
+client = HTTP.Client("https", "example.com", 443; http2_stream_manager=true)
+resp = HTTP.get("https://example.com/resource"; client=client)
+\`\`\`
+
+### Connection Control Helpers
+
+When a connection negotiates HTTP/2, you can use the following helpers:
+
+- `HTTP.http2_ping(client; data=nothing)` -> returns round-trip time in nanoseconds.
+- `HTTP.http2_change_settings(client, settings)` where `settings` is a vector of pairs or `aws_http2_setting`.
+- `HTTP.http2_local_settings(client)` / `HTTP.http2_remote_settings(client)` -> returns current settings.
+- `HTTP.http2_send_goaway(client, error_code; allow_more_streams=true, debug_data=nothing)`
+- `HTTP.http2_get_sent_goaway(client)` / `HTTP.http2_get_received_goaway(client)` -> returns `nothing` if no GOAWAY.
+
+These helpers require an HTTP/2 connection and will throw an `ArgumentError` if the connection is HTTP/1.1.
+
+## Trailing Headers
+
+Trailing headers are available on responses as `resp.trailers` after the response completes. For streaming requests,
+you can attach trailers before closing the write side of the stream.
+
+\`\`\`julia
+using HTTP
+
+resp = HTTP.open("POST", "https://example.com/upload") do stream
+    write(stream, "chunk-1")
+    write(stream, "chunk-2")
+    HTTP.addtrailer(stream, "x-checksum" => "abc123")
+end
+
+resp.trailers === nothing || println(HTTP.header(resp.trailers, "x-server-checksum"))
+\`\`\`
+
+## Metrics and Observability
+
+Each response includes a `metrics` field:
+
+- `response.metrics.request_body_length`
+- `response.metrics.response_body_length`
+- `response.metrics.nretries`
+- `response.metrics.stream_metrics` (AWS CRT `aws_http_stream_metrics`)
+
+For connection-level metrics, use `HTTP.manager_metrics(client)`, which returns `aws_http_manager_metrics` with
+`available_concurrency`, `pending_concurrency_acquires`, and `leased_concurrency`.
+
 ## Under the Hood (Advanced)
 
 When you call `HTTP.request`, the following advanced steps occur:
@@ -179,4 +245,3 @@ When you call `HTTP.request`, the following advanced steps occur:
 
 6. **Response Processing:**  
    The response is parsed, and if errors occur (as dictated by your settings), an exception is raised.
-

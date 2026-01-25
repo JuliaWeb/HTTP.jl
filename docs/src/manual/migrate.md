@@ -53,6 +53,7 @@ While the basic request syntax remains similar, there are some changes to keywor
 
 - The `response_stream` keyword argument is still supported, but HTTP.jl no longer automatically closes this stream when done - you need to handle this yourself
 - `retry` behavior has been overhauled with more consistent rules for what is retryable
+- The default `max_retries` is now 4 (was 10 in v1.x)
 - Some connection-related options have new defaults (e.g., TLS is now OpenSSL-based by default rather than MbedTLS)
 
 Example:
@@ -335,6 +336,9 @@ cookies = HTTP.getcookies(jar, "example.com")
 - **TLS Implementation**: OpenSSL is now the default TLS provider instead of MbedTLS
 - **Multithreading**: Improved thread safety throughout the codebase
 - **Performance**: Significant performance improvements, especially for high-throughput servers
+- **Trailing Headers**: Trailing headers are now captured on `Request.trailers` and `Response.trailers`, and can be sent with `HTTP.addtrailer` when streaming.
+- **HTTP/2 Controls**: HTTP/2 helpers (ping, settings, GOAWAY) are available for advanced connection management.
+- **Metrics**: Responses include `response.metrics` and clients expose `HTTP.manager_metrics` for connection manager stats.
 
 ## Transitioning Tips
 

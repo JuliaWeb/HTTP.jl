@@ -117,6 +117,28 @@ server = HTTP.serve!(handle_request, "127.0.0.1", 8080;
 println("Server started on http://127.0.0.1:8080")
 ```
 
+## Stream Handlers (Advanced)
+
+If you need direct access to the request and response streams, pass `stream=true` to `serve!` (or `serve`) and use
+an `HTTP.Stream` handler. Reads will automatically start when you read from the stream, and writes will automatically
+start when you write.
+
+```julia
+using HTTP
+
+server = HTTP.serve!("127.0.0.1", 8080; stream=true) do stream::HTTP.Stream
+    req = HTTP.startread(stream)
+    data = read(stream)
+
+    HTTP.setstatus(stream, 200)
+    HTTP.setheader(stream, "Content-Type" => "text/plain")
+    write(stream, "received $(length(data)) bytes")
+    HTTP.addtrailer(stream, "x-request-id" => HTTP.header(req, "x-request-id", "unknown"))
+end
+```
+
+Trailing headers sent by the client are available after the request completes via `stream.request.trailers`.
+
 ## Handlers and Middleware
 
 ### Handler Functions
