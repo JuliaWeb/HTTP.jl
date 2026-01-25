@@ -13,3 +13,5 @@
 /test/websockets/reports/*
 .idea/*
 .vscode
+!test/fixtures/http2.key
+!test/fixtures/http2.crt

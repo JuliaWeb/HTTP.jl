@@ -139,6 +139,31 @@ end
 
 Trailing headers sent by the client are available after the request completes via `stream.request.trailers`.
 
+## HTTP/2 Server Push (Advanced)
+
+When handling an HTTP/2 request, you can send a push promise to the client and stream a pushed response.
+The `HTTP.push_promise` function returns a new `HTTP.Stream` to write the pushed response.
+
+```julia
+using HTTP
+
+HTTP.serve!("127.0.0.1", 8443; stream=true, ssl_cert="server.crt", ssl_key="server.key", ssl_alpn_list="h2") do stream
+    req = HTTP.startread(stream)
+    if stream.http2
+        push = HTTP.push_promise(stream, "GET", "/assets/app.js"; scheme="https", authority="127.0.0.1:8443")
+        HTTP.setstatus(push, 200)
+        HTTP.setheader(push, "Content-Type" => "application/javascript")
+        write(push, "console.log(\"pushed\")")
+        HTTP.closewrite(push)
+    end
+    HTTP.setstatus(stream, 200)
+    write(stream, "ok")
+end
+```
+
+The push request must include `:scheme` and `:authority`. If these are not present on the original request,
+pass them explicitly via the keyword arguments. Clients that do not accept server push will reject the promise.
+
 ## Handlers and Middleware
 
 ### Handler Functions

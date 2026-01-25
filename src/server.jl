@@ -20,6 +20,30 @@ end
 
 Base.hash(c::Connection, h::UInt) = hash(c.connection, h)
 
+if !@isdefined aws_http2_send_push_promise_options
+    struct aws_http2_send_push_promise_options
+        self_size::Csize_t
+        user_data::Ptr{Cvoid}
+        on_complete::Ptr{Cvoid}
+        on_destroy::Ptr{Cvoid}
+        pad_length::UInt8
+    end
+end
+
+function aws_http2_stream_send_push_promise(
+    parent_stream::Ptr{aws_http_stream},
+    request::Ptr{aws_http_message},
+    options::Ref{aws_http2_send_push_promise_options},
+)
+    return ccall((:aws_http2_stream_send_push_promise, LibAwsHTTPFork.libaws_c_http_jq),
+        Ptr{aws_http_stream},
+        (Ptr{aws_http_stream}, Ptr{aws_http_message}, Ptr{aws_http2_send_push_promise_options}),
+        parent_stream,
+        request,
+        options,
+    )
+end
+
 function remote_address(c::Connection)
     socket_ptr = aws_http_connection_get_remote_endpoint(c.connection)
     addr = unsafe_load(socket_ptr).address
@@ -177,6 +201,51 @@ end
 
 listen!(f, host="127.0.0.1", port=8080; kw...) = serve!(f, host, port; stream=true, kw...)
 listen(f, host="127.0.0.1", port=8080; kw...) = serve(f, host, port; stream=true, kw...)
+
+function _push_promise_headers!(req::Request, parent::Stream; scheme=nothing, authority=nothing)
+    if !hasheader(req.headers, ":scheme")
+        scheme_val = scheme === nothing ? header(parent.request, ":scheme", "") : String(scheme)
+        isempty(scheme_val) && throw(ArgumentError("push promise requires :scheme"))
+        addheader(req.headers, ":scheme", scheme_val)
+    end
+    if !hasheader(req.headers, ":authority")
+        authority_val = authority === nothing ? header(parent.request, ":authority", header(parent.request, "host", "")) : String(authority)
+        isempty(authority_val) && throw(ArgumentError("push promise requires :authority"))
+        addheader(req.headers, ":authority", authority_val)
+    end
+    return
+end
+
+function push_promise(parent::Stream, req::Request; pad_length::Integer=0, scheme=nothing, authority=nothing)
+    parent.server_side || error("push_promise is only supported for server streams")
+    parent.http2 || throw(ArgumentError("HTTP/2 stream required for push promise"))
+    req.version == HTTPVersion(2, 0) || throw(ArgumentError("push promise request must be HTTP/2"))
+    0 <= pad_length <= 0xff || throw(ArgumentError("pad_length must be between 0 and 255"))
+    _push_promise_headers!(req, parent; scheme=scheme, authority=authority)
+    push_stream = Stream{typeof(parent.connection)}(parent.allocator, false, true, true)
+    push_stream.connection = parent.connection
+    push_stream.request = req
+    opts = aws_http2_send_push_promise_options(
+        sizeof(aws_http2_send_push_promise_options),
+        pointer_from_objref(push_stream),
+        on_server_stream_complete[],
+        on_destroy[],
+        UInt8(pad_length),
+    )
+    stream_ptr = aws_http2_stream_send_push_promise(parent.ptr, req.ptr, Ref(opts))
+    stream_ptr == C_NULL && aws_throw_error()
+    push_stream.ptr = stream_ptr
+    @lock parent.connection.streams_lock begin
+        push!(parent.connection.streams, push_stream)
+    end
+    retain_stream!(push_stream)
+    return push_stream
+end
+
+function push_promise(parent::Stream, method::Union{String, Symbol}, path; headers=Header[], pad_length::Integer=0, scheme=nothing, authority=nothing)
+    req = Request(String(method), String(path), headers, nothing, true, parent.allocator)
+    return push_promise(parent, req; pad_length=pad_length, scheme=scheme, authority=authority)
+end
 
 const on_incoming_connection = Ref{Ptr{Cvoid}}(C_NULL)
 
