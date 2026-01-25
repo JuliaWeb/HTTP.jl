@@ -105,6 +105,18 @@ function c_on_destroy(stream)
     return
 end
 
+const on_stream_acquired = Ref{Ptr{Cvoid}}(C_NULL)
+
+function c_on_stream_acquired(aws_stream_ptr, error_code, fut_ptr)
+    fut = unsafe_pointer_to_objref(fut_ptr)
+    if error_code != 0
+        notify(fut, CapturedException(aws_error(error_code), Base.backtrace()))
+    else
+        notify(fut, aws_stream_ptr)
+    end
+    return
+end
+
 if !@isdefined aws_websocket_server_upgrade_options
     const aws_websocket_server_upgrade_options = Ptr{Cvoid}
 end
@@ -551,6 +563,69 @@ function addtrailer(s::Stream, h::AbstractVector{<:Pair})
         addheader(trailers, String(k), String(v))
     end
     return addtrailer(s, trailers)
+end
+
+function with_stream_manager(client::Client, req::Request, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator)
+    stream = Stream{Nothing}(allocator, decompress, true, false)
+    if on_stream_response_body !== nothing
+        stream.bufferstream = Base.BufferStream()
+    end
+    acquire_fut = Future{Ptr{aws_http_stream}}()
+    GC.@preserve stream acquire_fut begin
+        stream.request_options = aws_http_make_request_options(
+            1,
+            req.ptr,
+            pointer_from_objref(stream),
+            on_response_headers[],
+            on_response_header_block_done[],
+            on_response_body[],
+            on_metrics[],
+            on_complete[],
+            on_destroy[],
+            chunkedbody !== nothing, # http2_use_manual_data_writes
+            readtimeout * 1000 # response_first_byte_timeout_ms
+        )
+        stream.response = resp = Response(0, nothing, nothing, true, allocator)
+        resp.metrics = RequestMetrics()
+        resp.request = req
+        acquire_opts = aws_http2_stream_manager_acquire_stream_options(
+            on_stream_acquired[],
+            pointer_from_objref(acquire_fut),
+            FieldRef(stream, :request_options),
+        )
+        aws_http2_stream_manager_acquire_stream(client.http2_stream_manager, Ref(acquire_opts))
+        stream_ptr = wait(acquire_fut)
+        stream.ptr = stream_ptr
+        stream.activated = true
+        try
+            if chunkedbody !== nothing
+                foreach(chunk -> writechunk(stream, chunk), chunkedbody)
+                writechunk(stream, "")
+            end
+            if on_stream_response_body !== nothing
+                try
+                    while !eof(stream.bufferstream)
+                        on_stream_response_body(resp, _readavailable(stream.bufferstream))
+                    end
+                    wait(stream.fut)
+                catch e
+                    rethrow(DontRetry(e))
+                end
+            else
+                wait(stream.fut)
+                if stream.bufferstream !== nothing
+                    resp.body = _readavailable(stream.bufferstream)
+                else
+                    resp.body = UInt8[]
+                end
+            end
+            return resp
+        finally
+            aws_http_stream_release(stream_ptr)
+            stream.released = true
+            stream.ptr = Ptr{aws_http_stream}(C_NULL)
+        end
+    end
 end
 
 function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)

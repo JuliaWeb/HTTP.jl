@@ -320,6 +320,13 @@
         @test resp.status == 200
     end
 
+    @testset "HTTP/2 stream manager smoke" begin
+        cs = HTTP.ClientSettings("https", "example.com", UInt32(443); http2_stream_manager=true)
+        client = HTTP.Client(cs)
+        @test client.http2_stream_manager != C_NULL
+        finalize(client)
+    end
+
     @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
         headers = Dict("User-Agent" => "HTTP.jl")
         query = Dict("hello" => "world")

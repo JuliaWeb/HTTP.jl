@@ -105,10 +105,9 @@ function request(method, url, h=Header[], b=nothing;
         with_retry_token(reqclient; logerrors=logerrors, logtag=logtag, method=method, uri=uri,
             retry_check=retry_check, retry_delays=retry_delays,
             retry_non_idempotent=retry_non_idempotent, retryable_body=retryable_body, req_ref=req_ref) do
-            resp = with_connection(reqclient) do conn
-                http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
+            resp = if reqclient.http2_stream_manager != C_NULL
                 path = resource(uri)
-                with_request(reqclient, method, path, headers, body, chunkedbody, decompress, authinfo, bearer, modifier, http2, cookies, cookiejar, verbose;
+                with_request(reqclient, method, path, headers, body, chunkedbody, decompress, authinfo, bearer, modifier, true, cookies, cookiejar, verbose;
                     copyheaders=false,
                     canonicalize_headers=canonicalize_headers,
                     detect_content_type=detect_content_type,
@@ -119,13 +118,38 @@ function request(method, url, h=Header[], b=nothing;
                         ref = Ref(1)
                         GC.@preserve ref begin
                             on_stream_response_body = BufferOnResponseBody(response_body, Base.unsafe_convert(Ptr{Int}, ref))
-                            with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)
+                            with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator)
                         end
                     elseif response_body isa IO
                         on_stream_response_body = IOOnResponseBody(response_body)
-                        with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)
+                        with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator)
                     else
-                        with_stream(conn, req, chunkedbody, response_body, decompress, http2, readtimeout, allocator)
+                        with_stream_manager(reqclient, req, chunkedbody, response_body, decompress, readtimeout, allocator)
+                    end
+                end
+            else
+                with_connection(reqclient) do conn
+                    http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
+                    path = resource(uri)
+                    with_request(reqclient, method, path, headers, body, chunkedbody, decompress, authinfo, bearer, modifier, http2, cookies, cookiejar, verbose;
+                        copyheaders=false,
+                        canonicalize_headers=canonicalize_headers,
+                        detect_content_type=detect_content_type,
+                        basicauth=apply_basicauth,
+                    ) do req
+                        req_ref[] = req
+                        if response_body isa AbstractVector{UInt8}
+                            ref = Ref(1)
+                            GC.@preserve ref begin
+                                on_stream_response_body = BufferOnResponseBody(response_body, Base.unsafe_convert(Ptr{Int}, ref))
+                                with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)
+                            end
+                        elseif response_body isa IO
+                            on_stream_response_body = IOOnResponseBody(response_body)
+                            with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)
+                        else
+                            with_stream(conn, req, chunkedbody, response_body, decompress, http2, readtimeout, allocator)
+                        end
                     end
                 end
             end

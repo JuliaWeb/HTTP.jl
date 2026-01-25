@@ -44,6 +44,7 @@ Base.@kwdef struct ClientSettings
     max_pending_connection_acquisitions::Int = 0
     enable_read_back_pressure::Bool = false
     http2_prior_knowledge::Bool = false
+    http2_stream_manager::Bool = false
 end
 
 ClientSettings(
@@ -88,6 +89,8 @@ mutable struct Client
     retry_strategy::Ptr{aws_retry_strategy}
     conn_manager_opts::aws_http_connection_manager_options
     connection_manager::Ptr{aws_http_connection_manager}
+    http2_stream_manager_opts::Union{Nothing, aws_http2_stream_manager_options}
+    http2_stream_manager::Ptr{aws_http2_stream_manager}
 
     Client() = new()
 end
@@ -204,11 +207,47 @@ function Client(cs::ClientSettings)
     )
     client.connection_manager = aws_http_connection_manager_new(cs.allocator, FieldRef(client, :conn_manager_opts))
     client.connection_manager == C_NULL && aws_throw_error()
+    client.http2_stream_manager_opts = nothing
+    client.http2_stream_manager = C_NULL
+    if cs.http2_stream_manager
+        opts = aws_http2_stream_manager_options(
+            cs.bootstrap,
+            pointer(FieldRef(client, :socket_options)),
+            (cs.scheme == "https" || cs.scheme == "wss") ? pointer(FieldRef(client, :tls_options)) : C_NULL,
+            cs.http2_prior_knowledge,
+            aws_byte_cursor_from_c_str(cs.host),
+            cs.port % UInt32,
+            C_NULL, # initial_settings_array
+            0, # num_initial_settings
+            0, # max_closed_streams
+            false, # conn_manual_window_management
+            cs.enable_read_back_pressure,
+            typemax(Csize_t), # initial_window_size
+            C_NULL, # monitoring_options
+            client.proxy_options === nothing ? C_NULL : pointer(FieldRef(client, :proxy_options)),
+            client.proxy_env_settings === nothing ? C_NULL : pointer(FieldRef(client, :proxy_env_settings)),
+            C_NULL, # shutdown_complete_user_data
+            C_NULL, # shutdown_complete_callback
+            false, # close_connection_on_server_error
+            0, # connection_ping_period_ms
+            0, # connection_ping_timeout_ms
+            0, # ideal_concurrent_streams_per_connection
+            0, # max_concurrent_streams_per_connection
+            cs.max_connections,
+        )
+        client.http2_stream_manager_opts = opts
+        client.http2_stream_manager = aws_http2_stream_manager_new(cs.allocator, Ref(opts))
+        client.http2_stream_manager == C_NULL && aws_throw_error()
+    end
 
     finalizer(client) do x
         if x.connection_manager != C_NULL
             aws_http_connection_manager_release(x.connection_manager)
             x.connection_manager = C_NULL
+        end
+        if x.http2_stream_manager != C_NULL
+            aws_http2_stream_manager_release(x.http2_stream_manager)
+            x.http2_stream_manager = C_NULL
         end
         if x.retry_strategy != C_NULL
             aws_retry_strategy_release(x.retry_strategy)
