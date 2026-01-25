@@ -193,6 +193,23 @@
         @test length(r.body) > 0
     end
 
+    @testset "Header insertion" begin
+        server = HTTP.serve!(req -> begin
+            accept_count = length(HTTP.headers(req, "accept"))
+            host_count = length(HTTP.headers(req, "host"))
+            return HTTP.Response(200, "$accept_count,$host_count")
+        end; listenany=true)
+        try
+            port = HTTP.port(server)
+            resp = HTTP.get("http://127.0.0.1:$port"; headers=["Accept" => "*/*", "Host" => "example.com"])
+            @test String(resp.body) == "1,1"
+            resp = HTTP.get("http://127.0.0.1:$port")
+            @test String(resp.body) == "1,1"
+        finally
+            close(server)
+        end
+    end
+
     @testset "readtimeout" begin
     @test_throws HTTP.TimeoutError HTTP.get("http://$httpbin/delay/5"; readtimeout=1, max_retries=0)
         @test isok(HTTP.get("http://$httpbin/delay/1"; readtimeout=2, max_retries=0))
