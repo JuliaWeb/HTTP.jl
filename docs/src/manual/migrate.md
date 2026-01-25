@@ -43,7 +43,8 @@ header_value = HTTP.header(r, "Content-Type")
 
 Key differences:
 - Headers access works directly on `Request`/`Response`, or on the `headers` field if you already have it
-- The `.body` field can now be any type, not just `Vector{UInt8}`
+- Request/response *body arguments* accept strings, byte vectors, Dict/NamedTuple (form-encoded), `HTTP.Form`, or IO
+- `Response.body` remains a `Vector{UInt8}` for buffered responses (or `nothing` when streaming into `response_body`)
 - Context dictionary access is now through `.context` rather than request-specific fields
 
 ### Making Requests
@@ -338,6 +339,7 @@ cookies = HTTP.getcookies(jar, "example.com")
 - **TLS Implementation**: OpenSSL is now the default TLS provider instead of MbedTLS
 - **Multithreading**: Improved thread safety throughout the codebase
 - **Performance**: Significant performance improvements, especially for high-throughput servers
+- **Parser APIs**: Low-level parser APIs from v1.x have been removed in v2.0
 - **Trailing Headers**: Trailing headers are now captured on `Request.trailers` and `Response.trailers`, and can be sent with `HTTP.addtrailer` when streaming.
 - **HTTP/2 Controls**: HTTP/2 helpers (ping, settings, GOAWAY) are available for advanced connection management.
 - **Metrics**: Responses include `response.metrics` and clients expose `HTTP.manager_metrics` for connection manager stats.
