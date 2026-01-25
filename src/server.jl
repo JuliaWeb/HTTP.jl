@@ -3,6 +3,48 @@ socket_endpoint(host, port) = aws_socket_endpoint(
     port % UInt32
 )
 
+function server_tlsoptions(host::String;
+    allocator=default_aws_allocator(),
+    ssl_cert=nothing,
+    ssl_key=nothing,
+    ssl_capath=nothing,
+    ssl_cacert=nothing,
+    ssl_insecure=false,
+    ssl_alpn_list=nothing,
+)
+    tls_options = aws_tls_connection_options(C_NULL, C_NULL, C_NULL, C_NULL, C_NULL, C_NULL, C_NULL, false, UInt32(0))
+    tls_ctx_options = Ptr{aws_tls_ctx_options}(aws_mem_acquire(allocator, sizeof(aws_tls_ctx_options)))
+    tls_ctx = C_NULL
+    try
+        if ssl_cert !== nothing && ssl_key !== nothing
+            LibAwsIO.aws_tls_ctx_options_init_default_server_from_path(tls_ctx_options, allocator, ssl_cert, ssl_key) != 0 && sockerr("aws_tls_ctx_options_init_default_server_from_path failed")
+        elseif Sys.iswindows() && ssl_cert !== nothing && ssl_key === nothing
+            LibAwsIO.aws_tls_ctx_options_init_default_server_from_system_path(tls_ctx_options, allocator, ssl_cert) != 0 && sockerr("aws_tls_ctx_options_init_default_server_from_system_path failed")
+        else
+            throw(ArgumentError("ssl_cert and ssl_key are required for TLS server"))
+        end
+        if ssl_capath !== nothing && ssl_cacert !== nothing
+            LibAwsIO.aws_tls_ctx_options_override_default_trust_store_from_path(tls_ctx_options, ssl_capath, ssl_cacert) != 0 && sockerr("aws_tls_ctx_options_override_default_trust_store_from_path failed")
+        end
+        if ssl_insecure
+            LibAwsIO.aws_tls_ctx_options_set_verify_peer(tls_ctx_options, false)
+        end
+        if ssl_alpn_list !== nothing
+            LibAwsIO.aws_tls_ctx_options_set_alpn_list(tls_ctx_options, ssl_alpn_list) != 0 && sockerr("aws_tls_ctx_options_set_alpn_list failed")
+        end
+        tls_ctx = LibAwsIO.aws_tls_server_ctx_new(allocator, tls_ctx_options)
+        tls_ctx == C_NULL && sockerr("")
+        ref = Ref(tls_options)
+        LibAwsIO.aws_tls_connection_options_init_from_ctx(ref, tls_ctx)
+        tls_options = ref[]
+    finally
+        LibAwsIO.aws_tls_ctx_options_clean_up(tls_ctx_options)
+        LibAwsIO.aws_tls_ctx_release(tls_ctx)
+        aws_mem_release(allocator, tls_ctx_options)
+    end
+    return tls_options
+end
+
 mutable struct Connection{S}
     const server::S # Server{F, C}
     const allocator::Ptr{aws_allocator}
@@ -158,7 +200,7 @@ function serve!(f, host="127.0.0.1", port=8080;
             ntuple(x -> Cchar(0), 16) # network_interface_name
         ),
         tls_options !== nothing ? tls_options :
-            any(x -> x !== nothing, (ssl_cert, ssl_key, ssl_capath, ssl_cacert)) ? LibAwsIO.tlsoptions(host;
+            any(x -> x !== nothing, (ssl_cert, ssl_key, ssl_capath, ssl_cacert)) ? server_tlsoptions(host;
                 ssl_cert,
                 ssl_key,
                 ssl_capath,
