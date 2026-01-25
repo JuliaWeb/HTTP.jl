@@ -31,4 +31,10 @@
     end
 
     @test_throws HTTP.AWSError HTTP.parseuri("http://example.com:abc", nothing, HTTP.default_aws_allocator())
+
+    exported = names(HTTP, all=false)
+    @test :startwrite in exported
+    @test :startread in exported
+    @test :closewrite in exported
+    @test :closeread in exported
 end # testset

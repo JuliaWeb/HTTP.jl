@@ -5,6 +5,7 @@ using LibAwsCommon, LibAwsIO, LibAwsHTTPFork
 import LibAwsCommon: Future, FieldRef
 
 export HTTPVersion
+export startwrite, startread, closewrite, closeread
 export @logfmt_str, common_logfmt, combined_logfmt
 export WebSockets
 
