@@ -363,6 +363,13 @@
         end
     end
 
+    @testset "closed IOStream body errors" begin
+        path = tempname()
+        io = open(path, "w")
+        close(io)
+        @test_throws ArgumentError HTTP.request("POST", "http://example.com"; body=io, retry=false, status_exception=false)
+    end
+
     @testset "Iterable request body streaming" begin
         mutable struct ChunkedIterable
             chunks::Vector{Vector{UInt8}}

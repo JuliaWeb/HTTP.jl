@@ -267,19 +267,24 @@ function InputStream(allocator::Ptr{aws_allocator}, body)
             is.bodyref = body
             is.bodycursor = aws_byte_cursor(sizeof(body), pointer(body))
             is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
+            is.ptr == C_NULL && aws_throw_error()
         elseif body isa Union{AbstractDict, NamedTuple}
             # hold a reference to the request body in order to gc-preserve it
             is.bodyref = URIs.escapeuri(body)
             is.bodycursor = aws_byte_cursor_from_c_str(is.bodyref)
             is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
+            is.ptr == C_NULL && aws_throw_error()
         elseif body isa IOStream
+            isopen(body) || throw(ArgumentError("request body IOStream is closed"))
             is.bodyref = body
             is.ptr = aws_input_stream_new_from_open_file(allocator, Libc.FILE(body))
+            is.ptr == C_NULL && aws_throw_error()
         elseif body isa Form
             # we set the request.body to the Form bytes in order to gc-preserve them
             is.bodyref = read(body)
             is.bodycursor = aws_byte_cursor(sizeof(is.bodyref), pointer(is.bodyref))
             is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
+            is.ptr == C_NULL && aws_throw_error()
         elseif body isa IO
             # we set the request.body to the IO bytes in order to gc-preserve them
             bytes = readavailable(body)
@@ -289,6 +294,7 @@ function InputStream(allocator::Ptr{aws_allocator}, body)
             is.bodyref = bytes
             is.bodycursor = aws_byte_cursor(sizeof(is.bodyref), pointer(is.bodyref))
             is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
+            is.ptr == C_NULL && aws_throw_error()
         elseif Base.isiterable(typeof(body))
             # assume a chunked request body; any kind of iterable where elements are RequestBodyTypes
             is.bodyref = body
