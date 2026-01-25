@@ -1,3 +1,6 @@
+export bytes, isbytes, nbytes, nobytes,
+    escapehtml, tocameldash, iso8859_1_to_utf8, ascii_lc_isequal
+
 """
     HTTPVersion(major, minor)
 
@@ -126,6 +129,23 @@ tocameldash(s::AbstractString) = tocameldash(String(s))
 @inline isupper(b::UInt8) = UInt8('A') <= b <= UInt8('Z')
 @inline lower(c::UInt8) = c | 0x20
 
+"""
+    ascii_lc_isequal(a, b)
+
+Case insensitive ASCII string comparison.
+"""
+function ascii_lc_isequal(a, b)
+    acu = codeunits(a)
+    bcu = codeunits(b)
+    len = length(acu)
+    len != length(bcu) && return false
+    for i = 1:len
+        @inbounds (acu[i] in UInt8('A'):UInt8('Z') ? acu[i] + 0x20 : acu[i]) ==
+            (bcu[i] in UInt8('A'):UInt8('Z') ? bcu[i] + 0x20 : bcu[i]) || return false
+    end
+    return true
+end
+
 function parseuri(url, query, allocator)
     uri_ref = Ref{aws_uri}()
     if url isa AbstractString
@@ -142,7 +162,34 @@ function parseuri(url, query, allocator)
     return uri_ref[]
 end
 
+"""
+    bytes(x)
+
+If `x` is "castable" to an `AbstractVector{UInt8}`, then an
+`AbstractVector{UInt8}` is returned; otherwise `x` is returned.
+"""
+function bytes end
+bytes(s::AbstractVector{UInt8}) = s
+bytes(s::AbstractString) = codeunits(s)
+bytes(x) = x
+
 isbytes(x) = x isa AbstractVector{UInt8} || x isa AbstractString
+
+"""
+    nbytes(x) -> Int
+
+Length in bytes of `x` if `x` is `isbytes(x)`.
+"""
+function nbytes end
+nbytes(x) = nothing
+nbytes(x::AbstractVector{UInt8}) = length(x)
+nbytes(x::AbstractString) = sizeof(x)
+nbytes(x::Vector{T}) where T <: AbstractString = sum(sizeof, x)
+nbytes(x::Vector{T}) where T <: AbstractVector{UInt8} = sum(length, x)
+nbytes(x::IOBuffer) = bytesavailable(x)
+nbytes(x::Vector{IOBuffer}) = sum(bytesavailable, x)
+
+const nobytes = view(UInt8[], 1:0)
 
 str(bc::aws_byte_cursor) = bc.ptr == C_NULL || bc.len == 0 ? "" : unsafe_string(bc.ptr, bc.len)
 

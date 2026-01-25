@@ -35,6 +35,29 @@ end
     end
 end
 
+@testset "HTTP.streamhandler" begin
+    handler = req -> begin
+        body = req.body === nothing ? UInt8[] : req.body
+        if isempty(body)
+            return HTTP.Response(200, ["Content-Type" => "text/plain"], "ping")
+        end
+        return HTTP.Response(200, ["Content-Type" => "text/plain"], String(body))
+    end
+    server = HTTP.listen!(HTTP.streamhandler(handler), "127.0.0.1", 0; listenany=true)
+    try
+        port = HTTP.port(server)
+        resp = HTTP.get("http://127.0.0.1:$port")
+        @test resp.status == 200
+        @test String(resp.body) == "ping"
+
+        resp = HTTP.post("http://127.0.0.1:$port"; body="echo")
+        @test resp.status == 200
+        @test String(resp.body) == "echo"
+    finally
+        close(server)
+    end
+end
+
 @testset "HTTP response trailers" begin
     server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
         read(http)

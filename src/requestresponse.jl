@@ -1,3 +1,5 @@
+export Header, Headers, Message, Request, Response
+
 # working with headers
 headereq(a::String, b::String) = GC.@preserve a b aws_http_header_name_eq(aws_byte_cursor_from_c_str(a), aws_byte_cursor_from_c_str(b))
 

@@ -30,6 +30,19 @@
         @test HTTP.iso8859_1_to_utf8(bytes) == utf8
     end
 
+    buf = UInt8[0x01, 0x02]
+    @test HTTP.bytes(buf) === buf
+    @test collect(HTTP.bytes("hi")) == collect(codeunits("hi"))
+    @test HTTP.nbytes("hi") == 2
+    @test HTTP.nbytes(buf) == 2
+    @test HTTP.nbytes([buf, UInt8[0x03]]) == 3
+    @test HTTP.nbytes(["a", "bc"]) == 3
+    @test HTTP.nbytes(IOBuffer("abc")) == 3
+    @test HTTP.nobytes isa AbstractVector{UInt8}
+    @test isempty(HTTP.nobytes)
+    @test HTTP.ascii_lc_isequal("AbC", "aBc")
+    @test !HTTP.ascii_lc_isequal("abc", "abd")
+
     @test_throws HTTP.AWSError HTTP.parseuri("http://example.com:abc", nothing, HTTP.default_aws_allocator())
 
     exported = names(HTTP, all=false)
@@ -37,8 +50,22 @@
     @test :startread in exported
     @test :closewrite in exported
     @test :closeread in exported
+    @test :Stream in exported
+    @test :Request in exported
+    @test :Response in exported
+    @test :Message in exported
+    @test :Header in exported
+    @test :Headers in exported
+    @test :bytes in exported
+    @test :nbytes in exported
+    @test :nobytes in exported
+    @test :escapehtml in exported
+    @test :tocameldash in exported
+    @test :iso8859_1_to_utf8 in exported
+    @test :ascii_lc_isequal in exported
     @test HTTP.nobody isa Vector{UInt8}
     @test isempty(HTTP.nobody)
+    @test isdefined(HTTP, :streamhandler)
 
     @test_deprecated HTTP.escape("a b") == "a%20b"
 

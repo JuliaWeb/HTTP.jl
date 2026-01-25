@@ -1,3 +1,5 @@
+export Stream, closebody, isaborted, readall!, setstatus
+
 const on_response_headers = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_response_headers(aws_stream_ptr, header_block, header_array::Ptr{aws_http_header}, num_headers, stream_ptr)

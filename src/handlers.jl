@@ -1,8 +1,9 @@
 module Handlers
 
-export Handler, Middleware, serve, serve!, Router, register!, getroute, getparams, getparam, getcookies
+export Handler, Middleware, serve, serve!, Router, register!, getroute, getparams, getparam, getcookies, streamhandler
 
-import ..Request, ..Cookies
+import ..Request, ..Response, ..Stream, ..Cookies, ..getbody
+import ..startread, ..setstatus, ..setheader, ..addtrailer, ..closewrite, ..closeread
 
 """
     Handler
@@ -38,6 +39,34 @@ and returns a "modified" handler (that parses and stores cookies). This "modifie
 then an input to the `auth_middlware`, which further enhances/modifies the handler.
 """
 abstract type Middleware end
+
+"""
+    streamhandler(request_handler) -> stream handler
+
+Middleware that takes a request handler and returns a stream handler.
+"""
+function streamhandler(handler)
+    return function(stream::Stream)
+        req = startread(stream)
+        req.body = read(stream)
+        resp = Base.invokelatest(handler, req)::Response
+        resp.request = req
+        setstatus(stream, resp.status)
+        for h in resp.headers
+            setheader(stream, h.name, h.value)
+        end
+        body = getbody(resp)
+        if body isa IO
+            write(stream, read(body))
+        elseif body !== nothing
+            write(stream, body)
+        end
+        resp.trailers === nothing || addtrailer(stream, resp.trailers)
+        closewrite(stream)
+        closeread(stream)
+        return
+    end
+end
 
 # tree-based router handler
 mutable struct Variable
