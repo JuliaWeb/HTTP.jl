@@ -568,6 +568,13 @@ getresponse(r::Response) = r
 
 bodylen(m::Message) = isdefined(m, :inputstream) && m.inputstream !== nothing ? m.inputstream.bodylen : 0
 
+function bodylen(r::Response)
+    if isdefined(r, :inputstream) && r.inputstream !== nothing
+        return r.inputstream.bodylen
+    end
+    return r.metrics.response_body_length
+end
+
 function Base.getproperty(x::Response, s::Symbol)
     if s == :status
         ref = Ref{Cint}()

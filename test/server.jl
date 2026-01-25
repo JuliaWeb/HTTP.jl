@@ -13,6 +13,28 @@ import Sockets
     end
 end
 
+@testset "access logging stream handler" begin
+    logger = Test.TestLogger()
+    with_logger(logger) do
+        server = HTTP.listen!("127.0.0.1", 0; listenany=true, access_log=common_logfmt) do http
+            read(http)
+            HTTP.setstatus(http, 200)
+            HTTP.startwrite(http)
+            write(http, "hello")
+        end
+        port = HTTP.port(server)
+        try
+            HTTP.post("http://127.0.0.1:$port"; body="x")
+            sleep(1)
+        finally
+            close(server)
+        end
+    end
+    logs = filter!(x -> x.group == :access, logger.logs)
+    @test length(logs) == 1
+    @test occursin(r" 200 5$", logs[1].message)
+end
+
 @testset "HTTP.listen stream handler" begin
     server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
         body = String(read(http))

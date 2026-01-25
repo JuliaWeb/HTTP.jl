@@ -277,8 +277,12 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
         aws_http1_stream_write_chunk(s.ptr, FieldRef(s, :chunk_options)) != 0 && aws_throw_error()
     end
     wait(fut)
-    if !s.server_side && isdefined(s, :response) && s.response !== nothing
-        s.response.metrics.request_body_length += s.chunk.bodylen
+    if isdefined(s, :response) && s.response !== nothing
+        if s.server_side
+            s.response.metrics.response_body_length += s.chunk.bodylen
+        else
+            s.response.metrics.request_body_length += s.chunk.bodylen
+        end
     end
     return s.chunk.bodylen
 end
