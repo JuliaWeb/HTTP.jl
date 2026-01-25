@@ -459,7 +459,12 @@ function print_request(io, method, version, path, headers, body)
     return
 end
 
-getbody(r::Message) = isdefined(r, :inputstream) ? r.inputstream.bodyref : r.body
+function getbody(r::Message)
+    if isdefined(r, :inputstream) && r.inputstream !== nothing
+        return r.inputstream.bodyref
+    end
+    return r.body
+end
 
 print_request(io::IO, r::Request) = print_request(io, r.method, r.version, r.path, r.headers, getbody(r))
 

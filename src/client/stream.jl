@@ -92,7 +92,11 @@ function c_on_complete(aws_stream_ptr, error_code, stream_ptr)
         close(stream.bufferstream)
     end
     if error_code != 0
-        notify(stream.fut, CapturedException(aws_error(error_code), Base.backtrace()))
+        if error_code == AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT && stream.readtimeout > 0
+            notify(stream.fut, TimeoutError(stream.readtimeout))
+        else
+            notify(stream.fut, CapturedException(aws_error(error_code), Base.backtrace()))
+        end
     else
         notify(stream.fut, nothing)
     end
@@ -142,6 +146,7 @@ mutable struct Stream{T} <: IO
     response_started::Bool
     handler_started::Bool
     ignore_writes::Bool
+    readtimeout::Int
     on_complete::Union{Nothing, Function}
     released::Bool
     # remaining fields are initially undefined
@@ -175,6 +180,7 @@ mutable struct Stream{T} <: IO
         false,
         false,
         false,
+        0,
         nothing,
         false,
     )
@@ -349,6 +355,9 @@ function _server_closewrite(s::Stream)
     if hasheader(resp.headers, "upgrade")
         s.final_chunk_written = true
         return
+    end
+    if resp.trailers !== nothing
+        aws_http1_stream_add_chunked_trailer(s.ptr, resp.trailers.ptr) != 0 && aws_throw_error()
     end
     writechunk(s, "")
     s.final_chunk_written = true
@@ -546,7 +555,15 @@ end
 function closeread(s::Stream)
     startread(s)
     try
-        wait(s.fut)
+        try
+            wait(s.fut)
+        catch e
+            e isa HTTPError && rethrow()
+            if !s.server_side && isdefined(s, :request) && s.request !== nothing
+                throw(RequestError(s.request, e))
+            end
+            rethrow()
+        end
     finally
         release_stream_ptr!(s)
     end
@@ -592,6 +609,17 @@ end
 
 function addtrailer(s::Stream, headers::Headers)
     s.ptr == C_NULL && error("stream is not initialized")
+    if s.server_side
+        resp = _ensure_response!(s)
+        if resp.trailers === nothing
+            resp.trailers = headers
+        elseif resp.trailers !== headers
+            for h in headers
+                addheader(resp.trailers, h)
+            end
+        end
+        return
+    end
     if s.http2
         aws_http2_stream_add_trailing_headers(s.ptr, headers.ptr) != 0 && aws_throw_error()
     else
@@ -617,6 +645,7 @@ end
 function with_stream_manager(client::Client, req::Request, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator; context=nothing)
     if context === nothing
         stream = Stream{Nothing}(allocator, decompress, true, false)
+        stream.readtimeout = readtimeout
         if on_stream_response_body !== nothing
             stream.bufferstream = Base.BufferStream()
         end
@@ -657,12 +686,22 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
                         while !eof(stream.bufferstream)
                             on_stream_response_body(resp, _readavailable(stream.bufferstream))
                         end
-                        wait(stream.fut)
+                        try
+                            wait(stream.fut)
+                        catch e
+                            e isa HTTPError && rethrow()
+                            throw(RequestError(req, e))
+                        end
                     catch e
                         rethrow(DontRetry(e))
                     end
                 else
-                    wait(stream.fut)
+                    try
+                        wait(stream.fut)
+                    catch e
+                        e isa HTTPError && rethrow()
+                        throw(RequestError(req, e))
+                    end
                     if stream.bufferstream !== nothing
                         resp.body = _readavailable(stream.bufferstream)
                     else
@@ -680,6 +719,7 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
 
     start_time = time()
     stream = Stream{Nothing}(allocator, decompress, true, false)
+    stream.readtimeout = readtimeout
     if on_stream_response_body !== nothing
         stream.bufferstream = Base.BufferStream()
     end
@@ -720,12 +760,22 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
                     while !eof(stream.bufferstream)
                         on_stream_response_body(resp, _readavailable(stream.bufferstream))
                     end
-                    wait(stream.fut)
+                    try
+                        wait(stream.fut)
+                    catch e
+                        e isa HTTPError && rethrow()
+                        throw(RequestError(req, e))
+                    end
                 catch e
                     rethrow(DontRetry(e))
                 end
             else
-                wait(stream.fut)
+                try
+                    wait(stream.fut)
+                catch e
+                    e isa HTTPError && rethrow()
+                    throw(RequestError(req, e))
+                end
                 if stream.bufferstream !== nothing
                     resp.body = _readavailable(stream.bufferstream)
                 else
@@ -745,6 +795,7 @@ end
 function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator; context=nothing)
     if context === nothing
         stream = Stream{Nothing}(allocator, decompress, http2, false)
+        stream.readtimeout = readtimeout
         if on_stream_response_body !== nothing
             stream.bufferstream = Base.BufferStream()
         end
@@ -782,12 +833,22 @@ function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, 
                         while !eof(stream.bufferstream)
                             on_stream_response_body(resp, _readavailable(stream.bufferstream))
                         end
-                        wait(stream.fut)
+                        try
+                            wait(stream.fut)
+                        catch e
+                            e isa HTTPError && rethrow()
+                            throw(RequestError(req, e))
+                        end
                     catch e
                         rethrow(DontRetry(e))
                     end
                 else
-                    wait(stream.fut)
+                    try
+                        wait(stream.fut)
+                    catch e
+                        e isa HTTPError && rethrow()
+                        throw(RequestError(req, e))
+                    end
                     if stream.bufferstream !== nothing
                         resp.body = _readavailable(stream.bufferstream)
                     else
@@ -805,6 +866,7 @@ function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, 
 
     start_time = time()
     stream = Stream{Nothing}(allocator, decompress, http2, false)
+    stream.readtimeout = readtimeout
     if on_stream_response_body !== nothing
         stream.bufferstream = Base.BufferStream()
     end
@@ -842,12 +904,22 @@ function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, 
                     while !eof(stream.bufferstream)
                         on_stream_response_body(resp, _readavailable(stream.bufferstream))
                     end
-                    wait(stream.fut)
+                    try
+                        wait(stream.fut)
+                    catch e
+                        e isa HTTPError && rethrow()
+                        throw(RequestError(req, e))
+                    end
                 catch e
                     rethrow(DontRetry(e))
                 end
             else
-                wait(stream.fut)
+                try
+                    wait(stream.fut)
+                catch e
+                    e isa HTTPError && rethrow()
+                    throw(RequestError(req, e))
+                end
                 if stream.bufferstream !== nothing
                     resp.body = _readavailable(stream.bufferstream)
                 else

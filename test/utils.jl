@@ -43,6 +43,29 @@
     @test HTTP.ascii_lc_isequal("AbC", "aBc")
     @test !HTTP.ascii_lc_isequal("abc", "abd")
 
+    err = HTTP.ConnectError("http://example.com", ErrorException("boom"))
+    @test err isa HTTP.ConnectError
+    @test err.url == "http://example.com"
+    @test err.error isa ErrorException
+    @test HTTP.TimeoutError(5).readtimeout == 5
+    req = HTTP.Request("GET", "/")
+    req_err = HTTP.RequestError(req, ErrorException("nope"))
+    @test req_err.request === req
+    @test req_err.error isa ErrorException
+    msg = ""
+    try
+        error("boom")
+    catch
+        msg = HTTP.current_exceptions_to_string()
+    end
+    @test occursin("boom", msg)
+    got = false
+    HTTP.@try ArgumentError begin
+        got = true
+        throw(ArgumentError("boom"))
+    end
+    @test got
+
     @test_throws HTTP.AWSError HTTP.parseuri("http://example.com:abc", nothing, HTTP.default_aws_allocator())
 
     exported = names(HTTP, all=false)

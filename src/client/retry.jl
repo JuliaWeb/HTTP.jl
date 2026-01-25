@@ -14,6 +14,9 @@ Base.showerror(io::IO, e::StreamError) = print(io, e.error)
 retryable_status(status::Integer) = status in (403, 408, 409, 429, 500, 502, 503, 504, 599)
 
 isrecoverable(ex::StatusError) = retryable_status(ex.status)
+isrecoverable(ex::ConnectError) = isrecoverable(ex.error)
+isrecoverable(ex::TimeoutError) = true
+isrecoverable(ex::RequestError) = isrecoverable(ex.error)
 isrecoverable(::Union{Base.EOFError, Base.IOError}) = true
 isrecoverable(ex::ArgumentError) = ex.msg == "stream is closed or unusable"
 isrecoverable(ex::CompositeException) = all(isrecoverable, ex.exceptions)
@@ -73,6 +76,8 @@ function _set_nretries!(x, nretries::Int)
         x.metrics.nretries = nretries
     elseif x isa StatusError
         x.response.metrics.nretries = nretries
+    elseif x isa RequestError
+        _set_nretries!(x.error, nretries)
     elseif x isa StreamError && x.stream !== nothing
         x.stream.response !== nothing && (x.stream.response.metrics.nretries = nretries)
     end

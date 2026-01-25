@@ -18,7 +18,8 @@ include("access_log.jl")
 include("sniff.jl"); using .Sniff
 include("forms.jl"); using .Forms
 include("requestresponse.jl")
-struct StatusError <: Exception
+include("exceptions.jl"); using .Exceptions
+struct StatusError <: HTTPError
     request_method::String
     request_uri::aws_uri
     response::Response

@@ -34,12 +34,22 @@ function c_on_ping_complete(conn, round_trip_time_ns, error_code, fut_ptr)
     return
 end
 
+function _client_url(client::Client)
+    host = client.settings.host
+    port = client.settings.port
+    return string(client.settings.scheme, "://", host, ":", port)
+end
+
 function with_connection(f::Function, client::Client; context=nothing)
     if context === nothing
         fut = Future{Ptr{aws_http_connection}}()
         GC.@preserve fut begin
             aws_http_connection_manager_acquire_connection(client.connection_manager, on_setup[], pointer_from_objref(fut))
-            connection = wait(fut)
+            connection = try
+                wait(fut)
+            catch e
+                throw(ConnectError(_client_url(client), e))
+            end
         end
         try
             return f(connection)
@@ -51,7 +61,11 @@ function with_connection(f::Function, client::Client; context=nothing)
     fut = Future{Ptr{aws_http_connection}}()
     GC.@preserve fut begin
         aws_http_connection_manager_acquire_connection(client.connection_manager, on_setup[], pointer_from_objref(fut))
-        connection = wait(fut)
+        connection = try
+            wait(fut)
+        catch e
+            throw(ConnectError(_client_url(client), e))
+        end
     end
     try
         return f(connection)
