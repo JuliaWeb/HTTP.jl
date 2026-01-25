@@ -178,6 +178,8 @@ end
 
 Base.hash(s::Stream, h::UInt) = hash(s.ptr, h)
 
+getrequest(s::Stream) = s.request
+
 const ACTIVE_STREAMS_LOCK = ReentrantLock()
 const ACTIVE_STREAMS = IdDict{Stream, Bool}()
 
@@ -580,7 +582,71 @@ function addtrailer(s::Stream, h::AbstractVector{<:Pair})
     return addtrailer(s, trailers)
 end
 
-function with_stream_manager(client::Client, req::Request, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator)
+function with_stream_manager(client::Client, req::Request, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator; context=nothing)
+    if context === nothing
+        stream = Stream{Nothing}(allocator, decompress, true, false)
+        if on_stream_response_body !== nothing
+            stream.bufferstream = Base.BufferStream()
+        end
+        acquire_fut = Future{Ptr{aws_http_stream}}()
+        GC.@preserve stream acquire_fut begin
+            stream.request_options = aws_http_make_request_options(
+                1,
+                req.ptr,
+                pointer_from_objref(stream),
+                on_response_headers[],
+                on_response_header_block_done[],
+                on_response_body[],
+                on_metrics[],
+                on_complete[],
+                on_destroy[],
+                chunkedbody !== nothing, # http2_use_manual_data_writes
+                readtimeout * 1000 # response_first_byte_timeout_ms
+            )
+            stream.response = resp = Response(0, nothing, nothing, true, allocator)
+            resp.metrics = RequestMetrics()
+            resp.request = req
+            acquire_opts = aws_http2_stream_manager_acquire_stream_options(
+                on_stream_acquired[],
+                pointer_from_objref(acquire_fut),
+                FieldRef(stream, :request_options),
+            )
+            aws_http2_stream_manager_acquire_stream(client.http2_stream_manager, Ref(acquire_opts))
+            stream_ptr = wait(acquire_fut)
+            stream.ptr = stream_ptr
+            stream.activated = true
+            try
+                if chunkedbody !== nothing
+                    foreach(chunk -> writechunk(stream, chunk), chunkedbody)
+                    writechunk(stream, "")
+                end
+                if on_stream_response_body !== nothing
+                    try
+                        while !eof(stream.bufferstream)
+                            on_stream_response_body(resp, _readavailable(stream.bufferstream))
+                        end
+                        wait(stream.fut)
+                    catch e
+                        rethrow(DontRetry(e))
+                    end
+                else
+                    wait(stream.fut)
+                    if stream.bufferstream !== nothing
+                        resp.body = _readavailable(stream.bufferstream)
+                    else
+                        resp.body = UInt8[]
+                    end
+                end
+                return resp
+            finally
+                aws_http_stream_release(stream_ptr)
+                stream.released = true
+                stream.ptr = Ptr{aws_http_stream}(C_NULL)
+            end
+        end
+    end
+
+    start_time = time()
     stream = Stream{Nothing}(allocator, decompress, true, false)
     if on_stream_response_body !== nothing
         stream.bufferstream = Base.BufferStream()
@@ -639,11 +705,73 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
             aws_http_stream_release(stream_ptr)
             stream.released = true
             stream.ptr = Ptr{aws_http_stream}(C_NULL)
+            _record_layer!(context, :streamlayer, start_time)
         end
     end
 end
 
-function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)
+function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator; context=nothing)
+    if context === nothing
+        stream = Stream{Nothing}(allocator, decompress, http2, false)
+        if on_stream_response_body !== nothing
+            stream.bufferstream = Base.BufferStream()
+        end
+        GC.@preserve stream begin
+            stream.request_options = aws_http_make_request_options(
+                1,
+                req.ptr,
+                pointer_from_objref(stream),
+                on_response_headers[],
+                on_response_header_block_done[],
+                on_response_body[],
+                on_metrics[],
+                on_complete[],
+                on_destroy[],
+                http2 && chunkedbody !== nothing, # http2_use_manual_data_writes
+                readtimeout * 1000 # response_first_byte_timeout_ms
+            )
+            stream_ptr = aws_http_connection_make_request(conn, FieldRef(stream, :request_options))
+            stream_ptr == C_NULL && aws_throw_error()
+            stream.ptr = stream_ptr
+            http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
+            stream.response = resp = Response(0, nothing, nothing, http2, allocator)
+            resp.metrics = RequestMetrics()
+            resp.request = req
+            try
+                aws_http_stream_activate(stream_ptr) != 0 && aws_throw_error()
+                # write chunked body if provided
+                if chunkedbody !== nothing
+                    foreach(chunk -> writechunk(stream, chunk), chunkedbody)
+                    # write final chunk
+                    writechunk(stream, "")
+                end
+                if on_stream_response_body !== nothing
+                    try
+                        while !eof(stream.bufferstream)
+                            on_stream_response_body(resp, _readavailable(stream.bufferstream))
+                        end
+                        wait(stream.fut)
+                    catch e
+                        rethrow(DontRetry(e))
+                    end
+                else
+                    wait(stream.fut)
+                    if stream.bufferstream !== nothing
+                        resp.body = _readavailable(stream.bufferstream)
+                    else
+                        resp.body = UInt8[]
+                    end
+                end
+                return resp
+            finally
+                aws_http_stream_release(stream_ptr)
+                stream.released = true
+                stream.ptr = Ptr{aws_http_stream}(C_NULL)
+            end
+        end # GC.@preserve
+    end
+
+    start_time = time()
     stream = Stream{Nothing}(allocator, decompress, http2, false)
     if on_stream_response_body !== nothing
         stream.bufferstream = Base.BufferStream()
@@ -699,6 +827,7 @@ function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, 
             aws_http_stream_release(stream_ptr)
             stream.released = true
             stream.ptr = Ptr{aws_http_stream}(C_NULL)
+            _record_layer!(context, :streamlayer, start_time)
         end
     end # GC.@preserve
 end

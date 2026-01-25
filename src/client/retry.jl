@@ -91,10 +91,23 @@ function with_retry_token(
     retry_non_idempotent::Bool=false,
     retryable_body::Bool=true,
     req_ref=nothing,
+    context=nothing,
 )
     # If max_retries is 0, we don't need to bother with any retrying
     max_retries = client.settings.max_retries
     if max_retries == 0
+        if context === nothing
+            try
+                return f()
+            catch e
+                if logerrors
+                    url = uri === nothing ? nothing : (uri isa aws_uri ? makeuri(uri) : uri)
+                    @error "HTTP request error" exception=(e, catch_backtrace()) method=method url=url logtag=logtag
+                end
+                rethrow()
+            end
+        end
+        start_time = time()
         try
             return f()
         catch e
@@ -103,6 +116,8 @@ function with_retry_token(
                 @error "HTTP request error" exception=(e, catch_backtrace()) method=method url=url logtag=logtag
             end
             rethrow()
+        finally
+            _record_layer!(context, :retrylayer, start_time)
         end
     end
     retry_check_fn = retry_check === nothing ? nothing : retry_check
@@ -110,11 +125,14 @@ function with_retry_token(
     delay_state = nothing
     nretries = 0
     while true
+        attempt_start = context === nothing ? 0.0 : time()
         try
             ret = f()
+            context === nothing || _record_layer!(context, :retrylayer, attempt_start)
             _set_nretries!(ret, nretries)
             return ret
         catch e
+            context === nothing || _record_layer!(context, :retrylayer, attempt_start)
             stream = nothing
             err = e
             if err isa StreamError

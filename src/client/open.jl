@@ -66,8 +66,11 @@ function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
     method_str = string(method)
     headers = mkreqheaders(headers, copyheaders)
     uri = parseuri(url, query, allocator)
+    context = observelayers ? Dict{Symbol, Any}() : nothing
+    context === nothing || _init_observations!(context)
     count = 0
     while true
+        redirect_start = context === nothing ? 0.0 : time()
         redirect_url = nothing
         resp = nothing
         proxy_kw = proxy_kwargs(proxy, scheme(uri))
@@ -86,7 +89,7 @@ function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
                 getclient(ClientSettings(scheme(uri), host(uri), getport(uri); client_kw...)) :
                 getclient(ClientSettings(scheme(uri), host(uri), getport(uri); client_kw...), pool)
         )::Client
-        resp = with_connection(reqclient) do conn
+        resp = with_connection(reqclient; context=context) do conn
             http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
             path = resource(uri)
             with_request(reqclient, method_str, path, headers, nothing, nothing, decompress, authinfo, bearer, modifier, http2, cookies, cookiejar, verbose;
@@ -94,6 +97,8 @@ function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
                 canonicalize_headers=canonicalize_headers,
                 detect_content_type=detect_content_type,
                 basicauth=apply_basicauth,
+                observelayers=observelayers,
+                context=context,
             ) do req
                 if !http2 &&
                    method_str in ("POST", "PUT", "PATCH") &&
@@ -103,27 +108,33 @@ function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
                     setheader(req.headers, "transfer-encoding", "chunked")
                 end
                 stream = _open_stream(conn, req, decompress, readtimeout, allocator)
-                if redirect && issafe(method_str)
-                    resp = startread(stream)
-                    if (count < redirect_limit && isredirect(resp) && (location = getheader(resp.headers, "Location")) != "")
-                        redirect_url = location
-                        closeread(stream)
-                        return resp
-                    end
-                end
-                err = nothing
+                stream_start = context === nothing ? 0.0 : time()
                 try
-                    f(stream)
-                catch e
-                    err = e
+                    if redirect && issafe(method_str)
+                        resp = startread(stream)
+                        if (count < redirect_limit && isredirect(resp) && (location = getheader(resp.headers, "Location")) != "")
+                            redirect_url = location
+                            closeread(stream)
+                            return resp
+                        end
+                    end
+                    err = nothing
+                    try
+                        f(stream)
+                    catch e
+                        err = e
+                    finally
+                        closewrite(stream)
+                    end
+                    resp = closeread(stream)
+                    err === nothing || throw(err)
+                    return resp
                 finally
-                    closewrite(stream)
+                    context === nothing || _record_layer!(context, :streamlayer, stream_start)
                 end
-                resp = closeread(stream)
-                err === nothing || throw(err)
-                return resp
             end
         end
+        context === nothing || _record_layer!(context, :redirectlayer, redirect_start)
         if redirect_url === nothing
             if status_exception && iserror(resp)
                 if logerrors

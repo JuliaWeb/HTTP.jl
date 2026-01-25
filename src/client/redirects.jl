@@ -38,14 +38,23 @@ function newmethod(request_method, response_status, redirect_method)
     return "GET"
 end
 
-function with_redirect(f, allocator, method, uri, headers=nothing, body=nothing, redirect::Bool=true, redirect_limit::Int=3, redirect_method=nothing, forwardheaders::Bool=true)
+function with_redirect(f, allocator, method, uri, headers=nothing, body=nothing, redirect::Bool=true, redirect_limit::Int=3, redirect_method=nothing, forwardheaders::Bool=true; context=nothing)
     if !redirect || redirect_limit == 0
         # no redirecting
         return f(method, uri, headers, body)
     end
     count = 0
     while true
-        ret = f(method, uri, headers, body)
+        if context === nothing
+            ret = f(method, uri, headers, body)
+        else
+            start_time = time()
+            try
+                ret = f(method, uri, headers, body)
+            finally
+                _record_layer!(context, :redirectlayer, start_time)
+            end
+        end
         resp = getresponse(ret)
         if (count == redirect_limit || !isredirect(resp) || (location = getheader(resp.headers, "Location")) == "")
             return ret

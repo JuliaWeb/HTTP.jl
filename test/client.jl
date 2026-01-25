@@ -301,6 +301,28 @@
         @test !isempty(pool.clients.clients)
     end
 
+    @testset "observelayers" begin
+        server = HTTP.serve!(req -> begin
+            if req.target == "/redirect"
+                return HTTP.Response(302, ["Location" => "/ok"], nothing)
+            end
+            return HTTP.Response(200, "ok")
+        end; listenany=true)
+        try
+            port = HTTP.port(server)
+            resp = HTTP.get("http://127.0.0.1:$port/redirect"; observelayers=true, retries=0)
+            ctx = resp.request.context
+            @test ctx[:messagelayer_count] >= 1
+            @test ctx[:redirectlayer_count] >= 1
+            @test ctx[:retrylayer_count] >= 1
+            @test ctx[:connectionlayer_count] >= 1
+            @test ctx[:streamlayer_count] >= 1
+            @test ctx[:total_request_duration_ms] > 0
+        finally
+            close(server)
+        end
+    end
+
     @testset "IO request body streaming" begin
         mutable struct ChunkedTestIO <: IO
             chunks::Vector{Vector{UInt8}}

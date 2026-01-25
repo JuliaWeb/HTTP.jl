@@ -240,6 +240,24 @@ function Base.iterate(it::IOChunkedBody, state=nothing)
     return view(it.buf, 1:n), nothing
 end
 
+const OBSERVELAYER_NAMES = (:messagelayer, :redirectlayer, :retrylayer, :connectionlayer, :streamlayer)
+
+function _init_observations!(context::Dict{Symbol, Any})
+    for name in OBSERVELAYER_NAMES
+        context[Symbol(name, "_count")] = 0
+        context[Symbol(name, "_duration_ms")] = 0.0
+    end
+    return context
+end
+
+function _record_layer!(context::Dict{Symbol, Any}, name::Symbol, started::Float64)
+    cntkey = Symbol(name, "_count")
+    durkey = Symbol(name, "_duration_ms")
+    context[cntkey] = Base.get(() -> 0, context, cntkey) + 1
+    context[durkey] = Base.get(() -> 0.0, context, durkey) + (time() - started) * 1000
+    return
+end
+
 function InputStream(allocator::Ptr{aws_allocator}, body)
     is = InputStream()
     if body !== nothing
@@ -311,11 +329,12 @@ mutable struct Request <: Message
     # only set in server-side request handlers
     body::Union{Nothing, Vector{UInt8}}
     trailers::Union{Nothing, Headers}
+    context::Dict{Symbol, Any}
     route::Union{Nothing, String}
     params::Union{Nothing, Dict{String, String}}
     cookies::Any # actually Union{Nothing, Vector{Cookie}}
 
-    function Request(method, path, headers=nothing, body=nothing, http2::Bool=false, allocator=default_aws_allocator())
+    function Request(method, path, headers=nothing, body=nothing, http2::Bool=false, allocator=default_aws_allocator(); context=nothing)
         ptr = http2 ?
           aws_http2_message_new_request(allocator) :
           aws_http_message_new_request(allocator)
@@ -333,6 +352,7 @@ mutable struct Request <: Message
             req.body = nothing
             req.inputstream = nothing
             req.trailers = nothing
+            req.context = context === nothing ? Dict{Symbol, Any}() : context
             req.route = nothing
             req.params = nothing
             req.cookies = nothing
@@ -341,6 +361,24 @@ mutable struct Request <: Message
         catch
             aws_http_message_release(ptr)
             rethrow()
+        end
+    end
+end
+
+getrequest(req::Request) = req
+
+function observelayer(f)
+    function observation(req_or_stream; kw...)
+        req = getrequest(req_or_stream)
+        nm = nameof(f)
+        start_time = time()
+        ctx = req.context
+        ctx[Symbol(nm, "_count")] = Base.get(() -> 0, ctx, Symbol(nm, "_count")) + 1
+        try
+            return f(req_or_stream; kw...)
+        finally
+            ctx[Symbol(nm, "_duration_ms")] =
+                Base.get(() -> 0.0, ctx, Symbol(nm, "_duration_ms")) + (time() - start_time) * 1000
         end
     end
 end

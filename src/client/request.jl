@@ -35,11 +35,13 @@ function with_request(
     canonicalize_headers::Bool=false,
     detect_content_type::Bool=false,
     basicauth::Bool=true,
+    observelayers::Bool=false,
+    context=nothing,
 )
     # create request
     mutable_headers = (headers isa AbstractVector{<:Pair} && !copyheaders) ? headers : nothing
     req_headers = mkreqheaders(headers, copyheaders)
-    req = Request(method, path, req_headers, nothing, http2, client.settings.allocator)
+    req = Request(method, path, req_headers, nothing, http2, client.settings.allocator; context=context)
     # add headers to request
     h = req.headers
     if http2
@@ -97,12 +99,19 @@ function with_request(
     end
     # call user function
     verbose > 0 && print_request(stdout, req)
-    ret = f(req)
-    resp = getresponse(ret)
-    if canonicalize_headers
-        canonicalizeheaders!(resp.headers)
+    start_time = time()
+    ret = nothing
+    try
+        ret = f(req)
+        resp = getresponse(ret)
+        if canonicalize_headers
+            canonicalizeheaders!(resp.headers)
+        end
+        verbose > 0 && print_response(stdout, resp)
+        cookies === false || Cookies.setcookies!(cookiejar, client.settings.scheme, client.settings.host, req.path, resp.headers)
+        return ret
+    finally
+        req.context[:total_request_duration_ms] = (time() - start_time) * 1000
+        observelayers && _record_layer!(req.context, :messagelayer, start_time)
     end
-    verbose > 0 && print_response(stdout, resp)
-    cookies === false || Cookies.setcookies!(cookiejar, client.settings.scheme, client.settings.host, req.path, resp.headers)
-    return ret
 end

@@ -70,6 +70,8 @@ function request(method, url, h=Header[], b=nothing;
     verbose=0,
     # only client keywords in catch-all
     kw...)
+    context = observelayers ? Dict{Symbol, Any}() : nothing
+    context === nothing || _init_observations!(context)
     if chunkedbody === nothing && body isa IO && !(body isa IOStream) && !(body isa Form)
         chunkedbody = IOChunkedBody(body)
         body = nothing
@@ -98,7 +100,7 @@ function request(method, url, h=Header[], b=nothing;
     end
     authinfo = (username !== nothing && password !== nothing) ? "$username:$password" : userinfo(uri)
     apply_basicauth = (username !== nothing && password !== nothing) ? true : basicauth
-    return with_redirect(allocator, method, uri, headers, body, redirect, redirect_limit, redirect_method, forwardheaders) do method, uri, headers, body
+    return with_redirect(allocator, method, uri, headers, body, redirect, redirect_limit, redirect_method, forwardheaders; context=context) do method, uri, headers, body
         reqclient = @something(
             client,
             pool === nothing ?
@@ -108,7 +110,7 @@ function request(method, url, h=Header[], b=nothing;
         req_ref = Ref{Any}(nothing)
         with_retry_token(reqclient; logerrors=logerrors, logtag=logtag, method=method, uri=uri,
             retry_check=retry_check, retry_delays=retry_delays,
-            retry_non_idempotent=retry_non_idempotent, retryable_body=retryable_body, req_ref=req_ref) do
+            retry_non_idempotent=retry_non_idempotent, retryable_body=retryable_body, req_ref=req_ref, context=context) do
             resp = if reqclient.http2_stream_manager != C_NULL
                 path = resource(uri)
                 with_request(reqclient, method, path, headers, body, chunkedbody, decompress, authinfo, bearer, modifier, true, cookies, cookiejar, verbose;
@@ -116,23 +118,25 @@ function request(method, url, h=Header[], b=nothing;
                     canonicalize_headers=canonicalize_headers,
                     detect_content_type=detect_content_type,
                     basicauth=apply_basicauth,
+                    observelayers=observelayers,
+                    context=context,
                 ) do req
                     req_ref[] = req
                     if response_body isa AbstractVector{UInt8}
                         ref = Ref(1)
                         GC.@preserve ref begin
                             on_stream_response_body = BufferOnResponseBody(response_body, Base.unsafe_convert(Ptr{Int}, ref))
-                            with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator)
+                            with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator; context=context)
                         end
                     elseif response_body isa IO
                         on_stream_response_body = IOOnResponseBody(response_body)
-                        with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator)
+                        with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator; context=context)
                     else
-                        with_stream_manager(reqclient, req, chunkedbody, response_body, decompress, readtimeout, allocator)
+                        with_stream_manager(reqclient, req, chunkedbody, response_body, decompress, readtimeout, allocator; context=context)
                     end
                 end
             else
-                with_connection(reqclient) do conn
+                with_connection(reqclient; context=context) do conn
                     http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
                     path = resource(uri)
                     with_request(reqclient, method, path, headers, body, chunkedbody, decompress, authinfo, bearer, modifier, http2, cookies, cookiejar, verbose;
@@ -140,19 +144,21 @@ function request(method, url, h=Header[], b=nothing;
                         canonicalize_headers=canonicalize_headers,
                         detect_content_type=detect_content_type,
                         basicauth=apply_basicauth,
+                        observelayers=observelayers,
+                        context=context,
                     ) do req
                         req_ref[] = req
                         if response_body isa AbstractVector{UInt8}
                             ref = Ref(1)
                             GC.@preserve ref begin
                                 on_stream_response_body = BufferOnResponseBody(response_body, Base.unsafe_convert(Ptr{Int}, ref))
-                                with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)
+                                with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator; context=context)
                             end
                         elseif response_body isa IO
                             on_stream_response_body = IOOnResponseBody(response_body)
-                            with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator)
+                            with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator; context=context)
                         else
-                            with_stream(conn, req, chunkedbody, response_body, decompress, http2, readtimeout, allocator)
+                            with_stream(conn, req, chunkedbody, response_body, decompress, http2, readtimeout, allocator; context=context)
                         end
                     end
                 end
