@@ -140,6 +140,7 @@ mutable struct Stream{T} <: IO
     response_started::Bool
     handler_started::Bool
     ignore_writes::Bool
+    on_complete::Union{Nothing, Function}
     released::Bool
     # remaining fields are initially undefined
     ptr::Ptr{aws_http_stream}
@@ -172,6 +173,7 @@ mutable struct Stream{T} <: IO
         false,
         false,
         false,
+        nothing,
         false,
     )
 end
@@ -339,6 +341,10 @@ function _server_closewrite(s::Stream)
         _send_response!(s)
     end
     if s.ignore_writes
+        s.final_chunk_written = true
+        return
+    end
+    if hasheader(resp.headers, "upgrade")
         s.final_chunk_written = true
         return
     end

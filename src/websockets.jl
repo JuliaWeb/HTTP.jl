@@ -2,11 +2,13 @@ module WebSockets
 
 using Base64, Random, LibAwsHTTPFork, LibAwsCommon, LibAwsIO
 
-import ..FieldRef, ..iswss, ..getport, ..makeuri, ..aws_throw_error, ..resource, ..Headers, ..Header, ..str, ..aws_error, ..aws_throw_error, ..Future, ..parseuri, ..with_redirect, ..with_request, ..getclient, ..ClientSettings, ..scheme, ..host, ..getport, ..userinfo, ..Client, ..Request, ..Response, ..setinputstream!, ..getresponse, ..CookieJar, ..COOKIEJAR, ..addheaders, ..Stream, ..HTTP, ..getheader
+import ..FieldRef, ..iswss, ..getport, ..makeuri, ..aws_throw_error, ..resource, ..Headers, ..Header, ..str, ..aws_error, ..aws_throw_error, ..Future, ..parseuri, ..with_redirect, ..with_request, ..getclient, ..ClientSettings, ..scheme, ..host, ..getport, ..userinfo, ..Client, ..Request, ..Response, ..Message, ..setinputstream!, ..getresponse, ..CookieJar, ..COOKIEJAR, ..addheaders, ..Stream, ..HTTP, ..getheader, ..hasheader, ..header
 
 export WebSocket, send, receive, ping, pong
 
 @enum OpCode::UInt8 CONTINUATION=0x00 TEXT=0x01 BINARY=0x02 CLOSE=0x08 PING=0x09 PONG=0x0A
+
+const DEFAULT_MAX_FRAG = 1024
 
 struct CloseFrameBody
     code::Int
@@ -18,11 +20,26 @@ struct WebSocketError <: Exception
 end
 
 isok(e::WebSocketError) = e.message.code in (1000, 1001, 1005)
+isok(::Any) = false
+
+function isupgrade(r::Message)
+    ((r isa Request && r.method == "GET") ||
+     (r isa Response && r.status == 101)) &&
+    (hasheader(r, "Connection", "upgrade") ||
+     hasheader(r, "Connection", "keep-alive, upgrade")) &&
+    hasheader(r, "Upgrade", "websocket")
+end
+
+isupgrade(s::Stream) = isupgrade(s.request)
+
+Base.@deprecate is_upgrade isupgrade
 
 mutable struct WebSocket
     id::String
     host::String
     path::String
+    maxframesize::Int
+    maxfragmentation::Int
     connect_fut::Future{Nothing}
     readchannel::Channel{Union{String, Vector{UInt8}, WebSocketError}}
     writebuffer::Vector{UInt8}
@@ -40,10 +57,12 @@ mutable struct WebSocket
     fragment_payload::Vector{UInt8}
     closebody::Union{Nothing, CloseFrameBody}
 
-    WebSocket(host::AbstractString, path::AbstractString) = new(
+    WebSocket(host::AbstractString, path::AbstractString; maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG) = new(
         string(rand(UInt32); base=58),
         String(host),
         String(path),
+        Int(maxframesize),
+        Int(maxfragmentation),
         Future{Nothing}(),
         Channel{Union{String, Vector{UInt8}, WebSocketError}}(Inf),
         UInt8[],
@@ -272,7 +291,10 @@ function c_on_incoming_frame_complete(websocket::Ptr{aws_websocket}, frame::Ptr{
 end
 
 function open(f::Function, url;
+    suppress_close_error::Bool=false,
     headers=[],
+    maxframesize::Integer=typemax(Int),
+    maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     allocator::Ptr{aws_allocator}=default_aws_allocator(),
     username=nothing,
     password=nothing,
@@ -306,7 +328,7 @@ function open(f::Function, url;
         path = resource(uri)
         with_request(reqclient, method, path, headers, body, nothing, false, (username !== nothing && password !== nothing) ? "$username:$password" : userinfo(uri), bearer, modifier, false, cookies, cookiejar, verbose) do req
             host = str(uri.host_name)
-            ws = WebSocket(host, path)
+            ws = WebSocket(host, path; maxframesize=maxframesize, maxfragmentation=maxfragmentation)
             ws.handshake_request = req
             ws.handshake_response = Response(0, nothing, nothing, false, allocator)
             options = aws_websocket_client_connection_options(
@@ -341,23 +363,23 @@ function open(f::Function, url;
     try
         f(ws)
     catch e
-        # if !isok(e)
-        #     suppress_close_error || @error "$(ws.id): error" (e, catch_backtrace())
-        # end
-        # if !isclosed(ws)
-        #     if e isa WebSocketError && e.message isa CloseFrameBody
-        #         close(ws, e.message)
-        #     else
-        #         close(ws, CloseFrameBody(1008, "Unexpected client websocket error"))
-        #     end
-        # end
-        # if !isok(e)
+        if !isok(e)
+            suppress_close_error || @error "$(ws.id): error" exception=(e, catch_backtrace())
+        end
+        if !isclosed(ws)
+            if e isa WebSocketError && e.message isa CloseFrameBody
+                close(ws, e.message)
+            else
+                close(ws, CloseFrameBody(1008, "Unexpected client websocket error"))
+            end
+        end
+        if !isok(e)
             rethrow()
-        # end
+        end
     finally
-        # if !isclosed(ws)
-            ws.closebody === nothing && close(ws)
-        # end
+        if !isclosed(ws)
+            close(ws, CloseFrameBody(1000, ""))
+        end
     end
 end
 
@@ -588,9 +610,20 @@ function Base.iterate(ws::WebSocket, st=nothing)
     end
 end
 
+@noinline handshakeerror() = throw(WebSocketError(CloseFrameBody(1002, "Websocket handshake failed")))
+
 # given a WebSocket request, return the 101 response
 function websocket_upgrade_handler(req::Request)
+    if !isupgrade(req)
+        return Response(400, ["content-type" => "text/plain"], "websocket upgrade required", false, req.allocator)
+    end
+    if !hasheader(req, "Sec-WebSocket-Version", "13")
+        return Response(400, ["content-type" => "text/plain"], "unsupported websocket version", false, req.allocator)
+    end
     key = getheader(req.headers, "sec-websocket-key")
+    if key === nothing || isempty(key)
+        return Response(400, ["content-type" => "text/plain"], "missing websocket key", false, req.allocator)
+    end
     resp_ptr = aws_http_message_new_websocket_handshake_response(req.allocator, aws_byte_cursor_from_c_str(key))
     resp_ptr == C_NULL && aws_throw_error()
     resp = Response()
@@ -600,12 +633,19 @@ function websocket_upgrade_handler(req::Request)
     return resp
 end
 
-function websocket_upgrade_function(f)
+function websocket_upgrade_function(f; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, done=nothing)
     #TODO: return WebSocketUpgradeArgs
     # then schedule a task to do the actual upgrade
     function websocket_upgrade(stream::Stream)
-        #TODO: get host/path from stream?
-        ws = WebSocket("", "")
+        resp = isdefined(stream, :response) ? stream.response : nothing
+        if resp === nothing || resp.status != 101
+            done !== nothing && notify(done, CapturedException(ArgumentError("websocket upgrade not accepted"), Base.backtrace()))
+            return
+        end
+        req = stream.request
+        ws = WebSocket(header(req, "host", ""), req.path; maxframesize=maxframesize, maxfragmentation=maxfragmentation)
+        ws.handshake_request = req
+        ws.handshake_response = resp
         stream.websocket_options = aws_websocket_server_upgrade_options(
             0,
             Ptr{Cvoid}(pointer_from_objref(ws)),
@@ -618,9 +658,36 @@ function websocket_upgrade_function(f)
         ws_ptr == C_NULL && aws_throw_error()
         ws.websocket_pointer = ws_ptr
         errormonitor(Threads.@spawn begin
+            err = nothing
             try
                 f(ws)
+            catch e
+                if !isok(e)
+                    err = e
+                    suppress_close_error || @error "$(ws.id): error" exception=(e, catch_backtrace())
+                end
+                if !isclosed(ws)
+                    if e isa WebSocketError && e.message isa CloseFrameBody
+                        close(ws, e.message)
+                    elseif isok(e)
+                        close(ws, CloseFrameBody(1000, ""))
+                    else
+                        close(ws, CloseFrameBody(1011, "Unexpected server websocket error"))
+                    end
+                end
+                if err !== nothing
+                    done !== nothing && notify(done, CapturedException(e, catch_backtrace()))
+                end
+                if !isok(e)
+                    rethrow()
+                end
             finally
+                if err === nothing
+                    if !isclosed(ws)
+                        close(ws, CloseFrameBody(1000, ""))
+                    end
+                    done !== nothing && notify(done, nothing)
+                end
                 aws_websocket_release(ws_ptr)
             end
         end)
@@ -628,8 +695,34 @@ function websocket_upgrade_function(f)
     end
 end
 
-serve!(f, host="127.0.0.1", port=8080; kw...) =
-    HTTP.serve!(websocket_upgrade_handler, host, port; on_stream_complete=websocket_upgrade_function(f), kw...)
+function _upgrade(f::Function, stream::Stream; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG)
+    isupgrade(stream) || handshakeerror()
+    hasheader(stream.request, "Sec-WebSocket-Version", "13") || handshakeerror()
+    key = getheader(stream.request.headers, "sec-websocket-key")
+    (key === nothing || isempty(key)) && handshakeerror()
+    stream.response_started && error("response already started")
+    done = Future{Nothing}()
+    stream.on_complete = websocket_upgrade_function(f; suppress_close_error=suppress_close_error, maxframesize=maxframesize, maxfragmentation=maxfragmentation, done=done)
+    stream.response = websocket_upgrade_handler(stream.request)
+    HTTP.startwrite(stream)
+    HTTP.closewrite(stream)
+    wait(done)
+    return
+end
+
+upgrade(f::Function, stream::Stream; kw...) = _upgrade(f, stream; kw...)
+upgrade(stream::Stream, f::Function; kw...) = _upgrade(f, stream; kw...)
+
+serve!(f, host="127.0.0.1", port=8080; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...) =
+    HTTP.serve!(websocket_upgrade_handler, host, port; on_stream_complete=websocket_upgrade_function(f; suppress_close_error=suppress_close_error, maxframesize=maxframesize, maxfragmentation=maxfragmentation), kw...)
+
+listen!(f, host="127.0.0.1", port=8080; kw...) = serve!(f, host, port; kw...)
+
+function listen(f, host="127.0.0.1", port=8080; kw...)
+    server = listen!(f, host, port; kw...)
+    wait(server)
+    return server
+end
 
 function __init__()
     on_connection_setup[] = @cfunction(c_on_connection_setup, Cvoid, (Ptr{aws_websocket_on_connection_setup_data}, Ptr{Cvoid}))

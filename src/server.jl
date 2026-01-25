@@ -505,6 +505,14 @@ function c_on_server_stream_complete(aws_stream_ptr, error_code, stream_ptr)
                 @error "on_stream_complete error" exception=(e, catch_backtrace())
             end
         end
+        if stream.on_complete !== nothing
+            try
+                Base.invokelatest(stream.on_complete, stream)
+            catch e
+                @error "stream on_complete error" exception=(e, catch_backtrace())
+            end
+            stream.on_complete = nothing
+        end
         if stream.connection.server.access_log !== nothing
             try
                 @info sprint(stream.connection.server.access_log, stream) _group=:access
