@@ -579,6 +579,34 @@
         finalize(client)
     end
 
+    @testset "Proxy basic auth strategy" begin
+        opts = HTTP.proxy_kwargs("http://user:pass@proxy.local:3128", "http")
+        @test opts.proxy_auth == :basic
+        @test opts.proxy_username == "user"
+        @test opts.proxy_password == "pass"
+
+        cs = HTTP.ClientSettings("https", "example.com", UInt32(443);
+            proxy_host="proxy.local",
+            proxy_port=UInt32(3128),
+            proxy_connection_type=:forward,
+            proxy_auth=:basic,
+            proxy_username="user",
+            proxy_password="pass",
+        )
+        client = HTTP.Client(cs)
+        @test client.proxy_options !== nothing
+        @test client.proxy_strategy != C_NULL
+        @test client.proxy_options.proxy_strategy == client.proxy_strategy
+        finalize(client)
+
+        @test_throws ArgumentError HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443);
+            proxy_host="proxy.local",
+            proxy_port=UInt32(3128),
+            proxy_auth=:basic,
+            proxy_username="user",
+        ))
+    end
+
     @testset "HTTP/2 control APIs" begin
         resp = HTTP.get("https://$httpbin/ip")
         if resp.version == HTTP.HTTPVersion(2, 0)

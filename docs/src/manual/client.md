@@ -81,6 +81,9 @@ The following keyword arguments (which correspond to the non-`scheme`/`host`/`po
     - **proxy_ssl_cacert**: The path to the CA certificate file for the proxy.
     - **proxy_ssl_insecure**: Default `false`. If `true`, SSL certificate verification will be disabled for the proxy.
     - **proxy_ssl_alpn_list**: A list of ALPN protocols to use for the proxy connection. Default is `"h2;http/1.1"`.
+    - **proxy_auth**: Optional. Set to `:basic` to enable basic auth on proxy requests.
+    - **proxy_username**: Username for proxy basic auth (requires explicit `proxy_host`/`proxy_port`).
+    - **proxy_password**: Password for proxy basic auth (requires explicit `proxy_host`/`proxy_port`).
   -- Retry options:
     - **max_retries**: The maximum number of times to retry a request. Default is 4.
     - **retry_partition**: Requests utilizing the same retry partition (an arbitrary string) will coordinate retries against each other to not overwhelm a temporarily unresponsive server.

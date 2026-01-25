@@ -22,7 +22,14 @@ function proxy_kwargs(proxy, req_scheme)
         isempty(p.host) && throw(ArgumentError("proxy URL must include a host"))
         port = isempty(p.port) ? (p.scheme == "https" ? 443 : 80) : parse(Int, p.port)
         conn_type = req_scheme in ("https", "wss") ? :tunnel : :forward
-        return (proxy_allow_env_var=false, proxy_host=p.host, proxy_port=UInt32(port), proxy_connection_type=conn_type)
+        if isempty(p.userinfo)
+            return (proxy_allow_env_var=false, proxy_host=p.host, proxy_port=UInt32(port), proxy_connection_type=conn_type)
+        end
+        parts = split(p.userinfo, ":"; limit=2)
+        proxy_user = unescapeuri(parts[1])
+        proxy_pass = length(parts) == 2 ? unescapeuri(parts[2]) : ""
+        return (proxy_allow_env_var=false, proxy_host=p.host, proxy_port=UInt32(port), proxy_connection_type=conn_type,
+            proxy_auth=:basic, proxy_username=proxy_user, proxy_password=proxy_pass)
     else
         throw(ArgumentError("proxy must be a URL String, URI, nothing, or false"))
     end

@@ -89,6 +89,9 @@ Base.@kwdef struct ClientSettings
     proxy_ssl_cacert::Union{Nothing, String} = nothing
     proxy_ssl_insecure::Bool = false
     proxy_ssl_alpn_list::String = "h2;http/1.1"
+    proxy_auth::Union{Nothing, Symbol} = nothing
+    proxy_username::Union{Nothing, String} = nothing
+    proxy_password::Union{Nothing, String} = nothing
     retry_partition::Union{Nothing, String} = nothing
     max_retries::Int = DEFAULT_MAX_RETRIES
     backoff_scale_factor_ms::Int = 25
@@ -151,6 +154,7 @@ mutable struct Client
     # only 1 of proxy_options or proxy_env_settings is set
     proxy_options::Union{Nothing, aws_http_proxy_options}
     proxy_env_settings::Union{Nothing, proxy_env_var_settings}
+    proxy_strategy::Ptr{aws_http_proxy_strategy}
     monitoring_options::Union{Nothing, aws_http_connection_monitoring_options}
     monitoring_observer::Union{Nothing, Any}
     retry_options::aws_standard_retry_options
@@ -196,9 +200,29 @@ function Client(cs::ClientSettings)
     # proxy options
     client.proxy_options = nothing
     client.proxy_env_settings = nothing
+    client.proxy_strategy = C_NULL
+    proxy_connection_type = cs.proxy_connection_type == :forward ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL
     if cs.proxy_host !== nothing && cs.proxy_port !== nothing
+        proxy_auth = cs.proxy_auth
+        if proxy_auth === nothing && (cs.proxy_username !== nothing || cs.proxy_password !== nothing)
+            proxy_auth = :basic
+        end
+        if proxy_auth !== nothing
+            proxy_auth == :basic || throw(ArgumentError("unsupported proxy_auth: $proxy_auth"))
+            cs.proxy_username === nothing && throw(ArgumentError("proxy_username required for basic proxy auth"))
+            cs.proxy_password === nothing && throw(ArgumentError("proxy_password required for basic proxy auth"))
+            auth_opts = aws_http_proxy_strategy_basic_auth_options(
+                proxy_connection_type,
+                aws_byte_cursor_from_c_str(cs.proxy_username),
+                aws_byte_cursor_from_c_str(cs.proxy_password),
+            )
+            GC.@preserve cs begin
+                client.proxy_strategy = aws_http_proxy_strategy_new_basic_auth(cs.allocator, Ref(auth_opts))
+            end
+            client.proxy_strategy == C_NULL && aws_throw_error()
+        end
         client.proxy_options = aws_http_proxy_options(
-            cs.proxy_connection_type == :forward ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL,
+            proxy_connection_type,
             aws_byte_cursor_from_c_str(cs.proxy_host),
             cs.proxy_port % UInt32,
             cs.proxy_ssl_cert === nothing ? C_NULL : LibAwsIO.tlsoptions(cs.proxy_host;
@@ -209,16 +233,18 @@ function Client(cs::ClientSettings)
                 cs.proxy_ssl_insecure,
                 cs.proxy_ssl_alpn_list
             ),
-            #TODO: support proxy_strategy
-            C_NULL, # proxy_strategy::Ptr{aws_http_proxy_strategy}
-            0, # auth_type::aws_http_proxy_authentication_type
+            client.proxy_strategy, # proxy_strategy::Ptr{aws_http_proxy_strategy}
+            AWS_HPAT_NONE, # auth_type::aws_http_proxy_authentication_type
             aws_byte_cursor_from_c_str(""), # auth_username::aws_byte_cursor
             aws_byte_cursor_from_c_str(""), # auth_password::aws_byte_cursor
         )
     elseif cs.proxy_allow_env_var
+        if cs.proxy_auth !== nothing || cs.proxy_username !== nothing || cs.proxy_password !== nothing
+            throw(ArgumentError("proxy auth requires explicit proxy_host/proxy_port"))
+        end
         client.proxy_env_settings = proxy_env_var_settings(
             AWS_HPEV_ENABLE,
-            cs.proxy_connection_type == :forward ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL,
+            proxy_connection_type,
             cs.proxy_ssl_cert === nothing ? C_NULL : LibAwsIO.tlsoptions(cs.proxy_host;
                 cs.proxy_ssl_cert,
                 cs.proxy_ssl_key,
@@ -334,6 +360,10 @@ function Client(cs::ClientSettings)
         if x.http2_stream_manager != C_NULL
             aws_http2_stream_manager_release(x.http2_stream_manager)
             x.http2_stream_manager = C_NULL
+        end
+        if x.proxy_strategy != C_NULL
+            aws_http_proxy_strategy_release(x.proxy_strategy)
+            x.proxy_strategy = C_NULL
         end
         if x.retry_strategy != C_NULL
             aws_retry_strategy_release(x.retry_strategy)
