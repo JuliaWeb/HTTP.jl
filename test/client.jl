@@ -327,6 +327,24 @@
         finalize(client)
     end
 
+    @testset "HTTP/2 control APIs" begin
+        resp = HTTP.get("https://$httpbin/ip")
+        if resp.version == HTTP.HTTPVersion(2, 0)
+            HTTP.open("GET", "https://$httpbin/ip") do io
+                r = HTTP.startread(io)
+                @test r.status == 200
+                rtt = HTTP.http2_ping(io)
+                @test rtt isa UInt64
+                HTTP.http2_change_settings(io, Pair{Int, Int}[])
+                @test length(HTTP.http2_local_settings(io)) == HTTP.AWS_HTTP2_SETTINGS_COUNT
+                @test HTTP.http2_get_sent_goaway(io) === nothing
+                @test HTTP.http2_get_received_goaway(io) === nothing
+            end
+        else
+            @test_skip "HTTP/2 not available for $httpbin"
+        end
+    end
+
     @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
         headers = Dict("User-Agent" => "HTTP.jl")
         query = Dict("hello" => "world")

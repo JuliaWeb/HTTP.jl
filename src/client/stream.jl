@@ -210,6 +210,21 @@ function release_stream_ptr!(s::Stream)
     return
 end
 
+function _with_http2_connection(f::Function, stream::Stream)
+    stream.ptr == C_NULL && throw(ArgumentError("HTTP stream is not initialized"))
+    conn = aws_http_stream_get_connection(stream.ptr)
+    return f(_ensure_http2_connection(conn))
+end
+
+http2_ping(stream::Stream; data=nothing) = _with_http2_connection(conn -> http2_ping(conn; data=data), stream)
+http2_change_settings(stream::Stream, settings) = _with_http2_connection(conn -> http2_change_settings(conn, settings), stream)
+http2_local_settings(stream::Stream) = _with_http2_connection(http2_local_settings, stream)
+http2_remote_settings(stream::Stream) = _with_http2_connection(http2_remote_settings, stream)
+http2_send_goaway(stream::Stream, http2_error::Integer; allow_more_streams::Bool=true, debug_data=nothing) =
+    _with_http2_connection(conn -> http2_send_goaway(conn, http2_error; allow_more_streams=allow_more_streams, debug_data=debug_data), stream)
+http2_get_sent_goaway(stream::Stream) = _with_http2_connection(http2_get_sent_goaway, stream)
+http2_get_received_goaway(stream::Stream) = _with_http2_connection(http2_get_received_goaway, stream)
+
 const on_stream_write_on_complete = Ref{Ptr{Cvoid}}(C_NULL)
 
 function c_on_stream_write_on_complete(aws_stream_ptr, error_code, fut_ptr)
