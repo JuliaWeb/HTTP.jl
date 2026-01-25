@@ -266,6 +266,27 @@
         end
     end
 
+    @testset "Request metrics" begin
+        server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+            body = read(http)
+            HTTP.setstatus(http, 200)
+            HTTP.startwrite(http)
+            write(http, body)
+        end
+        try
+            port = HTTP.port(server)
+            resp = HTTP.post("http://127.0.0.1:$port/"; body="hello")
+            @test resp.metrics.request_body_length == 5
+            @test resp.metrics.response_body_length == 5
+
+            resp = HTTP.post("http://127.0.0.1:$port/"; body=IOBuffer("chunked"))
+            @test resp.metrics.request_body_length == 7
+            @test resp.metrics.response_body_length == 7
+        finally
+            close(server)
+        end
+    end
+
     @testset "Request Options Parity" begin
         headers = ["X-Test" => "1"]
         HTTP.get("https://$httpbin/headers"; headers=headers, copyheaders=true)

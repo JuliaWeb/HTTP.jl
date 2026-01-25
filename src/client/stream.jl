@@ -277,6 +277,9 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
         aws_http1_stream_write_chunk(s.ptr, FieldRef(s, :chunk_options)) != 0 && aws_throw_error()
     end
     wait(fut)
+    if !s.server_side && isdefined(s, :response) && s.response !== nothing
+        s.response.metrics.request_body_length += s.chunk.bodylen
+    end
     return s.chunk.bodylen
 end
 
@@ -518,6 +521,21 @@ function Base.write(s::Stream, data::AbstractVector{UInt8})
     return length(data)
 end
 
+function Base.write(s::Stream, data::StridedVector{UInt8})
+    startwrite(s)
+    if s.server_side
+        if s.ignore_writes
+            return length(data)
+        elseif s.http2
+            s.responsebuf === nothing && (s.responsebuf = IOBuffer())
+            write(s.responsebuf, data)
+            return length(data)
+        end
+    end
+    writechunk(s, data)
+    return length(data)
+end
+
 function Base.write(s::Stream, data::Union{String, SubString{String}})
     startwrite(s)
     if s.server_side
@@ -667,6 +685,7 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
             stream.response = resp = Response(0, nothing, nothing, true, allocator)
             resp.metrics = RequestMetrics()
             resp.request = req
+            resp.metrics.request_body_length = bodylen(req)
             acquire_opts = aws_http2_stream_manager_acquire_stream_options(
                 on_stream_acquired[],
                 pointer_from_objref(acquire_fut),
@@ -741,6 +760,7 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
         stream.response = resp = Response(0, nothing, nothing, true, allocator)
         resp.metrics = RequestMetrics()
         resp.request = req
+        resp.metrics.request_body_length = bodylen(req)
         acquire_opts = aws_http2_stream_manager_acquire_stream_options(
             on_stream_acquired[],
             pointer_from_objref(acquire_fut),
@@ -820,6 +840,7 @@ function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, 
             stream.response = resp = Response(0, nothing, nothing, http2, allocator)
             resp.metrics = RequestMetrics()
             resp.request = req
+            resp.metrics.request_body_length = bodylen(req)
             try
                 aws_http_stream_activate(stream_ptr) != 0 && aws_throw_error()
                 # write chunked body if provided
@@ -891,6 +912,7 @@ function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, 
         stream.response = resp = Response(0, nothing, nothing, http2, allocator)
         resp.metrics = RequestMetrics()
         resp.request = req
+        resp.metrics.request_body_length = bodylen(req)
         try
             aws_http_stream_activate(stream_ptr) != 0 && aws_throw_error()
             # write chunked body if provided
