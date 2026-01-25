@@ -38,6 +38,14 @@ function with_request(
     observelayers::Bool=false,
     context=nothing,
 )
+    if chunkedbody === nothing && body isa IO && !(body isa IOStream) && !(body isa Form)
+        chunkedbody = IOChunkedBody(body)
+        body = nothing
+    end
+    if chunkedbody === nothing && body !== nothing && !(body isa RequestBodyTypes) && Base.isiterable(typeof(body))
+        chunkedbody = body
+        body = nothing
+    end
     # create request
     mutable_headers = (headers isa AbstractVector{<:Pair} && !copyheaders) ? headers : nothing
     req_headers = mkreqheaders(headers, copyheaders)

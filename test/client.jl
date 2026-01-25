@@ -363,6 +363,36 @@
         end
     end
 
+    @testset "Iterable request body streaming" begin
+        mutable struct ChunkedIterable
+            chunks::Vector{Vector{UInt8}}
+            iter_calls::Int
+        end
+        ChunkedIterable(chunks) = ChunkedIterable(chunks, 0)
+        function Base.iterate(it::ChunkedIterable, state::Int=1)
+            state > length(it.chunks) && return nothing
+            it.iter_calls += 1
+            return (it.chunks[state], state + 1)
+        end
+
+        server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
+            body = String(read(http))
+            HTTP.setstatus(http, 200)
+            HTTP.setheader(http, "Content-Type" => "text/plain")
+            HTTP.startwrite(http)
+            write(http, body)
+        end
+        try
+            port = HTTP.port(server)
+            chunks = ChunkedIterable([Vector{UInt8}("hello"), Vector{UInt8}(" "), Vector{UInt8}("world")])
+            resp = HTTP.post("http://127.0.0.1:$port/"; body=chunks)
+            @test String(resp.body) == "hello world"
+            @test chunks.iter_calls == 3
+        finally
+            close(server)
+        end
+    end
+
     @testset "stream helpers" begin
         server = HTTP.listen!("127.0.0.1", 0; listenany=true) do http
             body = String(read(http))
