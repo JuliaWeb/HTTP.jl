@@ -530,6 +530,35 @@
         finalize(client)
     end
 
+    @testset "HTTP/2 initial settings options" begin
+        settings = [
+            HTTP.AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS => 10,
+            HTTP.AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE => 65535,
+        ]
+        cs = HTTP.ClientSettings("https", "example.com", UInt32(443); http2_initial_settings=settings)
+        client = HTTP.Client(cs)
+        @test client.http2_initial_settings !== nothing
+        @test length(client.http2_initial_settings) == 2
+        @test client.conn_manager_opts.num_initial_settings == Csize_t(2)
+        @test client.conn_manager_opts.initial_settings_array != C_NULL
+        finalize(client)
+
+        cs = HTTP.ClientSettings("https", "example.com", UInt32(443);
+            http2_stream_manager=true,
+            http2_initial_settings=settings,
+        )
+        client = HTTP.Client(cs)
+        opts = client.http2_stream_manager_opts
+        @test opts !== nothing
+        @test opts.num_initial_settings == Csize_t(2)
+        @test opts.initial_settings_array != C_NULL
+        finalize(client)
+
+        @test_throws ArgumentError HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443);
+            http2_initial_settings=1,
+        ))
+    end
+
     @testset "HTTP manager metrics" begin
         client = HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443)))
         metrics = HTTP.manager_metrics(client)

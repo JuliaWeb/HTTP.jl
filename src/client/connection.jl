@@ -112,7 +112,8 @@ http2_ping(client::Client; data=nothing) = _with_http2_connection(conn -> http2_
 function _settings_from_pairs(settings::AbstractVector{<:Pair})
     out = Vector{aws_http2_setting}(undef, length(settings))
     for (i, (k, v)) in enumerate(settings)
-        out[i] = aws_http2_setting(aws_http2_settings_id(k), UInt32(v))
+        id = k isa aws_http2_settings_id ? k : aws_http2_settings_id(k)
+        out[i] = aws_http2_setting(id, UInt32(v))
     end
     return out
 end

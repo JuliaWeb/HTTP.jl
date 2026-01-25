@@ -114,6 +114,7 @@ Base.@kwdef struct ClientSettings
     http2_connection_ping_timeout_ms::Int = 0
     http2_ideal_concurrent_streams_per_connection::Int = 0
     http2_max_concurrent_streams_per_connection::Int = 0
+    http2_initial_settings::Union{Nothing, AbstractVector} = nothing
 end
 
 ClientSettings(
@@ -128,7 +129,14 @@ ClientSettings(
     max_retries::Integer=DEFAULT_MAX_RETRIES,
     require_ssl_verification::Bool=true,
     ssl_insecure::Bool=false,
-    kw...) =
+    kw...) = begin
+    http2_initial_settings = Base.get(() -> nothing, kw, :http2_initial_settings)
+    if http2_initial_settings !== nothing && !(http2_initial_settings isa AbstractVector)
+        throw(ArgumentError("http2_initial_settings must be a vector of pairs or aws_http2_setting"))
+    end
+    if haskey(kw, :http2_initial_settings)
+        kw = Base.structdiff((; kw...), (; http2_initial_settings=nothing))
+    end
     ClientSettings(;
         scheme=String(scheme),
         host=String(host),
@@ -136,7 +144,9 @@ ClientSettings(
         connect_timeout_ms=(connect_timeout !== nothing ? connect_timeout * 1000 : connect_timeout_ms),
         max_retries=(retry ? (retries != DEFAULT_MAX_RETRIES ? retries : max_retries) : 0),
         ssl_insecure=(!require_ssl_verification || ssl_insecure),
+        http2_initial_settings=http2_initial_settings,
         kw...)
+end
 
 # make a new ClientSettings object from an existing one w/ just different url values
 @generated function ClientSettings(cs::ClientSettings, scheme::AbstractString, host::AbstractString, port::Integer)
@@ -163,6 +173,7 @@ mutable struct Client
     connection_manager::Ptr{aws_http_connection_manager}
     http2_stream_manager_opts::Union{Nothing, aws_http2_stream_manager_options}
     http2_stream_manager::Ptr{aws_http2_stream_manager}
+    http2_initial_settings::Union{Nothing, Vector{aws_http2_setting}}
 
     Client() = new()
 end
@@ -291,6 +302,19 @@ function Client(cs::ClientSettings)
     )
     client.retry_strategy = aws_retry_strategy_new_standard(cs.allocator, FieldRef(client, :retry_options))
     client.retry_strategy == C_NULL && aws_throw_error()
+    settings_input = cs.http2_initial_settings
+    if settings_input === nothing
+        client.http2_initial_settings = nothing
+    elseif settings_input isa AbstractVector{aws_http2_setting}
+        client.http2_initial_settings = collect(settings_input)
+    elseif settings_input isa AbstractVector{<:Pair}
+        client.http2_initial_settings = _settings_from_pairs(settings_input)
+    else
+        throw(ArgumentError("http2_initial_settings must be a vector of pairs or aws_http2_setting"))
+    end
+    settings_ptr = client.http2_initial_settings === nothing ? C_NULL : pointer(client.http2_initial_settings)
+    settings_len = client.http2_initial_settings === nothing ? 0 : length(client.http2_initial_settings)
+
     client.conn_manager_opts = aws_http_connection_manager_options(
         cs.bootstrap,
         typemax(Csize_t), # initial_window_size::Csize_t
@@ -301,8 +325,8 @@ function Client(cs::ClientSettings)
         monitoring_ptr, # monitoring_options::Ptr{aws_http_connection_monitoring_options}
         aws_byte_cursor_from_c_str(cs.host),
         cs.port % UInt32,
-        C_NULL, # initial_settings_array::Ptr{aws_http2_setting}
-        0, # num_initial_settings::Csize_t
+        settings_ptr, # initial_settings_array::Ptr{aws_http2_setting}
+        settings_len, # num_initial_settings::Csize_t
         0, # max_closed_streams::Csize_t
         false, # http2_conn_manual_window_management::Bool
         client.proxy_options === nothing ? C_NULL : pointer(FieldRef(client, :proxy_options)), # proxy_options::Ptr{aws_http_proxy_options}
@@ -329,8 +353,8 @@ function Client(cs::ClientSettings)
             cs.http2_prior_knowledge,
             aws_byte_cursor_from_c_str(cs.host),
             cs.port % UInt32,
-            C_NULL, # initial_settings_array
-            0, # num_initial_settings
+            settings_ptr, # initial_settings_array
+            settings_len, # num_initial_settings
             0, # max_closed_streams
             false, # conn_manual_window_management
             cs.enable_read_back_pressure,
