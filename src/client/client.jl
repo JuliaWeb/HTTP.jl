@@ -106,6 +106,11 @@ Base.@kwdef struct ClientSettings
     monitoring_statistics_observer::Union{Nothing, Function} = nothing
     http2_prior_knowledge::Bool = false
     http2_stream_manager::Bool = false
+    http2_close_connection_on_server_error::Bool = false
+    http2_connection_ping_period_ms::Int = 0
+    http2_connection_ping_timeout_ms::Int = 0
+    http2_ideal_concurrent_streams_per_connection::Int = 0
+    http2_max_concurrent_streams_per_connection::Int = 0
 end
 
 ClientSettings(
@@ -309,11 +314,11 @@ function Client(cs::ClientSettings)
             client.proxy_env_settings === nothing ? C_NULL : pointer(FieldRef(client, :proxy_env_settings)),
             C_NULL, # shutdown_complete_user_data
             C_NULL, # shutdown_complete_callback
-            false, # close_connection_on_server_error
-            0, # connection_ping_period_ms
-            0, # connection_ping_timeout_ms
-            0, # ideal_concurrent_streams_per_connection
-            0, # max_concurrent_streams_per_connection
+            cs.http2_close_connection_on_server_error, # close_connection_on_server_error
+            cs.http2_connection_ping_period_ms, # connection_ping_period_ms
+            cs.http2_connection_ping_timeout_ms, # connection_ping_timeout_ms
+            cs.http2_ideal_concurrent_streams_per_connection, # ideal_concurrent_streams_per_connection
+            cs.http2_max_concurrent_streams_per_connection, # max_concurrent_streams_per_connection
             cs.max_connections,
         )
         client.http2_stream_manager_opts = opts

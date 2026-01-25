@@ -504,6 +504,26 @@
         finalize(client)
     end
 
+    @testset "HTTP/2 stream manager options" begin
+        cs = HTTP.ClientSettings("https", "example.com", UInt32(443);
+            http2_stream_manager=true,
+            http2_close_connection_on_server_error=true,
+            http2_connection_ping_period_ms=1234,
+            http2_connection_ping_timeout_ms=2345,
+            http2_ideal_concurrent_streams_per_connection=7,
+            http2_max_concurrent_streams_per_connection=9,
+        )
+        client = HTTP.Client(cs)
+        opts = client.http2_stream_manager_opts
+        @test opts !== nothing
+        @test opts.close_connection_on_server_error == true
+        @test opts.connection_ping_period_ms == Csize_t(1234)
+        @test opts.connection_ping_timeout_ms == Csize_t(2345)
+        @test opts.ideal_concurrent_streams_per_connection == Csize_t(7)
+        @test opts.max_concurrent_streams_per_connection == Csize_t(9)
+        finalize(client)
+    end
+
     @testset "HTTP manager metrics" begin
         client = HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443)))
         metrics = HTTP.manager_metrics(client)

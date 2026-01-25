@@ -103,6 +103,11 @@ The following keyword arguments (which correspond to the non-`scheme`/`host`/`po
   -- HTTP/2 options:
     - **http2_prior_knowledge**: Default `false`. If `true`, assume HTTP/2 without ALPN negotiation.
     - **http2_stream_manager**: Default `false`. If `true`, enable the HTTP/2 stream manager for multiplexed requests.
+    - **http2_close_connection_on_server_error**: Default `false`. If `true`, close HTTP/2 connections when a 5xx response is received.
+    - **http2_connection_ping_period_ms**: Default `0` (disabled). Period in milliseconds for sending HTTP/2 PING frames.
+    - **http2_connection_ping_timeout_ms**: Default `0` (AWS default). Timeout in milliseconds for PING responses.
+    - **http2_ideal_concurrent_streams_per_connection**: Default `0` (AWS default). Target streams per connection before opening new connections.
+    - **http2_max_concurrent_streams_per_connection**: Default `0` (no explicit limit). Upper bound for streams per connection.
   -- AWS runtime options:
     - **allocator**: The allocator to use for AWS-allocated memory during the request.
     - **bootstrap**: The AWS client bootstrap to use for the request.
