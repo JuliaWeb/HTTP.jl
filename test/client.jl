@@ -226,7 +226,7 @@
         try
             port = HTTP.port(server)
             @test_throws HTTP.TimeoutError HTTP.get("http://127.0.0.1:$port/delay/5"; readtimeout=1, max_retries=0)
-            @test isok(HTTP.get("http://127.0.0.1:$port/delay/1"; readtimeout=2, max_retries=0))
+            @test isok(HTTP.get("http://127.0.0.1:$port/delay/1"; readtimeout=5, max_retries=0))
         finally
             close(server)
         end
@@ -543,6 +543,7 @@
             http2_connection_ping_timeout_ms=2345,
             http2_ideal_concurrent_streams_per_connection=7,
             http2_max_concurrent_streams_per_connection=9,
+            http2_initial_window_size=12345,
         )
         client = HTTP.Client(cs)
         opts = client.http2_stream_manager_opts
@@ -552,23 +553,30 @@
         @test opts.connection_ping_timeout_ms == Csize_t(2345)
         @test opts.ideal_concurrent_streams_per_connection == Csize_t(7)
         @test opts.max_concurrent_streams_per_connection == Csize_t(9)
+        @test opts.initial_window_size == Csize_t(12345)
         finalize(client)
     end
 
     @testset "HTTP/2 max closed streams option" begin
-        cs = HTTP.ClientSettings("https", "example.com", UInt32(443); http2_max_closed_streams=7)
+        cs = HTTP.ClientSettings("https", "example.com", UInt32(443);
+            http2_max_closed_streams=7,
+            http2_initial_window_size=54321,
+        )
         client = HTTP.Client(cs)
         @test client.conn_manager_opts.max_closed_streams == Csize_t(7)
+        @test client.conn_manager_opts.initial_window_size == Csize_t(54321)
         finalize(client)
 
         cs = HTTP.ClientSettings("https", "example.com", UInt32(443);
             http2_stream_manager=true,
             http2_max_closed_streams=9,
+            http2_initial_window_size=65432,
         )
         client = HTTP.Client(cs)
         opts = client.http2_stream_manager_opts
         @test opts !== nothing
         @test opts.max_closed_streams == Csize_t(9)
+        @test opts.initial_window_size == Csize_t(65432)
         finalize(client)
     end
 

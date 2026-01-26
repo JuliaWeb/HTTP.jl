@@ -115,6 +115,7 @@ Base.@kwdef struct ClientSettings
     http2_ideal_concurrent_streams_per_connection::Int = 0
     http2_max_concurrent_streams_per_connection::Int = 0
     http2_max_closed_streams::Int = 0
+    http2_initial_window_size::Int = typemax(Int)
     http2_initial_settings::Union{Nothing, AbstractVector} = nothing
 end
 
@@ -318,7 +319,7 @@ function Client(cs::ClientSettings)
 
     client.conn_manager_opts = aws_http_connection_manager_options(
         cs.bootstrap,
-        typemax(Csize_t), # initial_window_size::Csize_t
+        cs.http2_initial_window_size, # initial_window_size::Csize_t
         pointer(FieldRef(client, :socket_options)),
         cs.response_first_byte_timeout_ms,
         (cs.scheme == "https" || cs.scheme == "wss") ? pointer(FieldRef(client, :tls_options)) : C_NULL,
@@ -359,7 +360,7 @@ function Client(cs::ClientSettings)
             cs.http2_max_closed_streams, # max_closed_streams
             false, # conn_manual_window_management
             cs.enable_read_back_pressure,
-            typemax(Csize_t), # initial_window_size
+            cs.http2_initial_window_size, # initial_window_size
             monitoring_ptr, # monitoring_options
             client.proxy_options === nothing ? C_NULL : pointer(FieldRef(client, :proxy_options)),
             client.proxy_env_settings === nothing ? C_NULL : pointer(FieldRef(client, :proxy_env_settings)),

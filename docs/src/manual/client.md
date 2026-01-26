@@ -112,6 +112,7 @@ The following keyword arguments (which correspond to the non-`scheme`/`host`/`po
     - **http2_ideal_concurrent_streams_per_connection**: Default `0` (AWS default). Target streams per connection before opening new connections.
     - **http2_max_concurrent_streams_per_connection**: Default `0` (no explicit limit). Upper bound for streams per connection.
     - **http2_max_closed_streams**: Default `0` (AWS default). Max closed streams to remember before ignoring late frames.
+    - **http2_initial_window_size**: Default `typemax(Int)` (AWS default). Initial flow-control window size for HTTP/2.
   -- AWS runtime options:
     - **allocator**: The allocator to use for AWS-allocated memory during the request.
     - **bootstrap**: The AWS client bootstrap to use for the request.
