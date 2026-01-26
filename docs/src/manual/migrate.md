@@ -53,7 +53,8 @@ While the basic request syntax remains similar, there are some changes to keywor
 
 #### Changes to Keyword Arguments
 
-- The `response_stream` keyword argument is still supported, but HTTP.jl no longer automatically closes this stream when done - you need to handle this yourself
+- The preferred keyword for streaming responses is `response_body`. `response_stream` is still supported for compatibility
+- Response streams are not automatically closed; you need to handle this yourself
 - `retry` behavior has been overhauled with more consistent rules for what is retryable
 - The default `max_retries` is now 4 (was 10 in v1.x)
 - Some connection-related options have new defaults (e.g., TLS is now OpenSSL-based by default rather than MbedTLS)
@@ -285,7 +286,8 @@ end
 close(server)
 ```
 
-`listen!` and `serve!` are both supported in v2.0; `serve!` is an alias that matches the HTTP server naming.
+`serve`/`serve!` are the primary request/response handlers. `listen`/`listen!` are stream-handler shorthands
+equivalent to `serve(...; stream=true)`.
 
 ## Error Handling
 
@@ -306,7 +308,7 @@ catch e
     if e isa HTTP.ConnectError
         println("Connection failed: $(e.error)")
     elseif e isa HTTP.TimeoutError
-        println("Request timed out after $(e.timeout) seconds")
+        println("Request timed out after $(e.readtimeout) seconds")
     elseif e isa HTTP.StatusError
         println("Server returned error status: $(e.status)")
     elseif e isa HTTP.RequestError
@@ -329,14 +331,14 @@ jar = HTTP.CookieJar()
 response = HTTP.get("https://example.com", cookiejar=jar)
 
 # Checking cookies
-cookies = HTTP.getcookies(jar, "example.com")
+cookies = HTTP.Cookies.getcookies!(jar, "https", "example.com", "/")
 ```
 
 ## Other Notable Changes
 
 - **URI Handling**: URIs are now handled by the separate URIs.jl package (this change actually occurred in v1.0)
 - **Default Headers**: Headers like `Accept: */*` are now included by default in requests
-- **TLS Implementation**: OpenSSL is now the default TLS provider instead of MbedTLS
+- **TLS Implementation**: TLS is handled by AWS CRT (s2n-tls) instead of MbedTLS
 - **Multithreading**: Improved thread safety throughout the codebase
 - **Performance**: Significant performance improvements, especially for high-throughput servers
 - **Parser APIs**: Low-level parser APIs from v1.x have been removed in v2.0
