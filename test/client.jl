@@ -612,6 +612,15 @@
         ))
     end
 
+    @testset "HTTP/2 window size validation" begin
+        @test_throws ArgumentError HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443);
+            http2_initial_window_size=-1,
+        ))
+        @test_throws ArgumentError HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443);
+            http2_initial_window_size=HTTP.HTTP2_MAX_WINDOW_SIZE + 1,
+        ))
+    end
+
     @testset "HTTP manager metrics" begin
         client = HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443)))
         metrics = HTTP.manager_metrics(client)

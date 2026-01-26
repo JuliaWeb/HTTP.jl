@@ -116,7 +116,7 @@ Base.@kwdef struct ClientSettings
     http2_ideal_concurrent_streams_per_connection::Int = 0
     http2_max_concurrent_streams_per_connection::Int = 0
     http2_max_closed_streams::Int = 0
-    http2_initial_window_size::Int = typemax(Int)
+    http2_initial_window_size::Int = HTTP2_DEFAULT_WINDOW_SIZE
     http2_initial_settings::Union{Nothing, AbstractVector} = nothing
 end
 
@@ -186,6 +186,9 @@ Client(scheme::AbstractString, host::AbstractString, port::Integer; kw...) = Cli
 function Client(cs::ClientSettings)
     client = Client()
     client.settings = cs
+    if cs.http2_initial_window_size < 0 || cs.http2_initial_window_size > HTTP2_MAX_WINDOW_SIZE
+        throw(ArgumentError("http2_initial_window_size must be between 0 and $(HTTP2_MAX_WINDOW_SIZE)"))
+    end
     # socket options
     client.socket_options = aws_socket_options(
         AWS_SOCKET_STREAM, # socket type

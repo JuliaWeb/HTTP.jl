@@ -179,7 +179,7 @@ http2_send_goaway(client::Client, http2_error::Integer; allow_more_streams::Bool
 function http2_update_window(conn::Ptr{aws_http_connection}, increment::Integer)
     _ensure_http2_connection(conn)
     increment < 0 && throw(ArgumentError("increment must be >= 0"))
-    increment > typemax(UInt32) && throw(ArgumentError("increment must be <= $(typemax(UInt32))"))
+    increment > HTTP2_MAX_WINDOW_SIZE && throw(ArgumentError("increment must be <= $(HTTP2_MAX_WINDOW_SIZE)"))
     aws_http2_connection_update_window(conn, UInt32(increment))
     return
 end

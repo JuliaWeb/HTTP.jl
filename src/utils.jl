@@ -1,6 +1,9 @@
 export bytes, isbytes, nbytes, nobytes,
     escapehtml, tocameldash, iso8859_1_to_utf8, ascii_lc_isequal
 
+const HTTP2_DEFAULT_WINDOW_SIZE = 65535
+const HTTP2_MAX_WINDOW_SIZE = 0x7fffffff
+
 """
     HTTPVersion(major, minor)
 

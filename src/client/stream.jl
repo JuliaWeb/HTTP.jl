@@ -242,7 +242,11 @@ http2_update_window(stream::Stream, increment::Integer) =
 function update_window(stream::Stream, increment::Integer)
     stream.ptr == C_NULL && throw(ArgumentError("HTTP stream is not initialized"))
     increment < 0 && throw(ArgumentError("increment must be >= 0"))
-    increment > typemax(Csize_t) && throw(ArgumentError("increment must be <= $(typemax(Csize_t))"))
+    if stream.http2
+        increment > HTTP2_MAX_WINDOW_SIZE && throw(ArgumentError("increment must be <= $(HTTP2_MAX_WINDOW_SIZE)"))
+    else
+        increment > typemax(Csize_t) && throw(ArgumentError("increment must be <= $(typemax(Csize_t))"))
+    end
     aws_http_stream_update_window(stream.ptr, Csize_t(increment))
     return
 end
