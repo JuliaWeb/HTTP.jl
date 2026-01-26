@@ -111,6 +111,7 @@ The following keyword arguments (which correspond to the non-`scheme`/`host`/`po
     - **http2_connection_ping_timeout_ms**: Default `0` (AWS default). Timeout in milliseconds for PING responses.
     - **http2_ideal_concurrent_streams_per_connection**: Default `0` (AWS default). Target streams per connection before opening new connections.
     - **http2_max_concurrent_streams_per_connection**: Default `0` (no explicit limit). Upper bound for streams per connection.
+    - **http2_max_closed_streams**: Default `0` (AWS default). Max closed streams to remember before ignoring late frames.
   -- AWS runtime options:
     - **allocator**: The allocator to use for AWS-allocated memory during the request.
     - **bootstrap**: The AWS client bootstrap to use for the request.

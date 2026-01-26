@@ -114,6 +114,7 @@ Base.@kwdef struct ClientSettings
     http2_connection_ping_timeout_ms::Int = 0
     http2_ideal_concurrent_streams_per_connection::Int = 0
     http2_max_concurrent_streams_per_connection::Int = 0
+    http2_max_closed_streams::Int = 0
     http2_initial_settings::Union{Nothing, AbstractVector} = nothing
 end
 
@@ -327,7 +328,7 @@ function Client(cs::ClientSettings)
         cs.port % UInt32,
         settings_ptr, # initial_settings_array::Ptr{aws_http2_setting}
         settings_len, # num_initial_settings::Csize_t
-        0, # max_closed_streams::Csize_t
+        cs.http2_max_closed_streams, # max_closed_streams::Csize_t
         false, # http2_conn_manual_window_management::Bool
         client.proxy_options === nothing ? C_NULL : pointer(FieldRef(client, :proxy_options)), # proxy_options::Ptr{aws_http_proxy_options}
         client.proxy_env_settings === nothing ? C_NULL : pointer(FieldRef(client, :proxy_env_settings)), # proxy_env_settings::Ptr{proxy_env_var_settings}
@@ -355,7 +356,7 @@ function Client(cs::ClientSettings)
             cs.port % UInt32,
             settings_ptr, # initial_settings_array
             settings_len, # num_initial_settings
-            0, # max_closed_streams
+            cs.http2_max_closed_streams, # max_closed_streams
             false, # conn_manual_window_management
             cs.enable_read_back_pressure,
             typemax(Csize_t), # initial_window_size

@@ -2,6 +2,14 @@ using Test, HTTP, URIs, JSON
 
 const httpbin = get(ENV, "JULIA_TEST_HTTPBINGO_SERVER", "httpbingo.julialang.org")
 isok(r) = r.status == 200
+const HAVE_HTTPBIN = let
+    try
+        resp = HTTP.get("http://$httpbin/ip"; readtimeout=2, max_retries=0)
+        isok(resp)
+    catch
+        false
+    end
+end
 
 include("utils.jl")
 include("headers.jl")

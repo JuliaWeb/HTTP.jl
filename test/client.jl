@@ -1,4 +1,5 @@
 @testset "Client.jl" begin
+    if HAVE_HTTPBIN
     @testset "GET, HEAD, POST, PUT, DELETE, PATCH: $scheme" for scheme in ["http", "https"]
         @test isok(HTTP.get("$scheme://$httpbin/ip"))
         @test isok(HTTP.head("$scheme://$httpbin/ip"))
@@ -192,6 +193,9 @@
         @test r.request.method == "GET"
         @test length(r.body) > 0
     end
+    else
+        @info "Skipping HTTPBin-dependent client tests"
+    end
 
     @testset "Header insertion" begin
         server = HTTP.serve!(req -> begin
@@ -211,8 +215,21 @@
     end
 
     @testset "readtimeout" begin
-    @test_throws HTTP.TimeoutError HTTP.get("http://$httpbin/delay/5"; readtimeout=1, max_retries=0)
-        @test isok(HTTP.get("http://$httpbin/delay/1"; readtimeout=2, max_retries=0))
+        server = HTTP.serve!("127.0.0.1", 0; listenany=true) do req
+            if req.target == "/delay/5"
+                sleep(5)
+            elseif req.target == "/delay/1"
+                sleep(1)
+            end
+            return HTTP.Response(200, "ok")
+        end
+        try
+            port = HTTP.port(server)
+            @test_throws HTTP.TimeoutError HTTP.get("http://127.0.0.1:$port/delay/5"; readtimeout=1, max_retries=0)
+            @test isok(HTTP.get("http://127.0.0.1:$port/delay/1"; readtimeout=2, max_retries=0))
+        finally
+            close(server)
+        end
     end
 
     @testset "Retry semantics" begin
@@ -310,39 +327,43 @@
         end
     end
 
-    @testset "Request Options Parity" begin
-        headers = ["X-Test" => "1"]
-        HTTP.get("https://$httpbin/headers"; headers=headers, copyheaders=true)
-        @test headers == ["X-Test" => "1"]
+    if HAVE_HTTPBIN
+        @testset "Request Options Parity" begin
+            headers = ["X-Test" => "1"]
+            HTTP.get("https://$httpbin/headers"; headers=headers, copyheaders=true)
+            @test headers == ["X-Test" => "1"]
 
-        headers2 = ["X-Test" => "1"]
-        HTTP.get("https://$httpbin/headers"; headers=headers2, copyheaders=false)
-        @test any(h -> lowercase(String(h.first)) == "accept", headers2)
-        @test any(h -> lowercase(String(h.first)) == "x-test", headers2)
+            headers2 = ["X-Test" => "1"]
+            HTTP.get("https://$httpbin/headers"; headers=headers2, copyheaders=false)
+            @test any(h -> lowercase(String(h.first)) == "accept", headers2)
+            @test any(h -> lowercase(String(h.first)) == "x-test", headers2)
 
-        resp = HTTP.get("https://user:pwd@$httpbin/headers"; basicauth=false)
-        @test HTTP.getheader(resp.request.headers, "authorization") === nothing
+            resp = HTTP.get("https://user:pwd@$httpbin/headers"; basicauth=false)
+            @test HTTP.getheader(resp.request.headers, "authorization") === nothing
 
-        resp = HTTP.get("https://user:pwd@$httpbin/headers"; basicauth=true)
-        auth = HTTP.getheader(resp.request.headers, "authorization")
-        @test auth !== nothing && startswith(auth, "Basic ")
+            resp = HTTP.get("https://user:pwd@$httpbin/headers"; basicauth=true)
+            auth = HTTP.getheader(resp.request.headers, "authorization")
+            @test auth !== nothing && startswith(auth, "Basic ")
 
-        resp = HTTP.post("https://$httpbin/anything"; body="hello", detect_content_type=true)
-        @test HTTP.getheader(resp.request.headers, "content-type") == "text/plain; charset=utf-8"
+            resp = HTTP.post("https://$httpbin/anything"; body="hello", detect_content_type=true)
+            @test HTTP.getheader(resp.request.headers, "content-type") == "text/plain; charset=utf-8"
 
-        orig_agent = HTTP.USER_AGENT[]
-        try
-            HTTP.setuseragent!(nothing)
-            resp = HTTP.get("https://$httpbin/headers")
-            @test HTTP.getheader(resp.request.headers, "user-agent") === nothing
-        finally
-            HTTP.setuseragent!(orig_agent)
+            orig_agent = HTTP.USER_AGENT[]
+            try
+                HTTP.setuseragent!(nothing)
+                resp = HTTP.get("https://$httpbin/headers")
+                @test HTTP.getheader(resp.request.headers, "user-agent") === nothing
+            finally
+                HTTP.setuseragent!(orig_agent)
+            end
+
+            pool = HTTP.Pool(1)
+            @test isempty(pool.clients.clients)
+            HTTP.get("https://$httpbin/ip"; pool=pool)
+            @test !isempty(pool.clients.clients)
         end
-
-        pool = HTTP.Pool(1)
-        @test isempty(pool.clients.clients)
-        HTTP.get("https://$httpbin/ip"; pool=pool)
-        @test !isempty(pool.clients.clients)
+    else
+        @info "Skipping HTTPBin-dependent Request Options Parity tests"
     end
 
     @testset "observelayers" begin
@@ -484,23 +505,27 @@
         end
     end
 
-    @testset "HTTP.open streaming" begin
-        resp = HTTP.open("GET", "https://$httpbin/stream/5") do io
-            r = HTTP.startread(io)
-            @test r.status == 200
-            data = String(read(io))
-            @test length(split(chomp(data), '\n')) == 5
-        end
-        @test resp.status == 200
+    if HAVE_HTTPBIN
+        @testset "HTTP.open streaming" begin
+            resp = HTTP.open("GET", "https://$httpbin/stream/5") do io
+                r = HTTP.startread(io)
+                @test r.status == 200
+                data = String(read(io))
+                @test length(split(chomp(data), '\n')) == 5
+            end
+            @test resp.status == 200
 
-        resp = HTTP.open("POST", "https://$httpbin/anything") do io
-            write(io, "hello")
-            HTTP.closewrite(io)
-            r = HTTP.startread(io)
-            data = String(read(io))
-            @test occursin("\"data\":\"hello\"", data)
+            resp = HTTP.open("POST", "https://$httpbin/anything") do io
+                write(io, "hello")
+                HTTP.closewrite(io)
+                r = HTTP.startread(io)
+                data = String(read(io))
+                @test occursin("\"data\":\"hello\"", data)
+            end
+            @test resp.status == 200
         end
-        @test resp.status == 200
+    else
+        @info "Skipping HTTPBin-dependent HTTP.open streaming tests"
     end
 
     @testset "HTTP/2 stream manager smoke" begin
@@ -527,6 +552,23 @@
         @test opts.connection_ping_timeout_ms == Csize_t(2345)
         @test opts.ideal_concurrent_streams_per_connection == Csize_t(7)
         @test opts.max_concurrent_streams_per_connection == Csize_t(9)
+        finalize(client)
+    end
+
+    @testset "HTTP/2 max closed streams option" begin
+        cs = HTTP.ClientSettings("https", "example.com", UInt32(443); http2_max_closed_streams=7)
+        client = HTTP.Client(cs)
+        @test client.conn_manager_opts.max_closed_streams == Csize_t(7)
+        finalize(client)
+
+        cs = HTTP.ClientSettings("https", "example.com", UInt32(443);
+            http2_stream_manager=true,
+            http2_max_closed_streams=9,
+        )
+        client = HTTP.Client(cs)
+        opts = client.http2_stream_manager_opts
+        @test opts !== nothing
+        @test opts.max_closed_streams == Csize_t(9)
         finalize(client)
     end
 
@@ -642,53 +684,57 @@
         ))
     end
 
-    @testset "HTTP/2 control APIs" begin
-        resp = HTTP.get("https://$httpbin/ip")
-        if resp.version == HTTP.HTTPVersion(2, 0)
-            HTTP.open("GET", "https://$httpbin/ip") do io
-                r = HTTP.startread(io)
-                @test r.status == 200
-                rtt = HTTP.http2_ping(io)
-                @test rtt isa UInt64
-                HTTP.http2_change_settings(io, Pair{Int, Int}[])
-                @test length(HTTP.http2_local_settings(io)) == HTTP.AWS_HTTP2_SETTINGS_COUNT
-                @test HTTP.http2_get_sent_goaway(io) === nothing
-                @test HTTP.http2_get_received_goaway(io) === nothing
+    if HAVE_HTTPBIN
+        @testset "HTTP/2 control APIs" begin
+            resp = HTTP.get("https://$httpbin/ip")
+            if resp.version == HTTP.HTTPVersion(2, 0)
+                HTTP.open("GET", "https://$httpbin/ip") do io
+                    r = HTTP.startread(io)
+                    @test r.status == 200
+                    rtt = HTTP.http2_ping(io)
+                    @test rtt isa UInt64
+                    HTTP.http2_change_settings(io, Pair{Int, Int}[])
+                    @test length(HTTP.http2_local_settings(io)) == HTTP.AWS_HTTP2_SETTINGS_COUNT
+                    @test HTTP.http2_get_sent_goaway(io) === nothing
+                    @test HTTP.http2_get_received_goaway(io) === nothing
+                end
+            else
+                @info "HTTP/2 not available for $httpbin"
             end
-        else
-            @info "HTTP/2 not available for $httpbin"
         end
-    end
 
-    @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
-        headers = Dict("User-Agent" => "HTTP.jl")
-        query = Dict("hello" => "world")
-        body = UInt8[1, 2, 3]
-        for uri in ("https://$httpbin/anything", HTTP.URI("https://$httpbin/anything"))
-            # HTTP.request
-            @test isok(HTTP.request("GET", uri; headers=headers, body=body, query=query))
-            @test isok(HTTP.request("GET", uri, headers; body=body, query=query))
-            @test isok(HTTP.request("GET", uri, headers, body; query=query))
-            # HTTP.get
-            @test isok(HTTP.get(uri; headers=headers, body=body, query=query))
-            @test isok(HTTP.get(uri, headers; body=body, query=query))
-            @test isok(HTTP.get(uri, headers, body; query=query))
-            # HTTP.put
-            @test isok(HTTP.put(uri; headers=headers, body=body, query=query))
-            @test isok(HTTP.put(uri, headers; body=body, query=query))
-            @test isok(HTTP.put(uri, headers, body; query=query))
-            # HTTP.post
-            @test isok(HTTP.post(uri; headers=headers, body=body, query=query))
-            @test isok(HTTP.post(uri, headers; body=body, query=query))
-            @test isok(HTTP.post(uri, headers, body; query=query))
-            # HTTP.patch
-            @test isok(HTTP.patch(uri; headers=headers, body=body, query=query))
-            @test isok(HTTP.patch(uri, headers; body=body, query=query))
-            @test isok(HTTP.patch(uri, headers, body; query=query))
-            # HTTP.delete
-            @test isok(HTTP.delete(uri; headers=headers, body=body, query=query))
-            @test isok(HTTP.delete(uri, headers; body=body, query=query))
-            @test isok(HTTP.delete(uri, headers, body; query=query))
+        @testset "Public entry point of HTTP.request and friends (e.g. issue #463)" begin
+            headers = Dict("User-Agent" => "HTTP.jl")
+            query = Dict("hello" => "world")
+            body = UInt8[1, 2, 3]
+            for uri in ("https://$httpbin/anything", HTTP.URI("https://$httpbin/anything"))
+                # HTTP.request
+                @test isok(HTTP.request("GET", uri; headers=headers, body=body, query=query))
+                @test isok(HTTP.request("GET", uri, headers; body=body, query=query))
+                @test isok(HTTP.request("GET", uri, headers, body; query=query))
+                # HTTP.get
+                @test isok(HTTP.get(uri; headers=headers, body=body, query=query))
+                @test isok(HTTP.get(uri, headers; body=body, query=query))
+                @test isok(HTTP.get(uri, headers, body; query=query))
+                # HTTP.put
+                @test isok(HTTP.put(uri; headers=headers, body=body, query=query))
+                @test isok(HTTP.put(uri, headers; body=body, query=query))
+                @test isok(HTTP.put(uri, headers, body; query=query))
+                # HTTP.post
+                @test isok(HTTP.post(uri; headers=headers, body=body, query=query))
+                @test isok(HTTP.post(uri, headers; body=body, query=query))
+                @test isok(HTTP.post(uri, headers, body; query=query))
+                # HTTP.patch
+                @test isok(HTTP.patch(uri; headers=headers, body=body, query=query))
+                @test isok(HTTP.patch(uri, headers; body=body, query=query))
+                @test isok(HTTP.patch(uri, headers, body; query=query))
+                # HTTP.delete
+                @test isok(HTTP.delete(uri; headers=headers, body=body, query=query))
+                @test isok(HTTP.delete(uri, headers; body=body, query=query))
+                @test isok(HTTP.delete(uri, headers, body; query=query))
+            end
         end
+    else
+        @info "Skipping HTTPBin-dependent HTTP/2 control and request entry point tests"
     end
 end

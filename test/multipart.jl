@@ -11,11 +11,15 @@ end
     headers = Dict("User-Agent" => "HTTP.jl")
     body = HTTP.Form(Dict())
     mark(body)
-    @testset "Setting of Content-Type" begin
-        test_multipart(HTTP.request("POST", "https://$httpbin/post", headers, body), body)
-        test_multipart(HTTP.post("https://$httpbin/post", headers, body), body)
-        test_multipart(HTTP.request("PUT", "https://$httpbin/put", headers, body), body)
-        test_multipart(HTTP.put("https://$httpbin/put", headers, body), body)
+    if HAVE_HTTPBIN
+        @testset "Setting of Content-Type" begin
+            test_multipart(HTTP.request("POST", "https://$httpbin/post", headers, body), body)
+            test_multipart(HTTP.post("https://$httpbin/post", headers, body), body)
+            test_multipart(HTTP.request("PUT", "https://$httpbin/put", headers, body), body)
+            test_multipart(HTTP.put("https://$httpbin/put", headers, body), body)
+        end
+    else
+        @info "Skipping HTTPBin-dependent multipart tests"
     end
     @testset "HTTP.Multipart ensure show() works correctly" begin
         # testing that there is no error in printing when nothing is set for filename
