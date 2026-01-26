@@ -110,6 +110,7 @@ Base.@kwdef struct ClientSettings
     http2_prior_knowledge::Bool = false
     http2_stream_manager::Bool = false
     http2_close_connection_on_server_error::Bool = false
+    http2_connection_manual_window_management::Bool = false
     http2_connection_ping_period_ms::Int = 0
     http2_connection_ping_timeout_ms::Int = 0
     http2_ideal_concurrent_streams_per_connection::Int = 0
@@ -330,7 +331,7 @@ function Client(cs::ClientSettings)
         settings_ptr, # initial_settings_array::Ptr{aws_http2_setting}
         settings_len, # num_initial_settings::Csize_t
         cs.http2_max_closed_streams, # max_closed_streams::Csize_t
-        false, # http2_conn_manual_window_management::Bool
+        cs.http2_connection_manual_window_management, # http2_conn_manual_window_management::Bool
         client.proxy_options === nothing ? C_NULL : pointer(FieldRef(client, :proxy_options)), # proxy_options::Ptr{aws_http_proxy_options}
         client.proxy_env_settings === nothing ? C_NULL : pointer(FieldRef(client, :proxy_env_settings)), # proxy_env_settings::Ptr{proxy_env_var_settings}
         cs.max_connections, # max_connections::Csize_t, 512
@@ -358,7 +359,7 @@ function Client(cs::ClientSettings)
             settings_ptr, # initial_settings_array
             settings_len, # num_initial_settings
             cs.http2_max_closed_streams, # max_closed_streams
-            false, # conn_manual_window_management
+            cs.http2_connection_manual_window_management, # conn_manual_window_management
             cs.enable_read_back_pressure,
             cs.http2_initial_window_size, # initial_window_size
             monitoring_ptr, # monitoring_options

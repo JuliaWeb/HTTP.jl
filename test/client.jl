@@ -539,6 +539,7 @@
         cs = HTTP.ClientSettings("https", "example.com", UInt32(443);
             http2_stream_manager=true,
             http2_close_connection_on_server_error=true,
+            http2_connection_manual_window_management=true,
             http2_connection_ping_period_ms=1234,
             http2_connection_ping_timeout_ms=2345,
             http2_ideal_concurrent_streams_per_connection=7,
@@ -549,11 +550,13 @@
         opts = client.http2_stream_manager_opts
         @test opts !== nothing
         @test opts.close_connection_on_server_error == true
+        @test opts.conn_manual_window_management == true
         @test opts.connection_ping_period_ms == Csize_t(1234)
         @test opts.connection_ping_timeout_ms == Csize_t(2345)
         @test opts.ideal_concurrent_streams_per_connection == Csize_t(7)
         @test opts.max_concurrent_streams_per_connection == Csize_t(9)
         @test opts.initial_window_size == Csize_t(12345)
+        @test client.conn_manager_opts.http2_conn_manual_window_management == true
         finalize(client)
     end
 
@@ -705,6 +708,8 @@
                     @test length(HTTP.http2_local_settings(io)) == HTTP.AWS_HTTP2_SETTINGS_COUNT
                     @test HTTP.http2_get_sent_goaway(io) === nothing
                     @test HTTP.http2_get_received_goaway(io) === nothing
+                    @test_nowarn HTTP.http2_update_window(io, 1024)
+                    @test_nowarn HTTP.update_window(io, 1024)
                 end
             else
                 @info "HTTP/2 not available for $httpbin"

@@ -236,6 +236,16 @@ http2_send_goaway(stream::Stream, http2_error::Integer; allow_more_streams::Bool
     _with_http2_connection(conn -> http2_send_goaway(conn, http2_error; allow_more_streams=allow_more_streams, debug_data=debug_data), stream)
 http2_get_sent_goaway(stream::Stream) = _with_http2_connection(http2_get_sent_goaway, stream)
 http2_get_received_goaway(stream::Stream) = _with_http2_connection(http2_get_received_goaway, stream)
+http2_update_window(stream::Stream, increment::Integer) =
+    _with_http2_connection(conn -> http2_update_window(conn, increment), stream)
+
+function update_window(stream::Stream, increment::Integer)
+    stream.ptr == C_NULL && throw(ArgumentError("HTTP stream is not initialized"))
+    increment < 0 && throw(ArgumentError("increment must be >= 0"))
+    increment > typemax(Csize_t) && throw(ArgumentError("increment must be <= $(typemax(Csize_t))"))
+    aws_http_stream_update_window(stream.ptr, Csize_t(increment))
+    return
+end
 
 const on_stream_write_on_complete = Ref{Ptr{Cvoid}}(C_NULL)
 

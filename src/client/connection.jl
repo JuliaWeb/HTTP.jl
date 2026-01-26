@@ -176,6 +176,17 @@ end
 http2_send_goaway(client::Client, http2_error::Integer; allow_more_streams::Bool=true, debug_data=nothing) =
     _with_http2_connection(conn -> http2_send_goaway(conn, http2_error; allow_more_streams=allow_more_streams, debug_data=debug_data), client)
 
+function http2_update_window(conn::Ptr{aws_http_connection}, increment::Integer)
+    _ensure_http2_connection(conn)
+    increment < 0 && throw(ArgumentError("increment must be >= 0"))
+    increment > typemax(UInt32) && throw(ArgumentError("increment must be <= $(typemax(UInt32))"))
+    aws_http2_connection_update_window(conn, UInt32(increment))
+    return
+end
+
+http2_update_window(client::Client, increment::Integer) =
+    _with_http2_connection(conn -> http2_update_window(conn, increment), client)
+
 
 function _get_goaway(get_fn, conn::Ptr{aws_http_connection})
     _ensure_http2_connection(conn)

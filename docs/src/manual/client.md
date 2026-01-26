@@ -107,6 +107,7 @@ The following keyword arguments (which correspond to the non-`scheme`/`host`/`po
     - **http2_prior_knowledge**: Default `false`. If `true`, assume HTTP/2 without ALPN negotiation.
     - **http2_stream_manager**: Default `false`. If `true`, enable the HTTP/2 stream manager for multiplexed requests.
     - **http2_close_connection_on_server_error**: Default `false`. If `true`, close HTTP/2 connections when a 5xx response is received.
+    - **http2_connection_manual_window_management**: Default `false`. If `true`, use manual connection-level flow control (call `HTTP.http2_update_window`).
     - **http2_connection_ping_period_ms**: Default `0` (disabled). Period in milliseconds for sending HTTP/2 PING frames.
     - **http2_connection_ping_timeout_ms**: Default `0` (AWS default). Timeout in milliseconds for PING responses.
     - **http2_ideal_concurrent_streams_per_connection**: Default `0` (AWS default). Target streams per connection before opening new connections.
@@ -206,8 +207,10 @@ When a connection negotiates HTTP/2, you can use the following helpers:
 - `HTTP.http2_local_settings(client)` / `HTTP.http2_remote_settings(client)` -> returns current settings.
 - `HTTP.http2_send_goaway(client, error_code; allow_more_streams=true, debug_data=nothing)`
 - `HTTP.http2_get_sent_goaway(client)` / `HTTP.http2_get_received_goaway(client)` -> returns `nothing` if no GOAWAY.
+- `HTTP.http2_update_window(client_or_stream, increment)` -> increases the HTTP/2 connection flow-control window.
+- `HTTP.update_window(stream, increment)` -> increases the stream flow-control window (useful with `enable_read_back_pressure=true`).
 
-These helpers require an HTTP/2 connection and will throw an `ArgumentError` if the connection is HTTP/1.1.
+HTTP/2-specific helpers require an HTTP/2 connection and will throw an `ArgumentError` if the connection is HTTP/1.1.
 
 ## Trailing Headers
 
