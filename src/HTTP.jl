@@ -1,8 +1,7 @@
 module HTTP
 
 using CodecZlib, URIs, Mmap, Base64, Dates, Sockets
-using LibAwsCommon, LibAwsIO, LibAwsHTTPFork
-import LibAwsCommon: Future, FieldRef
+using AwsIO, AwsHTTP
 
 export HTTPVersion
 export startwrite, startread, closewrite, closeread
@@ -14,6 +13,7 @@ const nobody = UInt8[]
 Base.@deprecate escape escapeuri
 
 include("utils.jl")
+include("statistics.jl")
 include("access_log.jl")
 include("sniff.jl"); using .Sniff
 include("forms.jl"); using .Forms
@@ -21,14 +21,14 @@ include("requestresponse.jl")
 include("exceptions.jl"); using .Exceptions
 struct StatusError <: HTTPError
     request_method::String
-    request_uri::aws_uri
+    request_uri::URI
     response::Response
 end
 
 function Base.showerror(io::IO, e::StatusError)
     println(io, "HTTP.StatusError:")
     println(io, "  Request method: $(e.request_method)")
-    println(io, "  Request URI: $(makeuri(e.request_uri))")
+    println(io, "  Request URI: $(e.request_uri)")
     println(io, "  response:")
     print_response(io, e.response)
     return
@@ -41,7 +41,7 @@ function Base.getproperty(e::StatusError, s::Symbol)
     elseif s == :method
         return e.request_method
     elseif s == :target
-        return makeuri(e.request_uri)
+        return e.request_uri
     else
         return getfield(e, s)
     end
@@ -61,62 +61,16 @@ include("server.jl")
 include("handlers.jl"); using .Handlers
 include("statuses.jl")
 
-#NOTE: this is global process logging in the aws-crt libraries; not appropriate for request-level
+#NOTE: this is process-level logging; not appropriate for request-level
 # logging, but more for debugging the library itself
-mutable struct AwsLogger
-    ptr::Ptr{aws_logger}
-    file_ref::Libc.FILE
-    options::aws_logger_standard_options
-    function AwsLogger(level::Integer, allocator::Ptr{aws_allocator})
-        fr = Libc.FILE(Libc.RawFD(1), "w")
-        opts = aws_logger_standard_options(aws_log_level(0), C_NULL, Ptr{Libc.FILE}(fr.ptr))
-        x = new(Ptr{aws_logger}(aws_mem_acquire(allocator, 64)), fr, opts)
-        aws_logger_init_standard(x.ptr, allocator, FieldRef(x, :options)) != 0 && aws_throw_error()
-        aws_logger_set(x.ptr)
-        return finalizer(x) do x
-            aws_logger_clean_up(x.ptr)
-            aws_mem_release(allocator, x.ptr)
-        end
-    end
-end
-
-const LOGGER = Ref{AwsLogger}()
-
-function set_log_level!(level::Integer, allocator::Ptr{aws_allocator}=default_aws_allocator())
+function set_log_level!(level::Integer)
     @assert 0 <= level <= 7 "log level must be between 0 and 7"
-    LOGGER[] = AwsLogger(level, allocator)
-    @assert aws_logger_set_log_level(LOGGER[].ptr, aws_log_level(level)) == 0
+    AwsIO.set_log_level!(AwsIO.logger_get(), AwsIO.LogLevel.T(level))
     return
 end
 
 function __init__()
-    allocator = default_aws_allocator()
-    LibAwsHTTPFork.init(allocator)
-    # intialize c functions
-    on_acquired[] = @cfunction(c_on_acquired, Cvoid, (Ptr{Cvoid}, Cint, Ptr{aws_retry_token}, Ptr{Cvoid}))
-    # on_shutdown[] = @cfunction(c_on_shutdown, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
-    on_setup[] = @cfunction(c_on_setup, Cvoid, (Ptr{aws_http_connection}, Cint, Ptr{Cvoid}))
-    on_change_settings_complete[] = @cfunction(c_on_change_settings_complete, Cvoid, (Ptr{aws_http_connection}, Cint, Ptr{Cvoid}))
-    on_ping_complete[] = @cfunction(c_on_ping_complete, Cvoid, (Ptr{aws_http_connection}, UInt64, Cint, Ptr{Cvoid}))
-    on_stream_write_on_complete[] = @cfunction(c_on_stream_write_on_complete, Cvoid, (Ptr{aws_http_stream}, Cint, Ptr{Cvoid}))
-    on_response_headers[] = @cfunction(c_on_response_headers, Cint, (Ptr{Cvoid}, Cint, Ptr{aws_http_header}, Csize_t, Ptr{Cvoid}))
-    on_response_header_block_done[] = @cfunction(c_on_response_header_block_done, Cint, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
-    on_response_body[] = @cfunction(c_on_response_body, Cint, (Ptr{Cvoid}, Ptr{aws_byte_cursor}, Ptr{Cvoid}))
-    on_metrics[] = @cfunction(c_on_metrics, Cvoid, (Ptr{Cvoid}, Ptr{aws_http_stream_metrics}, Ptr{Cvoid}))
-    on_complete[] = @cfunction(c_on_complete, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
-    on_destroy[] = @cfunction(c_on_destroy, Cvoid, (Ptr{Cvoid},))
-    on_stream_acquired[] = @cfunction(c_on_stream_acquired, Cvoid, (Ptr{aws_http_stream}, Cint, Ptr{Cvoid}))
-    retry_ready[] = @cfunction(c_retry_ready, Cvoid, (Ptr{aws_retry_token}, Cint, Ptr{Cvoid}))
-    on_incoming_connection[] = @cfunction(c_on_incoming_connection, Cvoid, (Ptr{Cvoid}, Ptr{aws_http_connection}, Cint, Ptr{Cvoid}))
-    on_connection_shutdown[] = @cfunction(c_on_connection_shutdown, Cvoid, (Ptr{Cvoid}, Cint, Ptr{Cvoid}))
-    on_statistics_observer[] = @cfunction(c_on_statistics_observer, Cvoid, (Csize_t, Ptr{aws_array_list}, Ptr{Cvoid}))
-    on_incoming_request[] = @cfunction(c_on_incoming_request, Ptr{aws_http_stream}, (Ptr{aws_http_connection}, Ptr{Cvoid}))
-    on_request_headers[] = @cfunction(c_on_request_headers, Cint, (Ptr{aws_http_stream}, aws_http_header_block, Ptr{aws_http_header}, Csize_t, Ptr{Cvoid}))
-    on_request_header_block_done[] = @cfunction(c_on_request_header_block_done, Cint, (Ptr{aws_http_stream}, aws_http_header_block, Ptr{Cvoid}))
-    on_request_body[] = @cfunction(c_on_request_body, Cint, (Ptr{aws_http_stream}, Ptr{aws_byte_cursor}, Ptr{Cvoid}))
-    on_request_done[] = @cfunction(c_on_request_done, Cint, (Ptr{aws_http_stream}, Ptr{Cvoid}))
-    on_server_stream_complete[] = @cfunction(c_on_server_stream_complete, Cint, (Ptr{aws_http_connection}, Cint, Ptr{Cvoid}))
-    on_destroy_complete[] = @cfunction(c_on_destroy_complete, Cvoid, (Ptr{Cvoid},))
+    AwsHTTP.http_library_init()
     return
 end
 

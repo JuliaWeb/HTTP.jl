@@ -38,7 +38,7 @@ function newmethod(request_method, response_status, redirect_method)
     return "GET"
 end
 
-function with_redirect(f, allocator, method, uri, headers=nothing, body=nothing, redirect::Bool=true, redirect_limit::Int=3, redirect_method=nothing, forwardheaders::Bool=true; context=nothing)
+function with_redirect(f, method, uri, headers=nothing, body=nothing, redirect::Bool=true, redirect_limit::Int=3, redirect_method=nothing, forwardheaders::Bool=true; context=nothing)
     if !redirect || redirect_limit == 0
         # no redirecting
         return f(method, uri, headers, body)
@@ -63,7 +63,7 @@ function with_redirect(f, allocator, method, uri, headers=nothing, body=nothing,
         # follow redirect
         olduri = uri
         newuri = resolvereference(makeuri(uri), location)
-        uri = parseuri(newuri, nothing, allocator)
+        uri = parseuri(newuri, nothing)
         method = newmethod(method, resp.status, redirect_method)
         body = method == "GET" ? nothing : body
         if forwardheaders
@@ -86,3 +86,6 @@ function with_redirect(f, allocator, method, uri, headers=nothing, body=nothing,
     end
     @assert false "Unreachable!"
 end
+
+# compatibility: old callers that pass allocator as first arg
+with_redirect(f, _allocator, method, uri, args...; kw...) = with_redirect(f, method, uri, args...; kw...)

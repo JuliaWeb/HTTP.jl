@@ -57,7 +57,7 @@ Additional keyword arguments are forwarded to `HTTP.open`.
 """
 function download(url::AbstractString, local_path=nothing, headers=Header[]; update_period=1, kw...)
     format_progress(x) = round(x, digits=4)
-    format_bytes(x) = !isfinite(x) ? "∞ B" : Base.format_bytes(round(Int, x))
+    format_bytes(x) = !isfinite(x) ? "∞ B" : Base.format_bytes(round(Int, max(x, 0)))
     format_seconds(x) = "$(round(x; digits=2)) s"
     format_bytes_per_second(x) = format_bytes(x) * "/s"
 
@@ -83,10 +83,12 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
         function report_callback()
             prev_time = now()
             taken_time = (prev_time - start_time).value / 1000
-            average_speed = downloaded_bytes / taken_time
+            average_speed = taken_time > 0 ? downloaded_bytes / taken_time : NaN
             remaining_bytes = total_bytes - downloaded_bytes
-            remaining_time = remaining_bytes / average_speed
-            completion_progress = downloaded_bytes / total_bytes
+            remaining_bytes = isfinite(remaining_bytes) && remaining_bytes < 0 ? 0 : remaining_bytes
+            remaining_time = average_speed > 0 ? remaining_bytes / average_speed : NaN
+            completion_progress = isfinite(total_bytes) && total_bytes > 0 ? downloaded_bytes / total_bytes : NaN
+            completion_progress = isfinite(completion_progress) ? clamp(completion_progress, 0, 1) : completion_progress
             @info("Downloading",
                   source=url,
                   dest=file,

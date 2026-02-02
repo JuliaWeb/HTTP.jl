@@ -49,7 +49,7 @@ function with_request(
     # create request
     mutable_headers = (headers isa AbstractVector{<:Pair} && !copyheaders) ? headers : nothing
     req_headers = mkreqheaders(headers, copyheaders)
-    req = Request(method, path, req_headers, nothing, http2, client.settings.allocator; context=context)
+    req = Request(method, path, req_headers, nothing, http2; context=context)
     # add headers to request
     h = req.headers
     if http2

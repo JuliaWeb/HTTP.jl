@@ -24,30 +24,6 @@ isrecoverable(ex::Sockets.DNSError) = (ex.code == Base.UV_EAI_AGAIN)
 isrecoverable(::AWSError) = true
 isrecoverable(::Exception) = false
 
-const on_acquired = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_acquired(retry_strategy, error_code, retry_token, fut_ptr)
-    fut = unsafe_pointer_to_objref(fut_ptr)
-    if error_code != 0
-        notify(fut, DontRetry(CapturedException(aws_error(error_code), Base.backtrace())))
-    else
-        notify(fut, retry_token)
-    end
-    return
-end
-
-const retry_ready = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_retry_ready(token, error_code::Cint, fut_ptr)
-    fut = unsafe_pointer_to_objref(fut_ptr)
-    if error_code != 0
-        notify(fut, DontRetry(CapturedException(aws_error(error_code), Base.backtrace())))
-    else
-        notify(fut, token)
-    end
-    return
-end
-
 function _default_retryable(method, err, retryable_body::Bool, retry_non_idempotent::Bool)
     retryable_body || return false
     method === nothing && return false
@@ -75,16 +51,16 @@ function _retry_error_type(err)
     if err isa StatusError
         status = err.status
         if status == 429
-            return AWS_RETRY_ERROR_TYPE_THROTTLING
+            return AwsIO.RetryErrorType.THROTTLING
         elseif 500 <= status < 600
-            return AWS_RETRY_ERROR_TYPE_SERVER_ERROR
+            return AwsIO.RetryErrorType.SERVER_ERROR
         elseif 400 <= status < 500
-            return AWS_RETRY_ERROR_TYPE_CLIENT_ERROR
+            return AwsIO.RetryErrorType.CLIENT_ERROR
         else
-            return AWS_RETRY_ERROR_TYPE_TRANSIENT
+            return AwsIO.RetryErrorType.TRANSIENT
         end
     end
-    return AWS_RETRY_ERROR_TYPE_TRANSIENT
+    return AwsIO.RetryErrorType.TRANSIENT
 end
 
 function _set_nretries!(x, nretries::Int)
@@ -114,42 +90,22 @@ function with_retry_token(
     req_ref=nothing,
     context=nothing,
 )
-    retry_token = Ptr{aws_retry_token}(C_NULL)
+    retry_token = nothing
     partition = client.settings.retry_partition
-    partition_ref = Ref{aws_byte_cursor}()
-    partition_ptr = C_NULL
-    if partition !== nothing
-        GC.@preserve partition begin
-            partition_ref[] = aws_byte_cursor_from_c_str(partition)
-        end
-        partition_ptr = partition_ref
-    end
-    use_retry_strategy = retry_delays === nothing && partition !== nothing && client.retry_strategy != C_NULL
+    use_retry_strategy = retry_delays === nothing && partition !== nothing && client.retry_strategy !== nothing
     # If max_retries is 0, we don't need to bother with any retrying
     max_retries = client.settings.max_retries
     if max_retries == 0
-        if context === nothing
-            try
-                return f()
-            catch e
-                if logerrors
-                    url = uri === nothing ? nothing : (uri isa aws_uri ? makeuri(uri) : uri)
-                    @error "HTTP request error" exception=(e, catch_backtrace()) method=method url=url logtag=logtag
-                end
-                rethrow()
-            end
-        end
-        start_time = time()
+        start_time = context !== nothing ? time() : 0.0
         try
             return f()
         catch e
             if logerrors
-                url = uri === nothing ? nothing : (uri isa aws_uri ? makeuri(uri) : uri)
-                @error "HTTP request error" exception=(e, catch_backtrace()) method=method url=url logtag=logtag
+                @error "HTTP request error" exception=(e, catch_backtrace()) method=method url=uri logtag=logtag
             end
             rethrow()
         finally
-            _record_layer!(context, :retrylayer, start_time)
+            context !== nothing && _record_layer!(context, :retrylayer, start_time)
         end
     end
     retry_check_fn = retry_check === nothing ? nothing : retry_check
@@ -162,10 +118,10 @@ function with_retry_token(
             ret = f()
             context === nothing || _record_layer!(context, :retrylayer, attempt_start)
             _set_nretries!(ret, nretries)
-            if retry_token != C_NULL
-                aws_retry_token_record_success(retry_token) != 0 && aws_throw_error()
-                aws_retry_token_release(retry_token)
-                retry_token = C_NULL
+            if retry_token !== nothing
+                AwsIO.retry_token_record_success(retry_token)
+                AwsIO.retry_token_release!(retry_token)
+                retry_token = nothing
             end
             return ret
         catch e
@@ -178,8 +134,7 @@ function with_retry_token(
             end
             if logerrors
                 log_err = err isa DontRetry ? err.error : err
-                url = uri === nothing ? nothing : (uri isa aws_uri ? makeuri(uri) : uri)
-                @error "HTTP request error" exception=(log_err, catch_backtrace()) method=method url=url logtag=logtag
+                @error "HTTP request error" exception=(log_err, catch_backtrace()) method=method url=uri logtag=logtag
             end
             if err isa DontRetry
                 if stream !== nothing && iserror(stream.response.status) && stream.bufferstream !== nothing
@@ -188,17 +143,17 @@ function with_retry_token(
                 end
                 err = err.error
                 _set_nretries!(err, nretries)
-                if retry_token != C_NULL
-                    aws_retry_token_release(retry_token)
-                    retry_token = C_NULL
+                if retry_token !== nothing
+                    AwsIO.retry_token_release!(retry_token)
+                    retry_token = nothing
                 end
                 throw(err)
             end
             if nretries >= max_retries
                 _set_nretries!(err, nretries)
-                if retry_token != C_NULL
-                    aws_retry_token_release(retry_token)
-                    retry_token = C_NULL
+                if retry_token !== nothing
+                    AwsIO.retry_token_release!(retry_token)
+                    retry_token = nothing
                 end
                 throw(err)
             end
@@ -217,33 +172,50 @@ function with_retry_token(
             end
             if !retry
                 _set_nretries!(err, nretries)
-                if retry_token != C_NULL
-                    aws_retry_token_release(retry_token)
-                    retry_token = C_NULL
+                if retry_token !== nothing
+                    AwsIO.retry_token_release!(retry_token)
+                    retry_token = nothing
                 end
                 throw(err)
             end
             if use_retry_strategy
                 try
-                    if retry_token == C_NULL
-                        fut = Future{Ptr{aws_retry_token}}()
-                        GC.@preserve fut begin
-                            rc = aws_retry_strategy_acquire_retry_token(client.retry_strategy, partition_ptr, on_acquired[], pointer_from_objref(fut), UInt64(client.settings.retry_timeout_ms))
-                            rc != 0 && aws_throw_error()
-                            retry_token = wait(fut)
-                        end
-                    end
-                    fut = Future{Ptr{aws_retry_token}}()
-                    error_type = _retry_error_type(err)
-                    GC.@preserve fut begin
-                        rc = aws_retry_strategy_schedule_retry(retry_token, error_type, retry_ready[], pointer_from_objref(fut))
-                        rc != 0 && aws_throw_error()
+                    if retry_token === nothing
+                        fut = Future{Any}()
+                        AwsIO.retry_strategy_acquire_token!(
+                            client.retry_strategy,
+                            partition,
+                            (token, error_code, _) -> begin
+                                if error_code != 0
+                                    notify(fut, DontRetry(CapturedException(aws_error(error_code), Base.backtrace())))
+                                else
+                                    notify(fut, token)
+                                end
+                            end,
+                            nothing,
+                            UInt64(client.settings.retry_timeout_ms)
+                        )
                         retry_token = wait(fut)
                     end
+                    fut = Future{Any}()
+                    error_type = _retry_error_type(err)
+                    AwsIO.retry_token_schedule_retry(
+                        retry_token,
+                        error_type,
+                        (token, error_code, _) -> begin
+                            if error_code != 0
+                                notify(fut, DontRetry(CapturedException(aws_error(error_code), Base.backtrace())))
+                            else
+                                notify(fut, token)
+                            end
+                        end,
+                        nothing
+                    )
+                    retry_token = wait(fut)
                 catch
-                    if retry_token != C_NULL
-                        aws_retry_token_release(retry_token)
-                        retry_token = C_NULL
+                    if retry_token !== nothing
+                        AwsIO.retry_token_release!(retry_token)
+                        retry_token = nothing
                     end
                     _set_nretries!(err, nretries)
                     throw(err)

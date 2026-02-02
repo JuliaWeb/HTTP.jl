@@ -1,138 +1,12 @@
 export Stream, closebody, isaborted, readall!, setstatus
 
-const on_response_headers = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_response_headers(aws_stream_ptr, header_block, header_array::Ptr{aws_http_header}, num_headers, stream_ptr)
-    stream = unsafe_pointer_to_objref(stream_ptr)
-    if header_block == AWS_HTTP_HEADER_BLOCK_TRAILING
-        trailers = stream.response.trailers
-        if trailers === nothing
-            trailers = Headers(stream.response.allocator)
-            stream.response.trailers = trailers
-        end
-        addheaders(trailers, header_array, num_headers)
-    else
-        headers = stream.response.headers
-        addheaders(headers, header_array, num_headers)
-    end
-    return Cint(0)
-end
-
 writebuf(body, maxsize=length(body) == 0 ? typemax(Int64) : length(body)) = Base.GenericIOBuffer{AbstractVector{UInt8}}(body, true, true, true, false, maxsize)
 
-function aws_http2_stream_add_trailing_headers(http2_stream::Ptr{aws_http_stream}, trailing_headers::Ptr{aws_http_headers})
-    return ccall((:aws_http2_stream_add_trailing_headers, LibAwsHTTPFork.libaws_c_http_jq),
-        Cint, (Ptr{aws_http_stream}, Ptr{aws_http_headers}), http2_stream, trailing_headers)
-end
-
-const on_response_header_block_done = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_response_header_block_done(aws_stream_ptr, header_block, stream_ptr)
-    stream = unsafe_pointer_to_objref(stream_ptr)
-    if aws_http_stream_get_incoming_response_status(aws_stream_ptr, FieldRef(stream, :status)) != 0
-        return aws_raise_error(aws_last_error())
-    end
-    stream.response.status = stream.status
-    # if this is the end of the main header block, prepare our response body to be written to, otherwise return
-    if header_block != AWS_HTTP_HEADER_BLOCK_MAIN
-        return Cint(0)
-    end
-    if stream.decompress !== false
-        val = getheader(stream.response.headers, "content-encoding")
-        stream.decompress = val !== nothing && val == "gzip"
-    end
-    notify(stream.headers_ready)
-    return Cint(0)
-end
-
-const on_response_body = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_response_body(aws_stream_ptr, data::Ptr{aws_byte_cursor}, stream_ptr)
-    stream = unsafe_pointer_to_objref(stream_ptr)
-    bc = unsafe_load(data)
-    stream.response.metrics.response_body_length += bc.len
-    if stream.decompress
-        if stream.gzipstream === nothing
-            stream.bufferstream = b = Base.BufferStream()
-            stream.gzipstream = g = CodecZlib.GzipDecompressorStream(b)
-            unsafe_write(g, bc.ptr, bc.len)
-        else
-            unsafe_write(stream.gzipstream, bc.ptr, bc.len)
-        end
-    else
-        if stream.bufferstream === nothing
-            stream.bufferstream = b = Base.BufferStream()
-            unsafe_write(b, bc.ptr, bc.len)
-        else
-            unsafe_write(stream.bufferstream, bc.ptr, bc.len)
-        end
-    end
-    return Cint(0)
-end
-
-const on_metrics = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_metrics(aws_stream_ptr, metrics::Ptr{aws_http_stream_metrics}, stream_ptr)
-    stream = unsafe_pointer_to_objref(stream_ptr)
-    m = unsafe_load(metrics)
-    if m.send_start_timestamp_ns != -1
-        stream.response.metrics.stream_metrics = m
-    end
-    return
-end
-
-const on_complete = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_complete(aws_stream_ptr, error_code, stream_ptr)
-    stream = unsafe_pointer_to_objref(stream_ptr)
-    if stream.gzipstream !== nothing
-        close(stream.gzipstream)
-    end
-    if stream.bufferstream !== nothing
-        close(stream.bufferstream)
-    end
-    if error_code != 0
-        if error_code == AWS_ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT && stream.readtimeout > 0
-            notify(stream.fut, TimeoutError(stream.readtimeout))
-        else
-            notify(stream.fut, CapturedException(aws_error(error_code), Base.backtrace()))
-        end
-    else
-        notify(stream.fut, nothing)
-    end
-    notify(stream.headers_ready)
-    release_stream!(stream)
-    return
-end
-
-const on_destroy = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_destroy(stream)
-    return
-end
-
-const on_stream_acquired = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_stream_acquired(aws_stream_ptr, error_code, fut_ptr)
-    fut = unsafe_pointer_to_objref(fut_ptr)
-    if error_code != 0
-        notify(fut, CapturedException(aws_error(error_code), Base.backtrace()))
-    else
-        notify(fut, aws_stream_ptr)
-    end
-    return
-end
-
-if !@isdefined aws_websocket_server_upgrade_options
-    const aws_websocket_server_upgrade_options = Ptr{Cvoid}
-end
-
 mutable struct Stream{T} <: IO
-    allocator::Ptr{aws_allocator}
     decompress::Union{Nothing, Bool}
     http2::Bool
     server_side::Bool
-    status::Cint # used as a ref
+    status::Int
     fut::Future{Nothing}
     chunk::Union{Nothing, InputStream}
     final_chunk_written::Bool
@@ -150,19 +24,11 @@ mutable struct Stream{T} <: IO
     on_complete::Union{Nothing, Function}
     released::Bool
     # remaining fields are initially undefined
-    ptr::Ptr{aws_http_stream}
-    connection::T # Connection{F, S} (in servers.jl)
-    request_options::aws_http_make_request_options
+    aws_stream::Any # H1Stream or H2Stream from AwsHTTP
+    connection::T
     response::Response
-    method::aws_byte_cursor
-    path::aws_byte_cursor
-    request_handler_options::aws_http_request_handler_options
     request::Request
-    http2_stream_write_data_options::aws_http2_stream_write_data_options
-    chunk_options::aws_http1_chunk_options
-    websocket_options::aws_websocket_server_upgrade_options
-    Stream{T}(allocator, decompress, http2, server_side::Bool=false) where {T} = new{T}(
-        allocator,
+    Stream{T}(decompress, http2, server_side::Bool=false) where {T} = new{T}(
         decompress,
         http2,
         server_side,
@@ -186,46 +52,18 @@ mutable struct Stream{T} <: IO
     )
 end
 
-Base.hash(s::Stream, h::UInt) = hash(s.ptr, h)
+# compatibility: 4-arg version for callers that still pass allocator
+Stream{T}(allocator, decompress, http2, server_side::Bool=false) where {T} =
+    Stream{T}(decompress, http2, server_side)
+
+Base.hash(s::Stream, h::UInt) = hash(objectid(s), h)
 
 getrequest(s::Stream) = s.request
 
-const ACTIVE_STREAMS_LOCK = ReentrantLock()
-const ACTIVE_STREAMS = IdDict{Stream, Bool}()
-
-function retain_stream!(s::Stream)
-    lock(ACTIVE_STREAMS_LOCK)
-    try
-        ACTIVE_STREAMS[s] = true
-    finally
-        unlock(ACTIVE_STREAMS_LOCK)
-    end
-    return
-end
-
-function release_stream!(s::Stream)
-    lock(ACTIVE_STREAMS_LOCK)
-    try
-        pop!(ACTIVE_STREAMS, s, nothing)
-    finally
-        unlock(ACTIVE_STREAMS_LOCK)
-    end
-    return
-end
-
-function release_stream_ptr!(s::Stream)
-    if isdefined(s, :ptr) && s.ptr != C_NULL && !s.released
-        aws_http_stream_release(s.ptr)
-        s.released = true
-        s.ptr = Ptr{aws_http_stream}(C_NULL)
-    end
-    return
-end
-
 function _with_http2_connection(f::Function, stream::Stream)
-    stream.ptr == C_NULL && throw(ArgumentError("HTTP stream is not initialized"))
-    conn = aws_http_stream_get_connection(stream.ptr)
-    return f(_ensure_http2_connection(conn))
+    !isdefined(stream, :aws_stream) && throw(ArgumentError("HTTP stream is not initialized"))
+    conn = stream.aws_stream.owning_connection
+    return f(conn)
 end
 
 http2_ping(stream::Stream; data=nothing) = _with_http2_connection(conn -> http2_ping(conn; data=data), stream)
@@ -240,25 +78,14 @@ http2_update_window(stream::Stream, increment::Integer) =
     _with_http2_connection(conn -> http2_update_window(conn, increment), stream)
 
 function update_window(stream::Stream, increment::Integer)
-    stream.ptr == C_NULL && throw(ArgumentError("HTTP stream is not initialized"))
+    !isdefined(stream, :aws_stream) && throw(ArgumentError("HTTP stream is not initialized"))
     increment < 0 && throw(ArgumentError("increment must be >= 0"))
     if stream.http2
         increment > HTTP2_MAX_WINDOW_SIZE && throw(ArgumentError("increment must be <= $(HTTP2_MAX_WINDOW_SIZE)"))
+        AwsHTTP.h2_stream_update_window!(stream.aws_stream, UInt32(increment))
     else
-        increment > typemax(Csize_t) && throw(ArgumentError("increment must be <= $(typemax(Csize_t))"))
-    end
-    aws_http_stream_update_window(stream.ptr, Csize_t(increment))
-    return
-end
-
-const on_stream_write_on_complete = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_stream_write_on_complete(aws_stream_ptr, error_code, fut_ptr)
-    fut = unsafe_pointer_to_objref(fut_ptr)
-    if error_code != 0
-        notify(fut, CapturedException(aws_error(error_code), Base.backtrace()))
-    else
-        notify(fut, nothing)
+        increment > typemax(UInt64) && throw(ArgumentError("increment too large"))
+        AwsHTTP.http_stream_update_window(stream.aws_stream, UInt64(increment))
     end
     return
 end
@@ -269,43 +96,116 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
                  isdefined(s.response, :request) &&
                  s.response.request.method in ("POST", "PUT", "PATCH")) "write is only allowed for POST, PUT, and PATCH requests"
     end
-    s.chunk = InputStream(s.allocator, chunk)
+    s.chunk = InputStream()
+    is = s.chunk
+    if chunk isa AbstractVector{UInt8}
+        is.bodyref = chunk
+        is.bodylen = length(chunk)
+    elseif chunk isa AbstractString
+        is.bodyref = chunk
+        is.bodylen = sizeof(chunk)
+    else
+        is.bodyref = chunk
+        is.bodylen = nbytes(chunk) === nothing ? 0 : nbytes(chunk)
+    end
     fut = Future{Nothing}()
     if s.http2
-        s.http2_stream_write_data_options = aws_http2_stream_write_data_options(
-            s.chunk.ptr,
-            chunk == "",
-            on_stream_write_on_complete[],
-            pointer_from_objref(fut)
-        )
-        aws_http2_stream_write_data(s.ptr, FieldRef(s, :http2_stream_write_data_options)) != 0 && aws_throw_error()
+        data = if chunk isa AbstractString
+            Vector{UInt8}(codeunits(chunk))
+        elseif chunk isa AbstractVector{UInt8}
+            chunk
+        else
+            UInt8[]
+        end
+        is_final = isempty(data)
+        AwsHTTP.h2_stream_write_data!(s.aws_stream, data;
+            end_stream=is_final,
+            on_complete=(err, ud) -> begin
+                if err != 0
+                    notify(fut, CapturedException(aws_error(err), Base.backtrace()))
+                else
+                    notify(fut, nothing)
+                end
+            end,
+        ) != 0 && aws_throw_error()
     else
-        s.chunk_options = aws_http1_chunk_options(
-            s.chunk.ptr,
-            s.chunk.bodylen,
-            C_NULL,
-            0,
-            on_stream_write_on_complete[],
-            pointer_from_objref(fut)
+        data = if chunk isa AbstractString
+            IOBuffer(codeunits(chunk))
+        elseif chunk isa AbstractVector{UInt8}
+            IOBuffer(chunk)
+        else
+            IOBuffer(UInt8[])
+        end
+        h1chunk = AwsHTTP.h1_chunk_new(data, is.bodylen;
+            on_complete=(stream, err, ud) -> begin
+                if err != 0
+                    notify(fut, CapturedException(aws_error(err), Base.backtrace()))
+                else
+                    notify(fut, nothing)
+                end
+            end,
         )
-        aws_http1_stream_write_chunk(s.ptr, FieldRef(s, :chunk_options)) != 0 && aws_throw_error()
+        AwsHTTP.h1_stream_write_chunk!(s.aws_stream, h1chunk) != 0 && aws_throw_error()
+        _h1_flush_outgoing!(s)
     end
     wait(fut)
     if isdefined(s, :response) && s.response !== nothing
         if s.server_side
-            s.response.metrics.response_body_length += s.chunk.bodylen
+            s.response.metrics.response_body_length += is.bodylen
         else
-            s.response.metrics.request_body_length += s.chunk.bodylen
+            s.response.metrics.request_body_length += is.bodylen
         end
     end
-    return s.chunk.bodylen
+    return is.bodylen
 end
 
 function _ensure_response!(s::Stream)
     if !isdefined(s, :response) || s.response === nothing
-        s.response = Response(200, nothing, nothing, s.http2, s.allocator)
+        s.response = Response(200, nothing, nothing, s.http2)
     end
     return s.response
+end
+
+# Drive H1 outgoing encoder and send encoded bytes through the channel pipeline.
+# Must be called after operations that produce outgoing data (send_response, write_chunk, activate).
+# For H1 only; H2 encoding is handled differently.
+function _h1_flush_outgoing!(s::Stream)
+    !isdefined(s, :aws_stream) && return
+    h1conn = s.aws_stream.owning_connection
+    slot = h1conn.slot
+    slot === nothing && return
+    channel = slot.channel
+    channel === nothing && return
+    if !AwsIO.channel_thread_is_callers_thread(channel)
+        fut = Future{Nothing}()
+        task = AwsIO.ChannelTask((task, ctx, status) -> begin
+            status == AwsIO.TaskStatus.RUN_READY || return notify(fut, nothing)
+            try
+                _h1_flush_outgoing!(s)
+                notify(fut, nothing)
+            catch e
+                notify(fut, CapturedException(e, catch_backtrace()))
+            end
+            return nothing
+        end, nothing, "http_h1_flush_outgoing")
+        AwsIO.channel_schedule_task_now!(channel, task)
+        wait(fut)
+        return
+    end
+    while true
+        status, encoded = AwsHTTP.h1_connection_encode_outgoing!(h1conn)
+        status != AwsHTTP.OP_SUCCESS && throw(AWSError("H1 encoding failed"))
+        isempty(encoded) && break
+        msg = AwsIO.IoMessage(length(encoded))
+        buf = msg.message_data
+        @inbounds for i in 1:length(encoded)
+            buf.mem[i] = encoded[i]
+        end
+        buf.len = Csize_t(length(encoded))
+        result = AwsIO.channel_slot_send_message(slot, msg, AwsIO.ChannelDirection.WRITE)
+        result isa AwsIO.ErrorResult && throw(AWSError("channel slot send failed"))
+    end
+    return
 end
 
 function _send_response!(s::Stream)
@@ -313,7 +213,21 @@ function _send_response!(s::Stream)
         return s.response
     end
     resp = _ensure_response!(s)
-    aws_http_stream_send_response(s.ptr, resp.ptr) != 0 && aws_throw_error()
+    msg = getfield(resp, :msg)
+    if s.http2 && AwsHTTP.http_message_get_protocol_version(msg) != AwsHTTP.HttpVersion.HTTP_2
+        converted = AwsHTTP.http2_message_new_from_http1(msg)
+        converted === nothing && aws_throw_error()
+        setfield!(resp, :msg, converted)
+        msg = converted
+    end
+    if s.http2
+        # H2 sends response via H2Stream API
+        conn = s.aws_stream.owning_connection
+        AwsHTTP.h2_stream_send_response!(s.aws_stream, conn, msg) != 0 && aws_throw_error()
+    else
+        AwsHTTP.h1_stream_send_response!(s.aws_stream, msg) != 0 && aws_throw_error()
+        _h1_flush_outgoing!(s)
+    end
     s.response_started = true
     return resp
 end
@@ -325,9 +239,12 @@ function _server_startwrite(s::Stream)
     resp = _ensure_response!(s)
     if s.request.method == "HEAD"
         s.ignore_writes = true
-        setinputstream!(resp, nothing)
+        _head_response!(resp)
     end
     if s.http2
+        if !s.ignore_writes && resp.inputstream === nothing && hasheader(resp.headers, "content-length")
+            removeheader(resp.headers, "content-length")
+        end
         if !s.response_started
             _send_response!(s)
         end
@@ -362,7 +279,7 @@ function _server_closewrite(s::Stream)
             return
         end
         if resp.trailers !== nothing
-            aws_http2_stream_add_trailing_headers(s.ptr, resp.trailers.ptr) != 0 && aws_throw_error()
+            AwsHTTP.h2_stream_add_trailing_headers!(s.aws_stream, resp.trailers.hdrs) != 0 && aws_throw_error()
         end
         writechunk(s, "")
         s.final_chunk_written = true
@@ -386,7 +303,7 @@ function _server_closewrite(s::Stream)
         return
     end
     if resp.trailers !== nothing
-        aws_http1_stream_add_chunked_trailer(s.ptr, resp.trailers.ptr) != 0 && aws_throw_error()
+        AwsHTTP.h1_stream_add_chunked_trailer!(s.aws_stream, resp.trailers.hdrs) != 0 && aws_throw_error()
     end
     writechunk(s, "")
     s.final_chunk_written = true
@@ -399,8 +316,17 @@ function _activate_stream!(s::Stream)
         return
     end
     if !s.activated
-        aws_http_stream_activate(s.ptr) != 0 && aws_throw_error()
-        s.activated = true
+        if s.http2
+            conn = s.aws_stream.owning_connection
+            status, _ = AwsHTTP.h2_stream_activate!(s.aws_stream, conn)
+            status != 0 && aws_throw_error()
+            s.activated = true
+            AwsHTTP._h2_connection_flush_outgoing!(conn)
+        else
+            AwsHTTP.h1_stream_activate!(s.aws_stream) != 0 && aws_throw_error()
+            s.activated = true
+            _h1_flush_outgoing!(s)
+        end
     end
     return
 end
@@ -605,7 +531,7 @@ function closeread(s::Stream)
             rethrow()
         end
     finally
-        release_stream_ptr!(s)
+        s.released = true
     end
     return s.response
 end
@@ -648,7 +574,7 @@ function setheaderifabsent(s::Stream, k, v)
 end
 
 function addtrailer(s::Stream, headers::Headers)
-    s.ptr == C_NULL && error("stream is not initialized")
+    !isdefined(s, :aws_stream) && error("stream is not initialized")
     if s.server_side
         resp = _ensure_response!(s)
         if resp.trailers === nothing
@@ -661,324 +587,328 @@ function addtrailer(s::Stream, headers::Headers)
         return
     end
     if s.http2
-        aws_http2_stream_add_trailing_headers(s.ptr, headers.ptr) != 0 && aws_throw_error()
+        AwsHTTP.h2_stream_add_trailing_headers!(s.aws_stream, headers.hdrs) != 0 && aws_throw_error()
     else
-        aws_http1_stream_add_chunked_trailer(s.ptr, headers.ptr) != 0 && aws_throw_error()
+        AwsHTTP.h1_stream_add_chunked_trailer!(s.aws_stream, headers.hdrs) != 0 && aws_throw_error()
     end
     return
 end
 
 function addtrailer(s::Stream, h::Pair)
-    trailers = Headers(s.allocator)
+    trailers = Headers()
     addheader(trailers, String(h.first), String(h.second))
     return addtrailer(s, trailers)
 end
 
 function addtrailer(s::Stream, h::AbstractVector{<:Pair})
-    trailers = Headers(s.allocator)
+    trailers = Headers()
     for (k, v) in h
         addheader(trailers, String(k), String(v))
     end
     return addtrailer(s, trailers)
 end
 
-function with_stream_manager(client::Client, req::Request, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator; context=nothing)
-    if context === nothing
-        stream = Stream{Nothing}(allocator, decompress, true, false)
-        stream.readtimeout = readtimeout
-        if on_stream_response_body !== nothing
-            stream.bufferstream = Base.BufferStream()
-        end
-        acquire_fut = Future{Ptr{aws_http_stream}}()
-        GC.@preserve stream acquire_fut begin
-            stream.request_options = aws_http_make_request_options(
-                1,
-                req.ptr,
-                pointer_from_objref(stream),
-                on_response_headers[],
-                on_response_header_block_done[],
-                on_response_body[],
-                on_metrics[],
-                on_complete[],
-                on_destroy[],
-                chunkedbody !== nothing, # http2_use_manual_data_writes
-                readtimeout * 1000 # response_first_byte_timeout_ms
-            )
-            stream.response = resp = Response(0, nothing, nothing, true, allocator)
-            resp.metrics = RequestMetrics()
-            resp.request = req
-            resp.metrics.request_body_length = bodylen(req)
-            acquire_opts = aws_http2_stream_manager_acquire_stream_options(
-                on_stream_acquired[],
-                pointer_from_objref(acquire_fut),
-                FieldRef(stream, :request_options),
-            )
-            aws_http2_stream_manager_acquire_stream(client.http2_stream_manager, Ref(acquire_opts))
-            stream_ptr = wait(acquire_fut)
-            stream.ptr = stream_ptr
-            stream.activated = true
-            try
-                if chunkedbody !== nothing
-                    foreach(chunk -> writechunk(stream, chunk), chunkedbody)
-                    writechunk(stream, "")
-                end
-                if on_stream_response_body !== nothing
-                    try
-                        while !eof(stream.bufferstream)
-                            on_stream_response_body(resp, _readavailable(stream.bufferstream))
-                        end
-                        try
-                            wait(stream.fut)
-                        catch e
-                            e isa HTTPError && rethrow()
-                            throw(RequestError(req, e))
-                        end
-                    catch e
-                        rethrow(DontRetry(e))
-                    end
-                else
-                    try
-                        wait(stream.fut)
-                    catch e
-                        e isa HTTPError && rethrow()
-                        throw(RequestError(req, e))
-                    end
-                    if stream.bufferstream !== nothing
-                        resp.body = _readavailable(stream.bufferstream)
-                    else
-                        resp.body = UInt8[]
-                    end
-                end
-                return resp
-            finally
-                aws_http_stream_release(stream_ptr)
-                stream.released = true
-                stream.ptr = Ptr{aws_http_stream}(C_NULL)
+# ─── Callback builders ───
+# These create the closure callbacks for AwsHTTP stream options.
+# Each closure captures the HTTP.Stream and manipulates it directly
+# when the AwsHTTP library fires the callback.
+
+function _on_response_headers(stream::Stream)
+    return (aws_stream, header_block, headers_vec, user_data) -> begin
+        if header_block == AwsHTTP.HttpHeaderBlock.TRAILING
+            trailers = stream.response.trailers
+            if trailers === nothing
+                trailers = Headers()
+                stream.response.trailers = trailers
+            end
+            for h in headers_vec
+                addheader(trailers, h)
+            end
+        else
+            hdrs = stream.response.headers
+            for h in headers_vec
+                addheader(hdrs, h)
             end
         end
+        return AwsHTTP.OP_SUCCESS
     end
+end
 
-    start_time = time()
-    stream = Stream{Nothing}(allocator, decompress, true, false)
+function _on_response_header_block_done(stream::Stream)
+    return (aws_stream, header_block, user_data) -> begin
+        stream.status = aws_stream.response_status
+        stream.response.status = stream.status
+        if header_block != AwsHTTP.HttpHeaderBlock.MAIN
+            return AwsHTTP.OP_SUCCESS
+        end
+        if stream.decompress !== false
+            val = getheader(stream.response.headers, "content-encoding")
+            stream.decompress = val !== nothing && val == "gzip"
+        end
+        notify(stream.headers_ready)
+        return AwsHTTP.OP_SUCCESS
+    end
+end
+
+function _on_response_body(stream::Stream)
+    return (aws_stream, data::AbstractVector{UInt8}, user_data) -> begin
+        stream.response.metrics.response_body_length += length(data)
+        if stream.decompress
+            if stream.gzipstream === nothing
+                stream.bufferstream = b = Base.BufferStream()
+                stream.gzipstream = g = CodecZlib.GzipDecompressorStream(b)
+                write(g, data)
+            else
+                write(stream.gzipstream, data)
+            end
+        else
+            if stream.bufferstream === nothing
+                stream.bufferstream = b = Base.BufferStream()
+                write(b, data)
+            else
+                write(stream.bufferstream, data)
+            end
+        end
+        return AwsHTTP.OP_SUCCESS
+    end
+end
+
+function _on_metrics(stream::Stream)
+    return (aws_stream, metrics, user_data) -> begin
+        if metrics.send_start_timestamp_ns != -1
+            stream.response.metrics.stream_metrics = metrics
+        end
+        return nothing
+    end
+end
+
+function _on_complete(stream::Stream)
+    return (aws_stream, error_code, user_data) -> begin
+        if stream.gzipstream !== nothing
+            close(stream.gzipstream)
+        end
+        if stream.bufferstream !== nothing
+            close(stream.bufferstream)
+        end
+        if error_code != 0 && !stream.http2 && isdefined(stream, :connection) && stream.connection !== nothing
+            AwsHTTP.http_connection_close(stream.connection)
+        end
+        if error_code != 0
+            if error_code == AwsHTTP.ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT && stream.readtimeout > 0
+                notify(stream.fut, TimeoutError(stream.readtimeout))
+            else
+                notify(stream.fut, CapturedException(aws_error(error_code), Base.backtrace()))
+            end
+        else
+            notify(stream.fut, nothing)
+        end
+        notify(stream.headers_ready)
+        stream.released = true
+        return nothing
+    end
+end
+
+function _make_request_options(stream::Stream, req::Request; chunkedbody=nothing, readtimeout=0)
+    msg = getfield(req, :msg)
+    return AwsHTTP.HttpMakeRequestOptions(;
+        request=msg,
+        on_response_headers=_on_response_headers(stream),
+        on_response_header_block_done=_on_response_header_block_done(stream),
+        on_response_body=_on_response_body(stream),
+        on_metrics=_on_metrics(stream),
+        on_complete=_on_complete(stream),
+        http2_use_manual_data_writes=(chunkedbody !== nothing),
+        response_first_byte_timeout_ms=UInt64(readtimeout * 1000),
+    )
+end
+
+# ─── with_stream_manager: H2 stream manager path ───
+
+function with_stream_manager(client::Client, req::Request, chunkedbody, on_stream_response_body, decompress, readtimeout; context=nothing)
+    start_time = context !== nothing ? time() : 0.0
+    stream = Stream{Nothing}(decompress, true, false)
     stream.readtimeout = readtimeout
     if on_stream_response_body !== nothing
         stream.bufferstream = Base.BufferStream()
     end
-    acquire_fut = Future{Ptr{aws_http_stream}}()
-    GC.@preserve stream acquire_fut begin
-        stream.request_options = aws_http_make_request_options(
-            1,
-            req.ptr,
-            pointer_from_objref(stream),
-            on_response_headers[],
-            on_response_header_block_done[],
-            on_response_body[],
-            on_metrics[],
-            on_complete[],
-            on_destroy[],
-            chunkedbody !== nothing, # http2_use_manual_data_writes
-            readtimeout * 1000 # response_first_byte_timeout_ms
-        )
-        stream.response = resp = Response(0, nothing, nothing, true, allocator)
-        resp.metrics = RequestMetrics()
-        resp.request = req
-        resp.metrics.request_body_length = bodylen(req)
-        acquire_opts = aws_http2_stream_manager_acquire_stream_options(
-            on_stream_acquired[],
-            pointer_from_objref(acquire_fut),
-            FieldRef(stream, :request_options),
-        )
-        aws_http2_stream_manager_acquire_stream(client.http2_stream_manager, Ref(acquire_opts))
-        stream_ptr = wait(acquire_fut)
-        stream.ptr = stream_ptr
-        stream.activated = true
-        try
-            if chunkedbody !== nothing
-                foreach(chunk -> writechunk(stream, chunk), chunkedbody)
-                writechunk(stream, "")
-            end
-            if on_stream_response_body !== nothing
-                try
-                    while !eof(stream.bufferstream)
-                        on_stream_response_body(resp, _readavailable(stream.bufferstream))
-                    end
-                    try
-                        wait(stream.fut)
-                    catch e
-                        e isa HTTPError && rethrow()
-                        throw(RequestError(req, e))
-                    end
-                catch e
-                    rethrow(DontRetry(e))
-                end
+    stream.response = resp = Response(0, nothing, nothing, true)
+    resp.metrics = RequestMetrics()
+    resp.request = req
+    resp.metrics.request_body_length = bodylen(req)
+    request_options = _make_request_options(stream, req; chunkedbody=chunkedbody, readtimeout=readtimeout)
+
+    # Acquire a connection from the H2 stream manager
+    acquire_ch = Base.Channel{Any}(1)
+    AwsHTTP.http2_stream_manager_acquire_stream(client.http2_stream_manager;
+        callback=(conn_or_nothing, error_code, ud) -> begin
+            if error_code != 0 || conn_or_nothing === nothing
+                put!(acquire_ch, error_code != 0 ? error_code : AwsHTTP.ERROR_HTTP_CONNECTION_CLOSED)
             else
+                put!(acquire_ch, conn_or_nothing)
+            end
+        end,
+    )
+    acquired = take!(acquire_ch)
+    if acquired isa Integer
+        throw(CapturedException(aws_error(acquired), Base.backtrace()))
+    end
+    connection = acquired
+
+    # Create stream on the acquired connection
+    aws_stream = AwsHTTP.http_connection_make_request(connection, request_options)
+    aws_stream === nothing && aws_throw_error()
+    stream.aws_stream = aws_stream
+
+    # Activate stream
+    _activate_stream!(stream)
+
+    try
+        # Write chunked body if provided
+        if chunkedbody !== nothing
+            foreach(chunk -> writechunk(stream, chunk), chunkedbody)
+            writechunk(stream, "")
+        end
+        if on_stream_response_body !== nothing
+            try
+                while !eof(stream.bufferstream)
+                    on_stream_response_body(resp, _readavailable(stream.bufferstream))
+                end
                 try
                     wait(stream.fut)
                 catch e
                     e isa HTTPError && rethrow()
                     throw(RequestError(req, e))
                 end
-                if stream.bufferstream !== nothing
-                    resp.body = _readavailable(stream.bufferstream)
-                else
-                    resp.body = UInt8[]
-                end
+            catch e
+                rethrow(DontRetry(e))
             end
-            return resp
-        finally
-            aws_http_stream_release(stream_ptr)
-            stream.released = true
-            stream.ptr = Ptr{aws_http_stream}(C_NULL)
+        else
+            try
+                wait(stream.fut)
+            catch e
+                e isa HTTPError && rethrow()
+                throw(RequestError(req, e))
+            end
+            if stream.bufferstream !== nothing
+                resp.body = _readavailable(stream.bufferstream)
+            else
+                resp.body = UInt8[]
+            end
+        end
+        return resp
+    finally
+        stream.released = true
+        AwsHTTP.http2_stream_manager_release_stream(client.http2_stream_manager, connection)
+        if context !== nothing
             _record_layer!(context, :streamlayer, start_time)
         end
     end
 end
 
-function with_stream(conn::Ptr{aws_http_connection}, req::Request, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator; context=nothing)
-    if context === nothing
-        stream = Stream{Nothing}(allocator, decompress, http2, false)
-        stream.readtimeout = readtimeout
-        if on_stream_response_body !== nothing
-            stream.bufferstream = Base.BufferStream()
-        end
-        GC.@preserve stream begin
-            stream.request_options = aws_http_make_request_options(
-                1,
-                req.ptr,
-                pointer_from_objref(stream),
-                on_response_headers[],
-                on_response_header_block_done[],
-                on_response_body[],
-                on_metrics[],
-                on_complete[],
-                on_destroy[],
-                http2 && chunkedbody !== nothing, # http2_use_manual_data_writes
-                readtimeout * 1000 # response_first_byte_timeout_ms
-            )
-            stream_ptr = aws_http_connection_make_request(conn, FieldRef(stream, :request_options))
-            stream_ptr == C_NULL && aws_throw_error()
-            stream.ptr = stream_ptr
-            http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
-            stream.response = resp = Response(0, nothing, nothing, http2, allocator)
-            resp.metrics = RequestMetrics()
-            resp.request = req
-            resp.metrics.request_body_length = bodylen(req)
-            try
-                aws_http_stream_activate(stream_ptr) != 0 && aws_throw_error()
-                # write chunked body if provided
-                if chunkedbody !== nothing
-                    foreach(chunk -> writechunk(stream, chunk), chunkedbody)
-                    # write final chunk
-                    writechunk(stream, "")
-                end
-                if on_stream_response_body !== nothing
-                    try
-                        while !eof(stream.bufferstream)
-                            on_stream_response_body(resp, _readavailable(stream.bufferstream))
-                        end
-                        try
-                            wait(stream.fut)
-                        catch e
-                            e isa HTTPError && rethrow()
-                            throw(RequestError(req, e))
-                        end
-                    catch e
-                        rethrow(DontRetry(e))
-                    end
-                else
-                    try
-                        wait(stream.fut)
-                    catch e
-                        e isa HTTPError && rethrow()
-                        throw(RequestError(req, e))
-                    end
-                    if stream.bufferstream !== nothing
-                        resp.body = _readavailable(stream.bufferstream)
-                    else
-                        resp.body = UInt8[]
-                    end
-                end
-                return resp
-            finally
-                aws_http_stream_release(stream_ptr)
-                stream.released = true
-                stream.ptr = Ptr{aws_http_stream}(C_NULL)
-            end
-        end # GC.@preserve
-    end
+# compatibility: 8-arg version for callers that still pass allocator
+with_stream_manager(client, req, chunkedbody, on_stream_response_body, decompress, readtimeout, _allocator; context=nothing) =
+    with_stream_manager(client, req, chunkedbody, on_stream_response_body, decompress, readtimeout; context=context)
 
-    start_time = time()
-    stream = Stream{Nothing}(allocator, decompress, http2, false)
+# ─── with_stream: connection manager path ───
+
+function with_stream(conn, req::Request, chunkedbody, on_stream_response_body, decompress, http2, readtimeout; context=nothing)
+    start_time = context !== nothing ? time() : 0.0
+    stream = Stream{typeof(conn)}(decompress, http2, false)
     stream.readtimeout = readtimeout
     if on_stream_response_body !== nothing
         stream.bufferstream = Base.BufferStream()
     end
-    GC.@preserve stream begin
-        stream.request_options = aws_http_make_request_options(
-            1,
-            req.ptr,
-            pointer_from_objref(stream),
-            on_response_headers[],
-            on_response_header_block_done[],
-            on_response_body[],
-            on_metrics[],
-            on_complete[],
-            on_destroy[],
-            http2 && chunkedbody !== nothing, # http2_use_manual_data_writes
-            readtimeout * 1000 # response_first_byte_timeout_ms
-        )
-        stream_ptr = aws_http_connection_make_request(conn, FieldRef(stream, :request_options))
-        stream_ptr == C_NULL && aws_throw_error()
-        stream.ptr = stream_ptr
-        http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
-        stream.response = resp = Response(0, nothing, nothing, http2, allocator)
-        resp.metrics = RequestMetrics()
-        resp.request = req
-        resp.metrics.request_body_length = bodylen(req)
-        try
-            aws_http_stream_activate(stream_ptr) != 0 && aws_throw_error()
-            # write chunked body if provided
-            if chunkedbody !== nothing
-                foreach(chunk -> writechunk(stream, chunk), chunkedbody)
-                # write final chunk
-                writechunk(stream, "")
+    stream.connection = conn
+
+    request_options = _make_request_options(stream, req;
+        chunkedbody=(http2 ? chunkedbody : nothing),
+        readtimeout=readtimeout)
+
+    aws_stream = AwsHTTP.http_connection_make_request(conn, request_options)
+    aws_stream === nothing && aws_throw_error()
+    stream.aws_stream = aws_stream
+    # Check actual connection version (may have been upgraded)
+    actual_http2 = AwsHTTP.http_connection_get_version(conn) == AwsHTTP.HttpVersion.HTTP_2
+    stream.http2 = actual_http2
+    stream.response = resp = Response(0, nothing, nothing, actual_http2)
+    resp.metrics = RequestMetrics()
+    resp.request = req
+    resp.metrics.request_body_length = bodylen(req)
+    timeout_task = nothing
+    if readtimeout > 0
+        timeout_task = errormonitor(Threads.@spawn begin
+            sleep(readtimeout)
+            (@atomic stream.fut.set) != 0 && return
+            if isdefined(stream, :connection)
+                conn = stream.connection
+                conn !== nothing && AwsHTTP.http_connection_close(conn)
             end
-            if on_stream_response_body !== nothing
-                try
-                    while !eof(stream.bufferstream)
-                        on_stream_response_body(resp, _readavailable(stream.bufferstream))
+            notify(stream.fut, TimeoutError(readtimeout))
+            if isdefined(stream, :aws_stream)
+                if stream.http2
+                    AwsHTTP.h2_stream_cancel!(stream.aws_stream)
+                else
+                    AwsHTTP.http_stream_cancel(stream.aws_stream)
+                    if isdefined(stream, :connection)
+                        conn = stream.connection
+                        if conn !== nothing && conn.slot !== nothing && conn.slot.channel !== nothing
+                            AwsIO.channel_shutdown!(conn.slot.channel, AwsHTTP.ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT; shutdown_immediately=true)
+                        elseif conn !== nothing
+                            AwsHTTP.http_connection_close(conn)
+                        end
                     end
-                    try
-                        wait(stream.fut)
-                    catch e
-                        e isa HTTPError && rethrow()
-                        throw(RequestError(req, e))
-                    end
-                catch e
-                    rethrow(DontRetry(e))
                 end
-            else
+            end
+        end)
+    end
+
+    try
+        _activate_stream!(stream)
+        # Write chunked body if provided
+        if chunkedbody !== nothing
+            foreach(chunk -> writechunk(stream, chunk), chunkedbody)
+            writechunk(stream, "")
+        end
+        if on_stream_response_body !== nothing
+            try
+                while !eof(stream.bufferstream)
+                    on_stream_response_body(resp, _readavailable(stream.bufferstream))
+                end
                 try
                     wait(stream.fut)
                 catch e
                     e isa HTTPError && rethrow()
                     throw(RequestError(req, e))
                 end
-                if stream.bufferstream !== nothing
-                    resp.body = _readavailable(stream.bufferstream)
-                else
-                    resp.body = UInt8[]
-                end
+            catch e
+                rethrow(DontRetry(e))
             end
-            return resp
-        finally
-            aws_http_stream_release(stream_ptr)
-            stream.released = true
-            stream.ptr = Ptr{aws_http_stream}(C_NULL)
+        else
+            try
+                wait(stream.fut)
+            catch e
+                e isa HTTPError && rethrow()
+                throw(RequestError(req, e))
+            end
+            if stream.bufferstream !== nothing
+                resp.body = _readavailable(stream.bufferstream)
+            else
+                resp.body = UInt8[]
+            end
+        end
+        return resp
+    finally
+        timeout_task = nothing
+        stream.released = true
+        if context !== nothing
             _record_layer!(context, :streamlayer, start_time)
         end
-    end # GC.@preserve
+    end
 end
+
+# compatibility: 9-arg version for callers that still pass allocator
+with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, _allocator; context=nothing) =
+    with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout; context=context)
 
 # can be removed once https://github.com/JuliaLang/julia/pull/57211 is fully released
 function _readavailable(this::Base.BufferStream)

@@ -3,6 +3,56 @@ export bytes, isbytes, nbytes, nobytes,
 
 const HTTP2_DEFAULT_WINDOW_SIZE = 65535
 const HTTP2_MAX_WINDOW_SIZE = 0x7fffffff
+const AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS = AwsHTTP.Http2SettingsId.MAX_CONCURRENT_STREAMS
+const AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE = AwsHTTP.Http2SettingsId.INITIAL_WINDOW_SIZE
+const AWS_HTTP2_SETTINGS_COUNT = Int(AwsHTTP.HTTP2_SETTINGS_END_RANGE - AwsHTTP.HTTP2_SETTINGS_BEGIN_RANGE)
+const _H2_CHANNEL_SUPPORTED = AwsHTTP.H2Connection <: AwsIO.AbstractChannelHandler
+
+function _normalize_alpn_list(alpn_list::Union{String, Nothing})
+    alpn_list === nothing && return nothing
+    isempty(alpn_list) && return alpn_list
+    _H2_CHANNEL_SUPPORTED && return alpn_list
+    parts = split(alpn_list, ';'; keepempty = false)
+    filtered = [p for p in parts if lowercase(p) != "h2"]
+    isempty(filtered) && return "http/1.1"
+    return join(filtered, ';')
+end
+
+@inline function _alpn_includes_h2(alpn_list::Union{String, Nothing})::Bool
+    alpn_list === nothing && return false
+    for part in split(alpn_list, ';'; keepempty = false)
+        lowercase(part) == "h2" && return true
+    end
+    return false
+end
+
+function _should_use_nw_tls(alpn_list::Union{String, Nothing})::Bool
+    @static if Sys.isapple()
+        return _use_nw_sockets() && _alpn_includes_h2(alpn_list)
+    else
+        return false
+    end
+end
+
+function _use_nw_sockets()::Bool
+    @static if Sys.isapple()
+        AwsIO._tls_set_use_secitem_from_env()
+        return AwsIO._NW_SHIM_LIB != "" && AwsIO.is_using_secitem()
+    else
+        return false
+    end
+end
+
+function _tls_alpn_list(tls_opts)
+    tls_opts === nothing && return nothing
+    if hasproperty(tls_opts, :alpn_list) && tls_opts.alpn_list !== nothing
+        return tls_opts.alpn_list
+    end
+    if hasproperty(tls_opts, :ctx) && tls_opts.ctx !== nothing
+        return tls_opts.ctx.options.alpn_list
+    end
+    return nothing
+end
 
 """
     HTTPVersion(major, minor)
@@ -149,8 +199,7 @@ function ascii_lc_isequal(a, b)
     return true
 end
 
-function parseuri(url, query, allocator)
-    uri_ref = Ref{aws_uri}()
+function parseuri(url, query)
     if url isa AbstractString
         url_str = String(url) * (query === nothing ? "" : ("?" * URIs.escapeuri(query)))
     elseif url isa URI
@@ -158,12 +207,11 @@ function parseuri(url, query, allocator)
     else
         throw(ArgumentError("url must be an AbstractString or URI"))
     end
-    GC.@preserve url_str begin
-        url_ref = Ref(aws_byte_cursor(sizeof(url_str), pointer(url_str)))
-        aws_uri_init_parse(uri_ref, allocator, url_ref) != 0 && aws_throw_error()
-    end
-    return uri_ref[]
+    return URIs.URI(url_str)
 end
+
+# compatibility: 3-arg version for callers that still pass allocator
+parseuri(url, query, _allocator) = parseuri(url, query)
 
 """
     bytes(x)
@@ -194,74 +242,123 @@ nbytes(x::Vector{IOBuffer}) = sum(bytesavailable, x)
 
 const nobytes = view(UInt8[], 1:0)
 
-str(bc::aws_byte_cursor) = bc.ptr == C_NULL || bc.len == 0 ? "" : unsafe_string(bc.ptr, bc.len)
-
-function print_uri(io, uri::aws_uri)
-    print(io, "scheme: ", str(uri.scheme), "\n")
-    print(io, "userinfo: ", str(uri.userinfo), "\n")
-    print(io, "host_name: ", str(uri.host_name), "\n")
-    print(io, "port: ", Int(uri.port), "\n")
-    print(io, "path: ", str(uri.path), "\n")
-    print(io, "query: ", str(uri.query_string), "\n")
-    return
-end
-
-scheme(uri::aws_uri) = str(uri.scheme)
-userinfo(uri::aws_uri) = str(uri.userinfo)
-host(uri::aws_uri) = str(uri.host_name)
-port(uri::aws_uri) = uri.port
-path(uri::aws_uri) = str(uri.path)
-query(uri::aws_uri) = str(uri.query_string)
-
-function resource(uri::aws_uri)
-    ref = Ref(uri)
-    GC.@preserve ref begin
-        bc = aws_uri_path_and_query(ref)
-        path = str(unsafe_load(bc))
-        return isempty(path) ? "/" : path
+# URI accessor helpers that work on URIs.URI
+scheme(uri::URI) = uri.scheme
+userinfo(uri::URI) = uri.userinfo
+host(uri::URI) = uri.host
+function port(uri::URI)
+    p = uri.port
+    if p === nothing || isempty(p)
+        return UInt32(0)
     end
+    return UInt32(parse(Int, p))
+end
+path(uri::URI) = uri.path
+query(uri::URI) = uri.query
+
+function resource(uri::URI)
+    p = uri.path
+    q = uri.query
+    r = isempty(p) ? "/" : p
+    return isempty(q) ? r : string(r, "?", q)
 end
 
 const URI_SCHEME_HTTPS = "https"
 const URI_SCHEME_WSS = "wss"
-ishttps(sch) = aws_byte_cursor_eq_c_str_ignore_case(sch, URI_SCHEME_HTTPS)
-iswss(sch) = aws_byte_cursor_eq_c_str_ignore_case(sch, URI_SCHEME_WSS)
-function getport(uri::aws_uri)
-    sch = Ref(uri.scheme)
-    GC.@preserve sch begin
-        return UInt32(uri.port != 0 ? uri.port : (ishttps(sch) || iswss(sch)) ? 443 : 80)
-    end
+ishttps(sch::AbstractString) = lowercase(sch) == URI_SCHEME_HTTPS
+iswss(sch::AbstractString) = lowercase(sch) == URI_SCHEME_WSS
+function getport(uri::URI)
+    p = port(uri)
+    return p != 0 ? p : (ishttps(scheme(uri)) || iswss(scheme(uri))) ? UInt32(443) : UInt32(80)
 end
 
-function makeuri(u::aws_uri)
-    return URIs.URI(
-        scheme=str(u.scheme),
-        userinfo=isempty(str(u.userinfo)) ? URIs.absent : str(u.userinfo),
-        host=str(u.host_name),
-        port=u.port == 0 ? URIs.absent : u.port,
-        path=isempty(str(u.path)) ? URIs.absent : str(u.path),
-        query=isempty(str(u.query_string)) ? URIs.absent : str(u.query_string),
-    )
-end
+makeuri(u::URI) = u
 
 struct AWSError <: Exception
     msg::String
 end
 
-aws_error() = AWSError(unsafe_string(aws_error_debug_str(aws_last_error())))
-aws_error(error_code) = AWSError(unsafe_string(aws_error_str(error_code)))
+function _resolve_error_str(error_code::Integer)
+    ec = Int(error_code)
+    # AwsHTTP has its own String-based error table for HTTP-range codes
+    if ec >= AwsHTTP.ERROR_HTTP_UNKNOWN && ec <= AwsHTTP.ERROR_HTTP_END_RANGE
+        return AwsHTTP.http_error_str(ec)
+    end
+    # AwsIO.error_str returns Ptr{UInt8}; convert to String
+    return unsafe_string(AwsIO.error_str(ec))
+end
+
+aws_error() = AWSError(_resolve_error_str(AwsIO.last_error()))
+aws_error(error_code) = AWSError(_resolve_error_str(error_code))
 aws_throw_error() = throw(aws_error())
+
+# Simple Future type for async callback coordination.
+# Replaces LibAwsCommon.Future. Supports notify/wait pattern:
+#   notify(f, value::T) -> success
+#   notify(f, err::Exception) -> error
+#   wait(f) -> returns T or throws Exception
+mutable struct Future{T}
+    const notify_cond::Threads.Condition
+    @atomic set::Int8 # 0=pending, 1=success, 2=error
+    result::Union{Exception, T}
+    Future{T}() where {T} = new{T}(Threads.Condition(), 0)
+end
+
+Future() = Future{Nothing}()
+
+function Base.wait(f::Future{T}) where {T}
+    set = @atomic f.set
+    set == 1 && return f.result::T
+    set == 2 && throw(f.result::Exception)
+    lock(f.notify_cond)
+    try
+        set = f.set
+        set == 1 && return f.result::T
+        set == 2 && throw(f.result::Exception)
+        wait(f.notify_cond)
+    finally
+        unlock(f.notify_cond)
+    end
+    f.set == 1 && return f.result::T
+    throw(f.result::Exception)
+end
+
+function Base.notify(f::Future{T}, result::T) where {T}
+    lock(f.notify_cond)
+    try
+        f.set != 0 && return
+        f.result = result
+        @atomic f.set = 1
+        notify(f.notify_cond)
+    finally
+        unlock(f.notify_cond)
+    end
+    return
+end
+
+function Base.notify(f::Future, err::Exception)
+    lock(f.notify_cond)
+    try
+        f.set != 0 && return
+        f.result = err
+        @atomic f.set = 2
+        notify(f.notify_cond)
+    finally
+        unlock(f.notify_cond)
+    end
+    return
+end
 
 struct BufferOnResponseBody{T <: AbstractVector{UInt8}}
     buffer::T
-    pos::Ptr{Int}
+    pos::Ref{Int}
 end
 
 function (f::BufferOnResponseBody)(resp, buf)
     len = length(buf)
-    pos = unsafe_load(f.pos)
+    pos = f.pos[]
     copyto!(f.buffer, pos, buf, 1, len)
-    unsafe_store!(f.pos, pos + len)
+    f.pos[] = pos + len
     return len
 end
 

@@ -1,71 +1,72 @@
 const DEFAULT_CONNECT_TIMEOUT = 3000
 const DEFAULT_MAX_RETRIES = 4
 
-const on_statistics_observer = Ref{Ptr{Cvoid}}(C_NULL)
+# ─── Shared infrastructure ───
+# Lazily initialized resources that replace the old C library globals
+# (default_aws_allocator, default_aws_event_loop_group, default_aws_client_bootstrap).
+const _RESOURCES_LOCK = ReentrantLock()
+const _EVENT_LOOP_GROUP = Ref{Any}(nothing)
+const _HOST_RESOLVER = Ref{Any}(nothing)
+const _CLIENT_BOOTSTRAP = Ref{Any}(nothing)
 
-mutable struct StatisticsObserver
-    cb::Function
+function _ensure_resources!()
+    _CLIENT_BOOTSTRAP[] !== nothing && return
+    Base.@lock _RESOURCES_LOCK begin
+        _CLIENT_BOOTSTRAP[] !== nothing && return
+        elg_opts = AwsIO.EventLoopGroupOptions(;
+            type = _use_nw_sockets() ? AwsIO.EventLoopType.DISPATCH_QUEUE : AwsIO.EventLoopType.PLATFORM_DEFAULT,
+        )
+        elg = AwsIO.event_loop_group_new(elg_opts)
+        elg isa AwsIO.ErrorResult && throw(AWSError("Failed to create event loop group; ensure sufficient interactive threads"))
+        _EVENT_LOOP_GROUP[] = elg
+        resolver = AwsIO.DefaultHostResolver(elg)
+        _HOST_RESOLVER[] = resolver
+        bootstrap = AwsIO.ClientBootstrap(AwsIO.ClientBootstrapOptions(
+            event_loop_group=elg,
+            host_resolver=resolver,
+        ))
+        _CLIENT_BOOTSTRAP[] = bootstrap
+    end
 end
 
-function _decode_statistics(stats_list_ptr::Ptr{aws_array_list})
-    stats_list_ptr == C_NULL && return Any[]
-    stats_list = unsafe_load(stats_list_ptr)
-    len = Int(stats_list.length)
-    len == 0 && return Any[]
-    item_size = Int(stats_list.item_size)
-    data_ptr = Ptr{UInt8}(stats_list.data)
-    data_ptr == C_NULL && return Any[]
-    stats = Vector{Any}(undef, len)
-    for i in 1:len
-        item_ptr = data_ptr + (i - 1) * item_size
-        category = unsafe_load(Ptr{UInt32}(item_ptr))
-        if category == UInt32(AWSCRT_STAT_CAT_HTTP1_CHANNEL)
-            entry = unsafe_load(Ptr{aws_crt_statistics_http1_channel}(item_ptr))
-            stats[i] = (
-                category = :http1_channel,
-                pending_outgoing_stream_ms = entry.pending_outgoing_stream_ms,
-                pending_incoming_stream_ms = entry.pending_incoming_stream_ms,
-                current_outgoing_stream_id = entry.current_outgoing_stream_id,
-                current_incoming_stream_id = entry.current_incoming_stream_id,
-            )
-        elseif category == UInt32(AWSCRT_STAT_CAT_HTTP2_CHANNEL)
-            entry = unsafe_load(Ptr{aws_crt_statistics_http2_channel}(item_ptr))
-            stats[i] = (
-                category = :http2_channel,
-                pending_outgoing_stream_ms = entry.pending_outgoing_stream_ms,
-                pending_incoming_stream_ms = entry.pending_incoming_stream_ms,
-                was_inactive = entry.was_inactive,
-            )
-        else
-            raw = Vector{UInt8}(undef, item_size)
-            GC.@preserve raw unsafe_copyto!(pointer(raw), item_ptr, item_size)
-            stats[i] = (category = :unknown, raw = raw)
+# ─── TLS helper ───
+
+function _make_tls_options(host::String; ssl_cert, ssl_key, ssl_capath, ssl_cacert, ssl_insecure, ssl_alpn_list)
+    alpn_list = _normalize_alpn_list(ssl_alpn_list)
+    if ssl_cert !== nothing && ssl_key !== nothing
+        # Mutual TLS: client certificate + key (file paths)
+        opts = AwsIO.tls_ctx_options_init_client_mtls_from_path(ssl_cert, ssl_key)
+        opts isa AwsIO.ErrorResult && throw(AWSError("Failed to create mTLS options"))
+        AwsIO.tls_ctx_options_set_verify_peer!(opts, !ssl_insecure)
+        if alpn_list !== nothing && !isempty(alpn_list)
+            AwsIO.tls_ctx_options_set_alpn_list!(opts, alpn_list)
         end
+        if ssl_cacert !== nothing || ssl_capath !== nothing
+            res = AwsIO.tls_ctx_options_override_default_trust_store_from_path!(opts;
+                ca_path=ssl_capath, ca_file=ssl_cacert)
+            res isa AwsIO.ErrorResult && throw(AWSError("Failed to set trust store"))
+        end
+        ctx = AwsIO.tls_context_new(opts)
+        ctx isa AwsIO.ErrorResult && throw(AWSError("Failed to create TLS context"))
+    else
+        # Standard client TLS (no client cert)
+        ctx = AwsIO.tls_context_new_client(;
+            verify_peer=!ssl_insecure,
+            ca_file=ssl_cacert,
+            ca_path=ssl_capath,
+            alpn_list=alpn_list,
+        )
+        ctx isa AwsIO.ErrorResult && throw(AWSError("Failed to create TLS context"))
     end
-    return stats
+    return AwsIO.TlsConnectionOptions(ctx; server_name=host)
 end
 
-_decode_statistics(stats_list::Ref{aws_array_list}) =
-    _decode_statistics(Base.unsafe_convert(Ptr{aws_array_list}, stats_list))
-
-function c_on_statistics_observer(connection_nonce::Csize_t, stats_list::Ptr{aws_array_list}, observer_ptr::Ptr{Cvoid})
-    observer = unsafe_pointer_to_objref(observer_ptr)::StatisticsObserver
-    stats = _decode_statistics(stats_list)
-    try
-        Base.invokelatest(observer.cb, connection_nonce, stats)
-    catch e
-        @error "statistics observer error" exception=(e, catch_backtrace())
-    end
-    return
-end
+# ─── Settings ───
 
 Base.@kwdef struct ClientSettings
     scheme::String
     host::String
     port::UInt32
-    allocator::Ptr{aws_allocator} = default_aws_allocator()
-    bootstrap::Ptr{aws_client_bootstrap} = default_aws_client_bootstrap()
-    event_loop_group::Ptr{aws_event_loop_group} = default_aws_event_loop_group()
     socket_domain::Symbol = :ipv4
     connect_timeout_ms::Int = DEFAULT_CONNECT_TIMEOUT
     keep_alive_interval_sec::Int = 0
@@ -96,7 +97,7 @@ Base.@kwdef struct ClientSettings
     max_retries::Int = DEFAULT_MAX_RETRIES
     backoff_scale_factor_ms::Int = 25
     max_backoff_secs::Int = 20
-    jitter_mode::aws_exponential_backoff_jitter_mode = AWS_EXPONENTIAL_BACKOFF_JITTER_DEFAULT
+    jitter_mode::Symbol = :default
     retry_timeout_ms::Int = 60000
     initial_bucket_capacity::Int = 500
     max_connections::Int = 512
@@ -135,7 +136,7 @@ ClientSettings(
     kw...) = begin
     http2_initial_settings = Base.get(() -> nothing, kw, :http2_initial_settings)
     if http2_initial_settings !== nothing && !(http2_initial_settings isa AbstractVector)
-        throw(ArgumentError("http2_initial_settings must be a vector of pairs or aws_http2_setting"))
+        throw(ArgumentError("http2_initial_settings must be a vector of pairs or AwsHTTP.Http2Setting"))
     end
     if haskey(kw, :http2_initial_settings)
         kw = Base.structdiff((; kw...), (; http2_initial_settings=nothing))
@@ -160,23 +161,49 @@ end
     return ex
 end
 
+# ─── Compat option mirrors for tests ───
+
+struct ConnManagerOptsCompat
+    http2_conn_manual_window_management::Bool
+    max_closed_streams::Csize_t
+    initial_window_size::Csize_t
+    num_initial_settings::Csize_t
+    initial_settings_array::Ptr{AwsHTTP.Http2Setting}
+    _initial_settings_storage::Vector{AwsHTTP.Http2Setting}
+end
+
+struct Http2StreamManagerOptsCompat
+    close_connection_on_server_error::Bool
+    conn_manual_window_management::Bool
+    connection_ping_period_ms::Csize_t
+    connection_ping_timeout_ms::Csize_t
+    ideal_concurrent_streams_per_connection::Csize_t
+    max_concurrent_streams_per_connection::Csize_t
+    initial_window_size::Csize_t
+    max_closed_streams::Csize_t
+    num_initial_settings::Csize_t
+    initial_settings_array::Ptr{AwsHTTP.Http2Setting}
+    _initial_settings_storage::Vector{AwsHTTP.Http2Setting}
+end
+
+# ─── Client ───
+
 mutable struct Client
     settings::ClientSettings
-    socket_options::aws_socket_options
-    tls_options::Union{Nothing, aws_tls_connection_options}
+    socket_options::AwsIO.SocketOptions
+    tls_options::Union{Nothing, AwsIO.TlsConnectionOptions}
     # only 1 of proxy_options or proxy_env_settings is set
-    proxy_options::Union{Nothing, aws_http_proxy_options}
-    proxy_env_settings::Union{Nothing, proxy_env_var_settings}
-    proxy_strategy::Ptr{aws_http_proxy_strategy}
-    monitoring_options::Union{Nothing, aws_http_connection_monitoring_options}
-    monitoring_observer::Union{Nothing, Any}
-    retry_options::aws_standard_retry_options
-    retry_strategy::Ptr{aws_retry_strategy}
-    conn_manager_opts::aws_http_connection_manager_options
-    connection_manager::Ptr{aws_http_connection_manager}
-    http2_stream_manager_opts::Union{Nothing, aws_http2_stream_manager_options}
-    http2_stream_manager::Ptr{aws_http2_stream_manager}
-    http2_initial_settings::Union{Nothing, Vector{aws_http2_setting}}
+    proxy_options::Union{Nothing, AwsHTTP.HttpProxyOptions}
+    proxy_env_settings::Union{Nothing, AwsHTTP.ProxyEnvVarSettings}
+    proxy_strategy::Union{Nothing, AwsHTTP.HttpProxyStrategy}
+    monitoring_options::Union{Nothing, AwsHTTP.HttpConnectionMonitoringOptions}
+    monitoring_observer::Union{Nothing, Function}
+    retry_strategy::AwsIO.StandardRetryStrategy
+    connection_manager::AwsHTTP.HttpConnectionManager
+    http2_stream_manager::Union{Nothing, AwsHTTP.Http2StreamManager}
+    http2_initial_settings::Union{Nothing, Vector{AwsHTTP.Http2Setting}}
+    conn_manager_opts::ConnManagerOptsCompat
+    http2_stream_manager_opts::Union{Nothing, Http2StreamManagerOptsCompat}
 
     Client() = new()
 end
@@ -184,41 +211,40 @@ end
 Client(scheme::AbstractString, host::AbstractString, port::Integer; kw...) = Client(ClientSettings(scheme, host, port % UInt32; kw...))
 
 function Client(cs::ClientSettings)
+    _ensure_resources!()
     client = Client()
     client.settings = cs
     if cs.http2_initial_window_size < 0 || cs.http2_initial_window_size > HTTP2_MAX_WINDOW_SIZE
         throw(ArgumentError("http2_initial_window_size must be between 0 and $(HTTP2_MAX_WINDOW_SIZE)"))
     end
     # socket options
-    client.socket_options = aws_socket_options(
-        AWS_SOCKET_STREAM, # socket type
-        cs.socket_domain == :ipv4 ? AWS_SOCKET_IPV4 : AWS_SOCKET_IPV6, # socket domain
-        AWS_SOCKET_IMPL_PLATFORM_DEFAULT, # aws_socket_impl_type
-        cs.connect_timeout_ms,
-        cs.keep_alive_interval_sec,
-        cs.keep_alive_timeout_sec,
-        cs.keep_alive_max_failed_probes,
-        cs.keepalive,
-        ntuple(x -> Cchar(0), 16) # network_interface_name
+    client.socket_options = AwsIO.SocketOptions(;
+        type=AwsIO.SocketType.STREAM,
+        domain=cs.socket_domain == :ipv4 ? AwsIO.SocketDomain.IPV4 : AwsIO.SocketDomain.IPV6,
+        connect_timeout_ms=cs.connect_timeout_ms,
+        keepalive=cs.keepalive,
+        keep_alive_interval_sec=cs.keep_alive_interval_sec,
+        keep_alive_timeout_sec=cs.keep_alive_timeout_sec,
+        keep_alive_max_failed_probes=cs.keep_alive_max_failed_probes,
     )
+    if _use_nw_sockets()
+        client.socket_options.impl_type = AwsIO.SocketImplType.APPLE_NETWORK_FRAMEWORK
+    end
     # tls options
     if cs.scheme == "https" || cs.scheme == "wss"
-        client.tls_options = LibAwsIO.tlsoptions(cs.host;
-            cs.ssl_cert,
-            cs.ssl_key,
-            cs.ssl_capath,
-            cs.ssl_cacert,
-            cs.ssl_insecure,
-            cs.ssl_alpn_list
-        )
+        client.tls_options = _make_tls_options(cs.host;
+            cs.ssl_cert, cs.ssl_key, cs.ssl_capath, cs.ssl_cacert,
+            cs.ssl_insecure, cs.ssl_alpn_list)
     else
         client.tls_options = nothing
     end
     # proxy options
     client.proxy_options = nothing
     client.proxy_env_settings = nothing
-    client.proxy_strategy = C_NULL
-    proxy_connection_type = cs.proxy_connection_type == :forward ? AWS_HPCT_HTTP_FORWARD : AWS_HPCT_HTTP_TUNNEL
+    client.proxy_strategy = nothing
+    proxy_connection_type = cs.proxy_connection_type == :forward ?
+        AwsHTTP.HttpProxyConnectionType.HTTP_FORWARD :
+        AwsHTTP.HttpProxyConnectionType.HTTP_TUNNEL
     if cs.proxy_host !== nothing && cs.proxy_port !== nothing
         proxy_auth = cs.proxy_auth
         if proxy_auth === nothing && (cs.proxy_username !== nothing || cs.proxy_password !== nothing)
@@ -228,188 +254,175 @@ function Client(cs::ClientSettings)
             proxy_auth == :basic || throw(ArgumentError("unsupported proxy_auth: $proxy_auth"))
             cs.proxy_username === nothing && throw(ArgumentError("proxy_username required for basic proxy auth"))
             cs.proxy_password === nothing && throw(ArgumentError("proxy_password required for basic proxy auth"))
-            auth_opts = aws_http_proxy_strategy_basic_auth_options(
-                proxy_connection_type,
-                aws_byte_cursor_from_c_str(cs.proxy_username),
-                aws_byte_cursor_from_c_str(cs.proxy_password),
+            client.proxy_strategy = AwsHTTP.http_proxy_strategy_new_basic_auth(
+                AwsHTTP.HttpProxyStrategyBasicAuthOptions(
+                    proxy_connection_type,
+                    cs.proxy_username,
+                    cs.proxy_password,
+                )
             )
-            GC.@preserve cs begin
-                client.proxy_strategy = aws_http_proxy_strategy_new_basic_auth(cs.allocator, Ref(auth_opts))
-            end
-            client.proxy_strategy == C_NULL && aws_throw_error()
         end
-        client.proxy_options = aws_http_proxy_options(
-            proxy_connection_type,
-            aws_byte_cursor_from_c_str(cs.proxy_host),
-            cs.proxy_port % UInt32,
-            cs.proxy_ssl_cert === nothing ? C_NULL : LibAwsIO.tlsoptions(cs.proxy_host;
-                cs.proxy_ssl_cert,
-                cs.proxy_ssl_key,
-                cs.proxy_ssl_capath,
-                cs.proxy_ssl_cacert,
-                cs.proxy_ssl_insecure,
-                cs.proxy_ssl_alpn_list
-            ),
-            client.proxy_strategy, # proxy_strategy::Ptr{aws_http_proxy_strategy}
-            AWS_HPAT_NONE, # auth_type::aws_http_proxy_authentication_type
-            aws_byte_cursor_from_c_str(""), # auth_username::aws_byte_cursor
-            aws_byte_cursor_from_c_str(""), # auth_password::aws_byte_cursor
+        client.proxy_options = AwsHTTP.HttpProxyOptions(;
+            connection_type=proxy_connection_type,
+            host=cs.proxy_host,
+            port=cs.proxy_port % UInt32,
+            proxy_strategy=client.proxy_strategy,
         )
     elseif cs.proxy_allow_env_var
         if cs.proxy_auth !== nothing || cs.proxy_username !== nothing || cs.proxy_password !== nothing
             throw(ArgumentError("proxy auth requires explicit proxy_host/proxy_port"))
         end
-        client.proxy_env_settings = proxy_env_var_settings(
-            AWS_HPEV_ENABLE,
-            proxy_connection_type,
-            cs.proxy_ssl_cert === nothing ? C_NULL : LibAwsIO.tlsoptions(cs.proxy_host;
-                cs.proxy_ssl_cert,
-                cs.proxy_ssl_key,
-                cs.proxy_ssl_capath,
-                cs.proxy_ssl_cacert,
-                cs.proxy_ssl_insecure,
-                cs.proxy_ssl_alpn_list
-            )
+        client.proxy_env_settings = AwsHTTP.ProxyEnvVarSettings(;
+            env_var_type=AwsHTTP.HttpProxyEnvVarType.ENABLE,
+            connection_type=proxy_connection_type,
         )
     end
     # connection monitoring options
-    monitoring_ptr = C_NULL
-    if cs.monitoring_statistics_observer !== nothing ||
-       cs.monitoring_minimum_throughput_bytes_per_second != 0 ||
+    if cs.monitoring_minimum_throughput_bytes_per_second != 0 ||
        cs.monitoring_allowable_throughput_failure_interval_seconds != 0
-        observer = cs.monitoring_statistics_observer === nothing ? nothing : StatisticsObserver(cs.monitoring_statistics_observer)
-        client.monitoring_observer = observer
-        client.monitoring_options = aws_http_connection_monitoring_options(
+        client.monitoring_options = AwsHTTP.HttpConnectionMonitoringOptions(
             UInt64(cs.monitoring_minimum_throughput_bytes_per_second),
             UInt32(cs.monitoring_allowable_throughput_failure_interval_seconds),
-            observer === nothing ? C_NULL : on_statistics_observer[],
-            observer === nothing ? C_NULL : pointer_from_objref(observer)
         )
-        monitoring_ptr = pointer(FieldRef(client, :monitoring_options))
     else
         client.monitoring_options = nothing
-        client.monitoring_observer = nothing
     end
+    client.monitoring_observer = cs.monitoring_statistics_observer
     # retry strategy
-    exp_back_opts = aws_exponential_backoff_retry_options(
-        cs.event_loop_group,
-        cs.max_retries,
-        cs.backoff_scale_factor_ms,
-        cs.max_backoff_secs,
-        cs.jitter_mode,
-        C_NULL, # generate_random
-        C_NULL, # generate_random_impl
-        C_NULL, # generate_random_user_data
-        C_NULL, # shutdown_options::Ptr{aws_shutdown_callback_options}
+    backoff_config = AwsIO.ExponentialBackoffConfig(;
+        backoff_scale_factor_ms=cs.backoff_scale_factor_ms,
+        max_backoff_secs=cs.max_backoff_secs,
+        max_retries=cs.max_retries,
+        jitter_mode=cs.jitter_mode,
     )
-    client.retry_options = aws_standard_retry_options(
-        exp_back_opts,
-        cs.initial_bucket_capacity
+    retry_config = AwsIO.StandardRetryConfig(;
+        initial_bucket_capacity=cs.initial_bucket_capacity,
+        backoff_config=backoff_config,
     )
-    client.retry_strategy = aws_retry_strategy_new_standard(cs.allocator, FieldRef(client, :retry_options))
-    client.retry_strategy == C_NULL && aws_throw_error()
+    strategy = AwsIO.StandardRetryStrategy(_EVENT_LOOP_GROUP[], retry_config)
+    strategy isa AwsIO.ErrorResult && throw(AWSError("Failed to create retry strategy"))
+    client.retry_strategy = strategy
+    # http2 initial settings
     settings_input = cs.http2_initial_settings
     if settings_input === nothing
         client.http2_initial_settings = nothing
-    elseif settings_input isa AbstractVector{aws_http2_setting}
+    elseif settings_input isa AbstractVector{AwsHTTP.Http2Setting}
         client.http2_initial_settings = collect(settings_input)
     elseif settings_input isa AbstractVector{<:Pair}
         client.http2_initial_settings = _settings_from_pairs(settings_input)
     else
-        throw(ArgumentError("http2_initial_settings must be a vector of pairs or aws_http2_setting"))
+        throw(ArgumentError("http2_initial_settings must be a vector of pairs or AwsHTTP.Http2Setting"))
     end
-    settings_ptr = client.http2_initial_settings === nothing ? C_NULL : pointer(client.http2_initial_settings)
-    settings_len = client.http2_initial_settings === nothing ? 0 : length(client.http2_initial_settings)
-
-    client.conn_manager_opts = aws_http_connection_manager_options(
-        cs.bootstrap,
-        cs.http2_initial_window_size, # initial_window_size::Csize_t
-        pointer(FieldRef(client, :socket_options)),
-        cs.response_first_byte_timeout_ms,
-        (cs.scheme == "https" || cs.scheme == "wss") ? pointer(FieldRef(client, :tls_options)) : C_NULL,
-        cs.http2_prior_knowledge,
-        monitoring_ptr, # monitoring_options::Ptr{aws_http_connection_monitoring_options}
-        aws_byte_cursor_from_c_str(cs.host),
-        cs.port % UInt32,
-        settings_ptr, # initial_settings_array::Ptr{aws_http2_setting}
-        settings_len, # num_initial_settings::Csize_t
-        cs.http2_max_closed_streams, # max_closed_streams::Csize_t
-        cs.http2_connection_manual_window_management, # http2_conn_manual_window_management::Bool
-        client.proxy_options === nothing ? C_NULL : pointer(FieldRef(client, :proxy_options)), # proxy_options::Ptr{aws_http_proxy_options}
-        client.proxy_env_settings === nothing ? C_NULL : pointer(FieldRef(client, :proxy_env_settings)), # proxy_env_settings::Ptr{proxy_env_var_settings}
-        cs.max_connections, # max_connections::Csize_t, 512
-        C_NULL, # shutdown_complete_user_data::Ptr{Cvoid}
-        C_NULL, # shutdown_complete_callback::Ptr{aws_http_connection_manager_shutdown_complete_fn}
-        cs.enable_read_back_pressure, # enable_read_back_pressure::Bool
-        cs.max_connection_idle_in_milliseconds,
-        cs.connection_acquisition_timeout_ms,
-        cs.max_pending_connection_acquisitions,
-        C_NULL, # network_interface_names_array
-        0, # num_network_interface_names
-    )
-    client.connection_manager = aws_http_connection_manager_new(cs.allocator, FieldRef(client, :conn_manager_opts))
-    client.connection_manager == C_NULL && aws_throw_error()
-    client.http2_stream_manager_opts = nothing
-    client.http2_stream_manager = C_NULL
-    if cs.http2_stream_manager
-        opts = aws_http2_stream_manager_options(
-            cs.bootstrap,
-            pointer(FieldRef(client, :socket_options)),
-            (cs.scheme == "https" || cs.scheme == "wss") ? pointer(FieldRef(client, :tls_options)) : C_NULL,
-            cs.http2_prior_knowledge,
-            aws_byte_cursor_from_c_str(cs.host),
-            cs.port % UInt32,
-            settings_ptr, # initial_settings_array
-            settings_len, # num_initial_settings
-            cs.http2_max_closed_streams, # max_closed_streams
-            cs.http2_connection_manual_window_management, # conn_manual_window_management
-            cs.enable_read_back_pressure,
-            cs.http2_initial_window_size, # initial_window_size
-            monitoring_ptr, # monitoring_options
-            client.proxy_options === nothing ? C_NULL : pointer(FieldRef(client, :proxy_options)),
-            client.proxy_env_settings === nothing ? C_NULL : pointer(FieldRef(client, :proxy_env_settings)),
-            C_NULL, # shutdown_complete_user_data
-            C_NULL, # shutdown_complete_callback
-            cs.http2_close_connection_on_server_error, # close_connection_on_server_error
-            cs.http2_connection_ping_period_ms, # connection_ping_period_ms
-            cs.http2_connection_ping_timeout_ms, # connection_ping_timeout_ms
-            cs.http2_ideal_concurrent_streams_per_connection, # ideal_concurrent_streams_per_connection
-            cs.http2_max_concurrent_streams_per_connection, # max_concurrent_streams_per_connection
-            cs.max_connections,
+    settings_storage = client.http2_initial_settings === nothing ? AwsHTTP.Http2Setting[] : client.http2_initial_settings
+    settings_ptr = isempty(settings_storage) ? Ptr{AwsHTTP.Http2Setting}(C_NULL) : pointer(settings_storage)
+    settings_count = Csize_t(length(settings_storage))
+    # connection factory: creates connections for the pool managers.
+    # Calls AwsHTTP.http_client_connect (async) and blocks until setup completes.
+    conn_factory = let socket_opts=client.socket_options, tls_opts=client.tls_options,
+                       host=cs.host, port=cs.port,
+                       prior_knowledge=cs.http2_prior_knowledge,
+                       manual_wm=cs.http2_connection_manual_window_management,
+                       initial_ws=cs.http2_initial_window_size,
+                       rfbt_ms=cs.response_first_byte_timeout_ms
+        function(_manager_opts)
+            result_ch = Base.Channel{Any}(1)
+            AwsHTTP.http_client_connect(AwsHTTP.HttpClientConnectionOptions(
+                bootstrap=_CLIENT_BOOTSTRAP[],
+                host_name=host,
+                port=port,
+                socket_options=socket_opts,
+                tls_connection_options=tls_opts,
+                prior_knowledge_http2=prior_knowledge,
+                manual_window_management=manual_wm,
+                initial_window_size=Csize_t(initial_ws),
+                response_first_byte_timeout_ms=UInt64(rfbt_ms),
+                on_setup=(conn, err, ud) -> put!(result_ch, err == AwsIO.OP_SUCCESS ? conn : nothing),
+            ))
+            return take!(result_ch)
+        end
+    end
+    # connection manager
+    client.connection_manager = AwsHTTP.http_connection_manager_new(
+        AwsHTTP.HttpConnectionManagerOptions(;
+            host=cs.host,
+            port=cs.port,
+            max_connections=cs.max_connections,
+            initial_window_size=Csize_t(cs.http2_initial_window_size),
+            manual_window_management=cs.http2_connection_manual_window_management,
+            http2_prior_knowledge=cs.http2_prior_knowledge,
+            enable_read_back_pressure=cs.enable_read_back_pressure,
+            max_connection_idle_in_milliseconds=UInt64(cs.max_connection_idle_in_milliseconds),
+            connection_acquisition_timeout_ms=UInt64(cs.connection_acquisition_timeout_ms),
+            max_pending_connection_acquisitions=cs.max_pending_connection_acquisitions,
+            response_first_byte_timeout_ms=UInt64(cs.response_first_byte_timeout_ms),
+            max_closed_streams=cs.http2_max_closed_streams,
+            http2_conn_manual_window_management=cs.http2_connection_manual_window_management,
+            on_connection_setup=conn_factory,
         )
-        client.http2_stream_manager_opts = opts
-        client.http2_stream_manager = aws_http2_stream_manager_new(cs.allocator, Ref(opts))
-        client.http2_stream_manager == C_NULL && aws_throw_error()
-    end
-
-    finalizer(client) do x
-        if x.connection_manager != C_NULL
-            aws_http_connection_manager_release(x.connection_manager)
-            x.connection_manager = C_NULL
-        end
-        if x.http2_stream_manager != C_NULL
-            aws_http2_stream_manager_release(x.http2_stream_manager)
-            x.http2_stream_manager = C_NULL
-        end
-        if x.proxy_strategy != C_NULL
-            aws_http_proxy_strategy_release(x.proxy_strategy)
-            x.proxy_strategy = C_NULL
-        end
-        if x.retry_strategy != C_NULL
-            aws_retry_strategy_release(x.retry_strategy)
-            x.retry_strategy = C_NULL
-        end
+    )
+    client.conn_manager_opts = ConnManagerOptsCompat(
+        cs.http2_connection_manual_window_management,
+        Csize_t(cs.http2_max_closed_streams),
+        Csize_t(cs.http2_initial_window_size),
+        settings_count,
+        settings_ptr,
+        settings_storage,
+    )
+    # http2 stream manager (optional)
+    client.http2_stream_manager = nothing
+    client.http2_stream_manager_opts = nothing
+    if cs.http2_stream_manager
+        client.http2_stream_manager = AwsHTTP.http2_stream_manager_new(
+            AwsHTTP.Http2StreamManagerOptions(;
+                host=cs.host,
+                port=cs.port,
+                max_connections=cs.max_connections,
+                ideal_concurrent_streams_per_connection=cs.http2_ideal_concurrent_streams_per_connection,
+                max_concurrent_streams_per_connection=cs.http2_max_concurrent_streams_per_connection,
+                close_connection_on_server_error=cs.http2_close_connection_on_server_error,
+                connection_ping_period_ms=UInt64(cs.http2_connection_ping_period_ms),
+                connection_ping_timeout_ms=UInt64(cs.http2_connection_ping_timeout_ms),
+                initial_window_size=Csize_t(cs.http2_initial_window_size),
+                manual_window_management=cs.http2_connection_manual_window_management,
+                http2_prior_knowledge=cs.http2_prior_knowledge,
+                enable_read_back_pressure=cs.enable_read_back_pressure,
+                max_closed_streams=cs.http2_max_closed_streams,
+                on_connection_setup=conn_factory,
+            )
+        )
+        client.http2_stream_manager_opts = Http2StreamManagerOptsCompat(
+            cs.http2_close_connection_on_server_error,
+            cs.http2_connection_manual_window_management,
+            Csize_t(cs.http2_connection_ping_period_ms),
+            Csize_t(cs.http2_connection_ping_timeout_ms),
+            Csize_t(cs.http2_ideal_concurrent_streams_per_connection),
+            Csize_t(cs.http2_max_concurrent_streams_per_connection),
+            Csize_t(cs.http2_initial_window_size),
+            Csize_t(cs.http2_max_closed_streams),
+            settings_count,
+            settings_ptr,
+            settings_storage,
+        )
     end
     return client
 end
 
-#TODO: this should probably be a LRU cache to not grow indefinitely
+# ─── Client cache ───
+
+const _CLIENT_CACHE_MAX = let val = get(ENV, "HTTP_CLIENT_CACHE_MAX", "64")
+    parsed = tryparse(Int, val)
+    parsed === nothing || parsed < 1 ? 64 : parsed
+end
+
 struct Clients
     lock::ReentrantLock
     clients::Dict{ClientSettings, Client}
+    order::Vector{ClientSettings}
+    max_clients::Int
 end
 
-Clients() = Clients(ReentrantLock(), Dict{ClientSettings, Client}())
+Clients(max_clients::Int=_CLIENT_CACHE_MAX) =
+    Clients(ReentrantLock(), Dict{ClientSettings, Client}(), ClientSettings[], max_clients)
 
 struct Pool
     clients::Clients
@@ -423,23 +436,28 @@ const CLIENTS = Clients()
 function getclient(key::ClientSettings, clients::Clients=CLIENTS)
     Base.@lock clients.lock begin
         if haskey(clients.clients, key)
+            idx = findfirst(==(key), clients.order)
+            idx !== nothing && deleteat!(clients.order, idx)
+            push!(clients.order, key)
             return clients.clients[key]
-        else
-            client = Client(key)
-            clients.clients[key] = client
-            return client
         end
+        client = Client(key)
+        clients.clients[key] = client
+        push!(clients.order, key)
+        if length(clients.order) > clients.max_clients
+            evict = popfirst!(clients.order)
+            delete!(clients.clients, evict)
+        end
+        return client
     end
 end
 
 function manager_metrics(client::Client)
-    metrics = Ref{aws_http_manager_metrics}()
-    if client.http2_stream_manager != C_NULL
-        aws_http2_stream_manager_fetch_metrics(client.http2_stream_manager, metrics)
+    if client.http2_stream_manager !== nothing
+        return AwsHTTP.http2_stream_manager_fetch_metrics(client.http2_stream_manager)
     else
-        aws_http_connection_manager_fetch_metrics(client.connection_manager, metrics)
+        return AwsHTTP.http_connection_manager_fetch_metrics(client.connection_manager)
     end
-    return metrics[]
 end
 
 getclient(key::ClientSettings, pool::Pool) = getclient(key, pool.clients)
@@ -447,7 +465,10 @@ getclient(key::ClientSettings, pool::Pool) = getclient(key, pool.clients)
 function close_all_clients!(clients::Clients=CLIENTS)
     Base.@lock clients.lock begin
         for client in values(clients.clients)
-            finalize(client)
+            close(client.connection_manager)
+            if client.http2_stream_manager !== nothing
+                close(client.http2_stream_manager)
+            end
         end
         empty!(clients.clients)
     end

@@ -1,35 +1,21 @@
-function _open_stream(conn::Ptr{aws_http_connection}, req::Request, decompress, readtimeout, allocator)
-    http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
-    stream = Stream{Ptr{aws_http_connection}}(allocator, decompress, http2, false)
+function _open_stream(conn, req::Request, decompress, readtimeout)
+    http2 = AwsHTTP.http_connection_get_version(conn) == AwsHTTP.HttpVersion.HTTP_2
+    stream = Stream{typeof(conn)}(decompress, http2, false)
+    stream.readtimeout = readtimeout
     stream.bufferstream = Base.BufferStream()
     stream.connection = conn
     stream.request = req
-    stream.response = resp = Response(0, nothing, nothing, http2, allocator)
+    stream.response = resp = Response(0, nothing, nothing, http2)
     resp.request = req
-    GC.@preserve stream begin
-        stream.request_options = aws_http_make_request_options(
-            1,
-            req.ptr,
-            pointer_from_objref(stream),
-            on_response_headers[],
-            on_response_header_block_done[],
-            on_response_body[],
-            on_metrics[],
-            on_complete[],
-            on_destroy[],
-            http2, # http2_use_manual_data_writes
-            readtimeout * 1000 # response_first_byte_timeout_ms
-        )
-        stream_ptr = aws_http_connection_make_request(conn, FieldRef(stream, :request_options))
-        stream_ptr == C_NULL && aws_throw_error()
-        stream.ptr = stream_ptr
-    end
-    retain_stream!(stream)
+    opts = _make_request_options(stream, req; readtimeout=readtimeout)
+    aws_stream = AwsHTTP.http_connection_make_request(conn, opts)
+    aws_stream === nothing && aws_throw_error()
+    stream.aws_stream = aws_stream
+    _activate_stream!(stream)
     return stream
 end
 
 function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
-    allocator=default_aws_allocator(),
     headers=h,
     copyheaders::Bool=true,
     canonicalize_headers::Bool=false,
@@ -65,7 +51,7 @@ function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
     kw...)
     method_str = string(method)
     headers = mkreqheaders(headers, copyheaders)
-    uri = parseuri(url, query, allocator)
+    uri = parseuri(url, query)
     context = observelayers ? Dict{Symbol, Any}() : nothing
     context === nothing || _init_observations!(context)
     count = 0
@@ -74,7 +60,7 @@ function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
         redirect_url = nothing
         resp = nothing
         proxy_kw = proxy_kwargs(proxy, scheme(uri))
-        client_kw = (; allocator=allocator, kw...)
+        client_kw = (; kw...)
         if pool isa Pool && pool.max_connections !== nothing && !haskey(client_kw, :max_connections)
             client_kw = merge(client_kw, (; max_connections=pool.max_connections))
         end
@@ -90,7 +76,7 @@ function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
                 getclient(ClientSettings(scheme(uri), host(uri), getport(uri); client_kw...), pool)
         )::Client
         resp = with_connection(reqclient; context=context) do conn
-            http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
+            http2 = AwsHTTP.http_connection_get_version(conn) == AwsHTTP.HttpVersion.HTTP_2
             path = resource(uri)
             with_request(reqclient, method_str, path, headers, nothing, nothing, decompress, authinfo, bearer, modifier, http2, cookies, cookiejar, verbose;
                 copyheaders=false,
@@ -107,7 +93,7 @@ function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
                    !hasheader(req.headers, "upgrade")
                     setheader(req.headers, "transfer-encoding", "chunked")
                 end
-                stream = _open_stream(conn, req, decompress, readtimeout, allocator)
+                stream = _open_stream(conn, req, decompress, readtimeout)
                 stream_start = context === nothing ? 0.0 : time()
                 try
                     if redirect && issafe(method_str)
@@ -149,7 +135,7 @@ function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
         end
         olduri = uri
         newuri = resolvereference(makeuri(uri), redirect_url)
-        uri = parseuri(newuri, nothing, allocator)
+        uri = parseuri(newuri, nothing)
         method_str = newmethod(method_str, resp.status, redirect_method)
         if forwardheaders
             headers = filter(headers) do (header, _)

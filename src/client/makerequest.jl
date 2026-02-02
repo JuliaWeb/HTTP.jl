@@ -38,7 +38,6 @@ end
 # main entrypoint for making an HTTP request
 # can provide method, url, headers, body, along with various keyword arguments
 function request(method, url, h=Header[], b=nothing;
-    allocator=default_aws_allocator(),
     headers=h,
     body=b,
     chunkedbody=nothing,
@@ -96,9 +95,9 @@ function request(method, url, h=Header[], b=nothing;
         body isa Form
     )
     headers = mkreqheaders(headers, copyheaders)
-    uri = parseuri(url, query, allocator)
+    uri = parseuri(url, query)
     proxy_kw = proxy_kwargs(proxy, scheme(uri))
-    client_kw = (; allocator=allocator, kw...)
+    client_kw = (; kw...)
     if pool isa Pool && pool.max_connections !== nothing && !haskey(client_kw, :max_connections)
         client_kw = merge(client_kw, (; max_connections=pool.max_connections))
     end
@@ -107,7 +106,7 @@ function request(method, url, h=Header[], b=nothing;
     end
     authinfo = (username !== nothing && password !== nothing) ? "$username:$password" : userinfo(uri)
     apply_basicauth = (username !== nothing && password !== nothing) ? true : basicauth
-    return with_redirect(allocator, method, uri, headers, body, redirect, redirect_limit, redirect_method, forwardheaders; context=context) do method, uri, headers, body
+    return with_redirect(method, uri, headers, body, redirect, redirect_limit, redirect_method, forwardheaders; context=context) do method, uri, headers, body
         reqclient = @something(
             client,
             pool === nothing ?
@@ -118,7 +117,7 @@ function request(method, url, h=Header[], b=nothing;
         with_retry_token(reqclient; logerrors=logerrors, logtag=logtag, method=method, uri=uri,
             retry_check=retry_check, retry_delays=retry_delays,
             retry_non_idempotent=retry_non_idempotent, retryable_body=retryable_body, req_ref=req_ref, context=context) do
-            resp = if reqclient.http2_stream_manager != C_NULL
+            resp = if reqclient.http2_stream_manager !== nothing
                 path = resource(uri)
                 with_request(reqclient, method, path, headers, body, chunkedbody, decompress, authinfo, bearer, modifier, true, cookies, cookiejar, verbose;
                     copyheaders=false,
@@ -130,21 +129,18 @@ function request(method, url, h=Header[], b=nothing;
                 ) do req
                     req_ref[] = req
                     if response_body isa AbstractVector{UInt8}
-                        ref = Ref(1)
-                        GC.@preserve ref begin
-                            on_stream_response_body = BufferOnResponseBody(response_body, Base.unsafe_convert(Ptr{Int}, ref))
-                            with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator; context=context)
-                        end
+                        on_stream_response_body = BufferOnResponseBody(response_body, Ref(1))
+                        with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout; context=context)
                     elseif response_body isa IO
                         on_stream_response_body = IOOnResponseBody(response_body)
-                        with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout, allocator; context=context)
+                        with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout; context=context)
                     else
-                        with_stream_manager(reqclient, req, chunkedbody, response_body, decompress, readtimeout, allocator; context=context)
+                        with_stream_manager(reqclient, req, chunkedbody, response_body, decompress, readtimeout; context=context)
                     end
                 end
             else
                 with_connection(reqclient; context=context) do conn
-                    http2 = aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2
+                    http2 = AwsHTTP.http_connection_get_version(conn) == AwsHTTP.HttpVersion.HTTP_2
                     path = resource(uri)
                     with_request(reqclient, method, path, headers, body, chunkedbody, decompress, authinfo, bearer, modifier, http2, cookies, cookiejar, verbose;
                         copyheaders=false,
@@ -156,16 +152,13 @@ function request(method, url, h=Header[], b=nothing;
                     ) do req
                         req_ref[] = req
                         if response_body isa AbstractVector{UInt8}
-                            ref = Ref(1)
-                            GC.@preserve ref begin
-                                on_stream_response_body = BufferOnResponseBody(response_body, Base.unsafe_convert(Ptr{Int}, ref))
-                                with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator; context=context)
-                            end
+                            on_stream_response_body = BufferOnResponseBody(response_body, Ref(1))
+                            with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout; context=context)
                         elseif response_body isa IO
                             on_stream_response_body = IOOnResponseBody(response_body)
-                            with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, allocator; context=context)
+                            with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout; context=context)
                         else
-                            with_stream(conn, req, chunkedbody, response_body, decompress, http2, readtimeout, allocator; context=context)
+                            with_stream(conn, req, chunkedbody, response_body, decompress, http2, readtimeout; context=context)
                         end
                     end
                 end

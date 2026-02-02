@@ -4,19 +4,19 @@ export Header, Headers, Message, Request, Response,
     canonicalizeheaders, canonicalizeheaders!, mkheaders
 
 # working with headers
-headereq(a::String, b::String) = GC.@preserve a b aws_http_header_name_eq(aws_byte_cursor_from_c_str(a), aws_byte_cursor_from_c_str(b))
+headereq(a::String, b::String) = ascii_lc_isequal(a, b)
 
-mutable struct Header
-    header::aws_http_header
-    Header() = new()
-    Header(header::aws_http_header) = new(header)
+struct Header
+    header::AwsHTTP.HttpHeader
 end
+Header() = Header(AwsHTTP.HttpHeader("", ""))
+Header(name::AbstractString, value::AbstractString) = Header(AwsHTTP.HttpHeader(String(name), String(value)))
 
 function Base.getproperty(x::Header, s::Symbol)
     if s == :name
-        return str(getfield(x, :header).name)
+        return getfield(x, :header).name
     elseif s == :value
-        return str(getfield(x, :header).value)
+        return getfield(x, :header).value
     else
         return getfield(x, s)
     end
@@ -25,32 +25,29 @@ end
 Base.show(io::IO, h::Header) = print_header(io, h)
 
 mutable struct Headers <: AbstractVector{Header}
-    const ptr::Ptr{aws_http_headers}
-    function Headers(allocator=default_aws_allocator())
-        x = new(aws_http_headers_new(allocator))
-        x.ptr == C_NULL && aws_throw_error()
-        return finalizer(_ -> aws_http_headers_release(x.ptr), x)
+    const hdrs::AwsHTTP.HttpHeaders
+    function Headers()
+        return new(AwsHTTP.http_headers_new())
     end
-    # no finalizer in this constructor because whoever called aws_http_headers_new needs to do that
-    Headers(ptr::Ptr{aws_http_headers}) = new(ptr)
+    Headers(hdrs::AwsHTTP.HttpHeaders) = new(hdrs)
 end
 
 abstract type Message end
 
-Base.size(h::Headers) = (Int(aws_http_headers_count(h.ptr)),)
+Base.size(h::Headers) = (AwsHTTP.http_headers_count(h.hdrs),)
 
 function Base.getindex(h::Headers, i::Int)
-    header = Header()
-    aws_http_headers_get_index(h.ptr, i - 1, FieldRef(header, :header)) != 0 && aws_throw_error()
-    return header
+    hdr = AwsHTTP.http_headers_get_index(h.hdrs, i - 1)
+    hdr === nothing && throw(BoundsError(h, i))
+    return Header(hdr)
 end
 
-Base.Dict(h::Headers) = Dict(((h.name, h.value) for h in h))
+Base.Dict(h::Headers) = Dict(((h2.name, h2.value) for h2 in h))
 
-addheader(headers::Headers, h::Header) = aws_http_headers_add_header(headers.ptr, FieldRef(h, :header)) != 0 && aws_throw_error()
-addheader(headers::Headers, k, v) = GC.@preserve k v aws_http_headers_add(headers.ptr, aws_byte_cursor_from_c_str(k), aws_byte_cursor_from_c_str(v)) != 0 && aws_throw_error()
-addheaders(headers::Headers, h::Vector{aws_http_header}) = GC.@preserve h aws_http_headers_add_array(headers.ptr, pointer(h), length(h)) != 0 && aws_throw_error()
-addheaders(headers::Headers, h::Ptr{aws_http_header}, count::Integer) = aws_http_headers_add_array(headers.ptr, h, count) != 0 && aws_throw_error()
+addheader(headers::Headers, h::Header) = AwsHTTP.http_headers_add_header(headers.hdrs, h.header) != 0 && aws_throw_error()
+addheader(headers::Headers, h::AwsHTTP.HttpHeader) = AwsHTTP.http_headers_add_header(headers.hdrs, h) != 0 && aws_throw_error()
+addheader(headers::Headers, k, v) = AwsHTTP.http_headers_add(headers.hdrs, String(k), String(v)) != 0 && aws_throw_error()
+addheaders(headers::Headers, h::Vector{AwsHTTP.HttpHeader}) = AwsHTTP.http_headers_add_array(headers.hdrs, h) != 0 && aws_throw_error()
 
 function addheaders(headers::Headers, h::Vector{Pair{String, String}})
     for (k, v) in h
@@ -58,30 +55,28 @@ function addheaders(headers::Headers, h::Vector{Pair{String, String}})
     end
 end
 
-setheader(headers::Headers, k, v) = GC.@preserve k v aws_http_headers_set(headers.ptr, aws_byte_cursor_from_c_str(k), aws_byte_cursor_from_c_str(v)) != 0 && aws_throw_error()
-setscheme(headers::Headers, scheme) = GC.@preserve scheme aws_http2_headers_set_request_scheme(headers.ptr, aws_byte_cursor_from_c_str(scheme)) != 0 && aws_throw_error()
-setauthority(headers::Headers, authority) = GC.@preserve authority aws_http2_headers_set_request_authority(headers.ptr, aws_byte_cursor_from_c_str(authority)) != 0 && aws_throw_error()
+setheader(headers::Headers, k, v) = AwsHTTP.http_headers_set(headers.hdrs, String(k), String(v)) != 0 && aws_throw_error()
+setscheme(headers::Headers, scheme) = AwsHTTP.http2_headers_set_request_scheme(headers.hdrs, String(scheme)) != 0 && aws_throw_error()
+setauthority(headers::Headers, authority) = AwsHTTP.http2_headers_set_request_authority(headers.hdrs, String(authority)) != 0 && aws_throw_error()
 
-#TODO: struct aws_string *aws_http_headers_get_all(const struct aws_http_headers *headers, struct aws_byte_cursor name);
 function getheader(headers::Headers, k)
-    out = Ref{aws_byte_cursor}()
-    GC.@preserve k out begin
-        aws_http_headers_get(headers.ptr, aws_byte_cursor_from_c_str(k), out) != 0 && return nothing
-        return str(out[])
-    end
+    return AwsHTTP.http_headers_get(headers.hdrs, String(k))
 end
 
-hasheader(headers::Headers, k) =
-    GC.@preserve k aws_http_headers_has(headers.ptr, aws_byte_cursor_from_c_str(k))
+hasheader(headers::Headers, k) = AwsHTTP.http_headers_has(headers.hdrs, String(k))
 
-removeheader(headers::Headers, k) =
-    GC.@preserve k aws_http_headers_erase(headers.ptr, aws_byte_cursor_from_c_str(k)) != 0 && aws_throw_error()
+removeheader(headers::Headers, k) = AwsHTTP.http_headers_erase(headers.hdrs, String(k)) != 0 && aws_throw_error()
+removeheader(headers::Headers, k, v) = AwsHTTP.http_headers_erase_value(headers.hdrs, String(k), String(v)) != 0 && aws_throw_error()
 
-removeheader(headers::Headers, k, v) =
-    GC.@preserve k v aws_http_headers_erase_value(headers.ptr, aws_byte_cursor_from_c_str(k), aws_byte_cursor_from_c_str(v)) != 0 && aws_throw_error()
+function Base.deleteat!(h::Headers, i::Int)
+    AwsHTTP.http_headers_erase_index(h.hdrs, i - 1) != 0 && aws_throw_error()
+    return h
+end
 
-Base.deleteat!(h::Headers, i::Int) = aws_http_headers_erase_index(h.ptr, i - 1) != 0 && aws_throw_error()
-Base.empty!(h::Headers) = aws_http_headers_clear(h.ptr) != 0 && aws_throw_error()
+function Base.empty!(h::Headers)
+    AwsHTTP.http_headers_clear(h.hdrs)
+    return h
+end
 
 setheaderifabsent(headers, k, v) = !hasheader(headers, k) && setheader(headers, k, v)
 setheaderifabsent(m::Message, k, v) = setheaderifabsent(m.headers, k, v)
@@ -240,14 +235,12 @@ end
 # request/response
 
 mutable struct InputStream
-    ptr::Ptr{aws_input_stream}
     bodyref::Any
     bodylen::Int64
-    bodycursor::aws_byte_cursor
-    InputStream() = new()
+    InputStream() = new(nothing, 0)
 end
 
-ischunked(is::InputStream) = is.ptr == C_NULL && is.bodyref !== nothing
+ischunked(is::InputStream) = is.bodylen < 0 && is.bodyref !== nothing
 
 const RequestBodyTypes = Union{AbstractString, AbstractVector{UInt8}, IO, AbstractDict, NamedTuple, Form, Nothing}
 const DEFAULT_IO_CHUNK_SIZE = 64 * 1024
@@ -286,79 +279,55 @@ function _record_layer!(context::Dict{Symbol, Any}, name::Symbol, started::Float
     return
 end
 
-function InputStream(allocator::Ptr{aws_allocator}, body)
-    is = InputStream()
-    if body !== nothing
-        if (body isa AbstractVector{UInt8}) || (body isa AbstractString)
-            is.bodyref = body
-            is.bodycursor = aws_byte_cursor(sizeof(body), pointer(body))
-            is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
-            is.ptr == C_NULL && aws_throw_error()
-        elseif body isa Union{AbstractDict, NamedTuple}
-            # hold a reference to the request body in order to gc-preserve it
-            is.bodyref = URIs.escapeuri(body)
-            is.bodycursor = aws_byte_cursor_from_c_str(is.bodyref)
-            is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
-            is.ptr == C_NULL && aws_throw_error()
-        elseif body isa IOStream
-            isopen(body) || throw(ArgumentError("request body IOStream is closed"))
-            is.bodyref = body
-            is.ptr = aws_input_stream_new_from_open_file(allocator, Libc.FILE(body))
-            is.ptr == C_NULL && aws_throw_error()
-        elseif body isa Form
-            # we set the request.body to the Form bytes in order to gc-preserve them
-            is.bodyref = read(body)
-            is.bodycursor = aws_byte_cursor(sizeof(is.bodyref), pointer(is.bodyref))
-            is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
-            is.ptr == C_NULL && aws_throw_error()
-        elseif body isa IO
-            # we set the request.body to the IO bytes in order to gc-preserve them
-            bytes = readavailable(body)
-            while !eof(body)
-                append!(bytes, readavailable(body))
-            end
-            is.bodyref = bytes
-            is.bodycursor = aws_byte_cursor(sizeof(is.bodyref), pointer(is.bodyref))
-            is.ptr = aws_input_stream_new_from_cursor(allocator, FieldRef(is, :bodycursor))
-            is.ptr == C_NULL && aws_throw_error()
-        elseif Base.isiterable(typeof(body))
-            # assume a chunked request body; any kind of iterable where elements are RequestBodyTypes
-            is.bodyref = body
-        else
-            throw(ArgumentError("request body must be a string, vector of UInt8, NamedTuple, AbstractDict, HTTP.Form, IO, or an iterable of those"))
-        end
-        if is.ptr != C_NULL
-            aws_input_stream_get_length(is.ptr, FieldRef(is, :bodylen)) != 0 && aws_throw_error()
-            if !(is.bodylen > 0)
-                aws_input_stream_release(is.ptr)
-                is.ptr = C_NULL
-            end
-        end
-    end
-    return finalizer(x -> x.ptr != C_NULL && aws_input_stream_release(x.ptr), is)
-end
-
-function setinputstream!(msg::Message, body)
-    aws_http_message_set_body_stream(msg.ptr, C_NULL)
-    msg.inputstream = nothing
+function setinputstream!(m::Message, body)
+    AwsHTTP.http_message_set_body_stream(getfield(m, :msg), nothing)
+    m.inputstream = nothing
     body === nothing && return
-    input_stream = InputStream(msg.allocator, body)
-    setfield!(msg, :inputstream, input_stream)
-    if input_stream.ptr != C_NULL
-        aws_http_message_set_body_stream(msg.ptr, input_stream.ptr)
-        if body isa Union{AbstractDict, NamedTuple}
-            setheaderifabsent(msg.headers, "content-type", "application/x-www-form-urlencoded")
-        elseif body isa Form
-            setheaderifabsent(msg.headers, "content-type", content_type(body))
+    is = InputStream()
+    if (body isa AbstractVector{UInt8}) || (body isa AbstractString)
+        is.bodyref = body
+        is.bodylen = sizeof(body)
+    elseif body isa Union{AbstractDict, NamedTuple}
+        is.bodyref = URIs.escapeuri(body)
+        is.bodylen = sizeof(is.bodyref)
+    elseif body isa IOStream
+        isopen(body) || throw(ArgumentError("request body IOStream is closed"))
+        is.bodyref = read(body)
+        is.bodylen = sizeof(is.bodyref)
+    elseif body isa Form
+        is.bodyref = read(body)
+        is.bodylen = sizeof(is.bodyref)
+    elseif body isa IO
+        bytes = readavailable(body)
+        while !eof(body)
+            append!(bytes, readavailable(body))
         end
-        setheader(msg.headers, "content-length", string(input_stream.bodylen))
+        is.bodyref = bytes
+        is.bodylen = sizeof(is.bodyref)
+    elseif Base.isiterable(typeof(body))
+        # chunked request body; any kind of iterable where elements are RequestBodyTypes
+        is.bodyref = body
+        is.bodylen = -1
+    else
+        throw(ArgumentError("request body must be a string, vector of UInt8, NamedTuple, AbstractDict, HTTP.Form, IO, or an iterable of those"))
+    end
+    setfield!(m, :inputstream, is)
+    if is.bodylen > 0
+        # Wrap body in IOBuffer so the H1 encoder's readbytes! works
+        AwsHTTP.http_message_set_body_stream(getfield(m, :msg), IOBuffer(is.bodyref))
+        if body isa Union{AbstractDict, NamedTuple}
+            setheaderifabsent(m.headers, "content-type", "application/x-www-form-urlencoded")
+        elseif body isa Form
+            setheaderifabsent(m.headers, "content-type", content_type(body))
+        end
+        setheader(m.headers, "content-length", string(is.bodylen))
     end
     return
 end
 
+
 mutable struct Request <: Message
-    allocator::Ptr{aws_allocator}
-    ptr::Ptr{aws_http_message}
+    msg::AwsHTTP.HttpMessage
     inputstream::Union{Nothing, InputStream} # used for outgoing request body
     # only set in server-side request handlers
     body::Union{Nothing, Vector{UInt8}}
@@ -368,36 +337,34 @@ mutable struct Request <: Message
     params::Union{Nothing, Dict{String, String}}
     cookies::Any # actually Union{Nothing, Vector{Cookie}}
 
-    function Request(method, path, headers=nothing, body=nothing, http2::Bool=false, allocator=default_aws_allocator(); context=nothing)
-        ptr = http2 ?
-          aws_http2_message_new_request(allocator) :
-          aws_http_message_new_request(allocator)
-        ptr == C_NULL && aws_throw_error()
-        try
-            GC.@preserve method aws_http_message_set_request_method(ptr, aws_byte_cursor_from_c_str(method)) != 0 && aws_throw_error()
-            GC.@preserve path aws_http_message_set_request_path(ptr, aws_byte_cursor_from_c_str(path)) != 0 && aws_throw_error()
-            request_headers = Headers(aws_http_message_get_headers(ptr))
-            if headers !== nothing
-                for (k, v) in headers
-                    addheader(request_headers, k, v)
-                end
+    function Request(method, path, headers=nothing, body=nothing, http2::Bool=false; context=nothing)
+        msg = http2 ?
+          AwsHTTP.http2_message_new_request() :
+          AwsHTTP.http_message_new_request()
+        AwsHTTP.http_message_set_request_method(msg, String(method)) != 0 && aws_throw_error()
+        AwsHTTP.http_message_set_request_path(msg, String(path)) != 0 && aws_throw_error()
+        msg_headers = AwsHTTP.http_message_get_headers(msg)
+        if headers !== nothing
+            for (k, v) in headers
+                AwsHTTP.http_headers_add(msg_headers, String(k), String(v)) != 0 && aws_throw_error()
             end
-            req = new(allocator, ptr)
-            req.body = nothing
-            req.inputstream = nothing
-            req.trailers = nothing
-            req.context = context === nothing ? Dict{Symbol, Any}() : context
-            req.route = nothing
-            req.params = nothing
-            req.cookies = nothing
-            body !== nothing && setinputstream!(req, body)
-            return finalizer(_ -> aws_http_message_release(ptr), req)
-        catch
-            aws_http_message_release(ptr)
-            rethrow()
         end
+        req = new(msg)
+        req.body = nothing
+        req.inputstream = nothing
+        req.trailers = nothing
+        req.context = context === nothing ? Dict{Symbol, Any}() : context
+        req.route = nothing
+        req.params = nothing
+        req.cookies = nothing
+        body !== nothing && setinputstream!(req, body)
+        return req
     end
 end
+
+# compatibility: 6-arg version for callers that still pass allocator
+Request(method, path, headers, body, http2::Bool, _allocator; context=nothing) =
+    Request(method, path, headers, body, http2; context=context)
 
 getrequest(req::Request) = req
 
@@ -417,26 +384,19 @@ function observelayer(f)
     end
 end
 
-ptr(x) = getfield(x, :ptr)
-
 function Base.getproperty(x::Request, s::Symbol)
     if s == :method
-        out = Ref{aws_byte_cursor}()
-        GC.@preserve out begin
-            aws_http_message_get_request_method(ptr(x), out) != 0 && return nothing
-            return str(out[])
-        end
-    elseif s == :path || s == :target || s == :uri
-        out = Ref{aws_byte_cursor}()
-        GC.@preserve out begin
-            aws_http_message_get_request_path(ptr(x), out) != 0 && return nothing
-            path = str(out[])
-            return s == :uri ? URI(path) : path
-        end
+        return AwsHTTP.http_message_get_request_method(getfield(x, :msg))
+    elseif s == :path || s == :target
+        return AwsHTTP.http_message_get_request_path(getfield(x, :msg))
+    elseif s == :uri
+        path = AwsHTTP.http_message_get_request_path(getfield(x, :msg))
+        return path === nothing ? URI("/") : URI(path)
     elseif s == :headers
-        return Headers(aws_http_message_get_headers(ptr(x)))
+        return Headers(AwsHTTP.http_message_get_headers(getfield(x, :msg)))
     elseif s == :version
-        return aws_http_message_get_protocol_version(ptr(x)) == AWS_HTTP_VERSION_2 ? HTTPVersion(2, 0) : HTTPVersion(1, 1)
+        v = AwsHTTP.http_message_get_protocol_version(getfield(x, :msg))
+        return v == AwsHTTP.HttpVersion.HTTP_2 ? HTTPVersion(2, 0) : HTTPVersion(1, 1)
     else
         return getfield(x, s)
     end
@@ -444,9 +404,9 @@ end
 
 function Base.setproperty!(x::Request, s::Symbol, v)
     if s == :method
-        GC.@preserve v aws_http_message_set_request_method(x.ptr, aws_byte_cursor_from_c_str(v)) != 0 && aws_throw_error()
+        AwsHTTP.http_message_set_request_method(getfield(x, :msg), String(v)) != 0 && aws_throw_error()
     elseif s == :path
-        GC.@preserve v aws_http_message_set_request_path(x.ptr, aws_byte_cursor_from_c_str(v)) != 0 && aws_throw_error()
+        AwsHTTP.http_message_set_request_path(getfield(x, :msg), String(v)) != 0 && aws_throw_error()
     elseif s == :headers
         addheaders(x.headers, v)
     else
@@ -510,61 +470,67 @@ target(r::Request) = r.path
 headers(r::Request) = r.headers
 body(r::Request) = r.body
 
-resource(uri::URI) = string(isempty(uri.path)      ? "/" :     uri.path,
-                            !isempty(uri.query)    ? "?" : "", uri.query,
-                            !isempty(uri.fragment) ? "#" : "", uri.fragment)
-
 mutable struct RequestMetrics
     request_body_length::Int
     response_body_length::Int
     nretries::Int
-    stream_metrics::Union{Nothing, aws_http_stream_metrics}
+    stream_metrics::Union{Nothing, AwsHTTP.HttpStreamMetrics}
 end
 
 RequestMetrics() = RequestMetrics(0, 0, 0, nothing)
 
 mutable struct Response <: Message
-    allocator::Ptr{aws_allocator}
-    ptr::Ptr{aws_http_message}
+    msg::AwsHTTP.HttpMessage
     inputstream::Union{Nothing, InputStream}
     body::Union{Nothing, Vector{UInt8}} # only set for client-side response body when no user-provided response_body
     trailers::Union{Nothing, Headers}
     metrics::RequestMetrics
     request::Union{Request, Nothing}
 
-    function Response(status::Integer, headers, body, http2::Bool=false, allocator=default_aws_allocator())
-        ptr = http2 ?
-            aws_http2_message_new_response(allocator) :
-            aws_http_message_new_response(allocator)
-        ptr == C_NULL && aws_throw_error()
-        try
-            GC.@preserve status aws_http_message_set_response_status(ptr, status) != 0 && aws_throw_error()
-            response_headers = Headers(aws_http_message_get_headers(ptr))
-            if headers !== nothing
-                for (k, v) in headers
-                    addheader(response_headers, k, v)
-                end
+    function Response(status::Integer, headers, body, http2::Bool=false)
+        msg = http2 ?
+            AwsHTTP.http2_message_new_response() :
+            AwsHTTP.http_message_new_response()
+        AwsHTTP.http_message_set_response_status(msg, Int(status)) != 0 && aws_throw_error()
+        msg_headers = AwsHTTP.http_message_get_headers(msg)
+        if headers !== nothing
+            for (k, v) in headers
+                AwsHTTP.http_headers_add(msg_headers, String(k), String(v)) != 0 && aws_throw_error()
             end
-            resp = new(allocator, ptr)
-            resp.body = nothing
-            resp.inputstream = nothing
-            resp.trailers = nothing
-            resp.metrics = RequestMetrics()
-            resp.request = nothing
-            body !== nothing && setinputstream!(resp, body)
-            return finalizer(_ -> aws_http_message_release(ptr), resp)
-        catch
-            aws_http_message_release(ptr)
-            rethrow()
         end
+        resp = new(msg)
+        resp.body = nothing
+        resp.inputstream = nothing
+        resp.trailers = nothing
+        resp.metrics = RequestMetrics()
+        resp.request = nothing
+        if body !== nothing
+            setinputstream!(resp, body)
+        else
+            if !hasheader(resp.headers, "content-length") && !hasheader(resp.headers, "transfer-encoding")
+                setheader(resp.headers, "content-length" => "0")
+            end
+        end
+        return resp
     end
-    Response() = new(C_NULL, C_NULL, nothing, nothing, nothing, RequestMetrics(), nothing)
+    Response() = new(AwsHTTP.http_message_new_response(), nothing, nothing, nothing, RequestMetrics(), nothing)
 end
+
+# compatibility: 5-arg version for callers that still pass allocator
+Response(status::Integer, headers, body, http2::Bool, _allocator) =
+    Response(status, headers, body, http2)
 
 Response(status::Integer, body) = Response(status, nothing, Vector{UInt8}(string(body)))
 Response(status::Integer) = Response(status, nothing, nothing)
 
 getresponse(r::Response) = r
+
+function _head_response!(resp::Response)
+    setinputstream!(resp, nothing)
+    hasheader(resp.headers, "transfer-encoding") && removeheader(resp.headers, "transfer-encoding")
+    setheader(resp.headers, "content-length" => "0")
+    return
+end
 
 bodylen(m::Message) = isdefined(m, :inputstream) && m.inputstream !== nothing ? m.inputstream.bodylen : 0
 
@@ -577,13 +543,12 @@ end
 
 function Base.getproperty(x::Response, s::Symbol)
     if s == :status
-        ref = Ref{Cint}()
-        aws_http_message_get_response_status(x.ptr, ref) != 0 && return nothing
-        return Int(ref[])
+        return AwsHTTP.http_message_get_response_status(getfield(x, :msg))
     elseif s == :headers
-        return Headers(aws_http_message_get_headers(x.ptr))
+        return Headers(AwsHTTP.http_message_get_headers(getfield(x, :msg)))
     elseif s == :version
-        return aws_http_message_get_protocol_version(x.ptr) == AWS_HTTP_VERSION_2 ? HTTPVersion(2, 0) : HTTPVersion(1, 1)
+        v = AwsHTTP.http_message_get_protocol_version(getfield(x, :msg))
+        return v == AwsHTTP.HttpVersion.HTTP_2 ? HTTPVersion(2, 0) : HTTPVersion(1, 1)
     else
         return getfield(x, s)
     end
@@ -591,7 +556,7 @@ end
 
 function Base.setproperty!(x::Response, s::Symbol, v)
     if s == :status
-        GC.@preserve v aws_http_message_set_response_status(x.ptr, v) != 0 && aws_throw_error()
+        AwsHTTP.http_message_set_response_status(getfield(x, :msg), Int(v)) != 0 && aws_throw_error()
     elseif s == :headers
         addheaders(x.headers, v)
     else

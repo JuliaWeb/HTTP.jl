@@ -66,7 +66,8 @@
     end
     @test got
 
-    @test_throws HTTP.AWSError HTTP.parseuri("http://example.com:abc", nothing, HTTP.default_aws_allocator())
+    # parseuri now delegates to URIs.jl (no C-level allocator needed)
+    @test HTTP.parseuri("http://example.com/path", nothing) isa URIs.URI
 
     exported = names(HTTP, all=false)
     @test :startwrite in exported

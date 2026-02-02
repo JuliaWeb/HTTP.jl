@@ -1,11 +1,12 @@
-using Test, HTTP, Logging, Base64
+using Test, HTTP, Logging, Base64, AwsIO
 import Sockets
 
 @testset "HTTP.serve" begin
     server = HTTP.serve!(req -> HTTP.Response(200, "Hello, World!"); listenany=true)
     try
         @test server.state == :running
-        resp = HTTP.get("http://127.0.0.1:8080")
+        port = HTTP.port(server)
+        resp = HTTP.get("http://127.0.0.1:$port")
         @test resp.status == 200
         @test String(resp.body) == "Hello, World!"
     finally
@@ -104,75 +105,81 @@ end
     end
 end
 
-@testset "HTTP/2 stream handler writes" begin
-    cert = joinpath(@__DIR__, "fixtures", "http2.crt")
-    key = joinpath(@__DIR__, "fixtures", "http2.key")
-    saw_http2 = Threads.Atomic{Bool}(false)
-    buffered = Threads.Atomic{Bool}(false)
-    server = HTTP.serve!("127.0.0.1", 0; listenany=true, stream=true, ssl_cert=cert, ssl_key=key, ssl_alpn_list="h2") do stream
-        HTTP.startread(stream)
-        stream.http2 && (saw_http2[] = true)
-        HTTP.setstatus(stream, 200)
-        HTTP.startwrite(stream)
-        write(stream, "hello")
-        if stream.http2 && stream.responsebuf !== nothing
-            buffered[] = true
+@testset "HTTP/2 TLS support" begin
+    if !AwsIO.tls_is_alpn_available()
+        @info "Skipping HTTP/2 TLS tests; ALPN not available"
+        @test true
+    else
+        @testset "HTTP/2 stream handler writes" begin
+            cert = joinpath(@__DIR__, "fixtures", "http2.crt")
+            key = joinpath(@__DIR__, "fixtures", "http2.key")
+            saw_http2 = Threads.Atomic{Bool}(false)
+            buffered = Threads.Atomic{Bool}(false)
+            server = HTTP.serve!("127.0.0.1", 0; listenany=true, stream=true, ssl_cert=cert, ssl_key=key, ssl_alpn_list="h2") do stream
+                HTTP.startread(stream)
+                stream.http2 && (saw_http2[] = true)
+                HTTP.setstatus(stream, 200)
+                HTTP.startwrite(stream)
+                write(stream, "hello")
+                if stream.http2 && stream.responsebuf !== nothing
+                    buffered[] = true
+                end
+                HTTP.closewrite(stream)
+            end
+            try
+                port = HTTP.port(server)
+                resp = HTTP.get("https://127.0.0.1:$(port)"; ssl_insecure=true, ssl_alpn_list="h2")
+                if resp.version == HTTP.HTTPVersion(2, 0)
+                    @test saw_http2[]
+                    @test !buffered[]
+                    @test String(resp.body) == "hello"
+                else
+                    @info "HTTP/2 not negotiated for stream handler test"
+                    @test true
+                end
+            finally
+                close(server)
+            end
         end
-        HTTP.closewrite(stream)
-    end
-    try
-        port = HTTP.port(server)
-        resp = HTTP.get("https://127.0.0.1:$(port)"; ssl_insecure=true, ssl_alpn_list="h2")
-        if resp.version == HTTP.HTTPVersion(2, 0)
-            @test saw_http2[]
-            @test !buffered[]
-            @test String(resp.body) == "hello"
-        else
-            @info "HTTP/2 not negotiated for stream handler test"
-            @test true
+        @testset "HTTP/2 server push promise" begin
+            cert = joinpath(@__DIR__, "fixtures", "http2.crt")
+            key = joinpath(@__DIR__, "fixtures", "http2.key")
+            port_ref = Ref{Int}(0)
+            push_called = Threads.Atomic{Bool}(false)
+            push_http2 = Threads.Atomic{Bool}(false)
+            push_server_side = Threads.Atomic{Bool}(false)
+            server = HTTP.serve!("127.0.0.1", 0; listenany=true, stream=true, ssl_cert=cert, ssl_key=key, ssl_alpn_list="h2") do stream
+                HTTP.startread(stream)
+                if stream.http2
+                    authority = "127.0.0.1:$(port_ref[])"
+                    push = HTTP.push_promise(stream, "GET", "/pushed"; scheme="https", authority=authority)
+                    push_called[] = true
+                    push_http2[] = push.http2
+                    push_server_side[] = push.server_side
+                    HTTP.setstatus(push, 200)
+                    HTTP.setheader(push, "Content-Type" => "text/plain")
+                    write(push, "pushed")
+                    HTTP.closewrite(push)
+                end
+                HTTP.setstatus(stream, 200)
+                write(stream, "ok")
+            end
+            try
+                port_ref[] = HTTP.port(server)
+                resp = HTTP.get("https://127.0.0.1:$(port_ref[])"; ssl_insecure=true, ssl_alpn_list="h2")
+                if resp.version == HTTP.HTTPVersion(2, 0)
+                    @test push_called[]
+                    @test push_http2[]
+                    @test push_server_side[]
+                    @test String(resp.body) == "ok"
+                else
+                    @info "HTTP/2 not negotiated for push promise test"
+                    @test true
+                end
+            finally
+                close(server)
+            end
         end
-    finally
-        close(server)
-    end
-end
-
-@testset "HTTP/2 server push promise" begin
-    cert = joinpath(@__DIR__, "fixtures", "http2.crt")
-    key = joinpath(@__DIR__, "fixtures", "http2.key")
-    port_ref = Ref{Int}(0)
-    push_called = Threads.Atomic{Bool}(false)
-    push_http2 = Threads.Atomic{Bool}(false)
-    push_server_side = Threads.Atomic{Bool}(false)
-    server = HTTP.serve!("127.0.0.1", 0; listenany=true, stream=true, ssl_cert=cert, ssl_key=key, ssl_alpn_list="h2") do stream
-        HTTP.startread(stream)
-        if stream.http2
-            authority = "127.0.0.1:$(port_ref[])"
-            push = HTTP.push_promise(stream, "GET", "/pushed"; scheme="https", authority=authority)
-            push_called[] = true
-            push_http2[] = push.http2
-            push_server_side[] = push.server_side
-            HTTP.setstatus(push, 200)
-            HTTP.setheader(push, "Content-Type" => "text/plain")
-            write(push, "pushed")
-            HTTP.closewrite(push)
-        end
-        HTTP.setstatus(stream, 200)
-        write(stream, "ok")
-    end
-    try
-        port_ref[] = HTTP.port(server)
-        resp = HTTP.get("https://127.0.0.1:$(port_ref[])"; ssl_insecure=true, ssl_alpn_list="h2")
-        if resp.version == HTTP.HTTPVersion(2, 0)
-            @test push_called[]
-            @test push_http2[]
-            @test push_server_side[]
-            @test String(resp.body) == "ok"
-        else
-            @info "HTTP/2 not negotiated for push promise test"
-            @test true
-        end
-    finally
-        close(server)
     end
 end
 

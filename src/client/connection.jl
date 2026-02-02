@@ -1,39 +1,3 @@
-const on_setup = Ref{Ptr{Cvoid}}(C_NULL)
-const on_change_settings_complete = Ref{Ptr{Cvoid}}(C_NULL)
-const on_ping_complete = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_setup(conn, error_code, fut_ptr)
-    fut = unsafe_pointer_to_objref(fut_ptr)
-    if error_code == AWS_IO_DNS_INVALID_NAME# || error_code == AWS_IO_TLS_ERROR_NEGOTIATION_FAILURE
-        notify(fut, DontRetry(CapturedException(aws_error(error_code), Base.backtrace())))
-    elseif error_code != 0
-        notify(fut, CapturedException(aws_error(error_code), Base.backtrace()))
-    else
-        notify(fut, conn)
-    end
-    return
-end
-
-function c_on_change_settings_complete(conn, error_code, fut_ptr)
-    fut = unsafe_pointer_to_objref(fut_ptr)
-    if error_code != 0
-        notify(fut, CapturedException(aws_error(error_code), Base.backtrace()))
-    else
-        notify(fut, nothing)
-    end
-    return
-end
-
-function c_on_ping_complete(conn, round_trip_time_ns, error_code, fut_ptr)
-    fut = unsafe_pointer_to_objref(fut_ptr)
-    if error_code != 0
-        notify(fut, CapturedException(aws_error(error_code), Base.backtrace()))
-    else
-        notify(fut, round_trip_time_ns)
-    end
-    return
-end
-
 function _client_url(client::Client)
     host = client.settings.host
     port = client.settings.port
@@ -41,43 +5,36 @@ function _client_url(client::Client)
 end
 
 function with_connection(f::Function, client::Client; context=nothing)
-    if context === nothing
-        fut = Future{Ptr{aws_http_connection}}()
-        GC.@preserve fut begin
-            aws_http_connection_manager_acquire_connection(client.connection_manager, on_setup[], pointer_from_objref(fut))
-            connection = try
-                wait(fut)
-            catch e
-                throw(ConnectError(_client_url(client), e))
+    start_time = context !== nothing ? time() : 0.0
+    ch = Channel{Any}(1)
+    AwsHTTP.http_connection_manager_acquire_connection(
+        client.connection_manager;
+        callback = (conn, error_code, _) -> begin
+            if error_code != AwsHTTP.OP_SUCCESS
+                ec = AwsIO.last_error()
+                put!(ch, CapturedException(aws_error(ec), Base.backtrace()))
+            else
+                put!(ch, conn)
             end
         end
-        try
-            return f(connection)
-        finally
-            aws_http_connection_manager_release_connection(client.connection_manager, connection)
-        end
-    end
-    start_time = time()
-    fut = Future{Ptr{aws_http_connection}}()
-    GC.@preserve fut begin
-        aws_http_connection_manager_acquire_connection(client.connection_manager, on_setup[], pointer_from_objref(fut))
-        connection = try
-            wait(fut)
-        catch e
-            throw(ConnectError(_client_url(client), e))
-        end
+    )
+    result = take!(ch)
+    connection = if result isa Exception
+        throw(ConnectError(_client_url(client), result))
+    else
+        result
     end
     try
         return f(connection)
     finally
-        aws_http_connection_manager_release_connection(client.connection_manager, connection)
-        _record_layer!(context, :connectionlayer, start_time)
+        AwsHTTP.http_connection_manager_release_connection(client.connection_manager, connection)
+        context !== nothing && _record_layer!(context, :connectionlayer, start_time)
     end
 end
 
-function _ensure_http2_connection(conn::Ptr{aws_http_connection})
-    conn == C_NULL && throw(ArgumentError("HTTP/2 connection is null"))
-    aws_http_connection_get_version(conn) == AWS_HTTP_VERSION_2 || throw(ArgumentError("HTTP/2 connection required"))
+function _ensure_http2_connection(conn)
+    conn === nothing && throw(ArgumentError("HTTP/2 connection is null"))
+    AwsHTTP.http_connection_get_version(conn) == AwsHTTP.HttpVersion.HTTP_2 || throw(ArgumentError("HTTP/2 connection required"))
     return conn
 end
 
@@ -87,100 +44,101 @@ function _with_http2_connection(f::Function, client::Client)
     end
 end
 
-function http2_ping(conn::Ptr{aws_http_connection}; data=nothing)
+function http2_ping(conn; data=nothing)
     _ensure_http2_connection(conn)
     fut = Future{UInt64}()
-    cursor_ref = Ref{aws_byte_cursor}()
-    cursor_ptr = C_NULL
-    bytes = nothing
-    if data !== nothing
+    opaque_data = if data !== nothing
         bytes = data isa AbstractString ? Vector{UInt8}(codeunits(data)) : Vector{UInt8}(data)
-        length(bytes) == AWS_HTTP2_PING_DATA_SIZE || throw(ArgumentError("PING data must be $(AWS_HTTP2_PING_DATA_SIZE) bytes"))
-        GC.@preserve bytes begin
-            cursor_ref[] = aws_byte_cursor_from_array(pointer(bytes), length(bytes))
+        length(bytes) == AwsHTTP.H2_PING_DATA_SIZE || throw(ArgumentError("PING data must be $(AwsHTTP.H2_PING_DATA_SIZE) bytes"))
+        bytes
+    else
+        zeros(UInt8, AwsHTTP.H2_PING_DATA_SIZE)
+    end
+    AwsHTTP.h2_connection_send_ping!(conn, opaque_data;
+        on_completed = (rtt_ns, error_code, _) -> begin
+            if error_code != 0
+                notify(fut, CapturedException(aws_error(error_code), Base.backtrace()))
+            else
+                notify(fut, rtt_ns)
+            end
         end
-        cursor_ptr = cursor_ref
-    end
-    GC.@preserve fut cursor_ref bytes begin
-        aws_http2_connection_ping(conn, cursor_ptr, on_ping_complete[], pointer_from_objref(fut)) != 0 && aws_throw_error()
-        return wait(fut)
-    end
+    )
+    return wait(fut)
 end
 
 http2_ping(client::Client; data=nothing) = _with_http2_connection(conn -> http2_ping(conn; data=data), client)
 
 function _settings_from_pairs(settings::AbstractVector{<:Pair})
-    out = Vector{aws_http2_setting}(undef, length(settings))
+    out = Vector{AwsHTTP.Http2Setting}(undef, length(settings))
     for (i, (k, v)) in enumerate(settings)
-        id = k isa aws_http2_settings_id ? k : aws_http2_settings_id(k)
-        out[i] = aws_http2_setting(id, UInt32(v))
+        id = k isa AwsHTTP.Http2SettingsId.T ? k : AwsHTTP.Http2SettingsId.T(k)
+        out[i] = AwsHTTP.Http2Setting(id, UInt32(v))
     end
     return out
 end
 
-function http2_change_settings(conn::Ptr{aws_http_connection}, settings::AbstractVector{aws_http2_setting})
+function http2_change_settings(conn, settings::Vector{AwsHTTP.Http2Setting})
     _ensure_http2_connection(conn)
     fut = Future{Nothing}()
-    settings_ptr = isempty(settings) ? C_NULL : pointer(settings)
-    GC.@preserve settings fut begin
-        aws_http2_connection_change_settings(conn, settings_ptr, length(settings), on_change_settings_complete[], pointer_from_objref(fut)) != 0 && aws_throw_error()
-        wait(fut)
-    end
+    AwsHTTP.h2_connection_change_settings!(conn, settings;
+        on_completed = (error_code, _) -> begin
+            if error_code != 0
+                notify(fut, CapturedException(aws_error(error_code), Base.backtrace()))
+            else
+                notify(fut, nothing)
+            end
+        end
+    )
+    wait(fut)
     return
 end
 
-http2_change_settings(conn::Ptr{aws_http_connection}, settings::AbstractVector{<:Pair}) =
+http2_change_settings(conn, settings::AbstractVector{<:Pair}) =
     http2_change_settings(conn, _settings_from_pairs(settings))
 
 http2_change_settings(client::Client, settings) =
     _with_http2_connection(conn -> http2_change_settings(conn, settings), client)
 
 
-function http2_local_settings(conn::Ptr{aws_http_connection})
+function http2_local_settings(conn)
     _ensure_http2_connection(conn)
-    settings = Vector{aws_http2_setting}(undef, AWS_HTTP2_SETTINGS_COUNT)
-    aws_http2_connection_get_local_settings(conn, pointer(settings))
-    return settings
+    return AwsHTTP.h2_connection_get_local_settings(conn)
 end
 
 http2_local_settings(client::Client) = _with_http2_connection(http2_local_settings, client)
 
-function http2_remote_settings(conn::Ptr{aws_http_connection})
+function http2_remote_settings(conn)
     _ensure_http2_connection(conn)
-    settings = Vector{aws_http2_setting}(undef, AWS_HTTP2_SETTINGS_COUNT)
-    aws_http2_connection_get_remote_settings(conn, pointer(settings))
-    return settings
+    return AwsHTTP.h2_connection_get_remote_settings(conn)
 end
 
 http2_remote_settings(client::Client) = _with_http2_connection(http2_remote_settings, client)
 
-function http2_send_goaway(conn::Ptr{aws_http_connection}, http2_error::Integer; allow_more_streams::Bool=true, debug_data=nothing)
+function http2_send_goaway(conn, http2_error::Integer; allow_more_streams::Bool=true, debug_data=nothing)
     _ensure_http2_connection(conn)
-    cursor_ref = Ref{aws_byte_cursor}()
-    cursor_ptr = C_NULL
-    bytes = nothing
-    if debug_data !== nothing
+    dd = if debug_data !== nothing
         bytes = debug_data isa AbstractString ? Vector{UInt8}(codeunits(debug_data)) : Vector{UInt8}(debug_data)
         length(bytes) <= 16 * 1024 || throw(ArgumentError("debug_data must be <= 16KB"))
-        GC.@preserve bytes begin
-            cursor_ref[] = aws_byte_cursor_from_array(pointer(bytes), length(bytes))
-        end
-        cursor_ptr = cursor_ref
+        bytes
+    else
+        UInt8[]
     end
-    GC.@preserve bytes cursor_ref begin
-        aws_http2_connection_send_goaway(conn, UInt32(http2_error), allow_more_streams, cursor_ptr)
-    end
+    AwsHTTP.h2_connection_send_goaway!(conn;
+        allow_more_streams=allow_more_streams,
+        error_code=UInt32(http2_error),
+        debug_data=dd
+    )
     return
 end
 
 http2_send_goaway(client::Client, http2_error::Integer; allow_more_streams::Bool=true, debug_data=nothing) =
     _with_http2_connection(conn -> http2_send_goaway(conn, http2_error; allow_more_streams=allow_more_streams, debug_data=debug_data), client)
 
-function http2_update_window(conn::Ptr{aws_http_connection}, increment::Integer)
+function http2_update_window(conn, increment::Integer)
     _ensure_http2_connection(conn)
     increment < 0 && throw(ArgumentError("increment must be >= 0"))
     increment > HTTP2_MAX_WINDOW_SIZE && throw(ArgumentError("increment must be <= $(HTTP2_MAX_WINDOW_SIZE)"))
-    aws_http2_connection_update_window(conn, UInt32(increment))
+    AwsHTTP.h2_connection_update_window!(conn, UInt32(increment))
     return
 end
 
@@ -188,23 +146,18 @@ http2_update_window(client::Client, increment::Integer) =
     _with_http2_connection(conn -> http2_update_window(conn, increment), client)
 
 
-function _get_goaway(get_fn, conn::Ptr{aws_http_connection})
+function _get_goaway(get_fn, conn)
     _ensure_http2_connection(conn)
-    http2_error = Ref{UInt32}()
-    last_stream_id = Ref{UInt32}()
-    ret = get_fn(conn, http2_error, last_stream_id)
-    if ret == 0
-        return (http2_error=http2_error[], last_stream_id=last_stream_id[])
-    elseif ret == AWS_ERROR_HTTP_DATA_NOT_AVAILABLE
-        return nothing
+    sent_or_received, last_stream_id, error_code = get_fn(conn)
+    if sent_or_received
+        return (http2_error=error_code, last_stream_id=last_stream_id)
     else
-        aws_throw_error()
+        return nothing
     end
 end
 
-http2_get_sent_goaway(conn::Ptr{aws_http_connection}) = _get_goaway(aws_http2_connection_get_sent_goaway, conn)
-http2_get_received_goaway(conn::Ptr{aws_http_connection}) = _get_goaway(aws_http2_connection_get_received_goaway, conn)
+http2_get_sent_goaway(conn) = _get_goaway(AwsHTTP.h2_connection_get_sent_goaway, conn)
+http2_get_received_goaway(conn) = _get_goaway(AwsHTTP.h2_connection_get_received_goaway, conn)
 
 http2_get_sent_goaway(client::Client) = _with_http2_connection(http2_get_sent_goaway, client)
-
 http2_get_received_goaway(client::Client) = _with_http2_connection(http2_get_received_goaway, client)

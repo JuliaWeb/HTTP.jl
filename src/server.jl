@@ -1,124 +1,60 @@
-socket_endpoint(host, port) = aws_socket_endpoint(
-    ntuple(i -> i > sizeof(host) ? 0x00 : codeunit(host, i), Base._counttuple(fieldtype(aws_socket_endpoint, :address))),
-    port % UInt32
-)
-
-function server_tlsoptions(host::String;
-    allocator=default_aws_allocator(),
+function server_tlsoptions(;
     ssl_cert=nothing,
     ssl_key=nothing,
     ssl_capath=nothing,
     ssl_cacert=nothing,
     ssl_insecure=false,
-    ssl_alpn_list=nothing,
+    ssl_alpn_list="h2;http/1.1",
 )
-    tls_options = aws_tls_connection_options(C_NULL, C_NULL, C_NULL, C_NULL, C_NULL, C_NULL, C_NULL, false, UInt32(0))
-    tls_ctx_options = Ptr{aws_tls_ctx_options}(aws_mem_acquire(allocator, sizeof(aws_tls_ctx_options)))
-    tls_ctx = C_NULL
-    try
-        if ssl_cert !== nothing && ssl_key !== nothing
-            LibAwsIO.aws_tls_ctx_options_init_default_server_from_path(tls_ctx_options, allocator, ssl_cert, ssl_key) != 0 && sockerr("aws_tls_ctx_options_init_default_server_from_path failed")
-        elseif Sys.iswindows() && ssl_cert !== nothing && ssl_key === nothing
-            LibAwsIO.aws_tls_ctx_options_init_default_server_from_system_path(tls_ctx_options, allocator, ssl_cert) != 0 && sockerr("aws_tls_ctx_options_init_default_server_from_system_path failed")
-        else
-            throw(ArgumentError("ssl_cert and ssl_key are required for TLS server"))
-        end
-        if ssl_capath !== nothing && ssl_cacert !== nothing
-            LibAwsIO.aws_tls_ctx_options_override_default_trust_store_from_path(tls_ctx_options, ssl_capath, ssl_cacert) != 0 && sockerr("aws_tls_ctx_options_override_default_trust_store_from_path failed")
-        end
-        if ssl_insecure
-            LibAwsIO.aws_tls_ctx_options_set_verify_peer(tls_ctx_options, false)
-        end
-        if ssl_alpn_list !== nothing
-            LibAwsIO.aws_tls_ctx_options_set_alpn_list(tls_ctx_options, ssl_alpn_list) != 0 && sockerr("aws_tls_ctx_options_set_alpn_list failed")
-        end
-        tls_ctx = LibAwsIO.aws_tls_server_ctx_new(allocator, tls_ctx_options)
-        tls_ctx == C_NULL && sockerr("")
-        ref = Ref(tls_options)
-        LibAwsIO.aws_tls_connection_options_init_from_ctx(ref, tls_ctx)
-        tls_options = ref[]
-    finally
-        LibAwsIO.aws_tls_ctx_options_clean_up(tls_ctx_options)
-        LibAwsIO.aws_tls_ctx_release(tls_ctx)
-        aws_mem_release(allocator, tls_ctx_options)
+    alpn_list = _normalize_alpn_list(ssl_alpn_list)
+    if ssl_cert !== nothing && ssl_key !== nothing
+        ctx_opts = AwsIO.tls_ctx_options_init_default_server_from_path(ssl_cert, ssl_key; alpn_list=alpn_list)
+        ctx_opts isa AwsIO.ErrorResult && throw(AWSError("Failed to create server TLS options"))
+    elseif Sys.iswindows() && ssl_cert !== nothing && ssl_key === nothing
+        ctx_opts = AwsIO.tls_ctx_options_init_default_server_from_system_path(ssl_cert)
+        ctx_opts isa AwsIO.ErrorResult && throw(AWSError("Failed to create server TLS options from system path"))
+    else
+        throw(ArgumentError("ssl_cert and ssl_key are required for TLS server"))
     end
-    return tls_options
+    if ssl_capath !== nothing || ssl_cacert !== nothing
+        res = AwsIO.tls_ctx_options_override_default_trust_store_from_path!(ctx_opts;
+            ca_path=ssl_capath, ca_file=ssl_cacert)
+        res isa AwsIO.ErrorResult && throw(AWSError("Failed to set trust store"))
+    end
+    if ssl_insecure
+        AwsIO.tls_ctx_options_set_verify_peer!(ctx_opts, false)
+    end
+    ctx = AwsIO.tls_server_ctx_new(ctx_opts)
+    ctx isa AwsIO.ErrorResult && throw(AWSError("Failed to create server TLS context"))
+    return AwsIO.TlsConnectionOptions(ctx; alpn_list=alpn_list)
 end
 
 mutable struct Connection{S}
     const server::S # Server{F, C}
-    const allocator::Ptr{aws_allocator}
-    const connection::Ptr{aws_http_connection}
+    const h1conn::Any # AwsHTTP.H1Connection or AwsHTTP.H2Connection
+    const channel::Any # AwsIO.Channel
     const streams_lock::ReentrantLock
     const streams::Set{Stream}
-    connection_options::aws_http_server_connection_options
+    const remote_addr::String
+    const remote_port_num::Int
 
-    Connection(
-        server::S,
-        allocator::Ptr{aws_allocator},
-        connection::Ptr{aws_http_connection},
-    ) where {S} = new{S}(server, allocator, connection, ReentrantLock(), Set{Stream}())
+    Connection(server::S, h1conn, channel, remote_addr::String, remote_port_num::Int) where {S} =
+        new{S}(server, h1conn, channel, ReentrantLock(), Set{Stream}(), remote_addr, remote_port_num)
 end
 
-Base.hash(c::Connection, h::UInt) = hash(c.connection, h)
+Base.hash(c::Connection, h::UInt) = hash(objectid(c), h)
 
-if !@isdefined aws_http2_send_push_promise_options
-    struct aws_http2_send_push_promise_options
-        self_size::Csize_t
-        user_data::Ptr{Cvoid}
-        on_complete::Ptr{Cvoid}
-        on_destroy::Ptr{Cvoid}
-        pad_length::UInt8
-    end
-end
-
-function aws_http2_stream_send_push_promise(
-    parent_stream::Ptr{aws_http_stream},
-    request::Ptr{aws_http_message},
-    options::Ref{aws_http2_send_push_promise_options},
-)
-    return ccall((:aws_http2_stream_send_push_promise, LibAwsHTTPFork.libaws_c_http_jq),
-        Ptr{aws_http_stream},
-        (Ptr{aws_http_stream}, Ptr{aws_http_message}, Ptr{aws_http2_send_push_promise_options}),
-        parent_stream,
-        request,
-        options,
-    )
-end
-
-function remote_address(c::Connection)
-    socket_ptr = aws_http_connection_get_remote_endpoint(c.connection)
-    addr = unsafe_load(socket_ptr).address
-    bytes = Vector{UInt8}(undef, length(addr))
-    nul_i = 0
-    for i in eachindex(bytes)
-        b = addr[i]
-        @inbounds bytes[i] = b
-        if b == 0x00
-            nul_i = i
-            break
-        end
-    end
-    resize!(bytes, nul_i == 0 ? length(addr) : nul_i - 1)
-    return String(bytes)
-end
-remote_port(c::Connection) = Int(unsafe_load(aws_http_connection_get_remote_endpoint(c.connection)).port)
+remote_address(c::Connection) = c.remote_addr
+remote_port(c::Connection) = c.remote_port_num
 function http_version(c::Connection)
-    v = aws_http_connection_get_version(c.connection)
-    return v == AWS_HTTP_VERSION_2 ? "HTTP/2" : "HTTP/1.1"
+    v = AwsHTTP.http_connection_get_version(c.h1conn)
+    return v == AwsHTTP.HttpVersion.HTTP_2 ? "HTTP/2" : "HTTP/1.1"
 end
-
-getinet(host::String, port::Integer) = Sockets.InetAddr(parse(IPAddr, host), port)
-getinet(host::IPAddr, port::Integer) = Sockets.InetAddr(host, port)
 
 mutable struct Server{F, C}
     const f::F
     const on_stream_complete::C
     const fut::Future{Symbol}
-    const allocator::Ptr{aws_allocator}
-    const endpoint::aws_socket_endpoint
-    const socket_options::aws_socket_options
-    const tls_options::Union{aws_tls_connection_options, Nothing}
     const connections_lock::ReentrantLock
     const connections::Set{Connection}
     const closed::Threads.Event
@@ -126,17 +62,13 @@ mutable struct Server{F, C}
     const stream::Bool
     const logstate::Base.CoreLogging.LogState
     @atomic state::Symbol # :initializing, :running, :closed
-    server::Ptr{aws_http_server}
-    server_options::aws_http_server_options
+    bootstrap::Any # AwsIO.ServerBootstrap
+    bound_port::Int
 
     Server{F, C}(
         f::F,
         on_stream_complete::C,
         fut::Future{Symbol},
-        allocator::Ptr{aws_allocator},
-        endpoint::aws_socket_endpoint,
-        socket_options::aws_socket_options,
-        tls_options::Union{aws_tls_connection_options, Nothing},
         connections_lock::ReentrantLock,
         connections::Set{Connection},
         closed::Threads.Event,
@@ -144,23 +76,224 @@ mutable struct Server{F, C}
         stream::Bool,
         logstate::Base.CoreLogging.LogState,
         state::Symbol,
-    ) where {F, C} = new{F, C}(f, on_stream_complete, fut, allocator, endpoint, socket_options, tls_options, connections_lock, connections, closed, access_log, stream, logstate, state)
+    ) where {F, C} = new{F, C}(f, on_stream_complete, fut, connections_lock, connections, closed, access_log, stream, logstate, state)
 end
 
 Base.wait(s::Server) = wait(s.closed)
 ftype(::Server{F}) where {F} = F
-port(s::Server) = Int(s.endpoint.port)
+port(s::Server) = s.bound_port
+
+function _should_log_stream_error(error_code::Integer)::Bool
+    error_code == 0 && return false
+    error_code == AwsHTTP.ERROR_HTTP_CONNECTION_CLOSED && return false
+    error_code == AwsHTTP.ERROR_HTTP_STREAM_CANCELLED && return false
+    error_code == AwsHTTP.ERROR_HTTP_SERVER_CLOSED && return false
+    error_code == AwsHTTP.ERROR_HTTP_SWITCHED_PROTOCOLS && return false
+    error_code == AwsHTTP.ERROR_HTTP_GOAWAY_RECEIVED && return false
+    error_code == AwsHTTP.ERROR_HTTP_RST_STREAM_RECEIVED && return false
+    error_code == AwsIO.ERROR_IO_SOCKET_CLOSED && return false
+    error_code == AwsIO.ERROR_IO_BROKEN_PIPE && return false
+    error_code == AwsIO.ERROR_IO_OPERATION_CANCELLED && return false
+    return true
+end
+
+function _should_log_channel_shutdown_error(error_code::Integer)::Bool
+    error_code == 0 && return false
+    error_code == AwsHTTP.ERROR_HTTP_CONNECTION_CLOSED && return false
+    error_code == AwsHTTP.ERROR_HTTP_SERVER_CLOSED && return false
+    error_code == AwsIO.ERROR_IO_SOCKET_CLOSED && return false
+    error_code == AwsIO.ERROR_IO_BROKEN_PIPE && return false
+    error_code == AwsIO.ERROR_IO_OPERATION_CANCELLED && return false
+    return true
+end
+
+function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
+    server = conn.server
+    http_conn = aws_conn
+    stream = Stream{typeof(conn)}(nothing, http2, true)
+    stream.connection = conn
+    stream.request = Request("", "", nothing, nothing, http2)
+
+    on_request_headers = (aws_stream, header_block, headers_vec, user_data) -> begin
+        if header_block == AwsHTTP.HttpHeaderBlock.TRAILING
+            trailers = stream.request.trailers
+            if trailers === nothing
+                trailers = Headers()
+                stream.request.trailers = trailers
+            end
+            for h in headers_vec
+                addheader(trailers, h.name, h.value)
+            end
+        else
+            hdrs = stream.request.headers
+            for h in headers_vec
+                if stream.http2 && !isempty(h.name) && h.name[1] == ':'
+                    if h.name == ":scheme" || h.name == ":authority" || h.name == ":protocol"
+                        addheader(hdrs, h.name, h.value)
+                        if h.name == ":authority" && !hasheader(hdrs, "host")
+                            addheader(hdrs, "host", h.value)
+                        end
+                    end
+                else
+                    addheader(hdrs, h.name, h.value)
+                end
+            end
+        end
+        return AwsHTTP.OP_SUCCESS
+    end
+
+    on_request_header_block_done = (aws_stream, header_block, user_data) -> begin
+        if header_block != AwsHTTP.HttpHeaderBlock.MAIN
+            return AwsHTTP.OP_SUCCESS
+        end
+        method = AwsHTTP.http_stream_get_incoming_request_method(aws_stream)
+        path = AwsHTTP.http_stream_get_incoming_request_uri(aws_stream)
+        method === nothing && (method = "")
+        path === nothing && (path = "")
+        stream.request.method = method
+        stream.request.path = path
+        notify(stream.headers_ready)
+        if server.stream && !stream.handler_started
+            stream.handler_started = true
+            stream.bufferstream === nothing && (stream.bufferstream = Base.BufferStream())
+            Threads.@spawn begin
+                Base.CoreLogging.with_logstate(server.logstate) do
+                    try
+                        Base.invokelatest(server.f, stream)
+                    catch e
+                        @error "Request handler error; sending 500" exception=(e, catch_backtrace())
+                        if !stream.response_started
+                            try setstatus(stream, 500) catch; end
+                        end
+                    finally
+                        try closewrite(stream) catch; end
+                    end
+                end
+            end
+        end
+        return AwsHTTP.OP_SUCCESS
+    end
+
+    on_request_body = (aws_stream, data, user_data) -> begin
+        if server.stream
+            stream.bufferstream === nothing && (stream.bufferstream = Base.BufferStream())
+            write(stream.bufferstream, data)
+            return AwsHTTP.OP_SUCCESS
+        end
+        body = stream.request.body
+        if body === nothing
+            stream.request.body = copy(data)
+        else
+            append!(body, data)
+        end
+        return AwsHTTP.OP_SUCCESS
+    end
+
+    on_request_done = (aws_stream, user_data) -> begin
+        if server.stream
+            Base.CoreLogging.with_logstate(server.logstate) do
+                stream.bufferstream !== nothing && close(stream.bufferstream)
+            end
+            return
+        end
+        errormonitor(Threads.@spawn begin
+            Base.CoreLogging.with_logstate(server.logstate) do
+                try
+                    stream.response = Base.invokelatest(server.f, stream.request)::Response
+                    if stream.request.method == "HEAD"
+                        _head_response!(stream.response)
+                    end
+                catch e
+                    @error "Request handler error; sending 500" exception=(e, catch_backtrace())
+                    stream.response = Response(500)
+                end
+                _send_response!(stream)
+            end
+        end)
+        return
+    end
+
+    on_complete = (aws_stream, error_code, user_data) -> begin
+        stream.released && return
+        stream.released = true
+        Base.CoreLogging.with_logstate(server.logstate) do
+            if _should_log_stream_error(error_code)
+                @error "server stream complete error" error_code
+            end
+            if server.on_stream_complete !== nothing
+                try
+                    Base.invokelatest(server.on_stream_complete, stream)
+                catch e
+                    @error "on_stream_complete error" exception=(e, catch_backtrace())
+                end
+            end
+            if stream.on_complete !== nothing
+                try
+                    Base.invokelatest(stream.on_complete, stream)
+                catch e
+                    @error "stream on_complete error" exception=(e, catch_backtrace())
+                end
+                stream.on_complete = nothing
+            end
+            if server.access_log !== nothing
+                try
+                    if isdefined(stream, :request) && isdefined(stream, :response)
+                        @info sprint(server.access_log, stream) _group=:access
+                    end
+                catch e
+                    @error "access log error" exception=(e, catch_backtrace())
+                end
+            end
+            @lock conn.streams_lock begin
+                delete!(conn.streams, stream)
+            end
+            # HTTP pipelining: create next request handler if connection allows
+            if !stream.http2 && AwsHTTP.http_connection_new_requests_allowed(http_conn)
+                _create_request_handler!(conn, http_conn; http2=false)
+            end
+        end
+        return
+    end
+
+    on_destroy = (user_data) -> nothing
+
+    opts = AwsHTTP.HttpRequestHandlerOptions(
+        http_conn,
+        nothing,
+        on_request_headers,
+        on_request_header_block_done,
+        on_request_body,
+        on_request_done,
+        on_complete,
+        on_destroy,
+    )
+    if http2
+        h2stream = AwsHTTP.h2_stream_new_request_handler(http_conn, opts; manual_write=server.stream)
+        stream.aws_stream = h2stream
+        @lock conn.streams_lock begin
+            push!(conn.streams, stream)
+        end
+        return h2stream
+    end
+    h1stream = AwsHTTP.http_connection_new_request_handler(http_conn, opts)
+    if h1stream === nothing
+        @error "failed to create request handler stream"
+        return
+    end
+    stream.aws_stream = h1stream
+    AwsHTTP.h1_stream_activate!(h1stream)
+    @lock conn.streams_lock begin
+        push!(conn.streams, stream)
+    end
+    return
+end
 
 function serve!(f, host="127.0.0.1", port=8080;
-    allocator=default_aws_allocator(),
-    bootstrap::Ptr{aws_server_bootstrap}=default_aws_server_bootstrap(),
-    endpoint=nothing,
-    listenany::Bool=false,
     on_stream_complete=nothing,
     access_log::Union{Nothing, Function}=nothing,
     stream::Bool=false,
+    listenany::Bool=false,
     # socket options
-    socket_options=nothing,
     socket_domain=:ipv4,
     connect_timeout_ms::Integer=3000,
     keep_alive_interval_sec::Integer=0,
@@ -177,60 +310,180 @@ function serve!(f, host="127.0.0.1", port=8080;
     ssl_alpn_list="h2;http/1.1",
     initial_window_size=typemax(UInt64),
     )
-    addr = getinet(host, port)
+    _ensure_resources!()
+    host_str = string(host)
+    port_int = Int(port)
     if listenany
-        port, sock = Sockets.listenany(addr.host, addr.port)
+        addr = Sockets.InetAddr(parse(IPAddr, host_str), port_int)
+        port_int, sock = Sockets.listenany(addr.host, addr.port)
         close(sock)
     end
+    tls_conn_opts = if tls_options !== nothing
+        tls_options
+    elseif any(x -> x !== nothing, (ssl_cert, ssl_key, ssl_capath, ssl_cacert))
+        server_tlsoptions(;
+            ssl_cert, ssl_key, ssl_capath, ssl_cacert, ssl_insecure, ssl_alpn_list
+        )
+    else
+        nothing
+    end
     server = Server{typeof(f), typeof(on_stream_complete)}(
-        f, # RequestHandler
+        f,
         on_stream_complete,
         Future{Symbol}(),
-        allocator,
-        endpoint !== nothing ? endpoint : socket_endpoint(host, port),
-        socket_options !== nothing ? socket_options : aws_socket_options(
-            AWS_SOCKET_STREAM, # socket type
-            socket_domain == :ipv4 ? AWS_SOCKET_IPV4 : AWS_SOCKET_IPV6, # socket domain
-            AWS_SOCKET_IMPL_PLATFORM_DEFAULT, # aws_socket_impl_type
-            connect_timeout_ms,
-            keep_alive_interval_sec,
-            keep_alive_timeout_sec,
-            keep_alive_max_failed_probes,
-            keepalive,
-            ntuple(x -> Cchar(0), 16) # network_interface_name
-        ),
-        tls_options !== nothing ? tls_options :
-            any(x -> x !== nothing, (ssl_cert, ssl_key, ssl_capath, ssl_cacert)) ? server_tlsoptions(host;
-                ssl_cert,
-                ssl_key,
-                ssl_capath,
-                ssl_cacert,
-                ssl_insecure,
-                ssl_alpn_list
-            ) : nothing,
-        ReentrantLock(), # connections_lock
-        Set{Connection}(), # connections
-        Threads.Event(), # closed
+        ReentrantLock(),
+        Set{Connection}(),
+        Threads.Event(),
         access_log,
         stream,
         Base.CoreLogging.current_logstate(),
-        :initializing, # state
+        :initializing,
     )
-    server.server_options = aws_http_server_options(
-        1,
-        allocator,
-        bootstrap,
-        pointer(FieldRef(server, :endpoint)),
-        pointer(FieldRef(server, :socket_options)),
-        server.tls_options === nothing ? C_NULL : pointer(FieldRef(server, :tls_options)),
-        initial_window_size,
-        pointer_from_objref(server),
-        on_incoming_connection[],
-        on_destroy_complete[],
-        false # manual_window_management
+    socket_opts = AwsIO.SocketOptions(;
+        domain = socket_domain == :ipv4 ? AwsIO.SocketDomain.IPV4 : AwsIO.SocketDomain.IPV6,
+        connect_timeout_ms = connect_timeout_ms,
+        keep_alive_interval_sec = keep_alive_interval_sec,
+        keep_alive_timeout_sec = keep_alive_timeout_sec,
+        keep_alive_max_failed_probes = keep_alive_max_failed_probes,
+        keepalive = keepalive,
     )
-    server.server = aws_http_server_new(FieldRef(server, :server_options))
-    @assert server.server != C_NULL "failed to create server"
+    alpn_list = _tls_alpn_list(tls_conn_opts)
+    if _use_nw_sockets()
+        socket_opts.impl_type = AwsIO.SocketImplType.APPLE_NETWORK_FRAMEWORK
+    end
+    initial_window = Csize_t(min(UInt64(initial_window_size), UInt64(typemax(Csize_t))))
+    on_protocol_negotiated = tls_conn_opts !== nothing ?
+        (new_slot, protocol, user_data) -> begin
+            protocol_str = AwsIO.byte_buffer_as_string(protocol)
+            version = protocol_str == "h2" ? AwsHTTP.HttpVersion.HTTP_2 : AwsHTTP.HttpVersion.HTTP_1_1
+            return AwsHTTP.http_connection_new_channel_handler(;
+                is_server=true,
+                version,
+                initial_window_size=initial_window,
+            )
+        end : nothing
+    on_incoming_channel_setup = (bootstrap, error_code, channel, user_data) -> begin
+        Base.CoreLogging.with_logstate(server.logstate) do
+            if error_code != 0
+                @error "incoming channel setup error" error_code
+                return
+            end
+            # For TLS, ALPN may have installed the H1/H2 handler. Otherwise install H1 manually.
+            http_conn = if tls_conn_opts !== nothing
+                handler = channel.last.handler
+                if handler isa AwsHTTP.H1Connection || handler isa AwsHTTP.H2Connection
+                    handler
+                else
+                    h = AwsHTTP.http_connection_new_channel_handler(;
+                        is_server=true,
+                        version=AwsHTTP.HttpVersion.HTTP_1_1,
+                        initial_window_size=initial_window,
+                    )
+                    slot = AwsIO.channel_slot_new!(channel)
+                    AwsIO.channel_slot_insert_end!(channel, slot)
+                    AwsIO.channel_slot_set_handler!(slot, h)
+                    h.slot = slot
+                    h
+                end
+            else
+                h = AwsHTTP.http_connection_new_channel_handler(;
+                    is_server=true,
+                    version=AwsHTTP.HttpVersion.HTTP_1_1,
+                    initial_window_size=initial_window,
+                )
+                slot = AwsIO.channel_slot_new!(channel)
+                AwsIO.channel_slot_insert_end!(channel, slot)
+                AwsIO.channel_slot_set_handler!(slot, h)
+                h.slot = slot
+                h
+            end
+            # Extract remote endpoint from the socket handler (first slot in pipeline)
+            remote_addr = "0.0.0.0"
+            remote_port_num = 0
+            try
+                socket_handler = channel.first.handler
+                ep = socket_handler.socket.remote_endpoint
+                remote_addr = AwsIO.get_address(ep)
+                remote_port_num = Int(ep.port)
+            catch
+            end
+            http_conn.remote_endpoint = "$remote_addr:$remote_port_num"
+            conn = Connection(server, http_conn, channel, remote_addr, remote_port_num)
+            @lock server.connections_lock begin
+                push!(server.connections, conn)
+            end
+            if AwsHTTP.http_connection_get_version(http_conn) == AwsHTTP.HttpVersion.HTTP_2
+                opts = AwsHTTP.HttpServerConnectionOptions(
+                    connection_user_data = conn,
+                    on_incoming_request = (h2conn, ud) -> begin
+                        try
+                            return _create_request_handler!(ud, h2conn; http2=true)
+                        catch e
+                            @error "failed to create HTTP/2 request handler" exception=(e, catch_backtrace())
+                            return nothing
+                        end
+                    end,
+                    on_shutdown = (h2conn, err, ud) -> nothing,
+                )
+                status = AwsHTTP.http_connection_configure_server(http_conn, opts)
+                if status != AwsHTTP.OP_SUCCESS
+                    @error "failed to configure HTTP/2 server connection" error_code=status
+                    return
+                end
+            else
+                _create_request_handler!(conn, http_conn; http2=false)
+            end
+            if AwsIO.channel_thread_is_callers_thread(channel)
+                AwsIO.channel_trigger_read(channel)
+            else
+                task = AwsIO.ChannelTask((task, ctx, status) -> begin
+                    status == AwsIO.TaskStatus.RUN_READY || return nothing
+                    AwsIO.channel_trigger_read(ctx.channel)
+                    return nothing
+                end, (channel = channel,), "http_server_trigger_read")
+                AwsIO.channel_schedule_task_now!(channel, task)
+            end
+        end
+        return
+    end
+    on_incoming_channel_shutdown = (bootstrap, error_code, channel, user_data) -> begin
+        Base.CoreLogging.with_logstate(server.logstate) do
+            if _should_log_channel_shutdown_error(error_code)
+                @error "incoming channel shutdown error" error_code
+            end
+            @lock server.connections_lock begin
+                filter!(c -> c.channel !== channel, server.connections)
+            end
+        end
+        return
+    end
+    on_listener_destroy = (bootstrap, user_data) -> begin
+        notify(server.fut, :destroyed)
+        return
+    end
+    bootstrap_opts = AwsIO.ServerBootstrapOptions(;
+        event_loop_group = _EVENT_LOOP_GROUP[],
+        socket_options = socket_opts,
+        host = host_str,
+        port = UInt32(port_int),
+        tls_connection_options = tls_conn_opts,
+        on_protocol_negotiated = on_protocol_negotiated,
+        on_incoming_channel_setup = on_incoming_channel_setup,
+        on_incoming_channel_shutdown = on_incoming_channel_shutdown,
+        on_listener_destroy = on_listener_destroy,
+        user_data = server,
+        enable_read_back_pressure = false,
+    )
+    bs = AwsIO.ServerBootstrap(bootstrap_opts)
+    bs isa AwsIO.ErrorResult && throw(AWSError("Failed to create server bootstrap"))
+    server.bootstrap = bs
+    # Retrieve the actual bound port (useful when port=0 or listenany)
+    if bs.listener_socket !== nothing
+        ep = AwsIO.socket_get_bound_address(bs.listener_socket)
+        server.bound_port = ep isa AwsIO.ErrorResult ? port_int : Int(ep.port)
+    else
+        server.bound_port = port_int
+    end
     @atomic server.state = :running
     return server
 end
@@ -261,285 +514,84 @@ end
 function push_promise(parent::Stream, req::Request; pad_length::Integer=0, scheme=nothing, authority=nothing)
     parent.server_side || error("push_promise is only supported for server streams")
     parent.http2 || throw(ArgumentError("HTTP/2 stream required for push promise"))
-    req.version == HTTPVersion(2, 0) || throw(ArgumentError("push promise request must be HTTP/2"))
-    0 <= pad_length <= 0xff || throw(ArgumentError("pad_length must be between 0 and 255"))
+    pad_length < 0 && throw(ArgumentError("pad_length must be >= 0"))
+    pad_length > typemax(UInt8) && throw(ArgumentError("pad_length must be <= $(typemax(UInt8))"))
+    isdefined(parent, :aws_stream) || throw(ArgumentError("HTTP stream is not initialized"))
     _push_promise_headers!(req, parent; scheme=scheme, authority=authority)
-    push_stream = Stream{typeof(parent.connection)}(parent.allocator, false, true, true)
-    push_stream.connection = parent.connection
-    push_stream.request = req
-    opts = aws_http2_send_push_promise_options(
-        sizeof(aws_http2_send_push_promise_options),
-        pointer_from_objref(push_stream),
-        on_server_stream_complete[],
-        on_destroy[],
-        UInt8(pad_length),
-    )
-    stream_ptr = aws_http2_stream_send_push_promise(parent.ptr, req.ptr, Ref(opts))
-    stream_ptr == C_NULL && aws_throw_error()
-    push_stream.ptr = stream_ptr
-    @lock parent.connection.streams_lock begin
-        push!(parent.connection.streams, push_stream)
+    msg = getfield(req, :msg)
+    if AwsHTTP.http_message_get_protocol_version(msg) != AwsHTTP.HttpVersion.HTTP_2
+        converted = AwsHTTP.http2_message_new_from_http1(msg)
+        converted === nothing && throw(AWSError("Failed to convert push promise request to HTTP/2"))
+        setfield!(req, :msg, converted)
+        msg = converted
     end
-    retain_stream!(push_stream)
+    h2conn = parent.aws_stream.owning_connection
+    h2conn === nothing && throw(ArgumentError("HTTP/2 connection is not initialized"))
+    promised_id = h2conn.next_stream_id
+    promised_id > AwsHTTP.H2_STREAM_ID_MAX && throw(AWSError("HTTP/2 stream IDs exhausted"))
+    h2conn.next_stream_id += UInt32(2)
+    h2stream = _create_request_handler!(parent.connection, h2conn; http2=true)
+    h2stream === nothing && throw(AWSError("Failed to create push promise stream"))
+    push_stream = nothing
+    @lock parent.connection.streams_lock begin
+        for s in parent.connection.streams
+            if s.aws_stream === h2stream
+                push_stream = s
+                break
+            end
+        end
+    end
+    push_stream === nothing && throw(AWSError("Failed to locate push promise stream"))
+    push_stream.request = req
+    notify(push_stream.headers_ready)
+    method_val = req.method
+    path_val = req.path
+    method_val === nothing && (method_val = "")
+    path_val === nothing && (path_val = "")
+    h2stream.id = promised_id
+    AwsHTTP.h2_stream_init_window_sizes!(h2stream, h2conn)
+    h2stream.metrics = AwsHTTP.HttpStreamMetrics(
+        h2stream.metrics.send_start_timestamp_ns,
+        h2stream.metrics.send_end_timestamp_ns,
+        h2stream.metrics.sending_duration_ns,
+        h2stream.metrics.receive_start_timestamp_ns,
+        h2stream.metrics.receive_end_timestamp_ns,
+        h2stream.metrics.receiving_duration_ns,
+        promised_id,
+    )
+    h2stream.state = AwsHTTP.H2StreamState.RESERVED_LOCAL
+    h2stream.request_method = AwsHTTP.http_str_to_method(String(method_val))
+    h2stream.request_method_str = String(method_val)
+    h2stream.request_path = String(path_val)
+    h2conn.active_streams[promised_id] = h2stream
+    headers = AwsHTTP.http_message_get_headers(msg)
+    status = AwsHTTP.h2_stream_send_push_promise!(parent.aws_stream, h2conn, promised_id, headers;
+        pad_length=UInt8(pad_length))
+    if status != AwsHTTP.OP_SUCCESS
+        delete!(h2conn.active_streams, promised_id)
+        @lock parent.connection.streams_lock begin
+            delete!(parent.connection.streams, push_stream)
+        end
+        throw(AWSError("Failed to send push promise"))
+    end
     return push_stream
 end
 
 function push_promise(parent::Stream, method::Union{String, Symbol}, path; headers=Header[], pad_length::Integer=0, scheme=nothing, authority=nothing)
-    req = Request(String(method), String(path), headers, nothing, true, parent.allocator)
-    return push_promise(parent, req; pad_length=pad_length, scheme=scheme, authority=authority)
-end
-
-const on_incoming_connection = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_incoming_connection(aws_server, aws_conn, error_code, server_ptr)
-    server = unsafe_pointer_to_objref(server_ptr)
-    Base.CoreLogging.with_logstate(server.logstate) do
-        if error_code != 0
-            @error "incoming connection error" exception=(aws_error(error_code), Base.backtrace())
-            return
-        end
-        conn = Connection(
-            server,
-            server.allocator,
-            aws_conn,
-        )
-        conn.connection_options = aws_http_server_connection_options(
-            1,
-            pointer_from_objref(conn),
-            on_incoming_request[],
-            on_connection_shutdown[]
-        )
-        if aws_http_connection_configure_server(
-            aws_conn,
-            FieldRef(conn, :connection_options)
-        ) != 0
-            @error "failed to configure connection" exception=(aws_error(), Base.backtrace())
-            return
-        end
-        @lock server.connections_lock begin
-            push!(server.connections, conn)
-        end
-        return
-    end
-end
-
-const on_connection_shutdown = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_connection_shutdown(aws_conn, error_code, conn_ptr)
-    conn = unsafe_pointer_to_objref(conn_ptr)
-    Base.CoreLogging.with_logstate(conn.server.logstate) do
-        if error_code != 0
-            @error "connection shutdown error" exception=(aws_error(error_code), Base.backtrace())
-        end
-        @lock conn.server.connections_lock begin
-            delete!(conn.server.connections, conn)
-        end
-        return
-    end
-end
-
-const on_incoming_request = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_incoming_request(aws_conn, conn_ptr)
-    conn = unsafe_pointer_to_objref(conn_ptr)
-    Base.CoreLogging.with_logstate(conn.server.logstate) do
-        stream = Stream{typeof(conn)}(
-            conn.allocator,
-            false, # decompress
-            aws_http_connection_get_version(aws_conn) == AWS_HTTP_VERSION_2, # http2
-            true,
-        )
-        stream.connection = conn
-        stream.request_handler_options = aws_http_request_handler_options(
-            1,
-            aws_conn,
-            pointer_from_objref(stream),
-            on_request_headers[],
-            on_request_header_block_done[],
-            on_request_body[],
-            on_request_done[],
-            on_server_stream_complete[],
-            on_destroy[]
-        )
-        stream.request = Request("", "")
-        stream.ptr = aws_http_stream_new_server_request_handler(
-            FieldRef(stream, :request_handler_options)
-        )
-        if stream.ptr == C_NULL
-            @error "failed to create stream" exception=(aws_error(), Base.backtrace())
-        else
-            @lock conn.streams_lock begin
-                push!(conn.streams, stream)
-            end
-        end
-        return stream.ptr
-    end
-end
-
-const on_request_headers = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_request_headers(aws_stream_ptr, header_block, header_array::Ptr{aws_http_header}, num_headers, stream_ptr)
-    stream = unsafe_pointer_to_objref(stream_ptr)
-    if header_block == AWS_HTTP_HEADER_BLOCK_TRAILING
-        trailers = stream.request.trailers
-        if trailers === nothing
-            trailers = Headers(stream.request.allocator)
-            stream.request.trailers = trailers
-        end
-        addheaders(trailers, header_array, num_headers)
-    else
-        headers = stream.request.headers
-        addheaders(headers, header_array, num_headers)
-    end
-    return Cint(0)
-end
-
-const on_request_header_block_done = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_request_header_block_done(aws_stream_ptr, header_block, stream_ptr)
-    stream = unsafe_pointer_to_objref(stream_ptr)
-    if header_block != AWS_HTTP_HEADER_BLOCK_MAIN
-        return Cint(0)
-    end
-    ret = aws_http_stream_get_incoming_request_method(aws_stream_ptr, FieldRef(stream, :method))
-    ret != 0 && return ret
-    aws_http_message_set_request_method(stream.request.ptr, stream.method)
-    ret = aws_http_stream_get_incoming_request_uri(aws_stream_ptr, FieldRef(stream, :path))
-    ret != 0 && return ret
-    aws_http_message_set_request_path(stream.request.ptr, stream.path)
-    notify(stream.headers_ready)
-    if stream.connection.server.stream && !stream.handler_started
-        stream.handler_started = true
-        stream.bufferstream === nothing && (stream.bufferstream = Base.BufferStream())
-        Threads.@spawn begin
-            Base.CoreLogging.with_logstate(stream.connection.server.logstate) do
-                try
-                    Base.invokelatest(stream.connection.server.f, stream)
-                catch e
-                    @error "Request handler error; sending 500" exception=(e, catch_backtrace())
-                    if !stream.response_started
-                        try
-                            setstatus(stream, 500)
-                        catch err
-                            @error "failed to set 500 status" exception=(err, catch_backtrace())
-                        end
-                    end
-                finally
-                    try
-                        closewrite(stream)
-                    catch err
-                        @error "failed to close response stream" exception=(err, catch_backtrace())
-                    end
-                end
-            end
-        end
-    end
-    return Cint(0)
-end
-
-const on_request_body = Ref{Ptr{Cvoid}}(C_NULL)
-
-#TODO: how could we allow for streaming request bodies?
-function c_on_request_body(aws_stream_ptr, data::Ptr{aws_byte_cursor}, stream_ptr)
-    stream = unsafe_pointer_to_objref(stream_ptr)
-    bc = unsafe_load(data)
-    if stream.connection.server.stream
-        stream.bufferstream === nothing && (stream.bufferstream = Base.BufferStream())
-        unsafe_write(stream.bufferstream, bc.ptr, bc.len)
-        return Cint(0)
-    end
-    body = stream.request.body
-    if body === nothing
-        body = Vector{UInt8}(undef, bc.len)
-        GC.@preserve body unsafe_copyto!(pointer(body), bc.ptr, bc.len)
-        stream.request.body = body
-    else
-        newlen = length(body) + bc.len
-        resize!(body, newlen)
-        GC.@preserve body unsafe_copyto!(pointer(body, length(body) - bc.len + 1), bc.ptr, bc.len)
-    end
-    return Cint(0)
-end
-
-const on_request_done = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_request_done(aws_stream_ptr, stream_ptr)
-    stream = unsafe_pointer_to_objref(stream_ptr)
-    Base.CoreLogging.with_logstate(stream.connection.server.logstate) do
-        if stream.connection.server.stream
-            stream.bufferstream !== nothing && close(stream.bufferstream)
-            return Cint(0)
-        end
-        try
-            stream.response = Base.invokelatest(stream.connection.server.f, stream.request)::Response
-            if stream.request.method == "HEAD"
-                setinputstream!(stream.response, nothing)
-            end
-            #TODO: is it possible to stream the response body?
-            #TODO: support transfer-encoding: gzip
-        catch e
-            @error "Request handler error; sending 500" exception=(e, catch_backtrace())
-            stream.response = Response(500)
-        end
-        ret = aws_http_stream_send_response(aws_stream_ptr, stream.response.ptr)
-        if ret != 0
-            @error "failed to send response" exception=(aws_error(ret), Base.backtrace())
-            return Cint(AWS_ERROR_HTTP_UNKNOWN)
-        end
-        return Cint(0)
-    end
-end
-
-const on_server_stream_complete = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_server_stream_complete(aws_stream_ptr, error_code, stream_ptr)
-    stream = unsafe_pointer_to_objref(stream_ptr)
-    Base.CoreLogging.with_logstate(stream.connection.server.logstate) do
-        if error_code != 0
-            @error "server complete error" exception=(aws_error(error_code), Base.backtrace())
-        end
-        if stream.connection.server.on_stream_complete !== nothing
-            try
-                Base.invokelatest(stream.connection.server.on_stream_complete, stream)
-            catch e
-                @error "on_stream_complete error" exception=(e, catch_backtrace())
-            end
-        end
-        if stream.on_complete !== nothing
-            try
-                Base.invokelatest(stream.on_complete, stream)
-            catch e
-                @error "stream on_complete error" exception=(e, catch_backtrace())
-            end
-            stream.on_complete = nothing
-        end
-        if stream.connection.server.access_log !== nothing
-            try
-                @info sprint(stream.connection.server.access_log, stream) _group=:access
-            catch e
-                @error "access log error" exception=(e, catch_backtrace())
-            end
-        end
-        @lock stream.connection.streams_lock begin
-            delete!(stream.connection.streams, stream)
-        end
-        release_stream_ptr!(stream)
-        return Cint(0)
-    end
-end
-
-const on_destroy_complete = Ref{Ptr{Cvoid}}(C_NULL)
-
-function c_on_destroy_complete(server_ptr)
-    server = unsafe_pointer_to_objref(server_ptr)
-    notify(server.fut, :destroyed)
-    return
+    return push_promise(parent, Request(String(method), String(path), headers, nothing, true); pad_length=pad_length, scheme=scheme, authority=authority)
 end
 
 function Base.close(server::Server)
     state = @atomicswap server.state = :closed
     if state == :running
-        aws_http_server_release(server.server)
+        AwsIO.server_bootstrap_shutdown!(server.bootstrap)
+        conns = Connection[]
+        @lock server.connections_lock begin
+            append!(conns, server.connections)
+        end
+        for conn in conns
+            AwsIO.channel_shutdown!(conn.channel; shutdown_immediately=true)
+        end
         @assert wait(server.fut) == :destroyed
         notify(server.closed)
     end
