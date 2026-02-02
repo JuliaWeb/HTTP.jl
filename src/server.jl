@@ -352,51 +352,40 @@ function serve!(f, host="127.0.0.1", port=8080;
         socket_opts.impl_type = AwsIO.SocketImplType.APPLE_NETWORK_FRAMEWORK
     end
     initial_window = Csize_t(min(UInt64(initial_window_size), UInt64(typemax(Csize_t))))
-    on_protocol_negotiated = tls_conn_opts !== nothing ?
-        (new_slot, protocol, user_data) -> begin
-            protocol_str = AwsIO.byte_buffer_as_string(protocol)
-            version = protocol_str == "h2" ? AwsHTTP.HttpVersion.HTTP_2 : AwsHTTP.HttpVersion.HTTP_1_1
-            return AwsHTTP.http_connection_new_channel_handler(;
-                is_server=true,
-                version,
-                initial_window_size=initial_window,
-            )
-        end : nothing
     on_incoming_channel_setup = (bootstrap, error_code, channel, user_data) -> begin
         Base.CoreLogging.with_logstate(server.logstate) do
             if error_code != 0
                 @error "incoming channel setup error" error_code
                 return
             end
-            # For TLS, ALPN may have installed the H1/H2 handler. Otherwise install H1 manually.
-            http_conn = if tls_conn_opts !== nothing
-                handler = channel.last.handler
-                if handler isa AwsHTTP.H1Connection || handler isa AwsHTTP.H2Connection
-                    handler
-                else
-                    h = AwsHTTP.http_connection_new_channel_handler(;
-                        is_server=true,
-                        version=AwsHTTP.HttpVersion.HTTP_1_1,
-                        initial_window_size=initial_window,
-                    )
-                    slot = AwsIO.channel_slot_new!(channel)
-                    AwsIO.channel_slot_insert_end!(channel, slot)
-                    AwsIO.channel_slot_set_handler!(slot, h)
-                    h.slot = slot
-                    h
+            slot = AwsIO.channel_slot_new!(channel)
+            AwsIO.channel_slot_insert_end!(channel, slot)
+            version = AwsHTTP.HttpVersion.HTTP_1_1
+            if tls_conn_opts !== nothing
+                tls_slot = slot.adj_left
+                if tls_slot === nothing || tls_slot.handler === nothing || !(tls_slot.handler isa AwsIO.TlsChannelHandler)
+                    @error "incoming channel setup error" error_code=AwsIO.ERROR_INVALID_STATE
+                    AwsIO.channel_shutdown!(channel, AwsIO.ERROR_INVALID_STATE)
+                    return
                 end
-            else
-                h = AwsHTTP.http_connection_new_channel_handler(;
-                    is_server=true,
-                    version=AwsHTTP.HttpVersion.HTTP_1_1,
-                    initial_window_size=initial_window,
-                )
-                slot = AwsIO.channel_slot_new!(channel)
-                AwsIO.channel_slot_insert_end!(channel, slot)
-                AwsIO.channel_slot_set_handler!(slot, h)
-                h.slot = slot
-                h
+                protocol = AwsIO.tls_handler_protocol(tls_slot.handler)
+                if protocol.len > 0
+                    protocol_str = AwsIO.byte_buffer_as_string(protocol)
+                    if protocol_str == "h2"
+                        version = AwsHTTP.HttpVersion.HTTP_2
+                    elseif protocol_str == "http/1.1"
+                        version = AwsHTTP.HttpVersion.HTTP_1_1
+                    end
+                end
             end
+            http_conn = AwsHTTP.http_connection_new_channel_handler(;
+                is_server=true,
+                version=version,
+                initial_window_size=initial_window,
+            )
+            http_conn === nothing && return
+            AwsIO.channel_slot_set_handler!(slot, http_conn)
+            http_conn.slot = slot
             # Extract remote endpoint from the socket handler (first slot in pipeline)
             remote_addr = "0.0.0.0"
             remote_port_num = 0
@@ -467,7 +456,7 @@ function serve!(f, host="127.0.0.1", port=8080;
         host = host_str,
         port = UInt32(port_int),
         tls_connection_options = tls_conn_opts,
-        on_protocol_negotiated = on_protocol_negotiated,
+        on_protocol_negotiated = nothing,
         on_incoming_channel_setup = on_incoming_channel_setup,
         on_incoming_channel_shutdown = on_incoming_channel_shutdown,
         on_listener_destroy = on_listener_destroy,
