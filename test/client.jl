@@ -159,7 +159,8 @@
         @test HTTP.request(read_method, "https://$httpbin/redirect/6", status_exception=false).status == 302 #over max number of redirects
         @test isok(HTTP.request(read_method, "https://$httpbin/relative-redirect/1"))
         @test isok(HTTP.request(read_method, "https://$httpbin/absolute-redirect/1"))
-        @test isok(HTTP.request(read_method, "https://$httpbin/redirect-to?url=http%3A%2F%2Fgoogle.com"))
+        redirect_target = URIs.escapeuri("http://$httpbin/get")
+        @test isok(HTTP.request(read_method, "https://$httpbin/redirect-to?url=$redirect_target"))
     end
 
     @testset "Client Basic Auth" begin
