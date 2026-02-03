@@ -70,7 +70,7 @@ function request(method, url, h=Header[], b=nothing;
     response_body=response_stream,
     decompress::Union{Nothing, Bool}=nothing,
     status_exception::Bool=true,
-    readtimeout::Int=0, # only supported for HTTP 1.1, not HTTP 2 (current aws limitation)
+    readtimeout::Int=0,
     retry_non_idempotent::Bool=false,
     modifier=nothing,
     verbose=0,

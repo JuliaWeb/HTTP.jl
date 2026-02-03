@@ -758,6 +758,17 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
     aws_stream = AwsHTTP.http_connection_make_request(connection, request_options)
     aws_stream === nothing && aws_throw_error()
     stream.aws_stream = aws_stream
+    timeout_task = nothing
+    if readtimeout > 0
+        timeout_task = errormonitor(Threads.@spawn begin
+            sleep(readtimeout)
+            (@atomic stream.fut.set) != 0 && return
+            notify(stream.fut, TimeoutError(readtimeout))
+            if isdefined(stream, :aws_stream)
+                AwsHTTP.h2_stream_cancel!(stream.aws_stream)
+            end
+        end)
+    end
 
     # Activate stream
     _activate_stream!(stream)
@@ -797,6 +808,7 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
         end
         return resp
     finally
+        timeout_task = nothing
         stream.released = true
         AwsHTTP.http2_stream_manager_release_stream(client.http2_stream_manager, connection)
         if context !== nothing
