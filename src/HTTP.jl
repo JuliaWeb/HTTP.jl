@@ -7,6 +7,7 @@ export HTTPVersion
 export startwrite, startread, closewrite, closeread
 export @logfmt_str, common_logfmt, combined_logfmt
 export WebSockets
+export Pool, default_connection_limit, set_default_connection_limit!, closeall
 
 const nobody = UInt8[]
 

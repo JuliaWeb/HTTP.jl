@@ -1,5 +1,6 @@
 const DEFAULT_CONNECT_TIMEOUT = 3000
 const DEFAULT_MAX_RETRIES = 4
+const default_connection_limit = Ref{Int}(max(16, Threads.nthreads() * 4))
 
 # ─── Shared infrastructure ───
 # Lazily initialized resources that replace the old C library globals
@@ -134,12 +135,22 @@ ClientSettings(
     require_ssl_verification::Bool=true,
     ssl_insecure::Bool=false,
     kw...) = begin
-    http2_initial_settings = Base.get(() -> nothing, kw, :http2_initial_settings)
+    kw_nt = (; kw...)
+    connection_limit = Base.get(() -> nothing, kw_nt, :connection_limit)
+    if connection_limit !== nothing
+        connection_limit_warning(connection_limit)
+        kw_nt = Base.structdiff(kw_nt, (; connection_limit=nothing))
+    end
+    max_connections = Base.get(() -> default_connection_limit[], kw_nt, :max_connections)
+    if haskey(kw_nt, :max_connections)
+        kw_nt = Base.structdiff(kw_nt, (; max_connections=nothing))
+    end
+    http2_initial_settings = Base.get(() -> nothing, kw_nt, :http2_initial_settings)
     if http2_initial_settings !== nothing && !(http2_initial_settings isa AbstractVector)
         throw(ArgumentError("http2_initial_settings must be a vector of pairs or AwsHTTP.Http2Setting"))
     end
-    if haskey(kw, :http2_initial_settings)
-        kw = Base.structdiff((; kw...), (; http2_initial_settings=nothing))
+    if haskey(kw_nt, :http2_initial_settings)
+        kw_nt = Base.structdiff(kw_nt, (; http2_initial_settings=nothing))
     end
     ClientSettings(;
         scheme=String(scheme),
@@ -147,9 +158,10 @@ ClientSettings(
         port=port,
         connect_timeout_ms=(connect_timeout !== nothing ? connect_timeout * 1000 : connect_timeout_ms),
         max_retries=(retry ? (retries != DEFAULT_MAX_RETRIES ? retries : max_retries) : 0),
+        max_connections=max_connections,
         ssl_insecure=(!require_ssl_verification || ssl_insecure),
         http2_initial_settings=http2_initial_settings,
-        kw...)
+        kw_nt...)
 end
 
 # make a new ClientSettings object from an existing one w/ just different url values
@@ -429,7 +441,15 @@ struct Pool
     max_connections::Union{Nothing, Int}
 end
 
-Pool(max_connections::Union{Int, Nothing}=nothing) = Pool(Clients(), max_connections)
+Pool() = Pool(default_connection_limit[])
+Pool(max_connections::Union{Int, Nothing}) = Pool(Clients(), max_connections)
+
+function Base.getproperty(pool::Pool, name::Symbol)
+    if name === :max
+        return getfield(pool, :max_connections)
+    end
+    return getfield(pool, name)
+end
 
 const CLIENTS = Clients()
 
@@ -471,7 +491,28 @@ function close_all_clients!(clients::Clients=CLIENTS)
             end
         end
         empty!(clients.clients)
+        empty!(clients.order)
     end
 end
 
 close_all_clients!(pool::Pool) = close_all_clients!(pool.clients)
+
+function set_default_connection_limit!(n::Integer)
+    default_connection_limit[] = Int(n)
+    return
+end
+
+function closeall(pool::Union{Nothing, Pool}=nothing)
+    if pool === nothing
+        close_all_clients!(CLIENTS)
+    else
+        close_all_clients!(pool.clients)
+    end
+    return
+end
+
+@noinline function connection_limit_warning(cl)
+    cl === nothing && return
+    @warn "connection_limit no longer supported as a keyword argument; use `HTTP.set_default_connection_limit!($cl)` before any requests are made or construct a shared pool via `POOL = HTTP.Pool($cl)` and pass to each request like `pool=POOL` instead."
+    return
+end

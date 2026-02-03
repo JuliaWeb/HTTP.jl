@@ -1,4 +1,21 @@
 @testset "Client.jl" begin
+    @testset "Connection pool compatibility" begin
+        original_limit = HTTP.default_connection_limit[]
+        HTTP.set_default_connection_limit!(13)
+        pool = HTTP.Pool()
+        @test pool.max_connections == 13
+        @test pool.max == 13
+        cs = HTTP.ClientSettings("http", "example.com", UInt32(80))
+        @test cs.max_connections == 13
+        @test_logs (:warn, r"connection_limit no longer supported") begin
+            cs_warn = HTTP.ClientSettings("http", "example.com", UInt32(80); connection_limit=7)
+            @test cs_warn.max_connections == 13
+        end
+        HTTP.set_default_connection_limit!(original_limit)
+        pool_default = HTTP.Pool()
+        @test pool_default.max_connections == original_limit
+        @test pool_default.max == original_limit
+    end
     if HAVE_HTTPBIN
     @testset "GET, HEAD, POST, PUT, DELETE, PATCH: $scheme" for scheme in ["http", "https"]
         @test isok(HTTP.get("$scheme://$httpbin/ip"))
