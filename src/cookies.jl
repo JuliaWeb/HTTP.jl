@@ -34,7 +34,7 @@ export Cookie, CookieJar, cookies, stringify, getcookies!, setcookies!, addcooki
 
 import Base: ==
 using Dates, Sockets
-import ..addheader, ..headereq, ..Headers, ..Request, ..Response
+import ..addheader, ..headereq, ..Headers, ..Request, ..Response, .._header_name, .._header_value
 
 @enum SameSite SameSiteDefaultMode=1 SameSiteLaxMode SameSiteStrictMode SameSiteNoneMode
 
@@ -211,8 +211,9 @@ const RFC1123GMTFormat = gmtformat(Dates.RFC1123Format)
 function readsetcookies(headers::Headers)
     result = Cookie[]
     for h in headers
-        headereq(h.name, "Set-Cookie") || continue
-        line = h.value
+        name = _header_name(h)
+        headereq(name, "Set-Cookie") || continue
+        line = _header_value(h)
         if length(line) == 0
             continue
         end
@@ -326,8 +327,9 @@ cookies(r::Request) = readcookies(r.headers, "")
 function readcookies(headers::Headers, filter::String="")
     result = Cookie[]
     for h in headers
-        headereq(h.name, "Cookie") || continue
-        line = h.value
+        name = _header_name(h)
+        headereq(name, "Cookie") || continue
+        line = _header_value(h)
         for part in split(strip(line), ';'; keepempty=false)
             part = strip(part)
             length(part) <= 1 && continue

@@ -2,7 +2,7 @@ module Handlers
 
 export Handler, Middleware, serve, serve!, Router, register!, getroute, getparams, getparam, getcookies, streamhandler
 
-import ..Request, ..Response, ..Stream, ..Cookies, ..getbody
+import ..Request, ..Response, ..Stream, ..Cookies, ..getbody, .._header_name, .._header_value
 import ..startread, ..setstatus, ..setheader, ..addtrailer, ..closewrite, ..closeread
 
 """
@@ -53,7 +53,7 @@ function streamhandler(handler)
         resp.request = req
         setstatus(stream, resp.status)
         for h in resp.headers
-            setheader(stream, h.name, h.value)
+            setheader(stream, _header_name(h), _header_value(h))
         end
         body = getbody(resp)
         if body isa IO

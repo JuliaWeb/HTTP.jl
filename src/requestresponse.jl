@@ -1,6 +1,6 @@
 export Header, Headers, Message, Request, Response,
     header, headers, hasheader, headercontains,
-    setheader, setheaderifabsent, defaultheader!, appendheader, removeheader,
+    setheader, setheaderifabsent, setheaders!, defaultheader!, appendheader, removeheader,
     canonicalizeheaders, canonicalizeheaders!, mkheaders
 
 # working with headers
@@ -24,32 +24,86 @@ end
 
 Base.show(io::IO, h::Header) = print_header(io, h)
 
-mutable struct Headers <: AbstractVector{Header}
+@inline _header_name(h::Header) = h.name
+@inline _header_name(h::Pair) = String(first(h))
+@inline _header_name(h::AwsHTTP.HttpHeader) = h.name
+@inline _header_value(h::Header) = h.value
+@inline _header_value(h::Pair) = String(last(h))
+@inline _header_value(h::AwsHTTP.HttpHeader) = h.value
+@inline _header_pair(h) = _header_name(h) => _header_value(h)
+
+Base.first(h::Header) = h.name
+Base.last(h::Header) = h.value
+
+mutable struct Headers <: AbstractVector{Pair{String, String}}
     const hdrs::AwsHTTP.HttpHeaders
     function Headers()
         return new(AwsHTTP.http_headers_new())
     end
     Headers(hdrs::AwsHTTP.HttpHeaders) = new(hdrs)
+    function Headers(h::AbstractVector{<:Pair})
+        hdrs = AwsHTTP.http_headers_new()
+        for (k, v) in h
+            AwsHTTP.http_headers_add(hdrs, String(k), String(v)) != 0 && aws_throw_error()
+        end
+        return new(hdrs)
+    end
 end
 
 abstract type Message end
 
+Base.eltype(::Type{Headers}) = Pair{String, String}
+Base.IndexStyle(::Type{Headers}) = IndexLinear()
 Base.size(h::Headers) = (AwsHTTP.http_headers_count(h.hdrs),)
+Base.length(h::Headers) = AwsHTTP.http_headers_count(h.hdrs)
 
 function Base.getindex(h::Headers, i::Int)
     hdr = AwsHTTP.http_headers_get_index(h.hdrs, i - 1)
     hdr === nothing && throw(BoundsError(h, i))
-    return Header(hdr)
+    return _header_pair(hdr)
 end
 
-Base.Dict(h::Headers) = Dict(((h2.name, h2.value) for h2 in h))
+function Base.setindex!(h::Headers, v::Pair, i::Int)
+    len = length(h)
+    (i < 1 || i > len) && throw(BoundsError(h, i))
+    items = collect(h)
+    items[i] = String(v.first) => String(v.second)
+    empty!(h)
+    addheaders(h, items)
+    return h
+end
+
+function Base.insert!(h::Headers, i::Int, v::Pair)
+    len = length(h)
+    (i < 1 || i > len + 1) && throw(BoundsError(h, i))
+    items = collect(h)
+    insert!(items, i, String(v.first) => String(v.second))
+    empty!(h)
+    addheaders(h, items)
+    return h
+end
+
+function Base.push!(h::Headers, v::Pair)
+    addheader(h, v)
+    return h
+end
+
+function Base.push!(h::Headers, v::Header)
+    addheader(h, v)
+    return h
+end
+
+Base.Dict(h::Headers) = Dict((_header_pair(h2) for h2 in h))
+Base.copy(h::Headers) = mkheaders(h)
+Base.convert(::Type{Vector{Pair{String, String}}}, h::Headers) = mkheaders(h)
 
 addheader(headers::Headers, h::Header) = AwsHTTP.http_headers_add_header(headers.hdrs, h.header) != 0 && aws_throw_error()
 addheader(headers::Headers, h::AwsHTTP.HttpHeader) = AwsHTTP.http_headers_add_header(headers.hdrs, h) != 0 && aws_throw_error()
+addheader(headers::Headers, h::Pair) = AwsHTTP.http_headers_add(headers.hdrs, String(h.first), String(h.second)) != 0 && aws_throw_error()
 addheader(headers::Headers, k, v) = AwsHTTP.http_headers_add(headers.hdrs, String(k), String(v)) != 0 && aws_throw_error()
 addheaders(headers::Headers, h::Vector{AwsHTTP.HttpHeader}) = AwsHTTP.http_headers_add_array(headers.hdrs, h) != 0 && aws_throw_error()
 
-function addheaders(headers::Headers, h::Vector{Pair{String, String}})
+function addheaders(headers::Headers, h::AbstractVector{<:Pair})
     for (k, v) in h
         addheader(headers, k, v)
     end
@@ -81,6 +135,27 @@ end
 setheaderifabsent(headers, k, v) = !hasheader(headers, k) && setheader(headers, k, v)
 setheaderifabsent(m::Message, k, v) = setheaderifabsent(m.headers, k, v)
 
+function setheaders!(headers::Headers, newheaders)
+    newheaders === headers && return headers
+    if newheaders === nothing
+        empty!(headers)
+        return headers
+    end
+    if newheaders isa Headers
+        newheaders.hdrs === headers.hdrs && return headers
+        items = collect(newheaders)
+    elseif newheaders isa AwsHTTP.HttpHeaders
+        items = collect(Headers(newheaders))
+    else
+        items = mkheaders(newheaders)
+    end
+    empty!(headers)
+    addheaders(headers, items)
+    return headers
+end
+
+setheaders!(m::Message, newheaders) = setheaders!(m.headers, newheaders)
+
 field_name_isequal(a, b) = headereq(String(a), String(b))
 
 Base.getindex(m::Message, k) = header(m, k)
@@ -106,7 +181,7 @@ end
 
 Get all headers with key `k` or empty if none.
 """
-headers(h::Headers, k) = [h2.value for h2 in h if field_name_isequal(h2.name, k)]
+headers(h::Headers, k) = [_header_value(h2) for h2 in h if field_name_isequal(_header_name(h2), k)]
 headers(h::AbstractVector{<:Pair}, k) = [String(v) for (name, v) in h if field_name_isequal(name, k)]
 headers(m::Message, k) = headers(m.headers, k)
 
@@ -183,7 +258,7 @@ function defaultheader!(m, v::Pair)
 end
 
 function canonicalizeheaders!(h::Headers)
-    items = [(h2.name, h2.value) for h2 in h]
+    items = [(_header_name(h2), _header_value(h2)) for h2 in h]
     for i in length(h):-1:1
         deleteat!(h, i)
     end
@@ -197,11 +272,11 @@ canonicalizeheaders(h::AbstractVector{<:Pair}) =
     [tocameldash(String(k)) => String(v) for (k, v) in h]
 
 mkheaders(::Nothing) = Pair{String, String}[]
-mkheaders(h::Headers) = [h2.name => h2.value for h2 in h]
+mkheaders(h::Headers) = [_header_pair(h2) for h2 in h]
 mkheaders(h::AbstractVector{Header}) = begin
     headers = Pair{String, String}[]
     for head in h
-        push!(headers, String(head.name) => String(head.value))
+        push!(headers, _header_pair(head))
     end
     return headers
 end
@@ -227,7 +302,7 @@ end
 function sync_headers!(dest::AbstractVector{<:Pair}, src::Headers)
     empty!(dest)
     for h in src
-        push!(dest, String(h.name) => String(h.value))
+        push!(dest, _header_pair(h))
     end
     return dest
 end
@@ -345,7 +420,8 @@ mutable struct Request <: Message
         AwsHTTP.http_message_set_request_path(msg, String(path)) != 0 && aws_throw_error()
         msg_headers = AwsHTTP.http_message_get_headers(msg)
         if headers !== nothing
-            for (k, v) in headers
+            src_headers = headers isa AbstractVector{<:Pair} ? headers : mkheaders(headers)
+            for (k, v) in src_headers
                 AwsHTTP.http_headers_add(msg_headers, String(k), String(v)) != 0 && aws_throw_error()
             end
         end
@@ -408,15 +484,15 @@ function Base.setproperty!(x::Request, s::Symbol, v)
     elseif s == :path
         AwsHTTP.http_message_set_request_path(getfield(x, :msg), String(v)) != 0 && aws_throw_error()
     elseif s == :headers
-        addheaders(x.headers, v)
+        setheaders!(x, v)
     else
         setfield!(x, s, v)
     end
 end
 
 function print_header(io, h)
-    key = h.name
-    val = h.value
+    key = _header_name(h)
+    val = _header_value(h)
     if headereq(key, "authorization")
         write(io, string(key, ": ", "******", "\r\n"))
         return
@@ -494,7 +570,8 @@ mutable struct Response <: Message
         AwsHTTP.http_message_set_response_status(msg, Int(status)) != 0 && aws_throw_error()
         msg_headers = AwsHTTP.http_message_get_headers(msg)
         if headers !== nothing
-            for (k, v) in headers
+            src_headers = headers isa AbstractVector{<:Pair} ? headers : mkheaders(headers)
+            for (k, v) in src_headers
                 AwsHTTP.http_headers_add(msg_headers, String(k), String(v)) != 0 && aws_throw_error()
             end
         end
@@ -558,7 +635,7 @@ function Base.setproperty!(x::Response, s::Symbol, v)
     if s == :status
         AwsHTTP.http_message_set_response_status(getfield(x, :msg), Int(v)) != 0 && aws_throw_error()
     elseif s == :headers
-        addheaders(x.headers, v)
+        setheaders!(x, v)
     else
         setfield!(x, s, v)
     end
