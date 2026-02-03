@@ -203,6 +203,50 @@ end
                 close(server)
             end
         end
+        @testset "HTTP/2 readtimeout keeps connection open" begin
+            cert = joinpath(@__DIR__, "fixtures", "http2.crt")
+            key = joinpath(@__DIR__, "fixtures", "http2.key")
+            seen_lock = ReentrantLock()
+            seen_conns = Set{UInt}()
+            server = HTTP.serve!("127.0.0.1", 0; listenany=true, stream=true, ssl_cert=cert, ssl_key=key, ssl_alpn_list="h2") do stream
+                HTTP.startread(stream)
+                @lock seen_lock push!(seen_conns, objectid(stream.connection))
+                if stream.request.path == "/slow"
+                    sleep(2)
+                else
+                    sleep(1.5)
+                end
+                try
+                    HTTP.setstatus(stream, 200)
+                    HTTP.startwrite(stream)
+                    write(stream, stream.request.path == "/slow" ? "slow" : "fast")
+                    HTTP.closewrite(stream)
+                catch
+                    nothing
+                end
+            end
+            try
+                port = HTTP.port(server)
+                cs = HTTP.ClientSettings("https", "127.0.0.1", UInt32(port); ssl_insecure=true, ssl_alpn_list="h2", max_connections=1)
+                client = HTTP.Client(cs)
+                slow_err = try
+                    HTTP.get("https://127.0.0.1:$(port)/slow"; client=client, readtimeout=1, retry=false)
+                catch e
+                    e
+                end
+                fast_resp = HTTP.get("https://127.0.0.1:$(port)/fast"; client=client, retry=false)
+                if fast_resp.version == HTTP.HTTPVersion(2, 0)
+                    @test slow_err isa HTTP.TimeoutError
+                    @test String(fast_resp.body) == "fast"
+                    @test length(seen_conns) == 1
+                else
+                    @info "HTTP/2 not negotiated for readtimeout connection test"
+                    @test true
+                end
+            finally
+                close(server)
+            end
+        end
     end
 end
 

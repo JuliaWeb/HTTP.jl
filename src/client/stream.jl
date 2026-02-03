@@ -839,9 +839,13 @@ function with_stream(conn, req::Request, chunkedbody, on_stream_response_body, d
         timeout_task = errormonitor(Threads.@spawn begin
             sleep(readtimeout)
             (@atomic stream.fut.set) != 0 && return
-            if isdefined(stream, :connection)
+            if !stream.http2 && isdefined(stream, :connection)
                 conn = stream.connection
-                conn !== nothing && AwsHTTP.http_connection_close(conn)
+                if conn !== nothing && conn.slot !== nothing && conn.slot.channel !== nothing
+                    AwsIO.channel_shutdown!(conn.slot.channel, AwsHTTP.ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT; shutdown_immediately=true)
+                elseif conn !== nothing
+                    AwsHTTP.http_connection_close(conn)
+                end
             end
             notify(stream.fut, TimeoutError(readtimeout))
             if isdefined(stream, :aws_stream)
@@ -849,14 +853,6 @@ function with_stream(conn, req::Request, chunkedbody, on_stream_response_body, d
                     AwsHTTP.h2_stream_cancel!(stream.aws_stream)
                 else
                     AwsHTTP.http_stream_cancel(stream.aws_stream)
-                    if isdefined(stream, :connection)
-                        conn = stream.connection
-                        if conn !== nothing && conn.slot !== nothing && conn.slot.channel !== nothing
-                            AwsIO.channel_shutdown!(conn.slot.channel, AwsHTTP.ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT; shutdown_immediately=true)
-                        elseif conn !== nothing
-                            AwsHTTP.http_connection_close(conn)
-                        end
-                    end
                 end
             end
         end)
