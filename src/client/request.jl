@@ -15,6 +15,15 @@ function setuseragent!(x::Union{String, Nothing})
     return
 end
 
+function _default_host_header(settings::ClientSettings)
+    scheme = lowercase(settings.scheme)
+    default_port = (scheme == "https" || scheme == "wss") ? UInt32(443) : UInt32(80)
+    if settings.port == default_port
+        return settings.host
+    end
+    return string(settings.host, ":", settings.port)
+end
+
 function with_request(
     f::Function,
     client::Client,
@@ -53,10 +62,18 @@ function with_request(
     # add headers to request
     h = req.headers
     if http2
+        authority = AwsHTTP.http_headers_get(h.hdrs, ":authority")
+        if authority === nothing
+            authority = AwsHTTP.http_headers_get(h.hdrs, "host")
+        end
+        if authority === nothing
+            authority = _default_host_header(client.settings)
+        end
+        AwsHTTP.http_headers_has(h.hdrs, "host") || setheader(h, "host", authority)
         setscheme(h, client.settings.scheme)
-        setauthority(h, client.settings.host)
+        setauthority(h, authority)
     else
-        setheader(h, "host", client.settings.host)
+        setheaderifabsent(h, "host", _default_host_header(client.settings))
     end
     setheaderifabsent(h, "accept", "*/*")
     if USER_AGENT[] !== nothing

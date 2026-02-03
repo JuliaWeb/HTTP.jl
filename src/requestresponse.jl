@@ -114,10 +114,22 @@ setscheme(headers::Headers, scheme) = AwsHTTP.http2_headers_set_request_scheme(h
 setauthority(headers::Headers, authority) = AwsHTTP.http2_headers_set_request_authority(headers.hdrs, String(authority)) != 0 && aws_throw_error()
 
 function getheader(headers::Headers, k)
-    return AwsHTTP.http_headers_get(headers.hdrs, String(k))
+    name = String(k)
+    val = AwsHTTP.http_headers_get(headers.hdrs, name)
+    if val === nothing && field_name_isequal(name, "host")
+        val = AwsHTTP.http_headers_get(headers.hdrs, ":authority")
+    end
+    return val
 end
 
-hasheader(headers::Headers, k) = AwsHTTP.http_headers_has(headers.hdrs, String(k))
+function hasheader(headers::Headers, k)
+    name = String(k)
+    has = AwsHTTP.http_headers_has(headers.hdrs, name)
+    if !has && field_name_isequal(name, "host")
+        has = AwsHTTP.http_headers_has(headers.hdrs, ":authority")
+    end
+    return has
+end
 
 removeheader(headers::Headers, k) = AwsHTTP.http_headers_erase(headers.hdrs, String(k)) != 0 && aws_throw_error()
 removeheader(headers::Headers, k, v) = AwsHTTP.http_headers_erase_value(headers.hdrs, String(k), String(v)) != 0 && aws_throw_error()
@@ -181,7 +193,15 @@ end
 
 Get all headers with key `k` or empty if none.
 """
-headers(h::Headers, k) = [_header_value(h2) for h2 in h if field_name_isequal(_header_name(h2), k)]
+function headers(h::Headers, k)
+    vals = [_header_value(h2) for h2 in h if field_name_isequal(_header_name(h2), k)]
+    if isempty(vals) && field_name_isequal(k, "host")
+        authority = AwsHTTP.http_headers_get(h.hdrs, ":authority")
+        authority === nothing && return String[]
+        return [authority]
+    end
+    return vals
+end
 headers(h::AbstractVector{<:Pair}, k) = [String(v) for (name, v) in h if field_name_isequal(name, k)]
 headers(m::Message, k) = headers(m.headers, k)
 

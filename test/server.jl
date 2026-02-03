@@ -164,6 +164,36 @@ end
                 close(server)
             end
         end
+        @testset "HTTP/2 host and authority mapping" begin
+            cert = joinpath(@__DIR__, "fixtures", "http2.crt")
+            key = joinpath(@__DIR__, "fixtures", "http2.key")
+            host_ref = Ref{String}("")
+            authority_ref = Ref{String}("")
+            server = HTTP.serve!("127.0.0.1", 0; listenany=true, stream=true, ssl_cert=cert, ssl_key=key, ssl_alpn_list="h2") do stream
+                HTTP.startread(stream)
+                if stream.http2
+                    host_ref[] = HTTP.header(stream.request, "host")
+                    authority_ref[] = HTTP.header(stream.request, ":authority")
+                end
+                HTTP.setstatus(stream, 200)
+                HTTP.startwrite(stream)
+                write(stream, "ok")
+                HTTP.closewrite(stream)
+            end
+            try
+                port = HTTP.port(server)
+                resp = HTTP.get("https://127.0.0.1:$(port)"; ssl_insecure=true, ssl_alpn_list="h2", headers=["Host" => "example.com"])
+                if resp.version == HTTP.HTTPVersion(2, 0)
+                    @test host_ref[] == "example.com"
+                    @test authority_ref[] == "example.com"
+                else
+                    @info "HTTP/2 not negotiated for host/authority mapping test"
+                    @test true
+                end
+            finally
+                close(server)
+            end
+        end
         @testset "HTTP/2 server push promise" begin
             cert = joinpath(@__DIR__, "fixtures", "http2.crt")
             key = joinpath(@__DIR__, "fixtures", "http2.key")

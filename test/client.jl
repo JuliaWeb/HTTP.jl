@@ -232,6 +232,17 @@
         end
     end
 
+    @testset "Host header includes port for non-default" begin
+        server = HTTP.serve!(req -> HTTP.Response(200, HTTP.header(req, "host")); listenany=true)
+        try
+            port = HTTP.port(server)
+            resp = HTTP.get("http://127.0.0.1:$port")
+            @test String(resp.body) == "127.0.0.1:$port"
+        finally
+            close(server)
+        end
+    end
+
     @testset "readtimeout" begin
         server = HTTP.serve!("127.0.0.1", 0; listenany=true) do req
             if req.target == "/delay/5"
