@@ -54,6 +54,7 @@ end
 mutable struct Server{F, C}
     const f::F
     const on_stream_complete::C
+    const on_shutdown::Any
     const fut::Future{Symbol}
     const connections_lock::ReentrantLock
     const connections::Set{Connection}
@@ -68,6 +69,7 @@ mutable struct Server{F, C}
     Server{F, C}(
         f::F,
         on_stream_complete::C,
+        on_shutdown::Any,
         fut::Future{Symbol},
         connections_lock::ReentrantLock,
         connections::Set{Connection},
@@ -76,12 +78,27 @@ mutable struct Server{F, C}
         stream::Bool,
         logstate::Base.CoreLogging.LogState,
         state::Symbol,
-    ) where {F, C} = new{F, C}(f, on_stream_complete, fut, connections_lock, connections, closed, access_log, stream, logstate, state)
+    ) where {F, C} = new{F, C}(f, on_stream_complete, on_shutdown, fut, connections_lock, connections, closed, access_log, stream, logstate, state)
 end
 
 Base.wait(s::Server) = wait(s.closed)
 ftype(::Server{F}) where {F} = F
 port(s::Server) = s.bound_port
+
+shutdown(fns::Vector{<:Function}) = foreach(shutdown, fns)
+shutdown(::Nothing) = nothing
+function shutdown(fn::Function)
+    try
+        fn()
+    catch e
+        @error "shutdown function failed" exception=(e, catch_backtrace())
+    end
+    return
+end
+
+function _future_done(f::Future)
+    return (@atomic f.set) != 0
+end
 
 function _should_log_stream_error(error_code::Integer)::Bool
     error_code == 0 && return false
@@ -244,8 +261,18 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
                     @error "access log error" exception=(e, catch_backtrace())
                 end
             end
+            shutdown_channel = false
             @lock conn.streams_lock begin
                 delete!(conn.streams, stream)
+                if @atomic(server.state) == :closing && isempty(conn.streams)
+                    shutdown_channel = true
+                end
+            end
+            if shutdown_channel
+                AwsIO.channel_shutdown!(conn.channel; shutdown_immediately=true)
+                @lock server.connections_lock begin
+                    delete!(server.connections, conn)
+                end
             end
             # HTTP pipelining: create next request handler if connection allows
             if !stream.http2 && AwsHTTP.http_connection_new_requests_allowed(http_conn)
@@ -288,11 +315,31 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
     return
 end
 
+function _warn_unsupported_server_options(; reuseaddr::Bool, backlog::Integer)
+    reuseaddr && @warn "reuseaddr is not supported by the AwsIO server; ignoring"
+    backlog != Sockets.BACKLOG_DEFAULT && @warn "backlog is not supported by the AwsIO server; ignoring"
+    return
+end
+
+function _stop_new_requests!(conn::Connection)
+    AwsHTTP.http_connection_stop_new_requests(conn.h1conn)
+    if AwsHTTP.http_connection_get_version(conn.h1conn) == AwsHTTP.HttpVersion.HTTP_2
+        try
+            AwsHTTP.h2_connection_send_goaway!(conn.h1conn; allow_more_streams=false)
+        catch
+        end
+    end
+    return
+end
+
 function serve!(f, host="127.0.0.1", port=8080;
     on_stream_complete=nothing,
+    on_shutdown=nothing,
     access_log::Union{Nothing, Function}=nothing,
     stream::Bool=false,
     listenany::Bool=false,
+    reuseaddr::Bool=false,
+    backlog::Integer=Sockets.BACKLOG_DEFAULT,
     # socket options
     socket_domain=:ipv4,
     connect_timeout_ms::Integer=3000,
@@ -311,6 +358,7 @@ function serve!(f, host="127.0.0.1", port=8080;
     initial_window_size=typemax(UInt64),
     )
     _ensure_resources!()
+    _warn_unsupported_server_options(; reuseaddr=reuseaddr, backlog=backlog)
     host_str = string(host)
     port_int = Int(port)
     if listenany
@@ -330,6 +378,7 @@ function serve!(f, host="127.0.0.1", port=8080;
     server = Server{typeof(f), typeof(on_stream_complete)}(
         f,
         on_stream_complete,
+        on_shutdown,
         Future{Symbol}(),
         ReentrantLock(),
         Set{Connection}(),
@@ -356,6 +405,11 @@ function serve!(f, host="127.0.0.1", port=8080;
         Base.CoreLogging.with_logstate(server.logstate) do
             if error_code != 0
                 @error "incoming channel setup error" error_code
+                return
+            end
+            st = @atomic(server.state)
+            if st == :closing || st == :closed
+                AwsIO.channel_shutdown!(channel; shutdown_immediately=true)
                 return
             end
             slot = AwsIO.channel_slot_new!(channel)
@@ -570,21 +624,67 @@ function push_promise(parent::Stream, method::Union{String, Symbol}, path; heade
     return push_promise(parent, Request(String(method), String(path), headers, nothing, true); pad_length=pad_length, scheme=scheme, authority=authority)
 end
 
-function Base.close(server::Server)
-    state = @atomicswap server.state = :closed
-    if state == :running
-        AwsIO.server_bootstrap_shutdown!(server.bootstrap)
-        conns = Connection[]
-        @lock server.connections_lock begin
-            append!(conns, server.connections)
-        end
-        for conn in conns
-            AwsIO.channel_shutdown!(conn.channel; shutdown_immediately=true)
-        end
-        @assert wait(server.fut) == :destroyed
-        notify(server.closed)
+function _forceclose!(server::Server; skip_shutdown::Bool=false)
+    skip_shutdown || shutdown(server.on_shutdown)
+    AwsIO.server_bootstrap_shutdown!(server.bootstrap)
+    conns = Connection[]
+    @lock server.connections_lock begin
+        append!(conns, server.connections)
     end
+    for conn in conns
+        AwsIO.channel_shutdown!(conn.channel; shutdown_immediately=true)
+    end
+    @atomic server.state = :closed
+    notify(server.closed)
     return
 end
 
-Base.isopen(server::Server) = @atomic(server.state) != :closed
+function Base.close(server::Server)
+    state = @atomicswap server.state = :closing
+    if state == :closed
+        return
+    elseif state == :closing
+        wait(server.closed)
+        return
+    end
+    shutdown(server.on_shutdown)
+    AwsIO.server_bootstrap_shutdown!(server.bootstrap)
+    conns = Connection[]
+    @lock server.connections_lock begin
+        append!(conns, server.connections)
+    end
+    for conn in conns
+        _stop_new_requests!(conn)
+        @lock conn.streams_lock begin
+            if isempty(conn.streams)
+                AwsIO.channel_shutdown!(conn.channel; shutdown_immediately=true)
+                @lock server.connections_lock begin
+                    delete!(server.connections, conn)
+                end
+            end
+        end
+    end
+    deadline = time() + 0.5
+    while time() < deadline
+        empty = @lock server.connections_lock begin
+            isempty(server.connections)
+        end
+        if empty
+            @atomic server.state = :closed
+            notify(server.closed)
+            return
+        end
+        sleep(0.05)
+    end
+    _forceclose!(server; skip_shutdown=true)
+    return
+end
+
+function forceclose(server::Server)
+    state = @atomicswap server.state = :closed
+    state == :closed && return
+    _forceclose!(server; skip_shutdown = state == :closing)
+    return
+end
+
+Base.isopen(server::Server) = @atomic(server.state) == :running

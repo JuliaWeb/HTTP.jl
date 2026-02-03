@@ -14,6 +14,29 @@ import Sockets
     end
 end
 
+@testset "server shutdown hooks" begin
+    closed = Threads.Atomic{Int}(0)
+    server = HTTP.serve!(req -> HTTP.Response(200, "ok"); listenany=true, on_shutdown=() -> (closed[] += 1))
+    try
+        port = HTTP.port(server)
+        HTTP.get("http://127.0.0.1:$port")
+    finally
+        close(server)
+    end
+    @test closed[] == 1
+
+    forced = Threads.Atomic{Int}(0)
+    server2 = HTTP.serve!(req -> HTTP.Response(200, "ok"); listenany=true,
+        on_shutdown=[() -> (forced[] += 1), () -> (forced[] += 1)])
+    try
+        port2 = HTTP.port(server2)
+        HTTP.get("http://127.0.0.1:$port2")
+    finally
+        HTTP.forceclose(server2)
+    end
+    @test forced[] == 2
+end
+
 @testset "access logging stream handler" begin
     logger = Test.TestLogger()
     with_logger(logger) do
