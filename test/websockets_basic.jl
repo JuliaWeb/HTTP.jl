@@ -135,3 +135,65 @@ end
     @test err isa WebSockets.WebSocketError
     @test err.message.code == 1009
 end
+
+@testset "WebSockets handshake accept validation" begin
+    server = HTTP.listen!("127.0.0.1", 0; listenany=true) do stream
+        HTTP.startread(stream)
+        HTTP.setstatus(stream, 101)
+        HTTP.setheader(stream, "Upgrade" => "websocket")
+        HTTP.setheader(stream, "Connection" => "Upgrade")
+        HTTP.setheader(stream, "Sec-WebSocket-Accept" => "invalid")
+        HTTP.startwrite(stream)
+        HTTP.closewrite(stream)
+    end
+    port = HTTP.port(server)
+    err = nothing
+    try
+        WebSockets.open("ws://127.0.0.1:$port"; suppress_close_error=true) do ws
+        end
+    catch e
+        err = e
+    finally
+        close(server)
+    end
+    @test err isa WebSockets.WebSocketError
+    @test err.message.code == 1002
+end
+
+@testset "WebSockets invalid close status" begin
+    server = WebSockets.listen!("127.0.0.1", 0; listenany=true) do ws
+        WebSockets.close(ws, WebSockets.CloseFrameBody(1005, "bad"))
+    end
+    port = HTTP.port(server)
+    err = nothing
+    try
+        WebSockets.open("ws://127.0.0.1:$port"; suppress_close_error=true) do ws
+            receive(ws)
+        end
+    catch e
+        err = e
+    finally
+        close(server)
+    end
+    @test err isa WebSockets.WebSocketError
+    @test err.message.code == 1002
+end
+
+@testset "WebSockets invalid UTF-8 text" begin
+    server = WebSockets.listen!("127.0.0.1", 0; listenany=true) do ws
+        WebSockets.writeframe(ws, true, WebSockets.TEXT, UInt8[0xff])
+    end
+    port = HTTP.port(server)
+    err = nothing
+    try
+        WebSockets.open("ws://127.0.0.1:$port"; suppress_close_error=true) do ws
+            receive(ws)
+        end
+    catch e
+        err = e
+    finally
+        close(server)
+    end
+    @test err isa WebSockets.WebSocketError
+    @test err.message.code == 1007
+end
