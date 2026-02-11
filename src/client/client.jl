@@ -1,5 +1,5 @@
 const DEFAULT_CONNECT_TIMEOUT = 3000
-const DEFAULT_MAX_RETRIES = 4
+const DEFAULT_MAX_RETRIES = 0
 const default_connection_limit = Ref{Int}(max(16, Threads.nthreads() * 4))
 
 # ─── Shared infrastructure ───
@@ -14,20 +14,33 @@ function _ensure_resources!()
     _CLIENT_BOOTSTRAP[] !== nothing && return
     Base.@lock _RESOURCES_LOCK begin
         _CLIENT_BOOTSTRAP[] !== nothing && return
-        elg_opts = AwsIO.EventLoopGroupOptions(;
-            type = _use_nw_sockets() ? AwsIO.EventLoopType.DISPATCH_QUEUE : AwsIO.EventLoopType.PLATFORM_DEFAULT,
-        )
-        elg = AwsIO.event_loop_group_new(elg_opts)
-        elg isa AwsIO.ErrorResult && throw(AWSError("Failed to create event loop group; ensure sufficient interactive threads"))
+        elg_opts = Reseau.EventLoops.EventLoopGroupOptions()
+        elg = Reseau.EventLoops.EventLoopGroup(elg_opts)
         _EVENT_LOOP_GROUP[] = elg
-        resolver = AwsIO.DefaultHostResolver(elg)
+        resolver = Reseau.Sockets.HostResolver(elg)
         _HOST_RESOLVER[] = resolver
-        bootstrap = AwsIO.ClientBootstrap(AwsIO.ClientBootstrapOptions(
+        bootstrap = Reseau.Sockets.ClientBootstrap(Reseau.Sockets.ClientBootstrapOptions(
             event_loop_group=elg,
             host_resolver=resolver,
         ))
         _CLIENT_BOOTSTRAP[] = bootstrap
     end
+end
+
+function _task_sleep_s(seconds::Real)::Nothing
+    seconds <= 0 && return nothing
+    elg = _EVENT_LOOP_GROUP[]
+    if elg === nothing
+        Reseau.thread_sleep_s(seconds)
+        return nothing
+    end
+    el = Reseau.EventLoops.event_loop_group_get_next_loop(elg)
+    if el === nothing
+        Reseau.thread_sleep_s(seconds)
+        return nothing
+    end
+    Reseau.EventLoops.task_sleep_s(el, seconds)
+    return nothing
 end
 
 # ─── TLS helper ───
@@ -36,30 +49,26 @@ function _make_tls_options(host::String; ssl_cert, ssl_key, ssl_capath, ssl_cace
     alpn_list = _normalize_alpn_list(ssl_alpn_list)
     if ssl_cert !== nothing && ssl_key !== nothing
         # Mutual TLS: client certificate + key (file paths)
-        opts = AwsIO.tls_ctx_options_init_client_mtls_from_path(ssl_cert, ssl_key)
-        opts isa AwsIO.ErrorResult && throw(AWSError("Failed to create mTLS options"))
-        AwsIO.tls_ctx_options_set_verify_peer!(opts, !ssl_insecure)
+        opts = Reseau.Sockets.tls_ctx_options_init_client_mtls_from_path(ssl_cert, ssl_key)
+        Reseau.Sockets.tls_ctx_options_set_verify_peer!(opts, !ssl_insecure)
         if alpn_list !== nothing && !isempty(alpn_list)
-            AwsIO.tls_ctx_options_set_alpn_list!(opts, alpn_list)
+            Reseau.Sockets.tls_ctx_options_set_alpn_list!(opts, alpn_list)
         end
         if ssl_cacert !== nothing || ssl_capath !== nothing
-            res = AwsIO.tls_ctx_options_override_default_trust_store_from_path!(opts;
+            Reseau.Sockets.tls_ctx_options_override_default_trust_store_from_path!(opts;
                 ca_path=ssl_capath, ca_file=ssl_cacert)
-            res isa AwsIO.ErrorResult && throw(AWSError("Failed to set trust store"))
         end
-        ctx = AwsIO.tls_context_new(opts)
-        ctx isa AwsIO.ErrorResult && throw(AWSError("Failed to create TLS context"))
+        ctx = Reseau.Sockets.tls_context_new(opts)
     else
         # Standard client TLS (no client cert)
-        ctx = AwsIO.tls_context_new_client(;
+        ctx = Reseau.Sockets.tls_context_new_client(;
             verify_peer=!ssl_insecure,
             ca_file=ssl_cacert,
             ca_path=ssl_capath,
             alpn_list=alpn_list,
         )
-        ctx isa AwsIO.ErrorResult && throw(AWSError("Failed to create TLS context"))
     end
-    return AwsIO.TlsConnectionOptions(ctx; server_name=host)
+    return Reseau.Sockets.TlsConnectionOptions(ctx; server_name=host)
 end
 
 # ─── Settings ───
@@ -202,15 +211,15 @@ end
 
 mutable struct Client
     settings::ClientSettings
-    socket_options::AwsIO.SocketOptions
-    tls_options::Union{Nothing, AwsIO.TlsConnectionOptions}
+    socket_options::Reseau.Sockets.SocketOptions
+    tls_options::Union{Nothing, Reseau.Sockets.TlsConnectionOptions}
     # only 1 of proxy_options or proxy_env_settings is set
     proxy_options::Union{Nothing, AwsHTTP.HttpProxyOptions}
     proxy_env_settings::Union{Nothing, AwsHTTP.ProxyEnvVarSettings}
     proxy_strategy::Union{Nothing, AwsHTTP.HttpProxyStrategy}
     monitoring_options::Union{Nothing, AwsHTTP.HttpConnectionMonitoringOptions}
     monitoring_observer::Union{Nothing, Function}
-    retry_strategy::AwsIO.StandardRetryStrategy
+    retry_strategy::Reseau.Sockets.StandardRetryStrategy
     connection_manager::AwsHTTP.HttpConnectionManager
     http2_stream_manager::Union{Nothing, AwsHTTP.Http2StreamManager}
     http2_initial_settings::Union{Nothing, Vector{AwsHTTP.Http2Setting}}
@@ -230,18 +239,15 @@ function Client(cs::ClientSettings)
         throw(ArgumentError("http2_initial_window_size must be between 0 and $(HTTP2_MAX_WINDOW_SIZE)"))
     end
     # socket options
-    client.socket_options = AwsIO.SocketOptions(;
-        type=AwsIO.SocketType.STREAM,
-        domain=cs.socket_domain == :ipv4 ? AwsIO.SocketDomain.IPV4 : AwsIO.SocketDomain.IPV6,
+    client.socket_options = Reseau.Sockets.SocketOptions(;
+        type=Reseau.Sockets.SocketType.STREAM,
+        domain=cs.socket_domain == :ipv4 ? Reseau.Sockets.SocketDomain.IPV4 : Reseau.Sockets.SocketDomain.IPV6,
         connect_timeout_ms=cs.connect_timeout_ms,
         keepalive=cs.keepalive,
         keep_alive_interval_sec=cs.keep_alive_interval_sec,
         keep_alive_timeout_sec=cs.keep_alive_timeout_sec,
         keep_alive_max_failed_probes=cs.keep_alive_max_failed_probes,
     )
-    if _use_nw_sockets()
-        client.socket_options.impl_type = AwsIO.SocketImplType.APPLE_NETWORK_FRAMEWORK
-    end
     # tls options
     if cs.scheme == "https" || cs.scheme == "wss"
         client.tls_options = _make_tls_options(cs.host;
@@ -301,18 +307,17 @@ function Client(cs::ClientSettings)
     end
     client.monitoring_observer = cs.monitoring_statistics_observer
     # retry strategy
-    backoff_config = AwsIO.ExponentialBackoffConfig(;
+    backoff_config = Reseau.Sockets.ExponentialBackoffConfig(;
         backoff_scale_factor_ms=cs.backoff_scale_factor_ms,
         max_backoff_secs=cs.max_backoff_secs,
         max_retries=cs.max_retries,
         jitter_mode=cs.jitter_mode,
     )
-    retry_config = AwsIO.StandardRetryConfig(;
+    retry_config = Reseau.Sockets.StandardRetryConfig(;
         initial_bucket_capacity=cs.initial_bucket_capacity,
         backoff_config=backoff_config,
     )
-    strategy = AwsIO.StandardRetryStrategy(_EVENT_LOOP_GROUP[], retry_config)
-    strategy isa AwsIO.ErrorResult && throw(AWSError("Failed to create retry strategy"))
+    strategy = Reseau.Sockets.StandardRetryStrategy(_EVENT_LOOP_GROUP[], retry_config)
     client.retry_strategy = strategy
     # http2 initial settings
     settings_input = cs.http2_initial_settings
@@ -348,7 +353,7 @@ function Client(cs::ClientSettings)
                 manual_window_management=manual_wm,
                 initial_window_size=Csize_t(initial_ws),
                 response_first_byte_timeout_ms=UInt64(rfbt_ms),
-                on_setup=(conn, err, ud) -> put!(result_ch, err == AwsIO.OP_SUCCESS ? conn : nothing),
+                on_setup=(conn, err, ud) -> put!(result_ch, err == Reseau.OP_SUCCESS ? conn : nothing),
             ))
             return take!(result_ch)
         end

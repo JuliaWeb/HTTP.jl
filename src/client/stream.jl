@@ -176,10 +176,10 @@ function _h1_flush_outgoing!(s::Stream)
     slot === nothing && return
     channel = slot.channel
     channel === nothing && return
-    if !AwsIO.channel_thread_is_callers_thread(channel)
+    if !Reseau.Sockets.channel_thread_is_callers_thread(channel)
         fut = Future{Nothing}()
-        task = AwsIO.ChannelTask((task, ctx, status) -> begin
-            status == AwsIO.TaskStatus.RUN_READY || return notify(fut, nothing)
+        task = Reseau.Sockets.ChannelTask((task, ctx, status) -> begin
+            status == Reseau.TaskStatus.RUN_READY || return notify(fut, nothing)
             try
                 _h1_flush_outgoing!(s)
                 notify(fut, nothing)
@@ -188,7 +188,7 @@ function _h1_flush_outgoing!(s::Stream)
             end
             return nothing
         end, nothing, "http_h1_flush_outgoing")
-        AwsIO.channel_schedule_task_now!(channel, task)
+        Reseau.Sockets.channel_schedule_task_now!(channel, task)
         wait(fut)
         return
     end
@@ -196,14 +196,18 @@ function _h1_flush_outgoing!(s::Stream)
         status, encoded = AwsHTTP.h1_connection_encode_outgoing!(h1conn)
         status != AwsHTTP.OP_SUCCESS && throw(AWSError("H1 encoding failed"))
         isempty(encoded) && break
-        msg = AwsIO.IoMessage(length(encoded))
+        msg = Reseau.Sockets.IoMessage(length(encoded))
         buf = msg.message_data
         @inbounds for i in 1:length(encoded)
             buf.mem[i] = encoded[i]
         end
         buf.len = Csize_t(length(encoded))
-        result = AwsIO.channel_slot_send_message(slot, msg, AwsIO.ChannelDirection.WRITE)
-        result isa AwsIO.ErrorResult && throw(AWSError("channel slot send failed"))
+        try
+            Reseau.Sockets.channel_slot_send_message(slot, msg, Reseau.Sockets.ChannelDirection.WRITE)
+        catch e
+            e isa Reseau.ReseauError || rethrow()
+            throw(AWSError("channel slot send failed"))
+        end
     end
     return
 end
@@ -761,7 +765,7 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
     timeout_task = nothing
     if readtimeout > 0
         timeout_task = errormonitor(Threads.@spawn begin
-            sleep(readtimeout)
+            _task_sleep_s(readtimeout)
             (@atomic stream.fut.set) != 0 && return
             notify(stream.fut, TimeoutError(readtimeout))
             if isdefined(stream, :aws_stream)
@@ -849,12 +853,12 @@ function with_stream(conn, req::Request, chunkedbody, on_stream_response_body, d
     timeout_task = nothing
     if readtimeout > 0
         timeout_task = errormonitor(Threads.@spawn begin
-            sleep(readtimeout)
+            _task_sleep_s(readtimeout)
             (@atomic stream.fut.set) != 0 && return
             if !stream.http2 && isdefined(stream, :connection)
                 conn = stream.connection
                 if conn !== nothing && conn.slot !== nothing && conn.slot.channel !== nothing
-                    AwsIO.channel_shutdown!(conn.slot.channel, AwsHTTP.ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT; shutdown_immediately=true)
+                    Reseau.Sockets.channel_shutdown!(conn.slot.channel, AwsHTTP.ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT; shutdown_immediately=true)
                 elseif conn !== nothing
                     AwsHTTP.http_connection_close(conn)
                 end

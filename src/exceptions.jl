@@ -2,6 +2,9 @@ module Exceptions
 
 export @try, HTTPError, ConnectError, TimeoutError, RequestError, current_exceptions_to_string
 
+# Pull parent-module bindings needed for concrete field types.
+import ..Request
+
 @eval begin
 """
     @try PermittedErrorTypes expr
@@ -33,7 +36,7 @@ the remote server. The underlying error is stored in `error`.
 """
 struct ConnectError <: HTTPError
     url::String
-    error::Any
+    error::Exception
 end
 
 function Base.showerror(io::IO, e::ConnectError)
@@ -60,8 +63,8 @@ Raised when an error occurs while physically sending a request to the remote ser
 or reading the response back. The underlying error is stored in `error`.
 """
 struct RequestError <: HTTPError
-    request::Any
-    error::Any
+    request::Request
+    error::Exception
 end
 
 function Base.showerror(io::IO, e::RequestError)

@@ -11,7 +11,7 @@ function with_connection(f::Function, client::Client; context=nothing)
         client.connection_manager;
         callback = (conn, error_code, _) -> begin
             if error_code != AwsHTTP.OP_SUCCESS
-                ec = AwsIO.last_error()
+                ec = Reseau.last_error()
                 put!(ch, CapturedException(aws_error(ec), Base.backtrace()))
             else
                 put!(ch, conn)

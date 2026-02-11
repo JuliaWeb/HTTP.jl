@@ -106,71 +106,73 @@ function request(method, url, h=Header[], b=nothing;
     end
     authinfo = (username !== nothing && password !== nothing) ? "$username:$password" : userinfo(uri)
     apply_basicauth = (username !== nothing && password !== nothing) ? true : basicauth
-    return with_redirect(method, uri, headers, body, redirect, redirect_limit, redirect_method, forwardheaders; context=context) do method, uri, headers, body
-        reqclient = @something(
-            client,
-            pool === nothing ?
-                getclient(ClientSettings(scheme(uri), host(uri), getport(uri); client_kw...)) :
-                getclient(ClientSettings(scheme(uri), host(uri), getport(uri); client_kw...), pool)
-        )::Client
-        req_ref = Ref{Any}(nothing)
-        with_retry_token(reqclient; logerrors=logerrors, logtag=logtag, method=method, uri=uri,
-            retry_check=retry_check, retry_delays=retry_delays,
-            retry_non_idempotent=retry_non_idempotent, retryable_body=retryable_body, req_ref=req_ref, context=context) do
-            resp = if reqclient.http2_stream_manager !== nothing
-                path = resource(uri)
-                with_request(reqclient, method, path, headers, body, chunkedbody, decompress, authinfo, bearer, modifier, true, cookies, cookiejar, verbose;
-                    copyheaders=false,
-                    canonicalize_headers=canonicalize_headers,
-                    detect_content_type=detect_content_type,
-                    basicauth=apply_basicauth,
-                    observelayers=observelayers,
-                    context=context,
-                ) do req
-                    req_ref[] = req
-                    if response_body isa AbstractVector{UInt8}
-                        on_stream_response_body = BufferOnResponseBody(response_body, Ref(1))
-                        with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout; context=context)
-                    elseif response_body isa IO
-                        on_stream_response_body = IOOnResponseBody(response_body)
-                        with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout; context=context)
-                    else
-                        with_stream_manager(reqclient, req, chunkedbody, response_body, decompress, readtimeout; context=context)
-                    end
-                end
-            else
-                with_connection(reqclient; context=context) do conn
-                    http2 = AwsHTTP.http_connection_get_version(conn) == AwsHTTP.HttpVersion.HTTP_2
-                    path = resource(uri)
-                    with_request(reqclient, method, path, headers, body, chunkedbody, decompress, authinfo, bearer, modifier, http2, cookies, cookiejar, verbose;
-                        copyheaders=false,
-                        canonicalize_headers=canonicalize_headers,
-                        detect_content_type=detect_content_type,
-                        basicauth=apply_basicauth,
+    # `client_kw`/`chunkedbody` are reassigned above; freeze them in a fresh binding so
+    # the request pipeline closures capture a concrete value rather than a `Core.Box`.
+    let client_kw = client_kw, chunkedbody = chunkedbody
+        return with_redirect(method, uri, headers, body, redirect, redirect_limit, redirect_method, forwardheaders; context=context) do method, uri, headers, body
+            reqclient = @something(
+                client,
+                pool === nothing ?
+                    getclient(ClientSettings(scheme(uri), host(uri), getport(uri); client_kw...)) :
+                    getclient(ClientSettings(scheme(uri), host(uri), getport(uri); client_kw...), pool)
+            )::Client
+            req_ref = Ref{Any}(nothing)
+                with_retry_token(reqclient; logerrors=logerrors, logtag=logtag, method=method, uri=uri,
+                    retry_check=retry_check, retry_delays=retry_delays,
+                    retry_non_idempotent=retry_non_idempotent, retryable_body=retryable_body, req_ref=req_ref, context=context) do
+                    resp = if reqclient.http2_stream_manager !== nothing
+                        with_request(reqclient, method, resource(uri), headers, body, chunkedbody, decompress, authinfo, bearer, modifier, true, cookies, cookiejar, verbose;
+                            copyheaders=false,
+                            canonicalize_headers=canonicalize_headers,
+                            detect_content_type=detect_content_type,
+                            basicauth=apply_basicauth,
                         observelayers=observelayers,
                         context=context,
                     ) do req
                         req_ref[] = req
                         if response_body isa AbstractVector{UInt8}
                             on_stream_response_body = BufferOnResponseBody(response_body, Ref(1))
-                            with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout; context=context)
+                            with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout; context=context)
                         elseif response_body isa IO
                             on_stream_response_body = IOOnResponseBody(response_body)
-                            with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout; context=context)
+                            with_stream_manager(reqclient, req, chunkedbody, on_stream_response_body, decompress, readtimeout; context=context)
                         else
-                            with_stream(conn, req, chunkedbody, response_body, decompress, http2, readtimeout; context=context)
+                            with_stream_manager(reqclient, req, chunkedbody, response_body, decompress, readtimeout; context=context)
+                        end
+                        end
+                    else
+                        with_connection(reqclient; context=context) do conn
+                            http2 = AwsHTTP.http_connection_get_version(conn) == AwsHTTP.HttpVersion.HTTP_2
+                            with_request(reqclient, method, resource(uri), headers, body, chunkedbody, decompress, authinfo, bearer, modifier, http2, cookies, cookiejar, verbose;
+                                copyheaders=false,
+                                canonicalize_headers=canonicalize_headers,
+                                detect_content_type=detect_content_type,
+                                basicauth=apply_basicauth,
+                            observelayers=observelayers,
+                            context=context,
+                        ) do req
+                            req_ref[] = req
+                            if response_body isa AbstractVector{UInt8}
+                                on_stream_response_body = BufferOnResponseBody(response_body, Ref(1))
+                                with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout; context=context)
+                            elseif response_body isa IO
+                                on_stream_response_body = IOOnResponseBody(response_body)
+                                with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout; context=context)
+                            else
+                                with_stream(conn, req, chunkedbody, response_body, decompress, http2, readtimeout; context=context)
+                            end
                         end
                     end
                 end
-            end
-            # status error check
-            if status_exception && iserror(resp)
-                if logerrors
-                    @error "HTTP StatusError" method=method url=makeuri(uri) status=resp.status logtag=logtag
+                # status error check
+                if status_exception && iserror(resp)
+                    if logerrors
+                        @error "HTTP StatusError" method=method url=makeuri(uri) status=resp.status logtag=logtag
+                    end
+                    throw(StatusError(method, uri, resp))
                 end
-                throw(StatusError(method, uri, resp))
+                return resp
             end
-            return resp
         end
     end
 end

@@ -38,7 +38,7 @@ function determine_file(path, resp, hdrs)
         filename = something(
             try_get_filename_from_headers(hdrs),
             resp.request === nothing ? nothing : try_get_filename_from_request(resp.request),
-            basename(tempname())
+            basename(tempname(; cleanup = false))
         )
         return safer_joinpath(path, filename)
     end
@@ -102,9 +102,11 @@ function download(url::AbstractString, local_path=nothing, headers=Header[]; upd
                  )
         end
 
-        Base.open(file, "w") do fh
+        Base.open(file, "w") do io
             while !eof(stream)
-                downloaded_bytes += write(fh, readavailable(stream))
+                buf = readavailable(stream)
+                wrote = write(io, buf)
+                downloaded_bytes += wrote
                 if !isinf(update_period)
                     if now() - prev_time > Millisecond(round(1000update_period))
                         report_callback()

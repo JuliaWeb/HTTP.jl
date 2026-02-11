@@ -667,7 +667,7 @@
     end
 
     @testset "HTTP connection monitoring stats" begin
-        list = AwsIO.ArrayList{HTTP.aws_crt_statistics_http1_channel}()
+        list = HTTP.aws_crt_statistics_http1_channel[]
         stat1 = HTTP.aws_crt_statistics_http1_channel(
             HTTP.AWSCRT_STAT_CAT_HTTP1_CHANNEL,
             UInt64(10),
@@ -675,7 +675,7 @@
             UInt32(1),
             UInt32(2),
         )
-        AwsIO.push_back!(list, stat1)
+        push!(list, stat1)
         decoded = HTTP._decode_statistics(list)
         @test length(decoded) == 1
         @test decoded[1].category == :http1_channel
@@ -684,14 +684,14 @@
         @test decoded[1].current_outgoing_stream_id == 1
         @test decoded[1].current_incoming_stream_id == 2
 
-        list = AwsIO.ArrayList{HTTP.aws_crt_statistics_http2_channel}()
+        list = HTTP.aws_crt_statistics_http2_channel[]
         stat2 = HTTP.aws_crt_statistics_http2_channel(
             HTTP.AWSCRT_STAT_CAT_HTTP2_CHANNEL,
             UInt64(5),
             UInt64(6),
             true,
         )
-        AwsIO.push_back!(list, stat2)
+        push!(list, stat2)
         decoded = HTTP._decode_statistics(list)
         @test length(decoded) == 1
         @test decoded[1].category == :http2_channel
@@ -702,7 +702,7 @@
         called = Ref(false)
         cb = (nonce, stats) -> (called[] = true)
         client = HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443); monitoring_statistics_observer=cb))
-        list = AwsIO.ArrayList{HTTP.aws_crt_statistics_http1_channel}()
+        list = HTTP.aws_crt_statistics_http1_channel[]
         stat3 = HTTP.aws_crt_statistics_http1_channel(
             HTTP.AWSCRT_STAT_CAT_HTTP1_CHANNEL,
             UInt64(1),
@@ -710,7 +710,7 @@
             UInt32(1),
             UInt32(1),
         )
-        AwsIO.push_back!(list, stat3)
+        push!(list, stat3)
         HTTP._call_statistics_observer(client.monitoring_observer, Csize_t(0), list)
         @test called[]
         finalize(client)

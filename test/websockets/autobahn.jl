@@ -1,4 +1,4 @@
-using Test, Sockets, HTTP, HTTP.WebSockets, JSON
+using Test, HTTP, HTTP.WebSockets, JSON
 
 const DIR = abspath(joinpath(dirname(pathof(HTTP)), "../test/websockets"))
 

@@ -6,7 +6,7 @@ const HTTP2_MAX_WINDOW_SIZE = 0x7fffffff
 const AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS = AwsHTTP.Http2SettingsId.MAX_CONCURRENT_STREAMS
 const AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE = AwsHTTP.Http2SettingsId.INITIAL_WINDOW_SIZE
 const AWS_HTTP2_SETTINGS_COUNT = Int(AwsHTTP.HTTP2_SETTINGS_END_RANGE - AwsHTTP.HTTP2_SETTINGS_BEGIN_RANGE)
-const _H2_CHANNEL_SUPPORTED = AwsHTTP.H2Connection <: AwsIO.AbstractChannelHandler
+const _H2_CHANNEL_SUPPORTED = AwsHTTP.H2Connection <: Reseau.Sockets.AbstractChannelHandler
 
 function _normalize_alpn_list(alpn_list::Union{String, Nothing})
     alpn_list === nothing && return nothing
@@ -36,8 +36,8 @@ end
 
 function _use_nw_sockets()::Bool
     @static if Sys.isapple()
-        AwsIO._tls_set_use_secitem_from_env()
-        return AwsIO._NW_SHIM_LIB != "" && AwsIO.is_using_secitem()
+        Reseau.Sockets._tls_set_use_secitem_from_env()
+        return Reseau.Sockets.is_using_secitem()
     else
         return false
     end
@@ -284,11 +284,10 @@ function _resolve_error_str(error_code::Integer)
     if ec >= AwsHTTP.ERROR_HTTP_UNKNOWN && ec <= AwsHTTP.ERROR_HTTP_END_RANGE
         return AwsHTTP.http_error_str(ec)
     end
-    # AwsIO.error_str returns Ptr{UInt8}; convert to String
-    return unsafe_string(AwsIO.error_str(ec))
+    return Reseau.error_str(ec)
 end
 
-aws_error() = AWSError(_resolve_error_str(AwsIO.last_error()))
+aws_error() = AWSError(_resolve_error_str(Reseau.last_error()))
 aws_error(error_code) = AWSError(_resolve_error_str(error_code))
 aws_throw_error() = throw(aws_error())
 

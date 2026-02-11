@@ -1,5 +1,258 @@
-using Test, HTTP, Logging, Base64, AwsIO
+using Test, HTTP, Logging, Base64, Reseau
 import Sockets
+
+# Find a subsequence in a byte vector (naive; good enough for tests).
+function _find_subseq(hay::Vector{UInt8}, needle::Vector{UInt8}, from::Int = 1)::Int
+    n = length(needle)
+    m = length(hay)
+    (n == 0 || from > m) && return 0
+    last_i = m - n + 1
+    last_i < from && return 0
+    @inbounds for i in from:last_i
+        if hay[i] == needle[1]
+            ok = true
+            for j in 2:n
+                if hay[i + j - 1] != needle[j]
+                    ok = false
+                    break
+                end
+            end
+            ok && return i
+        end
+    end
+    return 0
+end
+
+const _HTTP1_CHUNKED_TERMINATOR = Vector{UInt8}(codeunits("\r\n0\r\n"))
+const _HTTP1_HEADERS_TERMINATOR = Vector{UInt8}(codeunits("\r\n\r\n"))
+
+function _http1_chunked_with_trailers_done(buf::Vector{UInt8})::Bool
+    idx0 = _find_subseq(buf, _HTTP1_CHUNKED_TERMINATOR)
+    idx0 == 0 && return false
+    idx_end = _find_subseq(buf, _HTTP1_HEADERS_TERMINATOR, idx0 + length(_HTTP1_CHUNKED_TERMINATOR))
+    return idx_end != 0
+end
+
+# Minimal raw TCP client for tests. Avoids the `Sockets` stdlib.
+@static if Sys.iswindows()
+    const _WS2_32 = "ws2_32"
+    const _AF_INET = Cint(2)
+    const _SOCK_STREAM = Cint(1)
+    const _IPPROTO_TCP = Cint(6)
+    const _INVALID_SOCKET = typemax(UInt)
+    const _SOCKET_ERROR = Cint(-1)
+    const _POLLIN = Int16(0x0001)
+    const _RAW_READ_TIMEOUT_MS = Cint(5_000)
+
+    struct _sockaddr_in
+        sin_family::UInt16
+        sin_port::UInt16
+        sin_addr::UInt32
+        sin_zero::NTuple{8, UInt8}
+    end
+
+    struct _WSAPOLLFD
+        fd::UInt
+        events::Int16
+        revents::Int16
+    end
+
+    function _raw_tcp_connect_readall(
+            host::AbstractString,
+            port::Integer,
+            request::AbstractString,
+            ;
+            stop_pred = nothing,
+        )::Vector{UInt8}
+        wsadata = Vector{UInt8}(undef, 512)
+        ret = ccall((:WSAStartup, _WS2_32), Cint, (UInt16, Ptr{UInt8}), UInt16(0x0202), wsadata)
+        ret == 0 || error("WSAStartup() failed: $ret")
+        sock = ccall((:socket, _WS2_32), UInt, (Cint, Cint, Cint), _AF_INET, _SOCK_STREAM, _IPPROTO_TCP)
+        if sock == _INVALID_SOCKET
+            err = ccall((:WSAGetLastError, _WS2_32), Cint, ())
+            _ = ccall((:WSACleanup, _WS2_32), Cint, ())
+            error("socket() failed: $err")
+        end
+
+        try
+            addr = ccall((:inet_addr, _WS2_32), UInt32, (Cstring,), host)
+            addr == 0xffffffff && error("inet_addr() failed for host=$host")
+            port_be = ccall((:htons, _WS2_32), UInt16, (UInt16,), UInt16(port))
+            sin = _sockaddr_in(UInt16(_AF_INET), port_be, addr, ntuple(_ -> UInt8(0), 8))
+
+            cres = ccall((:connect, _WS2_32), Cint, (UInt, Ref{_sockaddr_in}, Cint), sock, sin, Cint(sizeof(_sockaddr_in)))
+            cres == 0 || error("connect() failed: $(ccall((:WSAGetLastError, _WS2_32), Cint, ()))")
+
+            bytes = Vector{UInt8}(codeunits(request))
+            sent = GC.@preserve bytes ccall(
+                (:send, _WS2_32),
+                Cint,
+                (UInt, Ptr{UInt8}, Cint, Cint),
+                sock,
+                pointer(bytes),
+                Cint(length(bytes)),
+                Cint(0),
+            )
+            sent == length(bytes) || error("send() failed: $(ccall((:WSAGetLastError, _WS2_32), Cint, ()))")
+            # Some server stacks treat EOF as end-of-request; half-close our send side.
+            _ = ccall((:shutdown, _WS2_32), Cint, (UInt, Cint), sock, Cint(1)) # SD_SEND = 1
+
+            buf = UInt8[]
+            tmp = Vector{UInt8}(undef, 4096)
+            while true
+                pollfd = Ref(_WSAPOLLFD(sock, _POLLIN, Int16(0)))
+                pres = ccall(
+                    (:WSAPoll, _WS2_32),
+                    Cint,
+                    (Ptr{_WSAPOLLFD}, UInt32, Cint),
+                    pollfd,
+                    UInt32(1),
+                    _RAW_READ_TIMEOUT_MS,
+                )
+                pres == 0 && error("WSAPoll() timeout")
+                pres == _SOCKET_ERROR && error("WSAPoll() failed: $(ccall((:WSAGetLastError, _WS2_32), Cint, ()))")
+
+                r = GC.@preserve tmp ccall(
+                    (:recv, _WS2_32),
+                    Cint,
+                    (UInt, Ptr{UInt8}, Cint, Cint),
+                    sock,
+                    pointer(tmp),
+                    Cint(length(tmp)),
+                    Cint(0),
+                )
+                r == _SOCKET_ERROR && error("recv() failed: $(ccall((:WSAGetLastError, _WS2_32), Cint, ()))")
+                r == 0 && break
+                append!(buf, view(tmp, 1:r))
+                stop_pred !== nothing && stop_pred(buf) && return buf
+            end
+            return buf
+        finally
+            _ = ccall((:closesocket, _WS2_32), Cint, (UInt,), sock)
+            _ = ccall((:WSACleanup, _WS2_32), Cint, ())
+        end
+    end
+else
+    const _AF_INET = Cint(2)
+    const _SOCK_STREAM = Cint(1)
+    const _POLLIN = Int16(0x0001)
+    const _RAW_READ_TIMEOUT_MS = Cint(5_000)
+
+    @static if Sys.isapple() || Sys.isbsd()
+        struct _sockaddr_in
+            sin_len::UInt8
+            sin_family::UInt8
+            sin_port::UInt16
+            sin_addr::UInt32
+            sin_zero::NTuple{8, UInt8}
+        end
+    else
+        struct _sockaddr_in
+            sin_family::UInt16
+            sin_port::UInt16
+            sin_addr::UInt32
+            sin_zero::NTuple{8, UInt8}
+        end
+    end
+
+    struct _pollfd
+        fd::Cint
+        events::Int16
+        revents::Int16
+    end
+
+    const _poll_nfds_t = @static (Sys.isapple() || Sys.isbsd()) ? Cuint : Culong
+
+    function _raw_tcp_connect_readall(
+            host::AbstractString,
+            port::Integer,
+            request::AbstractString,
+            ;
+            stop_pred = nothing,
+        )::Vector{UInt8}
+        fd = ccall(:socket, Cint, (Cint, Cint, Cint), _AF_INET, _SOCK_STREAM, 0)
+        fd < 0 && error("socket() failed: errno=$(Libc.errno())")
+        try
+            addr = Ref{UInt32}(0)
+            ok = ccall(:inet_pton, Cint, (Cint, Cstring, Ptr{Cvoid}), _AF_INET, host, addr)
+            ok == 1 || error("inet_pton() failed for host=$host")
+
+            port16 = UInt16(port)
+            port_be = ccall(:htons, UInt16, (UInt16,), port16)
+
+            sin = @static if Sys.isapple() || Sys.isbsd()
+                _sockaddr_in(
+                    UInt8(sizeof(_sockaddr_in)),
+                    UInt8(_AF_INET),
+                    port_be,
+                    addr[],
+                    ntuple(_ -> UInt8(0), 8),
+                )
+            else
+                _sockaddr_in(
+                    UInt16(_AF_INET),
+                    port_be,
+                    addr[],
+                    ntuple(_ -> UInt8(0), 8),
+                )
+            end
+
+            ret = ccall(:connect, Cint, (Cint, Ref{_sockaddr_in}, Cuint), fd, sin, Cuint(sizeof(_sockaddr_in)))
+            ret == 0 || error("connect() failed: errno=$(Libc.errno())")
+
+            bytes = Vector{UInt8}(codeunits(request))
+            n = GC.@preserve bytes ccall(
+                :write,
+                Cssize_t,
+                (Cint, Ptr{UInt8}, Csize_t),
+                fd,
+                pointer(bytes),
+                Csize_t(length(bytes)),
+            )
+            n == length(bytes) || error("write() failed: errno=$(Libc.errno())")
+            # Some server stacks treat EOF as end-of-request; half-close our send side.
+            _ = ccall(:shutdown, Cint, (Cint, Cint), fd, Cint(1)) # SHUT_WR = 1
+
+            buf = UInt8[]
+            tmp = Vector{UInt8}(undef, 4096)
+            while true
+                pollfd = Ref(_pollfd(fd, _POLLIN, Int16(0)))
+                pres = ccall(
+                    :poll,
+                    Cint,
+                    (Ptr{_pollfd}, _poll_nfds_t, Cint),
+                    pollfd,
+                    _poll_nfds_t(1),
+                    _RAW_READ_TIMEOUT_MS,
+                )
+                if pres == 0
+                    error("poll() timeout")
+                end
+                if pres < 0
+                    err = Libc.errno()
+                    err == Libc.EINTR && continue
+                    error("poll() failed: errno=$err")
+                end
+
+                r = GC.@preserve tmp ccall(
+                    :read,
+                    Cssize_t,
+                    (Cint, Ptr{UInt8}, Csize_t),
+                    fd,
+                    pointer(tmp),
+                    Csize_t(length(tmp)),
+                )
+                r < 0 && error("read() failed: errno=$(Libc.errno())")
+                r == 0 && break
+                append!(buf, view(tmp, 1:Int(r)))
+                stop_pred !== nothing && stop_pred(buf) && return buf
+            end
+            return buf
+        finally
+            _ = ccall(:close, Cint, (Cint,), fd)
+        end
+    end
+end
 
 @testset "HTTP.serve" begin
     server = HTTP.serve!(req -> HTTP.Response(200, "Hello, World!"); listenany=true)
@@ -111,6 +364,7 @@ end
         HTTP.startwrite(http)
         write(http, "hello")
         HTTP.addtrailer(http, "X-Trailer" => "ok")
+        HTTP.closewrite(http)
     end
     try
         port = HTTP.port(server)
@@ -129,7 +383,7 @@ end
 end
 
 @testset "HTTP/2 TLS support" begin
-    if !AwsIO.tls_is_alpn_available()
+    if !Reseau.Sockets.tls_is_alpn_available()
         @info "Skipping HTTP/2 TLS tests; ALPN not available"
         @test true
     else

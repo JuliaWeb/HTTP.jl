@@ -33,7 +33,7 @@ module Cookies
 export Cookie, CookieJar, cookies, stringify, getcookies!, setcookies!, addcookie!
 
 import Base: ==
-using Dates, Sockets
+using Dates
 import ..addheader, ..headereq, ..Headers, ..Request, ..Response, .._header_name, .._header_value
 
 @enum SameSite SameSiteDefaultMode=1 SameSiteLaxMode SameSiteStrictMode SameSiteNoneMode
@@ -301,14 +301,18 @@ function readsetcookies(headers::Headers)
     return result
 end
 
-function isIP(host)
-    try
-        Base.parse(IPAddr, host)
-        return true
-    catch e
-        isa(e, ArgumentError) && return false
-        rethrow(e)
+function isIP(host::AbstractString)::Bool
+    # Minimal IPv4 literal check (avoid `Sockets` stdlib dependency).
+    parts = split(host, '.'; keepempty = false)
+    length(parts) == 4 || return false
+    for p in parts
+        isempty(p) && return false
+        all(isdigit, p) || return false
+        v = tryparse(Int, p)
+        v === nothing && return false
+        (0 <= v <= 255) || return false
     end
+    return true
 end
 
 """

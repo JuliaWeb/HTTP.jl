@@ -1,4 +1,4 @@
-using Test, Sockets, Deno_jll, HTTP
+using Test, Deno_jll, HTTP
 
 # Not all architectures have a Deno_jll
 hasproperty(Deno_jll, :deno) && @testset "WebSocket server" begin

@@ -1,4 +1,4 @@
-using Test, HTTP, URIs, JSON, AwsIO
+using Test, HTTP, URIs, JSON, Reseau
 
 const httpbin = get(ENV, "JULIA_TEST_HTTPBINGO_SERVER", "httpbingo.julialang.org")
 isok(r) = r.status == 200

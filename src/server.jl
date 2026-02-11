@@ -5,34 +5,32 @@ function server_tlsoptions(;
     ssl_cacert=nothing,
     ssl_insecure=false,
     ssl_alpn_list="h2;http/1.1",
-)
+    )
     alpn_list = _normalize_alpn_list(ssl_alpn_list)
     if ssl_cert !== nothing && ssl_key !== nothing
-        ctx_opts = AwsIO.tls_ctx_options_init_default_server_from_path(ssl_cert, ssl_key; alpn_list=alpn_list)
-        ctx_opts isa AwsIO.ErrorResult && throw(AWSError("Failed to create server TLS options"))
+        ctx_opts = Reseau.Sockets.tls_ctx_options_init_default_server_from_path(ssl_cert, ssl_key; alpn_list=alpn_list)
     elseif Sys.iswindows() && ssl_cert !== nothing && ssl_key === nothing
-        ctx_opts = AwsIO.tls_ctx_options_init_default_server_from_system_path(ssl_cert)
-        ctx_opts isa AwsIO.ErrorResult && throw(AWSError("Failed to create server TLS options from system path"))
+        ctx_opts = Reseau.Sockets.tls_ctx_options_init_default_server_from_system_path(ssl_cert)
     else
         throw(ArgumentError("ssl_cert and ssl_key are required for TLS server"))
     end
     if ssl_capath !== nothing || ssl_cacert !== nothing
-        res = AwsIO.tls_ctx_options_override_default_trust_store_from_path!(ctx_opts;
+        Reseau.Sockets.tls_ctx_options_override_default_trust_store_from_path!(ctx_opts;
             ca_path=ssl_capath, ca_file=ssl_cacert)
-        res isa AwsIO.ErrorResult && throw(AWSError("Failed to set trust store"))
     end
     if ssl_insecure
-        AwsIO.tls_ctx_options_set_verify_peer!(ctx_opts, false)
+        Reseau.Sockets.tls_ctx_options_set_verify_peer!(ctx_opts, false)
     end
-    ctx = AwsIO.tls_server_ctx_new(ctx_opts)
-    ctx isa AwsIO.ErrorResult && throw(AWSError("Failed to create server TLS context"))
-    return AwsIO.TlsConnectionOptions(ctx; alpn_list=alpn_list)
+    ctx = Reseau.Sockets.tls_server_ctx_new(ctx_opts)
+    return Reseau.Sockets.TlsConnectionOptions(ctx; alpn_list=alpn_list)
 end
+
+const _BACKLOG_DEFAULT = 511
 
 mutable struct Connection{S}
     const server::S # Server{F, C}
     const h1conn::Any # AwsHTTP.H1Connection or AwsHTTP.H2Connection
-    const channel::Any # AwsIO.Channel
+    const channel::Any # Reseau.Channel
     const streams_lock::ReentrantLock
     const streams::Set{Stream}
     const remote_addr::String
@@ -63,7 +61,7 @@ mutable struct Server{F, C}
     const stream::Bool
     const logstate::Base.CoreLogging.LogState
     @atomic state::Symbol # :initializing, :running, :closed
-    bootstrap::Any # AwsIO.ServerBootstrap
+    bootstrap::Any # Reseau.ServerBootstrap
     bound_port::Int
 
     Server{F, C}(
@@ -108,9 +106,9 @@ function _should_log_stream_error(error_code::Integer)::Bool
     error_code == AwsHTTP.ERROR_HTTP_SWITCHED_PROTOCOLS && return false
     error_code == AwsHTTP.ERROR_HTTP_GOAWAY_RECEIVED && return false
     error_code == AwsHTTP.ERROR_HTTP_RST_STREAM_RECEIVED && return false
-    error_code == AwsIO.ERROR_IO_SOCKET_CLOSED && return false
-    error_code == AwsIO.ERROR_IO_BROKEN_PIPE && return false
-    error_code == AwsIO.ERROR_IO_OPERATION_CANCELLED && return false
+    error_code == Reseau.EventLoops.ERROR_IO_SOCKET_CLOSED && return false
+    error_code == Reseau.EventLoops.ERROR_IO_BROKEN_PIPE && return false
+    error_code == Reseau.EventLoops.ERROR_IO_OPERATION_CANCELLED && return false
     return true
 end
 
@@ -118,9 +116,9 @@ function _should_log_channel_shutdown_error(error_code::Integer)::Bool
     error_code == 0 && return false
     error_code == AwsHTTP.ERROR_HTTP_CONNECTION_CLOSED && return false
     error_code == AwsHTTP.ERROR_HTTP_SERVER_CLOSED && return false
-    error_code == AwsIO.ERROR_IO_SOCKET_CLOSED && return false
-    error_code == AwsIO.ERROR_IO_BROKEN_PIPE && return false
-    error_code == AwsIO.ERROR_IO_OPERATION_CANCELLED && return false
+    error_code == Reseau.EventLoops.ERROR_IO_SOCKET_CLOSED && return false
+    error_code == Reseau.EventLoops.ERROR_IO_BROKEN_PIPE && return false
+    error_code == Reseau.EventLoops.ERROR_IO_OPERATION_CANCELLED && return false
     return true
 end
 
@@ -269,7 +267,7 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
                 end
             end
             if shutdown_channel
-                AwsIO.channel_shutdown!(conn.channel; shutdown_immediately=true)
+                Reseau.Sockets.channel_shutdown!(conn.channel; shutdown_immediately=true)
                 @lock server.connections_lock begin
                     delete!(server.connections, conn)
                 end
@@ -316,8 +314,8 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
 end
 
 function _warn_unsupported_server_options(; reuseaddr::Bool, backlog::Integer)
-    reuseaddr && @warn "reuseaddr is not supported by the AwsIO server; ignoring"
-    backlog != Sockets.BACKLOG_DEFAULT && @warn "backlog is not supported by the AwsIO server; ignoring"
+    reuseaddr && @warn "reuseaddr is not supported by the Reseau server; ignoring"
+    backlog != _BACKLOG_DEFAULT && @warn "backlog is not supported by the Reseau server; ignoring"
     return
 end
 
@@ -339,7 +337,7 @@ function serve!(f, host="127.0.0.1", port=8080;
     stream::Bool=false,
     listenany::Bool=false,
     reuseaddr::Bool=false,
-    backlog::Integer=Sockets.BACKLOG_DEFAULT,
+    backlog::Integer=_BACKLOG_DEFAULT,
     # socket options
     socket_domain=:ipv4,
     connect_timeout_ms::Integer=3000,
@@ -360,12 +358,9 @@ function serve!(f, host="127.0.0.1", port=8080;
     _ensure_resources!()
     _warn_unsupported_server_options(; reuseaddr=reuseaddr, backlog=backlog)
     host_str = string(host)
-    port_int = Int(port)
-    if listenany
-        addr = Sockets.InetAddr(parse(IPAddr, host_str), port_int)
-        port_int, sock = Sockets.listenany(addr.host, addr.port)
-        close(sock)
-    end
+    # `listenany=true` should pick an ephemeral port (port=0), avoiding collisions
+    # with any existing process bound to the default `port` (e.g. 8080).
+    port_int = listenany ? 0 : Int(port)
     tls_conn_opts = if tls_options !== nothing
         tls_options
     elseif any(x -> x !== nothing, (ssl_cert, ssl_key, ssl_capath, ssl_cacert))
@@ -388,8 +383,10 @@ function serve!(f, host="127.0.0.1", port=8080;
         Base.CoreLogging.current_logstate(),
         :initializing,
     )
-    socket_opts = AwsIO.SocketOptions(;
-        domain = socket_domain == :ipv4 ? AwsIO.SocketDomain.IPV4 : AwsIO.SocketDomain.IPV6,
+    server.bound_port = port_int
+    listener_ready = Threads.Event()
+    socket_opts = Reseau.Sockets.SocketOptions(;
+        domain = socket_domain == :ipv4 ? Reseau.Sockets.SocketDomain.IPV4 : Reseau.Sockets.SocketDomain.IPV6,
         connect_timeout_ms = connect_timeout_ms,
         keep_alive_interval_sec = keep_alive_interval_sec,
         keep_alive_timeout_sec = keep_alive_timeout_sec,
@@ -397,9 +394,6 @@ function serve!(f, host="127.0.0.1", port=8080;
         keepalive = keepalive,
     )
     alpn_list = _tls_alpn_list(tls_conn_opts)
-    if _use_nw_sockets()
-        socket_opts.impl_type = AwsIO.SocketImplType.APPLE_NETWORK_FRAMEWORK
-    end
     initial_window = Csize_t(min(UInt64(initial_window_size), UInt64(typemax(Csize_t))))
     on_incoming_channel_setup = (bootstrap, error_code, channel, user_data) -> begin
         Base.CoreLogging.with_logstate(server.logstate) do
@@ -409,22 +403,22 @@ function serve!(f, host="127.0.0.1", port=8080;
             end
             st = @atomic(server.state)
             if st == :closing || st == :closed
-                AwsIO.channel_shutdown!(channel; shutdown_immediately=true)
+                Reseau.Sockets.channel_shutdown!(channel; shutdown_immediately=true)
                 return
             end
-            slot = AwsIO.channel_slot_new!(channel)
-            AwsIO.channel_slot_insert_end!(channel, slot)
+            slot = Reseau.Sockets.channel_slot_new!(channel)
+            Reseau.Sockets.channel_slot_insert_end!(channel, slot)
             version = AwsHTTP.HttpVersion.HTTP_1_1
             if tls_conn_opts !== nothing
                 tls_slot = slot.adj_left
-                if tls_slot === nothing || tls_slot.handler === nothing || !(tls_slot.handler isa AwsIO.TlsChannelHandler)
-                    @error "incoming channel setup error" error_code=AwsIO.ERROR_INVALID_STATE
-                    AwsIO.channel_shutdown!(channel, AwsIO.ERROR_INVALID_STATE)
+                if tls_slot === nothing || tls_slot.handler === nothing || !(tls_slot.handler isa Reseau.Sockets.TlsChannelHandler)
+                    @error "incoming channel setup error" error_code=Reseau.ERROR_INVALID_STATE
+                    Reseau.Sockets.channel_shutdown!(channel, Reseau.ERROR_INVALID_STATE)
                     return
                 end
-                protocol = AwsIO.tls_handler_protocol(tls_slot.handler)
+                protocol = Reseau.Sockets.tls_handler_protocol(tls_slot.handler)
                 if protocol.len > 0
-                    protocol_str = AwsIO.byte_buffer_as_string(protocol)
+                    protocol_str = Reseau.byte_buffer_as_string(protocol)
                     if protocol_str == "h2"
                         version = AwsHTTP.HttpVersion.HTTP_2
                     elseif protocol_str == "http/1.1"
@@ -438,7 +432,7 @@ function serve!(f, host="127.0.0.1", port=8080;
                 initial_window_size=initial_window,
             )
             http_conn === nothing && return
-            AwsIO.channel_slot_set_handler!(slot, http_conn)
+            Reseau.Sockets.channel_slot_set_handler!(slot, http_conn)
             http_conn.slot = slot
             # Extract remote endpoint from the socket handler (first slot in pipeline)
             remote_addr = "0.0.0.0"
@@ -446,7 +440,7 @@ function serve!(f, host="127.0.0.1", port=8080;
             try
                 socket_handler = channel.first.handler
                 ep = socket_handler.socket.remote_endpoint
-                remote_addr = AwsIO.get_address(ep)
+                remote_addr = Reseau.Sockets.get_address(ep)
                 remote_port_num = Int(ep.port)
             catch
             end
@@ -476,15 +470,15 @@ function serve!(f, host="127.0.0.1", port=8080;
             else
                 _create_request_handler!(conn, http_conn; http2=false)
             end
-            if AwsIO.channel_thread_is_callers_thread(channel)
-                AwsIO.channel_trigger_read(channel)
+            if Reseau.Sockets.channel_thread_is_callers_thread(channel)
+                Reseau.Sockets.channel_trigger_read(channel)
             else
-                task = AwsIO.ChannelTask((task, ctx, status) -> begin
-                    status == AwsIO.TaskStatus.RUN_READY || return nothing
-                    AwsIO.channel_trigger_read(ctx.channel)
+                task = Reseau.Sockets.ChannelTask((task, ctx, status) -> begin
+                    status == Reseau.TaskStatus.RUN_READY || return nothing
+                    Reseau.Sockets.channel_trigger_read(ctx.channel)
                     return nothing
                 end, (channel = channel,), "http_server_trigger_read")
-                AwsIO.channel_schedule_task_now!(channel, task)
+                Reseau.Sockets.channel_schedule_task_now!(channel, task)
             end
         end
         return
@@ -504,29 +498,37 @@ function serve!(f, host="127.0.0.1", port=8080;
         notify(server.fut, :destroyed)
         return
     end
-    bootstrap_opts = AwsIO.ServerBootstrapOptions(;
+    bootstrap_opts = Reseau.Sockets.ServerBootstrapOptions(;
         event_loop_group = _EVENT_LOOP_GROUP[],
         socket_options = socket_opts,
         host = host_str,
         port = UInt32(port_int),
         tls_connection_options = tls_conn_opts,
         on_protocol_negotiated = nothing,
+        on_listener_setup = (bootstrap, error_code, user_data) -> begin
+            if error_code == 0 && bootstrap.listener_socket !== nothing
+                server.bound_port = try
+                    ep = Reseau.Sockets.socket_get_bound_address(bootstrap.listener_socket)
+                    Int(ep.port)
+                catch
+                    port_int
+                end
+            else
+                server.bound_port = port_int
+            end
+            notify(listener_ready)
+            return nothing
+        end,
         on_incoming_channel_setup = on_incoming_channel_setup,
         on_incoming_channel_shutdown = on_incoming_channel_shutdown,
         on_listener_destroy = on_listener_destroy,
         user_data = server,
         enable_read_back_pressure = false,
     )
-    bs = AwsIO.ServerBootstrap(bootstrap_opts)
-    bs isa AwsIO.ErrorResult && throw(AWSError("Failed to create server bootstrap"))
+    bs = Reseau.Sockets.ServerBootstrap(bootstrap_opts)
     server.bootstrap = bs
-    # Retrieve the actual bound port (useful when port=0 or listenany)
-    if bs.listener_socket !== nothing
-        ep = AwsIO.socket_get_bound_address(bs.listener_socket)
-        server.bound_port = ep isa AwsIO.ErrorResult ? port_int : Int(ep.port)
-    else
-        server.bound_port = port_int
-    end
+    # Wait until the listener is ready so `port(server)` is accurate immediately.
+    wait(listener_ready)
     @atomic server.state = :running
     return server
 end
@@ -626,13 +628,13 @@ end
 
 function _forceclose!(server::Server; skip_shutdown::Bool=false)
     skip_shutdown || shutdown(server.on_shutdown)
-    AwsIO.server_bootstrap_shutdown!(server.bootstrap)
+    Reseau.Sockets.server_bootstrap_shutdown!(server.bootstrap)
     conns = Connection[]
     @lock server.connections_lock begin
         append!(conns, server.connections)
     end
     for conn in conns
-        AwsIO.channel_shutdown!(conn.channel; shutdown_immediately=true)
+        Reseau.Sockets.channel_shutdown!(conn.channel; shutdown_immediately=true)
     end
     @atomic server.state = :closed
     notify(server.closed)
@@ -648,7 +650,7 @@ function Base.close(server::Server)
         return
     end
     shutdown(server.on_shutdown)
-    AwsIO.server_bootstrap_shutdown!(server.bootstrap)
+    Reseau.Sockets.server_bootstrap_shutdown!(server.bootstrap)
     conns = Connection[]
     @lock server.connections_lock begin
         append!(conns, server.connections)
@@ -657,7 +659,7 @@ function Base.close(server::Server)
         _stop_new_requests!(conn)
         @lock conn.streams_lock begin
             if isempty(conn.streams)
-                AwsIO.channel_shutdown!(conn.channel; shutdown_immediately=true)
+                Reseau.Sockets.channel_shutdown!(conn.channel; shutdown_immediately=true)
                 @lock server.connections_lock begin
                     delete!(server.connections, conn)
                 end
@@ -674,7 +676,7 @@ function Base.close(server::Server)
             notify(server.closed)
             return
         end
-        sleep(0.05)
+        _task_sleep_s(0.05)
     end
     _forceclose!(server; skip_shutdown=true)
     return

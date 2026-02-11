@@ -56,14 +56,6 @@ _normalize_stat(stat) = stat
 function _decode_statistics(stats_list)
     list = stats_list isa Base.RefValue ? stats_list[] : stats_list
     out = Any[]
-    if list isa AwsIO.ArrayList
-        for i in 1:length(list)
-            item = list[i]
-            item = item isa Base.RefValue ? item[] : item
-            push!(out, _normalize_stat(item))
-        end
-        return out
-    end
     if list isa AbstractVector
         for item in list
             item = item isa Base.RefValue ? item[] : item
@@ -71,7 +63,7 @@ function _decode_statistics(stats_list)
         end
         return out
     end
-    throw(ArgumentError("stats_list must be ArrayList or AbstractVector"))
+    throw(ArgumentError("stats_list must be an AbstractVector"))
 end
 
 function _call_statistics_observer(observer, nonce, stats_list)
