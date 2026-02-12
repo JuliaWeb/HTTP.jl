@@ -473,11 +473,11 @@ function serve!(f, host="127.0.0.1", port=8080;
             if Reseau.Sockets.channel_thread_is_callers_thread(channel)
                 Reseau.Sockets.channel_trigger_read(channel)
             else
-                task = Reseau.Sockets.ChannelTask((task, ctx, status) -> begin
-                    status == Reseau.TaskStatus.RUN_READY || return nothing
-                    Reseau.Sockets.channel_trigger_read(ctx.channel)
+                task = Reseau.Sockets.ChannelTask(Reseau.EventCallable(status -> begin
+                    Reseau.TaskStatus.T(status) == Reseau.TaskStatus.RUN_READY || return nothing
+                    Reseau.Sockets.channel_trigger_read(channel)
                     return nothing
-                end, (channel = channel,), "http_server_trigger_read")
+                end), "http_server_trigger_read")
                 Reseau.Sockets.channel_schedule_task_now!(channel, task)
             end
         end
@@ -498,7 +498,7 @@ function serve!(f, host="127.0.0.1", port=8080;
         notify(server.fut, :destroyed)
         return
     end
-    bootstrap_opts = Reseau.Sockets.ServerBootstrapOptions(;
+    bs = Reseau.Sockets.ServerBootstrap(;
         event_loop_group = _EVENT_LOOP_GROUP[],
         socket_options = socket_opts,
         host = host_str,
@@ -525,7 +525,6 @@ function serve!(f, host="127.0.0.1", port=8080;
         user_data = server,
         enable_read_back_pressure = false,
     )
-    bs = Reseau.Sockets.ServerBootstrap(bootstrap_opts)
     server.bootstrap = bs
     # Wait until the listener is ready so `port(server)` is accurate immediately.
     wait(listener_ready)

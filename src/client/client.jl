@@ -14,15 +14,14 @@ function _ensure_resources!()
     _CLIENT_BOOTSTRAP[] !== nothing && return
     Base.@lock _RESOURCES_LOCK begin
         _CLIENT_BOOTSTRAP[] !== nothing && return
-        elg_opts = Reseau.EventLoops.EventLoopGroupOptions()
-        elg = Reseau.EventLoops.EventLoopGroup(elg_opts)
+        elg = Reseau.EventLoops.EventLoopGroup()
         _EVENT_LOOP_GROUP[] = elg
         resolver = Reseau.Sockets.HostResolver(elg)
         _HOST_RESOLVER[] = resolver
-        bootstrap = Reseau.Sockets.ClientBootstrap(Reseau.Sockets.ClientBootstrapOptions(
-            event_loop_group=elg,
-            host_resolver=resolver,
-        ))
+        bootstrap = Reseau.Sockets.ClientBootstrap(;
+            event_loop_group = elg,
+            host_resolver = resolver,
+        )
         _CLIENT_BOOTSTRAP[] = bootstrap
     end
 end
