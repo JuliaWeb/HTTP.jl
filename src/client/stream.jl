@@ -172,14 +172,14 @@ end
 function _h1_flush_outgoing!(s::Stream)
     !isdefined(s, :aws_stream) && return
     h1conn = s.aws_stream.owning_connection
-    slot = h1conn.slot
-    slot === nothing && return
-    channel = slot.channel
-    channel === nothing && return
-    if !Reseau.Sockets.channel_thread_is_callers_thread(channel)
+    pipeline = h1conn.pipeline
+    pipeline === nothing && return
+    socket = pipeline.socket
+    socket === nothing && return
+    if !Reseau.Sockets.pipeline_thread_is_callers_thread(pipeline)
         fut = Future{Nothing}()
-        task = Reseau.Sockets.ChannelTask((task, ctx, status) -> begin
-            status == Reseau.TaskStatus.RUN_READY || return notify(fut, nothing)
+        task = Reseau.Sockets.ChannelTask(Reseau.EventCallable(status -> begin
+            Reseau.TaskStatus.T(status) == Reseau.TaskStatus.RUN_READY || return notify(fut, nothing)
             try
                 _h1_flush_outgoing!(s)
                 notify(fut, nothing)
@@ -187,8 +187,8 @@ function _h1_flush_outgoing!(s::Stream)
                 notify(fut, CapturedException(e, catch_backtrace()))
             end
             return nothing
-        end, nothing, "http_h1_flush_outgoing")
-        Reseau.Sockets.channel_schedule_task_now!(channel, task)
+        end), "http_h1_flush_outgoing")
+        Reseau.Sockets.pipeline_schedule_task_now!(pipeline, task)
         wait(fut)
         return
     end
@@ -203,10 +203,10 @@ function _h1_flush_outgoing!(s::Stream)
         end
         buf.len = Csize_t(length(encoded))
         try
-            Reseau.Sockets.channel_slot_send_message(slot, msg, Reseau.Sockets.ChannelDirection.WRITE)
+            Reseau.Sockets.pipeline_write!(socket, msg)
         catch e
             e isa Reseau.ReseauError || rethrow()
-            throw(AWSError("channel slot send failed"))
+            throw(AWSError("pipeline write failed"))
         end
     end
     return
@@ -857,8 +857,8 @@ function with_stream(conn, req::Request, chunkedbody, on_stream_response_body, d
             (@atomic stream.fut.set) != 0 && return
             if !stream.http2 && isdefined(stream, :connection)
                 conn = stream.connection
-                if conn !== nothing && conn.slot !== nothing && conn.slot.channel !== nothing
-                    Reseau.Sockets.channel_shutdown!(conn.slot.channel, AwsHTTP.ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT; shutdown_immediately=true)
+                if conn !== nothing && conn.pipeline !== nothing
+                    Reseau.Sockets.pipeline_shutdown!(conn.pipeline, AwsHTTP.ERROR_HTTP_RESPONSE_FIRST_BYTE_TIMEOUT; shutdown_immediately=true)
                 elseif conn !== nothing
                     AwsHTTP.http_connection_close(conn)
                 end

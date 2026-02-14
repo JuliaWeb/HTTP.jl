@@ -30,14 +30,14 @@ const _BACKLOG_DEFAULT = 511
 mutable struct Connection{S}
     const server::S # Server{F, C}
     const h1conn::Any # AwsHTTP.H1Connection or AwsHTTP.H2Connection
-    const channel::Any # Reseau.Channel
+    const pipeline::Any # Reseau.PipelineState
     const streams_lock::ReentrantLock
     const streams::Set{Stream}
     const remote_addr::String
     const remote_port_num::Int
 
-    Connection(server::S, h1conn, channel, remote_addr::String, remote_port_num::Int) where {S} =
-        new{S}(server, h1conn, channel, ReentrantLock(), Set{Stream}(), remote_addr, remote_port_num)
+    Connection(server::S, h1conn, pipeline, remote_addr::String, remote_port_num::Int) where {S} =
+        new{S}(server, h1conn, pipeline, ReentrantLock(), Set{Stream}(), remote_addr, remote_port_num)
 end
 
 Base.hash(c::Connection, h::UInt) = hash(objectid(c), h)
@@ -267,7 +267,7 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
                 end
             end
             if shutdown_channel
-                Reseau.Sockets.channel_shutdown!(conn.channel; shutdown_immediately=true)
+                Reseau.Sockets.pipeline_shutdown!(conn.pipeline; shutdown_immediately=true)
                 @lock server.connections_lock begin
                     delete!(server.connections, conn)
                 end
@@ -395,7 +395,7 @@ function serve!(f, host="127.0.0.1", port=8080;
     )
     alpn_list = _tls_alpn_list(tls_conn_opts)
     initial_window = Csize_t(min(UInt64(initial_window_size), UInt64(typemax(Csize_t))))
-    on_incoming_channel_setup = (bootstrap, error_code, channel, user_data) -> begin
+    on_incoming_channel_setup = (bootstrap, error_code, pipeline, user_data) -> begin
         Base.CoreLogging.with_logstate(server.logstate) do
             if error_code != 0
                 @error "incoming channel setup error" error_code
@@ -403,20 +403,18 @@ function serve!(f, host="127.0.0.1", port=8080;
             end
             st = @atomic(server.state)
             if st == :closing || st == :closed
-                Reseau.Sockets.channel_shutdown!(channel; shutdown_immediately=true)
+                Reseau.Sockets.pipeline_shutdown!(pipeline; shutdown_immediately=true)
                 return
             end
-            slot = Reseau.Sockets.channel_slot_new!(channel)
-            Reseau.Sockets.channel_slot_insert_end!(channel, slot)
             version = AwsHTTP.HttpVersion.HTTP_1_1
             if tls_conn_opts !== nothing
-                tls_slot = slot.adj_left
-                if tls_slot === nothing || tls_slot.handler === nothing || !(tls_slot.handler isa Reseau.Sockets.TlsChannelHandler)
+                tls_handler = pipeline.tls_handler
+                if tls_handler === nothing
                     @error "incoming channel setup error" error_code=Reseau.ERROR_INVALID_STATE
-                    Reseau.Sockets.channel_shutdown!(channel, Reseau.ERROR_INVALID_STATE)
+                    Reseau.Sockets.pipeline_shutdown!(pipeline, Reseau.ERROR_INVALID_STATE)
                     return
                 end
-                protocol = Reseau.Sockets.tls_handler_protocol(tls_slot.handler)
+                protocol = Reseau.Sockets.tls_handler_protocol(tls_handler)
                 if protocol.len > 0
                     protocol_str = Reseau.byte_buffer_as_string(protocol)
                     if protocol_str == "h2"
@@ -426,26 +424,28 @@ function serve!(f, host="127.0.0.1", port=8080;
                     end
                 end
             end
-            http_conn = AwsHTTP.http_connection_new_channel_handler(;
+            http_conn = AwsHTTP.http_connection_new_handler(;
                 is_server=true,
                 version=version,
                 initial_window_size=initial_window,
             )
             http_conn === nothing && return
-            Reseau.Sockets.channel_slot_set_handler!(slot, http_conn)
-            http_conn.slot = slot
-            # Extract remote endpoint from the socket handler (first slot in pipeline)
+            if version == AwsHTTP.HttpVersion.HTTP_2
+                AwsHTTP.h2_connection_install!(http_conn, pipeline, pipeline.socket)
+            else
+                AwsHTTP.h1_connection_install!(http_conn, pipeline, pipeline.socket)
+            end
             remote_addr = "0.0.0.0"
             remote_port_num = 0
             try
-                socket_handler = channel.first.handler
-                ep = socket_handler.socket.remote_endpoint
+                socket = pipeline.socket
+                ep = socket.remote_endpoint
                 remote_addr = Reseau.Sockets.get_address(ep)
                 remote_port_num = Int(ep.port)
             catch
             end
             http_conn.remote_endpoint = "$remote_addr:$remote_port_num"
-            conn = Connection(server, http_conn, channel, remote_addr, remote_port_num)
+            conn = Connection(server, http_conn, pipeline, remote_addr, remote_port_num)
             @lock server.connections_lock begin
                 push!(server.connections, conn)
             end
@@ -470,26 +470,26 @@ function serve!(f, host="127.0.0.1", port=8080;
             else
                 _create_request_handler!(conn, http_conn; http2=false)
             end
-            if Reseau.Sockets.channel_thread_is_callers_thread(channel)
-                Reseau.Sockets.channel_trigger_read(channel)
+            if Reseau.Sockets.pipeline_thread_is_callers_thread(pipeline)
+                Reseau.Sockets.pipeline_trigger_read(pipeline.socket)
             else
                 task = Reseau.Sockets.ChannelTask(Reseau.EventCallable(status -> begin
                     Reseau.TaskStatus.T(status) == Reseau.TaskStatus.RUN_READY || return nothing
-                    Reseau.Sockets.channel_trigger_read(channel)
+                    Reseau.Sockets.pipeline_trigger_read(pipeline.socket)
                     return nothing
                 end), "http_server_trigger_read")
-                Reseau.Sockets.channel_schedule_task_now!(channel, task)
+                Reseau.Sockets.pipeline_schedule_task_now!(pipeline, task)
             end
         end
         return
     end
-    on_incoming_channel_shutdown = (bootstrap, error_code, channel, user_data) -> begin
+    on_incoming_channel_shutdown = (bootstrap, error_code, pipeline, user_data) -> begin
         Base.CoreLogging.with_logstate(server.logstate) do
             if _should_log_channel_shutdown_error(error_code)
                 @error "incoming channel shutdown error" error_code
             end
             @lock server.connections_lock begin
-                filter!(c -> c.channel !== channel, server.connections)
+                filter!(c -> c.pipeline !== pipeline, server.connections)
             end
         end
         return
@@ -633,7 +633,7 @@ function _forceclose!(server::Server; skip_shutdown::Bool=false)
         append!(conns, server.connections)
     end
     for conn in conns
-        Reseau.Sockets.channel_shutdown!(conn.channel; shutdown_immediately=true)
+        Reseau.Sockets.pipeline_shutdown!(conn.pipeline; shutdown_immediately=true)
     end
     @atomic server.state = :closed
     notify(server.closed)
@@ -658,7 +658,7 @@ function Base.close(server::Server)
         _stop_new_requests!(conn)
         @lock conn.streams_lock begin
             if isempty(conn.streams)
-                Reseau.Sockets.channel_shutdown!(conn.channel; shutdown_immediately=true)
+                Reseau.Sockets.pipeline_shutdown!(conn.pipeline; shutdown_immediately=true)
                 @lock server.connections_lock begin
                     delete!(server.connections, conn)
                 end
