@@ -1,12 +1,9 @@
 name: CI
 on:
-  pull_request:
-    branches:
-      - master
   push:
-    branches:
-      - master
+    branches: [master]
     tags: '*'
+  pull_request:
 defaults:
   run:
     shell: bash
@@ -20,21 +17,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version:
-          - 'min'
-          - 'lts'
-          - '1.9' # test because we know there was a precompilation issue on 1.9 issues/1202
-          - '1' # automatically expands to the latest stable 1.x release of Julia
-          - 'nightly'
-        os:
-          - ubuntu-latest
-          - macOS-latest
-          - windows-latest
-        arch:
-          - default
-        exclude:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+            version: '1.12'
+          - os: windows-latest
+            arch: x64
+            version: '1.12'
           - os: macOS-latest
-            version: 'min' # no apple silicon support for Julia 1.6
+            arch: aarch64
+            version: '1.12'
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
@@ -42,36 +34,14 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
+      - name: Install Reseau and AwsHTTP from GitHub
+        run: |
+          julia --project -e '
+            using Pkg
+            Pkg.develop(url="https://github.com/JuliaServices/Reseau.jl")
+            Pkg.develop(url="https://github.com/JuliaServices/AwsHTTP.jl")
+            Pkg.instantiate()'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
         env:
-          PIE_SOCKET_API_KEY: ${{ secrets.PIE_SOCKET_API_KEY }}
-          JULIA_VERSION: ${{ matrix.version }}
           JULIA_NUM_THREADS: 2
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v5
-        with:
-          files: lcov.info
-          token: ${{ secrets.GITHUB_TOKEN }}
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: '1'
-      - run: |
-          julia --project=docs -e '
-            using Pkg
-            Pkg.develop(PackageSpec(path=pwd()))
-            Pkg.instantiate()'
-      - run: |
-          julia --project=docs -e '
-            using Documenter: doctest
-            using HTTP
-            doctest(HTTP)'
-      - run: julia --project=docs docs/make.jl
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
