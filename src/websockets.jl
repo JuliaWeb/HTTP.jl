@@ -374,29 +374,27 @@ function _create_ws_handler!(ws::WebSocket, pipeline, is_client::Bool)
     handler = WsHandler(pipeline, aws_ws, ws)
     ws.aws_ws = aws_ws
     ws.handler = handler
-    # Install read handler via downstream_read_setter (replaces H1Connection's read handler)
-    if pipeline.downstream_read_setter !== nothing
-        (pipeline.downstream_read_setter::Function)(function(msg::Reseau.Sockets.IoMessage)
-            data = Reseau.byte_buffer_as_vector(msg.message_data)
-            isempty(data) && return nothing
-            @lock handler.wslock begin
-                status, _ = AwsHTTP.ws_on_incoming_data!(handler.aws_ws, data)
-                if status != AwsHTTP.OP_SUCCESS
-                    ws_ref = handler.ws
-                    if ws_ref !== nothing && !ws_ref.readclosed
-                        close_body = status == AwsHTTP.ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR ?
-                            CloseFrameBody(1002, "WebSocket protocol error") :
-                            CloseFrameBody(1011, "WebSocket error")
-                        _queue_close!(ws_ref, close_body)
-                        errormonitor(Threads.@spawn close(ws_ref, close_body))
-                    end
-                    Reseau.throw_error(status)
+    # Install read handler (replaces H1Connection's read handler).
+    Reseau.Sockets.pipeline_set_downstream_read!(pipeline, function(msg::Reseau.Sockets.IoMessage)
+        data = Reseau.byte_buffer_as_vector(msg.message_data)
+        isempty(data) && return nothing
+        @lock handler.wslock begin
+            status, _ = AwsHTTP.ws_on_incoming_data!(handler.aws_ws, data)
+            if status != AwsHTTP.OP_SUCCESS
+                ws_ref = handler.ws
+                if ws_ref !== nothing && !ws_ref.readclosed
+                    close_body = status == AwsHTTP.ERROR_HTTP_WEBSOCKET_PROTOCOL_ERROR ?
+                        CloseFrameBody(1002, "WebSocket protocol error") :
+                        CloseFrameBody(1011, "WebSocket error")
+                    _queue_close!(ws_ref, close_body)
+                    errormonitor(Threads.@spawn close(ws_ref, close_body))
                 end
-                _ws_channel_flush!(handler)
+                Reseau.throw_error(status)
             end
-            return nothing
-        end)
-    end
+            _ws_channel_flush!(handler)
+        end
+        return nothing
+    end)
     return
 end
 

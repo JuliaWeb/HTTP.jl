@@ -408,7 +408,7 @@ function serve!(f, host="127.0.0.1", port=8080;
             end
             version = AwsHTTP.HttpVersion.HTTP_1_1
             if tls_conn_opts !== nothing
-                tls_handler = pipeline.tls_handler
+                tls_handler = Reseau.Sockets.pipeline_tls_handler(pipeline)
                 if tls_handler === nothing
                     @error "incoming channel setup error" error_code=Reseau.ERROR_INVALID_STATE
                     Reseau.Sockets.pipeline_shutdown!(pipeline, Reseau.ERROR_INVALID_STATE)
