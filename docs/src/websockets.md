@@ -66,3 +66,28 @@ WebSockets.listen("0.0.0.0", 8080) do ws
     end
 end
 ```
+
+```julia
+# reuse the same socket (i.e. port) for both HTTP traffic and websockets
+# https://github.com/JuliaWeb/HTTP.jl/issues/578
+server = HTTP.listen() do http::HTTP.Stream
+    # messy messy code so that we can use the websocket on the same port as the HTTP server
+    # https://github.com/fonsp/Pluto.jl/blob/main/src/webserver/WebServer.jl#L187-L188
+    if HTTP.WebSockets.isupgrade(http.message)
+        HTTP.WebSockets.upgrade(http) do ws
+            for msg in ws
+                # simple echo server
+                 send(ws, msg)
+            end
+        end
+    else
+        function handle(request::HTTP.Request)
+            return HTTP.Response("Hello")
+        end
+
+        # streamhandler is a middleware that takes a request handler and returns a stream handler.
+        # https://github.com/JuliaWeb/HTTP.jl/blob/96a0b347cc9e8b001bef4550d5e5ecde9159cc34/src/Handlers.jl#L47-L49
+        HTTP.streamhandler(handle)(http)
+    end
+end
+```
