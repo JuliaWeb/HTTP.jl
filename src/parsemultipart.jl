@@ -221,7 +221,7 @@ end
 """
     parse_multipart_form(req::Request)::Vector{Multipart}
 
-Parse the full mutipart form submission from the client returning and
+Parse the full mutipart form submission from the client returning an
 array of Multipart objects containing all the data.
 
 The order of the multipart form data in the request should be preserved.
@@ -231,6 +231,33 @@ The boundary delimiter MUST NOT appear inside any of the encapsulated parts. Not
 that the boundary delimiter does not need to have '-' characters, but a line using
 the boundary delimiter will start with '--' and end in \r\n.
 [RFC2046 5.1](https://tools.ietf.org/html/rfc2046#section-5.1.1)
+            
+# Examples
+```jldoctest
+julia> req = HTTP.Request(
+           "POST",
+           "/",
+           ["Content-Type" => "multipart/form-data; boundary=12345"],
+           """--12345
+           Content-Disposition: form-data; name="text"
+           
+           Hello!
+           --12345
+           Content-Disposition: form-data; name="file1"; filename="a.txt"
+           Content-Type: text/plain
+           
+           Content of a.txt.
+           
+           --12345--
+           """ |> str -> replace(str, "\n" => "\r\n"));
+
+julia> HTTP.MultiPartParsing.parse_multipart_form(req)
+2-element Vector{HTTP.Forms.Multipart}:
+ HTTP.Multipart(data=::Base.GenericIOBuffer{SubArray{UInt8, 1, Vector{UInt8}, Tuple{UnitRange{Int64}}, true}}, contenttype="tex
+t/plain", contenttransferencoding=""))
+ HTTP.Multipart(filename="a.txt", data=::Base.GenericIOBuffer{SubArray{UInt8, 1, Vector{UInt8}, Tuple{UnitRange{Int64}}, true}}
+, contenttype="text/plain", contenttransferencoding=""))
+```
 """
 function parse_multipart_form(msg::Message)::Union{Vector{Multipart}, Nothing}
     # parse boundary from Content-Type
