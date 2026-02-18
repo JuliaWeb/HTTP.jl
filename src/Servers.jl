@@ -480,7 +480,7 @@ function handle_connection(f, c::Connection, listener, readtimeout, access_log, 
                 # The remote can close the stream whenever it wants to, but there's nothing
                 # anyone can do about it on this side. No reason to log an error in that case.
                 client_closed = e isa Base.IOError && e.code in (Base.UV_EPIPE, Base.UV_ECONNRESET, Base.UV_ECONNABORTED)
-                level = (e isa Base.IOError && !isopen(c)) || client_closed ? Logging.Debug : Logging.Error
+                level = e isa Base.IOError || client_closed ? Logging.Debug : Logging.Error
                 @logmsgv 1 level begin
                     msg = current_exceptions_to_string()
                     "handle_connection handler error. $msg"
