@@ -459,6 +459,19 @@ function _ensure_default_empty_response_headers!(resp)::Nothing
     return nothing
 end
 
+@inline function _init_message_io_fields!(m)::Nothing
+    m.body = nothing
+    m.inputstream = nothing
+    m.trailers = nothing
+    return nothing
+end
+
+@inline function _set_optional_message_body!(m::Message, body)::Nothing
+    body === nothing && return nothing
+    setinputstream!(m, body)
+    return nothing
+end
+
 
 mutable struct Request <: Message
     msg::AwsHTTP.HttpMessage
@@ -476,14 +489,12 @@ mutable struct Request <: Message
         _set_request_line!(msg, method, path)
         _set_message_headers!(msg, headers)
         req = new(msg)
-        req.body = nothing
-        req.inputstream = nothing
-        req.trailers = nothing
+        _init_message_io_fields!(req)
         req.context = context === nothing ? Dict{Symbol, Any}() : context
         req.route = nothing
         req.params = nothing
         req.cookies = nothing
-        body !== nothing && setinputstream!(req, body)
+        _set_optional_message_body!(req, body)
         return req
     end
 end
@@ -615,13 +626,11 @@ mutable struct Response <: Message
         _set_response_status!(msg, status)
         _set_message_headers!(msg, headers)
         resp = new(msg)
-        resp.body = nothing
-        resp.inputstream = nothing
-        resp.trailers = nothing
+        _init_message_io_fields!(resp)
         resp.metrics = RequestMetrics()
         resp.request = nothing
         if body !== nothing
-            setinputstream!(resp, body)
+            _set_optional_message_body!(resp, body)
         else
             _ensure_default_empty_response_headers!(resp)
         end
