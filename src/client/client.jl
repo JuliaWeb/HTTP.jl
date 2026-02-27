@@ -158,31 +158,6 @@ end
     return ex
 end
 
-# ─── Compat option mirrors for tests ───
-
-struct ConnManagerOptsCompat
-    http2_conn_manual_window_management::Bool
-    max_closed_streams::Csize_t
-    initial_window_size::Csize_t
-    num_initial_settings::Csize_t
-    initial_settings_array::Ptr{AwsHTTP.Http2Setting}
-    _initial_settings_storage::Vector{AwsHTTP.Http2Setting}
-end
-
-struct Http2StreamManagerOptsCompat
-    close_connection_on_server_error::Bool
-    conn_manual_window_management::Bool
-    connection_ping_period_ms::Csize_t
-    connection_ping_timeout_ms::Csize_t
-    ideal_concurrent_streams_per_connection::Csize_t
-    max_concurrent_streams_per_connection::Csize_t
-    initial_window_size::Csize_t
-    max_closed_streams::Csize_t
-    num_initial_settings::Csize_t
-    initial_settings_array::Ptr{AwsHTTP.Http2Setting}
-    _initial_settings_storage::Vector{AwsHTTP.Http2Setting}
-end
-
 # ─── Client ───
 
 mutable struct Client
@@ -199,8 +174,6 @@ mutable struct Client
     connection_manager::AwsHTTP.HttpConnectionManager
     http2_stream_manager::Union{Nothing, AwsHTTP.Http2StreamManager}
     http2_initial_settings::Union{Nothing, Vector{AwsHTTP.Http2Setting}}
-    conn_manager_opts::ConnManagerOptsCompat
-    http2_stream_manager_opts::Union{Nothing, Http2StreamManagerOptsCompat}
 
     Client() = new()
 end
@@ -300,9 +273,6 @@ function Client(cs::ClientSettings)
     else
         throw(ArgumentError("http2_initial_settings must be a vector of pairs or AwsHTTP.Http2Setting"))
     end
-    settings_storage = client.http2_initial_settings === nothing ? AwsHTTP.Http2Setting[] : client.http2_initial_settings
-    settings_ptr = isempty(settings_storage) ? Ptr{AwsHTTP.Http2Setting}(C_NULL) : pointer(settings_storage)
-    settings_count = Csize_t(length(settings_storage))
     manager_connection_options = AwsHTTP.HttpClientConnectionOptions(
         host_name=cs.host,
         port=cs.port,
@@ -330,17 +300,8 @@ function Client(cs::ClientSettings)
         http2_conn_manual_window_management=cs.http2_connection_manual_window_management,
         connection_options=manager_connection_options,
     )
-    client.conn_manager_opts = ConnManagerOptsCompat(
-        cs.http2_connection_manual_window_management,
-        Csize_t(cs.http2_max_closed_streams),
-        Csize_t(cs.http2_initial_window_size),
-        settings_count,
-        settings_ptr,
-        settings_storage,
-    )
     # http2 stream manager (optional)
     client.http2_stream_manager = nothing
-    client.http2_stream_manager_opts = nothing
     if cs.http2_stream_manager
         client.http2_stream_manager = AwsHTTP.http2_stream_manager_new(;
             host=cs.host,
@@ -357,19 +318,6 @@ function Client(cs::ClientSettings)
             enable_read_back_pressure=cs.enable_read_back_pressure,
             max_closed_streams=cs.http2_max_closed_streams,
             connection_options=manager_connection_options,
-        )
-        client.http2_stream_manager_opts = Http2StreamManagerOptsCompat(
-            cs.http2_close_connection_on_server_error,
-            cs.http2_connection_manual_window_management,
-            Csize_t(cs.http2_connection_ping_period_ms),
-            Csize_t(cs.http2_connection_ping_timeout_ms),
-            Csize_t(cs.http2_ideal_concurrent_streams_per_connection),
-            Csize_t(cs.http2_max_concurrent_streams_per_connection),
-            Csize_t(cs.http2_initial_window_size),
-            Csize_t(cs.http2_max_closed_streams),
-            settings_count,
-            settings_ptr,
-            settings_storage,
         )
     end
     return client

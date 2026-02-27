@@ -576,16 +576,16 @@
             http2_initial_window_size=12345,
         )
         client = HTTP.Client(cs)
-        opts = client.http2_stream_manager_opts
-        @test opts !== nothing
-        @test opts.close_connection_on_server_error == true
-        @test opts.conn_manual_window_management == true
-        @test opts.connection_ping_period_ms == Csize_t(1234)
-        @test opts.connection_ping_timeout_ms == Csize_t(2345)
-        @test opts.ideal_concurrent_streams_per_connection == Csize_t(7)
-        @test opts.max_concurrent_streams_per_connection == Csize_t(9)
-        @test opts.initial_window_size == Csize_t(12345)
-        @test client.conn_manager_opts.http2_conn_manual_window_management == true
+        sm = client.http2_stream_manager
+        @test sm !== nothing
+        @test sm.close_connection_on_server_error == true
+        @test sm.manual_window_management == true
+        @test sm.connection_ping_period_ms == UInt64(1234)
+        @test sm.connection_ping_timeout_ms == UInt64(2345)
+        @test sm.ideal_concurrent_streams_per_connection == 7
+        @test sm.max_concurrent_streams_per_connection == 9
+        @test sm.initial_window_size == Csize_t(12345)
+        @test client.connection_manager.http2_conn_manual_window_management == true
         finalize(client)
     end
 
@@ -595,8 +595,8 @@
             http2_initial_window_size=54321,
         )
         client = HTTP.Client(cs)
-        @test client.conn_manager_opts.max_closed_streams == Csize_t(7)
-        @test client.conn_manager_opts.initial_window_size == Csize_t(54321)
+        @test client.connection_manager.max_closed_streams == 7
+        @test client.connection_manager.initial_window_size == Csize_t(54321)
         finalize(client)
 
         cs = HTTP.ClientSettings("https", "example.com", UInt32(443);
@@ -605,10 +605,10 @@
             http2_initial_window_size=65432,
         )
         client = HTTP.Client(cs)
-        opts = client.http2_stream_manager_opts
-        @test opts !== nothing
-        @test opts.max_closed_streams == Csize_t(9)
-        @test opts.initial_window_size == Csize_t(65432)
+        sm = client.http2_stream_manager
+        @test sm !== nothing
+        @test sm.max_closed_streams == 9
+        @test sm.initial_window_size == Csize_t(65432)
         finalize(client)
     end
 
@@ -621,8 +621,10 @@
         client = HTTP.Client(cs)
         @test client.http2_initial_settings !== nothing
         @test length(client.http2_initial_settings) == 2
-        @test client.conn_manager_opts.num_initial_settings == Csize_t(2)
-        @test client.conn_manager_opts.initial_settings_array != C_NULL
+        @test client.http2_initial_settings[1].id == HTTP.AwsHTTP.Http2SettingsId.MAX_CONCURRENT_STREAMS
+        @test client.http2_initial_settings[1].value == 10
+        @test client.http2_initial_settings[2].id == HTTP.AwsHTTP.Http2SettingsId.INITIAL_WINDOW_SIZE
+        @test client.http2_initial_settings[2].value == 65535
         finalize(client)
 
         cs = HTTP.ClientSettings("https", "example.com", UInt32(443);
@@ -630,10 +632,9 @@
             http2_initial_settings=settings,
         )
         client = HTTP.Client(cs)
-        opts = client.http2_stream_manager_opts
-        @test opts !== nothing
-        @test opts.num_initial_settings == Csize_t(2)
-        @test opts.initial_settings_array != C_NULL
+        @test client.http2_stream_manager !== nothing
+        @test client.http2_initial_settings !== nothing
+        @test length(client.http2_initial_settings) == 2
         finalize(client)
 
         @test_throws ArgumentError HTTP.Client(HTTP.ClientSettings("https", "example.com", UInt32(443);
