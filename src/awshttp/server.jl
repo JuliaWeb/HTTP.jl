@@ -9,8 +9,6 @@ mutable struct HttpServer
     manual_window_management::Bool
     tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}
     http1_options::Http1ConnectionOptions
-    on_incoming_connection::Union{Nothing, Function}
-    on_destroy_complete::Union{Nothing, Function}
     connections::Vector{HttpConnection}
     channel_map::IdDict{Sockets.Channel, HttpConnection}
     lock::ReentrantLock
@@ -62,10 +60,10 @@ function _server_update_listener_endpoint!(server::HttpServer)
     return nothing
 end
 
-function _server_on_channel_setup(server::HttpServer, error_code::Int, channel)
+function _server_on_channel_setup(server::HttpServer, on_incoming_connection, error_code::Int, channel)
     if error_code != Reseau.OP_SUCCESS || channel === nothing
-        if server.on_incoming_connection !== nothing
-            server.on_incoming_connection(server, nothing, error_code)
+        if on_incoming_connection !== nothing
+            on_incoming_connection(server, nothing, error_code)
         end
         return nothing
     end
@@ -116,9 +114,9 @@ function _server_on_channel_setup(server::HttpServer, error_code::Int, channel)
         end
     end
 
-    if server.on_incoming_connection !== nothing
+    if on_incoming_connection !== nothing
         try
-            server.on_incoming_connection(server, conn, Reseau.OP_SUCCESS)
+            on_incoming_connection(server, conn, Reseau.OP_SUCCESS)
         catch e
             @error "on_incoming_connection callback error" exception=(e, catch_backtrace())
         end
@@ -145,11 +143,11 @@ function _server_on_channel_shutdown(server::HttpServer, error_code::Int, channe
     return nothing
 end
 
-function _server_on_listener_destroy(server::HttpServer)
+function _server_on_listener_destroy(server::HttpServer, on_destroy_complete)
     server.is_open = false
-    if server.on_destroy_complete !== nothing
+    if on_destroy_complete !== nothing
         try
-            server.on_destroy_complete()
+            on_destroy_complete()
         catch e
             @error "server destroy callback error" exception=(e, catch_backtrace())
         end
@@ -201,8 +199,6 @@ function http_server_new(;
         manual_window_management,
         tls_connection_options,
         http1_options,
-        on_incoming_connection,
-        on_destroy_complete,
         HttpConnection[],
         IdDict{Sockets.Channel, HttpConnection}(),
         ReentrantLock(),
@@ -227,9 +223,9 @@ function http_server_new(;
             _server_update_listener_endpoint!(server)
             notify(listener_ready)
         end,
-        on_incoming_channel_setup = (err, channel) -> _server_on_channel_setup(server, err, channel),
+        on_incoming_channel_setup = (err, channel) -> _server_on_channel_setup(server, on_incoming_connection, err, channel),
         on_incoming_channel_shutdown = (err, channel) -> _server_on_channel_shutdown(server, err, channel),
-        on_listener_destroy = _ -> _server_on_listener_destroy(server),
+        on_listener_destroy = _ -> _server_on_listener_destroy(server, on_destroy_complete),
         enable_read_back_pressure = manual_window_management,
     )
 
