@@ -41,7 +41,7 @@ end
 
 # ─── Statistics observer ───
 
-# Callback: (stats, channel_handler_type, user_data) -> Nothing
+# Callback: (stats, channel_handler_type) -> Nothing
 # channel_handler_type is 1 for H1, 2 for H2
 
 # ─── Connection monitor ───
@@ -52,21 +52,19 @@ end
     UNHEALTHY = 2
 end
 
-mutable struct HttpConnectionMonitor{FU, UD}
+mutable struct HttpConnectionMonitor
     options::HttpConnectionMonitoringOptions
     bytes_read::UInt64
     bytes_written::UInt64
     last_check_time_ns::UInt64
     consecutive_failure_seconds::UInt32
     health_state::ConnectionHealthState.T
-    on_unhealthy::FU   # (monitor, user_data) -> Nothing
-    user_data::UD
+    on_unhealthy::Any   # (monitor) -> Nothing
 end
 
 function http_connection_monitor_new(;
     options::HttpConnectionMonitoringOptions=HttpConnectionMonitoringOptions(UInt64(0), UInt32(0)),
     on_unhealthy=nothing,
-    user_data=nothing,
 )::HttpConnectionMonitor
     return HttpConnectionMonitor(
         options,
@@ -75,7 +73,6 @@ function http_connection_monitor_new(;
         UInt32(0),
         ConnectionHealthState.HEALTHY,
         on_unhealthy,
-        user_data,
     )
 end
 
@@ -133,7 +130,7 @@ function http_connection_monitor_check_throughput!(monitor::HttpConnectionMonito
     if monitor.consecutive_failure_seconds >= monitor.options.allowable_throughput_failure_interval_seconds
         monitor.health_state = ConnectionHealthState.UNHEALTHY
         if monitor.on_unhealthy !== nothing
-            monitor.on_unhealthy(monitor, monitor.user_data)
+            monitor.on_unhealthy(monitor)
         end
         return ConnectionHealthState.UNHEALTHY
     end

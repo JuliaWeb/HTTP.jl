@@ -42,12 +42,10 @@ end
 const _H2_PENDING_SETTINGS_MAX = 16
 const _H2_MIN_WINDOW_SIZE = 256
 
-mutable struct H2Connection
+mutable struct H2Connection <: HttpConnection
     # ── Connection identity ──
     http_version::HttpVersion.T
     is_client::Bool
-    # late-init: reassigned via http_connection_configure_server
-    user_data::Any
     on_incoming_request::Any
     server_configured::Bool
     remote_endpoint::String
@@ -126,7 +124,6 @@ end
 
 function h2_connection_new(;
     is_client::Bool=true,
-    user_data=nothing,
     manual_window_management::Bool=false,
     initial_window_size::UInt32=UInt32(H2_INIT_WINDOW_SIZE),
     on_goaway_received=nothing,
@@ -149,7 +146,6 @@ function h2_connection_new(;
     conn = H2Connection(
         HttpVersion.HTTP_2,
         is_client,
-        user_data,
         nothing,
         false,
         "",
@@ -862,7 +858,7 @@ function _h2_handle_stream_frame!(conn::H2Connection, frame::H2DecodedFrame)::H2
             if conn.on_incoming_request === nothing
                 return h2err_from_aws_code(ERROR_HTTP_REACTION_REQUIRED)
             end
-            stream = conn.on_incoming_request(conn, conn.user_data)
+            stream = conn.on_incoming_request(conn)
             stream isa H2Stream || return h2err_from_aws_code(ERROR_INVALID_ARGUMENT)
             stream.id = sid
             stream.metrics = HttpStreamMetrics(
@@ -973,7 +969,7 @@ function _h2_handle_stream_frame!(conn::H2Connection, frame::H2DecodedFrame)::H2
             conn.active_streams[promised_id] = promised_stream
         end
         if stream.on_incoming_push_promise !== nothing
-            stream.on_incoming_push_promise(stream, frame.promised_stream_id, frame.headers, stream.user_data)
+            stream.on_incoming_push_promise(stream, frame.promised_stream_id, frame.headers)
         end
         return H2ERR_SUCCESS
     end

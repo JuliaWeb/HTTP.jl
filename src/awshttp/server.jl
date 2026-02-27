@@ -3,21 +3,18 @@
 
 # ─── Server connection options ───
 
-struct HttpServerConnectionOptions{CUD, FIR, FH2C, FSD}
-    connection_user_data::CUD
-    on_incoming_request::FIR    # (connection, user_data) -> stream_or_nothing
-    on_h2c_upgrade::FH2C        # (connection, request, user_data) -> Bool
-    on_shutdown::FSD             # (connection, error_code, user_data) -> Nothing
+struct HttpServerConnectionOptions
+    on_incoming_request::Any    # (connection) -> stream_or_nothing
+    on_h2c_upgrade::Any         # (connection, request) -> Bool
+    on_shutdown::Any            # (connection, error_code) -> Nothing
 end
 
 function HttpServerConnectionOptions(;
-    connection_user_data=nothing,
     on_incoming_request=nothing,
     on_h2c_upgrade=nothing,
     on_shutdown=nothing,
 )
     return HttpServerConnectionOptions(
-        connection_user_data,
         on_incoming_request,
         on_h2c_upgrade,
         on_shutdown,
@@ -26,19 +23,18 @@ end
 
 # ─── Server options ───
 
-struct HttpServerOptions{ELG, SO, TLS, H1O, SUD, FIC, FDC}
+struct HttpServerOptions
     endpoint_host::String
     endpoint_port::UInt32
     prior_knowledge_http2::Bool
     initial_window_size::Csize_t
     manual_window_management::Bool
-    event_loop_group::ELG
-    socket_options::SO
-    tls_connection_options::TLS
-    http1_options::H1O
-    server_user_data::SUD
-    on_incoming_connection::FIC  # (server, connection, error_code, user_data) -> Nothing
-    on_destroy_complete::FDC     # (user_data) -> Nothing
+    event_loop_group::Union{EventLoops.EventLoopGroup, Nothing}
+    socket_options::Sockets.SocketOptions
+    tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}
+    http1_options::Http1ConnectionOptions
+    on_incoming_connection::Any  # (server, connection, error_code) -> Nothing
+    on_destroy_complete::Any     # () -> Nothing
 end
 
 function HttpServerOptions(;
@@ -51,7 +47,6 @@ function HttpServerOptions(;
     socket_options::Sockets.SocketOptions=Sockets.SocketOptions(),
     tls_connection_options=nothing,
     http1_options::Http1ConnectionOptions=Http1ConnectionOptions(),
-    server_user_data=nothing,
     on_incoming_connection=nothing,
     on_destroy_complete=nothing,
 )
@@ -59,7 +54,6 @@ function HttpServerOptions(;
         endpoint_host, endpoint_port,
         prior_knowledge_http2, initial_window_size, manual_window_management,
         event_loop_group, socket_options, tls_connection_options, http1_options,
-        server_user_data,
         on_incoming_connection, on_destroy_complete,
     )
 end
@@ -68,15 +62,15 @@ end
 
 mutable struct HttpServer
     options::HttpServerOptions
-    connections::Vector{Any}
-    channel_map::IdDict{Any, Any}
+    connections::Vector{HttpConnection}
+    channel_map::IdDict{Sockets.Channel, HttpConnection}
     lock::ReentrantLock
     is_open::Bool
     is_shutting_down::Bool
     listener_host::String
     listener_port::UInt32
     bootstrap::Union{Sockets.ServerBootstrap, Nothing}
-    event_loop_group::Any
+    event_loop_group::EventLoops.EventLoopGroup
     owns_event_loop_group::Bool
     destroyed_event::Threads.Event
 end
@@ -122,7 +116,7 @@ end
 function _server_on_channel_setup(server::HttpServer, error_code::Int, channel)
     if error_code != Reseau.OP_SUCCESS || channel === nothing
         if server.options.on_incoming_connection !== nothing
-            server.options.on_incoming_connection(server, nothing, error_code, server.options.server_user_data)
+            server.options.on_incoming_connection(server, nothing, error_code)
         end
         return nothing
     end
@@ -175,7 +169,7 @@ function _server_on_channel_setup(server::HttpServer, error_code::Int, channel)
 
     if server.options.on_incoming_connection !== nothing
         try
-            server.options.on_incoming_connection(server, conn, Reseau.OP_SUCCESS, server.options.server_user_data)
+            server.options.on_incoming_connection(server, conn, Reseau.OP_SUCCESS)
         catch e
             @error "on_incoming_connection callback error" exception=(e, catch_backtrace())
         end
@@ -193,14 +187,11 @@ end
 function _server_on_channel_shutdown(server::HttpServer, error_code::Int, channel)
     conn = _server_unregister_connection!(server, channel)
     if conn !== nothing && hasproperty(conn, :on_shutdown) && conn.on_shutdown !== nothing
-        _dispatch_user_callback(
-            conn.on_shutdown,
-            conn,
-            error_code,
-            conn.user_data;
-            subject = LS_HTTP_SERVER,
-            label = "on_shutdown",
-        )
+        try
+            conn.on_shutdown(conn, error_code)
+        catch e
+            @error "on_shutdown callback error" exception=(e, catch_backtrace())
+        end
     end
     return nothing
 end
@@ -209,7 +200,7 @@ function _server_on_listener_destroy(server::HttpServer)
     server.is_open = false
     if server.options.on_destroy_complete !== nothing
         try
-            server.options.on_destroy_complete(server.options.server_user_data)
+            server.options.on_destroy_complete()
         catch e
             @error "server destroy callback error" exception=(e, catch_backtrace())
         end
@@ -245,8 +236,8 @@ function http_server_new(options::HttpServerOptions)
 
     server = HttpServer(
         options,
-        Any[],
-        IdDict{Any, Any}(),
+        HttpConnection[],
+        IdDict{Sockets.Channel, HttpConnection}(),
         ReentrantLock(),
         true,
         false,
@@ -319,7 +310,6 @@ function http_connection_configure_server(connection, options::HttpServerConnect
     end
 
     if connection isa H1Connection
-        connection.user_data = options.connection_user_data
         connection.on_incoming_request = options.on_incoming_request
         connection.on_h2c_upgrade = options.on_h2c_upgrade
         connection.h2c_enabled = options.on_h2c_upgrade !== nothing
@@ -327,7 +317,6 @@ function http_connection_configure_server(connection, options::HttpServerConnect
         connection.on_shutdown = options.on_shutdown
         return OP_SUCCESS
     elseif connection isa H2Connection
-        connection.user_data = options.connection_user_data
         connection.on_incoming_request = options.on_incoming_request
         connection.server_configured = true
         connection.on_shutdown = options.on_shutdown

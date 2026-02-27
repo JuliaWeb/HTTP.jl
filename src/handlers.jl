@@ -49,7 +49,7 @@ function streamhandler(handler)
     return function(stream::Stream)
         req = startread(stream)
         req.body = read(stream)
-        resp = Base.invokelatest(handler, req)::Response
+        resp = handler(req)::Response
         resp.request = req
         setstatus(stream, resp.status)
         for h in resp.headers

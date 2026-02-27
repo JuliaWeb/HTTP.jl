@@ -69,6 +69,6 @@ end
 function _call_statistics_observer(observer, nonce, stats_list)
     observer === nothing && return nothing
     stats = _decode_statistics(stats_list)
-    Base.invokelatest(observer, nonce, stats)
+    observer(nonce, stats)
     return nothing
 end

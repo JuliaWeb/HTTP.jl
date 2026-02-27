@@ -282,7 +282,7 @@ _to_bytes(x) = Vector{UInt8}(codeunits(string(x)))
 # Each closure captures the HTTP.WebSocket and manipulates it directly.
 
 function _on_incoming_frame_begin(ws::WebSocket)
-    return (aws_ws, frame_info, user_data) -> begin
+    return (aws_ws, frame_info) -> begin
         ws.incoming_opcode = frame_info.opcode
         ws.incoming_fin = frame_info.fin
         empty!(ws.incoming_payload)
@@ -299,7 +299,7 @@ function _on_incoming_frame_begin(ws::WebSocket)
 end
 
 function _on_incoming_frame_payload(ws::WebSocket)
-    return (aws_ws, frame_info, data, user_data) -> begin
+    return (aws_ws, frame_info, data) -> begin
         ws.drop_incoming && return true
         try
             n = length(data)
@@ -313,7 +313,7 @@ function _on_incoming_frame_payload(ws::WebSocket)
 end
 
 function _on_incoming_frame_complete(ws::WebSocket)
-    return (aws_ws, frame_info, error_code, user_data) -> begin
+    return (aws_ws, frame_info, error_code) -> begin
         if error_code != 0
             @error "$(ws.id): incoming frame complete error" error_code
             close_body = CloseFrameBody(1006, "")

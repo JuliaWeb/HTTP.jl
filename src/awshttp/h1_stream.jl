@@ -83,24 +83,23 @@ end
 # ─── Callback types (see Phase 5.5 of parity roadmap) ───
 # All callbacks are stored as `Any` to allow flexible function types.
 # Signature conventions:
-#   on_incoming_headers(stream, header_block, headers::Vector{HttpHeader}, user_data) -> Int
-#   on_incoming_header_block_done(stream, header_block, user_data) -> Int
-#   on_incoming_body(stream, data::AbstractVector{UInt8}, user_data) -> Int
-#   on_stream_complete(stream, error_code::Int, user_data) -> Nothing
-#   on_stream_destroy(user_data) -> Nothing
-#   on_stream_metrics(stream, metrics::HttpStreamMetrics, user_data) -> Nothing
+#   on_incoming_headers(stream, header_block, headers::Vector{HttpHeader}) -> Int
+#   on_incoming_header_block_done(stream, header_block) -> Int
+#   on_incoming_body(stream, data::AbstractVector{UInt8}) -> Int
+#   on_stream_complete(stream, error_code::Int) -> Nothing
+#   on_stream_destroy(stream) -> Nothing
+#   on_stream_metrics(stream, metrics::HttpStreamMetrics) -> Nothing
 
 # ─── Make-request options (client) ───
 
 struct HttpMakeRequestOptions
     request::HttpMessage
-    user_data::Any
-    on_response_headers::Any       # (stream, header_block, headers, user_data) -> Int
-    on_response_header_block_done::Any  # (stream, header_block, user_data) -> Int
-    on_response_body::Any          # (stream, data, user_data) -> Int
-    on_metrics::Any                 # (stream, metrics, user_data) -> Nothing
-    on_complete::Any                # (stream, error_code, user_data) -> Nothing
-    on_destroy::Any                 # (user_data) -> Nothing
+    on_response_headers::Any       # (stream, header_block, headers) -> Int
+    on_response_header_block_done::Any  # (stream, header_block) -> Int
+    on_response_body::Any          # (stream, data) -> Int
+    on_metrics::Any                 # (stream, metrics) -> Nothing
+    on_complete::Any                # (stream, error_code) -> Nothing
+    on_destroy::Any                 # (stream) -> Nothing
     response_first_byte_timeout_ms::UInt64
     # ── H2-specific options ──
     http2_use_manual_data_writes::Bool
@@ -108,12 +107,11 @@ struct HttpMakeRequestOptions
     http2_headers_pad_length::UInt32
     # ── h2c upgrade ──
     h2c_upgrade::Bool  # attempt HTTP/2 cleartext upgrade on this request
-    on_h2c_upgrade::Any  # (stream, error_code, user_data) -> Nothing
+    on_h2c_upgrade::Any  # (connection, h2_connection, h2_stream, error_code) -> Nothing
 end
 
 function HttpMakeRequestOptions(;
     request::HttpMessage,
-    user_data = nothing,
     on_response_headers = nothing,
     on_response_header_block_done = nothing,
     on_response_body = nothing,
@@ -128,7 +126,7 @@ function HttpMakeRequestOptions(;
     on_h2c_upgrade = nothing,
 )
     return HttpMakeRequestOptions(
-        request, user_data,
+        request,
         on_response_headers, on_response_header_block_done,
         on_response_body, on_metrics, on_complete, on_destroy,
         response_first_byte_timeout_ms,
@@ -140,8 +138,7 @@ end
 # ─── Request handler options (server) ───
 
 struct HttpRequestHandlerOptions
-    server_connection::Any  # H1Connection
-    user_data::Any
+    server_connection::HttpConnection
     on_request_headers::Any
     on_request_header_block_done::Any
     on_request_body::Any
@@ -154,13 +151,12 @@ end
 
 mutable struct H1Stream
     # ── Base stream fields ──
-    owning_connection::Any  # H1Connection (forward ref)
+    owning_connection::HttpConnection
     id::UInt32
     request_method::HttpMethod.T
     metrics::HttpStreamMetrics
 
     # Callbacks
-    user_data::Any
     on_incoming_headers::Any
     on_incoming_header_block_done::Any
     on_incoming_body::Any
@@ -240,7 +236,6 @@ function h1_stream_new_request(connection, options::HttpMakeRequestOptions)::Uni
         method_enum,
         HttpStreamMetrics(),
         # callbacks
-        options.user_data,
         options.on_response_headers,
         options.on_response_header_block_done,
         options.on_response_body,
@@ -278,7 +273,6 @@ function h1_stream_new_request_handler(options::HttpRequestHandlerOptions)::H1St
         HttpMethod.UNKNOWN,
         HttpStreamMetrics(),
         # callbacks
-        options.user_data,
         options.on_request_headers,
         options.on_request_header_block_done,
         options.on_request_body,
@@ -404,15 +398,15 @@ function _stream_complete!(stream::H1Stream, error_code::Int)::Nothing
     stream.api_state = H1StreamApiState.COMPLETE
 
     if stream.on_metrics !== nothing
-        stream.on_metrics(stream, stream.metrics, stream.user_data)
+        stream.on_metrics(stream, stream.metrics)
     end
 
     if stream.on_complete !== nothing
-        stream.on_complete(stream, error_code, stream.user_data)
+        stream.on_complete(stream, error_code)
     end
 
     if stream.on_destroy !== nothing
-        stream.on_destroy(stream.user_data)
+        stream.on_destroy(stream)
     end
     return nothing
 end

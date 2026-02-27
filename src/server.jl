@@ -129,7 +129,7 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
     stream.connection = conn
     stream.request = Request("", "", nothing, nothing, http2)
 
-    on_request_headers = (aws_stream, header_block, headers_vec, user_data) -> begin
+    on_request_headers = (aws_stream, header_block, headers_vec) -> begin
         if header_block == AwsHTTP.HttpHeaderBlock.TRAILING
             trailers = stream.request.trailers
             if trailers === nothing
@@ -157,7 +157,7 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
         return AwsHTTP.OP_SUCCESS
     end
 
-    on_request_header_block_done = (aws_stream, header_block, user_data) -> begin
+    on_request_header_block_done = (aws_stream, header_block) -> begin
         if header_block != AwsHTTP.HttpHeaderBlock.MAIN
             return AwsHTTP.OP_SUCCESS
         end
@@ -174,7 +174,7 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
             Threads.@spawn begin
                 Base.CoreLogging.with_logstate(server.logstate) do
                     try
-                        Base.invokelatest(server.f, stream)
+                        server.f(stream)
                     catch e
                         @error "Request handler error; sending 500" exception=(e, catch_backtrace())
                         if !stream.response_started
@@ -189,7 +189,7 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
         return AwsHTTP.OP_SUCCESS
     end
 
-    on_request_body = (aws_stream, data, user_data) -> begin
+    on_request_body = (aws_stream, data) -> begin
         if server.stream
             stream.bufferstream === nothing && (stream.bufferstream = Base.BufferStream())
             write(stream.bufferstream, data)
@@ -204,7 +204,7 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
         return AwsHTTP.OP_SUCCESS
     end
 
-    on_request_done = (aws_stream, user_data) -> begin
+    on_request_done = (aws_stream) -> begin
         if server.stream
             Base.CoreLogging.with_logstate(server.logstate) do
                 stream.bufferstream !== nothing && close(stream.bufferstream)
@@ -214,7 +214,7 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
         errormonitor(Threads.@spawn begin
             Base.CoreLogging.with_logstate(server.logstate) do
                 try
-                    stream.response = Base.invokelatest(server.f, stream.request)::Response
+                    stream.response = server.f(stream.request)::Response
                     if stream.request.method == "HEAD"
                         _head_response!(stream.response)
                     end
@@ -228,7 +228,7 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
         return
     end
 
-    on_complete = (aws_stream, error_code, user_data) -> begin
+    on_complete = (aws_stream, error_code) -> begin
         stream.released && return
         stream.released = true
         Base.CoreLogging.with_logstate(server.logstate) do
@@ -237,14 +237,14 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
             end
             if server.on_stream_complete !== nothing
                 try
-                    Base.invokelatest(server.on_stream_complete, stream)
+                    server.on_stream_complete(stream)
                 catch e
                     @error "on_stream_complete error" exception=(e, catch_backtrace())
                 end
             end
             if stream.on_complete !== nothing
                 try
-                    Base.invokelatest(stream.on_complete, stream)
+                    stream.on_complete(stream)
                 catch e
                     @error "stream on_complete error" exception=(e, catch_backtrace())
                 end
@@ -280,11 +280,10 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
         return
     end
 
-    on_destroy = (user_data) -> nothing
+    on_destroy = (aws_stream) -> nothing
 
     opts = AwsHTTP.HttpRequestHandlerOptions(
         http_conn,
-        nothing,
         on_request_headers,
         on_request_header_block_done,
         on_request_body,
@@ -443,16 +442,15 @@ function serve!(f, host="127.0.0.1", port=8080;
             end
             if AwsHTTP.http_connection_get_version(http_conn) == AwsHTTP.HttpVersion.HTTP_2
                 opts = AwsHTTP.HttpServerConnectionOptions(
-                    connection_user_data = conn,
-                    on_incoming_request = (h2conn, ud) -> begin
+                    on_incoming_request = (h2conn) -> begin
                         try
-                            return _create_request_handler!(ud, h2conn; http2=true)
+                            return _create_request_handler!(conn, h2conn; http2=true)
                         catch e
                             @error "failed to create HTTP/2 request handler" exception=(e, catch_backtrace())
                             return nothing
                         end
                     end,
-                    on_shutdown = (h2conn, err, ud) -> nothing,
+                    on_shutdown = (h2conn, err) -> nothing,
                 )
                 status = AwsHTTP.http_connection_configure_server(http_conn, opts)
                 if status != AwsHTTP.OP_SUCCESS

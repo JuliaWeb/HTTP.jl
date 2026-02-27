@@ -47,8 +47,7 @@ mutable struct H2StreamDataWrite
     data::Vector{UInt8}       # data payload
     end_stream::Bool          # whether END_STREAM flag should be set
     pad_length::UInt8         # frame padding (0-255)
-    on_complete::Any           # (error_code, user_data) -> Nothing
-    user_data::Any
+    on_complete::Any           # (error_code) -> Nothing
 end
 
 # ─── H2 Stream ───
@@ -57,21 +56,20 @@ const H2_PRIORITY_DEFAULT_WEIGHT = UInt16(16)
 
 mutable struct H2Stream
     # ── Identity ──
-    owning_connection::Any  # H2Connection (forward ref)
+    owning_connection::HttpConnection
     id::UInt32
     is_client::Bool
 
     # ── Callbacks ──
-    user_data::Any
-    on_incoming_headers::Any          # (stream, block_type, headers, user_data) -> Int
-    on_incoming_header_block_done::Any  # (stream, block_type, user_data) -> Int
-    on_incoming_body::Any             # (stream, data, user_data) -> Int
-    on_request_done::Any              # (stream, user_data) -> Int (server only)
-    on_metrics::Any                    # (stream, metrics, user_data) -> Nothing
-    on_complete::Any                   # (stream, error_code, user_data) -> Nothing
+    on_incoming_headers::Any          # (stream, block_type, headers) -> Int
+    on_incoming_header_block_done::Any  # (stream, block_type) -> Int
+    on_incoming_body::Any             # (stream, data) -> Int
+    on_request_done::Any              # (stream) -> Int (server only)
+    on_metrics::Any                    # (stream, metrics) -> Nothing
+    on_complete::Any                   # (stream, error_code) -> Nothing
     # late-init: reassigned after construction in some patterns
-    on_destroy::Any                   # (user_data) -> Nothing
-    on_incoming_push_promise::Any    # (stream, promised_stream_id, headers, user_data) -> Nothing
+    on_destroy::Any                   # (stream) -> Nothing
+    on_incoming_push_promise::Any    # (stream, promised_stream_id, headers) -> Nothing
 
     # ── Metrics ──
     metrics::HttpStreamMetrics
@@ -189,7 +187,6 @@ function h2_stream_new_request(connection, options::HttpMakeRequestOptions)::Uni
         UInt32(0),   # id assigned on activation
         true,        # is_client
         # Callbacks
-        options.user_data,
         options.on_response_headers,
         options.on_response_header_block_done,
         options.on_response_body,
@@ -239,7 +236,7 @@ function h2_stream_new_request(connection, options::HttpMakeRequestOptions)::Uni
     if has_body && !manual
         body = http_message_get_body_stream(outgoing_msg)
         body_data = _h2_body_to_bytes(body)
-        write_entry = H2StreamDataWrite(body_data, true, UInt8(0), nothing, nothing)
+        write_entry = H2StreamDataWrite(body_data, true, UInt8(0), nothing)
         push!(stream.outgoing_writes, write_entry)
     end
 
@@ -258,7 +255,6 @@ function h2_stream_new_request_handler(connection, options::HttpRequestHandlerOp
         UInt32(0),
         false,  # is_client = false (server)
         # Callbacks
-        options.user_data,
         options.on_request_headers,
         options.on_request_header_block_done,
         options.on_request_body,
@@ -306,7 +302,6 @@ end
 Create a stream from a received PUSH_PROMISE frame (client side).
 """
 function h2_stream_new_push_promise(connection, promised_stream_id::UInt32, request::HttpMessage;
-    user_data=nothing,
     on_response_headers=nothing,
     on_response_header_block_done=nothing,
     on_response_body=nothing,
@@ -323,7 +318,6 @@ function h2_stream_new_push_promise(connection, promised_stream_id::UInt32, requ
         promised_stream_id,
         true,  # client receives push
         # Callbacks
-        user_data,
         on_response_headers,
         on_response_header_block_done,
         on_response_body,
@@ -549,7 +543,7 @@ function h2_stream_complete!(stream::H2Stream, error_code::Int)::Nothing
     # Fail pending writes
     for w in stream.outgoing_writes
         if w.on_complete !== nothing
-            w.on_complete(error_code, w.user_data)
+            w.on_complete(error_code)
         end
     end
     empty!(stream.outgoing_writes)
@@ -557,11 +551,11 @@ function h2_stream_complete!(stream::H2Stream, error_code::Int)::Nothing
     stream.outgoing_message = nothing
 
     if stream.on_metrics !== nothing
-        stream.on_metrics(stream, stream.metrics, stream.user_data)
+        stream.on_metrics(stream, stream.metrics)
     end
 
     if stream.on_complete !== nothing
-        stream.on_complete(stream, error_code, stream.user_data)
+        stream.on_complete(stream, error_code)
     end
 
     # Unregister from connection
@@ -571,7 +565,7 @@ function h2_stream_complete!(stream::H2Stream, error_code::Int)::Nothing
     end
 
     if stream.on_destroy !== nothing
-        stream.on_destroy(stream.user_data)
+        stream.on_destroy(stream)
     end
     return nothing
 end
@@ -651,15 +645,14 @@ end
 # ─── Manual data writes ───
 
 """
-    h2_stream_write_data!(stream, data; end_stream=false, pad_length=0x00, on_complete=nothing, user_data=nothing) -> Int
+    h2_stream_write_data!(stream, data; end_stream=false, pad_length=0x00, on_complete=nothing) -> Int
 
 Submit DATA for the stream (manual write mode).
 """
 function h2_stream_write_data!(stream::H2Stream, data::AbstractVector{UInt8};
     end_stream::Bool=false,
     pad_length::UInt8=UInt8(0),
-    on_complete=nothing,
-    user_data=nothing)::Int
+    on_complete=nothing)::Int
 
     if stream.api_state != H2StreamApiState.ACTIVE
         return raise_error(ERROR_HTTP_STREAM_HAS_COMPLETED)
@@ -675,7 +668,7 @@ function h2_stream_write_data!(stream::H2Stream, data::AbstractVector{UInt8};
         stream.manual_write_ended = true
     end
 
-    write_entry = H2StreamDataWrite(copy(data), end_stream, pad_length, on_complete, user_data)
+    write_entry = H2StreamDataWrite(copy(data), end_stream, pad_length, on_complete)
     push!(stream.outgoing_writes, write_entry)
 
     if stream.body_state == H2StreamBodyState.WAITING_WRITES
@@ -758,7 +751,7 @@ function h2_stream_send_response!(stream::H2Stream, conn, response::HttpMessage;
         body = http_message_get_body_stream(response)
         if body !== nothing
             body_data = _h2_body_to_bytes(body)
-            write_entry = H2StreamDataWrite(body_data, true, UInt8(0), nothing, nothing)
+            write_entry = H2StreamDataWrite(body_data, true, UInt8(0), nothing)
             push!(stream.outgoing_writes, write_entry)
         end
         if stream.state == H2StreamState.RESERVED_LOCAL
@@ -863,7 +856,7 @@ function h2_stream_encode_data_frame!(stream::H2Stream, conn)::Tuple{Int, H2Data
         popfirst!(stream.outgoing_writes)
 
         if write.on_complete !== nothing
-            write.on_complete(OP_SUCCESS, write.user_data)
+            write.on_complete(OP_SUCCESS)
         end
 
         if end_stream_flag
@@ -956,7 +949,7 @@ function h2_stream_on_headers!(stream::H2Stream, headers::Vector{HttpHeader},
 
     # Invoke header callback
     if stream.on_incoming_headers !== nothing
-        result = stream.on_incoming_headers(stream, block_type, headers, stream.user_data)
+        result = stream.on_incoming_headers(stream, block_type, headers)
         if result != 0
             return h2err_from_aws_code(ERROR_HTTP_CALLBACK_FAILURE)
         end
@@ -990,7 +983,7 @@ function h2_stream_on_headers_end!(stream::H2Stream, block_type::HttpHeaderBlock
 
     # Invoke header block done callback
     if stream.on_incoming_header_block_done !== nothing
-        result = stream.on_incoming_header_block_done(stream, block_type, stream.user_data)
+        result = stream.on_incoming_header_block_done(stream, block_type)
         if result != 0
             return h2err_from_aws_code(ERROR_HTTP_CALLBACK_FAILURE)
         end
@@ -1044,7 +1037,7 @@ function h2_stream_on_data!(stream::H2Stream, data::AbstractVector{UInt8},
 
     # Invoke body callback
     if stream.on_incoming_body !== nothing && !isempty(data)
-        result = stream.on_incoming_body(stream, data, stream.user_data)
+        result = stream.on_incoming_body(stream, data)
         if result != 0
             return h2err_from_aws_code(ERROR_HTTP_CALLBACK_FAILURE)
         end
@@ -1090,7 +1083,7 @@ function h2_stream_on_end_stream_received!(stream::H2Stream)::Nothing
     end
 
     if !stream.is_client && stream.on_request_done !== nothing
-        stream.on_request_done(stream, stream.user_data)
+        stream.on_request_done(stream)
     end
     return nothing
 end

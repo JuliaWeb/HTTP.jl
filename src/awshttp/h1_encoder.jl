@@ -106,17 +106,16 @@ end
 
 # ─── H1 Chunk ───
 
-mutable struct H1Chunk{FC, UD}
+mutable struct H1Chunk
     # late-init: starts as IO, set to nothing on destroy
     data::Any            # input stream (IO or nothing)
     data_size::UInt64
-    on_complete::FC      # Union{Nothing, Function} - (stream, error_code, user_data) -> Nothing
-    user_data::UD
+    on_complete::Any      # (stream, error_code) -> Nothing
     chunk_line::Memory{UInt8}  # pre-encoded "SIZE[;ext=val]\r\n"
 end
 
 """
-    h1_chunk_new(data, data_size; extensions=H1ChunkExtension[], on_complete=nothing, user_data=nothing) -> H1Chunk
+    h1_chunk_new(data, data_size; extensions=H1ChunkExtension[], on_complete=nothing) -> H1Chunk
 
 Create a new chunk for the manual chunked encoding API.
 Pre-encodes the chunk-line header (hex size + extensions + CRLF).
@@ -124,7 +123,7 @@ Pre-encodes the chunk-line header (hex size + extensions + CRLF).
 function h1_chunk_new(
     data, data_size::Integer;
     extensions::Vector{H1ChunkExtension}=H1ChunkExtension[],
-    on_complete=nothing, user_data=nothing
+    on_complete=nothing
 )::H1Chunk
     chunk_line = UInt8[]
     # Write hex size (uppercase, no padding)
@@ -140,7 +139,7 @@ function h1_chunk_new(
     push!(chunk_line, UInt8('\r'), UInt8('\n'))
     chunk_mem = Memory{UInt8}(undef, length(chunk_line))
     copyto!(chunk_mem, 1, chunk_line, 1, length(chunk_line))
-    return H1Chunk(data, UInt64(data_size), on_complete, user_data, chunk_mem)
+    return H1Chunk(data, UInt64(data_size), on_complete, chunk_mem)
 end
 
 function h1_chunk_destroy!(chunk::H1Chunk)
@@ -150,11 +149,10 @@ end
 
 function h1_chunk_complete_and_destroy!(chunk::H1Chunk, error_code::Int)
     cb = chunk.on_complete
-    ud = chunk.user_data
     data = chunk.data
     h1_chunk_destroy!(chunk)
     if cb !== nothing
-        cb(data, error_code, ud)
+        cb(data, error_code)
     end
     return nothing
 end

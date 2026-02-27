@@ -34,23 +34,22 @@ struct H1DecodedHeader
     data::String
 end
 
-# ─── Decoder vtable (callback functions) ───
+# ─── Decoder callbacks ───
 
-struct H1DecoderVtable{FH, FB, FReq, FResp, FD}
-    on_header::FH      # (header::H1DecodedHeader, user_data) -> Int
-    on_body::FB        # (data::AbstractVector{UInt8}, finished::Bool, user_data) -> Int
-    on_request::FReq   # (method_enum::HttpMethod.T, method_str::String, uri::String, user_data) -> Int
-    on_response::FResp # (status_code::Int, user_data) -> Int
-    on_done::FD        # (user_data) -> Int
+struct H1DecoderCallbacks{FH, FB, FReq, FResp, FD}
+    on_header::FH      # (header::H1DecodedHeader) -> Int
+    on_body::FB        # (data::AbstractVector{UInt8}, finished::Bool) -> Int
+    on_request::FReq   # (method_enum::HttpMethod.T, method_str::String, uri::String) -> Int
+    on_response::FResp # (status_code::Int) -> Int
+    on_done::FD        # () -> Int
 end
 
 # ─── Decoder params ───
 
-struct H1DecoderParams{UD, VT <: H1DecoderVtable}
+struct H1DecoderParams{CB <: H1DecoderCallbacks}
     scratch_space_initial_size::Int
     is_decoding_requests::Bool
-    user_data::UD
-    vtable::VT
+    callbacks::CB
 end
 
 # ─── Decoder state enum ───
@@ -68,7 +67,7 @@ end
 
 # ─── H1 Decoder ───
 
-mutable struct H1Decoder{VT <: H1DecoderVtable, UD}
+mutable struct H1Decoder{CB <: H1DecoderCallbacks}
     scratch_space::Vector{UInt8}
     state::H1DecoderState.T
     transfer_encoding::Int
@@ -86,9 +85,8 @@ mutable struct H1Decoder{VT <: H1DecoderVtable, UD}
     stop_processing::Bool
     # late-init: starts nothing, set via h1_decoder_set_logging_id
     logging_id::Any
-    vtable::VT
+    callbacks::CB
     is_decoding_requests::Bool
-    user_data::UD
 end
 
 """
@@ -105,9 +103,8 @@ function h1_decoder_new(params::H1DecoderParams)::H1Decoder
         HttpHeaderBlock.MAIN,
         false,
         nothing,
-        params.vtable,
+        params.callbacks,
         params.is_decoding_requests,
-        params.user_data,
     )
     _reset_state!(decoder)
     return decoder
@@ -156,7 +153,7 @@ end
 # Internal: mark message as done, call on_done callback
 function _mark_done!(decoder::H1Decoder)::Int
     decoder.is_done = true
-    return decoder.vtable.on_done(decoder.user_data)
+    return decoder.callbacks.on_done()
 end
 
 # ─── CRLF scanning ───
@@ -224,7 +221,7 @@ function _state_unchunked_body!(decoder::H1Decoder, data::AbstractVector{UInt8},
     body_end = body_start + Int(processed_bytes) - 1
     pos[] += Int(processed_bytes)
 
-    err = decoder.vtable.on_body(@view(data[body_start:body_end]), finished, decoder.user_data)
+    err = decoder.callbacks.on_body(@view(data[body_start:body_end]), finished)
     err != OP_SUCCESS && return OP_ERR
 
     if finished
@@ -251,7 +248,7 @@ function _state_chunk!(decoder::H1Decoder, data::AbstractVector{UInt8}, pos::Ref
     body_end = body_start + Int(processed_bytes) - 1
     pos[] += Int(processed_bytes)
 
-    err = decoder.vtable.on_body(@view(data[body_start:body_end]), false, decoder.user_data)
+    err = decoder.callbacks.on_body(@view(data[body_start:body_end]), false)
     err != OP_SUCCESS && return OP_ERR
 
     if finished
@@ -273,7 +270,7 @@ function _state_connection_close_body!(decoder::H1Decoder, data::AbstractVector{
     decoder.content_processed += UInt64(remaining_input)
 
     # Not finished yet — caller must signal EOF via h1_decoder_signal_eof!
-    err = decoder.vtable.on_body(@view(data[body_start:body_end]), false, decoder.user_data)
+    err = decoder.callbacks.on_body(@view(data[body_start:body_end]), false)
     err != OP_SUCCESS && return OP_ERR
 
     return OP_SUCCESS
@@ -338,7 +335,7 @@ function _linestate_request!(decoder::H1Decoder, line::String)::Int
     version_str != "HTTP/1.1" && return raise_error(ERROR_HTTP_PROTOCOL_ERROR)
 
     method_enum = http_str_to_method(method_str)
-    err = decoder.vtable.on_request(method_enum, method_str, uri_str, decoder.user_data)
+    err = decoder.callbacks.on_request(method_enum, method_str, uri_str)
     err != OP_SUCCESS && return OP_ERR
 
     _decoder_set_state!(decoder, H1DecoderState.GETLINE_HEADER)
@@ -378,7 +375,7 @@ function _linestate_response!(decoder::H1Decoder, line::String)::Int
         decoder.header_block = HttpHeaderBlock.INFORMATIONAL
     end
 
-    err = decoder.vtable.on_response(code_val, decoder.user_data)
+    err = decoder.callbacks.on_response(code_val)
     err != OP_SUCCESS && return OP_ERR
 
     _decoder_set_state!(decoder, H1DecoderState.GETLINE_HEADER)
@@ -479,7 +476,7 @@ function _linestate_header!(decoder::H1Decoder, line::String)::Int
     end
 
     # Call on_header callback
-    err = decoder.vtable.on_header(header, decoder.user_data)
+    err = decoder.callbacks.on_header(header)
     err != OP_SUCCESS && return OP_ERR
 
     _decoder_set_state!(decoder, H1DecoderState.GETLINE_HEADER)
@@ -508,7 +505,7 @@ function _linestate_chunk_size!(decoder::H1Decoder, line::String)::Int
 
     # Zero-size chunk = final chunk
     if chunk_size == 0
-        err = decoder.vtable.on_body(UInt8[], true, decoder.user_data)
+        err = decoder.callbacks.on_body(UInt8[], true)
         err != OP_SUCCESS && return OP_ERR
 
         # Expect trailers (or empty line to end message)
@@ -614,7 +611,7 @@ function h1_decoder_signal_eof!(decoder::H1Decoder)::Int
     if decoder.state != H1DecoderState.CONNECTION_CLOSE_BODY
         return raise_error(ERROR_INVALID_STATE)
     end
-    err = decoder.vtable.on_body(UInt8[], true, decoder.user_data)
+    err = decoder.callbacks.on_body(UInt8[], true)
     err != OP_SUCCESS && return OP_ERR
     return _mark_done!(decoder)
 end

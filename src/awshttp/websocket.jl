@@ -171,7 +171,7 @@ end
     DONE = 5
 end
 
-mutable struct WsDecoder{FF, FP, UD}
+mutable struct WsDecoder
     state::WsDecoderState.T
     state_bytes_processed::UInt64
 
@@ -191,12 +191,11 @@ mutable struct WsDecoder{FF, FP, UD}
     expecting_continuation::Bool
 
     # Callbacks
-    on_frame::FF        # (frame::WsDecodedFrame) -> Int
-    on_payload::FP      # (data::Vector{UInt8}) -> Int
-    user_data::UD
+    on_frame::Any       # (frame::WsDecodedFrame) -> Int
+    on_payload::Any     # (data::Vector{UInt8}) -> Int
 end
 
-function ws_decoder_new(; on_frame=nothing, on_payload=nothing, user_data=nothing)::WsDecoder
+function ws_decoder_new(; on_frame=nothing, on_payload=nothing)::WsDecoder
     return WsDecoder(
         WsDecoderState.OPCODE_BYTE,
         UInt64(0),
@@ -205,7 +204,7 @@ function ws_decoder_new(; on_frame=nothing, on_payload=nothing, user_data=nothin
         UInt64(0), 0,
         UInt8[], UInt8[], UInt8[],
         false,
-        on_frame, on_payload, user_data,
+        on_frame, on_payload,
     )
 end
 
@@ -419,15 +418,14 @@ end
 
 # ─── WebSocket handler ───
 
-mutable struct WebSocket{UD, Dec <: WsDecoder, FBegin, FPayload, FComplete, FShutdown}
+mutable struct WebSocket
     is_client::Bool
     is_open::Bool
     close_sent::Bool
     close_received::Bool
-    user_data::UD
 
     # Frame encoder/decoder
-    decoder::Dec
+    decoder::WsDecoder
 
     # Outgoing frame queue
     outgoing_frames::Vector{Memory{UInt8}}
@@ -445,15 +443,14 @@ mutable struct WebSocket{UD, Dec <: WsDecoder, FBegin, FPayload, FComplete, FShu
     incoming_message_payload_total::UInt64
 
     # Callbacks
-    on_incoming_frame_begin::FBegin     # (ws, frame_info) -> Bool
-    on_incoming_frame_payload::FPayload # (ws, frame_info, data) -> Bool
-    on_incoming_frame_complete::FComplete # (ws, frame_info, error_code) -> Bool
-    on_connection_shutdown::FShutdown    # (ws, error_code) -> Nothing
+    on_incoming_frame_begin::Any     # (ws, frame_info) -> Bool
+    on_incoming_frame_payload::Any   # (ws, frame_info, data) -> Bool
+    on_incoming_frame_complete::Any  # (ws, frame_info, error_code) -> Bool
+    on_connection_shutdown::Any      # (ws, error_code) -> Nothing
 end
 
 function ws_new(;
     is_client::Bool=true,
-    user_data=nothing,
     manual_window_management::Bool=false,
     initial_window_size::UInt64=typemax(UInt64),
     max_incoming_payload_length::UInt64=UInt64(0),
@@ -469,7 +466,6 @@ function ws_new(;
     return WebSocket(
         is_client,
         true, false, false,
-        user_data,
         decoder,
         Memory{UInt8}[],
         initial_window_size,
@@ -487,12 +483,12 @@ end
 # ─── Send operations ───
 
 """
-    ws_send_frame!(ws, opcode, payload; fin=true, on_complete=nothing, user_data=nothing) -> Int
+    ws_send_frame!(ws, opcode, payload; fin=true, on_complete=nothing) -> Int
 
 Send a WebSocket frame.
 """
 function ws_send_frame!(ws::WebSocket, opcode::UInt8, payload::AbstractVector{UInt8};
-    fin::Bool=true, on_complete=nothing, user_data=nothing)::Int
+    fin::Bool=true, on_complete=nothing)::Int
 
     if !ws.is_open
         return raise_error(ERROR_HTTP_CONNECTION_CLOSED)
@@ -527,7 +523,7 @@ function ws_send_frame!(ws::WebSocket, opcode::UInt8, payload::AbstractVector{UI
     push!(ws.outgoing_frames, encoded)
 
     if on_complete !== nothing
-        on_complete(ws, OP_SUCCESS, user_data)
+        on_complete(ws, OP_SUCCESS)
     end
 
     return OP_SUCCESS
@@ -625,7 +621,7 @@ function ws_on_incoming_data!(ws::WebSocket, data::AbstractVector{UInt8})::Tuple
 
         # Invoke begin callback
         if ws.on_incoming_frame_begin !== nothing
-            cont = ws.on_incoming_frame_begin(ws, frame_info, ws.user_data)
+            cont = ws.on_incoming_frame_begin(ws, frame_info)
             if cont === false
                 return (raise_error(ERROR_HTTP_CALLBACK_FAILURE), frames)
             end
@@ -633,7 +629,7 @@ function ws_on_incoming_data!(ws::WebSocket, data::AbstractVector{UInt8})::Tuple
 
         # Invoke payload callback
         if ws.on_incoming_frame_payload !== nothing && !isempty(frame.payload)
-            cont = ws.on_incoming_frame_payload(ws, frame_info, frame.payload, ws.user_data)
+            cont = ws.on_incoming_frame_payload(ws, frame_info, frame.payload)
             if cont === false
                 return (raise_error(ERROR_HTTP_CALLBACK_FAILURE), frames)
             end
@@ -641,7 +637,7 @@ function ws_on_incoming_data!(ws::WebSocket, data::AbstractVector{UInt8})::Tuple
 
         # Invoke complete callback
         if ws.on_incoming_frame_complete !== nothing
-            cont = ws.on_incoming_frame_complete(ws, frame_info, 0, ws.user_data)
+            cont = ws.on_incoming_frame_complete(ws, frame_info, 0)
             if cont === false
                 return (raise_error(ERROR_HTTP_CALLBACK_FAILURE), frames)
             end
