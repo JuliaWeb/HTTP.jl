@@ -77,7 +77,7 @@ connection handler is created. If `prior_knowledge_http2` is set, HTTP/2 is used
 without ALPN negotiation.
 """
 function http_client_connect(options::HttpClientConnectionOptions; on_setup=nothing, on_shutdown=nothing)
-    event_loop_group = options.bootstrap === nothing ? get_client_event_loop_group() : options.bootstrap
+    event_loop_group = options.event_loop_group === nothing ? get_client_event_loop_group() : options.event_loop_group
     if !(event_loop_group isa EventLoops.EventLoopGroup)
         event_loop_group = EventLoops.get_event_loop_group()
     end

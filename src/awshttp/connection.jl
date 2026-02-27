@@ -16,7 +16,7 @@ abstract type HttpConnection end
 
 Base.@kwdef struct HttpClientConnectionOptions
     # ── Networking ──
-    bootstrap::Union{EventLoops.EventLoopGroup, Nothing} = nothing
+    event_loop_group::Union{EventLoops.EventLoopGroup, Nothing} = nothing
     socket_options::Union{Sockets.SocketOptions, Nothing} = nothing
     tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing} = nothing
     # ── Host/port ──
