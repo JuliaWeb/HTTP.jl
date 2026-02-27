@@ -437,7 +437,7 @@ mutable struct WebSocket
     on_incoming_frame::Union{Nothing, Function}     # (ws, frame_info, payload, error_code) -> Bool
 end
 
-function ws_new(;
+function WebSocket(;
     is_client::Bool=true,
     manual_window_management::Bool=false,
     initial_window_size::UInt64=typemax(UInt64),

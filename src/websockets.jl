@@ -385,7 +385,7 @@ end
 # Create an AwsHTTP WebSocket and WsChannelHandler, then install
 # the handler into the H1Connection's channel slot.
 function _create_ws_handler!(ws::WebSocket, slot::Reseau.Sockets.ChannelSlot, is_client::Bool)
-    aws_ws = AwsHTTP.ws_new(;
+    aws_ws = AwsHTTP.WebSocket(;
         is_client=is_client,
         on_incoming_frame=_on_incoming_frame(ws),
     )

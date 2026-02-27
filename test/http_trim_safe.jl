@@ -20,8 +20,8 @@ function run_request_response_smoke()::Nothing
 end
 
 function run_websocket_codec_smoke()::Nothing
-    client = HTTP.AwsHTTP.ws_new(; is_client=true)
-    server = HTTP.AwsHTTP.ws_new(; is_client=false)
+    client = HTTP.AwsHTTP.WebSocket(; is_client=true)
+    server = HTTP.AwsHTTP.WebSocket(; is_client=false)
 
     HTTP.AwsHTTP.ws_send_text!(client, UInt8[0x68, 0x69])
     client_bytes = HTTP.AwsHTTP.ws_get_outgoing_data!(client)
