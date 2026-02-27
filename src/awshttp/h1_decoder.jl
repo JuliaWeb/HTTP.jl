@@ -77,11 +77,11 @@ mutable struct H1Decoder
     is_decoding_requests::Bool
 end
 
-h1_decoder_on_header(::H1Decoder, ::Any)::Int = OP_SUCCESS
-h1_decoder_on_body(::H1Decoder, ::Any, ::Bool)::Int = OP_SUCCESS
-h1_decoder_on_request(::H1Decoder, ::Any, ::Any, ::Any)::Int = OP_SUCCESS
-h1_decoder_on_response(::H1Decoder, ::Any)::Int = OP_SUCCESS
-h1_decoder_on_done(::Any)::Int = OP_SUCCESS
+h1_decoder_on_header(::H1Decoder, _)::Int = OP_SUCCESS
+h1_decoder_on_body(::H1Decoder, _, ::Bool)::Int = OP_SUCCESS
+h1_decoder_on_request(::H1Decoder, _, _, _)::Int = OP_SUCCESS
+h1_decoder_on_response(::H1Decoder, _)::Int = OP_SUCCESS
+h1_decoder_on_done(_)::Int = OP_SUCCESS
 
 """
     h1_decoder_new(params::H1DecoderParams) -> H1Decoder

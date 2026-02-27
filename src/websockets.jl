@@ -31,7 +31,7 @@ struct WebSocketError <: Exception
 end
 
 isok(e::WebSocketError) = e.message.code in (1000, 1001, 1005)
-isok(::Any) = false
+isok(_) = false
 
 function isupgrade(r::Message)
     ((r isa Request && r.method == "GET") ||
