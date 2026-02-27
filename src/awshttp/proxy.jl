@@ -173,14 +173,12 @@ function http_proxy_strategy_create_negotiator(strategy::BasicAuthProxyStrategy)
     return BasicAuthTunnellingNegotiator(auth_header)
 end
 
-struct HttpProxyStrategyBasicAuthOptions
-    proxy_connection_type::HttpProxyConnectionType.T
-    user_name::String
-    password::String
-end
-
-function http_proxy_strategy_new_basic_auth(options::HttpProxyStrategyBasicAuthOptions)::HttpProxyStrategy
-    return BasicAuthProxyStrategy(options.proxy_connection_type, options.user_name, options.password)
+function http_proxy_strategy_new_basic_auth(
+    proxy_connection_type::HttpProxyConnectionType.T,
+    user_name::AbstractString,
+    password::AbstractString,
+)::HttpProxyStrategy
+    return BasicAuthProxyStrategy(proxy_connection_type, String(user_name), String(password))
 end
 
 ## Identity strategy (forwarding)

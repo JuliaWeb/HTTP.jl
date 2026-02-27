@@ -248,11 +248,9 @@ function Client(cs::ClientSettings)
             cs.proxy_username === nothing && throw(ArgumentError("proxy_username required for basic proxy auth"))
             cs.proxy_password === nothing && throw(ArgumentError("proxy_password required for basic proxy auth"))
             client.proxy_strategy = AwsHTTP.http_proxy_strategy_new_basic_auth(
-                AwsHTTP.HttpProxyStrategyBasicAuthOptions(
-                    proxy_connection_type,
-                    cs.proxy_username,
-                    cs.proxy_password,
-                )
+                proxy_connection_type,
+                cs.proxy_username,
+                cs.proxy_password,
             )
         end
         client.proxy_options = AwsHTTP.HttpProxyOptions(;
