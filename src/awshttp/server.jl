@@ -8,7 +8,7 @@ mutable struct HttpServer
     initial_window_size::Csize_t
     manual_window_management::Bool
     tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}
-    http1_options::Http1ConnectionOptions
+    read_buffer_capacity::Csize_t
     connections::Vector{HttpConnection}
     channel_map::IdDict{Sockets.Channel, HttpConnection}
     lock::ReentrantLock
@@ -97,7 +97,7 @@ function _server_on_channel_setup(server::HttpServer, on_incoming_connection, er
             version=version,
             manual_window_management=server.manual_window_management,
             initial_window_size=server.initial_window_size,
-            read_buffer_capacity=server.http1_options.read_buffer_capacity,
+            read_buffer_capacity=server.read_buffer_capacity,
         )
         handler === nothing && return Sockets.channel_shutdown!(channel, ERROR_HTTP_UNSUPPORTED_PROTOCOL)
         Sockets.channel_slot_set_handler!(slot, handler)
@@ -173,7 +173,7 @@ function http_server_new(;
     event_loop_group::Union{EventLoops.EventLoopGroup, Nothing}=nothing,
     socket_options::Sockets.SocketOptions=Sockets.SocketOptions(),
     tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}=nothing,
-    http1_options::Http1ConnectionOptions=Http1ConnectionOptions(),
+    read_buffer_capacity::Csize_t=Csize_t(0),
     on_incoming_connection=nothing,
     on_destroy_complete=nothing,
 )
@@ -198,7 +198,7 @@ function http_server_new(;
         initial_window_size,
         manual_window_management,
         tls_connection_options,
-        http1_options,
+        read_buffer_capacity,
         HttpConnection[],
         IdDict{Sockets.Channel, HttpConnection}(),
         ReentrantLock(),

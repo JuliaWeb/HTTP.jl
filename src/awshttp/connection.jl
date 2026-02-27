@@ -8,14 +8,6 @@ struct HttpConnectionMonitoringOptions
     allowable_throughput_failure_interval_seconds::UInt32
 end
 
-# ─── HTTP/1 connection options ───
-
-struct Http1ConnectionOptions
-    read_buffer_capacity::Csize_t  # 0 = default
-end
-
-Http1ConnectionOptions() = Http1ConnectionOptions(Csize_t(0))
-
 # ─── Shared connection abstraction ───
 
 abstract type HttpConnection end
@@ -40,7 +32,7 @@ Base.@kwdef struct HttpClientConnectionOptions
     # ── Timeouts ──
     response_first_byte_timeout_ms::UInt64 = UInt64(0)
     # ── Protocol-specific options ──
-    http1_options::Http1ConnectionOptions = Http1ConnectionOptions()
+    read_buffer_capacity::Csize_t = Csize_t(0)
     # ── Advanced ──
     requested_event_loop::Union{EventLoops.EventLoop, Nothing} = nothing
 end

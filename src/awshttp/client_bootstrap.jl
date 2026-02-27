@@ -141,7 +141,7 @@ function http_client_connect(options::HttpClientConnectionOptions; on_setup=noth
                 on_shutdown = shutdown_cb !== nothing ?
                     (conn, err) -> _dispatch_user_callback(shutdown_cb, conn, err; label = "on_shutdown") : nothing,
                 response_first_byte_timeout_ms = options.response_first_byte_timeout_ms,
-                read_buffer_capacity = options.http1_options.read_buffer_capacity,
+                read_buffer_capacity = options.read_buffer_capacity,
                 h2c_upgrade = options.h2c_upgrade,
             )
             if handler === nothing
