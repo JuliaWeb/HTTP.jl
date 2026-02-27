@@ -13,12 +13,10 @@ end
 
 # ─── H1 Connection ───
 
-mutable struct H1Connection
+mutable struct H1Connection <: HttpConnection
     # ── Connection identity ──
     http_version::HttpVersion.T
     is_client::Bool
-    # late-init: reassigned via http_connection_configure_server
-    user_data::Any
     on_incoming_request::Any
     on_h2c_upgrade::Any
     server_configured::Bool
@@ -57,15 +55,15 @@ mutable struct H1Connection
 
     # ── Client/Server-specific ──
     response_first_byte_timeout_ms::UInt64
-    on_shutdown::Any  # (connection, error_code, user_data) -> Nothing
+    on_shutdown::Any  # (connection, error_code) -> Nothing
 
     # ── Proxy ──
-    proxy_request_transform::Any  # (request::HttpMessage, user_data) -> Int  or nothing
+    proxy_request_transform::Any  # (request::HttpMessage) -> Int  or nothing
 
     # ── Channel integration ──
     # late-init: set by channel_slot_set_handler!
     slot::Union{Sockets.ChannelSlot, Nothing}
-    on_channel_handler_installed::Any  # (connection, user_data) -> Nothing  or nothing
+    on_channel_handler_installed::Any  # (connection) -> Nothing  or nothing
     remote_endpoint::String  # host:port or "" if unknown
 end
 
@@ -120,14 +118,14 @@ function _h1_deliver_buffered_headers!(stream::H1Stream)::Int
         for i in 0:(count - 1)
             h = http_headers_get_index(headers, i)
             h === nothing && return OP_ERR
-            err = stream.on_incoming_headers(stream, HttpHeaderBlock.MAIN, [h], stream.user_data)
+            err = stream.on_incoming_headers(stream, HttpHeaderBlock.MAIN, [h])
             err != OP_SUCCESS && return OP_ERR
         end
     end
     stream.is_incoming_head_done = true
     stream.h2c.headers_buffered = false
     if stream.on_incoming_header_block_done !== nothing
-        err = stream.on_incoming_header_block_done(stream, HttpHeaderBlock.MAIN, stream.user_data)
+        err = stream.on_incoming_header_block_done(stream, HttpHeaderBlock.MAIN)
         err != OP_SUCCESS && return OP_ERR
     end
     if stream.h2c.request_message !== nothing
@@ -141,15 +139,7 @@ function _h1_stream_invoke_h2c_upgrade_callback(stream::H1Stream, h2_connection,
     cb === nothing && return nothing
     stream.h2c.upgrade_callback_invoked && return nothing
     stream.h2c.upgrade_callback_invoked = true
-    try
-        cb(stream.owning_connection, h2_connection, h2_stream, error_code, stream.user_data)
-    catch err
-        if err isa MethodError
-            cb(stream, error_code, stream.user_data)
-        else
-            rethrow()
-        end
-    end
+    cb(stream.owning_connection, h2_connection, h2_stream, error_code)
     return nothing
 end
 
@@ -163,7 +153,6 @@ end
 function _h1_create_h2c_probe_stream(conn::H1Connection)::Union{H1Stream, Nothing}
     opts = HttpRequestHandlerOptions(
         conn,
-        conn.user_data,
         nothing,
         nothing,
         nothing,
@@ -183,7 +172,7 @@ function _h1_create_h2c_probe_stream(conn::H1Connection)::Union{H1Stream, Nothin
 end
 
 function _h1_promote_h2c_probe_stream(conn::H1Connection, probe::H1Stream)::Union{H1Stream, Nothing}
-    stream = conn.on_incoming_request(conn, conn.user_data)
+    stream = conn.on_incoming_request(conn)
     stream === nothing && return (raise_error(ERROR_HTTP_REACTION_REQUIRED); nothing)
     stream isa H1Stream || return (raise_error(ERROR_INVALID_ARGUMENT); nothing)
     if stream.api_state == H1StreamApiState.INIT
@@ -264,7 +253,6 @@ function _h1_create_h2_connection_for_upgrade(conn::H1Connection, is_server::Boo
         UInt32(H2_INIT_WINDOW_SIZE)
     h2_conn = h2_connection_new(
         is_client = !is_server,
-        user_data = conn.user_data,
         manual_window_management = conn.manual_window_management,
         initial_window_size = initial_window,
         on_shutdown = conn.on_shutdown,
@@ -275,7 +263,6 @@ function _h1_create_h2_connection_for_upgrade(conn::H1Connection, is_server::Boo
     Sockets.channel_slot_set_handler!(new_slot, h2_conn)
     if is_server
         opts = HttpServerConnectionOptions(
-            connection_user_data = conn.user_data,
             on_incoming_request = conn.on_incoming_request,
             on_h2c_upgrade = conn.on_h2c_upgrade,
             on_shutdown = conn.on_shutdown,
@@ -297,7 +284,6 @@ function _h1_finish_client_h2c_upgrade!(conn::H1Connection, stream::H1Stream)::I
     h2_conn === nothing && return _h1_fail_h2c_upgrade(stream, Reseau.last_error())
     options = HttpMakeRequestOptions(
         request = stream.h2c.original_request,
-        user_data = stream.user_data,
         on_response_headers = stream.on_incoming_headers,
         on_response_header_block_done = stream.on_incoming_header_block_done,
         on_response_body = stream.on_incoming_body,
@@ -350,7 +336,7 @@ function _h1_finish_server_h2c_upgrade!(conn::H1Connection, stream::H1Stream)::I
     if stream.h2c.upgrade_settings !== nothing && !isempty(stream.h2c.upgrade_settings)
         h2_connection_apply_remote_settings!(h2_conn, stream.h2c.upgrade_settings) != OP_SUCCESS && return OP_ERR
     end
-    request_stream = h2_conn.on_incoming_request === nothing ? nothing : h2_conn.on_incoming_request(h2_conn, h2_conn.user_data)
+    request_stream = h2_conn.on_incoming_request === nothing ? nothing : h2_conn.on_incoming_request(h2_conn)
     request_stream isa H2Stream || return raise_error(ERROR_HTTP_PROTOCOL_SWITCH_FAILURE)
     request_stream.id = UInt32(1)
     request_stream.metrics = HttpStreamMetrics(
@@ -390,7 +376,7 @@ function _h1_finish_server_h2c_upgrade!(conn::H1Connection, stream::H1Stream)::I
     return OP_SUCCESS
 end
 
-# ─── Decoder vtable callbacks (wired to the H1 decoder) ───
+# ─── Decoder callbacks (wired to the H1 decoder) ───
 
 function _conn_decoder_on_request(method_enum, method_str, uri, conn)::Int
     stream = conn.incoming_stream
@@ -479,7 +465,7 @@ function _conn_decoder_on_header(header::H1DecodedHeader, conn)::Int
     # Forward to stream callback
     if stream.on_incoming_headers !== nothing
         h = HttpHeader(header.name_data, header.value_data)
-        err = stream.on_incoming_headers(stream, header_block, [h], stream.user_data)
+        err = stream.on_incoming_headers(stream, header_block, [h])
         err != OP_SUCCESS && return OP_ERR
     end
 
@@ -501,7 +487,7 @@ function _conn_mark_head_done!(conn::H1Connection, stream::H1Stream)::Int
             end
         end
         if stream.on_incoming_header_block_done !== nothing
-            err = stream.on_incoming_header_block_done(stream, header_block, stream.user_data)
+            err = stream.on_incoming_header_block_done(stream, header_block)
             err != OP_SUCCESS && return OP_ERR
         end
         return OP_SUCCESS
@@ -531,7 +517,7 @@ function _conn_mark_head_done!(conn::H1Connection, stream::H1Stream)::Int
             return OP_SUCCESS
         end
         stream.h2c.upgrade_settings = settings
-        accept = conn.on_h2c_upgrade !== nothing && conn.on_h2c_upgrade(conn, stream.h2c.request_message, conn.user_data)
+        accept = conn.on_h2c_upgrade !== nothing && conn.on_h2c_upgrade(conn, stream.h2c.request_message)
         if !accept
             promoted = _h1_promote_h2c_probe_stream(conn, stream)
             promoted === nothing && return OP_ERR
@@ -550,7 +536,7 @@ function _conn_mark_head_done!(conn::H1Connection, stream::H1Stream)::Int
     end
     stream.is_incoming_head_done = true
     if stream.on_incoming_header_block_done !== nothing
-        err = stream.on_incoming_header_block_done(stream, header_block, stream.user_data)
+        err = stream.on_incoming_header_block_done(stream, header_block)
         err != OP_SUCCESS && return OP_ERR
     end
     return OP_SUCCESS
@@ -590,7 +576,7 @@ function _conn_decoder_on_body(data::AbstractVector{UInt8}, finished::Bool, conn
 
     # Forward body data to stream
     if !isempty(data) && stream.on_incoming_body !== nothing
-        err = stream.on_incoming_body(stream, data, stream.user_data)
+        err = stream.on_incoming_body(stream, data)
         err != OP_SUCCESS && return OP_ERR
     end
 
@@ -633,7 +619,7 @@ function _conn_decoder_on_done(conn)::Int
 
     # If server: on_request_done fires
     if !stream.is_client && stream.on_request_done !== nothing
-        stream.on_request_done(stream, stream.user_data)
+        stream.on_request_done(stream)
     end
 
     # Try to complete the stream
@@ -645,15 +631,15 @@ function _conn_decoder_on_done(conn)::Int
     return OP_SUCCESS
 end
 
-# ─── Internal: build decoder vtable for a connection ───
+# ─── Internal: build decoder callbacks for a connection ───
 
-function _make_decoder_vtable()
-    return H1DecoderVtable(
-        (hdr, ud) -> _conn_decoder_on_header(hdr, ud),
-        (data, finished, ud) -> _conn_decoder_on_body(data, finished, ud),
-        (me, ms, uri, ud) -> _conn_decoder_on_request(me, ms, uri, ud),
-        (sc, ud) -> _conn_decoder_on_response(sc, ud),
-        (ud) -> _conn_decoder_on_done(ud),
+function _make_decoder_callbacks(conn)
+    return H1DecoderCallbacks(
+        (hdr) -> _conn_decoder_on_header(hdr, conn),
+        (data, finished) -> _conn_decoder_on_body(data, finished, conn),
+        (me, ms, uri) -> _conn_decoder_on_request(me, ms, uri, conn),
+        (sc) -> _conn_decoder_on_response(sc, conn),
+        () -> _conn_decoder_on_done(conn),
     )
 end
 
@@ -668,7 +654,6 @@ function h1_connection_new_client(;
     manual_window_management::Bool = false,
     initial_window_size::Csize_t = Csize_t(typemax(Csize_t)),
     read_buffer_capacity::Csize_t = Csize_t(0),
-    user_data = nothing,
     on_shutdown = nothing,
     on_channel_handler_installed = nothing,
     proxy_request_transform = nothing,
@@ -677,16 +662,16 @@ function h1_connection_new_client(;
 )::H1Connection
     conn_window = manual_window_management ? initial_window_size : Csize_t(typemax(Csize_t))
     encoder = h1_encoder_init()
-    vtable = _make_decoder_vtable()
+    callbacks = _make_decoder_callbacks(nothing)
 
     # Create connection first with a placeholder decoder
     conn = H1Connection(
-        HttpVersion.HTTP_1_1, true, user_data,
+        HttpVersion.HTTP_1_1, true,
         nothing, nothing, false,
         h2c_upgrade, nothing,
         H1Stream[], nothing, nothing, UInt32(1),
         encoder,
-        h1_decoder_new(H1DecoderParams(1024, false, nothing, vtable)),  # placeholder
+        h1_decoder_new(H1DecoderParams(1024, false, callbacks)),  # placeholder
         conn_window, read_buffer_capacity, H1ConnectionReadState.OPEN,
         manual_window_management ? UInt64(initial_window_size) : typemax(UInt64),
         manual_window_management,
@@ -695,8 +680,8 @@ function h1_connection_new_client(;
         proxy_request_transform, nothing, on_channel_handler_installed, "",
     )
 
-    # Now create decoder with conn as user_data
-    conn.decoder = h1_decoder_new(H1DecoderParams(1024, false, conn, vtable))
+    # Now create decoder with callbacks capturing conn
+    conn.decoder = h1_decoder_new(H1DecoderParams(1024, false, _make_decoder_callbacks(conn)))
     return conn
 end
 
@@ -709,20 +694,19 @@ function h1_connection_new_server(;
     manual_window_management::Bool = false,
     initial_window_size::Csize_t = Csize_t(typemax(Csize_t)),
     read_buffer_capacity::Csize_t = Csize_t(0),
-    user_data = nothing,
     on_shutdown = nothing,
 )::H1Connection
     conn_window = manual_window_management ? initial_window_size : Csize_t(typemax(Csize_t))
     encoder = h1_encoder_init()
-    vtable = _make_decoder_vtable()
+    callbacks = _make_decoder_callbacks(nothing)
 
     conn = H1Connection(
-        HttpVersion.HTTP_1_1, false, user_data,
+        HttpVersion.HTTP_1_1, false,
         nothing, nothing, false,
         false, nothing,
         H1Stream[], nothing, nothing, UInt32(2),
         encoder,
-        h1_decoder_new(H1DecoderParams(1024, true, nothing, vtable)),  # placeholder
+        h1_decoder_new(H1DecoderParams(1024, true, callbacks)),  # placeholder
         conn_window, read_buffer_capacity, H1ConnectionReadState.OPEN,
         manual_window_management ? UInt64(initial_window_size) : typemax(UInt64),
         manual_window_management,
@@ -731,7 +715,7 @@ function h1_connection_new_server(;
         nothing, nothing, nothing, "",
     )
 
-    conn.decoder = h1_decoder_new(H1DecoderParams(1024, true, conn, vtable))
+    conn.decoder = h1_decoder_new(H1DecoderParams(1024, true, _make_decoder_callbacks(conn)))
     return conn
 end
 
@@ -802,7 +786,6 @@ function http_connection_new_request_handler(conn::H1Connection, options::HttpRe
     end
     return h1_stream_new_request_handler(HttpRequestHandlerOptions(
         conn,  # server_connection
-        options.user_data,
         options.on_request_headers,
         options.on_request_header_block_done,
         options.on_request_body,
@@ -1028,7 +1011,7 @@ function _ensure_server_incoming_stream!(conn::H1Connection)::Nothing
         probe === nothing && Reseau.throw_error(Reseau.ERROR_UNKNOWN)
         return nothing
     end
-    stream = conn.on_incoming_request(conn, conn.user_data)
+    stream = conn.on_incoming_request(conn)
     stream === nothing && Reseau.throw_error(ERROR_HTTP_REACTION_REQUIRED)
     if !(stream isa H1Stream)
         Reseau.throw_error(ERROR_INVALID_ARGUMENT)

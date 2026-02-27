@@ -305,30 +305,16 @@ function Client(cs::ClientSettings)
     settings_storage = client.http2_initial_settings === nothing ? AwsHTTP.Http2Setting[] : client.http2_initial_settings
     settings_ptr = isempty(settings_storage) ? Ptr{AwsHTTP.Http2Setting}(C_NULL) : pointer(settings_storage)
     settings_count = Csize_t(length(settings_storage))
-    # connection factory: creates connections for the pool managers.
-    # Calls AwsHTTP.http_client_connect (async) and blocks until setup completes.
-    conn_factory = let socket_opts=client.socket_options, tls_opts=client.tls_options,
-                       host=cs.host, port=cs.port,
-                       prior_knowledge=cs.http2_prior_knowledge,
-                       manual_wm=cs.http2_connection_manual_window_management,
-                       initial_ws=cs.http2_initial_window_size,
-                       rfbt_ms=cs.response_first_byte_timeout_ms
-        function(_manager_opts)
-            result_ch = Base.Channel{Any}(1)
-            AwsHTTP.http_client_connect(AwsHTTP.HttpClientConnectionOptions(
-                host_name=host,
-                port=port,
-                socket_options=socket_opts,
-                tls_connection_options=tls_opts,
-                prior_knowledge_http2=prior_knowledge,
-                manual_window_management=manual_wm,
-                initial_window_size=Csize_t(initial_ws),
-                response_first_byte_timeout_ms=UInt64(rfbt_ms),
-                on_setup=(conn, err, ud) -> put!(result_ch, err == Reseau.OP_SUCCESS ? conn : nothing),
-            ))
-            return take!(result_ch)
-        end
-    end
+    manager_connection_options = AwsHTTP.HttpClientConnectionOptions(
+        host_name=cs.host,
+        port=cs.port,
+        socket_options=client.socket_options,
+        tls_connection_options=client.tls_options,
+        prior_knowledge_http2=cs.http2_prior_knowledge,
+        manual_window_management=cs.http2_connection_manual_window_management,
+        initial_window_size=Csize_t(cs.http2_initial_window_size),
+        response_first_byte_timeout_ms=UInt64(cs.response_first_byte_timeout_ms),
+    )
     # connection manager
     client.connection_manager = AwsHTTP.http_connection_manager_new(
         AwsHTTP.HttpConnectionManagerOptions(;
@@ -345,7 +331,7 @@ function Client(cs::ClientSettings)
             response_first_byte_timeout_ms=UInt64(cs.response_first_byte_timeout_ms),
             max_closed_streams=cs.http2_max_closed_streams,
             http2_conn_manual_window_management=cs.http2_connection_manual_window_management,
-            on_connection_setup=conn_factory,
+            connection_options=manager_connection_options,
         )
     )
     client.conn_manager_opts = ConnManagerOptsCompat(
@@ -375,7 +361,7 @@ function Client(cs::ClientSettings)
                 http2_prior_knowledge=cs.http2_prior_knowledge,
                 enable_read_back_pressure=cs.enable_read_back_pressure,
                 max_closed_streams=cs.http2_max_closed_streams,
-                on_connection_setup=conn_factory,
+                connection_options=manager_connection_options,
             )
         )
         client.http2_stream_manager_opts = Http2StreamManagerOptsCompat(

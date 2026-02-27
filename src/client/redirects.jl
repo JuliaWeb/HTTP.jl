@@ -86,6 +86,3 @@ function with_redirect(f, method, uri, headers=nothing, body=nothing, redirect::
     end
     @assert false "Unreachable!"
 end
-
-# compatibility: old callers that pass allocator as first arg
-with_redirect(f, _allocator, method, uri, args...; kw...) = with_redirect(f, method, uri, args...; kw...)

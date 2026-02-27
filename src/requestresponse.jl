@@ -490,10 +490,6 @@ mutable struct Request <: Message
     end
 end
 
-# compatibility: 6-arg version for callers that still pass allocator
-Request(method, path, headers, body, http2::Bool, _allocator; context=nothing) =
-    Request(method, path, headers, body, http2; context=context)
-
 getrequest(req::Request) = req
 
 function observelayer(f)
@@ -635,10 +631,6 @@ mutable struct Response <: Message
     end
     Response() = new(_new_response_message(false), nothing, nothing, nothing, RequestMetrics(), nothing)
 end
-
-# compatibility: 5-arg version for callers that still pass allocator
-Response(status::Integer, headers, body, http2::Bool, _allocator) =
-    Response(status, headers, body, http2)
 
 Response(status::Integer, body) = Response(status, nothing, Vector{UInt8}(string(body)))
 Response(status::Integer) = Response(status, nothing, nothing)

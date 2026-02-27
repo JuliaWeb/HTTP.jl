@@ -16,13 +16,17 @@ end
 
 Http1ConnectionOptions() = Http1ConnectionOptions(Csize_t(0))
 
+# ─── Shared connection abstraction ───
+
+abstract type HttpConnection end
+
 # ─── Client connection options ───
 
 struct HttpClientConnectionOptions
     # ── Networking ──
-    bootstrap::Any  # ClientBootstrap - initiates socket connection
-    socket_options::Any  # SocketOptions - TCP/UDP settings
-    tls_connection_options::Any  # TlsConnectionOptions or nothing
+    bootstrap::Union{EventLoops.EventLoopGroup, Nothing}
+    socket_options::Union{Sockets.SocketOptions, Nothing}
+    tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}
     # ── Host/port ──
     host_name::String
     port::UInt32
@@ -34,18 +38,14 @@ struct HttpClientConnectionOptions
     manual_window_management::Bool
     initial_window_size::Csize_t
     # ── Callbacks ──
-    user_data::Any
-    on_setup::Any        # (connection_or_nothing, error_code, user_data) -> Nothing
-    on_shutdown::Any    # (connection, error_code, user_data) -> Nothing
+    on_setup::Any        # (connection_or_nothing, error_code) -> Nothing
+    on_shutdown::Any     # (connection, error_code) -> Nothing
     # ── Timeouts ──
     response_first_byte_timeout_ms::UInt64
     # ── Protocol-specific options ──
     http1_options::Http1ConnectionOptions
-    http2_options::Any  # Http2ConnectionOptions or nothing
     # ── Advanced ──
-    requested_event_loop::Any  # pin to specific event loop, or nothing
-    proxy_options::Any  # proxy configuration, or nothing
-    monitoring_options::Union{HttpConnectionMonitoringOptions, Nothing}
+    requested_event_loop::Union{EventLoops.EventLoop, Nothing}
 end
 
 function _dispatch_user_callback(f, args...; subject::LogSubject = LS_HTTP_CONNECTION, label::AbstractString = "callback")
@@ -54,7 +54,7 @@ function _dispatch_user_callback(f, args...; subject::LogSubject = LS_HTTP_CONNE
     errormonitor(Threads.@spawn begin
         try
             Reseau.logf(Reseau.LogLevel.TRACE, subject, "HTTP user $(label) starting")
-            Base.invokelatest(f, args...)
+            f(args...)
         catch err
             Reseau.logf(
                 Reseau.LogLevel.ERROR,
@@ -75,28 +75,56 @@ function HttpClientConnectionOptions(;
     alpn_string_map::Union{HttpAlpnMap, Nothing} = nothing,
     prior_knowledge_http2::Bool = false,
     h2c_upgrade::Bool = false,
-    user_data = nothing,
     on_setup = nothing,
     on_shutdown = nothing,
     manual_window_management::Bool = false,
     initial_window_size::Csize_t = Csize_t(typemax(Csize_t)),
     response_first_byte_timeout_ms::UInt64 = UInt64(0),
     http1_options::Http1ConnectionOptions = Http1ConnectionOptions(),
-    http2_options = nothing,
     requested_event_loop = nothing,
-    proxy_options = nothing,
-    monitoring_options::Union{HttpConnectionMonitoringOptions, Nothing} = nothing,
 )
     return HttpClientConnectionOptions(
         bootstrap, socket_options, tls_connection_options,
         host_name, port,
         alpn_string_map, prior_knowledge_http2, h2c_upgrade,
         manual_window_management, initial_window_size,
-        user_data, on_setup, on_shutdown,
+        on_setup, on_shutdown,
         response_first_byte_timeout_ms,
-        http1_options, http2_options,
-        requested_event_loop, proxy_options, monitoring_options,
+        http1_options,
+        requested_event_loop,
     )
+end
+
+function _copy_connection_options_with_setup(options::HttpClientConnectionOptions, on_setup)
+    return HttpClientConnectionOptions(
+        bootstrap=options.bootstrap,
+        host_name=options.host_name,
+        port=options.port,
+        socket_options=options.socket_options,
+        tls_connection_options=options.tls_connection_options,
+        alpn_string_map=options.alpn_string_map,
+        prior_knowledge_http2=options.prior_knowledge_http2,
+        h2c_upgrade=options.h2c_upgrade,
+        on_setup=on_setup,
+        on_shutdown=options.on_shutdown,
+        manual_window_management=options.manual_window_management,
+        initial_window_size=options.initial_window_size,
+        response_first_byte_timeout_ms=options.response_first_byte_timeout_ms,
+        http1_options=options.http1_options,
+        requested_event_loop=options.requested_event_loop,
+    )
+end
+
+function http_client_connect_sync(options::HttpClientConnectionOptions)::Tuple{Union{HttpConnection, Nothing}, Int}
+    result = Base.Channel{Tuple{Union{HttpConnection, Nothing}, Int}}(1)
+    user_on_setup = options.on_setup
+    sync_on_setup = function (connection, error_code)
+        user_on_setup === nothing || _dispatch_user_callback(user_on_setup, connection, error_code; label="on_setup")
+        put!(result, (error_code == OP_SUCCESS ? connection : nothing, error_code))
+        return nothing
+    end
+    http_client_connect(_copy_connection_options_with_setup(options, sync_on_setup))
+    return take!(result)
 end
 
 # ─── Abstract connection interface ───

@@ -18,12 +18,12 @@ end
 end
 
 const HCMCT_COUNT = 3
-const _ConnectionAcquireResult = Tuple{Any, Int}
+const _ConnectionAcquireResult = Tuple{Union{HttpConnection, Nothing}, Int}
 
 # ─── Idle connection wrapper ───
 
 mutable struct IdleConnection
-    connection::Any
+    connection::HttpConnection
     cull_timestamp_ns::UInt64  # monotonic_time_ns() when this becomes eligible for culling
 end
 
@@ -58,9 +58,7 @@ struct HttpConnectionManagerOptions
     response_first_byte_timeout_ms::UInt64
     max_closed_streams::Int
     http2_conn_manual_window_management::Bool
-    shutdown_complete_user_data::Any
-    shutdown_complete_callback::Any  # (user_data) -> Nothing
-    on_connection_setup::Any  # factory: (options) -> connection_or_nothing
+    connection_options::Union{HttpClientConnectionOptions, Nothing}
 end
 
 function HttpConnectionManagerOptions(;
@@ -77,9 +75,7 @@ function HttpConnectionManagerOptions(;
     response_first_byte_timeout_ms::UInt64=UInt64(0),
     max_closed_streams::Int=0,
     http2_conn_manual_window_management::Bool=false,
-    shutdown_complete_user_data=nothing,
-    shutdown_complete_callback=nothing,
-    on_connection_setup=nothing,
+    connection_options::Union{HttpClientConnectionOptions, Nothing}=nothing,
 )
     return HttpConnectionManagerOptions(
         host,
@@ -95,9 +91,7 @@ function HttpConnectionManagerOptions(;
         response_first_byte_timeout_ms,
         max_closed_streams,
         http2_conn_manual_window_management,
-        shutdown_complete_user_data,
-        shutdown_complete_callback,
-        on_connection_setup,
+        connection_options,
     )
 end
 
@@ -166,9 +160,7 @@ end
 function _connection_manager_shutdown!(mgr::HttpConnectionManager)::Nothing
     mgr.state = HttpConnectionManagerState.SHUTTING_DOWN
     for idle in mgr.idle_connections
-        if applicable(http_connection_close, idle.connection)
-            http_connection_close(idle.connection)
-        end
+        http_connection_close(idle.connection)
     end
     empty!(mgr.idle_connections)
     raise_error(ERROR_HTTP_CONNECTION_MANAGER_SHUTTING_DOWN)
@@ -177,10 +169,24 @@ function _connection_manager_shutdown!(mgr::HttpConnectionManager)::Nothing
     end
     empty!(mgr.pending_acquisitions)
     fill!(mgr.internal_ref, 0)
-    if mgr.options.shutdown_complete_callback !== nothing
-        mgr.options.shutdown_complete_callback(mgr.options.shutdown_complete_user_data)
-    end
     return nothing
+end
+
+function _connection_manager_connect_options(mgr::HttpConnectionManager)::HttpClientConnectionOptions
+    conn_opts = mgr.options.connection_options
+    conn_opts !== nothing && return conn_opts
+    return HttpClientConnectionOptions(
+        host_name=mgr.options.host,
+        port=mgr.options.port,
+        prior_knowledge_http2=mgr.options.http2_prior_knowledge,
+        manual_window_management=mgr.options.http2_conn_manual_window_management,
+        initial_window_size=mgr.options.initial_window_size,
+        response_first_byte_timeout_ms=mgr.options.response_first_byte_timeout_ms,
+    )
+end
+
+function _connection_manager_connect(mgr::HttpConnectionManager)::Tuple{Union{HttpConnection, Nothing}, Int}
+    return http_client_connect_sync(_connection_manager_connect_options(mgr))
 end
 
 # ─── Connection total helpers ───
@@ -238,7 +244,7 @@ end
 # ─── Acquire connection ───
 
 """
-    http_connection_manager_acquire_connection(manager) -> Future{Tuple{Any, Int}}
+    http_connection_manager_acquire_connection(manager) -> Future{Tuple{Union{HttpConnection, Nothing}, Int}}
 
 Acquire a connection from the pool. The future resolves to `(connection, error_code)`.
 If no idle connection is available, the request is queued.
@@ -261,14 +267,10 @@ function http_connection_manager_acquire_connection(mgr::HttpConnectionManager):
     while !isempty(mgr.idle_connections)
         idle = pop!(mgr.idle_connections)
         is_usable = true
-        if applicable(http_connection_is_open, idle.connection)
-            is_usable = http_connection_is_open(idle.connection)
-        end
+        is_usable = http_connection_is_open(idle.connection)
         if !is_usable
             mgr.internal_ref[Int(HttpConnectionManagerCountType.OPEN_CONNECTION) + 1] -= 1
-            if applicable(http_connection_close, idle.connection)
-                http_connection_close(idle.connection)
-            end
+            http_connection_close(idle.connection)
             continue
         end
         mgr.internal_ref[Int(HttpConnectionManagerCountType.VENDED_CONNECTION) + 1] += 1
@@ -278,16 +280,7 @@ function http_connection_manager_acquire_connection(mgr::HttpConnectionManager):
     total = _connection_manager_total_connections(mgr)
     if total < mgr.options.max_connections
         mgr.internal_ref[Int(HttpConnectionManagerCountType.PENDING_CONNECTIONS) + 1] += 1
-        conn = nothing
-        err = OP_SUCCESS
-        if mgr.options.on_connection_setup !== nothing
-            try
-                conn = mgr.options.on_connection_setup(mgr.options)
-            catch
-                raise_error(ERROR_HTTP_CONNECTION_CLOSED)
-                err = ERROR_HTTP_CONNECTION_CLOSED
-            end
-        end
+        conn, err = _connection_manager_connect(mgr)
         if conn === nothing && err == OP_SUCCESS
             raise_error(ERROR_HTTP_CONNECTION_CLOSED)
             err = ERROR_HTTP_CONNECTION_CLOSED
@@ -307,11 +300,11 @@ function http_connection_manager_acquire_connection(mgr::HttpConnectionManager):
 end
 
 """
-    http_connection_manager_acquire_connection!(manager) -> Tuple{Any, Int}
+    http_connection_manager_acquire_connection!(manager) -> Tuple{Union{HttpConnection, Nothing}, Int}
 
 Blocking helper for `http_connection_manager_acquire_connection`.
 """
-function http_connection_manager_acquire_connection!(mgr::HttpConnectionManager)::Tuple{Any, Int}
+function http_connection_manager_acquire_connection!(mgr::HttpConnectionManager)::Tuple{Union{HttpConnection, Nothing}, Int}
     return wait(http_connection_manager_acquire_connection(mgr))
 end
 
@@ -321,7 +314,7 @@ end
 Return a connection to the pool for reuse. If there are pending acquisitions,
 the connection is handed to the next waiter instead.
 """
-function http_connection_manager_release_connection(mgr::HttpConnectionManager, connection)::Int
+function http_connection_manager_release_connection(mgr::HttpConnectionManager, connection::HttpConnection)::Int
     _connection_manager_cull_pending!(mgr)
     vended_idx = Int(HttpConnectionManagerCountType.VENDED_CONNECTION) + 1
     if mgr.internal_ref[vended_idx] <= 0
@@ -329,14 +322,10 @@ function http_connection_manager_release_connection(mgr::HttpConnectionManager, 
     end
     mgr.internal_ref[vended_idx] -= 1
     is_usable = true
-    if applicable(http_connection_is_open, connection)
-        is_usable = http_connection_is_open(connection)
-    end
+    is_usable = http_connection_is_open(connection)
     if !is_usable || mgr.state == HttpConnectionManagerState.SHUTTING_DOWN
         mgr.internal_ref[Int(HttpConnectionManagerCountType.OPEN_CONNECTION) + 1] -= 1
-        if applicable(http_connection_close, connection)
-            http_connection_close(connection)
-        end
+        http_connection_close(connection)
         return OP_SUCCESS
     end
     if !isempty(mgr.pending_acquisitions)

@@ -25,65 +25,37 @@ end
     CURRENT_CONNECTION = 2
 end
 
-# ─── Proxy negotiator vtables ───
+# ─── Proxy negotiator interface ───
 
-struct HttpProxyNegotiatorForwardingVtable{FRT}
-    forward_request_transform::FRT  # (negotiator, message) -> Int
-end
+abstract type HttpProxyNegotiator end
 
-struct HttpProxyNegotiatorTunnellingVtable{FCRT, FIH, FS, FIB, FRD}
-    connect_request_transform::FCRT # (negotiator, message, on_done, on_forward, user_data) -> Nothing
-    on_incoming_headers::FIH        # (negotiator, header_block, headers) -> Int
-    on_status::FS                   # (negotiator, status_code) -> Int
-    on_incoming_body::FIB           # (negotiator, data) -> Int
-    get_retry_directive::FRD        # (negotiator) -> HttpProxyNegotiationRetryDirective.T
-end
+http_proxy_negotiator_is_tunnelling(::HttpProxyNegotiator)::Bool = false
+http_proxy_negotiator_forward_request_transform!(::HttpProxyNegotiator, message)::Int = OP_SUCCESS
 
-# ─── Proxy negotiator ───
-
-mutable struct HttpProxyNegotiator{Impl, FV <: Union{HttpProxyNegotiatorForwardingVtable, Nothing}, TV <: Union{HttpProxyNegotiatorTunnellingVtable, Nothing}}
-    impl::Impl
-    is_tunnelling::Bool
-    forwarding_vtable::FV
-    tunnelling_vtable::TV
-end
-
-function http_proxy_negotiator_get_retry_directive(n::HttpProxyNegotiator)::HttpProxyNegotiationRetryDirective.T
-    if n.is_tunnelling && n.tunnelling_vtable !== nothing && n.tunnelling_vtable.get_retry_directive !== nothing
-        return n.tunnelling_vtable.get_retry_directive(n)
-    end
-    return HttpProxyNegotiationRetryDirective.STOP
-end
-
-# ─── Proxy strategy ───
-
-struct HttpProxyStrategyVtable{FCN}
-    create_negotiator::FCN  # (strategy) -> HttpProxyNegotiator
-end
-
-mutable struct HttpProxyStrategy{VT <: HttpProxyStrategyVtable, Impl}
-    vtable::VT
-    impl::Impl
-    proxy_connection_type::HttpProxyConnectionType.T
-end
-
-function http_proxy_strategy_create_negotiator(strategy::HttpProxyStrategy)::Union{HttpProxyNegotiator, Nothing}
-    if strategy.vtable.create_negotiator !== nothing
-        return strategy.vtable.create_negotiator(strategy)
-    end
+function http_proxy_negotiator_connect_request_transform!(::HttpProxyNegotiator, message, on_done, on_forward)::Nothing
+    on_forward === nothing || on_forward(message)
     return nothing
 end
 
+http_proxy_negotiator_on_incoming_headers!(::HttpProxyNegotiator, header_block, headers)::Int = OP_SUCCESS
+http_proxy_negotiator_on_status!(::HttpProxyNegotiator, status_code::Int)::Int = OP_SUCCESS
+http_proxy_negotiator_on_incoming_body!(::HttpProxyNegotiator, data)::Int = OP_SUCCESS
+http_proxy_negotiator_get_retry_directive(::HttpProxyNegotiator)::HttpProxyNegotiationRetryDirective.T = HttpProxyNegotiationRetryDirective.STOP
+
+# ─── Proxy strategy interface ───
+
+abstract type HttpProxyStrategy end
+
+http_proxy_strategy_connection_type(::HttpProxyStrategy)::HttpProxyConnectionType.T = HttpProxyConnectionType.HTTP_LEGACY
+http_proxy_strategy_create_negotiator(::HttpProxyStrategy)::Union{HttpProxyNegotiator, Nothing} = nothing
+
 # ─── Proxy options ───
 
-struct HttpProxyOptions{PS <: Union{HttpProxyStrategy, Nothing}}
+struct HttpProxyOptions
     connection_type::HttpProxyConnectionType.T
     host::String
     port::UInt32
-    proxy_strategy::PS
-    auth_type::HttpProxyAuthenticationType.T  # deprecated
-    auth_username::String  # deprecated
-    auth_password::String  # deprecated
+    proxy_strategy::Union{HttpProxyStrategy, Nothing}
     no_proxy_hosts::String
 end
 
@@ -92,26 +64,24 @@ function HttpProxyOptions(;
     host::String="",
     port::UInt32=UInt32(0),
     proxy_strategy::Union{HttpProxyStrategy, Nothing}=nothing,
-    auth_type::HttpProxyAuthenticationType.T=HttpProxyAuthenticationType.NONE,
-    auth_username::String="",
-    auth_password::String="",
     no_proxy_hosts::String="",
 )
     return HttpProxyOptions(
-        connection_type, host, port,
+        connection_type,
+        host,
+        port,
         proxy_strategy,
-        auth_type, auth_username, auth_password,
         no_proxy_hosts,
     )
 end
 
 # ─── Proxy config (persistent) ───
 
-mutable struct HttpProxyConfig{PS <: Union{HttpProxyStrategy, Nothing}}
+mutable struct HttpProxyConfig
     connection_type::HttpProxyConnectionType.T
     host::String
     port::UInt32
-    proxy_strategy::PS
+    proxy_strategy::Union{HttpProxyStrategy, Nothing}
     no_proxy_hosts::String
 end
 
@@ -163,40 +133,44 @@ end
 
 ## Basic auth strategy
 
-struct BasicAuthImpl
-    user_name::String
-    password::String
-    proxy_connection_type::HttpProxyConnectionType.T
+struct BasicAuthForwardingNegotiator <: HttpProxyNegotiator
+    authorization_header::String
 end
 
-function _basic_auth_create_negotiator(strategy::HttpProxyStrategy)::HttpProxyNegotiator
-    impl = strategy.impl::BasicAuthImpl
-    encoded = Base64.base64encode(string(impl.user_name, ":", impl.password))
+function http_proxy_negotiator_forward_request_transform!(n::BasicAuthForwardingNegotiator, message)::Int
+    hdrs = http_message_get_headers(message)
+    http_headers_add(hdrs, "Proxy-Authorization", n.authorization_header)
+    return OP_SUCCESS
+end
 
-    if impl.proxy_connection_type == HttpProxyConnectionType.HTTP_FORWARD
-        vtable = HttpProxyNegotiatorForwardingVtable(
-            (negotiator, message) -> begin
-                hdrs = http_message_get_headers(message)
-                http_headers_add(hdrs, "Proxy-Authorization", "Basic $encoded")
-                return OP_SUCCESS
-            end,
-        )
-        return HttpProxyNegotiator(impl, false, vtable, nothing)
-    else
-        # Tunnelling: add auth to CONNECT request
-        vtable = HttpProxyNegotiatorTunnellingVtable(
-            (negotiator, message, on_done, on_forward, ud) -> begin
-                hdrs = http_message_get_headers(message)
-                http_headers_add(hdrs, "Proxy-Authorization", "Basic $encoded")
-                if on_forward !== nothing
-                    on_forward(message, ud)
-                end
-            end,
-            nothing, nothing, nothing,
-            (_) -> HttpProxyNegotiationRetryDirective.STOP,
-        )
-        return HttpProxyNegotiator(impl, true, nothing, vtable)
+struct BasicAuthTunnellingNegotiator <: HttpProxyNegotiator
+    authorization_header::String
+end
+
+http_proxy_negotiator_is_tunnelling(::BasicAuthTunnellingNegotiator)::Bool = true
+
+function http_proxy_negotiator_connect_request_transform!(n::BasicAuthTunnellingNegotiator, message, on_done, on_forward)::Nothing
+    hdrs = http_message_get_headers(message)
+    http_headers_add(hdrs, "Proxy-Authorization", n.authorization_header)
+    on_forward === nothing || on_forward(message)
+    return nothing
+end
+
+struct BasicAuthProxyStrategy <: HttpProxyStrategy
+    connection_type::HttpProxyConnectionType.T
+    user_name::String
+    password::String
+end
+
+http_proxy_strategy_connection_type(strategy::BasicAuthProxyStrategy)::HttpProxyConnectionType.T = strategy.connection_type
+
+function http_proxy_strategy_create_negotiator(strategy::BasicAuthProxyStrategy)::Union{HttpProxyNegotiator, Nothing}
+    encoded = Base64.base64encode(string(strategy.user_name, ":", strategy.password))
+    auth_header = "Basic $encoded"
+    if strategy.connection_type == HttpProxyConnectionType.HTTP_FORWARD
+        return BasicAuthForwardingNegotiator(auth_header)
     end
+    return BasicAuthTunnellingNegotiator(auth_header)
 end
 
 struct HttpProxyStrategyBasicAuthOptions
@@ -206,91 +180,92 @@ struct HttpProxyStrategyBasicAuthOptions
 end
 
 function http_proxy_strategy_new_basic_auth(options::HttpProxyStrategyBasicAuthOptions)::HttpProxyStrategy
-    impl = BasicAuthImpl(options.user_name, options.password, options.proxy_connection_type)
-    vtable = HttpProxyStrategyVtable(_basic_auth_create_negotiator)
-    return HttpProxyStrategy(vtable, impl, options.proxy_connection_type)
+    return BasicAuthProxyStrategy(options.proxy_connection_type, options.user_name, options.password)
 end
 
 ## Identity strategy (forwarding)
 
-function _forwarding_identity_create_negotiator(strategy::HttpProxyStrategy)::HttpProxyNegotiator
-    vtable = HttpProxyNegotiatorForwardingVtable(
-        (negotiator, message) -> OP_SUCCESS,
-    )
-    return HttpProxyNegotiator(nothing, false, vtable, nothing)
+struct ForwardingIdentityNegotiator <: HttpProxyNegotiator end
+
+struct ForwardingIdentityProxyStrategy <: HttpProxyStrategy end
+
+http_proxy_strategy_connection_type(::ForwardingIdentityProxyStrategy)::HttpProxyConnectionType.T = HttpProxyConnectionType.HTTP_FORWARD
+
+function http_proxy_strategy_create_negotiator(::ForwardingIdentityProxyStrategy)::Union{HttpProxyNegotiator, Nothing}
+    return ForwardingIdentityNegotiator()
 end
 
 function http_proxy_strategy_new_forwarding_identity()::HttpProxyStrategy
-    vtable = HttpProxyStrategyVtable(_forwarding_identity_create_negotiator)
-    return HttpProxyStrategy(vtable, nothing, HttpProxyConnectionType.HTTP_FORWARD)
+    return ForwardingIdentityProxyStrategy()
 end
 
 ## Identity strategy (tunnelling, one-time)
 
-function _tunneling_identity_create_negotiator(strategy::HttpProxyStrategy)::HttpProxyNegotiator
-    vtable = HttpProxyNegotiatorTunnellingVtable(
-        (negotiator, message, on_done, on_forward, ud) -> begin
-            if on_forward !== nothing
-                on_forward(message, ud)
-            end
-        end,
-        nothing, nothing, nothing,
-        (_) -> HttpProxyNegotiationRetryDirective.STOP,
-    )
-    return HttpProxyNegotiator(nothing, true, nothing, vtable)
+struct TunnelingIdentityNegotiator <: HttpProxyNegotiator end
+
+http_proxy_negotiator_is_tunnelling(::TunnelingIdentityNegotiator)::Bool = true
+
+struct TunnelingIdentityProxyStrategy <: HttpProxyStrategy end
+
+http_proxy_strategy_connection_type(::TunnelingIdentityProxyStrategy)::HttpProxyConnectionType.T = HttpProxyConnectionType.HTTP_TUNNEL
+
+function http_proxy_strategy_create_negotiator(::TunnelingIdentityProxyStrategy)::Union{HttpProxyNegotiator, Nothing}
+    return TunnelingIdentityNegotiator()
 end
 
 function http_proxy_strategy_new_tunneling_one_time_identity()::HttpProxyStrategy
-    vtable = HttpProxyStrategyVtable(_tunneling_identity_create_negotiator)
-    return HttpProxyStrategy(vtable, nothing, HttpProxyConnectionType.HTTP_TUNNEL)
+    return TunnelingIdentityProxyStrategy()
 end
 
 ## Sequence strategy (tunnelling)
 
-struct SequenceImpl
+struct SequenceProxyStrategy <: HttpProxyStrategy
     strategies::Vector{HttpProxyStrategy}
 end
 
-function _sequence_create_negotiator(strategy::HttpProxyStrategy)::HttpProxyNegotiator
-    impl = strategy.impl::SequenceImpl
-    # Create negotiators for all sub-strategies
-    sub_negotiators = HttpProxyNegotiator[]
-    for sub in impl.strategies
-        neg = http_proxy_strategy_create_negotiator(sub)
-        neg !== nothing && push!(sub_negotiators, neg)
+http_proxy_strategy_connection_type(::SequenceProxyStrategy)::HttpProxyConnectionType.T = HttpProxyConnectionType.HTTP_TUNNEL
+
+mutable struct SequenceTunnellingNegotiator <: HttpProxyNegotiator
+    sub_negotiators::Vector{HttpProxyNegotiator}
+    current_idx::Int
+end
+
+http_proxy_negotiator_is_tunnelling(::SequenceTunnellingNegotiator)::Bool = true
+
+function http_proxy_negotiator_connect_request_transform!(n::SequenceTunnellingNegotiator, message, on_done, on_forward)::Nothing
+    if n.current_idx <= length(n.sub_negotiators)
+        sub = n.sub_negotiators[n.current_idx]
+        if http_proxy_negotiator_is_tunnelling(sub)
+            http_proxy_negotiator_connect_request_transform!(sub, message, on_done, on_forward)
+        else
+            on_forward === nothing || on_forward(message)
+        end
+    else
+        on_forward === nothing || on_forward(message)
     end
+    return nothing
+end
 
-    current_idx = Ref(1)
+function http_proxy_negotiator_get_retry_directive(n::SequenceTunnellingNegotiator)::HttpProxyNegotiationRetryDirective.T
+    if n.current_idx < length(n.sub_negotiators)
+        n.current_idx += 1
+        return HttpProxyNegotiationRetryDirective.NEW_CONNECTION
+    end
+    return HttpProxyNegotiationRetryDirective.STOP
+end
 
-    vtable = HttpProxyNegotiatorTunnellingVtable(
-        (negotiator, message, on_done, on_forward, ud) -> begin
-            if current_idx[] <= length(sub_negotiators)
-                sub = sub_negotiators[current_idx[]]
-                if sub.is_tunnelling && sub.tunnelling_vtable !== nothing &&
-                   sub.tunnelling_vtable.connect_request_transform !== nothing
-                    sub.tunnelling_vtable.connect_request_transform(sub, message, on_done, on_forward, ud)
-                elseif on_forward !== nothing
-                    on_forward(message, ud)
-                end
-            elseif on_forward !== nothing
-                on_forward(message, ud)
-            end
-        end,
-        nothing, nothing, nothing,
-        (negotiator) -> begin
-            if current_idx[] < length(sub_negotiators)
-                current_idx[] += 1
-                return HttpProxyNegotiationRetryDirective.NEW_CONNECTION
-            end
-            return HttpProxyNegotiationRetryDirective.STOP
-        end,
-    )
-    return HttpProxyNegotiator((sub_negotiators, current_idx), true, nothing, vtable)
+function http_proxy_strategy_create_negotiator(strategy::SequenceProxyStrategy)::Union{HttpProxyNegotiator, Nothing}
+    sub_negotiators = HttpProxyNegotiator[]
+    for sub_strategy in strategy.strategies
+        negotiator = http_proxy_strategy_create_negotiator(sub_strategy)
+        negotiator === nothing && continue
+        push!(sub_negotiators, negotiator)
+    end
+    return SequenceTunnellingNegotiator(sub_negotiators, 1)
 end
 
 function http_proxy_strategy_new_tunneling_sequence(strategies::AbstractVector{<:HttpProxyStrategy})::HttpProxyStrategy
-    vtable = HttpProxyStrategyVtable(_sequence_create_negotiator)
-    return HttpProxyStrategy(vtable, SequenceImpl(HttpProxyStrategy[strategies...]), HttpProxyConnectionType.HTTP_TUNNEL)
+    return SequenceProxyStrategy(HttpProxyStrategy[strategies...])
 end
 
 # ─── No-proxy matching ───

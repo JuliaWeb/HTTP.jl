@@ -16,19 +16,19 @@ end
     FULL = 2        # at max concurrent streams
 end
 
-const _StreamAcquireResult = Tuple{Any, Int}
+const _StreamAcquireResult = Tuple{Union{H2Connection, Nothing}, Int}
 
 # ─── Per-connection wrapper ───
 
 mutable struct H2SmConnection
-    connection::Any
+    connection::H2Connection
     num_streams_assigned::UInt32
     max_concurrent_streams::UInt32  # server-negotiated limit
     state::H2SmConnectionState.T
     stopped_new_requests::Bool
 end
 
-function H2SmConnection(connection; max_concurrent_streams::UInt32=UInt32(100))
+function H2SmConnection(connection::H2Connection; max_concurrent_streams::UInt32=UInt32(100))
     return H2SmConnection(
         connection,
         UInt32(0),
@@ -41,10 +41,7 @@ end
 # ─── Pending stream acquisition ───
 
 mutable struct H2SmPendingStreamAcquisition
-    request_options::Any
     future::EventLoops.Future{_StreamAcquireResult}
-    # late-init: starts nothing, assigned during acquisition
-    sm_connection::Union{H2SmConnection, Nothing}
 end
 
 # ─── Stream manager options ───
@@ -63,9 +60,7 @@ struct Http2StreamManagerOptions
     http2_prior_knowledge::Bool
     enable_read_back_pressure::Bool
     max_closed_streams::Int
-    shutdown_complete_user_data::Any
-    shutdown_complete_callback::Any  # (user_data) -> Nothing
-    on_connection_setup::Any  # factory: (options) -> connection_or_nothing
+    connection_options::Union{HttpClientConnectionOptions, Nothing}
 end
 
 function Http2StreamManagerOptions(;
@@ -82,9 +77,7 @@ function Http2StreamManagerOptions(;
     http2_prior_knowledge::Bool=false,
     enable_read_back_pressure::Bool=false,
     max_closed_streams::Int=0,
-    shutdown_complete_user_data=nothing,
-    shutdown_complete_callback=nothing,
-    on_connection_setup=nothing,
+    connection_options::Union{HttpClientConnectionOptions, Nothing}=nothing,
 )
     return Http2StreamManagerOptions(
         host,
@@ -100,9 +93,7 @@ function Http2StreamManagerOptions(;
         http2_prior_knowledge,
         enable_read_back_pressure,
         max_closed_streams,
-        shutdown_complete_user_data,
-        shutdown_complete_callback,
-        on_connection_setup,
+        connection_options,
     )
 end
 
@@ -180,19 +171,13 @@ end
 function _h2_stream_manager_shutdown!(mgr::Http2StreamManager)::Nothing
     mgr.state = H2SmState.DESTROYING
     for sm_conn in mgr.ideal_available
-        if applicable(http_connection_close, sm_conn.connection)
-            http_connection_close(sm_conn.connection)
-        end
+        http_connection_close(sm_conn.connection)
     end
     for sm_conn in mgr.nonideal_available
-        if applicable(http_connection_close, sm_conn.connection)
-            http_connection_close(sm_conn.connection)
-        end
+        http_connection_close(sm_conn.connection)
     end
     for sm_conn in mgr.full_connections
-        if applicable(http_connection_close, sm_conn.connection)
-            http_connection_close(sm_conn.connection)
-        end
+        http_connection_close(sm_conn.connection)
     end
     empty!(mgr.ideal_available)
     empty!(mgr.nonideal_available)
@@ -205,10 +190,30 @@ function _h2_stream_manager_shutdown!(mgr::Http2StreamManager)::Nothing
     mgr.connections_acquiring = 0
     mgr.open_streams = 0
     mgr.pending_make_requests = 0
-    if mgr.options.shutdown_complete_callback !== nothing
-        mgr.options.shutdown_complete_callback(mgr.options.shutdown_complete_user_data)
-    end
     return nothing
+end
+
+function _h2_stream_manager_connect_options(mgr::Http2StreamManager)::HttpClientConnectionOptions
+    conn_opts = mgr.options.connection_options
+    conn_opts !== nothing && return conn_opts
+    return HttpClientConnectionOptions(
+        host_name=mgr.options.host,
+        port=mgr.options.port,
+        prior_knowledge_http2=mgr.options.http2_prior_knowledge,
+        manual_window_management=mgr.options.manual_window_management,
+        initial_window_size=mgr.options.initial_window_size,
+    )
+end
+
+function _h2_stream_manager_connect(mgr::Http2StreamManager)::Tuple{Union{H2Connection, Nothing}, Int}
+    conn, error_code = http_client_connect_sync(_h2_stream_manager_connect_options(mgr))
+    conn === nothing && return nothing, error_code
+    if conn isa H2Connection
+        return conn, OP_SUCCESS
+    end
+    http_connection_close(conn)
+    raise_error(ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION)
+    return nothing, ERROR_HTTP_STREAM_MANAGER_UNEXPECTED_HTTP_VERSION
 end
 
 # ─── Connection state classification ───
@@ -253,7 +258,7 @@ end
 # ─── Stream acquisition ───
 
 """
-    http2_stream_manager_acquire_stream(manager; options=nothing) -> Future{Tuple{Any, Int}}
+    http2_stream_manager_acquire_stream(manager; options=nothing) -> Future{Tuple{Union{H2Connection, Nothing}, Int}}
 
 Acquire a stream from the stream manager. The future resolves to `(stream, error_code)`.
 """
@@ -278,14 +283,7 @@ function http2_stream_manager_acquire_stream(
     total = _h2_sm_total_connections(mgr)
     if total < mgr.options.max_connections
         mgr.connections_acquiring += 1
-        conn = nothing
-        if mgr.options.on_connection_setup !== nothing
-            try
-                conn = mgr.options.on_connection_setup(mgr.options)
-            catch
-                conn = nothing
-            end
-        end
+        conn, error_code = _h2_stream_manager_connect(mgr)
         mgr.connections_acquiring -= 1
         if conn !== nothing
             sm_conn = H2SmConnection(conn)
@@ -294,21 +292,22 @@ function http2_stream_manager_acquire_stream(
             _h2_sm_classify_connection!(mgr, sm_conn)
             _complete_stream_acquire!(future, conn, OP_SUCCESS)
         else
-            raise_error(ERROR_HTTP_CONNECTION_CLOSED)
-            _complete_stream_acquire!(future, nothing, ERROR_HTTP_CONNECTION_CLOSED)
+            ec = error_code == OP_SUCCESS ? ERROR_HTTP_CONNECTION_CLOSED : error_code
+            raise_error(ec)
+            _complete_stream_acquire!(future, nothing, ec)
         end
         return future
     end
-    push!(mgr.pending_acquisitions, H2SmPendingStreamAcquisition(options, future, nothing))
+    push!(mgr.pending_acquisitions, H2SmPendingStreamAcquisition(future))
     return future
 end
 
 """
-    http2_stream_manager_acquire_stream!(manager; options=nothing) -> Tuple{Any, Int}
+    http2_stream_manager_acquire_stream!(manager; options=nothing) -> Tuple{Union{H2Connection, Nothing}, Int}
 
 Blocking helper for `http2_stream_manager_acquire_stream`.
 """
-function http2_stream_manager_acquire_stream!(mgr::Http2StreamManager; options=nothing)::Tuple{Any, Int}
+function http2_stream_manager_acquire_stream!(mgr::Http2StreamManager; options=nothing)::Tuple{Union{H2Connection, Nothing}, Int}
     return wait(http2_stream_manager_acquire_stream(mgr; options))
 end
 
@@ -327,7 +326,7 @@ end
 
 Release a stream back to the manager (decrement stream count, process pending).
 """
-function http2_stream_manager_release_stream(mgr::Http2StreamManager, connection)::Nothing
+function http2_stream_manager_release_stream(mgr::Http2StreamManager, connection::H2Connection)::Nothing
     sm_conn = _h2_sm_find_by_connection(mgr, connection)
     sm_conn === nothing && return nothing
     if sm_conn.num_streams_assigned > 0
@@ -339,7 +338,7 @@ function http2_stream_manager_release_stream(mgr::Http2StreamManager, connection
     return nothing
 end
 
-function _h2_sm_find_by_connection(mgr::Http2StreamManager, connection)::Union{H2SmConnection, Nothing}
+function _h2_sm_find_by_connection(mgr::Http2StreamManager, connection::H2Connection)::Union{H2SmConnection, Nothing}
     for sm_conn in mgr.ideal_available
         sm_conn.connection === connection && return sm_conn
     end
@@ -373,7 +372,7 @@ end
 Notify the stream manager that a stream completed. If close_connection_on_server_error
 is enabled and status is 5xx, stop new requests on that connection.
 """
-function http2_stream_manager_on_stream_complete(mgr::Http2StreamManager, connection, status_code::Int)::Nothing
+function http2_stream_manager_on_stream_complete(mgr::Http2StreamManager, connection::H2Connection, status_code::Int)::Nothing
     if mgr.options.close_connection_on_server_error && 500 <= status_code <= 599
         sm_conn = _h2_sm_find_by_connection(mgr, connection)
         if sm_conn !== nothing

@@ -52,10 +52,6 @@ mutable struct Stream{T} <: IO
     )
 end
 
-# compatibility: 4-arg version for callers that still pass allocator
-Stream{T}(allocator, decompress, http2, server_side::Bool=false) where {T} =
-    Stream{T}(decompress, http2, server_side)
-
 Base.hash(s::Stream, h::UInt) = hash(objectid(s), h)
 
 getrequest(s::Stream) = s.request
@@ -120,7 +116,7 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
         is_final = isempty(data)
         AwsHTTP.h2_stream_write_data!(s.aws_stream, data;
             end_stream=is_final,
-            on_complete=(err, ud) -> begin
+            on_complete=(err) -> begin
                 if err != 0
                     notify(fut, CapturedException(aws_error(err), Base.backtrace()))
                 else
@@ -137,7 +133,7 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
             IOBuffer(UInt8[])
         end
         h1chunk = AwsHTTP.h1_chunk_new(data, is.bodylen;
-            on_complete=(stream, err, ud) -> begin
+            on_complete=(stream, err) -> begin
                 if err != 0
                     notify(fut, CapturedException(aws_error(err), Base.backtrace()))
                 else
@@ -618,7 +614,7 @@ end
 # when the AwsHTTP library fires the callback.
 
 function _on_response_headers(stream::Stream)
-    return (aws_stream, header_block, headers_vec, user_data) -> begin
+    return (aws_stream, header_block, headers_vec) -> begin
         if header_block == AwsHTTP.HttpHeaderBlock.TRAILING
             trailers = stream.response.trailers
             if trailers === nothing
@@ -639,7 +635,7 @@ function _on_response_headers(stream::Stream)
 end
 
 function _on_response_header_block_done(stream::Stream)
-    return (aws_stream, header_block, user_data) -> begin
+    return (aws_stream, header_block) -> begin
         stream.status = aws_stream.response_status
         stream.response.status = stream.status
         if header_block != AwsHTTP.HttpHeaderBlock.MAIN
@@ -655,7 +651,7 @@ function _on_response_header_block_done(stream::Stream)
 end
 
 function _on_response_body(stream::Stream)
-    return (aws_stream, data::AbstractVector{UInt8}, user_data) -> begin
+    return (aws_stream, data::AbstractVector{UInt8}) -> begin
         stream.response.metrics.response_body_length += length(data)
         if stream.decompress
             if stream.gzipstream === nothing
@@ -678,7 +674,7 @@ function _on_response_body(stream::Stream)
 end
 
 function _on_metrics(stream::Stream)
-    return (aws_stream, metrics, user_data) -> begin
+    return (aws_stream, metrics) -> begin
         if metrics.send_start_timestamp_ns != -1
             stream.response.metrics.stream_metrics = metrics
         end
@@ -687,7 +683,7 @@ function _on_metrics(stream::Stream)
 end
 
 function _on_complete(stream::Stream)
-    return (aws_stream, error_code, user_data) -> begin
+    return (aws_stream, error_code) -> begin
         if stream.gzipstream !== nothing
             close(stream.gzipstream)
         end
@@ -811,10 +807,6 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
     end
 end
 
-# compatibility: 8-arg version for callers that still pass allocator
-with_stream_manager(client, req, chunkedbody, on_stream_response_body, decompress, readtimeout, _allocator; context=nothing) =
-    with_stream_manager(client, req, chunkedbody, on_stream_response_body, decompress, readtimeout; context=context)
-
 # ─── with_stream: connection manager path ───
 
 function with_stream(conn, req::Request, chunkedbody, on_stream_response_body, decompress, http2, readtimeout; context=nothing)
@@ -907,10 +899,6 @@ function with_stream(conn, req::Request, chunkedbody, on_stream_response_body, d
         end
     end
 end
-
-# compatibility: 9-arg version for callers that still pass allocator
-with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout, _allocator; context=nothing) =
-    with_stream(conn, req, chunkedbody, on_stream_response_body, decompress, http2, readtimeout; context=context)
 
 # can be removed once https://github.com/JuliaLang/julia/pull/57211 is fully released
 function _readavailable(this::Base.BufferStream)

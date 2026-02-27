@@ -210,9 +210,6 @@ function parseuri(url, query)
     return URIs.URI(url_str)
 end
 
-# compatibility: 3-arg version for callers that still pass allocator
-parseuri(url, query, _allocator) = parseuri(url, query)
-
 """
     bytes(x)
 
