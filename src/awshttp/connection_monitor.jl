@@ -59,12 +59,10 @@ mutable struct HttpConnectionMonitor
     last_check_time_ns::UInt64
     consecutive_failure_seconds::UInt32
     health_state::ConnectionHealthState.T
-    on_unhealthy::Any   # (monitor) -> Nothing
 end
 
 function http_connection_monitor_new(;
     options::HttpConnectionMonitoringOptions=HttpConnectionMonitoringOptions(UInt64(0), UInt32(0)),
-    on_unhealthy=nothing,
 )::HttpConnectionMonitor
     return HttpConnectionMonitor(
         options,
@@ -72,7 +70,6 @@ function http_connection_monitor_new(;
         Reseau.monotonic_time_ns(),
         UInt32(0),
         ConnectionHealthState.HEALTHY,
-        on_unhealthy,
     )
 end
 
@@ -91,12 +88,12 @@ function http_connection_monitor_record_bytes!(monitor::HttpConnectionMonitor;
 end
 
 """
-    http_connection_monitor_check_throughput!(monitor) -> ConnectionHealthState.T
+    http_connection_monitor_check_throughput!(monitor; on_unhealthy=nothing) -> ConnectionHealthState.T
 
 Check if the connection meets the minimum throughput threshold.
 Called periodically (typically every second).
 """
-function http_connection_monitor_check_throughput!(monitor::HttpConnectionMonitor)::ConnectionHealthState.T
+function http_connection_monitor_check_throughput!(monitor::HttpConnectionMonitor; on_unhealthy=nothing)::ConnectionHealthState.T
     min_throughput = monitor.options.minimum_throughput_bytes_per_second
     if min_throughput == 0
         return ConnectionHealthState.HEALTHY
@@ -129,9 +126,7 @@ function http_connection_monitor_check_throughput!(monitor::HttpConnectionMonito
 
     if monitor.consecutive_failure_seconds >= monitor.options.allowable_throughput_failure_interval_seconds
         monitor.health_state = ConnectionHealthState.UNHEALTHY
-        if monitor.on_unhealthy !== nothing
-            monitor.on_unhealthy(monitor)
-        end
+        on_unhealthy === nothing || on_unhealthy(monitor)
         return ConnectionHealthState.UNHEALTHY
     end
 
