@@ -48,7 +48,7 @@ Base.@deprecate is_upgrade isupgrade
 # Bridges the Reseau channel pipeline with the AwsHTTP WebSocket codec.
 # Installed into the H1Connection's channel slot after HTTP 101 upgrade.
 
-mutable struct WsChannelHandler <: Reseau.Sockets.AbstractChannelHandler
+mutable struct WsChannelHandler
     slot::Union{Reseau.Sockets.ChannelSlot, Nothing}
     aws_ws::Any  # AwsHTTP.WebSocket
     wslock::ReentrantLock  # protects outgoing_frames access
@@ -132,11 +132,11 @@ function _ws_channel_flush!(handler::WsChannelHandler)
         Reseau.Sockets.channel_slot_send_message(slot, msg, Reseau.Sockets.ChannelDirection.WRITE)
         return
     end
-    task = Reseau.Sockets.ChannelTask((task, ctx, status) -> begin
-        status == Reseau.TaskStatus.RUN_READY || return nothing
-        Reseau.Sockets.channel_slot_send_message(ctx.slot, ctx.msg, Reseau.Sockets.ChannelDirection.WRITE)
+    task = Reseau.Sockets.ChannelTask(Reseau.EventCallable(status -> begin
+        Reseau.TaskStatus.T(status) == Reseau.TaskStatus.RUN_READY || return nothing
+        Reseau.Sockets.channel_slot_send_message(slot, msg, Reseau.Sockets.ChannelDirection.WRITE)
         return nothing
-    end, (slot=slot, msg=msg), "http_ws_flush")
+    end), "http_ws_flush")
     Reseau.Sockets.channel_schedule_task_now!(channel, task)
     return
 end

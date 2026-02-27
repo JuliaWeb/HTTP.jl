@@ -3,38 +3,15 @@ const DEFAULT_MAX_RETRIES = 0
 const default_connection_limit = Ref{Int}(max(16, Threads.nthreads() * 4))
 
 # ─── Shared infrastructure ───
-# Lazily initialized resources that replace the old C library globals
-# (default_aws_allocator, default_aws_event_loop_group, default_aws_client_bootstrap).
-const _RESOURCES_LOCK = ReentrantLock()
-const _EVENT_LOOP_GROUP = Ref{Any}(nothing)
-const _HOST_RESOLVER = Ref{Any}(nothing)
-const _CLIENT_BOOTSTRAP = Ref{Any}(nothing)
-
-function _ensure_resources!()
-    _CLIENT_BOOTSTRAP[] !== nothing && return
-    Base.@lock _RESOURCES_LOCK begin
-        _CLIENT_BOOTSTRAP[] !== nothing && return
-        elg = Reseau.EventLoops.EventLoopGroup()
-        _EVENT_LOOP_GROUP[] = elg
-        resolver = Reseau.Sockets.HostResolver(elg)
-        _HOST_RESOLVER[] = resolver
-        bootstrap = Reseau.Sockets.ClientBootstrap(;
-            event_loop_group = elg,
-            host_resolver = resolver,
-        )
-        _CLIENT_BOOTSTRAP[] = bootstrap
-    end
-end
+# Uses Reseau/AwsHTTP scoped defaults for event loops, DNS resolver, and bootstrap.
+_ensure_resources!() = nothing
 
 function _task_sleep_s(seconds::Real)::Nothing
     seconds <= 0 && return nothing
-    elg = _EVENT_LOOP_GROUP[]
-    if elg === nothing
-        Reseau.thread_sleep_s(seconds)
-        return nothing
-    end
-    el = Reseau.EventLoops.event_loop_group_get_next_loop(elg)
-    if el === nothing
+    local el
+    try
+        el = Reseau.EventLoops.get_next_event_loop()
+    catch
         Reseau.thread_sleep_s(seconds)
         return nothing
     end
@@ -218,7 +195,7 @@ mutable struct Client
     proxy_strategy::Union{Nothing, AwsHTTP.HttpProxyStrategy}
     monitoring_options::Union{Nothing, AwsHTTP.HttpConnectionMonitoringOptions}
     monitoring_observer::Union{Nothing, Function}
-    retry_strategy::Reseau.Sockets.StandardRetryStrategy
+    retry_strategy::Reseau.StandardRetryStrategy
     connection_manager::AwsHTTP.HttpConnectionManager
     http2_stream_manager::Union{Nothing, AwsHTTP.Http2StreamManager}
     http2_initial_settings::Union{Nothing, Vector{AwsHTTP.Http2Setting}}
@@ -231,7 +208,6 @@ end
 Client(scheme::AbstractString, host::AbstractString, port::Integer; kw...) = Client(ClientSettings(scheme, host, port % UInt32; kw...))
 
 function Client(cs::ClientSettings)
-    _ensure_resources!()
     client = Client()
     client.settings = cs
     if cs.http2_initial_window_size < 0 || cs.http2_initial_window_size > HTTP2_MAX_WINDOW_SIZE
@@ -306,17 +282,14 @@ function Client(cs::ClientSettings)
     end
     client.monitoring_observer = cs.monitoring_statistics_observer
     # retry strategy
-    backoff_config = Reseau.Sockets.ExponentialBackoffConfig(;
+    strategy = Reseau.StandardRetryStrategy(
+        Reseau.EventLoops.get_event_loop_group();
+        initial_bucket_capacity=cs.initial_bucket_capacity,
         backoff_scale_factor_ms=cs.backoff_scale_factor_ms,
         max_backoff_secs=cs.max_backoff_secs,
         max_retries=cs.max_retries,
         jitter_mode=cs.jitter_mode,
     )
-    retry_config = Reseau.Sockets.StandardRetryConfig(;
-        initial_bucket_capacity=cs.initial_bucket_capacity,
-        backoff_config=backoff_config,
-    )
-    strategy = Reseau.Sockets.StandardRetryStrategy(_EVENT_LOOP_GROUP[], retry_config)
     client.retry_strategy = strategy
     # http2 initial settings
     settings_input = cs.http2_initial_settings
@@ -343,7 +316,6 @@ function Client(cs::ClientSettings)
         function(_manager_opts)
             result_ch = Base.Channel{Any}(1)
             AwsHTTP.http_client_connect(AwsHTTP.HttpClientConnectionOptions(
-                bootstrap=_CLIENT_BOOTSTRAP[],
                 host_name=host,
                 port=port,
                 socket_options=socket_opts,

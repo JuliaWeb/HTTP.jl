@@ -355,7 +355,6 @@ function serve!(f, host="127.0.0.1", port=8080;
     ssl_alpn_list="h2;http/1.1",
     initial_window_size=typemax(UInt64),
     )
-    _ensure_resources!()
     _warn_unsupported_server_options(; reuseaddr=reuseaddr, backlog=backlog)
     host_str = string(host)
     # `listenany=true` should pick an ephemeral port (port=0), avoiding collisions
@@ -395,7 +394,7 @@ function serve!(f, host="127.0.0.1", port=8080;
     )
     alpn_list = _tls_alpn_list(tls_conn_opts)
     initial_window = Csize_t(min(UInt64(initial_window_size), UInt64(typemax(Csize_t))))
-    on_incoming_channel_setup = (bootstrap, error_code, channel, user_data) -> begin
+    on_incoming_channel_setup = (error_code, channel) -> begin
         Base.CoreLogging.with_logstate(server.logstate) do
             if error_code != 0
                 @error "incoming channel setup error" error_code
@@ -406,25 +405,19 @@ function serve!(f, host="127.0.0.1", port=8080;
                 Reseau.Sockets.channel_shutdown!(channel; shutdown_immediately=true)
                 return
             end
-            slot = Reseau.Sockets.channel_slot_new!(channel)
-            Reseau.Sockets.channel_slot_insert_end!(channel, slot)
             version = AwsHTTP.HttpVersion.HTTP_1_1
             if tls_conn_opts !== nothing
-                tls_slot = slot.adj_left
-                if tls_slot === nothing || tls_slot.handler === nothing || !(tls_slot.handler isa Reseau.Sockets.TlsChannelHandler)
-                    @error "incoming channel setup error" error_code=Reseau.ERROR_INVALID_STATE
-                    Reseau.Sockets.channel_shutdown!(channel, Reseau.ERROR_INVALID_STATE)
-                    return
+                protocol = Reseau.Sockets.negotiated_protocol(channel)
+                if protocol == "h2"
+                    version = AwsHTTP.HttpVersion.HTTP_2
+                elseif protocol == "http/1.1"
+                    version = AwsHTTP.HttpVersion.HTTP_1_1
                 end
-                protocol = Reseau.Sockets.tls_handler_protocol(tls_slot.handler)
-                if protocol.len > 0
-                    protocol_str = Reseau.byte_buffer_as_string(protocol)
-                    if protocol_str == "h2"
-                        version = AwsHTTP.HttpVersion.HTTP_2
-                    elseif protocol_str == "http/1.1"
-                        version = AwsHTTP.HttpVersion.HTTP_1_1
-                    end
-                end
+            end
+            slot = begin
+                new_slot = Reseau.Sockets.channel_slot_new!(channel)
+                Reseau.Sockets.channel_slot_insert_end!(channel, new_slot)
+                new_slot
             end
             http_conn = AwsHTTP.http_connection_new_channel_handler(;
                 is_server=true,
@@ -433,13 +426,12 @@ function serve!(f, host="127.0.0.1", port=8080;
             )
             http_conn === nothing && return
             Reseau.Sockets.channel_slot_set_handler!(slot, http_conn)
-            http_conn.slot = slot
             # Extract remote endpoint from the socket handler (first slot in pipeline)
             remote_addr = "0.0.0.0"
             remote_port_num = 0
             try
-                socket_handler = channel.first.handler
-                ep = socket_handler.socket.remote_endpoint
+                sock = channel.socket
+                ep = sock.remote_endpoint
                 remote_addr = Reseau.Sockets.get_address(ep)
                 remote_port_num = Int(ep.port)
             catch
@@ -483,7 +475,7 @@ function serve!(f, host="127.0.0.1", port=8080;
         end
         return
     end
-    on_incoming_channel_shutdown = (bootstrap, error_code, channel, user_data) -> begin
+    on_incoming_channel_shutdown = (error_code, channel) -> begin
         Base.CoreLogging.with_logstate(server.logstate) do
             if _should_log_channel_shutdown_error(error_code)
                 @error "incoming channel shutdown error" error_code
@@ -494,40 +486,38 @@ function serve!(f, host="127.0.0.1", port=8080;
         end
         return
     end
-    on_listener_destroy = (bootstrap, user_data) -> begin
+    on_listener_destroy = _error_code -> begin
         notify(server.fut, :destroyed)
         return
     end
     bs = Reseau.Sockets.ServerBootstrap(;
-        event_loop_group = _EVENT_LOOP_GROUP[],
+        event_loop_group = Reseau.EventLoops.get_event_loop_group(),
         socket_options = socket_opts,
         host = host_str,
         port = UInt32(port_int),
         tls_connection_options = tls_conn_opts,
-        on_protocol_negotiated = nothing,
-        on_listener_setup = (bootstrap, error_code, user_data) -> begin
-            if error_code == 0 && bootstrap.listener_socket !== nothing
-                server.bound_port = try
-                    ep = Reseau.Sockets.socket_get_bound_address(bootstrap.listener_socket)
-                    Int(ep.port)
-                catch
-                    port_int
-                end
-            else
-                server.bound_port = port_int
-            end
+        on_listener_setup = _error_code -> begin
             notify(listener_ready)
             return nothing
         end,
         on_incoming_channel_setup = on_incoming_channel_setup,
         on_incoming_channel_shutdown = on_incoming_channel_shutdown,
         on_listener_destroy = on_listener_destroy,
-        user_data = server,
         enable_read_back_pressure = false,
     )
     server.bootstrap = bs
     # Wait until the listener is ready so `port(server)` is accurate immediately.
     wait(listener_ready)
+    if bs.listener_socket !== nothing
+        server.bound_port = try
+            ep = Reseau.Sockets.socket_get_bound_address(bs.listener_socket)
+            Int(ep.port)
+        catch
+            port_int
+        end
+    else
+        server.bound_port = port_int
+    end
     @atomic server.state = :running
     return server
 end

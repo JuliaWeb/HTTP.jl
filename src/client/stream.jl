@@ -178,8 +178,8 @@ function _h1_flush_outgoing!(s::Stream)
     channel === nothing && return
     if !Reseau.Sockets.channel_thread_is_callers_thread(channel)
         fut = Future{Nothing}()
-        task = Reseau.Sockets.ChannelTask((task, ctx, status) -> begin
-            status == Reseau.TaskStatus.RUN_READY || return notify(fut, nothing)
+        task = Reseau.Sockets.ChannelTask(Reseau.EventCallable(status -> begin
+            Reseau.TaskStatus.T(status) == Reseau.TaskStatus.RUN_READY || return notify(fut, nothing)
             try
                 _h1_flush_outgoing!(s)
                 notify(fut, nothing)
@@ -187,7 +187,7 @@ function _h1_flush_outgoing!(s::Stream)
                 notify(fut, CapturedException(e, catch_backtrace()))
             end
             return nothing
-        end, nothing, "http_h1_flush_outgoing")
+        end), "http_h1_flush_outgoing")
         Reseau.Sockets.channel_schedule_task_now!(channel, task)
         wait(fut)
         return

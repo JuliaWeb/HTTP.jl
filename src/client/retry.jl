@@ -67,16 +67,16 @@ function _retry_error_type(err)
     if err isa StatusError
         status = err.status
         if status == 429
-            return Reseau.Sockets.RetryErrorType.THROTTLING
+            return Reseau.RetryErrorType.THROTTLING
         elseif 500 <= status < 600
-            return Reseau.Sockets.RetryErrorType.SERVER_ERROR
+            return Reseau.RetryErrorType.SERVER_ERROR
         elseif 400 <= status < 500
-            return Reseau.Sockets.RetryErrorType.CLIENT_ERROR
+            return Reseau.RetryErrorType.CLIENT_ERROR
         else
-            return Reseau.Sockets.RetryErrorType.TRANSIENT
+            return Reseau.RetryErrorType.TRANSIENT
         end
     end
-    return Reseau.Sockets.RetryErrorType.TRANSIENT
+    return Reseau.RetryErrorType.TRANSIENT
 end
 
 function _set_nretries!(x, nretries::Int)
@@ -93,38 +93,35 @@ function _set_nretries!(x, nretries::Int)
 end
 
 function _acquire_retry_token!(client::Client, partition)
-    fut = Future{Reseau.Sockets.StandardRetryToken}()
-    on_acquired = function(token, error_code, fut_ref)
-        fut_local = fut_ref::Future{Reseau.Sockets.StandardRetryToken}
+    fut = Future{Reseau.StandardRetryToken}()
+    on_acquired = function(token, error_code)
         if error_code != Reseau.OP_SUCCESS || token === nothing
-            notify(fut_local, aws_error(error_code != Reseau.OP_SUCCESS ? error_code : Reseau.ERROR_INVALID_STATE))
+            notify(fut, aws_error(error_code != Reseau.OP_SUCCESS ? error_code : Reseau.ERROR_INVALID_STATE))
         else
-            notify(fut_local, token)
+            notify(fut, token)
         end
         return nothing
     end
-    Reseau.Sockets.retry_strategy_acquire_token!(
+    Reseau.retry_strategy_acquire_token!(
         client.retry_strategy,
         partition,
         on_acquired,
-        fut,
         client.settings.retry_timeout_ms,
     )
     return wait(fut)
 end
 
-function _schedule_retry!(token, error_type::Reseau.Sockets.RetryErrorType.T)
+function _schedule_retry!(token, error_type::Reseau.RetryErrorType.T)
     fut = Future{typeof(token)}()
-    on_ready = function(token_cb, error_code, fut_ref)
-        fut_local = fut_ref::Future{typeof(token)}
+    on_ready = function(token_cb, error_code)
         if error_code != Reseau.OP_SUCCESS || token_cb === nothing
-            notify(fut_local, aws_error(error_code != Reseau.OP_SUCCESS ? error_code : Reseau.ERROR_INVALID_STATE))
+            notify(fut, aws_error(error_code != Reseau.OP_SUCCESS ? error_code : Reseau.ERROR_INVALID_STATE))
         else
-            notify(fut_local, token_cb)
+            notify(fut, token_cb)
         end
         return nothing
     end
-    Reseau.Sockets.retry_token_schedule_retry(token, error_type, on_ready, fut)
+    Reseau.retry_token_schedule_retry(token, error_type, on_ready)
     return wait(fut)
 end
 
@@ -185,8 +182,8 @@ function with_retry_token(
             context !== nothing && _record_layer!(context, :retrylayer, attempt_start)
             _set_nretries!(ret, nretries)
             if retry_token !== nothing
-                Reseau.Sockets.retry_token_record_success(retry_token)
-                Reseau.Sockets.retry_token_release!(retry_token)
+                Reseau.retry_token_record_success(retry_token)
+                Reseau.retry_token_release!(retry_token)
                 retry_token = nothing
             end
             return ret
@@ -212,7 +209,7 @@ function with_retry_token(
                 err = err.error
                 _set_nretries!(err, nretries)
                 if retry_token !== nothing
-                    Reseau.Sockets.retry_token_release!(retry_token)
+                    Reseau.retry_token_release!(retry_token)
                     retry_token = nothing
                 end
                 throw(err)
@@ -221,7 +218,7 @@ function with_retry_token(
             if nretries >= max_retries
                 _set_nretries!(err, nretries)
                 if retry_token !== nothing
-                    Reseau.Sockets.retry_token_release!(retry_token)
+                    Reseau.retry_token_release!(retry_token)
                     retry_token = nothing
                 end
                 throw(err)
@@ -244,7 +241,7 @@ function with_retry_token(
             if !retry
                 _set_nretries!(err, nretries)
                 if retry_token !== nothing
-                    Reseau.Sockets.retry_token_release!(retry_token)
+                    Reseau.retry_token_release!(retry_token)
                     retry_token = nothing
                 end
                 throw(err)
@@ -258,7 +255,7 @@ function with_retry_token(
                     retry_token = _schedule_retry!(retry_token, _retry_error_type(err))
                 catch
                     if retry_token !== nothing
-                        Reseau.Sockets.retry_token_release!(retry_token)
+                        Reseau.retry_token_release!(retry_token)
                         retry_token = nothing
                     end
                     _set_nretries!(err, nretries)

@@ -6,7 +6,7 @@ const HTTP2_MAX_WINDOW_SIZE = 0x7fffffff
 const AWS_HTTP2_SETTINGS_MAX_CONCURRENT_STREAMS = AwsHTTP.Http2SettingsId.MAX_CONCURRENT_STREAMS
 const AWS_HTTP2_SETTINGS_INITIAL_WINDOW_SIZE = AwsHTTP.Http2SettingsId.INITIAL_WINDOW_SIZE
 const AWS_HTTP2_SETTINGS_COUNT = Int(AwsHTTP.HTTP2_SETTINGS_END_RANGE - AwsHTTP.HTTP2_SETTINGS_BEGIN_RANGE)
-const _H2_CHANNEL_SUPPORTED = AwsHTTP.H2Connection <: Reseau.Sockets.AbstractChannelHandler
+const _H2_CHANNEL_SUPPORTED = true
 
 function _normalize_alpn_list(alpn_list::Union{String, Nothing})
     alpn_list === nothing && return nothing
