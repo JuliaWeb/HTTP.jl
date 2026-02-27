@@ -25,7 +25,7 @@ function _default_host_header(settings::ClientSettings)
 end
 
 function with_request(
-    f::Function,
+    f,
     client::Client,
     method,
     path,

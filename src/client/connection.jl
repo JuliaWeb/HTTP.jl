@@ -4,7 +4,7 @@ function _client_url(client::Client)
     return string(client.settings.scheme, "://", host, ":", port)
 end
 
-function with_connection(f::Function, client::Client; context=nothing)
+function with_connection(f, client::Client; context=nothing)
     start_time = context !== nothing ? time() : 0.0
     connection, error_code = wait(AwsHTTP.http_connection_manager_acquire_connection(client.connection_manager))
     if error_code != AwsHTTP.OP_SUCCESS || connection === nothing
@@ -25,7 +25,7 @@ function _ensure_http2_connection(conn)
     return conn
 end
 
-function _with_http2_connection(f::Function, client::Client)
+function _with_http2_connection(f, client::Client)
     return with_connection(client) do conn
         f(_ensure_http2_connection(conn))
     end

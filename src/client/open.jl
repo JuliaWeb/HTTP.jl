@@ -15,7 +15,7 @@ function _open_stream(conn, req::Request, decompress, readtimeout)
     return stream
 end
 
-function open(f::Function, method::Union{String, Symbol}, url, h=Header[];
+function open(f, method::Union{String, Symbol}, url, h=Header[];
     headers=h,
     copyheaders::Bool=true,
     canonicalize_headers::Bool=false,

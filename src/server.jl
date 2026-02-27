@@ -84,9 +84,9 @@ Base.wait(s::Server) = wait(s.closed)
 ftype(::Server{F}) where {F} = F
 port(s::Server) = s.bound_port
 
-shutdown(fns::Vector{<:Function}) = foreach(shutdown, fns)
+shutdown(fns::AbstractVector) = foreach(shutdown, fns)
 shutdown(::Nothing) = nothing
-function shutdown(fn::Function)
+function shutdown(fn)
     try
         fn()
     catch e

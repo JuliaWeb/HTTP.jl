@@ -589,7 +589,7 @@ end
 
 # ─── Client-side open ───
 
-function open(f::Function, url;
+function open(f, url;
     suppress_close_error::Bool=false,
     headers=[],
     maxframesize::Integer=typemax(Int),
@@ -796,7 +796,7 @@ function websocket_upgrade_function(f; suppress_close_error::Bool=false, maxfram
     end
 end
 
-function _upgrade(f::Function, stream::Stream; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG)
+function _upgrade(f, stream::Stream; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG)
     isupgrade(stream) || handshakeerror()
     hasheader(stream.request, "Sec-WebSocket-Version", "13") || handshakeerror()
     key = getheader(stream.request.headers, "sec-websocket-key")
@@ -818,8 +818,8 @@ function _upgrade(f::Function, stream::Stream; suppress_close_error::Bool=false,
     return
 end
 
-upgrade(f::Function, stream::Stream; kw...) = _upgrade(f, stream; kw...)
-upgrade(stream::Stream, f::Function; kw...) = _upgrade(f, stream; kw...)
+upgrade(f, stream::Stream; kw...) = _upgrade(f, stream; kw...)
+upgrade(stream::Stream, f; kw...) = _upgrade(f, stream; kw...)
 
 serve!(f, host="127.0.0.1", port=8080; suppress_close_error::Bool=false, maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, kw...) =
     HTTP.serve!(websocket_upgrade_handler, host, port; on_stream_complete=websocket_upgrade_function(f; suppress_close_error=suppress_close_error, maxframesize=maxframesize, maxfragmentation=maxfragmentation), kw...)

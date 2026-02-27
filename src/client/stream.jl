@@ -56,7 +56,7 @@ Base.hash(s::Stream, h::UInt) = hash(objectid(s), h)
 
 getrequest(s::Stream) = s.request
 
-function _with_http2_connection(f::Function, stream::Stream)
+function _with_http2_connection(f, stream::Stream)
     !isdefined(stream, :aws_stream) && throw(ArgumentError("HTTP stream is not initialized"))
     conn = stream.aws_stream.owning_connection
     return f(conn)
