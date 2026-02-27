@@ -6,23 +6,10 @@ end
 
 function with_connection(f::Function, client::Client; context=nothing)
     start_time = context !== nothing ? time() : 0.0
-    ch = Channel{Any}(1)
-    AwsHTTP.http_connection_manager_acquire_connection(
-        client.connection_manager;
-        callback = (conn, error_code, _) -> begin
-            if error_code != AwsHTTP.OP_SUCCESS
-                ec = Reseau.last_error()
-                put!(ch, CapturedException(aws_error(ec), Base.backtrace()))
-            else
-                put!(ch, conn)
-            end
-        end
-    )
-    result = take!(ch)
-    connection = if result isa Exception
-        throw(ConnectError(_client_url(client), result))
-    else
-        result
+    connection, error_code = wait(AwsHTTP.http_connection_manager_acquire_connection(client.connection_manager))
+    if error_code != AwsHTTP.OP_SUCCESS || connection === nothing
+        ec = error_code != AwsHTTP.OP_SUCCESS ? error_code : Reseau.last_error()
+        throw(ConnectError(_client_url(client), aws_error(ec)))
     end
     try
         return f(connection)
@@ -46,7 +33,6 @@ end
 
 function http2_ping(conn; data=nothing)
     _ensure_http2_connection(conn)
-    fut = Future{UInt64}()
     opaque_data = if data !== nothing
         bytes = data isa AbstractString ? Vector{UInt8}(codeunits(data)) : Vector{UInt8}(data)
         length(bytes) == AwsHTTP.H2_PING_DATA_SIZE || throw(ArgumentError("PING data must be $(AwsHTTP.H2_PING_DATA_SIZE) bytes"))
@@ -54,16 +40,9 @@ function http2_ping(conn; data=nothing)
     else
         zeros(UInt8, AwsHTTP.H2_PING_DATA_SIZE)
     end
-    AwsHTTP.h2_connection_send_ping!(conn, opaque_data;
-        on_completed = (rtt_ns, error_code, _) -> begin
-            if error_code != 0
-                notify(fut, CapturedException(aws_error(error_code), Base.backtrace()))
-            else
-                notify(fut, rtt_ns)
-            end
-        end
-    )
-    return wait(fut)
+    rtt_ns, error_code = wait(AwsHTTP.h2_connection_send_ping!(conn, opaque_data))
+    error_code == AwsHTTP.OP_SUCCESS || throw(aws_error(error_code))
+    return rtt_ns
 end
 
 http2_ping(client::Client; data=nothing) = _with_http2_connection(conn -> http2_ping(conn; data=data), client)
@@ -79,17 +58,8 @@ end
 
 function http2_change_settings(conn, settings::Vector{AwsHTTP.Http2Setting})
     _ensure_http2_connection(conn)
-    fut = Future{Nothing}()
-    AwsHTTP.h2_connection_change_settings!(conn, settings;
-        on_completed = (error_code, _) -> begin
-            if error_code != 0
-                notify(fut, CapturedException(aws_error(error_code), Base.backtrace()))
-            else
-                notify(fut, nothing)
-            end
-        end
-    )
-    wait(fut)
+    error_code = wait(AwsHTTP.h2_connection_change_settings!(conn, settings))
+    error_code == AwsHTTP.OP_SUCCESS || throw(aws_error(error_code))
     return
 end
 

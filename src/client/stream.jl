@@ -742,21 +742,11 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
     request_options = _make_request_options(stream, req; chunkedbody=chunkedbody, readtimeout=readtimeout)
 
     # Acquire a connection from the H2 stream manager
-    acquire_ch = Base.Channel{Any}(1)
-    AwsHTTP.http2_stream_manager_acquire_stream(client.http2_stream_manager;
-        callback=(conn_or_nothing, error_code, ud) -> begin
-            if error_code != 0 || conn_or_nothing === nothing
-                put!(acquire_ch, error_code != 0 ? error_code : AwsHTTP.ERROR_HTTP_CONNECTION_CLOSED)
-            else
-                put!(acquire_ch, conn_or_nothing)
-            end
-        end,
-    )
-    acquired = take!(acquire_ch)
-    if acquired isa Integer
-        throw(CapturedException(aws_error(acquired), Base.backtrace()))
+    connection, error_code = wait(AwsHTTP.http2_stream_manager_acquire_stream(client.http2_stream_manager))
+    if error_code != AwsHTTP.OP_SUCCESS || connection === nothing
+        ec = error_code != AwsHTTP.OP_SUCCESS ? error_code : AwsHTTP.ERROR_HTTP_CONNECTION_CLOSED
+        throw(CapturedException(aws_error(ec), Base.backtrace()))
     end
-    connection = acquired
 
     # Create stream on the acquired connection
     aws_stream = AwsHTTP.http_connection_make_request(connection, request_options)
