@@ -21,7 +21,7 @@ mutable struct Stream{T} <: IO
     handler_started::Bool
     ignore_writes::Bool
     readtimeout::Int
-    on_complete::Union{Nothing, Function}
+    on_complete::Union{Nothing, AwsHTTP.StreamDestroyCallback}
     released::Bool
     # remaining fields are initially undefined
     aws_stream::Union{AwsHTTP.H1Stream, AwsHTTP.H2Stream}

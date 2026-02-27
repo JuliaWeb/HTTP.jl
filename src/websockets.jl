@@ -803,7 +803,14 @@ function _upgrade(f::Function, stream::Stream; suppress_close_error::Bool=false,
     (key === nothing || isempty(key)) && handshakeerror()
     stream.response_started && error("response already started")
     done = Future{Nothing}()
-    stream.on_complete = websocket_upgrade_function(f; suppress_close_error=suppress_close_error, maxframesize=maxframesize, maxfragmentation=maxfragmentation, done=done)
+    stream.on_complete = AwsHTTP._stream_destroy_callback(
+        websocket_upgrade_function(f;
+            suppress_close_error=suppress_close_error,
+            maxframesize=maxframesize,
+            maxfragmentation=maxfragmentation,
+            done=done,
+        ),
+    )
     stream.response = websocket_upgrade_handler(stream.request)
     startwrite(stream)
     closewrite(stream)
