@@ -77,7 +77,6 @@ function _server_on_channel_setup(server::HttpServer, on_incoming_connection, er
         local version
         try
             version = _http_select_version(
-                channel,
                 server.tls_connection_options !== nothing,
                 server.prior_knowledge_http2,
                 nothing,

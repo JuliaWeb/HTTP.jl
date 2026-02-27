@@ -111,7 +111,6 @@ function http_client_connect(options::HttpClientConnectionOptions; on_setup=noth
             local version
             try
                 version = _http_select_version(
-                    channel,
                     options.tls_connection_options !== nothing,
                     options.prior_knowledge_http2,
                     alpn_map,

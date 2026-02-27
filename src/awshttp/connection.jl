@@ -147,11 +147,6 @@ Return the channel associated with this connection, or nothing if not yet instal
 """
 function http_connection_get_channel end
 
-function _http_version_from_alpn_protocol(protocol::Reseau.ByteBuffer, alpn_map::Union{HttpAlpnMap, Nothing})::HttpVersion.T
-    protocol.len == 0 && return HttpVersion.HTTP_1_1
-    return _http_version_from_alpn_string(Reseau.byte_buffer_as_string(protocol), alpn_map)
-end
-
 function _http_version_from_alpn_string(protocol_str::AbstractString, alpn_map::Union{HttpAlpnMap, Nothing})::HttpVersion.T
     if alpn_map !== nothing
         version = http_alpn_map_get(alpn_map, protocol_str)
@@ -181,21 +176,15 @@ function _http_version_from_alpn_string(protocol_str::AbstractString, alpn_map::
 end
 
 function _http_select_version(
-        channel::Sockets.Channel,
         is_using_tls::Bool,
         prior_knowledge_http2::Bool,
         alpn_map::Union{HttpAlpnMap, Nothing},
-        negotiated_protocol::Union{String, Nothing} = nothing,
+        negotiated_protocol::Union{AbstractString, Nothing}=nothing,
     )
     version = HttpVersion.HTTP_1_1
     if is_using_tls
         if negotiated_protocol !== nothing && !isempty(negotiated_protocol)
             version = _http_version_from_alpn_string(negotiated_protocol, alpn_map)
-        elseif channel.socket !== nothing
-            protocol = Sockets.socket_get_protocol(channel.socket)
-            if protocol.len > 0
-                version = _http_version_from_alpn_protocol(protocol, alpn_map)
-            end
         end
     elseif prior_knowledge_http2
         Reseau.logf(Reseau.LogLevel.TRACE, LS_HTTP_CONNECTION, "Using prior knowledge to start HTTP/2 connection")
