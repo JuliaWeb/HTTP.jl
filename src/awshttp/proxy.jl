@@ -51,28 +51,12 @@ http_proxy_strategy_create_negotiator(::HttpProxyStrategy)::Union{HttpProxyNegot
 
 # ─── Proxy options ───
 
-struct HttpProxyOptions
-    connection_type::HttpProxyConnectionType.T
-    host::String
-    port::UInt32
-    proxy_strategy::Union{HttpProxyStrategy, Nothing}
-    no_proxy_hosts::String
-end
-
-function HttpProxyOptions(;
-    connection_type::HttpProxyConnectionType.T=HttpProxyConnectionType.HTTP_LEGACY,
-    host::String="",
-    port::UInt32=UInt32(0),
-    proxy_strategy::Union{HttpProxyStrategy, Nothing}=nothing,
-    no_proxy_hosts::String="",
-)
-    return HttpProxyOptions(
-        connection_type,
-        host,
-        port,
-        proxy_strategy,
-        no_proxy_hosts,
-    )
+Base.@kwdef struct HttpProxyOptions
+    connection_type::HttpProxyConnectionType.T = HttpProxyConnectionType.HTTP_LEGACY
+    host::String = ""
+    port::UInt32 = UInt32(0)
+    proxy_strategy::Union{HttpProxyStrategy, Nothing} = nothing
+    no_proxy_hosts::String = ""
 end
 
 # ─── Proxy config (persistent) ───
@@ -117,16 +101,9 @@ end
 
 # ─── Environment variable proxy settings ───
 
-struct ProxyEnvVarSettings
-    env_var_type::HttpProxyEnvVarType.T
-    connection_type::HttpProxyConnectionType.T
-end
-
-function ProxyEnvVarSettings(;
-    env_var_type::HttpProxyEnvVarType.T=HttpProxyEnvVarType.DISABLE,
-    connection_type::HttpProxyConnectionType.T=HttpProxyConnectionType.HTTP_LEGACY,
-)
-    return ProxyEnvVarSettings(env_var_type, connection_type)
+Base.@kwdef struct ProxyEnvVarSettings
+    env_var_type::HttpProxyEnvVarType.T = HttpProxyEnvVarType.DISABLE
+    connection_type::HttpProxyConnectionType.T = HttpProxyConnectionType.HTTP_LEGACY
 end
 
 # ─── Built-in strategies ───
