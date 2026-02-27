@@ -141,6 +141,18 @@ ClientSettings(
     if haskey(kw_nt, :monitoring_statistics_observer)
         kw_nt = Base.structdiff(kw_nt, (; monitoring_statistics_observer=nothing))
     end
+    http2 = Base.get(() -> nothing, kw_nt, :http2)
+    if haskey(kw_nt, :http2)
+        kw_nt = Base.structdiff(kw_nt, (; http2=nothing))
+    end
+    if http2 !== nothing
+        http2 isa Bool || throw(ArgumentError("http2 must be a Bool"))
+        if !http2
+            haskey(kw_nt, :ssl_alpn_list) || (kw_nt = (; kw_nt..., ssl_alpn_list="http/1.1"))
+            haskey(kw_nt, :http2_prior_knowledge) || (kw_nt = (; kw_nt..., http2_prior_knowledge=false))
+            haskey(kw_nt, :http2_stream_manager) || (kw_nt = (; kw_nt..., http2_stream_manager=false))
+        end
+    end
     ClientSettings(;
         scheme=String(scheme),
         host=String(host),

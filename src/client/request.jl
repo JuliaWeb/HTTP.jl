@@ -24,6 +24,22 @@ function _default_host_header(settings::ClientSettings)
     return string(settings.host, ":", settings.port)
 end
 
+function _normalize_http2_header_names!(headers::Headers)
+    items = Pair{String, String}[]
+    sizehint!(items, length(headers))
+    for h in headers
+        name = _header_name(h)
+        value = _header_value(h)
+        if !isempty(name) && name[1] == ':'
+            push!(items, name => value)
+        else
+            push!(items, lowercase(name) => value)
+        end
+    end
+    setheaders!(headers, items)
+    return headers
+end
+
 function with_request(
     f,
     client::Client,
@@ -69,7 +85,6 @@ function with_request(
         if authority === nothing
             authority = _default_host_header(client.settings)
         end
-        AwsHTTP.http_headers_has(h.hdrs, "host") || setheader(h, "host", authority)
         setscheme(h, client.settings.scheme)
         setauthority(h, authority)
     else
@@ -95,7 +110,10 @@ function with_request(
         setheader(h, "content-type", sniff(body))
     end
     if cookies === true || (cookies isa AbstractDict && !isempty(cookies))
-        cookiestosend = Cookies.getcookies!(cookiejar, client.settings.scheme, client.settings.host, req.path)
+        reqpath = req.path
+        reqpath = reqpath === nothing ? "/" : String(reqpath)
+        isempty(reqpath) && (reqpath = "/")
+        cookiestosend = Cookies.getcookies!(cookiejar, client.settings.scheme, client.settings.host, reqpath)
         if !(cookies isa Bool)
             for (name, value) in cookies
                 push!(cookiestosend, Cookie(name, value))
@@ -116,7 +134,9 @@ function with_request(
     elseif body !== nothing
         setinputstream!(req, body)
     end
-    if canonicalize_headers && !http2
+    if http2
+        _normalize_http2_header_names!(h)
+    elseif canonicalize_headers
         canonicalizeheaders!(h)
     end
     if mutable_headers !== nothing
@@ -133,7 +153,12 @@ function with_request(
             canonicalizeheaders!(resp.headers)
         end
         verbose > 0 && print_response(stdout, resp)
-        cookies === false || Cookies.setcookies!(cookiejar, client.settings.scheme, client.settings.host, req.path, resp.headers)
+        if cookies !== false
+            reqpath = req.path
+            reqpath = reqpath === nothing ? "/" : String(reqpath)
+            isempty(reqpath) && (reqpath = "/")
+            Cookies.setcookies!(cookiejar, client.settings.scheme, client.settings.host, reqpath, resp.headers)
+        end
         return ret
     finally
         req.context[:total_request_duration_ms] = (time() - start_time) * 1000

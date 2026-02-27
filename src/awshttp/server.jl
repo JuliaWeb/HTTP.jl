@@ -3,14 +3,16 @@
 
 # ─── HTTP Server ───
 
+const _ServerConnection = Union{H1Connection, H2Connection}
+
 mutable struct HttpServer
     prior_knowledge_http2::Bool
     initial_window_size::Csize_t
     manual_window_management::Bool
     tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}
     read_buffer_capacity::Csize_t
-    connections::Vector{HttpConnection}
-    channel_map::IdDict{Sockets.Channel, HttpConnection}
+    connections::Vector{_ServerConnection}
+    channel_map::IdDict{Sockets.Channel, _ServerConnection}
     lock::ReentrantLock
     is_open::Bool
     is_shutting_down::Bool
@@ -22,7 +24,7 @@ mutable struct HttpServer
     destroyed_event::Threads.Event
 end
 
-function _server_register_connection!(server::HttpServer, channel, connection)
+function _server_register_connection!(server::HttpServer, channel, connection::_ServerConnection)
     Base.@lock server.lock begin
         push!(server.connections, connection)
         server.channel_map[channel] = connection
@@ -30,7 +32,7 @@ function _server_register_connection!(server::HttpServer, channel, connection)
     return nothing
 end
 
-function _server_unregister_connection!(server::HttpServer, channel)
+function _server_unregister_connection!(server::HttpServer, channel)::Union{_ServerConnection, Nothing}
     conn = nothing
     Base.@lock server.lock begin
         if haskey(server.channel_map, channel)
@@ -104,13 +106,10 @@ function _server_on_channel_setup(server::HttpServer, on_incoming_connection, er
         conn = handler
     end
 
-    # Populate remote endpoint if available
-    if hasproperty(conn, :remote_endpoint)
-        sock = channel.socket
-        if sock !== nothing
-            addr = Sockets.get_address(sock.remote_endpoint)
-            conn.remote_endpoint = "$(addr):$(sock.remote_endpoint.port)"
-        end
+    sock = channel.socket
+    if sock !== nothing
+        addr = Sockets.get_address(sock.remote_endpoint)
+        conn.remote_endpoint = "$(addr):$(sock.remote_endpoint.port)"
     end
 
     if on_incoming_connection !== nothing
@@ -121,8 +120,7 @@ function _server_on_channel_setup(server::HttpServer, on_incoming_connection, er
         end
     end
 
-    configured = hasproperty(conn, :server_configured) && conn.server_configured
-    if !configured
+    if !conn.server_configured
         Sockets.channel_shutdown!(channel, ERROR_HTTP_REACTION_REQUIRED)
         return nothing
     end
@@ -132,7 +130,7 @@ end
 
 function _server_on_channel_shutdown(server::HttpServer, error_code::Int, channel)
     conn = _server_unregister_connection!(server, channel)
-    if conn !== nothing && hasproperty(conn, :on_shutdown) && conn.on_shutdown !== nothing
+    if conn !== nothing && conn.on_shutdown !== nothing
         try
             conn.on_shutdown(conn, error_code)
         catch e
@@ -198,8 +196,8 @@ function http_server_new(;
         manual_window_management,
         tls_connection_options,
         read_buffer_capacity,
-        HttpConnection[],
-        IdDict{Sockets.Channel, HttpConnection}(),
+        _ServerConnection[],
+        IdDict{Sockets.Channel, _ServerConnection}(),
         ReentrantLock(),
         true,
         false,

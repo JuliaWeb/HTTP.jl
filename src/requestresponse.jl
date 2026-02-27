@@ -486,8 +486,8 @@ mutable struct Request <: Message
 
     function Request(method, path, headers=nothing, body=nothing, http2::Bool=false; context=nothing)
         msg = _new_request_message(http2)
-        _set_request_line!(msg, method, path)
         _set_message_headers!(msg, headers)
+        _set_request_line!(msg, method, path)
         req = new(msg)
         _init_message_io_fields!(req)
         req.context = context === nothing ? Dict{Symbol, Any}() : context

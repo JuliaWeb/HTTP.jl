@@ -20,4 +20,7 @@ include("client.jl")
 include("handlers.jl")
 include("server.jl")
 include("websockets_basic.jl")
+if get(ENV, "HTTP_RUN_AWSHTTP_VENDORED_TESTS", "0") == "1"
+    include("awshttp_vendor.jl")
+end
 include("trim_compile_tests.jl")

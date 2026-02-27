@@ -18,12 +18,13 @@ end
 end
 
 const HCMCT_COUNT = 3
-const _ConnectionAcquireResult = Tuple{Union{HttpConnection, Nothing}, Int}
+const _ManagedConnection = Union{H1Connection, H2Connection}
+const _ConnectionAcquireResult = Tuple{Union{_ManagedConnection, Nothing}, Int}
 
 # ─── Idle connection wrapper ───
 
 mutable struct IdleConnection
-    connection::HttpConnection
+    connection::_ManagedConnection
     cull_timestamp_ns::UInt64  # monotonic_time_ns() when this becomes eligible for culling
 end
 
@@ -75,7 +76,11 @@ end
     return EventLoops.Future{_ConnectionAcquireResult}()
 end
 
-@inline function _complete_acquire!(future::EventLoops.Future{_ConnectionAcquireResult}, connection, error_code::Int)::Nothing
+@inline function _complete_acquire!(
+    future::EventLoops.Future{_ConnectionAcquireResult},
+    connection::Union{_ManagedConnection, Nothing},
+    error_code::Int,
+)::Nothing
     notify(future, (connection, error_code))
     return nothing
 end
@@ -169,7 +174,7 @@ function _connection_manager_connect_options(mgr::HttpConnectionManager)::HttpCl
     )
 end
 
-function _connection_manager_connect(mgr::HttpConnectionManager)::Tuple{Union{HttpConnection, Nothing}, Int}
+function _connection_manager_connect(mgr::HttpConnectionManager)::Tuple{Union{_ManagedConnection, Nothing}, Int}
     return http_client_connect_sync(_connection_manager_connect_options(mgr))
 end
 
@@ -194,9 +199,7 @@ function _connection_manager_cull_idle!(mgr::HttpConnectionManager)::Nothing
         if now_ns >= oldest.cull_timestamp_ns
             popfirst!(mgr.idle_connections)
             mgr.internal_ref[Int(HttpConnectionManagerCountType.OPEN_CONNECTION) + 1] -= 1
-            if applicable(http_connection_close, oldest.connection)
-                http_connection_close(oldest.connection)
-            end
+            http_connection_close(oldest.connection)
         else
             break
         end
@@ -284,11 +287,11 @@ function http_connection_manager_acquire_connection(mgr::HttpConnectionManager):
 end
 
 """
-    http_connection_manager_acquire_connection!(manager) -> Tuple{Union{HttpConnection, Nothing}, Int}
+    http_connection_manager_acquire_connection!(manager) -> Tuple{Union{H1Connection, H2Connection, Nothing}, Int}
 
 Blocking helper for `http_connection_manager_acquire_connection`.
 """
-function http_connection_manager_acquire_connection!(mgr::HttpConnectionManager)::Tuple{Union{HttpConnection, Nothing}, Int}
+function http_connection_manager_acquire_connection!(mgr::HttpConnectionManager)::Tuple{Union{_ManagedConnection, Nothing}, Int}
     return wait(http_connection_manager_acquire_connection(mgr))
 end
 
@@ -298,7 +301,7 @@ end
 Return a connection to the pool for reuse. If there are pending acquisitions,
 the connection is handed to the next waiter instead.
 """
-function http_connection_manager_release_connection(mgr::HttpConnectionManager, connection::HttpConnection)::Int
+function http_connection_manager_release_connection(mgr::HttpConnectionManager, connection::_ManagedConnection)::Int
     _connection_manager_cull_pending!(mgr)
     vended_idx = Int(HttpConnectionManagerCountType.VENDED_CONNECTION) + 1
     if mgr.internal_ref[vended_idx] <= 0

@@ -1001,9 +1001,11 @@ function http_connection_make_request(
     on_complete=nothing,
     on_destroy=nothing,
     http2_use_manual_data_writes::Bool=false,
+    response_first_byte_timeout_ms::UInt64=UInt64(0),
     http2_priority=nothing,
     http2_headers_pad_length::UInt32=UInt32(0),
 )::Union{H2Stream, Nothing}
+    _ = response_first_byte_timeout_ms
     if !conn.is_client
         raise_error(ERROR_INVALID_STATE)
         return nothing

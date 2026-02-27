@@ -3,6 +3,8 @@
 
 # ─── http_connection_get_channel dispatches ───
 
+const _ClientConnection = Union{H1Connection, H2Connection}
+
 http_connection_get_channel(conn::H1Connection) = conn.slot !== nothing ? conn.slot.channel : nothing
 http_connection_get_channel(conn::H2Connection) = conn.slot !== nothing ? conn.slot.channel : nothing
 
@@ -69,9 +71,6 @@ without ALPN negotiation.
 """
 function http_client_connect(options::HttpClientConnectionOptions; on_setup=nothing, on_shutdown=nothing)
     event_loop_group = options.event_loop_group === nothing ? EventLoops.get_event_loop_group() : options.event_loop_group
-    if !(event_loop_group isa EventLoops.EventLoopGroup)
-        event_loop_group = EventLoops.get_event_loop_group()
-    end
 
     # Build the ALPN map
     alpn_map = if options.alpn_string_map !== nothing
@@ -80,7 +79,7 @@ function http_client_connect(options::HttpClientConnectionOptions; on_setup=noth
         http_alpn_map_init()
     end
 
-    connection_ref = Ref{Union{HttpConnection, Nothing}}(nothing)
+    connection_ref = Ref{Union{_ClientConnection, Nothing}}(nothing)
 
     setup_cb = on_setup
     shutdown_cb = on_shutdown
@@ -147,7 +146,7 @@ function http_client_connect(options::HttpClientConnectionOptions; on_setup=noth
         end
 
         conn = connection_ref[]
-        if conn !== nothing && hasproperty(conn, :remote_endpoint)
+        if conn !== nothing
             conn.remote_endpoint = "$(options.host_name):$(options.port)"
         end
         if channel !== nothing
