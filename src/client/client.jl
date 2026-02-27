@@ -316,23 +316,21 @@ function Client(cs::ClientSettings)
         response_first_byte_timeout_ms=UInt64(cs.response_first_byte_timeout_ms),
     )
     # connection manager
-    client.connection_manager = AwsHTTP.http_connection_manager_new(
-        AwsHTTP.HttpConnectionManagerOptions(;
-            host=cs.host,
-            port=cs.port,
-            max_connections=cs.max_connections,
-            initial_window_size=Csize_t(cs.http2_initial_window_size),
-            manual_window_management=cs.http2_connection_manual_window_management,
-            http2_prior_knowledge=cs.http2_prior_knowledge,
-            enable_read_back_pressure=cs.enable_read_back_pressure,
-            max_connection_idle_in_milliseconds=UInt64(cs.max_connection_idle_in_milliseconds),
-            connection_acquisition_timeout_ms=UInt64(cs.connection_acquisition_timeout_ms),
-            max_pending_connection_acquisitions=cs.max_pending_connection_acquisitions,
-            response_first_byte_timeout_ms=UInt64(cs.response_first_byte_timeout_ms),
-            max_closed_streams=cs.http2_max_closed_streams,
-            http2_conn_manual_window_management=cs.http2_connection_manual_window_management,
-            connection_options=manager_connection_options,
-        )
+    client.connection_manager = AwsHTTP.http_connection_manager_new(;
+        host=cs.host,
+        port=cs.port,
+        max_connections=cs.max_connections,
+        initial_window_size=Csize_t(cs.http2_initial_window_size),
+        manual_window_management=cs.http2_connection_manual_window_management,
+        http2_prior_knowledge=cs.http2_prior_knowledge,
+        enable_read_back_pressure=cs.enable_read_back_pressure,
+        max_connection_idle_in_milliseconds=UInt64(cs.max_connection_idle_in_milliseconds),
+        connection_acquisition_timeout_ms=UInt64(cs.connection_acquisition_timeout_ms),
+        max_pending_connection_acquisitions=cs.max_pending_connection_acquisitions,
+        response_first_byte_timeout_ms=UInt64(cs.response_first_byte_timeout_ms),
+        max_closed_streams=cs.http2_max_closed_streams,
+        http2_conn_manual_window_management=cs.http2_connection_manual_window_management,
+        connection_options=manager_connection_options,
     )
     client.conn_manager_opts = ConnManagerOptsCompat(
         cs.http2_connection_manual_window_management,
@@ -346,23 +344,21 @@ function Client(cs::ClientSettings)
     client.http2_stream_manager = nothing
     client.http2_stream_manager_opts = nothing
     if cs.http2_stream_manager
-        client.http2_stream_manager = AwsHTTP.http2_stream_manager_new(
-            AwsHTTP.Http2StreamManagerOptions(;
-                host=cs.host,
-                port=cs.port,
-                max_connections=cs.max_connections,
-                ideal_concurrent_streams_per_connection=cs.http2_ideal_concurrent_streams_per_connection,
-                max_concurrent_streams_per_connection=cs.http2_max_concurrent_streams_per_connection,
-                close_connection_on_server_error=cs.http2_close_connection_on_server_error,
-                connection_ping_period_ms=UInt64(cs.http2_connection_ping_period_ms),
-                connection_ping_timeout_ms=UInt64(cs.http2_connection_ping_timeout_ms),
-                initial_window_size=Csize_t(cs.http2_initial_window_size),
-                manual_window_management=cs.http2_connection_manual_window_management,
-                http2_prior_knowledge=cs.http2_prior_knowledge,
-                enable_read_back_pressure=cs.enable_read_back_pressure,
-                max_closed_streams=cs.http2_max_closed_streams,
-                connection_options=manager_connection_options,
-            )
+        client.http2_stream_manager = AwsHTTP.http2_stream_manager_new(;
+            host=cs.host,
+            port=cs.port,
+            max_connections=cs.max_connections,
+            ideal_concurrent_streams_per_connection=cs.http2_ideal_concurrent_streams_per_connection,
+            max_concurrent_streams_per_connection=cs.http2_max_concurrent_streams_per_connection,
+            close_connection_on_server_error=cs.http2_close_connection_on_server_error,
+            connection_ping_period_ms=UInt64(cs.http2_connection_ping_period_ms),
+            connection_ping_timeout_ms=UInt64(cs.http2_connection_ping_timeout_ms),
+            initial_window_size=Csize_t(cs.http2_initial_window_size),
+            manual_window_management=cs.http2_connection_manual_window_management,
+            http2_prior_knowledge=cs.http2_prior_knowledge,
+            enable_read_back_pressure=cs.enable_read_back_pressure,
+            max_closed_streams=cs.http2_max_closed_streams,
+            connection_options=manager_connection_options,
         )
         client.http2_stream_manager_opts = Http2StreamManagerOptsCompat(
             cs.http2_close_connection_on_server_error,

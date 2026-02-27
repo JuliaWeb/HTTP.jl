@@ -42,9 +42,11 @@ struct HttpManagerMetrics
     leased_concurrency::Int
 end
 
-# ─── Connection manager options ───
+# ─── Connection manager ───
 
-struct HttpConnectionManagerOptions
+mutable struct HttpConnectionManager
+    is_shut_down::Bool
+    state::HttpConnectionManagerState.T
     host::String
     port::UInt32
     max_connections::Int
@@ -59,9 +61,31 @@ struct HttpConnectionManagerOptions
     max_closed_streams::Int
     http2_conn_manual_window_management::Bool
     connection_options::Union{HttpClientConnectionOptions, Nothing}
+
+    # Connection pools
+    idle_connections::Vector{IdleConnection}   # LIFO: push!/pop! from end
+    pending_acquisitions::Vector{PendingAcquisition}  # FIFO: push!/popfirst!
+
+    # Internal reference tracking
+    internal_ref::Vector{Int}  # indexed by HCMCT_COUNT
+
 end
 
-function HttpConnectionManagerOptions(;
+@inline function _connection_acquire_future()::EventLoops.Future{_ConnectionAcquireResult}
+    return EventLoops.Future{_ConnectionAcquireResult}()
+end
+
+@inline function _complete_acquire!(future::EventLoops.Future{_ConnectionAcquireResult}, connection, error_code::Int)::Nothing
+    notify(future, (connection, error_code))
+    return nothing
+end
+
+"""
+    http_connection_manager_new(; kwargs...) -> HttpConnectionManager
+
+Create a new connection manager with the given configuration.
+"""
+function http_connection_manager_new(;
     host::String="",
     port::UInt32=UInt32(0),
     max_connections::Int=1,
@@ -76,8 +100,14 @@ function HttpConnectionManagerOptions(;
     max_closed_streams::Int=0,
     http2_conn_manual_window_management::Bool=false,
     connection_options::Union{HttpClientConnectionOptions, Nothing}=nothing,
-)
-    return HttpConnectionManagerOptions(
+)::HttpConnectionManager
+    if max_connections < 1
+        raise_error(ERROR_INVALID_ARGUMENT)
+        error("max_connections must be >= 1")
+    end
+    return HttpConnectionManager(
+        false,
+        HttpConnectionManagerState.READY,
         host,
         port,
         max_connections,
@@ -92,56 +122,10 @@ function HttpConnectionManagerOptions(;
         max_closed_streams,
         http2_conn_manual_window_management,
         connection_options,
+        IdleConnection[],
+        PendingAcquisition[],
+        zeros(Int, HCMCT_COUNT),
     )
-end
-
-# ─── Connection manager ───
-
-mutable struct HttpConnectionManager
-    is_shut_down::Bool
-    state::HttpConnectionManagerState.T
-    options::HttpConnectionManagerOptions
-
-    # Connection pools
-    idle_connections::Vector{IdleConnection}   # LIFO: push!/pop! from end
-    pending_acquisitions::Vector{PendingAcquisition}  # FIFO: push!/popfirst!
-
-    # Internal reference tracking
-    internal_ref::Vector{Int}  # indexed by HCMCT_COUNT
-
-    # Total open connections (idle + vended + connecting)
-    function HttpConnectionManager(options::HttpConnectionManagerOptions)
-        return new(
-            false,
-            HttpConnectionManagerState.READY,
-            options,
-            IdleConnection[],
-            PendingAcquisition[],
-            zeros(Int, HCMCT_COUNT),
-        )
-    end
-end
-
-@inline function _connection_acquire_future()::EventLoops.Future{_ConnectionAcquireResult}
-    return EventLoops.Future{_ConnectionAcquireResult}()
-end
-
-@inline function _complete_acquire!(future::EventLoops.Future{_ConnectionAcquireResult}, connection, error_code::Int)::Nothing
-    notify(future, (connection, error_code))
-    return nothing
-end
-
-"""
-    http_connection_manager_new(options::HttpConnectionManagerOptions) -> HttpConnectionManager
-
-Create a new connection manager with the given options.
-"""
-function http_connection_manager_new(options::HttpConnectionManagerOptions)::HttpConnectionManager
-    if options.max_connections < 1
-        raise_error(ERROR_INVALID_ARGUMENT)
-        error("max_connections must be >= 1")
-    end
-    return HttpConnectionManager(options)
 end
 
 """
@@ -173,15 +157,15 @@ function _connection_manager_shutdown!(mgr::HttpConnectionManager)::Nothing
 end
 
 function _connection_manager_connect_options(mgr::HttpConnectionManager)::HttpClientConnectionOptions
-    conn_opts = mgr.options.connection_options
+    conn_opts = mgr.connection_options
     conn_opts !== nothing && return conn_opts
     return HttpClientConnectionOptions(
-        host_name=mgr.options.host,
-        port=mgr.options.port,
-        prior_knowledge_http2=mgr.options.http2_prior_knowledge,
-        manual_window_management=mgr.options.http2_conn_manual_window_management,
-        initial_window_size=mgr.options.initial_window_size,
-        response_first_byte_timeout_ms=mgr.options.response_first_byte_timeout_ms,
+        host_name=mgr.host,
+        port=mgr.port,
+        prior_knowledge_http2=mgr.http2_prior_knowledge,
+        manual_window_management=mgr.http2_conn_manual_window_management,
+        initial_window_size=mgr.initial_window_size,
+        response_first_byte_timeout_ms=mgr.response_first_byte_timeout_ms,
     )
 end
 
@@ -202,7 +186,7 @@ end
 # ─── Idle connection culling ───
 
 function _connection_manager_cull_idle!(mgr::HttpConnectionManager)::Nothing
-    idle_timeout_ms = mgr.options.max_connection_idle_in_milliseconds
+    idle_timeout_ms = mgr.max_connection_idle_in_milliseconds
     idle_timeout_ms == 0 && return nothing
     now_ns = Reseau.monotonic_time_ns()
     while !isempty(mgr.idle_connections)
@@ -223,7 +207,7 @@ end
 # ─── Pending acquisition culling ───
 
 function _connection_manager_cull_pending!(mgr::HttpConnectionManager)::Nothing
-    timeout_ms = mgr.options.connection_acquisition_timeout_ms
+    timeout_ms = mgr.connection_acquisition_timeout_ms
     timeout_ms == 0 && return nothing
     now_ns = Reseau.monotonic_time_ns()
     timeout_ns = timeout_ms * 1_000_000
@@ -257,7 +241,7 @@ function http_connection_manager_acquire_connection(mgr::HttpConnectionManager):
         return future
     end
     _connection_manager_cull_pending!(mgr)
-    max_pending = mgr.options.max_pending_connection_acquisitions
+    max_pending = mgr.max_pending_connection_acquisitions
     if max_pending > 0 && length(mgr.pending_acquisitions) >= max_pending
         raise_error(ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED)
         _complete_acquire!(future, nothing, ERROR_HTTP_CONNECTION_MANAGER_MAX_PENDING_ACQUISITIONS_EXCEEDED)
@@ -278,7 +262,7 @@ function http_connection_manager_acquire_connection(mgr::HttpConnectionManager):
         return future
     end
     total = _connection_manager_total_connections(mgr)
-    if total < mgr.options.max_connections
+    if total < mgr.max_connections
         mgr.internal_ref[Int(HttpConnectionManagerCountType.PENDING_CONNECTIONS) + 1] += 1
         conn, err = _connection_manager_connect(mgr)
         if conn === nothing && err == OP_SUCCESS
@@ -334,8 +318,8 @@ function http_connection_manager_release_connection(mgr::HttpConnectionManager, 
         _complete_acquire!(pending.future, connection, OP_SUCCESS)
         return OP_SUCCESS
     end
-    cull_ns = if mgr.options.max_connection_idle_in_milliseconds > 0
-        Reseau.monotonic_time_ns() + mgr.options.max_connection_idle_in_milliseconds * 1_000_000
+    cull_ns = if mgr.max_connection_idle_in_milliseconds > 0
+        Reseau.monotonic_time_ns() + mgr.max_connection_idle_in_milliseconds * 1_000_000
     else
         typemax(UInt64)
     end

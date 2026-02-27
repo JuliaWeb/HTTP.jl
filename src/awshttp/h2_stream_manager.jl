@@ -44,9 +44,11 @@ mutable struct H2SmPendingStreamAcquisition
     future::EventLoops.Future{_StreamAcquireResult}
 end
 
-# ─── Stream manager options ───
+# ─── Stream manager ───
 
-struct Http2StreamManagerOptions
+mutable struct Http2StreamManager
+    is_shut_down::Bool
+    state::H2SmState.T
     host::String
     port::UInt32
     max_connections::Int
@@ -61,48 +63,6 @@ struct Http2StreamManagerOptions
     enable_read_back_pressure::Bool
     max_closed_streams::Int
     connection_options::Union{HttpClientConnectionOptions, Nothing}
-end
-
-function Http2StreamManagerOptions(;
-    host::String="",
-    port::UInt32=UInt32(0),
-    max_connections::Int=1,
-    ideal_concurrent_streams_per_connection::Int=100,
-    max_concurrent_streams_per_connection::Int=0,
-    close_connection_on_server_error::Bool=false,
-    connection_ping_period_ms::UInt64=UInt64(0),
-    connection_ping_timeout_ms::UInt64=UInt64(0),
-    initial_window_size::Csize_t=Csize_t(typemax(Csize_t)),
-    manual_window_management::Bool=false,
-    http2_prior_knowledge::Bool=false,
-    enable_read_back_pressure::Bool=false,
-    max_closed_streams::Int=0,
-    connection_options::Union{HttpClientConnectionOptions, Nothing}=nothing,
-)
-    return Http2StreamManagerOptions(
-        host,
-        port,
-        max_connections,
-        ideal_concurrent_streams_per_connection,
-        max_concurrent_streams_per_connection,
-        close_connection_on_server_error,
-        connection_ping_period_ms,
-        connection_ping_timeout_ms,
-        initial_window_size,
-        manual_window_management,
-        http2_prior_knowledge,
-        enable_read_back_pressure,
-        max_closed_streams,
-        connection_options,
-    )
-end
-
-# ─── Stream manager ───
-
-mutable struct Http2StreamManager
-    is_shut_down::Bool
-    state::H2SmState.T
-    options::Http2StreamManagerOptions
 
     # Connection pools
     ideal_available::Vector{H2SmConnection}     # connections below ideal limit
@@ -117,20 +77,6 @@ mutable struct Http2StreamManager
     open_streams::Int
     pending_make_requests::Int
 
-    function Http2StreamManager(options::Http2StreamManagerOptions)
-        return new(
-            false,
-            H2SmState.READY,
-            options,
-            H2SmConnection[],
-            H2SmConnection[],
-            H2SmConnection[],
-            H2SmPendingStreamAcquisition[],
-            0,
-            0,
-            0,
-        )
-    end
 end
 
 @inline function _stream_acquire_future()::EventLoops.Future{_StreamAcquireResult}
@@ -143,16 +89,55 @@ end
 end
 
 """
-    http2_stream_manager_new(options::Http2StreamManagerOptions) -> Http2StreamManager
+    http2_stream_manager_new(; kwargs...) -> Http2StreamManager
 
 Create a new HTTP/2 stream manager.
 """
-function http2_stream_manager_new(options::Http2StreamManagerOptions)::Http2StreamManager
-    if options.max_connections < 1
+function http2_stream_manager_new(;
+    host::String="",
+    port::UInt32=UInt32(0),
+    max_connections::Int=1,
+    ideal_concurrent_streams_per_connection::Int=100,
+    max_concurrent_streams_per_connection::Int=0,
+    close_connection_on_server_error::Bool=false,
+    connection_ping_period_ms::UInt64=UInt64(0),
+    connection_ping_timeout_ms::UInt64=UInt64(0),
+    initial_window_size::Csize_t=Csize_t(typemax(Csize_t)),
+    manual_window_management::Bool=false,
+    http2_prior_knowledge::Bool=false,
+    enable_read_back_pressure::Bool=false,
+    max_closed_streams::Int=0,
+    connection_options::Union{HttpClientConnectionOptions, Nothing}=nothing,
+)::Http2StreamManager
+    if max_connections < 1
         raise_error(ERROR_INVALID_ARGUMENT)
         error("max_connections must be >= 1")
     end
-    return Http2StreamManager(options)
+    return Http2StreamManager(
+        false,
+        H2SmState.READY,
+        host,
+        port,
+        max_connections,
+        ideal_concurrent_streams_per_connection,
+        max_concurrent_streams_per_connection,
+        close_connection_on_server_error,
+        connection_ping_period_ms,
+        connection_ping_timeout_ms,
+        initial_window_size,
+        manual_window_management,
+        http2_prior_knowledge,
+        enable_read_back_pressure,
+        max_closed_streams,
+        connection_options,
+        H2SmConnection[],
+        H2SmConnection[],
+        H2SmConnection[],
+        H2SmPendingStreamAcquisition[],
+        0,
+        0,
+        0,
+    )
 end
 
 """
@@ -194,14 +179,14 @@ function _h2_stream_manager_shutdown!(mgr::Http2StreamManager)::Nothing
 end
 
 function _h2_stream_manager_connect_options(mgr::Http2StreamManager)::HttpClientConnectionOptions
-    conn_opts = mgr.options.connection_options
+    conn_opts = mgr.connection_options
     conn_opts !== nothing && return conn_opts
     return HttpClientConnectionOptions(
-        host_name=mgr.options.host,
-        port=mgr.options.port,
-        prior_knowledge_http2=mgr.options.http2_prior_knowledge,
-        manual_window_management=mgr.options.manual_window_management,
-        initial_window_size=mgr.options.initial_window_size,
+        host_name=mgr.host,
+        port=mgr.port,
+        prior_knowledge_http2=mgr.http2_prior_knowledge,
+        manual_window_management=mgr.manual_window_management,
+        initial_window_size=mgr.initial_window_size,
     )
 end
 
@@ -219,9 +204,9 @@ end
 # ─── Connection state classification ───
 
 function _h2_sm_classify_connection!(mgr::Http2StreamManager, sm_conn::H2SmConnection)::Nothing
-    ideal_limit = mgr.options.ideal_concurrent_streams_per_connection
-    max_limit = if mgr.options.max_concurrent_streams_per_connection > 0
-        min(UInt32(mgr.options.max_concurrent_streams_per_connection), sm_conn.max_concurrent_streams)
+    ideal_limit = mgr.ideal_concurrent_streams_per_connection
+    max_limit = if mgr.max_concurrent_streams_per_connection > 0
+        min(UInt32(mgr.max_concurrent_streams_per_connection), sm_conn.max_concurrent_streams)
     else
         sm_conn.max_concurrent_streams
     end
@@ -281,7 +266,7 @@ function http2_stream_manager_acquire_stream(
         return future
     end
     total = _h2_sm_total_connections(mgr)
-    if total < mgr.options.max_connections
+    if total < mgr.max_connections
         mgr.connections_acquiring += 1
         conn, error_code = _h2_stream_manager_connect(mgr)
         mgr.connections_acquiring -= 1
@@ -373,7 +358,7 @@ Notify the stream manager that a stream completed. If close_connection_on_server
 is enabled and status is 5xx, stop new requests on that connection.
 """
 function http2_stream_manager_on_stream_complete(mgr::Http2StreamManager, connection::H2Connection, status_code::Int)::Nothing
-    if mgr.options.close_connection_on_server_error && 500 <= status_code <= 599
+    if mgr.close_connection_on_server_error && 500 <= status_code <= 599
         sm_conn = _h2_sm_find_by_connection(mgr, connection)
         if sm_conn !== nothing
             sm_conn.stopped_new_requests = true
@@ -393,16 +378,16 @@ Get current stream manager metrics.
 function http2_stream_manager_fetch_metrics(mgr::Http2StreamManager)::HttpManagerMetrics
     available = 0
     for sm_conn in mgr.ideal_available
-        max_per = if mgr.options.max_concurrent_streams_per_connection > 0
-            min(UInt32(mgr.options.max_concurrent_streams_per_connection), sm_conn.max_concurrent_streams)
+        max_per = if mgr.max_concurrent_streams_per_connection > 0
+            min(UInt32(mgr.max_concurrent_streams_per_connection), sm_conn.max_concurrent_streams)
         else
             sm_conn.max_concurrent_streams
         end
         available += Int(max_per - sm_conn.num_streams_assigned)
     end
     for sm_conn in mgr.nonideal_available
-        max_per = if mgr.options.max_concurrent_streams_per_connection > 0
-            min(UInt32(mgr.options.max_concurrent_streams_per_connection), sm_conn.max_concurrent_streams)
+        max_per = if mgr.max_concurrent_streams_per_connection > 0
+            min(UInt32(mgr.max_concurrent_streams_per_connection), sm_conn.max_concurrent_streams)
         else
             sm_conn.max_concurrent_streams
         end
