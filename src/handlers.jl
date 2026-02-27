@@ -85,11 +85,11 @@ function Variable(pattern)
     return Variable(re.captures[1], pat === nothing ? nothing : Regex(pat))
 end
 
-struct Leaf
+struct Leaf{H}
     method::String
     variables::Vector{Tuple{Int, String}}
     path::String
-    handler::Any
+    handler::H
 end
 
 Base.show(io::IO, x::Leaf) = print(io, "Leaf($(x.method))")

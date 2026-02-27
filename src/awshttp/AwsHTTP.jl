@@ -23,11 +23,11 @@ include("request_response.jl")
 # --- HTTP/1.1 encoder ---
 include("h1_encoder.jl")
 
-# --- HTTP/1.1 decoder ---
-include("h1_decoder.jl")
-
 # --- HTTP connection (base types and API) ---
 include("connection.jl")
+
+# --- HTTP/1.1 decoder ---
+include("h1_decoder.jl")
 
 # --- HTTP/1.1 stream ---
 include("h1_stream.jl")

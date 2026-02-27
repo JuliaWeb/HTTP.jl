@@ -73,7 +73,7 @@ mutable struct H1Decoder
     header_block::HttpHeaderBlock.T
     stop_processing::Bool
     # late-init: consumer-specific state (for connection-level callbacks)
-    context::Any
+    context::Union{Nothing, HttpConnection}
     is_decoding_requests::Bool
 end
 
@@ -577,7 +577,7 @@ h1_decoder_get_body_headers_ignored(decoder::H1Decoder)::Bool = decoder.body_hea
 """Return the current header block type (MAIN, INFORMATIONAL, TRAILING)."""
 h1_decoder_get_header_block(decoder::H1Decoder)::HttpHeaderBlock.T = decoder.header_block
 
-function h1_decoder_set_context!(decoder::H1Decoder, context)::Nothing
+function h1_decoder_set_context!(decoder::H1Decoder, context::Union{Nothing, HttpConnection})::Nothing
     decoder.context = context
     return nothing
 end
