@@ -56,18 +56,6 @@ end
 
 # ─── Client connection bootstrap ───
 
-# Internal state for tracking an in-progress client connection setup.
-# Mirrors aws-c-http's _HttpClientBootstrap.
-mutable struct _HttpClientBootstrap
-    options::HttpClientConnectionOptions
-    alpn_map::HttpAlpnMap
-    connection::Union{HttpConnection, Nothing}
-    negotiated_protocol::Union{String, Nothing}
-end
-
-_HttpClientBootstrap(options::HttpClientConnectionOptions, alpn_map::HttpAlpnMap, connection) =
-    _HttpClientBootstrap(options, alpn_map, connection, nothing)
-
 const DEFAULT_HTTP_CLIENT_EVENT_LOOP_GROUP = Base.ScopedValues.ScopedValue{Any}()
 
 get_client_event_loop_group() =
@@ -101,7 +89,7 @@ function http_client_connect(options::HttpClientConnectionOptions; on_setup=noth
         http_alpn_map_init()
     end
 
-    http_bootstrap = _HttpClientBootstrap(options, alpn_map, nothing, nothing)
+    connection_ref = Ref{Union{HttpConnection, Nothing}}(nothing)
 
     setup_cb = on_setup
     shutdown_cb = on_shutdown
@@ -116,8 +104,8 @@ function http_client_connect(options::HttpClientConnectionOptions; on_setup=noth
             return nothing
         end
 
-        if http_bootstrap.connection === nothing
-            http_bootstrap.negotiated_protocol = Sockets.negotiated_protocol(channel)
+        if connection_ref[] === nothing
+            negotiated_protocol = Sockets.negotiated_protocol(channel)
             slot = Sockets.channel_slot_new!(channel)
             Sockets.channel_slot_insert_end!(channel, slot)
             local version
@@ -126,8 +114,8 @@ function http_client_connect(options::HttpClientConnectionOptions; on_setup=noth
                     channel,
                     options.tls_connection_options !== nothing,
                     options.prior_knowledge_http2,
-                    http_bootstrap.alpn_map,
-                    http_bootstrap.negotiated_protocol,
+                    alpn_map,
+                    negotiated_protocol,
                 )
             catch e
                 err = e isa Reseau.ReseauError ? e.code : Reseau.ERROR_UNKNOWN
@@ -164,11 +152,11 @@ function http_client_connect(options::HttpClientConnectionOptions; on_setup=noth
                 end
                 return nothing
             end
-            http_bootstrap.connection = handler
+            connection_ref[] = handler
             Sockets.channel_slot_set_handler!(slot, handler)
         end
 
-        conn = http_bootstrap.connection
+        conn = connection_ref[]
         if conn !== nothing && hasproperty(conn, :remote_endpoint)
             conn.remote_endpoint = "$(options.host_name):$(options.port)"
         end
