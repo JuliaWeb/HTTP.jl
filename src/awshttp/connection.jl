@@ -143,7 +143,7 @@ Return the HTTP version of this connection.
 function http_connection_get_version end
 
 """
-    http_connection_make_request(connection, options::HttpMakeRequestOptions) -> H1Stream
+    http_connection_make_request(connection; kwargs...) -> H1Stream
 
 Create a new client request stream on this connection.
 """

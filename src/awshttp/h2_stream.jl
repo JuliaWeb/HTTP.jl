@@ -140,12 +140,24 @@ function _h2_body_to_bytes(body)::Vector{UInt8}
 end
 
 """
-    h2_stream_new_request(connection, options::HttpMakeRequestOptions) -> Union{H2Stream, Nothing}
+    h2_stream_new_request(connection; kwargs...) -> Union{H2Stream, Nothing}
 
 Create a new client request stream. The stream is not yet active; call `h2_stream_activate!`.
 """
-function h2_stream_new_request(connection, options::HttpMakeRequestOptions)::Union{H2Stream, Nothing}
-    msg = options.request
+function h2_stream_new_request(
+    connection;
+    request::HttpMessage,
+    on_response_headers=nothing,
+    on_response_header_block_done=nothing,
+    on_response_body=nothing,
+    on_metrics=nothing,
+    on_complete=nothing,
+    on_destroy=nothing,
+    http2_use_manual_data_writes::Bool=false,
+    http2_priority=nothing,
+    http2_headers_pad_length::UInt32=UInt32(0),
+)::Union{H2Stream, Nothing}
+    msg = request
 
     # Get the method for tracking
     method_str = http_message_get_request_method(msg)
@@ -167,7 +179,7 @@ function h2_stream_new_request(connection, options::HttpMakeRequestOptions)::Uni
 
     # Determine body state
     has_body = http_message_get_body_stream(outgoing_msg) !== nothing
-    manual = options.http2_use_manual_data_writes
+    manual = http2_use_manual_data_writes
     initial_body_state = if manual
         H2StreamBodyState.WAITING_WRITES
     elseif has_body
@@ -175,25 +187,25 @@ function h2_stream_new_request(connection, options::HttpMakeRequestOptions)::Uni
     else
         H2StreamBodyState.NONE
     end
-    if options.http2_headers_pad_length > typemax(UInt8)
+    if http2_headers_pad_length > typemax(UInt8)
         raise_error(ERROR_INVALID_ARGUMENT)
         return nothing
     end
-    headers_pad_length = UInt8(options.http2_headers_pad_length)
-    priority = options.http2_priority === nothing ? Http2PrioritySettings() : options.http2_priority
+    headers_pad_length = UInt8(http2_headers_pad_length)
+    priority = http2_priority === nothing ? Http2PrioritySettings() : http2_priority
 
     stream = H2Stream(
         connection,
         UInt32(0),   # id assigned on activation
         true,        # is_client
         # Callbacks
-        options.on_response_headers,
-        options.on_response_header_block_done,
-        options.on_response_body,
+        on_response_headers,
+        on_response_header_block_done,
+        on_response_body,
         nothing,  # on_request_done (client)
-        options.on_metrics,
-        options.on_complete,
-        options.on_destroy,
+        on_metrics,
+        on_complete,
+        on_destroy,
         nothing,     # on_incoming_push_promise
         # Metrics
         HttpStreamMetrics(),

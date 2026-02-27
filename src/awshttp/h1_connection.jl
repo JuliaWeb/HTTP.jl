@@ -269,7 +269,8 @@ function _h1_finish_client_h2c_upgrade!(conn::H1Connection, stream::H1Stream)::I
     end
     h2_conn = _h1_create_h2_connection_for_upgrade(conn, false)
     h2_conn === nothing && return _h1_fail_h2c_upgrade(stream, Reseau.last_error())
-    options = HttpMakeRequestOptions(
+    h2_stream = h2_stream_new_request(
+        h2_conn;
         request = stream.h2c.original_request,
         on_response_headers = stream.on_incoming_headers,
         on_response_header_block_done = stream.on_incoming_header_block_done,
@@ -278,7 +279,6 @@ function _h1_finish_client_h2c_upgrade!(conn::H1Connection, stream::H1Stream)::I
         on_complete = stream.on_complete,
         on_destroy = stream.on_destroy,
     )
-    h2_stream = h2_stream_new_request(h2_conn, options)
     if h2_stream === nothing
         http_connection_close(h2_conn)
         return _h1_fail_h2c_upgrade(stream, Reseau.last_error())
@@ -758,7 +758,22 @@ end
 
 # ─── Make request (client API) ───
 
-function http_connection_make_request(conn::H1Connection, options::HttpMakeRequestOptions)::Union{H1Stream, Nothing}
+function http_connection_make_request(
+    conn::H1Connection;
+    request::HttpMessage,
+    on_response_headers=nothing,
+    on_response_header_block_done=nothing,
+    on_response_body=nothing,
+    on_metrics=nothing,
+    on_complete=nothing,
+    on_destroy=nothing,
+    response_first_byte_timeout_ms::UInt64=UInt64(0),
+    http2_use_manual_data_writes::Bool=false,
+    http2_priority=nothing,
+    http2_headers_pad_length::UInt32=UInt32(0),
+    h2c_upgrade::Bool=false,
+    on_h2c_upgrade=nothing,
+)::Union{H1Stream, Nothing}
     if !conn.is_client
         raise_error(ERROR_INVALID_STATE)
         return nothing
@@ -767,7 +782,22 @@ function http_connection_make_request(conn::H1Connection, options::HttpMakeReque
         raise_error(conn.new_stream_error_code)
         return nothing
     end
-    return h1_stream_new_request(conn, options)
+    return h1_stream_new_request(
+        conn;
+        request=request,
+        on_response_headers=on_response_headers,
+        on_response_header_block_done=on_response_header_block_done,
+        on_response_body=on_response_body,
+        on_metrics=on_metrics,
+        on_complete=on_complete,
+        on_destroy=on_destroy,
+        response_first_byte_timeout_ms=response_first_byte_timeout_ms,
+        http2_use_manual_data_writes=http2_use_manual_data_writes,
+        http2_priority=http2_priority,
+        http2_headers_pad_length=http2_headers_pad_length,
+        h2c_upgrade=h2c_upgrade,
+        on_h2c_upgrade=on_h2c_upgrade,
+    )
 end
 
 # ─── Make server request handler (server API) ───

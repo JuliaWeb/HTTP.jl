@@ -7,8 +7,8 @@ function _open_stream(conn, req::Request, decompress, readtimeout)
     stream.request = req
     stream.response = resp = Response(0, nothing, nothing, http2)
     resp.request = req
-    opts = _make_request_options(stream, req; readtimeout=readtimeout)
-    aws_stream = AwsHTTP.http_connection_make_request(conn, opts)
+    request_kwargs = _make_request_kwargs(stream, req; readtimeout=readtimeout)
+    aws_stream = AwsHTTP.http_connection_make_request(conn; request_kwargs...)
     aws_stream === nothing && aws_throw_error()
     stream.aws_stream = aws_stream
     _activate_stream!(stream)

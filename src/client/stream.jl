@@ -693,9 +693,9 @@ function _on_complete(stream::Stream)
     end
 end
 
-function _make_request_options(stream::Stream, req::Request; chunkedbody=nothing, readtimeout=0)
+function _make_request_kwargs(stream::Stream, req::Request; chunkedbody=nothing, readtimeout=0)
     msg = getfield(req, :msg)
-    return AwsHTTP.HttpMakeRequestOptions(;
+    return (;
         request=msg,
         on_response_headers=_on_response_headers(stream),
         on_response_header_block_done=_on_response_header_block_done(stream),
@@ -720,7 +720,7 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
     resp.metrics = RequestMetrics()
     resp.request = req
     resp.metrics.request_body_length = bodylen(req)
-    request_options = _make_request_options(stream, req; chunkedbody=chunkedbody, readtimeout=readtimeout)
+    request_kwargs = _make_request_kwargs(stream, req; chunkedbody=chunkedbody, readtimeout=readtimeout)
 
     # Acquire a connection from the H2 stream manager
     connection, error_code = wait(AwsHTTP.http2_stream_manager_acquire_stream(client.http2_stream_manager))
@@ -730,7 +730,7 @@ function with_stream_manager(client::Client, req::Request, chunkedbody, on_strea
     end
 
     # Create stream on the acquired connection
-    aws_stream = AwsHTTP.http_connection_make_request(connection, request_options)
+    aws_stream = AwsHTTP.http_connection_make_request(connection; request_kwargs...)
     aws_stream === nothing && aws_throw_error()
     stream.aws_stream = aws_stream
     timeout_task = nothing
@@ -803,11 +803,11 @@ function with_stream(conn, req::Request, chunkedbody, on_stream_response_body, d
     end
     stream.connection = conn
 
-    request_options = _make_request_options(stream, req;
+    request_kwargs = _make_request_kwargs(stream, req;
         chunkedbody=(http2 ? chunkedbody : nothing),
         readtimeout=readtimeout)
 
-    aws_stream = AwsHTTP.http_connection_make_request(conn, request_options)
+    aws_stream = AwsHTTP.http_connection_make_request(conn; request_kwargs...)
     aws_stream === nothing && aws_throw_error()
     stream.aws_stream = aws_stream
     # Check actual connection version (may have been upgraded)

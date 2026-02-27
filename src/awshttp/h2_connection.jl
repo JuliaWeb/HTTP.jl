@@ -991,7 +991,19 @@ http_connection_is_client(conn::H2Connection) = conn.is_client
 
 http_connection_get_version(conn::H2Connection) = conn.http_version
 
-function http_connection_make_request(conn::H2Connection, options::HttpMakeRequestOptions)::Union{H2Stream, Nothing}
+function http_connection_make_request(
+    conn::H2Connection;
+    request::HttpMessage,
+    on_response_headers=nothing,
+    on_response_header_block_done=nothing,
+    on_response_body=nothing,
+    on_metrics=nothing,
+    on_complete=nothing,
+    on_destroy=nothing,
+    http2_use_manual_data_writes::Bool=false,
+    http2_priority=nothing,
+    http2_headers_pad_length::UInt32=UInt32(0),
+)::Union{H2Stream, Nothing}
     if !conn.is_client
         raise_error(ERROR_INVALID_STATE)
         return nothing
@@ -1000,7 +1012,19 @@ function http_connection_make_request(conn::H2Connection, options::HttpMakeReque
         raise_error(ERROR_HTTP_CONNECTION_CLOSED)
         return nothing
     end
-    return h2_stream_new_request(conn, options)
+    return h2_stream_new_request(
+        conn;
+        request=request,
+        on_response_headers=on_response_headers,
+        on_response_header_block_done=on_response_header_block_done,
+        on_response_body=on_response_body,
+        on_metrics=on_metrics,
+        on_complete=on_complete,
+        on_destroy=on_destroy,
+        http2_use_manual_data_writes=http2_use_manual_data_writes,
+        http2_priority=http2_priority,
+        http2_headers_pad_length=http2_headers_pad_length,
+    )
 end
 
 http_connection_stop_new_requests(conn::H2Connection) = begin conn.new_requests_allowed = false; nothing end

@@ -90,51 +90,6 @@ end
 #   on_stream_destroy(stream) -> Nothing
 #   on_stream_metrics(stream, metrics::HttpStreamMetrics) -> Nothing
 
-# ─── Make-request options (client) ───
-
-struct HttpMakeRequestOptions
-    request::HttpMessage
-    on_response_headers::Union{Nothing, Function}       # (stream, header_block, headers) -> Int
-    on_response_header_block_done::Union{Nothing, Function}  # (stream, header_block) -> Int
-    on_response_body::Union{Nothing, Function}          # (stream, data) -> Int
-    on_metrics::Union{Nothing, Function}                 # (stream, metrics) -> Nothing
-    on_complete::Union{Nothing, Function}                # (stream, error_code) -> Nothing
-    on_destroy::Union{Nothing, Function}                 # (stream) -> Nothing
-    response_first_byte_timeout_ms::UInt64
-    # ── H2-specific options ──
-    http2_use_manual_data_writes::Bool
-    http2_priority::Union{Nothing, Http2PrioritySettings}
-    http2_headers_pad_length::UInt32
-    # ── h2c upgrade ──
-    h2c_upgrade::Bool  # attempt HTTP/2 cleartext upgrade on this request
-    on_h2c_upgrade::Union{Nothing, Function}  # (connection, h2_connection, h2_stream, error_code) -> Nothing
-end
-
-function HttpMakeRequestOptions(;
-    request::HttpMessage,
-    on_response_headers = nothing,
-    on_response_header_block_done = nothing,
-    on_response_body = nothing,
-    on_metrics = nothing,
-    on_complete = nothing,
-    on_destroy = nothing,
-    response_first_byte_timeout_ms::UInt64 = UInt64(0),
-    http2_use_manual_data_writes::Bool = false,
-    http2_priority = nothing,
-    http2_headers_pad_length::UInt32 = UInt32(0),
-    h2c_upgrade::Bool = false,
-    on_h2c_upgrade = nothing,
-)
-    return HttpMakeRequestOptions(
-        request,
-        on_response_headers, on_response_header_block_done,
-        on_response_body, on_metrics, on_complete, on_destroy,
-        response_first_byte_timeout_ms,
-        http2_use_manual_data_writes, http2_priority, http2_headers_pad_length,
-        h2c_upgrade, on_h2c_upgrade,
-    )
-end
-
 # ─── H1 Stream ───
 
 mutable struct H1Stream
@@ -182,20 +137,35 @@ mutable struct H1Stream
 end
 
 """
-    h1_stream_new_request(connection, options::HttpMakeRequestOptions) -> H1Stream
+    h1_stream_new_request(connection; kwargs...) -> H1Stream
 
 Create a new client request stream. The stream is not yet active; call `h1_stream_activate!`.
 """
-function h1_stream_new_request(connection, options::HttpMakeRequestOptions)::Union{H1Stream, Nothing}
-    msg = options.request
+function h1_stream_new_request(
+    connection;
+    request::HttpMessage,
+    on_response_headers=nothing,
+    on_response_header_block_done=nothing,
+    on_response_body=nothing,
+    on_metrics=nothing,
+    on_complete=nothing,
+    on_destroy=nothing,
+    response_first_byte_timeout_ms::UInt64=UInt64(0),
+    http2_use_manual_data_writes::Bool=false,
+    http2_priority=nothing,
+    http2_headers_pad_length::UInt32=UInt32(0),
+    h2c_upgrade::Bool=false,
+    on_h2c_upgrade=nothing,
+)::Union{H1Stream, Nothing}
+    msg = request
     method_str = http_message_get_request_method(msg)
     method_enum = http_str_to_method(method_str)
 
-    h2c_state = H2CState(options.on_h2c_upgrade)
+    h2c_state = H2CState(on_h2c_upgrade)
     request_for_encoder = msg
-    use_h2c_upgrade = options.h2c_upgrade || connection.h2c_enabled
+    use_h2c_upgrade = h2c_upgrade || connection.h2c_enabled
     if use_h2c_upgrade
-        if options.http2_use_manual_data_writes || _h1_request_has_body(http_message_get_headers(msg)) ||
+        if http2_use_manual_data_writes || _h1_request_has_body(http_message_get_headers(msg)) ||
                 http_message_get_body_stream(msg) !== nothing
             raise_error(ERROR_INVALID_ARGUMENT)
             return nothing
@@ -224,15 +194,15 @@ function h1_stream_new_request(connection, options::HttpMakeRequestOptions)::Uni
         method_enum,
         HttpStreamMetrics(),
         # callbacks
-        options.on_response_headers,
-        options.on_response_header_block_done,
-        options.on_response_body,
-        options.on_metrics,
-        options.on_complete,
-        options.on_destroy,
+        on_response_headers,
+        on_response_header_block_done,
+        on_response_body,
+        on_metrics,
+        on_complete,
+        on_destroy,
         # client
         HTTP_STATUS_CODE_UNKNOWN,
-        options.response_first_byte_timeout_ms,
+        response_first_byte_timeout_ms,
         nothing,
         # server (unused for client)
         "", "", nothing,
