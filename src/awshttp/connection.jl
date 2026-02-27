@@ -22,27 +22,27 @@ abstract type HttpConnection end
 
 # ─── Client connection options ───
 
-struct HttpClientConnectionOptions
+Base.@kwdef struct HttpClientConnectionOptions
     # ── Networking ──
-    bootstrap::Union{EventLoops.EventLoopGroup, Nothing}
-    socket_options::Union{Sockets.SocketOptions, Nothing}
-    tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}
+    bootstrap::Union{EventLoops.EventLoopGroup, Nothing} = nothing
+    socket_options::Union{Sockets.SocketOptions, Nothing} = nothing
+    tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing} = nothing
     # ── Host/port ──
     host_name::String
     port::UInt32
     # ── ALPN/Version ──
-    alpn_string_map::Union{HttpAlpnMap, Nothing}  # ALPN protocol → HttpVersion map
-    prior_knowledge_http2::Bool  # skip ALPN, assume HTTP/2
-    h2c_upgrade::Bool  # attempt HTTP/2 cleartext upgrade via Upgrade: h2c
+    alpn_string_map::Union{HttpAlpnMap, Nothing} = nothing  # ALPN protocol → HttpVersion map
+    prior_knowledge_http2::Bool = false  # skip ALPN, assume HTTP/2
+    h2c_upgrade::Bool = false  # attempt HTTP/2 cleartext upgrade via Upgrade: h2c
     # ── Window management ──
-    manual_window_management::Bool
-    initial_window_size::Csize_t
+    manual_window_management::Bool = false
+    initial_window_size::Csize_t = Csize_t(typemax(Csize_t))
     # ── Timeouts ──
-    response_first_byte_timeout_ms::UInt64
+    response_first_byte_timeout_ms::UInt64 = UInt64(0)
     # ── Protocol-specific options ──
-    http1_options::Http1ConnectionOptions
+    http1_options::Http1ConnectionOptions = Http1ConnectionOptions()
     # ── Advanced ──
-    requested_event_loop::Union{EventLoops.EventLoop, Nothing}
+    requested_event_loop::Union{EventLoops.EventLoop, Nothing} = nothing
 end
 
 function _dispatch_user_callback(f, args...; subject::LogSubject = LS_HTTP_CONNECTION, label::AbstractString = "callback")
@@ -61,32 +61,6 @@ function _dispatch_user_callback(f, args...; subject::LogSubject = LS_HTTP_CONNE
         end
     end)
     return nothing
-end
-
-function HttpClientConnectionOptions(;
-    bootstrap = nothing,
-    host_name::String,
-    port::UInt32,
-    socket_options = nothing,
-    tls_connection_options = nothing,
-    alpn_string_map::Union{HttpAlpnMap, Nothing} = nothing,
-    prior_knowledge_http2::Bool = false,
-    h2c_upgrade::Bool = false,
-    manual_window_management::Bool = false,
-    initial_window_size::Csize_t = Csize_t(typemax(Csize_t)),
-    response_first_byte_timeout_ms::UInt64 = UInt64(0),
-    http1_options::Http1ConnectionOptions = Http1ConnectionOptions(),
-    requested_event_loop = nothing,
-)
-    return HttpClientConnectionOptions(
-        bootstrap, socket_options, tls_connection_options,
-        host_name, port,
-        alpn_string_map, prior_knowledge_http2, h2c_upgrade,
-        manual_window_management, initial_window_size,
-        response_first_byte_timeout_ms,
-        http1_options,
-        requested_event_loop,
-    )
 end
 
 function http_client_connect_sync(
