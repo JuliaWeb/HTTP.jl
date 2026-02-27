@@ -66,6 +66,45 @@ function _decode_statistics(stats_list)
     throw(ArgumentError("stats_list must be an AbstractVector"))
 end
 
+struct _StatisticsObserverCallbackWrapper <: Function end
+
+@inline function (::_StatisticsObserverCallbackWrapper)(f::F, nonce, stats)::Nothing where {F}
+    f(nonce, stats)
+    return nothing
+end
+
+@generated function _statistics_observer_callback_fptr(::Type{F}) where {F}
+    quote
+        @cfunction($(_StatisticsObserverCallbackWrapper()), Cvoid, (Ref{$F}, Any, Any))
+    end
+end
+
+struct StatisticsObserverCallback
+    ptr::Ptr{Cvoid}
+    objptr::Ptr{Cvoid}
+    _root::Any
+end
+
+function StatisticsObserverCallback(callable::F) where {F}
+    ptr = _statistics_observer_callback_fptr(F)
+    objref = Base.cconvert(Ref{F}, callable)
+    objptr = Ptr{Cvoid}(Base.unsafe_convert(Ref{F}, objref))
+    return StatisticsObserverCallback(ptr, objptr, objref)
+end
+
+@inline _statistics_observer_callback(cb::StatisticsObserverCallback) = cb
+@inline _statistics_observer_callback(::Nothing) = nothing
+@inline _statistics_observer_callback(cb) = StatisticsObserverCallback(cb)
+
+Base.convert(::Type{Union{Nothing, StatisticsObserverCallback}}, cb::StatisticsObserverCallback) = cb
+Base.convert(::Type{Union{Nothing, StatisticsObserverCallback}}, ::Nothing) = nothing
+Base.convert(::Type{Union{Nothing, StatisticsObserverCallback}}, cb) = _statistics_observer_callback(cb)
+
+@inline function (f::StatisticsObserverCallback)(nonce, stats)::Nothing
+    ccall(f.ptr, Cvoid, (Ptr{Cvoid}, Any, Any), f.objptr, nonce, stats)
+    return nothing
+end
+
 function _call_statistics_observer(observer, nonce, stats_list)
     observer === nothing && return nothing
     stats = _decode_statistics(stats_list)

@@ -93,7 +93,7 @@ Base.@kwdef struct ClientSettings
     enable_read_back_pressure::Bool = false
     monitoring_minimum_throughput_bytes_per_second::UInt64 = 0
     monitoring_allowable_throughput_failure_interval_seconds::UInt32 = 0
-    monitoring_statistics_observer::Union{Nothing, Function} = nothing
+    monitoring_statistics_observer::Union{Nothing, StatisticsObserverCallback} = nothing
     http2_prior_knowledge::Bool = false
     http2_stream_manager::Bool = false
     http2_close_connection_on_server_error::Bool = false
@@ -137,6 +137,10 @@ ClientSettings(
     if haskey(kw_nt, :http2_initial_settings)
         kw_nt = Base.structdiff(kw_nt, (; http2_initial_settings=nothing))
     end
+    monitoring_statistics_observer = Base.get(() -> nothing, kw_nt, :monitoring_statistics_observer)
+    if haskey(kw_nt, :monitoring_statistics_observer)
+        kw_nt = Base.structdiff(kw_nt, (; monitoring_statistics_observer=nothing))
+    end
     ClientSettings(;
         scheme=String(scheme),
         host=String(host),
@@ -146,6 +150,7 @@ ClientSettings(
         max_connections=max_connections,
         ssl_insecure=(!require_ssl_verification || ssl_insecure),
         http2_initial_settings=http2_initial_settings,
+        monitoring_statistics_observer=_statistics_observer_callback(monitoring_statistics_observer),
         kw_nt...)
 end
 
