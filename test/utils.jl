@@ -107,6 +107,20 @@
 
     @test_deprecated HTTP.escape("a b") == "a%20b"
 
+    @testset "AwsHTTP method mapping" begin
+        @test HTTP.AwsHTTP.http_str_to_method("GET") == HTTP.AwsHTTP.HttpMethod.GET
+        @test HTTP.AwsHTTP.http_str_to_method("HEAD") == HTTP.AwsHTTP.HttpMethod.HEAD
+        @test HTTP.AwsHTTP.http_str_to_method("POST") == HTTP.AwsHTTP.HttpMethod.POST
+        @test HTTP.AwsHTTP.http_str_to_method("PUT") == HTTP.AwsHTTP.HttpMethod.PUT
+        @test HTTP.AwsHTTP.http_str_to_method("DELETE") == HTTP.AwsHTTP.HttpMethod.DELETE
+        @test HTTP.AwsHTTP.http_str_to_method("CONNECT") == HTTP.AwsHTTP.HttpMethod.CONNECT
+        @test HTTP.AwsHTTP.http_str_to_method("OPTIONS") == HTTP.AwsHTTP.HttpMethod.OPTIONS
+        @test HTTP.AwsHTTP.http_str_to_method("TRACE") == HTTP.AwsHTTP.HttpMethod.TRACE
+        @test HTTP.AwsHTTP.http_str_to_method("PATCH") == HTTP.AwsHTTP.HttpMethod.PATCH
+        @test HTTP.AwsHTTP.http_str_to_method("post") == HTTP.AwsHTTP.HttpMethod.UNKNOWN
+        @test HTTP.AwsHTTP.http_str_to_method("CUSTOM") == HTTP.AwsHTTP.HttpMethod.UNKNOWN
+    end
+
     @testset "download" begin
         server = HTTP.serve!(req -> HTTP.Response(200, ["Content-Disposition" => "attachment; filename=\"hello.txt\""], "hello"); listenany=true)
         try
