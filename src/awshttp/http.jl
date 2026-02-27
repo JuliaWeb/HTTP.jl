@@ -608,36 +608,3 @@ function http_error_code_is_retryable(error_code::Integer)::Bool
     end
     return EventLoops.io_error_code_is_retryable(error_code)
 end
-
-# ─── Library init/cleanup ───
-
-const _http_initialized = Ref(false)
-
-"""
-    http_library_init()
-
-Initialize the HTTP library. Idempotent.
-"""
-function http_library_init()
-    _http_initialized[] && return
-    _http_initialized[] = true
-    return nothing
-end
-
-"""
-    http_library_clean_up()
-
-Clean up the HTTP library. Idempotent.
-"""
-function http_library_clean_up()
-    _http_initialized[] || return
-    _http_initialized[] = false
-    return nothing
-end
-
-"""
-    http_library_initialized() -> Bool
-
-Check if the HTTP library is initialized.
-"""
-http_library_initialized() = _http_initialized[]

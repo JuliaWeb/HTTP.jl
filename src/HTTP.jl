@@ -72,11 +72,6 @@ function set_log_level!(level::Integer)
     return
 end
 
-function __init__()
-    AwsHTTP.http_library_init()
-    return
-end
-
 # only run if precompiling
 if VERSION >= v"1.9.0-0" && ccall(:jl_generating_output, Cint, ()) == 1
     do_precompile = true
