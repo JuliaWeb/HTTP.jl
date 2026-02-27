@@ -820,21 +820,6 @@ function _clean_up_current_chunk!(encoder::H1Encoder, error_code::Int)
     return nothing
 end
 
-# State dispatch table
-const _ENCODER_STATE_FNS = (
-    _state_fn_init,                          # INIT = 0
-    _state_fn_head,                          # HEAD = 1
-    _state_fn_unchunked_body_stream,         # UNCHUNKED_BODY_STREAM = 2
-    _state_fn_chunked_body_stream,           # CHUNKED_BODY_STREAM = 3
-    _state_fn_chunked_body_stream_last_chunk,# CHUNKED_BODY_STREAM_LAST_CHUNK = 4
-    _state_fn_chunk_next,                    # CHUNK_NEXT = 5
-    _state_fn_chunk_line,                    # CHUNK_LINE = 6
-    _state_fn_chunk_body,                    # CHUNK_BODY = 7
-    _state_fn_chunk_end,                     # CHUNK_END = 8
-    _state_fn_chunk_trailer,                 # CHUNK_TRAILER = 9
-    _state_fn_done,                          # DONE = 10
-)
-
 """
     h1_encoder_process!(encoder::H1Encoder, dst::IOBuffer) -> Int
 
@@ -851,9 +836,34 @@ function h1_encoder_process!(encoder::H1Encoder, dst::IOBuffer)::Int
     # Run state machine until state stops changing
     while true
         prev_state = encoder.state
-        state_idx = Int(UInt8(encoder.state)) + 1  # 0-based enum -> 1-based index
-        fn = _ENCODER_STATE_FNS[state_idx]
-        if fn(encoder, dst) != OP_SUCCESS
+        state = encoder.state
+        result = if state == H1EncoderState.INIT
+            _state_fn_init(encoder, dst)
+        elseif state == H1EncoderState.HEAD
+            _state_fn_head(encoder, dst)
+        elseif state == H1EncoderState.UNCHUNKED_BODY_STREAM
+            _state_fn_unchunked_body_stream(encoder, dst)
+        elseif state == H1EncoderState.CHUNKED_BODY_STREAM
+            _state_fn_chunked_body_stream(encoder, dst)
+        elseif state == H1EncoderState.CHUNKED_BODY_STREAM_LAST_CHUNK
+            _state_fn_chunked_body_stream_last_chunk(encoder, dst)
+        elseif state == H1EncoderState.CHUNK_NEXT
+            _state_fn_chunk_next(encoder, dst)
+        elseif state == H1EncoderState.CHUNK_LINE
+            _state_fn_chunk_line(encoder, dst)
+        elseif state == H1EncoderState.CHUNK_BODY
+            _state_fn_chunk_body(encoder, dst)
+        elseif state == H1EncoderState.CHUNK_END
+            _state_fn_chunk_end(encoder, dst)
+        elseif state == H1EncoderState.CHUNK_TRAILER
+            _state_fn_chunk_trailer(encoder, dst)
+        elseif state == H1EncoderState.DONE
+            _state_fn_done(encoder, dst)
+        else
+            raise_error(ERROR_INVALID_STATE)
+            OP_ERR
+        end
+        if result != OP_SUCCESS
             return OP_ERR
         end
         if encoder.state == prev_state
