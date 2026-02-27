@@ -190,12 +190,9 @@ mutable struct WsDecoder
     # Fragmentation tracking
     expecting_continuation::Bool
 
-    # Callbacks
-    on_frame::Any       # (frame::WsDecodedFrame) -> Int
-    on_payload::Any     # (data::Vector{UInt8}) -> Int
 end
 
-function ws_decoder_new(; on_frame=nothing, on_payload=nothing)::WsDecoder
+function ws_decoder_new()::WsDecoder
     return WsDecoder(
         WsDecoderState.OPCODE_BYTE,
         UInt64(0),
@@ -204,7 +201,6 @@ function ws_decoder_new(; on_frame=nothing, on_payload=nothing)::WsDecoder
         UInt64(0), 0,
         UInt8[], UInt8[], UInt8[],
         false,
-        on_frame, on_payload,
     )
 end
 
@@ -361,11 +357,6 @@ function ws_decoder_process!(dec::WsDecoder, data::AbstractVector{UInt8})::Tuple
             )
             push!(frames, frame)
 
-            # Invoke callback
-            if dec.on_frame !== nothing
-                dec.on_frame(frame)
-            end
-
             _ws_decoder_reset!(dec)
         end
     end
@@ -442,11 +433,8 @@ mutable struct WebSocket
     max_incoming_payload_length::UInt64
     incoming_message_payload_total::UInt64
 
-    # Callbacks
-    on_incoming_frame_begin::Any     # (ws, frame_info) -> Bool
-    on_incoming_frame_payload::Any   # (ws, frame_info, data) -> Bool
-    on_incoming_frame_complete::Any  # (ws, frame_info, error_code) -> Bool
-    on_connection_shutdown::Any      # (ws, error_code) -> Nothing
+    # Callback
+    on_incoming_frame::Any     # (ws, frame_info, payload, error_code) -> Bool
 end
 
 function ws_new(;
@@ -455,10 +443,7 @@ function ws_new(;
     initial_window_size::UInt64=typemax(UInt64),
     max_incoming_payload_length::UInt64=UInt64(0),
     ping_interval_ms::UInt64=UInt64(0),
-    on_incoming_frame_begin=nothing,
-    on_incoming_frame_payload=nothing,
-    on_incoming_frame_complete=nothing,
-    on_connection_shutdown=nothing,
+    on_incoming_frame=nothing,
 )::WebSocket
 
     decoder = ws_decoder_new()
@@ -473,22 +458,19 @@ function ws_new(;
         ping_interval_ms, UInt64(0),
         max_incoming_payload_length,
         UInt64(0),
-        on_incoming_frame_begin,
-        on_incoming_frame_payload,
-        on_incoming_frame_complete,
-        on_connection_shutdown,
+        on_incoming_frame,
     )
 end
 
 # ─── Send operations ───
 
 """
-    ws_send_frame!(ws, opcode, payload; fin=true, on_complete=nothing) -> Int
+    ws_send_frame!(ws, opcode, payload; fin=true) -> Int
 
 Send a WebSocket frame.
 """
 function ws_send_frame!(ws::WebSocket, opcode::UInt8, payload::AbstractVector{UInt8};
-    fin::Bool=true, on_complete=nothing)::Int
+    fin::Bool=true)::Int
 
     if !ws.is_open
         return raise_error(ERROR_HTTP_CONNECTION_CLOSED)
@@ -521,10 +503,6 @@ function ws_send_frame!(ws::WebSocket, opcode::UInt8, payload::AbstractVector{UI
 
     encoded = ws_encode_frame(frame)
     push!(ws.outgoing_frames, encoded)
-
-    if on_complete !== nothing
-        on_complete(ws, OP_SUCCESS)
-    end
 
     return OP_SUCCESS
 end
@@ -619,25 +597,9 @@ function ws_on_incoming_data!(ws::WebSocket, data::AbstractVector{UInt8})::Tuple
             fin=frame.fin,
         )
 
-        # Invoke begin callback
-        if ws.on_incoming_frame_begin !== nothing
-            cont = ws.on_incoming_frame_begin(ws, frame_info)
-            if cont === false
-                return (raise_error(ERROR_HTTP_CALLBACK_FAILURE), frames)
-            end
-        end
-
-        # Invoke payload callback
-        if ws.on_incoming_frame_payload !== nothing && !isempty(frame.payload)
-            cont = ws.on_incoming_frame_payload(ws, frame_info, frame.payload)
-            if cont === false
-                return (raise_error(ERROR_HTTP_CALLBACK_FAILURE), frames)
-            end
-        end
-
-        # Invoke complete callback
-        if ws.on_incoming_frame_complete !== nothing
-            cont = ws.on_incoming_frame_complete(ws, frame_info, 0)
+        # Invoke incoming frame callback
+        if ws.on_incoming_frame !== nothing
+            cont = ws.on_incoming_frame(ws, frame_info, frame.payload, 0)
             if cont === false
                 return (raise_error(ERROR_HTTP_CALLBACK_FAILURE), frames)
             end

@@ -47,7 +47,7 @@ mutable struct H2StreamDataWrite
     data::Vector{UInt8}       # data payload
     end_stream::Bool          # whether END_STREAM flag should be set
     pad_length::UInt8         # frame padding (0-255)
-    on_complete::Any           # (error_code) -> Nothing
+    completion::Union{EventLoops.Future{Int}, Nothing}
 end
 
 # ─── H2 Stream ───
@@ -542,9 +542,7 @@ function h2_stream_complete!(stream::H2Stream, error_code::Int)::Nothing
 
     # Fail pending writes
     for w in stream.outgoing_writes
-        if w.on_complete !== nothing
-            w.on_complete(error_code)
-        end
+        w.completion === nothing || notify(w.completion, error_code)
     end
     empty!(stream.outgoing_writes)
 
@@ -645,14 +643,14 @@ end
 # ─── Manual data writes ───
 
 """
-    h2_stream_write_data!(stream, data; end_stream=false, pad_length=0x00, on_complete=nothing) -> Int
+    h2_stream_write_data!(stream, data; end_stream=false, pad_length=0x00, completion=nothing) -> Int
 
 Submit DATA for the stream (manual write mode).
 """
 function h2_stream_write_data!(stream::H2Stream, data::AbstractVector{UInt8};
     end_stream::Bool=false,
     pad_length::UInt8=UInt8(0),
-    on_complete=nothing)::Int
+    completion::Union{EventLoops.Future{Int}, Nothing}=nothing)::Int
 
     if stream.api_state != H2StreamApiState.ACTIVE
         return raise_error(ERROR_HTTP_STREAM_HAS_COMPLETED)
@@ -668,7 +666,7 @@ function h2_stream_write_data!(stream::H2Stream, data::AbstractVector{UInt8};
         stream.manual_write_ended = true
     end
 
-    write_entry = H2StreamDataWrite(copy(data), end_stream, pad_length, on_complete)
+    write_entry = H2StreamDataWrite(copy(data), end_stream, pad_length, completion)
     push!(stream.outgoing_writes, write_entry)
 
     if stream.body_state == H2StreamBodyState.WAITING_WRITES
@@ -855,9 +853,7 @@ function h2_stream_encode_data_frame!(stream::H2Stream, conn)::Tuple{Int, H2Data
         # This write is complete
         popfirst!(stream.outgoing_writes)
 
-        if write.on_complete !== nothing
-            write.on_complete(OP_SUCCESS)
-        end
+        write.completion === nothing || notify(write.completion, OP_SUCCESS)
 
         if end_stream_flag
             stream.end_stream_sent = true

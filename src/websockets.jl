@@ -162,13 +162,9 @@ mutable struct WebSocket
     aws_ws::Any    # AwsHTTP.WebSocket
     handler::Any   # WsChannelHandler
     # Fragment tracking
-    incoming_opcode::UInt8
-    incoming_fin::Bool
-    incoming_payload::Vector{UInt8}
     fragment_opcode::Union{Nothing, UInt8}
     fragment_payload::Vector{UInt8}
     fragment_count::Int
-    drop_incoming::Bool
     closebody::Union{Nothing, CloseFrameBody}
 
     WebSocket(host::AbstractString, path::AbstractString; maxframesize::Integer=typemax(Int), maxfragmentation::Integer=DEFAULT_MAX_FRAG, is_client::Bool=true) = new(
@@ -187,13 +183,9 @@ mutable struct WebSocket
         nothing,
         nothing, # aws_ws
         nothing, # handler
-        0x00,
-        false,
-        UInt8[],
         nothing,
         UInt8[],
         0,
-        false,
         nothing,
     )
 end
@@ -277,43 +269,11 @@ opcode(x) = isbinary(x) ? BINARY : TEXT
 _to_bytes(x::AbstractVector{UInt8}) = x
 _to_bytes(x) = Vector{UInt8}(codeunits(string(x)))
 
-# ─── AwsHTTP WebSocket callback builders ───
-# These create the closure callbacks passed to AwsHTTP.ws_new().
-# Each closure captures the HTTP.WebSocket and manipulates it directly.
+# ─── AwsHTTP WebSocket callback builder ───
+# This closure captures the HTTP.WebSocket and handles each full frame.
 
-function _on_incoming_frame_begin(ws::WebSocket)
-    return (aws_ws, frame_info) -> begin
-        ws.incoming_opcode = frame_info.opcode
-        ws.incoming_fin = frame_info.fin
-        empty!(ws.incoming_payload)
-        ws.drop_incoming = false
-        if frame_info.payload_length > ws.maxframesize
-            close_body = CloseFrameBody(1009, "frame too large")
-            _queue_close!(ws, close_body)
-            errormonitor(Threads.@spawn close(ws, close_body))
-            ws.drop_incoming = true
-        end
-        frame_info.payload_length > 0 && sizehint!(ws.incoming_payload, Int(frame_info.payload_length))
-        return true
-    end
-end
-
-function _on_incoming_frame_payload(ws::WebSocket)
-    return (aws_ws, frame_info, data) -> begin
-        ws.drop_incoming && return true
-        try
-            n = length(data)
-            n == 0 && return true
-            append!(ws.incoming_payload, data)
-        catch e
-            @error "$(ws.id): incoming frame payload error" exception=(e, catch_backtrace())
-        end
-        return true
-    end
-end
-
-function _on_incoming_frame_complete(ws::WebSocket)
-    return (aws_ws, frame_info, error_code) -> begin
+function _on_incoming_frame(ws::WebSocket)
+    return (aws_ws, frame_info, payload, error_code) -> begin
         if error_code != 0
             @error "$(ws.id): incoming frame complete error" error_code
             close_body = CloseFrameBody(1006, "")
@@ -321,13 +281,14 @@ function _on_incoming_frame_complete(ws::WebSocket)
             errormonitor(Threads.@spawn close(ws, close_body))
             return true
         end
-        if ws.drop_incoming
-            ws.drop_incoming = false
+        if frame_info.payload_length > ws.maxframesize
+            close_body = CloseFrameBody(1009, "frame too large")
+            _queue_close!(ws, close_body)
+            errormonitor(Threads.@spawn close(ws, close_body))
             return true
         end
         op = frame_info.opcode
         fin = frame_info.fin
-        payload = ws.incoming_payload
         # PING/PONG: AwsHTTP handles auto-PONG, nothing to do here
         if op == UInt8(PING) || op == UInt8(PONG)
             return true
@@ -426,9 +387,7 @@ end
 function _create_ws_handler!(ws::WebSocket, slot::Reseau.Sockets.ChannelSlot, is_client::Bool)
     aws_ws = AwsHTTP.ws_new(;
         is_client=is_client,
-        on_incoming_frame_begin=_on_incoming_frame_begin(ws),
-        on_incoming_frame_payload=_on_incoming_frame_payload(ws),
-        on_incoming_frame_complete=_on_incoming_frame_complete(ws),
+        on_incoming_frame=_on_incoming_frame(ws),
     )
     handler = WsChannelHandler(aws_ws, ws)
     ws.aws_ws = aws_ws

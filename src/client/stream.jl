@@ -104,7 +104,7 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
         is.bodyref = chunk
         is.bodylen = nbytes(chunk) === nothing ? 0 : nbytes(chunk)
     end
-    fut = Future{Nothing}()
+    write_fut = Reseau.EventLoops.Future{Int}()
     if s.http2
         data = if chunk isa AbstractString
             Vector{UInt8}(codeunits(chunk))
@@ -116,13 +116,7 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
         is_final = isempty(data)
         AwsHTTP.h2_stream_write_data!(s.aws_stream, data;
             end_stream=is_final,
-            on_complete=(err) -> begin
-                if err != 0
-                    notify(fut, CapturedException(aws_error(err), Base.backtrace()))
-                else
-                    notify(fut, nothing)
-                end
-            end,
+            completion=write_fut,
         ) != 0 && aws_throw_error()
     else
         data = if chunk isa AbstractString
@@ -133,18 +127,13 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
             IOBuffer(UInt8[])
         end
         h1chunk = AwsHTTP.h1_chunk_new(data, is.bodylen;
-            on_complete=(stream, err) -> begin
-                if err != 0
-                    notify(fut, CapturedException(aws_error(err), Base.backtrace()))
-                else
-                    notify(fut, nothing)
-                end
-            end,
+            completion=write_fut,
         )
         AwsHTTP.h1_stream_write_chunk!(s.aws_stream, h1chunk) != 0 && aws_throw_error()
         _h1_flush_outgoing!(s)
     end
-    wait(fut)
+    write_err = wait(write_fut)
+    write_err == AwsHTTP.OP_SUCCESS || throw(CapturedException(aws_error(write_err), Base.backtrace()))
     if isdefined(s, :response) && s.response !== nothing
         if s.server_side
             s.response.metrics.response_body_length += is.bodylen
