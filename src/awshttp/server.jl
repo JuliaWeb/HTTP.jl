@@ -1,47 +1,16 @@
 # HTTP Server - Listener and connection factory
 # Port of aws-c-http/include/aws/http/server.h, connection.c (server portions)
 
-# ─── Server options ───
-
-struct HttpServerOptions
-    endpoint_host::String
-    endpoint_port::UInt32
-    prior_knowledge_http2::Bool
-    initial_window_size::Csize_t
-    manual_window_management::Bool
-    event_loop_group::Union{EventLoops.EventLoopGroup, Nothing}
-    socket_options::Sockets.SocketOptions
-    tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}
-    http1_options::Http1ConnectionOptions
-    on_incoming_connection::Union{Nothing, Function}  # (server, connection, error_code) -> Nothing
-    on_destroy_complete::Union{Nothing, Function}     # () -> Nothing
-end
-
-function HttpServerOptions(;
-    endpoint_host::String="0.0.0.0",
-    endpoint_port::UInt32=UInt32(0),
-    prior_knowledge_http2::Bool=false,
-    initial_window_size::Csize_t=typemax(Csize_t),
-    manual_window_management::Bool=false,
-    event_loop_group=nothing,
-    socket_options::Sockets.SocketOptions=Sockets.SocketOptions(),
-    tls_connection_options=nothing,
-    http1_options::Http1ConnectionOptions=Http1ConnectionOptions(),
-    on_incoming_connection=nothing,
-    on_destroy_complete=nothing,
-)
-    return HttpServerOptions(
-        endpoint_host, endpoint_port,
-        prior_knowledge_http2, initial_window_size, manual_window_management,
-        event_loop_group, socket_options, tls_connection_options, http1_options,
-        on_incoming_connection, on_destroy_complete,
-    )
-end
-
 # ─── HTTP Server ───
 
 mutable struct HttpServer
-    options::HttpServerOptions
+    prior_knowledge_http2::Bool
+    initial_window_size::Csize_t
+    manual_window_management::Bool
+    tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}
+    http1_options::Http1ConnectionOptions
+    on_incoming_connection::Union{Nothing, Function}
+    on_destroy_complete::Union{Nothing, Function}
     connections::Vector{HttpConnection}
     channel_map::IdDict{Sockets.Channel, HttpConnection}
     lock::ReentrantLock
@@ -95,8 +64,8 @@ end
 
 function _server_on_channel_setup(server::HttpServer, error_code::Int, channel)
     if error_code != Reseau.OP_SUCCESS || channel === nothing
-        if server.options.on_incoming_connection !== nothing
-            server.options.on_incoming_connection(server, nothing, error_code)
+        if server.on_incoming_connection !== nothing
+            server.on_incoming_connection(server, nothing, error_code)
         end
         return nothing
     end
@@ -111,8 +80,8 @@ function _server_on_channel_setup(server::HttpServer, error_code::Int, channel)
         try
             version = _http_select_version(
                 channel,
-                server.options.tls_connection_options !== nothing,
-                server.options.prior_knowledge_http2,
+                server.tls_connection_options !== nothing,
+                server.prior_knowledge_http2,
                 nothing,
                 Sockets.negotiated_protocol(channel),
             )
@@ -128,9 +97,9 @@ function _server_on_channel_setup(server::HttpServer, error_code::Int, channel)
         handler = http_connection_new_channel_handler(
             is_server=true,
             version=version,
-            manual_window_management=server.options.manual_window_management,
-            initial_window_size=server.options.initial_window_size,
-            read_buffer_capacity=server.options.http1_options.read_buffer_capacity,
+            manual_window_management=server.manual_window_management,
+            initial_window_size=server.initial_window_size,
+            read_buffer_capacity=server.http1_options.read_buffer_capacity,
         )
         handler === nothing && return Sockets.channel_shutdown!(channel, ERROR_HTTP_UNSUPPORTED_PROTOCOL)
         Sockets.channel_slot_set_handler!(slot, handler)
@@ -147,9 +116,9 @@ function _server_on_channel_setup(server::HttpServer, error_code::Int, channel)
         end
     end
 
-    if server.options.on_incoming_connection !== nothing
+    if server.on_incoming_connection !== nothing
         try
-            server.options.on_incoming_connection(server, conn, Reseau.OP_SUCCESS)
+            server.on_incoming_connection(server, conn, Reseau.OP_SUCCESS)
         catch e
             @error "on_incoming_connection callback error" exception=(e, catch_backtrace())
         end
@@ -178,9 +147,9 @@ end
 
 function _server_on_listener_destroy(server::HttpServer)
     server.is_open = false
-    if server.options.on_destroy_complete !== nothing
+    if server.on_destroy_complete !== nothing
         try
-            server.options.on_destroy_complete()
+            server.on_destroy_complete()
         catch e
             @error "server destroy callback error" exception=(e, catch_backtrace())
         end
@@ -193,21 +162,33 @@ function _server_on_listener_destroy(server::HttpServer)
 end
 
 """
-    http_server_new(options::HttpServerOptions) -> HttpServer
+    http_server_new(; kwargs...) -> HttpServer
 
 Create a new HTTP server with the given options.
 """
-function http_server_new(options::HttpServerOptions)
-    if options.on_incoming_connection === nothing
+function http_server_new(;
+    endpoint_host::String="0.0.0.0",
+    endpoint_port::UInt32=UInt32(0),
+    prior_knowledge_http2::Bool=false,
+    initial_window_size::Csize_t=typemax(Csize_t),
+    manual_window_management::Bool=false,
+    event_loop_group::Union{EventLoops.EventLoopGroup, Nothing}=nothing,
+    socket_options::Sockets.SocketOptions=Sockets.SocketOptions(),
+    tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}=nothing,
+    http1_options::Http1ConnectionOptions=Http1ConnectionOptions(),
+    on_incoming_connection=nothing,
+    on_destroy_complete=nothing,
+)
+    if on_incoming_connection === nothing
         raise_error(ERROR_INVALID_ARGUMENT)
         error("on_incoming_connection is required")
     end
-    if options.prior_knowledge_http2 && options.tls_connection_options !== nothing
+    if prior_knowledge_http2 && tls_connection_options !== nothing
         raise_error(ERROR_INVALID_ARGUMENT)
         error("HTTP/2 prior knowledge only works with cleartext TCP")
     end
 
-    elg = options.event_loop_group
+    elg = event_loop_group
     owns_elg = false
     if elg === nothing
         elg = EventLoops.EventLoopGroup()
@@ -215,14 +196,20 @@ function http_server_new(options::HttpServerOptions)
     end
 
     server = HttpServer(
-        options,
+        prior_knowledge_http2,
+        initial_window_size,
+        manual_window_management,
+        tls_connection_options,
+        http1_options,
+        on_incoming_connection,
+        on_destroy_complete,
         HttpConnection[],
         IdDict{Sockets.Channel, HttpConnection}(),
         ReentrantLock(),
         true,
         false,
-        options.endpoint_host,
-        options.endpoint_port,
+        endpoint_host,
+        endpoint_port,
         nothing,
         elg,
         owns_elg,
@@ -232,10 +219,10 @@ function http_server_new(options::HttpServerOptions)
     listener_ready = Threads.Event()
     bootstrap = Sockets.ServerBootstrap(;
         event_loop_group = elg,
-        socket_options = options.socket_options,
-        host = options.endpoint_host,
-        port = options.endpoint_port,
-        tls_connection_options = options.tls_connection_options,
+        socket_options = socket_options,
+        host = endpoint_host,
+        port = endpoint_port,
+        tls_connection_options = tls_connection_options,
         on_listener_setup = err -> begin
             _server_update_listener_endpoint!(server)
             notify(listener_ready)
@@ -243,7 +230,7 @@ function http_server_new(options::HttpServerOptions)
         on_incoming_channel_setup = (err, channel) -> _server_on_channel_setup(server, err, channel),
         on_incoming_channel_shutdown = (err, channel) -> _server_on_channel_shutdown(server, err, channel),
         on_listener_destroy = _ -> _server_on_listener_destroy(server),
-        enable_read_back_pressure = options.manual_window_management,
+        enable_read_back_pressure = manual_window_management,
     )
 
     server.bootstrap = bootstrap
