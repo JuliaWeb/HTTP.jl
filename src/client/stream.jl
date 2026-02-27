@@ -92,18 +92,14 @@ function writechunk(s::Stream, chunk::RequestBodyTypes)
                  isdefined(s.response, :request) &&
                  s.response.request.method in ("POST", "PUT", "PATCH")) "write is only allowed for POST, PUT, and PATCH requests"
     end
-    s.chunk = InputStream()
-    is = s.chunk
-    if chunk isa AbstractVector{UInt8}
-        is.bodyref = chunk
-        is.bodylen = length(chunk)
+    is = if chunk isa AbstractVector{UInt8}
+        InputStream(chunk, length(chunk))
     elseif chunk isa AbstractString
-        is.bodyref = chunk
-        is.bodylen = sizeof(chunk)
+        InputStream(chunk, sizeof(chunk))
     else
-        is.bodyref = chunk
-        is.bodylen = nbytes(chunk) === nothing ? 0 : nbytes(chunk)
+        InputStream(chunk, nbytes(chunk) === nothing ? 0 : nbytes(chunk))
     end
+    s.chunk = is
     write_fut = Reseau.EventLoops.Future{Int}()
     if s.http2
         data = if chunk isa AbstractString

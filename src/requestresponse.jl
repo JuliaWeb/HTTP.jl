@@ -329,11 +329,13 @@ end
 
 # request/response
 
-mutable struct InputStream
-    bodyref::Any
+mutable struct InputStream{B}
+    bodyref::B
     bodylen::Int64
-    InputStream() = new(nothing, 0)
 end
+
+InputStream() = InputStream{Nothing}(nothing, 0)
+InputStream(body, bodylen::Integer) = InputStream{typeof(body)}(body, Int64(bodylen))
 
 ischunked(is::InputStream) = is.bodylen < 0 && is.bodyref !== nothing
 
@@ -378,31 +380,27 @@ function setinputstream!(m::Message, body)
     AwsHTTP.http_message_set_body_stream(getfield(m, :msg), nothing)
     m.inputstream = nothing
     body === nothing && return
-    is = InputStream()
-    if (body isa AbstractVector{UInt8}) || (body isa AbstractString)
-        is.bodyref = body
-        is.bodylen = sizeof(body)
+    is = if (body isa AbstractVector{UInt8}) || (body isa AbstractString)
+        InputStream(body, sizeof(body))
     elseif body isa Union{AbstractDict, NamedTuple}
-        is.bodyref = URIs.escapeuri(body)
-        is.bodylen = sizeof(is.bodyref)
+        encoded = URIs.escapeuri(body)
+        InputStream(encoded, sizeof(encoded))
     elseif body isa IOStream
         isopen(body) || throw(ArgumentError("request body IOStream is closed"))
-        is.bodyref = read(body)
-        is.bodylen = sizeof(is.bodyref)
+        bytes = read(body)
+        InputStream(bytes, sizeof(bytes))
     elseif body isa Form
-        is.bodyref = read(body)
-        is.bodylen = sizeof(is.bodyref)
+        bytes = read(body)
+        InputStream(bytes, sizeof(bytes))
     elseif body isa IO
         bytes = readavailable(body)
         while !eof(body)
             append!(bytes, readavailable(body))
         end
-        is.bodyref = bytes
-        is.bodylen = sizeof(is.bodyref)
+        InputStream(bytes, sizeof(bytes))
     elseif Base.isiterable(typeof(body))
         # chunked request body; any kind of iterable where elements are RequestBodyTypes
-        is.bodyref = body
-        is.bodylen = -1
+        InputStream(body, -1)
     else
         throw(ArgumentError("request body must be a string, vector of UInt8, NamedTuple, AbstractDict, HTTP.Form, IO, or an iterable of those"))
     end
