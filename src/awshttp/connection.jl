@@ -37,21 +37,18 @@ Base.@kwdef struct HttpClientConnectionOptions
     requested_event_loop::Union{EventLoops.EventLoop, Nothing} = nothing
 end
 
-function _dispatch_user_callback(f, args...; subject::LogSubject = LS_HTTP_CONNECTION, label::AbstractString = "callback")
+function _invoke_user_callback(f, args...; subject::LogSubject = LS_HTTP_CONNECTION, label::AbstractString = "callback")
     f === nothing && return nothing
-    Reseau.logf(Reseau.LogLevel.TRACE, subject, "HTTP user $(label) dispatching")
-    errormonitor(Threads.@spawn begin
-        try
-            Reseau.logf(Reseau.LogLevel.TRACE, subject, "HTTP user $(label) starting")
-            f(args...)
-        catch err
-            Reseau.logf(
-                Reseau.LogLevel.ERROR,
-                subject,
-                "HTTP user $(label) threw: $(sprint(showerror, err, catch_backtrace()))",
-            )
-        end
-    end)
+    Reseau.logf(Reseau.LogLevel.TRACE, subject, "HTTP user $(label) invoking")
+    try
+        f(args...)
+    catch err
+        Reseau.logf(
+            Reseau.LogLevel.ERROR,
+            subject,
+            "HTTP user $(label) threw: $(sprint(showerror, err, catch_backtrace()))",
+        )
+    end
     return nothing
 end
 
@@ -60,14 +57,14 @@ function http_client_connect_sync(
     on_setup=nothing,
     on_shutdown=nothing,
 )::Tuple{Union{HttpConnection, Nothing}, Int}
-    result = Base.Channel{Tuple{Union{HttpConnection, Nothing}, Int}}(1)
+    result = EventLoops.Future{Tuple{Union{HttpConnection, Nothing}, Int}}()
     sync_on_setup = function (connection, error_code)
-        on_setup === nothing || _dispatch_user_callback(on_setup, connection, error_code; label="on_setup")
-        put!(result, (error_code == OP_SUCCESS ? connection : nothing, error_code))
+        notify(result, (error_code == OP_SUCCESS ? connection : nothing, error_code))
+        on_setup === nothing || _invoke_user_callback(on_setup, connection, error_code; label="on_setup")
         return nothing
     end
     http_client_connect(options; on_setup=sync_on_setup, on_shutdown=on_shutdown)
-    return take!(result)
+    return wait(result)
 end
 
 # ─── Abstract connection interface ───
