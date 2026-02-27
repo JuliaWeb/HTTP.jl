@@ -986,7 +986,7 @@ function h1_connection_encode_outgoing!(conn::H1Connection)::Tuple{Int, Vector{U
     end
 
     dst = IOBuffer(; maxsize=16384)
-    err = h1_encoder_process!(conn.encoder, dst)
+    err = h1_encoder_process!(conn.encoder, stream.encoder_message, dst)
     err != OP_SUCCESS && return (OP_ERR, UInt8[])
 
     encoded = take!(dst)
