@@ -519,7 +519,6 @@ mutable struct H1Encoder
     state::H1EncoderState.T
     message::Union{H1EncoderMessage, Nothing}
     progress_bytes::UInt64
-    current_chunk::Union{H1Chunk, Nothing}
     chunk_count::UInt64
 end
 
@@ -529,7 +528,7 @@ end
 Create a new H1 encoder in INIT state.
 """
 function h1_encoder_init()::H1Encoder
-    return H1Encoder(H1EncoderState.INIT, nothing, UInt64(0), nothing, UInt64(0))
+    return H1Encoder(H1EncoderState.INIT, nothing, UInt64(0), UInt64(0))
 end
 
 """
@@ -541,7 +540,6 @@ function h1_encoder_clean_up!(encoder::H1Encoder)
     encoder.state = H1EncoderState.INIT
     encoder.message = nothing
     encoder.progress_bytes = UInt64(0)
-    encoder.current_chunk = nothing
     encoder.chunk_count = UInt64(0)
     return nothing
 end
@@ -741,15 +739,18 @@ function _state_fn_chunk_next(encoder::H1Encoder, dst::IOBuffer)::Int
         return OP_SUCCESS  # wait for more chunks
     end
 
-    # Pop first chunk
-    encoder.current_chunk = popfirst!(msg.pending_chunk_list)
     encoder.chunk_count += 1
     _switch_state!(encoder, H1EncoderState.CHUNK_LINE)
     return OP_SUCCESS
 end
 
 function _state_fn_chunk_line(encoder::H1Encoder, dst::IOBuffer)::Int
-    chunk = encoder.current_chunk
+    msg = encoder.message
+    if isempty(msg.pending_chunk_list)
+        raise_error(ERROR_INVALID_STATE)
+        return OP_ERR
+    end
+    chunk = first(msg.pending_chunk_list)
     done = _encode_buf!(encoder, dst, chunk.chunk_line)
     if !done
         return OP_SUCCESS
@@ -766,7 +767,12 @@ function _state_fn_chunk_line(encoder::H1Encoder, dst::IOBuffer)::Int
 end
 
 function _state_fn_chunk_body(encoder::H1Encoder, dst::IOBuffer)::Int
-    chunk = encoder.current_chunk
+    msg = encoder.message
+    if isempty(msg.pending_chunk_list)
+        raise_error(ERROR_INVALID_STATE)
+        return OP_ERR
+    end
+    chunk = first(msg.pending_chunk_list)
     err, done = _encode_stream!(encoder, dst, chunk.data, chunk.data_size)
     if err != OP_SUCCESS
         error_code = Reseau.last_error()
@@ -781,6 +787,11 @@ function _state_fn_chunk_body(encoder::H1Encoder, dst::IOBuffer)::Int
 end
 
 function _state_fn_chunk_end(encoder::H1Encoder, dst::IOBuffer)::Int
+    msg = encoder.message
+    if isempty(msg.pending_chunk_list)
+        raise_error(ERROR_INVALID_STATE)
+        return OP_ERR
+    end
     done = _write_crlf!(dst)
     if !done
         return OP_SUCCESS
@@ -812,11 +823,11 @@ end
 
 # Internal: clean up current chunk after encoding
 function _clean_up_current_chunk!(encoder::H1Encoder, error_code::Int)
-    chunk = encoder.current_chunk
-    encoder.current_chunk = nothing
-    if chunk !== nothing
-        h1_chunk_complete_and_destroy!(chunk, error_code)
-    end
+    msg = encoder.message
+    msg === nothing && return nothing
+    isempty(msg.pending_chunk_list) && return nothing
+    chunk = popfirst!(msg.pending_chunk_list)
+    h1_chunk_complete_and_destroy!(chunk, error_code)
     return nothing
 end
 
