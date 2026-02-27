@@ -50,7 +50,7 @@ function http_version(c::Connection)
     return v == AwsHTTP.HttpVersion.HTTP_2 ? "HTTP/2" : "HTTP/1.1"
 end
 
-mutable struct Server{F, C, S}
+mutable struct Server{F, C, S, A}
     const f::F
     const on_stream_complete::C
     const on_shutdown::S
@@ -58,14 +58,14 @@ mutable struct Server{F, C, S}
     const connections_lock::ReentrantLock
     const connections::Set{Connection}
     const closed::Threads.Event
-    const access_log::Union{Nothing, Function}
+    const access_log::A
     const stream::Bool
     const logstate::Base.CoreLogging.LogState
     @atomic state::Symbol # :initializing, :running, :closed
     bootstrap::Union{Nothing, Reseau.Sockets.ServerBootstrap}
     bound_port::Int
 
-    Server{F, C, S}(
+    Server{F, C, S, A}(
         f::F,
         on_stream_complete::C,
         on_shutdown::S,
@@ -73,11 +73,11 @@ mutable struct Server{F, C, S}
         connections_lock::ReentrantLock,
         connections::Set{Connection},
         closed::Threads.Event,
-        access_log::Union{Nothing, Function},
+        access_log::A,
         stream::Bool,
         logstate::Base.CoreLogging.LogState,
         state::Symbol,
-    ) where {F, C, S} = new{F, C, S}(f, on_stream_complete, on_shutdown, fut, connections_lock, connections, closed, access_log, stream, logstate, state)
+    ) where {F, C, S, A} = new{F, C, S, A}(f, on_stream_complete, on_shutdown, fut, connections_lock, connections, closed, access_log, stream, logstate, state)
 end
 
 Base.wait(s::Server) = wait(s.closed)
@@ -341,7 +341,7 @@ end
 function serve!(f, host="127.0.0.1", port=8080;
     on_stream_complete=nothing,
     on_shutdown=nothing,
-    access_log::Union{Nothing, Function}=nothing,
+    access_log=nothing,
     stream::Bool=false,
     listenany::Bool=false,
     reuseaddr::Bool=false,
@@ -377,7 +377,7 @@ function serve!(f, host="127.0.0.1", port=8080;
     else
         nothing
     end
-    server = Server{typeof(f), typeof(on_stream_complete), typeof(on_shutdown)}(
+    server = Server{typeof(f), typeof(on_stream_complete), typeof(on_shutdown), typeof(access_log)}(
         f,
         on_stream_complete,
         on_shutdown,

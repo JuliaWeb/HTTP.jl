@@ -712,7 +712,7 @@
             UInt32(1),
         )
         push!(list, stat3)
-        HTTP._call_statistics_observer(client.monitoring_observer, Csize_t(0), list)
+        HTTP._call_statistics_observer(client.settings.monitoring_statistics_observer, Csize_t(0), list)
         @test called[]
         finalize(client)
     end

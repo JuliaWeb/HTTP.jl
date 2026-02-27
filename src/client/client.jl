@@ -169,7 +169,6 @@ mutable struct Client
     proxy_env_settings::Union{Nothing, AwsHTTP.ProxyEnvVarSettings}
     proxy_strategy::Union{Nothing, AwsHTTP.HttpProxyStrategy}
     monitoring_options::Union{Nothing, AwsHTTP.HttpConnectionMonitoringOptions}
-    monitoring_observer::Union{Nothing, Function}
     retry_strategy::Reseau.StandardRetryStrategy
     connection_manager::AwsHTTP.HttpConnectionManager
     http2_stream_manager::Union{Nothing, AwsHTTP.Http2StreamManager}
@@ -251,7 +250,6 @@ function Client(cs::ClientSettings)
     else
         client.monitoring_options = nothing
     end
-    client.monitoring_observer = cs.monitoring_statistics_observer
     # retry strategy
     strategy = Reseau.StandardRetryStrategy(
         Reseau.EventLoops.get_event_loop_group();
