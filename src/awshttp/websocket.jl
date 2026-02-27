@@ -434,7 +434,7 @@ mutable struct WebSocket
     incoming_message_payload_total::UInt64
 
     # Callback
-    on_incoming_frame::Any     # (ws, frame_info, payload, error_code) -> Bool
+    on_incoming_frame::Union{Nothing, Function}     # (ws, frame_info, payload, error_code) -> Bool
 end
 
 function ws_new(;

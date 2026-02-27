@@ -49,14 +49,14 @@ Base.@deprecate is_upgrade isupgrade
 # Bridges the Reseau channel pipeline with the AwsHTTP WebSocket codec.
 # Installed into the H1Connection's channel slot after HTTP 101 upgrade.
 
-mutable struct WsChannelHandler
+mutable struct WsChannelHandler{W}
     slot::Union{Reseau.Sockets.ChannelSlot, Nothing}
-    aws_ws::Any  # AwsHTTP.WebSocket
+    aws_ws::AwsHTTP.WebSocket
     wslock::ReentrantLock  # protects outgoing_frames access
-    ws::Any
+    ws::Union{Nothing, W}
 end
 
-WsChannelHandler(aws_ws, ws) = WsChannelHandler(nothing, aws_ws, ReentrantLock(), ws)
+WsChannelHandler(aws_ws::AwsHTTP.WebSocket, ws::W) where {W} = WsChannelHandler{W}(nothing, aws_ws, ReentrantLock(), ws)
 
 function Reseau.Sockets.setchannelslot!(handler::WsChannelHandler, slot::Reseau.Sockets.ChannelSlot)::Nothing
     handler.slot = slot
@@ -159,8 +159,8 @@ mutable struct WebSocket
     handshake_request::Union{Nothing, Request}
     handshake_response::Union{Nothing, Response}
     # AwsHTTP WebSocket codec + channel handler
-    aws_ws::Any    # AwsHTTP.WebSocket
-    handler::Any   # WsChannelHandler
+    aws_ws::Union{Nothing, AwsHTTP.WebSocket}
+    handler::Union{Nothing, WsChannelHandler{WebSocket}}
     # Fragment tracking
     fragment_opcode::Union{Nothing, UInt8}
     fragment_payload::Vector{UInt8}

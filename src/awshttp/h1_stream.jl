@@ -22,7 +22,7 @@ mutable struct H2CState
     request_message::Union{HttpMessage, Nothing}
     original_request::Union{HttpMessage, Nothing}
     upgrade_settings::Union{AbstractVector, Nothing}
-    on_h2c_upgrade::Any
+    on_h2c_upgrade::Union{Nothing, Function}
 end
 
 function H2CState(on_h2c_upgrade = nothing)
@@ -94,20 +94,20 @@ end
 
 struct HttpMakeRequestOptions
     request::HttpMessage
-    on_response_headers::Any       # (stream, header_block, headers) -> Int
-    on_response_header_block_done::Any  # (stream, header_block) -> Int
-    on_response_body::Any          # (stream, data) -> Int
-    on_metrics::Any                 # (stream, metrics) -> Nothing
-    on_complete::Any                # (stream, error_code) -> Nothing
-    on_destroy::Any                 # (stream) -> Nothing
+    on_response_headers::Union{Nothing, Function}       # (stream, header_block, headers) -> Int
+    on_response_header_block_done::Union{Nothing, Function}  # (stream, header_block) -> Int
+    on_response_body::Union{Nothing, Function}          # (stream, data) -> Int
+    on_metrics::Union{Nothing, Function}                 # (stream, metrics) -> Nothing
+    on_complete::Union{Nothing, Function}                # (stream, error_code) -> Nothing
+    on_destroy::Union{Nothing, Function}                 # (stream) -> Nothing
     response_first_byte_timeout_ms::UInt64
     # ── H2-specific options ──
     http2_use_manual_data_writes::Bool
-    http2_priority::Any  # Http2Priority or nothing
+    http2_priority::Union{Nothing, Http2PrioritySettings}
     http2_headers_pad_length::UInt32
     # ── h2c upgrade ──
     h2c_upgrade::Bool  # attempt HTTP/2 cleartext upgrade on this request
-    on_h2c_upgrade::Any  # (connection, h2_connection, h2_stream, error_code) -> Nothing
+    on_h2c_upgrade::Union{Nothing, Function}  # (connection, h2_connection, h2_stream, error_code) -> Nothing
 end
 
 function HttpMakeRequestOptions(;
@@ -135,18 +135,6 @@ function HttpMakeRequestOptions(;
     )
 end
 
-# ─── Request handler options (server) ───
-
-struct HttpRequestHandlerOptions
-    server_connection::HttpConnection
-    on_request_headers::Any
-    on_request_header_block_done::Any
-    on_request_body::Any
-    on_request_done::Any
-    on_complete::Any
-    on_destroy::Any
-end
-
 # ─── H1 Stream ───
 
 mutable struct H1Stream
@@ -157,12 +145,12 @@ mutable struct H1Stream
     metrics::HttpStreamMetrics
 
     # Callbacks
-    on_incoming_headers::Any
-    on_incoming_header_block_done::Any
-    on_incoming_body::Any
-    on_metrics::Any
-    on_complete::Any
-    on_destroy::Any
+    on_incoming_headers::Union{Nothing, Function}
+    on_incoming_header_block_done::Union{Nothing, Function}
+    on_incoming_body::Union{Nothing, Function}
+    on_metrics::Union{Nothing, Function}
+    on_complete::Union{Nothing, Function}
+    on_destroy::Union{Nothing, Function}
 
     # Client-specific
     response_status::Int
@@ -172,7 +160,7 @@ mutable struct H1Stream
     # Server-specific
     request_method_str::String
     request_path::String
-    on_request_done::Any
+    on_request_done::Union{Nothing, Function}
 
     is_client::Bool
 
@@ -262,27 +250,35 @@ function h1_stream_new_request(connection, options::HttpMakeRequestOptions)::Uni
 end
 
 """
-    h1_stream_new_request_handler(options::HttpRequestHandlerOptions) -> H1Stream
+    h1_stream_new_request_handler(connection; kwargs...) -> H1Stream
 
 Create a new server request handler stream.
 """
-function h1_stream_new_request_handler(options::HttpRequestHandlerOptions)::H1Stream
+function h1_stream_new_request_handler(
+    connection::HttpConnection;
+    on_request_headers=nothing,
+    on_request_header_block_done=nothing,
+    on_request_body=nothing,
+    on_request_done=nothing,
+    on_complete=nothing,
+    on_destroy=nothing,
+)::H1Stream
     stream = H1Stream(
-        options.server_connection,
+        connection,
         UInt32(0),
         HttpMethod.UNKNOWN,
         HttpStreamMetrics(),
         # callbacks
-        options.on_request_headers,
-        options.on_request_header_block_done,
-        options.on_request_body,
+        on_request_headers,
+        on_request_header_block_done,
+        on_request_body,
         nothing,  # on_metrics
-        options.on_complete,
-        options.on_destroy,
+        on_complete,
+        on_destroy,
         # client (unused)
         HTTP_STATUS_CODE_UNKNOWN, UInt64(0), nothing,
         # server
-        "", "", options.on_request_done,
+        "", "", on_request_done,
         false,  # is_client = false (server)
         # thread data
         nothing, false, false, false, false,

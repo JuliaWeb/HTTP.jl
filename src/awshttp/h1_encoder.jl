@@ -108,7 +108,7 @@ end
 
 mutable struct H1Chunk
     # late-init: starts as IO, set to nothing on destroy
-    data::Any            # input stream (IO or nothing)
+    data::Union{Nothing, IO}
     data_size::UInt64
     completion::Union{EventLoops.Future{Int}, Nothing}
     chunk_line::Memory{UInt8}  # pre-encoded "SIZE[;ext=val]\r\n"
@@ -243,7 +243,7 @@ end
 
 mutable struct H1EncoderMessage
     outgoing_head_buf::Memory{UInt8}      # pre-encoded request/status line + headers
-    body::Any                              # input stream for unchunked body
+    body::Union{Nothing, IO}
     pending_chunk_list::Vector{H1Chunk}    # queue of chunks for manual chunked API
     trailer::Union{H1Trailer, Nothing}
     content_length::UInt64
@@ -521,7 +521,6 @@ mutable struct H1Encoder
     progress_bytes::UInt64
     current_chunk::Union{H1Chunk, Nothing}
     chunk_count::UInt64
-    current_stream::Any  # for logging/callbacks context
 end
 
 """
@@ -530,7 +529,7 @@ end
 Create a new H1 encoder in INIT state.
 """
 function h1_encoder_init()::H1Encoder
-    return H1Encoder(H1EncoderState.INIT, nothing, UInt64(0), nothing, UInt64(0), nothing)
+    return H1Encoder(H1EncoderState.INIT, nothing, UInt64(0), nothing, UInt64(0))
 end
 
 """
@@ -544,21 +543,19 @@ function h1_encoder_clean_up!(encoder::H1Encoder)
     encoder.progress_bytes = UInt64(0)
     encoder.current_chunk = nothing
     encoder.chunk_count = UInt64(0)
-    encoder.current_stream = nothing
     return nothing
 end
 
 """
-    h1_encoder_start_message!(encoder, message; stream=nothing) -> Int
+    h1_encoder_start_message!(encoder, message) -> Int
 
 Begin encoding a message. Returns OP_ERR if a message is already in progress.
 """
-function h1_encoder_start_message!(encoder::H1Encoder, message::H1EncoderMessage; stream=nothing)::Int
+function h1_encoder_start_message!(encoder::H1Encoder, message::H1EncoderMessage)::Int
     if encoder.message !== nothing
         return raise_error(ERROR_INVALID_STATE)
     end
     encoder.message = message
-    encoder.current_stream = stream
     _switch_state!(encoder, H1EncoderState.INIT)
     return OP_SUCCESS
 end

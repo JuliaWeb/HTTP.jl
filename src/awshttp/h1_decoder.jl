@@ -34,22 +34,11 @@ struct H1DecodedHeader
     data::String
 end
 
-# ─── Decoder callbacks ───
-
-struct H1DecoderCallbacks{FH, FB, FReq, FResp, FD}
-    on_header::FH      # (header::H1DecodedHeader) -> Int
-    on_body::FB        # (data::AbstractVector{UInt8}, finished::Bool) -> Int
-    on_request::FReq   # (method_enum::HttpMethod.T, method_str::String, uri::String) -> Int
-    on_response::FResp # (status_code::Int) -> Int
-    on_done::FD        # () -> Int
-end
-
 # ─── Decoder params ───
 
-struct H1DecoderParams{CB <: H1DecoderCallbacks}
+struct H1DecoderParams
     scratch_space_initial_size::Int
     is_decoding_requests::Bool
-    callbacks::CB
 end
 
 # ─── Decoder state enum ───
@@ -67,7 +56,7 @@ end
 
 # ─── H1 Decoder ───
 
-mutable struct H1Decoder{CB <: H1DecoderCallbacks}
+mutable struct H1Decoder
     scratch_space::Vector{UInt8}
     state::H1DecoderState.T
     transfer_encoding::Int
@@ -83,11 +72,16 @@ mutable struct H1Decoder{CB <: H1DecoderCallbacks}
     connection_close_detected::Bool
     header_block::HttpHeaderBlock.T
     stop_processing::Bool
-    # late-init: starts nothing, set via h1_decoder_set_logging_id
-    logging_id::Any
-    callbacks::CB
+    # late-init: consumer-specific state (for connection-level callbacks)
+    context::Any
     is_decoding_requests::Bool
 end
+
+h1_decoder_on_header(::H1Decoder, ::Any)::Int = OP_SUCCESS
+h1_decoder_on_body(::H1Decoder, ::Any, ::Bool)::Int = OP_SUCCESS
+h1_decoder_on_request(::H1Decoder, ::Any, ::Any, ::Any)::Int = OP_SUCCESS
+h1_decoder_on_response(::H1Decoder, ::Any)::Int = OP_SUCCESS
+h1_decoder_on_done(::Any)::Int = OP_SUCCESS
 
 """
     h1_decoder_new(params::H1DecoderParams) -> H1Decoder
@@ -103,7 +97,6 @@ function h1_decoder_new(params::H1DecoderParams)::H1Decoder
         HttpHeaderBlock.MAIN,
         false,
         nothing,
-        params.callbacks,
         params.is_decoding_requests,
     )
     _reset_state!(decoder)
@@ -153,7 +146,7 @@ end
 # Internal: mark message as done, call on_done callback
 function _mark_done!(decoder::H1Decoder)::Int
     decoder.is_done = true
-    return decoder.callbacks.on_done()
+    return h1_decoder_on_done(decoder)
 end
 
 # ─── CRLF scanning ───
@@ -221,7 +214,7 @@ function _state_unchunked_body!(decoder::H1Decoder, data::AbstractVector{UInt8},
     body_end = body_start + Int(processed_bytes) - 1
     pos[] += Int(processed_bytes)
 
-    err = decoder.callbacks.on_body(@view(data[body_start:body_end]), finished)
+    err = h1_decoder_on_body(decoder, @view(data[body_start:body_end]), finished)
     err != OP_SUCCESS && return OP_ERR
 
     if finished
@@ -248,7 +241,7 @@ function _state_chunk!(decoder::H1Decoder, data::AbstractVector{UInt8}, pos::Ref
     body_end = body_start + Int(processed_bytes) - 1
     pos[] += Int(processed_bytes)
 
-    err = decoder.callbacks.on_body(@view(data[body_start:body_end]), false)
+    err = h1_decoder_on_body(decoder, @view(data[body_start:body_end]), false)
     err != OP_SUCCESS && return OP_ERR
 
     if finished
@@ -270,7 +263,7 @@ function _state_connection_close_body!(decoder::H1Decoder, data::AbstractVector{
     decoder.content_processed += UInt64(remaining_input)
 
     # Not finished yet — caller must signal EOF via h1_decoder_signal_eof!
-    err = decoder.callbacks.on_body(@view(data[body_start:body_end]), false)
+    err = h1_decoder_on_body(decoder, @view(data[body_start:body_end]), false)
     err != OP_SUCCESS && return OP_ERR
 
     return OP_SUCCESS
@@ -335,7 +328,7 @@ function _linestate_request!(decoder::H1Decoder, line::String)::Int
     version_str != "HTTP/1.1" && return raise_error(ERROR_HTTP_PROTOCOL_ERROR)
 
     method_enum = http_str_to_method(method_str)
-    err = decoder.callbacks.on_request(method_enum, method_str, uri_str)
+    err = h1_decoder_on_request(decoder, method_enum, method_str, uri_str)
     err != OP_SUCCESS && return OP_ERR
 
     _decoder_set_state!(decoder, H1DecoderState.GETLINE_HEADER)
@@ -375,7 +368,7 @@ function _linestate_response!(decoder::H1Decoder, line::String)::Int
         decoder.header_block = HttpHeaderBlock.INFORMATIONAL
     end
 
-    err = decoder.callbacks.on_response(code_val)
+    err = h1_decoder_on_response(decoder, code_val)
     err != OP_SUCCESS && return OP_ERR
 
     _decoder_set_state!(decoder, H1DecoderState.GETLINE_HEADER)
@@ -476,7 +469,7 @@ function _linestate_header!(decoder::H1Decoder, line::String)::Int
     end
 
     # Call on_header callback
-    err = decoder.callbacks.on_header(header)
+    err = h1_decoder_on_header(decoder, header)
     err != OP_SUCCESS && return OP_ERR
 
     _decoder_set_state!(decoder, H1DecoderState.GETLINE_HEADER)
@@ -505,7 +498,7 @@ function _linestate_chunk_size!(decoder::H1Decoder, line::String)::Int
 
     # Zero-size chunk = final chunk
     if chunk_size == 0
-        err = decoder.callbacks.on_body(UInt8[], true)
+        err = h1_decoder_on_body(decoder, UInt8[], true)
         err != OP_SUCCESS && return OP_ERR
 
         # Expect trailers (or empty line to end message)
@@ -584,9 +577,8 @@ h1_decoder_get_body_headers_ignored(decoder::H1Decoder)::Bool = decoder.body_hea
 """Return the current header block type (MAIN, INFORMATIONAL, TRAILING)."""
 h1_decoder_get_header_block(decoder::H1Decoder)::HttpHeaderBlock.T = decoder.header_block
 
-"""Set a logging identifier for the decoder."""
-function h1_decoder_set_logging_id!(decoder::H1Decoder, id)
-    decoder.logging_id = id
+function h1_decoder_set_context!(decoder::H1Decoder, context)::Nothing
+    decoder.context = context
     return nothing
 end
 
@@ -611,7 +603,7 @@ function h1_decoder_signal_eof!(decoder::H1Decoder)::Int
     if decoder.state != H1DecoderState.CONNECTION_CLOSE_BODY
         return raise_error(ERROR_INVALID_STATE)
     end
-    err = decoder.callbacks.on_body(UInt8[], true)
+    err = h1_decoder_on_body(decoder, UInt8[], true)
     err != OP_SUCCESS && return OP_ERR
     return _mark_done!(decoder)
 end

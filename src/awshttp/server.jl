@@ -1,26 +1,6 @@
 # HTTP Server - Listener and connection factory
 # Port of aws-c-http/include/aws/http/server.h, connection.c (server portions)
 
-# ─── Server connection options ───
-
-struct HttpServerConnectionOptions
-    on_incoming_request::Any    # (connection) -> stream_or_nothing
-    on_h2c_upgrade::Any         # (connection, request) -> Bool
-    on_shutdown::Any            # (connection, error_code) -> Nothing
-end
-
-function HttpServerConnectionOptions(;
-    on_incoming_request=nothing,
-    on_h2c_upgrade=nothing,
-    on_shutdown=nothing,
-)
-    return HttpServerConnectionOptions(
-        on_incoming_request,
-        on_h2c_upgrade,
-        on_shutdown,
-    )
-end
-
 # ─── Server options ───
 
 struct HttpServerOptions
@@ -33,8 +13,8 @@ struct HttpServerOptions
     socket_options::Sockets.SocketOptions
     tls_connection_options::Union{Sockets.TlsConnectionOptions, Nothing}
     http1_options::Http1ConnectionOptions
-    on_incoming_connection::Any  # (server, connection, error_code) -> Nothing
-    on_destroy_complete::Any     # () -> Nothing
+    on_incoming_connection::Union{Nothing, Function}  # (server, connection, error_code) -> Nothing
+    on_destroy_complete::Union{Nothing, Function}     # () -> Nothing
 end
 
 function HttpServerOptions(;
@@ -299,27 +279,32 @@ function http_server_release(server::HttpServer)::Nothing
 end
 
 """
-    http_connection_configure_server(connection, options::HttpServerConnectionOptions) -> Int
+    http_connection_configure_server(connection; on_incoming_request=nothing, on_h2c_upgrade=nothing, on_shutdown=nothing) -> Int
 
 Configure a server connection with handler callbacks. Must be called from
 the on_incoming_connection callback.
 """
-function http_connection_configure_server(connection, options::HttpServerConnectionOptions)::Int
+function http_connection_configure_server(
+    connection;
+    on_incoming_request=nothing,
+    on_h2c_upgrade=nothing,
+    on_shutdown=nothing,
+)::Int
     if http_connection_is_client(connection)
         return raise_error(ERROR_INVALID_STATE)
     end
 
     if connection isa H1Connection
-        connection.on_incoming_request = options.on_incoming_request
-        connection.on_h2c_upgrade = options.on_h2c_upgrade
-        connection.h2c_enabled = options.on_h2c_upgrade !== nothing
+        connection.on_incoming_request = on_incoming_request
+        connection.on_h2c_upgrade = on_h2c_upgrade
+        connection.h2c_enabled = on_h2c_upgrade !== nothing
         connection.server_configured = true
-        connection.on_shutdown = options.on_shutdown
+        connection.on_shutdown = on_shutdown
         return OP_SUCCESS
     elseif connection isa H2Connection
-        connection.on_incoming_request = options.on_incoming_request
+        connection.on_incoming_request = on_incoming_request
         connection.server_configured = true
-        connection.on_shutdown = options.on_shutdown
+        connection.on_shutdown = on_shutdown
         return OP_SUCCESS
     end
 

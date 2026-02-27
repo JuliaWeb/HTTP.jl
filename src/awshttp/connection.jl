@@ -37,9 +37,6 @@ struct HttpClientConnectionOptions
     # ── Window management ──
     manual_window_management::Bool
     initial_window_size::Csize_t
-    # ── Callbacks ──
-    on_setup::Any        # (connection_or_nothing, error_code) -> Nothing
-    on_shutdown::Any     # (connection, error_code) -> Nothing
     # ── Timeouts ──
     response_first_byte_timeout_ms::UInt64
     # ── Protocol-specific options ──
@@ -75,8 +72,6 @@ function HttpClientConnectionOptions(;
     alpn_string_map::Union{HttpAlpnMap, Nothing} = nothing,
     prior_knowledge_http2::Bool = false,
     h2c_upgrade::Bool = false,
-    on_setup = nothing,
-    on_shutdown = nothing,
     manual_window_management::Bool = false,
     initial_window_size::Csize_t = Csize_t(typemax(Csize_t)),
     response_first_byte_timeout_ms::UInt64 = UInt64(0),
@@ -88,42 +83,24 @@ function HttpClientConnectionOptions(;
         host_name, port,
         alpn_string_map, prior_knowledge_http2, h2c_upgrade,
         manual_window_management, initial_window_size,
-        on_setup, on_shutdown,
         response_first_byte_timeout_ms,
         http1_options,
         requested_event_loop,
     )
 end
 
-function _copy_connection_options_with_setup(options::HttpClientConnectionOptions, on_setup)
-    return HttpClientConnectionOptions(
-        bootstrap=options.bootstrap,
-        host_name=options.host_name,
-        port=options.port,
-        socket_options=options.socket_options,
-        tls_connection_options=options.tls_connection_options,
-        alpn_string_map=options.alpn_string_map,
-        prior_knowledge_http2=options.prior_knowledge_http2,
-        h2c_upgrade=options.h2c_upgrade,
-        on_setup=on_setup,
-        on_shutdown=options.on_shutdown,
-        manual_window_management=options.manual_window_management,
-        initial_window_size=options.initial_window_size,
-        response_first_byte_timeout_ms=options.response_first_byte_timeout_ms,
-        http1_options=options.http1_options,
-        requested_event_loop=options.requested_event_loop,
-    )
-end
-
-function http_client_connect_sync(options::HttpClientConnectionOptions)::Tuple{Union{HttpConnection, Nothing}, Int}
+function http_client_connect_sync(
+    options::HttpClientConnectionOptions;
+    on_setup=nothing,
+    on_shutdown=nothing,
+)::Tuple{Union{HttpConnection, Nothing}, Int}
     result = Base.Channel{Tuple{Union{HttpConnection, Nothing}, Int}}(1)
-    user_on_setup = options.on_setup
     sync_on_setup = function (connection, error_code)
-        user_on_setup === nothing || _dispatch_user_callback(user_on_setup, connection, error_code; label="on_setup")
+        on_setup === nothing || _dispatch_user_callback(on_setup, connection, error_code; label="on_setup")
         put!(result, (error_code == OP_SUCCESS ? connection : nothing, error_code))
         return nothing
     end
-    http_client_connect(_copy_connection_options_with_setup(options, sync_on_setup))
+    http_client_connect(options; on_setup=sync_on_setup, on_shutdown=on_shutdown)
     return take!(result)
 end
 
@@ -180,7 +157,7 @@ Stop accepting new requests on this connection.
 function http_connection_stop_new_requests end
 
 """
-    http_connection_new_request_handler(connection, options) -> H1Stream
+    http_connection_new_request_handler(connection; kwargs...) -> H1Stream
 
 Create a new server request handler stream on this connection (server only).
 """

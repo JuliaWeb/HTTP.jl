@@ -61,15 +61,15 @@ mutable struct H2Stream
     is_client::Bool
 
     # ── Callbacks ──
-    on_incoming_headers::Any          # (stream, block_type, headers) -> Int
-    on_incoming_header_block_done::Any  # (stream, block_type) -> Int
-    on_incoming_body::Any             # (stream, data) -> Int
-    on_request_done::Any              # (stream) -> Int (server only)
-    on_metrics::Any                    # (stream, metrics) -> Nothing
-    on_complete::Any                   # (stream, error_code) -> Nothing
+    on_incoming_headers::Union{Nothing, Function}          # (stream, block_type, headers) -> Int
+    on_incoming_header_block_done::Union{Nothing, Function}  # (stream, block_type) -> Int
+    on_incoming_body::Union{Nothing, Function}             # (stream, data) -> Int
+    on_request_done::Union{Nothing, Function}              # (stream) -> Int (server only)
+    on_metrics::Union{Nothing, Function}                    # (stream, metrics) -> Nothing
+    on_complete::Union{Nothing, Function}                   # (stream, error_code) -> Nothing
     # late-init: reassigned after construction in some patterns
-    on_destroy::Any                   # (stream) -> Nothing
-    on_incoming_push_promise::Any    # (stream, promised_stream_id, headers) -> Nothing
+    on_destroy::Union{Nothing, Function}                   # (stream) -> Nothing
+    on_incoming_push_promise::Union{Nothing, Function}    # (stream, promised_stream_id, headers) -> Nothing
 
     # ── Metrics ──
     metrics::HttpStreamMetrics
@@ -244,24 +244,32 @@ function h2_stream_new_request(connection, options::HttpMakeRequestOptions)::Uni
 end
 
 """
-    h2_stream_new_request_handler(connection, options::HttpRequestHandlerOptions) -> H2Stream
+    h2_stream_new_request_handler(connection; kwargs...) -> H2Stream
 
 Create a new server request handler stream for an incoming request.
 """
-function h2_stream_new_request_handler(connection, options::HttpRequestHandlerOptions;
-    manual_write::Bool=false)::H2Stream
+function h2_stream_new_request_handler(
+    connection;
+    on_request_headers=nothing,
+    on_request_header_block_done=nothing,
+    on_request_body=nothing,
+    on_request_done=nothing,
+    on_complete=nothing,
+    on_destroy=nothing,
+    manual_write::Bool=false,
+)::H2Stream
     stream = H2Stream(
         connection,
         UInt32(0),
         false,  # is_client = false (server)
         # Callbacks
-        options.on_request_headers,
-        options.on_request_header_block_done,
-        options.on_request_body,
-        options.on_request_done,
+        on_request_headers,
+        on_request_header_block_done,
+        on_request_body,
+        on_request_done,
         nothing,  # on_metrics
-        options.on_complete,
-        options.on_destroy,
+        on_complete,
+        on_destroy,
         nothing,  # on_incoming_push_promise
         # Metrics
         HttpStreamMetrics(),

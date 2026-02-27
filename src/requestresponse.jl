@@ -471,7 +471,7 @@ mutable struct Request <: Message
     context::Dict{Symbol, Any}
     route::Union{Nothing, String}
     params::Union{Nothing, Dict{String, String}}
-    cookies::Any # actually Union{Nothing, Vector{Cookie}}
+    cookies::Union{Nothing, Vector}
 
     function Request(method, path, headers=nothing, body=nothing, http2::Bool=false; context=nothing)
         msg = _new_request_message(http2)

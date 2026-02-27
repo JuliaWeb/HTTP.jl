@@ -17,8 +17,8 @@ mutable struct H1Connection <: HttpConnection
     # ── Connection identity ──
     http_version::HttpVersion.T
     is_client::Bool
-    on_incoming_request::Any
-    on_h2c_upgrade::Any
+    on_incoming_request::Union{Nothing, Function}
+    on_h2c_upgrade::Union{Nothing, Function}
     server_configured::Bool
     # ── h2c upgrade (client + server probe) ──
     h2c_enabled::Bool
@@ -55,15 +55,11 @@ mutable struct H1Connection <: HttpConnection
 
     # ── Client/Server-specific ──
     response_first_byte_timeout_ms::UInt64
-    on_shutdown::Any  # (connection, error_code) -> Nothing
-
-    # ── Proxy ──
-    proxy_request_transform::Any  # (request::HttpMessage) -> Int  or nothing
+    on_shutdown::Union{Nothing, Function}  # (connection, error_code) -> Nothing
 
     # ── Channel integration ──
     # late-init: set by channel_slot_set_handler!
     slot::Union{Sockets.ChannelSlot, Nothing}
-    on_channel_handler_installed::Any  # (connection) -> Nothing  or nothing
     remote_endpoint::String  # host:port or "" if unknown
 end
 
@@ -151,16 +147,7 @@ function _h1_fail_h2c_upgrade(stream::H1Stream, error_code::Int)::Int
 end
 
 function _h1_create_h2c_probe_stream(conn::H1Connection)::Union{H1Stream, Nothing}
-    opts = HttpRequestHandlerOptions(
-        conn,
-        nothing,
-        nothing,
-        nothing,
-        nothing,
-        nothing,
-        nothing,
-    )
-    stream = h1_stream_new_request_handler(opts)
+    stream = h1_stream_new_request_handler(conn)
     stream === nothing && return nothing
     stream.h2c.is_h2c_probe = true
     if stream.api_state == H1StreamApiState.INIT
@@ -262,12 +249,12 @@ function _h1_create_h2_connection_for_upgrade(conn::H1Connection, is_server::Boo
     Sockets.channel_slot_insert_right!(conn.slot, new_slot)
     Sockets.channel_slot_set_handler!(new_slot, h2_conn)
     if is_server
-        opts = HttpServerConnectionOptions(
+        if http_connection_configure_server(
+            h2_conn;
             on_incoming_request = conn.on_incoming_request,
             on_h2c_upgrade = conn.on_h2c_upgrade,
             on_shutdown = conn.on_shutdown,
-        )
-        if http_connection_configure_server(h2_conn, opts) != OP_SUCCESS
+        ) != OP_SUCCESS
             http_connection_close(h2_conn)
             return nothing
         end
@@ -631,16 +618,36 @@ function _conn_decoder_on_done(conn)::Int
     return OP_SUCCESS
 end
 
-# ─── Internal: build decoder callbacks for a connection ───
+# ─── H1 decoder dispatch ───
 
-function _make_decoder_callbacks(conn)
-    return H1DecoderCallbacks(
-        (hdr) -> _conn_decoder_on_header(hdr, conn),
-        (data, finished) -> _conn_decoder_on_body(data, finished, conn),
-        (me, ms, uri) -> _conn_decoder_on_request(me, ms, uri, conn),
-        (sc) -> _conn_decoder_on_response(sc, conn),
-        () -> _conn_decoder_on_done(conn),
-    )
+function h1_decoder_on_header(decoder::H1Decoder, header::H1DecodedHeader)::Int
+    conn = decoder.context
+    conn isa H1Connection || return OP_ERR
+    return _conn_decoder_on_header(header, conn)
+end
+
+function h1_decoder_on_body(decoder::H1Decoder, data::AbstractVector{UInt8}, finished::Bool)::Int
+    conn = decoder.context
+    conn isa H1Connection || return OP_ERR
+    return _conn_decoder_on_body(data, finished, conn)
+end
+
+function h1_decoder_on_request(decoder::H1Decoder, method_enum::HttpMethod.T, method_str::String, uri::String)::Int
+    conn = decoder.context
+    conn isa H1Connection || return OP_ERR
+    return _conn_decoder_on_request(method_enum, method_str, uri, conn)
+end
+
+function h1_decoder_on_response(decoder::H1Decoder, status_code::Int)::Int
+    conn = decoder.context
+    conn isa H1Connection || return OP_ERR
+    return _conn_decoder_on_response(status_code, conn)
+end
+
+function h1_decoder_on_done(decoder::H1Decoder)::Int
+    conn = decoder.context
+    conn isa H1Connection || return OP_ERR
+    return _conn_decoder_on_done(conn)
 end
 
 # ─── Constructor ───
@@ -655,33 +662,26 @@ function h1_connection_new_client(;
     initial_window_size::Csize_t = Csize_t(typemax(Csize_t)),
     read_buffer_capacity::Csize_t = Csize_t(0),
     on_shutdown = nothing,
-    on_channel_handler_installed = nothing,
-    proxy_request_transform = nothing,
     response_first_byte_timeout_ms::UInt64 = UInt64(0),
     h2c_upgrade::Bool = false,
 )::H1Connection
     conn_window = manual_window_management ? initial_window_size : Csize_t(typemax(Csize_t))
     encoder = h1_encoder_init()
-    callbacks = _make_decoder_callbacks(nothing)
-
-    # Create connection first with a placeholder decoder
     conn = H1Connection(
         HttpVersion.HTTP_1_1, true,
         nothing, nothing, false,
         h2c_upgrade, nothing,
         H1Stream[], nothing, nothing, UInt32(1),
         encoder,
-        h1_decoder_new(H1DecoderParams(1024, false, callbacks)),  # placeholder
+        h1_decoder_new(H1DecoderParams(1024, false)),
         conn_window, read_buffer_capacity, H1ConnectionReadState.OPEN,
         manual_window_management ? UInt64(initial_window_size) : typemax(UInt64),
         manual_window_management,
         true, false, false, 0, 0,
         response_first_byte_timeout_ms, on_shutdown,
-        proxy_request_transform, nothing, on_channel_handler_installed, "",
+        nothing, "",
     )
-
-    # Now create decoder with callbacks capturing conn
-    conn.decoder = h1_decoder_new(H1DecoderParams(1024, false, _make_decoder_callbacks(conn)))
+    h1_decoder_set_context!(conn.decoder, conn)
     return conn
 end
 
@@ -698,24 +698,21 @@ function h1_connection_new_server(;
 )::H1Connection
     conn_window = manual_window_management ? initial_window_size : Csize_t(typemax(Csize_t))
     encoder = h1_encoder_init()
-    callbacks = _make_decoder_callbacks(nothing)
-
     conn = H1Connection(
         HttpVersion.HTTP_1_1, false,
         nothing, nothing, false,
         false, nothing,
         H1Stream[], nothing, nothing, UInt32(2),
         encoder,
-        h1_decoder_new(H1DecoderParams(1024, true, callbacks)),  # placeholder
+        h1_decoder_new(H1DecoderParams(1024, true)),
         conn_window, read_buffer_capacity, H1ConnectionReadState.OPEN,
         manual_window_management ? UInt64(initial_window_size) : typemax(UInt64),
         manual_window_management,
         true, false, false, 0, 0,
         UInt64(0), on_shutdown,
-        nothing, nothing, nothing, "",
+        nothing, "",
     )
-
-    conn.decoder = h1_decoder_new(H1DecoderParams(1024, true, _make_decoder_callbacks(conn)))
+    h1_decoder_set_context!(conn.decoder, conn)
     return conn
 end
 
@@ -775,7 +772,15 @@ end
 
 # ─── Make server request handler (server API) ───
 
-function http_connection_new_request_handler(conn::H1Connection, options::HttpRequestHandlerOptions)::Union{H1Stream, Nothing}
+function http_connection_new_request_handler(
+    conn::H1Connection;
+    on_request_headers=nothing,
+    on_request_header_block_done=nothing,
+    on_request_body=nothing,
+    on_request_done=nothing,
+    on_complete=nothing,
+    on_destroy=nothing,
+)::Union{H1Stream, Nothing}
     if conn.is_client
         raise_error(ERROR_INVALID_STATE)
         return nothing
@@ -784,15 +789,15 @@ function http_connection_new_request_handler(conn::H1Connection, options::HttpRe
         raise_error(conn.new_stream_error_code)
         return nothing
     end
-    return h1_stream_new_request_handler(HttpRequestHandlerOptions(
-        conn,  # server_connection
-        options.on_request_headers,
-        options.on_request_header_block_done,
-        options.on_request_body,
-        options.on_request_done,
-        options.on_complete,
-        options.on_destroy,
-    ))
+    return h1_stream_new_request_handler(
+        conn;
+        on_request_headers=on_request_headers,
+        on_request_header_block_done=on_request_header_block_done,
+        on_request_body=on_request_body,
+        on_request_done=on_request_done,
+        on_complete=on_complete,
+        on_destroy=on_destroy,
+    )
 end
 
 # ─── Stream activation ───

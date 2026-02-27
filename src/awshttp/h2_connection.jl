@@ -46,7 +46,7 @@ mutable struct H2Connection <: HttpConnection
     # ── Connection identity ──
     http_version::HttpVersion.T
     is_client::Bool
-    on_incoming_request::Any
+    on_incoming_request::Union{Nothing, Function}
     server_configured::Bool
     remote_endpoint::String
 
@@ -97,9 +97,9 @@ mutable struct H2Connection <: HttpConnection
 
     # ── Callbacks ──
     # late-init: reassigned after construction in some usage patterns
-    on_goaway_received::Any    # (last_stream_id, error_code, debug_data) -> Nothing
-    on_remote_settings_change::Any  # (settings::Vector{Http2Setting}) -> Nothing
-    on_shutdown::Any           # (connection, error_code) -> Nothing
+    on_goaway_received::Union{Nothing, Function}    # (last_stream_id, error_code, debug_data) -> Nothing
+    on_remote_settings_change::Union{Nothing, Function}  # (settings::Vector{Http2Setting}) -> Nothing
+    on_shutdown::Union{Nothing, Function}           # (connection, error_code) -> Nothing
 
     # ── Channel integration ──
     # late-init: set by channel_slot_set_handler!
@@ -1005,7 +1005,15 @@ end
 
 http_connection_stop_new_requests(conn::H2Connection) = begin conn.new_requests_allowed = false; nothing end
 
-function http_connection_new_request_handler(conn::H2Connection, options::HttpRequestHandlerOptions)::Union{H2Stream, Nothing}
+function http_connection_new_request_handler(
+    conn::H2Connection;
+    on_request_headers=nothing,
+    on_request_header_block_done=nothing,
+    on_request_body=nothing,
+    on_request_done=nothing,
+    on_complete=nothing,
+    on_destroy=nothing,
+)::Union{H2Stream, Nothing}
     if conn.is_client
         raise_error(ERROR_INVALID_STATE)
         return nothing
@@ -1014,7 +1022,15 @@ function http_connection_new_request_handler(conn::H2Connection, options::HttpRe
         raise_error(ERROR_HTTP_CONNECTION_CLOSED)
         return nothing
     end
-    return h2_stream_new_request_handler(conn, options)
+    return h2_stream_new_request_handler(
+        conn;
+        on_request_headers=on_request_headers,
+        on_request_header_block_done=on_request_header_block_done,
+        on_request_body=on_request_body,
+        on_request_done=on_request_done,
+        on_complete=on_complete,
+        on_destroy=on_destroy,
+    )
 end
 
 http_connection_get_remote_endpoint(conn::H2Connection)::String = conn.remote_endpoint

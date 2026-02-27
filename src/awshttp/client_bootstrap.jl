@@ -20,8 +20,6 @@ function http_connection_new_channel_handler(;
     manual_window_management::Bool = false,
     initial_window_size::Csize_t = Csize_t(typemax(Csize_t)),
     on_shutdown = nothing,
-    on_channel_handler_installed = nothing,
-    proxy_request_transform = nothing,
     response_first_byte_timeout_ms::UInt64 = UInt64(0),
     read_buffer_capacity::Csize_t = Csize_t(0),
     h2c_upgrade::Bool = false,
@@ -40,8 +38,6 @@ function http_connection_new_channel_handler(;
                 initial_window_size,
                 read_buffer_capacity,
                 on_shutdown,
-                on_channel_handler_installed,
-                proxy_request_transform,
                 response_first_byte_timeout_ms,
                 h2c_upgrade,
             )
@@ -85,14 +81,14 @@ end
     http_client_connect(options::HttpClientConnectionOptions) -> Nothing
 
 Initiate an asynchronous HTTP client connection. When the connection is established,
-`options.on_setup` is called with the connection object. On failure, `options.on_setup`
+`on_setup` is called with the connection object. On failure, `on_setup`
 is called with `nothing` and an error code.
 
 The ALPN protocol negotiated during TLS determines whether an HTTP/1.1 or HTTP/2
 connection handler is created. If `prior_knowledge_http2` is set, HTTP/2 is used
 without ALPN negotiation.
 """
-function http_client_connect(options::HttpClientConnectionOptions)
+function http_client_connect(options::HttpClientConnectionOptions; on_setup=nothing, on_shutdown=nothing)
     event_loop_group = options.bootstrap === nothing ? get_client_event_loop_group() : options.bootstrap
     if !(event_loop_group isa EventLoops.EventLoopGroup)
         event_loop_group = EventLoops.get_event_loop_group()
@@ -107,12 +103,15 @@ function http_client_connect(options::HttpClientConnectionOptions)
 
     http_bootstrap = _HttpClientBootstrap(options, alpn_map, nothing, nothing)
 
-    # on_setup: fires when the channel is fully set up (after TLS + ALPN).
-    on_setup = (error_code, channel) -> begin
+    setup_cb = on_setup
+    shutdown_cb = on_shutdown
+
+    # on_channel_setup: fires when the channel is fully set up (after TLS + ALPN).
+    on_channel_setup = (error_code, channel) -> begin
         Reseau.logf(Reseau.LogLevel.DEBUG, LS_HTTP_CONNECTION, "http_client_connect on_setup wrapper invoked err=$(error_code)")
         if error_code != Reseau.OP_SUCCESS
-            if options.on_setup !== nothing
-                _dispatch_user_callback(options.on_setup, nothing, error_code; label = "on_setup")
+            if setup_cb !== nothing
+                _dispatch_user_callback(setup_cb, nothing, error_code; label = "on_setup")
             end
             return nothing
         end
@@ -133,16 +132,16 @@ function http_client_connect(options::HttpClientConnectionOptions)
             catch e
                 err = e isa Reseau.ReseauError ? e.code : Reseau.ERROR_UNKNOWN
                 Sockets.channel_shutdown!(channel, err)
-                if options.on_setup !== nothing
-                    _dispatch_user_callback(options.on_setup, nothing, err; label = "on_setup")
+                if setup_cb !== nothing
+                    _dispatch_user_callback(setup_cb, nothing, err; label = "on_setup")
                 end
                 return nothing
             end
             if version == HttpVersion.UNKNOWN
                 err = ERROR_HTTP_UNSUPPORTED_PROTOCOL
                 Sockets.channel_shutdown!(channel, err)
-                if options.on_setup !== nothing
-                    _dispatch_user_callback(options.on_setup, nothing, err; label = "on_setup")
+                if setup_cb !== nothing
+                    _dispatch_user_callback(setup_cb, nothing, err; label = "on_setup")
                 end
                 return nothing
             end
@@ -151,8 +150,8 @@ function http_client_connect(options::HttpClientConnectionOptions)
                 version,
                 manual_window_management = options.manual_window_management,
                 initial_window_size = options.initial_window_size,
-                on_shutdown = options.on_shutdown !== nothing ?
-                    (conn, err) -> _dispatch_user_callback(options.on_shutdown, conn, err; label = "on_shutdown") : nothing,
+                on_shutdown = shutdown_cb !== nothing ?
+                    (conn, err) -> _dispatch_user_callback(shutdown_cb, conn, err; label = "on_shutdown") : nothing,
                 response_first_byte_timeout_ms = options.response_first_byte_timeout_ms,
                 read_buffer_capacity = options.http1_options.read_buffer_capacity,
                 h2c_upgrade = options.h2c_upgrade,
@@ -160,8 +159,8 @@ function http_client_connect(options::HttpClientConnectionOptions)
             if handler === nothing
                 err = ERROR_HTTP_UNSUPPORTED_PROTOCOL
                 Sockets.channel_shutdown!(channel, err)
-                if options.on_setup !== nothing
-                    _dispatch_user_callback(options.on_setup, nothing, err; label = "on_setup")
+                if setup_cb !== nothing
+                    _dispatch_user_callback(setup_cb, nothing, err; label = "on_setup")
                 end
                 return nothing
             end
@@ -186,9 +185,9 @@ function http_client_connect(options::HttpClientConnectionOptions)
             end
         end
 
-        if options.on_setup !== nothing
+        if setup_cb !== nothing
             Reseau.logf(Reseau.LogLevel.DEBUG, LS_HTTP_CONNECTION, "http_client_connect invoking user on_setup")
-            _dispatch_user_callback(options.on_setup, conn, Reseau.OP_SUCCESS; label = "on_setup")
+            _dispatch_user_callback(setup_cb, conn, Reseau.OP_SUCCESS; label = "on_setup")
         else
             Reseau.logf(Reseau.LogLevel.DEBUG, LS_HTTP_CONNECTION, "http_client_connect user on_setup is nothing")
         end
@@ -197,7 +196,7 @@ function http_client_connect(options::HttpClientConnectionOptions)
 
     try
         return Sockets.client_bootstrap_connect!(
-            on_setup,
+            on_channel_setup,
             options.host_name,
             options.port;
             socket_options = options.socket_options !== nothing ? options.socket_options : Sockets.SocketOptions(),
@@ -208,7 +207,7 @@ function http_client_connect(options::HttpClientConnectionOptions)
         )
     catch err
         error_code = err isa Reseau.ReseauError ? err.code : Reseau.ERROR_UNKNOWN
-        on_setup(error_code, nothing)
+        on_channel_setup(error_code, nothing)
         return nothing
     end
 end

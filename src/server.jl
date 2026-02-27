@@ -26,17 +26,18 @@ function server_tlsoptions(;
 end
 
 const _BACKLOG_DEFAULT = 511
+const _ServerHttpConnection = Union{AwsHTTP.H1Connection, AwsHTTP.H2Connection}
 
 mutable struct Connection{S}
     const server::S # Server{F, C}
-    const h1conn::Any # AwsHTTP.H1Connection or AwsHTTP.H2Connection
-    const channel::Any # Reseau.Channel
+    const h1conn::_ServerHttpConnection
+    const channel::Reseau.Sockets.Channel
     const streams_lock::ReentrantLock
     const streams::Set{Stream}
     const remote_addr::String
     const remote_port_num::Int
 
-    Connection(server::S, h1conn, channel, remote_addr::String, remote_port_num::Int) where {S} =
+    Connection(server::S, h1conn::_ServerHttpConnection, channel::Reseau.Sockets.Channel, remote_addr::String, remote_port_num::Int) where {S} =
         new{S}(server, h1conn, channel, ReentrantLock(), Set{Stream}(), remote_addr, remote_port_num)
 end
 
@@ -49,10 +50,10 @@ function http_version(c::Connection)
     return v == AwsHTTP.HttpVersion.HTTP_2 ? "HTTP/2" : "HTTP/1.1"
 end
 
-mutable struct Server{F, C}
+mutable struct Server{F, C, S}
     const f::F
     const on_stream_complete::C
-    const on_shutdown::Any
+    const on_shutdown::S
     const fut::Future{Symbol}
     const connections_lock::ReentrantLock
     const connections::Set{Connection}
@@ -61,13 +62,13 @@ mutable struct Server{F, C}
     const stream::Bool
     const logstate::Base.CoreLogging.LogState
     @atomic state::Symbol # :initializing, :running, :closed
-    bootstrap::Any # Reseau.ServerBootstrap
+    bootstrap::Union{Nothing, Reseau.Sockets.ServerBootstrap}
     bound_port::Int
 
-    Server{F, C}(
+    Server{F, C, S}(
         f::F,
         on_stream_complete::C,
-        on_shutdown::Any,
+        on_shutdown::S,
         fut::Future{Symbol},
         connections_lock::ReentrantLock,
         connections::Set{Connection},
@@ -76,7 +77,7 @@ mutable struct Server{F, C}
         stream::Bool,
         logstate::Base.CoreLogging.LogState,
         state::Symbol,
-    ) where {F, C} = new{F, C}(f, on_stream_complete, on_shutdown, fut, connections_lock, connections, closed, access_log, stream, logstate, state)
+    ) where {F, C, S} = new{F, C, S}(f, on_stream_complete, on_shutdown, fut, connections_lock, connections, closed, access_log, stream, logstate, state)
 end
 
 Base.wait(s::Server) = wait(s.closed)
@@ -282,24 +283,32 @@ function _create_request_handler!(conn::Connection, aws_conn; http2::Bool=false)
 
     on_destroy = (aws_stream) -> nothing
 
-    opts = AwsHTTP.HttpRequestHandlerOptions(
-        http_conn,
-        on_request_headers,
-        on_request_header_block_done,
-        on_request_body,
-        on_request_done,
-        on_complete,
-        on_destroy,
-    )
     if http2
-        h2stream = AwsHTTP.h2_stream_new_request_handler(http_conn, opts; manual_write=server.stream)
+        h2stream = AwsHTTP.h2_stream_new_request_handler(
+            http_conn;
+            on_request_headers=on_request_headers,
+            on_request_header_block_done=on_request_header_block_done,
+            on_request_body=on_request_body,
+            on_request_done=on_request_done,
+            on_complete=on_complete,
+            on_destroy=on_destroy,
+            manual_write=server.stream,
+        )
         stream.aws_stream = h2stream
         @lock conn.streams_lock begin
             push!(conn.streams, stream)
         end
         return h2stream
     end
-    h1stream = AwsHTTP.http_connection_new_request_handler(http_conn, opts)
+    h1stream = AwsHTTP.http_connection_new_request_handler(
+        http_conn;
+        on_request_headers=on_request_headers,
+        on_request_header_block_done=on_request_header_block_done,
+        on_request_body=on_request_body,
+        on_request_done=on_request_done,
+        on_complete=on_complete,
+        on_destroy=on_destroy,
+    )
     if h1stream === nothing
         @error "failed to create request handler stream"
         return
@@ -368,7 +377,7 @@ function serve!(f, host="127.0.0.1", port=8080;
     else
         nothing
     end
-    server = Server{typeof(f), typeof(on_stream_complete)}(
+    server = Server{typeof(f), typeof(on_stream_complete), typeof(on_shutdown)}(
         f,
         on_stream_complete,
         on_shutdown,
@@ -441,7 +450,8 @@ function serve!(f, host="127.0.0.1", port=8080;
                 push!(server.connections, conn)
             end
             if AwsHTTP.http_connection_get_version(http_conn) == AwsHTTP.HttpVersion.HTTP_2
-                opts = AwsHTTP.HttpServerConnectionOptions(
+                status = AwsHTTP.http_connection_configure_server(
+                    http_conn;
                     on_incoming_request = (h2conn) -> begin
                         try
                             return _create_request_handler!(conn, h2conn; http2=true)
@@ -452,7 +462,6 @@ function serve!(f, host="127.0.0.1", port=8080;
                     end,
                     on_shutdown = (h2conn, err) -> nothing,
                 )
-                status = AwsHTTP.http_connection_configure_server(http_conn, opts)
                 if status != AwsHTTP.OP_SUCCESS
                     @error "failed to configure HTTP/2 server connection" error_code=status
                     return

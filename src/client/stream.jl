@@ -24,7 +24,7 @@ mutable struct Stream{T} <: IO
     on_complete::Union{Nothing, Function}
     released::Bool
     # remaining fields are initially undefined
-    aws_stream::Any # H1Stream or H2Stream from AwsHTTP
+    aws_stream::Union{AwsHTTP.H1Stream, AwsHTTP.H2Stream}
     connection::T
     response::Response
     request::Request
