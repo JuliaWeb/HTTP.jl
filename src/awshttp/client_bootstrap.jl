@@ -56,15 +56,6 @@ end
 
 # ─── Client connection bootstrap ───
 
-const DEFAULT_HTTP_CLIENT_EVENT_LOOP_GROUP = Base.ScopedValues.ScopedValue{Any}()
-
-get_client_event_loop_group() =
-    isassigned(DEFAULT_HTTP_CLIENT_EVENT_LOOP_GROUP) ? DEFAULT_HTTP_CLIENT_EVENT_LOOP_GROUP[] : EventLoops.get_event_loop_group()
-
-function with_client_bootstrap(f, event_loop_group)
-    return Base.ScopedValues.with(f, DEFAULT_HTTP_CLIENT_EVENT_LOOP_GROUP => event_loop_group)
-end
-
 """
     http_client_connect(options::HttpClientConnectionOptions) -> Nothing
 
@@ -77,7 +68,7 @@ connection handler is created. If `prior_knowledge_http2` is set, HTTP/2 is used
 without ALPN negotiation.
 """
 function http_client_connect(options::HttpClientConnectionOptions; on_setup=nothing, on_shutdown=nothing)
-    event_loop_group = options.event_loop_group === nothing ? get_client_event_loop_group() : options.event_loop_group
+    event_loop_group = options.event_loop_group === nothing ? EventLoops.get_event_loop_group() : options.event_loop_group
     if !(event_loop_group isa EventLoops.EventLoopGroup)
         event_loop_group = EventLoops.get_event_loop_group()
     end
