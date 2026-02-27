@@ -22,7 +22,7 @@ mutable struct H2CState
     request_message::Union{HttpMessage, Nothing}
     original_request::Union{HttpMessage, Nothing}
     upgrade_settings::Union{AbstractVector, Nothing}
-    on_h2c_upgrade::Union{Nothing, Function}
+    on_h2c_upgrade::Union{Nothing, H2CUpgradeResultCallback}
 end
 
 function H2CState(on_h2c_upgrade = nothing)
@@ -37,7 +37,7 @@ function H2CState(on_h2c_upgrade = nothing)
         nothing,
         nothing,
         nothing,
-        on_h2c_upgrade,
+        _h2c_upgrade_result_callback(on_h2c_upgrade),
     )
 end
 
@@ -80,16 +80,6 @@ function _h1_create_h2c_upgrade_request(
     return upgrade_request
 end
 
-# ─── Callback types (see Phase 5.5 of parity roadmap) ───
-# All callbacks are stored as `Any` to allow flexible function types.
-# Signature conventions:
-#   on_incoming_headers(stream, header_block, headers::Vector{HttpHeader}) -> Int
-#   on_incoming_header_block_done(stream, header_block) -> Int
-#   on_incoming_body(stream, data::AbstractVector{UInt8}) -> Int
-#   on_stream_complete(stream, error_code::Int) -> Nothing
-#   on_stream_destroy(stream) -> Nothing
-#   on_stream_metrics(stream, metrics::HttpStreamMetrics) -> Nothing
-
 # ─── H1 Stream ───
 
 mutable struct H1Stream
@@ -100,12 +90,12 @@ mutable struct H1Stream
     metrics::HttpStreamMetrics
 
     # Callbacks
-    on_incoming_headers::Union{Nothing, Function}
-    on_incoming_header_block_done::Union{Nothing, Function}
-    on_incoming_body::Union{Nothing, Function}
-    on_metrics::Union{Nothing, Function}
-    on_complete::Union{Nothing, Function}
-    on_destroy::Union{Nothing, Function}
+    on_incoming_headers::Union{Nothing, StreamHeadersCallback}
+    on_incoming_header_block_done::Union{Nothing, StreamHeaderBlockDoneCallback}
+    on_incoming_body::Union{Nothing, StreamBodyCallback}
+    on_metrics::Union{Nothing, StreamMetricsCallback}
+    on_complete::Union{Nothing, StreamCompleteCallback}
+    on_destroy::Union{Nothing, StreamDestroyCallback}
 
     # Client-specific
     response_status::Int
@@ -115,7 +105,7 @@ mutable struct H1Stream
     # Server-specific
     request_method_str::String
     request_path::String
-    on_request_done::Union{Nothing, Function}
+    on_request_done::Union{Nothing, StreamRequestDoneCallback}
 
     is_client::Bool
 
@@ -194,12 +184,12 @@ function h1_stream_new_request(
         method_enum,
         HttpStreamMetrics(),
         # callbacks
-        on_response_headers,
-        on_response_header_block_done,
-        on_response_body,
-        on_metrics,
-        on_complete,
-        on_destroy,
+        _stream_headers_callback(on_response_headers),
+        _stream_header_block_done_callback(on_response_header_block_done),
+        _stream_body_callback(on_response_body),
+        _stream_metrics_callback(on_metrics),
+        _stream_complete_callback(on_complete),
+        _stream_destroy_callback(on_destroy),
         # client
         HTTP_STATUS_CODE_UNKNOWN,
         response_first_byte_timeout_ms,
@@ -239,16 +229,16 @@ function h1_stream_new_request_handler(
         HttpMethod.UNKNOWN,
         HttpStreamMetrics(),
         # callbacks
-        on_request_headers,
-        on_request_header_block_done,
-        on_request_body,
+        _stream_headers_callback(on_request_headers),
+        _stream_header_block_done_callback(on_request_header_block_done),
+        _stream_body_callback(on_request_body),
         nothing,  # on_metrics
-        on_complete,
-        on_destroy,
+        _stream_complete_callback(on_complete),
+        _stream_destroy_callback(on_destroy),
         # client (unused)
         HTTP_STATUS_CODE_UNKNOWN, UInt64(0), nothing,
         # server
-        "", "", on_request_done,
+        "", "", _stream_request_done_callback(on_request_done),
         false,  # is_client = false (server)
         # thread data
         nothing, false, false, false, false,

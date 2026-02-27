@@ -73,7 +73,7 @@ const DEFAULT_HTTP_CLIENT_EVENT_LOOP_GROUP = Base.ScopedValues.ScopedValue{Any}(
 get_client_event_loop_group() =
     isassigned(DEFAULT_HTTP_CLIENT_EVENT_LOOP_GROUP) ? DEFAULT_HTTP_CLIENT_EVENT_LOOP_GROUP[] : EventLoops.get_event_loop_group()
 
-function with_client_bootstrap(f::Function, event_loop_group)
+function with_client_bootstrap(f, event_loop_group)
     return Base.ScopedValues.with(f, DEFAULT_HTTP_CLIENT_EVENT_LOOP_GROUP => event_loop_group)
 end
 

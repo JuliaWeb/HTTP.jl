@@ -278,16 +278,16 @@ function http_connection_configure_server(
     end
 
     if connection isa H1Connection
-        connection.on_incoming_request = on_incoming_request
-        connection.on_h2c_upgrade = on_h2c_upgrade
+        connection.on_incoming_request = _connection_incoming_request_callback(on_incoming_request)
+        connection.on_h2c_upgrade = _connection_h2c_upgrade_callback(on_h2c_upgrade)
         connection.h2c_enabled = on_h2c_upgrade !== nothing
         connection.server_configured = true
-        connection.on_shutdown = on_shutdown
+        connection.on_shutdown = _connection_shutdown_callback(on_shutdown)
         return OP_SUCCESS
     elseif connection isa H2Connection
-        connection.on_incoming_request = on_incoming_request
+        connection.on_incoming_request = _connection_incoming_request_callback(on_incoming_request)
         connection.server_configured = true
-        connection.on_shutdown = on_shutdown
+        connection.on_shutdown = _connection_shutdown_callback(on_shutdown)
         return OP_SUCCESS
     end
 

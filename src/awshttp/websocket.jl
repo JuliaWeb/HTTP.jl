@@ -434,7 +434,7 @@ mutable struct WebSocket
     incoming_message_payload_total::UInt64
 
     # Callback
-    on_incoming_frame::Union{Nothing, Function}     # (ws, frame_info, payload, error_code) -> Bool
+    on_incoming_frame::Union{Nothing, WebSocketIncomingFrameCallback}     # (ws, frame_info, payload, error_code) -> Bool
 end
 
 function WebSocket(;
@@ -458,7 +458,7 @@ function WebSocket(;
         ping_interval_ms, UInt64(0),
         max_incoming_payload_length,
         UInt64(0),
-        on_incoming_frame,
+        _websocket_incoming_frame_callback(on_incoming_frame),
     )
 end
 

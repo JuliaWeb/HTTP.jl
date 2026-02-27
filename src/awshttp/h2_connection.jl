@@ -46,7 +46,7 @@ mutable struct H2Connection <: HttpConnection
     # ── Connection identity ──
     http_version::HttpVersion.T
     is_client::Bool
-    on_incoming_request::Union{Nothing, Function}
+    on_incoming_request::Union{Nothing, ConnectionIncomingRequestCallback}
     server_configured::Bool
     remote_endpoint::String
 
@@ -57,7 +57,7 @@ mutable struct H2Connection <: HttpConnection
     incoming_buffer_pos::Int
 
     # ── Stream management ──
-    active_streams::Dict{UInt32, Any}  # stream_id => stream object (heterogeneous H2Stream types)
+    active_streams::Dict{UInt32, H2Stream}  # stream_id => stream object
     next_stream_id::UInt32             # client=1, server=2; increments by 2
     latest_peer_stream_id::UInt32      # latest stream ID from peer
 
@@ -97,9 +97,9 @@ mutable struct H2Connection <: HttpConnection
 
     # ── Callbacks ──
     # late-init: reassigned after construction in some usage patterns
-    on_goaway_received::Union{Nothing, Function}    # (last_stream_id, error_code, debug_data) -> Nothing
-    on_remote_settings_change::Union{Nothing, Function}  # (settings::Vector{Http2Setting}) -> Nothing
-    on_shutdown::Union{Nothing, Function}           # (connection, error_code) -> Nothing
+    on_goaway_received::Union{Nothing, ConnectionGoawayCallback}    # (last_stream_id, error_code, debug_data) -> Nothing
+    on_remote_settings_change::Union{Nothing, ConnectionRemoteSettingsCallback}  # (settings::Vector{Http2Setting}) -> Nothing
+    on_shutdown::Union{Nothing, ConnectionShutdownCallback}           # (connection, error_code) -> Nothing
 
     # ── Channel integration ──
     # late-init: set by channel_slot_set_handler!
@@ -155,7 +155,7 @@ function h2_connection_new(;
         UInt8[],
         1,
         # Streams
-        Dict{UInt32, Any}(),
+        Dict{UInt32, H2Stream}(),
         next_id,
         UInt32(0),
         # Settings
@@ -180,9 +180,9 @@ function h2_connection_new(;
         # Outgoing
         Memory{UInt8}[], Memory{UInt8}[],
         # Callbacks
-        on_goaway_received,
-        on_remote_settings_change,
-        on_shutdown,
+        _connection_goaway_callback(on_goaway_received),
+        _connection_remote_settings_callback(on_remote_settings_change),
+        _connection_shutdown_callback(on_shutdown),
         # Channel integration
         nothing,  # slot
     )

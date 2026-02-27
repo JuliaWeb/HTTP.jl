@@ -20,6 +20,9 @@ include("http.jl")
 # --- request/response ---
 include("request_response.jl")
 
+# --- callback wrappers ---
+include("callables.jl")
+
 # --- HTTP/1.1 encoder ---
 include("h1_encoder.jl")
 
@@ -44,11 +47,11 @@ include("hpack.jl")
 # --- HTTP/2 frames ---
 include("h2_frames.jl")
 
-# --- HTTP/2 connection ---
-include("h2_connection.jl")
-
 # --- HTTP/2 stream ---
 include("h2_stream.jl")
+
+# --- HTTP/2 connection ---
+include("h2_connection.jl")
 
 # --- Client bootstrap (depends on H1Connection, H2Connection) ---
 include("client_bootstrap.jl")

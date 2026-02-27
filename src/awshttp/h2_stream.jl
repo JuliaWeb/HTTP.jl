@@ -61,15 +61,15 @@ mutable struct H2Stream
     is_client::Bool
 
     # ── Callbacks ──
-    on_incoming_headers::Union{Nothing, Function}          # (stream, block_type, headers) -> Int
-    on_incoming_header_block_done::Union{Nothing, Function}  # (stream, block_type) -> Int
-    on_incoming_body::Union{Nothing, Function}             # (stream, data) -> Int
-    on_request_done::Union{Nothing, Function}              # (stream) -> Int (server only)
-    on_metrics::Union{Nothing, Function}                    # (stream, metrics) -> Nothing
-    on_complete::Union{Nothing, Function}                   # (stream, error_code) -> Nothing
+    on_incoming_headers::Union{Nothing, StreamHeadersCallback}          # (stream, block_type, headers) -> Int
+    on_incoming_header_block_done::Union{Nothing, StreamHeaderBlockDoneCallback}  # (stream, block_type) -> Int
+    on_incoming_body::Union{Nothing, StreamBodyCallback}             # (stream, data) -> Int
+    on_request_done::Union{Nothing, StreamRequestDoneCallback}              # (stream) -> Int (server only)
+    on_metrics::Union{Nothing, StreamMetricsCallback}                    # (stream, metrics) -> Nothing
+    on_complete::Union{Nothing, StreamCompleteCallback}                   # (stream, error_code) -> Nothing
     # late-init: reassigned after construction in some patterns
-    on_destroy::Union{Nothing, Function}                   # (stream) -> Nothing
-    on_incoming_push_promise::Union{Nothing, Function}    # (stream, promised_stream_id, headers) -> Nothing
+    on_destroy::Union{Nothing, StreamDestroyCallback}                   # (stream) -> Nothing
+    on_incoming_push_promise::Union{Nothing, StreamPushPromiseCallback}    # (stream, promised_stream_id, headers) -> Nothing
 
     # ── Metrics ──
     metrics::HttpStreamMetrics
@@ -199,13 +199,13 @@ function h2_stream_new_request(
         UInt32(0),   # id assigned on activation
         true,        # is_client
         # Callbacks
-        on_response_headers,
-        on_response_header_block_done,
-        on_response_body,
+        _stream_headers_callback(on_response_headers),
+        _stream_header_block_done_callback(on_response_header_block_done),
+        _stream_body_callback(on_response_body),
         nothing,  # on_request_done (client)
-        on_metrics,
-        on_complete,
-        on_destroy,
+        _stream_metrics_callback(on_metrics),
+        _stream_complete_callback(on_complete),
+        _stream_destroy_callback(on_destroy),
         nothing,     # on_incoming_push_promise
         # Metrics
         HttpStreamMetrics(),
@@ -275,13 +275,13 @@ function h2_stream_new_request_handler(
         UInt32(0),
         false,  # is_client = false (server)
         # Callbacks
-        on_request_headers,
-        on_request_header_block_done,
-        on_request_body,
-        on_request_done,
+        _stream_headers_callback(on_request_headers),
+        _stream_header_block_done_callback(on_request_header_block_done),
+        _stream_body_callback(on_request_body),
+        _stream_request_done_callback(on_request_done),
         nothing,  # on_metrics
-        on_complete,
-        on_destroy,
+        _stream_complete_callback(on_complete),
+        _stream_destroy_callback(on_destroy),
         nothing,  # on_incoming_push_promise
         # Metrics
         HttpStreamMetrics(),
@@ -338,11 +338,11 @@ function h2_stream_new_push_promise(connection, promised_stream_id::UInt32, requ
         promised_stream_id,
         true,  # client receives push
         # Callbacks
-        on_response_headers,
-        on_response_header_block_done,
-        on_response_body,
+        _stream_headers_callback(on_response_headers),
+        _stream_header_block_done_callback(on_response_header_block_done),
+        _stream_body_callback(on_response_body),
         nothing, # on_request_done (client)
-        nothing, on_complete, on_destroy, nothing,
+        nothing, _stream_complete_callback(on_complete), _stream_destroy_callback(on_destroy), nothing,
         # Metrics
         HttpStreamMetrics(),
         # State: RESERVED_REMOTE (push promise received)

@@ -17,8 +17,8 @@ mutable struct H1Connection <: HttpConnection
     # ── Connection identity ──
     http_version::HttpVersion.T
     is_client::Bool
-    on_incoming_request::Union{Nothing, Function}
-    on_h2c_upgrade::Union{Nothing, Function}
+    on_incoming_request::Union{Nothing, ConnectionIncomingRequestCallback}
+    on_h2c_upgrade::Union{Nothing, ConnectionH2CUpgradeCallback}
     server_configured::Bool
     # ── h2c upgrade (client + server probe) ──
     h2c_enabled::Bool
@@ -55,7 +55,7 @@ mutable struct H1Connection <: HttpConnection
 
     # ── Client/Server-specific ──
     response_first_byte_timeout_ms::UInt64
-    on_shutdown::Union{Nothing, Function}  # (connection, error_code) -> Nothing
+    on_shutdown::Union{Nothing, ConnectionShutdownCallback}  # (connection, error_code) -> Nothing
 
     # ── Channel integration ──
     # late-init: set by channel_slot_set_handler!
@@ -678,7 +678,7 @@ function h1_connection_new_client(;
         manual_window_management ? UInt64(initial_window_size) : typemax(UInt64),
         manual_window_management,
         true, false, false, 0, 0,
-        response_first_byte_timeout_ms, on_shutdown,
+        response_first_byte_timeout_ms, _connection_shutdown_callback(on_shutdown),
         nothing, "",
     )
     h1_decoder_set_context!(conn.decoder, conn)
@@ -709,7 +709,7 @@ function h1_connection_new_server(;
         manual_window_management ? UInt64(initial_window_size) : typemax(UInt64),
         manual_window_management,
         true, false, false, 0, 0,
-        UInt64(0), on_shutdown,
+        UInt64(0), _connection_shutdown_callback(on_shutdown),
         nothing, "",
     )
     h1_decoder_set_context!(conn.decoder, conn)
