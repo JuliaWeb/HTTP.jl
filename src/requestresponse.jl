@@ -420,6 +420,47 @@ function setinputstream!(m::Message, body)
     return
 end
 
+@inline function _new_request_message(http2::Bool)::AwsHTTP.HttpMessage
+    return http2 ? AwsHTTP.http2_message_new_request() : AwsHTTP.http_message_new_request()
+end
+
+@inline function _new_response_message(http2::Bool)::AwsHTTP.HttpMessage
+    return http2 ? AwsHTTP.http2_message_new_response() : AwsHTTP.http_message_new_response()
+end
+
+@inline function _message_headers(msg::AwsHTTP.HttpMessage)::Headers
+    return Headers(AwsHTTP.http_message_get_headers(msg))
+end
+
+@inline function _message_version(msg::AwsHTTP.HttpMessage)::HTTPVersion
+    version = AwsHTTP.http_message_get_protocol_version(msg)
+    return version == AwsHTTP.HttpVersion.HTTP_2 ? HTTPVersion(2, 0) : HTTPVersion(1, 1)
+end
+
+@inline function _set_request_line!(msg::AwsHTTP.HttpMessage, method, path)::Nothing
+    AwsHTTP.http_message_set_request_method(msg, String(method)) != 0 && aws_throw_error()
+    AwsHTTP.http_message_set_request_path(msg, String(path)) != 0 && aws_throw_error()
+    return nothing
+end
+
+@inline function _set_response_status!(msg::AwsHTTP.HttpMessage, status::Integer)::Nothing
+    AwsHTTP.http_message_set_response_status(msg, Int(status)) != 0 && aws_throw_error()
+    return nothing
+end
+
+function _set_message_headers!(msg::AwsHTTP.HttpMessage, headers)::Nothing
+    setheaders!(_message_headers(msg), headers)
+    return nothing
+end
+
+function _ensure_default_empty_response_headers!(resp)::Nothing
+    headers = resp.headers
+    if !hasheader(headers, "content-length") && !hasheader(headers, "transfer-encoding")
+        setheader(headers, "content-length" => "0")
+    end
+    return nothing
+end
+
 
 mutable struct Request <: Message
     msg::AwsHTTP.HttpMessage
@@ -433,18 +474,9 @@ mutable struct Request <: Message
     cookies::Any # actually Union{Nothing, Vector{Cookie}}
 
     function Request(method, path, headers=nothing, body=nothing, http2::Bool=false; context=nothing)
-        msg = http2 ?
-          AwsHTTP.http2_message_new_request() :
-          AwsHTTP.http_message_new_request()
-        AwsHTTP.http_message_set_request_method(msg, String(method)) != 0 && aws_throw_error()
-        AwsHTTP.http_message_set_request_path(msg, String(path)) != 0 && aws_throw_error()
-        msg_headers = AwsHTTP.http_message_get_headers(msg)
-        if headers !== nothing
-            src_headers = headers isa AbstractVector{<:Pair} ? headers : mkheaders(headers)
-            for (k, v) in src_headers
-                AwsHTTP.http_headers_add(msg_headers, String(k), String(v)) != 0 && aws_throw_error()
-            end
-        end
+        msg = _new_request_message(http2)
+        _set_request_line!(msg, method, path)
+        _set_message_headers!(msg, headers)
         req = new(msg)
         req.body = nothing
         req.inputstream = nothing
@@ -481,30 +513,31 @@ function observelayer(f)
 end
 
 function Base.getproperty(x::Request, s::Symbol)
+    msg = getfield(x, :msg)
     if s == :method
-        return AwsHTTP.http_message_get_request_method(getfield(x, :msg))
+        return AwsHTTP.http_message_get_request_method(msg)
     elseif s == :path || s == :target
-        return AwsHTTP.http_message_get_request_path(getfield(x, :msg))
+        return AwsHTTP.http_message_get_request_path(msg)
     elseif s == :uri
-        path = AwsHTTP.http_message_get_request_path(getfield(x, :msg))
+        path = AwsHTTP.http_message_get_request_path(msg)
         return path === nothing ? URI("/") : URI(path)
     elseif s == :headers
-        return Headers(AwsHTTP.http_message_get_headers(getfield(x, :msg)))
+        return _message_headers(msg)
     elseif s == :version
-        v = AwsHTTP.http_message_get_protocol_version(getfield(x, :msg))
-        return v == AwsHTTP.HttpVersion.HTTP_2 ? HTTPVersion(2, 0) : HTTPVersion(1, 1)
+        return _message_version(msg)
     else
         return getfield(x, s)
     end
 end
 
 function Base.setproperty!(x::Request, s::Symbol, v)
+    msg = getfield(x, :msg)
     if s == :method
-        AwsHTTP.http_message_set_request_method(getfield(x, :msg), String(v)) != 0 && aws_throw_error()
+        AwsHTTP.http_message_set_request_method(msg, String(v)) != 0 && aws_throw_error()
     elseif s == :path
-        AwsHTTP.http_message_set_request_path(getfield(x, :msg), String(v)) != 0 && aws_throw_error()
+        AwsHTTP.http_message_set_request_path(msg, String(v)) != 0 && aws_throw_error()
     elseif s == :headers
-        setheaders!(x, v)
+        _set_message_headers!(msg, v)
     else
         setfield!(x, s, v)
     end
@@ -584,17 +617,9 @@ mutable struct Response <: Message
     request::Union{Request, Nothing}
 
     function Response(status::Integer, headers, body, http2::Bool=false)
-        msg = http2 ?
-            AwsHTTP.http2_message_new_response() :
-            AwsHTTP.http_message_new_response()
-        AwsHTTP.http_message_set_response_status(msg, Int(status)) != 0 && aws_throw_error()
-        msg_headers = AwsHTTP.http_message_get_headers(msg)
-        if headers !== nothing
-            src_headers = headers isa AbstractVector{<:Pair} ? headers : mkheaders(headers)
-            for (k, v) in src_headers
-                AwsHTTP.http_headers_add(msg_headers, String(k), String(v)) != 0 && aws_throw_error()
-            end
-        end
+        msg = _new_response_message(http2)
+        _set_response_status!(msg, status)
+        _set_message_headers!(msg, headers)
         resp = new(msg)
         resp.body = nothing
         resp.inputstream = nothing
@@ -604,13 +629,11 @@ mutable struct Response <: Message
         if body !== nothing
             setinputstream!(resp, body)
         else
-            if !hasheader(resp.headers, "content-length") && !hasheader(resp.headers, "transfer-encoding")
-                setheader(resp.headers, "content-length" => "0")
-            end
+            _ensure_default_empty_response_headers!(resp)
         end
         return resp
     end
-    Response() = new(AwsHTTP.http_message_new_response(), nothing, nothing, nothing, RequestMetrics(), nothing)
+    Response() = new(_new_response_message(false), nothing, nothing, nothing, RequestMetrics(), nothing)
 end
 
 # compatibility: 5-arg version for callers that still pass allocator
@@ -639,23 +662,24 @@ function bodylen(r::Response)
 end
 
 function Base.getproperty(x::Response, s::Symbol)
+    msg = getfield(x, :msg)
     if s == :status
-        return AwsHTTP.http_message_get_response_status(getfield(x, :msg))
+        return AwsHTTP.http_message_get_response_status(msg)
     elseif s == :headers
-        return Headers(AwsHTTP.http_message_get_headers(getfield(x, :msg)))
+        return _message_headers(msg)
     elseif s == :version
-        v = AwsHTTP.http_message_get_protocol_version(getfield(x, :msg))
-        return v == AwsHTTP.HttpVersion.HTTP_2 ? HTTPVersion(2, 0) : HTTPVersion(1, 1)
+        return _message_version(msg)
     else
         return getfield(x, s)
     end
 end
 
 function Base.setproperty!(x::Response, s::Symbol, v)
+    msg = getfield(x, :msg)
     if s == :status
-        AwsHTTP.http_message_set_response_status(getfield(x, :msg), Int(v)) != 0 && aws_throw_error()
+        AwsHTTP.http_message_set_response_status(msg, Int(v)) != 0 && aws_throw_error()
     elseif s == :headers
-        setheaders!(x, v)
+        _set_message_headers!(msg, v)
     else
         setfield!(x, s, v)
     end
