@@ -59,7 +59,7 @@ mutable struct H1Connection <: HttpConnection
 
     # ── Channel integration ──
     # late-init: set by channel_slot_set_handler!
-    slot::Union{Sockets.ChannelSlot, Nothing}
+    slot::Union{Sockets.ChannelSlot{Sockets.Channel}, Nothing}
     remote_endpoint::String  # host:port or "" if unknown
 end
 

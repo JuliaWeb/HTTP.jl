@@ -103,7 +103,7 @@ mutable struct H2Connection <: HttpConnection
 
     # ── Channel integration ──
     # late-init: set by channel_slot_set_handler!
-    slot::Union{Sockets.ChannelSlot, Nothing}
+    slot::Union{Sockets.ChannelSlot{Sockets.Channel}, Nothing}
 end
 
 # Set the channel slot when installed in a pipeline.

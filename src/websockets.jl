@@ -50,7 +50,7 @@ Base.@deprecate is_upgrade isupgrade
 # Installed into the H1Connection's channel slot after HTTP 101 upgrade.
 
 mutable struct WsChannelHandler{W}
-    slot::Union{Reseau.Sockets.ChannelSlot, Nothing}
+    slot::Union{Reseau.Sockets.ChannelSlot{Reseau.Sockets.Channel}, Nothing}
     aws_ws::AwsHTTP.WebSocket
     wslock::ReentrantLock  # protects outgoing_frames access
     ws::Union{Nothing, W}
