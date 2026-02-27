@@ -10,7 +10,8 @@ const _HTTP_TRIM_MODE = get(ENV, "HTTP_TRIM", "0") == "1"
     include("trim/trim.jl")
 else
     using CodecZlib, URIs, Mmap, Base64, Dates
-    using Reseau, AwsHTTP
+    using Reseau
+    include("awshttp/AwsHTTP.jl")
 
     export HTTPVersion
     export startwrite, startread, closewrite, closeread

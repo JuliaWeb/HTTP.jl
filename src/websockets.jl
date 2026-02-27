@@ -1,6 +1,7 @@
 module WebSockets
 
-using Base64, Random, AwsHTTP, Reseau
+using Base64, Random, Reseau
+using ..AwsHTTP
 
 import ..Headers, ..Header, ..Request, ..Response, ..Message, ..Stream
 import ..setinputstream!, ..getresponse, ..getheader, ..hasheader, ..header
