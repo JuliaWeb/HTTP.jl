@@ -97,7 +97,7 @@ function isaborted(stream::Stream)::Bool
     response = stream.response
     response === nothing && return false
     return _status_throws(response::Response) &&
-           (response.close || hasheader(response, "Connection", "close"))
+           (response.close || headercontains(response, "Connection", "close"))
 end
 
 function _client_finish_stream_read!(stream::Stream; suppress_producer_errors::Bool)::Response

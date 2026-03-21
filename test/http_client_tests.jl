@@ -345,6 +345,20 @@ end
     end
 end
 
+@testset "HTTP client redirect helper strips all duplicate sensitive headers" begin
+    headers = HT.Headers()
+    push!(headers, "Authorization" => "Bearer one")
+    push!(headers, "X-Test" => "keep")
+    push!(headers, "Cookie" => "session=abc")
+    push!(headers, "Authorization" => "Bearer two")
+    push!(headers, "Proxy-Authorization" => "Basic xyz")
+    push!(headers, "Cookie" => "session=def")
+
+    HT._strip_sensitive_redirect_headers!(headers)
+
+    @test collect(headers) == ["X-Test" => "keep"]
+end
+
 @testset "HTTP client redirect forwardheaders=false clears original headers and stale Host" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4

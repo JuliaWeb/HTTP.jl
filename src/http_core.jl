@@ -385,31 +385,51 @@ end
 """
     hasheader(headers, key, value) -> Bool
 
-Return `true` when the first header value for `key` matches `value`
+Return `true` when any stored header value for `key` matches `value`
 case-insensitively.
 """
 function hasheader(headers::Headers, key::AbstractString, value::AbstractString)::Bool
-    current = header(headers, key, nothing)
-    current === nothing && return false
-    return _ascii_equal_fold(current::String, value)
+    canon = canonical_header_key(key)
+    for (name, current) in headers
+        name == canon || continue
+        _ascii_equal_fold(current, value) && return true
+    end
+    return false
 end
 
 """
     setheader(headers, key => value) -> Headers
     setheader(headers, key, value) -> Headers
 
-Replace the first stored value for `key` with `value`, preserving the original
-position if the key already exists and appending it otherwise. Later duplicate
-entries are left untouched. Returns the mutated `headers`.
+Replace all stored values for `key` with `value`, preserving the first matching
+position if the key already exists and appending it otherwise. Returns the
+mutated `headers`.
 """
 function setheader(headers::Headers, header::Pair)
     item = _header_pair(header.first, header.second)
     key = first(item)
-    idx = findfirst(x -> first(x) == key, headers.entries)
-    if idx === nothing
-        push!(headers.entries, item)
+    entries = headers.entries
+    first_idx = 0
+    write_idx = 1
+    @inbounds for read_idx in eachindex(entries)
+        entry = entries[read_idx]
+        if first(entry) == key
+            if first_idx == 0
+                first_idx = write_idx
+                entries[write_idx] = item
+                write_idx += 1
+            end
+            continue
+        end
+        if write_idx != read_idx
+            entries[write_idx] = entry
+        end
+        write_idx += 1
+    end
+    if first_idx == 0
+        push!(entries, item)
     else
-        headers.entries[idx] = item
+        resize!(entries, write_idx - 1)
     end
     return headers
 end
@@ -448,12 +468,23 @@ end
 """
     removeheader(headers, key) -> Headers
 
-Remove the first stored header for `key` and return the mutated `headers`.
+Remove every stored header for `key` and return the mutated `headers`.
 """
 function removeheader(headers::Headers, key::AbstractString)
     canon = canonical_header_key(key)
-    idx = findfirst(x -> first(x) == canon, headers.entries)
-    idx === nothing || deleteat!(headers.entries, idx)
+    entries = headers.entries
+    write_idx = 1
+    @inbounds for read_idx in eachindex(entries)
+        entry = entries[read_idx]
+        if first(entry) == canon
+            continue
+        end
+        if write_idx != read_idx
+            entries[write_idx] = entry
+        end
+        write_idx += 1
+    end
+    resize!(entries, write_idx - 1)
     return headers
 end
 
@@ -566,9 +597,10 @@ tokens rather than one opaque string.
 """
 function headercontains(headers::Headers, key::AbstractString, token::AbstractString)::Bool
     needle = token isa String ? (token::String) : String(token)
+    canon = canonical_header_key(key)
     for (name, value) in headers
-        _ascii_equal_fold(name, key) || continue
-        return _header_value_contains_token(value, needle)
+        name == canon || continue
+        _header_value_contains_token(value, needle) && return true
     end
     return false
 end

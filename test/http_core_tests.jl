@@ -35,9 +35,17 @@ const HT = HTTP
 
     duplicates = HT.Headers()
     push!(duplicates, "X-Test" => "one")
+    push!(duplicates, "X-Other" => "keep")
     push!(duplicates, "X-Test" => "two")
     HT.setheader(duplicates, "x-test", "zero")
-    @test collect(duplicates) == ["X-Test" => "zero", "X-Test" => "two"]
+    @test collect(duplicates) == ["X-Test" => "zero", "X-Other" => "keep"]
+
+    remove_all = HT.Headers()
+    push!(remove_all, "X-Test" => "one")
+    push!(remove_all, "X-Other" => "keep")
+    push!(remove_all, "X-Test" => "two")
+    HT.removeheader(remove_all, "x-test")
+    @test collect(remove_all) == ["X-Other" => "keep"]
 
     empty_value = HT.Headers(["X-Empty" => ""])
     @test HT.header(empty_value, "X-Empty") == ""
@@ -47,12 +55,19 @@ end
 @testset "HTTP core header tokens" begin
     headers = HT.Headers()
     HT.setheader(headers, "Connection", "keep-alive, Upgrade")
-    HT.appendheader(headers, "Connection", " close")
+    push!(headers, "X-Other" => "keep")
+    push!(headers, "Connection" => " close")
     @test HT.headercontains(headers, "connection", "upgrade")
     @test HT.headercontains(headers, "connection", "keep-alive")
     @test HT.headercontains(headers, "connection", "close")
     @test HT.headercontains(headers, "connection", "  UPGRADE\t")
     @test !HT.headercontains(headers, "connection", "te")
+
+    exact = HT.Headers()
+    push!(exact, "Connection" => "keep-alive")
+    push!(exact, "X-Other" => "keep")
+    push!(exact, "Connection" => "close")
+    @test HT.hasheader(exact, "connection", "close")
 end
 
 @testset "HTTP core request context" begin
