@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v2.0.0] - 2026-03-18
+### Changed
+- The package now presents a curated 2.0 public API built around `Request`,
+  `Response`, `Stream`, `Client`, `Transport`, and explicit body types on top
+  of `Reseau`.
+- High-level request helpers materialize `Response.body::Vector{UInt8}` by
+  default. Use `response_body` or `HTTP.open` when you want streaming control.
+- `Response.status_code` has been renamed to `status`.
+- Internal pooling, routing, HPACK, and explicit HTTP/2 implementation details
+  are no longer part of the documented public API surface.
+
+### Removed
+- Undocumented 1.x internals are no longer supported migration targets for the
+  2.0 line.
+
 ## [v1.11.0] - 2025-12-20
 ### Added
 - Added full Server-Sent Events (SSE) support for both client and server:

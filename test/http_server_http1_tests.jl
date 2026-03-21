@@ -1,0 +1,612 @@
+using Test
+using HTTP
+using Reseau
+
+const HT = HTTP
+const NC = Reseau.TCP
+const ND = Reseau.HostResolvers
+const IOP = Reseau.IOPoll
+
+function _read_all_server_bytes(body::HT.AbstractBody)::Vector{UInt8}
+    out = UInt8[]
+    buf = Vector{UInt8}(undef, 32)
+    while true
+        n = HT.body_read!(body, buf)
+        n == 0 && break
+        append!(out, @view(buf[1:n]))
+    end
+    return out
+end
+
+function _wait_server_addr(server; timeout_s::Float64 = 5.0)::String
+    deadline = time() + timeout_s
+    while time() < deadline
+        try
+            return HT.server_addr(server)
+        catch
+            sleep(0.01)
+        end
+    end
+    error("timed out waiting for server address")
+end
+
+function _run_with_timeout(f::F; timeout_s::Float64 = 5.0, label::String = "operation") where {F <: Function}
+    task = Threads.@spawn f()
+    status = timedwait(() -> istaskdone(task), timeout_s; pollint = 0.001)
+    status == :timed_out && error("timed out waiting for $label")
+    return fetch(task)
+end
+
+function _raw_http_request(port::Integer, request::AbstractString; settle_s::Float64 = 0.5)::String
+    sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
+    try
+        write(sock, Vector{UInt8}(codeunits(String(request))))
+        try
+            NC.closewrite(sock)
+        catch
+        end
+        sleep(settle_s)
+        return _read_until_deadline(sock)
+    finally
+        NC.close(sock)
+    end
+end
+
+function _read_until_deadline(conn::NC.Conn; timeout_s::Float64 = 1.0)::String
+    buf = Vector{UInt8}(undef, 1024)
+    out = UInt8[]
+    while true
+        NC.set_read_deadline!(conn, Int64(time_ns()) + round(Int64, timeout_s * 1.0e9))
+        try
+            chunk = readavailable(conn)
+            n = length(chunk)
+            n == 0 && break
+            n > length(buf) && resize!(buf, n)
+            copyto!(buf, 1, chunk, 1, n)
+            append!(out, @view(buf[1:n]))
+        catch err
+            if err isa IOP.DeadlineExceededError || err isa EOFError
+                break
+            end
+            if err isa SystemError && occursin("Connection reset by peer", sprint(showerror, err))
+                break
+            end
+            rethrow(err)
+        end
+    end
+    return String(out)
+end
+
+function _read_until_quiet(conn::NC.Conn; timeout_s::Float64 = 1.0, quiet_timeout_s::Float64 = 0.1)::String
+    buf = Vector{UInt8}(undef, 1024)
+    out = UInt8[]
+    deadline_ns = Int64(time_ns()) + round(Int64, timeout_s * 1.0e9)
+    saw_bytes = false
+    while true
+        remaining_ns = deadline_ns - Int64(time_ns())
+        remaining_ns <= 0 && break
+        read_timeout_s = saw_bytes ? min(quiet_timeout_s, remaining_ns / 1.0e9) : (remaining_ns / 1.0e9)
+        NC.set_read_deadline!(conn, Int64(time_ns()) + round(Int64, read_timeout_s * 1.0e9))
+        try
+            chunk = readavailable(conn)
+            n = length(chunk)
+            n == 0 && break
+            n > length(buf) && resize!(buf, n)
+            copyto!(buf, 1, chunk, 1, n)
+            append!(out, @view(buf[1:n]))
+            saw_bytes = true
+        catch err
+            if err isa IOP.DeadlineExceededError || err isa EOFError
+                break
+            end
+            if err isa SystemError && occursin("Connection reset by peer", sprint(showerror, err))
+                break
+            end
+            rethrow(err)
+        end
+    end
+    return String(out)
+end
+
+@testset "HTTP server SSE helper" begin
+    response = HT.Response(200)
+    stream = HT.sse_stream(response)
+    @test response.body === stream
+    @test HT.header(response.headers, "Content-Type") == "text/event-stream"
+    @test HT.header(response.headers, "Cache-Control") == "no-cache"
+    close(stream)
+end
+
+@testset "HTTP server SSE roundtrip" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            response = HT.Response(200)
+            HT.sse_stream(response) do stream
+                write(stream, HT.SSEEvent("first"))
+                write(stream, HT.SSEEvent("second"; event = "update", id = "2", retry = 2500))
+                write(stream, HT.SSEEvent("multi\nline\ndata"))
+            end
+            return response
+        end
+    address = _wait_server_addr(server)
+    try
+        @test isopen(server)
+        @test HT.port(server) > 0
+        events = HT.SSEEvent[]
+        response = HT.get("http://$(address)/"; sse_callback = event -> push!(events, event))
+        @test response.status == 200
+        @test response.body === HT.nobody
+        @test length(events) == 3
+        @test events[1].data == "first"
+        @test events[1].event === nothing
+        @test events[1].id === nothing
+        @test events[2].data == "second"
+        @test events[2].event == "update"
+        @test events[2].id == "2"
+        @test events[2].retry == 2500
+        @test events[3].data == "multi\nline\ndata"
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+        @test !isopen(server)
+    end
+end
+
+@testset "HTTP server top-level wrapper kwargs and stream abort state" begin
+    aborted_states = Channel{Bool}(2)
+    server = HT.serve!("127.0.0.1", 0;
+        stream = true,
+        listenany = true,
+        read_timeout_ns = 11_000_000_000,
+        read_header_timeout_ns = 22_000_000_000,
+        write_timeout_ns = 33_000_000_000,
+        idle_timeout_ns = 44_000_000_000,
+        max_header_bytes = 512,
+    ) do stream
+        _ = HT.startread(stream)
+        put!(aborted_states, HT.isaborted(stream))
+        HT.setstatus(stream, 500)
+        HT.setheader(stream, "Connection", "close")
+        put!(aborted_states, HT.isaborted(stream))
+        HT.startwrite(stream)
+        write(stream, "aborted")
+        return nothing
+    end
+    address = _wait_server_addr(server)
+    try
+        @test server.read_timeout_ns == 11_000_000_000
+        @test server.read_header_timeout_ns == 22_000_000_000
+        @test server.write_timeout_ns == 33_000_000_000
+        @test server.idle_timeout_ns == 44_000_000_000
+        @test server.max_header_bytes == 512
+
+        response = HT.get("http://$(address)/"; retry = false, status_exception = false)
+        @test response.status == 500
+        @test String(response.body) == "aborted"
+        @test take!(aborted_states) == false
+        @test take!(aborted_states) == true
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server basic request handling" begin
+    seen_targets = String[]
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            push!(seen_targets, request.target)
+            payload = collect(codeunits("echo:" * request.target))
+            return HT.Response(200; reason = "OK", body = HT.BytesBody(payload), content_length = length(payload))
+        end
+    address = _wait_server_addr(server)
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4))
+    try
+        @test isopen(server)
+        @test HT.port(server) > 0
+        response1 = HT.get!(client, address, "/one")
+        @test response1.status == 200
+        @test String(_read_all_server_bytes(response1.body)) == "echo:/one"
+        response2 = HT.get!(client, address, "/two")
+        @test response2.status == 200
+        @test String(_read_all_server_bytes(response2.body)) == "echo:/two"
+        @test seen_targets == ["/one", "/two"]
+    finally
+        close(client.transport)
+        _run_with_timeout(() -> close(server); label = "server close")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+        @test !isopen(server)
+    end
+end
+
+@testset "HTTP server wire-level parse and continue behavior" begin
+    small_header_server = HT.Server(
+        address = "127.0.0.1:0",
+        stream = true,
+        max_header_bytes = 512,
+        handler = stream -> begin
+            _ = HT.startread(stream)
+            HT.setstatus(stream, 200)
+            HT.startwrite(stream)
+            return nothing
+        end,
+    )
+    HT.listen!(small_header_server)
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        body = read(stream)
+        HT.setstatus(stream, 200)
+        HT.startwrite(stream)
+        isempty(body) || write(stream, body)
+        return nothing
+    end
+    address = _wait_server_addr(server)
+    small_header_address = _wait_server_addr(small_header_server)
+    try
+        port_num = HT.port(server)
+        large_header_resp = _raw_http_request(HT.port(small_header_server), "GET / HTTP/1.1\r\nHost: $(small_header_address)\r\n$(repeat("Foo: Bar\r\n", 200))\r\n")
+        @test occursin("HTTP/1.1 431 Request Header Fields Too Large", large_header_resp)
+
+        invalid_resp = _raw_http_request(port_num, "GET / HTP/1.1\r\n\r\n")
+        @test occursin("HTTP/1.1 400 Bad Request", invalid_resp)
+
+        no_target_resp = _raw_http_request(port_num, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
+        @test occursin("HTTP/1.1 400 Bad Request", no_target_resp)
+
+        sock = ND.connect("tcp", "127.0.0.1:$(port_num)")
+        try
+            write(sock, Vector{UInt8}(codeunits("POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 15\r\nExpect: 100-continue\r\n\r\n")))
+            sleep(0.1)
+            interim = _read_until_deadline(sock)
+            @test interim == "HTTP/1.1 100 Continue\r\n\r\n"
+            write(sock, Vector{UInt8}(codeunits("Body of Request")))
+            sleep(0.1)
+            final = _read_until_deadline(sock)
+            @test occursin("HTTP/1.1 200 OK\r\n", final)
+            @test occursin("Transfer-Encoding: chunked\r\n", final)
+            @test occursin("Body of Request", final)
+        finally
+            NC.close(sock)
+        end
+    finally
+        _run_with_timeout(() -> HT.forceclose(small_header_server); label = "small header server forceclose")
+        _run_with_timeout(() -> wait(small_header_server); label = "small header server task completion")
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server rejects unsupported Expect headers" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2)
+        end
+    address = _wait_server_addr(server)
+    try
+        raw = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 0\r\nExpect: fancy-feature\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        @test occursin("HTTP/1.1 417", raw)
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server stream handlers suppress bodies for HEAD, 204, and 304" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            request = HT.startread(stream)
+            if request.target == "/nocontent"
+                HT.setstatus(stream, 204)
+            elseif request.target == "/notmodified"
+                HT.setstatus(stream, 304)
+            else
+                HT.setstatus(stream, 200)
+            end
+            HT.startwrite(stream)
+            write(stream, "oops")
+            return nothing
+        end
+    address = _wait_server_addr(server)
+    try
+        head_raw = _raw_http_request(HT.port(server), "HEAD /head HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        @test occursin("HTTP/1.1 200 OK", head_raw)
+        @test !occursin("oops", head_raw)
+        @test !occursin("transfer-encoding: chunked", lowercase(head_raw))
+
+        no_content_raw = _raw_http_request(HT.port(server), "GET /nocontent HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        @test occursin("HTTP/1.1 204 No Content", no_content_raw)
+        @test !occursin("oops", no_content_raw)
+        @test !occursin("transfer-encoding: chunked", lowercase(no_content_raw))
+
+        not_modified_raw = _raw_http_request(HT.port(server), "GET /notmodified HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        @test occursin("HTTP/1.1 304 Not Modified", not_modified_raw)
+        @test !occursin("oops", not_modified_raw)
+        @test !occursin("transfer-encoding: chunked", lowercase(not_modified_raw))
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server timeout and handler error responses" begin
+    timeout_server = HT.Server(
+        address = "127.0.0.1:0",
+        stream = true,
+        read_header_timeout_ns = 200_000_000,
+        handler = stream -> begin
+            _ = stream
+            return nothing
+        end,
+    )
+    HT.listen!(timeout_server)
+    timeout_address = _wait_server_addr(timeout_server)
+    try
+        sock = ND.connect("tcp", "127.0.0.1:$(HT.port(timeout_server))")
+        try
+            sleep(0.6)
+            timed_out = _read_until_deadline(sock; timeout_s = 1.0)
+            @test occursin("HTTP/1.1 408 Request Timeout", timed_out)
+        finally
+            NC.close(sock)
+        end
+    finally
+        _run_with_timeout(() -> HT.forceclose(timeout_server); label = "timeout server forceclose")
+        _run_with_timeout(() -> wait(timeout_server); label = "timeout server task completion")
+    end
+
+    error_server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        error("boom")
+    end
+    error_address = _wait_server_addr(error_server)
+    try
+        response = HT.get("http://$(error_address)/"; retry = false, status_exception = false)
+        @test response.status == 500
+    finally
+        _run_with_timeout(() -> HT.forceclose(error_server); label = "error server forceclose")
+        _run_with_timeout(() -> wait(error_server); label = "error server task completion")
+    end
+end
+
+@testset "HTTP server idle timeout closes keep-alive connections" begin
+    server = HT.Server(
+        address = "127.0.0.1:0",
+        stream = true,
+        idle_timeout_ns = 200_000_000,
+        handler = stream -> begin
+            _ = HT.startread(stream)
+            HT.setstatus(stream, 200)
+            HT.startwrite(stream)
+            write(stream, "ok")
+            return nothing
+        end,
+    )
+    HT.listen!(server)
+    address = _wait_server_addr(server)
+    sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
+    try
+        write(sock, Vector{UInt8}(codeunits("GET /one HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
+        first = _read_until_quiet(sock; timeout_s = 2.0, quiet_timeout_s = 0.1)
+        @test occursin("HTTP/1.1 200 OK", first)
+        sleep(1.0)
+        closed_after_idle = false
+        try
+            write(sock, Vector{UInt8}(codeunits("GET /two HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
+            second = _read_until_quiet(sock; timeout_s = 0.5, quiet_timeout_s = 0.1)
+            closed_after_idle = !occursin("HTTP/1.1 200 OK", second)
+        catch err
+            closed_after_idle = err isa EOFError || err isa SystemError || err isa IOP.DeadlineExceededError
+        end
+        @test closed_after_idle
+    finally
+        try
+            NC.close(sock)
+        catch
+        end
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server write timeout aborts stalled responses" begin
+    timeout_seen = Channel{Bool}(1)
+    server = HT.Server(
+        address = "127.0.0.1:0",
+        stream = true,
+        write_timeout_ns = 200_000_000,
+        handler = stream -> begin
+            _ = HT.startread(stream)
+            HT.setstatus(stream, 200)
+            HT.startwrite(stream)
+            chunk = fill(UInt8('x'), 64 * 1024)
+            try
+                while true
+                    write(stream, chunk)
+                end
+            catch err
+                put!(timeout_seen, err isa IOP.DeadlineExceededError)
+            end
+            return nothing
+        end,
+    )
+    HT.listen!(server)
+    address = _wait_server_addr(server)
+    sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
+    try
+        write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
+        status = timedwait(() -> isready(timeout_seen), 5.0; pollint = 0.001)
+        @test status != :timed_out
+        @test take!(timeout_seen)
+    finally
+        try
+            NC.close(sock)
+        catch
+        end
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server stream handler request and response flow" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            _ = HT.startread(stream)
+            body = String(read(stream))
+            HT.setstatus(stream, 200)
+            HT.setheader(stream, "Content-Type", "text/plain")
+            HT.startwrite(stream)
+            write(stream, isempty(body) ? "ping" : body)
+            return nothing
+        end
+    address = _wait_server_addr(server)
+    try
+        resp1 = HT.get("http://$(address)/")
+        @test resp1.status == 200
+        @test String(resp1.body) == "ping"
+
+        resp2 = HT.post("http://$(address)/"; body = "echo")
+        @test resp2.status == 200
+        @test String(resp2.body) == "echo"
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server stream handlers reject fixed-length mismatches before writing malformed bodies" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            request = HT.startread(stream)
+            if request.target == "/overflow"
+                HT.setheader(stream, "Content-Length", "2")
+                HT.startwrite(stream)
+                write(stream, "toolong")
+                return nothing
+            end
+            HT.setheader(stream, "Content-Length", "5")
+            HT.startwrite(stream)
+            write(stream, "hi")
+            return nothing
+        end
+    address = _wait_server_addr(server)
+    try
+        overflow_raw = _raw_http_request(HT.port(server), "GET /overflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        @test !occursin("toolong", overflow_raw)
+        @test !occursin("content-length: 2", lowercase(overflow_raw))
+
+        underflow_raw = _raw_http_request(HT.port(server), "GET /underflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        @test !occursin("hi", underflow_raw)
+        @test !occursin("content-length: 5", lowercase(underflow_raw))
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server stream handler emits chunked trailers" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            _ = HT.startread(stream)
+            _ = read(stream)
+            HT.setstatus(stream, 200)
+            HT.startwrite(stream)
+            write(stream, "hello")
+            HT.addtrailer(stream, "X-Trailer" => "ok")
+            return nothing
+        end
+    address = _wait_server_addr(server)
+    try
+        raw = _raw_http_request(HT.port(server), "GET / HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        lower_raw = lowercase(raw)
+        @test occursin("transfer-encoding: chunked", lower_raw)
+        @test occursin("hello", raw)
+        @test occursin("\r\n0\r\nx-trailer: ok\r\n\r\n", lower_raw)
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server shutdown rejects new requests" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            return HT.Response(200; reason = "OK", body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2)
+        end
+    address = _wait_server_addr(server)
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4))
+    try
+        response = _run_with_timeout(() -> HT.get!(client, address, "/live"); label = "live request")
+        @test response.status == 200
+        @test String(_read_all_server_bytes(response.body)) == "ok"
+        _run_with_timeout(() -> close(server); label = "server close")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+        @test !isopen(server)
+        # Bound the post-shutdown probe so Windows CI cannot hang indefinitely
+        # if a stale keep-alive conn does not surface close immediately.
+        probe = HT.Request("GET", "/after-shutdown"; host = address, body = HT.EmptyBody(), content_length = 0)
+        HT.set_deadline!(probe.context, Int64(time_ns()) + Int64(2_000_000_000))
+        @test_throws Exception _run_with_timeout(() -> HT.do!(client, address, probe); timeout_s = 3.0, label = "post-shutdown request")
+    finally
+        close(client.transport)
+    end
+end
+
+@testset "HTTP server close waits for active requests to finish" begin
+    started = Channel{Nothing}(1)
+    release = Channel{Nothing}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            put!(started, nothing)
+            take!(release)
+            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2)
+        end
+    address = _wait_server_addr(server)
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4))
+    close_task = nothing
+    try
+        response_task = Threads.@spawn HT.get!(client, address, "/slow")
+        take!(started)
+        close_task = Threads.@spawn close(server)
+        sleep(0.1)
+        @test !istaskdone(close_task::Task)
+        put!(release, nothing)
+        response = fetch(response_task)
+        @test response.status == 200
+        @test String(_read_all_server_bytes(response.body)) == "ok"
+        _run_with_timeout(() -> fetch(close_task::Task); label = "graceful close task")
+        @test !isopen(server)
+    finally
+        close(client.transport)
+        close_task === nothing || try
+            fetch(close_task::Task)
+        catch
+        end
+        isopen(server) && HT.forceclose(server)
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server closes keep-alive when request body is unread" begin
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            request = HT.startread(stream)
+            payload = collect(codeunits("ok:" * request.target))
+            HT.setstatus(stream, 200)
+            HT.startwrite(stream)
+            write(stream, payload)
+            return nothing
+        end
+    address = _wait_server_addr(server)
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4))
+    try
+        req1 = HT.Request("POST", "/one"; host = address, body = HT.BytesBody(collect(codeunits("abc"))), content_length = 3)
+        response1 = HT.do!(client, address, req1)
+        @test response1.status == 200
+        @test response1.close
+        @test String(_read_all_server_bytes(response1.body)) == "ok:/one"
+        @test HT.idle_connection_count(client.transport) == 0
+
+        response2 = HT.get!(client, address, "/two")
+        @test response2.status == 200
+        @test String(_read_all_server_bytes(response2.body)) == "ok:/two"
+    finally
+        close(client.transport)
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+        @test !isopen(server)
+    end
+end

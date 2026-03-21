@@ -1,0 +1,433 @@
+# HTTP/2 frame model and framer (read/write) implementation.
+"""HTTP/2 DATA frame type code (`0x0`)."""
+const FRAME_DATA = UInt8(0x0)
+"""HTTP/2 HEADERS frame type code (`0x1`)."""
+const FRAME_HEADERS = UInt8(0x1)
+"""HTTP/2 PRIORITY frame type code (`0x2`)."""
+const FRAME_PRIORITY = UInt8(0x2)
+"""HTTP/2 RST_STREAM frame type code (`0x3`)."""
+const FRAME_RST_STREAM = UInt8(0x3)
+"""HTTP/2 SETTINGS frame type code (`0x4`)."""
+const FRAME_SETTINGS = UInt8(0x4)
+"""HTTP/2 PUSH_PROMISE frame type code (`0x5`)."""
+const FRAME_PUSH_PROMISE = UInt8(0x5)
+"""HTTP/2 PING frame type code (`0x6`)."""
+const FRAME_PING = UInt8(0x6)
+"""HTTP/2 GOAWAY frame type code (`0x7`)."""
+const FRAME_GOAWAY = UInt8(0x7)
+"""HTTP/2 WINDOW_UPDATE frame type code (`0x8`)."""
+const FRAME_WINDOW_UPDATE = UInt8(0x8)
+"""HTTP/2 CONTINUATION frame type code (`0x9`)."""
+const FRAME_CONTINUATION = UInt8(0x9)
+
+"""HTTP/2 flag bit indicating that a frame ends the stream."""
+const FLAG_END_STREAM = UInt8(0x1)
+"""HTTP/2 flag bit indicating that a HEADERS or CONTINUATION frame ends the header block."""
+const FLAG_END_HEADERS = UInt8(0x4)
+"""HTTP/2 flag bit used by SETTINGS and PING acknowledgment frames."""
+const FLAG_ACK = UInt8(0x1)
+"""HTTP/2 flag bit indicating padded payload data."""
+const FLAG_PADDED = UInt8(0x8)
+const _FLAG_HEADERS_PRIORITY = UInt8(0x20)
+
+"""
+    FrameHeader
+
+Generic HTTP/2 frame header (9-byte wire prefix).
+"""
+struct FrameHeader
+    length::Int
+    type::UInt8
+    flags::UInt8
+    stream_id::UInt32
+end
+
+"""
+    AbstractFrame
+
+Abstract supertype for concrete HTTP/2 wire frame representations.
+"""
+abstract type AbstractFrame end
+
+"""HTTP/2 DATA frame."""
+struct DataFrame <: AbstractFrame
+    stream_id::UInt32
+    end_stream::Bool
+    data::Vector{UInt8}
+end
+
+"""HTTP/2 HEADERS frame."""
+struct HeadersFrame <: AbstractFrame
+    stream_id::UInt32
+    end_stream::Bool
+    end_headers::Bool
+    header_block_fragment::Vector{UInt8}
+end
+
+"""HTTP/2 PRIORITY frame."""
+struct PriorityFrame <: AbstractFrame
+    stream_id::UInt32
+    exclusive::Bool
+    stream_dependency::UInt32
+    weight::UInt8
+end
+
+"""HTTP/2 RST_STREAM frame."""
+struct RSTStreamFrame <: AbstractFrame
+    stream_id::UInt32
+    error_code::UInt32
+end
+
+"""HTTP/2 SETTINGS frame."""
+struct SettingsFrame <: AbstractFrame
+    ack::Bool
+    settings::Vector{Pair{UInt16,UInt32}}
+end
+
+"""HTTP/2 PUSH_PROMISE frame."""
+struct PushPromiseFrame <: AbstractFrame
+    stream_id::UInt32
+    promised_stream_id::UInt32
+    end_headers::Bool
+    header_block_fragment::Vector{UInt8}
+end
+
+"""HTTP/2 PING frame."""
+struct PingFrame <: AbstractFrame
+    ack::Bool
+    opaque_data::NTuple{8,UInt8}
+end
+
+"""HTTP/2 GOAWAY frame."""
+struct GoAwayFrame <: AbstractFrame
+    last_stream_id::UInt32
+    error_code::UInt32
+    debug_data::Vector{UInt8}
+end
+
+"""HTTP/2 WINDOW_UPDATE frame."""
+struct WindowUpdateFrame <: AbstractFrame
+    stream_id::UInt32
+    window_size_increment::UInt32
+end
+
+"""HTTP/2 CONTINUATION frame."""
+struct ContinuationFrame <: AbstractFrame
+    stream_id::UInt32
+    end_headers::Bool
+    header_block_fragment::Vector{UInt8}
+end
+
+"""Unknown frame passthrough for forward-compatible parsing."""
+struct UnknownFrame <: AbstractFrame
+    header::FrameHeader
+    payload::Vector{UInt8}
+end
+
+"""
+    Framer(io; max_frame_size=16384)
+
+Frame reader/writer for an `IO` stream.
+
+`Framer` is intentionally low-level: it deals only with HTTP/2 frame boundaries
+and per-frame validation, not stream state machines or HPACK. Higher layers are
+responsible for enforcing sequencing rules such as CONTINUATION ownership.
+"""
+mutable struct Framer{I<:IO}
+    io::I
+    max_frame_size::Int
+end
+
+"""
+    Framer(io; max_frame_size=16384)
+
+Construct an HTTP/2 framer with the configured frame-size limit.
+
+`max_frame_size` is the receive/send safety limit enforced by this local
+framer, not necessarily the peer's advertised SETTINGS value. Throws
+`ArgumentError` unless the size is within RFC 7540's legal range.
+"""
+function Framer(io::I; max_frame_size::Integer=16_384) where {I<:IO}
+    max_frame_size >= 16_384 || throw(ArgumentError("HTTP/2 max_frame_size must be >= 16384"))
+    max_frame_size <= 16_777_215 || throw(ArgumentError("HTTP/2 max_frame_size must be <= 16777215"))
+    return Framer(io, Int(max_frame_size))
+end
+
+@inline function _read_exact_bytes!(io::IO, n::Int)::Vector{UInt8}
+    n >= 0 || throw(ArgumentError("n must be >= 0"))
+    n == 0 && return UInt8[]
+    bytes = Vector{UInt8}(undef, n)
+    readbytes = readbytes!(io, bytes, n)
+    readbytes == n || throw(ParseError("unexpected EOF while reading HTTP/2 frame payload"))
+    return bytes
+end
+
+@inline function _read_u32_be(bytes::Vector{UInt8}, index::Int)::UInt32
+    return (UInt32(bytes[index]) << 24) |
+           (UInt32(bytes[index+1]) << 16) |
+           (UInt32(bytes[index+2]) << 8) |
+           UInt32(bytes[index+3])
+end
+
+@inline function _write_u32_be!(out::Vector{UInt8}, value::UInt32)
+    push!(out, UInt8((value >> 24) & 0xff))
+    push!(out, UInt8((value >> 16) & 0xff))
+    push!(out, UInt8((value >> 8) & 0xff))
+    push!(out, UInt8(value & 0xff))
+    return nothing
+end
+
+@inline function _encode_header_bytes(header::FrameHeader)::Vector{UInt8}
+    header.length < 0 && throw(ArgumentError("HTTP/2 frame length must be >= 0"))
+    header.length <= 0x00ff_ffff || throw(ArgumentError("HTTP/2 frame length must fit 24 bits"))
+    bytes = UInt8[]
+    push!(bytes, UInt8((header.length >> 16) & 0xff))
+    push!(bytes, UInt8((header.length >> 8) & 0xff))
+    push!(bytes, UInt8(header.length & 0xff))
+    push!(bytes, header.type)
+    push!(bytes, header.flags)
+    _write_u32_be!(bytes, header.stream_id & 0x7fff_ffff)
+    return bytes
+end
+
+function _read_frame_header!(io::IO)::FrameHeader
+    header_bytes = _read_exact_bytes!(io, 9)
+    length = (Int(header_bytes[1]) << 16) | (Int(header_bytes[2]) << 8) | Int(header_bytes[3])
+    ftype = header_bytes[4]
+    flags = header_bytes[5]
+    stream_id = _read_u32_be(header_bytes, 6) & 0x7fff_ffff
+    return FrameHeader(length, ftype, flags, stream_id)
+end
+
+function _parse_settings_payload(payload::Vector{UInt8})::Vector{Pair{UInt16,UInt32}}
+    (length(payload) % 6 == 0) || throw(ParseError("HTTP/2 SETTINGS payload length must be a multiple of 6"))
+    settings = Pair{UInt16,UInt32}[]
+    index = 1
+    while index <= length(payload)
+        id = (UInt16(payload[index]) << 8) | UInt16(payload[index+1])
+        value = _read_u32_be(payload, index + 2)
+        push!(settings, id => value)
+        index += 6
+    end
+    return settings
+end
+
+function _serialize_settings_payload(settings::Vector{Pair{UInt16,UInt32}})::Vector{UInt8}
+    payload = UInt8[]
+    for setting in settings
+        id = setting.first
+        value = setting.second
+        push!(payload, UInt8((id >> 8) & 0xff))
+        push!(payload, UInt8(id & 0xff))
+        _write_u32_be!(payload, value)
+    end
+    return payload
+end
+
+function _split_padded_payload(payload::Vector{UInt8}, frame_name::AbstractString)::Tuple{Vector{UInt8},Int}
+    isempty(payload) && throw(ParseError("HTTP/2 $(frame_name) padded payload must include pad length"))
+    pad_length = Int(payload[1])
+    1 + pad_length <= length(payload) || throw(ParseError("HTTP/2 $(frame_name) padding exceeds payload length"))
+    data_end = length(payload) - pad_length
+    return copy(@view(payload[2:data_end])), pad_length
+end
+
+function _parse_headers_fragment(payload::Vector{UInt8}, flags::UInt8)::Vector{UInt8}
+    working = payload
+    if (flags & FLAG_PADDED) != 0
+        working, _ = _split_padded_payload(working, "HEADERS")
+    end
+    if (flags & _FLAG_HEADERS_PRIORITY) != 0
+        length(working) >= 5 || throw(ParseError("HTTP/2 HEADERS priority payload must be at least 5 bytes"))
+        return copy(@view(working[6:end]))
+    end
+    return working
+end
+
+function _parse_push_promise_payload(payload::Vector{UInt8}, flags::UInt8)::Tuple{UInt32,Vector{UInt8}}
+    working = payload
+    if (flags & FLAG_PADDED) != 0
+        working, _ = _split_padded_payload(working, "PUSH_PROMISE")
+    end
+    length(working) >= 4 || throw(ParseError("HTTP/2 PUSH_PROMISE frame payload must be >= 4 bytes"))
+    promised = _read_u32_be(working, 1) & 0x7fff_ffff
+    fragment = length(working) == 4 ? UInt8[] : copy(@view(working[5:end]))
+    return promised, fragment
+end
+
+"""
+    read_frame!(framer)
+
+Read and decode one HTTP/2 frame from `framer.io`.
+
+Returns a concrete `AbstractFrame` subtype.
+
+Throws:
+- `ParseError` for malformed wire payloads
+- `ProtocolError` for locally enforced invariants such as frame-size overflow
+- `EOFError` or other I/O exceptions from the underlying stream
+"""
+function read_frame!(framer::Framer)::AbstractFrame
+    header = _read_frame_header!(framer.io)
+    header.length <= framer.max_frame_size || throw(ProtocolError("HTTP/2 frame exceeds max_frame_size"))
+    payload = _read_exact_bytes!(framer.io, header.length)
+    # This function intentionally validates only frame-local invariants. Stream-
+    # level rules such as "HEADERS must precede DATA" live in the client/server
+    # state machines above the framer.
+    if header.type == FRAME_DATA
+        data = if (header.flags & FLAG_PADDED) != 0
+            stripped, _ = _split_padded_payload(payload, "DATA")
+            stripped
+        else
+            payload
+        end
+        return DataFrame(header.stream_id, (header.flags & FLAG_END_STREAM) != 0, data)
+    end
+    if header.type == FRAME_HEADERS
+        return HeadersFrame(
+            header.stream_id,
+            (header.flags & FLAG_END_STREAM) != 0,
+            (header.flags & FLAG_END_HEADERS) != 0,
+            _parse_headers_fragment(payload, header.flags),
+        )
+    end
+    if header.type == FRAME_PRIORITY
+        length(payload) == 5 || throw(ParseError("HTTP/2 PRIORITY frame payload must be 5 bytes"))
+        dep = _read_u32_be(payload, 1)
+        exclusive = (dep & 0x8000_0000) != 0
+        stream_dependency = dep & 0x7fff_ffff
+        weight = payload[5]
+        return PriorityFrame(header.stream_id, exclusive, stream_dependency, weight)
+    end
+    if header.type == FRAME_RST_STREAM
+        length(payload) == 4 || throw(ParseError("HTTP/2 RST_STREAM frame payload must be 4 bytes"))
+        return RSTStreamFrame(header.stream_id, _read_u32_be(payload, 1))
+    end
+    if header.type == FRAME_SETTINGS
+        if (header.flags & FLAG_ACK) != 0
+            isempty(payload) || throw(ParseError("HTTP/2 SETTINGS ACK frame must have empty payload"))
+            return SettingsFrame(true, Pair{UInt16,UInt32}[])
+        end
+        return SettingsFrame(false, _parse_settings_payload(payload))
+    end
+    if header.type == FRAME_PUSH_PROMISE
+        promised, fragment = _parse_push_promise_payload(payload, header.flags)
+        return PushPromiseFrame(header.stream_id, promised, (header.flags & FLAG_END_HEADERS) != 0, fragment)
+    end
+    if header.type == FRAME_PING
+        length(payload) == 8 || throw(ParseError("HTTP/2 PING frame payload must be 8 bytes"))
+        return PingFrame((header.flags & FLAG_ACK) != 0, ntuple(i -> payload[i], 8))
+    end
+    if header.type == FRAME_GOAWAY
+        length(payload) >= 8 || throw(ParseError("HTTP/2 GOAWAY frame payload must be >= 8 bytes"))
+        last_stream_id = _read_u32_be(payload, 1) & 0x7fff_ffff
+        error_code = _read_u32_be(payload, 5)
+        debug_data = payload[9:end]
+        return GoAwayFrame(last_stream_id, error_code, debug_data)
+    end
+    if header.type == FRAME_WINDOW_UPDATE
+        length(payload) == 4 || throw(ParseError("HTTP/2 WINDOW_UPDATE frame payload must be 4 bytes"))
+        increment = _read_u32_be(payload, 1) & 0x7fff_ffff
+        increment == 0 && throw(ProtocolError("HTTP/2 WINDOW_UPDATE increment must be > 0"))
+        return WindowUpdateFrame(header.stream_id, increment)
+    end
+    if header.type == FRAME_CONTINUATION
+        return ContinuationFrame(header.stream_id, (header.flags & FLAG_END_HEADERS) != 0, payload)
+    end
+    return UnknownFrame(header, payload)
+end
+
+function _serialize_frame(frame::AbstractFrame)::Tuple{FrameHeader,Vector{UInt8}}
+    if frame isa DataFrame
+        f = frame::DataFrame
+        flags = f.end_stream ? FLAG_END_STREAM : UInt8(0)
+        payload = copy(f.data)
+        return FrameHeader(length(payload), FRAME_DATA, flags, f.stream_id), payload
+    end
+    if frame isa HeadersFrame
+        f = frame::HeadersFrame
+        flags = UInt8(0)
+        f.end_stream && (flags |= FLAG_END_STREAM)
+        f.end_headers && (flags |= FLAG_END_HEADERS)
+        payload = copy(f.header_block_fragment)
+        return FrameHeader(length(payload), FRAME_HEADERS, flags, f.stream_id), payload
+    end
+    if frame isa PriorityFrame
+        f = frame::PriorityFrame
+        dep = f.stream_dependency & 0x7fff_ffff
+        f.exclusive && (dep |= 0x8000_0000)
+        payload = UInt8[]
+        _write_u32_be!(payload, dep)
+        push!(payload, f.weight)
+        return FrameHeader(length(payload), FRAME_PRIORITY, UInt8(0), f.stream_id), payload
+    end
+    if frame isa RSTStreamFrame
+        f = frame::RSTStreamFrame
+        payload = UInt8[]
+        _write_u32_be!(payload, f.error_code)
+        return FrameHeader(length(payload), FRAME_RST_STREAM, UInt8(0), f.stream_id), payload
+    end
+    if frame isa SettingsFrame
+        f = frame::SettingsFrame
+        flags = f.ack ? FLAG_ACK : UInt8(0)
+        payload = f.ack ? UInt8[] : _serialize_settings_payload(f.settings)
+        return FrameHeader(length(payload), FRAME_SETTINGS, flags, UInt32(0)), payload
+    end
+    if frame isa PushPromiseFrame
+        f = frame::PushPromiseFrame
+        flags = f.end_headers ? FLAG_END_HEADERS : UInt8(0)
+        payload = UInt8[]
+        _write_u32_be!(payload, f.promised_stream_id & 0x7fff_ffff)
+        append!(payload, f.header_block_fragment)
+        return FrameHeader(length(payload), FRAME_PUSH_PROMISE, flags, f.stream_id), payload
+    end
+    if frame isa PingFrame
+        f = frame::PingFrame
+        flags = f.ack ? FLAG_ACK : UInt8(0)
+        payload = UInt8[f.opaque_data...]
+        return FrameHeader(8, FRAME_PING, flags, UInt32(0)), payload
+    end
+    if frame isa GoAwayFrame
+        f = frame::GoAwayFrame
+        payload = UInt8[]
+        _write_u32_be!(payload, f.last_stream_id & 0x7fff_ffff)
+        _write_u32_be!(payload, f.error_code)
+        append!(payload, f.debug_data)
+        return FrameHeader(length(payload), FRAME_GOAWAY, UInt8(0), UInt32(0)), payload
+    end
+    if frame isa WindowUpdateFrame
+        f = frame::WindowUpdateFrame
+        f.window_size_increment > 0 || throw(ProtocolError("HTTP/2 WINDOW_UPDATE increment must be > 0"))
+        payload = UInt8[]
+        _write_u32_be!(payload, f.window_size_increment & 0x7fff_ffff)
+        return FrameHeader(4, FRAME_WINDOW_UPDATE, UInt8(0), f.stream_id), payload
+    end
+    if frame isa ContinuationFrame
+        f = frame::ContinuationFrame
+        flags = f.end_headers ? FLAG_END_HEADERS : UInt8(0)
+        payload = copy(f.header_block_fragment)
+        return FrameHeader(length(payload), FRAME_CONTINUATION, flags, f.stream_id), payload
+    end
+    if frame isa UnknownFrame
+        f = frame::UnknownFrame
+        return f.header, copy(f.payload)
+    end
+    throw(ArgumentError("unsupported HTTP/2 frame type"))
+end
+
+"""
+    write_frame!(framer, frame)
+
+Serialize and write one HTTP/2 frame to `framer.io`.
+
+Returns `nothing`. Throws `ProtocolError` or `ArgumentError` for frames that
+cannot be represented legally, plus any exception raised by the underlying
+`IO`.
+"""
+function write_frame!(framer::Framer, frame::AbstractFrame)
+    header, payload = _serialize_frame(frame)
+    header.length <= framer.max_frame_size || throw(ProtocolError("HTTP/2 frame exceeds max_frame_size"))
+    write(framer.io, _encode_header_bytes(header))
+    isempty(payload) || write(framer.io, payload)
+    return nothing
+end

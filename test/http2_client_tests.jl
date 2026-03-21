@@ -1,0 +1,667 @@
+using Test
+using HTTP
+using Reseau
+
+const HT = HTTP
+const ND = Reseau.HostResolvers
+const NC = Reseau.TCP
+const TL = Reseau.TLS
+
+const _TLS_CERT_PATH = joinpath(@__DIR__, "resources", "unittests.crt")
+const _TLS_KEY_PATH = joinpath(@__DIR__, "resources", "unittests.key")
+
+function _write_all_h2_tcp!(conn::NC.Conn, bytes::Vector{UInt8})::Nothing
+    total = 0
+    while total < length(bytes)
+        n = write(conn, bytes[(total + 1):end])
+        n > 0 || error("expected write progress")
+        total += n
+    end
+    return nothing
+end
+
+function _read_exact_h2_tcp!(conn::NC.Conn, n::Int)::Vector{UInt8}
+    out = Vector{UInt8}(undef, n)
+    offset = 0
+    while offset < n
+        chunk = Vector{UInt8}(undef, n - offset)
+        nr = readbytes!(conn, chunk)
+        nr > 0 || error("unexpected EOF")
+        copyto!(out, offset + 1, chunk, 1, nr)
+        offset += nr
+    end
+    return out
+end
+
+function _write_frame_to_conn!(conn::NC.Conn, frame::HT.AbstractFrame)
+    io = IOBuffer()
+    framer = HT.Framer(io)
+    HT.write_frame!(framer, frame)
+    _write_all_h2_tcp!(conn, take!(io))
+    return nothing
+end
+
+function _write_padded_data_frame_to_conn!(conn::NC.Conn, stream_id::UInt32, data::Vector{UInt8}; end_stream::Bool = false, padding::Int = 1)
+    padding >= 0 || throw(ArgumentError("padding must be >= 0"))
+    payload = UInt8[UInt8(padding)]
+    append!(payload, data)
+    append!(payload, zeros(UInt8, padding))
+    length_bytes = UInt8[
+        UInt8((length(payload) >> 16) & 0xff),
+        UInt8((length(payload) >> 8) & 0xff),
+        UInt8(length(payload) & 0xff),
+    ]
+    flags = HT.FLAG_PADDED
+    end_stream && (flags |= HT.FLAG_END_STREAM)
+    header = UInt8[
+        length_bytes...,
+        HT.FRAME_DATA,
+        flags,
+        UInt8((stream_id >> 24) & 0x7f),
+        UInt8((stream_id >> 16) & 0xff),
+        UInt8((stream_id >> 8) & 0xff),
+        UInt8(stream_id & 0xff),
+    ]
+    _write_all_h2_tcp!(conn, vcat(header, payload))
+    return nothing
+end
+
+function _wait_task_h2!(task::Task; timeout_s::Float64 = 5.0)
+    status = timedwait(() -> istaskdone(task), timeout_s; pollint = 0.001)
+    status == :timed_out && error("timed out waiting for h2 server task")
+    fetch(task)
+    return nothing
+end
+
+function _read_next_headers_frame!(reader::HT.Framer)::HT.HeadersFrame
+    while true
+        frame = HT.read_frame!(reader)
+        frame isa HT.HeadersFrame && return frame::HT.HeadersFrame
+        frame isa HT.WindowUpdateFrame && continue
+        frame isa HT.SettingsFrame && continue
+        frame isa HT.PingFrame && continue
+        error("expected headers frame, got $(typeof(frame))")
+    end
+end
+
+function _read_all_h2_body(body::HT.AbstractBody)::Vector{UInt8}
+    out = UInt8[]
+    buf = Vector{UInt8}(undef, 64)
+    while true
+        n = HT.body_read!(body, buf)
+        n == 0 && break
+        append!(out, @view(buf[1:n]))
+    end
+    return out
+end
+
+@testset "HTTP/2 client roundtrip" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    seen_paths = String[]
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            preface = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            preface == HT._H2_PREFACE || error("invalid h2 preface")
+            client_settings = HT.read_frame!(reader)
+            client_settings isa HT.SettingsFrame || error("expected client settings frame")
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            client_ack = HT.read_frame!(reader)
+            client_ack isa HT.SettingsFrame || error("expected client settings ack")
+            (client_ack::HT.SettingsFrame).ack || error("expected settings ack flag")
+            headers_frame = _read_next_headers_frame!(reader)
+            headers_frame isa HT.HeadersFrame || error("expected headers frame")
+            hf = headers_frame::HT.HeadersFrame
+            decoded_headers = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            for header in decoded_headers
+                header.name == ":path" && push!(seen_paths, header.value)
+            end
+            response_headers = HT.HeaderField[HT.HeaderField(":status", "200", false)]
+            encoded = HT.encode_header_block(server_encoder, response_headers)
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/h2"; host = address, body = HT.EmptyBody(), content_length = 0)
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        @test String(_read_all_h2_body(response.body)) == "ok"
+        _wait_task_h2!(server_task)
+        @test seen_paths == ["/h2"]
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 client strips padded DATA payload bytes" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            preface = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            preface == HT._H2_PREFACE || error("invalid h2 preface")
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            response_headers = HT.HeaderField[HT.HeaderField(":status", "200", false)]
+            encoded = HT.encode_header_block(server_encoder, response_headers)
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            _write_padded_data_frame_to_conn!(accepted_conn, hf.stream_id, collect(codeunits("ok")); end_stream = true, padding = 3)
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/padded"; host = address, body = HT.EmptyBody(), content_length = 0)
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        @test String(_read_all_h2_body(response.body)) == "ok"
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 client sequential streams" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    seen_streams = UInt32[]
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            for _ in 1:2
+                headers_frame = _read_next_headers_frame!(reader)
+                hf = headers_frame::HT.HeadersFrame
+                push!(seen_streams, hf.stream_id)
+                _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+                encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+                _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+                _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("s" * string(hf.stream_id)))))
+            end
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        req1 = HT.Request("GET", "/a"; host = address, body = HT.EmptyBody(), content_length = 0)
+        req2 = HT.Request("GET", "/b"; host = address, body = HT.EmptyBody(), content_length = 0)
+        res1 = HT.h2_roundtrip!(h2_conn, req1)
+        res2 = HT.h2_roundtrip!(h2_conn, req2)
+        @test res1.status == 200
+        @test res2.status == 200
+        @test String(_read_all_h2_body(res1.body)) == "s1"
+        @test String(_read_all_h2_body(res2.body)) == "s3"
+        _wait_task_h2!(server_task)
+        @test seen_streams == UInt32[1, 3]
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 client splits large DATA request body" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    frame_sizes = Int[]
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            @test !hf.end_stream
+            done = false
+            while !done
+                frame = HT.read_frame!(reader)
+                if frame isa HT.DataFrame
+                    df = frame::HT.DataFrame
+                    df.stream_id == hf.stream_id || continue
+                    push!(frame_sizes, length(df.data))
+                    _write_frame_to_conn!(accepted_conn, HT.WindowUpdateFrame(UInt32(0), UInt32(length(df.data))))
+                    _write_frame_to_conn!(accepted_conn, HT.WindowUpdateFrame(hf.stream_id, UInt32(length(df.data))))
+                    done = df.end_stream
+                end
+            end
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        payload = fill(UInt8('x'), 70_000)
+        request = HT.Request("POST", "/upload"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        @test String(_read_all_h2_body(response.body)) == "ok"
+        _wait_task_h2!(server_task)
+        @test length(frame_sizes) > 1
+        @test all(n -> n <= 16_384, frame_sizes)
+        @test sum(frame_sizes) == 70_000
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 high-level request supports iterable bodies" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    received = IOBuffer()
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            decoded = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            @test any(field -> field.name == ":path" && field.value == "/iter", decoded)
+            done = hf.end_stream
+            while !done
+                frame = HT.read_frame!(reader)
+                frame isa HT.DataFrame || continue
+                df = frame::HT.DataFrame
+                df.stream_id == hf.stream_id || continue
+                write(received, df.data)
+                done = df.end_stream
+            end
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    try
+        response = HT.post("http://$(address)/iter"; body = ["hey", " there ", "sailor"], protocol = :h2)
+        @test response.status == 200
+        @test String(response.body) == "ok"
+        _wait_task_h2!(server_task)
+        @test String(take!(received)) == "hey there sailor"
+    finally
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 client honors stream-level flow control" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    chunk_sizes = Int[]
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(32)]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            done = false
+            while !done
+                frame = HT.read_frame!(reader)
+                frame isa HT.DataFrame || continue
+                df = frame::HT.DataFrame
+                df.stream_id == hf.stream_id || continue
+                push!(chunk_sizes, length(df.data))
+                if length(chunk_sizes) == 1
+                    _write_frame_to_conn!(accepted_conn, HT.WindowUpdateFrame(hf.stream_id, UInt32(96)))
+                end
+                done = df.end_stream
+            end
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        payload = fill(UInt8('x'), 128)
+        request = HT.Request("POST", "/fc-stream"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        @test String(_read_all_h2_body(response.body)) == "ok"
+        _wait_task_h2!(server_task)
+        @test !isempty(chunk_sizes)
+        @test chunk_sizes[1] == 32
+        @test sum(chunk_sizes) == 128
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 client honors connection-level flow control" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    chunk_sizes = Int[]
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            done = false
+            while !done
+                frame = HT.read_frame!(reader)
+                frame isa HT.DataFrame || continue
+                df = frame::HT.DataFrame
+                df.stream_id == hf.stream_id || continue
+                push!(chunk_sizes, length(df.data))
+                if length(chunk_sizes) == 1
+                    _write_frame_to_conn!(accepted_conn, HT.WindowUpdateFrame(UInt32(0), UInt32(112)))
+                end
+                done = df.end_stream
+            end
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        lock(h2_conn.state_lock)
+        try
+            h2_conn.conn_send_window = 16
+        finally
+            unlock(h2_conn.state_lock)
+        end
+        payload = fill(UInt8('x'), 128)
+        request = HT.Request("POST", "/fc-conn"; host = address, body = HT.BytesBody(payload), content_length = length(payload))
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        @test String(_read_all_h2_body(response.body)) == "ok"
+        _wait_task_h2!(server_task)
+        @test !isempty(chunk_sizes)
+        @test chunk_sizes[1] == 16
+        @test sum(chunk_sizes) == 128
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 client shared connection concurrent calls are safe" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    seen_streams = UInt32[]
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            for _ in 1:4
+                headers_frame = _read_next_headers_frame!(reader)
+                hf = headers_frame::HT.HeadersFrame
+                push!(seen_streams, hf.stream_id)
+                _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+                encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+                _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+                _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
+            end
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        tasks = Task[]
+        for i in 1:4
+            push!(tasks, errormonitor(Threads.@spawn begin
+                req = HT.Request("GET", "/$(i)"; host = address, body = HT.EmptyBody(), content_length = 0)
+                return HT.h2_roundtrip!(h2_conn, req)
+            end))
+        end
+        results = [fetch(task) for task in tasks]
+        @test all(res -> res.status == 200, results)
+        @test all(res -> String(_read_all_h2_body(res.body)) == "ok", results)
+        _wait_task_h2!(server_task)
+        @test sort(seen_streams) == UInt32[1, 3, 5, 7]
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 client multiplexes concurrent streams" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            requests = Pair{UInt32, String}[]
+            for _ in 1:2
+                headers_frame = _read_next_headers_frame!(reader)
+                headers_frame isa HT.HeadersFrame || error("expected headers frame")
+                hf = headers_frame::HT.HeadersFrame
+                decoded = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+                path = ""
+                for h in decoded
+                    h.name == ":path" && (path = h.value)
+                end
+                push!(requests, hf.stream_id => path)
+            end
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            second = requests[2]
+            first = requests[1]
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(second.first, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(second.first, true, collect(codeunits("resp:" * second.second))))
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(first.first, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(first.first, true, collect(codeunits("resp:" * first.second))))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        t1 = errormonitor(Threads.@spawn begin
+            req = HT.Request("GET", "/one"; host = address, body = HT.EmptyBody(), content_length = 0)
+            return HT.h2_roundtrip!(h2_conn, req)
+        end)
+        t2 = errormonitor(Threads.@spawn begin
+            req = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
+            return HT.h2_roundtrip!(h2_conn, req)
+        end)
+        @test timedwait(() -> istaskdone(t1), 3.0; pollint = 0.001) != :timed_out
+        @test timedwait(() -> istaskdone(t2), 3.0; pollint = 0.001) != :timed_out
+        r1 = fetch(t1)
+        r2 = fetch(t2)
+        @test r1.status == 200
+        @test r2.status == 200
+        @test String(_read_all_h2_body(r1.body)) == "resp:/one"
+        @test String(_read_all_h2_body(r2.body)) == "resp:/two"
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 secure connect rejects non-h2 ALPN" begin
+    listener = TL.listen(
+        "tcp",
+        "127.0.0.1:0",
+        TL.Config(
+            verify_peer = false,
+            cert_file = _TLS_CERT_PATH,
+            key_file = _TLS_KEY_PATH,
+            alpn_protocols = ["http/1.1"],
+        );
+        backlog = 8,
+    )
+    laddr = TL.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        conn = nothing
+        try
+            conn = TL.accept(listener)
+            try
+                TL.handshake!(conn)
+                sleep(0.05)
+            catch err
+                # The client intentionally aborts once ALPN negotiation fails.
+                # Server-side TLS failures are expected in this test path.
+                ex = err::Exception
+                if !(ex isa TL.TLSError || ex isa EOFError || ex isa SystemError)
+                    rethrow(ex)
+                end
+            end
+        finally
+            conn === nothing || try
+                TL.close(conn::TL.Conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    @test_throws HT.H2NegotiationError HT.connect_h2!(
+        address;
+        secure = true,
+        tls_config = TL.Config(
+            verify_peer = false,
+            server_name = "localhost",
+            alpn_protocols = ["h2", "http/1.1"],
+        ),
+    )
+    _wait_task_h2!(server_task)
+    TL.close(listener)
+end
