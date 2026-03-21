@@ -160,6 +160,8 @@ function _readline_crlf(io::IO, max_line_bytes::Integer)::String
 end
 
 """
+    _upcoming_header_keys(io) -> Int
+
 Approximate number of header keys available in the current buffered chunk.
 Specialized readers can override this to enable better preallocation.
 """
@@ -417,19 +419,58 @@ function _write_status_line!(io::IO, response::Response)
 end
 
 function _write_headers!(io::IO, hdrs::Headers)
+    _normalize_outgoing_headers!(hdrs)
     for (key, value) in hdrs
         print(io, key, ": ", value, "\r\n")
     end
     return nothing
 end
 
-function _prepare_trailer_header!(headers::Headers, trailer_values::Headers)
-    isempty(trailer_values) && return nothing
-    hasheader(headers, "Trailer") && return nothing
-    names = header_keys(trailer_values)
-    isempty(names) && return nothing
-    setheader(headers, "Trailer", join(names, ", "))
+function _validate_declared_trailer_headers!(hdrs::Headers)::Nothing
+    for value in headers(hdrs, "Trailer")
+        for item in split(value, ',')
+            trailer_name = _trim_http_ows(item)
+            isempty(trailer_name) && throw(ProtocolError("invalid HTTP Trailer header value"))
+            _valid_trailer_header_name(trailer_name) || throw(ProtocolError("invalid HTTP trailer field name: $(repr(trailer_name))"))
+        end
+    end
     return nothing
+end
+
+function _normalize_outgoing_headers!(headers::Headers)::Nothing
+    entries = headers.entries
+    @inbounds for i in eachindex(entries)
+        key, value = entries[i]
+        _valid_header_field_name(key) || throw(ProtocolError("invalid HTTP header field name: $(repr(key))"))
+        normalized = _normalize_header_field_value(value)
+        normalized === nothing && throw(ProtocolError("invalid HTTP header field value for $(repr(key))"))
+        normalized == value || (entries[i] = key => normalized)
+    end
+    _validate_declared_trailer_headers!(headers)
+    return nothing
+end
+
+function _normalize_outgoing_trailers!(trailers::Headers)::Nothing
+    entries = trailers.entries
+    @inbounds for i in eachindex(entries)
+        key, value = entries[i]
+        _valid_trailer_header_name(key) || throw(ProtocolError("invalid HTTP trailer field name: $(repr(key))"))
+        normalized = _normalize_header_field_value(value)
+        normalized === nothing && throw(ProtocolError("invalid HTTP trailer field value for $(repr(key))"))
+        normalized == value || (entries[i] = key => normalized)
+    end
+    return nothing
+end
+
+function _prepare_trailer_header!(headers::Headers, trailer_values::Headers)::Headers
+    isempty(trailer_values) && return Headers()
+    prepared_trailers = copy(trailer_values)
+    _normalize_outgoing_trailers!(prepared_trailers)
+    hasheader(headers, "Trailer") && return prepared_trailers
+    names = header_keys(prepared_trailers)
+    isempty(names) && return prepared_trailers
+    setheader(headers, "Trailer", join(names, ", "))
+    return prepared_trailers
 end
 
 function _write_exact_body!(io::IO, body::AbstractBody, expected_len::Int64)
@@ -511,7 +552,6 @@ function _prepare_request_headers_for_write(
             setheader(headers, "Content-Length", "0")
         end
     end
-    use_chunked && _prepare_trailer_header!(headers, request.trailers)
     return headers, use_chunked
 end
 
@@ -520,12 +560,14 @@ function _write_request_head!(
     request::Request;
     wire_target::Union{Nothing,AbstractString}=nothing,
     proxy_authorization::Union{Nothing,AbstractString}=nothing,
-)::Bool
+)::Tuple{Bool,Headers}
     headers, use_chunked = _prepare_request_headers_for_write(request; proxy_authorization=proxy_authorization)
+    trailer_values = use_chunked ? _prepare_trailer_header!(headers, request.trailers) : Headers()
+    _normalize_outgoing_headers!(headers)
     _write_start_line!(io, request; wire_target=wire_target)
     _write_headers!(io, headers)
     write(io, "\r\n")
-    return use_chunked
+    return use_chunked, trailer_values
 end
 
 function _response_has_body(response::Response)::Bool
@@ -555,9 +597,9 @@ function write_request!(
     wire_target::Union{Nothing,AbstractString}=nothing,
     proxy_authorization::Union{Nothing,AbstractString}=nothing,
 ) where {B<:AbstractBody}
-    use_chunked = _write_request_head!(io, request; wire_target=wire_target, proxy_authorization=proxy_authorization)
+    use_chunked, trailer_values = _write_request_head!(io, request; wire_target=wire_target, proxy_authorization=proxy_authorization)
     if use_chunked
-        _write_chunked_body!(io, request.body, request.trailers)
+        _write_chunked_body!(io, request.body, trailer_values)
         return nothing
     end
     request.content_length < 0 && return nothing
@@ -599,13 +641,14 @@ function write_response!(io::IO, response::Response{B}) where {B<:AbstractBody}
             setheader(headers, "Content-Length", "0")
         end
     end
-    use_chunked && _prepare_trailer_header!(headers, response.trailers)
+    trailer_values = use_chunked ? _prepare_trailer_header!(headers, response.trailers) : Headers()
+    _normalize_outgoing_headers!(headers)
     _write_status_line!(io, response)
     _write_headers!(io, headers)
     write(io, "\r\n")
     allows_body || return nothing
     if use_chunked
-        _write_chunked_body!(io, response.body, response.trailers)
+        _write_chunked_body!(io, response.body, trailer_values)
         return nothing
     end
     response.content_length < 0 && return nothing
@@ -729,14 +772,14 @@ function read_request(io::IO; max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BY
 end
 
 """
-    _read_response(io, request=nothing; max_line_bytes=..., max_header_bytes=...)
+    _read_incoming_response(io, request=nothing; max_line_bytes=..., max_header_bytes=...)
 
-Parse one HTTP/1 response from `io`.
+Parse one HTTP/1 response from `io` into the internal incoming-response form.
+
 `request` is optional but allows HEAD/no-body response handling parity.
-
-Returns a `Response` whose body is one of `EmptyBody`, `FixedLengthBody`,
-`ChunkedBody`, or `EOFBody` depending on the status code and framing headers.
-Exception behavior mirrors `read_request`.
+Returns an `_IncomingResponse` whose `rawbody` is one of `EmptyBody`,
+`FixedLengthBody`, `ChunkedBody`, or `EOFBody` depending on the status code and
+framing headers. Exception behavior mirrors `read_request`.
 """
 function _read_incoming_response(
     io::IO,
@@ -849,6 +892,16 @@ function _read_incoming_response(
     )
 end
 
+"""
+    _read_response(io, request=nothing; max_line_bytes=..., max_header_bytes=...)
+
+Parse one HTTP/1 response from `io`.
+`request` is optional but allows HEAD/no-body response handling parity.
+
+Returns a `Response` whose body is one of `EmptyBody`, `FixedLengthBody`,
+`ChunkedBody`, or `EOFBody` depending on the status code and framing headers.
+Exception behavior mirrors `read_request`.
+"""
 function _read_response(
     io::IO,
     request::Union{Nothing,Request}=nothing;

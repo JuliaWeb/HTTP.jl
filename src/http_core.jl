@@ -125,6 +125,83 @@ end
     return b == 0x20 || b == 0x09
 end
 
+@inline function _is_http_ctl_byte(b::UInt8)::Bool
+    return b < 0x20 || b == 0x7f
+end
+
+@inline function _is_http_token_byte(b::UInt8)::Bool
+    (0x30 <= b <= 0x39 || 0x41 <= b <= 0x5a || 0x61 <= b <= 0x7a) && return true
+    return b == 0x21 || b == 0x23 || b == 0x24 || b == 0x25 || b == 0x26 || b == 0x27 ||
+           b == 0x2a || b == 0x2b || b == 0x2d || b == 0x2e || b == 0x5e || b == 0x5f ||
+           b == 0x60 || b == 0x7c || b == 0x7e
+end
+
+function _valid_header_field_name(name::AbstractString)::Bool
+    raw = name isa String ? (name::String) : String(name)
+    isempty(raw) && return false
+    @inbounds for b in codeunits(raw)
+        _is_http_token_byte(b) || return false
+    end
+    return true
+end
+
+function _normalize_header_field_value(value::AbstractString)::Union{Nothing,String}
+    raw = value isa String ? (value::String) : String(value)
+    bytes = codeunits(raw)
+    needs_rewrite = false
+    @inbounds for b in bytes
+        if b == 0x0d || b == 0x0a
+            needs_rewrite = true
+            continue
+        end
+        if _is_http_ctl_byte(b) && b != 0x09
+            return nothing
+        end
+    end
+    sanitized = if needs_rewrite
+        rewritten = Vector{UInt8}(undef, length(bytes))
+        @inbounds for i in eachindex(bytes)
+            b = bytes[i]
+            rewritten[i] = (b == 0x0d || b == 0x0a) ? 0x20 : b
+        end
+        String(rewritten)
+    else
+        raw
+    end
+    return _trim_http_ows(sanitized)
+end
+
+const _FORBIDDEN_TRAILER_HEADERS = Set([
+    "Authorization",
+    "Cache-Control",
+    "Connection",
+    "Content-Encoding",
+    "Content-Length",
+    "Content-Range",
+    "Content-Type",
+    "Expect",
+    "Host",
+    "Keep-Alive",
+    "Max-Forwards",
+    "Pragma",
+    "Proxy-Authenticate",
+    "Proxy-Authorization",
+    "Proxy-Connection",
+    "Range",
+    "Realm",
+    "Te",
+    "Trailer",
+    "Transfer-Encoding",
+    "Www-Authenticate",
+])
+
+function _valid_trailer_header_name(name::AbstractString)::Bool
+    canon = canonical_header_key(name)
+    _valid_header_field_name(canon) || return false
+    startswith(canon, "If-") && return false
+    return !(canon in _FORBIDDEN_TRAILER_HEADERS)
+end
+
 const _COMMON_CANONICAL_HEADER_KEYS = Dict(
     "Accept" => "Accept",
     "Accept-Charset" => "Accept-Charset",

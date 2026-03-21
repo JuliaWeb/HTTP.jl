@@ -98,6 +98,48 @@ end
     @test String(take!(io)) == "X-Test: one\r\nX-Test: two\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\n"
 end
 
+@testset "HTTP/1 header serialization hardening" begin
+    request_headers = HT.Headers()
+    HT.setheader(request_headers, "Host", "example.com")
+    push!(request_headers, "X-Test" => "ok\r\nInjected: yes")
+    request = HT.Request("GET", "/"; headers = request_headers, body = HT.EmptyBody(), content_length = 0)
+    request_io = IOBuffer()
+    HT.write_request!(request_io, request)
+    request_wire = String(take!(request_io))
+    @test occursin("X-Test: ok  Injected: yes\r\n", request_wire)
+    @test !occursin("\r\nInjected: yes\r\n", request_wire)
+
+    response_headers = HT.Headers()
+    push!(response_headers, "X-Test" => "\r\n value ")
+    response = HT.Response(200; headers = response_headers, body = HT.EmptyBody(), content_length = 0)
+    response_io = IOBuffer()
+    HT.write_response!(response_io, response)
+    response_wire = String(take!(response_io))
+    @test occursin("X-Test: value\r\n", response_wire)
+    @test !occursin("\r\n value\r\n", response_wire)
+
+    invalid_name_headers = HT.Headers()
+    push!(invalid_name_headers, "Bad Header" => "value")
+    @test_throws HT.ProtocolError HT._write_headers!(IOBuffer(), invalid_name_headers)
+
+    invalid_value_headers = HT.Headers()
+    push!(invalid_value_headers, "X-Test" => "bad\0value")
+    @test_throws HT.ProtocolError HT._write_headers!(IOBuffer(), invalid_value_headers)
+
+    declared_bad_trailer_headers = HT.Headers()
+    HT.setheader(declared_bad_trailer_headers, "Transfer-Encoding", "chunked")
+    HT.setheader(declared_bad_trailer_headers, "Trailer", "Content-Length")
+    declared_bad_trailer = HT.Response(200; headers = declared_bad_trailer_headers, body = HT.BytesBody(collect(codeunits("body"))), content_length = -1)
+    @test_throws HT.ProtocolError HT.write_response!(IOBuffer(), declared_bad_trailer)
+
+    invalid_trailer_headers = HT.Headers()
+    HT.setheader(invalid_trailer_headers, "Transfer-Encoding", "chunked")
+    invalid_trailers = HT.Headers()
+    HT.setheader(invalid_trailers, "Content-Length", "5")
+    invalid_trailer_response = HT.Response(200; headers = invalid_trailer_headers, trailers = invalid_trailers, body = HT.BytesBody(collect(codeunits("body"))), content_length = -1)
+    @test_throws HT.ProtocolError HT.write_response!(IOBuffer(), invalid_trailer_response)
+end
+
 @testset "HTTP/1 response parse/write chunked" begin
     raw = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Trailer: done\r\n\r\n"
     resp = HT._read_response(IOBuffer(codeunits(raw)))
