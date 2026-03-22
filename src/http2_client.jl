@@ -554,14 +554,14 @@ function _make_tls_config_for_h2(config::Union{Nothing,TLS.Config}, address::Str
 end
 
 """
-    connect_h2!(address; secure=false, host_resolver=HostResolver(), tls_config=nothing)
+    _connect_h2_from_tcp!(tcp, address; secure=false, tls_config=nothing) -> H2Connection
 
-Open and initialize an HTTP/2 client connection, including client preface,
-SETTINGS exchange, optional TLS handshake, and ALPN verification.
+Open and initialize an HTTP/2 client connection on an existing TCP socket,
+including client preface, SETTINGS exchange, optional TLS handshake, and ALPN
+verification.
 
 Keyword arguments:
 - `secure`: when `true`, connect over TLS and require ALPN `h2`
-- `host_resolver`: resolver/dialer used for the underlying TCP connection
 - `tls_config`: optional TLS configuration, augmented as needed to advertise `h2`
 
 Returns a ready-to-use `H2Connection`. Throws `H2NegotiationError` for ALPN
@@ -724,48 +724,77 @@ function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request:
     end
 end
 
+@inline function _is_h2_connection_specific_header(name::String)::Bool
+    return name == "connection" || name == "proxy-connection" || name == "keep-alive" || name == "upgrade"
+end
+
 function _request_headers_for_h2(address::String, request::Request, secure::Bool)::Vector{HeaderField}
-    host, _ = HostResolvers.split_host_port(address)
-    fields = HeaderField[
-        HeaderField(":method", request.method, false),
-        HeaderField(":scheme", secure ? "https" : "http", false),
-        HeaderField(":authority", host, false),
-        HeaderField(":path", request.target, false),
-    ]
+    authority = request.host === nothing ? address : (request.host::String)
+    normal_connect = request.method == "CONNECT" && !startswith(request.target, "/")
+    fields = HeaderField[HeaderField(":method", request.method, false)]
+    push!(fields, HeaderField(":authority", authority, false))
+    if !normal_connect
+        push!(fields, HeaderField(":scheme", secure ? "https" : "http", false))
+        push!(fields, HeaderField(":path", request.target, false))
+    end
     for key in header_keys(request.headers)
         startswith(key, ":") && continue
+        lowered = lowercase(key)
+        if lowered == "host" || _is_h2_connection_specific_header(lowered) || lowered == "transfer-encoding"
+            continue
+        end
         values = headers(request.headers, key)
         for value in values
-            push!(fields, HeaderField(lowercase(key), value, false))
+            if lowered == "te"
+                lowercase(_trim_http_ows(value)) == "trailers" || continue
+                push!(fields, HeaderField("te", "trailers", false))
+                continue
+            end
+            push!(fields, HeaderField(lowered, value, false))
         end
     end
     return fields
 end
 
 function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Headers}
-    status = 200
+    status = nothing
+    saw_regular = false
     out = Headers()
     for header in headers
-        if header.name == ":status"
-            status = parse(Int, header.value)
+        name = header.name
+        value = header.value
+        name == lowercase(name) || throw(ProtocolError("HTTP/2 header field names must be lowercase"))
+        normalized = _normalize_header_field_value(value)
+        normalized === nothing && throw(ProtocolError("invalid HTTP/2 header field value for $(repr(name))"))
+        if startswith(name, ':')
+            saw_regular && throw(ProtocolError("HTTP/2 pseudo-headers must precede regular headers"))
+            if name == ":status"
+                status === nothing || throw(ProtocolError("duplicate HTTP/2 :status pseudo-header"))
+                parsed_status = try
+                    parse(Int, normalized)
+                catch
+                    throw(ProtocolError("malformed HTTP/2 :status pseudo-header"))
+                end
+                status = parsed_status
+            else
+                throw(ProtocolError("unsupported HTTP/2 response pseudo-header $(repr(name))"))
+            end
             continue
         end
-        appendheader(out, header.name, header.value)
+        saw_regular = true
+        if _is_h2_connection_specific_header(name) || name == "transfer-encoding" || name == "te"
+            throw(ProtocolError("forbidden HTTP/2 response header $(repr(name))"))
+        end
+        appendheader(out, name, normalized)
     end
-    return status, out
+    status === nothing && throw(ProtocolError("missing HTTP/2 :status pseudo-header"))
+    return status::Int, out
 end
 
 """
-    h2_roundtrip!(conn, request)
+    _stream_available_bytes(state) -> Int
 
-Send one request on `conn` and return the matching HTTP/2 `Response`.
-
-The returned response body is either:
-- `EmptyBody` when the peer completed the stream without DATA payload
-- `H2Body` when the response body must be streamed incrementally
-
-This function may throw `ProtocolError`, `ParseError`, `H2NegotiationError`,
-transport exceptions, or any stream-level error synthesized by the read loop.
+Return the number of unread response-body bytes currently buffered in `state`.
 """
 @inline function _stream_available_bytes(state::H2StreamState)::Int
     available = (length(state.body) - state.body_read_index) + 1

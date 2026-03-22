@@ -95,6 +95,96 @@ function _read_all_h2_body(body::HT.AbstractBody)::Vector{UInt8}
     return out
 end
 
+@testset "HTTP/2 client request header filtering and authority selection" begin
+    headers = HT.Headers()
+    HT.setheader(headers, "Connection", "close")
+    HT.setheader(headers, "Transfer-Encoding", "chunked")
+    HT.setheader(headers, "Upgrade", "websocket")
+    HT.setheader(headers, "Keep-Alive", "timeout=5")
+    HT.setheader(headers, "Proxy-Connection", "keep-alive")
+    HT.setheader(headers, "X-Test", "ok")
+    HT.setheader(headers, "TE", "trailers")
+    request = HT.Request("GET", "/filtered"; host = "example.com:8443", headers = headers, body = HT.EmptyBody(), content_length = 0)
+    fields = HT._request_headers_for_h2("127.0.0.1:8443", request, true)
+    @test any(field -> field.name == ":authority" && field.value == "example.com:8443", fields)
+    @test any(field -> field.name == ":scheme" && field.value == "https", fields)
+    @test any(field -> field.name == ":path" && field.value == "/filtered", fields)
+    @test any(field -> field.name == "x-test" && field.value == "ok", fields)
+    @test any(field -> field.name == "te" && field.value == "trailers", fields)
+    @test !any(field -> field.name == "connection", fields)
+    @test !any(field -> field.name == "transfer-encoding", fields)
+    @test !any(field -> field.name == "upgrade", fields)
+    @test !any(field -> field.name == "keep-alive", fields)
+    @test !any(field -> field.name == "proxy-connection", fields)
+
+    no_override = HT.Request("GET", "/port"; body = HT.EmptyBody(), content_length = 0)
+    port_fields = HT._request_headers_for_h2("example.com:8443", no_override, false)
+    @test any(field -> field.name == ":authority" && field.value == "example.com:8443", port_fields)
+
+    invalid_te_headers = HT.Headers()
+    HT.setheader(invalid_te_headers, "TE", "gzip")
+    invalid_te_request = HT.Request("GET", "/te"; headers = invalid_te_headers, body = HT.EmptyBody(), content_length = 0)
+    invalid_te_fields = HT._request_headers_for_h2("example.com:443", invalid_te_request, true)
+    @test !any(field -> field.name == "te", invalid_te_fields)
+end
+
+@testset "HTTP/2 client validates response pseudo-headers" begin
+    @test_throws HT.ProtocolError HT._decode_response_headers(HT.HeaderField[])
+    @test_throws HT.ProtocolError HT._decode_response_headers(HT.HeaderField[
+        HT.HeaderField(":status", "200", false),
+        HT.HeaderField(":status", "204", false),
+    ])
+    @test_throws HT.ProtocolError HT._decode_response_headers(HT.HeaderField[
+        HT.HeaderField(":status", "200", false),
+        HT.HeaderField("connection", "close", false),
+    ])
+    @test_throws HT.ProtocolError HT._decode_response_headers(HT.HeaderField[
+        HT.HeaderField("x-test", "ok", false),
+        HT.HeaderField(":status", "200", false),
+    ])
+end
+
+@testset "HTTP/2 client rejects response without status pseudo-header" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField("x-test", "ok", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, true, true, encoded))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/missing-status"; host = address, body = HT.EmptyBody(), content_length = 0)
+        @test_throws HT.ProtocolError HT.h2_roundtrip!(h2_conn, request)
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
 @testset "HTTP/2 client roundtrip" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
