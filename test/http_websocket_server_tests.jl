@@ -23,7 +23,7 @@ function _wait_server_addr(server; timeout_s::Float64 = 5.0)
     return W.server_addr(server)
 end
 
-function _raw_upgrade_response(address::String; secure::Bool = false, origin::Union{Nothing, String} = nothing)
+function _raw_upgrade_response(address::String; secure::Bool = false, origin::Union{Nothing, String} = nothing, key::Union{Nothing, String} = nothing)
     conn = secure ?
         TL.client(NC.connect(ND.HostResolver(), "tcp", address), TL.Config(server_name = "127.0.0.1", verify_peer = false)) :
         NC.connect(ND.HostResolver(), "tcp", address)
@@ -32,7 +32,7 @@ function _raw_upgrade_response(address::String; secure::Bool = false, origin::Un
         headers = HT.Headers()
         HT.setheader(headers, "Upgrade", "websocket")
         HT.setheader(headers, "Connection", "Upgrade")
-        HT.setheader(headers, "Sec-WebSocket-Key", HT.ws_random_handshake_key())
+        HT.setheader(headers, "Sec-WebSocket-Key", key === nothing ? HT.ws_random_handshake_key() : key::String)
         HT.setheader(headers, "Sec-WebSocket-Version", "13")
         origin === nothing || HT.setheader(headers, "Origin", origin)
         request = HT.Request("GET", "/ws"; headers = headers, host = address, content_length = 0)
@@ -50,6 +50,17 @@ function _raw_upgrade_response(address::String; secure::Bool = false, origin::Un
         catch
         end
     end
+end
+
+function _read_all_ws_body(body::HT.AbstractBody)::String
+    out = UInt8[]
+    buf = Vector{UInt8}(undef, 64)
+    while true
+        n = HT.body_read!(body, buf)
+        n == 0 && break
+        append!(out, @view(buf[1:n]))
+    end
+    return String(out)
 end
 
 @testset "HTTP.WebSockets server listen! over ws" begin
@@ -138,6 +149,26 @@ end
             @test W.receive(ws) == "allowed"
         finally
             close(ws)
+        end
+    finally
+        close(server)
+    end
+end
+
+@testset "HTTP.WebSockets server rejects invalid websocket keys" begin
+    server = W.listen!("127.0.0.1", 0) do ws
+        W.send(ws, "nope")
+    end
+    try
+        address = _wait_server_addr(server)
+        for key in ("x", "%%%", "AQIDBA==")
+            response = _raw_upgrade_response(address; key = key)
+            try
+                @test response.status == 400
+                @test occursin("invalid websocket key", _read_all_ws_body(response.body))
+            finally
+                HT.body_close!(response.body)
+            end
         end
     finally
         close(server)

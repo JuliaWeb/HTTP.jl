@@ -95,6 +95,15 @@ end
     @test_throws HT.WebSocketProtocolError HT.ws_decoder_process!(decoder, UInt8[0x88, 0x01, 0x00])
 
     decoder = HT.ws_decoder_new()
+    @test_throws HT.WebSocketProtocolError HT.ws_decoder_process!(decoder, UInt8[0xc1, 0x01, UInt8('a')])
+
+    decoder = HT.ws_decoder_new()
+    @test_throws HT.WebSocketProtocolError HT.ws_decoder_process!(decoder, UInt8[0xa2, 0x01, UInt8(0x01)])
+
+    decoder = HT.ws_decoder_new()
+    @test_throws HT.WebSocketProtocolError HT.ws_decoder_process!(decoder, UInt8[0x98, 0x00])
+
+    decoder = HT.ws_decoder_new()
     header_events = Tuple{UInt8, Bool, UInt64}[]
     medium_payload = fill(UInt8('m'), 126)
     medium_frames = HT.ws_decoder_process!(
@@ -216,4 +225,22 @@ end
     HT.setheader(bad_headers, "Sec-WebSocket-Version", "13")
     bad_request = HT.Request("GET", "/ws"; headers = bad_headers, host = "example.com", content_length = 0)
     @test !HT.ws_is_websocket_request(bad_request)
+
+    invalid_key_headers = copy(headers)
+    HT.setheader(invalid_key_headers, "Sec-WebSocket-Key", "x")
+    invalid_key_request = HT.Request("GET", "/ws"; headers = invalid_key_headers, host = "example.com", content_length = 0)
+    @test !HT.ws_is_websocket_request(invalid_key_request)
+    @test HT.ws_get_request_sec_websocket_key(invalid_key_request) === nothing
+
+    malformed_key_headers = copy(headers)
+    HT.setheader(malformed_key_headers, "Sec-WebSocket-Key", "%%%")
+    malformed_key_request = HT.Request("GET", "/ws"; headers = malformed_key_headers, host = "example.com", content_length = 0)
+    @test !HT.ws_is_websocket_request(malformed_key_request)
+    @test HT.ws_get_request_sec_websocket_key(malformed_key_request) === nothing
+
+    short_key_headers = copy(headers)
+    HT.setheader(short_key_headers, "Sec-WebSocket-Key", "AQIDBA==")
+    short_key_request = HT.Request("GET", "/ws"; headers = short_key_headers, host = "example.com", content_length = 0)
+    @test !HT.ws_is_websocket_request(short_key_request)
+    @test HT.ws_get_request_sec_websocket_key(short_key_request) === nothing
 end

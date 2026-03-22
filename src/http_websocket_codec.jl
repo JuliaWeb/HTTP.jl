@@ -197,6 +197,7 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
             pos += 1
             dec.fin = (b & 0x80) != 0
             dec.rsv = ((b & 0x40) != 0, (b & 0x20) != 0, (b & 0x10) != 0)
+            (dec.rsv[1] || dec.rsv[2] || dec.rsv[3]) && _ws_throw_protocol_error("unexpected websocket RSV bits without negotiated extensions")
             dec.opcode = b & 0x0f
             dec.opcode in (0x00, 0x01, 0x02, 0x08, 0x09, 0x0a) || _ws_throw_protocol_error("invalid websocket opcode")
             is_control = ws_is_control_frame(dec.opcode)
@@ -529,6 +530,17 @@ function ws_compute_accept_key(key::AbstractString)::String
     return Base64.base64encode(hash)
 end
 
+function _ws_valid_handshake_key(key::AbstractString)::Bool
+    stripped = strip(String(key))
+    isempty(stripped) && return false
+    decoded = try
+        Base64.base64decode(stripped)
+    catch
+        return false
+    end
+    return length(decoded) == 16
+end
+
 @inline function _ws_header_value_has_token(value::AbstractString, token::AbstractString; case_sensitive::Bool=false)::Bool
     for part in eachsplit(value, ',')
         trimmed = strip(part)
@@ -555,7 +567,7 @@ function ws_is_websocket_request(request::Request)::Bool
     uppercase(request.method) == "GET" || return false
     _ws_headers_have_token(request.headers, "Upgrade", "websocket"; case_sensitive=false) || return false
     _ws_headers_have_token(request.headers, "Connection", "upgrade"; case_sensitive=false) || return false
-    header(request.headers, "Sec-WebSocket-Key", nothing) === nothing && return false
+    ws_get_request_sec_websocket_key(request) === nothing && return false
     version = header(request.headers, "Sec-WebSocket-Version", nothing)
     version === nothing && return false
     strip(version) == "13" || return false
@@ -565,7 +577,9 @@ end
 function ws_get_request_sec_websocket_key(request::Request)::Union{Nothing,String}
     key = header(request.headers, "Sec-WebSocket-Key", nothing)
     key === nothing && return nothing
-    return strip(key)
+    stripped = strip(key)
+    _ws_valid_handshake_key(stripped) || return nothing
+    return stripped
 end
 
 function ws_select_subprotocol(request::Request, server_protocols::AbstractVector{<:AbstractString})::Union{Nothing,String}
