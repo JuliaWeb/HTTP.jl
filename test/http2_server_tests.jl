@@ -222,6 +222,70 @@ end
     end
 end
 
+@testset "HTTP/2 server honors peer header table size settings" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            headers = HT.Headers()
+            HT.setheader(headers, "X-Reused", "same")
+            return HT.Response(200; headers = headers, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    conn, reader = _open_raw_h2_server_conn(address; settings = Pair{UInt16, UInt32}[UInt16(0x1) => UInt32(0)])
+    encoder = HT.Encoder()
+    decoder = HT.Decoder()
+    try
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/one")
+        _, block1, _ = _read_h2_server_header_block!(reader)
+        decoded1 = HT.decode_header_block(decoder, block1)
+        @test any(field -> field.name == "x-reused" && field.value == "same", decoded1)
+        @test isempty(decoder.table.entries)
+
+        _write_h2_server_request_headers!(conn, encoder, UInt32(3), address, "/two")
+        _, block2, _ = _read_h2_server_header_block!(reader)
+        decoded2 = HT.decode_header_block(decoder, block2)
+        @test any(field -> field.name == "x-reused" && field.value == "same", decoded2)
+        @test isempty(decoder.table.entries)
+    finally
+        try
+            NC.close(conn)
+        catch
+        end
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server accepts duplicate peer settings in order" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            payload = collect(codeunits("dup:" * request.target))
+            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    conn, reader = _open_raw_h2_server_conn(address; settings = Pair{UInt16, UInt32}[
+        UInt16(0x5) => UInt32(32_768),
+        UInt16(0x5) => UInt32(16_384),
+    ])
+    encoder = HT.Encoder()
+    decoder = HT.Decoder()
+    try
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/dup-settings")
+        headers_frame = HT.read_frame!(reader)
+        @test headers_frame isa HT.HeadersFrame
+        decoded_headers = HT.decode_header_block(decoder, (headers_frame::HT.HeadersFrame).header_block_fragment)
+        @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
+        data_frame = HT.read_frame!(reader)
+        @test data_frame isa HT.DataFrame
+        @test String((data_frame::HT.DataFrame).data) == "dup:/dup-settings"
+    finally
+        try
+            NC.close(conn)
+        catch
+        end
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server router request handlers work" begin
     router = HT.Router()
     HT.register!(router, "GET", "/router/{name}", req -> begin

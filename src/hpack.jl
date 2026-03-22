@@ -905,6 +905,14 @@ end
     return _entry_size(field.name, field.value)
 end
 
+@inline function _header_list_size(fields::Vector{HeaderField})::Int
+    total = 0
+    for field in fields
+        total += _header_field_size(field)
+    end
+    return total
+end
+
 """
     decode_header_block(decoder, block)
 

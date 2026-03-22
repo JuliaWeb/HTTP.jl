@@ -24,6 +24,22 @@ function Base.showerror(io::IO, err::H2NegotiationError)
 end
 
 """
+    H2GoAwayError
+
+Raised when an HTTP/2 connection can no longer accept a stream because the peer
+sent `GOAWAY`.
+"""
+struct H2GoAwayError <: Exception
+    message::String
+    last_stream_id::UInt32
+end
+
+function Base.showerror(io::IO, err::H2GoAwayError)
+    print(io, err.message)
+    return nothing
+end
+
+"""
     H2StreamState
 
 Per-stream response assembly state owned by the shared HTTP/2 client read loop.
@@ -85,6 +101,7 @@ mutable struct H2Connection{F<:Framer}
     state_lock::ReentrantLock
     write_lock::ReentrantLock
     streams::Dict{UInt32,H2StreamState}
+    stream_condition::Threads.Condition
     read_task::Union{Nothing,Task}
     read_loop_condition::Threads.Condition
     conn_error::Union{Nothing,Exception}
@@ -92,6 +109,10 @@ mutable struct H2Connection{F<:Framer}
     conn_send_window::Int64
     initial_stream_send_window::Int64
     stream_send_window::Dict{UInt32,Int64}
+    peer_max_concurrent_streams::Int
+    peer_max_header_list_size::Int
+    peer_goaway_last_stream_id::UInt32
+    accepting_new_streams::Bool
     max_header_block_bytes::Int
     @atomic closed::Bool
 end
@@ -198,11 +219,25 @@ function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, data::Vec
 end
 
 function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,UInt32}})
+    header_table_size = nothing
     lock(conn.state_lock)
     try
         for setting in settings
-            if setting.first == UInt16(0x4)
-                value = setting.second
+            id = setting.first
+            value = setting.second
+            if id == UInt16(0x1)
+                header_table_size = Int(value)
+                continue
+            end
+            if id == UInt16(0x2)
+                value == UInt32(0) || throw(ProtocolError("HTTP/2 servers must not enable push"))
+                continue
+            end
+            if id == UInt16(0x3)
+                conn.peer_max_concurrent_streams = Int(value)
+                continue
+            end
+            if id == UInt16(0x4)
                 value > UInt32(0x7fff_ffff) && throw(ProtocolError("HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE too large"))
                 new_window = Int64(value)
                 delta = new_window - conn.initial_stream_send_window
@@ -212,16 +247,30 @@ function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,
                 end
                 continue
             end
-            if setting.first == UInt16(0x5)
-                value = setting.second
+            if id == UInt16(0x5)
                 value < UInt32(16_384) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too small"))
                 value > UInt32(16_777_215) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too large"))
                 conn.reader.max_frame_size = Int(value)
+                continue
+            end
+            if id == UInt16(0x6)
+                conn.peer_max_header_list_size = Int(value)
             end
         end
         notify(conn.window_condition; all=true)
+        notify(conn.stream_condition; all=true)
     finally
         unlock(conn.state_lock)
+    end
+    if header_table_size !== nothing
+        size = header_table_size::Int
+        lock(conn.write_lock)
+        try
+            set_max_dynamic_table_size_limit!(conn.encoder, size)
+            set_max_dynamic_table_size!(conn.encoder, size)
+        finally
+            unlock(conn.write_lock)
+        end
     end
     return nothing
 end
@@ -247,17 +296,50 @@ function _stream_state(conn::H2Connection, stream_id::UInt32)::Union{Nothing,H2S
     end
 end
 
+function _h2_conn_available(conn::H2Connection)::Bool
+    lock(conn.state_lock)
+    try
+        (@atomic :acquire conn.closed) && return false
+        conn.conn_error === nothing || return false
+        conn.accepting_new_streams || return false
+        conn.next_stream_id <= conn.peer_goaway_last_stream_id || return false
+        return length(conn.streams) < conn.peer_max_concurrent_streams
+    finally
+        unlock(conn.state_lock)
+    end
+end
+
+function _h2_conn_reusable(conn::H2Connection)::Bool
+    lock(conn.state_lock)
+    try
+        (@atomic :acquire conn.closed) && return false
+        conn.conn_error === nothing || return false
+        return conn.accepting_new_streams && conn.next_stream_id <= conn.peer_goaway_last_stream_id
+    finally
+        unlock(conn.state_lock)
+    end
+end
+
 function _register_stream!(conn::H2Connection)::H2StreamState
     lock(conn.state_lock)
     try
-        (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
-        conn.conn_error === nothing || throw(conn.conn_error::Exception)
-        stream_id = conn.next_stream_id
-        conn.next_stream_id += UInt32(2)
-        state = H2StreamState(stream_id)
-        conn.streams[stream_id] = state
-        conn.stream_send_window[stream_id] = conn.initial_stream_send_window
-        return state
+        while true
+            (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
+            conn.conn_error === nothing || throw(conn.conn_error::Exception)
+            if !conn.accepting_new_streams || conn.next_stream_id > conn.peer_goaway_last_stream_id
+                throw(H2GoAwayError("HTTP/2 connection is draining after GOAWAY", conn.peer_goaway_last_stream_id))
+            end
+            if length(conn.streams) >= conn.peer_max_concurrent_streams
+                wait(conn.stream_condition)
+                continue
+            end
+            stream_id = conn.next_stream_id
+            conn.next_stream_id += UInt32(2)
+            state = H2StreamState(stream_id)
+            conn.streams[stream_id] = state
+            conn.stream_send_window[stream_id] = conn.initial_stream_send_window
+            return state
+        end
     finally
         unlock(conn.state_lock)
     end
@@ -266,8 +348,9 @@ end
 function _unregister_stream!(conn::H2Connection, stream_id::UInt32)
     lock(conn.state_lock)
     try
-        delete!(conn.streams, stream_id)
-        delete!(conn.stream_send_window, stream_id)
+        pop!(conn.streams, stream_id, nothing)
+        pop!(conn.stream_send_window, stream_id, nothing)
+        notify(conn.stream_condition; all=true)
     finally
         unlock(conn.state_lock)
     end
@@ -297,6 +380,7 @@ function _fail_h2_connection!(conn::H2Connection, err::Exception)
         conn.conn_error === nothing && (conn.conn_error = err)
         @atomic :release conn.closed = true
         notify(conn.window_condition; all=true)
+        notify(conn.stream_condition; all=true)
         append!(stream_states, values(conn.streams))
     finally
         unlock(conn.state_lock)
@@ -321,28 +405,12 @@ function _fail_h2_connection!(conn::H2Connection, err::Exception)
 end
 
 function _read_settings_until_ready!(conn::H2Connection)
-    saw_peer_settings = false
-    while !saw_peer_settings
-        frame = read_frame!(conn.reader)
-        if frame isa SettingsFrame
-            settings = frame::SettingsFrame
-            if settings.ack
-                continue
-            end
-            _apply_peer_settings!(conn, settings.settings)
-            _write_frame_h2_threadsafe!(conn, SettingsFrame(true, Pair{UInt16,UInt32}[]))
-            saw_peer_settings = true
-            continue
-        end
-        if frame isa PingFrame
-            ping = frame::PingFrame
-            ping.ack || _write_frame_h2_threadsafe!(conn, PingFrame(true, ping.opaque_data))
-            continue
-        end
-        if frame isa GoAwayFrame
-            throw(ProtocolError("HTTP/2 peer sent GOAWAY"))
-        end
-    end
+    frame = read_frame!(conn.reader)
+    frame isa SettingsFrame || throw(ProtocolError("HTTP/2 peer must send SETTINGS before other frames"))
+    settings = frame::SettingsFrame
+    settings.ack && throw(ProtocolError("initial HTTP/2 SETTINGS frame must not be ACK"))
+    _apply_peer_settings!(conn, settings.settings)
+    _write_frame_h2_threadsafe!(conn, SettingsFrame(true, Pair{UInt16,UInt32}[]))
     return nothing
 end
 
@@ -424,7 +492,31 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         return nothing
     end
     if frame isa GoAwayFrame
-        throw(ProtocolError("HTTP/2 peer sent GOAWAY"))
+        goaway = frame::GoAwayFrame
+        goaway.error_code == UInt32(0) || throw(ProtocolError("HTTP/2 peer sent GOAWAY"))
+        to_fail = Pair{UInt32,H2StreamState}[]
+        lock(conn.state_lock)
+        try
+            conn.accepting_new_streams = false
+            conn.peer_goaway_last_stream_id = min(conn.peer_goaway_last_stream_id, goaway.last_stream_id)
+            for (stream_id, state) in conn.streams
+                if stream_id > conn.peer_goaway_last_stream_id
+                    push!(to_fail, stream_id => state)
+                end
+            end
+            for failed in to_fail
+                pop!(conn.streams, failed.first, nothing)
+                pop!(conn.stream_send_window, failed.first, nothing)
+            end
+            notify(conn.stream_condition; all=true)
+            notify(conn.window_condition; all=true)
+        finally
+            unlock(conn.state_lock)
+        end
+        for failed in to_fail
+            _set_stream_error!(failed.second, H2GoAwayError("HTTP/2 stream rejected by GOAWAY", goaway.last_stream_id))
+        end
+        return nothing
     end
     if frame isa RSTStreamFrame
         rst = frame::RSTStreamFrame
@@ -456,6 +548,9 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         state === nothing && return nothing
         _handle_stream_header_fragment!(conn, state::H2StreamState, headers.header_block_fragment, headers.end_headers, headers.end_stream)
         return nothing
+    end
+    if frame isa PushPromiseFrame
+        throw(ProtocolError("HTTP/2 server push is unsupported"))
     end
     if frame isa ContinuationFrame
         cont = frame::ContinuationFrame
@@ -606,6 +701,7 @@ function _connect_h2_from_tcp!(
             state_lock,
             ReentrantLock(),
             Dict{UInt32,H2StreamState}(),
+            Threads.Condition(state_lock),
             nothing,
             Threads.Condition(state_lock),
             nothing,
@@ -613,6 +709,10 @@ function _connect_h2_from_tcp!(
             Int64(65_535),
             Int64(65_535),
             Dict{UInt32,Int64}(),
+            typemax(Int),
+            0,
+            typemax(UInt32),
+            true,
             _H2_DEFAULT_MAX_HEADER_BLOCK_BYTES,
             false,
         )
@@ -683,6 +783,7 @@ function Base.close(conn::H2Connection)
             return nothing
         end
         @atomic :release conn.closed = true
+        notify(conn.stream_condition; all=true)
         notify(conn.window_condition; all=true)
         conn.conn_error === nothing && (conn.conn_error = ProtocolError("HTTP/2 connection is closed"))
         append!(stream_states, values(conn.streams))
@@ -925,6 +1026,9 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
     cleanup_on_exit = true
     try
         headers = _request_headers_for_h2(conn.address, request, conn.secure)
+        if conn.peer_max_header_list_size > 0 && _header_list_size(headers) > conn.peer_max_header_list_size
+            throw(ProtocolError("HTTP/2 request headers exceed peer SETTINGS_MAX_HEADER_LIST_SIZE"))
+        end
         try
             end_stream = request.body isa EmptyBody
             lock(conn.write_lock)

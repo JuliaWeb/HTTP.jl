@@ -55,7 +55,7 @@ mutable struct Client
     trace::Union{Nothing,ClientTrace}
     prefer_http2::Bool
     h2_lock::ReentrantLock
-    h2_conns::Dict{String,H2Connection}
+    h2_conns::Dict{String,Vector{H2Connection}}
 end
 
 function ClientTrace(;
@@ -76,7 +76,7 @@ function Client(;
     prefer_http2::Bool=true,
 )
     max_redirects >= 0 || throw(ArgumentError("max_redirects must be >= 0"))
-    return Client(transport, check_redirect, cookiejar, Int(max_redirects), trace, prefer_http2, ReentrantLock(), Dict{String,H2Connection}())
+    return Client(transport, check_redirect, cookiejar, Int(max_redirects), trace, prefer_http2, ReentrantLock(), Dict{String,Vector{H2Connection}}())
 end
 
 struct _UseTransportProxy end
@@ -106,10 +106,12 @@ function Base.close(client::Client)
     close(client.transport)
     lock(client.h2_lock)
     try
-        for (_, conn) in client.h2_conns
-            try
-                close(conn)
-            catch
+        for (_, conns) in client.h2_conns
+            for conn in conns
+                try
+                    close(conn)
+                catch
+                end
             end
         end
         empty!(client.h2_conns)
@@ -133,13 +135,23 @@ function _acquire_h2_conn!(
     key = _h2_key(plan)
     lock(client.h2_lock)
     try
-        existing = get(() -> nothing, client.h2_conns, key)
-        if existing !== nothing
-            is_closed = @atomic :acquire (existing::H2Connection).closed
-            if !is_closed
+        conns = get(() -> H2Connection[], client.h2_conns, key)
+        i = 1
+        while i <= length(conns)
+            existing = conns[i]
+            if !_h2_conn_available(existing::H2Connection)
+                if !_h2_conn_reusable(existing::H2Connection)
+                    deleteat!(conns, i)
+                    try
+                        close(existing::H2Connection)
+                    catch
+                    end
+                    continue
+                end
+            else
                 return existing::H2Connection
             end
-            delete!(client.h2_conns, key)
+            i += 1
         end
         tls_cfg = if secure
             base_cfg = client.transport.tls_config
@@ -163,6 +175,7 @@ function _acquire_h2_conn!(
         else
             nothing
         end
+        conn = nothing
         conn = if plan.mode == _ProxyPlanMode.DIRECT
             connect_h2!(
                 address;
@@ -187,8 +200,9 @@ function _acquire_h2_conn!(
         else
             throw(ArgumentError("HTTP/2 is not supported for proxy plan mode $(plan.mode)"))
         end
-        client.h2_conns[key] = conn
-        return conn
+        push!(conns, conn)
+        client.h2_conns[key] = conns
+        return conn::H2Connection
     finally
         unlock(client.h2_lock)
     end
@@ -198,17 +212,26 @@ end
     return err isa H2NegotiationError
 end
 
-function _drop_h2_conn!(client::Client, plan::_ProxyPlan)
+function _drop_h2_conn!(client::Client, plan::_ProxyPlan, target::Union{Nothing,H2Connection}=nothing)
     key = _h2_key(plan)
     lock(client.h2_lock)
     try
-        conn = get(() -> nothing, client.h2_conns, key)
-        if conn !== nothing
-            delete!(client.h2_conns, key)
-            try
-                close(conn::H2Connection)
-            catch
+        conns = get(() -> H2Connection[], client.h2_conns, key)
+        kept = H2Connection[]
+        for conn in conns
+            if target === nothing || conn === target
+                try
+                    close(conn)
+                catch
+                end
+            else
+                push!(kept, conn)
             end
+        end
+        if isempty(kept)
+            pop!(client.h2_conns, key, H2Connection[])
+        else
+            client.h2_conns[key] = kept
         end
     finally
         unlock(client.h2_lock)
@@ -404,11 +427,12 @@ function _do_incoming!(
             _trace_call(client.trace, :on_get_conn, current_address, current_secure)
             response = try
                 if _use_h2(client, current_secure, protocol) && proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD
+                    conn = nothing
                     try
                         conn = _acquire_h2_conn!(client, proxy_plan, current_address, current_secure; server_name=current_server_name)
-                        _h2_roundtrip_incoming!(conn, send_request)
+                        _h2_roundtrip_incoming!(conn::H2Connection, send_request)
                     catch err
-                        _drop_h2_conn!(client, proxy_plan)
+                        _drop_h2_conn!(client, proxy_plan, conn)
                         if protocol == :auto && _should_fallback_h2_to_h1(err)
                             _roundtrip_incoming!(
                                 client.transport,

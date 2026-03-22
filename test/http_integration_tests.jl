@@ -21,6 +21,48 @@ function _read_all_integration(body::HT.AbstractBody)::Vector{UInt8}
     return out
 end
 
+function _write_all_h2_integration!(conn::NC.Conn, bytes::Vector{UInt8})::Nothing
+    total = 0
+    while total < length(bytes)
+        n = write(conn, bytes[(total + 1):end])
+        n > 0 || error("expected write progress")
+        total += n
+    end
+    return nothing
+end
+
+function _read_exact_h2_integration!(conn::NC.Conn, n::Int)::Vector{UInt8}
+    out = Vector{UInt8}(undef, n)
+    offset = 0
+    while offset < n
+        chunk = Vector{UInt8}(undef, n - offset)
+        nr = readbytes!(conn, chunk)
+        nr > 0 || error("unexpected EOF")
+        copyto!(out, offset + 1, chunk, 1, nr)
+        offset += nr
+    end
+    return out
+end
+
+function _write_frame_h2_integration!(conn::NC.Conn, frame::HT.AbstractFrame)
+    io = IOBuffer()
+    framer = HT.Framer(io)
+    HT.write_frame!(framer, frame)
+    _write_all_h2_integration!(conn, take!(io))
+    return nothing
+end
+
+function _read_next_headers_h2_integration!(reader::HT.Framer)::HT.HeadersFrame
+    while true
+        frame = HT.read_frame!(reader)
+        frame isa HT.HeadersFrame && return frame::HT.HeadersFrame
+        frame isa HT.SettingsFrame && continue
+        frame isa HT.PingFrame && continue
+        frame isa HT.WindowUpdateFrame && continue
+        error("expected headers frame, got $(typeof(frame))")
+    end
+end
+
 @testset "HTTP integration TLS auto falls back to h1 on ALPN mismatch" begin
     listener = TL.listen(
         "tcp",
@@ -148,4 +190,82 @@ end
         HT.forceclose(h2_server)
         wait(h2_server)
     end
+end
+
+@testset "HTTP integration opens additional h2 connections under peer concurrency caps" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    accepted = Channel{Nothing}(8)
+    server_task = errormonitor(Threads.@spawn begin
+        workers = Task[]
+        try
+            while true
+                conn = NC.accept(listener)
+                put!(accepted, nothing)
+                push!(workers, errormonitor(Threads.@spawn begin
+                    reader = HT.Framer(HT._ConnReader(conn))
+                    encoder = HT.Encoder()
+                    decoder = HT.Decoder()
+                    try
+                        _ = _read_exact_h2_integration!(conn, length(HT._H2_PREFACE))
+                        _ = HT.read_frame!(reader)
+                        _write_frame_h2_integration!(conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[UInt16(0x3) => UInt32(1)]))
+                        _ = HT.read_frame!(reader)
+                        headers_frame = _read_next_headers_h2_integration!(reader)
+                        decoded = HT.decode_header_block(decoder, (headers_frame::HT.HeadersFrame).header_block_fragment)
+                        path = ""
+                        for header in decoded
+                            header.name == ":path" && (path = header.value)
+                        end
+                        sleep(1.0)
+                        encoded = HT.encode_header_block(encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+                        _write_frame_h2_integration!(conn, HT.HeadersFrame(headers_frame.stream_id, false, true, encoded))
+                        _write_frame_h2_integration!(conn, HT.DataFrame(headers_frame.stream_id, true, collect(codeunits("resp:" * path))))
+                    finally
+                        try
+                            NC.close(conn)
+                        catch
+                        end
+                    end
+                    return nothing
+                end))
+            end
+        catch err
+            err isa EOFError || err isa Reseau.IOPoll.NetClosingError || rethrow(err)
+        finally
+            for worker in workers
+                fetch(worker)
+            end
+        end
+        return nothing
+    end)
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), prefer_http2 = true)
+    started = time()
+    try
+        t1 = errormonitor(Threads.@spawn HT.get!(client, address, "/one"; protocol = :h2))
+        t2 = errormonitor(Threads.@spawn HT.get!(client, address, "/two"; protocol = :h2))
+        @test timedwait(() -> istaskdone(t1) && istaskdone(t2), 4.0; pollint = 0.001) != :timed_out
+        r1 = fetch(t1)
+        r2 = fetch(t2)
+        elapsed = time() - started
+        @test r1.status == 200
+        @test r2.status == 200
+        @test String(_read_all_integration(r1.body)) == "resp:/one"
+        @test String(_read_all_integration(r2.body)) == "resp:/two"
+        @test elapsed < 1.8
+    finally
+        close(client)
+        try
+            NC.close(listener)
+        catch
+        end
+        fetch(server_task)
+    end
+    accepted_count = 0
+    while isready(accepted)
+        take!(accepted)
+        accepted_count += 1
+    end
+    @test accepted_count >= 2
 end

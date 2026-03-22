@@ -1127,6 +1127,7 @@ mutable struct _H2SendWindowState
     conn_send_window::Int64
     initial_stream_send_window::Int64
     peer_max_send_frame_size::Int
+    peer_max_header_list_size::Int
     header_encoder::Encoder
     stream_send_window::Dict{UInt32,Int64}
     conn_error::Union{Nothing,Exception}
@@ -1141,6 +1142,7 @@ function _H2SendWindowState()
         Int64(65_535),
         Int64(65_535),
         16_384,
+        0,
         Encoder(),
         Dict{UInt32,Int64}(),
         nothing,
@@ -1230,16 +1232,20 @@ function _unregister_h2_send_window!(send_state::_H2SendWindowState, stream_id::
     return nothing
 end
 
-function _apply_h2_peer_settings!(send_state::_H2SendWindowState, settings::Vector{Pair{UInt16,UInt32}})::Nothing
-    seen_ids = Set{UInt16}()
+function _apply_h2_peer_settings!(
+    send_state::_H2SendWindowState,
+    write_lock::ReentrantLock,
+    settings::Vector{Pair{UInt16,UInt32}},
+)::Nothing
+    header_table_size = nothing
     lock(send_state.state_lock)
     try
         for setting in settings
             id = setting.first
-            in(id, seen_ids) && throw(ProtocolError("duplicate HTTP/2 SETTINGS entry"))
-            push!(seen_ids, id)
             value = setting.second
-            if id == UInt16(0x4)
+            if id == UInt16(0x1)
+                header_table_size = Int(value)
+            elseif id == UInt16(0x4)
                 value > UInt32(0x7fff_ffff) && throw(ProtocolError("HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE too large"))
                 new_window = Int64(value)
                 delta = new_window - send_state.initial_stream_send_window
@@ -1255,11 +1261,23 @@ function _apply_h2_peer_settings!(send_state::_H2SendWindowState, settings::Vect
                 value < UInt32(16_384) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too small"))
                 value > UInt32(16_777_215) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too large"))
                 send_state.peer_max_send_frame_size = Int(value)
+            elseif id == UInt16(0x6)
+                send_state.peer_max_header_list_size = Int(value)
             end
         end
         notify(send_state.window_condition; all=true)
     finally
         unlock(send_state.state_lock)
+    end
+    if header_table_size !== nothing
+        size = header_table_size::Int
+        lock(write_lock)
+        try
+            set_max_dynamic_table_size_limit!(send_state.header_encoder, size)
+            set_max_dynamic_table_size!(send_state.header_encoder, size)
+        finally
+            unlock(write_lock)
+        end
     end
     return nothing
 end
@@ -1764,15 +1782,17 @@ function _decode_h2_request(headers::Vector{HeaderField}, body::Vector{UInt8})::
     return _decode_h2_request(headers, request_body; stream_done=true)
 end
 
-function _encode_h2_response_headers!(encoder::Encoder, response::Response)::Vector{UInt8}
+function _encode_h2_response_headers!(encoder::Encoder, response::Response; max_header_list_size::Int=0)::Vector{UInt8}
     header_fields = HeaderField[HeaderField(":status", string(response.status), false)]
     _append_h2_headers!(header_fields, response.headers)
+    max_header_list_size > 0 && _header_list_size(header_fields) > max_header_list_size && throw(ProtocolError("HTTP/2 response headers exceed peer SETTINGS_MAX_HEADER_LIST_SIZE"))
     return encode_header_block(encoder, header_fields)
 end
 
-function _encode_h2_trailer_headers!(encoder::Encoder, trailers::Headers)::Vector{UInt8}
+function _encode_h2_trailer_headers!(encoder::Encoder, trailers::Headers; max_header_list_size::Int=0)::Vector{UInt8}
     header_fields = HeaderField[]
     _append_h2_headers!(header_fields, trailers)
+    max_header_list_size > 0 && _header_list_size(header_fields) > max_header_list_size && throw(ProtocolError("HTTP/2 response trailers exceed peer SETTINGS_MAX_HEADER_LIST_SIZE"))
     return encode_header_block(encoder, header_fields)
 end
 
@@ -1797,10 +1817,19 @@ function _write_h2_response_headers!(
     response::Response;
     end_stream::Bool,
 )::Nothing
+    max_frame_size = 16_384
+    max_header_list_size = 0
+    lock(send_state.state_lock)
+    try
+        max_frame_size = send_state.peer_max_send_frame_size
+        max_header_list_size = send_state.peer_max_header_list_size
+    finally
+        unlock(send_state.state_lock)
+    end
     lock(write_lock)
     try
-        header_block = _encode_h2_response_headers!(send_state.header_encoder, response)
-        _write_h2_header_block_locked!(conn, stream_id, header_block; end_stream=end_stream, max_frame_size=send_state.peer_max_send_frame_size)
+        header_block = _encode_h2_response_headers!(send_state.header_encoder, response; max_header_list_size=max_header_list_size)
+        _write_h2_header_block_locked!(conn, stream_id, header_block; end_stream=end_stream, max_frame_size=max_frame_size)
     finally
         unlock(write_lock)
     end
@@ -1815,10 +1844,19 @@ function _write_h2_trailers!(
     trailers::Headers,
 )::Nothing
     isempty(trailers) && return nothing
+    max_frame_size = 16_384
+    max_header_list_size = 0
+    lock(send_state.state_lock)
+    try
+        max_frame_size = send_state.peer_max_send_frame_size
+        max_header_list_size = send_state.peer_max_header_list_size
+    finally
+        unlock(send_state.state_lock)
+    end
     lock(write_lock)
     try
-        header_block = _encode_h2_trailer_headers!(send_state.header_encoder, trailers)
-        _write_h2_header_block_locked!(conn, stream_id, header_block; end_stream=true, max_frame_size=send_state.peer_max_send_frame_size)
+        header_block = _encode_h2_trailer_headers!(send_state.header_encoder, trailers; max_header_list_size=max_header_list_size)
+        _write_h2_header_block_locked!(conn, stream_id, header_block; end_stream=true, max_frame_size=max_frame_size)
     finally
         unlock(write_lock)
     end
@@ -2103,7 +2141,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
         client_settings = read_frame!(reader)
         client_settings isa SettingsFrame || throw(ProtocolError("expected initial h2 SETTINGS frame"))
         (client_settings::SettingsFrame).ack && throw(ProtocolError("initial h2 SETTINGS frame must not be ACK"))
-        _apply_h2_peer_settings!(send_state, (client_settings::SettingsFrame).settings)
+        _apply_h2_peer_settings!(send_state, write_lock, (client_settings::SettingsFrame).settings)
         _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(false, Pair{UInt16,UInt32}[]))
         _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(true, Pair{UInt16,UInt32}[]))
         _set_conn_shutdown_hook!(tracked, () -> _request_h2_conn_shutdown!(conn, write_lock, conn_control))
@@ -2127,7 +2165,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             if frame isa SettingsFrame
                 sf = frame::SettingsFrame
                 if !sf.ack
-                    _apply_h2_peer_settings!(send_state, sf.settings)
+                    _apply_h2_peer_settings!(send_state, write_lock, sf.settings)
                     _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(true, Pair{UInt16,UInt32}[]))
                 end
                 continue
