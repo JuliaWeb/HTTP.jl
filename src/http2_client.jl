@@ -54,11 +54,14 @@ mutable struct H2StreamState
     condition::Threads.Condition
     header_block::Vector{UInt8}
     decoded_headers::Union{Nothing,Vector{HeaderField}}
+    pending_trailers::Headers
+    response_trailers::Union{Nothing,Headers}
     body::Vector{UInt8}
     body_read_index::Int
     max_buffered_bytes::Int
     headers_complete::Bool
     stream_done::Bool
+    trailers_published::Bool
     error::Union{Nothing,Exception}
 end
 
@@ -70,9 +73,12 @@ function H2StreamState(stream_id::UInt32)
         Threads.Condition(lock),
         UInt8[],
         nothing,
+        Headers(),
+        nothing,
         UInt8[],
         1,
         256 * 1024,
+        false,
         false,
         false,
         nothing,
@@ -130,6 +136,7 @@ mutable struct H2Body{C<:H2Connection} <: AbstractBody
     conn::C
     stream_id::UInt32
     state::H2StreamState
+    trailers::Headers
     @atomic closed::Bool
 end
 
@@ -427,14 +434,26 @@ function _handle_stream_header_fragment!(
         remaining >= 0 && length(fragment) <= remaining || throw(ProtocolError("HTTP/2 response header block exceeded maximum size"))
         append!(state.header_block, fragment)
         if end_headers
-            state.decoded_headers = decode_header_block(conn.decoder, state.header_block)
-            state.headers_complete = true
+            decoded = decode_header_block(conn.decoder, state.header_block)
             empty!(state.header_block)
+            if !state.headers_complete
+                state.decoded_headers = decoded
+                state.headers_complete = true
+            else
+                end_stream || throw(ProtocolError("HTTP/2 response trailers must end the stream"))
+                trailers = _decode_h2_trailer_headers(decoded)
+                for key in header_keys(trailers)
+                    values = headers(trailers, key)
+                    for value in values
+                        appendheader(state.pending_trailers, key, value)
+                    end
+                end
+            end
         end
         if end_stream
             state.stream_done = true
-            notify(state.condition)
         end
+        notify(state.condition)
     finally
         unlock(state.lock)
     end
@@ -901,6 +920,35 @@ function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Heade
     return status::Int, out
 end
 
+function _decode_h2_trailer_headers(headers::Vector{HeaderField})::Headers
+    out = Headers()
+    for header in headers
+        name = header.name
+        value = header.value
+        name == lowercase(name) || throw(ProtocolError("HTTP/2 trailer field names must be lowercase"))
+        startswith(name, ':') && throw(ProtocolError("HTTP/2 trailers must not include pseudo-headers"))
+        _valid_trailer_header_name(name) || throw(ProtocolError("invalid HTTP/2 trailer header $(repr(name))"))
+        normalized = _normalize_header_field_value(value)
+        normalized === nothing && throw(ProtocolError("invalid HTTP/2 trailer field value for $(repr(name))"))
+        appendheader(out, name, normalized)
+    end
+    return out
+end
+
+function _publish_h2_response_trailers!(state::H2StreamState)
+    state.trailers_published && return nothing
+    target = state.response_trailers
+    target === nothing && return nothing
+    for key in header_keys(state.pending_trailers)
+        values = headers(state.pending_trailers, key)
+        for value in values
+            appendheader(target::Headers, key, value)
+        end
+    end
+    state.trailers_published = true
+    return nothing
+end
+
 function _write_h2_header_block_locked!(
     conn::H2Connection,
     stream_id::UInt32,
@@ -963,6 +1011,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
                 _compact_stream_body_buffer!(body.state)
                 notify(body.state.condition)
             elseif body.state.stream_done
+                _publish_h2_response_trailers!(body.state)
                 done = true
             else
                 wait(body.state.condition)
@@ -1057,7 +1106,10 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
             stream_state.decoded_headers === nothing && throw(ProtocolError("HTTP/2 response missing decoded headers"))
             decoded_headers = stream_state.decoded_headers::Vector{HeaderField}
             status, response_headers = _decode_response_headers(decoded_headers)
+            response_trailers = Headers()
+            stream_state.response_trailers = response_trailers
             if stream_state.stream_done && _stream_available_bytes(stream_state) == 0
+                _publish_h2_response_trailers!(stream_state)
                 cleanup_on_exit = false
                 _unregister_stream!(conn, stream_state.stream_id)
                 return _IncomingResponse(
@@ -1065,7 +1117,7 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
                         status,
                         "",
                         response_headers,
-                        Headers(),
+                        response_trailers,
                         Int64(0),
                         UInt8(2),
                         UInt8(0),
@@ -1078,14 +1130,14 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
                     EmptyBody(),
                 )
             end
-            body = H2Body(conn, stream_state.stream_id, stream_state, false)
+            body = H2Body(conn, stream_state.stream_id, stream_state, response_trailers, false)
             cleanup_on_exit = false
             return _IncomingResponse(
                 _IncomingResponseHead(
                     status,
                     "",
                     response_headers,
-                    Headers(),
+                    response_trailers,
                     Int64(-1),
                     UInt8(2),
                     UInt8(0),

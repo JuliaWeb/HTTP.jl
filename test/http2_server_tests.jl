@@ -83,6 +83,9 @@ end
 
 function _read_h2_server_header_block!(reader::HT.Framer)
     first = HT.read_frame!(reader)
+    while first isa HT.WindowUpdateFrame || first isa HT.SettingsFrame || first isa HT.PingFrame
+        first = HT.read_frame!(reader)
+    end
     first isa HT.HeadersFrame || error("expected headers frame, got $(typeof(first))")
     headers_frame = first::HT.HeadersFrame
     fragments = copy(headers_frame.header_block_fragment)
@@ -118,6 +121,84 @@ end
         @test String(_read_all_h2_server(res2.body)) == "h2:/two"
     finally
         close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server accepts legal request trailers" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            buf = Vector{UInt8}(undef, 8)
+            body_bytes = UInt8[]
+            while true
+                n = HT.body_read!(request.body, buf)
+                n == 0 && break
+                append!(body_bytes, @view(buf[1:n]))
+            end
+            body = String(body_bytes)
+            trailer = HT.header(request.trailers, "X-Trailer", "")
+            payload = collect(codeunits(body * "|" * trailer))
+            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    conn, reader = _open_raw_h2_server_conn(address)
+    encoder = HT.Encoder()
+    decoder = HT.Decoder()
+    try
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/trailers"; method = "POST", end_stream = false)
+        _write_frame_h2_server_raw!(conn, HT.DataFrame(UInt32(1), false, collect(codeunits("ok"))))
+        trailer_block = HT.encode_header_block(encoder, HT.HeaderField[HT.HeaderField("x-trailer", "done", false)])
+        _write_frame_h2_server_raw!(conn, HT.HeadersFrame(UInt32(1), true, true, trailer_block))
+        headers_frame, header_block, _ = _read_h2_server_header_block!(reader)
+        decoded_headers = HT.decode_header_block(decoder, header_block)
+        @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
+        data_frame = HT.read_frame!(reader)
+        while data_frame isa HT.WindowUpdateFrame || data_frame isa HT.SettingsFrame || data_frame isa HT.PingFrame
+            data_frame = HT.read_frame!(reader)
+        end
+        @test data_frame isa HT.DataFrame
+        @test String((data_frame::HT.DataFrame).data) == "ok|done"
+        @test (data_frame::HT.DataFrame).end_stream
+    finally
+        try
+            NC.close(conn)
+        catch
+        end
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server rejects invalid request trailer pseudo-headers" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/bad-trailer"; end_stream = false)
+        bad_trailer_block = HT.encode_header_block(encoder, HT.HeaderField[HT.HeaderField(":path", "/oops", false)])
+        _write_frame_h2_server_raw!(conn, HT.HeadersFrame(UInt32(1), true, true, bad_trailer_block))
+        NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
+        frame_or_err = try
+            HT.read_frame!(reader)
+        catch err
+            err
+        finally
+            NC.set_deadline!(conn::NC.Conn, Int64(0))
+        end
+        @test frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception
+        if frame_or_err isa HT.GoAwayFrame
+            @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
+        end
+    finally
+        conn === nothing || try
+            NC.close(conn::NC.Conn)
+        catch
+        end
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end

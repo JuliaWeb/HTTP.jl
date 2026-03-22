@@ -1090,11 +1090,14 @@ mutable struct _H2ServerStreamState
     condition::Threads.Condition
     header_block::Vector{UInt8}
     decoded_headers::Union{Nothing,Vector{HeaderField}}
+    trailers::Headers
+    request::Union{Nothing,Request}
     body::Vector{UInt8}
     body_read_index::Int
     max_buffered_bytes::Int
     headers_complete::Bool
     stream_done::Bool
+    trailers_complete::Bool
     handler_started::Bool
     handler_finished::Bool
     aborted::Bool
@@ -1109,9 +1112,12 @@ function _H2ServerStreamState(stream_id::UInt32)
         Threads.Condition(lock),
         UInt8[],
         nothing,
+        Headers(),
+        nothing,
         UInt8[],
         1,
         256 * 1024,
+        false,
         false,
         false,
         false,
@@ -1983,6 +1989,13 @@ function _handle_h2_stream!(
     end
     try
         request = _decode_h2_request(decoded_headers, request_body::AbstractBody; stream_done=stream_done)
+        request.trailers = state.trailers
+        lock(state.lock)
+        try
+            state.request = request
+        finally
+            unlock(state.lock)
+        end
         if server.stream
             stream = Stream(request)
             try
@@ -2230,14 +2243,31 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 end
                 lock(state.lock)
                 try
-                    state.headers_complete && throw(ProtocolError("unexpected additional HTTP/2 HEADERS on request stream"))
+                    initial_headers = !state.headers_complete
+                    if !initial_headers
+                        state.stream_done && throw(ProtocolError("unexpected additional HTTP/2 HEADERS on request stream"))
+                        state.trailers_complete && throw(ProtocolError("unexpected additional HTTP/2 HEADERS on request stream"))
+                        hf.end_stream || throw(ProtocolError("HTTP/2 request trailers must end the stream"))
+                    end
                     remaining = max_header_block_bytes - length(state.header_block)
                     remaining >= 0 && length(hf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size"))
                     append!(state.header_block, hf.header_block_fragment)
                     if hf.end_headers
-                        state.decoded_headers = decode_header_block(decoder, state.header_block)
-                        state.headers_complete = true
+                        decoded = decode_header_block(decoder, state.header_block)
                         empty!(state.header_block)
+                        if initial_headers
+                            state.decoded_headers = decoded
+                            state.headers_complete = true
+                        else
+                            trailers = _decode_h2_trailer_headers(decoded)
+                            for key in header_keys(trailers)
+                                values = headers(trailers, key)
+                                for value in values
+                                    appendheader(state.trailers, key, value)
+                                end
+                            end
+                            state.trailers_complete = true
+                        end
                     end
                     hf.end_headers || (continuation_stream = hf.stream_id)
                     hf.end_stream && (state.stream_done = true)
@@ -2248,7 +2278,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 _update_h2_server_conn_state!(tracked, states_lock, states)
                 if hf.end_headers
                     continuation_stream = UInt32(0)
-                    _dispatch_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state)
+                    !state.trailers_complete && _dispatch_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state)
                 end
                 continue
             end
@@ -2263,13 +2293,26 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 end
                 lock(state.lock)
                 try
+                    initial_headers = !state.headers_complete
                     remaining = max_header_block_bytes - length(state.header_block)
                     remaining >= 0 && length(cf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size"))
                     append!(state.header_block, cf.header_block_fragment)
                     if cf.end_headers
-                        state.decoded_headers = decode_header_block(decoder, state.header_block)
-                        state.headers_complete = true
+                        decoded = decode_header_block(decoder, state.header_block)
                         empty!(state.header_block)
+                        if initial_headers
+                            state.decoded_headers = decoded
+                            state.headers_complete = true
+                        else
+                            trailers = _decode_h2_trailer_headers(decoded)
+                            for key in header_keys(trailers)
+                                values = headers(trailers, key)
+                                for value in values
+                                    appendheader(state.trailers, key, value)
+                                end
+                            end
+                            state.trailers_complete = true
+                        end
                         continuation_stream = UInt32(0)
                     else
                         continuation_stream = cf.stream_id
@@ -2278,7 +2321,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 finally
                     unlock(state.lock)
                 end
-                cf.end_headers && _dispatch_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state)
+                cf.end_headers && !state.trailers_complete && _dispatch_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state)
                 continue
             end
             if frame isa DataFrame
