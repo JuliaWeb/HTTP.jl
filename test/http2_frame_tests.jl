@@ -63,6 +63,69 @@ end
     @test_throws HT.ProtocolError HT.read_frame!(reader)
 end
 
+@testset "HTTP/2 frame stream-id validation on read" begin
+    invalid_frames = (
+        (
+            "DATA stream 0",
+            UInt8[0x00, 0x00, 0x00, HT.FRAME_DATA, 0x00, 0x00, 0x00, 0x00, 0x00],
+        ),
+        (
+            "HEADERS stream 0",
+            UInt8[0x00, 0x00, 0x00, HT.FRAME_HEADERS, HT.FLAG_END_HEADERS, 0x00, 0x00, 0x00, 0x00],
+        ),
+        (
+            "PRIORITY stream 0",
+            UInt8[0x00, 0x00, 0x05, HT.FRAME_PRIORITY, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x10],
+        ),
+        (
+            "RST_STREAM stream 0",
+            UInt8[0x00, 0x00, 0x04, HT.FRAME_RST_STREAM, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+        ),
+        (
+            "SETTINGS non-zero stream",
+            UInt8[0x00, 0x00, 0x00, HT.FRAME_SETTINGS, 0x00, 0x00, 0x00, 0x00, 0x01],
+        ),
+        (
+            "PUSH_PROMISE stream 0",
+            UInt8[0x00, 0x00, 0x04, HT.FRAME_PUSH_PROMISE, HT.FLAG_END_HEADERS, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02],
+        ),
+        (
+            "PING non-zero stream",
+            UInt8[0x00, 0x00, 0x08, HT.FRAME_PING, 0x00, 0x00, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0],
+        ),
+        (
+            "GOAWAY non-zero stream",
+            UInt8[0x00, 0x00, 0x08, HT.FRAME_GOAWAY, 0x00, 0x00, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0],
+        ),
+        (
+            "CONTINUATION stream 0",
+            UInt8[0x00, 0x00, 0x00, HT.FRAME_CONTINUATION, HT.FLAG_END_HEADERS, 0x00, 0x00, 0x00, 0x00],
+        ),
+    )
+    for (name, bytes) in invalid_frames
+        @testset "$name" begin
+            @test_throws HT.ProtocolError HT.read_frame!(HT.Framer(IOBuffer(bytes)))
+        end
+    end
+end
+
+@testset "HTTP/2 frame stream-id validation on write" begin
+    invalid_writes = (
+        HT.DataFrame(UInt32(0), false, UInt8[]),
+        HT.HeadersFrame(UInt32(0), false, true, UInt8[]),
+        HT.PriorityFrame(UInt32(0), false, UInt32(1), UInt8(0x10)),
+        HT.RSTStreamFrame(UInt32(0), UInt32(0x1)),
+        HT.PushPromiseFrame(UInt32(0), UInt32(2), true, UInt8[]),
+        HT.PushPromiseFrame(UInt32(1), UInt32(0), true, UInt8[]),
+        HT.ContinuationFrame(UInt32(0), true, UInt8[]),
+    )
+    for frame in invalid_writes
+        io = IOBuffer()
+        writer = HT.Framer(io)
+        @test_throws HT.ProtocolError HT.write_frame!(writer, frame)
+    end
+end
+
 @testset "HTTP/2 padded payload parsing" begin
     padded_data_bytes = UInt8[
         0x00, 0x00, 0x06,

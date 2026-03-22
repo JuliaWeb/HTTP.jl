@@ -255,6 +255,16 @@ function _parse_push_promise_payload(payload::Vector{UInt8}, flags::UInt8)::Tupl
     return promised, fragment
 end
 
+@inline function _require_zero_stream_id(stream_id::UInt32, frame_name::AbstractString)
+    stream_id == UInt32(0) || throw(ProtocolError("HTTP/2 $(frame_name) stream id must be zero"))
+    return nothing
+end
+
+@inline function _require_nonzero_stream_id(stream_id::UInt32, frame_name::AbstractString)
+    stream_id != UInt32(0) || throw(ProtocolError("HTTP/2 $(frame_name) stream id must be non-zero"))
+    return nothing
+end
+
 """
     read_frame!(framer)
 
@@ -275,6 +285,7 @@ function read_frame!(framer::Framer)::AbstractFrame
     # level rules such as "HEADERS must precede DATA" live in the client/server
     # state machines above the framer.
     if header.type == FRAME_DATA
+        _require_nonzero_stream_id(header.stream_id, "DATA")
         data = if (header.flags & FLAG_PADDED) != 0
             stripped, _ = _split_padded_payload(payload, "DATA")
             stripped
@@ -284,6 +295,7 @@ function read_frame!(framer::Framer)::AbstractFrame
         return DataFrame(header.stream_id, (header.flags & FLAG_END_STREAM) != 0, data)
     end
     if header.type == FRAME_HEADERS
+        _require_nonzero_stream_id(header.stream_id, "HEADERS")
         return HeadersFrame(
             header.stream_id,
             (header.flags & FLAG_END_STREAM) != 0,
@@ -292,6 +304,7 @@ function read_frame!(framer::Framer)::AbstractFrame
         )
     end
     if header.type == FRAME_PRIORITY
+        _require_nonzero_stream_id(header.stream_id, "PRIORITY")
         length(payload) == 5 || throw(ParseError("HTTP/2 PRIORITY frame payload must be 5 bytes"))
         dep = _read_u32_be(payload, 1)
         exclusive = (dep & 0x8000_0000) != 0
@@ -300,10 +313,12 @@ function read_frame!(framer::Framer)::AbstractFrame
         return PriorityFrame(header.stream_id, exclusive, stream_dependency, weight)
     end
     if header.type == FRAME_RST_STREAM
+        _require_nonzero_stream_id(header.stream_id, "RST_STREAM")
         length(payload) == 4 || throw(ParseError("HTTP/2 RST_STREAM frame payload must be 4 bytes"))
         return RSTStreamFrame(header.stream_id, _read_u32_be(payload, 1))
     end
     if header.type == FRAME_SETTINGS
+        _require_zero_stream_id(header.stream_id, "SETTINGS")
         if (header.flags & FLAG_ACK) != 0
             isempty(payload) || throw(ParseError("HTTP/2 SETTINGS ACK frame must have empty payload"))
             return SettingsFrame(true, Pair{UInt16,UInt32}[])
@@ -311,14 +326,18 @@ function read_frame!(framer::Framer)::AbstractFrame
         return SettingsFrame(false, _parse_settings_payload(payload))
     end
     if header.type == FRAME_PUSH_PROMISE
+        _require_nonzero_stream_id(header.stream_id, "PUSH_PROMISE")
         promised, fragment = _parse_push_promise_payload(payload, header.flags)
+        promised != UInt32(0) || throw(ProtocolError("HTTP/2 PUSH_PROMISE promised stream id must be non-zero"))
         return PushPromiseFrame(header.stream_id, promised, (header.flags & FLAG_END_HEADERS) != 0, fragment)
     end
     if header.type == FRAME_PING
+        _require_zero_stream_id(header.stream_id, "PING")
         length(payload) == 8 || throw(ParseError("HTTP/2 PING frame payload must be 8 bytes"))
         return PingFrame((header.flags & FLAG_ACK) != 0, ntuple(i -> payload[i], 8))
     end
     if header.type == FRAME_GOAWAY
+        _require_zero_stream_id(header.stream_id, "GOAWAY")
         length(payload) >= 8 || throw(ParseError("HTTP/2 GOAWAY frame payload must be >= 8 bytes"))
         last_stream_id = _read_u32_be(payload, 1) & 0x7fff_ffff
         error_code = _read_u32_be(payload, 5)
@@ -332,6 +351,7 @@ function read_frame!(framer::Framer)::AbstractFrame
         return WindowUpdateFrame(header.stream_id, increment)
     end
     if header.type == FRAME_CONTINUATION
+        _require_nonzero_stream_id(header.stream_id, "CONTINUATION")
         return ContinuationFrame(header.stream_id, (header.flags & FLAG_END_HEADERS) != 0, payload)
     end
     return UnknownFrame(header, payload)
@@ -340,12 +360,14 @@ end
 function _serialize_frame(frame::AbstractFrame)::Tuple{FrameHeader,Vector{UInt8}}
     if frame isa DataFrame
         f = frame::DataFrame
+        _require_nonzero_stream_id(f.stream_id, "DATA")
         flags = f.end_stream ? FLAG_END_STREAM : UInt8(0)
         payload = copy(f.data)
         return FrameHeader(length(payload), FRAME_DATA, flags, f.stream_id), payload
     end
     if frame isa HeadersFrame
         f = frame::HeadersFrame
+        _require_nonzero_stream_id(f.stream_id, "HEADERS")
         flags = UInt8(0)
         f.end_stream && (flags |= FLAG_END_STREAM)
         f.end_headers && (flags |= FLAG_END_HEADERS)
@@ -354,6 +376,7 @@ function _serialize_frame(frame::AbstractFrame)::Tuple{FrameHeader,Vector{UInt8}
     end
     if frame isa PriorityFrame
         f = frame::PriorityFrame
+        _require_nonzero_stream_id(f.stream_id, "PRIORITY")
         dep = f.stream_dependency & 0x7fff_ffff
         f.exclusive && (dep |= 0x8000_0000)
         payload = UInt8[]
@@ -363,6 +386,7 @@ function _serialize_frame(frame::AbstractFrame)::Tuple{FrameHeader,Vector{UInt8}
     end
     if frame isa RSTStreamFrame
         f = frame::RSTStreamFrame
+        _require_nonzero_stream_id(f.stream_id, "RST_STREAM")
         payload = UInt8[]
         _write_u32_be!(payload, f.error_code)
         return FrameHeader(length(payload), FRAME_RST_STREAM, UInt8(0), f.stream_id), payload
@@ -375,6 +399,8 @@ function _serialize_frame(frame::AbstractFrame)::Tuple{FrameHeader,Vector{UInt8}
     end
     if frame isa PushPromiseFrame
         f = frame::PushPromiseFrame
+        _require_nonzero_stream_id(f.stream_id, "PUSH_PROMISE")
+        f.promised_stream_id != UInt32(0) || throw(ProtocolError("HTTP/2 PUSH_PROMISE promised stream id must be non-zero"))
         flags = f.end_headers ? FLAG_END_HEADERS : UInt8(0)
         payload = UInt8[]
         _write_u32_be!(payload, f.promised_stream_id & 0x7fff_ffff)
@@ -404,6 +430,7 @@ function _serialize_frame(frame::AbstractFrame)::Tuple{FrameHeader,Vector{UInt8}
     end
     if frame isa ContinuationFrame
         f = frame::ContinuationFrame
+        _require_nonzero_stream_id(f.stream_id, "CONTINUATION")
         flags = f.end_headers ? FLAG_END_HEADERS : UInt8(0)
         payload = copy(f.header_block_fragment)
         return FrameHeader(length(payload), FRAME_CONTINUATION, flags, f.stream_id), payload
