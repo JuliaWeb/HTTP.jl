@@ -54,13 +54,16 @@ mutable struct Encoder
 end
 
 """
-    Decoder(; max_table_size=4096)
+    Decoder(; max_table_size=4096, max_string_length=0, max_header_list_size=0)
 
 Stateful HPACK decoder that tracks peer dynamic table state across header
-blocks.
+blocks while enforcing optional decode-time size limits.
 """
 mutable struct Decoder
     table::DynamicTable
+    allowed_max_table_size::Int
+    max_string_length::Int
+    max_header_list_size::Int
 end
 
 const _STATIC_TABLE = HeaderField[
@@ -491,7 +494,7 @@ function _append_huffman_string!(out::Vector{UInt8}, value::String)
     return nothing
 end
 
-function _decode_huffman_string(bytes::Vector{UInt8})::String
+function _decode_huffman_string(bytes::Vector{UInt8}, max_string_length::Int=0)::String
     nodes = _HUFFMAN_TREE
     root = Int32(1)
     n = root
@@ -513,6 +516,7 @@ function _decode_huffman_string(bytes::Vector{UInt8})::String
             next == 0 && throw(ParseError("invalid HPACK Huffman-encoded data"))
             next_node = nodes[Int(next)]
             if next_node.children === nothing
+                max_string_length > 0 && length(out) >= max_string_length && throw(ParseError("HPACK string too long"))
                 push!(out, UInt8(next_node.sym))
                 cbits -= Int(next_node.code_len)
                 n = root
@@ -535,6 +539,7 @@ function _decode_huffman_string(bytes::Vector{UInt8})::String
         if next_node.children !== nothing || Int(next_node.code_len) > cbits
             break
         end
+        max_string_length > 0 && length(out) >= max_string_length && throw(ParseError("HPACK string too long"))
         push!(out, UInt8(next_node.sym))
         cbits -= Int(next_node.code_len)
         n = root
@@ -570,12 +575,17 @@ function Encoder(; max_table_size::Integer=4096)
 end
 
 """
-    Decoder(; max_table_size=4096)
+    Decoder(; max_table_size=4096, max_string_length=0, max_header_list_size=0)
 
-Create an HPACK decoder with a bounded dynamic table.
+Create an HPACK decoder with a bounded dynamic table and optional decode-time
+limits for individual strings and the total decoded header list size.
 """
-function Decoder(; max_table_size::Integer=4096)
-    return Decoder(DynamicTable(max_table_size))
+function Decoder(; max_table_size::Integer=4096, max_string_length::Integer=0, max_header_list_size::Integer=0)
+    max_table_size >= 0 || throw(ArgumentError("dynamic table max_size must be >= 0"))
+    max_string_length >= 0 || throw(ArgumentError("max_string_length must be >= 0"))
+    max_header_list_size >= 0 || throw(ArgumentError("max_header_list_size must be >= 0"))
+    size = Int(max_table_size)
+    return Decoder(DynamicTable(size), size, Int(max_string_length), Int(max_header_list_size))
 end
 
 """
@@ -616,6 +626,24 @@ end
 
 function set_max_dynamic_table_size!(decoder::Decoder, max_size::Integer)
     set_max_dynamic_table_size!(decoder.table, max_size)
+    return nothing
+end
+
+function set_max_dynamic_table_size_limit!(decoder::Decoder, max_size::Integer)
+    max_size >= 0 || throw(ArgumentError("dynamic table max_size must be >= 0"))
+    decoder.allowed_max_table_size = Int(max_size)
+    return nothing
+end
+
+function set_max_string_length!(decoder::Decoder, max_size::Integer)
+    max_size >= 0 || throw(ArgumentError("max_string_length must be >= 0"))
+    decoder.max_string_length = Int(max_size)
+    return nothing
+end
+
+function set_max_header_list_size!(decoder::Decoder, max_size::Integer)
+    max_size >= 0 || throw(ArgumentError("max_header_list_size must be >= 0"))
+    decoder.max_header_list_size = Int(max_size)
     return nothing
 end
 
@@ -726,15 +754,16 @@ function _encode_string!(out::Vector{UInt8}, value::String)
     return nothing
 end
 
-function _decode_string(data::Vector{UInt8}, index::Int)::Tuple{String,Int}
+function _decode_string(decoder::Decoder, data::Vector{UInt8}, index::Int)::Tuple{String,Int}
     index <= length(data) || throw(ParseError("HPACK string decode out of bounds"))
     huffman = (data[index] & 0x80) != 0
     len, index = _decode_integer(data, index, 7)
+    decoder.max_string_length > 0 && len > decoder.max_string_length && throw(ParseError("HPACK string too long"))
     end_index = index + len - 1
     end_index <= length(data) || throw(ParseError("HPACK string length exceeds payload"))
     bytes = data[index:end_index]
     if huffman
-        return _decode_huffman_string(bytes), end_index + 1
+        return _decode_huffman_string(bytes, decoder.max_string_length), end_index + 1
     end
     return String(bytes), end_index + 1
 end
@@ -861,15 +890,19 @@ function _decode_literal!(
 )::Tuple{HeaderField,Int}
     name_index, index = _decode_integer(data, index, prefix_bits)
     name = if name_index == 0
-        decoded_name, next_index = _decode_string(data, index)
+        decoded_name, next_index = _decode_string(decoder, data, index)
         index = next_index
         decoded_name
     else
         _table_get(decoder.table, name_index).name
     end
-    value, index = _decode_string(data, index)
+    value, index = _decode_string(decoder, data, index)
     should_index && _add_dynamic_entry!(decoder.table, name, value)
     return HeaderField(name, value, sensitive), index
+end
+
+@inline function _header_field_size(field::HeaderField)::Int
+    return _entry_size(field.name, field.value)
 end
 
 """
@@ -885,16 +918,22 @@ function decode_header_block(decoder::Decoder, block::Vector{UInt8})::Vector{Hea
     headers = HeaderField[]
     index = 1
     saw_header_field = false
+    total_size = 0
     while index <= length(block)
         b = block[index]
         if (b & 0x80) != 0
             idx, index = _decode_integer(block, index, 7)
-            push!(headers, _table_get(decoder.table, idx))
+            field = _table_get(decoder.table, idx)
+            total_size += _header_field_size(field)
+            decoder.max_header_list_size > 0 && total_size > decoder.max_header_list_size && throw(ParseError("HPACK header list too large"))
+            push!(headers, field)
             saw_header_field = true
             continue
         end
         if (b & 0x40) != 0
             header, index = _decode_literal!(decoder, block, index, 6, true, false)
+            total_size += _header_field_size(header)
+            decoder.max_header_list_size > 0 && total_size > decoder.max_header_list_size && throw(ParseError("HPACK header list too large"))
             push!(headers, header)
             saw_header_field = true
             continue
@@ -902,17 +941,22 @@ function decode_header_block(decoder::Decoder, block::Vector{UInt8})::Vector{Hea
         if (b & 0x20) != 0
             saw_header_field && throw(ParseError("HPACK dynamic table size update must appear before header fields"))
             size, index = _decode_integer(block, index, 5)
+            size > decoder.allowed_max_table_size && throw(ParseError("HPACK dynamic table size update too large"))
             set_max_dynamic_table_size!(decoder, size)
             continue
         end
         if (b & 0x10) != 0
             header, index = _decode_literal!(decoder, block, index, 4, false, true)
+            total_size += _header_field_size(header)
+            decoder.max_header_list_size > 0 && total_size > decoder.max_header_list_size && throw(ParseError("HPACK header list too large"))
             push!(headers, header)
             saw_header_field = true
             continue
         end
         should_index = false
         header, index = _decode_literal!(decoder, block, index, 4, should_index, false)
+        total_size += _header_field_size(header)
+        decoder.max_header_list_size > 0 && total_size > decoder.max_header_list_size && throw(ParseError("HPACK header list too large"))
         push!(headers, header)
         saw_header_field = true
     end

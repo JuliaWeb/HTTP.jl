@@ -128,6 +128,12 @@ function Server(;
     )
 end
 
+@inline function _h2_max_header_block_bytes(server::Server)::Int
+    limit = server.max_header_bytes
+    limit > (typemax(Int) >>> 1) && return typemax(Int)
+    return limit * 2
+end
+
 mutable struct Stream <: IO
     side::_StreamType.T
     method::Union{Nothing,String}
@@ -2076,7 +2082,11 @@ end
 function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::Nothing
     conn = tracked.conn
     reader = Framer(_ConnReader(reader_source))
-    decoder = Decoder()
+    decoder = Decoder(
+        max_string_length=server.max_header_bytes,
+        max_header_list_size=server.max_header_bytes,
+    )
+    max_header_block_bytes = _h2_max_header_block_bytes(server)
     write_lock = ReentrantLock()
     states_lock = ReentrantLock()
     send_state = _H2SendWindowState()
@@ -2183,6 +2193,8 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 lock(state.lock)
                 try
                     state.headers_complete && throw(ProtocolError("unexpected additional HTTP/2 HEADERS on request stream"))
+                    remaining = max_header_block_bytes - length(state.header_block)
+                    remaining >= 0 && length(hf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size"))
                     append!(state.header_block, hf.header_block_fragment)
                     if hf.end_headers
                         state.decoded_headers = decode_header_block(decoder, state.header_block)
@@ -2213,6 +2225,8 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 end
                 lock(state.lock)
                 try
+                    remaining = max_header_block_bytes - length(state.header_block)
+                    remaining >= 0 && length(cf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size"))
                     append!(state.header_block, cf.header_block_fragment)
                     if cf.end_headers
                         state.decoded_headers = decode_header_block(decoder, state.header_block)

@@ -43,6 +43,14 @@ end
     @test decoder.table.max_size == 32
 end
 
+@testset "HPACK decoder rejects dynamic table updates above allowed limit" begin
+    encoder = HT.Encoder(max_table_size = 16_384)
+    HT.set_max_dynamic_table_size!(encoder, 8_192)
+    block = HT.encode_header_block(encoder, HT.HeaderField[])
+    decoder = HT.Decoder(max_table_size = 4_096)
+    @test_throws HT.ParseError HT.decode_header_block(decoder, block)
+end
+
 @testset "HPACK encoder emits table size update bytes" begin
     encoder = HT.Encoder(max_table_size = 64)
     HT.set_max_dynamic_table_size!(encoder, 16)
@@ -104,4 +112,27 @@ end
     @test (block[2] & 0x80) == 0x80
     decoded = HT.decode_header_block(decoder, block)
     @test _pairs(decoded) == _pairs(input)
+end
+
+@testset "HPACK decoder enforces max decoded string length" begin
+    encoder = HT.Encoder()
+    block = HT.encode_header_block(
+        encoder,
+        HT.HeaderField[HT.HeaderField("x-limit", repeat("abcdef", 8), false)],
+    )
+    decoder = HT.Decoder(max_string_length = 16)
+    @test_throws HT.ParseError HT.decode_header_block(decoder, block)
+end
+
+@testset "HPACK decoder enforces max header list size" begin
+    encoder = HT.Encoder()
+    block = HT.encode_header_block(
+        encoder,
+        HT.HeaderField[
+            HT.HeaderField("x-a", repeat("a", 20), false),
+            HT.HeaderField("x-b", repeat("b", 20), false),
+        ],
+    )
+    decoder = HT.Decoder(max_header_list_size = 96)
+    @test_throws HT.ParseError HT.decode_header_block(decoder, block)
 end

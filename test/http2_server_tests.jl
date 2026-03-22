@@ -670,6 +670,94 @@ end
     end
 end
 
+@testset "HTTP/2 server rejects oversized request header blocks" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true, max_header_bytes = 64) do request
+            _ = request
+            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        large_value = String(UInt8[UInt8(0x21 + ((i - 1) % 90)) for i in 1:512])
+        header_fields = HT.HeaderField[
+            HT.HeaderField(":method", "GET", false),
+            HT.HeaderField(":scheme", "http", false),
+            HT.HeaderField(":authority", address, false),
+            HT.HeaderField(":path", "/oversized-block", false),
+            HT.HeaderField("x-huge", large_value, false),
+        ]
+        header_block = HT.encode_header_block(encoder, header_fields)
+        @test length(header_block) > 128
+        split_idx = max(1, length(header_block) ÷ 2)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(UInt32(1), true, false, header_block[1:split_idx]))
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.ContinuationFrame(UInt32(1), true, header_block[(split_idx + 1):end]))
+        NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
+        frame_or_err = try
+            HT.read_frame!(reader)
+        catch err
+            err
+        finally
+            NC.set_deadline!(conn::NC.Conn, Int64(0))
+        end
+        @test frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception
+        if frame_or_err isa HT.GoAwayFrame
+            @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
+        end
+    finally
+        conn === nothing || try
+            NC.close(conn::NC.Conn)
+        catch
+        end
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server rejects oversized decoded request header lists" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true, max_header_bytes = 96) do request
+            _ = request
+            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        header_fields = HT.HeaderField[
+            HT.HeaderField(":method", "GET", false),
+            HT.HeaderField(":scheme", "http", false),
+            HT.HeaderField(":authority", address, false),
+            HT.HeaderField(":path", "/oversized-list", false),
+            HT.HeaderField("x-a", repeat("a", 20), false),
+            HT.HeaderField("x-b", repeat("b", 20), false),
+        ]
+        header_block = HT.encode_header_block(encoder, header_fields)
+        @test length(header_block) <= 192
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(UInt32(1), true, true, header_block))
+        NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
+        frame_or_err = try
+            HT.read_frame!(reader)
+        catch err
+            err
+        finally
+            NC.set_deadline!(conn::NC.Conn, Int64(0))
+        end
+        @test frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception
+        if frame_or_err isa HT.GoAwayFrame
+            @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
+        end
+    finally
+        conn === nothing || try
+            NC.close(conn::NC.Conn)
+        catch
+        end
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server honors peer response-header filtering and stream flow control" begin
     payload = fill(UInt8('x'), 128)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request

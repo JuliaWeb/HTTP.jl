@@ -5,6 +5,8 @@ using Reseau.TLS
 using Reseau.IOPoll
 
 const _H2_PREFACE = collect(codeunits("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"))
+const _H2_DEFAULT_MAX_HEADER_LIST_SIZE = 10 * 1024 * 1024
+const _H2_DEFAULT_MAX_HEADER_BLOCK_BYTES = 2 * _H2_DEFAULT_MAX_HEADER_LIST_SIZE
 
 """
     H2NegotiationError
@@ -90,6 +92,7 @@ mutable struct H2Connection{F<:Framer}
     conn_send_window::Int64
     initial_stream_send_window::Int64
     stream_send_window::Dict{UInt32,Int64}
+    max_header_block_bytes::Int
     @atomic closed::Bool
 end
 
@@ -352,6 +355,8 @@ function _handle_stream_header_fragment!(
 )
     lock(state.lock)
     try
+        remaining = conn.max_header_block_bytes - length(state.header_block)
+        remaining >= 0 && length(fragment) <= remaining || throw(ProtocolError("HTTP/2 response header block exceeded maximum size"))
         append!(state.header_block, fragment)
         if end_headers
             state.decoded_headers = decode_header_block(conn.decoder, state.header_block)
@@ -593,7 +598,10 @@ function _connect_h2_from_tcp!(
             tls_conn,
             Framer(stream_reader),
             Encoder(),
-            Decoder(),
+            Decoder(
+                max_string_length=_H2_DEFAULT_MAX_HEADER_LIST_SIZE,
+                max_header_list_size=_H2_DEFAULT_MAX_HEADER_LIST_SIZE,
+            ),
             UInt32(1),
             state_lock,
             ReentrantLock(),
@@ -605,6 +613,7 @@ function _connect_h2_from_tcp!(
             Int64(65_535),
             Int64(65_535),
             Dict{UInt32,Int64}(),
+            _H2_DEFAULT_MAX_HEADER_BLOCK_BYTES,
             false,
         )
         _verify_h2_alpn!(conn)

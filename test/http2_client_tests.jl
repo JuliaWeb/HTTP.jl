@@ -255,6 +255,102 @@ end
     end
 end
 
+@testset "HTTP/2 client rejects oversized accumulated response header blocks" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    large_value = String(UInt8[UInt8(0x21 + ((i - 1) % 90)) for i in 1:512])
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            _ = HT.decode_header_block(server_decoder, (headers_frame::HT.HeadersFrame).header_block_fragment)
+            response_headers = HT.HeaderField[
+                HT.HeaderField(":status", "200", false),
+                HT.HeaderField("x-huge", large_value, false),
+            ]
+            encoded = HT.encode_header_block(server_encoder, response_headers)
+            @test length(encoded) > 64
+            split_idx = max(1, length(encoded) ÷ 2)
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(headers_frame.stream_id, false, false, encoded[1:split_idx]))
+            _write_frame_to_conn!(accepted_conn, HT.ContinuationFrame(headers_frame.stream_id, true, encoded[(split_idx + 1):end]))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        h2_conn.max_header_block_bytes = 64
+        request = HT.Request("GET", "/too-large-headers"; host = address, body = HT.EmptyBody(), content_length = 0)
+        @test_throws HT.ProtocolError HT.h2_roundtrip!(h2_conn, request)
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 client rejects oversized decoded response header lists" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            _ = HT.decode_header_block(server_decoder, (headers_frame::HT.HeadersFrame).header_block_fragment)
+            response_headers = HT.HeaderField[
+                HT.HeaderField(":status", "200", false),
+                HT.HeaderField("x-a", repeat("a", 20), false),
+                HT.HeaderField("x-b", repeat("b", 20), false),
+            ]
+            encoded = HT.encode_header_block(server_encoder, response_headers)
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(headers_frame.stream_id, true, true, encoded))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        HT.set_max_header_list_size!(h2_conn.decoder, 96)
+        HT.set_max_string_length!(h2_conn.decoder, 96)
+        request = HT.Request("GET", "/too-many-headers"; host = address, body = HT.EmptyBody(), content_length = 0)
+        @test_throws HT.ParseError HT.h2_roundtrip!(h2_conn, request)
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
 @testset "HTTP/2 client roundtrip" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
