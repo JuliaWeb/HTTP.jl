@@ -1014,7 +1014,7 @@ end
         @test res.status == 200
         @test String(_read_all_body_bytes(res.body)) == "done"
         _wait_task!(server_task)
-        @test close_count[] == 1
+        @test timedwait(() -> close_count[] == 1, 2.0; pollint = 0.001) != :timed_out
     finally
         close(transport)
         try
