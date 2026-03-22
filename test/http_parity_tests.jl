@@ -31,6 +31,22 @@ end
     @test _read_all_parity(response_204.body) == UInt8[]
     bad_cl = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nhi"
     @test_throws HT.ProtocolError HT._read_response(IOBuffer(codeunits(bad_cl)))
+
+    head_request = HT.Request("HEAD", "/head"; host = "example.test", body = HT.EmptyBody(), content_length = 0)
+    head_response = HT.Response(
+        200;
+        body = HT.BytesBody(collect(codeunits("oops"))),
+        content_length = 4,
+        request = head_request,
+    )
+    io = IOBuffer()
+    HT.write_response!(io, head_response)
+    raw_head = String(take!(io))
+    @test occursin("Content-Length: 4\r\n", raw_head)
+    @test !occursin("transfer-encoding: chunked", lowercase(raw_head))
+    parts = split(raw_head, "\r\n\r\n"; limit = 2)
+    @test length(parts) == 2
+    @test parts[2] == ""
 end
 
 @testset "HTTP parity redirect semantics" begin

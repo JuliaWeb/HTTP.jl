@@ -457,6 +457,30 @@ end
     end
 end
 
+@testset "HTTP server ordinary handlers suppress bodies for HEAD" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            return HT.Response(
+                200;
+                body = HT.BytesBody(collect(codeunits("oops"))),
+                content_length = 4,
+                request = request,
+            )
+        end
+    address = _wait_server_addr(server)
+    try
+        head_raw = _raw_http_request(HT.port(server), "HEAD /head HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        @test occursin("HTTP/1.1 200 OK", head_raw)
+        @test occursin("Content-Length: 4\r\n", head_raw)
+        @test !occursin("transfer-encoding: chunked", lowercase(head_raw))
+        parts = split(head_raw, "\r\n\r\n"; limit = 2)
+        @test length(parts) == 2
+        @test parts[2] == ""
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP server stream handler request and response flow" begin
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
             _ = HT.startread(stream)

@@ -701,11 +701,20 @@ function write_response!(io::IO, response::Response{B}) where {B<:AbstractBody}
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
     response_close && setheader(headers, "Connection", "close")
-    allows_body = _body_allowed_for_status(response.status)
+    status_allows_body = _body_allowed_for_status(response.status)
+    response_to_head = response.request !== nothing && (response.request::Request).method == "HEAD"
+    allows_body = status_allows_body && !response_to_head
     use_chunked = allows_body && _parse_transfer_encoding!(headers, response.proto_major, response.proto_minor)
-    if !allows_body
+    if !status_allows_body
         removeheader(headers, "Content-Length")
         removeheader(headers, "Transfer-Encoding")
+    elseif response_to_head
+        removeheader(headers, "Transfer-Encoding")
+        if response.content_length >= 0
+            setheader(headers, "Content-Length", string(response.content_length))
+        elseif !_response_has_body(response)
+            setheader(headers, "Content-Length", "0")
+        end
     elseif !use_chunked
         if response.content_length >= 0
             setheader(headers, "Content-Length", string(response.content_length))
