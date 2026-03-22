@@ -185,10 +185,57 @@ end
     bad_header = "GET / HTTP/1.1\r\nHost example.com\r\n\r\n"
     @test_throws HT.ParseError HT.read_request(IOBuffer(codeunits(bad_header)))
     bad_cl = "POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello"
-    @test_throws HT.ParseError HT.read_request(IOBuffer(codeunits(bad_cl)))
+    @test_throws HT.ProtocolError HT.read_request(IOBuffer(codeunits(bad_cl)))
     bad_chunk = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nX\r\nabc\r\n0\r\n\r\n"
     bad_resp = HT._read_response(IOBuffer(codeunits(bad_chunk)))
     @test_throws HT.ParseError _read_all_body_bytes(bad_resp.body)
+
+    equal_cl = "POST /upload HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello"
+    equal_req = HT.read_request(IOBuffer(codeunits(equal_cl)))
+    @test equal_req.content_length == 5
+    @test HT.headers(equal_req.headers, "Content-Length") == ["5"]
+    @test _read_all_body_bytes(equal_req.body) == collect(codeunits("hello"))
+
+    bad_te = "POST /upload HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: gzip\r\n\r\nhello"
+    @test_throws HT.ProtocolError HT.read_request(IOBuffer(codeunits(bad_te)))
+
+    dup_te = "POST /upload HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+    @test_throws HT.ProtocolError HT.read_request(IOBuffer(codeunits(dup_te)))
+
+    bad_host_space = "GET / HTTP/1.1\r\nHost : example.com\r\n\r\n"
+    @test_throws HT.ParseError HT.read_request(IOBuffer(codeunits(bad_host_space)))
+
+    missing_host = "GET / HTTP/1.1\r\nConnection: close\r\n\r\n"
+    @test_throws HT.ProtocolError HT.read_request(IOBuffer(codeunits(missing_host)))
+
+    dup_host = "GET / HTTP/1.1\r\nHost: example.com\r\nHost: example.com\r\n\r\n"
+    @test_throws HT.ProtocolError HT.read_request(IOBuffer(codeunits(dup_host)))
+
+    malformed_host = "GET / HTTP/1.1\r\nHost: example.com/path\r\n\r\n"
+    @test_throws HT.ProtocolError HT.read_request(IOBuffer(codeunits(malformed_host)))
+
+    bad_target = "GET foo HTTP/1.1\r\nHost: example.com\r\n\r\n"
+    @test_throws HT.ParseError HT.read_request(IOBuffer(codeunits(bad_target)))
+
+    stale_cl_chunked = "POST /upload HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+    stale_req = HT.read_request(IOBuffer(codeunits(stale_cl_chunked)))
+    @test stale_req.content_length == -1
+    @test !HT.hasheader(stale_req.headers, "Content-Length")
+    forwarded = IOBuffer()
+    HT.write_request!(forwarded, stale_req)
+    forwarded_wire = String(take!(forwarded))
+    @test occursin("Transfer-Encoding: chunked\r\n", forwarded_wire)
+    @test !occursin("Content-Length:", forwarded_wire)
+
+    stale_resp_headers = HT.Headers()
+    HT.setheader(stale_resp_headers, "Transfer-Encoding", "chunked")
+    HT.setheader(stale_resp_headers, "Content-Length", "5")
+    stale_resp = HT.Response(200; headers = stale_resp_headers, body = HT.BytesBody(collect(codeunits("hello"))), content_length = -1)
+    response_io = IOBuffer()
+    HT.write_response!(response_io, stale_resp)
+    response_wire = String(take!(response_io))
+    @test occursin("Transfer-Encoding: chunked\r\n", response_wire)
+    @test !occursin("Content-Length:", response_wire)
 end
 
 @testset "HTTP/1 response body suppression" begin

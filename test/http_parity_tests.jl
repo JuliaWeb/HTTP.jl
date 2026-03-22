@@ -30,7 +30,7 @@ end
     @test response_204.status == 204
     @test _read_all_parity(response_204.body) == UInt8[]
     bad_cl = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nhi"
-    @test_throws HT.ParseError HT._read_response(IOBuffer(codeunits(bad_cl)))
+    @test_throws HT.ProtocolError HT._read_response(IOBuffer(codeunits(bad_cl)))
 end
 
 @testset "HTTP parity redirect semantics" begin

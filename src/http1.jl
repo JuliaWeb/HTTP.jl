@@ -182,9 +182,17 @@ function _read_headers(io::IO, max_line_bytes::Integer, max_header_bytes::Intege
         sep = findfirst(':', line)
         sep === nothing && throw(ParseError("malformed HTTP/1 header line (missing ':'): $(repr(line))"))
         key = String(SubString(line, firstindex(line), prevind(line, sep)))
-        isempty(_trim_http_ows(key)) && throw(ParseError("malformed HTTP/1 header line (empty key)"))
+        key == _trim_http_ows(key) || throw(ParseError("malformed HTTP/1 header line (whitespace before ':'): $(repr(line))"))
+        _valid_header_field_name(key) || throw(ParseError("invalid HTTP/1 header field name: $(repr(key))"))
         value = _trim_http_ows(SubString(line, nextind(line, sep), lastindex(line)))
-        appendheader(headers, key, value)
+        normalized = _normalize_header_field_value(value)
+        normalized === nothing && throw(ParseError("invalid HTTP/1 header field value for $(repr(key))"))
+        canon_key = canonical_header_key(key)
+        if canon_key == "Content-Length" || canon_key == "Transfer-Encoding" || canon_key == "Host"
+            push!(headers, canon_key => normalized)
+        else
+            appendheader(headers, canon_key, normalized)
+        end
     end
 end
 
@@ -207,26 +215,91 @@ function _parse_http_version(version::AbstractString)::Tuple{UInt8,UInt8}
     return UInt8(major), UInt8(minor)
 end
 
+function _parse_int64_decimal_header_value(value::AbstractString, kind::AbstractString)::Int64
+    trimmed = _trim_http_ows(value)
+    isempty(trimmed) && throw(ParseError("empty $kind header value"))
+    limit = UInt64(typemax(Int64))
+    total = UInt64(0)
+    @inbounds for b in codeunits(trimmed)
+        0x30 <= b <= 0x39 || throw(ParseError("invalid $kind header value: $(repr(value))"))
+        digit = UInt64(b - 0x30)
+        total > ((limit - digit) ÷ UInt64(10)) && throw(ParseError("invalid $kind header value: $(repr(value))"))
+        total = total * UInt64(10) + digit
+    end
+    return Int64(total)
+end
+
 function _parse_content_length(hdrs::Headers)::Int64
     values = headers(hdrs, "Content-Length")
     isempty(values) && return Int64(-1)
     parsed = Int64(-1)
+    canonical = ""
     for value in values
         trimmed = _trim_http_ows(value)
-        isempty(trimmed) && throw(ParseError("empty Content-Length header value"))
-        n = try
-            parse(Int64, trimmed)
-        catch
-            throw(ParseError("invalid Content-Length header value: $(repr(value))"))
-        end
-        n < 0 && throw(ParseError("negative Content-Length header value"))
+        n = _parse_int64_decimal_header_value(value, "Content-Length")
         if parsed == Int64(-1)
             parsed = n
+            canonical = trimmed
             continue
         end
         parsed == n || throw(ProtocolError("mismatched Content-Length header values"))
     end
+    length(values) == 1 && values[1] == canonical || begin
+        removeheader(hdrs, "Content-Length")
+        setheader(hdrs, "Content-Length", canonical)
+    end
     return parsed
+end
+
+function _parse_transfer_encoding!(hdrs::Headers, proto_major::UInt8, proto_minor::UInt8)::Bool
+    values = headers(hdrs, "Transfer-Encoding")
+    isempty(values) && return false
+    if proto_major < UInt8(1) || (proto_major == UInt8(1) && proto_minor < UInt8(1))
+        removeheader(hdrs, "Transfer-Encoding")
+        return false
+    end
+    length(values) == 1 || throw(ProtocolError("too many Transfer-Encoding header values"))
+    raw = _trim_http_ows(values[1])
+    _ascii_equal_fold(raw, "chunked") || throw(ProtocolError("unsupported transfer encoding"))
+    setheader(hdrs, "Transfer-Encoding", "chunked")
+    return true
+end
+
+function _validate_incoming_trailers!(trailers::Headers)::Nothing
+    for (key, _) in trailers
+        _valid_trailer_header_name(key) || throw(ParseError("invalid HTTP trailer field name: $(repr(key))"))
+    end
+    return nothing
+end
+
+function _validate_request_target!(method::String, target::String)::Nothing
+    _string_contains_ctl_byte(target) && throw(ParseError("invalid HTTP target: $(repr(target))"))
+    if method == "CONNECT" && !startswith(target, "/")
+        _valid_host_header(target) || throw(ParseError("invalid HTTP CONNECT target: $(repr(target))"))
+        return nothing
+    end
+    target == "*" && return nothing
+    startswith(target, "/") && return nothing
+    try
+        _parse_http_url(target)
+        return nothing
+    catch
+        throw(ParseError("invalid HTTP target: $(repr(target))"))
+    end
+end
+
+function _validate_request_host!(hdrs::Headers, method::String, proto_major::UInt8, proto_minor::UInt8)::Union{Nothing,String}
+    host_values = headers(hdrs, "Host")
+    if (proto_major > UInt8(1) || (proto_major == UInt8(1) && proto_minor >= UInt8(1))) &&
+       isempty(host_values) &&
+       method != "CONNECT"
+        throw(ProtocolError("missing required Host header"))
+    end
+    length(host_values) > 1 && throw(ProtocolError("too many Host headers"))
+    isempty(host_values) && return nothing
+    host = host_values[1]
+    _valid_host_header(host) || throw(ProtocolError("malformed Host header"))
+    return host
 end
 
 function _should_close_connection(headers::Headers, proto_major::UInt8, proto_minor::UInt8)::Bool
@@ -290,6 +363,7 @@ function _read_next_chunk!(body::ChunkedBody)
     if size == 0
         # Terminal chunk: trailing header block is parsed as trailers.
         parsed_trailers = _read_headers(body.io, body.max_line_bytes, body.max_header_bytes)
+        _validate_incoming_trailers!(parsed_trailers)
         empty!(body.trailers)
         for (key, value) in parsed_trailers
             appendheader(body.trailers, key, value)
@@ -540,7 +614,7 @@ function _prepare_request_headers_for_write(
     end
     request_close = request.close || _should_close_connection(headers, request.proto_major, request.proto_minor)
     request_close && setheader(headers, "Connection", "close")
-    use_chunked = headercontains(headers, "Transfer-Encoding", "chunked")
+    use_chunked = _parse_transfer_encoding!(headers, request.proto_major, request.proto_minor)
     if !use_chunked
         if request.content_length >= 0
             setheader(headers, "Content-Length", string(request.content_length))
@@ -551,6 +625,8 @@ function _prepare_request_headers_for_write(
         else
             setheader(headers, "Content-Length", "0")
         end
+    else
+        removeheader(headers, "Content-Length")
     end
     return headers, use_chunked
 end
@@ -626,7 +702,7 @@ function write_response!(io::IO, response::Response{B}) where {B<:AbstractBody}
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
     response_close && setheader(headers, "Connection", "close")
     allows_body = _body_allowed_for_status(response.status)
-    use_chunked = allows_body && headercontains(headers, "Transfer-Encoding", "chunked")
+    use_chunked = allows_body && _parse_transfer_encoding!(headers, response.proto_major, response.proto_minor)
     if !allows_body
         removeheader(headers, "Content-Length")
         removeheader(headers, "Transfer-Encoding")
@@ -640,6 +716,8 @@ function write_response!(io::IO, response::Response{B}) where {B<:AbstractBody}
         else
             setheader(headers, "Content-Length", "0")
         end
+    else
+        removeheader(headers, "Content-Length")
     end
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, response.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
@@ -671,6 +749,8 @@ function _parse_request_line(line::AbstractString)::Tuple{String,String,UInt8,UI
     version = String(SubString(line, nextind(line, second_space), lastindex(line)))
     isempty(method) && throw(ParseError("empty HTTP method in request line"))
     isempty(target) && throw(ParseError("empty HTTP target in request line"))
+    _valid_header_field_name(method) || throw(ParseError("invalid HTTP method in request line: $(repr(method))"))
+    _validate_request_target!(method, target)
     major, minor = _parse_http_version(version)
     return method, target, major, minor
 end
@@ -721,10 +801,13 @@ function read_request(io::IO; max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BY
     line = _readline_crlf(io, max_line_bytes)
     method, target, proto_major, proto_minor = _parse_request_line(line)
     headers = _read_headers(io, max_line_bytes, max_header_bytes)
+    chunked = _parse_transfer_encoding!(headers, proto_major, proto_minor)
     content_length = _parse_content_length(headers)
-    host = header(headers, "Host", nothing)
+    chunked && removeheader(headers, "Content-Length")
+    content_length = chunked ? Int64(-1) : content_length
+    host = _validate_request_host!(headers, method, proto_major, proto_minor)
     close = _should_close_connection(headers, proto_major, proto_minor)
-    if headercontains(headers, "Transfer-Encoding", "chunked")
+    if chunked
         body = ChunkedBody(io; max_line_bytes=Int(max_line_bytes), max_header_bytes=Int(max_header_bytes))
         return _request_nocopy(
             method,
@@ -790,7 +873,10 @@ function _read_incoming_response(
     line = _readline_crlf(io, max_line_bytes)
     proto_major, proto_minor, status, reason = _parse_status_line(line)
     headers = _read_headers(io, max_line_bytes, max_header_bytes)
+    chunked = _parse_transfer_encoding!(headers, proto_major, proto_minor)
     content_length = _parse_content_length(headers)
+    chunked && removeheader(headers, "Content-Length")
+    content_length = chunked ? Int64(-1) : content_length
     close = _should_close_connection(headers, proto_major, proto_minor)
     request_is_head = request !== nothing && request.method == "HEAD"
     request_is_connect_tunnel = request !== nothing && request.method == "CONNECT" && status >= 200 && status < 300
@@ -813,7 +899,7 @@ function _read_incoming_response(
             EmptyBody(),
         )
     end
-    if headercontains(headers, "Transfer-Encoding", "chunked")
+    if chunked
         body = ChunkedBody(io; max_line_bytes=Int(max_line_bytes), max_header_bytes=Int(max_header_bytes))
         return _IncomingResponse(
             _IncomingResponseHead(
@@ -911,7 +997,10 @@ function _read_response(
     line = _readline_crlf(io, max_line_bytes)
     proto_major, proto_minor, status, reason = _parse_status_line(line)
     headers = _read_headers(io, max_line_bytes, max_header_bytes)
+    chunked = _parse_transfer_encoding!(headers, proto_major, proto_minor)
     content_length = _parse_content_length(headers)
+    chunked && removeheader(headers, "Content-Length")
+    content_length = chunked ? Int64(-1) : content_length
     close = _should_close_connection(headers, proto_major, proto_minor)
     request_is_head = request !== nothing && request.method == "HEAD"
     request_is_connect_tunnel = request !== nothing && request.method == "CONNECT" && status >= 200 && status < 300
@@ -932,7 +1021,7 @@ function _read_response(
             0,
         )
     end
-    if headercontains(headers, "Transfer-Encoding", "chunked")
+    if chunked
         body = ChunkedBody(io; max_line_bytes=Int(max_line_bytes), max_header_bytes=Int(max_header_bytes))
         return _response_nocopy_exact(
             status,

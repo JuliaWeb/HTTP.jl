@@ -202,6 +202,28 @@ function _valid_trailer_header_name(name::AbstractString)::Bool
     return !(canon in _FORBIDDEN_TRAILER_HEADERS)
 end
 
+function _string_contains_ctl_byte(value::AbstractString)::Bool
+    @inbounds for b in codeunits(value)
+        _is_http_ctl_byte(b) && return true
+    end
+    return false
+end
+
+@inline function _is_valid_host_header_byte(b::UInt8)::Bool
+    (0x30 <= b <= 0x39 || 0x41 <= b <= 0x5a || 0x61 <= b <= 0x7a) && return true
+    return b == 0x21 || b == 0x24 || b == 0x25 || b == 0x26 || b == 0x27 || b == 0x28 ||
+           b == 0x29 || b == 0x2a || b == 0x2b || b == 0x2c || b == 0x2d || b == 0x2e ||
+           b == 0x3a || b == 0x3b || b == 0x3d || b == 0x5b || b == 0x5d || b == 0x5f ||
+           b == 0x7e
+end
+
+function _valid_host_header(host::AbstractString)::Bool
+    @inbounds for b in codeunits(host)
+        _is_valid_host_header_byte(b) || return false
+    end
+    return true
+end
+
 const _COMMON_CANONICAL_HEADER_KEYS = Dict(
     "Accept" => "Accept",
     "Accept-Charset" => "Accept-Charset",

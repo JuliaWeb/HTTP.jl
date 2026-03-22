@@ -252,6 +252,18 @@ end
         no_target_resp = _raw_http_request(port_num, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
         @test occursin("HTTP/1.1 400 Bad Request", no_target_resp)
 
+        missing_host_resp = _raw_http_request(port_num, "GET / HTTP/1.1\r\n\r\n")
+        @test occursin("HTTP/1.1 400 Bad Request", missing_host_resp)
+
+        whitespace_host_resp = _raw_http_request(port_num, "GET / HTTP/1.1\r\nHost : $(address)\r\n\r\n")
+        @test occursin("HTTP/1.1 400 Bad Request", whitespace_host_resp)
+
+        duplicate_host_resp = _raw_http_request(port_num, "GET / HTTP/1.1\r\nHost: $(address)\r\nHost: $(address)\r\n\r\n")
+        @test occursin("HTTP/1.1 400 Bad Request", duplicate_host_resp)
+
+        invalid_target_resp = _raw_http_request(port_num, "GET foo HTTP/1.1\r\nHost: $(address)\r\n\r\n")
+        @test occursin("HTTP/1.1 400 Bad Request", invalid_target_resp)
+
         sock = ND.connect("tcp", "127.0.0.1:$(port_num)")
         try
             write(sock, Vector{UInt8}(codeunits("POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 15\r\nExpect: 100-continue\r\n\r\n")))

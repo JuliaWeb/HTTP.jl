@@ -51,7 +51,7 @@ function run_http_trim_sample()::Nothing
     HT.appendheader(headers, "x-trace-id", "def")
     HT.headercontains(headers, "x-trace-id", "abc") || error("expected token")
     ctx = HT.RequestContext(deadline_ns = time_ns() + 1_000_000)
-    req = HT.Request("GET", "/health"; headers = headers, context = ctx)
+    req = HT.Request("GET", "/health"; headers = headers, host = "example.com", context = ctx)
     _ = req
     body = HT.BytesBody(UInt8[0x61, 0x62, 0x63])
     resp = HT.Response{typeof(body)}(200, "OK", headers, HT.Headers(), body, Int64(-1), UInt8(1), UInt8(1), false, nothing, nothing, nothing, 0)
@@ -62,7 +62,7 @@ function run_http_trim_sample()::Nothing
     dst == UInt8[0x61, 0x62, 0x63] || error("unexpected bytes")
     HT.body_close!(body)
     HT.body_closed(body) || error("expected closed body")
-    req = HT.Request("POST", "/ready"; headers = headers, body = HT.BytesBody(UInt8[0x61, 0x62]), content_length = 2)
+    req = HT.Request("POST", "/ready"; headers = headers, body = HT.BytesBody(UInt8[0x61, 0x62]), host = "example.com", content_length = 2)
     req_io = IOBuffer()
     HT.write_request!(req_io, req)
     req_bytes = take!(req_io)
