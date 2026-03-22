@@ -1121,6 +1121,7 @@ mutable struct _H2SendWindowState
     conn_send_window::Int64
     initial_stream_send_window::Int64
     peer_max_send_frame_size::Int
+    header_encoder::Encoder
     stream_send_window::Dict{UInt32,Int64}
     conn_error::Union{Nothing,Exception}
     @atomic closed::Bool
@@ -1134,6 +1135,7 @@ function _H2SendWindowState()
         Int64(65_535),
         Int64(65_535),
         16_384,
+        Encoder(),
         Dict{UInt32,Int64}(),
         nothing,
         false,
@@ -1756,23 +1758,64 @@ function _decode_h2_request(headers::Vector{HeaderField}, body::Vector{UInt8})::
     return _decode_h2_request(headers, request_body; stream_done=true)
 end
 
-function _encode_h2_response_headers(response::Response)::Vector{UInt8}
+function _encode_h2_response_headers!(encoder::Encoder, response::Response)::Vector{UInt8}
     header_fields = HeaderField[HeaderField(":status", string(response.status), false)]
     _append_h2_headers!(header_fields, response.headers)
-    encoder = Encoder()
     return encode_header_block(encoder, header_fields)
 end
 
-function _encode_h2_trailer_headers(trailers::Headers)::Vector{UInt8}
+function _encode_h2_trailer_headers!(encoder::Encoder, trailers::Headers)::Vector{UInt8}
     header_fields = HeaderField[]
     _append_h2_headers!(header_fields, trailers)
-    encoder = Encoder()
     return encode_header_block(encoder, header_fields)
 end
 
-function _write_h2_trailers!(conn::Union{TCP.Conn,TLS.Conn}, write_lock::ReentrantLock, stream_id::UInt32, trailers::Headers)::Nothing
+function _write_h2_header_block_locked!(
+    conn::Union{TCP.Conn,TLS.Conn},
+    stream_id::UInt32,
+    header_block::Vector{UInt8};
+    end_stream::Bool,
+    max_frame_size::Int,
+)::Nothing
+    for frame in _header_block_frames(stream_id, end_stream, header_block, max_frame_size)
+        _write_frame_h2_server!(conn, frame)
+    end
+    return nothing
+end
+
+function _write_h2_response_headers!(
+    conn::Union{TCP.Conn,TLS.Conn},
+    write_lock::ReentrantLock,
+    send_state::_H2SendWindowState,
+    stream_id::UInt32,
+    response::Response;
+    end_stream::Bool,
+)::Nothing
+    lock(write_lock)
+    try
+        header_block = _encode_h2_response_headers!(send_state.header_encoder, response)
+        _write_h2_header_block_locked!(conn, stream_id, header_block; end_stream=end_stream, max_frame_size=send_state.peer_max_send_frame_size)
+    finally
+        unlock(write_lock)
+    end
+    return nothing
+end
+
+function _write_h2_trailers!(
+    conn::Union{TCP.Conn,TLS.Conn},
+    write_lock::ReentrantLock,
+    send_state::_H2SendWindowState,
+    stream_id::UInt32,
+    trailers::Headers,
+)::Nothing
     isempty(trailers) && return nothing
-    _write_frame_h2_server_threadsafe!(write_lock, conn, HeadersFrame(stream_id, true, true, _encode_h2_trailer_headers(trailers)))
+    lock(write_lock)
+    try
+        header_block = _encode_h2_trailer_headers!(send_state.header_encoder, trailers)
+        _write_h2_header_block_locked!(conn, stream_id, header_block; end_stream=true, max_frame_size=send_state.peer_max_send_frame_size)
+    finally
+        unlock(write_lock)
+    end
     return nothing
 end
 
@@ -1831,15 +1874,15 @@ function _write_h2_response!(
             body_close!(response.body)
         catch
         end
-        _write_frame_h2_server_threadsafe!(write_lock, conn, HeadersFrame(stream_id, !has_trailers, true, _encode_h2_response_headers(response)))
-        has_trailers && _write_h2_trailers!(conn, write_lock, stream_id, response.trailers)
+        _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response; end_stream=!has_trailers)
+        has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
         return nothing
     end
     body_empty = response.body isa EmptyBody
     end_stream = body_empty && !has_trailers
-    _write_frame_h2_server_threadsafe!(write_lock, conn, HeadersFrame(stream_id, end_stream, true, _encode_h2_response_headers(response)))
+    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response; end_stream=end_stream)
     body_empty || _write_response_body_h2_server!(conn, write_lock, send_state, stream_id, response; end_stream=!has_trailers)
-    has_trailers && _write_h2_trailers!(conn, write_lock, stream_id, response.trailers)
+    has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
     return nothing
 end
 
@@ -1863,9 +1906,9 @@ function _write_h2_buffered_stream_response!(
     has_body = !isempty(body_bytes)
     has_trailers = !isempty(response.trailers)
     end_stream = !has_body && !has_trailers
-    _write_frame_h2_server_threadsafe!(write_lock, conn, HeadersFrame(stream_id, end_stream, true, _encode_h2_response_headers(response)))
+    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response; end_stream=end_stream)
     has_body && _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, body_bytes; end_stream=!has_trailers)
-    has_trailers && _write_h2_trailers!(conn, write_lock, stream_id, response.trailers)
+    has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
     return nothing
 end
 

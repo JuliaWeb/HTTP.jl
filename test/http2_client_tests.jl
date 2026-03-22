@@ -84,6 +84,25 @@ function _read_next_headers_frame!(reader::HT.Framer)::HT.HeadersFrame
     end
 end
 
+function _read_h2_header_block_frames!(reader::HT.Framer)
+    first = HT.read_frame!(reader)
+    first isa HT.HeadersFrame || error("expected headers frame, got $(typeof(first))")
+    headers_frame = first::HT.HeadersFrame
+    fragments = copy(headers_frame.header_block_fragment)
+    frames = HT.AbstractFrame[headers_frame]
+    end_headers = headers_frame.end_headers
+    while !end_headers
+        frame = HT.read_frame!(reader)
+        frame isa HT.ContinuationFrame || error("expected continuation frame, got $(typeof(frame))")
+        cont = frame::HT.ContinuationFrame
+        cont.stream_id == headers_frame.stream_id || error("unexpected continuation stream")
+        append!(fragments, cont.header_block_fragment)
+        push!(frames, cont)
+        end_headers = cont.end_headers
+    end
+    return headers_frame, fragments, frames
+end
+
 function _read_all_h2_body(body::HT.AbstractBody)::Vector{UInt8}
     out = UInt8[]
     buf = Vector{UInt8}(undef, 64)
@@ -176,6 +195,57 @@ end
         request = HT.Request("GET", "/missing-status"; host = address, body = HT.EmptyBody(), content_length = 0)
         @test_throws HT.ProtocolError HT.h2_roundtrip!(h2_conn, request)
         _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 client fragments large request headers" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    large_value = repeat("x", 20_000)
+    continuation_count = Ref(0)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame, fragments, frames = _read_h2_header_block_frames!(reader)
+            continuation_count[] = count(frame -> frame isa HT.ContinuationFrame, frames)
+            @test continuation_count[] > 0
+            decoded = HT.decode_header_block(server_decoder, fragments)
+            @test any(field -> field.name == "x-big" && field.value == large_value, decoded)
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(headers_frame.stream_id, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(headers_frame.stream_id, true, collect(codeunits("ok"))))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        headers = HT.Headers()
+        HT.setheader(headers, "X-Big", large_value)
+        request = HT.Request("GET", "/fragmented"; host = address, headers = headers, body = HT.EmptyBody(), content_length = 0)
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        @test String(_read_all_h2_body(response.body)) == "ok"
+        _wait_task_h2!(server_task)
+        @test continuation_count[] > 0
     finally
         close(h2_conn)
         try

@@ -431,3 +431,31 @@ function write_frame!(framer::Framer, frame::AbstractFrame)
     isempty(payload) || write(framer.io, payload)
     return nothing
 end
+
+function _header_block_frames(
+    stream_id::UInt32,
+    end_stream::Bool,
+    header_block::Vector{UInt8},
+    max_frame_size::Integer,
+)::Vector{AbstractFrame}
+    max_frame_size > 0 || throw(ArgumentError("max_frame_size must be > 0"))
+    total = length(header_block)
+    if total <= max_frame_size
+        return AbstractFrame[HeadersFrame(stream_id, end_stream, true, copy(header_block))]
+    end
+    frames = AbstractFrame[]
+    offset = 1
+    chunk_len = min(total, Int(max_frame_size))
+    first_fragment = Vector{UInt8}(undef, chunk_len)
+    copyto!(first_fragment, 1, header_block, offset, chunk_len)
+    push!(frames, HeadersFrame(stream_id, end_stream, false, first_fragment))
+    offset += chunk_len
+    while offset <= total
+        chunk_len = min(total - offset + 1, Int(max_frame_size))
+        fragment = Vector{UInt8}(undef, chunk_len)
+        copyto!(fragment, 1, header_block, offset, chunk_len)
+        offset += chunk_len
+        push!(frames, ContinuationFrame(stream_id, offset > total, fragment))
+    end
+    return frames
+end

@@ -791,6 +791,18 @@ function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Heade
     return status::Int, out
 end
 
+function _write_h2_header_block_locked!(
+    conn::H2Connection,
+    stream_id::UInt32,
+    header_block::Vector{UInt8};
+    end_stream::Bool,
+)::Nothing
+    for frame in _header_block_frames(stream_id, end_stream, header_block, conn.reader.max_frame_size)
+        _write_frame_h2!(conn, frame)
+    end
+    return nothing
+end
+
 """
     _stream_available_bytes(state) -> Int
 
@@ -911,7 +923,7 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
                 (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
                 conn.conn_error === nothing || throw(conn.conn_error::Exception)
                 header_block = encode_header_block(conn.encoder, headers)
-                _write_frame_h2!(conn, HeadersFrame(stream_state.stream_id, end_stream, true, header_block))
+                _write_h2_header_block_locked!(conn, stream_state.stream_id, header_block; end_stream=end_stream)
             finally
                 unlock(conn.write_lock)
             end

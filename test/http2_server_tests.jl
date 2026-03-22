@@ -81,6 +81,25 @@ function _write_h2_server_request_headers!(
     return nothing
 end
 
+function _read_h2_server_header_block!(reader::HT.Framer)
+    first = HT.read_frame!(reader)
+    first isa HT.HeadersFrame || error("expected headers frame, got $(typeof(first))")
+    headers_frame = first::HT.HeadersFrame
+    fragments = copy(headers_frame.header_block_fragment)
+    frames = HT.AbstractFrame[headers_frame]
+    end_headers = headers_frame.end_headers
+    while !end_headers
+        frame = HT.read_frame!(reader)
+        frame isa HT.ContinuationFrame || error("expected continuation frame, got $(typeof(frame))")
+        cont = frame::HT.ContinuationFrame
+        cont.stream_id == headers_frame.stream_id || error("unexpected continuation stream")
+        append!(fragments, cont.header_block_fragment)
+        push!(frames, cont)
+        end_headers = cont.end_headers
+    end
+    return headers_frame, fragments, frames
+end
+
 @testset "HTTP/2 server request handling" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("h2:" * request.target))
@@ -99,6 +118,105 @@ end
         @test String(_read_all_h2_server(res2.body)) == "h2:/two"
     finally
         close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server fragments large response headers" begin
+    large_value = repeat("h", 50_000)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            headers = HT.Headers()
+            HT.setheader(headers, "X-Large", large_value)
+            return HT.Response(200; headers = headers, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    conn, reader = _open_raw_h2_server_conn(address)
+    encoder = HT.Encoder()
+    decoder = HT.Decoder()
+    try
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/large-headers")
+        headers_frame, fragments, frames = _read_h2_server_header_block!(reader)
+        @test headers_frame.end_stream
+        @test !headers_frame.end_headers
+        @test count(frame -> frame isa HT.ContinuationFrame, frames) > 0
+        decoded = HT.decode_header_block(decoder, fragments)
+        @test any(field -> field.name == ":status" && field.value == "200", decoded)
+        @test any(field -> field.name == "x-large" && field.value == large_value, decoded)
+    finally
+        try
+            NC.close(conn)
+        catch
+        end
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server fragments large response trailers" begin
+    large_trailer = repeat("t", 50_000)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            trailers = HT.Headers()
+            HT.setheader(trailers, "X-Large-Trailer", large_trailer)
+            body = HT.BytesBody(collect(codeunits("ok")))
+            return HT.Response(200; trailers = trailers, body = body, content_length = 2, proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    conn, reader = _open_raw_h2_server_conn(address)
+    encoder = HT.Encoder()
+    decoder = HT.Decoder()
+    try
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/large-trailers")
+        headers_frame, header_block, _ = _read_h2_server_header_block!(reader)
+        decoded_headers = HT.decode_header_block(decoder, header_block)
+        @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
+        data_frame = HT.read_frame!(reader)
+        @test data_frame isa HT.DataFrame
+        @test !(data_frame::HT.DataFrame).end_stream
+        @test String((data_frame::HT.DataFrame).data) == "ok"
+        trailer_frame, trailer_block, trailer_frames = _read_h2_server_header_block!(reader)
+        @test trailer_frame.end_stream
+        @test count(frame -> frame isa HT.ContinuationFrame, trailer_frames) > 0
+        decoded_trailers = HT.decode_header_block(decoder, trailer_block)
+        @test any(field -> field.name == "x-large-trailer" && field.value == large_trailer, decoded_trailers)
+    finally
+        try
+            NC.close(conn)
+        catch
+        end
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server reuses HPACK encoder state across responses" begin
+    repeated_value = repeat("r", 512)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            headers = HT.Headers()
+            HT.setheader(headers, "X-Reused", repeated_value)
+            return HT.Response(200; headers = headers, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    conn, reader = _open_raw_h2_server_conn(address)
+    encoder = HT.Encoder()
+    decoder = HT.Decoder()
+    try
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/one")
+        _, block1, _ = _read_h2_server_header_block!(reader)
+        _ = HT.decode_header_block(decoder, block1)
+        _write_h2_server_request_headers!(conn, encoder, UInt32(3), address, "/two")
+        _, block2, _ = _read_h2_server_header_block!(reader)
+        decoded2 = HT.decode_header_block(decoder, block2)
+        @test any(field -> field.name == "x-reused" && field.value == repeated_value, decoded2)
+        @test length(block2) < length(block1)
+    finally
+        try
+            NC.close(conn)
+        catch
+        end
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end

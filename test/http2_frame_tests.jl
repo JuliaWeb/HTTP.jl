@@ -156,3 +156,19 @@ end
     @test (rt::HT.UnknownFrame).header.type == UInt8(0xfe)
     @test (rt::HT.UnknownFrame).payload == UInt8[0x01, 0x02, 0x03]
 end
+
+@testset "HTTP/2 header block fragmentation helper" begin
+    block = collect(UInt8(0x01):UInt8(0x0a))
+    frames = HT._header_block_frames(UInt32(9), true, block, 4)
+    @test length(frames) == 3
+    @test frames[1] isa HT.HeadersFrame
+    @test (frames[1]::HT.HeadersFrame).end_stream
+    @test !(frames[1]::HT.HeadersFrame).end_headers
+    @test (frames[1]::HT.HeadersFrame).header_block_fragment == UInt8[0x01, 0x02, 0x03, 0x04]
+    @test frames[2] isa HT.ContinuationFrame
+    @test !(frames[2]::HT.ContinuationFrame).end_headers
+    @test (frames[2]::HT.ContinuationFrame).header_block_fragment == UInt8[0x05, 0x06, 0x07, 0x08]
+    @test frames[3] isa HT.ContinuationFrame
+    @test (frames[3]::HT.ContinuationFrame).end_headers
+    @test (frames[3]::HT.ContinuationFrame).header_block_fragment == UInt8[0x09, 0x0a]
+end
