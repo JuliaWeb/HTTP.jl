@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Documented the intentionally deferred Go-parity areas for the 2.x release
+  line, including HTTP/2 server push, `Pusher`, `ResponseController` /
+  hijack-style control APIs, full `httptrace` parity, and full `net/url` /
+  `ServeMux` parity.
 
 ## [v2.0.0] - 2026-03-18
 ### Changed

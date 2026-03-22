@@ -27,6 +27,22 @@ cookies, multipart forms, retries, and proxy-aware transports for Julia.
 
 Current package compat targets Julia `1.10` and later.
 
+## Scope and Deferred Go Parity
+
+`HTTP.jl` 2.x borrows heavily from Go's `net/http` design, but it is not a
+drop-in clone of every Go API or feature.
+
+The current release intentionally defers:
+
+- HTTP/2 server push and a `Pusher`-style surface
+- Go `ResponseController` / hijack-style server-control APIs
+- full `httptrace` parity beyond the documented `HTTP.ClientTrace` hooks
+- full `net/url` and `ServeMux` feature parity
+
+These are explicit scope decisions for the 2.x release line rather than known
+bugs in the documented client, server, streaming, proxy, HTTP/2, SSE, and
+WebSocket APIs.
+
 ## Contributing and Questions
 
 Contributions are very welcome, as are feature requests and suggestions. Please open an

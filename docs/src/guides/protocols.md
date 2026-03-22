@@ -71,3 +71,19 @@ Use these higher-level APIs for ordinary HTTP/2 traffic:
 
 HPACK tables, HTTP/2 frame structs, and direct connection/session types are
 internal implementation details rather than part of the documented public API.
+
+## Intentional Go Parity Gaps
+
+`HTTP.jl` 2.x borrows ideas from Go's `net/http`, but it does not aim to
+surface every Go API or compatibility point.
+
+The current release intentionally defers:
+
+- HTTP/2 server push and any `Pusher`-style server API
+- Go `ResponseController` / hijack-style response-control APIs
+- full `httptrace` parity beyond the documented `HTTP.ClientTrace` hooks
+- full `net/url` and `ServeMux` feature parity
+
+Treat these as explicit scope decisions for the current release, not accidental
+regressions in the supported client, server, HTTP/2, or WebSocket features
+documented here.

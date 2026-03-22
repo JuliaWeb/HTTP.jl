@@ -77,3 +77,4 @@ String(resp.body)
 - Request and response bodies are explicit types instead of loosely typed byte blobs.
 - Client/server internals follow a more explicit state-machine design, which makes retries, proxying, streaming, and HTTP/2 behavior easier to reason about.
 - Most wire-level HTTP/2 and HPACK details are implementation details rather than part of the documented public API.
+- `HTTP.jl` is not a drop-in clone of Go's `net/http`; see the Protocols guide for the intentionally deferred Go-parity areas in the current release.
