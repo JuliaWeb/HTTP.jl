@@ -64,7 +64,15 @@ struct ProxyConfig
     https::Union{Nothing,_ProxyTarget}
     all::Union{Nothing,_ProxyTarget}
     no_proxy::Union{Nothing,NoProxy}
+    refuse_http_proxy_in_cgi::Bool
 end
+
+ProxyConfig(
+    http::Union{Nothing,_ProxyTarget},
+    https::Union{Nothing,_ProxyTarget},
+    all::Union{Nothing,_ProxyTarget},
+    no_proxy::Union{Nothing,NoProxy},
+) = ProxyConfig(http, https, all, no_proxy, false)
 
 @enumx _ProxyPlanMode::UInt8 begin
     DIRECT = 0
@@ -328,6 +336,12 @@ function _env_no_proxy()::Union{Nothing,NoProxy}
     return NoProxy(raw)
 end
 
+@inline function _cgi_http_proxy_refusal()::Bool
+    return !isempty(get(() -> "", ENV, "REQUEST_METHOD"))
+end
+
+const _CGI_HTTP_PROXY_ERROR = "refusing to use HTTP_PROXY value in CGI environment; see golang.org/s/cgihttpproxy"
+
 function ProxyConfig(url::AbstractString; no_proxy=nothing)::ProxyConfig
     matcher = no_proxy === nothing ? nothing : NoProxy(no_proxy)
     return ProxyConfig(nothing, nothing, _parse_proxy_target(url), matcher)
@@ -341,11 +355,15 @@ function ProxyConfig(;
     env::Bool=false,
 )::ProxyConfig
     matcher = no_proxy === nothing ? (env ? _env_no_proxy() : nothing) : NoProxy(no_proxy)
+    http_proxy = http === nothing ? (env ? _env_proxy("HTTP_PROXY", "http_proxy") : nothing) : _proxy_target(http)
+    https_proxy = https === nothing ? (env ? _env_proxy("HTTPS_PROXY", "https_proxy") : nothing) : _proxy_target(https)
+    all_proxy = all === nothing ? (env ? _env_proxy("ALL_PROXY", "all_proxy") : nothing) : _proxy_target(all)
     return ProxyConfig(
-        http === nothing ? (env ? _env_proxy("HTTP_PROXY", "http_proxy") : nothing) : _proxy_target(http),
-        https === nothing ? (env ? _env_proxy("HTTPS_PROXY", "https_proxy") : nothing) : _proxy_target(https),
-        all === nothing ? (env ? _env_proxy("ALL_PROXY", "all_proxy") : nothing) : _proxy_target(all),
+        http_proxy,
+        https_proxy,
+        all_proxy,
         matcher,
+        env && http === nothing && http_proxy !== nothing && _cgi_http_proxy_refusal(),
     )
 end
 
@@ -382,6 +400,7 @@ function _proxy_for(
     host::AbstractString,
     port::Integer,
 )::Union{Nothing,_ProxyTarget}
+    !secure && config.refuse_http_proxy_in_cgi && throw(ArgumentError(_CGI_HTTP_PROXY_ERROR))
     config.no_proxy !== nothing && _matches_no_proxy(config.no_proxy::NoProxy, host, port) && return nothing
     if secure
         config.https !== nothing && return config.https::_ProxyTarget

@@ -12,6 +12,12 @@ const _TLS_CERT_PATH = joinpath(@__DIR__, "resources", "unittests.crt")
 const _TLS_KEY_PATH = joinpath(@__DIR__, "resources", "unittests.key")
 const _HTTP_WINDOWS_PROXY_WARMED = Ref(false)
 
+if !isdefined(@__MODULE__, :_http_windows_ci)
+    @inline function _http_windows_ci()::Bool
+        return Sys.iswindows() && get(ENV, "GITHUB_ACTIONS", "false") == "true"
+    end
+end
+
 function _read_all_proxy(body::HT.AbstractBody)::Vector{UInt8}
     out = UInt8[]
     buf = Vector{UInt8}(undef, 64)
@@ -371,6 +377,57 @@ end
     @test (fallback::HT._ProxyTarget).address == "fallback-proxy.local:3128"
 end
 
+@testset "HTTP proxy CGI safeguard matches Go semantics" begin
+    selector = withenv(
+            "HTTP_PROXY" => "http://cgi-http-proxy.local:8080",
+            "HTTPS_PROXY" => "http://cgi-https-proxy.local:8443",
+            "ALL_PROXY" => "http://fallback-proxy.local:3128",
+            "REQUEST_METHOD" => "POST",
+        ) do
+        HT.ProxyFromEnvironment()
+    end
+    err = try
+        HT._proxy_for(selector, false, "public.local", 80)
+        nothing
+    catch err
+        err
+    end
+    @test err isa ArgumentError
+    @test occursin("refusing to use HTTP_PROXY value in CGI environment", sprint(showerror, err::ArgumentError))
+
+    https_proxy = HT._proxy_for(selector, true, "secure.local", 443)
+    @test https_proxy !== nothing
+    @test (https_proxy::HT._ProxyTarget).address == "cgi-https-proxy.local:8443"
+
+    selector_lower = withenv(
+            "HTTP_PROXY" => nothing,
+            "http_proxy" => "http://lower-http-proxy.local:8080",
+            "REQUEST_METHOD" => "GET",
+        ) do
+        HT.ProxyFromEnvironment()
+    end
+    err_lower = try
+        HT._proxy_for(selector_lower, false, "public.local", 80)
+        nothing
+    catch err
+        err
+    end
+    @test err_lower isa ArgumentError
+    @test occursin("refusing to use HTTP_PROXY value in CGI environment", sprint(showerror, err_lower::ArgumentError))
+
+    selector_fallback = withenv(
+            "HTTP_PROXY" => nothing,
+            "http_proxy" => nothing,
+            "ALL_PROXY" => "http://fallback-proxy.local:3128",
+            "REQUEST_METHOD" => "POST",
+        ) do
+        HT.ProxyFromEnvironment()
+    end
+    fallback = HT._proxy_for(selector_fallback, false, "origin.local", 80)
+    @test fallback !== nothing
+    @test (fallback::HT._ProxyTarget).address == "fallback-proxy.local:3128"
+end
+
 @testset "HTTP proxy planning chooses direct, forward, and tunnel modes" begin
     direct = HT._proxy_plan(HT.ProxyConfig(), false, "origin.local:80")
     @test direct.mode == HT._ProxyPlanMode.DIRECT
@@ -629,6 +686,32 @@ end
             NC.close(listener)
         catch
         end
+    end
+end
+
+@testset "HTTP default client surfaces CGI HTTP_PROXY refusal" begin
+    _reset_default_http_client_proxy!()
+    try
+        err = withenv(
+                "HTTP_PROXY" => "http://cgi-http-proxy.local:8080",
+                "http_proxy" => nothing,
+                "NO_PROXY" => nothing,
+                "no_proxy" => nothing,
+                "REQUEST_METHOD" => "POST",
+            ) do
+            try
+                HT.get("http://public.local:80/cgi-refusal")
+                nothing
+            catch err
+                err
+            finally
+                _reset_default_http_client_proxy!()
+            end
+        end
+        @test err isa ArgumentError
+        @test occursin("refusing to use HTTP_PROXY value in CGI environment", sprint(showerror, err::ArgumentError))
+    finally
+        _reset_default_http_client_proxy!()
     end
 end
 
