@@ -12,6 +12,10 @@ using Reseau.HostResolvers
 using Reseau.TLS
 
 const _CONN_READER_DEFAULT_BUFFER_BYTES = 16 * 1024
+const _TRANSPORT_WRITE_BODY_CHUNK_BYTES = 16 * 1024
+const _TRANSPORT_EXPECT_CONTINUE_TIMEOUT_NS = Int64(1_000_000_000)
+const _TRANSPORT_MAX_POST_CLOSE_DRAIN_BYTES = 256 * 1024
+const _TRANSPORT_MAX_POST_CLOSE_DRAIN_TIME_NS = Int64(50_000_000)
 
 mutable struct _ConnReader{C} <: IO
     conn::C
@@ -209,6 +213,136 @@ function _conn_stream(conn::Conn)
     end
     conn.tcp === nothing && throw(ProtocolError("transport connection missing TCP stream"))
     return conn.tcp::TCP.Conn
+end
+
+function _set_conn_read_deadline!(conn::Conn, deadline_ns::Int64)
+    if conn.secure
+        conn.tls === nothing || TLS.set_read_deadline!(conn.tls::TLS.Conn, deadline_ns)
+    else
+        conn.tcp === nothing || TCP.set_read_deadline!(conn.tcp::TCP.Conn, deadline_ns)
+    end
+    return nothing
+end
+
+function _set_conn_write_deadline!(conn::Conn, deadline_ns::Int64)
+    if conn.secure
+        conn.tls === nothing || TLS.set_write_deadline!(conn.tls::TLS.Conn, deadline_ns)
+    else
+        conn.tcp === nothing || TCP.set_write_deadline!(conn.tcp::TCP.Conn, deadline_ns)
+    end
+    return nothing
+end
+
+@inline function _transport_request_wants_close(request::Request)::Bool
+    request.close && return true
+    return headercontains(request.headers, "Connection", "close")
+end
+
+@inline function _request_expects_continue(request::Request)::Bool
+    _request_has_body(request) || return false
+    request.proto_major > 1 && return headercontains(request.headers, "Expect", "100-continue")
+    request.proto_major == 1 || return false
+    request.proto_minor >= 1 || return false
+    return headercontains(request.headers, "Expect", "100-continue")
+end
+
+@inline function _write_request_should_stop(stop_upload::Union{Nothing,Threads.Atomic{Bool}})::Bool
+    stop_upload === nothing && return false
+    return (stop_upload::Threads.Atomic{Bool})[]
+end
+
+function _expect_continue_deadline_ns(request_deadline::Int64)::Int64
+    now_ns = Int64(time_ns())
+    timeout_deadline = now_ns > typemax(Int64) - _TRANSPORT_EXPECT_CONTINUE_TIMEOUT_NS ? typemax(Int64) : now_ns + _TRANSPORT_EXPECT_CONTINUE_TIMEOUT_NS
+    request_deadline == 0 && return timeout_deadline
+    return min(request_deadline, timeout_deadline)
+end
+
+function _await_expect_continue!(continue_state::Threads.Atomic{UInt8}, request_deadline::Int64)::Bool
+    deadline_ns = _expect_continue_deadline_ns(request_deadline)
+    while true
+        state = continue_state[]
+        state == UInt8(0x1) && return true
+        state == UInt8(0x2) && return false
+        remaining_ns = deadline_ns - Int64(time_ns())
+        remaining_ns <= 0 && return true
+        timedwait(() -> begin
+            state_now = continue_state[]
+            return state_now == UInt8(0x1) || state_now == UInt8(0x2)
+        end, remaining_ns / 1.0e9; pollint=0.001)
+    end
+end
+
+function _write_exact_body_transport!(
+    io::IO,
+    body::AbstractBody,
+    expected_len::Int64;
+    stop_upload::Union{Nothing,Threads.Atomic{Bool}}=nothing,
+)::Bool
+    expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
+    expected_len == 0 && return true
+    remaining = expected_len
+    while remaining > 0
+        _write_request_should_stop(stop_upload) && return false
+        to_read = Int(min(Int64(_TRANSPORT_WRITE_BODY_CHUNK_BYTES), remaining))
+        buf = Vector{UInt8}(undef, to_read)
+        n = body_read!(body, buf)
+        n > 0 || throw(ProtocolError("body ended before expected Content-Length bytes were written"))
+        _write_request_should_stop(stop_upload) && return false
+        write(io, n == length(buf) ? buf : @view(buf[1:n]))
+        remaining -= n
+    end
+    return true
+end
+
+function _write_exact_bytes_body_transport!(
+    stream,
+    body::BytesBody,
+    expected_len::Int64;
+    stop_upload::Union{Nothing,Threads.Atomic{Bool}}=nothing,
+)::Bool
+    expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
+    expected_len == 0 && return true
+    available = (length(body.data) - body.next_index) + 1
+    available >= expected_len || throw(ProtocolError("body ended before expected Content-Length bytes were written"))
+    remaining = expected_len
+    while remaining > 0
+        _write_request_should_stop(stop_upload) && return false
+        chunk_len = Int(min(Int64(_TRANSPORT_WRITE_BODY_CHUNK_BYTES), remaining))
+        stop_index = body.next_index + chunk_len - 1
+        chunk = if body.next_index == 1 && stop_index == length(body.data)
+            body.data
+        else
+            view(body.data, body.next_index:stop_index)
+        end
+        n = write(stream, chunk)
+        n == chunk_len || throw(ProtocolError("transport short write"))
+        body.next_index = stop_index + 1
+        remaining -= n
+    end
+    return true
+end
+
+function _write_chunked_body_transport!(
+    io::IO,
+    body::AbstractBody,
+    trailer_values::Headers;
+    stop_upload::Union{Nothing,Threads.Atomic{Bool}}=nothing,
+)::Bool
+    buf = Vector{UInt8}(undef, _TRANSPORT_WRITE_BODY_CHUNK_BYTES)
+    while true
+        _write_request_should_stop(stop_upload) && return false
+        n = body_read!(body, buf)
+        n == 0 && break
+        _write_request_should_stop(stop_upload) && return false
+        print(io, string(n, base=16), "\r\n")
+        write(io, @view(buf[1:n]))
+        write(io, "\r\n")
+    end
+    write(io, "0\r\n")
+    _write_headers!(io, trailer_values)
+    write(io, "\r\n")
+    return true
 end
 
 function _close_conn!(conn::Conn)::Bool
@@ -438,16 +572,32 @@ function _write_request_streaming!(
     request::Request;
     wire_target::Union{Nothing,AbstractString}=nothing,
     proxy_authorization::Union{Nothing,AbstractString}=nothing,
-)
+    continue_state::Union{Nothing,Threads.Atomic{UInt8}}=nothing,
+    stop_upload::Union{Nothing,Threads.Atomic{Bool}}=nothing,
+    request_deadline::Int64=Int64(0),
+    head_written::Union{Nothing,Threads.Atomic{Bool}}=nothing,
+)::Bool
     if request.content_length >= 0 && request.body isa BytesBody && !headercontains(request.headers, "Transfer-Encoding", "chunked")
         _write_request_head!(request_io, request; wire_target=wire_target, proxy_authorization=proxy_authorization)
         _write_request_bytes!(stream, request_io)
-        _write_exact_bytes_body!(stream, request.body::BytesBody, request.content_length)
-        return nothing
+        head_written === nothing || ((head_written::Threads.Atomic{Bool})[] = true)
+        continue_state === nothing || (_await_expect_continue!(continue_state::Threads.Atomic{UInt8}, request_deadline) || return false)
+        return _write_exact_bytes_body_transport!(stream, request.body::BytesBody, request.content_length; stop_upload=stop_upload)
     end
-    write_request!(request_io, request; wire_target=wire_target, proxy_authorization=proxy_authorization)
+    use_chunked, trailer_values = _write_request_head!(request_io, request; wire_target=wire_target, proxy_authorization=proxy_authorization)
     _write_request_bytes!(stream, request_io)
-    return nothing
+    head_written === nothing || ((head_written::Threads.Atomic{Bool})[] = true)
+    !_request_has_body(request) && return true
+    continue_state === nothing || (_await_expect_continue!(continue_state::Threads.Atomic{UInt8}, request_deadline) || return false)
+    if use_chunked
+        return _write_chunked_body_transport!(stream, request.body, trailer_values; stop_upload=stop_upload)
+    end
+    request.content_length < 0 && return true
+    body = request.body
+    if body isa BytesBody
+        return _write_exact_bytes_body_transport!(stream, body::BytesBody, request.content_length; stop_upload=stop_upload)
+    end
+    return _write_exact_body_transport!(stream, body, request.content_length; stop_upload=stop_upload)
 end
 
 function _perform_http_connect_tunnel!(
@@ -821,7 +971,7 @@ end
 
 @inline function _response_reusable(response::_IncomingResponse, request::Request)::Bool
     response.head.close && return false
-    request.close && return false
+    _transport_request_wants_close(request) && return false
     headercontains(response.head.headers, "Connection", "close") && return false
     response.rawbody isa EOFBody && return false
     return true
@@ -849,6 +999,14 @@ end
     return false
 end
 
+@inline function _request_upload_abort_error(err)::Bool
+    err isa EOFError && return true
+    err isa SystemError && return true
+    err isa IOPoll.NetClosingError && return true
+    err isa IOPoll.DeadlineExceededError && return true
+    return false
+end
+
 function _release_managed!(body::ManagedBody)
     was_released = @atomic :acquire body.released
     was_released && return nothing
@@ -865,8 +1023,40 @@ function body_closed(body::ManagedBody)::Bool
     return @atomic :acquire body.released
 end
 
+function _maybe_drain_managed_body!(body::ManagedBody)::Bool
+    !body.reusable && return false
+    inner = body.inner
+    inner isa EmptyBody && return true
+    inner isa EOFBody && return false
+    if inner isa FixedLengthBody
+        remaining = (inner::FixedLengthBody).remaining
+        remaining > _TRANSPORT_MAX_POST_CLOSE_DRAIN_BYTES && return false
+    end
+    deadline_ns = Int64(time_ns())
+    deadline_ns = deadline_ns > typemax(Int64) - _TRANSPORT_MAX_POST_CLOSE_DRAIN_TIME_NS ? typemax(Int64) : deadline_ns + _TRANSPORT_MAX_POST_CLOSE_DRAIN_TIME_NS
+    _set_conn_read_deadline!(body.conn, deadline_ns)
+    remaining_budget = _TRANSPORT_MAX_POST_CLOSE_DRAIN_BYTES
+    while remaining_budget > 0
+        chunk_len = min(_TRANSPORT_WRITE_BODY_CHUNK_BYTES, remaining_budget)
+        buf = Vector{UInt8}(undef, chunk_len)
+        n = try
+            body_read!(inner, buf)
+        catch err
+            err isa IOPoll.DeadlineExceededError && return false
+            err isa EOFError && return false
+            return false
+        end
+        if n == 0
+            @atomic :release body.saw_eof = true
+            return true
+        end
+        remaining_budget -= n
+    end
+    return false
+end
+
 function body_close!(body::ManagedBody)
-    if !(@atomic :acquire body.saw_eof)
+    if !(@atomic :acquire body.saw_eof) && !_maybe_drain_managed_body!(body)
         body.reusable = false
     end
     body_close!(body.inner)
@@ -890,13 +1080,13 @@ function body_read!(body::ManagedBody, dst::Vector{UInt8})::Int
 end
 
 """
-    roundtrip!(transport, address, request; secure=false, server_name=nothing)
+    _roundtrip_incoming!(transport, address, request; secure=false, server_name=nothing, proxy_config=transport.proxy)
 
 Execute one HTTP/1 request/response exchange through `transport`.
 
 This is the low-level HTTP/1 path used by the higher-level client APIs. It
-returns a `Response`, potentially wrapping the body in `ManagedBody` so the
-connection can be recycled when the caller finishes consuming it.
+returns an `_IncomingResponse` before the public `Response` conversion and
+`ManagedBody` wrapping step.
 
 Throws parser, protocol, transport, TLS, and timeout exceptions depending on
 where the exchange fails.
@@ -928,14 +1118,68 @@ function _roundtrip_incoming!(
             _apply_conn_deadline!(conn, request_deadline)
             request_io = _reset_request_buffer!(conn)
             stream = _conn_stream(conn)
-            try
-                wire_target = plan.mode == _ProxyPlanMode.HTTP_FORWARD ? _request_url(false, String(address), current_request.target) : nothing
-                proxy_auth = plan.mode == _ProxyPlanMode.HTTP_FORWARD && plan.proxy !== nothing ? (plan.proxy::_ProxyTarget).authorization : nothing
-                _write_request_streaming!(request_io, stream, current_request; wire_target=wire_target, proxy_authorization=proxy_auth)
-            finally
+            wire_target = plan.mode == _ProxyPlanMode.HTTP_FORWARD ? _request_url(false, String(address), current_request.target) : nothing
+            proxy_auth = plan.mode == _ProxyPlanMode.HTTP_FORWARD && plan.proxy !== nothing ? (plan.proxy::_ProxyTarget).authorization : nothing
+            has_request_body = _request_has_body(current_request)
+            continue_state = _request_expects_continue(current_request) ? Threads.Atomic{UInt8}(UInt8(0x0)) : nothing
+            stop_upload = has_request_body ? Threads.Atomic{Bool}(false) : nothing
+            allow_writer_close = has_request_body ? Threads.Atomic{Bool}(true) : nothing
+            head_written = Threads.Atomic{Bool}(!has_request_body)
+            writer_done = Threads.Atomic{Bool}(!has_request_body)
+            writer_err = Base.RefValue{Union{Nothing,Exception}}(nothing)
+            writer_task = nothing
+            if has_request_body
+                writer_task = Threads.@spawn begin
+                    try
+                        _write_request_streaming!(
+                            request_io,
+                            stream,
+                            current_request;
+                            wire_target=wire_target,
+                            proxy_authorization=proxy_auth,
+                            continue_state=continue_state,
+                            stop_upload=stop_upload,
+                            request_deadline=request_deadline,
+                            head_written=head_written,
+                        )
+                    catch err
+                        writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
+                        allow_writer_close === nothing || (allow_writer_close::Threads.Atomic{Bool})[] || return nothing
+                        try
+                            _close_conn!(conn)
+                        catch
+                        end
+                    finally
+                        try
+                            body_close!(current_request.body)
+                        catch
+                        finally
+                            writer_done[] = true
+                        end
+                    end
+                    return nothing
+                end
+                if request_deadline == 0
+                    while !(head_written[] || writer_done[])
+                        timedwait(() -> head_written[] || writer_done[], 0.05; pollint=0.001)
+                    end
+                else
+                    status = timedwait(() -> head_written[] || writer_done[], max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
+                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
+                end
+                if writer_done[]
+                    wait(writer_task::Task)
+                    err = writer_err[]
+                    err === nothing || throw(err::Exception)
+                end
+            else
                 try
-                    body_close!(current_request.body)
-                catch
+                    _write_request_streaming!(request_io, stream, current_request; wire_target=wire_target, proxy_authorization=proxy_auth)
+                finally
+                    try
+                        body_close!(current_request.body)
+                    catch
+                    end
                 end
             end
             reader = conn.reader
@@ -943,13 +1187,43 @@ function _roundtrip_incoming!(
             # HTTP/1 informational responses are consumed internally so callers
             # observe the final non-1xx response.
             while (raw_response.head.status >= 100 && raw_response.head.status < 200) && raw_response.head.status != 101
+                if continue_state !== nothing && raw_response.head.status == 100
+                    (continue_state::Threads.Atomic{UInt8})[] = UInt8(0x1)
+                end
                 try
                     body_close!(raw_response.rawbody)
                 catch
                 end
                 raw_response = _read_incoming_response(reader, current_request)
             end
+            early_final = false
+            if continue_state !== nothing && (continue_state::Threads.Atomic{UInt8})[] == UInt8(0x0)
+                (continue_state::Threads.Atomic{UInt8})[] = UInt8(0x2)
+                early_final = true
+            end
+            if stop_upload !== nothing && !(writer_done::Threads.Atomic{Bool})[]
+                early_final = true
+                (stop_upload::Threads.Atomic{Bool})[] = true
+                (allow_writer_close::Threads.Atomic{Bool})[] = false
+                _set_conn_write_deadline!(conn, Int64(time_ns()))
+            end
+            if has_request_body && !early_final
+                if request_deadline == 0
+                    wait(writer_task::Task)
+                else
+                    status = timedwait(() -> istaskdone(writer_task::Task), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
+                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
+                    wait(writer_task::Task)
+                end
+            end
+            if has_request_body && writer_task !== nothing && istaskdone(writer_task::Task)
+                err = writer_err[]
+                if err !== nothing && !(early_final && _request_upload_abort_error(err::Exception))
+                    throw(err::Exception)
+                end
+            end
             reusable = _response_reusable(raw_response, current_request)
+            early_final && (reusable = false)
             if raw_response.rawbody isa EmptyBody
                 if reusable
                     _put_idle_conn!(transport, conn)

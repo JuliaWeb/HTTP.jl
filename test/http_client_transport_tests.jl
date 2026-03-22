@@ -7,6 +7,12 @@ const NC = Reseau.TCP
 const ND = Reseau.HostResolvers
 const IP = Reseau.IOPoll
 
+if !isdefined(@__MODULE__, :_http_windows_ci)
+    @inline function _http_windows_ci()::Bool
+        return Sys.iswindows() && get(ENV, "GITHUB_ACTIONS", "false") == "true"
+    end
+end
+
 function _read_all_body_bytes(body::HT.AbstractBody)::Vector{UInt8}
     out = UInt8[]
     buf = Vector{UInt8}(undef, 32)
@@ -689,13 +695,14 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     accept_count = Ref(0)
     same_conn_second_request = Ref(false)
+    first_body = fill(UInt8('x'), HT._TRANSPORT_MAX_POST_CLOSE_DRAIN_BYTES + 1024)
     server_task = errormonitor(Threads.@spawn begin
         conn1 = NC.accept(listener)
         accept_count[] += 1
         try
             req1 = HT.read_request(HT._ConnReader(conn1))
             _read_all_body_bytes(req1.body)
-            _write_response_to_conn!(conn1, req1; body_text = "first-response")
+            _write_response_bytes_to_conn!(conn1, req1; body_bytes = first_body)
             NC.set_read_deadline!(conn1, Int64(time_ns()) + 300_000_000)
             try
                 req_maybe = HT.read_request(HT._ConnReader(conn1))
@@ -808,7 +815,7 @@ end
         _wait_task!(server_task)
         @test accept_count[] == 1
         @test !second_request_seen[]
-        @test HT.idle_connection_count(transport) == 0
+        @test HT.idle_connection_count(transport) == 1
     finally
         close(transport)
         try
@@ -843,6 +850,118 @@ end
         res = HT.roundtrip!(transport, address, req)
         @test res.status == 200
         @test String(_read_all_body_bytes(res.body)) == "ok"
+        _wait_task!(server_task)
+    finally
+        close(transport)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP client transport waits for 100-continue before sending body" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    sent_body_before_continue = Ref(false)
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        reader = HT._ConnReader(conn)
+        try
+            request = HT.read_request(reader)
+            probe = Vector{UInt8}(undef, 1)
+            NC.set_read_deadline!(conn, Int64(time_ns()) + 100_000_000)
+            try
+                sent_body_before_continue[] = HT.body_read!(request.body, probe) > 0
+            catch err
+                if !(err isa IP.DeadlineExceededError || err isa HT.ParseError || err isa HT.ProtocolError)
+                    rethrow(err)
+                end
+            finally
+                NC.set_read_deadline!(conn, Int64(0))
+            end
+            _write_all_tcp!(conn, collect(codeunits("HTTP/1.1 100 Continue\r\n\r\n")))
+            @test String(_read_all_body_bytes(request.body)) == "hello"
+            _write_response_to_conn!(conn, request; body_text = "done", close_conn = true)
+        finally
+            try
+                NC.close(conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4)
+    try
+        headers = HT.Headers()
+        HT.setheader(headers, "Expect", "100-continue")
+        req = HT.Request("POST", "/continue"; host = address, headers = headers, body = HT.BytesBody(collect(codeunits("hello"))), content_length = 5)
+        res = HT.roundtrip!(transport, address, req)
+        @test res.status == 200
+        @test String(_read_all_body_bytes(res.body)) == "done"
+        _wait_task!(server_task)
+        @test !sent_body_before_continue[]
+    finally
+        close(transport)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP client transport returns early final responses before upload completes" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    close_count = Ref(0)
+    stage = Ref(1)
+    callback_body = HT.CallbackBody(
+        dst -> begin
+            if stage[] == 1
+                bytes = collect(codeunits("hello"))
+                copyto!(dst, 1, bytes, 1, length(bytes))
+                stage[] = 2
+                return length(bytes)
+            end
+            if stage[] == 2
+                sleep(1.0)
+                bytes = collect(codeunits("world"))
+                copyto!(dst, 1, bytes, 1, length(bytes))
+                stage[] = 3
+                return length(bytes)
+            end
+            return 0
+        end,
+        () -> begin
+            close_count[] += 1
+            return nothing
+        end,
+    )
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            request = HT.read_request(HT._ConnReader(conn))
+            _write_response_bytes_to_conn!(conn, request; body_bytes = collect(codeunits("early")), close_conn = true)
+        finally
+            try
+                NC.close(conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4)
+    try
+        req = HT.Request("POST", "/early"; host = address, body = callback_body, content_length = 10)
+        started = time()
+        res = HT.roundtrip!(transport, address, req)
+        elapsed = time() - started
+        @test res.status == 200
+        @test String(_read_all_body_bytes(res.body)) == "early"
+        @test elapsed < 0.75
+        @test timedwait(() -> close_count[] == 1, 2.0; pollint = 0.001) != :timed_out
         _wait_task!(server_task)
     finally
         close(transport)
@@ -905,19 +1024,119 @@ end
     end
 end
 
-@testset "HTTP client transport does not reuse conn after early response close" begin
+@testset "HTTP client transport bounded drain preserves reuse on early close" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    accept_count = Ref(0)
+    paths = String[]
+    first_body = fill(UInt8('a'), 32 * 1024)
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        accept_count[] += 1
+        try
+            req1 = HT.read_request(HT._ConnReader(conn))
+            push!(paths, req1.target)
+            _read_all_body_bytes(req1.body)
+            _write_response_bytes_to_conn!(conn, req1; body_bytes = first_body)
+            req2 = HT.read_request(HT._ConnReader(conn))
+            push!(paths, req2.target)
+            _read_all_body_bytes(req2.body)
+            _write_response_to_conn!(conn, req2; body_text = "second", close_conn = true)
+        finally
+            try
+                NC.close(conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4)
+    try
+        req1 = HT.Request("GET", "/one"; host = address, body = HT.EmptyBody(), content_length = 0)
+        res1 = HT.roundtrip!(transport, address, req1)
+        first_byte = Vector{UInt8}(undef, 1)
+        @test HT.body_read!(res1.body, first_byte) == 1
+        HT.body_close!(res1.body)
+        req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
+        res2 = HT.roundtrip!(transport, address, req2)
+        @test res2.status == 200
+        @test String(_read_all_body_bytes(res2.body)) == "second"
+        _wait_task!(server_task)
+        @test accept_count[] == 1
+        @test paths == ["/one", "/two"]
+    finally
+        close(transport)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP client transport respects request Connection close" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    accept_count = Ref(0)
+    server_task = errormonitor(Threads.@spawn begin
+        for _ in 1:2
+            conn = NC.accept(listener)
+            accept_count[] += 1
+            try
+                request = HT.read_request(HT._ConnReader(conn))
+                _read_all_body_bytes(request.body)
+                _write_response_to_conn!(conn, request; body_text = "ok")
+                NC.set_read_deadline!(conn, Int64(time_ns()) + 100_000_000)
+                try
+                    _ = HT.read_request(HT._ConnReader(conn))
+                catch
+                end
+            finally
+                try
+                    NC.close(conn)
+                catch
+                end
+            end
+        end
+        return nothing
+    end)
+    transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4)
+    try
+        headers = HT.Headers()
+        HT.setheader(headers, "Connection", "close")
+        req1 = HT.Request("GET", "/one"; host = address, headers = headers, body = HT.EmptyBody(), content_length = 0)
+        res1 = HT.roundtrip!(transport, address, req1)
+        @test String(_read_all_body_bytes(res1.body)) == "ok"
+        req2 = HT.Request("GET", "/two"; host = address, headers = headers, body = HT.EmptyBody(), content_length = 0)
+        res2 = HT.roundtrip!(transport, address, req2)
+        @test String(_read_all_body_bytes(res2.body)) == "ok"
+        _wait_task!(server_task)
+        @test accept_count[] == 2
+        @test HT.idle_connection_count(transport) == 0
+    finally
+        close(transport)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP client transport does not reuse conn after early response close beyond drain limit" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     accept_count = Ref(0)
     same_conn_second_request = Ref(false)
+    first_body = fill(UInt8('x'), HT._TRANSPORT_MAX_POST_CLOSE_DRAIN_BYTES + 1024)
     server_task = errormonitor(Threads.@spawn begin
         conn1 = NC.accept(listener)
         accept_count[] += 1
         try
             req1 = HT.read_request(HT._ConnReader(conn1))
             _read_all_body_bytes(req1.body)
-            _write_response_to_conn!(conn1, req1; body_text = "first-response")
+            _write_response_bytes_to_conn!(conn1, req1; body_bytes = first_body)
             NC.set_read_deadline!(conn1, Int64(time_ns()) + 300_000_000)
             try
                 req_maybe = HT.read_request(HT._ConnReader(conn1))
