@@ -221,6 +221,26 @@ end
     end
 end
 
+@testset "HTTP handlers request timeout middleware" begin
+    fast = HT.handlertimeout(0.05)(req -> begin
+        _ = req
+        return _response_with_text("ok")
+    end)
+    fast_resp = fast(HT.Request("GET", "/"))
+    @test fast_resp.status == 200
+    @test String(_read_all_handler_bytes(fast_resp.body)) == "ok"
+
+    slow = HT.handlertimeout(0.02; status = 504, body = "custom timeout")(req -> begin
+        _ = req
+        sleep(0.1)
+        return _response_with_text("late")
+    end)
+    slow_resp = slow(HT.Request("GET", "/"))
+    @test slow_resp.status == 504
+    @test HT.header(slow_resp.headers, "Content-Type") == "text/plain; charset=utf-8"
+    @test String(_read_all_handler_bytes(slow_resp.body)) == "custom timeout"
+end
+
 @testset "HTTP streamhandler helper" begin
     if _handlers_windows_ci_ice()
         @test_skip true

@@ -1094,6 +1094,25 @@ end
     )
 end
 
+@inline function _request_with_context(
+    request::Request{B},
+    context::RequestContext,
+)::Request{B} where {B<:AbstractBody}
+    return _request_nocopy(
+        request.method,
+        request.target,
+        request.headers,
+        request.trailers,
+        request.body,
+        request.host,
+        request.content_length,
+        request.proto_major,
+        request.proto_minor,
+        request.close,
+        context,
+    )
+end
+
 """
     Response(status; reason="", headers=Headers(), trailers=Headers(), body=EmptyBody(),
              content_length=-1, proto_major=1, proto_minor=1, close=false,

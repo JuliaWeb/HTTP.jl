@@ -11,18 +11,27 @@ export getparams
 export getparam
 export getcookies
 export limitrequestbody
+export handlertimeout
 
 import ..Request
+import ..RequestContext
 import ..Response
 import ..Stream
 import ..Cookie
 import ..Cookies
+import ..BytesBody
+import ..Headers
 import ..setstatus
+import ..setheader
 import ..startread
 import ..serve
 import ..serve!
+import ..cancel!
+import ..canceled
+import ..body_close!
 import .._request_with_body_limit
 import .._ensure_request_body_limit!
+import .._request_with_context
 
 """
     Handler
@@ -366,6 +375,101 @@ response.
 function limitrequestbody(limit::Integer)
     limit >= 0 || throw(ArgumentError("limit must be >= 0"))
     return handler -> _RequestBodyLimitMiddleware(handler, Int64(limit))
+end
+
+mutable struct _HandlerTimeoutMiddleware{H}
+    handler::H
+    timeout_ns::Int64
+    status::Int
+    response_body::Vector{UInt8}
+    content_type::String
+end
+
+function _timeout_child_context(parent::RequestContext, timeout_ns::Int64)::RequestContext
+    now = Int64(time_ns())
+    child_deadline = timeout_ns <= 0 ? Int64(0) : (now + timeout_ns)
+    parent_deadline = parent.deadline_ns
+    if parent_deadline > 0
+        child_deadline = child_deadline > 0 ? min(child_deadline, parent_deadline) : parent_deadline
+    end
+    child = RequestContext(; deadline_ns=child_deadline)
+    if parent.metadata !== nothing
+        child.metadata = copy(parent.metadata)
+    end
+    if canceled(parent)
+        cancel!(child; message=parent.cancel_message === nothing ? "request canceled" : parent.cancel_message::String)
+    end
+    return child
+end
+
+function _handler_timeout_response(
+    request::Request,
+    middleware::_HandlerTimeoutMiddleware,
+)::Response
+    headers = Headers()
+    setheader(headers, "Content-Type", middleware.content_type)
+    body_bytes = copy(middleware.response_body)
+    return Response(
+        middleware.status;
+        headers=headers,
+        body=BytesBody(body_bytes),
+        content_length=length(body_bytes),
+        proto_major=Int(request.proto_major),
+        proto_minor=Int(request.proto_minor),
+        request=request,
+    )
+end
+
+function (middleware::_HandlerTimeoutMiddleware)(req::Request)
+    derived_ctx = _timeout_child_context(req.context, middleware.timeout_ns)
+    timed_req = _request_with_context(req, derived_ctx)
+    result = Channel{Tuple{Bool,Any}}(1)
+    Threads.@spawn begin
+        try
+            put!(result, (true, middleware.handler(timed_req)))
+        catch err
+            put!(result, (false, err))
+        end
+        return nothing
+    end
+    timeout_s = middleware.timeout_ns / 1.0e9
+    status = timedwait(() -> isready(result), timeout_s; pollint=0.001)
+    if status == :ok
+        success, value = take!(result)
+        success && return value
+        throw(value)
+    end
+    cancel!(derived_ctx; message="handler timed out")
+    try
+        body_close!(timed_req.body)
+    catch
+    end
+    return _handler_timeout_response(req, middleware)
+end
+
+function (middleware::_HandlerTimeoutMiddleware)(::Stream)
+    throw(ArgumentError("handlertimeout only supports request handlers"))
+end
+
+"""
+    handlertimeout(timeout_s; status=503, body="handler timed out", content_type="text/plain; charset=utf-8")
+        -> middleware
+
+Wrap a request handler with a wall-clock timeout and synthesize a timeout
+response when the handler does not finish in time.
+"""
+function handlertimeout(
+    timeout_s::Real;
+    status::Integer=503,
+    body::Union{AbstractString,AbstractVector{UInt8}}="handler timed out",
+    content_type::AbstractString="text/plain; charset=utf-8",
+)
+    timeout_s > 0 || throw(ArgumentError("timeout_s must be > 0"))
+    status >= 0 || throw(ArgumentError("status must be >= 0"))
+    timeout_ns = round(Int64, timeout_s * 1.0e9)
+    timeout_ns > 0 || throw(ArgumentError("timeout_s must be > 0"))
+    response_body = body isa AbstractString ? Vector{UInt8}(codeunits(String(body))) : Vector{UInt8}(body)
+    return handler -> _HandlerTimeoutMiddleware(handler, timeout_ns, Int(status), response_body, String(content_type))
 end
 
 """

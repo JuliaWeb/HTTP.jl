@@ -382,6 +382,30 @@ end
     end
 end
 
+@testset "HTTP server request handler timeout middleware on HTTP/1.1" begin
+    handler = HT.handlertimeout(0.05)(request -> begin
+        if request.target == "/fast"
+            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2)
+        end
+        sleep(0.15)
+        return HT.Response(200; body = HT.BytesBody(UInt8[0x6c, 0x61, 0x74, 0x65]), content_length = 4)
+    end)
+    server = HT.serve!(handler, "127.0.0.1", 0; listenany = true)
+    address = _wait_server_addr(server)
+    try
+        slow = HT.get("http://$(address)/slow"; status_exception = false)
+        @test slow.status == 503
+        @test String(slow.body) == "handler timed out"
+
+        fast = HT.get("http://$(address)/fast")
+        @test fast.status == 200
+        @test String(fast.body) == "ok"
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP server wire-level parse and continue behavior" begin
     small_header_server = HT.Server(
         address = "127.0.0.1:0",

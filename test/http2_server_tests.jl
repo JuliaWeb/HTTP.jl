@@ -227,6 +227,34 @@ end
     end
 end
 
+@testset "HTTP/2 server request handler timeout middleware" begin
+    handler = HT.handlertimeout(0.05)(request -> begin
+        if request.target == "/fast"
+            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+        end
+        sleep(0.15)
+        return HT.Response(200; body = HT.BytesBody(UInt8[0x6c, 0x61, 0x74, 0x65]), content_length = 4, proto_major = 2, proto_minor = 0)
+    end)
+    server = HT.serve!(handler, "127.0.0.1", 0; listenany = true)
+    address = _wait_http_server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        slow_req = HT.Request("GET", "/slow"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        slow_res = HT.h2_roundtrip!(conn, slow_req)
+        @test slow_res.status == 503
+        @test String(_read_all_h2_server(slow_res.body)) == "handler timed out"
+
+        fast_req = HT.Request("GET", "/fast"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        fast_res = HT.h2_roundtrip!(conn, fast_req)
+        @test fast_res.status == 200
+        @test String(_read_all_h2_server(fast_res.body)) == "ok"
+    finally
+        close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server accepts legal request trailers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             buf = Vector{UInt8}(undef, 8)
