@@ -80,6 +80,38 @@ of targeting parser, connection-pool, HPACK, or HTTP/2 wire internals directly.
 
 Move to `HTTP.WebSockets.open`, `listen!`, `send`, and `receive`.
 
+## 5. Client timeout behavior is richer than 1.x
+
+If you used `HTTP#master`/1.x timeout keywords, this is one of the biggest
+behavioral changes to account for.
+
+In 1.x, most callers mainly had:
+
+- `connect_timeout`
+- `readtimeout`
+
+In 2.0, the client surface is more explicit and more capable:
+
+- `connect_timeout` covers the whole connection-establishment phase
+  including DNS, TCP connect, proxy `CONNECT`, TLS handshake, and HTTP/2
+  session setup
+- `request_timeout` is a true overall exchange deadline
+- `response_header_timeout` separately bounds header waits
+- `read_idle_timeout` and `write_idle_timeout` bound inactivity between
+  individual read/write progress events
+- `expect_continue_timeout` gives explicit control over HTTP/1
+  `100-continue` upload waits
+- `HTTP.WebSockets.open` now participates in the same handshake timeout model
+
+Compatibility note:
+
+- `readtimeout` is still accepted in 2.0, but it is deprecated and now maps to
+  `read_idle_timeout`
+
+This means some old 1.x call sites can migrate mechanically, but the preferred
+2.0 migration is usually to replace `readtimeout = ...` with the more precise
+timeout that actually matches your operational intent.
+
 ## Suggested Migration Order
 
 1. Upgrade simple top-level request call sites first.

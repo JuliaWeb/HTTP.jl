@@ -28,7 +28,7 @@ function wait_for_base_url(server)
                     status_exception = false,
                     proxy = HTTP.ProxyConfig(),
                     connect_timeout = 0.1,
-                    readtimeout = 0.1,
+                    request_timeout = 0.1,
                 )
                 return base_url
             catch
@@ -59,6 +59,7 @@ String(resp.body)
 
 - Familiar top-level request helpers: `HTTP.get`, `HTTP.post`, `HTTP.request`, `HTTP.open`
 - Explicit client controls: `HTTP.Client`, `HTTP.Transport`, `HTTP.ClientTrace`, `HTTP.ProxyConfig`
+- Rich client timeout controls: `connect_timeout`, `request_timeout`, `response_header_timeout`, `read_idle_timeout`, and `write_idle_timeout`
 - Server entrypoints for request/response and stream-level handlers: `HTTP.serve!`, `HTTP.listen!`, `HTTP.streamhandler`
 - Built-in HTTP/2 support in the normal client and server workflows
 - Protocol-specific APIs for WebSockets

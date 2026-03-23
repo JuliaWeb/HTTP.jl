@@ -27,7 +27,7 @@ function wait_for_base_url(server)
                     status_exception = false,
                     proxy = HTTP.ProxyConfig(),
                     connect_timeout = 0.1,
-                    readtimeout = 0.1,
+                    request_timeout = 0.1,
                 )
                 return base_url
             catch
@@ -74,7 +74,7 @@ function wait_for_base_url(server)
                     status_exception = false,
                     proxy = HTTP.ProxyConfig(),
                     connect_timeout = 0.1,
-                    readtimeout = 0.1,
+                    request_timeout = 0.1,
                 )
                 return base_url
             catch

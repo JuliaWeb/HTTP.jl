@@ -53,6 +53,14 @@ proxy-aware clients without forcing you through internal parser state. The
 [WebSockets API reference](../api/websockets.md) is the canonical home for the
 public docstrings.
 
+`HTTP.WebSockets.open` also accepts the client-side handshake timeout controls:
+
+- `connect_timeout`
+- `request_timeout`
+- `response_header_timeout`
+- `read_idle_timeout`
+- `write_idle_timeout`
+
 ## HTTP/2 Support
 
 `HTTP.jl` supports HTTP/2 through the normal client and server APIs.

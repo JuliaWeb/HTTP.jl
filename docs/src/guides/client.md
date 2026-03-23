@@ -26,7 +26,7 @@ function wait_for_base_url(server)
                     status_exception = false,
                     proxy = HTTP.ProxyConfig(),
                     connect_timeout = 0.1,
-                    readtimeout = 0.1,
+                    request_timeout = 0.1,
                 )
                 return base_url
             catch
@@ -80,7 +80,7 @@ function wait_for_base_url(server)
                     status_exception = false,
                     proxy = HTTP.ProxyConfig(),
                     connect_timeout = 0.1,
-                    readtimeout = 0.1,
+                    request_timeout = 0.1,
                 )
                 return base_url
             catch
@@ -123,7 +123,7 @@ function wait_for_base_url(server)
                     status_exception = false,
                     proxy = HTTP.ProxyConfig(),
                     connect_timeout = 0.1,
-                    readtimeout = 0.1,
+                    request_timeout = 0.1,
                 )
                 return base_url
             catch
@@ -169,7 +169,7 @@ function wait_for_base_url(server)
                     status_exception = false,
                     proxy = HTTP.ProxyConfig(),
                     connect_timeout = 0.1,
-                    readtimeout = 0.1,
+                    request_timeout = 0.1,
                 )
                 return base_url
             catch
@@ -224,9 +224,45 @@ Common body-related types:
 The retry path is explicit and conservative. For predictable behavior, prefer a
 long-lived `Client` over relying solely on default top-level behavior.
 
+### Timeout Model
+
+The client APIs now expose timeout controls by phase instead of only a single
+read timeout:
+
+- `connect_timeout` bounds DNS, TCP connect, proxy `CONNECT`, TLS handshake,
+  and HTTP/2 session setup
+- `request_timeout` is the overall deadline for the whole exchange
+- `response_header_timeout` bounds the wait from "request sent" to "response
+  headers available"
+- `read_idle_timeout` bounds inactivity between inbound read-progress events,
+  including response-header waits when `response_header_timeout` is unset
+- `write_idle_timeout` bounds inactivity between outbound write-progress events
+- `expect_continue_timeout` controls how long HTTP/1 uploads wait on
+  `100-continue` before sending the body anyway
+
+`readtimeout` is still accepted for compatibility, but it is deprecated and now
+behaves like `read_idle_timeout`.
+
+For example:
+
+```julia
+resp = HTTP.get(
+    url;
+    connect_timeout = 2.0,
+    response_header_timeout = 5.0,
+    read_idle_timeout = 30.0,
+)
+```
+
+`HTTP.open` uses the same timeout model, and `HTTP.WebSockets.open` uses the
+handshake-relevant subset (`connect_timeout`, `request_timeout`,
+`response_header_timeout`, `read_idle_timeout`, and `write_idle_timeout`).
+
 Reach for these APIs when you need more control:
 
 - `RetryBucket` for coordinated retry throttling
 - `ClientTrace` for request lifecycle callbacks
-- `connect_timeout` and `readtimeout` keywords on `request`
+- `connect_timeout`, `request_timeout`, `response_header_timeout`,
+  `read_idle_timeout`, `write_idle_timeout`, and `expect_continue_timeout`
+  on `request`
 - `retry_if`, `retry_non_idempotent`, and `respect_retry_after` for custom retry policy
