@@ -25,6 +25,7 @@ mutable struct _ConnReader{C} <: IO
     buf::Vector{UInt8}
     next::Int
     stop::Int
+    capture::Union{Nothing,_VerboseCaptureBuffer}
 end
 
 """
@@ -39,12 +40,29 @@ HTTP-specific buffering policy.
 """
 function _ConnReader(conn::C; buffer_bytes::Integer=_CONN_READER_DEFAULT_BUFFER_BYTES) where {C}
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
-    return _ConnReader{C}(conn, Vector{UInt8}(undef, Int(buffer_bytes)), 1, 0)
+    return _ConnReader{C}(conn, Vector{UInt8}(undef, Int(buffer_bytes)), 1, 0, nothing)
 end
 
 @inline function _conn_reader_available(reader::_ConnReader)::Int
     reader.next > reader.stop && return 0
     return reader.stop - reader.next + 1
+end
+
+@inline function _set_conn_reader_capture!(reader::_ConnReader, capture::Union{Nothing,_VerboseCaptureBuffer})::Nothing
+    reader.capture = capture
+    return nothing
+end
+
+@inline function _capture_conn_reader_bytes!(reader::_ConnReader, data::AbstractVector{UInt8})::Nothing
+    capture = reader.capture
+    capture === nothing || _verbose_capture!(capture::_VerboseCaptureBuffer, data)
+    return nothing
+end
+
+@inline function _capture_conn_reader_bytes!(reader::_ConnReader, byte::UInt8)::Nothing
+    capture = reader.capture
+    capture === nothing || _verbose_capture!(capture::_VerboseCaptureBuffer, byte)
+    return nothing
 end
 
 @inline function _fill_conn_reader!(reader::_ConnReader)::Int
@@ -425,6 +443,7 @@ function _close_conn!(conn::Conn)::Bool
         return false
     end
     @atomic :release conn.closed = true
+    _set_conn_reader_capture!(conn.reader, nothing)
     if conn.secure
         if conn.tls !== nothing
             try
@@ -594,6 +613,7 @@ function _wait_for_conn!(transport::Transport, waiter::_ConnWaiter, deadline_ns:
 end
 
 function _prepare_conn_for_reuse!(conn::Conn)
+    _set_conn_reader_capture!(conn.reader, nothing)
     if conn.secure
         conn.tls === nothing || TLS.set_deadline!(conn.tls::TLS.Conn, Int64(0))
     else
@@ -955,12 +975,15 @@ function Base.read(reader::_ConnReader{C}, ::Type{UInt8}) where {C}
     if _conn_reader_available(reader) > 0
         b = @inbounds reader.buf[reader.next]
         reader.next += 1
+        _capture_conn_reader_bytes!(reader, b)
         return b
     end
     n = _fill_conn_reader!(reader)
     n == 0 && throw(EOFError())
     reader.next = 2
-    return @inbounds reader.buf[1]
+    b = @inbounds reader.buf[1]
+    _capture_conn_reader_bytes!(reader, b)
+    return b
 end
 
 function Base.readbytes!(reader::_ConnReader{C}, dst::Vector{UInt8}, nb::Integer=length(dst)) where {C}
@@ -971,6 +994,7 @@ function Base.readbytes!(reader::_ConnReader{C}, dst::Vector{UInt8}, nb::Integer
     if available > 0
         copied = min(available, target)
         copyto!(dst, 1, reader.buf, reader.next, copied)
+        _capture_conn_reader_bytes!(reader, view(reader.buf, reader.next:(reader.next + copied - 1)))
         reader.next += copied
         total = copied
         total == target && return total
@@ -980,6 +1004,7 @@ function Base.readbytes!(reader::_ConnReader{C}, dst::Vector{UInt8}, nb::Integer
         n == 0 && break
         copied = min(n, target - total)
         copyto!(dst, total + 1, reader.buf, 1, copied)
+        _capture_conn_reader_bytes!(reader, view(reader.buf, 1:copied))
         reader.next = copied + 1
         reader.stop = n
         total += copied
@@ -991,12 +1016,15 @@ end
     if _conn_reader_available(reader) > 0
         b = @inbounds reader.buf[reader.next]
         reader.next += 1
+        _capture_conn_reader_bytes!(reader, b)
         return b
     end
     n = _fill_conn_reader!(reader)
     n == 0 && throw(ParseError("unexpected EOF while reading HTTP/1 data"))
     reader.next = 2
-    return @inbounds reader.buf[1]
+    b = @inbounds reader.buf[1]
+    _capture_conn_reader_bytes!(reader, b)
+    return b
 end
 
 function _readline_crlf(reader::_ConnReader{C}, max_line_bytes::Integer)::String where {C}
@@ -1020,12 +1048,14 @@ function _readline_crlf(reader::_ConnReader{C}, max_line_bytes::Integer)::String
             segment_len = stop - start + 1
             length(bytes) + segment_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes"))
             append!(bytes, @view(reader.buf[start:stop]))
+            _capture_conn_reader_bytes!(reader, view(reader.buf, start:stop))
             reader.next = stop + 1
             continue
         end
         segment_len = nl_idx - start + 1
         length(bytes) + segment_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes"))
         append!(bytes, @view(reader.buf[start:nl_idx]))
+        _capture_conn_reader_bytes!(reader, view(reader.buf, start:nl_idx))
         reader.next = nl_idx + 1
         nbytes = length(bytes)
         if nbytes >= 2 && bytes[nbytes-1] == 0x0d && bytes[nbytes] == 0x0a
@@ -1191,6 +1221,8 @@ function _roundtrip_incoming!(
             _apply_conn_deadline!(conn, request_deadline)
             request_io = _reset_request_buffer!(conn)
             stream = _conn_stream(conn)
+            exchange = _request_context_verbose_exchange(current_request.context)
+            write_stream = exchange === nothing ? stream : _VerboseTeeWriteIO(stream, (exchange::_VerboseExchangeState).request_capture)
             wire_target = plan.mode == _ProxyPlanMode.HTTP_FORWARD ? _request_url(false, String(address), current_request.target) : nothing
             proxy_auth = plan.mode == _ProxyPlanMode.HTTP_FORWARD && plan.proxy !== nothing ? (plan.proxy::_ProxyTarget).authorization : nothing
             has_request_body = _request_has_body(current_request)
@@ -1202,7 +1234,7 @@ function _roundtrip_incoming!(
                     try
                         _write_request_streaming!(
                             request_io,
-                            stream,
+                            write_stream,
                             current_request;
                             wire_target=wire_target,
                             proxy_authorization=proxy_auth,
@@ -1241,7 +1273,7 @@ function _roundtrip_incoming!(
                 end
             else
                 try
-                    _write_request_streaming!(request_io, stream, current_request; wire_target=wire_target, proxy_authorization=proxy_auth)
+                    _write_request_streaming!(request_io, write_stream, current_request; wire_target=wire_target, proxy_authorization=proxy_auth)
                 finally
                     try
                         body_close!(current_request.body)
@@ -1250,6 +1282,7 @@ function _roundtrip_incoming!(
                 end
             end
             reader = conn.reader
+            _set_conn_reader_capture!(reader, exchange === nothing ? nothing : (exchange::_VerboseExchangeState).response_capture)
             raw_response = _read_incoming_response(reader, current_request)
             # HTTP/1 informational responses are consumed internally so callers
             # observe the final non-1xx response.
@@ -1263,6 +1296,7 @@ function _roundtrip_incoming!(
                 end
                 raw_response = _read_incoming_response(reader, current_request)
             end
+            _set_verbose_response_head!(exchange, raw_response.head)
             early_final = false
             if _request_write_should_wait_for_continue(write_state) && _request_write_continue_state(write_state::_RequestWriteState) == _REQUEST_WRITE_CONTINUE_PENDING
                 _request_write_mark_continue_suppressed!(write_state::_RequestWriteState)

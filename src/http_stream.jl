@@ -30,6 +30,7 @@ function Stream(
     decompress::Union{Nothing,Bool},
     readtimeout::Real,
     retry_controller::Union{Nothing,_RetryController},
+    verbose_config::Union{Nothing,_VerboseConfig},
 )
     readtimeout >= 0 || throw(ArgumentError("readtimeout must be >= 0"))
     return Stream(
@@ -48,6 +49,7 @@ function Stream(
         decompress,
         Float64(readtimeout),
         retry_controller,
+        verbose_config,
         IOBuffer(),
         nothing,
         nothing,
@@ -146,6 +148,7 @@ function _client_start_stream_read!(stream::Stream)::Response
         host=stream.parsed.address,
         content_length=normalized_body.content_length,
     )
+    stream.verbose_config === nothing || _set_request_context_verbose_config!(req.context, stream.verbose_config::_VerboseConfig)
     if stream.readtimeout > 0
         timeout_ns = Int64(round(stream.readtimeout * 1.0e9))
         set_deadline!(req.context, Int64(time_ns()) + timeout_ns)
@@ -324,13 +327,16 @@ including `redirect`, `redirect_limit`, `redirect_method`,
 `forwardheaders`, `cookies`, `cookiejar`, `decompress`, `basicauth`, `retry`,
 `retries`, `retry_non_idempotent`, `retry_if`, `respect_retry_after`,
 `retry_bucket`, `client`, `connect_timeout`, `readtimeout`,
-`require_ssl_verification`, and `protocol`. `basicauth` accepts
+`require_ssl_verification`, `protocol`, `verbose`, `verbose_body_nbytes`, and
+`verbose_io`. `basicauth` accepts
 `(username, password)` credentials; explicit `Authorization` headers take
 precedence, and URL `userinfo` is only used as a fallback when neither is
 provided. As with `request(...)`, automatic retries only occur for replayable
 request bodies, `retry_bucket=true` uses the transport's default `RetryBucket`,
 and the built-in policy does not automatically retry request
-read-timeout/deadline failures.
+read-timeout/deadline failures. `verbose=true`/`1` prints compact progress
+logs, `verbose=2` adds detailed request/response dumps with body previews, and
+`verbose=3` captures full bodies.
 
 The `do`-block form closes request writes automatically, closes the readable
 side on exit, and returns the final response metadata.
@@ -358,6 +364,9 @@ function open(
     query=nothing,
     decompress::Union{Nothing,Bool}=nothing,
     basicauth=nothing,
+    verbose=false,
+    verbose_body_nbytes::Integer=_VERBOSE_DEFAULT_BODY_NBYTES,
+    verbose_io::IO=stderr,
     client::Union{Nothing,Client}=nothing,
     connect_timeout::Real=0,
     readtimeout::Real=0,
@@ -372,6 +381,7 @@ function open(
     _apply_default_accept_encoding!(req_headers, decompress)
     _apply_request_authorization!(req_headers, basicauth, parsed.authorization)
     req_client, owns_client = _client_for_request(client; connect_timeout=connect_timeout, require_ssl_verification=require_ssl_verification)
+    config = _verbose_config(; verbose=verbose, verbose_body_nbytes=verbose_body_nbytes, verbose_io=verbose_io)
     retry_controller = _retry_controller(
         req_client;
         retry=retry,
@@ -384,7 +394,7 @@ function open(
     client === nothing || proxy === _USE_TRANSPORT_PROXY || throw(ArgumentError("proxy override is not supported when passing an explicit Client"))
     proxy_config = _proxy_config_for_request(req_client, proxy)
     effective_cookiejar = _effective_cookiejar(client, cookiejar)
-    return Stream(
+    stream = Stream(
         _method_upper(String(method)),
         parsed,
         req_headers,
@@ -398,6 +408,7 @@ function open(
         decompress=decompress,
         readtimeout=readtimeout,
         retry_controller=retry_controller,
+        verbose_config=config,
         redirect_policy=_redirect_policy(
             req_client;
             redirect_limit=redirect_limit,
@@ -405,6 +416,7 @@ function open(
             forwardheaders=forwardheaders,
         ),
     )
+    return stream
 end
 
 function open(

@@ -417,46 +417,58 @@ function _do_incoming!(
     previous_response = nothing
     retry_attempt = 1
     retry_token = nothing
+    config = _request_context_verbose_config(request.context)
+    _verbose_line!(config, 1, string("request ", _verbose_request_summary(current_request, _request_url(current_secure, current_address, current_request.target))))
     for redirect_count in 0:redirect_policy.max_redirects
         while true
             send_request = _copy_request_for_send(current_request; allow_nonreplayable=retry_attempt == 1)
+            request_url = _request_url(current_secure, current_address, current_request.target)
             proxy_plan = _proxy_plan(proxy_config, current_secure, current_address)
+            use_h2 = _use_h2(client, current_secure, protocol) && proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD
+            exchange = _begin_verbose_exchange!(send_request, use_h2 ? :h2 : :h1, retry_attempt, redirect_count, request_url)
+            use_h2 && (send_request = _wrap_verbose_request_body!(send_request, exchange))
+            _verbose_line!(config, 1, string("attempt ", retry_attempt, " via ", use_h2 ? "h2" : "h1", " ", _verbose_request_summary(send_request, request_url)))
             host, path = _host_path_from_request(current_address, current_request)
             cookie_value = _cookie_header(cookiejar, cookies, current_secure, host, path)
             cookie_value === nothing || setheader(send_request.headers, "Cookie", cookie_value)
             _trace_call(client.trace, :on_get_conn, current_address, current_secure)
             response = try
-                if _use_h2(client, current_secure, protocol) && proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD
+                if use_h2
                     conn = nothing
                     try
                         conn = _acquire_h2_conn!(client, proxy_plan, current_address, current_secure; server_name=current_server_name)
-                        _h2_roundtrip_incoming!(conn::H2Connection, send_request)
+                        _attach_verbose_to_incoming_response(_h2_roundtrip_incoming!(conn::H2Connection, send_request), exchange; capture_body=true)
                     catch err
                         _drop_h2_conn!(client, proxy_plan, conn)
                         if protocol == :auto && _should_fallback_h2_to_h1(err)
-                            _roundtrip_incoming!(
+                            _verbose_line!(config, 1, string("h2 fallback to h1 after ", sprint(showerror, err)))
+                            send_request = _copy_request_for_send(current_request; allow_nonreplayable=retry_attempt == 1)
+                            exchange = _begin_verbose_exchange!(send_request, :h1, retry_attempt, redirect_count, request_url)
+                            _attach_verbose_to_incoming_response(_roundtrip_incoming!(
                                 client.transport,
                                 current_address,
                                 send_request;
                                 secure=current_secure,
                                 server_name=current_server_name,
                                 proxy_config=proxy_config,
-                            )
+                            ), exchange; capture_body=false)
                         else
                             rethrow(err)
                         end
                     end
                 else
-                    _roundtrip_incoming!(
+                    _attach_verbose_to_incoming_response(_roundtrip_incoming!(
                         client.transport,
                         current_address,
                         send_request;
                         secure=current_secure,
                         server_name=current_server_name,
                         proxy_config=proxy_config,
-                    )
+                    ), exchange; capture_body=false)
                 end
             catch err
+                exchange !== nothing && _verbose_log_request_dump!(exchange::_VerboseExchangeState)
+                _verbose_line!(config, 1, string("attempt ", retry_attempt, " failed: ", sprint(showerror, err)))
                 if controller !== nothing
                     ctrl = controller::_RetryController
                     _release_retry_token!(ctrl, retry_token, err)
@@ -467,6 +479,7 @@ function _do_incoming!(
                     if _should_retry_request_attempt(ctrl, retry_attempt, current_request, err, nothing)
                         scheduled, next_token = _arm_request_retry!(ctrl, current_address, current_request, retry_attempt, nothing)
                         if scheduled
+                            _verbose_line!(config, 1, string("retrying after error on attempt ", retry_attempt))
                             retry_attempt += 1
                             retry_token = next_token
                             continue
@@ -477,13 +490,14 @@ function _do_incoming!(
             end
             response = _annotate_incoming_response(
                 response,
-                _request_url(current_secure, current_address, current_request.target),
+                request_url,
                 previous_response,
                 redirect_count,
             )
             _trace_call(client.trace, :on_got_conn, current_address, current_secure)
             _trace_call(client.trace, :on_wrote_request, send_request.method, send_request.target)
             _trace_call(client.trace, :on_got_first_response_byte, response.head.status)
+            _verbose_line!(config, 1, string("response ", _verbose_response_summary(response.head), " for ", request_url))
             _store_set_cookies!(cookiejar, cookies, current_secure, host, path, response.head.headers)
             status_response = _retry_policy_response(response, current_request)
             if controller !== nothing
@@ -509,6 +523,7 @@ function _do_incoming!(
                 if should_retry
                     scheduled, next_token = _arm_request_retry!(ctrl, current_address, current_request, retry_attempt, status_response)
                     if scheduled
+                        _verbose_line!(config, 1, string("retrying after response status ", status_response.status, " on attempt ", retry_attempt))
                         retry_attempt += 1
                         retry_token = next_token
                         try
@@ -537,6 +552,7 @@ function _do_incoming!(
             end
             previous_response = _streaming_response(response)
             body_close!(response.rawbody)
+            _verbose_line!(config, 1, string("redirect ", response.head.status, " -> ", location::String))
             previous_secure = current_secure
             previous_address = current_address
             previous_target = current_request.target
@@ -583,7 +599,12 @@ function do!(
     forwardheaders::Bool=true,
     cookies=true,
     cookiejar::Union{Nothing,CookieJar}=nothing,
+    verbose=false,
+    verbose_body_nbytes::Integer=_VERBOSE_DEFAULT_BODY_NBYTES,
+    verbose_io::IO=stderr,
 )
+    config = _verbose_config(; verbose=verbose, verbose_body_nbytes=verbose_body_nbytes, verbose_io=verbose_io)
+    config === nothing || _set_request_context_verbose_config!(request.context, config)
     normalized_cookies = _normalize_cookies_input(cookies)
     policy = _redirect_policy(
         client;
@@ -1211,6 +1232,12 @@ Keyword arguments:
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
   successful SSE responses
+- `verbose`: `true`/`1` prints compact client progress logs, `2` adds detailed
+  request/response dumps with body previews, and `3` includes full captured
+  bodies
+- `verbose_body_nbytes`: maximum request/response body bytes shown by
+  `verbose=2`; ignored by `verbose=3`
+- `verbose_io`: destination `IO` for verbose logs; defaults to `stderr`
 - `client`: optional explicit `Client`; otherwise a default or ephemeral client
   is created
 - `connect_timeout`: connection timeout in seconds for implicit clients
@@ -1260,6 +1287,9 @@ function request(
     response_body=response_stream,
     decompress::Union{Nothing,Bool}=nothing,
     sse_callback=nothing,
+    verbose=false,
+    verbose_body_nbytes::Integer=_VERBOSE_DEFAULT_BODY_NBYTES,
+    verbose_io::IO=stderr,
     client::Union{Nothing,Client}=nothing,
     connect_timeout::Real=0,
     readtimeout::Real=0,
@@ -1288,6 +1318,8 @@ function request(
         host=parsed.address,
         content_length=normalized_body.content_length,
     )
+    config = _verbose_config(; verbose=verbose, verbose_body_nbytes=verbose_body_nbytes, verbose_io=verbose_io)
+    config === nothing || _set_request_context_verbose_config!(req.context, config)
     if readtimeout > 0
         timeout_ns = Int64(round(readtimeout * 1.0e9))
         set_deadline!(req.context, Int64(time_ns()) + timeout_ns)

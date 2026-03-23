@@ -192,6 +192,35 @@ end
     end
 end
 
+@testset "HTTP integration verbose best-effort h2 dumps" begin
+    h2_server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        payload = collect(codeunits("h2-verbose:" * request.target))
+        return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+    end
+    h2_address = _wait_http_addr(h2_server)
+    verbose_io = IOBuffer()
+    try
+        response = HT.get(
+            "http://$(h2_address)/verbose-h2";
+            protocol = :h2,
+            verbose = 2,
+            verbose_io = verbose_io,
+        )
+        @test response.status == 200
+        @test String(response.body) == "h2-verbose:/verbose-h2"
+        log_text = String(take!(verbose_io))
+        @test occursin("[http] request dump (h2, attempt 1)", log_text)
+        @test occursin("GET /verbose-h2 HTTP/2\r\n", log_text)
+        @test occursin("Host: $(h2_address)\r\n", log_text)
+        @test occursin("[http] response dump (h2, attempt 1)", log_text)
+        @test occursin("HTTP/2 200\r\n", log_text)
+        @test occursin("h2-verbose:/verbose-h2", log_text)
+    finally
+        HT.forceclose(h2_server)
+        wait(h2_server)
+    end
+end
+
 @testset "HTTP integration opens additional h2 connections under peer concurrency caps" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
