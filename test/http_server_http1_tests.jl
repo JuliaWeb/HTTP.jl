@@ -218,6 +218,40 @@ end
     end
 end
 
+@testset "HTTP server request body limiting middleware on HTTP/1.1" begin
+    seen_payloads = String[]
+    limited_handler = HT.limitrequestbody(4)(request -> begin
+        buf = Vector{UInt8}(undef, 4)
+        n = HT.body_read!(request.body, buf)
+        push!(seen_payloads, String(@view(buf[1:n])))
+        return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2)
+    end)
+    server = HT.serve!(limited_handler, "127.0.0.1", 0; listenany = true)
+    address = _wait_server_addr(server)
+    try
+        ok = HT.post("http://$(address)/"; body = "ping")
+        @test ok.status == 200
+        @test String(ok.body) == "ok"
+
+        raw = _raw_http_request(
+            HT.port(server),
+            "POST / HTTP/1.1\r\n" *
+            "Host: $(address)\r\n" *
+            "Transfer-Encoding: chunked\r\n" *
+            "\r\n" *
+            "4\r\nabcd\r\n" *
+            "2\r\nef\r\n" *
+            "0\r\n\r\n";
+            settle_s = 0.1,
+        )
+        @test occursin("HTTP/1.1 413 Content Too Large", raw)
+        @test seen_payloads == ["ping", "abcd"]
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP server wire-level parse and continue behavior" begin
     small_header_server = HT.Server(
         address = "127.0.0.1:0",

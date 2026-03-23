@@ -12,6 +12,7 @@ export ParseError
 export ProtocolError
 export CanceledError
 export HTTPTimeoutError
+export RequestBodyTooLargeError
 export canonical_header_key
 export header
 export headers
@@ -75,6 +76,16 @@ struct HTTPTimeoutError <: Exception
     timeout_ns::Int64
 end
 
+"""
+    RequestBodyTooLargeError
+
+Raised when server-side request body limiting rejects a payload that exceeds the
+configured byte cap.
+"""
+struct RequestBodyTooLargeError <: Exception
+    limit::Int64
+end
+
 function Base.showerror(io::IO, err::ParseError)
     print(io, "http parse error: ", err.message)
     return nothing
@@ -92,6 +103,11 @@ end
 
 function Base.showerror(io::IO, err::HTTPTimeoutError)
     print(io, "http timeout during ", err.operation, " after ", err.timeout_ns, " ns")
+    return nothing
+end
+
+function Base.showerror(io::IO, err::RequestBodyTooLargeError)
+    print(io, "http request body exceeded limit of ", err.limit, " bytes")
     return nothing
 end
 
@@ -1055,6 +1071,26 @@ end
         proto_minor,
         close,
         context,
+    )
+end
+
+@inline function _request_with_body(
+    request::Request,
+    body::B;
+    content_length::Integer=request.content_length,
+)::Request{B} where {B<:AbstractBody}
+    return _request_nocopy(
+        request.method,
+        request.target,
+        request.headers,
+        request.trailers,
+        body,
+        request.host,
+        Int64(content_length),
+        request.proto_major,
+        request.proto_minor,
+        request.close,
+        request.context,
     )
 end
 

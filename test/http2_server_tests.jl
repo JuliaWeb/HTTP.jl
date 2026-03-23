@@ -126,6 +126,37 @@ end
     end
 end
 
+@testset "HTTP/2 server request body limiting middleware" begin
+    server = HT.serve!(HT.limitrequestbody(4)(request -> begin
+            buf = Vector{UInt8}(undef, 8)
+            while true
+                n = HT.body_read!(request.body, buf)
+                n == 0 && break
+            end
+            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+        end), "127.0.0.1", 0; listenany = true)
+    address = _wait_http_server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        decoder = HT.Decoder()
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/limited"; method = "POST", end_stream = false)
+        _write_frame_h2_server_raw!(conn, HT.DataFrame(UInt32(1), true, collect(codeunits("abcdef"))))
+        headers_frame, header_block, _ = _read_h2_server_header_block!(reader)
+        decoded_headers = HT.decode_header_block(decoder, header_block)
+        @test any(field -> field.name == ":status" && field.value == "413", decoded_headers)
+        @test headers_frame.end_stream
+    finally
+        try
+            conn === nothing || NC.close(conn)
+        catch
+        end
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server accepts legal request trailers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             buf = Vector{UInt8}(undef, 8)

@@ -657,9 +657,96 @@ end
     return headercontains(response.headers, "Connection", "close")
 end
 
-@inline function _request_body_fully_consumed(request::Request)::Bool
+mutable struct _LimitedRequestBody{B<:AbstractBody} <: AbstractBody
+    inner::B
+    limit::Int64
+    read_so_far::Int64
+    known_length_safe::Bool
+    overflowed::Bool
+    probe::Vector{UInt8}
+    @atomic closed::Bool
+end
+
+function _LimitedRequestBody(inner::B, limit::Integer; known_length_safe::Bool=false) where {B<:AbstractBody}
+    limit >= 0 || throw(ArgumentError("limit must be >= 0"))
+    return _LimitedRequestBody(inner, Int64(limit), Int64(0), known_length_safe, false, UInt8[0x00], false)
+end
+
+function body_closed(body::_LimitedRequestBody)::Bool
+    return (@atomic :acquire body.closed) || body_closed(body.inner)
+end
+
+function body_close!(body::_LimitedRequestBody)::Nothing
+    body_closed(body) && return nothing
+    @atomic :release body.closed = true
+    body_close!(body.inner)
+    return nothing
+end
+
+function trailers(body::_LimitedRequestBody)::Headers
+    return trailers(body.inner)
+end
+
+function body_read!(body::_LimitedRequestBody, dst::Vector{UInt8})::Int
+    body_closed(body) && return 0
+    isempty(dst) && return 0
+    body.overflowed && throw(RequestBodyTooLargeError(body.limit))
+    allowed = body.limit - body.read_so_far
+    if allowed <= 0
+        body.known_length_safe && return 0
+        n = body_read!(body.inner, body.probe)
+        n == 0 && return 0
+        body.overflowed = true
+        throw(RequestBodyTooLargeError(body.limit))
+    end
+    n = if allowed >= length(dst)
+        body_read!(body.inner, dst)
+    else
+        scratch = Vector{UInt8}(undef, Int(allowed))
+        read = body_read!(body.inner, scratch)
+        read > 0 && copyto!(dst, 1, scratch, 1, read)
+        read
+    end
+    body.read_so_far += n
+    return n
+end
+
+function _request_with_body_limit(request::Request, limit::Int64)::Request
+    request.content_length > limit && throw(RequestBodyTooLargeError(limit))
+    request.body isa EmptyBody && return request
+    body = _LimitedRequestBody(request.body, limit; known_length_safe=request.content_length >= 0)
+    return _request_with_body(request, body; content_length=request.content_length)
+end
+
+function _ensure_request_body_limit!(request::Request)::Nothing
     body = request.body
+    body isa _LimitedRequestBody || return nothing
+    limited = body::_LimitedRequestBody
+    limited.overflowed && throw(RequestBodyTooLargeError(limited.limit))
+    limited.known_length_safe && return nothing
+    body_closed(limited) && return nothing
+    remaining = limited.limit - limited.read_so_far
+    while remaining > 0
+        chunk_len = min(Int64(16 * 1024), remaining)
+        scratch = Vector{UInt8}(undef, Int(chunk_len))
+        n = body_read!(limited.inner, scratch)
+        n == 0 && return nothing
+        limited.read_so_far += n
+        remaining -= n
+    end
+    n = body_read!(limited.inner, limited.probe)
+    n == 0 && return nothing
+    limited.overflowed = true
+    throw(RequestBodyTooLargeError(limited.limit))
+end
+
+@inline function _server_request_body_fully_consumed(body::AbstractBody)::Bool
     body isa EmptyBody && return true
+    if body isa _LimitedRequestBody
+        limited = body::_LimitedRequestBody
+        limited.overflowed && return false
+        return _server_request_body_fully_consumed(limited.inner)
+    end
     if body isa _H2ServerBody
         return _h2_server_body_fully_consumed(body::_H2ServerBody)
     end
@@ -671,6 +758,10 @@ end
     end
     body isa EOFBody && return false
     return false
+end
+
+@inline function _request_body_fully_consumed(request::Request)::Bool
+    return _server_request_body_fully_consumed(request.body)
 end
 
 function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response)::Nothing
@@ -709,6 +800,9 @@ end
 end
 
 function _server_error_status(err::Exception)::Union{Nothing,Int}
+    if err isa RequestBodyTooLargeError
+        return 413
+    end
     if err isa ParseError
         return 400
     end
@@ -2050,10 +2144,7 @@ function _handle_h2_stream!(
             response_obj = response::Response
             _write_h2_response!(conn, write_lock, send_state, stream_id, request, response_obj)
         end
-        if request.body isa _H2ServerBody
-            body = request.body::_H2ServerBody
-            _request_body_fully_consumed(request) || body_close!(body)
-        end
+        _request_body_fully_consumed(request) || body_close!(request.body)
     catch err
         stream_cancelled = false
         lock(state.lock)
