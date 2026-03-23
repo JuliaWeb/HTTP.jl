@@ -189,6 +189,44 @@ end
     end
 end
 
+@testset "HTTP/2 server fileserver serves files and redirects canonically" begin
+    mktempdir() do dir
+        write(joinpath(dir, "hello.txt"), "hello world")
+        docs_dir = joinpath(dir, "docs")
+        mkpath(docs_dir)
+        write(joinpath(docs_dir, "index.html"), "<p>docs</p>")
+
+        server = HT.serve!(HT.fileserver(dir; etag = :weak_stat), "127.0.0.1", 0; listenany = true)
+        address = _wait_http_server_addr(server)
+        conn = HT.connect_h2!(address; secure = false)
+        try
+            range_headers = HT.Headers()
+            HT.setheader(range_headers, "Range", "bytes=6-10")
+            range_req = HT.Request("GET", "/hello.txt"; host = address, headers = range_headers, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            range_res = HT.h2_roundtrip!(conn, range_req)
+            @test range_res.status == 206
+            @test HT.header(range_res.headers, "Content-Range") == "bytes 6-10/11"
+            @test !isempty(HT.header(range_res.headers, "ETag", ""))
+            @test String(_read_all_h2_server(range_res.body)) == "world"
+
+            redirect_req = HT.Request("GET", "/docs"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            redirect_res = HT.h2_roundtrip!(conn, redirect_req)
+            @test redirect_res.status == 301
+            @test HT.header(redirect_res.headers, "Location") == "/docs/"
+            @test isempty(_read_all_h2_server(redirect_res.body))
+
+            index_req = HT.Request("GET", "/docs/"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            index_res = HT.h2_roundtrip!(conn, index_req)
+            @test index_res.status == 200
+            @test String(_read_all_h2_server(index_res.body)) == "<p>docs</p>"
+        finally
+            close(conn)
+            HT.forceclose(server)
+            _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        end
+    end
+end
+
 @testset "HTTP/2 server accepts legal request trailers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             buf = Vector{UInt8}(undef, 8)

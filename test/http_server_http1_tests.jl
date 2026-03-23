@@ -323,6 +323,65 @@ end
     end
 end
 
+@testset "HTTP servefile and fileserver over HTTP/1.1" begin
+    mktempdir() do dir
+        hello_path = joinpath(dir, "hello.txt")
+        write(hello_path, "hello world")
+        docs_dir = joinpath(dir, "docs")
+        mkpath(docs_dir)
+        write(joinpath(docs_dir, "index.html"), "<p>docs</p>")
+
+        direct_req = HT.Request("GET", "/hello.txt")
+        direct_resp = HT.servefile(direct_req, hello_path; etag = :weak_stat, cache_control = "public, max-age=60")
+        @test direct_resp.status == 200
+        @test HT.header(direct_resp.headers, "Cache-Control") == "public, max-age=60"
+        @test !isempty(HT.header(direct_resp.headers, "ETag", ""))
+        @test String(_read_all_server_bytes(direct_resp.body)) == "hello world"
+
+        server = HT.serve!(HT.fileserver(dir; etag = :weak_stat, cache_control = "public, max-age=60"), "127.0.0.1", 0; listenany = true)
+        address = _wait_server_addr(server)
+        try
+            range_headers = HT.Headers()
+            HT.setheader(range_headers, "Range", "bytes=6-10")
+            partial = HT.request("GET", "http://$(address)/hello.txt"; headers = range_headers)
+            @test partial.status == 206
+            @test HT.header(partial.headers, "Content-Range") == "bytes 6-10/11"
+            @test String(partial.body) == "world"
+            @test !isempty(HT.header(partial.headers, "ETag", ""))
+
+            dir_redirect = HT.request("GET", "http://$(address)/docs"; redirect = false, status_exception = false)
+            @test dir_redirect.status == 301
+            @test HT.header(dir_redirect.headers, "Location") == "/docs/"
+
+            index_redirect = HT.request("GET", "http://$(address)/docs/index.html"; redirect = false, status_exception = false)
+            @test index_redirect.status == 301
+            @test HT.header(index_redirect.headers, "Location") == "/docs/"
+
+            file_redirect = HT.request("GET", "http://$(address)/hello.txt/"; redirect = false, status_exception = false)
+            @test file_redirect.status == 301
+            @test HT.header(file_redirect.headers, "Location") == "/hello.txt"
+
+            index_resp = HT.get("http://$(address)/docs/"; status_exception = false)
+            @test index_resp.status == 200
+            @test String(index_resp.body) == "<p>docs</p>"
+
+            post_resp = HT.request("POST", "http://$(address)/hello.txt"; status_exception = false)
+            @test post_resp.status == 405
+            @test HT.header(post_resp.headers, "Allow") == "GET, HEAD"
+
+            traversal = _raw_http_request(
+                HT.port(server),
+                "GET /%2e%2e/secret HTTP/1.1\r\nHost: $(address)\r\n\r\n";
+                settle_s = 0.1,
+            )
+            @test occursin("HTTP/1.1 400 Bad Request", traversal)
+        finally
+            _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+            _run_with_timeout(() -> wait(server); label = "server task completion")
+        end
+    end
+end
+
 @testset "HTTP server wire-level parse and continue behavior" begin
     small_header_server = HT.Server(
         address = "127.0.0.1:0",

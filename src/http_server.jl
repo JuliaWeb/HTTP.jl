@@ -7,6 +7,8 @@ export serve
 export serve!
 export streamhandler
 export servecontent
+export servefile
+export fileserver
 export forceclose
 export port
 
@@ -1292,6 +1294,213 @@ function servecontent(
         proto_minor=Int(request.proto_minor),
         request=request,
     )
+end
+
+function _request_path_and_query(target::AbstractString)::Tuple{String,String}
+    raw = String(target)
+    isempty(raw) && return "/", ""
+    if raw == "*"
+        return "/", ""
+    end
+    path_and_query = if startswith(raw, "/")
+        raw
+    else
+        scheme_idx = findfirst("://", raw)
+        if scheme_idx === nothing
+            raw
+        else
+            authority_start = last(scheme_idx) + 1
+            authority_start > lastindex(raw) ? "/" : begin
+                slash_idx = findnext(isequal('/'), raw, authority_start)
+                slash_idx === nothing ? "/" : String(SubString(raw, slash_idx, lastindex(raw)))
+            end
+        end
+    end
+    qidx = findfirst(isequal('?'), path_and_query)
+    if qidx === nothing
+        return path_and_query, ""
+    end
+    path = qidx == firstindex(path_and_query) ? "" : String(SubString(path_and_query, firstindex(path_and_query), prevind(path_and_query, qidx)))
+    query = String(SubString(path_and_query, qidx, lastindex(path_and_query)))
+    return isempty(path) ? "/" : path, query
+end
+
+function _decoded_request_path_segments(path::AbstractString)::Vector{String}
+    decoded = try
+        URIs.unescapeuri(String(path))
+    catch err
+        throw(ArgumentError("invalid request path: $(sprint(showerror, err))"))
+    end
+    segments = String[]
+    for segment in split(decoded, '/'; keepempty=false)
+        (segment == "." || segment == "..") && throw(ArgumentError("invalid request path"))
+        push!(segments, segment)
+    end
+    return segments
+end
+
+function _server_response(
+    request::Request,
+    status::Integer;
+    headers=Headers(),
+    body::AbstractBody=EmptyBody(),
+    content_length::Integer=0,
+)::Response
+    return Response(
+        status;
+        headers=headers,
+        body=body,
+        content_length=content_length,
+        proto_major=Int(request.proto_major),
+        proto_minor=Int(request.proto_minor),
+        request=request,
+    )
+end
+
+function _redirect_response(request::Request, location::AbstractString)::Response
+    headers = Headers()
+    setheader(headers, "Location", String(location))
+    return _server_response(request, 301; headers=headers)
+end
+
+function _method_not_allowed_response(request::Request)::Response
+    headers = Headers()
+    setheader(headers, "Allow", "GET, HEAD")
+    return _server_response(request, 405; headers=headers)
+end
+
+function _resolve_file_etag(path::String, st, etag)
+    etag === nothing && return nothing
+    if etag === :weak_stat
+        return "W/\"$(st.size)-$(round(Int64, st.mtime))\""
+    end
+    if etag isa Function
+        value = etag(path, st)
+        value === nothing && return nothing
+        return String(value)
+    end
+    return String(etag)
+end
+
+function _servefile_response(
+    request::Request,
+    path::String;
+    request_path::String,
+    query_suffix::String,
+    index_file::String,
+    redirect_canonical::Bool,
+    etag=nothing,
+    cache_control::Union{Nothing,AbstractString}=nothing,
+)::Response
+    if redirect_canonical && endswith(request_path, "/" * index_file)
+        location = String(SubString(request_path, firstindex(request_path), lastindex(request_path) - length(index_file)))
+        return _redirect_response(request, location * query_suffix)
+    end
+
+    if isdir(path)
+        if redirect_canonical && !endswith(request_path, "/")
+            return _redirect_response(request, request_path * "/" * query_suffix)
+        end
+        path = joinpath(path, index_file)
+        isfile(path) || return _server_response(request, 404)
+    else
+        if redirect_canonical && request_path != "/" && endswith(request_path, "/")
+            trimmed = rstrip(request_path, '/')
+            isempty(trimmed) && (trimmed = "/")
+            return _redirect_response(request, trimmed * query_suffix)
+        end
+        isfile(path) || return _server_response(request, 404)
+    end
+
+    st = stat(path)
+    modtime = Dates.unix2datetime(st.mtime)
+    response_headers = Headers()
+    cache_control === nothing || setheader(response_headers, "Cache-Control", String(cache_control))
+    resolved_etag = _resolve_file_etag(path, st, etag)
+    source = open(path, "r")
+    response = servecontent(
+        request,
+        source;
+        name=basename(path),
+        size=st.size,
+        modtime=modtime,
+        etag=resolved_etag,
+        headers=response_headers,
+    )
+    if response.body isa _SeekableResponseBody
+        (response.body::_SeekableResponseBody).owns_io = true
+    end
+    return response
+end
+
+"""
+    servefile(request, path; ...)
+
+Serve the file or directory at `path` for `request` using `servecontent`
+semantics and canonical redirect handling.
+"""
+function servefile(
+    request::Request,
+    path::AbstractString;
+    index_file::AbstractString="index.html",
+    redirect_canonical::Bool=true,
+    etag=nothing,
+    cache_control::Union{Nothing,AbstractString}=nothing,
+)::Response
+    (request.method == "GET" || request.method == "HEAD") || return _method_not_allowed_response(request)
+    request_path, query_suffix = _request_path_and_query(request.target)
+    try
+        _decoded_request_path_segments(request_path)
+    catch
+        return _server_response(request, 400)
+    end
+    return _servefile_response(
+        request,
+        String(path);
+        request_path=request_path,
+        query_suffix=query_suffix,
+        index_file=String(index_file),
+        redirect_canonical=redirect_canonical,
+        etag=etag,
+        cache_control=cache_control,
+    )
+end
+
+"""
+    fileserver(root; ...)
+
+Return a request handler that serves static files rooted at `root`.
+"""
+function fileserver(
+    root::AbstractString;
+    index_file::AbstractString="index.html",
+    redirect_canonical::Bool=true,
+    etag=nothing,
+    cache_control::Union{Nothing,AbstractString}=nothing,
+)
+    root_path = abspath(String(root))
+    isdir(root_path) || throw(ArgumentError("fileserver root must be an existing directory"))
+    index_name = String(index_file)
+    return function (request::Request)
+        (request.method == "GET" || request.method == "HEAD") || return _method_not_allowed_response(request)
+        request_path, query_suffix = _request_path_and_query(request.target)
+        segments = try
+            _decoded_request_path_segments(request_path)
+        catch
+            return _server_response(request, 400)
+        end
+        resolved = isempty(segments) ? root_path : joinpath(root_path, segments...)
+        return _servefile_response(
+            request,
+            resolved;
+            request_path=request_path,
+            query_suffix=query_suffix,
+            index_file=index_name,
+            redirect_canonical=redirect_canonical,
+            etag=etag,
+            cache_control=cache_control,
+        )
+    end
 end
 
 function _server_stream_allows_body(stream::Stream)::Bool
