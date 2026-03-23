@@ -1265,9 +1265,9 @@ Keyword arguments:
 - `verbose_io`: destination `IO` for verbose logs; defaults to `stderr`
 - `client`: optional explicit `Client`; otherwise a default or ephemeral client
   is created
-- `connect_timeout`: connection establishment timeout in seconds; currently
-  enforced for implicit-client dialing and additionally tracked per request for
-  lower layers
+- `connect_timeout`: connection establishment timeout in seconds, covering DNS,
+  TCP connect, proxy CONNECT, TLS handshake, and HTTP/2 session setup in the
+  high-level client paths
 - `request_timeout`: overall request deadline in seconds
 - `response_header_timeout`: maximum time to wait for response headers after
   the request has been sent
