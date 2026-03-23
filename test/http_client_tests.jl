@@ -813,7 +813,7 @@ end
     seen_header = Ref{Union{Nothing, String}}(nothing)
     seen_auth = Union{Nothing, String}[]
     server_task = errormonitor(Threads.@spawn begin
-        for _ in 1:10
+        for _ in 1:15
             conn = NC.accept(listener)
             try
                 req = HT.read_request(HT._ConnReader(conn))
@@ -828,7 +828,7 @@ end
                     _send_response_client!(conn, req; body_text = payload, close_conn = true)
                 elseif startswith(req.target, "/encoded?")
                     _send_response_client!(conn, req; body_text = req.target, close_conn = true)
-                elseif req.target == "/auth" || req.target == "/auth-url" || req.target == "/auth-header"
+                elseif req.target == "/auth" || req.target == "/auth-url" || req.target == "/auth-url-uri" || req.target == "/auth-header"
                     push!(seen_auth, HT.header(req.headers, "Authorization", nothing))
                     _send_response_client!(conn, req; body_text = "auth-ok", close_conn = true)
                 elseif req.target == "/missing"
@@ -850,13 +850,26 @@ end
         @test resp_hello.status == 200
         @test String(resp_hello.body) == "hello"
 
+        uri_hello = HT.URI("$(base_url)/hello")
+        resp_uri = HT.get(uri_hello)
+        @test resp_uri.status == 200
+        @test String(resp_uri.body) == "hello"
+
         resp_symbol = HT.request(:GET, "$(base_url)/hello")
         @test resp_symbol.status == 200
         @test String(resp_symbol.body) == "hello"
 
+        resp_symbol_uri = HT.request(:GET, uri_hello)
+        @test resp_symbol_uri.status == 200
+        @test String(resp_symbol_uri.body) == "hello"
+
         resp_query = HT.get("$(base_url)/query"; query = Dict("a" => 1, "b" => 2))
         @test resp_query.status == 200
         @test String(resp_query.body) == "/query?a=1&b=2"
+
+        resp_query_uri = HT.get(HT.URI("$(base_url)/query?x=0"); query = Dict("a" => 1, "b" => 2))
+        @test resp_query_uri.status == 200
+        @test String(resp_query_uri.body) == "/query?x=0&a=1&b=2"
 
         resp_encoded = HT.get("$(base_url)/encoded"; query = Dict("a b" => "c+d", "slash" => "/x"))
         @test resp_encoded.status == 200
@@ -866,6 +879,11 @@ end
         @test resp_echo.status == 200
         @test String(resp_echo.body) == "payload"
         @test seen_header[] == "abc123"
+
+        resp_echo_uri = HT.post(HT.URI("$(base_url)/echo"), ["X-Token" => "xyz789"], "payload-uri")
+        @test resp_echo_uri.status == 200
+        @test String(resp_echo_uri.body) == "payload-uri"
+        @test seen_header[] == "xyz789"
 
         resp_auth = HT.get("$(base_url)/auth"; basicauth = ("alice", "secret"))
         @test resp_auth.status == 200
@@ -880,7 +898,15 @@ end
         resp_auth_header = HT.get("http://ignored:ignored@$(address)/auth-header", override_headers; basicauth = ("alice", "secret"))
         @test resp_auth_header.status == 200
         @test String(resp_auth_header.body) == "auth-ok"
-        @test seen_auth == ["Basic YWxpY2U6c2VjcmV0", "Basic YWxpY2U6c2VjcmV0", "Bearer override"]
+        resp_auth_uri = HT.get(HT.URI("http://alice:secret@$(address)/auth-url-uri"))
+        @test resp_auth_uri.status == 200
+        @test String(resp_auth_uri.body) == "auth-ok"
+        @test seen_auth == [
+            "Basic YWxpY2U6c2VjcmV0",
+            "Basic YWxpY2U6c2VjcmV0",
+            "Bearer override",
+            "Basic YWxpY2U6c2VjcmV0",
+        ]
 
         resp_missing = HT.get("$(base_url)/missing"; status_exception = false)
         @test resp_missing.status == 404
@@ -911,6 +937,19 @@ end
         @test parsed.authorization == "Basic YWxpY2U6c2VjcmV0"
         @test parsed.authorization === parsed.authorization
 
+        parsed_uri = HT._parse_http_url(HT.URI("http://alice:secret@$(address)/lazy/path?x=1#frag"); query = Dict("y" => 2))
+        @test !parsed_uri.secure
+        @test parsed_uri.address == "$(address)"
+        @test parsed_uri.address === parsed_uri.address
+        @test parsed_uri.target == "/lazy/path?x=1&y=2"
+        @test parsed_uri.target === parsed_uri.target
+        @test parsed_uri.server_name == "127.0.0.1"
+        @test parsed_uri.server_name === parsed_uri.server_name
+        @test parsed_uri.url == "http://$(address)/lazy/path?x=1&y=2"
+        @test parsed_uri.url === parsed_uri.url
+        @test parsed_uri.authorization == "Basic YWxpY2U6c2VjcmV0"
+        @test parsed_uri.authorization === parsed_uri.authorization
+
         parsed_query = HT._parse_http_url("https://example.com?x=1"; query = Dict("y" => 2))
         @test parsed_query.secure
         @test parsed_query.address == "example.com:443"
@@ -919,6 +958,14 @@ end
         @test parsed_query.url == "https://example.com:443/?x=1&y=2"
         @test parsed_query.authorization === nothing
 
+        parsed_query_uri = HT._parse_http_url(HT.URI("https://example.com?x=1"); query = Dict("y" => 2))
+        @test parsed_query_uri.secure
+        @test parsed_query_uri.address == "example.com:443"
+        @test parsed_query_uri.target == "/?x=1&y=2"
+        @test parsed_query_uri.server_name == "example.com"
+        @test parsed_query_uri.url == "https://example.com:443/?x=1&y=2"
+        @test parsed_query_uri.authorization === nothing
+
         parsed_ipv6 = HT._parse_http_url("https://[2001:db8::1]/ipv6")
         @test parsed_ipv6.address == "[2001:db8::1]:443"
         @test parsed_ipv6.target == "/ipv6"
@@ -926,13 +973,22 @@ end
         @test parsed_ipv6.url == "https://[2001:db8::1]:443/ipv6"
         @test parsed_ipv6.authorization === nothing
 
+        parsed_ipv6_uri = HT._parse_http_url(HT.URI("https://[2001:db8::1]/ipv6"))
+        @test parsed_ipv6_uri.address == "[2001:db8::1]:443"
+        @test parsed_ipv6_uri.target == "/ipv6"
+        @test parsed_ipv6_uri.server_name == "2001:db8::1"
+        @test parsed_ipv6_uri.url == "https://[2001:db8::1]:443/ipv6"
+        @test parsed_ipv6_uri.authorization === nothing
+
         _wait_task_client!(server_task)
         @test "/hello" in seen_targets
         @test "/echo" in seen_targets
         @test "/query?a=1&b=2" in seen_targets
+        @test "/query?x=0&a=1&b=2" in seen_targets
         @test "/encoded?a%20b=c%2Bd&slash=%2Fx" in seen_targets
         @test "/auth" in seen_targets
         @test "/auth-url" in seen_targets
+        @test "/auth-url-uri" in seen_targets
         @test "/auth-header" in seen_targets
     finally
         try

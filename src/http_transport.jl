@@ -16,6 +16,9 @@ const _TRANSPORT_WRITE_BODY_CHUNK_BYTES = 16 * 1024
 const _TRANSPORT_EXPECT_CONTINUE_TIMEOUT_NS = Int64(1_000_000_000)
 const _TRANSPORT_MAX_POST_CLOSE_DRAIN_BYTES = 256 * 1024
 const _TRANSPORT_MAX_POST_CLOSE_DRAIN_TIME_NS = Int64(50_000_000)
+const _REQUEST_WRITE_CONTINUE_PENDING = UInt8(0x0)
+const _REQUEST_WRITE_CONTINUE_ALLOWED = UInt8(0x1)
+const _REQUEST_WRITE_CONTINUE_SUPPRESSED = UInt8(0x2)
 
 mutable struct _ConnReader{C} <: IO
     conn::C
@@ -114,6 +117,19 @@ end
 
 function _ConnWaiter(key::String)
     return _ConnWaiter(key, Threads.Event(true), nothing, nothing, _CONN_WAITER_WAITING)
+end
+
+mutable struct _RequestWriteState
+    expects_continue::Bool
+    @atomic continue_state::UInt8
+    @atomic stop_upload::Bool
+    @atomic allow_writer_close::Bool
+    @atomic head_written::Bool
+    @atomic writer_done::Bool
+end
+
+function _RequestWriteState(expects_continue::Bool)
+    return _RequestWriteState(expects_continue, _REQUEST_WRITE_CONTINUE_PENDING, false, true, false, false)
 end
 
 """
@@ -246,9 +262,68 @@ end
     return headercontains(request.headers, "Expect", "100-continue")
 end
 
-@inline function _write_request_should_stop(stop_upload::Union{Nothing,Threads.Atomic{Bool}})::Bool
-    stop_upload === nothing && return false
-    return (stop_upload::Threads.Atomic{Bool})[]
+@inline function _request_write_should_wait_for_continue(write_state::Union{Nothing,_RequestWriteState})::Bool
+    return write_state !== nothing && (write_state::_RequestWriteState).expects_continue
+end
+
+@inline function _request_write_continue_state(write_state::_RequestWriteState)::UInt8
+    return @atomic :acquire write_state.continue_state
+end
+
+@inline function _request_write_mark_continue_allowed!(write_state::_RequestWriteState)::Nothing
+    @atomic :release write_state.continue_state = _REQUEST_WRITE_CONTINUE_ALLOWED
+    return nothing
+end
+
+@inline function _request_write_mark_continue_suppressed!(write_state::_RequestWriteState)::Nothing
+    @atomic :release write_state.continue_state = _REQUEST_WRITE_CONTINUE_SUPPRESSED
+    return nothing
+end
+
+@inline function _request_write_should_stop(write_state::Union{Nothing,_RequestWriteState})::Bool
+    write_state === nothing && return false
+    return @atomic :acquire (write_state::_RequestWriteState).stop_upload
+end
+
+@inline function _request_write_request_stop!(write_state::_RequestWriteState)::Nothing
+    @atomic :release write_state.stop_upload = true
+    return nothing
+end
+
+@inline function _request_write_allows_close(write_state::Union{Nothing,_RequestWriteState})::Bool
+    write_state === nothing && return true
+    return @atomic :acquire (write_state::_RequestWriteState).allow_writer_close
+end
+
+@inline function _request_write_disallow_close!(write_state::_RequestWriteState)::Nothing
+    @atomic :release write_state.allow_writer_close = false
+    return nothing
+end
+
+@inline function _request_write_mark_head_written!(write_state::Union{Nothing,_RequestWriteState})::Nothing
+    write_state === nothing && return nothing
+    @atomic :release (write_state::_RequestWriteState).head_written = true
+    return nothing
+end
+
+@inline function _request_write_head_written(write_state::Union{Nothing,_RequestWriteState})::Bool
+    write_state === nothing && return true
+    return @atomic :acquire (write_state::_RequestWriteState).head_written
+end
+
+@inline function _request_write_done(write_state::Union{Nothing,_RequestWriteState})::Bool
+    write_state === nothing && return true
+    return @atomic :acquire (write_state::_RequestWriteState).writer_done
+end
+
+@inline function _request_write_mark_done!(write_state::Union{Nothing,_RequestWriteState})::Nothing
+    write_state === nothing && return nothing
+    @atomic :release (write_state::_RequestWriteState).writer_done = true
+    return nothing
+end
+
+@inline function _request_write_head_written_or_done(write_state::Union{Nothing,_RequestWriteState})::Bool
+    return _request_write_head_written(write_state) || _request_write_done(write_state)
 end
 
 function _expect_continue_deadline_ns(request_deadline::Int64)::Int64
@@ -258,17 +333,17 @@ function _expect_continue_deadline_ns(request_deadline::Int64)::Int64
     return min(request_deadline, timeout_deadline)
 end
 
-function _await_expect_continue!(continue_state::Threads.Atomic{UInt8}, request_deadline::Int64)::Bool
+function _await_expect_continue!(write_state::_RequestWriteState, request_deadline::Int64)::Bool
     deadline_ns = _expect_continue_deadline_ns(request_deadline)
     while true
-        state = continue_state[]
-        state == UInt8(0x1) && return true
-        state == UInt8(0x2) && return false
+        state = _request_write_continue_state(write_state)
+        state == _REQUEST_WRITE_CONTINUE_ALLOWED && return true
+        state == _REQUEST_WRITE_CONTINUE_SUPPRESSED && return false
         remaining_ns = deadline_ns - Int64(time_ns())
         remaining_ns <= 0 && return true
         timedwait(() -> begin
-            state_now = continue_state[]
-            return state_now == UInt8(0x1) || state_now == UInt8(0x2)
+            state_now = _request_write_continue_state(write_state)
+            return state_now == _REQUEST_WRITE_CONTINUE_ALLOWED || state_now == _REQUEST_WRITE_CONTINUE_SUPPRESSED
         end, remaining_ns / 1.0e9; pollint=0.001)
     end
 end
@@ -277,18 +352,18 @@ function _write_exact_body_transport!(
     io::IO,
     body::AbstractBody,
     expected_len::Int64;
-    stop_upload::Union{Nothing,Threads.Atomic{Bool}}=nothing,
+    write_state::Union{Nothing,_RequestWriteState}=nothing,
 )::Bool
     expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
     expected_len == 0 && return true
     remaining = expected_len
     while remaining > 0
-        _write_request_should_stop(stop_upload) && return false
+        _request_write_should_stop(write_state) && return false
         to_read = Int(min(Int64(_TRANSPORT_WRITE_BODY_CHUNK_BYTES), remaining))
         buf = Vector{UInt8}(undef, to_read)
         n = body_read!(body, buf)
         n > 0 || throw(ProtocolError("body ended before expected Content-Length bytes were written"))
-        _write_request_should_stop(stop_upload) && return false
+        _request_write_should_stop(write_state) && return false
         write(io, n == length(buf) ? buf : @view(buf[1:n]))
         remaining -= n
     end
@@ -299,7 +374,7 @@ function _write_exact_bytes_body_transport!(
     stream,
     body::BytesBody,
     expected_len::Int64;
-    stop_upload::Union{Nothing,Threads.Atomic{Bool}}=nothing,
+    write_state::Union{Nothing,_RequestWriteState}=nothing,
 )::Bool
     expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
     expected_len == 0 && return true
@@ -307,7 +382,7 @@ function _write_exact_bytes_body_transport!(
     available >= expected_len || throw(ProtocolError("body ended before expected Content-Length bytes were written"))
     remaining = expected_len
     while remaining > 0
-        _write_request_should_stop(stop_upload) && return false
+        _request_write_should_stop(write_state) && return false
         chunk_len = Int(min(Int64(_TRANSPORT_WRITE_BODY_CHUNK_BYTES), remaining))
         stop_index = body.next_index + chunk_len - 1
         chunk = if body.next_index == 1 && stop_index == length(body.data)
@@ -327,14 +402,14 @@ function _write_chunked_body_transport!(
     io::IO,
     body::AbstractBody,
     trailer_values::Headers;
-    stop_upload::Union{Nothing,Threads.Atomic{Bool}}=nothing,
+    write_state::Union{Nothing,_RequestWriteState}=nothing,
 )::Bool
     buf = Vector{UInt8}(undef, _TRANSPORT_WRITE_BODY_CHUNK_BYTES)
     while true
-        _write_request_should_stop(stop_upload) && return false
+        _request_write_should_stop(write_state) && return false
         n = body_read!(body, buf)
         n == 0 && break
-        _write_request_should_stop(stop_upload) && return false
+        _request_write_should_stop(write_state) && return false
         print(io, string(n, base=16), "\r\n")
         write(io, @view(buf[1:n]))
         write(io, "\r\n")
@@ -572,32 +647,30 @@ function _write_request_streaming!(
     request::Request;
     wire_target::Union{Nothing,AbstractString}=nothing,
     proxy_authorization::Union{Nothing,AbstractString}=nothing,
-    continue_state::Union{Nothing,Threads.Atomic{UInt8}}=nothing,
-    stop_upload::Union{Nothing,Threads.Atomic{Bool}}=nothing,
+    write_state::Union{Nothing,_RequestWriteState}=nothing,
     request_deadline::Int64=Int64(0),
-    head_written::Union{Nothing,Threads.Atomic{Bool}}=nothing,
 )::Bool
     if request.content_length >= 0 && request.body isa BytesBody && !headercontains(request.headers, "Transfer-Encoding", "chunked")
         _write_request_head!(request_io, request; wire_target=wire_target, proxy_authorization=proxy_authorization)
         _write_request_bytes!(stream, request_io)
-        head_written === nothing || ((head_written::Threads.Atomic{Bool})[] = true)
-        continue_state === nothing || (_await_expect_continue!(continue_state::Threads.Atomic{UInt8}, request_deadline) || return false)
-        return _write_exact_bytes_body_transport!(stream, request.body::BytesBody, request.content_length; stop_upload=stop_upload)
+        _request_write_mark_head_written!(write_state)
+        !_request_write_should_wait_for_continue(write_state) || (_await_expect_continue!(write_state::_RequestWriteState, request_deadline) || return false)
+        return _write_exact_bytes_body_transport!(stream, request.body::BytesBody, request.content_length; write_state=write_state)
     end
     use_chunked, trailer_values = _write_request_head!(request_io, request; wire_target=wire_target, proxy_authorization=proxy_authorization)
     _write_request_bytes!(stream, request_io)
-    head_written === nothing || ((head_written::Threads.Atomic{Bool})[] = true)
+    _request_write_mark_head_written!(write_state)
     !_request_has_body(request) && return true
-    continue_state === nothing || (_await_expect_continue!(continue_state::Threads.Atomic{UInt8}, request_deadline) || return false)
+    !_request_write_should_wait_for_continue(write_state) || (_await_expect_continue!(write_state::_RequestWriteState, request_deadline) || return false)
     if use_chunked
-        return _write_chunked_body_transport!(stream, request.body, trailer_values; stop_upload=stop_upload)
+        return _write_chunked_body_transport!(stream, request.body, trailer_values; write_state=write_state)
     end
     request.content_length < 0 && return true
     body = request.body
     if body isa BytesBody
-        return _write_exact_bytes_body_transport!(stream, body::BytesBody, request.content_length; stop_upload=stop_upload)
+        return _write_exact_bytes_body_transport!(stream, body::BytesBody, request.content_length; write_state=write_state)
     end
-    return _write_exact_body_transport!(stream, body, request.content_length; stop_upload=stop_upload)
+    return _write_exact_body_transport!(stream, body, request.content_length; write_state=write_state)
 end
 
 function _perform_http_connect_tunnel!(
@@ -1121,11 +1194,7 @@ function _roundtrip_incoming!(
             wire_target = plan.mode == _ProxyPlanMode.HTTP_FORWARD ? _request_url(false, String(address), current_request.target) : nothing
             proxy_auth = plan.mode == _ProxyPlanMode.HTTP_FORWARD && plan.proxy !== nothing ? (plan.proxy::_ProxyTarget).authorization : nothing
             has_request_body = _request_has_body(current_request)
-            continue_state = _request_expects_continue(current_request) ? Threads.Atomic{UInt8}(UInt8(0x0)) : nothing
-            stop_upload = has_request_body ? Threads.Atomic{Bool}(false) : nothing
-            allow_writer_close = has_request_body ? Threads.Atomic{Bool}(true) : nothing
-            head_written = Threads.Atomic{Bool}(!has_request_body)
-            writer_done = Threads.Atomic{Bool}(!has_request_body)
+            write_state = has_request_body ? _RequestWriteState(_request_expects_continue(current_request)) : nothing
             writer_err = Base.RefValue{Union{Nothing,Exception}}(nothing)
             writer_task = nothing
             if has_request_body
@@ -1137,14 +1206,12 @@ function _roundtrip_incoming!(
                             current_request;
                             wire_target=wire_target,
                             proxy_authorization=proxy_auth,
-                            continue_state=continue_state,
-                            stop_upload=stop_upload,
+                            write_state=write_state,
                             request_deadline=request_deadline,
-                            head_written=head_written,
                         )
                     catch err
                         writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
-                        allow_writer_close === nothing || (allow_writer_close::Threads.Atomic{Bool})[] || return nothing
+                        _request_write_allows_close(write_state) || return nothing
                         try
                             _close_conn!(conn)
                         catch
@@ -1154,20 +1221,20 @@ function _roundtrip_incoming!(
                             body_close!(current_request.body)
                         catch
                         finally
-                            writer_done[] = true
+                            _request_write_mark_done!(write_state)
                         end
                     end
                     return nothing
                 end
                 if request_deadline == 0
-                    while !(head_written[] || writer_done[])
-                        timedwait(() -> head_written[] || writer_done[], 0.05; pollint=0.001)
+                    while !_request_write_head_written_or_done(write_state)
+                        timedwait(() -> _request_write_head_written_or_done(write_state), 0.05; pollint=0.001)
                     end
                 else
-                    status = timedwait(() -> head_written[] || writer_done[], max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
+                    status = timedwait(() -> _request_write_head_written_or_done(write_state), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
                     status == :timed_out && throw(IOPoll.DeadlineExceededError())
                 end
-                if writer_done[]
+                if _request_write_done(write_state)
                     wait(writer_task::Task)
                     err = writer_err[]
                     err === nothing || throw(err::Exception)
@@ -1187,8 +1254,8 @@ function _roundtrip_incoming!(
             # HTTP/1 informational responses are consumed internally so callers
             # observe the final non-1xx response.
             while (raw_response.head.status >= 100 && raw_response.head.status < 200) && raw_response.head.status != 101
-                if continue_state !== nothing && raw_response.head.status == 100
-                    (continue_state::Threads.Atomic{UInt8})[] = UInt8(0x1)
+                if _request_write_should_wait_for_continue(write_state) && raw_response.head.status == 100
+                    _request_write_mark_continue_allowed!(write_state::_RequestWriteState)
                 end
                 try
                     body_close!(raw_response.rawbody)
@@ -1197,14 +1264,14 @@ function _roundtrip_incoming!(
                 raw_response = _read_incoming_response(reader, current_request)
             end
             early_final = false
-            if continue_state !== nothing && (continue_state::Threads.Atomic{UInt8})[] == UInt8(0x0)
-                (continue_state::Threads.Atomic{UInt8})[] = UInt8(0x2)
+            if _request_write_should_wait_for_continue(write_state) && _request_write_continue_state(write_state::_RequestWriteState) == _REQUEST_WRITE_CONTINUE_PENDING
+                _request_write_mark_continue_suppressed!(write_state::_RequestWriteState)
                 early_final = true
             end
-            if stop_upload !== nothing && !(writer_done::Threads.Atomic{Bool})[]
+            if has_request_body && !_request_write_done(write_state)
                 early_final = true
-                (stop_upload::Threads.Atomic{Bool})[] = true
-                (allow_writer_close::Threads.Atomic{Bool})[] = false
+                _request_write_request_stop!(write_state::_RequestWriteState)
+                _request_write_disallow_close!(write_state::_RequestWriteState)
                 _set_conn_write_deadline!(conn, Int64(time_ns()))
             end
             if has_request_body && !early_final

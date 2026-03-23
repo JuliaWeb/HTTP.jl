@@ -152,10 +152,7 @@ function _urlparts_authorization!(parts::_URLParts)::Union{Nothing,String}
     cached = getfield(parts, :authorization_cache)
     isempty(cached) || return cached
     userinfo = _text_range_string(getfield(parts, :source), getfield(parts, :userinfo_range))
-    parts_split = split(userinfo, ':'; limit=2)
-    username = parts_split[1]
-    password = length(parts_split) == 2 ? parts_split[2] : ""
-    authorization = "Basic " * base64encode(string(username, ":", password))
+    authorization = _userinfo_basic_authorization(userinfo)
     setfield!(parts, :authorization_cache, authorization)
     return authorization
 end
@@ -184,6 +181,14 @@ end
 @inline function _request_url(secure::Bool, address::String, target::String)::String
     return string(secure ? "https://" : "http://", address, target)
 end
+
+@inline function _userinfo_basic_authorization(userinfo::AbstractString)::String
+    parts_split = split(userinfo, ':'; limit=2)
+    username = parts_split[1]
+    password = length(parts_split) == 2 ? parts_split[2] : ""
+    return "Basic " * base64encode(string(username, ":", password))
+end
+
 function _query_string(query)::String
     query === nothing && return ""
     query isa AbstractString && return String(query)
@@ -243,6 +248,22 @@ function _append_query(target::String, query)::String
     isempty(query_s) && return target
     occursin('?', target) && return string(target, "&", query_s)
     return string(target, "?", query_s)
+end
+
+@inline _uri_component_present(component)::Bool = component !== URIs.absent
+
+@inline function _uri_component_string(component)::String
+    return _uri_component_present(component) ? String(component) : ""
+end
+
+function _uri_request_target(uri::URI)::String
+    path = _uri_component_string(uri.path)
+    has_query = _uri_component_present(uri.query)
+    query = has_query ? String(uri.query) : ""
+    if isempty(path)
+        return has_query ? string("/?", query) : "/"
+    end
+    return has_query ? string(path, "?", query) : path
 end
 
 function _parse_http_url(url::AbstractString; query=nothing)::_URLParts
@@ -315,5 +336,54 @@ function _parse_http_url(url::AbstractString; query=nothing)::_URLParts
         "",
         "",
         "",
+    )
+end
+
+function _parse_http_url(url::URI; query=nothing)::_URLParts
+    source = string(url)
+    scheme = _uri_component_present(url.scheme) ? String(url.scheme) : ""
+    secure = if scheme == "http"
+        false
+    elseif scheme == "https"
+        true
+    elseif isempty(scheme)
+        throw(ArgumentError("URL must include http:// or https:// scheme: $source"))
+    else
+        throw(ArgumentError("unsupported URL scheme '$scheme'; expected http or https"))
+    end
+
+    host = _uri_component_string(url.host)
+    isempty(host) && throw(ArgumentError("URL missing host: $source"))
+
+    default_port = secure ? UInt16(443) : UInt16(80)
+    has_explicit_port = _uri_component_present(url.port)
+    address = if has_explicit_port
+        string(URIs.hoststring(host), ":", String(url.port))
+    else
+        HostResolvers.join_host_port(host, Int(default_port))
+    end
+
+    target = _uri_request_target(url)
+    query === nothing || (target = _append_query(target, query))
+
+    has_userinfo = _uri_component_present(url.userinfo) && !isempty(url.userinfo)
+    authorization = has_userinfo ? _userinfo_basic_authorization(String(url.userinfo)) : nothing
+    return _URLParts(
+        source,
+        secure,
+        default_port,
+        _EMPTY_TEXT_RANGE,
+        _EMPTY_TEXT_RANGE,
+        _EMPTY_TEXT_RANGE,
+        _EMPTY_TEXT_RANGE,
+        "",
+        has_explicit_port,
+        startswith(target, "/?"),
+        has_userinfo,
+        address,
+        target,
+        host,
+        _request_url(secure, address, target),
+        authorization === nothing ? "" : authorization,
     )
 end

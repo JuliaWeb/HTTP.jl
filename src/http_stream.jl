@@ -340,7 +340,7 @@ Method is currently a `Symbol` to avoid colliding with Base's file-opening
 """
 function open(
     method::Symbol,
-    url::AbstractString,
+    url::Union{AbstractString,URI},
     headers=Pair{String,String}[];
     retry::Bool=true,
     retries::Integer=4,
@@ -410,7 +410,7 @@ end
 function open(
     f::Function,
     method::Symbol,
-    url::AbstractString,
+    url::Union{AbstractString,URI},
     headers=Pair{String,String}[];
     status_exception::Bool=true,
     kwargs...,

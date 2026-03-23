@@ -1170,7 +1170,7 @@ end
 
 
 """
-    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
+    request(method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
 
 High-level one-shot HTTP request API.
 
@@ -1235,7 +1235,7 @@ request. Automatic retries only occur for replayable request bodies.
 """
 function request(
     method::Union{AbstractString,Symbol},
-    url::AbstractString,
+    url::Union{AbstractString,URI},
     h=Pair{String,String}[],
     b=nothing;
     headers=h,
@@ -1385,40 +1385,40 @@ function _split_headers_body_args(args::Tuple)
 end
 
 """`GET` convenience wrapper around `request`."""
-function get(url::AbstractString, headers=Pair{String,String}[]; kwargs...)
+function get(url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...)
     return request("GET", url, headers, nothing; kwargs...)
 end
 
 """`HEAD` convenience wrapper around `request`."""
-function head(url::AbstractString, headers=Pair{String,String}[]; kwargs...)
+function head(url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...)
     return request("HEAD", url, headers, nothing; kwargs...)
 end
 
 """`POST` convenience wrapper around `request`."""
-function post(url::AbstractString, args...; kwargs...)
+function post(url::Union{AbstractString,URI}, args...; kwargs...)
     headers, body = _split_headers_body_args(args)
     return request("POST", url, headers, body; kwargs...)
 end
 
 """`PUT` convenience wrapper around `request`."""
-function put(url::AbstractString, args...; kwargs...)
+function put(url::Union{AbstractString,URI}, args...; kwargs...)
     headers, body = _split_headers_body_args(args)
     return request("PUT", url, headers, body; kwargs...)
 end
 
 """`PATCH` convenience wrapper around `request`."""
-function patch(url::AbstractString, args...; kwargs...)
+function patch(url::Union{AbstractString,URI}, args...; kwargs...)
     headers, body = _split_headers_body_args(args)
     return request("PATCH", url, headers, body; kwargs...)
 end
 
 """`DELETE` convenience wrapper around `request`."""
-function delete(url::AbstractString, args...; kwargs...)
+function delete(url::Union{AbstractString,URI}, args...; kwargs...)
     headers, body = _split_headers_body_args(args)
     return request("DELETE", url, headers, body; kwargs...)
 end
 
 """`OPTIONS` convenience wrapper around `request`."""
-function options(url::AbstractString, headers=Pair{String,String}[]; kwargs...)
+function options(url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...)
     return request("OPTIONS", url, headers, nothing; kwargs...)
 end

@@ -18,6 +18,8 @@ The source tree is organized by responsibility:
 """
 module HTTP
 
+using URIs
+
 const VERSION = v"2.0.0"
 
 include("http_core.jl")
