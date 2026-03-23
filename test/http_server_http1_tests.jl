@@ -1,6 +1,7 @@
 using Test
 using HTTP
 using Reseau
+using Dates
 
 const HT = HTTP
 const NC = Reseau.TCP
@@ -246,6 +247,76 @@ end
         )
         @test occursin("HTTP/1.1 413 Content Too Large", raw)
         @test seen_payloads == ["ping", "abcd"]
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP servecontent direct conditionals and single ranges" begin
+    payload = collect(codeunits("abcdef"))
+    modtime = Dates.DateTime(2024, 1, 2, 3, 4, 5)
+
+    range_headers = HT.Headers()
+    HT.setheader(range_headers, "Range", "bytes=2-4")
+    range_req = HT.Request("GET", "/"; headers = range_headers)
+    range_resp = HT.servecontent(range_req, payload; name = "demo.txt", etag = "\"v1\"", modtime = modtime)
+    @test range_resp.status == 206
+    @test HT.header(range_resp.headers, "Accept-Ranges") == "bytes"
+    @test HT.header(range_resp.headers, "Content-Range") == "bytes 2-4/6"
+    @test HT.header(range_resp.headers, "Content-Type") == "text/plain; charset=utf-8"
+    @test range_resp.content_length == 3
+    @test String(_read_all_server_bytes(range_resp.body)) == "cde"
+
+    io_range_resp = HT.servecontent(range_req, IOBuffer(copy(payload)); name = "demo.txt")
+    @test io_range_resp.status == 206
+    @test HT.header(io_range_resp.headers, "Content-Range") == "bytes 2-4/6"
+    @test String(_read_all_server_bytes(io_range_resp.body)) == "cde"
+
+    none_match_headers = HT.Headers()
+    HT.setheader(none_match_headers, "If-None-Match", "\"v1\"")
+    none_match_req = HT.Request("GET", "/"; headers = none_match_headers)
+    none_match_resp = HT.servecontent(none_match_req, payload; name = "demo.txt", etag = "\"v1\"", modtime = modtime)
+    @test none_match_resp.status == 304
+    @test isempty(_read_all_server_bytes(none_match_resp.body))
+    @test HT.header(none_match_resp.headers, "ETag") == "\"v1\""
+
+    if_match_headers = HT.Headers()
+    HT.setheader(if_match_headers, "If-Match", "\"other\"")
+    if_match_req = HT.Request("GET", "/"; headers = if_match_headers)
+    if_match_resp = HT.servecontent(if_match_req, payload; name = "demo.txt", etag = "\"v1\"", modtime = modtime)
+    @test if_match_resp.status == 412
+    @test isempty(_read_all_server_bytes(if_match_resp.body))
+
+    invalid_range_headers = HT.Headers()
+    HT.setheader(invalid_range_headers, "Range", "bytes=20-25")
+    invalid_range_req = HT.Request("GET", "/"; headers = invalid_range_headers)
+    invalid_range_resp = HT.servecontent(invalid_range_req, payload; name = "demo.txt")
+    @test invalid_range_resp.status == 416
+    @test HT.header(invalid_range_resp.headers, "Content-Range") == "bytes */6"
+    @test isempty(_read_all_server_bytes(invalid_range_resp.body))
+end
+
+@testset "HTTP servecontent live HTTP/1.1 range and HEAD behavior" begin
+    payload = collect(codeunits("abcdef"))
+    modtime = Dates.DateTime(2024, 1, 2, 3, 4, 5)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            return HT.servecontent(request, payload; name = "demo.txt", etag = "\"v1\"", modtime = modtime)
+        end
+    address = _wait_server_addr(server)
+    try
+        range_headers = HT.Headers()
+        HT.setheader(range_headers, "Range", "bytes=1-3")
+        partial = HT.request("GET", "http://$(address)/"; headers = range_headers)
+        @test partial.status == 206
+        @test HT.header(partial.headers, "Content-Range") == "bytes 1-3/6"
+        @test HT.header(partial.headers, "Content-Length") == "3"
+        @test String(partial.body) == "bcd"
+
+        head = HT.request("HEAD", "http://$(address)/"; headers = range_headers)
+        @test head.status == 206
+        @test HT.header(head.headers, "Content-Length") == "3"
+        @test isempty(head.body)
     finally
         _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
         _run_with_timeout(() -> wait(server); label = "server task completion")

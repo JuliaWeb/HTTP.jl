@@ -1,6 +1,7 @@
 using Test
 using HTTP
 using Reseau
+using Dates
 
 const HT = HTTP
 const ND = Reseau.HostResolvers
@@ -152,6 +153,37 @@ end
             conn === nothing || NC.close(conn)
         catch
         end
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server servecontent supports ranges and conditionals" begin
+    payload = collect(codeunits("abcdef"))
+    modtime = Dates.DateTime(2024, 1, 2, 3, 4, 5)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            return HT.servecontent(request, payload; name = "demo.txt", etag = "\"v1\"", modtime = modtime)
+        end
+    address = _wait_http_server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        range_headers = HT.Headers()
+        HT.setheader(range_headers, "Range", "bytes=2-4")
+        range_req = HT.Request("GET", "/"; host = address, headers = range_headers, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        range_res = HT.h2_roundtrip!(conn, range_req)
+        @test range_res.status == 206
+        @test HT.header(range_res.headers, "Content-Range") == "bytes 2-4/6"
+        @test HT.header(range_res.headers, "Content-Length") == "3"
+        @test String(_read_all_h2_server(range_res.body)) == "cde"
+
+        none_match_headers = HT.Headers()
+        HT.setheader(none_match_headers, "If-None-Match", "\"v1\"")
+        none_match_req = HT.Request("GET", "/"; host = address, headers = none_match_headers, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        none_match_res = HT.h2_roundtrip!(conn, none_match_req)
+        @test none_match_res.status == 304
+        @test isempty(_read_all_h2_server(none_match_res.body))
+    finally
+        close(conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
