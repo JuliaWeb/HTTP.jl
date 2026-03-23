@@ -240,3 +240,25 @@ end
         _close_quiet!(target_task)
     end
 end
+
+@testset "HTTP.WebSockets client handshake response_header_timeout" begin
+    listener = nothing
+    task = nothing
+    try
+        listener, task, address = _ws_server() do conn
+            request = _read_ws_request(conn)
+            @test request.target == "/slow"
+            sleep(0.20)
+        end
+        err = try
+            W.open("ws://$address/slow"; response_header_timeout = 0.05)
+            nothing
+        catch ex
+            ex
+        end
+        @test err isa Reseau.IOPoll.DeadlineExceededError
+    finally
+        _close_quiet!(listener)
+        _close_quiet!(task)
+    end
+end

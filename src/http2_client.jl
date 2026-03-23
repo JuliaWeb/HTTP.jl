@@ -650,15 +650,22 @@ function _verify_h2_alpn!(conn::H2Connection)
     return nothing
 end
 
-function _make_tls_config_for_h2(config::Union{Nothing,TLS.Config}, address::String)::TLS.Config
+function _make_tls_config_for_h2(
+    config::Union{Nothing,TLS.Config},
+    address::String;
+    server_name::Union{Nothing,String}=nothing,
+    handshake_timeout_ns::Int64=Int64(0),
+)::TLS.Config
     host, _ = HostResolvers.split_host_port(address)
+    effective_server_name = server_name === nothing ? host : server_name
     if config === nothing
-        return TLS.Config(server_name=host, alpn_protocols=["h2"])
+        return TLS.Config(server_name=effective_server_name, alpn_protocols=["h2"], handshake_timeout_ns=handshake_timeout_ns)
     end
     protocols = isempty(config.alpn_protocols) ? ["h2"] : copy(config.alpn_protocols)
     in("h2", protocols) || push!(protocols, "h2")
+    effective_handshake_timeout_ns = _min_nonzero_ns(config.handshake_timeout_ns, handshake_timeout_ns)
     return TLS.Config(
-        server_name=config.server_name === nothing ? host : config.server_name,
+        server_name=server_name === nothing ? (config.server_name === nothing ? host : config.server_name) : server_name,
         verify_peer=config.verify_peer,
         client_auth=config.client_auth,
         cert_file=config.cert_file,
@@ -666,7 +673,7 @@ function _make_tls_config_for_h2(config::Union{Nothing,TLS.Config}, address::Str
         ca_file=config.ca_file,
         client_ca_file=config.client_ca_file,
         alpn_protocols=protocols,
-        handshake_timeout_ns=config.handshake_timeout_ns,
+        handshake_timeout_ns=effective_handshake_timeout_ns,
         min_version=config.min_version,
         max_version=config.max_version,
     )
@@ -692,13 +699,16 @@ function _connect_h2_from_tcp!(
     address::String;
     secure::Bool=false,
     tls_config::Union{Nothing,TLS.Config}=nothing,
+    connect_deadline_ns::Int64=Int64(0),
 )::H2Connection
     tls_conn = nothing
     try
         stream_reader = nothing
+        connect_deadline_ns == 0 || TCP.set_deadline!(tcp, connect_deadline_ns)
         if secure
             cfg = _make_tls_config_for_h2(tls_config, address)
             tls_conn = TLS.client(tcp, cfg)
+            connect_deadline_ns == 0 || TLS.set_deadline!(tls_conn, connect_deadline_ns)
             TLS.handshake!(tls_conn)
             stream_reader = _ConnReader(tls_conn::TLS.Conn)
         else
@@ -739,6 +749,11 @@ function _connect_h2_from_tcp!(
         _write_all_h2!(conn, _H2_PREFACE)
         _write_frame_h2_threadsafe!(conn, SettingsFrame(false, Pair{UInt16,UInt32}[]))
         _read_settings_until_ready!(conn)
+        if tls_conn !== nothing
+            TLS.set_deadline!(tls_conn::TLS.Conn, Int64(0))
+        else
+            TCP.set_deadline!(tcp, Int64(0))
+        end
         _start_h2_read_loop!(conn)
         return conn
     catch
@@ -770,8 +785,9 @@ function connect_h2!(
     address::AbstractString;
     secure::Bool=false,
     tls_config::Union{Nothing,TLS.Config}=nothing,
+    connect_deadline_ns::Int64=Int64(0),
 )::H2Connection
-    return _connect_h2_from_tcp!(tcp, String(address); secure=secure, tls_config=tls_config)
+    return _connect_h2_from_tcp!(tcp, String(address); secure=secure, tls_config=tls_config, connect_deadline_ns=connect_deadline_ns)
 end
 
 function connect_h2!(
@@ -779,9 +795,10 @@ function connect_h2!(
     secure::Bool=false,
     host_resolver::HostResolvers.HostResolver=HostResolvers.HostResolver(),
     tls_config::Union{Nothing,TLS.Config}=nothing,
+    connect_deadline_ns::Int64=Int64(0),
 )::H2Connection
     tcp = TCP.connect(host_resolver, "tcp", address)
-    return _connect_h2_from_tcp!(tcp, String(address); secure=secure, tls_config=tls_config)
+    return _connect_h2_from_tcp!(tcp, String(address); secure=secure, tls_config=tls_config, connect_deadline_ns=connect_deadline_ns)
 end
 
 """
@@ -1058,16 +1075,37 @@ function body_close!(body::H2Body)
     return nothing
 end
 
-function _wait_stream_headers!(state::H2StreamState)
-    lock(state.lock)
-    try
-        while !state.headers_complete && !state.stream_done && state.error === nothing
-            wait(state.condition)
+function _wait_stream_headers!(state::H2StreamState, deadline_ns::Int64)
+    if deadline_ns == 0
+        lock(state.lock)
+        try
+            while !state.headers_complete && !state.stream_done && state.error === nothing
+                wait(state.condition)
+            end
+        finally
+            unlock(state.lock)
         end
-    finally
-        unlock(state.lock)
+        return nothing
     end
-    return nothing
+    while true
+        lock(state.lock)
+        try
+            (state.headers_complete || state.stream_done || state.error !== nothing) && return nothing
+        finally
+            unlock(state.lock)
+        end
+        remaining_ns = deadline_ns - Int64(time_ns())
+        remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
+        status = timedwait(() -> begin
+            lock(state.lock)
+            try
+                return state.headers_complete || state.stream_done || state.error !== nothing
+            finally
+                unlock(state.lock)
+            end
+        end, remaining_ns / 1.0e9; pollint=0.001)
+        status == :timed_out && throw(IOPoll.DeadlineExceededError())
+    end
 end
 
 function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_IncomingResponse
@@ -1098,7 +1136,7 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
             end
             rethrow()
         end
-        _wait_stream_headers!(stream_state)
+        _wait_stream_headers!(stream_state, _request_response_header_deadline_ns(request))
         lock(stream_state.lock)
         try
             stream_state.error === nothing || throw(stream_state.error::Exception)

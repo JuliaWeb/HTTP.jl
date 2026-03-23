@@ -50,6 +50,10 @@ import .._read_incoming_response
 import .._redirect_policy
 import .._redirect_referer
 import .._request_deadline_ns
+import .._request_connect_host_resolver
+import .._request_connect_phase_deadline_ns
+import .._request_connect_phase_timeout_ns
+import .._request_response_header_deadline_ns
 import .._resolve_request_timeout_settings
 import .._apply_request_timeout_settings!
 import .._request_url
@@ -62,6 +66,7 @@ import .._validate_request_extra_kwargs
 import .._apply_conn_deadline!
 import .._clear_conn_deadline!
 import .._new_conn!
+import .._set_conn_read_deadline!
 import .._is_redirect_status
 import ..header
 import ..headers
@@ -649,8 +654,20 @@ function _websocket_roundtrip!(
     proxy_config,
 )::_ClientHandshake
     deadline_ns = _request_deadline_ns(request)
+    connect_host_resolver = _request_connect_host_resolver(client.transport.host_resolver, request)
+    connect_deadline_ns = _request_connect_phase_deadline_ns(client.transport.host_resolver, request)
+    tls_handshake_timeout_ns = _request_connect_phase_timeout_ns(client.transport.host_resolver, request)
     plan = _proxy_plan(proxy_config, secure, address)
-    conn = _new_conn!(client.transport, plan, address; secure=secure, server_name=server_name, deadline_ns=deadline_ns)
+    conn = _new_conn!(
+        client.transport,
+        plan,
+        address;
+        secure=secure,
+        server_name=server_name,
+        host_resolver=connect_host_resolver,
+        connect_deadline_ns=connect_deadline_ns,
+        tls_handshake_timeout_ns=tls_handshake_timeout_ns,
+    )
     try
         _apply_conn_deadline!(conn, deadline_ns)
         request_io = conn.request_buf
@@ -663,6 +680,7 @@ function _websocket_roundtrip!(
         nbytes = request_io.size
         wrote = write(stream, request_io.data, nbytes)
         wrote == nbytes || throw(ProtocolError("transport short write"))
+        _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(request))
         response = _read_incoming_response(conn.reader, request)
         try
             body_close!(response.rawbody)

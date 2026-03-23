@@ -5,6 +5,7 @@ using Reseau
 const HT = HTTP
 const NC = Reseau.TCP
 const ND = Reseau.HostResolvers
+const TL = Reseau.TLS
 
 function _read_all_body_bytes_client(body::HT.AbstractBody)::Vector{UInt8}
     out = UInt8[]
@@ -61,6 +62,15 @@ function _wait_task_client!(task::Task; timeout_s::Float64 = 5.0)
     status == :timed_out && error("timed out waiting for server task")
     fetch(task)
     return nothing
+end
+
+function _is_timeout_error_client(err)::Bool
+    err isa Reseau.IOPoll.DeadlineExceededError && return true
+    err isa TL.TLSHandshakeTimeoutError && return true
+    err isa TL.TLSError || return false
+    cause = (err::TL.TLSError).cause
+    cause === nothing && return false
+    return _is_timeout_error_client(cause::Exception)
 end
 
 @testset "HTTP client redirect rewrites method" begin
@@ -1917,5 +1927,78 @@ end
         catch
         end
     end
+    end
+end
+
+@testset "HTTP high-level response_header_timeout" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            req = HT.read_request(HT._ConnReader(conn))
+            _ = req
+            sleep(0.20)
+        finally
+            try
+                NC.close(conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    try
+        err = try
+            HT.get("$(base_url)/slow"; response_header_timeout=0.05)
+            nothing
+        catch ex
+            ex
+        end
+        @test err isa Reseau.IOPoll.DeadlineExceededError
+        _wait_task_client!(server_task)
+    finally
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP connect_timeout works with explicit client" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            sleep(0.20)
+        finally
+            try
+                NC.close(conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    client = HT.Client(transport=HT.Transport(tls_config=TL.Config(verify_peer=false), max_idle_per_host=4, max_idle_total=4))
+    try
+        err = try
+            HT.get("https://$(address)/stall"; client=client, connect_timeout=0.05, retry=false)
+            nothing
+        catch ex
+            ex
+        end
+        @test err !== nothing
+        @test !(err isa ArgumentError)
+        @test _is_timeout_error_client(err::Exception)
+        _wait_task_client!(server_task)
+    finally
+        close(client.transport)
+        try
+            NC.close(listener)
+        catch
+        end
     end
 end

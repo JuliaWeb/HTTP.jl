@@ -628,17 +628,23 @@ function _host_for_sni(address::AbstractString)::String
     return host
 end
 
-function _effective_tls_config(transport::Transport, address::String, server_name::Union{Nothing,String})::TLS.Config
+function _effective_tls_config(
+    transport::Transport,
+    address::String,
+    server_name::Union{Nothing,String};
+    handshake_timeout_ns::Int64=Int64(0),
+)::TLS.Config
     sni = server_name === nothing ? _host_for_sni(address) : server_name
     cfg = transport.tls_config
     if cfg === nothing
-        return TLS.Config(server_name=sni)
+        return TLS.Config(server_name=sni, handshake_timeout_ns=handshake_timeout_ns)
     end
-    if cfg.server_name !== nothing
+    effective_handshake_timeout_ns = _min_nonzero_ns(cfg.handshake_timeout_ns, handshake_timeout_ns)
+    if cfg.server_name !== nothing && effective_handshake_timeout_ns == cfg.handshake_timeout_ns
         return cfg
     end
     return TLS.Config(
-        server_name=sni,
+        server_name=cfg.server_name === nothing ? sni : cfg.server_name,
         verify_peer=cfg.verify_peer,
         client_auth=cfg.client_auth,
         cert_file=cfg.cert_file,
@@ -646,7 +652,7 @@ function _effective_tls_config(transport::Transport, address::String, server_nam
         ca_file=cfg.ca_file,
         client_ca_file=cfg.client_ca_file,
         alpn_protocols=copy(cfg.alpn_protocols),
-        handshake_timeout_ns=cfg.handshake_timeout_ns,
+        handshake_timeout_ns=effective_handshake_timeout_ns,
         min_version=cfg.min_version,
         max_version=cfg.max_version,
     )
@@ -728,17 +734,20 @@ function _new_conn!(
     address::String;
     secure::Bool,
     server_name::Union{Nothing,String},
-    deadline_ns::Int64=Int64(0),
+    host_resolver::HostResolvers.HostResolver=transport.host_resolver,
+    connect_deadline_ns::Int64=Int64(0),
+    tls_handshake_timeout_ns::Int64=Int64(0),
 )::Conn
-    tcp = TCP.connect(transport.host_resolver, "tcp", plan.first_hop_address)
+    tcp = TCP.connect(host_resolver, "tcp", plan.first_hop_address)
     if plan.mode == _ProxyPlanMode.HTTP_TUNNEL
         proxy = plan.proxy
         proxy === nothing && throw(ProtocolError("proxy CONNECT tunnel is missing proxy config"))
-        _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, deadline_ns)
+        _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
     end
     if secure
-        cfg = _effective_tls_config(transport, address, server_name)
+        cfg = _effective_tls_config(transport, address, server_name; handshake_timeout_ns=tls_handshake_timeout_ns)
         tls = TLS.client(tcp, cfg)
+        connect_deadline_ns == 0 || TLS.set_deadline!(tls, connect_deadline_ns)
         TLS.handshake!(tls)
         return Conn(plan.pool_key, plan.first_hop_address, true, tcp, tls, _ConnReader(tls), IOBuffer(), false, false, time_ns())
     end
@@ -773,7 +782,10 @@ function _acquire_conn!(
     address::String;
     secure::Bool,
     server_name::Union{Nothing,String},
-    deadline_ns::Int64=Int64(0),
+    acquire_deadline_ns::Int64=Int64(0),
+    host_resolver::HostResolvers.HostResolver=transport.host_resolver,
+    connect_deadline_ns::Int64=Int64(0),
+    tls_handshake_timeout_ns::Int64=Int64(0),
 )::Conn
     _transport_closed(transport) && throw(ProtocolError("transport is closed"))
     waiter = nothing
@@ -816,7 +828,16 @@ function _acquire_conn!(
         end
         if should_dial
             try
-                return _new_conn!(transport, plan, address; secure=secure, server_name=server_name, deadline_ns=deadline_ns)
+                return _new_conn!(
+                    transport,
+                    plan,
+                    address;
+                    secure=secure,
+                    server_name=server_name,
+                    host_resolver=host_resolver,
+                    connect_deadline_ns=connect_deadline_ns,
+                    tls_handshake_timeout_ns=tls_handshake_timeout_ns,
+                )
             catch err
                 waiter_to_notify = nothing
                 lock(transport.lock)
@@ -829,10 +850,19 @@ function _acquire_conn!(
                 rethrow(err)
             end
         end
-        result = _wait_for_conn!(transport, waiter::_ConnWaiter, deadline_ns)
+        result = _wait_for_conn!(transport, waiter::_ConnWaiter, acquire_deadline_ns)
         if result === :dial
             try
-                return _new_conn!(transport, plan, address; secure=secure, server_name=server_name, deadline_ns=deadline_ns)
+                return _new_conn!(
+                    transport,
+                    plan,
+                    address;
+                    secure=secure,
+                    server_name=server_name,
+                    host_resolver=host_resolver,
+                    connect_deadline_ns=connect_deadline_ns,
+                    tls_handshake_timeout_ns=tls_handshake_timeout_ns,
+                )
             catch err
                 waiter_to_notify = nothing
                 lock(transport.lock)
@@ -1208,13 +1238,19 @@ function _roundtrip_incoming!(
     current_request = request
     while true
         plan = _proxy_plan(proxy_config, secure, String(address))
+        connect_host_resolver = _request_connect_host_resolver(transport.host_resolver, current_request)
+        connect_deadline_ns = _request_connect_phase_deadline_ns(transport.host_resolver, current_request)
+        tls_handshake_timeout_ns = _request_connect_phase_timeout_ns(transport.host_resolver, current_request)
         conn = _acquire_conn!(
             transport,
             plan,
             String(address);
             secure=secure,
             server_name=server_name === nothing ? nothing : String(server_name),
-            deadline_ns=request_deadline,
+            acquire_deadline_ns=request_deadline,
+            host_resolver=connect_host_resolver,
+            connect_deadline_ns=connect_deadline_ns,
+            tls_handshake_timeout_ns=tls_handshake_timeout_ns,
         )
         was_reused = conn.reused
         try
@@ -1283,6 +1319,7 @@ function _roundtrip_incoming!(
             end
             reader = conn.reader
             _set_conn_reader_capture!(reader, exchange === nothing ? nothing : (exchange::_VerboseExchangeState).response_capture)
+            _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(current_request))
             raw_response = _read_incoming_response(reader, current_request)
             # HTTP/1 informational responses are consumed internally so callers
             # observe the final non-1xx response.
@@ -1296,6 +1333,7 @@ function _roundtrip_incoming!(
                 end
                 raw_response = _read_incoming_response(reader, current_request)
             end
+            _set_conn_read_deadline!(conn, request_deadline)
             _set_verbose_response_head!(exchange, raw_response.head)
             early_final = false
             if _request_write_should_wait_for_continue(write_state) && _request_write_continue_state(write_state::_RequestWriteState) == _REQUEST_WRITE_CONTINUE_PENDING

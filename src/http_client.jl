@@ -130,9 +130,14 @@ function _acquire_h2_conn!(
     plan::_ProxyPlan,
     address::String,
     secure::Bool;
+    request::Union{Nothing,Request}=nothing,
     server_name::Union{Nothing,String}=nothing,
 )::H2Connection
     key = _h2_key(plan)
+    base_host_resolver = client.transport.host_resolver
+    connect_host_resolver = request === nothing ? base_host_resolver : _request_connect_host_resolver(base_host_resolver, request::Request)
+    connect_deadline_ns = request === nothing ? _phase_deadline_ns(base_host_resolver.timeout_ns, base_host_resolver.deadline_ns) : _request_connect_phase_deadline_ns(base_host_resolver, request::Request)
+    tls_handshake_timeout_ns = request === nothing ? Int64(0) : _request_connect_phase_timeout_ns(base_host_resolver, request::Request)
     lock(client.h2_lock)
     try
         conns = get(() -> H2Connection[], client.h2_conns, key)
@@ -154,24 +159,12 @@ function _acquire_h2_conn!(
             i += 1
         end
         tls_cfg = if secure
-            base_cfg = client.transport.tls_config
-            if base_cfg === nothing
-                TLS.Config(server_name=server_name)
-            else
-                TLS.Config(
-                    server_name=server_name === nothing ? base_cfg.server_name : server_name,
-                    verify_peer=base_cfg.verify_peer,
-                    client_auth=base_cfg.client_auth,
-                    cert_file=base_cfg.cert_file,
-                    key_file=base_cfg.key_file,
-                    ca_file=base_cfg.ca_file,
-                    client_ca_file=base_cfg.client_ca_file,
-                    alpn_protocols=copy(base_cfg.alpn_protocols),
-                    handshake_timeout_ns=base_cfg.handshake_timeout_ns,
-                    min_version=base_cfg.min_version,
-                    max_version=base_cfg.max_version,
-                )
-            end
+            _make_tls_config_for_h2(
+                client.transport.tls_config,
+                address;
+                server_name=server_name,
+                handshake_timeout_ns=tls_handshake_timeout_ns,
+            )
         else
             nothing
         end
@@ -180,16 +173,17 @@ function _acquire_h2_conn!(
             connect_h2!(
                 address;
                 secure=secure,
-                host_resolver=client.transport.host_resolver,
+                host_resolver=connect_host_resolver,
                 tls_config=tls_cfg,
+                connect_deadline_ns=connect_deadline_ns,
             )
         elseif plan.mode == _ProxyPlanMode.HTTP_TUNNEL
             proxy = plan.proxy
             proxy === nothing && throw(ProtocolError("proxy CONNECT tunnel is missing proxy config"))
-            tcp = TCP.connect(client.transport.host_resolver, "tcp", plan.first_hop_address)
+            tcp = TCP.connect(connect_host_resolver, "tcp", plan.first_hop_address)
             try
-                _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, Int64(0))
-                connect_h2!(tcp, address; secure=secure, tls_config=tls_cfg)
+                _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
+                connect_h2!(tcp, address; secure=secure, tls_config=tls_cfg, connect_deadline_ns=connect_deadline_ns)
             catch
                 try
                     TCP.close(tcp)
@@ -436,7 +430,7 @@ function _do_incoming!(
                 if use_h2
                     conn = nothing
                     try
-                        conn = _acquire_h2_conn!(client, proxy_plan, current_address, current_secure; server_name=current_server_name)
+                        conn = _acquire_h2_conn!(client, proxy_plan, current_address, current_secure; request=send_request, server_name=current_server_name)
                         _attach_verbose_to_incoming_response(_h2_roundtrip_incoming!(conn::H2Connection, send_request), exchange; capture_body=true)
                     catch err
                         _drop_h2_conn!(client, proxy_plan, conn)
@@ -1141,19 +1135,16 @@ function _client_for_request(
 )::Tuple{Client,Bool}
     connect_timeout >= 0 || throw(ArgumentError("connect_timeout must be >= 0"))
     if client !== nothing
-        if connect_timeout > 0 || !require_ssl_verification
-            throw(ArgumentError("connect_timeout/require_ssl_verification overrides are not supported when passing an explicit Client"))
+        if !require_ssl_verification
+            throw(ArgumentError("require_ssl_verification overrides are not supported when passing an explicit Client"))
         end
         return client::Client, false
     end
-    if connect_timeout == 0 && require_ssl_verification
+    if require_ssl_verification
         return _default_client!(), false
     end
-    timeout_ns = connect_timeout == 0 ? Int64(0) : Int64(round(connect_timeout * 1.0e9))
-    resolver = HostResolvers.HostResolver(timeout_ns=timeout_ns)
     tls_config = require_ssl_verification ? nothing : TLS.Config(verify_peer=false)
     transport = Transport(
-        host_resolver=resolver,
         tls_config=tls_config,
         proxy=ProxyFromEnvironment(),
         max_idle_per_host=1,
@@ -1180,7 +1171,6 @@ end
 end
 
 function _apply_conn_deadline!(conn::Conn, deadline_ns::Int64)
-    deadline_ns == 0 && return nothing
     if conn.secure
         conn.tls === nothing || TLS.set_deadline!(conn.tls::TLS.Conn, deadline_ns)
     else
@@ -1196,6 +1186,32 @@ function _clear_conn_deadline!(conn::Conn)
         conn.tcp === nothing || TCP.set_deadline!(conn.tcp::TCP.Conn, Int64(0))
     end
     return nothing
+end
+
+@inline function _request_connect_phase_timeout_ns(base::HostResolvers.HostResolver, request::Request)::Int64
+    return _min_nonzero_ns(base.timeout_ns, _request_connect_timeout_ns(request))
+end
+
+@inline function _request_connect_phase_deadline_ns(base::HostResolvers.HostResolver, request::Request)::Int64
+    overall_deadline_ns = _min_nonzero_ns(base.deadline_ns, _request_deadline_ns(request))
+    timeout_ns = _request_connect_phase_timeout_ns(base, request)
+    return _phase_deadline_ns(timeout_ns, overall_deadline_ns)
+end
+
+function _request_connect_host_resolver(base::HostResolvers.HostResolver, request::Request)::HostResolvers.HostResolver
+    timeout_ns = _request_connect_phase_timeout_ns(base, request)
+    deadline_ns = _min_nonzero_ns(base.deadline_ns, _request_deadline_ns(request))
+    if timeout_ns == base.timeout_ns && deadline_ns == base.deadline_ns
+        return base
+    end
+    return HostResolvers.HostResolver(
+        timeout_ns=timeout_ns,
+        deadline_ns=deadline_ns,
+        local_addr=base.local_addr,
+        fallback_delay_ns=base.fallback_delay_ns,
+        resolver=base.resolver,
+        policy=base.policy,
+    )
 end
 
 

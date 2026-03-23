@@ -234,6 +234,33 @@ end
     end
 end
 
+@testset "HTTP/2 connect_h2! respects connect deadline" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        try
+            sleep(0.20)
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    try
+        @test_throws Reseau.IOPoll.DeadlineExceededError HT.connect_h2!(address; secure = false, connect_deadline_ns = Int64(time_ns() + 50_000_000))
+        _wait_task_h2!(server_task)
+    finally
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
 @testset "HTTP/2 client rejects server ENABLE_PUSH settings" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
@@ -257,6 +284,50 @@ end
         @test_throws HT.ProtocolError HT.connect_h2!(address; secure = false)
         _wait_task_h2!(server_task)
     finally
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP/2 client response_header_timeout bounds header wait" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            sleep(0.20)
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, true, true, encoded))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    try
+        request = HT.Request("GET", "/slow-headers"; host = address, body = HT.EmptyBody(), content_length = 0)
+        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(; response_header_timeout = 0.05)
+        HT._apply_request_timeout_settings!(request.context, request_timeout_ns, timeout_config)
+        @test_throws Reseau.IOPoll.DeadlineExceededError HT.h2_roundtrip!(h2_conn, request)
+        _wait_task_h2!(server_task)
+    finally
+        close(h2_conn)
         try
             NC.close(listener)
         catch

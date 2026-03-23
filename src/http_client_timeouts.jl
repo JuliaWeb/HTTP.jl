@@ -2,6 +2,23 @@
 
 const _REQUEST_TIMEOUT_CONTEXT_KEY = :_http_request_timeout_config
 
+@inline function _min_nonzero_ns(a::Int64, b::Int64)::Int64
+    a == 0 && return b
+    b == 0 && return a
+    return min(a, b)
+end
+
+function _phase_deadline_ns(timeout_ns::Int64, overall_deadline_ns::Int64)::Int64
+    timeout_ns < 0 && throw(ArgumentError("timeout_ns must be >= 0"))
+    overall_deadline_ns < 0 && throw(ArgumentError("overall_deadline_ns must be >= 0"))
+    timeout_deadline_ns = Int64(0)
+    if timeout_ns > 0
+        now_ns = Int64(time_ns())
+        timeout_deadline_ns = now_ns > typemax(Int64) - timeout_ns ? typemax(Int64) : now_ns + timeout_ns
+    end
+    return _min_nonzero_ns(timeout_deadline_ns, overall_deadline_ns)
+end
+
 struct _RequestTimeoutConfig
     connect_timeout_ns::Int64
     response_header_timeout_ns::Int64
@@ -111,6 +128,10 @@ end
     config = _request_context_timeout_config(request.context)
     config === nothing && return Int64(0)
     return (config::_RequestTimeoutConfig).response_header_timeout_ns
+end
+
+@inline function _request_response_header_deadline_ns(request::Request)::Int64
+    return _phase_deadline_ns(_request_response_header_timeout_ns(request), _request_deadline_ns(request))
 end
 
 @inline function _request_read_idle_timeout_ns(request::Request)::Int64
