@@ -50,6 +50,8 @@ import .._read_incoming_response
 import .._redirect_policy
 import .._redirect_referer
 import .._request_deadline_ns
+import .._resolve_request_timeout_settings
+import .._apply_request_timeout_settings!
 import .._request_url
 import .._resolve_redirect_target
 import .._should_copy_sensitive_headers_on_redirect
@@ -58,6 +60,7 @@ import .._strip_sensitive_redirect_headers!
 import .._streaming_response
 import .._validate_request_extra_kwargs
 import .._apply_conn_deadline!
+import .._clear_conn_deadline!
 import .._new_conn!
 import .._is_redirect_status
 import ..header
@@ -671,6 +674,7 @@ function _websocket_roundtrip!(
             _close_conn!(conn)
             return _ClientHandshake(nothing, public_response, UInt8[], request)
         end
+        _clear_conn_deadline!(conn)
         return _ClientHandshake(conn, public_response, buffered, request)
     catch
         _close_conn!(conn)
@@ -694,6 +698,10 @@ function _open_client_websocket(
     cookiejar::Union{Nothing,CookieJar}=nothing,
     proxy=_USE_TRANSPORT_PROXY,
     connect_timeout::Real=0,
+    request_timeout::Real=0,
+    response_header_timeout::Real=0,
+    read_idle_timeout::Real=0,
+    write_idle_timeout::Real=0,
     require_ssl_verification::Bool=true,
     kwargs...,
 )::WebSocket
@@ -707,6 +715,15 @@ function _open_client_websocket(
     key = ws_random_handshake_key()
     _apply_websocket_request_headers!(req_headers, key; subprotocols=subprotocols)
     request = Request("GET", parsed.target; headers=req_headers, host=parsed.address, body=EmptyBody(), content_length=0)
+    request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
+        ;
+        request_timeout=request_timeout,
+        connect_timeout=connect_timeout,
+        response_header_timeout=response_header_timeout,
+        read_idle_timeout=read_idle_timeout,
+        write_idle_timeout=write_idle_timeout,
+    )
+    _apply_request_timeout_settings!(request.context, request_timeout_ns, timeout_config)
     req_client, owns_client = _client_for_request(client; connect_timeout=connect_timeout, require_ssl_verification=require_ssl_verification)
     client === nothing || proxy === _USE_TRANSPORT_PROXY || throw(ArgumentError("proxy override is not supported when passing an explicit Client"))
     proxy_config = _proxy_config_for_request(req_client, proxy)
@@ -824,8 +841,11 @@ end
 Open a client WebSocket connection to `url`.
 
 Keyword arguments cover handshake headers, redirect behavior, cookies, proxy
-selection, TLS verification, and frame limits. When called with a function, the
-socket is closed automatically with status code `1000` when `f` returns.
+selection, TLS verification, handshake timeout controls, and frame limits.
+`request_timeout` applies an overall handshake deadline, while
+`response_header_timeout`, `read_idle_timeout`, and `write_idle_timeout`
+configure the underlying HTTP handshake phases. When called with a function,
+the socket is closed automatically with status code `1000` when `f` returns.
 """
 function open(
     url::AbstractString;
@@ -844,6 +864,10 @@ function open(
     cookiejar::Union{Nothing,CookieJar}=nothing,
     proxy=_USE_TRANSPORT_PROXY,
     connect_timeout::Real=0,
+    request_timeout::Real=0,
+    response_header_timeout::Real=0,
+    read_idle_timeout::Real=0,
+    write_idle_timeout::Real=0,
     require_ssl_verification::Bool=true,
     kwargs...,
 )
@@ -863,6 +887,10 @@ function open(
         cookiejar=cookiejar,
         proxy=proxy,
         connect_timeout=connect_timeout,
+        request_timeout=request_timeout,
+        response_header_timeout=response_header_timeout,
+        read_idle_timeout=read_idle_timeout,
+        write_idle_timeout=write_idle_timeout,
         require_ssl_verification=require_ssl_verification,
         kwargs...,
     )

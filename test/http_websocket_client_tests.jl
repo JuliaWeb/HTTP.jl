@@ -134,7 +134,19 @@ end
             HT.ws_close!(server_ws; status_code = UInt16(1000), reason = UInt8[])
             write(conn, HT.ws_get_outgoing_data!(server_ws))
         end
-        ws = W.open("ws://$address/chat")
+        ws = W.open(
+            "ws://$address/chat";
+            request_timeout = 0.25,
+            response_header_timeout = 0.25,
+            read_idle_timeout = 0.25,
+            write_idle_timeout = 0.25,
+        )
+        @test ws.handshake_request.context.deadline_ns != 0
+        timeout_config = HT._request_context_timeout_config(ws.handshake_request.context)
+        @test timeout_config !== nothing
+        @test (timeout_config::HT._RequestTimeoutConfig).response_header_timeout_ns == 250_000_000
+        @test timeout_config.read_idle_timeout_ns == 250_000_000
+        @test timeout_config.write_idle_timeout_ns == 250_000_000
         @test W.receive(ws) == "hello"
         W.send(ws, "pong")
         err = try

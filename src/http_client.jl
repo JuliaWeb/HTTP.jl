@@ -1189,6 +1189,15 @@ function _apply_conn_deadline!(conn::Conn, deadline_ns::Int64)
     return nothing
 end
 
+function _clear_conn_deadline!(conn::Conn)
+    if conn.secure
+        conn.tls === nothing || TLS.set_deadline!(conn.tls::TLS.Conn, Int64(0))
+    else
+        conn.tcp === nothing || TCP.set_deadline!(conn.tcp::TCP.Conn, Int64(0))
+    end
+    return nothing
+end
+
 
 """
     request(method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
@@ -1240,8 +1249,17 @@ Keyword arguments:
 - `verbose_io`: destination `IO` for verbose logs; defaults to `stderr`
 - `client`: optional explicit `Client`; otherwise a default or ephemeral client
   is created
-- `connect_timeout`: connection timeout in seconds for implicit clients
-- `readtimeout`: overall request deadline in seconds
+- `connect_timeout`: connection establishment timeout in seconds; currently
+  enforced for implicit-client dialing and additionally tracked per request for
+  lower layers
+- `request_timeout`: overall request deadline in seconds
+- `response_header_timeout`: maximum time to wait for response headers after
+  the request has been sent
+- `read_idle_timeout`: maximum time between inbound read progress events
+- `write_idle_timeout`: maximum time between outbound write progress events
+- `expect_continue_timeout`: how long to wait for a `100 Continue` response
+  before sending the request body anyway; pass `0` to disable the wait
+- `readtimeout`: deprecated alias for `read_idle_timeout`
 - `require_ssl_verification`: disable certificate verification only for testing
 - `protocol`: `:auto`, `:h1`, or `:h2`
 
@@ -1292,13 +1310,27 @@ function request(
     verbose_io::IO=stderr,
     client::Union{Nothing,Client}=nothing,
     connect_timeout::Real=0,
-    readtimeout::Real=0,
+    request_timeout::Real=0,
+    response_header_timeout::Real=0,
+    read_idle_timeout::Real=0,
+    write_idle_timeout::Real=0,
+    expect_continue_timeout=nothing,
+    readtimeout=nothing,
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto,
     kwargs...,
 )
     _validate_request_extra_kwargs(kwargs)
-    readtimeout >= 0 || throw(ArgumentError("readtimeout must be >= 0"))
+    request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
+        ;
+        request_timeout=request_timeout,
+        connect_timeout=connect_timeout,
+        response_header_timeout=response_header_timeout,
+        read_idle_timeout=read_idle_timeout,
+        write_idle_timeout=write_idle_timeout,
+        expect_continue_timeout=expect_continue_timeout,
+        readtimeout=readtimeout,
+    )
     parsed = _parse_http_url(url; query=query)
     req_headers = _normalize_headers_input(headers)
     normalized_cookies = _normalize_cookies_input(cookies)
@@ -1320,10 +1352,7 @@ function request(
     )
     config = _verbose_config(; verbose=verbose, verbose_body_nbytes=verbose_body_nbytes, verbose_io=verbose_io)
     config === nothing || _set_request_context_verbose_config!(req.context, config)
-    if readtimeout > 0
-        timeout_ns = Int64(round(readtimeout * 1.0e9))
-        set_deadline!(req.context, Int64(time_ns()) + timeout_ns)
-    end
+    _apply_request_timeout_settings!(req.context, request_timeout_ns, timeout_config)
     req_client, owns_client = _client_for_request(client; connect_timeout=connect_timeout, require_ssl_verification=require_ssl_verification)
     retry_controller = _retry_controller(
         req_client;

@@ -148,7 +148,8 @@ mutable struct Stream <: IO
     redirect_policy::Union{Nothing,_RedirectPolicy}
     protocol::Symbol
     decompress::Union{Nothing,Bool}
-    readtimeout::Float64
+    request_timeout_ns::Int64
+    timeout_config::Union{Nothing,_RequestTimeoutConfig}
     retry_controller::Union{Nothing,_RetryController}
     verbose_config::Union{Nothing,_VerboseConfig}
     request_buffer::IOBuffer
@@ -189,7 +190,8 @@ function Stream(server::Server, tracked::_ServerConn, request::Request)
         nothing,
         :auto,
         nothing,
-        0.0,
+        Int64(0),
+        nothing,
         nothing,
         nothing,
         IOBuffer(),
@@ -231,7 +233,8 @@ function Stream(request::Request)
         nothing,
         :auto,
         nothing,
-        0.0,
+        Int64(0),
+        nothing,
         nothing,
         nothing,
         IOBuffer(),

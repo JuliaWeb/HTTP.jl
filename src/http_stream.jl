@@ -28,11 +28,12 @@ function Stream(
     redirect_policy::_RedirectPolicy,
     protocol::Symbol,
     decompress::Union{Nothing,Bool},
-    readtimeout::Real,
+    request_timeout_ns::Integer,
+    timeout_config::Union{Nothing,_RequestTimeoutConfig},
     retry_controller::Union{Nothing,_RetryController},
     verbose_config::Union{Nothing,_VerboseConfig},
 )
-    readtimeout >= 0 || throw(ArgumentError("readtimeout must be >= 0"))
+    request_timeout_ns >= 0 || throw(ArgumentError("request_timeout_ns must be >= 0"))
     return Stream(
         _StreamType.CLIENT,
         String(method),
@@ -47,7 +48,8 @@ function Stream(
         redirect_policy,
         protocol,
         decompress,
-        Float64(readtimeout),
+        Int64(request_timeout_ns),
+        timeout_config,
         retry_controller,
         verbose_config,
         IOBuffer(),
@@ -149,10 +151,7 @@ function _client_start_stream_read!(stream::Stream)::Response
         content_length=normalized_body.content_length,
     )
     stream.verbose_config === nothing || _set_request_context_verbose_config!(req.context, stream.verbose_config::_VerboseConfig)
-    if stream.readtimeout > 0
-        timeout_ns = Int64(round(stream.readtimeout * 1.0e9))
-        set_deadline!(req.context, Int64(time_ns()) + timeout_ns)
-    end
+    _apply_request_timeout_settings!(req.context, stream.request_timeout_ns, stream.timeout_config)
     incoming = _do_incoming!(
         stream.client,
         stream.parsed.address,
@@ -326,15 +325,20 @@ readable `IO` for the response body. `kwargs` largely mirror `request(...)`,
 including `redirect`, `redirect_limit`, `redirect_method`,
 `forwardheaders`, `cookies`, `cookiejar`, `decompress`, `basicauth`, `retry`,
 `retries`, `retry_non_idempotent`, `retry_if`, `respect_retry_after`,
-`retry_bucket`, `client`, `connect_timeout`, `readtimeout`,
-`require_ssl_verification`, `protocol`, `verbose`, `verbose_body_nbytes`, and
-`verbose_io`. `basicauth` accepts
+`retry_bucket`, `client`, `connect_timeout`, `request_timeout`,
+`response_header_timeout`, `read_idle_timeout`, `write_idle_timeout`,
+`expect_continue_timeout`, `readtimeout`, `require_ssl_verification`,
+`protocol`, `verbose`, `verbose_body_nbytes`, and `verbose_io`. `basicauth` accepts
 `(username, password)` credentials; explicit `Authorization` headers take
 precedence, and URL `userinfo` is only used as a fallback when neither is
 provided. As with `request(...)`, automatic retries only occur for replayable
 request bodies, `retry_bucket=true` uses the transport's default `RetryBucket`,
 and the built-in policy does not automatically retry request
-read-timeout/deadline failures. `verbose=true`/`1` prints compact progress
+read-timeout/deadline failures. `request_timeout` applies an overall deadline,
+`read_idle_timeout` and `write_idle_timeout` bound inactivity between response
+and request I/O progress, `response_header_timeout` bounds the wait for
+response headers after the request is sent, and deprecated `readtimeout`
+behaves like `read_idle_timeout`. `verbose=true`/`1` prints compact progress
 logs, `verbose=2` adds detailed request/response dumps with body previews, and
 `verbose=3` captures full bodies.
 
@@ -369,7 +373,12 @@ function open(
     verbose_io::IO=stderr,
     client::Union{Nothing,Client}=nothing,
     connect_timeout::Real=0,
-    readtimeout::Real=0,
+    request_timeout::Real=0,
+    response_header_timeout::Real=0,
+    read_idle_timeout::Real=0,
+    write_idle_timeout::Real=0,
+    expect_continue_timeout=nothing,
+    readtimeout=nothing,
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto,
     kwargs...,
@@ -382,6 +391,16 @@ function open(
     _apply_request_authorization!(req_headers, basicauth, parsed.authorization)
     req_client, owns_client = _client_for_request(client; connect_timeout=connect_timeout, require_ssl_verification=require_ssl_verification)
     config = _verbose_config(; verbose=verbose, verbose_body_nbytes=verbose_body_nbytes, verbose_io=verbose_io)
+    request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
+        ;
+        request_timeout=request_timeout,
+        connect_timeout=connect_timeout,
+        response_header_timeout=response_header_timeout,
+        read_idle_timeout=read_idle_timeout,
+        write_idle_timeout=write_idle_timeout,
+        expect_continue_timeout=expect_continue_timeout,
+        readtimeout=readtimeout,
+    )
     retry_controller = _retry_controller(
         req_client;
         retry=retry,
@@ -406,7 +425,8 @@ function open(
         redirect=redirect,
         protocol=protocol,
         decompress=decompress,
-        readtimeout=readtimeout,
+        request_timeout_ns=request_timeout_ns,
+        timeout_config=timeout_config,
         retry_controller=retry_controller,
         verbose_config=config,
         redirect_policy=_redirect_policy(

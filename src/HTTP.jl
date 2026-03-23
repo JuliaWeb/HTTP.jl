@@ -23,6 +23,7 @@ using URIs
 const VERSION = v"2.0.0"
 
 include("http_core.jl")
+include("http_client_timeouts.jl")
 include("http1.jl")
 include("hpack.jl")
 include("http2.jl")

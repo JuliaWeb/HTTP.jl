@@ -1841,6 +1841,45 @@ end
     end
 end
 
+@testset "HTTP request timeout configuration parsing" begin
+    request_timeout_ns, config = HT._resolve_request_timeout_settings(
+        ;
+        request_timeout=1.25,
+        connect_timeout=0.5,
+        response_header_timeout=0.75,
+        read_idle_timeout=0.125,
+        write_idle_timeout=0.25,
+        expect_continue_timeout=1.5,
+    )
+    @test request_timeout_ns == 1_250_000_000
+    @test config !== nothing
+    @test (config::HT._RequestTimeoutConfig).connect_timeout_ns == 500_000_000
+    @test config.response_header_timeout_ns == 750_000_000
+    @test config.read_idle_timeout_ns == 125_000_000
+    @test config.write_idle_timeout_ns == 250_000_000
+    @test config.expect_continue_timeout_ns == 1_500_000_000
+
+    ctx = HT.RequestContext()
+    HT._apply_request_timeout_settings!(ctx, request_timeout_ns, config)
+    stored = HT._request_context_timeout_config(ctx)
+    @test stored !== nothing
+    @test stored == config
+    @test ctx.deadline_ns > time_ns()
+    @test !HT.expired(ctx)
+
+    legacy_request_timeout_ns = Int64(-1)
+    legacy_config = nothing
+    @test_logs (:warn, r"`readtimeout` is deprecated") begin
+        legacy_request_timeout_ns, legacy_config = HT._resolve_request_timeout_settings(; readtimeout=0.05)
+    end
+    @test legacy_request_timeout_ns == 50_000_000
+    @test legacy_config !== nothing
+    @test (legacy_config::HT._RequestTimeoutConfig).read_idle_timeout_ns == 50_000_000
+    @test legacy_config.response_header_timeout_ns == 50_000_000
+
+    @test_throws ArgumentError HT._resolve_request_timeout_settings(; readtimeout=0.05, read_idle_timeout=0.05)
+end
+
 @testset "HTTP high-level readtimeout" begin
     if _http_windows_ci()
         @test_skip true
