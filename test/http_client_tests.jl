@@ -1882,10 +1882,10 @@ end
     @test_logs (:warn, r"`readtimeout` is deprecated") begin
         legacy_request_timeout_ns, legacy_config = HT._resolve_request_timeout_settings(; readtimeout=0.05)
     end
-    @test legacy_request_timeout_ns == 50_000_000
+    @test legacy_request_timeout_ns == 0
     @test legacy_config !== nothing
     @test (legacy_config::HT._RequestTimeoutConfig).read_idle_timeout_ns == 50_000_000
-    @test legacy_config.response_header_timeout_ns == 50_000_000
+    @test legacy_config.response_header_timeout_ns == 0
 
     @test_throws ArgumentError HT._resolve_request_timeout_settings(; readtimeout=0.05, read_idle_timeout=0.05)
 end
@@ -1952,6 +1952,43 @@ end
     try
         err = try
             HT.get("$(base_url)/slow"; response_header_timeout=0.05)
+            nothing
+        catch ex
+            ex
+        end
+        @test err isa Reseau.IOPoll.DeadlineExceededError
+        _wait_task_client!(server_task)
+    finally
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP high-level read_idle_timeout" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            req = HT.read_request(HT._ConnReader(conn))
+            _ = _read_all_body_bytes_client(req.body)
+            write(conn, collect(codeunits("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\na")))
+            sleep(0.20)
+        finally
+            try
+                NC.close(conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    try
+        err = try
+            HT.get("$(base_url)/slow-body"; read_idle_timeout=0.05)
             nothing
         catch ex
             ex

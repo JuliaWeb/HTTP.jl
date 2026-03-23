@@ -54,6 +54,7 @@ import .._request_connect_host_resolver
 import .._request_connect_phase_deadline_ns
 import .._request_connect_phase_timeout_ns
 import .._request_response_header_deadline_ns
+import .._request_write_deadline_ns
 import .._resolve_request_timeout_settings
 import .._apply_request_timeout_settings!
 import .._request_url
@@ -67,6 +68,7 @@ import .._apply_conn_deadline!
 import .._clear_conn_deadline!
 import .._new_conn!
 import .._set_conn_read_deadline!
+import .._set_conn_write_deadline!
 import .._is_redirect_status
 import ..header
 import ..headers
@@ -678,6 +680,7 @@ function _websocket_roundtrip!(
         write_request!(request_io, request; wire_target=wire_target, proxy_authorization=proxy_auth)
         stream = _conn_stream(conn)
         nbytes = request_io.size
+        _set_conn_write_deadline!(conn, _request_write_deadline_ns(request))
         wrote = write(stream, request_io.data, nbytes)
         wrote == nbytes || throw(ProtocolError("transport short write"))
         _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(request))

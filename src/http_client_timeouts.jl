@@ -62,18 +62,14 @@ function _resolve_request_timeout_settings(;
     readtimeout=nothing,
 )::Tuple{Int64,Union{Nothing,_RequestTimeoutConfig}}
     read_idle_timeout_value = read_idle_timeout
-    request_timeout_value = request_timeout
-    response_header_timeout_value = response_header_timeout
     if readtimeout !== nothing
         read_idle_timeout == 0 || throw(ArgumentError("readtimeout is deprecated and cannot be combined with read_idle_timeout"))
         _warn_deprecated_readtimeout()
         read_idle_timeout_value = readtimeout
-        request_timeout == 0 && (request_timeout_value = readtimeout)
-        response_header_timeout == 0 && (response_header_timeout_value = readtimeout)
     end
-    request_timeout_ns = _timeout_ns_from_seconds("request_timeout", request_timeout_value)
+    request_timeout_ns = _timeout_ns_from_seconds("request_timeout", request_timeout)
     connect_timeout_ns = _timeout_ns_from_seconds("connect_timeout", connect_timeout)
-    response_header_timeout_ns = _timeout_ns_from_seconds("response_header_timeout", response_header_timeout_value)
+    response_header_timeout_ns = _timeout_ns_from_seconds("response_header_timeout", response_header_timeout)
     read_idle_timeout_ns = _timeout_ns_from_seconds("read_idle_timeout", read_idle_timeout_value)
     write_idle_timeout_ns = _timeout_ns_from_seconds("write_idle_timeout", write_idle_timeout)
     expect_continue_timeout_ns = expect_continue_timeout === nothing ? Int64(0) : _timeout_ns_from_seconds("expect_continue_timeout", expect_continue_timeout)
@@ -131,7 +127,8 @@ end
 end
 
 @inline function _request_response_header_deadline_ns(request::Request)::Int64
-    return _phase_deadline_ns(_request_response_header_timeout_ns(request), _request_deadline_ns(request))
+    timeout_ns = _min_nonzero_ns(_request_response_header_timeout_ns(request), _request_read_idle_timeout_ns(request))
+    return _phase_deadline_ns(timeout_ns, _request_deadline_ns(request))
 end
 
 @inline function _request_read_idle_timeout_ns(request::Request)::Int64
@@ -140,10 +137,18 @@ end
     return (config::_RequestTimeoutConfig).read_idle_timeout_ns
 end
 
+@inline function _request_read_deadline_ns(request::Request)::Int64
+    return _phase_deadline_ns(_request_read_idle_timeout_ns(request), _request_deadline_ns(request))
+end
+
 @inline function _request_write_idle_timeout_ns(request::Request)::Int64
     config = _request_context_timeout_config(request.context)
     config === nothing && return Int64(0)
     return (config::_RequestTimeoutConfig).write_idle_timeout_ns
+end
+
+@inline function _request_write_deadline_ns(request::Request)::Int64
+    return _phase_deadline_ns(_request_write_idle_timeout_ns(request), _request_deadline_ns(request))
 end
 
 @inline function _request_expect_continue_timeout_ns(request::Request)::Int64

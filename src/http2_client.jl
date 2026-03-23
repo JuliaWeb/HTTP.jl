@@ -136,6 +136,7 @@ mutable struct H2Body{C<:H2Connection} <: AbstractBody
     conn::C
     stream_id::UInt32
     state::H2StreamState
+    request::Request
     trailers::Headers
     @atomic closed::Bool
 end
@@ -159,18 +160,28 @@ function _write_all_h2!(conn::H2Connection, bytes::Vector{UInt8})
     return nothing
 end
 
-function _write_frame_h2!(conn::H2Connection, frame::AbstractFrame)
+function _set_h2_write_deadline!(conn::H2Connection, deadline_ns::Int64)::Nothing
+    if conn.secure
+        conn.tls === nothing || TLS.set_write_deadline!(conn.tls::TLS.Conn, deadline_ns)
+    else
+        TCP.set_write_deadline!(conn.tcp, deadline_ns)
+    end
+    return nothing
+end
+
+function _write_frame_h2!(conn::H2Connection, frame::AbstractFrame; write_deadline_ns::Int64=Int64(0))
     io = IOBuffer()
     framer = Framer(io)
     write_frame!(framer, frame)
+    _set_h2_write_deadline!(conn, write_deadline_ns)
     _write_all_h2!(conn, take!(io))
     return nothing
 end
 
-function _write_frame_h2_threadsafe!(conn::H2Connection, frame::AbstractFrame)
+function _write_frame_h2_threadsafe!(conn::H2Connection, frame::AbstractFrame; write_deadline_ns::Int64=Int64(0))
     lock(conn.write_lock)
     try
-        _write_frame_h2!(conn, frame)
+        _write_frame_h2!(conn, frame; write_deadline_ns=write_deadline_ns)
     finally
         unlock(conn.write_lock)
     end
@@ -181,7 +192,7 @@ end
     return conn.reader.max_frame_size
 end
 
-function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::Int)::Int
+function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::Int, deadline_ns::Int64)::Int
     wanted > 0 || throw(ArgumentError("wanted send window must be > 0"))
     lock(conn.state_lock)
     try
@@ -192,12 +203,46 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
             if stream_window <= 0 || conn.conn_send_window <= 0
                 # Both the connection-level and per-stream windows must allow
                 # progress. The read loop replenishes these via WINDOW_UPDATE.
-                wait(conn.window_condition)
+                if deadline_ns == 0
+                    wait(conn.window_condition)
+                else
+                    remaining_ns = deadline_ns - Int64(time_ns())
+                    remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
+                    status = timedwait(() -> begin
+                        lock(conn.state_lock)
+                        try
+                            (@atomic :acquire conn.closed) && return true
+                            conn.conn_error !== nothing && return true
+                            stream_window_now = get(() -> Int64(0), conn.stream_send_window, stream_id)
+                            return stream_window_now > 0 && conn.conn_send_window > 0
+                        finally
+                            unlock(conn.state_lock)
+                        end
+                    end, remaining_ns / 1.0e9; pollint=0.001)
+                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
+                end
                 continue
             end
             allowed = min(Int64(wanted), conn.conn_send_window, stream_window, Int64(_h2_max_data_frame_size(conn)))
             if allowed <= 0
-                wait(conn.window_condition)
+                if deadline_ns == 0
+                    wait(conn.window_condition)
+                else
+                    remaining_ns = deadline_ns - Int64(time_ns())
+                    remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
+                    status = timedwait(() -> begin
+                        lock(conn.state_lock)
+                        try
+                            (@atomic :acquire conn.closed) && return true
+                            conn.conn_error !== nothing && return true
+                            stream_window_now = get(() -> Int64(0), conn.stream_send_window, stream_id)
+                            return stream_window_now > 0 && conn.conn_send_window > 0
+                        finally
+                            unlock(conn.state_lock)
+                        end
+                    end, remaining_ns / 1.0e9; pollint=0.001)
+                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
+                end
                 continue
             end
             conn.conn_send_window -= allowed
@@ -209,17 +254,18 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
     end
 end
 
-function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, data::Vector{UInt8}; end_stream::Bool)
+function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::Request, data::Vector{UInt8}; end_stream::Bool)
     isempty(data) && return nothing
     offset = 1
     total_len = length(data)
     while offset <= total_len
         remaining = total_len - offset + 1
-        chunk_len = _reserve_send_window!(conn, stream_id, remaining)
+        write_deadline_ns = _request_write_deadline_ns(request)
+        chunk_len = _reserve_send_window!(conn, stream_id, remaining, write_deadline_ns)
         chunk = Vector{UInt8}(undef, chunk_len)
         copyto!(chunk, 1, data, offset, chunk_len)
         final_chunk = (offset + chunk_len - 1) == total_len
-        _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, end_stream && final_chunk, chunk))
+        _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, end_stream && final_chunk, chunk); write_deadline_ns=write_deadline_ns)
         offset += chunk_len
     end
     return nothing
@@ -848,16 +894,16 @@ function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request:
             n = body_read!(request.body, buf)
             if n == 0
                 if have_pending
-                    _write_data_frames_h2!(conn, stream_id, pending; end_stream=true)
+                    _write_data_frames_h2!(conn, stream_id, request, pending; end_stream=true)
                 else
-                    _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, true, UInt8[]))
+                    _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, true, UInt8[]); write_deadline_ns=_request_write_deadline_ns(request))
                 end
                 return nothing
             end
             current = Vector{UInt8}(undef, n)
             copyto!(current, 1, buf, 1, n)
             if have_pending
-                _write_data_frames_h2!(conn, stream_id, pending; end_stream=false)
+                _write_data_frames_h2!(conn, stream_id, request, pending; end_stream=false)
             end
             pending = current
             have_pending = true
@@ -971,9 +1017,10 @@ function _write_h2_header_block_locked!(
     stream_id::UInt32,
     header_block::Vector{UInt8};
     end_stream::Bool,
+    write_deadline_ns::Int64=Int64(0),
 )::Nothing
     for frame in _header_block_frames(stream_id, end_stream, header_block, conn.reader.max_frame_size)
-        _write_frame_h2!(conn, frame)
+        _write_frame_h2!(conn, frame; write_deadline_ns=write_deadline_ns)
     end
     return nothing
 end
@@ -1031,7 +1078,24 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
                 _publish_h2_response_trailers!(body.state)
                 done = true
             else
-                wait(body.state.condition)
+                deadline_ns = _request_read_deadline_ns(body.request)
+                if deadline_ns == 0
+                    wait(body.state.condition)
+                else
+                    remaining_ns = deadline_ns - Int64(time_ns())
+                    remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
+                    status = timedwait(() -> begin
+                        lock(body.state.lock)
+                        try
+                            body.state.error !== nothing && return true
+                            body.state.stream_done && return true
+                            return _stream_available_bytes(body.state) > 0
+                        finally
+                            unlock(body.state.lock)
+                        end
+                    end, remaining_ns / 1.0e9; pollint=0.001)
+                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
+                end
                 continue
             end
         finally
@@ -1123,7 +1187,13 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
                 (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
                 conn.conn_error === nothing || throw(conn.conn_error::Exception)
                 header_block = encode_header_block(conn.encoder, headers)
-                _write_h2_header_block_locked!(conn, stream_state.stream_id, header_block; end_stream=end_stream)
+                _write_h2_header_block_locked!(
+                    conn,
+                    stream_state.stream_id,
+                    header_block;
+                    end_stream=end_stream,
+                    write_deadline_ns=_request_write_deadline_ns(request),
+                )
             finally
                 unlock(conn.write_lock)
             end
@@ -1168,7 +1238,7 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
                     EmptyBody(),
                 )
             end
-            body = H2Body(conn, stream_state.stream_id, stream_state, response_trailers, false)
+            body = H2Body(conn, stream_state.stream_id, stream_state, request, response_trailers, false)
             cleanup_on_exit = false
             return _IncomingResponse(
                 _IncomingResponseHead(

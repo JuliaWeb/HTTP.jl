@@ -28,6 +28,12 @@ mutable struct _ConnReader{C} <: IO
     capture::Union{Nothing,_VerboseCaptureBuffer}
 end
 
+mutable struct _RequestDeadlineWriteIO{S} <: IO
+    inner::S
+    conn
+    request::Request
+end
+
 """
     _ConnReader(conn; buffer_bytes=16*1024)
 
@@ -63,6 +69,29 @@ end
     capture = reader.capture
     capture === nothing || _verbose_capture!(capture::_VerboseCaptureBuffer, byte)
     return nothing
+end
+
+@inline function _apply_request_write_deadline!(io::_RequestDeadlineWriteIO)::Nothing
+    _set_conn_write_deadline!(io.conn::Conn, _request_write_deadline_ns(io.request))
+    return nothing
+end
+
+function Base.write(io::_RequestDeadlineWriteIO, b::UInt8)::Int
+    _apply_request_write_deadline!(io)
+    return write(io.inner, b)
+end
+
+function _request_deadline_write_bytes!(io::_RequestDeadlineWriteIO, data::AbstractVector{UInt8})::Int
+    _apply_request_write_deadline!(io)
+    return write(io.inner, data)
+end
+
+Base.write(io::_RequestDeadlineWriteIO, data::StridedVector{UInt8})::Int = _request_deadline_write_bytes!(io, data)
+Base.write(io::_RequestDeadlineWriteIO, data::AbstractVector{UInt8})::Int = _request_deadline_write_bytes!(io, data)
+
+function Base.write(io::_RequestDeadlineWriteIO, data::Union{String,SubString{String}})::Int
+    _apply_request_write_deadline!(io)
+    return write(io.inner, data)
 end
 
 @inline function _fill_conn_reader!(reader::_ConnReader)::Int
@@ -195,6 +224,7 @@ mutable struct ManagedBody{B<:AbstractBody} <: AbstractBody
     inner::B
     transport::Transport
     conn::Conn
+    request::Request
     reusable::Bool
     @atomic saw_eof::Bool
     @atomic released::Bool
@@ -1199,6 +1229,7 @@ end
 
 function body_read!(body::ManagedBody, dst::Vector{UInt8})::Int
     try
+        _set_conn_read_deadline!(body.conn, _request_read_deadline_ns(body.request))
         n = body_read!(body.inner, dst)
         if n == 0
             @atomic :release body.saw_eof = true
@@ -1257,8 +1288,9 @@ function _roundtrip_incoming!(
             _apply_conn_deadline!(conn, request_deadline)
             request_io = _reset_request_buffer!(conn)
             stream = _conn_stream(conn)
+            deadline_stream = _RequestDeadlineWriteIO(stream, conn, current_request)
             exchange = _request_context_verbose_exchange(current_request.context)
-            write_stream = exchange === nothing ? stream : _VerboseTeeWriteIO(stream, (exchange::_VerboseExchangeState).request_capture)
+            write_stream = exchange === nothing ? deadline_stream : _VerboseTeeWriteIO(deadline_stream, (exchange::_VerboseExchangeState).request_capture)
             wire_target = plan.mode == _ProxyPlanMode.HTTP_FORWARD ? _request_url(false, String(address), current_request.target) : nothing
             proxy_auth = plan.mode == _ProxyPlanMode.HTTP_FORWARD && plan.proxy !== nothing ? (plan.proxy::_ProxyTarget).authorization : nothing
             has_request_body = _request_has_body(current_request)
@@ -1371,7 +1403,7 @@ function _roundtrip_incoming!(
                 end
                 return raw_response
             end
-            managed = ManagedBody(raw_response.rawbody, transport, conn, reusable, false, false)
+            managed = ManagedBody(raw_response.rawbody, transport, conn, current_request, reusable, false, false)
             return _IncomingResponse(
                 raw_response.head,
                 managed,
