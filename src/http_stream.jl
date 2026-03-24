@@ -439,15 +439,16 @@ function open(
     return stream
 end
 
-function open(
+function _open_with_callback(
+    opener,
     f::Function,
     method::Symbol,
-    url::Union{AbstractString,URI},
+    url,
     headers=Pair{String,String}[];
     status_exception::Bool=true,
     kwargs...,
 )
-    stream = open(method, url, headers; kwargs...)
+    stream = opener(method, url, headers; kwargs...)
     callback_error = nothing
     try
         f(stream)
@@ -465,4 +466,15 @@ function open(
     end
     callback_error === nothing || throw(callback_error)
     return response
+end
+
+function open(
+    f::Function,
+    method::Symbol,
+    url::Union{AbstractString,URI},
+    headers=Pair{String,String}[];
+    status_exception::Bool=true,
+    kwargs...,
+)
+    return _open_with_callback(open, f, method, url, headers; status_exception=status_exception, kwargs...)
 end

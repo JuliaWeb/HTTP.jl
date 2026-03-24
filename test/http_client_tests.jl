@@ -73,6 +73,181 @@ function _is_timeout_error_client(err)::Bool
     return _is_timeout_error_client(cause::Exception)
 end
 
+@testset "HTTP @client macro supports single middlewares" begin
+    @eval module ClientSingleMiddleware
+        using HTTP
+
+        function request_middleware(next)
+            return function(method, url, headers=Pair{String,String}[], body=nothing; clienttoken=nothing, kw...)
+                req_headers = HTTP.Headers(headers)
+                clienttoken === nothing || HTTP.setheader(req_headers, "X-Client-Token", String(clienttoken))
+                response = next(method, url, req_headers, body; kw...)
+                HTTP.setheader(response, "X-Client-Request", "handled")
+                return response
+            end
+        end
+
+        function stream_middleware(next)
+            return function(method::Symbol, url, headers=Pair{String,String}[]; streamtoken=nothing, kw...)
+                req_headers = HTTP.Headers(headers)
+                streamtoken === nothing || HTTP.setheader(req_headers, "X-Stream-Token", String(streamtoken))
+                return next(method, url, req_headers; kw...)
+            end
+        end
+
+        HTTP.@client request_middleware stream_middleware
+    end
+
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog=8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    seen_tokens = String[]
+    server_task = errormonitor(Threads.@spawn begin
+        conn1 = NC.accept(listener)
+        try
+            req1 = HT.read_request(HT._ConnReader(conn1))
+            push!(seen_tokens, HT.header(req1.headers, "X-Client-Token", ""))
+            _send_response_client!(conn1, req1; body_text="request")
+        finally
+            try
+                NC.close(conn1)
+            catch
+            end
+        end
+        conn2 = NC.accept(listener)
+        try
+            req2 = HT.read_request(HT._ConnReader(conn2))
+            push!(seen_tokens, HT.header(req2.headers, "X-Stream-Token", ""))
+            _send_response_client!(conn2, req2; body_text="stream")
+        finally
+            try
+                NC.close(conn2)
+            catch
+            end
+        end
+        return nothing
+    end)
+    try
+        response = ClientSingleMiddleware.get("$(base_url)/request"; clienttoken="abc123", retry=false)
+        @test response.status == 200
+        @test String(response.body) == "request"
+        @test HT.header(response, "X-Client-Request") == "handled"
+
+        seen_body = Ref("")
+        response = ClientSingleMiddleware.open(:GET, "$(base_url)/stream"; streamtoken="stream-xyz", retry=false) do stream
+            meta = HT.startread(stream)
+            @test meta.status == 200
+            seen_body[] = String(read(stream))
+        end
+        @test response.status == 200
+        @test seen_body[] == "stream"
+        @test seen_tokens == ["abc123", "stream-xyz"]
+        _wait_task_client!(server_task)
+    finally
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP @client macro supports tuple middlewares" begin
+    @eval module ClientTupleMiddlewares
+        using HTTP
+
+        function outer_request(next)
+            return function(method, url, headers=Pair{String,String}[], body=nothing; events=nothing, kw...)
+                events === nothing || push!(events, "request-outer-before")
+                response = next(method, url, headers, body; events=events, kw...)
+                events === nothing || push!(events, "request-outer-after")
+                return response
+            end
+        end
+
+        function inner_request(next)
+            return function(method, url, headers=Pair{String,String}[], body=nothing; events=nothing, kw...)
+                events === nothing || push!(events, "request-inner-before")
+                response = next(method, url, headers, body; kw...)
+                events === nothing || push!(events, "request-inner-after")
+                return response
+            end
+        end
+
+        function outer_stream(next)
+            return function(method::Symbol, url, headers=Pair{String,String}[]; events=nothing, kw...)
+                events === nothing || push!(events, "stream-outer-before")
+                stream = next(method, url, headers; events=events, kw...)
+                events === nothing || push!(events, "stream-outer-after")
+                return stream
+            end
+        end
+
+        function inner_stream(next)
+            return function(method::Symbol, url, headers=Pair{String,String}[]; events=nothing, kw...)
+                events === nothing || push!(events, "stream-inner-before")
+                stream = next(method, url, headers; kw...)
+                events === nothing || push!(events, "stream-inner-after")
+                return stream
+            end
+        end
+
+        HTTP.@client (outer_request, inner_request) (outer_stream, inner_stream)
+    end
+
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog=8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    server_task = errormonitor(Threads.@spawn begin
+        for body_text in ("request", "stream")
+            conn = NC.accept(listener)
+            try
+                req = HT.read_request(HT._ConnReader(conn))
+                _send_response_client!(conn, req; body_text=body_text)
+            finally
+                try
+                    NC.close(conn)
+                catch
+                end
+            end
+        end
+        return nothing
+    end)
+    try
+        request_events = String[]
+        response = ClientTupleMiddlewares.get("$(base_url)/tuple-request"; events=request_events, retry=false)
+        @test response.status == 200
+        @test String(response.body) == "request"
+        @test request_events == [
+            "request-outer-before",
+            "request-inner-before",
+            "request-inner-after",
+            "request-outer-after",
+        ]
+
+        stream_events = String[]
+        response = ClientTupleMiddlewares.open(:GET, "$(base_url)/tuple-stream"; events=stream_events, retry=false) do stream
+            meta = HT.startread(stream)
+            @test meta.status == 200
+            @test String(read(stream)) == "stream"
+        end
+        @test response.status == 200
+        @test stream_events == [
+            "stream-outer-before",
+            "stream-inner-before",
+            "stream-inner-after",
+            "stream-outer-after",
+        ]
+        _wait_task_client!(server_task)
+    finally
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
 @testset "HTTP client redirect rewrites method" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4

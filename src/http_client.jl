@@ -15,6 +15,7 @@ export put
 export patch
 export delete
 export options
+export @client
 
 """
     ClientTrace(; ...)
@@ -1461,6 +1462,16 @@ function _split_headers_body_args(args::Tuple)
     throw(ArgumentError("expected at most two positional arguments after URL: headers and body"))
 end
 
+@inline _compose_client_middleware(base, middleware::Tuple{}) = base
+
+function _compose_client_middleware(base, middleware::Tuple)
+    return foldr((layer, handler) -> layer(handler), middleware; init=base)
+end
+
+@inline function _compose_client_middleware(base, middleware)
+    return middleware(base)
+end
+
 """`GET` convenience wrapper around `request`."""
 function get(url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...)
     return request("GET", url, headers, nothing; kwargs...)
@@ -1498,4 +1509,84 @@ end
 """`OPTIONS` convenience wrapper around `request`."""
 function options(url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...)
     return request("OPTIONS", url, headers, nothing; kwargs...)
+end
+
+"""
+    HTTP.@client request_middleware
+    HTTP.@client request_middleware stream_middleware
+
+Define module-local `request`, verb helpers, and `open` methods that wrap the
+public HTTP client APIs with custom client-side middleware.
+
+Each middleware must be a callable of the form `mw(next) -> wrapped`, where
+`wrapped` matches either:
+- `request(method, url, headers, body; kwargs...)` for one-shot requests
+- `open(method::Symbol, url, headers; kwargs...)` for streaming requests
+
+Pass either a single middleware or a tuple of middlewares for each position.
+Tuple middlewares are applied from left to right, so `(outer, inner)` runs
+`outer(inner(HTTP.request))`.
+"""
+macro client(request_middleware, stream_middleware=:(()))
+    request_handler = gensym(:http_client_request)
+    open_handler = gensym(:http_client_open)
+    expr = quote
+        const $request_handler = HTTP._compose_client_middleware(HTTP.request, $request_middleware)
+        const $open_handler = HTTP._compose_client_middleware(HTTP.open, $stream_middleware)
+
+        function request(method, url, h=Pair{String,String}[], b=nothing; headers=h, body=b, kwargs...)
+            $__source__
+            return $request_handler(method, url, headers, body; kwargs...)
+        end
+
+        function get(url, headers=Pair{String,String}[]; kwargs...)
+            $__source__
+            return request("GET", url, headers, nothing; kwargs...)
+        end
+
+        function head(url, headers=Pair{String,String}[]; kwargs...)
+            $__source__
+            return request("HEAD", url, headers, nothing; kwargs...)
+        end
+
+        function post(url, args...; kwargs...)
+            $__source__
+            headers, body = HTTP._split_headers_body_args(args)
+            return request("POST", url, headers, body; kwargs...)
+        end
+
+        function put(url, args...; kwargs...)
+            $__source__
+            headers, body = HTTP._split_headers_body_args(args)
+            return request("PUT", url, headers, body; kwargs...)
+        end
+
+        function patch(url, args...; kwargs...)
+            $__source__
+            headers, body = HTTP._split_headers_body_args(args)
+            return request("PATCH", url, headers, body; kwargs...)
+        end
+
+        function delete(url, args...; kwargs...)
+            $__source__
+            headers, body = HTTP._split_headers_body_args(args)
+            return request("DELETE", url, headers, body; kwargs...)
+        end
+
+        function options(url, headers=Pair{String,String}[]; kwargs...)
+            $__source__
+            return request("OPTIONS", url, headers, nothing; kwargs...)
+        end
+
+        function open(method::Symbol, url, headers=Pair{String,String}[]; kwargs...)
+            $__source__
+            return $open_handler(method, url, headers; kwargs...)
+        end
+
+        function open(f::Function, method::Symbol, url, headers=Pair{String,String}[]; status_exception::Bool=true, kwargs...)
+            $__source__
+            return HTTP._open_with_callback($open_handler, f, method, url, headers; status_exception=status_exception, kwargs...)
+        end
+    end
+    return esc(Base.remove_linenums!(expr))
 end
