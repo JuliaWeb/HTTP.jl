@@ -1131,6 +1131,7 @@ end
         @test occursin("Content-Encoding: gzip\r\n", log_text)
         @test occursin("<gzip-compressed ", log_text)
         @test occursin("-byte body omitted>", log_text)
+        @test !occursin("[truncated after", log_text)
         @test !occursin("zip-text", log_text)
     finally
         try

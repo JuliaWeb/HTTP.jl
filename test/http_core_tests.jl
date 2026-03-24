@@ -148,3 +148,108 @@ end
     @test HT.header(req.headers, "content-type") == "text/plain"
     @test HT.header(res.headers, "content-type") == "text/plain"
 end
+
+@testset "HTTP core request/response display" begin
+    request_headers = HT.Headers()
+    HT.setheader(request_headers, "Authorization", "Bearer super-secret")
+    HT.setheader(request_headers, "Content-Type", "text/plain")
+    request = HT.Request(
+        "POST",
+        "/submit";
+        headers=request_headers,
+        body=HT.BytesBody(collect(codeunits("hello world"))),
+        host="example.com",
+        content_length=11,
+    )
+
+    compact = sprint(show, request)
+    @test occursin("HTTP.Request POST example.com/submit", compact)
+    @test occursin("2 headers", compact)
+    @test occursin("11-byte body", compact)
+    @test !occursin("super-secret", compact)
+
+    plain = sprint(io -> show(io, MIME"text/plain"(), request))
+    @test occursin("POST /submit HTTP/1.1", plain)
+    @test occursin("Host: example.com", plain)
+    @test occursin("Authorization: ******", plain)
+    @test occursin("Content-Type: text/plain\r\n\r\nhello world", plain)
+    @test occursin("hello world", plain)
+    @test !occursin("super-secret", plain)
+
+    compact_plain = sprint(io -> show(IOContext(io, :compact => true), MIME"text/plain"(), request))
+    @test compact_plain == compact
+
+    large_body = repeat("a", HT._VERBOSE_DEFAULT_BODY_NBYTES + 5)
+    limited_request = HT.Request(
+        "POST",
+        "/large";
+        headers=HT.Headers(["Content-Type" => "text/plain"]),
+        body=HT.BytesBody(collect(codeunits(large_body))),
+        host="example.com",
+        content_length=ncodeunits(large_body),
+    )
+    limited_plain = sprint(io -> show(io, MIME"text/plain"(), limited_request))
+    @test occursin("[truncated after $(HT._VERBOSE_DEFAULT_BODY_NBYTES) of $(ncodeunits(large_body)) bytes]", limited_plain)
+    full_print = sprint(print, limited_request)
+    @test !occursin("[truncated after", full_print)
+    @test occursin(large_body, full_print)
+
+    reads = Ref(0)
+    callback_request = HT.Request(
+        "POST",
+        "/stream";
+        body=HT.CallbackBody(
+            dst -> begin
+                reads[] += 1
+                isempty(dst) && return 0
+                dst[1] = UInt8('x')
+                return 1
+            end,
+            () -> nothing,
+        ),
+        content_length=7,
+    )
+    callback_print = sprint(print, callback_request)
+    @test occursin("<7-byte streaming body omitted>", callback_print)
+    @test reads[] == 0
+
+    compressed_headers = HT.Headers()
+    HT.setheader(compressed_headers, "Content-Encoding", "gzip")
+    compressed_response = HT.Response(
+        200;
+        headers=compressed_headers,
+        body=UInt8[0x1f, 0x8b, 0x08, 0x00],
+        content_length=4,
+    )
+    compressed_plain = sprint(io -> show(io, MIME"text/plain"(), compressed_response))
+    @test occursin("<gzip-compressed 4-byte body omitted>", compressed_plain)
+
+    response_headers = HT.Headers()
+    HT.setheader(response_headers, "Set-Cookie", "session=secret")
+    response = HT.Response(
+        201;
+        reason="Created",
+        headers=response_headers,
+        body=Vector{UInt8}(codeunits("created")),
+        content_length=7,
+    )
+    response_compact = sprint(show, response)
+    @test occursin("HTTP.Response 201 Created", response_compact)
+    @test occursin("1 header", response_compact)
+    response_plain = sprint(io -> show(io, MIME"text/plain"(), response))
+    @test occursin("HTTP/1.1 201 Created", response_plain)
+    @test occursin("Set-Cookie: ******", response_plain)
+    @test occursin("Set-Cookie: ******\r\n\r\ncreated", response_plain)
+    @test occursin("created", response_plain)
+    @test !occursin("session=secret", response_plain)
+
+    empty_request = HT.Request("GET", "/"; headers=HT.Headers(["Accept-Encoding" => "gzip, deflate"]), host="example.com", content_length=0)
+    empty_request_plain = sprint(io -> show(io, MIME"text/plain"(), empty_request))
+    @test !endswith(empty_request_plain, "\r\n")
+    @test !endswith(empty_request_plain, "\n")
+
+    empty_response = HT.Response(204; headers=HT.Headers(["Connection" => "close"]), content_length=0)
+    empty_response_plain = sprint(io -> show(io, MIME"text/plain"(), empty_response))
+    @test !endswith(empty_response_plain, "\r\n")
+    @test !endswith(empty_response_plain, "\n")
+end
