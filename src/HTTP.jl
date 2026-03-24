@@ -47,6 +47,7 @@ using .Handlers
 include("http_sse.jl")
 include("http_websocket_codec.jl")
 include("http_websockets.jl")
+include("precompile_workload.jl")
 
 if ccall(:jl_generating_output, Cint, ()) == 1
     include("precompile.jl")
