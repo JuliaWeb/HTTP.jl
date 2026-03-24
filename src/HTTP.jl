@@ -48,4 +48,8 @@ include("http_sse.jl")
 include("http_websocket_codec.jl")
 include("http_websockets.jl")
 
+if ccall(:jl_generating_output, Cint, ()) == 1
+    include("precompile.jl")
+end
+
 end
