@@ -20,15 +20,8 @@ function _read_all_server_bytes(body::HT.AbstractBody)::Vector{UInt8}
 end
 
 function _wait_server_addr(server; timeout_s::Float64 = 5.0)::String
-    deadline = time() + timeout_s
-    while time() < deadline
-        try
-            return HT.server_addr(server)
-        catch
-            sleep(0.01)
-        end
-    end
-    error("timed out waiting for server address")
+    _ = timeout_s
+    return HT.server_addr(server)
 end
 
 function _run_with_timeout(f::F; timeout_s::Float64 = 5.0, label::String = "operation") where {F <: Function}

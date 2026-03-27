@@ -410,6 +410,20 @@ function _listener_bound_address(listener::Union{TCP.Listener,TLS.Listener})::Tu
     return (sprint(show, laddr), Int(laddr.port))
 end
 
+function _mark_server_listening!(server::Server, listener::Union{TCP.Listener,TLS.Listener})::Nothing
+    bound_address, bound_port = _listener_bound_address(listener)
+    lock(server.lock)
+    try
+        server.listener = listener
+        server.bound_address = bound_address
+        server.bound_port = bound_port
+    finally
+        unlock(server.lock)
+    end
+    _set_server_state!(server, _ServerState.RUNNING)
+    return nothing
+end
+
 function _accept_server_conn!(listener::Union{TCP.Listener,TLS.Listener})
     if listener isa TLS.Listener
         return TLS.accept(listener::TLS.Listener)
@@ -3275,16 +3289,10 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     return nothing
 end
 
-function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Listener})
+function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Listener}, ready::Threads.Event)
     _server_shutting_down(server) && throw(ProtocolError("server is shutting down"))
-    lock(server.lock)
-    try
-        server.listener = listener
-        server.bound_address, server.bound_port = _listener_bound_address(listener)
-    finally
-        unlock(server.lock)
-    end
-    _set_server_state!(server, _ServerState.RUNNING)
+    _mark_server_listening!(server, listener)
+    notify(ready)
     while true
         _server_shutting_down(server) && return nothing
         conn = try
@@ -3305,12 +3313,12 @@ function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Liste
     return nothing
 end
 
-function _run_server!(server::Server)
+function _run_server!(server::Server, ready::Threads.Event)
     listener = TCP.listen(
         server.network, _listen_address(server); backlog=server.backlog, reuseaddr=server.reuseaddr,
     )
     try
-        _serve_listener!(server, listener)
+        _serve_listener!(server, listener, ready)
     finally
         try
             TCP.close(listener)
@@ -3329,13 +3337,22 @@ function listen!(server::Server)::Server
     state = _server_state(server)
     state == _ServerState.CLOSED && throw(ProtocolError("closed servers cannot be restarted"))
     state == _ServerState.RUNNING && throw(ProtocolError("server is already running"))
-    task = errormonitor(Threads.@spawn _run_server!(server))
+    ready = Threads.Event(true)
+    task = errormonitor(Threads.@spawn begin
+        try
+            _run_server!(server, ready)
+        catch
+            notify(ready)
+            rethrow()
+        end
+    end)
     lock(server.lock)
     try
         server.serve_task = task
     finally
         unlock(server.lock)
     end
+    wait(ready)
     return server
 end
 
@@ -3419,7 +3436,7 @@ function listen!(
     listenany && throw(ArgumentError("listenany is not valid when passing an existing listener"))
     _ = reuseaddr
     _ = backlog
-    bound_address, bound_port = _listener_bound_address(listener)
+    bound_address, _ = _listener_bound_address(listener)
     server = Server(
         network="tcp",
         address=bound_address,
@@ -3434,15 +3451,22 @@ function listen!(
         reuseaddr=reuseaddr,
         backlog=backlog,
     )
-    server.bound_address = bound_address
-    server.bound_port = bound_port
-    task = errormonitor(Threads.@spawn _serve_listener!(server, listener))
+    ready = Threads.Event(true)
+    task = errormonitor(Threads.@spawn begin
+        try
+            _serve_listener!(server, listener, ready)
+        catch
+            notify(ready)
+            rethrow()
+        end
+    end)
     lock(server.lock)
     try
         server.serve_task = task
     finally
         unlock(server.lock)
     end
+    wait(ready)
     return server
 end
 
@@ -3507,7 +3531,7 @@ function serve!(
     end
     if length(args) == 1 && args[1] isa Union{TCP.Listener,TLS.Listener}
         listener = args[1]::Union{TCP.Listener,TLS.Listener}
-        bound_address, bound_port = _listener_bound_address(listener)
+        bound_address, _ = _listener_bound_address(listener)
         server = Server(
             network="tcp",
             address=bound_address,
@@ -3522,15 +3546,22 @@ function serve!(
             reuseaddr=reuseaddr,
             backlog=backlog,
         )
-        server.bound_address = bound_address
-        server.bound_port = bound_port
-        task = errormonitor(Threads.@spawn _serve_listener!(server, listener))
+        ready = Threads.Event(true)
+        task = errormonitor(Threads.@spawn begin
+            try
+                _serve_listener!(server, listener, ready)
+            catch
+                notify(ready)
+                rethrow()
+            end
+        end)
         lock(server.lock)
         try
             server.serve_task = task
         finally
             unlock(server.lock)
         end
+        wait(ready)
         return server
     end
     host, port_num = if length(args) == 1 && args[1] isa Integer

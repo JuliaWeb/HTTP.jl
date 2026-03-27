@@ -1244,15 +1244,22 @@ function _serve_ws_conn!(server::Server, conn)::Nothing
     return nothing
 end
 
-function serve!(server::Server, listener)::Server
-    _server_shutting_down(server) && throw(ProtocolError("websocket server is shutting down"))
+function _mark_ws_server_listening!(server::Server, listener)::Nothing
+    bound_address = _listener_bound_address(listener)
     lock(server.lock)
     try
         server.listener = listener
-        server.bound_address = _listener_bound_address(listener)
+        server.bound_address = bound_address
     finally
         unlock(server.lock)
     end
+    return nothing
+end
+
+function serve!(server::Server, listener, ready::Threads.Event)::Server
+    _server_shutting_down(server) && throw(ProtocolError("websocket server is shutting down"))
+    _mark_ws_server_listening!(server, listener)
+    notify(ready)
     while !_server_shutting_down(server)
         conn = try
             if listener isa TLS.Listener
@@ -1270,12 +1277,12 @@ function serve!(server::Server, listener)::Server
     return server
 end
 
-function _listen_ws(server::Server)
+function _listen_ws(server::Server, ready::Threads.Event)
     listener = server.tls_config === nothing ?
                TCP.listen(server.network, server.address; backlog=128) :
                TLS.listen(server.network, server.address, server.tls_config::TLS.Config; backlog=128)
     try
-        serve!(server, listener)
+        serve!(server, listener, ready)
     finally
         try
             if listener isa TLS.Listener
@@ -1387,7 +1394,16 @@ function listen!(
         maxfragmentation=maxfragmentation,
         read_buffer_bytes=read_buffer_bytes,
     )
-    server.serve_task = errormonitor(Threads.@spawn _listen_ws(server))
+    ready = Threads.Event(true)
+    server.serve_task = errormonitor(Threads.@spawn begin
+        try
+            _listen_ws(server, ready)
+        catch
+            notify(ready)
+            rethrow()
+        end
+    end)
+    wait(ready)
     return server
 end
 

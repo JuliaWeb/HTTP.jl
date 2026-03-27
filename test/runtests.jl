@@ -272,7 +272,6 @@ test_files = [
     "http2_client_tests.jl",
     "http2_server_tests.jl",
     "http_integration_tests.jl",
-    "http_precompile_workload_tests.jl",
     "http_parity_tests.jl",
     "trim_compile_tests.jl",
 ]

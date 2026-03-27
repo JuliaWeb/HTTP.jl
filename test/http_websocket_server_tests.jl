@@ -12,14 +12,7 @@ const _TLS_CERT_PATH = joinpath(@__DIR__, "resources", "unittests.crt")
 const _TLS_KEY_PATH = joinpath(@__DIR__, "resources", "unittests.key")
 
 function _wait_server_addr(server; timeout_s::Float64 = 5.0)
-    deadline = time() + timeout_s
-    while time() < deadline
-        try
-            return W.server_addr(server)
-        catch
-            sleep(0.01)
-        end
-    end
+    _ = timeout_s
     return W.server_addr(server)
 end
 
