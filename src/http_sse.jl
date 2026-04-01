@@ -436,7 +436,7 @@ end
 function _consume_incoming_sse!(
     incoming::_IncomingResponse,
     response::Response,
-    callback::Function;
+    callback::Function,
     decompress::Union{Nothing,Bool},
 )::Nothing
     raw_stream = Base.BufferStream()

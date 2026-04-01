@@ -1,15 +1,5 @@
 using Test
 
-const _TRIM_SAFE_ERROR_BUDGET = @static if Sys.isapple()
-    0
-elseif Sys.iswindows()
-    0
-elseif Sys.islinux()
-    0
-else
-    typemax(Int)
-end
-
 const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _TRIM_PRE_RELEASE = !isempty(VERSION.prerelease)
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
@@ -96,8 +86,7 @@ function _maybe_print_output(header::String, output::String)
 end
 
 function _trim_executable_timeout_s()::Float64
-    default = Sys.iswindows() ? "120.0" : "30.0"
-    return parse(Float64, get(ENV, "HTTP_TRIM_EXE_TIMEOUT_S", default))
+    return parse(Float64, get(ENV, "HTTP_TRIM_EXE_TIMEOUT_S", "30.0"))
 end
 
 function _trim_prerelease_allow_failure(script_file::String, reason::String, output::String = "")
@@ -118,8 +107,7 @@ function _trim_selected_workloads(workloads::Vector{Tuple{String, String}})::Vec
 end
 
 function _trim_use_bundle()::Bool
-    default = Sys.iswindows() ? "1" : "0"
-    return get(ENV, "HTTP_TRIM_BUNDLE", default) == "1"
+    return get(ENV, "HTTP_TRIM_BUNDLE", "0") == "1"
 end
 
 function _run_trim_case(project_path::String, script_file::String, output_name::String)
@@ -140,8 +128,9 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             end
             totals = _parse_trim_verify_totals(output)
             trim_errors, trim_warnings = if totals === nothing
-                if exit_code == 0
-                    (0, 0)
+                fallback = _count_trim_verify_messages(output)
+                if exit_code == 0 && fallback == (0, 0)
+                    fallback
                 elseif _TRIM_PRE_RELEASE
                     _trim_prerelease_allow_failure(script_file, "failed to parse trim verifier summary", output)
                     return nothing
@@ -151,41 +140,38 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             else
                 totals
             end
-            if get(ENV, "HTTP_TRIM_PRINT_OUTPUT", "0") == "1" || (trim_errors > 0 && !_TRIM_PRE_RELEASE)
+            if get(ENV, "HTTP_TRIM_PRINT_OUTPUT", "0") == "1" || trim_errors > 0 || trim_warnings > 0
                 _maybe_print_output("---- trim compile output ($(script_file)) ----", output)
             end
             if _TRIM_PRE_RELEASE && (trim_errors > 0 || exit_code != 0)
                 _trim_prerelease_allow_failure(script_file, "trim verify finished with $(trim_errors) errors, $(trim_warnings) warnings (exit=$(exit_code))", output)
                 return nothing
             end
-            @test trim_errors <= _TRIM_SAFE_ERROR_BUDGET
-            @test trim_warnings >= 0
+            @test trim_errors == 0
+            @test trim_warnings == 0
             output_path = Sys.iswindows() ? "$(output_name).exe" : output_name
-            if trim_errors == 0
-                run_path = bundle_dir === nothing ? output_path : joinpath(bundle_dir, "bin", output_path)
-                @test exit_code == 0
-                @test isfile(run_path)
-                run_cmd = Sys.iswindows() ? `$(abspath(run_path))` : `$(abspath(run_path))`
-                run_timeout_s = _trim_executable_timeout_s()
-                run_exit, run_output, run_timed_out = _run_trim_executable(run_cmd; timeout_s = run_timeout_s)
-                if run_timed_out
-                    if _TRIM_PRE_RELEASE
-                        _trim_prerelease_allow_failure(script_file, "trim executable run timed out", run_output)
-                        return nothing
-                    end
+            run_path = bundle_dir === nothing ? output_path : joinpath(bundle_dir, "bin", output_path)
+            @test exit_code == 0
+            @test isfile(run_path)
+            run_cmd = Sys.iswindows() ? `$(abspath(run_path))` : `$(abspath(run_path))`
+            run_timeout_s = _trim_executable_timeout_s()
+            run_exit, run_output, run_timed_out = _run_trim_executable(run_cmd; timeout_s = run_timeout_s)
+            if run_timed_out
+                if _TRIM_PRE_RELEASE
+                    _trim_prerelease_allow_failure(script_file, "trim executable run timed out", run_output)
+                    return nothing
+                else
                     _trim_timeout_error("executable run", script_file, run_output)
                 end
-                if _TRIM_PRE_RELEASE && run_exit != 0
-                    _trim_prerelease_allow_failure(script_file, "trim executable exited with status $(run_exit)", run_output)
-                    return nothing
-                end
-                if run_exit != 0
-                    _maybe_print_output("---- trim executable output ($(script_file)) ----", run_output)
-                end
-                @test run_exit == 0
-            else
-                @test exit_code != 0
             end
+            if _TRIM_PRE_RELEASE && run_exit != 0
+                _trim_prerelease_allow_failure(script_file, "trim executable exited with status $(run_exit)", run_output)
+                return nothing
+            end
+            if run_exit != 0
+                _maybe_print_output("---- trim executable output ($(script_file)) ----", run_output)
+            end
+            @test run_exit == 0
         end
     end
     println("[trim] compile DONE $(script_file) ($(round(time() - start_t; digits = 2))s)")
@@ -198,6 +184,12 @@ function _parse_trim_verify_totals(output::String)
     return parse(Int, m.captures[1]), parse(Int, m.captures[2])
 end
 
+function _count_trim_verify_messages(output::String)::Tuple{Int,Int}
+    errors = length(collect(eachmatch(r"Verifier error #\d+:", output)))
+    warnings = length(collect(eachmatch(r"Verifier warning #\d+:", output)))
+    return errors, warnings
+end
+
 @testset "Trim compile" begin
     if !_TRIM_SUPPORTED
         println("[trim] skip Julia < 1.12: JuliaC trim compilation is unavailable")
@@ -205,7 +197,18 @@ end
     else
         project_path = normpath(joinpath(@__DIR__, ".."))
         trim_workloads = [
-            ("http_trim_safe.jl", "http_trim_safe"),
+            ("http_trim_client_h1_raw.jl", "http_trim_client_h1_raw"),
+            ("http_trim_client_h1_wire.jl", "http_trim_client_h1_wire"),
+            ("http_trim_client_h1_roundtrip.jl", "http_trim_client_h1_roundtrip"),
+            ("http_trim_client_h1_do.jl", "http_trim_client_h1_do"),
+            ("http_trim_client_h1_request.jl", "http_trim_client_h1_request"),
+            ("http_trim_client_h2_wire.jl", "http_trim_client_h2_wire"),
+            ("http_trim_client_h2_tcp_roundtrip.jl", "http_trim_client_h2_tcp_roundtrip"),
+            ("http_trim_client_h2_roundtrip.jl", "http_trim_client_h2_roundtrip"),
+            ("http_trim_client_server.jl", "http_trim_client_server"),
+            ("http_trim_open_fileserver.jl", "http_trim_open_fileserver"),
+            ("http_trim_http2.jl", "http_trim_http2"),
+            ("http_trim_websocket.jl", "http_trim_websocket"),
         ]
         trim_workloads = _trim_selected_workloads(trim_workloads)
         for (script_file, output_name) in trim_workloads

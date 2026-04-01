@@ -31,7 +31,7 @@ function Stream(
     request_timeout_ns::Integer,
     timeout_config::Union{Nothing,_RequestTimeoutConfig},
     retry_controller::Union{Nothing,_RetryController},
-    verbose_config::Union{Nothing,_VerboseConfig},
+    verbose_config::_VerboseConfig,
 )
     request_timeout_ns >= 0 || throw(ArgumentError("request_timeout_ns must be >= 0"))
     return Stream(
@@ -104,7 +104,7 @@ function isaborted(stream::Stream)::Bool
            (response.close || headercontains(response, "Connection", "close"))
 end
 
-function _client_finish_stream_read!(stream::Stream; suppress_producer_errors::Bool)::Response
+function _client_finish_stream_read!(stream::Stream, suppress_producer_errors::Bool)::Response
     _require_client_stream(stream)
     was_closed = @atomic :acquire stream.read_closed
     was_closed && return _stream_response(stream)
@@ -150,20 +150,20 @@ function _client_start_stream_read!(stream::Stream)::Response
         host=stream.parsed.address,
         content_length=normalized_body.content_length,
     )
-    stream.verbose_config === nothing || _set_request_context_verbose_config!(req.context, stream.verbose_config::_VerboseConfig)
+    _set_request_context_verbose_config!(req.context, stream.verbose_config)
     _apply_request_timeout_settings!(req.context, stream.request_timeout_ns, stream.timeout_config)
     incoming = _do_incoming!(
         stream.client,
         stream.parsed.address,
-        req;
-        secure=stream.parsed.secure,
-        server_name=stream.parsed.server_name,
-        protocol=stream.protocol,
-        redirect_policy=stream.redirect ? stream.redirect_policy : _redirect_policy(stream.client; redirect_limit=0),
-        retry_controller=stream.retry_controller,
-        proxy_config=stream.proxy_config,
-        cookies=stream.cookies,
-        cookiejar=stream.cookiejar,
+        req,
+        stream.parsed.secure,
+        stream.parsed.server_name,
+        stream.protocol,
+        stream.redirect ? stream.redirect_policy : _redirect_policy(stream.client, 0),
+        stream.retry_controller,
+        stream.proxy_config,
+        stream.cookies,
+        stream.cookiejar,
     )
     resolved_request = incoming.head.request === nothing ? req : incoming.head.request::Request
     stream.response = _finalize_request_response(
@@ -173,7 +173,7 @@ function _client_start_stream_read!(stream::Stream)::Response
         resolved_request,
         stream.parsed.url,
     )
-    reader, producer = _response_body_reader(incoming; decompress=stream.decompress)
+    reader, producer = _response_body_reader(incoming, stream.decompress)
     stream.reader = reader
     stream.producer = producer
     return stream.response::Response
@@ -251,7 +251,7 @@ function readbytes!(stream::Stream, dest::AbstractVector{UInt8}, nb::Integer=len
     if _stream_is_client(stream)
         _client_start_stream_read!(stream)
         n = readbytes!(_stream_reader(stream), dest, nb)
-        n == 0 && _client_finish_stream_read!(stream; suppress_producer_errors=false)
+        n == 0 && _client_finish_stream_read!(stream, false)
         return n
     end
     return _server_readbytes!(stream, dest, nb)
@@ -261,7 +261,7 @@ function read(stream::Stream)::Vector{UInt8}
     if _stream_is_client(stream)
         _client_start_stream_read!(stream)
         bytes = read(_stream_reader(stream))
-        _client_finish_stream_read!(stream; suppress_producer_errors=false)
+        _client_finish_stream_read!(stream, false)
         return bytes
     end
     return _server_read(stream)
@@ -275,7 +275,7 @@ function eof(stream::Stream)::Bool
     if _stream_is_client(stream)
         _client_start_stream_read!(stream)
         done = eof(_stream_reader(stream))
-        done && _client_finish_stream_read!(stream; suppress_producer_errors=false)
+        done && _client_finish_stream_read!(stream, false)
         return done
     end
     return _server_eof(stream)
@@ -293,7 +293,7 @@ reused.
 function closeread(stream::Stream)
     if _stream_is_client(stream)
         _client_start_stream_read!(stream)
-        return _client_finish_stream_read!(stream; suppress_producer_errors=true)
+        return _client_finish_stream_read!(stream, true)
     end
     return _server_closeread(stream)
 end
@@ -384,32 +384,23 @@ function open(
     kwargs...,
 )::Stream
     _validate_request_extra_kwargs(kwargs)
-    parsed = _parse_http_url(url; query=query)
+    parsed = _parse_http_url(url, query)
     req_headers = _normalize_headers_input(headers)
     normalized_cookies = _normalize_cookies_input(cookies)
     _apply_default_accept_encoding!(req_headers, decompress)
     _apply_request_authorization!(req_headers, basicauth, parsed.authorization)
-    req_client, owns_client = _client_for_request(client; connect_timeout=connect_timeout, require_ssl_verification=require_ssl_verification)
-    config = _verbose_config(; verbose=verbose, verbose_body_nbytes=verbose_body_nbytes, verbose_io=verbose_io)
+    req_client, owns_client = _client_for_request(client, connect_timeout, require_ssl_verification)
+    config = _verbose_config(verbose, verbose_body_nbytes, verbose_io)
     request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
-        ;
-        request_timeout=request_timeout,
-        connect_timeout=connect_timeout,
-        response_header_timeout=response_header_timeout,
-        read_idle_timeout=read_idle_timeout,
-        write_idle_timeout=write_idle_timeout,
-        expect_continue_timeout=expect_continue_timeout,
-        readtimeout=readtimeout,
+        request_timeout,
+        connect_timeout,
+        response_header_timeout,
+        read_idle_timeout,
+        write_idle_timeout,
+        expect_continue_timeout,
+        readtimeout,
     )
-    retry_controller = _retry_controller(
-        req_client;
-        retry=retry,
-        retries=retries,
-        retry_non_idempotent=retry_non_idempotent,
-        retry_if=retry_if,
-        respect_retry_after=respect_retry_after,
-        retry_bucket=retry_bucket,
-    )
+    retry_controller = _retry_controller(req_client, retry, retries, retry_non_idempotent, retry_if, respect_retry_after, retry_bucket)
     client === nothing || proxy === _USE_TRANSPORT_PROXY || throw(ArgumentError("proxy override is not supported when passing an explicit Client"))
     proxy_config = _proxy_config_for_request(req_client, proxy)
     effective_cookiejar = _effective_cookiejar(client, cookiejar)
@@ -429,12 +420,7 @@ function open(
         timeout_config=timeout_config,
         retry_controller=retry_controller,
         verbose_config=config,
-        redirect_policy=_redirect_policy(
-            req_client;
-            redirect_limit=redirect_limit,
-            redirect_method=redirect_method,
-            forwardheaders=forwardheaders,
-        ),
+        redirect_policy=_redirect_policy(req_client, redirect_limit, redirect_method, forwardheaders),
     )
     return stream
 end

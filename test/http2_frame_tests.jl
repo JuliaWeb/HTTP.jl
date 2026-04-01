@@ -6,9 +6,9 @@ const HT = HTTP
 
 function _roundtrip_frame(frame::HT.AbstractFrame)::HT.AbstractFrame
     io = IOBuffer()
-    writer = HT.Framer(io)
+    writer = io
     HT.write_frame!(writer, frame)
-    reader = HT.Framer(IOBuffer(take!(io)))
+    reader = IOBuffer(take!(io))
     return HT.read_frame!(reader)
 end
 
@@ -59,7 +59,7 @@ end
         0x00, 0x00, 0x00, 0x00,
     ]
     write(io, bytes)
-    reader = HT.Framer(IOBuffer(take!(io)))
+    reader = IOBuffer(take!(io))
     @test_throws HT.ProtocolError HT.read_frame!(reader)
 end
 
@@ -104,7 +104,7 @@ end
     )
     for (name, bytes) in invalid_frames
         @testset "$name" begin
-            @test_throws HT.ProtocolError HT.read_frame!(HT.Framer(IOBuffer(bytes)))
+            @test_throws HT.ProtocolError HT.read_frame!(IOBuffer(bytes))
         end
     end
 end
@@ -121,7 +121,7 @@ end
     )
     for frame in invalid_writes
         io = IOBuffer()
-        writer = HT.Framer(io)
+        writer = io
         @test_throws HT.ProtocolError HT.write_frame!(writer, frame)
     end
 end
@@ -136,7 +136,7 @@ end
         0x61, 0x62, 0x63,
         0x00, 0x00,
     ]
-    data_frame = HT.read_frame!(HT.Framer(IOBuffer(padded_data_bytes)))
+    data_frame = HT.read_frame!(IOBuffer(padded_data_bytes))
     @test data_frame isa HT.DataFrame
     @test (data_frame::HT.DataFrame).end_stream
     @test (data_frame::HT.DataFrame).data == collect(codeunits("abc"))
@@ -150,7 +150,7 @@ end
         0xaa, 0xbb, 0xcc,
         0x00,
     ]
-    headers_frame = HT.read_frame!(HT.Framer(IOBuffer(padded_headers_bytes)))
+    headers_frame = HT.read_frame!(IOBuffer(padded_headers_bytes))
     @test headers_frame isa HT.HeadersFrame
     @test (headers_frame::HT.HeadersFrame).end_headers
     @test (headers_frame::HT.HeadersFrame).header_block_fragment == UInt8[0xaa, 0xbb, 0xcc]
@@ -168,7 +168,7 @@ end
         0xaa, 0xbb,
         0x00,
     ]
-    headers_priority = HT.read_frame!(HT.Framer(IOBuffer(headers_priority_bytes)))
+    headers_priority = HT.read_frame!(IOBuffer(headers_priority_bytes))
     @test headers_priority isa HT.HeadersFrame
     @test (headers_priority::HT.HeadersFrame).header_block_fragment == UInt8[0xaa, 0xbb]
 
@@ -179,7 +179,7 @@ end
         0x00, 0x00, 0x00, 0x03,
         0x80, 0x00, 0x00, 0x02,
     ]
-    @test_throws HT.ParseError HT.read_frame!(HT.Framer(IOBuffer(bad_headers_priority_bytes)))
+    @test_throws HT.ParseError HT.read_frame!(IOBuffer(bad_headers_priority_bytes))
 
     push_promise_bytes = UInt8[
         0x00, 0x00, 0x08,
@@ -191,7 +191,7 @@ end
         0xaa, 0xbb,
         0x00,
     ]
-    push_promise = HT.read_frame!(HT.Framer(IOBuffer(push_promise_bytes)))
+    push_promise = HT.read_frame!(IOBuffer(push_promise_bytes))
     @test push_promise isa HT.PushPromiseFrame
     @test (push_promise::HT.PushPromiseFrame).promised_stream_id == UInt32(7)
     @test (push_promise::HT.PushPromiseFrame).header_block_fragment == UInt8[0xaa, 0xbb]
@@ -204,7 +204,7 @@ end
         0x80, 0x00, 0x00, 0x03,
         0x20,
     ]
-    priority = HT.read_frame!(HT.Framer(IOBuffer(priority_bytes)))
+    priority = HT.read_frame!(IOBuffer(priority_bytes))
     @test priority isa HT.PriorityFrame
     @test (priority::HT.PriorityFrame).exclusive
     @test (priority::HT.PriorityFrame).stream_dependency == UInt32(3)
@@ -222,7 +222,10 @@ end
 
 @testset "HTTP/2 header block fragmentation helper" begin
     block = collect(UInt8(0x01):UInt8(0x0a))
-    frames = HT._header_block_frames(UInt32(9), true, block, 4)
+    frames = HT.AbstractFrame[]
+    HT._header_block_frames(UInt32(9), true, block, 4) do frame
+        push!(frames, frame)
+    end
     @test length(frames) == 3
     @test frames[1] isa HT.HeadersFrame
     @test (frames[1]::HT.HeadersFrame).end_stream

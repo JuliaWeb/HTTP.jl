@@ -42,7 +42,7 @@ end
 
 function _write_frame_h2_server_raw!(conn::NC.Conn, frame::HT.AbstractFrame)
     io = IOBuffer()
-    framer = HT.Framer(io)
+    framer = io
     HT.write_frame!(framer, frame)
     _write_all_h2_server_raw!(conn, take!(io))
     return nothing
@@ -50,7 +50,7 @@ end
 
 function _open_raw_h2_server_conn(address::String; settings::Vector{Pair{UInt16, UInt32}} = Pair{UInt16, UInt32}[])
     conn = ND.connect("tcp", address)
-    reader = HT.Framer(HT._ConnReader(conn))
+    reader = HT._ConnReader(conn)
     _write_all_h2_server_raw!(conn, HT._H2_PREFACE)
     _write_frame_h2_server_raw!(conn, HT.SettingsFrame(false, settings))
     first = HT.read_frame!(reader)
@@ -82,7 +82,7 @@ function _write_h2_server_request_headers!(
     return nothing
 end
 
-function _read_h2_server_header_block!(reader::HT.Framer)
+function _read_h2_server_header_block!(reader::IO)
     first = HT.read_frame!(reader)
     while first isa HT.WindowUpdateFrame || first isa HT.SettingsFrame || first isa HT.PingFrame
         first = HT.read_frame!(reader)
@@ -850,7 +850,7 @@ end
         end
     address = _wait_http_server_addr(server)
     conn = ND.connect("tcp", address)
-    reader = HT.Framer(HT._ConnReader(conn))
+    reader = HT._ConnReader(conn)
     try
         _write_all_h2_server_raw!(conn, HT._H2_PREFACE)
         _write_frame_h2_server_raw!(conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))

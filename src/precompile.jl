@@ -21,7 +21,7 @@ _precompile_body_string(body::AbstractVector{UInt8}) = String(body)
 _precompile_body_string(body::AbstractString) = String(body)
 
 function _precompile_text_response(
-    text::AbstractString;
+    text::AbstractString,
     status::Integer=200,
     headers=Pair{String,String}[],
     proto_major::Integer=1,
@@ -81,8 +81,9 @@ function _run_precompile_workload!()::Nothing
             cookie_header = header(req, "Cookie", nothing)
             if cookie_header === nothing || !occursin("precompile=1", cookie_header::String)
                 return _precompile_text_response(
-                    "cookie:set";
-                    headers=["Set-Cookie" => "precompile=1; Path=/"],
+                    "cookie:set",
+                    200,
+                    ["Set-Cookie" => "precompile=1; Path=/"],
                 )
             end
             return _precompile_text_response("cookie:seen")
@@ -115,9 +116,11 @@ function _run_precompile_workload!()::Nothing
 
         h2_server = serve!("127.0.0.1", 0; listenany=true) do request
             return _precompile_text_response(
-                "h2:" * request.target;
-                proto_major=2,
-                proto_minor=0,
+                "h2:" * request.target,
+                200,
+                Pair{String,String}[],
+                2,
+                0,
             )
         end
 

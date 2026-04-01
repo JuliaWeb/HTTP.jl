@@ -62,7 +62,8 @@ mutable struct H2StreamState
     headers_complete::Bool
     stream_done::Bool
     trailers_published::Bool
-    error::Union{Nothing,Exception}
+    conn_errored::Bool
+    stream_error::Union{Nothing,Exception}
 end
 
 function H2StreamState(stream_id::UInt32)
@@ -81,6 +82,7 @@ function H2StreamState(stream_id::UInt32)
         false,
         false,
         false,
+        false,
         nothing,
     )
 end
@@ -95,12 +97,13 @@ One `H2Connection` multiplexes many logical requests over a single TCP or TLS
 transport. A dedicated background read task owns frame intake and distributes
 completed data to per-stream consumers.
 """
-mutable struct H2Connection{F<:Framer}
+mutable struct H2Connection
     address::String
     secure::Bool
     tcp::TCP.Conn
     tls::Union{Nothing,TLS.Conn}
-    reader::F
+    reader::_ConnReader
+    peer_max_send_frame_size::Int
     encoder::Encoder
     decoder::Decoder
     next_stream_id::UInt32
@@ -110,7 +113,7 @@ mutable struct H2Connection{F<:Framer}
     stream_condition::Threads.Condition
     read_task::Union{Nothing,Task}
     read_loop_condition::Threads.Condition
-    conn_error::Union{Nothing,Exception}
+    conn_error::Union{Nothing,ProtocolError}
     window_condition::Threads.Condition
     conn_send_window::Int64
     initial_stream_send_window::Int64
@@ -132,8 +135,8 @@ Reading from `H2Body` drains the buffered DATA bytes accumulated by the read
 loop, and each successful read sends WINDOW_UPDATE frames so the peer can keep
 transmitting.
 """
-mutable struct H2Body{C<:H2Connection} <: AbstractBody
-    conn::C
+mutable struct H2Body <: AbstractBody
+    conn::H2Connection
     stream_id::UInt32
     state::H2StreamState
     request::Request
@@ -169,19 +172,18 @@ function _set_h2_write_deadline!(conn::H2Connection, deadline_ns::Int64)::Nothin
     return nothing
 end
 
-function _write_frame_h2!(conn::H2Connection, frame::AbstractFrame; write_deadline_ns::Int64=Int64(0))
+function _write_frame_h2!(conn::H2Connection, frame::AbstractFrame, write_deadline_ns::Int64=Int64(0))
     io = IOBuffer()
-    framer = Framer(io)
-    write_frame!(framer, frame)
+    write_frame!(io, frame)
     _set_h2_write_deadline!(conn, write_deadline_ns)
     _write_all_h2!(conn, take!(io))
     return nothing
 end
 
-function _write_frame_h2_threadsafe!(conn::H2Connection, frame::AbstractFrame; write_deadline_ns::Int64=Int64(0))
+function _write_frame_h2_threadsafe!(conn::H2Connection, frame::AbstractFrame, write_deadline_ns::Int64=Int64(0))
     lock(conn.write_lock)
     try
-        _write_frame_h2!(conn, frame; write_deadline_ns=write_deadline_ns)
+        _write_frame_h2!(conn, frame, write_deadline_ns)
     finally
         unlock(conn.write_lock)
     end
@@ -189,7 +191,7 @@ function _write_frame_h2_threadsafe!(conn::H2Connection, frame::AbstractFrame; w
 end
 
 @inline function _h2_max_data_frame_size(conn::H2Connection)::Int
-    return conn.reader.max_frame_size
+    return conn.peer_max_send_frame_size
 end
 
 function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::Int, deadline_ns::Int64)::Int
@@ -198,7 +200,7 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
     try
         while true
             (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
-            conn.conn_error === nothing || throw(conn.conn_error::Exception)
+            conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
             stream_window = get(() -> Int64(0), conn.stream_send_window, stream_id)
             if stream_window <= 0 || conn.conn_send_window <= 0
                 # Both the connection-level and per-stream windows must allow
@@ -254,7 +256,7 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
     end
 end
 
-function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::Request, data::Vector{UInt8}; end_stream::Bool)
+function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::Request, data::Vector{UInt8}, end_stream::Bool)
     isempty(data) && return nothing
     offset = 1
     total_len = length(data)
@@ -265,7 +267,7 @@ function _write_data_frames_h2!(conn::H2Connection, stream_id::UInt32, request::
         chunk = Vector{UInt8}(undef, chunk_len)
         copyto!(chunk, 1, data, offset, chunk_len)
         final_chunk = (offset + chunk_len - 1) == total_len
-        _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, end_stream && final_chunk, chunk); write_deadline_ns=write_deadline_ns)
+        _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, end_stream && final_chunk, chunk), write_deadline_ns)
         offset += chunk_len
     end
     return nothing
@@ -303,7 +305,7 @@ function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,
             if id == UInt16(0x5)
                 value < UInt32(16_384) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too small"))
                 value > UInt32(16_777_215) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too large"))
-                conn.reader.max_frame_size = Int(value)
+                conn.peer_max_send_frame_size = Int(value)
                 continue
             end
             if id == UInt16(0x6)
@@ -331,7 +333,35 @@ end
 function _set_stream_error!(state::H2StreamState, err::Exception)
     lock(state.lock)
     try
-        state.error === nothing && (state.error = err)
+        state.stream_error === nothing && (state.stream_error = err)
+        state.stream_done = true
+        notify(state.condition)
+    finally
+        unlock(state.lock)
+    end
+    return nothing
+end
+
+@inline function _stream_failed(state::H2StreamState)::Bool
+    return state.conn_errored || state.stream_error !== nothing
+end
+
+@inline function _stream_conn_error(conn::H2Connection)::ProtocolError
+    err = conn.conn_error
+    return err === nothing ? ProtocolError("HTTP/2 connection failed") : (err::ProtocolError)
+end
+
+@inline function _throw_stream_error(conn::H2Connection, state::H2StreamState)::Nothing
+    err = state.stream_error
+    err === nothing || throw(err::Exception)
+    state.conn_errored && throw(_stream_conn_error(conn))
+    return nothing
+end
+
+function _set_stream_conn_errored!(state::H2StreamState)
+    lock(state.lock)
+    try
+        state.conn_errored = true
         state.stream_done = true
         notify(state.condition)
     finally
@@ -378,7 +408,7 @@ function _register_stream!(conn::H2Connection)::H2StreamState
     try
         while true
             (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
-            conn.conn_error === nothing || throw(conn.conn_error::Exception)
+            conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
             if !conn.accepting_new_streams || conn.next_stream_id > conn.peer_goaway_last_stream_id
                 throw(H2GoAwayError("HTTP/2 connection is draining after GOAWAY", conn.peer_goaway_last_stream_id))
             end
@@ -426,7 +456,7 @@ function _close_h2_transports!(conn::H2Connection)
     return nothing
 end
 
-function _fail_h2_connection!(conn::H2Connection, err::Exception)
+function _fail_h2_connection!(conn::H2Connection, err::ProtocolError)
     stream_states = H2StreamState[]
     lock(conn.state_lock)
     try
@@ -438,20 +468,8 @@ function _fail_h2_connection!(conn::H2Connection, err::Exception)
     finally
         unlock(conn.state_lock)
     end
-    close_err = conn.conn_error === nothing ? err : (conn.conn_error::Exception)
     for state in stream_states
-        lock(state.lock)
-        try
-            if state.stream_done && state.error === nothing
-                notify(state.condition)
-                continue
-            end
-            state.error === nothing && (state.error = close_err)
-            state.stream_done = true
-            notify(state.condition)
-        finally
-            unlock(state.lock)
-        end
+        _set_stream_conn_errored!(state)
     end
     _close_h2_transports!(conn)
     return nothing
@@ -509,9 +527,10 @@ end
 function _handle_stream_data!(state::H2StreamState, frame::DataFrame)
     lock(state.lock)
     try
-        while ((length(state.body) - state.body_read_index) + 1) >= state.max_buffered_bytes && state.error === nothing && !state.stream_done
+        while ((length(state.body) - state.body_read_index) + 1) >= state.max_buffered_bytes && !_stream_failed(state) && !state.stream_done
             wait(state.condition)
         end
+        _stream_failed(state) && return nothing
         append!(state.body, frame.data)
         if frame.end_stream
             state.stream_done = true
@@ -643,11 +662,7 @@ function _run_h2_read_loop!(conn::H2Connection)
         end
     catch err
         (@atomic :acquire conn.closed) && return nothing
-        if err isa Exception
-            _fail_h2_connection!(conn, err::Exception)
-        else
-            _fail_h2_connection!(conn, ProtocolError("HTTP/2 read loop failed"))
-        end
+        _fail_h2_connection!(conn, ProtocolError("HTTP/2 read loop failed", err::Exception))
         return nothing
     finally
         lock(conn.state_lock)
@@ -698,7 +713,7 @@ end
 
 function _make_tls_config_for_h2(
     config::Union{Nothing,TLS.Config},
-    address::String;
+    address::String,
     server_name::Union{Nothing,String}=nothing,
     handshake_timeout_ns::Int64=Int64(0),
 )::TLS.Config
@@ -742,7 +757,7 @@ TLS, or I/O exceptions from the underlying transport.
 """
 function _connect_h2_from_tcp!(
     tcp::TCP.Conn,
-    address::String;
+    address::String,
     secure::Bool=false,
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
@@ -766,7 +781,8 @@ function _connect_h2_from_tcp!(
             secure,
             tcp,
             tls_conn,
-            Framer(stream_reader),
+            stream_reader,
+            16_384,
             Encoder(),
             Decoder(
                 max_string_length=_H2_DEFAULT_MAX_HEADER_LIST_SIZE,
@@ -833,7 +849,7 @@ function connect_h2!(
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
 )::H2Connection
-    return _connect_h2_from_tcp!(tcp, String(address); secure=secure, tls_config=tls_config, connect_deadline_ns=connect_deadline_ns)
+    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns)
 end
 
 function connect_h2!(
@@ -844,7 +860,7 @@ function connect_h2!(
     connect_deadline_ns::Int64=Int64(0),
 )::H2Connection
     tcp = TCP.connect(host_resolver, "tcp", address)
-    return _connect_h2_from_tcp!(tcp, String(address); secure=secure, tls_config=tls_config, connect_deadline_ns=connect_deadline_ns)
+    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns)
 end
 
 """
@@ -873,9 +889,8 @@ function Base.close(conn::H2Connection)
     finally
         unlock(conn.state_lock)
     end
-    close_err = conn.conn_error === nothing ? ProtocolError("HTTP/2 connection is closed") : (conn.conn_error::Exception)
     for state in stream_states
-        _set_stream_error!(state, close_err)
+        _set_stream_conn_errored!(state)
     end
     _close_h2_transports!(conn)
     if read_task !== nothing && (read_task::Task) !== current_task()
@@ -894,16 +909,16 @@ function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request:
             n = body_read!(request.body, buf)
             if n == 0
                 if have_pending
-                    _write_data_frames_h2!(conn, stream_id, request, pending; end_stream=true)
+                    _write_data_frames_h2!(conn, stream_id, request, pending, true)
                 else
-                    _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, true, UInt8[]); write_deadline_ns=_request_write_deadline_ns(request))
+                    _write_frame_h2_threadsafe!(conn, DataFrame(stream_id, true, UInt8[]), _request_write_deadline_ns(request))
                 end
                 return nothing
             end
             current = Vector{UInt8}(undef, n)
             copyto!(current, 1, buf, 1, n)
             if have_pending
-                _write_data_frames_h2!(conn, stream_id, request, pending; end_stream=false)
+                _write_data_frames_h2!(conn, stream_id, request, pending, false)
             end
             pending = current
             have_pending = true
@@ -1015,12 +1030,12 @@ end
 function _write_h2_header_block_locked!(
     conn::H2Connection,
     stream_id::UInt32,
-    header_block::Vector{UInt8};
+    header_block::Vector{UInt8},
     end_stream::Bool,
     write_deadline_ns::Int64=Int64(0),
 )::Nothing
-    for frame in _header_block_frames(stream_id, end_stream, header_block, conn.reader.max_frame_size)
-        _write_frame_h2!(conn, frame; write_deadline_ns=write_deadline_ns)
+    _header_block_frames(stream_id, end_stream, header_block, conn.peer_max_send_frame_size) do frame
+        _write_frame_h2!(conn, frame, write_deadline_ns)
     end
     return nothing
 end
@@ -1066,7 +1081,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         done = false
         lock(body.state.lock)
         try
-            body.state.error === nothing || throw(body.state.error::Exception)
+            _throw_stream_error(body.conn, body.state)
             available = _stream_available_bytes(body.state)
             if available > 0
                 nread = min(length(dst), available)
@@ -1087,8 +1102,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
                     status = timedwait(() -> begin
                         lock(body.state.lock)
                         try
-                            body.state.error !== nothing && return true
-                            body.state.stream_done && return true
+                            (_stream_failed(body.state) || body.state.stream_done) && return true
                             return _stream_available_bytes(body.state) > 0
                         finally
                             unlock(body.state.lock)
@@ -1122,7 +1136,7 @@ function body_close!(body::H2Body)
     try
         if !body.state.stream_done
             should_reset = true
-            body.state.error === nothing && (body.state.error = ProtocolError("HTTP/2 response body closed"))
+            body.state.stream_error === nothing && (body.state.stream_error = ProtocolError("HTTP/2 response body closed"))
             body.state.stream_done = true
             notify(body.state.condition)
         end
@@ -1139,11 +1153,11 @@ function body_close!(body::H2Body)
     return nothing
 end
 
-function _wait_stream_headers!(state::H2StreamState, deadline_ns::Int64)
+function _wait_stream_headers!(conn::H2Connection, state::H2StreamState, deadline_ns::Int64)
     if deadline_ns == 0
         lock(state.lock)
         try
-            while !state.headers_complete && !state.stream_done && state.error === nothing
+            while !state.headers_complete && !state.stream_done && !_stream_failed(state)
                 wait(state.condition)
             end
         finally
@@ -1154,7 +1168,7 @@ function _wait_stream_headers!(state::H2StreamState, deadline_ns::Int64)
     while true
         lock(state.lock)
         try
-            (state.headers_complete || state.stream_done || state.error !== nothing) && return nothing
+            (state.headers_complete || state.stream_done || _stream_failed(state)) && return nothing
         finally
             unlock(state.lock)
         end
@@ -1163,7 +1177,7 @@ function _wait_stream_headers!(state::H2StreamState, deadline_ns::Int64)
         status = timedwait(() -> begin
             lock(state.lock)
             try
-                return state.headers_complete || state.stream_done || state.error !== nothing
+                return state.headers_complete || state.stream_done || _stream_failed(state)
             finally
                 unlock(state.lock)
             end
@@ -1185,31 +1199,27 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
             lock(conn.write_lock)
             try
                 (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
-                conn.conn_error === nothing || throw(conn.conn_error::Exception)
+                conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
                 header_block = encode_header_block(conn.encoder, headers)
                 _write_h2_header_block_locked!(
                     conn,
                     stream_state.stream_id,
-                    header_block;
-                    end_stream=end_stream,
-                    write_deadline_ns=_request_write_deadline_ns(request),
+                    header_block,
+                    end_stream,
+                    _request_write_deadline_ns(request),
                 )
             finally
                 unlock(conn.write_lock)
             end
             end_stream || _write_request_body_h2!(conn, stream_state.stream_id, request)
         catch err
-            if err isa Exception
-                _fail_h2_connection!(conn, err::Exception)
-            else
-                _fail_h2_connection!(conn, ProtocolError("HTTP/2 write failed"))
-            end
+            _fail_h2_connection!(conn, ProtocolError("HTTP/2 write failed", err::Exception))
             rethrow()
         end
-        _wait_stream_headers!(stream_state, _request_response_header_deadline_ns(request))
+        _wait_stream_headers!(conn, stream_state, _request_response_header_deadline_ns(request))
         lock(stream_state.lock)
         try
-            stream_state.error === nothing || throw(stream_state.error::Exception)
+            _throw_stream_error(conn, stream_state)
             stream_state.headers_complete || throw(ProtocolError("HTTP/2 response ended without END_HEADERS"))
             stream_state.decoded_headers === nothing && throw(ProtocolError("HTTP/2 response missing decoded headers"))
             decoded_headers = stream_state.decoded_headers::Vector{HeaderField}

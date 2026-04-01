@@ -155,7 +155,7 @@ mutable struct Stream <: IO
     request_timeout_ns::Int64
     timeout_config::Union{Nothing,_RequestTimeoutConfig}
     retry_controller::Union{Nothing,_RetryController}
-    verbose_config::Union{Nothing,_VerboseConfig}
+    verbose_config::_VerboseConfig
     request_buffer::IOBuffer
     response::Union{Nothing,Response}
     reader::Union{Nothing,IO}
@@ -197,7 +197,7 @@ function Stream(server::Server, tracked::_ServerConn, request::Request)
         Int64(0),
         nothing,
         nothing,
-        nothing,
+        _quiet_verbose_config(),
         IOBuffer(),
         response,
         nothing,
@@ -240,7 +240,7 @@ function Stream(request::Request)
         Int64(0),
         nothing,
         nothing,
-        nothing,
+        _quiet_verbose_config(),
         IOBuffer(),
         response,
         nothing,
@@ -685,7 +685,7 @@ mutable struct _LimitedRequestBody{B<:AbstractBody} <: AbstractBody
     @atomic closed::Bool
 end
 
-function _LimitedRequestBody(inner::B, limit::Integer; known_length_safe::Bool=false) where {B<:AbstractBody}
+function _LimitedRequestBody(inner::B, limit::Integer, known_length_safe::Bool=false) where {B<:AbstractBody}
     limit >= 0 || throw(ArgumentError("limit must be >= 0"))
     return _LimitedRequestBody(inner, Int64(limit), Int64(0), known_length_safe, false, UInt8[0x00], false)
 end
@@ -732,7 +732,7 @@ end
 function _request_with_body_limit(request::Request, limit::Int64)::Request
     request.content_length > limit && throw(RequestBodyTooLargeError(limit))
     request.body isa EmptyBody && return request
-    body = _LimitedRequestBody(request.body, limit; known_length_safe=request.content_length >= 0)
+    body = _LimitedRequestBody(request.body, limit, request.content_length >= 0)
     return _request_with_body(request, body; content_length=request.content_length)
 end
 
@@ -1355,7 +1355,7 @@ end
 
 function _server_response(
     request::Request,
-    status::Integer;
+    status::Integer,
     headers=Headers(),
     body::AbstractBody=EmptyBody(),
     content_length::Integer=0,
@@ -1374,13 +1374,13 @@ end
 function _redirect_response(request::Request, location::AbstractString)::Response
     headers = Headers()
     setheader(headers, "Location", String(location))
-    return _server_response(request, 301; headers=headers)
+    return _server_response(request, 301, headers)
 end
 
 function _method_not_allowed_response(request::Request)::Response
     headers = Headers()
     setheader(headers, "Allow", "GET, HEAD")
-    return _server_response(request, 405; headers=headers)
+    return _server_response(request, 405, headers)
 end
 
 function _resolve_file_etag(path::String, st, etag)
@@ -1398,7 +1398,7 @@ end
 
 function _servefile_response(
     request::Request,
-    path::String;
+    path::String,
     request_path::String,
     query_suffix::String,
     index_file::String,
@@ -1470,13 +1470,13 @@ function servefile(
     end
     return _servefile_response(
         request,
-        String(path);
-        request_path=request_path,
-        query_suffix=query_suffix,
-        index_file=String(index_file),
-        redirect_canonical=redirect_canonical,
-        etag=etag,
-        cache_control=cache_control,
+        String(path),
+        request_path,
+        query_suffix,
+        String(index_file),
+        redirect_canonical,
+        etag,
+        cache_control,
     )
 end
 
@@ -1506,13 +1506,13 @@ function fileserver(
         resolved = isempty(segments) ? root_path : joinpath(root_path, segments...)
         return _servefile_response(
             request,
-            resolved;
-            request_path=request_path,
-            query_suffix=query_suffix,
-            index_file=index_name,
-            redirect_canonical=redirect_canonical,
-            etag=etag,
-            cache_control=cache_control,
+            resolved,
+            request_path,
+            query_suffix,
+            index_name,
+            redirect_canonical,
+            etag,
+            cache_control,
         )
     end
 end
@@ -1540,7 +1540,7 @@ function _server_stream_write_mode(stream::Stream)::_ServerStreamWriteMode.T
     return _ServerStreamWriteMode.CHUNKED
 end
 
-function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8}; buffer::Bool=true)::Nothing
+function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8}, buffer::Bool=true)::Nothing
     isempty(bytes) && return nothing
     data = bytes isa Vector{UInt8} ? bytes : Vector{UInt8}(bytes)
     if buffer && (_server_stream_buffered_h2(stream) || _server_stream_buffered_fixed_h1(stream))
@@ -1583,7 +1583,7 @@ function _write_server_stream_head!(stream::Stream)::Nothing
     _write_status_line!(io, stream.response)
     _write_headers!(io, headers)
     write(io, "\r\n")
-    _write_server_stream_bytes!(stream, take!(io); buffer=false)
+    _write_server_stream_bytes!(stream, take!(io), false)
     @atomic :release stream.response_started = true
     return nothing
 end
@@ -1766,7 +1766,7 @@ function _server_closewrite(stream::Stream)::Nothing
         end
         _write_server_stream_head!(stream)
         body_bytes = take!(stream.request_buffer)
-        _write_server_stream_bytes!(stream, body_bytes; buffer=false)
+        _write_server_stream_bytes!(stream, body_bytes, false)
     elseif stream.write_mode == _ServerStreamWriteMode.CHUNKED
         io = IOBuffer()
         write(io, "0\r\n")
@@ -2127,7 +2127,7 @@ function _send_h2_server_window_updates!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
     stream_id::UInt32,
-    nbytes::Int;
+    nbytes::Int,
     stream_level::Bool=true,
 )::Nothing
     nbytes <= 0 && return nothing
@@ -2177,7 +2177,7 @@ end
 
 function _set_h2_server_stream_error!(
     state::_H2ServerStreamState,
-    err::Exception;
+    err::Exception,
     aborted::Bool=true,
     discard_body::Bool=true,
     finish_if_unstarted::Bool=false,
@@ -2213,7 +2213,7 @@ function _fail_h2_server_streams!(
         unlock(states_lock)
     end
     for state in snapshot
-        _set_h2_server_stream_error!(state, err; finish_if_unstarted=true)
+        _set_h2_server_stream_error!(state, err, true, true, true)
         _unregister_h2_send_window!(send_state, state.stream_id)
     end
     return nothing
@@ -2338,6 +2338,18 @@ function _ServerPrefaceConn(prefix::Vector{UInt8}, conn::C) where {C}
     return _ServerPrefaceConn{C}(prefix, 1, conn)
 end
 
+function _ConnReader(conn::_ServerPrefaceConn{TCP.Conn}, buffer_bytes::Integer=_CONN_READER_DEFAULT_BUFFER_BYTES)
+    reader = _ConnReader(conn.conn::TCP.Conn, buffer_bytes)
+    available = max(0, length(conn.prefix) - conn.next + 1)
+    if available > 0
+        available > length(reader.buf) && resize!(reader.buf, available)
+        copyto!(reader.buf, 1, conn.prefix, conn.next, available)
+        reader.next = 1
+        reader.stop = available
+    end
+    return reader
+end
+
 function Base.read!(conn::_ServerPrefaceConn, dst::Vector{UInt8})::Int
     n = readbytes!(conn, dst)
     n == length(dst) || throw(EOFError())
@@ -2413,8 +2425,7 @@ end
 
 function _write_frame_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, frame::AbstractFrame)::Nothing
     io = IOBuffer()
-    framer = Framer(io)
-    write_frame!(framer, frame)
+    write_frame!(io, frame)
     _write_all_h2_server!(conn, take!(io))
     return nothing
 end
@@ -2539,7 +2550,7 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
     return method::String, scheme, path, authority, out_headers
 end
 
-function _decode_h2_request(headers::Vector{HeaderField}, body::AbstractBody; stream_done::Bool=false)::Request
+function _decode_h2_request(headers::Vector{HeaderField}, body::AbstractBody, stream_done::Bool=false)::Request
     method, _scheme, path, authority, out_headers = _validate_h2_request_headers!(headers)
     target = method == "CONNECT" ? authority::String : (path::String)
     host = authority === nothing ? header(out_headers, "Host") : authority
@@ -2565,17 +2576,17 @@ end
 
 function _decode_h2_request(headers::Vector{HeaderField}, body::Vector{UInt8})::Request
     request_body = isempty(body) ? EmptyBody() : BytesBody(body)
-    return _decode_h2_request(headers, request_body; stream_done=true)
+    return _decode_h2_request(headers, request_body, true)
 end
 
-function _encode_h2_response_headers!(encoder::Encoder, response::Response; max_header_list_size::Int=0)::Vector{UInt8}
+function _encode_h2_response_headers!(encoder::Encoder, response::Response, max_header_list_size::Int=0)::Vector{UInt8}
     header_fields = HeaderField[HeaderField(":status", string(response.status), false)]
     _append_h2_headers!(header_fields, response.headers)
     max_header_list_size > 0 && _header_list_size(header_fields) > max_header_list_size && throw(ProtocolError("HTTP/2 response headers exceed peer SETTINGS_MAX_HEADER_LIST_SIZE"))
     return encode_header_block(encoder, header_fields)
 end
 
-function _encode_h2_trailer_headers!(encoder::Encoder, trailers::Headers; max_header_list_size::Int=0)::Vector{UInt8}
+function _encode_h2_trailer_headers!(encoder::Encoder, trailers::Headers, max_header_list_size::Int=0)::Vector{UInt8}
     header_fields = HeaderField[]
     _append_h2_headers!(header_fields, trailers)
     max_header_list_size > 0 && _header_list_size(header_fields) > max_header_list_size && throw(ProtocolError("HTTP/2 response trailers exceed peer SETTINGS_MAX_HEADER_LIST_SIZE"))
@@ -2585,11 +2596,11 @@ end
 function _write_h2_header_block_locked!(
     conn::Union{TCP.Conn,TLS.Conn},
     stream_id::UInt32,
-    header_block::Vector{UInt8};
+    header_block::Vector{UInt8},
     end_stream::Bool,
     max_frame_size::Int,
 )::Nothing
-    for frame in _header_block_frames(stream_id, end_stream, header_block, max_frame_size)
+    _header_block_frames(stream_id, end_stream, header_block, max_frame_size) do frame
         _write_frame_h2_server!(conn, frame)
     end
     return nothing
@@ -2600,7 +2611,7 @@ function _write_h2_response_headers!(
     write_lock::ReentrantLock,
     send_state::_H2SendWindowState,
     stream_id::UInt32,
-    response::Response;
+    response::Response,
     end_stream::Bool,
 )::Nothing
     max_frame_size = 16_384
@@ -2614,8 +2625,8 @@ function _write_h2_response_headers!(
     end
     lock(write_lock)
     try
-        header_block = _encode_h2_response_headers!(send_state.header_encoder, response; max_header_list_size=max_header_list_size)
-        _write_h2_header_block_locked!(conn, stream_id, header_block; end_stream=end_stream, max_frame_size=max_frame_size)
+        header_block = _encode_h2_response_headers!(send_state.header_encoder, response, max_header_list_size)
+        _write_h2_header_block_locked!(conn, stream_id, header_block, end_stream, max_frame_size)
     finally
         unlock(write_lock)
     end
@@ -2641,8 +2652,8 @@ function _write_h2_trailers!(
     end
     lock(write_lock)
     try
-        header_block = _encode_h2_trailer_headers!(send_state.header_encoder, trailers; max_header_list_size=max_header_list_size)
-        _write_h2_header_block_locked!(conn, stream_id, header_block; end_stream=true, max_frame_size=max_frame_size)
+        header_block = _encode_h2_trailer_headers!(send_state.header_encoder, trailers, max_header_list_size)
+        _write_h2_header_block_locked!(conn, stream_id, header_block, true, max_frame_size)
     finally
         unlock(write_lock)
     end
@@ -2654,7 +2665,7 @@ function _write_response_body_h2_server!(
     write_lock::ReentrantLock,
     send_state::_H2SendWindowState,
     stream_id::UInt32,
-    response::Response;
+    response::Response,
     end_stream::Bool=true,
 )::Nothing
     response.body isa EmptyBody && return nothing
@@ -2704,14 +2715,14 @@ function _write_h2_response!(
             body_close!(response.body)
         catch
         end
-        _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response; end_stream=!has_trailers)
+        _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response, !has_trailers)
         has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
         return nothing
     end
     body_empty = response.body isa EmptyBody
     end_stream = body_empty && !has_trailers
-    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response; end_stream=end_stream)
-    body_empty || _write_response_body_h2_server!(conn, write_lock, send_state, stream_id, response; end_stream=!has_trailers)
+    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response, end_stream)
+    body_empty || _write_response_body_h2_server!(conn, write_lock, send_state, stream_id, response, !has_trailers)
     has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
     return nothing
 end
@@ -2736,7 +2747,7 @@ function _write_h2_buffered_stream_response!(
     has_body = !isempty(body_bytes)
     has_trailers = !isempty(response.trailers)
     end_stream = !has_body && !has_trailers
-    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response; end_stream=end_stream)
+    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response, end_stream)
     has_body && _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, body_bytes; end_stream=!has_trailers)
     has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
     return nothing
@@ -2768,7 +2779,7 @@ function _handle_h2_stream!(
         unlock(state.lock)
     end
     try
-        request = _decode_h2_request(decoded_headers, request_body::AbstractBody; stream_done=stream_done)
+        request = _decode_h2_request(decoded_headers, request_body::AbstractBody, stream_done)
         request.trailers = state.trailers
         lock(state.lock)
         try
@@ -2909,7 +2920,7 @@ end
 
 function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::Nothing
     conn = tracked.conn
-    reader = Framer(_ConnReader(reader_source))
+    reader = _ConnReader(reader_source)
     decoder = Decoder(
         max_string_length=server.max_header_bytes,
         max_header_list_size=server.max_header_bytes,
@@ -2979,7 +2990,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     unlock(states_lock)
                 end
                 state === nothing && continue
-                _set_h2_server_stream_error!(state, ProtocolError("HTTP/2 stream reset by peer"); finish_if_unstarted=true)
+                _set_h2_server_stream_error!(state, ProtocolError("HTTP/2 stream reset by peer"), true, true, true)
                 _unregister_h2_send_window!(send_state, rst.stream_id)
                 _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
                 continue
@@ -3128,7 +3139,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     unlock(state.lock)
                 end
                 if state.aborted
-                    _send_h2_server_window_updates!(conn, write_lock, df.stream_id, length(df.data); stream_level=false)
+                    _send_h2_server_window_updates!(conn, write_lock, df.stream_id, length(df.data), false)
                     _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
                 end
                 continue

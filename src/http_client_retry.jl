@@ -164,7 +164,7 @@ function _arm_request_retry!(
 end
 
 function _retry_controller(
-    client::Client;
+    client::Client,
     retry::Bool,
     retries::Integer,
     retry_non_idempotent::Bool,

@@ -1,4 +1,7 @@
 # Core HTTP request/response/header/body types and errors.
+using Reseau.TCP
+using Reseau.TLS
+
 export Headers
 export Request
 export Response
@@ -51,7 +54,11 @@ ordering, or unsupported control-flow states in the client/server stacks.
 """
 struct ProtocolError <: Exception
     message::String
+    err::Union{Nothing,Exception}
 end
+
+ProtocolError(message::AbstractString) = ProtocolError(String(message), nothing)
+ProtocolError(message::AbstractString, err::Exception) = ProtocolError(String(message), err)
 
 """
     CanceledError
@@ -93,6 +100,12 @@ end
 
 function Base.showerror(io::IO, err::ProtocolError)
     print(io, "http protocol error: ", err.message)
+    wrapped = err.err
+    if wrapped !== nothing
+        print(io, " (caused by: ")
+        showerror(io, wrapped::Exception)
+        print(io, ")")
+    end
     return nothing
 end
 
@@ -747,17 +760,116 @@ Arguments:
 The context itself does not schedule timers; it is a passive state container
 that transport code consults before or during blocking operations.
 """
+const _VERBOSE_DEFAULT_BODY_NBYTES = 1000
+
+struct _VerboseConfig
+    level::Int
+    body_nbytes::Int
+    io::IO
+end
+
+@inline function _quiet_verbose_config(io::IO=stderr)::_VerboseConfig
+    return _VerboseConfig(0, _VERBOSE_DEFAULT_BODY_NBYTES, io)
+end
+
+mutable struct _VerboseCaptureBuffer
+    bytes::Vector{UInt8}
+    limit::Int
+    total::Int64
+    truncated::Bool
+end
+
+function _VerboseCaptureBuffer(limit::Integer)
+    limit_i = Int(limit)
+    limit_i >= 0 || throw(ArgumentError("capture limit must be >= 0"))
+    return _VerboseCaptureBuffer(UInt8[], limit_i, Int64(0), false)
+end
+
+mutable struct _ConnReader <: IO
+    buf::Vector{UInt8}
+    next::Int
+    stop::Int
+    capture::Union{Nothing,_VerboseCaptureBuffer}
+    conn::Union{TCP.Conn,TLS.Conn}
+end
+
+mutable struct _VerboseExchangeState
+    config::_VerboseConfig
+    active::Bool
+    protocol::Symbol
+    attempt::Int
+    redirect_count::Int
+    url::String
+    request_method::String
+    request_target::String
+    request_host::Union{Nothing,String}
+    request_headers::Headers
+    request_proto_major::UInt8
+    request_proto_minor::UInt8
+    response_status::Int
+    response_reason::String
+    response_headers::Headers
+    response_trailers::Headers
+    response_proto_major::UInt8
+    response_proto_minor::UInt8
+    request_capture::_VerboseCaptureBuffer
+    response_capture::_VerboseCaptureBuffer
+    @atomic request_logged::Bool
+    @atomic response_logged::Bool
+    @atomic response_complete::Bool
+end
+
+function _VerboseExchangeState(config::_VerboseConfig=_quiet_verbose_config())
+    return _VerboseExchangeState(
+        config,
+        false,
+        :auto,
+        0,
+        0,
+        "",
+        "",
+        "",
+        nothing,
+        Headers(),
+        UInt8(1),
+        UInt8(1),
+        0,
+        "",
+        Headers(),
+        Headers(),
+        UInt8(1),
+        UInt8(1),
+        _VerboseCaptureBuffer(0),
+        _VerboseCaptureBuffer(0),
+        false,
+        false,
+        false,
+    )
+end
+
+struct _RequestTimeoutConfig
+    connect_timeout_ns::Int64
+    response_header_timeout_ns::Int64
+    read_idle_timeout_ns::Int64
+    write_idle_timeout_ns::Int64
+    expect_continue_timeout_ns::Int64
+end
+
 mutable struct RequestContext
     deadline_ns::Int64
     @atomic canceled_flag::Bool
     cancel_message::Union{Nothing,String}
     metadata::Union{Nothing,Dict{Symbol,Any}}
+    timeout_config::Union{Nothing,_RequestTimeoutConfig}
+    verbose_config::_VerboseConfig
+    verbose_exchange_state::_VerboseExchangeState
 end
 
 """Construct a `RequestContext`; throws `ArgumentError` when `deadline_ns < 0`."""
 function RequestContext(; deadline_ns::Integer=Int64(0))
     deadline_ns < 0 && throw(ArgumentError("deadline_ns must be >= 0"))
-    return RequestContext(Int64(deadline_ns), false, nothing, nothing)
+    verbose_config = _quiet_verbose_config()
+    return RequestContext(Int64(deadline_ns), false, nothing, nothing, nothing, verbose_config, _VerboseExchangeState(verbose_config))
 end
 
 """
@@ -843,8 +955,8 @@ end
 
 function Base.empty!(ctx::RequestContext)
     metadata = ctx.metadata
-    metadata === nothing && return ctx
-    empty!(metadata::Dict{Symbol,Any})
+    metadata === nothing || empty!(metadata::Dict{Symbol,Any})
+    ctx.timeout_config = nothing
     return ctx
 end
 

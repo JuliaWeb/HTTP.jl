@@ -1,4 +1,4 @@
-# HTTP/2 frame model and framer (read/write) implementation.
+# HTTP/2 frame model and frame (read/write) implementation.
 """HTTP/2 DATA frame type code (`0x0`)."""
 const FRAME_DATA = UInt8(0x0)
 """HTTP/2 HEADERS frame type code (`0x1`)."""
@@ -29,6 +29,7 @@ const FLAG_ACK = UInt8(0x1)
 """HTTP/2 flag bit indicating padded payload data."""
 const FLAG_PADDED = UInt8(0x8)
 const _FLAG_HEADERS_PRIORITY = UInt8(0x20)
+const _H2_MAX_FRAME_SIZE = 16_384
 
 """
     FrameHeader
@@ -122,35 +123,6 @@ end
 struct UnknownFrame <: AbstractFrame
     header::FrameHeader
     payload::Vector{UInt8}
-end
-
-"""
-    Framer(io; max_frame_size=16384)
-
-Frame reader/writer for an `IO` stream.
-
-`Framer` is intentionally low-level: it deals only with HTTP/2 frame boundaries
-and per-frame validation, not stream state machines or HPACK. Higher layers are
-responsible for enforcing sequencing rules such as CONTINUATION ownership.
-"""
-mutable struct Framer{I<:IO}
-    io::I
-    max_frame_size::Int
-end
-
-"""
-    Framer(io; max_frame_size=16384)
-
-Construct an HTTP/2 framer with the configured frame-size limit.
-
-`max_frame_size` is the receive/send safety limit enforced by this local
-framer, not necessarily the peer's advertised SETTINGS value. Throws
-`ArgumentError` unless the size is within RFC 7540's legal range.
-"""
-function Framer(io::I; max_frame_size::Integer=16_384) where {I<:IO}
-    max_frame_size >= 16_384 || throw(ArgumentError("HTTP/2 max_frame_size must be >= 16384"))
-    max_frame_size <= 16_777_215 || throw(ArgumentError("HTTP/2 max_frame_size must be <= 16777215"))
-    return Framer(io, Int(max_frame_size))
 end
 
 @inline function _read_exact_bytes!(io::IO, n::Int)::Vector{UInt8}
@@ -266,9 +238,9 @@ end
 end
 
 """
-    read_frame!(framer)
+    read_frame!(io)
 
-Read and decode one HTTP/2 frame from `framer.io`.
+Read and decode one HTTP/2 frame from `io`.
 
 Returns a concrete `AbstractFrame` subtype.
 
@@ -277,10 +249,10 @@ Throws:
 - `ProtocolError` for locally enforced invariants such as frame-size overflow
 - `EOFError` or other I/O exceptions from the underlying stream
 """
-function read_frame!(framer::Framer)::AbstractFrame
-    header = _read_frame_header!(framer.io)
-    header.length <= framer.max_frame_size || throw(ProtocolError("HTTP/2 frame exceeds max_frame_size"))
-    payload = _read_exact_bytes!(framer.io, header.length)
+function read_frame!(io::IO)::AbstractFrame
+    header = _read_frame_header!(io)
+    header.length <= _H2_MAX_FRAME_SIZE || throw(ProtocolError("HTTP/2 frame exceeds max_frame_size"))
+    payload = _read_exact_bytes!(io, header.length)
     # This function intentionally validates only frame-local invariants. Stream-
     # level rules such as "HEADERS must precede DATA" live in the client/server
     # state machines above the framer.
@@ -443,46 +415,47 @@ function _serialize_frame(frame::AbstractFrame)::Tuple{FrameHeader,Vector{UInt8}
 end
 
 """
-    write_frame!(framer, frame)
+    write_frame!(io, frame)
 
-Serialize and write one HTTP/2 frame to `framer.io`.
+Serialize and write one HTTP/2 frame to `io`.
 
 Returns `nothing`. Throws `ProtocolError` or `ArgumentError` for frames that
 cannot be represented legally, plus any exception raised by the underlying
 `IO`.
 """
-function write_frame!(framer::Framer, frame::AbstractFrame)
+function write_frame!(io::IO, frame::AbstractFrame)
     header, payload = _serialize_frame(frame)
-    header.length <= framer.max_frame_size || throw(ProtocolError("HTTP/2 frame exceeds max_frame_size"))
-    write(framer.io, _encode_header_bytes(header))
-    isempty(payload) || write(framer.io, payload)
+    header.length <= _H2_MAX_FRAME_SIZE || throw(ProtocolError("HTTP/2 frame exceeds max_frame_size"))
+    write(io, _encode_header_bytes(header))
+    isempty(payload) || write(io, payload)
     return nothing
 end
 
 function _header_block_frames(
+    f::F,
     stream_id::UInt32,
     end_stream::Bool,
     header_block::Vector{UInt8},
     max_frame_size::Integer,
-)::Vector{AbstractFrame}
+)::Nothing where {F}
     max_frame_size > 0 || throw(ArgumentError("max_frame_size must be > 0"))
     total = length(header_block)
     if total <= max_frame_size
-        return AbstractFrame[HeadersFrame(stream_id, end_stream, true, copy(header_block))]
+        f(HeadersFrame(stream_id, end_stream, true, copy(header_block)))
+        return nothing
     end
-    frames = AbstractFrame[]
     offset = 1
     chunk_len = min(total, Int(max_frame_size))
     first_fragment = Vector{UInt8}(undef, chunk_len)
     copyto!(first_fragment, 1, header_block, offset, chunk_len)
-    push!(frames, HeadersFrame(stream_id, end_stream, false, first_fragment))
+    f(HeadersFrame(stream_id, end_stream, false, first_fragment))
     offset += chunk_len
     while offset <= total
         chunk_len = min(total - offset + 1, Int(max_frame_size))
         fragment = Vector{UInt8}(undef, chunk_len)
         copyto!(fragment, 1, header_block, offset, chunk_len)
         offset += chunk_len
-        push!(frames, ContinuationFrame(stream_id, offset > total, fragment))
+        f(ContinuationFrame(stream_id, offset > total, fragment))
     end
-    return frames
+    return nothing
 end

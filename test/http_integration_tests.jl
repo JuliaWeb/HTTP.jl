@@ -46,13 +46,13 @@ end
 
 function _write_frame_h2_integration!(conn::NC.Conn, frame::HT.AbstractFrame)
     io = IOBuffer()
-    framer = HT.Framer(io)
+    framer = io
     HT.write_frame!(framer, frame)
     _write_all_h2_integration!(conn, take!(io))
     return nothing
 end
 
-function _read_next_headers_h2_integration!(reader::HT.Framer)::HT.HeadersFrame
+function _read_next_headers_h2_integration!(reader::IO)::HT.HeadersFrame
     while true
         frame = HT.read_frame!(reader)
         frame isa HT.HeadersFrame && return frame::HT.HeadersFrame
@@ -233,7 +233,7 @@ end
                 conn = NC.accept(listener)
                 put!(accepted, nothing)
                 push!(workers, errormonitor(Threads.@spawn begin
-                    reader = HT.Framer(HT._ConnReader(conn))
+                    reader = HT._ConnReader(conn)
                     encoder = HT.Encoder()
                     decoder = HT.Decoder()
                     try

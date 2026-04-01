@@ -35,7 +35,7 @@ end
 
 function _write_frame_to_conn!(conn::NC.Conn, frame::HT.AbstractFrame)
     io = IOBuffer()
-    framer = HT.Framer(io)
+    framer = io
     HT.write_frame!(framer, frame)
     _write_all_h2_tcp!(conn, take!(io))
     return nothing
@@ -73,7 +73,7 @@ function _wait_task_h2!(task::Task; timeout_s::Float64 = 5.0)
     return nothing
 end
 
-function _read_next_headers_frame!(reader::HT.Framer)::HT.HeadersFrame
+function _read_next_headers_frame!(reader::IO)::HT.HeadersFrame
     while true
         frame = HT.read_frame!(reader)
         frame isa HT.HeadersFrame && return frame::HT.HeadersFrame
@@ -84,7 +84,7 @@ function _read_next_headers_frame!(reader::HT.Framer)::HT.HeadersFrame
     end
 end
 
-function _read_h2_header_block_frames!(reader::HT.Framer)
+function _read_h2_header_block_frames!(reader::IO)
     first = HT.read_frame!(reader)
     first isa HT.HeadersFrame || error("expected headers frame, got $(typeof(first))")
     headers_frame = first::HT.HeadersFrame
@@ -169,7 +169,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -210,7 +210,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         try
             _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
             _ = HT.read_frame!(reader)
@@ -267,7 +267,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         try
             _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
             _ = HT.read_frame!(reader)
@@ -297,7 +297,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -322,7 +322,7 @@ end
     h2_conn = HT.connect_h2!(address; secure = false)
     try
         request = HT.Request("GET", "/slow-headers"; host = address, body = HT.EmptyBody(), content_length = 0)
-        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(; response_header_timeout = 0.05)
+        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0.05)
         HT._apply_request_timeout_settings!(request.context, request_timeout_ns, timeout_config)
         @test_throws Reseau.IOPoll.DeadlineExceededError HT.h2_roundtrip!(h2_conn, request)
         _wait_task_h2!(server_task)
@@ -341,7 +341,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -368,7 +368,7 @@ end
     response = nothing
     try
         request = HT.Request("GET", "/slow-body"; host = address, body = HT.EmptyBody(), content_length = 0)
-        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(; read_idle_timeout = 0.05)
+        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 0.05)
         HT._apply_request_timeout_settings!(request.context, request_timeout_ns, timeout_config)
         response = HT.h2_roundtrip!(h2_conn, request)
         buf = Vector{UInt8}(undef, 8)
@@ -395,7 +395,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_decoder = HT.Decoder()
         try
             _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
@@ -423,7 +423,7 @@ end
     try
         body = HT.BytesBody(collect(codeunits("abcd")))
         request = HT.Request("POST", "/slow-upload"; host = address, body = body, content_length = 4)
-        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(; write_idle_timeout = 0.05)
+        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 0, 0.05)
         HT._apply_request_timeout_settings!(request.context, request_timeout_ns, timeout_config)
         @test_throws Reseau.IOPoll.DeadlineExceededError HT.h2_roundtrip!(h2_conn, request)
         _wait_task_h2!(server_task)
@@ -442,7 +442,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -490,7 +490,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         try
             _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
             _ = HT.read_frame!(reader)
@@ -529,7 +529,7 @@ end
     continuation_count = Ref(0)
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -579,7 +579,7 @@ end
     large_value = String(UInt8[UInt8(0x21 + ((i - 1) % 90)) for i in 1:512])
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -627,7 +627,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -675,7 +675,7 @@ end
     seen_paths = String[]
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -763,7 +763,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -831,7 +831,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -878,7 +878,7 @@ end
     seen_streams = UInt32[]
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -931,7 +931,7 @@ end
     frame_sizes = Int[]
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -993,7 +993,7 @@ end
     received = IOBuffer()
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -1046,7 +1046,7 @@ end
     chunk_sizes = Int[]
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -1107,7 +1107,7 @@ end
     chunk_sizes = Int[]
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -1174,7 +1174,7 @@ end
     seen_streams = UInt32[]
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -1228,7 +1228,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -1297,7 +1297,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try
@@ -1344,7 +1344,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
-        reader = HT.Framer(HT._ConnReader(accepted_conn))
+        reader = HT._ConnReader(accepted_conn)
         server_encoder = HT.Encoder()
         server_decoder = HT.Decoder()
         try

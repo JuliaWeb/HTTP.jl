@@ -163,7 +163,7 @@ end
         0x00, 0x00, 0x00, 0x01,
         0x00, 0x00, 0x00, 0x00,
     ])
-    framer = HT.Framer(io)
+    framer = io
     @test_throws HT.ProtocolError HT.read_frame!(framer)
 
     bad_ping = IOBuffer(UInt8[
@@ -173,7 +173,7 @@ end
         0x00, 0x00, 0x00, 0x01,
         0, 0, 0, 0, 0, 0, 0, 0,
     ])
-    @test_throws HT.ProtocolError HT.read_frame!(HT.Framer(bad_ping))
+    @test_throws HT.ProtocolError HT.read_frame!(bad_ping)
 end
 
 @testset "HTTP parity high-level replayable form body redirect" begin

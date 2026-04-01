@@ -541,7 +541,7 @@ function _ws_valid_handshake_key(key::AbstractString)::Bool
     return length(decoded) == 16
 end
 
-@inline function _ws_header_value_has_token(value::AbstractString, token::AbstractString; case_sensitive::Bool=false)::Bool
+@inline function _ws_header_value_has_token(value::AbstractString, token::AbstractString, case_sensitive::Bool=false)::Bool
     for part in eachsplit(value, ',')
         trimmed = strip(part)
         isempty(trimmed) && continue
@@ -554,19 +554,19 @@ end
     return false
 end
 
-@inline function _ws_headers_have_token(hdrs::Headers, name::AbstractString, token::AbstractString; case_sensitive::Bool=false)::Bool
+@inline function _ws_headers_have_token(hdrs::Headers, name::AbstractString, token::AbstractString, case_sensitive::Bool=false)::Bool
     values = headers(hdrs, name)
     isempty(values) && return false
     for value in values
-        _ws_header_value_has_token(value, token; case_sensitive=case_sensitive) && return true
+        _ws_header_value_has_token(value, token, case_sensitive) && return true
     end
     return false
 end
 
 function ws_is_websocket_request(request::Request)::Bool
     uppercase(request.method) == "GET" || return false
-    _ws_headers_have_token(request.headers, "Upgrade", "websocket"; case_sensitive=false) || return false
-    _ws_headers_have_token(request.headers, "Connection", "upgrade"; case_sensitive=false) || return false
+    _ws_headers_have_token(request.headers, "Upgrade", "websocket", false) || return false
+    _ws_headers_have_token(request.headers, "Connection", "upgrade", false) || return false
     ws_get_request_sec_websocket_key(request) === nothing && return false
     version = header(request.headers, "Sec-WebSocket-Version", nothing)
     version === nothing && return false

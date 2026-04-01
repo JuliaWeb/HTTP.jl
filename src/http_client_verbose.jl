@@ -1,37 +1,6 @@
 # Internal client-side verbose logging, capture, and formatting helpers.
 
-const _VERBOSE_DEFAULT_BODY_NBYTES = 1000
 const _VERBOSE_H1_CAPTURE_HEADROOM_BYTES = 256 * 1024
-const _VERBOSE_CONTEXT_CONFIG_KEY = :_http_verbose_config
-const _VERBOSE_CONTEXT_EXCHANGE_KEY = :_http_verbose_exchange
-
-struct _VerboseConfig
-    level::Int
-    body_nbytes::Int
-    io::IO
-end
-
-mutable struct _VerboseCaptureBuffer
-    bytes::Vector{UInt8}
-    limit::Int
-    total::Int64
-    truncated::Bool
-end
-
-mutable struct _VerboseExchangeState
-    config::_VerboseConfig
-    protocol::Symbol
-    attempt::Int
-    redirect_count::Int
-    url::String
-    request::Request
-    response_head::Union{Nothing,_IncomingResponseHead}
-    request_capture::_VerboseCaptureBuffer
-    response_capture::_VerboseCaptureBuffer
-    @atomic request_logged::Bool
-    @atomic response_logged::Bool
-    @atomic response_complete::Bool
-end
 
 mutable struct _VerboseTeeWriteIO{S} <: IO
     inner::S
@@ -67,44 +36,33 @@ function _normalize_verbose_body_nbytes(value)::Int
     return n
 end
 
-function _verbose_config(; verbose=false, verbose_body_nbytes::Integer=_VERBOSE_DEFAULT_BODY_NBYTES, verbose_io::IO=stderr)::Union{Nothing,_VerboseConfig}
+function _verbose_config(verbose=false, verbose_body_nbytes::Integer=_VERBOSE_DEFAULT_BODY_NBYTES, verbose_io::IO=stderr)::_VerboseConfig
     level = _normalize_verbose_level(verbose)
-    level == 0 && return nothing
     return _VerboseConfig(level, _normalize_verbose_body_nbytes(verbose_body_nbytes), verbose_io)
 end
 
-@inline function _request_context_verbose_config(ctx::RequestContext)::Union{Nothing,_VerboseConfig}
-    return get(ctx, _VERBOSE_CONTEXT_CONFIG_KEY, nothing)
+@inline function _request_context_verbose_config(ctx::RequestContext)::_VerboseConfig
+    return ctx.verbose_config
 end
 
-@inline function _set_request_context_verbose_config!(ctx::RequestContext, config::Union{Nothing,_VerboseConfig})::Nothing
-    config === nothing && return nothing
-    ctx[_VERBOSE_CONTEXT_CONFIG_KEY] = config
+@inline function _set_request_context_verbose_config!(ctx::RequestContext, config::_VerboseConfig)::Nothing
+    ctx.verbose_config = config
+    ctx.verbose_exchange_state = _VerboseExchangeState(config)
     return nothing
 end
 
 @inline function _request_context_verbose_exchange(ctx::RequestContext)::Union{Nothing,_VerboseExchangeState}
-    return get(ctx, _VERBOSE_CONTEXT_EXCHANGE_KEY, nothing)
+    exchange = ctx.verbose_exchange_state
+    return exchange.active ? exchange : nothing
 end
 
 @inline function _set_request_context_verbose_exchange!(ctx::RequestContext, exchange::Union{Nothing,_VerboseExchangeState})::Nothing
-    if exchange === nothing
-        metadata = ctx.metadata
-        metadata === nothing || delete!(metadata::Dict{Symbol,Any}, _VERBOSE_CONTEXT_EXCHANGE_KEY)
-    else
-        ctx[_VERBOSE_CONTEXT_EXCHANGE_KEY] = exchange
-    end
+    ctx.verbose_exchange_state = exchange === nothing ? _VerboseExchangeState(ctx.verbose_config) : exchange
     return nothing
 end
 
-@inline function _verbose_enabled(config::Union{Nothing,_VerboseConfig}, level::Integer=1)::Bool
-    return config !== nothing && (config::_VerboseConfig).level >= level
-end
-
-function _VerboseCaptureBuffer(limit::Integer)
-    limit_i = Int(limit)
-    limit_i >= 0 || throw(ArgumentError("capture limit must be >= 0"))
-    return _VerboseCaptureBuffer(UInt8[], limit_i, Int64(0), false)
+@inline function _verbose_enabled(config::_VerboseConfig, level::Integer=1)::Bool
+    return config.level >= level
 end
 
 @inline function _verbose_capture_limit(config::_VerboseConfig)::Int
@@ -133,12 +91,23 @@ function _new_verbose_exchange(
 )::_VerboseExchangeState
     return _VerboseExchangeState(
         config,
+        true,
         protocol,
         Int(attempt),
         Int(redirect_count),
         String(url),
-        request,
-        nothing,
+        request.method,
+        request.target,
+        request.host,
+        request.headers,
+        request.proto_major,
+        request.proto_minor,
+        0,
+        "",
+        Headers(),
+        Headers(),
+        UInt8(1),
+        UInt8(1),
         _VerboseCaptureBuffer(_verbose_request_capture_limit(config, protocol)),
         _VerboseCaptureBuffer(_verbose_response_capture_limit(config, protocol)),
         false,
@@ -155,15 +124,23 @@ function _begin_verbose_exchange!(
     url::AbstractString,
 )::Union{Nothing,_VerboseExchangeState}
     config = _request_context_verbose_config(request.context)
-    _verbose_enabled(config, 2) || return nothing
-    exchange = _new_verbose_exchange(config::_VerboseConfig, protocol, attempt, redirect_count, url, request)
+    if !_verbose_enabled(config, 2)
+        _set_request_context_verbose_exchange!(request.context, nothing)
+        return nothing
+    end
+    exchange = _new_verbose_exchange(config, protocol, attempt, redirect_count, url, request)
     _set_request_context_verbose_exchange!(request.context, exchange)
     return exchange
 end
 
 @inline function _set_verbose_response_head!(exchange::Union{Nothing,_VerboseExchangeState}, head::_IncomingResponseHead)::Nothing
     exchange === nothing && return nothing
-    (exchange::_VerboseExchangeState).response_head = head
+    exchange.response_status = head.status
+    exchange.response_reason = head.reason
+    exchange.response_headers = head.headers
+    exchange.response_trailers = head.trailers
+    exchange.response_proto_major = head.proto_major
+    exchange.response_proto_minor = head.proto_minor
     return nothing
 end
 
@@ -212,17 +189,17 @@ end
     return nothing
 end
 
-function _verbose_line!(config::Union{Nothing,_VerboseConfig}, level::Integer, message::AbstractString)::Nothing
+function _verbose_line!(config::_VerboseConfig, level::Integer, message::AbstractString)::Nothing
     _verbose_enabled(config, level) || return nothing
-    io = (config::_VerboseConfig).io
+    io = config.io
     println(io, "[http] ", message)
     flush(io)
     return nothing
 end
 
-function _verbose_block!(config::Union{Nothing,_VerboseConfig}, level::Integer, label::AbstractString, body::AbstractString)::Nothing
+function _verbose_block!(config::_VerboseConfig, level::Integer, label::AbstractString, body::AbstractString)::Nothing
     _verbose_enabled(config, level) || return nothing
-    io = (config::_VerboseConfig).io
+    io = config.io
     println(io, "[http] ", label)
     if !isempty(body)
         write(io, body)
@@ -396,7 +373,7 @@ function _render_message_body(
     return string(rendered, truncated && previewed ? _render_truncation_suffix(length(bytes), total) : "")
 end
 
-function _write_message_headers!(io::IO, headers::Headers; host::Union{Nothing,String}=nothing)::Nothing
+function _write_message_headers!(io::IO, headers::Headers, host::Union{Nothing,String}=nothing)::Nothing
     wrote_any = false
     if host !== nothing && !hasheader(headers, "Host")
         print(io, "Host: ", _http_render_header_value("Host", host::String))
@@ -455,9 +432,9 @@ function Base.show(io::IO, response::Response)
     print(io, ", ", _count_label(length(response.headers), "header"), ", ", _body_summary_label(response.body, response.content_length), ")")
 end
 
-function _show_request_message(io::IO, request::Request; body_limit::Int)::Nothing
+function _show_request_message(io::IO, request::Request, body_limit::Int)::Nothing
     print(io, request.method, " ", request.target, " ", _http_proto_string(request.proto_major, request.proto_minor), "\r\n")
-    _write_message_headers!(io, request.headers; host=request.host)
+    _write_message_headers!(io, request.headers, request.host)
     body = _render_message_body(request.body, request.content_length, request.headers; body_limit=body_limit)
     if !isempty(body) || !isempty(request.trailers)
         write(io, "\r\n\r\n")
@@ -470,7 +447,7 @@ function _show_request_message(io::IO, request::Request; body_limit::Int)::Nothi
     return nothing
 end
 
-function _show_response_message(io::IO, response::Response; body_limit::Int)::Nothing
+function _show_response_message(io::IO, response::Response, body_limit::Int)::Nothing
     print(io, _http_proto_string(response.proto_major, response.proto_minor), " ", response.status)
     isempty(response.reason) || print(io, " ", response.reason)
     write(io, "\r\n")
@@ -489,20 +466,20 @@ end
 
 function Base.show(io::IO, ::MIME"text/plain", request::Request)
     get(io, :compact, false)::Bool && return show(io, request)
-    return _show_request_message(io, request; body_limit=_VERBOSE_DEFAULT_BODY_NBYTES)
+    return _show_request_message(io, request, _VERBOSE_DEFAULT_BODY_NBYTES)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", response::Response)
     get(io, :compact, false)::Bool && return show(io, response)
-    return _show_response_message(io, response; body_limit=_VERBOSE_DEFAULT_BODY_NBYTES)
+    return _show_response_message(io, response, _VERBOSE_DEFAULT_BODY_NBYTES)
 end
 
 function Base.print(io::IO, request::Request)
-    return _show_request_message(io, request; body_limit=typemax(Int))
+    return _show_request_message(io, request, typemax(Int))
 end
 
 function Base.print(io::IO, response::Response)
-    return _show_response_message(io, response; body_limit=typemax(Int))
+    return _show_response_message(io, response, typemax(Int))
 end
 
 function _format_h1_raw_message(capture::_VerboseCaptureBuffer, headers::Union{Nothing,Headers}=nothing)::String
@@ -530,34 +507,31 @@ function _write_verbose_headers!(io::IO, hdrs::Headers)::Nothing
 end
 
 function _format_h2_request(exchange::_VerboseExchangeState)::String
-    req = exchange.request
     io = IOBuffer()
-    print(io, req.method, " ", req.target, " HTTP/2\r\n")
-    req.host === nothing || print(io, "Host: ", req.host::String, "\r\n")
-    _write_verbose_headers!(io, req.headers)
+    print(io, exchange.request_method, " ", exchange.request_target, " HTTP/2\r\n")
+    exchange.request_host === nothing || print(io, "Host: ", exchange.request_host::String, "\r\n")
+    _write_verbose_headers!(io, exchange.request_headers)
     write(io, "\r\n")
     body_bytes = exchange.request_capture.bytes
-    rendered_body, previewed = _render_body_for_verbose(body_bytes, exchange.request_capture.total, req.headers)
+    rendered_body, previewed = _render_body_for_verbose(body_bytes, exchange.request_capture.total, exchange.request_headers)
     write(io, rendered_body)
     previewed && write(io, _render_capture_suffix(exchange.request_capture))
     return String(take!(io))
 end
 
 function _format_h2_response(exchange::_VerboseExchangeState)::String
-    head = exchange.response_head
-    head === nothing && return ""
     io = IOBuffer()
-    print(io, "HTTP/2 ", head.status)
-    isempty(head.reason) || print(io, " ", head.reason)
+    print(io, "HTTP/2 ", exchange.response_status)
+    isempty(exchange.response_reason) || print(io, " ", exchange.response_reason)
     write(io, "\r\n")
-    _write_verbose_headers!(io, head.headers)
+    _write_verbose_headers!(io, exchange.response_headers)
     write(io, "\r\n")
     body_bytes = exchange.response_capture.bytes
-    rendered_body, previewed = _render_body_for_verbose(body_bytes, exchange.response_capture.total, head.headers)
+    rendered_body, previewed = _render_body_for_verbose(body_bytes, exchange.response_capture.total, exchange.response_headers)
     write(io, rendered_body)
-    if !isempty(head.trailers)
+    if !isempty(exchange.response_trailers)
         write(io, "\r\n")
-        _write_verbose_headers!(io, head.trailers)
+        _write_verbose_headers!(io, exchange.response_trailers)
     end
     previewed && write(io, _render_capture_suffix(exchange.response_capture))
     return String(take!(io))
@@ -565,14 +539,14 @@ end
 
 function _format_verbose_request(exchange::_VerboseExchangeState)::String
     if exchange.protocol == :h1
-        return _format_h1_raw_message(exchange.request_capture, exchange.request.headers)
+        return _format_h1_raw_message(exchange.request_capture, exchange.request_headers)
     end
     return _format_h2_request(exchange)
 end
 
 function _format_verbose_response(exchange::_VerboseExchangeState)::String
     if exchange.protocol == :h1
-        headers = exchange.response_head === nothing ? nothing : (exchange.response_head::_IncomingResponseHead).headers
+        headers = isempty(exchange.response_headers) ? nothing : exchange.response_headers
         return _format_h1_raw_message(exchange.response_capture, headers)
     end
     return _format_h2_response(exchange)
@@ -586,7 +560,7 @@ function _verbose_log_request_dump!(exchange::_VerboseExchangeState)::Nothing
     return nothing
 end
 
-function _verbose_log_response_dump!(exchange::_VerboseExchangeState; complete::Bool)::Nothing
+function _verbose_log_response_dump!(exchange::_VerboseExchangeState, complete::Bool)::Nothing
     was_logged = @atomic :acquire exchange.response_logged
     was_logged && return nothing
     @atomic :release exchange.response_complete = complete
@@ -599,25 +573,25 @@ end
 
 function _attach_verbose_to_incoming_response(
     incoming::_IncomingResponse{B},
-    exchange::Union{Nothing,_VerboseExchangeState};
+    exchange::Union{Nothing,_VerboseExchangeState},
     capture_body::Bool,
 ) where {B<:AbstractBody}
     exchange === nothing && return incoming
     _set_verbose_response_head!(exchange, incoming.head)
     if incoming.rawbody isa EmptyBody
-        _verbose_log_response_dump!(exchange; complete=true)
+        _verbose_log_response_dump!(exchange, true)
         return incoming
     end
     wrapped = _VerboseResponseBodyCapture(
         incoming.rawbody,
         capture_body ? exchange.response_capture : nothing,
-        complete -> _verbose_log_response_dump!(exchange; complete=complete),
+        complete -> _verbose_log_response_dump!(exchange, complete),
         false,
     )
     return _IncomingResponse(incoming.head, wrapped)
 end
 
-function _verbose_finish_response_capture!(body::_VerboseResponseBodyCapture; complete::Bool)::Nothing
+function _verbose_finish_response_capture!(body::_VerboseResponseBodyCapture, complete::Bool)::Nothing
     was_finished = @atomic :acquire body.finished
     was_finished && return nothing
     @atomic :release body.finished = true
@@ -675,7 +649,7 @@ function body_read!(body::_VerboseResponseBodyCapture, dst::Vector{UInt8})::Int
         capture === nothing || _verbose_capture!(capture::_VerboseCaptureBuffer, view(dst, 1:n))
         return n
     end
-    _verbose_finish_response_capture!(body; complete=true)
+    _verbose_finish_response_capture!(body, true)
     return 0
 end
 
@@ -683,7 +657,7 @@ function body_close!(body::_VerboseResponseBodyCapture)
     try
         body_close!(body.inner)
     finally
-        _verbose_finish_response_capture!(body; complete=false)
+        _verbose_finish_response_capture!(body, false)
     end
     return nothing
 end

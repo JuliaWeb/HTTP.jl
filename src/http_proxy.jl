@@ -295,7 +295,7 @@ function _matches_no_proxy(matcher::NoProxy, host::AbstractString, port::Integer
     return false
 end
 
-function _parse_proxy_target(url::AbstractString; allow_unsupported::Bool=false)::_ProxyTarget
+function _parse_proxy_target(url::AbstractString, allow_unsupported::Bool=false)::_ProxyTarget
     value = strip(String(url))
     isempty(value) && throw(ArgumentError("proxy URL must not be empty"))
     if !occursin("://", value)

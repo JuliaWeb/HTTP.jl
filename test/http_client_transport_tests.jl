@@ -299,7 +299,7 @@ end
 @testset "_read_all_response_bytes caps eager preallocation" begin
     payload = collect(codeunits("ok"))
     body = HT.BytesBody(payload)
-    bytes = HT._read_all_response_bytes(body; content_length_hint = HT._MAX_EAGER_RESPONSE_PREALLOC + 1)
+    bytes = HT._read_all_response_bytes(body, HT._MAX_EAGER_RESPONSE_PREALLOC + 1)
     @test bytes == payload
 end
 
@@ -361,7 +361,7 @@ end
 @testset "_ConnReader uses buffered reads for HTTP/1 parsing" begin
     raw = collect(codeunits("POST /upload HTTP/1.1\r\nHost: example.test\r\nContent-Length: 5\r\n\r\nhello"))
     conn = _ChunkReadConn(raw; max_chunk = 8)
-    reader = HT._ConnReader(conn; buffer_bytes = 32)
+    reader = HT._ConnReader(conn, 32)
     request = HT.read_request(reader)
     @test request.method == "POST"
     @test request.target == "/upload"

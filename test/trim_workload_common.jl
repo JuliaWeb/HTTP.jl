@@ -50,6 +50,7 @@ trim_body_string(body::AbstractString) = String(body)
 function trim_text_response(
     text::AbstractString;
     status::Integer = 200,
+    headers = Pair{String,String}[],
     proto_major::Integer = 1,
     proto_minor::Integer = 1,
 )
@@ -58,7 +59,7 @@ function trim_text_response(
     return HT._response_nocopy_exact(
         Int(status),
         "",
-        HT.Headers(),
+        HT.Headers(headers),
         HT.Headers(),
         body,
         Int64(ncodeunits(payload)),

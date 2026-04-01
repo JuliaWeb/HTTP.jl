@@ -1,7 +1,5 @@
 # Internal request-scoped client timeout parsing and context helpers.
 
-const _REQUEST_TIMEOUT_CONTEXT_KEY = :_http_request_timeout_config
-
 @inline function _min_nonzero_ns(a::Int64, b::Int64)::Int64
     a == 0 && return b
     b == 0 && return a
@@ -17,14 +15,6 @@ function _phase_deadline_ns(timeout_ns::Int64, overall_deadline_ns::Int64)::Int6
         timeout_deadline_ns = now_ns > typemax(Int64) - timeout_ns ? typemax(Int64) : now_ns + timeout_ns
     end
     return _min_nonzero_ns(timeout_deadline_ns, overall_deadline_ns)
-end
-
-struct _RequestTimeoutConfig
-    connect_timeout_ns::Int64
-    response_header_timeout_ns::Int64
-    read_idle_timeout_ns::Int64
-    write_idle_timeout_ns::Int64
-    expect_continue_timeout_ns::Int64
 end
 
 @inline function _request_timeout_config_empty(config::_RequestTimeoutConfig)::Bool
@@ -52,7 +42,7 @@ function _warn_deprecated_readtimeout()::Nothing
     return nothing
 end
 
-function _resolve_request_timeout_settings(;
+function _resolve_request_timeout_settings(
     request_timeout::Real=0,
     connect_timeout::Real=0,
     response_header_timeout::Real=0,
@@ -84,18 +74,11 @@ function _resolve_request_timeout_settings(;
 end
 
 @inline function _request_context_timeout_config(ctx::RequestContext)::Union{Nothing,_RequestTimeoutConfig}
-    metadata = ctx.metadata
-    metadata === nothing && return nothing
-    return get(() -> nothing, metadata::Dict{Symbol,Any}, _REQUEST_TIMEOUT_CONTEXT_KEY)
+    return ctx.timeout_config
 end
 
 @inline function _set_request_context_timeout_config!(ctx::RequestContext, config::Union{Nothing,_RequestTimeoutConfig})::Nothing
-    if config === nothing
-        metadata = ctx.metadata
-        metadata === nothing || delete!(metadata::Dict{Symbol,Any}, _REQUEST_TIMEOUT_CONTEXT_KEY)
-        return nothing
-    end
-    ctx[_REQUEST_TIMEOUT_CONTEXT_KEY] = config
+    ctx.timeout_config = config
     return nothing
 end
 

@@ -414,7 +414,7 @@ function body_read!(body::ChunkedBody, dst::Vector{UInt8})::Int
     return n
 end
 
-function _write_start_line!(io::IO, request::Request; wire_target::Union{Nothing,AbstractString}=nothing)
+function _write_start_line!(io::IO, request::Request, wire_target::Union{Nothing,AbstractString}=nothing)
     target = wire_target === nothing ? request.target : String(wire_target)
     print(io, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
     return nothing
@@ -601,7 +601,7 @@ function _request_has_body(request::Request)::Bool
 end
 
 function _prepare_request_headers_for_write(
-    request::Request;
+    request::Request,
     proxy_authorization::Union{Nothing,AbstractString}=nothing,
 )::Tuple{Headers,Bool}
     headers = copy(request.headers)
@@ -633,14 +633,14 @@ end
 
 function _write_request_head!(
     io::IO,
-    request::Request;
+    request::Request,
     wire_target::Union{Nothing,AbstractString}=nothing,
     proxy_authorization::Union{Nothing,AbstractString}=nothing,
 )::Tuple{Bool,Headers}
-    headers, use_chunked = _prepare_request_headers_for_write(request; proxy_authorization=proxy_authorization)
+    headers, use_chunked = _prepare_request_headers_for_write(request, proxy_authorization)
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, request.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
-    _write_start_line!(io, request; wire_target=wire_target)
+    _write_start_line!(io, request, wire_target)
     _write_headers!(io, headers)
     write(io, "\r\n")
     return use_chunked, trailer_values
@@ -673,7 +673,7 @@ function write_request!(
     wire_target::Union{Nothing,AbstractString}=nothing,
     proxy_authorization::Union{Nothing,AbstractString}=nothing,
 ) where {B<:AbstractBody}
-    use_chunked, trailer_values = _write_request_head!(io, request; wire_target=wire_target, proxy_authorization=proxy_authorization)
+    use_chunked, trailer_values = _write_request_head!(io, request, wire_target, proxy_authorization)
     if use_chunked
         _write_chunked_body!(io, request.body, trailer_values)
         return nothing
@@ -863,118 +863,25 @@ function read_request(io::IO; max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BY
     )
 end
 
-"""
-    _read_incoming_response(io, request=nothing; max_line_bytes=..., max_header_bytes=...)
-
-Parse one HTTP/1 response from `io` into the internal incoming-response form.
-
-`request` is optional but allows HEAD/no-body response handling parity.
-Returns an `_IncomingResponse` whose `rawbody` is one of `EmptyBody`,
-`FixedLengthBody`, `ChunkedBody`, or `EOFBody` depending on the status code and
-framing headers. Exception behavior mirrors `read_request`.
-"""
-function _read_incoming_response(
-    io::IO,
-    request::Union{Nothing,Request}=nothing;
-    max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BYTES,
-    max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES,
-)
-    line = _readline_crlf(io, max_line_bytes)
-    proto_major, proto_minor, status, reason = _parse_status_line(line)
-    headers = _read_headers(io, max_line_bytes, max_header_bytes)
-    chunked = _parse_transfer_encoding!(headers, proto_major, proto_minor)
-    content_length = _parse_content_length(headers)
-    chunked && removeheader(headers, "Content-Length")
-    content_length = chunked ? Int64(-1) : content_length
-    close = _should_close_connection(headers, proto_major, proto_minor)
-    request_is_head = request !== nothing && request.method == "HEAD"
-    request_is_connect_tunnel = request !== nothing && request.method == "CONNECT" && status >= 200 && status < 300
-    if !_body_allowed_for_status(status) || request_is_head || request_is_connect_tunnel
-        return _IncomingResponse(
-            _IncomingResponseHead(
-                status,
-                reason,
-                headers,
-                Headers(),
-                Int64(0),
-                proto_major,
-                proto_minor,
-                close,
-                request,
-                nothing,
-                nothing,
-                0,
-            ),
-            EmptyBody(),
-        )
-    end
-    if chunked
-        body = ChunkedBody(io; max_line_bytes=Int(max_line_bytes), max_header_bytes=Int(max_header_bytes))
-        return _IncomingResponse(
-            _IncomingResponseHead(
-                status,
-                reason,
-                headers,
-                body.trailers,
-                Int64(-1),
-                proto_major,
-                proto_minor,
-                close,
-                request,
-                nothing,
-                nothing,
-                0,
-            ),
-            body,
-        )
-    end
-    if content_length > 0
-        body = FixedLengthBody(io, content_length)
-        return _IncomingResponse(
-            _IncomingResponseHead(
-                status,
-                reason,
-                headers,
-                Headers(),
-                content_length,
-                proto_major,
-                proto_minor,
-                close,
-                request,
-                nothing,
-                nothing,
-                0,
-            ),
-            body,
-        )
-    end
-    if content_length == 0
-        return _IncomingResponse(
-            _IncomingResponseHead(
-                status,
-                reason,
-                headers,
-                Headers(),
-                Int64(0),
-                proto_major,
-                proto_minor,
-                close,
-                request,
-                nothing,
-                nothing,
-                0,
-            ),
-            EmptyBody(),
-        )
-    end
-    body = EOFBody(io)
+@inline function _incoming_response_from_parts(
+    status::Int,
+    reason::String,
+    headers::Headers,
+    trailers::Headers,
+    body::B,
+    content_length::Int64,
+    proto_major::UInt8,
+    proto_minor::UInt8,
+    close::Bool,
+    request::Union{Nothing,Request},
+)::_IncomingResponse{B} where {B<:AbstractBody}
     return _IncomingResponse(
         _IncomingResponseHead(
             status,
             reason,
             headers,
-            Headers(),
-            Int64(-1),
+            trailers,
+            content_length,
             proto_major,
             proto_minor,
             close,
@@ -987,22 +894,42 @@ function _read_incoming_response(
     )
 end
 
-"""
-    _read_response(io, request=nothing; max_line_bytes=..., max_header_bytes=...)
+@inline function _public_response_from_parts(
+    status::Int,
+    reason::String,
+    headers::Headers,
+    trailers::Headers,
+    body::B,
+    content_length::Int64,
+    proto_major::UInt8,
+    proto_minor::UInt8,
+    close::Bool,
+    request::Union{Nothing,Request},
+)::Response{B} where {B<:AbstractBody}
+    return _response_nocopy_exact(
+        status,
+        reason,
+        headers,
+        trailers,
+        body,
+        content_length,
+        proto_major,
+        proto_minor,
+        close,
+        request,
+        nothing,
+        nothing,
+        0,
+    )
+end
 
-Parse one HTTP/1 response from `io`.
-`request` is optional but allows HEAD/no-body response handling parity.
-
-Returns a `Response` whose body is one of `EmptyBody`, `FixedLengthBody`,
-`ChunkedBody`, or `EOFBody` depending on the status code and framing headers.
-Exception behavior mirrors `read_request`.
-"""
-function _read_response(
+function _read_response_common(
+    build::F,
     io::IO,
-    request::Union{Nothing,Request}=nothing;
+    request::Union{Nothing,Request}=nothing,
     max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BYTES,
     max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES,
-)
+) where {F}
     line = _readline_crlf(io, max_line_bytes)
     proto_major, proto_minor, status, reason = _parse_status_line(line)
     headers = _read_headers(io, max_line_bytes, max_header_bytes)
@@ -1014,7 +941,7 @@ function _read_response(
     request_is_head = request !== nothing && request.method == "HEAD"
     request_is_connect_tunnel = request !== nothing && request.method == "CONNECT" && status >= 200 && status < 300
     if !_body_allowed_for_status(status) || request_is_head || request_is_connect_tunnel
-        return _response_nocopy_exact(
+        return build(
             status,
             reason,
             headers,
@@ -1025,14 +952,11 @@ function _read_response(
             proto_minor,
             close,
             request,
-            nothing,
-            nothing,
-            0,
         )
     end
     if chunked
         body = ChunkedBody(io; max_line_bytes=Int(max_line_bytes), max_header_bytes=Int(max_header_bytes))
-        return _response_nocopy_exact(
+        return build(
             status,
             reason,
             headers,
@@ -1043,14 +967,11 @@ function _read_response(
             proto_minor,
             close,
             request,
-            nothing,
-            nothing,
-            0,
         )
     end
     if content_length > 0
         body = FixedLengthBody(io, content_length)
-        return _response_nocopy_exact(
+        return build(
             status,
             reason,
             headers,
@@ -1061,13 +982,10 @@ function _read_response(
             proto_minor,
             close,
             request,
-            nothing,
-            nothing,
-            0,
         )
     end
     if content_length == 0
-        return _response_nocopy_exact(
+        return build(
             status,
             reason,
             headers,
@@ -1078,13 +996,10 @@ function _read_response(
             proto_minor,
             close,
             request,
-            nothing,
-            nothing,
-            0,
         )
     end
     body = EOFBody(io)
-    return _response_nocopy_exact(
+    return build(
         status,
         reason,
         headers,
@@ -1095,8 +1010,43 @@ function _read_response(
         proto_minor,
         close,
         request,
-        nothing,
-        nothing,
-        0,
     )
+end
+
+"""
+    _read_incoming_response(io, request=nothing, max_line_bytes=..., max_header_bytes=...)
+
+Parse one HTTP/1 response from `io` into the internal incoming-response form.
+
+`request` is optional but allows HEAD/no-body response handling parity.
+Returns an `_IncomingResponse` whose `rawbody` is one of `EmptyBody`,
+`FixedLengthBody`, `ChunkedBody`, or `EOFBody` depending on the status code and
+framing headers. Exception behavior mirrors `read_request`.
+"""
+function _read_incoming_response(
+    io::IO,
+    request::Union{Nothing,Request}=nothing,
+    max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BYTES,
+    max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES,
+)
+    return _read_response_common(_incoming_response_from_parts, io, request, max_line_bytes, max_header_bytes)
+end
+
+"""
+    _read_response(io, request=nothing, max_line_bytes=..., max_header_bytes=...)
+
+Parse one HTTP/1 response from `io`.
+`request` is optional but allows HEAD/no-body response handling parity.
+
+Returns a `Response` whose body is one of `EmptyBody`, `FixedLengthBody`,
+`ChunkedBody`, or `EOFBody` depending on the status code and framing headers.
+Exception behavior mirrors `read_request`.
+"""
+function _read_response(
+    io::IO,
+    request::Union{Nothing,Request}=nothing,
+    max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BYTES,
+    max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES,
+)
+    return _read_response_common(_public_response_from_parts, io, request, max_line_bytes, max_header_bytes)
 end

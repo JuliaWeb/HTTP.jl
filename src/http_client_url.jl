@@ -266,7 +266,7 @@ function _uri_request_target(uri::URI)::String
     return has_query ? string(path, "?", query) : path
 end
 
-function _parse_http_url(url::AbstractString; query=nothing)::_URLParts
+function _parse_http_url(url::AbstractString, query=nothing)::_URLParts
     s = url isa String ? url : String(url)
     bytes = codeunits(s)
     scheme_idx = findfirst("://", s)
@@ -339,7 +339,7 @@ function _parse_http_url(url::AbstractString; query=nothing)::_URLParts
     )
 end
 
-function _parse_http_url(url::URI; query=nothing)::_URLParts
+function _parse_http_url(url::URI, query=nothing)::_URLParts
     source = string(url)
     scheme = _uri_component_present(url.scheme) ? String(url.scheme) : ""
     secure = if scheme == "http"

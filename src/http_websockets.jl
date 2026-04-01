@@ -397,7 +397,7 @@ function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
     return nothing
 end
 
-function _ws_read_loop!(ws::WebSocket; buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
+function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
     buf = Vector{UInt8}(undef, buffer_bytes)
     try
@@ -442,9 +442,9 @@ function _ws_read_loop!(ws::WebSocket; buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
     return nothing
 end
 
-function _start_read_task!(ws::WebSocket; buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
+function _start_read_task!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     ws.readtask !== nothing && return nothing
-    ws.readtask = errormonitor(Threads.@spawn _ws_read_loop!(ws; buffer_bytes=buffer_bytes))
+    ws.readtask = errormonitor(Threads.@spawn _ws_read_loop!(ws, buffer_bytes))
     return nothing
 end
 
@@ -589,7 +589,7 @@ end
 
 function _apply_websocket_request_headers!(
     headers::Headers,
-    key::String;
+    key::String,
     subprotocols::AbstractVector{<:AbstractString}=String[],
 )::Nothing
     setheader(headers, "Upgrade", "websocket")
@@ -604,15 +604,15 @@ function _apply_websocket_request_headers!(
     return nothing
 end
 
-function _parse_websocket_url(url::AbstractString; query=nothing)
+function _parse_websocket_url(url::AbstractString, query=nothing)
     text = String(url)
     lower = lowercase(text)
     if startswith(lower, "ws://")
-        return _parse_http_url("http://" * text[6:end]; query=query)
+        return _parse_http_url("http://" * text[6:end], query)
     elseif startswith(lower, "wss://")
-        return _parse_http_url("https://" * text[7:end]; query=query)
+        return _parse_http_url("https://" * text[7:end], query)
     elseif startswith(lower, "http://") || startswith(lower, "https://")
-        return _parse_http_url(text; query=query)
+        return _parse_http_url(text, query)
     end
     throw(ArgumentError("websocket URL must use ws://, wss://, http://, or https://"))
 end
@@ -650,7 +650,7 @@ end
 function _websocket_roundtrip!(
     client::Client,
     address::String,
-    request::Request;
+    request::Request,
     secure::Bool,
     server_name::String,
     proxy_config,
@@ -663,12 +663,12 @@ function _websocket_roundtrip!(
     conn = _new_conn!(
         client.transport,
         plan,
-        address;
-        secure=secure,
-        server_name=server_name,
-        host_resolver=connect_host_resolver,
-        connect_deadline_ns=connect_deadline_ns,
-        tls_handshake_timeout_ns=tls_handshake_timeout_ns,
+        address,
+        secure,
+        server_name,
+        connect_host_resolver,
+        connect_deadline_ns,
+        tls_handshake_timeout_ns,
     )
     try
         _apply_conn_deadline!(conn, deadline_ns)
@@ -727,34 +727,28 @@ function _open_client_websocket(
     kwargs...,
 )::WebSocket
     _validate_request_extra_kwargs(kwargs)
-    parsed = _parse_websocket_url(url; query=query)
+    parsed = _parse_websocket_url(url, query)
     req_headers = _normalize_headers_input(headers)
     normalized_cookies = _normalize_cookies_input(cookies)
     if parsed.authorization !== nothing && !hasheader(req_headers, "Authorization")
         setheader(req_headers, "Authorization", parsed.authorization::String)
     end
     key = ws_random_handshake_key()
-    _apply_websocket_request_headers!(req_headers, key; subprotocols=subprotocols)
+    _apply_websocket_request_headers!(req_headers, key, subprotocols)
     request = Request("GET", parsed.target; headers=req_headers, host=parsed.address, body=EmptyBody(), content_length=0)
     request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
-        ;
-        request_timeout=request_timeout,
-        connect_timeout=connect_timeout,
-        response_header_timeout=response_header_timeout,
-        read_idle_timeout=read_idle_timeout,
-        write_idle_timeout=write_idle_timeout,
+        request_timeout,
+        connect_timeout,
+        response_header_timeout,
+        read_idle_timeout,
+        write_idle_timeout,
     )
     _apply_request_timeout_settings!(request.context, request_timeout_ns, timeout_config)
-    req_client, owns_client = _client_for_request(client; connect_timeout=connect_timeout, require_ssl_verification=require_ssl_verification)
+    req_client, owns_client = _client_for_request(client, connect_timeout, require_ssl_verification)
     client === nothing || proxy === _USE_TRANSPORT_PROXY || throw(ArgumentError("proxy override is not supported when passing an explicit Client"))
     proxy_config = _proxy_config_for_request(req_client, proxy)
     effective_cookiejar = _effective_cookiejar(client, cookiejar)
-    redirect_policy = _redirect_policy(
-        req_client;
-        redirect_limit=redirect ? redirect_limit : 0,
-        redirect_method=redirect_method,
-        forwardheaders=forwardheaders,
-    )
+    redirect_policy = _redirect_policy(req_client, redirect ? redirect_limit : 0, redirect_method, forwardheaders)
     current_address = parsed.address
     current_secure = parsed.secure
     current_server_name = parsed.server_name
@@ -766,14 +760,7 @@ function _open_client_websocket(
         cookie_value = _cookie_header(effective_cookiejar, normalized_cookies, current_secure, host, path)
         cookie_value === nothing || setheader(send_request.headers, "Cookie", cookie_value)
         expected_accept = ws_compute_accept_key(header(send_request.headers, "Sec-WebSocket-Key")::String)
-        attempt = _websocket_roundtrip!(
-            req_client,
-            current_address,
-            send_request;
-            secure=current_secure,
-            server_name=current_server_name,
-            proxy_config=proxy_config,
-        )
+        attempt = _websocket_roundtrip!(req_client, current_address, send_request, current_secure, current_server_name, proxy_config)
         _store_set_cookies!(effective_cookiejar, normalized_cookies, current_secure, host, path, attempt.response.headers)
         response = attempt.response
         if response.status == 101
@@ -838,7 +825,7 @@ function _open_client_websocket(
         current_server_name = _host_for_sni(current_address)
         current_request = _prepare_request_for_redirect(current_request, response.status, next_target, redirect_policy)
         key = ws_random_handshake_key()
-        _apply_websocket_request_headers!(current_request.headers, key; subprotocols=subprotocols)
+        _apply_websocket_request_headers!(current_request.headers, key, subprotocols)
         current_request.host = current_address
         next_ref = _redirect_referer(previous_secure, previous_address, previous_target, current_secure, header(current_request.headers, "Referer", nothing))
         if next_ref === nothing
@@ -848,7 +835,7 @@ function _open_client_websocket(
         end
         if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address)
             _strip_sensitive_redirect_headers!(current_request.headers)
-            _apply_websocket_request_headers!(current_request.headers, key; subprotocols=subprotocols)
+            _apply_websocket_request_headers!(current_request.headers, key, subprotocols)
         end
     end
     owns_client && close(req_client)
@@ -1169,8 +1156,8 @@ end
 
 function _upgrade_response(request::Request, server::Server)::Response
     uppercase(request.method) == "GET" || return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
-    _ws_headers_have_token(request.headers, "Upgrade", "websocket"; case_sensitive=false) || return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
-    _ws_headers_have_token(request.headers, "Connection", "upgrade"; case_sensitive=false) || return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
+    _ws_headers_have_token(request.headers, "Upgrade", "websocket", false) || return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
+    _ws_headers_have_token(request.headers, "Connection", "upgrade", false) || return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
     version = header(request.headers, "Sec-WebSocket-Version", nothing)
     version === nothing && return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
     strip(version) == "13" || return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
@@ -1203,7 +1190,7 @@ function _serve_ws_session!(server::Server, conn, request::Request, response::Re
     )
     ws.handshake_request = request
     ws.handshake_response = response
-    _start_read_task!(ws; buffer_bytes=server.read_buffer_bytes)
+    _start_read_task!(ws, server.read_buffer_bytes)
     _track_session!(server, ws)
     try
         server.handler(ws)

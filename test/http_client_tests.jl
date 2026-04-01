@@ -1261,7 +1261,7 @@ end
             @test status_err.response.url == "$(base_url)/missing"
         end
 
-        parsed = HT._parse_http_url("http://alice:secret@$(address)/lazy/path?x=1#frag"; query = Dict("y" => 2))
+        parsed = HT._parse_http_url("http://alice:secret@$(address)/lazy/path?x=1#frag", Dict("y" => 2))
         @test !parsed.secure
         @test parsed.address == "$(address)"
         @test parsed.address === parsed.address
@@ -1274,7 +1274,7 @@ end
         @test parsed.authorization == "Basic YWxpY2U6c2VjcmV0"
         @test parsed.authorization === parsed.authorization
 
-        parsed_uri = HT._parse_http_url(HT.URI("http://alice:secret@$(address)/lazy/path?x=1#frag"); query = Dict("y" => 2))
+        parsed_uri = HT._parse_http_url(HT.URI("http://alice:secret@$(address)/lazy/path?x=1#frag"), Dict("y" => 2))
         @test !parsed_uri.secure
         @test parsed_uri.address == "$(address)"
         @test parsed_uri.address === parsed_uri.address
@@ -1287,7 +1287,7 @@ end
         @test parsed_uri.authorization == "Basic YWxpY2U6c2VjcmV0"
         @test parsed_uri.authorization === parsed_uri.authorization
 
-        parsed_query = HT._parse_http_url("https://example.com?x=1"; query = Dict("y" => 2))
+        parsed_query = HT._parse_http_url("https://example.com?x=1", Dict("y" => 2))
         @test parsed_query.secure
         @test parsed_query.address == "example.com:443"
         @test parsed_query.target == "/?x=1&y=2"
@@ -1295,7 +1295,7 @@ end
         @test parsed_query.url == "https://example.com:443/?x=1&y=2"
         @test parsed_query.authorization === nothing
 
-        parsed_query_uri = HT._parse_http_url(HT.URI("https://example.com?x=1"); query = Dict("y" => 2))
+        parsed_query_uri = HT._parse_http_url(HT.URI("https://example.com?x=1"), Dict("y" => 2))
         @test parsed_query_uri.secure
         @test parsed_query_uri.address == "example.com:443"
         @test parsed_query_uri.target == "/?x=1&y=2"
@@ -2029,13 +2029,12 @@ end
 
 @testset "HTTP request timeout configuration parsing" begin
     request_timeout_ns, config = HT._resolve_request_timeout_settings(
-        ;
-        request_timeout=1.25,
-        connect_timeout=0.5,
-        response_header_timeout=0.75,
-        read_idle_timeout=0.125,
-        write_idle_timeout=0.25,
-        expect_continue_timeout=1.5,
+        1.25,
+        0.5,
+        0.75,
+        0.125,
+        0.25,
+        1.5,
     )
     @test request_timeout_ns == 1_250_000_000
     @test config !== nothing
@@ -2052,18 +2051,20 @@ end
     @test stored == config
     @test ctx.deadline_ns > time_ns()
     @test !HT.expired(ctx)
+    empty!(ctx)
+    @test HT._request_context_timeout_config(ctx) === nothing
 
     legacy_request_timeout_ns = Int64(-1)
     legacy_config = nothing
     @test_logs (:warn, r"`readtimeout` is deprecated") begin
-        legacy_request_timeout_ns, legacy_config = HT._resolve_request_timeout_settings(; readtimeout=0.05)
+        legacy_request_timeout_ns, legacy_config = HT._resolve_request_timeout_settings(0, 0, 0, 0, 0, nothing, 0.05)
     end
     @test legacy_request_timeout_ns == 0
     @test legacy_config !== nothing
     @test (legacy_config::HT._RequestTimeoutConfig).read_idle_timeout_ns == 50_000_000
     @test legacy_config.response_header_timeout_ns == 0
 
-    @test_throws ArgumentError HT._resolve_request_timeout_settings(; readtimeout=0.05, read_idle_timeout=0.05)
+    @test_throws ArgumentError HT._resolve_request_timeout_settings(0, 0, 0, 0.05, 0, nothing, 0.05)
 end
 
 @testset "HTTP high-level readtimeout" begin

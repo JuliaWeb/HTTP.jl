@@ -20,14 +20,6 @@ const _REQUEST_WRITE_CONTINUE_PENDING = UInt8(0x0)
 const _REQUEST_WRITE_CONTINUE_ALLOWED = UInt8(0x1)
 const _REQUEST_WRITE_CONTINUE_SUPPRESSED = UInt8(0x2)
 
-mutable struct _ConnReader{C} <: IO
-    conn::C
-    buf::Vector{UInt8}
-    next::Int
-    stop::Int
-    capture::Union{Nothing,_VerboseCaptureBuffer}
-end
-
 mutable struct _RequestDeadlineWriteIO{S} <: IO
     inner::S
     conn
@@ -35,7 +27,7 @@ mutable struct _RequestDeadlineWriteIO{S} <: IO
 end
 
 """
-    _ConnReader(conn; buffer_bytes=16*1024)
+    _ConnReader(conn, buffer_bytes=16*1024)
 
 Buffered `IO` adapter layered over `TCP.Conn` or `TLS.Conn`.
 
@@ -44,9 +36,18 @@ it can parse lines and then continue reading bodies from the same transport.
 This type provides that without forcing the transport types themselves to own
 HTTP-specific buffering policy.
 """
-function _ConnReader(conn::C; buffer_bytes::Integer=_CONN_READER_DEFAULT_BUFFER_BYTES) where {C}
+function _ConnReader(conn::Union{TCP.Conn,TLS.Conn}, buffer_bytes::Integer=_CONN_READER_DEFAULT_BUFFER_BYTES)
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
-    return _ConnReader{C}(conn, Vector{UInt8}(undef, Int(buffer_bytes)), 1, 0, nothing)
+    return _ConnReader(Vector{UInt8}(undef, Int(buffer_bytes)), 1, 0, nothing, conn)
+end
+
+@inline function _set_conn_reader_conn!(reader::_ConnReader, conn::Union{TCP.Conn,TLS.Conn})::Nothing
+    if conn isa TCP.Conn
+        reader.conn = conn
+    else
+        reader.conn = conn::TLS.Conn
+    end
+    return nothing
 end
 
 @inline function _conn_reader_available(reader::_ConnReader)::Int
@@ -95,7 +96,14 @@ function Base.write(io::_RequestDeadlineWriteIO, data::Union{String,SubString{St
 end
 
 @inline function _fill_conn_reader!(reader::_ConnReader)::Int
-    n = readbytes!(reader.conn, reader.buf; all=false)
+    conn = reader.conn
+    n = if conn isa TCP.Conn
+        readbytes!(conn, reader.buf; all=false)
+    elseif conn isa TLS.Conn
+        readbytes!(conn, reader.buf; all=false)
+    else
+        error("unexpected _ConnReader conn type")
+    end
     reader.next = 1
     reader.stop = n
     return n
@@ -126,8 +134,6 @@ function _upcoming_header_keys(reader::_ConnReader)::Int
     return nkeys
 end
 
-const _PooledConnReader = Union{_ConnReader{TCP.Conn},_ConnReader{TLS.Conn}}
-
 """
     Conn
 
@@ -141,7 +147,7 @@ mutable struct Conn
     secure::Bool
     tcp::Union{Nothing,TCP.Conn}
     tls::Union{Nothing,TLS.Conn}
-    reader::_PooledConnReader
+    reader::_ConnReader
     request_buf::IOBuffer
     reused::Bool
     @atomic closed::Bool
@@ -192,8 +198,8 @@ bound the total live HTTP/1 connections (idle, in-flight, and dialing) for one
 pool key and cause additional acquires to wait for direct handoff or a freed
 dial slot.
 """
-mutable struct Transport
-    host_resolver::HostResolvers.HostResolver
+mutable struct Transport{S<:HostResolvers.AbstractResolver}
+    host_resolver::HostResolvers.HostResolver{S}
     tls_config::Union{Nothing,TLS.Config}
     proxy::ProxyConfig
     retry_bucket::Union{Nothing,RetryBucket}
@@ -399,7 +405,7 @@ end
 function _write_exact_body_transport!(
     io::IO,
     body::AbstractBody,
-    expected_len::Int64;
+    expected_len::Int64,
     write_state::Union{Nothing,_RequestWriteState}=nothing,
 )::Bool
     expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
@@ -421,7 +427,7 @@ end
 function _write_exact_bytes_body_transport!(
     stream,
     body::BytesBody,
-    expected_len::Int64;
+    expected_len::Int64,
     write_state::Union{Nothing,_RequestWriteState}=nothing,
 )::Bool
     expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
@@ -449,7 +455,7 @@ end
 function _write_chunked_body_transport!(
     io::IO,
     body::AbstractBody,
-    trailer_values::Headers;
+    trailer_values::Headers,
     write_state::Union{Nothing,_RequestWriteState}=nothing,
 )::Bool
     buf = Vector{UInt8}(undef, _TRANSPORT_WRITE_BODY_CHUNK_BYTES)
@@ -661,7 +667,7 @@ end
 function _effective_tls_config(
     transport::Transport,
     address::String,
-    server_name::Union{Nothing,String};
+    server_name::Union{Nothing,String},
     handshake_timeout_ns::Int64=Int64(0),
 )::TLS.Config
     sni = server_name === nothing ? _host_for_sni(address) : server_name
@@ -697,36 +703,84 @@ function _write_request_bytes!(stream, request_io::IOBuffer)
     return nothing
 end
 
+@inline function _request_forward_address(request::Request)::String
+    if request.host !== nothing
+        return request.host::String
+    end
+    host_values = headers(request.headers, "Host")
+    isempty(host_values) && throw(ProtocolError("proxy-forward request is missing host"))
+    length(host_values) == 1 || throw(ProtocolError("proxy-forward request has multiple Host headers"))
+    return first(host_values)
+end
+
+@inline function _request_proxy_authorization(plan::_ProxyPlan)::Union{Nothing,String}
+    if plan.mode == _ProxyPlanMode.HTTP_FORWARD
+        proxy = plan.proxy
+        proxy === nothing && return nothing
+        return (proxy::_ProxyTarget).authorization
+    end
+    return nothing
+end
+
+function _prepare_request_headers_for_write(
+    request::Request,
+    plan::_ProxyPlan,
+)::Tuple{Headers,Bool}
+    return _prepare_request_headers_for_write(request, _request_proxy_authorization(plan))
+end
+
+function _write_start_line!(io::IO, request::Request, plan::_ProxyPlan)
+    if plan.mode == _ProxyPlanMode.HTTP_FORWARD
+        target = _request_url(false, _request_forward_address(request), request.target)
+        print(io, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
+        return nothing
+    end
+    return _write_start_line!(io, request)
+end
+
+function _write_request_head!(
+    io::IO,
+    request::Request,
+    plan::_ProxyPlan,
+)::Tuple{Bool,Headers}
+    headers, use_chunked = _prepare_request_headers_for_write(request, plan)
+    trailer_values = use_chunked ? _prepare_trailer_header!(headers, request.trailers) : Headers()
+    _normalize_outgoing_headers!(headers)
+    _write_start_line!(io, request, plan)
+    _write_headers!(io, headers)
+    write(io, "\r\n")
+    return use_chunked, trailer_values
+end
+
 function _write_request_streaming!(
     request_io::IOBuffer,
     stream,
-    request::Request;
-    wire_target::Union{Nothing,AbstractString}=nothing,
-    proxy_authorization::Union{Nothing,AbstractString}=nothing,
+    request::Request,
+    plan::_ProxyPlan,
     write_state::Union{Nothing,_RequestWriteState}=nothing,
     request_deadline::Int64=Int64(0),
 )::Bool
     if request.content_length >= 0 && request.body isa BytesBody && !headercontains(request.headers, "Transfer-Encoding", "chunked")
-        _write_request_head!(request_io, request; wire_target=wire_target, proxy_authorization=proxy_authorization)
+        _write_request_head!(request_io, request, plan)
         _write_request_bytes!(stream, request_io)
         _request_write_mark_head_written!(write_state)
         !_request_write_should_wait_for_continue(write_state) || (_await_expect_continue!(write_state::_RequestWriteState, request_deadline) || return false)
-        return _write_exact_bytes_body_transport!(stream, request.body::BytesBody, request.content_length; write_state=write_state)
+        return _write_exact_bytes_body_transport!(stream, request.body::BytesBody, request.content_length, write_state)
     end
-    use_chunked, trailer_values = _write_request_head!(request_io, request; wire_target=wire_target, proxy_authorization=proxy_authorization)
+    use_chunked, trailer_values = _write_request_head!(request_io, request, plan)
     _write_request_bytes!(stream, request_io)
     _request_write_mark_head_written!(write_state)
     !_request_has_body(request) && return true
     !_request_write_should_wait_for_continue(write_state) || (_await_expect_continue!(write_state::_RequestWriteState, request_deadline) || return false)
     if use_chunked
-        return _write_chunked_body_transport!(stream, request.body, trailer_values; write_state=write_state)
+        return _write_chunked_body_transport!(stream, request.body, trailer_values, write_state)
     end
     request.content_length < 0 && return true
     body = request.body
     if body isa BytesBody
-        return _write_exact_bytes_body_transport!(stream, body::BytesBody, request.content_length; write_state=write_state)
+        return _write_exact_bytes_body_transport!(stream, body::BytesBody, request.content_length, write_state)
     end
-    return _write_exact_body_transport!(stream, body, request.content_length; write_state=write_state)
+    return _write_exact_body_transport!(stream, body, request.content_length, write_state)
 end
 
 function _perform_http_connect_tunnel!(
@@ -761,7 +815,7 @@ end
 function _new_conn!(
     transport::Transport,
     plan::_ProxyPlan,
-    address::String;
+    address::String,
     secure::Bool,
     server_name::Union{Nothing,String},
     host_resolver::HostResolvers.HostResolver=transport.host_resolver,
@@ -775,7 +829,7 @@ function _new_conn!(
         _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
     end
     if secure
-        cfg = _effective_tls_config(transport, address, server_name; handshake_timeout_ns=tls_handshake_timeout_ns)
+        cfg = _effective_tls_config(transport, address, server_name, tls_handshake_timeout_ns)
         tls = TLS.client(tcp, cfg)
         connect_deadline_ns == 0 || TLS.set_deadline!(tls, connect_deadline_ns)
         TLS.handshake!(tls)
@@ -809,7 +863,7 @@ end
 function _acquire_conn!(
     transport::Transport,
     plan::_ProxyPlan,
-    address::String;
+    address::String,
     secure::Bool,
     server_name::Union{Nothing,String},
     acquire_deadline_ns::Int64=Int64(0),
@@ -861,12 +915,12 @@ function _acquire_conn!(
                 return _new_conn!(
                     transport,
                     plan,
-                    address;
-                    secure=secure,
-                    server_name=server_name,
-                    host_resolver=host_resolver,
-                    connect_deadline_ns=connect_deadline_ns,
-                    tls_handshake_timeout_ns=tls_handshake_timeout_ns,
+                    address,
+                    secure,
+                    server_name,
+                    host_resolver,
+                    connect_deadline_ns,
+                    tls_handshake_timeout_ns,
                 )
             catch err
                 waiter_to_notify = nothing
@@ -886,12 +940,12 @@ function _acquire_conn!(
                 return _new_conn!(
                     transport,
                     plan,
-                    address;
-                    secure=secure,
-                    server_name=server_name,
-                    host_resolver=host_resolver,
-                    connect_deadline_ns=connect_deadline_ns,
-                    tls_handshake_timeout_ns=tls_handshake_timeout_ns,
+                    address,
+                    secure,
+                    server_name,
+                    host_resolver,
+                    connect_deadline_ns,
+                    tls_handshake_timeout_ns,
                 )
             catch err
                 waiter_to_notify = nothing
@@ -1031,7 +1085,7 @@ function idle_connection_count(transport::Transport; key::Union{Nothing,Abstract
     end
 end
 
-function Base.read(reader::_ConnReader{C}, ::Type{UInt8}) where {C}
+function Base.read(reader::_ConnReader, ::Type{UInt8})
     if _conn_reader_available(reader) > 0
         b = @inbounds reader.buf[reader.next]
         reader.next += 1
@@ -1046,7 +1100,7 @@ function Base.read(reader::_ConnReader{C}, ::Type{UInt8}) where {C}
     return b
 end
 
-function Base.readbytes!(reader::_ConnReader{C}, dst::Vector{UInt8}, nb::Integer=length(dst)) where {C}
+function Base.readbytes!(reader::_ConnReader, dst::Vector{UInt8}, nb::Integer=length(dst))
     target = min(Int(nb), length(dst))
     target <= 0 && return 0
     total = 0
@@ -1072,7 +1126,7 @@ function Base.readbytes!(reader::_ConnReader{C}, dst::Vector{UInt8}, nb::Integer
     return total
 end
 
-@inline function _read_u8(reader::_ConnReader{C})::UInt8 where {C}
+@inline function _read_u8(reader::_ConnReader)::UInt8
     if _conn_reader_available(reader) > 0
         b = @inbounds reader.buf[reader.next]
         reader.next += 1
@@ -1087,7 +1141,7 @@ end
     return b
 end
 
-function _readline_crlf(reader::_ConnReader{C}, max_line_bytes::Integer)::String where {C}
+function _readline_crlf(reader::_ConnReader, max_line_bytes::Integer)::String
     max_line_bytes <= 0 && throw(ArgumentError("max_line_bytes must be > 0"))
     bytes = UInt8[]
     while true
@@ -1244,7 +1298,7 @@ function body_read!(body::ManagedBody, dst::Vector{UInt8})::Int
 end
 
 """
-    _roundtrip_incoming!(transport, address, request; secure=false, server_name=nothing, proxy_config=transport.proxy)
+    _roundtrip_incoming!(transport, address, request, false, nothing, transport.proxy, 1)
 
 Execute one HTTP/1 request/response exchange through `transport`.
 
@@ -1258,165 +1312,184 @@ where the exchange fails.
 function _roundtrip_incoming!(
     transport::Transport,
     address::AbstractString,
-    request::Request;
+    request::Request,
     secure::Bool=false,
     server_name::Union{Nothing,AbstractString}=nothing,
     proxy_config::ProxyConfig=transport.proxy,
+    attempt::Int=1,
 )
     request_deadline = _request_deadline_ns(request)
-    retry_template = _retryable_request(request) ? _copy_request(request) : nothing
-    attempt = 1
-    current_request = request
-    while true
-        plan = _proxy_plan(proxy_config, secure, String(address))
-        connect_host_resolver = _request_connect_host_resolver(transport.host_resolver, current_request)
-        connect_deadline_ns = _request_connect_phase_deadline_ns(transport.host_resolver, current_request)
-        tls_handshake_timeout_ns = _request_connect_phase_timeout_ns(transport.host_resolver, current_request)
-        conn = _acquire_conn!(
-            transport,
-            plan,
-            String(address);
-            secure=secure,
-            server_name=server_name === nothing ? nothing : String(server_name),
-            acquire_deadline_ns=request_deadline,
-            host_resolver=connect_host_resolver,
-            connect_deadline_ns=connect_deadline_ns,
-            tls_handshake_timeout_ns=tls_handshake_timeout_ns,
-        )
-        was_reused = conn.reused
-        try
-            _apply_conn_deadline!(conn, request_deadline)
-            request_io = _reset_request_buffer!(conn)
-            stream = _conn_stream(conn)
-            deadline_stream = _RequestDeadlineWriteIO(stream, conn, current_request)
-            exchange = _request_context_verbose_exchange(current_request.context)
-            write_stream = exchange === nothing ? deadline_stream : _VerboseTeeWriteIO(deadline_stream, (exchange::_VerboseExchangeState).request_capture)
-            wire_target = plan.mode == _ProxyPlanMode.HTTP_FORWARD ? _request_url(false, String(address), current_request.target) : nothing
-            proxy_auth = plan.mode == _ProxyPlanMode.HTTP_FORWARD && plan.proxy !== nothing ? (plan.proxy::_ProxyTarget).authorization : nothing
-            has_request_body = _request_has_body(current_request)
-            write_state = has_request_body ? _RequestWriteState(_request_expects_continue(current_request)) : nothing
-            writer_err = Base.RefValue{Union{Nothing,Exception}}(nothing)
-            writer_task = nothing
-            if has_request_body
-                writer_task = Threads.@spawn begin
-                    try
+    retry_template = attempt == 1 && _retryable_request(request) ? _copy_request(request) : nothing
+    plan = _proxy_plan(proxy_config, secure, String(address))
+    connect_host_resolver = _request_connect_host_resolver(transport.host_resolver, request)
+    connect_deadline_ns = _request_connect_phase_deadline_ns(transport.host_resolver, request)
+    tls_handshake_timeout_ns = _request_connect_phase_timeout_ns(transport.host_resolver, request)
+    conn = _acquire_conn!(
+        transport,
+        plan,
+        String(address),
+        secure,
+        server_name === nothing ? nothing : String(server_name),
+        request_deadline,
+        connect_host_resolver,
+        connect_deadline_ns,
+        tls_handshake_timeout_ns,
+    )
+    was_reused = conn.reused
+    try
+        _apply_conn_deadline!(conn, request_deadline)
+        request_io = _reset_request_buffer!(conn)
+        stream = _conn_stream(conn)
+        deadline_stream = _RequestDeadlineWriteIO(stream, conn, request)
+        exchange = _request_context_verbose_exchange(request.context)
+        has_request_body = _request_has_body(request)
+        write_state = has_request_body ? _RequestWriteState(_request_expects_continue(request)) : nothing
+        writer_err = Base.RefValue{Union{Nothing,Exception}}(nothing)
+        writer_task = nothing
+        if has_request_body
+            writer_task = Threads.@spawn begin
+                try
+                    if exchange === nothing
                         _write_request_streaming!(
                             request_io,
-                            write_stream,
-                            current_request;
-                            wire_target=wire_target,
-                            proxy_authorization=proxy_auth,
-                            write_state=write_state,
-                            request_deadline=request_deadline,
+                            deadline_stream,
+                            request,
+                            plan,
+                            write_state,
+                            request_deadline,
                         )
-                    catch err
-                        writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
-                        _request_write_allows_close(write_state) || return nothing
-                        try
-                            _close_conn!(conn)
-                        catch
-                        end
-                    finally
-                        try
-                            body_close!(current_request.body)
-                        catch
-                        finally
-                            _request_write_mark_done!(write_state)
-                        end
+                    else
+                        _write_request_streaming!(
+                            request_io,
+                            _VerboseTeeWriteIO(deadline_stream, (exchange::_VerboseExchangeState).request_capture),
+                            request,
+                            plan,
+                            write_state,
+                            request_deadline,
+                        )
                     end
-                    return nothing
-                end
-                if request_deadline == 0
-                    while !_request_write_head_written_or_done(write_state)
-                        timedwait(() -> _request_write_head_written_or_done(write_state), 0.05; pollint=0.001)
-                    end
-                else
-                    status = timedwait(() -> _request_write_head_written_or_done(write_state), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
-                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
-                end
-                if _request_write_done(write_state)
-                    wait(writer_task::Task)
-                    err = writer_err[]
-                    err === nothing || throw(err::Exception)
-                end
-            else
-                try
-                    _write_request_streaming!(request_io, write_stream, current_request; wire_target=wire_target, proxy_authorization=proxy_auth)
-                finally
+                catch err
+                    writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
+                    _request_write_allows_close(write_state) || return nothing
                     try
-                        body_close!(current_request.body)
+                        _close_conn!(conn)
                     catch
                     end
+                finally
+                    try
+                        body_close!(request.body)
+                    catch
+                    finally
+                        _request_write_mark_done!(write_state)
+                    end
                 end
+                return nothing
             end
-            reader = conn.reader
-            _set_conn_reader_capture!(reader, exchange === nothing ? nothing : (exchange::_VerboseExchangeState).response_capture)
-            _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(current_request))
-            raw_response = _read_incoming_response(reader, current_request)
-            # HTTP/1 informational responses are consumed internally so callers
-            # observe the final non-1xx response.
-            while (raw_response.head.status >= 100 && raw_response.head.status < 200) && raw_response.head.status != 101
-                if _request_write_should_wait_for_continue(write_state) && raw_response.head.status == 100
-                    _request_write_mark_continue_allowed!(write_state::_RequestWriteState)
+            if request_deadline == 0
+                while !_request_write_head_written_or_done(write_state)
+                    timedwait(() -> _request_write_head_written_or_done(write_state), 0.05; pollint=0.001)
                 end
+            else
+                status = timedwait(() -> _request_write_head_written_or_done(write_state), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
+                status == :timed_out && throw(IOPoll.DeadlineExceededError())
+            end
+            if _request_write_done(write_state)
+                wait(writer_task::Task)
+                err = writer_err[]
+                err === nothing || throw(err::Exception)
+            end
+        else
+            try
+                if exchange === nothing
+                    _write_request_streaming!(request_io, deadline_stream, request, plan)
+                else
+                    _write_request_streaming!(
+                        request_io,
+                        _VerboseTeeWriteIO(deadline_stream, (exchange::_VerboseExchangeState).request_capture),
+                        request,
+                        plan,
+                    )
+                end
+            finally
                 try
-                    body_close!(raw_response.rawbody)
+                    body_close!(request.body)
                 catch
                 end
-                raw_response = _read_incoming_response(reader, current_request)
             end
-            _set_conn_read_deadline!(conn, request_deadline)
-            _set_verbose_response_head!(exchange, raw_response.head)
-            early_final = false
-            if _request_write_should_wait_for_continue(write_state) && _request_write_continue_state(write_state::_RequestWriteState) == _REQUEST_WRITE_CONTINUE_PENDING
-                _request_write_mark_continue_suppressed!(write_state::_RequestWriteState)
-                early_final = true
-            end
-            if has_request_body && !_request_write_done(write_state)
-                early_final = true
-                _request_write_request_stop!(write_state::_RequestWriteState)
-                _request_write_disallow_close!(write_state::_RequestWriteState)
-                _set_conn_write_deadline!(conn, Int64(time_ns()))
-            end
-            if has_request_body && !early_final
-                if request_deadline == 0
-                    wait(writer_task::Task)
-                else
-                    status = timedwait(() -> istaskdone(writer_task::Task), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
-                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
-                    wait(writer_task::Task)
-                end
-            end
-            if has_request_body && writer_task !== nothing && istaskdone(writer_task::Task)
-                err = writer_err[]
-                if err !== nothing && !(early_final && _request_upload_abort_error(err::Exception))
-                    throw(err::Exception)
-                end
-            end
-            reusable = _response_reusable(raw_response, current_request)
-            early_final && (reusable = false)
-            if raw_response.rawbody isa EmptyBody
-                if reusable
-                    _put_idle_conn!(transport, conn)
-                else
-                    _close_owned_conn!(transport, conn)
-                end
-                return raw_response
-            end
-            managed = ManagedBody(raw_response.rawbody, transport, conn, current_request, reusable, false, false)
-            return _IncomingResponse(
-                raw_response.head,
-                managed,
-            )
-        catch err
-            _close_owned_conn!(transport, conn)
-            if attempt == 1 && was_reused && retry_template !== nothing && _retryable_reused_conn_error(err)
-                current_request = _copy_request(retry_template::Request)
-                attempt = 2
-                continue
-            end
-            rethrow(err)
         end
+        reader = conn.reader
+        _set_conn_reader_capture!(reader, exchange === nothing ? nothing : (exchange::_VerboseExchangeState).response_capture)
+        _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(request))
+        raw_response = _read_incoming_response(reader, request)
+        # HTTP/1 informational responses are consumed internally so callers
+        # observe the final non-1xx response.
+        while (raw_response.head.status >= 100 && raw_response.head.status < 200) && raw_response.head.status != 101
+            if _request_write_should_wait_for_continue(write_state) && raw_response.head.status == 100
+                _request_write_mark_continue_allowed!(write_state::_RequestWriteState)
+            end
+            try
+                body_close!(raw_response.rawbody)
+            catch
+            end
+            raw_response = _read_incoming_response(reader, request)
+        end
+        _set_conn_read_deadline!(conn, request_deadline)
+        _set_verbose_response_head!(exchange, raw_response.head)
+        early_final = false
+        if _request_write_should_wait_for_continue(write_state) && _request_write_continue_state(write_state::_RequestWriteState) == _REQUEST_WRITE_CONTINUE_PENDING
+            _request_write_mark_continue_suppressed!(write_state::_RequestWriteState)
+            early_final = true
+        end
+        if has_request_body && !_request_write_done(write_state)
+            early_final = true
+            _request_write_request_stop!(write_state::_RequestWriteState)
+            _request_write_disallow_close!(write_state::_RequestWriteState)
+            _set_conn_write_deadline!(conn, Int64(time_ns()))
+        end
+        if has_request_body && !early_final
+            if request_deadline == 0
+                wait(writer_task::Task)
+            else
+                status = timedwait(() -> istaskdone(writer_task::Task), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
+                status == :timed_out && throw(IOPoll.DeadlineExceededError())
+                wait(writer_task::Task)
+            end
+        end
+        if has_request_body && writer_task !== nothing && istaskdone(writer_task::Task)
+            err = writer_err[]
+            if err !== nothing && !(early_final && _request_upload_abort_error(err::Exception))
+                throw(err::Exception)
+            end
+        end
+        reusable = _response_reusable(raw_response, request)
+        early_final && (reusable = false)
+        if raw_response.rawbody isa EmptyBody
+            if reusable
+                _put_idle_conn!(transport, conn)
+            else
+                _close_owned_conn!(transport, conn)
+            end
+            return raw_response
+        end
+        managed = ManagedBody(raw_response.rawbody, transport, conn, request, reusable, false, false)
+        return _IncomingResponse(
+            raw_response.head,
+            managed,
+        )
+    catch err
+        _close_owned_conn!(transport, conn)
+        if attempt == 1 && was_reused && retry_template !== nothing && _retryable_reused_conn_error(err)
+            return _roundtrip_incoming!(
+                transport,
+                address,
+                _copy_request(retry_template::Request),
+                secure,
+                server_name,
+                proxy_config,
+                attempt + 1,
+            )
+        end
+        rethrow(err)
     end
 end
 
@@ -1433,5 +1506,5 @@ function roundtrip!(
     secure::Bool=false,
     server_name::Union{Nothing,AbstractString}=nothing,
 )
-    return _streaming_response(_roundtrip_incoming!(transport, address, request; secure=secure, server_name=server_name))
+    return _streaming_response(_roundtrip_incoming!(transport, address, request, secure, server_name))
 end
