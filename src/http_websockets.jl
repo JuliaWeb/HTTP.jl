@@ -349,7 +349,7 @@ function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
         return nothing
     end
     if op == UInt8(WsOpcode.CONTINUATION)
-        ws.fragment_opcode === nothing && begin
+        if ws.fragment_opcode === nothing
             _queue_close!(ws, CloseFrameBody(1002, "unexpected continuation"))
             return nothing
         end
@@ -772,7 +772,7 @@ function _open_client_websocket(
                 rethrow()
             end
             conn = attempt.conn
-            conn === nothing && begin
+            if conn === nothing
                 owns_client && close(req_client)
                 throw(ProtocolError("websocket upgrade succeeded without an active connection"))
             end
@@ -805,11 +805,11 @@ function _open_client_websocket(
             throw(WebSocketError(CloseFrameBody(1002, "websocket handshake failed: status $(response.status)")))
         end
         location = header(response.headers, "Location", nothing)
-        (location === nothing || isempty(location::String)) && begin
+        if location === nothing || isempty(location::String)
             owns_client && close(req_client)
             throw(WebSocketError(CloseFrameBody(1002, "websocket handshake failed: status $(response.status)")))
         end
-        redirect_count == redirect_policy.max_redirects && begin
+        if redirect_count == redirect_policy.max_redirects
             owns_client && close(req_client)
             throw(TooManyRedirectsError(redirect_policy.max_redirects, response))
         end

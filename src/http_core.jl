@@ -1090,6 +1090,10 @@ function body_close!(body::CallbackBody)
     return nothing
 end
 
+@inline _body_immediately_empty(::AbstractBody)::Bool = false
+@inline _body_immediately_empty(::EmptyBody)::Bool = true
+@inline _body_uses_eof_framing(::AbstractBody)::Bool = false
+
 """
     Request(method, target; headers=Headers(), trailers=Headers(), body=EmptyBody(), host=nothing,
             content_length=-1, proto_major=1, proto_minor=1, close=false,

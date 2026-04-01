@@ -1,6 +1,5 @@
 # HTTP client transport, connection pooling, and low-level HTTP/1 roundtrip APIs.
 export Transport
-export ManagedBody
 export roundtrip!
 export close_idle_connections!
 export idle_connection_count
@@ -14,11 +13,13 @@ using Reseau.TLS
 const _CONN_READER_DEFAULT_BUFFER_BYTES = 16 * 1024
 const _TRANSPORT_WRITE_BODY_CHUNK_BYTES = 16 * 1024
 const _TRANSPORT_EXPECT_CONTINUE_TIMEOUT_NS = Int64(1_000_000_000)
-const _TRANSPORT_MAX_POST_CLOSE_DRAIN_BYTES = 256 * 1024
-const _TRANSPORT_MAX_POST_CLOSE_DRAIN_TIME_NS = Int64(50_000_000)
 const _REQUEST_WRITE_CONTINUE_PENDING = UInt8(0x0)
 const _REQUEST_WRITE_CONTINUE_ALLOWED = UInt8(0x1)
 const _REQUEST_WRITE_CONTINUE_SUPPRESSED = UInt8(0x2)
+const _H1_BODY_EMPTY = UInt8(0x0)
+const _H1_BODY_FIXED = UInt8(0x1)
+const _H1_BODY_CHUNKED = UInt8(0x2)
+const _H1_BODY_EOF = UInt8(0x3)
 
 mutable struct _RequestDeadlineWriteIO{S} <: IO
     inner::S
@@ -215,24 +216,20 @@ mutable struct Transport{S<:HostResolvers.AbstractResolver}
     @atomic closed::Bool
 end
 
-"""
-    ManagedBody
-
-Response body wrapper that returns/tears down pooled connections once the body
-is fully consumed or closed.
-
-If the caller drains the body to EOF, `ManagedBody` returns the underlying
-connection to the idle pool when it is safe to do so. If the body is abandoned
-early or an error occurs, the connection is closed instead so the next request
-does not observe leftover bytes.
-"""
-mutable struct ManagedBody{B<:AbstractBody} <: AbstractBody
-    inner::B
-    transport::Transport
+mutable struct H1Body{T<:Transport} <: AbstractBody
+    kind::UInt8
+    reader::_ConnReader
+    transport::T
     conn::Conn
     request::Request
+    trailers::Headers
+    remaining::Int64
+    max_line_bytes::Int
+    max_header_bytes::Int
     reusable::Bool
-    @atomic saw_eof::Bool
+    manage_conn::Bool
+    done::Bool
+    @atomic closed::Bool
     @atomic released::Bool
 end
 
@@ -804,11 +801,21 @@ function _perform_http_connect_tunnel!(
     write_request!(request_io, request)
     _write_request_bytes!(tcp, request_io)
     response = _read_incoming_response(_ConnReader(tcp), request)
+    response.head.status == 200 || throw(ProtocolError("proxy CONNECT failed with status $(response.head.status)"))
+    body = response.rawbody
     try
-        body_close!(response.rawbody)
+        if body isa EmptyBody
+        elseif body isa FixedLengthBody
+            body_close!(body)
+        elseif body isa ChunkedBody
+            body_close!(body)
+        elseif body isa EOFBody
+            body_close!(body)
+        else
+            error("unexpected proxy CONNECT response body type")
+        end
     catch
     end
-    response.head.status == 200 || throw(ProtocolError("proxy CONNECT failed with status $(response.head.status)"))
     return nothing
 end
 
@@ -1186,11 +1193,53 @@ end
     return request_buf
 end
 
+@inline function _body_immediately_empty(body::H1Body)::Bool
+    return body.kind == _H1_BODY_EMPTY
+end
+
+@inline function _body_uses_eof_framing(body::H1Body)::Bool
+    return body.kind == _H1_BODY_EOF
+end
+
+function trailers(body::H1Body)::Headers
+    return copy(body.trailers)
+end
+
+@inline function _new_h1_body(
+    kind::UInt8,
+    reader::_ConnReader,
+    transport::T,
+    conn::Conn,
+    request::Request,
+    trailers::Headers,
+    remaining::Int64,
+    max_line_bytes::Int,
+    max_header_bytes::Int,
+    done::Bool=false,
+)::H1Body{T} where {T<:Transport}
+    return H1Body(
+        kind,
+        reader,
+        transport,
+        conn,
+        request,
+        trailers,
+        remaining,
+        max_line_bytes,
+        max_header_bytes,
+        false,
+        false,
+        done,
+        false,
+        false,
+    )
+end
+
 @inline function _response_reusable(response::_IncomingResponse, request::Request)::Bool
     response.head.close && return false
     _transport_request_wants_close(request) && return false
     headercontains(response.head.headers, "Connection", "close") && return false
-    response.rawbody isa EOFBody && return false
+    _body_uses_eof_framing(response.rawbody) && return false
     return true
 end
 
@@ -1224,7 +1273,8 @@ end
     return false
 end
 
-function _release_managed!(body::ManagedBody)
+@inline function _release_h1_body!(body::H1Body)::Nothing
+    body.manage_conn || return nothing
     was_released = @atomic :acquire body.released
     was_released && return nothing
     @atomic :release body.released = true
@@ -1236,65 +1286,189 @@ function _release_managed!(body::ManagedBody)
     return nothing
 end
 
-function body_closed(body::ManagedBody)::Bool
-    return @atomic :acquire body.released
+@inline function _arm_h1_body!(body::H1Body, reusable::Bool)::H1Body
+    body.reusable = reusable
+    body.manage_conn = true
+    return body
 end
 
-function _maybe_drain_managed_body!(body::ManagedBody)::Bool
-    !body.reusable && return false
-    inner = body.inner
-    inner isa EmptyBody && return true
-    inner isa EOFBody && return false
-    if inner isa FixedLengthBody
-        remaining = (inner::FixedLengthBody).remaining
-        remaining > _TRANSPORT_MAX_POST_CLOSE_DRAIN_BYTES && return false
-    end
-    deadline_ns = Int64(time_ns())
-    deadline_ns = deadline_ns > typemax(Int64) - _TRANSPORT_MAX_POST_CLOSE_DRAIN_TIME_NS ? typemax(Int64) : deadline_ns + _TRANSPORT_MAX_POST_CLOSE_DRAIN_TIME_NS
-    _set_conn_read_deadline!(body.conn, deadline_ns)
-    remaining_budget = _TRANSPORT_MAX_POST_CLOSE_DRAIN_BYTES
-    while remaining_budget > 0
-        chunk_len = min(_TRANSPORT_WRITE_BODY_CHUNK_BYTES, remaining_budget)
-        buf = Vector{UInt8}(undef, chunk_len)
-        n = try
-            body_read!(inner, buf)
-        catch err
-            err isa IOPoll.DeadlineExceededError && return false
-            err isa EOFError && return false
-            return false
-        end
-        if n == 0
-            @atomic :release body.saw_eof = true
-            return true
-        end
-        remaining_budget -= n
-    end
-    return false
-end
-
-function body_close!(body::ManagedBody)
-    if !(@atomic :acquire body.saw_eof) && !_maybe_drain_managed_body!(body)
-        body.reusable = false
-    end
-    body_close!(body.inner)
-    _release_managed!(body)
+@inline function _finish_h1_body!(body::H1Body)::Nothing
+    body.done = true
+    @atomic :release body.closed = true
+    _release_h1_body!(body)
     return nothing
 end
 
-function body_read!(body::ManagedBody, dst::Vector{UInt8})::Int
-    try
-        _set_conn_read_deadline!(body.conn, _request_read_deadline_ns(body.request))
-        n = body_read!(body.inner, dst)
-        if n == 0
-            @atomic :release body.saw_eof = true
-            _release_managed!(body)
+function body_closed(body::H1Body)::Bool
+    return @atomic :acquire body.closed
+end
+
+function _read_next_h1_chunk!(body::H1Body)::Nothing
+    line = _readline_crlf(body.reader, body.max_line_bytes)
+    size = _parse_chunk_size(line)
+    if size == 0
+        parsed_trailers = _read_headers(body.reader, body.max_line_bytes, body.max_header_bytes)
+        _validate_incoming_trailers!(parsed_trailers)
+        empty!(body.trailers)
+        for (key, value) in parsed_trailers
+            appendheader(body.trailers, key, value)
         end
-        return n
+        body.done = true
+        body.remaining = 0
+        return nothing
+    end
+    body.remaining = size
+    return nothing
+end
+
+function body_close!(body::H1Body)
+    was_closed = @atomic :acquire body.closed
+    was_closed && return nothing
+    @atomic :release body.closed = true
+    body.done || (body.reusable = false)
+    body.done = true
+    _release_h1_body!(body)
+    return nothing
+end
+
+function body_read!(body::H1Body, dst::Vector{UInt8})::Int
+    isempty(dst) && return 0
+    body_closed(body) && return 0
+    try
+        body.manage_conn && _set_conn_read_deadline!(body.conn, _request_read_deadline_ns(body.request))
+        if body.kind == _H1_BODY_EMPTY
+            _finish_h1_body!(body)
+            return 0
+        elseif body.kind == _H1_BODY_FIXED
+            if body.remaining <= 0
+                _finish_h1_body!(body)
+                return 0
+            end
+            to_read = min(Int64(length(dst)), body.remaining)
+            n = _read_exact!(body.reader, dst, to_read)
+            n == to_read || throw(ParseError("truncated fixed-length HTTP/1 body"))
+            body.remaining -= n
+            body.remaining == 0 && _finish_h1_body!(body)
+            return n
+        elseif body.kind == _H1_BODY_CHUNKED
+            if body.done
+                _finish_h1_body!(body)
+                return 0
+            end
+            body.remaining == 0 && _read_next_h1_chunk!(body)
+            if body.done
+                _finish_h1_body!(body)
+                return 0
+            end
+            to_read = min(Int64(length(dst)), body.remaining)
+            n = _read_exact!(body.reader, dst, to_read)
+            n == to_read || throw(ParseError("truncated chunked HTTP/1 body"))
+            body.remaining -= n
+            if body.remaining == 0
+                _consume_crlf(body.reader)
+            end
+            return n
+        elseif body.kind == _H1_BODY_EOF
+            n = try
+                readbytes!(body.reader, dst, length(dst))
+            catch err
+                err isa EOFError || rethrow(err)
+                0
+            end
+            n == 0 && _finish_h1_body!(body)
+            return n
+        end
+        error("unexpected H1 body kind")
     catch
         body.reusable = false
-        _release_managed!(body)
+        body.done = true
+        @atomic :release body.closed = true
+        _release_h1_body!(body)
         rethrow()
     end
+end
+
+function _read_transport_incoming_response(
+    reader::_ConnReader,
+    transport::Transport,
+    conn::Conn,
+    request::Request,
+    max_line_bytes::Integer=_HTTP1_DEFAULT_MAX_LINE_BYTES,
+    max_header_bytes::Integer=_HTTP1_DEFAULT_MAX_HEADER_BYTES,
+)
+    line = _readline_crlf(reader, max_line_bytes)
+    proto_major, proto_minor, status, reason = _parse_status_line(line)
+    headers = _read_headers(reader, max_line_bytes, max_header_bytes)
+    chunked = _parse_transfer_encoding!(headers, proto_major, proto_minor)
+    content_length = _parse_content_length(headers)
+    chunked && removeheader(headers, "Content-Length")
+    content_length = chunked ? Int64(-1) : content_length
+    close = _should_close_connection(headers, proto_major, proto_minor)
+    request_is_head = request.method == "HEAD"
+    request_is_connect_tunnel = request.method == "CONNECT" && status >= 200 && status < 300
+    body = if !_body_allowed_for_status(status) || request_is_head || request_is_connect_tunnel || content_length == 0
+        _new_h1_body(
+            _H1_BODY_EMPTY,
+            reader,
+            transport,
+            conn,
+            request,
+            Headers(),
+            Int64(0),
+            Int(max_line_bytes),
+            Int(max_header_bytes),
+            true,
+        )
+    elseif chunked
+        trailers = Headers()
+        _new_h1_body(
+            _H1_BODY_CHUNKED,
+            reader,
+            transport,
+            conn,
+            request,
+            trailers,
+            Int64(0),
+            Int(max_line_bytes),
+            Int(max_header_bytes),
+        )
+    elseif content_length > 0
+        _new_h1_body(
+            _H1_BODY_FIXED,
+            reader,
+            transport,
+            conn,
+            request,
+            Headers(),
+            content_length,
+            Int(max_line_bytes),
+            Int(max_header_bytes),
+        )
+    else
+        _new_h1_body(
+            _H1_BODY_EOF,
+            reader,
+            transport,
+            conn,
+            request,
+            Headers(),
+            Int64(-1),
+            Int(max_line_bytes),
+            Int(max_header_bytes),
+        )
+    end
+    return _incoming_response_from_parts(
+        status,
+        reason,
+        headers,
+        body.trailers,
+        body,
+        _body_immediately_empty(body) ? Int64(0) : content_length,
+        proto_major,
+        proto_minor,
+        close,
+        request,
+    )
 end
 
 """
@@ -1303,8 +1477,7 @@ end
 Execute one HTTP/1 request/response exchange through `transport`.
 
 This is the low-level HTTP/1 path used by the higher-level client APIs. It
-returns an `_IncomingResponse` before the public `Response` conversion and
-`ManagedBody` wrapping step.
+returns an `_IncomingResponse` before the public `Response` conversion step.
 
 Throws parser, protocol, transport, TLS, and timeout exceptions depending on
 where the exchange fails.
@@ -1420,7 +1593,7 @@ function _roundtrip_incoming!(
         reader = conn.reader
         _set_conn_reader_capture!(reader, exchange === nothing ? nothing : (exchange::_VerboseExchangeState).response_capture)
         _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(request))
-        raw_response = _read_incoming_response(reader, request)
+        raw_response = _read_transport_incoming_response(reader, transport, conn, request)
         # HTTP/1 informational responses are consumed internally so callers
         # observe the final non-1xx response.
         while (raw_response.head.status >= 100 && raw_response.head.status < 200) && raw_response.head.status != 101
@@ -1431,7 +1604,7 @@ function _roundtrip_incoming!(
                 body_close!(raw_response.rawbody)
             catch
             end
-            raw_response = _read_incoming_response(reader, request)
+            raw_response = _read_transport_incoming_response(reader, transport, conn, request)
         end
         _set_conn_read_deadline!(conn, request_deadline)
         _set_verbose_response_head!(exchange, raw_response.head)
@@ -1463,19 +1636,11 @@ function _roundtrip_incoming!(
         end
         reusable = _response_reusable(raw_response, request)
         early_final && (reusable = false)
-        if raw_response.rawbody isa EmptyBody
-            if reusable
-                _put_idle_conn!(transport, conn)
-            else
-                _close_owned_conn!(transport, conn)
-            end
-            return raw_response
+        body = _arm_h1_body!(raw_response.rawbody::H1Body, reusable)
+        if _body_immediately_empty(body)
+            body_close!(body)
         end
-        managed = ManagedBody(raw_response.rawbody, transport, conn, request, reusable, false, false)
-        return _IncomingResponse(
-            raw_response.head,
-            managed,
-        )
+        return _IncomingResponse(raw_response.head, body)
     catch err
         _close_owned_conn!(transport, conn)
         if attempt == 1 && was_reused && retry_template !== nothing && _retryable_reused_conn_error(err)

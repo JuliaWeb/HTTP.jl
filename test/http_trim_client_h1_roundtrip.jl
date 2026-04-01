@@ -53,8 +53,8 @@ function run_http_trim_client_h1_roundtrip()::Nothing
         response = HT.roundtrip!(transport, address, request)
         response.status == 200 || error("expected 200 response, got $(response.status)")
         body = response.body
-        body isa HT.ManagedBody || error("expected ManagedBody response body")
-        trim_body_string(body::HT.ManagedBody) == "h1-roundtrip" || error("unexpected response body")
+        body isa HT.H1Body || error("expected H1Body response body")
+        trim_body_string(body::HT.H1Body) == "h1-roundtrip" || error("unexpected response body")
     finally
         try
             transport === nothing || close(transport::HT.Transport)

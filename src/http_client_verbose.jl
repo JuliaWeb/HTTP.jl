@@ -578,7 +578,7 @@ function _attach_verbose_to_incoming_response(
 ) where {B<:AbstractBody}
     exchange === nothing && return incoming
     _set_verbose_response_head!(exchange, incoming.head)
-    if incoming.rawbody isa EmptyBody
+    if _body_immediately_empty(incoming.rawbody)
         _verbose_log_response_dump!(exchange, true)
         return incoming
     end
