@@ -51,7 +51,7 @@ end
 """
     SSEStream(; max_len=16*1024*1024)
 
-Writable Server-Sent Events body used by `sse_stream(response)`.
+Writable Server-Sent Events body used by `sse_stream(status)`.
 
 `SSEStream` is also an `AbstractBody`, so server response writers can stream it
 directly to HTTP/1 or HTTP/2 connections while user code keeps pushing
@@ -124,25 +124,70 @@ function write(stream::SSEStream, event::SSEEvent)::Int
 end
 
 """
+    sse_stream(status=200; max_len=16*1024*1024, ...) -> Response
+    sse_stream(status, f; max_len=16*1024*1024, ...) -> Response
     sse_stream(response; max_len=16*1024*1024) -> SSEStream
     sse_stream(response, f; max_len=16*1024*1024) -> SSEStream
 
-Attach a writable `SSEStream` to `response`, set the standard SSE headers, and
-return the stream for incremental event emission.
+Create or configure a server-sent events response.
 
-The `do`-block form runs the producer on a background task and closes the
-stream automatically when the callback finishes.
+`sse_stream(status; ...)` constructs a `Response` with an `SSEStream` body,
+sets the standard SSE headers, and returns the response for manual event
+emission.
+
+`sse_stream(status) do stream ... end` is the usual server helper. It creates
+the response, runs the producer on a background task, and closes the stream
+automatically when the callback finishes.
+
+The `response`-accepting forms are for responses that already have an
+`SSEStream` body.
 """
-function sse_stream(response::Response; max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN)::SSEStream
-    fieldtype(typeof(response), :body) <: AbstractBody ||
-        throw(ArgumentError("sse_stream requires a Response whose body field can hold AbstractBody values"))
-    stream = response.body isa SSEStream ? response.body::SSEStream : SSEStream(; max_len=max_len)
-    response.body = stream
+@inline function _configure_sse_response!(response::Response)::Response
     response.content_length = Int64(-1)
     setheader(response.headers, "Content-Type", "text/event-stream")
     setheader(response.headers, "Cache-Control", "no-cache")
     removeheader(response.headers, "Content-Length")
-    return stream
+    return response
+end
+
+function sse_stream(
+    status::Integer=200;
+    reason::AbstractString="",
+    headers=Headers(),
+    trailers=Headers(),
+    max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN,
+    proto_major::Integer=1,
+    proto_minor::Integer=1,
+    close::Bool=false,
+    request::Union{Nothing,Request}=nothing,
+    request_url::Union{Nothing,AbstractString}=nothing,
+    previous::Union{Nothing,Response}=nothing,
+    redirect_count::Integer=0,
+)::Response
+    response = Response(
+        status,
+        SSEStream(; max_len=max_len);
+        reason=reason,
+        headers=headers,
+        trailers=trailers,
+        content_length=Int64(-1),
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+        close=close,
+        request=request,
+        request_url=request_url,
+        previous=previous,
+        redirect_count=redirect_count,
+    )
+    return _configure_sse_response!(response)
+end
+
+function sse_stream(response::Response; max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN)::SSEStream
+    _ = max_len
+    response.body isa SSEStream ||
+        throw(ArgumentError("sse_stream(response) requires response.body to already be an SSEStream; use sse_stream(status) to construct one"))
+    _configure_sse_response!(response)
+    return response.body::SSEStream
 end
 
 function sse_stream(response::Response, f::Function; max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN)::SSEStream
@@ -163,8 +208,73 @@ function sse_stream(response::Response, f::Function; max_len::Integer=_DEFAULT_S
     return stream
 end
 
+function sse_stream(
+    status::Integer,
+    f::Function;
+    reason::AbstractString="",
+    headers=Headers(),
+    trailers=Headers(),
+    max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN,
+    proto_major::Integer=1,
+    proto_minor::Integer=1,
+    close::Bool=false,
+    request::Union{Nothing,Request}=nothing,
+    request_url::Union{Nothing,AbstractString}=nothing,
+    previous::Union{Nothing,Response}=nothing,
+    redirect_count::Integer=0,
+)::Response
+    response = sse_stream(
+        status;
+        reason=reason,
+        headers=headers,
+        trailers=trailers,
+        max_len=max_len,
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+        close=close,
+        request=request,
+        request_url=request_url,
+        previous=previous,
+        redirect_count=redirect_count,
+    )
+    sse_stream(response, f; max_len=max_len)
+    return response
+end
+
 function sse_stream(f::Function, response::Response; max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN)::SSEStream
     return sse_stream(response, f; max_len=max_len)
+end
+
+function sse_stream(
+    f::Function,
+    status::Integer;
+    reason::AbstractString="",
+    headers=Headers(),
+    trailers=Headers(),
+    max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN,
+    proto_major::Integer=1,
+    proto_minor::Integer=1,
+    close::Bool=false,
+    request::Union{Nothing,Request}=nothing,
+    request_url::Union{Nothing,AbstractString}=nothing,
+    previous::Union{Nothing,Response}=nothing,
+    redirect_count::Integer=0,
+)::Response
+    return sse_stream(
+        status,
+        f;
+        reason=reason,
+        headers=headers,
+        trailers=trailers,
+        max_len=max_len,
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+        close=close,
+        request=request,
+        request_url=request_url,
+        previous=previous,
+        redirect_count=redirect_count,
+    )
 end
 
 mutable struct _SSEState

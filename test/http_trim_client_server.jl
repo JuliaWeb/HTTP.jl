@@ -28,8 +28,6 @@ function _http_trim_client_server_entry()::Nothing
     return nothing
 end
 
-Base.Experimental.entrypoint(_http_trim_client_server_entry, ())
-
 function run_http_trim_client_server()::Nothing
     listener::Union{Nothing,Reseau.TCP.Listener} = nothing
     client::Union{Nothing,Reseau.TCP.Conn} = nothing
@@ -76,7 +74,7 @@ function run_http_trim_client_server()::Nothing
         #     return trim_text_response("hello")
         # end
 
-        server_task = errormonitor(Task(_http_trim_client_server_entry))
+        server_task = Task(_http_trim_client_server_entry)
         schedule(server_task)
         start_status = Reseau.IOPoll.timedwait(() -> _HTTP_TRIM_CLIENT_SERVER_STARTED[], 5.0; pollint = 0.001)
         start_status == :timed_out && error("timed out waiting for trim HTTP server task")

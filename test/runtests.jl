@@ -74,8 +74,8 @@ end
 function _http_send_warmup_response!(conn::NC.Conn, request::HTTP.Request)::Nothing
     payload = collect(codeunits("windows-warmup:" * request.target))
     response = HTTP.Response(
-        200;
-        body = HTTP.BytesBody(payload),
+        200,
+        HTTP.BytesBody(payload);
         content_length = length(payload),
         request = request,
     )

@@ -34,8 +34,8 @@ end
 
     head_request = HT.Request("HEAD", "/head"; host = "example.test", body = HT.EmptyBody(), content_length = 0)
     head_response = HT.Response(
-        200;
-        body = HT.BytesBody(collect(codeunits("oops"))),
+        200,
+        HT.BytesBody(collect(codeunits("oops")));
         content_length = 4,
         request = head_request,
     )
@@ -62,7 +62,7 @@ end
             headers = HT.Headers()
             HT.setheader(headers, "Location", "/next")
             HT.setheader(headers, "Connection", "close")
-            resp1 = HT.Response(307; reason = "Temporary Redirect", headers = headers, body = HT.EmptyBody(), content_length = 0, close = true, request = req1)
+            resp1 = HT.Response(307, HT.EmptyBody(); reason = "Temporary Redirect", headers = headers, content_length = 0, close = true, request = req1)
             io1 = IOBuffer()
             HT.write_response!(io1, resp1)
             bytes1 = take!(io1)
@@ -77,7 +77,7 @@ end
         try
             req2 = HT.read_request(HT._ConnReader(conn2))
             push!(seen_methods, req2.method)
-            resp2 = HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, request = req2)
+            resp2 = HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, request = req2)
             io2 = IOBuffer()
             HT.write_response!(io2, resp2)
             bytes2 = take!(io2)
@@ -119,7 +119,7 @@ end
             headers = HT.Headers()
             HT.setheader(headers, "Location", "/next")
             HT.setheader(headers, "Connection", "close")
-            resp = HT.Response(307; reason = "Temporary Redirect", headers = headers, body = HT.BytesBody(UInt8[0x72]), content_length = 1, close = true, request = req)
+            resp = HT.Response(307, HT.BytesBody(UInt8[0x72]); reason = "Temporary Redirect", headers = headers, content_length = 1, close = true, request = req)
             io = IOBuffer()
             HT.write_response!(io, resp)
             write(conn, take!(io))
@@ -191,7 +191,7 @@ end
             headers = HT.Headers()
             HT.setheader(headers, "Location", "/next")
             HT.setheader(headers, "Connection", "close")
-            resp1 = HT.Response(307; reason = "Temporary Redirect", headers = headers, body = HT.EmptyBody(), content_length = 0, close = true, request = req1)
+            resp1 = HT.Response(307, HT.EmptyBody(); reason = "Temporary Redirect", headers = headers, content_length = 0, close = true, request = req1)
             io1 = IOBuffer()
             HT.write_response!(io1, resp1)
             write(conn1, take!(io1))
@@ -206,7 +206,7 @@ end
             req2 = HT.read_request(HT._ConnReader(conn2))
             push!(seen_bodies, String(_read_all_parity(req2.body)))
             push!(seen_content_types, HT.header(req2.headers, "Content-Type"))
-            resp2 = HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, request = req2)
+            resp2 = HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, request = req2)
             io2 = IOBuffer()
             HT.write_response!(io2, resp2)
             write(conn2, take!(io2))
@@ -245,7 +245,7 @@ end
             headers = HT.Headers()
             HT.setheader(headers, "Location", "/next")
             HT.setheader(headers, "Connection", "close")
-            resp = HT.Response(307; reason = "Temporary Redirect", headers = headers, body = HT.BytesBody(UInt8[0x72]), content_length = 1, close = true, request = req)
+            resp = HT.Response(307, HT.BytesBody(UInt8[0x72]); reason = "Temporary Redirect", headers = headers, content_length = 1, close = true, request = req)
             io = IOBuffer()
             HT.write_response!(io, resp)
             write(conn, take!(io))

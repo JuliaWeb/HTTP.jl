@@ -62,7 +62,7 @@ function _read_until_deadline(conn::NC.Conn; timeout_s::Float64 = 1.0)::String
             if err isa IOP.DeadlineExceededError || err isa EOFError
                 break
             end
-            if err isa SystemError && occursin("Connection reset by peer", sprint(showerror, err))
+            if HT._is_peer_close_error(err::Exception)
                 break
             end
             rethrow(err)
@@ -93,7 +93,7 @@ function _read_until_quiet(conn::NC.Conn; timeout_s::Float64 = 1.0, quiet_timeou
             if err isa IOP.DeadlineExceededError || err isa EOFError
                 break
             end
-            if err isa SystemError && occursin("Connection reset by peer", sprint(showerror, err))
+            if HT._is_peer_close_error(err::Exception)
                 break
             end
             rethrow(err)
@@ -103,9 +103,9 @@ function _read_until_quiet(conn::NC.Conn; timeout_s::Float64 = 1.0, quiet_timeou
 end
 
 @testset "HTTP server SSE helper" begin
-    response = HT.Response(200)
-    stream = HT.sse_stream(response)
-    @test response.body === stream
+    response = HT.sse_stream(200)
+    @test response.body isa HT.SSEStream
+    stream = response.body::HT.SSEStream
     @test HT.header(response.headers, "Content-Type") == "text/event-stream"
     @test HT.header(response.headers, "Cache-Control") == "no-cache"
     close(stream)
@@ -114,8 +114,7 @@ end
 @testset "HTTP server SSE roundtrip" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
-            response = HT.Response(200)
-            HT.sse_stream(response) do stream
+            response = HT.sse_stream(200) do stream
                 write(stream, HT.SSEEvent("first"))
                 write(stream, HT.SSEEvent("second"; event = "update", id = "2", retry = 2500))
                 write(stream, HT.SSEEvent("multi\nline\ndata"))
@@ -190,7 +189,7 @@ end
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             push!(seen_targets, request.target)
             payload = collect(codeunits("echo:" * request.target))
-            return HT.Response(200; reason = "OK", body = HT.BytesBody(payload), content_length = length(payload))
+            return HT.Response(200, HT.BytesBody(payload); reason = "OK", content_length = length(payload))
         end
     address = _wait_server_addr(server)
     client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4))
@@ -209,40 +208,6 @@ end
         _run_with_timeout(() -> close(server); label = "server close")
         _run_with_timeout(() -> wait(server); label = "server task completion")
         @test !isopen(server)
-    end
-end
-
-@testset "HTTP server request body limiting middleware on HTTP/1.1" begin
-    seen_payloads = String[]
-    limited_handler = HT.limitrequestbody(4)(request -> begin
-        buf = Vector{UInt8}(undef, 4)
-        n = HT.body_read!(request.body, buf)
-        push!(seen_payloads, String(@view(buf[1:n])))
-        return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2)
-    end)
-    server = HT.serve!(limited_handler, "127.0.0.1", 0; listenany = true)
-    address = _wait_server_addr(server)
-    try
-        ok = HT.post("http://$(address)/"; body = "ping")
-        @test ok.status == 200
-        @test String(ok.body) == "ok"
-
-        raw = _raw_http_request(
-            HT.port(server),
-            "POST / HTTP/1.1\r\n" *
-            "Host: $(address)\r\n" *
-            "Transfer-Encoding: chunked\r\n" *
-            "\r\n" *
-            "4\r\nabcd\r\n" *
-            "2\r\nef\r\n" *
-            "0\r\n\r\n";
-            settle_s = 0.1,
-        )
-        @test occursin("HTTP/1.1 413 Content Too Large", raw)
-        @test seen_payloads == ["ping", "abcd"]
-    finally
-        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
-        _run_with_timeout(() -> wait(server); label = "server task completion")
     end
 end
 
@@ -378,10 +343,10 @@ end
 @testset "HTTP server request handler timeout middleware on HTTP/1.1" begin
     handler = HT.handlertimeout(0.05)(request -> begin
         if request.target == "/fast"
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2)
         end
         sleep(0.15)
-        return HT.Response(200; body = HT.BytesBody(UInt8[0x6c, 0x61, 0x74, 0x65]), content_length = 4)
+        return HT.Response(200, HT.BytesBody(UInt8[0x6c, 0x61, 0x74, 0x65]); content_length = 4)
     end)
     server = HT.serve!(handler, "127.0.0.1", 0; listenany = true)
     address = _wait_server_addr(server)
@@ -471,7 +436,7 @@ end
 @testset "HTTP server rejects unsupported Expect headers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2)
         end
     address = _wait_server_addr(server)
     try
@@ -641,8 +606,8 @@ end
 @testset "HTTP server ordinary handlers suppress bodies for HEAD" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             return HT.Response(
-                200;
-                body = HT.BytesBody(collect(codeunits("oops"))),
+                200,
+                HT.BytesBody(collect(codeunits("oops")));
                 content_length = 4,
                 request = request,
             )
@@ -742,7 +707,7 @@ end
 @testset "HTTP server shutdown rejects new requests" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
-            return HT.Response(200; reason = "OK", body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); reason = "OK", content_length = 2)
         end
     address = _wait_server_addr(server)
     client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4))
@@ -770,7 +735,7 @@ end
             _ = request
             put!(started, nothing)
             take!(release)
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2)
         end
     address = _wait_server_addr(server)
     client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4))

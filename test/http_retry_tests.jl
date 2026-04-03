@@ -38,10 +38,10 @@ function _send_response_retry!(
     )::Nothing
     payload = collect(codeunits(body_text))
     response = HT.Response(
-        status;
+        status,
+        HT.BytesBody(payload);
         reason = reason,
         headers = headers,
-        body = HT.BytesBody(payload),
         content_length = length(payload),
         close = close_conn,
         request = request,

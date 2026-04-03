@@ -35,7 +35,7 @@ end
 
 function _response_with_text(text::AbstractString; status::Integer = 200)::HT.Response
     bytes = collect(codeunits(String(text)))
-    return HT.Response(status; body = HT.BytesBody(bytes), content_length = length(bytes))
+    return HT.Response(status, HT.BytesBody(bytes); content_length = length(bytes))
 end
 
 function _streamhandler_echo_request(req)
@@ -151,74 +151,6 @@ end
     @test cookies[2].name == "mode"
     @test cookies[2].value == "test"
     @test HT.getcookies(req) === cookies
-end
-
-@testset "HTTP handlers request body limiting middleware" begin
-    seen = Ref(false)
-    limited_handler = HT.limitrequestbody(4)(req -> begin
-        seen[] = true
-        _response_with_text(String(_read_all_handler_bytes(req.body)))
-    end)
-
-    req = HT.Request("POST", "/"; body = HT.BytesBody(collect(codeunits("ping"))), content_length = 4)
-    resp = limited_handler(req)
-    @test seen[]
-    @test String(_read_all_handler_bytes(resp.body)) == "ping"
-
-    seen[] = false
-    oversized = HT.Request("POST", "/"; body = HT.BytesBody(collect(codeunits("toolong"))), content_length = 7)
-    @test_throws HT.RequestBodyTooLargeError limited_handler(oversized)
-    @test !seen[]
-
-    early_stop = HT.limitrequestbody(4)(req -> begin
-        buf = Vector{UInt8}(undef, 4)
-        @test HT.body_read!(req.body, buf) == 4
-        return _response_with_text("ok")
-    end)
-    unknown_length = HT.Request("POST", "/"; body = HT.BytesBody(collect(codeunits("abcdef"))), content_length = -1)
-    @test_throws HT.RequestBodyTooLargeError early_stop(unknown_length)
-end
-
-@testset "HTTP handlers router middleware limits request bodies" begin
-    if _handlers_windows_ci_ice()
-        @test_skip true
-    else
-        request_router = HT.Router(HT.Handlers.default404, HT.Handlers.default405, HT.limitrequestbody(4))
-        HT.register!(request_router, "POST", "/echo/{name}", _router_echo_request)
-
-        request_server = HT.serve!(request_router, "127.0.0.1", 0; listenany = true)
-        request_address = _wait_handlers_server_addr(request_server)
-        try
-            ok = HT.post("http://$(request_address)/echo/jane"; body = "ping")
-            @test ok.status == 200
-            @test String(_read_all_handler_bytes(ok.body)) == "echo:jane:ping"
-
-            oversized = HT.post("http://$(request_address)/echo/jane"; body = "toolong", status_exception = false)
-            @test oversized.status == 413
-            @test isempty(_read_all_handler_bytes(oversized.body))
-        finally
-            HT.forceclose(request_server)
-            wait(request_server)
-        end
-
-        stream_router = HT.Router(HT.Handlers.default404, HT.Handlers.default405, HT.limitrequestbody(4))
-        HT.register!(stream_router, "POST", "/stream/{name}", _router_stream_request)
-
-        stream_server = HT.listen!(stream_router, "127.0.0.1", 0; listenany = true)
-        stream_address = _wait_handlers_server_addr(stream_server)
-        try
-            ok = HT.post("http://$(stream_address)/stream/sam"; body = "pong")
-            @test ok.status == 200
-            @test String(_read_all_handler_bytes(ok.body)) == "stream:sam:pong"
-
-            oversized = HT.post("http://$(stream_address)/stream/sam"; body = "toolong", status_exception = false)
-            @test oversized.status == 413
-            @test isempty(_read_all_handler_bytes(oversized.body))
-        finally
-            HT.forceclose(stream_server)
-            wait(stream_server)
-        end
-    end
 end
 
 @testset "HTTP handlers request timeout middleware" begin

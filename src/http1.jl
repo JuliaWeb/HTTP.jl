@@ -150,7 +150,7 @@ function _readline_crlf(io::IO, max_line_bytes::Integer)::String
     while true
         b = _read_u8(io)
         push!(bytes, b)
-        length(bytes) > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes"))
+        length(bytes) > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
         n = length(bytes)
         if n >= 2 && bytes[n-1] == 0x0d && bytes[n] == 0x0a
             resize!(bytes, n - 2)
@@ -177,7 +177,7 @@ function _read_headers(io::IO, max_line_bytes::Integer, max_header_bytes::Intege
     while true
         line = _readline_crlf(io, max_line_bytes)
         consumed += ncodeunits(line) + 2
-        consumed > max_header_bytes && throw(ProtocolError("HTTP/1 headers exceed configured max_header_bytes"))
+        consumed > max_header_bytes && throw(ProtocolError("HTTP/1 headers exceed configured max_header_bytes", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
         isempty(line) && return headers
         sep = findfirst(':', line)
         sep === nothing && throw(ParseError("malformed HTTP/1 header line (missing ':'): $(repr(line))"))

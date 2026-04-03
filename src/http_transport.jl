@@ -20,6 +20,7 @@ const _H1_BODY_EMPTY = UInt8(0x0)
 const _H1_BODY_FIXED = UInt8(0x1)
 const _H1_BODY_CHUNKED = UInt8(0x2)
 const _H1_BODY_EOF = UInt8(0x3)
+const _TransportHostResolver = typeof(HostResolvers.HostResolver())
 
 mutable struct _RequestDeadlineWriteIO{S} <: IO
     inner::S
@@ -199,8 +200,8 @@ bound the total live HTTP/1 connections (idle, in-flight, and dialing) for one
 pool key and cause additional acquires to wait for direct handoff or a freed
 dial slot.
 """
-mutable struct Transport{S<:HostResolvers.AbstractResolver}
-    host_resolver::HostResolvers.HostResolver{S}
+mutable struct Transport
+    host_resolver::_TransportHostResolver
     tls_config::Union{Nothing,TLS.Config}
     proxy::ProxyConfig
     retry_bucket::Union{Nothing,RetryBucket}
@@ -216,10 +217,10 @@ mutable struct Transport{S<:HostResolvers.AbstractResolver}
     @atomic closed::Bool
 end
 
-mutable struct H1Body{T<:Transport} <: AbstractBody
+mutable struct H1Body <: AbstractBody
     kind::UInt8
     reader::_ConnReader
-    transport::T
+    transport::Transport
     conn::Conn
     request::Request
     trailers::Headers
@@ -234,7 +235,6 @@ mutable struct H1Body{T<:Transport} <: AbstractBody
 end
 
 function Transport(;
-    host_resolver::HostResolvers.HostResolver=HostResolvers.HostResolver(),
     tls_config::Union{Nothing,TLS.Config}=nothing,
     proxy=nothing,
     retry_bucket::Union{Nothing,RetryBucket}=RetryBucket(),
@@ -247,6 +247,7 @@ function Transport(;
     max_idle_total > 0 || throw(ArgumentError("max_idle_total must be > 0"))
     max_conns_per_host >= 0 || throw(ArgumentError("max_conns_per_host must be >= 0"))
     idle_timeout_ns >= 0 || throw(ArgumentError("idle_timeout_ns must be >= 0"))
+    host_resolver = HostResolvers.HostResolver()
     return Transport(
         host_resolver,
         tls_config,
@@ -825,7 +826,7 @@ function _new_conn!(
     address::String,
     secure::Bool,
     server_name::Union{Nothing,String},
-    host_resolver::HostResolvers.HostResolver=transport.host_resolver,
+    host_resolver::_TransportHostResolver=transport.host_resolver,
     connect_deadline_ns::Int64=Int64(0),
     tls_handshake_timeout_ns::Int64=Int64(0),
 )::Conn
@@ -874,7 +875,7 @@ function _acquire_conn!(
     secure::Bool,
     server_name::Union{Nothing,String},
     acquire_deadline_ns::Int64=Int64(0),
-    host_resolver::HostResolvers.HostResolver=transport.host_resolver,
+    host_resolver::_TransportHostResolver=transport.host_resolver,
     connect_deadline_ns::Int64=Int64(0),
     tls_handshake_timeout_ns::Int64=Int64(0),
 )::Conn
@@ -1167,14 +1168,14 @@ function _readline_crlf(reader::_ConnReader, max_line_bytes::Integer)::String
         end
         if nl_idx == 0
             segment_len = stop - start + 1
-            length(bytes) + segment_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes"))
+            length(bytes) + segment_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
             append!(bytes, @view(reader.buf[start:stop]))
             _capture_conn_reader_bytes!(reader, view(reader.buf, start:stop))
             reader.next = stop + 1
             continue
         end
         segment_len = nl_idx - start + 1
-        length(bytes) + segment_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes"))
+        length(bytes) + segment_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
         append!(bytes, @view(reader.buf[start:nl_idx]))
         _capture_conn_reader_bytes!(reader, view(reader.buf, start:nl_idx))
         reader.next = nl_idx + 1
@@ -1208,7 +1209,7 @@ end
 @inline function _new_h1_body(
     kind::UInt8,
     reader::_ConnReader,
-    transport::T,
+    transport::Transport,
     conn::Conn,
     request::Request,
     trailers::Headers,
@@ -1216,7 +1217,7 @@ end
     max_line_bytes::Int,
     max_header_bytes::Int,
     done::Bool=false,
-)::H1Body{T} where {T<:Transport}
+)::H1Body
     return H1Body(
         kind,
         reader,

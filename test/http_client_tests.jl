@@ -35,10 +35,10 @@ end
 
 function _send_response_bytes_client!(conn::NC.Conn, request::HT.Request; status::Int = 200, reason::String = "OK", body_bytes::Vector{UInt8}, headers::HT.Headers = HT.Headers(), close_conn::Bool = false)::Nothing
     response = HT.Response(
-        status;
+        status,
+        HT.BytesBody(body_bytes);
         reason = reason,
         headers = headers,
-        body = HT.BytesBody(body_bytes),
         content_length = length(body_bytes),
         close = close_conn,
         request = request,
@@ -1104,9 +1104,9 @@ end
             HT.setheader(headers, "Content-Encoding", "gzip")
             HT.setheader(headers, "Connection", "close")
             response = HT.Response(
-                200;
+                200,
+                HT.BytesBody(payload);
                 headers = headers,
-                body = HT.BytesBody(payload),
                 content_length = length(payload),
                 close = true,
                 request = req,
@@ -2000,13 +2000,15 @@ end
     @test parsed_events[1].retry == 25
     @test parsed_events[1].fields["extra"] == ""
 
-    do_stream = nothing
+    do_response = nothing
     @test_logs (:error, r"SSE stream handler error") begin
-        do_stream = HT.sse_stream(HT.Response(200)) do sse_stream
+        do_response = HT.sse_stream(200) do sse_stream
             write(sse_stream, HT.SSEEvent("hello"))
             error("boom")
         end
-        @test do_stream !== nothing
+        @test do_response !== nothing
+        @test do_response.body isa HT.SSEStream
+        do_stream = do_response.body::HT.SSEStream
         @test timedwait(() -> !isopen(do_stream), 5.0; pollint = 0.001) == :ok
     end
 

@@ -15,7 +15,6 @@ export ParseError
 export ProtocolError
 export CanceledError
 export HTTPTimeoutError
-export RequestBodyTooLargeError
 export canonical_header_key
 export header
 export headers
@@ -45,6 +44,12 @@ struct ParseError <: Exception
     message::String
 end
 
+@enum _ProtocolErrorCode::UInt8 begin
+    _PROTOCOL_ERROR_GENERIC = 0
+    _PROTOCOL_ERROR_LINE_TOO_LONG = 1
+    _PROTOCOL_ERROR_HEADERS_TOO_LARGE = 2
+end
+
 """
     ProtocolError
 
@@ -54,11 +59,15 @@ ordering, or unsupported control-flow states in the client/server stacks.
 """
 struct ProtocolError <: Exception
     message::String
+    code::_ProtocolErrorCode
     err::Union{Nothing,Exception}
 end
 
-ProtocolError(message::AbstractString) = ProtocolError(String(message), nothing)
-ProtocolError(message::AbstractString, err::Exception) = ProtocolError(String(message), err)
+ProtocolError(message::AbstractString) = ProtocolError(String(message), _PROTOCOL_ERROR_GENERIC, nothing)
+ProtocolError(message::AbstractString, code::_ProtocolErrorCode) = ProtocolError(String(message), code, nothing)
+ProtocolError(message::String, err::Exception) = invoke(ProtocolError, Tuple{String, _ProtocolErrorCode, Union{Nothing,Exception}}, message, _PROTOCOL_ERROR_GENERIC, err)
+ProtocolError(message::AbstractString, err::Exception) = ProtocolError(String(message), err::Exception)
+ProtocolError(message::AbstractString, code::_ProtocolErrorCode, err::Exception) = ProtocolError(String(message), code, err)
 
 """
     CanceledError
@@ -81,16 +90,6 @@ context expired" from transport-specific readiness or handshake failures.
 struct HTTPTimeoutError <: Exception
     operation::String
     timeout_ns::Int64
-end
-
-"""
-    RequestBodyTooLargeError
-
-Raised when server-side request body limiting rejects a payload that exceeds the
-configured byte cap.
-"""
-struct RequestBodyTooLargeError <: Exception
-    limit::Int64
 end
 
 function Base.showerror(io::IO, err::ParseError)
@@ -116,11 +115,6 @@ end
 
 function Base.showerror(io::IO, err::HTTPTimeoutError)
     print(io, "http timeout during ", err.operation, " after ", err.timeout_ns, " ns")
-    return nothing
-end
-
-function Base.showerror(io::IO, err::RequestBodyTooLargeError)
-    print(io, "http request body exceeded limit of ", err.limit, " bytes")
     return nothing
 end
 
@@ -1190,26 +1184,6 @@ end
     )
 end
 
-@inline function _request_with_body(
-    request::Request,
-    body::B;
-    content_length::Integer=request.content_length,
-)::Request{B} where {B<:AbstractBody}
-    return _request_nocopy(
-        request.method,
-        request.target,
-        request.headers,
-        request.trailers,
-        body,
-        request.host,
-        Int64(content_length),
-        request.proto_major,
-        request.proto_minor,
-        request.close,
-        request.context,
-    )
-end
-
 @inline function _request_with_context(
     request::Request{B},
     context::RequestContext,
@@ -1230,7 +1204,7 @@ end
 end
 
 """
-    Response(status; reason="", headers=Headers(), trailers=Headers(), body=EmptyBody(),
+    Response(status, body=EmptyBody(); reason="", headers=Headers(), trailers=Headers(),
              content_length=-1, proto_major=1, proto_minor=1, close=false,
              request=nothing)
 
@@ -1240,13 +1214,10 @@ Keyword arguments mirror `Request` closely. `request` optionally links the
 response back to the originating request, which is especially useful in client
 redirect flows and server handler pipelines.
 
-    Returns a new `Response{B}` where `B` is the body field type chosen for the
-    public response object. For `AbstractBody` inputs, the constructor widens
-    the field to `AbstractBody` so server handlers can swap in another streaming
-    body later without rebuilding the whole response object. Fully materialized
-    high-level payloads like `Vector{UInt8}` keep their concrete body type.
-    `request_url` is optional client metadata used by high-level request
-    helpers.
+    Returns a new `Response{B}` where `B` is the exact body field type. The
+    optional `body` positional argument determines the response body type for
+    dispatch and storage. `request_url` is optional client metadata used by
+    high-level request helpers.
 
     Throws `ArgumentError` for invalid status or protocol metadata.
 """
@@ -1286,15 +1257,12 @@ struct _IncomingResponse{B<:AbstractBody}
     rawbody::B
 end
 
-@inline _public_response_body_type(::Type{B}) where {B<:AbstractBody} = AbstractBody
-@inline _public_response_body_type(::Type{B}) where {B} = B
-
 function Response(
-    status::Integer;
+    status::Integer,
+    body::B=EmptyBody();
     reason::AbstractString="",
     headers=Headers(),
     trailers=Headers(),
-    body::B=EmptyBody(),
     content_length::Integer=Int64(-1),
     proto_major::Integer=1,
     proto_minor::Integer=1,
@@ -1309,8 +1277,7 @@ function Response(
     redirect_count < 0 && throw(ArgumentError("redirect_count must be >= 0"))
     (proto_major < 0 || proto_major > typemax(UInt8)) && throw(ArgumentError("proto_major must fit in UInt8"))
     (proto_minor < 0 || proto_minor > typemax(UInt8)) && throw(ArgumentError("proto_minor must fit in UInt8"))
-    BodyT = _public_response_body_type(B)
-    return Response{BodyT}(
+    return Response{B}(
         Int(status),
         String(reason),
         copy(mkheaders(headers)),
@@ -1324,39 +1291,6 @@ function Response(
         request_url === nothing ? nothing : String(request_url),
         previous,
         Int(redirect_count),
-    )
-end
-
-@inline function _response_nocopy_public(
-    status::Int,
-    reason::String,
-    headers::Headers,
-    trailers::Headers,
-    body::B,
-    content_length::Int64,
-    proto_major::UInt8,
-    proto_minor::UInt8,
-    close::Bool,
-    request::Union{Nothing,Request},
-    request_url::Union{Nothing,String},
-    previous::Union{Nothing,Response},
-    redirect_count::Int,
-)::Response where {B}
-    BodyT = _public_response_body_type(B)
-    return Response{BodyT}(
-        status,
-        reason,
-        headers,
-        trailers,
-        body,
-        content_length,
-        proto_major,
-        proto_minor,
-        close,
-        request,
-        request_url,
-        previous,
-        redirect_count,
     )
 end
 

@@ -42,10 +42,10 @@ end
 function _send_response_proxy!(conn::NC.Conn, request::HT.Request; status::Int = 200, reason::String = "OK", body_text::String = "", headers::HT.Headers = HT.Headers(), close_conn::Bool = false)::Nothing
     payload = collect(codeunits(body_text))
     response = HT.Response(
-        status;
+        status,
+        HT.BytesBody(payload);
         reason = reason,
         headers = headers,
-        body = HT.BytesBody(payload),
         content_length = length(payload),
         close = close_conn,
         request = request,
@@ -161,9 +161,9 @@ function _proxy_windows_ci_warmup!()::Nothing
             conn = TL.accept(origin_listener)
             try
                 TL.handshake!(conn)
-                req = HT.read_request(HT._ConnReader(conn)
+                req = HT.read_request(HT._ConnReader(conn))
                 payload = collect(codeunits("proxy-warmup"))
-                response = HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), request = req)
+                response = HT.Response(200, HT.BytesBody(payload); content_length = length(payload), request = req)
                 io = IOBuffer()
                 HT.write_response!(io, response)
                 write(conn, take!(io))
@@ -182,7 +182,7 @@ function _proxy_windows_ci_warmup!()::Nothing
             bridge1 = nothing
             bridge2 = nothing
             try
-                connect_req = HT.read_request(HT._ConnReader(client_conn)
+                connect_req = HT.read_request(HT._ConnReader(client_conn))
                 headers = HT.Headers()
                 HT.setheader(headers, "Connection", "keep-alive")
                 _send_response_proxy!(client_conn, connect_req; status = 200, reason = "Connection Established", headers = headers)
@@ -459,7 +459,7 @@ end
     server_task = errormonitor(Threads.@spawn begin
         conn = NC.accept(listener)
         try
-            req = HT.read_request(HT._ConnReader(conn)
+            req = HT.read_request(HT._ConnReader(conn))
             seen_target[] = req.target
             seen_host[] = HT.header(req.headers, "Host")
             seen_proxy_auth[] = HT.header(req.headers, "Proxy-Authorization")
@@ -517,10 +517,10 @@ end
         conn = TL.accept(origin_listener)
         try
             TL.handshake!(conn)
-            req = HT.read_request(HT._ConnReader(conn)
+            req = HT.read_request(HT._ConnReader(conn))
             seen_origin_target[] = req.target
             payload = collect(codeunits("tls-proxied"))
-            response = HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), request = req)
+            response = HT.Response(200, HT.BytesBody(payload); content_length = length(payload), request = req)
             io = IOBuffer()
             HT.write_response!(io, response)
             write(conn, take!(io))
@@ -538,7 +538,7 @@ end
         bridge1 = nothing
         bridge2 = nothing
         try
-            connect_req = HT.read_request(HT._ConnReader(client_conn)
+            connect_req = HT.read_request(HT._ConnReader(client_conn))
             seen_connect_host[] = HT.header(connect_req.headers, "Host")
             seen_proxy_auth[] = HT.header(connect_req.headers, "Proxy-Authorization")
             @test connect_req.method == "CONNECT"
@@ -610,7 +610,7 @@ end
         for _ in 1:2
             conn = NC.accept(listener)
             try
-                req = HT.read_request(HT._ConnReader(conn)
+                req = HT.read_request(HT._ConnReader(conn))
                 push!(seen_targets, req.target)
                 if occursin("/open", req.target)
                     _send_response_proxy!(conn, req; body_text = "open-proxied", close_conn = true)
@@ -660,7 +660,7 @@ end
     server_task = errormonitor(Threads.@spawn begin
         conn = NC.accept(listener)
         try
-            req = HT.read_request(HT._ConnReader(conn)
+            req = HT.read_request(HT._ConnReader(conn))
             seen_target[] = req.target
             _send_response_proxy!(conn, req; body_text = "env-proxied", close_conn = true)
         finally
@@ -795,7 +795,7 @@ end
         client_conn = NC.accept(proxy_listener)
         origin_conn = NC.connect(ND.HostResolver(), "tcp", origin_address)
         try
-            connect_req = HT.read_request(HT._ConnReader(client_conn)
+            connect_req = HT.read_request(HT._ConnReader(client_conn))
             @test connect_req.method == "CONNECT"
             @test connect_req.target == origin_address
             _send_response_proxy!(client_conn, connect_req; status = 200, reason = "Connection Established", headers = HT.Headers())

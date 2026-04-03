@@ -351,6 +351,18 @@ end
     return err === nothing ? ProtocolError("HTTP/2 connection failed") : (err::ProtocolError)
 end
 
+function _all_streams_done(conn::H2Connection)::Bool
+    lock(conn.state_lock)
+    try
+        for state in values(conn.streams)
+            state.stream_done || return false
+        end
+        return true
+    finally
+        unlock(conn.state_lock)
+    end
+end
+
 @inline function _throw_stream_error(conn::H2Connection, state::H2StreamState)::Nothing
     err = state.stream_error
     err === nothing || throw(err::Exception)
@@ -362,7 +374,6 @@ function _set_stream_conn_errored!(state::H2StreamState)
     lock(state.lock)
     try
         state.conn_errored = true
-        state.stream_done = true
         notify(state.condition)
     finally
         unlock(state.lock)
@@ -662,6 +673,11 @@ function _run_h2_read_loop!(conn::H2Connection)
         end
     catch err
         (@atomic :acquire conn.closed) && return nothing
+        if _all_streams_done(conn)
+            @atomic :release conn.closed = true
+            _close_h2_transports!(conn)
+            return nothing
+        end
         _fail_h2_connection!(conn, ProtocolError("HTTP/2 read loop failed", err::Exception))
         return nothing
     finally
@@ -1081,9 +1097,9 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         done = false
         lock(body.state.lock)
         try
-            _throw_stream_error(body.conn, body.state)
             available = _stream_available_bytes(body.state)
             if available > 0
+                body.state.conn_errored && !body.state.stream_done && _throw_stream_error(body.conn, body.state)
                 nread = min(length(dst), available)
                 copyto!(dst, 1, body.state.body, body.state.body_read_index, nread)
                 body.state.body_read_index += nread
@@ -1093,6 +1109,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
                 _publish_h2_response_trailers!(body.state)
                 done = true
             else
+                _throw_stream_error(body.conn, body.state)
                 deadline_ns = _request_read_deadline_ns(body.request)
                 if deadline_ns == 0
                     wait(body.state.condition)

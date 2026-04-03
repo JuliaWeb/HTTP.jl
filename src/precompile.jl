@@ -29,9 +29,9 @@ function _precompile_text_response(
 )::Response
     payload = collect(codeunits(String(text)))
     return Response(
-        status;
+        status,
+        BytesBody(payload);
         headers=headers,
-        body=BytesBody(payload),
         content_length=length(payload),
         proto_major=proto_major,
         proto_minor=proto_minor,
@@ -65,15 +65,15 @@ function _run_precompile_workload!()::Nothing
         register!(request_router, "GET", "/hello/{name}", handlertimeout(0.5)(req ->
             _precompile_text_response("hello:" * getparam(req, "name"))
         ))
-        register!(request_router, "POST", "/echo/{name}", handlertimeout(0.5)(limitrequestbody(16)(req -> begin
+        register!(request_router, "POST", "/echo/{name}", handlertimeout(0.5)(req -> begin
             payload = _precompile_body_string(req.body)
             return _precompile_text_response("echo:" * getparam(req, "name") * ":" * payload)
-        end)))
+        end))
         register!(request_router, "GET", "/redirect", req ->
             Response(
-                302;
+                302,
+                EmptyBody();
                 headers=["Location" => "/hello/redirected"],
-                body=EmptyBody(),
                 content_length=0,
             )
         )

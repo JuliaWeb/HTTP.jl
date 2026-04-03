@@ -604,19 +604,53 @@ function do!(
     policy = _redirect_policy(client, redirect_limit, redirect_method, forwardheaders)
     proxy_config = _proxy_config_for_request(client, proxy)
     effective_cookiejar = _effective_cookiejar(client, cookiejar)
-    return _streaming_response(_do_incoming!(
-        client,
-        address,
-        request,
-        secure,
-        server_name,
-        protocol,
-        policy,
-        nothing,
-        proxy_config,
-        normalized_cookies,
-        effective_cookiejar,
-    ))
+    if protocol === :h1
+        incoming = _do_incoming!(
+            client,
+            address,
+            request,
+            secure,
+            server_name,
+            :h1,
+            policy,
+            nothing,
+            proxy_config,
+            normalized_cookies,
+            effective_cookiejar,
+        )
+        return _streaming_response(incoming::_IncomingResponse{H1Body})
+    elseif protocol === :h2
+        incoming = _do_incoming!(
+            client,
+            address,
+            request,
+            secure,
+            server_name,
+            :h2,
+            policy,
+            nothing,
+            proxy_config,
+            normalized_cookies,
+            effective_cookiejar,
+        )
+        return _streaming_response(incoming::_IncomingResponse{H2Body})
+    elseif protocol === :auto
+        incoming = _do_incoming!(
+            client,
+            address,
+            request,
+            secure,
+            server_name,
+            :auto,
+            policy,
+            nothing,
+            proxy_config,
+            normalized_cookies,
+            effective_cookiejar,
+        )
+        return _streaming_response(incoming::Union{_IncomingResponse{H1Body},_IncomingResponse{H2Body}})
+    end
+    throw(ArgumentError("protocol must be :auto, :h1, or :h2"))
 end
 
 """
@@ -1185,17 +1219,17 @@ function _clear_conn_deadline!(conn::Conn)
     return nothing
 end
 
-@inline function _request_connect_phase_timeout_ns(base::HostResolvers.HostResolver, request::Request)::Int64
+@inline function _request_connect_phase_timeout_ns(base::_TransportHostResolver, request::Request)::Int64
     return _min_nonzero_ns(base.timeout_ns, _request_connect_timeout_ns(request))
 end
 
-@inline function _request_connect_phase_deadline_ns(base::HostResolvers.HostResolver, request::Request)::Int64
+@inline function _request_connect_phase_deadline_ns(base::_TransportHostResolver, request::Request)::Int64
     overall_deadline_ns = _min_nonzero_ns(base.deadline_ns, _request_deadline_ns(request))
     timeout_ns = _request_connect_phase_timeout_ns(base, request)
     return _phase_deadline_ns(timeout_ns, overall_deadline_ns)
 end
 
-function _request_connect_host_resolver(base::HostResolvers.HostResolver, request::Request)::HostResolvers.HostResolver
+function _request_connect_host_resolver(base::_TransportHostResolver, request::Request)::_TransportHostResolver
     timeout_ns = _request_connect_phase_timeout_ns(base, request)
     deadline_ns = _min_nonzero_ns(base.deadline_ns, _request_deadline_ns(request))
     if timeout_ns == base.timeout_ns && deadline_ns == base.deadline_ns
@@ -1410,7 +1444,7 @@ function _finalize_request_response(
     resolved_request::Request,
     request_url::String,
 )::Response
-    return _response_nocopy_public(
+    return _response_nocopy_exact(
         incoming.head.status,
         incoming.head.reason,
         incoming.head.headers,

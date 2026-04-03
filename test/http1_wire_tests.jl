@@ -76,7 +76,8 @@ end
     HT.write_request!(expected_io, make_streaming_request())
     streamed_io = IOBuffer()
     request_buf = IOBuffer()
-    HT._write_request_streaming!(request_buf, streamed_io, make_streaming_request())
+    plan = HT._ProxyPlan(HT._ProxyPlanMode.DIRECT, nothing, "example.com", "http://example.com")
+    HT._write_request_streaming!(request_buf, streamed_io, make_streaming_request(), plan)
     @test take!(streamed_io) == take!(expected_io)
 
     partial_body = HT.BytesBody(collect(codeunits("abcdef")))
@@ -111,7 +112,7 @@ end
 
     response_headers = HT.Headers()
     push!(response_headers, "X-Test" => "\r\n value ")
-    response = HT.Response(200; headers = response_headers, body = HT.EmptyBody(), content_length = 0)
+    response = HT.Response(200, HT.EmptyBody(); headers = response_headers, content_length = 0)
     response_io = IOBuffer()
     HT.write_response!(response_io, response)
     response_wire = String(take!(response_io))
@@ -129,14 +130,14 @@ end
     declared_bad_trailer_headers = HT.Headers()
     HT.setheader(declared_bad_trailer_headers, "Transfer-Encoding", "chunked")
     HT.setheader(declared_bad_trailer_headers, "Trailer", "Content-Length")
-    declared_bad_trailer = HT.Response(200; headers = declared_bad_trailer_headers, body = HT.BytesBody(collect(codeunits("body"))), content_length = -1)
+    declared_bad_trailer = HT.Response(200, HT.BytesBody(collect(codeunits("body"))); headers = declared_bad_trailer_headers, content_length = -1)
     @test_throws HT.ProtocolError HT.write_response!(IOBuffer(), declared_bad_trailer)
 
     invalid_trailer_headers = HT.Headers()
     HT.setheader(invalid_trailer_headers, "Transfer-Encoding", "chunked")
     invalid_trailers = HT.Headers()
     HT.setheader(invalid_trailers, "Content-Length", "5")
-    invalid_trailer_response = HT.Response(200; headers = invalid_trailer_headers, trailers = invalid_trailers, body = HT.BytesBody(collect(codeunits("body"))), content_length = -1)
+    invalid_trailer_response = HT.Response(200, HT.BytesBody(collect(codeunits("body"))); headers = invalid_trailer_headers, trailers = invalid_trailers, content_length = -1)
     @test_throws HT.ProtocolError HT.write_response!(IOBuffer(), invalid_trailer_response)
 end
 
@@ -151,7 +152,7 @@ end
     HT.setheader(headers, "Transfer-Encoding", "chunked")
     trailers = HT.Headers()
     HT.setheader(trailers, "X-Checksum", "abc123")
-    resp_out = HT.Response(200; reason = "OK", headers = headers, trailers = trailers, body = HT.BytesBody(collect(codeunits("chunked-body"))), content_length = -1)
+    resp_out = HT.Response(200, HT.BytesBody(collect(codeunits("chunked-body"))); reason = "OK", headers = headers, trailers = trailers, content_length = -1)
     io = IOBuffer()
     HT.write_response!(io, resp_out)
     resp_in = HT._read_response(IOBuffer(take!(io)))
@@ -173,7 +174,7 @@ end
     HT.setheader(response_headers, "Transfer-Encoding", "chunked")
     response_trailers = HT.Headers()
     HT.setheader(response_trailers, "X-Custom", "yes")
-    response = HT.Response(200; headers = response_headers, trailers = response_trailers, body = _TestStreamingBody("stream"), content_length = -1)
+    response = HT.Response(200, _TestStreamingBody("stream"); headers = response_headers, trailers = response_trailers, content_length = -1)
     response_io = IOBuffer()
     HT.write_response!(response_io, response)
     parsed_response = HT._read_response(IOBuffer(take!(response_io)))
@@ -230,7 +231,7 @@ end
     stale_resp_headers = HT.Headers()
     HT.setheader(stale_resp_headers, "Transfer-Encoding", "chunked")
     HT.setheader(stale_resp_headers, "Content-Length", "5")
-    stale_resp = HT.Response(200; headers = stale_resp_headers, body = HT.BytesBody(collect(codeunits("hello"))), content_length = -1)
+    stale_resp = HT.Response(200, HT.BytesBody(collect(codeunits("hello"))); headers = stale_resp_headers, content_length = -1)
     response_io = IOBuffer()
     HT.write_response!(response_io, stale_resp)
     response_wire = String(take!(response_io))
@@ -246,7 +247,7 @@ end
 end
 
 @testset "HTTP/1 status line reason phrase handling" begin
-    response = HT.Response(200; body = HT.EmptyBody(), content_length = 0)
+    response = HT.Response(200, HT.EmptyBody(); content_length = 0)
     io = IOBuffer()
     HT.write_response!(io, response)
     bytes = take!(io)

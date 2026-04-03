@@ -87,8 +87,6 @@ function _http_trim_h2_tcp_roundtrip_server_entry()::Nothing
     return nothing
 end
 
-Base.Experimental.entrypoint(_http_trim_h2_tcp_roundtrip_server_entry, ())
-
 function run_http_trim_client_h2_tcp_roundtrip()::Nothing
     listener::Union{Nothing,Reseau.TCP.Listener} = nothing
     tcp::Union{Nothing,Reseau.TCP.Conn} = nothing
@@ -100,7 +98,7 @@ function run_http_trim_client_h2_tcp_roundtrip()::Nothing
         _HTTP_TRIM_H2_TCP_ROUNDTRIP_STARTED[] = false
         _HTTP_TRIM_H2_TCP_ROUNDTRIP_DONE[] = false
 
-        server_task = errormonitor(Task(_http_trim_h2_tcp_roundtrip_server_entry))
+        server_task = Task(_http_trim_h2_tcp_roundtrip_server_entry)
         schedule(server_task)
         start_status = Reseau.IOPoll.timedwait(() -> _HTTP_TRIM_H2_TCP_ROUNDTRIP_STARTED[], 5.0; pollint = 0.001)
         start_status == :timed_out && error("timed out waiting for trim H2 TCP roundtrip server task")

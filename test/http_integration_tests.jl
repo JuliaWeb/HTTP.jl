@@ -79,7 +79,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server = HT.serve!(listener) do request
         payload = collect(codeunits("tls-h1:" * request.target))
-        return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload))
+        return HT.Response(200, HT.BytesBody(payload); content_length = length(payload))
     end
     client = HT.Client(
         transport = HT.Transport(
@@ -120,7 +120,7 @@ end
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server = HT.serve!(listener) do request
         payload = collect(codeunits("tls-h2:" * request.target))
-        return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+        return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
     end
     client = HT.Client(
         transport = HT.Transport(
@@ -160,7 +160,7 @@ end
 @testset "HTTP integration protocol selection" begin
     h1_server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("h1:" * request.target))
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload))
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload))
         end
     h1_address = _wait_http_addr(h1_server)
     client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), prefer_http2 = true)
@@ -176,7 +176,7 @@ end
 
     h2_server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("h2:" * request.target))
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     h2_address = _wait_http_addr(h2_server)
     client2 = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), prefer_http2 = true)
@@ -195,7 +195,7 @@ end
 @testset "HTTP integration verbose best-effort h2 dumps" begin
     h2_server = HT.serve!("127.0.0.1", 0; listenany = true) do request
         payload = collect(codeunits("h2-verbose:" * request.target))
-        return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+        return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
     end
     h2_address = _wait_http_addr(h2_server)
     verbose_io = IOBuffer()

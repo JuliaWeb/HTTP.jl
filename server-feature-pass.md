@@ -7,36 +7,6 @@
 
 ## Items
 
-### [x] ITEM-001 (P0) Request Body Limiting Middleware
-- Description: Add a Go-inspired `MaxBytesReader` equivalent for the server stack as middleware. The current rewrite has no first-class request-body size limiting layer above header parsing, so handlers that read large or malicious bodies have to implement ad hoc guards themselves. We need a middleware-friendly body limiter that works for ordinary request handlers and stream handlers, maps overflow to a deterministic `413` response, and behaves correctly for both fixed-length and streaming bodies.
-- Desired outcome: `HTTP.limitrequestbody(limit)` exists, wraps incoming request bodies with a limiter, rejects oversized payloads with `413`, and has coverage across HTTP/1.1 and HTTP/2.
-- Affected files: `src/http_core.jl`, `src/http_server.jl`, `src/http_handlers.jl`, `src/HTTP.jl`, `test/http_server_http1_tests.jl`, `test/http2_server_tests.jl`
-- Implementation notes:
-  - Add a dedicated overflow exception type and map it to `413` in the server error-to-status path.
-  - Add an internal helper for rebuilding a `Request` around a wrapped `AbstractBody` because `Request{B}` stores the body concretely.
-  - Implement a body wrapper that enforces the byte cap without buffering whole payloads and detects oversize on both incremental and early-stopped reads.
-  - Expose middleware that works for request handlers first, then make it usable with `Router(...; middleware=...)` and explicit server handlers.
-  - Ensure overflowed or abandoned oversized bodies make the connection/stream non-reusable where appropriate instead of leaving unread bytes around.
-- Verification:
-  - `julia --project=. test/http_server_http1_tests.jl`
-  - `julia --project=. test/http2_server_tests.jl`
-  - `julia --project=. test/http_handlers_tests.jl`
-- Assumptions:
-  - It is acceptable for the first public API to be middleware-oriented rather than a low-level exported reader helper.
-  - We do not need to preserve exact Go partial-read-plus-error semantics if a Julia-native body wrapper can deliver the same safety and status behavior.
-  - Early-stop oversize detection can be guaranteed for ordinary request handlers and for stream handlers that have not started writing a response yet; stream handlers that already started writing will still get known-length prechecks and read-time enforcement.
-- Risks:
-  - Request body wrappers must not accidentally let oversized unread bytes keep a connection reusable.
-  - HTTP/2 body coordination may need careful stream error handling so the limiter does not leave flow-control or stream state inconsistent.
-- Completion criteria:
-  - Oversized bodies reliably yield `413`.
-  - Legitimate exact-limit requests still succeed.
-  - HTTP/1.1 and HTTP/2 tests cover both eager and incremental handler reads.
-- Verification evidence:
-  - `julia --project=. test/http_handlers_tests.jl`
-  - `julia --project=. test/http_server_http1_tests.jl`
-  - `julia --project=. test/http2_server_tests.jl`
-
 ### [x] ITEM-002 (P0) `servecontent` With Conditionals and Single-Range Support
 - Description: Add a `ServeContent`-style response builder for seekable or byte-backed content. The rewrite currently has no built-in conditional caching or range-serving primitive, which leaves a large gap relative to Go’s production-grade server surface. We need a reusable core that handles MIME inference, `Last-Modified`, caller-supplied `ETag`, RFC 7232 preconditions, and single-range `206`/`416` behavior.
 - Desired outcome: `HTTP.servecontent(req, source; ...)` can return correct `200`, `206`, `304`, `412`, and `416` responses for in-memory bytes and seekable file-like content, including `HEAD` suppression.

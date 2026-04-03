@@ -675,96 +675,8 @@ end
     return headercontains(response.headers, "Connection", "close")
 end
 
-mutable struct _LimitedRequestBody{B<:AbstractBody} <: AbstractBody
-    inner::B
-    limit::Int64
-    read_so_far::Int64
-    known_length_safe::Bool
-    overflowed::Bool
-    probe::Vector{UInt8}
-    @atomic closed::Bool
-end
-
-function _LimitedRequestBody(inner::B, limit::Integer, known_length_safe::Bool=false) where {B<:AbstractBody}
-    limit >= 0 || throw(ArgumentError("limit must be >= 0"))
-    return _LimitedRequestBody(inner, Int64(limit), Int64(0), known_length_safe, false, UInt8[0x00], false)
-end
-
-function body_closed(body::_LimitedRequestBody)::Bool
-    return (@atomic :acquire body.closed) || body_closed(body.inner)
-end
-
-function body_close!(body::_LimitedRequestBody)::Nothing
-    body_closed(body) && return nothing
-    @atomic :release body.closed = true
-    body_close!(body.inner)
-    return nothing
-end
-
-function trailers(body::_LimitedRequestBody)::Headers
-    return trailers(body.inner)
-end
-
-function body_read!(body::_LimitedRequestBody, dst::Vector{UInt8})::Int
-    body_closed(body) && return 0
-    isempty(dst) && return 0
-    body.overflowed && throw(RequestBodyTooLargeError(body.limit))
-    allowed = body.limit - body.read_so_far
-    if allowed <= 0
-        body.known_length_safe && return 0
-        n = body_read!(body.inner, body.probe)
-        n == 0 && return 0
-        body.overflowed = true
-        throw(RequestBodyTooLargeError(body.limit))
-    end
-    n = if allowed >= length(dst)
-        body_read!(body.inner, dst)
-    else
-        scratch = Vector{UInt8}(undef, Int(allowed))
-        read = body_read!(body.inner, scratch)
-        read > 0 && copyto!(dst, 1, scratch, 1, read)
-        read
-    end
-    body.read_so_far += n
-    return n
-end
-
-function _request_with_body_limit(request::Request, limit::Int64)::Request
-    request.content_length > limit && throw(RequestBodyTooLargeError(limit))
-    request.body isa EmptyBody && return request
-    body = _LimitedRequestBody(request.body, limit, request.content_length >= 0)
-    return _request_with_body(request, body; content_length=request.content_length)
-end
-
-function _ensure_request_body_limit!(request::Request)::Nothing
-    body = request.body
-    body isa _LimitedRequestBody || return nothing
-    limited = body::_LimitedRequestBody
-    limited.overflowed && throw(RequestBodyTooLargeError(limited.limit))
-    limited.known_length_safe && return nothing
-    body_closed(limited) && return nothing
-    remaining = limited.limit - limited.read_so_far
-    while remaining > 0
-        chunk_len = min(Int64(16 * 1024), remaining)
-        scratch = Vector{UInt8}(undef, Int(chunk_len))
-        n = body_read!(limited.inner, scratch)
-        n == 0 && return nothing
-        limited.read_so_far += n
-        remaining -= n
-    end
-    n = body_read!(limited.inner, limited.probe)
-    n == 0 && return nothing
-    limited.overflowed = true
-    throw(RequestBodyTooLargeError(limited.limit))
-end
-
 @inline function _server_request_body_fully_consumed(body::AbstractBody)::Bool
     body isa EmptyBody && return true
-    if body isa _LimitedRequestBody
-        limited = body::_LimitedRequestBody
-        limited.overflowed && return false
-        return _server_request_body_fully_consumed(limited.inner)
-    end
     if body isa _H2ServerBody
         return _h2_server_body_fully_consumed(body::_H2ServerBody)
     end
@@ -813,20 +725,21 @@ function _request_has_unsupported_expect(request::Request)::Bool
     return !saw_supported
 end
 
-@inline function _is_connection_reset_error(err::Exception)::Bool
-    return err isa SystemError && occursin("Connection reset by peer", sprint(showerror, err))
+@inline function _is_peer_close_error(err::Exception)::Bool
+    err isa SystemError || return false
+    errno = err.errnum
+    return errno == Int(Base.Libc.ECONNRESET) ||
+           errno == Int(Base.Libc.EPIPE) ||
+           errno == Int(Base.Libc.ECONNABORTED)
 end
 
 function _server_error_status(err::Exception)::Union{Nothing,Int}
-    if err isa RequestBodyTooLargeError
-        return 413
-    end
     if err isa ParseError
         return 400
     end
     if err isa ProtocolError
-        message = sprint(showerror, err)
-        if occursin("max_header_bytes", message) || occursin("max_line_bytes", message)
+        code = err.code
+        if code == _PROTOCOL_ERROR_LINE_TOO_LONG || code == _PROTOCOL_ERROR_HEADERS_TOO_LARGE
             return 431
         end
         return 400
@@ -1244,9 +1157,9 @@ function servecontent(
     precondition_result, range_header = _servecontent_preconditions(request, response_headers, modtime_value)
     if precondition_result == :precondition_failed
         return Response(
-            412;
+            412,
+            EmptyBody();
             headers=response_headers,
-            body=EmptyBody(),
             content_length=0,
             proto_major=Int(request.proto_major),
             proto_minor=Int(request.proto_minor),
@@ -1254,9 +1167,9 @@ function servecontent(
         )
     elseif precondition_result == :not_modified
         return Response(
-            304;
+            304,
+            EmptyBody();
             headers=_not_modified_headers(response_headers),
-            body=EmptyBody(),
             content_length=0,
             proto_major=Int(request.proto_major),
             proto_minor=Int(request.proto_minor),
@@ -1278,9 +1191,9 @@ function servecontent(
             if parsed_range === :invalid || (parsed_range === :no_overlap && total_size > 0)
                 setheader(response_headers, "Content-Range", "bytes */$(total_size)")
                 return Response(
-                    416;
+                    416,
+                    EmptyBody();
                     headers=response_headers,
-                    body=EmptyBody(),
                     content_length=0,
                     proto_major=Int(request.proto_major),
                     proto_minor=Int(request.proto_minor),
@@ -1300,9 +1213,9 @@ function servecontent(
     body, selected_length = _servecontent_body(source, total_size, selected_range)
     setheader(response_headers, "Content-Length", string(selected_length))
     return Response(
-        status;
+        status,
+        body;
         headers=response_headers,
-        body=body,
         content_length=selected_length,
         proto_major=Int(request.proto_major),
         proto_minor=Int(request.proto_minor),
@@ -1361,9 +1274,9 @@ function _server_response(
     content_length::Integer=0,
 )::Response
     return Response(
-        status;
+        status,
+        body;
         headers=headers,
-        body=body,
         content_length=content_length,
         proto_major=Int(request.proto_major),
         proto_minor=Int(request.proto_minor),
@@ -2920,7 +2833,6 @@ end
 
 function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::Nothing
     conn = tracked.conn
-    reader = _ConnReader(reader_source)
     decoder = Decoder(
         max_string_length=server.max_header_bytes,
         max_header_list_size=server.max_header_bytes,
@@ -2939,6 +2851,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     try
         preface = _read_exact_h2_server!(reader_source, length(_H2_PREFACE))
         preface == _H2_PREFACE || throw(ProtocolError("invalid h2 client preface"))
+        reader = _ConnReader(reader_source)
         client_settings = read_frame!(reader)
         client_settings isa SettingsFrame || throw(ProtocolError("expected initial h2 SETTINGS frame"))
         (client_settings::SettingsFrame).ack && throw(ProtocolError("initial h2 SETTINGS frame must not be ACK"))
@@ -3038,7 +2951,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                         hf.end_stream || throw(ProtocolError("HTTP/2 request trailers must end the stream"))
                     end
                     remaining = max_header_block_bytes - length(state.header_block)
-                    remaining >= 0 && length(hf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size"))
+                    remaining >= 0 && length(hf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
                     append!(state.header_block, hf.header_block_fragment)
                     if hf.end_headers
                         decoded = decode_header_block(decoder, state.header_block)
@@ -3083,7 +2996,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 try
                     initial_headers = !state.headers_complete
                     remaining = max_header_block_bytes - length(state.header_block)
-                    remaining >= 0 && length(cf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size"))
+                    remaining >= 0 && length(cf.header_block_fragment) <= remaining || throw(ProtocolError("HTTP/2 request header block exceeded maximum size", _PROTOCOL_ERROR_HEADERS_TOO_LARGE))
                     append!(state.header_block, cf.header_block_fragment)
                     if cf.end_headers
                         decoded = decode_header_block(decoder, state.header_block)
@@ -3197,7 +3110,7 @@ function _serve_conn!(server::Server, tracked::_ServerConn)::Nothing
             _try_write_server_error!(tracked.conn, nothing, 408)
             return nothing
         end
-        if err isa ParseError || err isa ProtocolError || err isa EOFError || err isa IOPoll.DeadlineExceededError || err isa IOPoll.NetClosingError || err isa TLS.TLSError || err isa TLS.TLSHandshakeTimeoutError || _is_connection_reset_error(err::Exception)
+        if err isa ParseError || err isa ProtocolError || err isa EOFError || err isa IOPoll.DeadlineExceededError || err isa IOPoll.NetClosingError || err isa TLS.TLSError || err isa TLS.TLSHandshakeTimeoutError || _is_peer_close_error(err::Exception)
             return nothing
         end
         rethrow(err)
@@ -3221,7 +3134,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             catch err
                 status = _server_error_status(err::Exception)
                 status === nothing || _try_write_server_error!(tracked.conn, nothing, status::Int)
-                if err isa ParseError || err isa ProtocolError || err isa EOFError || err isa IOPoll.DeadlineExceededError || err isa IOPoll.NetClosingError || err isa TLS.TLSError || err isa TLS.TLSHandshakeTimeoutError || _is_connection_reset_error(err::Exception)
+                if err isa ParseError || err isa ProtocolError || err isa EOFError || err isa IOPoll.DeadlineExceededError || err isa IOPoll.NetClosingError || err isa TLS.TLSError || err isa TLS.TLSHandshakeTimeoutError || _is_peer_close_error(err::Exception)
                     return nothing
                 end
                 rethrow(err)

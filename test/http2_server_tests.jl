@@ -107,7 +107,7 @@ end
 @testset "HTTP/2 server request handling" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("h2:" * request.target))
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
@@ -122,37 +122,6 @@ end
         @test String(_read_all_h2_server(res2.body)) == "h2:/two"
     finally
         close(conn)
-        HT.forceclose(server)
-        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
-    end
-end
-
-@testset "HTTP/2 server request body limiting middleware" begin
-    server = HT.serve!(HT.limitrequestbody(4)(request -> begin
-            buf = Vector{UInt8}(undef, 8)
-            while true
-                n = HT.body_read!(request.body, buf)
-                n == 0 && break
-            end
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
-        end), "127.0.0.1", 0; listenany = true)
-    address = _wait_http_server_addr(server)
-    conn = nothing
-    try
-        conn, reader = _open_raw_h2_server_conn(address)
-        encoder = HT.Encoder()
-        decoder = HT.Decoder()
-        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/limited"; method = "POST", end_stream = false)
-        _write_frame_h2_server_raw!(conn, HT.DataFrame(UInt32(1), true, collect(codeunits("abcdef"))))
-        headers_frame, header_block, _ = _read_h2_server_header_block!(reader)
-        decoded_headers = HT.decode_header_block(decoder, header_block)
-        @test any(field -> field.name == ":status" && field.value == "413", decoded_headers)
-        @test headers_frame.end_stream
-    finally
-        try
-            conn === nothing || NC.close(conn)
-        catch
-        end
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -230,10 +199,10 @@ end
 @testset "HTTP/2 server request handler timeout middleware" begin
     handler = HT.handlertimeout(0.05)(request -> begin
         if request.target == "/fast"
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
         end
         sleep(0.15)
-        return HT.Response(200; body = HT.BytesBody(UInt8[0x6c, 0x61, 0x74, 0x65]), content_length = 4, proto_major = 2, proto_minor = 0)
+        return HT.Response(200, HT.BytesBody(UInt8[0x6c, 0x61, 0x74, 0x65]); content_length = 4, proto_major = 2, proto_minor = 0)
     end)
     server = HT.serve!(handler, "127.0.0.1", 0; listenany = true)
     address = _wait_http_server_addr(server)
@@ -267,7 +236,7 @@ end
             body = String(body_bytes)
             trailer = HT.header(request.trailers, "X-Trailer", "")
             payload = collect(codeunits(body * "|" * trailer))
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn, reader = _open_raw_h2_server_conn(address)
@@ -301,7 +270,7 @@ end
 @testset "HTTP/2 server rejects invalid request trailer pseudo-headers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = nothing
@@ -339,7 +308,7 @@ end
             _ = request
             headers = HT.Headers()
             HT.setheader(headers, "X-Large", large_value)
-            return HT.Response(200; headers = headers, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.EmptyBody(); headers = headers, content_length = 0, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn, reader = _open_raw_h2_server_conn(address)
@@ -371,7 +340,7 @@ end
             trailers = HT.Headers()
             HT.setheader(trailers, "X-Large-Trailer", large_trailer)
             body = HT.BytesBody(collect(codeunits("ok")))
-            return HT.Response(200; trailers = trailers, body = body, content_length = 2, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, body; trailers = trailers, content_length = 2, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn, reader = _open_raw_h2_server_conn(address)
@@ -407,7 +376,7 @@ end
             _ = request
             headers = HT.Headers()
             HT.setheader(headers, "X-Reused", repeated_value)
-            return HT.Response(200; headers = headers, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.EmptyBody(); headers = headers, content_length = 0, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn, reader = _open_raw_h2_server_conn(address)
@@ -437,7 +406,7 @@ end
             _ = request
             headers = HT.Headers()
             HT.setheader(headers, "X-Reused", "same")
-            return HT.Response(200; headers = headers, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.EmptyBody(); headers = headers, content_length = 0, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn, reader = _open_raw_h2_server_conn(address; settings = Pair{UInt16, UInt32}[UInt16(0x1) => UInt32(0)])
@@ -468,7 +437,7 @@ end
 @testset "HTTP/2 server accepts duplicate peer settings in order" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("dup:" * request.target))
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn, reader = _open_raw_h2_server_conn(address; settings = Pair{UInt16, UInt32}[
@@ -500,7 +469,7 @@ end
     router = HT.Router()
     HT.register!(router, "GET", "/router/{name}", req -> begin
             payload = collect(codeunits("router:" * HT.getparam(req, "name")))
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end)
     server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
     address = _wait_http_server_addr(server)
@@ -600,7 +569,7 @@ end
                 total += n
             end
             payload = collect(codeunits(string(total)))
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
@@ -630,7 +599,7 @@ end
                 total += n
             end
             payload = collect(codeunits(string(total)))
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
@@ -682,7 +651,7 @@ end
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             sleep(1.0)
             payload = collect(codeunits(request.target))
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
@@ -716,7 +685,7 @@ end
 @testset "HTTP/2 server shutdown closes listener" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
@@ -740,7 +709,7 @@ end
             put!(started, nothing)
             take!(release)
             payload = collect(codeunits("ok"))
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = nothing
@@ -798,7 +767,7 @@ end
     large_payload = fill(UInt8('z'), 70_000)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
-            return HT.Response(200; body = HT.BytesBody(large_payload), content_length = length(large_payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(large_payload); content_length = length(large_payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
@@ -820,9 +789,9 @@ end
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("oops"))
             if request.target == "/nocontent"
-                return HT.Response(204; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+                return HT.Response(204, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
             end
-            return HT.Response(304; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(304, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
@@ -846,7 +815,7 @@ end
 @testset "HTTP/2 server rejects invalid continuation sequencing" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = ND.connect("tcp", address)
@@ -894,7 +863,7 @@ end
 @testset "HTTP/2 server rejects invalid request headers" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     invalid_cases = (
@@ -947,7 +916,7 @@ end
 @testset "HTTP/2 server rejects oversized request header blocks" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true, max_header_bytes = 64) do request
             _ = request
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = nothing
@@ -992,7 +961,7 @@ end
 @testset "HTTP/2 server rejects oversized decoded request header lists" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true, max_header_bytes = 96) do request
             _ = request
-            return HT.Response(200; body = HT.BytesBody(UInt8[0x6f, 0x6b]), content_length = 2, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = nothing
@@ -1043,7 +1012,7 @@ end
             HT.appendheader(headers, "TE", "trailers")
             HT.appendheader(headers, "Trailer", "x-drop-me")
             HT.appendheader(headers, "X-Extra", "ok")
-            return HT.Response(200; headers = headers, body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); headers = headers, content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = nothing
@@ -1086,7 +1055,7 @@ end
     payload = fill(UInt8('z'), 70_000)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
-            return HT.Response(200; body = HT.BytesBody(payload), content_length = length(payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = nothing
@@ -1137,9 +1106,9 @@ end
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             if request.target == "/cancel"
                 sleep(0.3)
-                return HT.Response(200; body = HT.BytesBody(collect(codeunits("cancel"))), content_length = 6, proto_major = 2, proto_minor = 0)
+                return HT.Response(200, HT.BytesBody(collect(codeunits("cancel"))); content_length = 6, proto_major = 2, proto_minor = 0)
             end
-            return HT.Response(200; body = HT.BytesBody(collect(codeunits("ok"))), content_length = 2, proto_major = 2, proto_minor = 0)
+            return HT.Response(200, HT.BytesBody(collect(codeunits("ok"))); content_length = 2, proto_major = 2, proto_minor = 0)
         end
     address = _wait_http_server_addr(server)
     conn = nothing

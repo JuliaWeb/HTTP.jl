@@ -10,7 +10,6 @@ export getroute
 export getparams
 export getparam
 export getcookies
-export limitrequestbody
 export handlertimeout
 
 import ..Request
@@ -29,8 +28,6 @@ import ..serve!
 import ..cancel!
 import ..canceled
 import ..body_close!
-import .._request_with_body_limit
-import .._ensure_request_body_limit!
 import .._request_with_context
 
 """
@@ -342,41 +339,6 @@ function cookie_middleware(handler)
     end
 end
 
-struct _RequestBodyLimitMiddleware{H}
-    handler::H
-    limit::Int64
-end
-
-function (middleware::_RequestBodyLimitMiddleware)(req::Request)
-    limited_req = _request_with_body_limit(req, middleware.limit)
-    response = middleware.handler(limited_req)
-    _ensure_request_body_limit!(limited_req)
-    return response
-end
-
-function (middleware::_RequestBodyLimitMiddleware)(stream::Stream)
-    req = startread(stream)
-    limited_req = _request_with_body_limit(req, middleware.limit)
-    stream.request = limited_req
-    result = middleware.handler(stream)
-    (@atomic :acquire stream.response_started) || _ensure_request_body_limit!(limited_req)
-    return result
-end
-
-"""
-    limitrequestbody(limit) -> middleware
-
-Wrap a request or stream handler with a server-side request-body byte limit.
-
-When an incoming body exceeds `limit`, handler reads throw
-`HTTP.RequestBodyTooLargeError`, which the server stack turns into a `413`
-response.
-"""
-function limitrequestbody(limit::Integer)
-    limit >= 0 || throw(ArgumentError("limit must be >= 0"))
-    return handler -> _RequestBodyLimitMiddleware(handler, Int64(limit))
-end
-
 mutable struct _HandlerTimeoutMiddleware{H}
     handler::H
     timeout_ns::Int64
@@ -410,9 +372,9 @@ function _handler_timeout_response(
     setheader(headers, "Content-Type", middleware.content_type)
     body_bytes = copy(middleware.response_body)
     return Response(
-        middleware.status;
+        middleware.status,
+        BytesBody(body_bytes);
         headers=headers,
-        body=BytesBody(body_bytes),
         content_length=length(body_bytes),
         proto_major=Int(request.proto_major),
         proto_minor=Int(request.proto_minor),

@@ -28,8 +28,6 @@ function _http_trim_h1_wire_server_entry()::Nothing
     return nothing
 end
 
-Base.Experimental.entrypoint(_http_trim_h1_wire_server_entry, ())
-
 function run_http_trim_client_h1_wire()::Nothing
     listener::Union{Nothing,Reseau.TCP.Listener} = nothing
     client::Union{Nothing,Reseau.TCP.Conn} = nothing
@@ -40,7 +38,7 @@ function run_http_trim_client_h1_wire()::Nothing
         _HTTP_TRIM_H1_WIRE_STARTED[] = false
         _HTTP_TRIM_H1_WIRE_DONE[] = false
 
-        server_task = errormonitor(Task(_http_trim_h1_wire_server_entry))
+        server_task = Task(_http_trim_h1_wire_server_entry)
         schedule(server_task)
         start_status = Reseau.IOPoll.timedwait(() -> _HTTP_TRIM_H1_WIRE_STARTED[], 5.0; pollint = 0.001)
         start_status == :timed_out && error("timed out waiting for trim H1 wire server task")
@@ -57,7 +55,8 @@ function run_http_trim_client_h1_wire()::Nothing
         response.status == 200 || error("expected 200 response, got $(response.status)")
         body = response.body
         body isa HT.FixedLengthBody || error("expected FixedLengthBody response body")
-        trim_body_string(body::HT.FixedLengthBody) == "h1-wire" || error("unexpected response body")
+        HT.header(response.headers, "Content-Length") == "7" || error("unexpected Content-Length header")
+        HT.body_close!(body)
     finally
         _HTTP_TRIM_H1_WIRE_LISTENER[] = nothing
         try

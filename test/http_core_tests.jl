@@ -216,9 +216,9 @@ end
     compressed_headers = HT.Headers()
     HT.setheader(compressed_headers, "Content-Encoding", "gzip")
     compressed_response = HT.Response(
-        200;
+        200,
+        UInt8[0x1f, 0x8b, 0x08, 0x00];
         headers=compressed_headers,
-        body=UInt8[0x1f, 0x8b, 0x08, 0x00],
         content_length=4,
     )
     compressed_plain = sprint(io -> show(io, MIME"text/plain"(), compressed_response))
@@ -227,10 +227,10 @@ end
     response_headers = HT.Headers()
     HT.setheader(response_headers, "Set-Cookie", "session=secret")
     response = HT.Response(
-        201;
+        201,
+        Vector{UInt8}(codeunits("created"));
         reason="Created",
         headers=response_headers,
-        body=Vector{UInt8}(codeunits("created")),
         content_length=7,
     )
     response_compact = sprint(show, response)

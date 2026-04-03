@@ -99,7 +99,7 @@ function _accept_ws_request!(conn, request::HT.Request; subprotocol::Union{Nothi
     key === nothing && error("missing websocket key")
     HT.setheader(headers, "Sec-WebSocket-Accept", HT.ws_compute_accept_key(key))
     subprotocol === nothing || HT.setheader(headers, "Sec-WebSocket-Protocol", subprotocol)
-    _write_response_all!(conn, HT.Response(101; headers = headers, body = HT.EmptyBody(), content_length = 0))
+    _write_response_all!(conn, HT.Response(101, HT.EmptyBody(); headers = headers, content_length = 0))
     return nothing
 end
 
@@ -228,7 +228,7 @@ end
             headers = HT.Headers()
             HT.setheader(headers, "Location", "ws://$target_address/final")
             HT.setheader(headers, "Set-Cookie", "session=abc; Path=/")
-            _write_response_all!(conn, HT.Response(302; headers = headers, body = HT.EmptyBody(), content_length = 0))
+            _write_response_all!(conn, HT.Response(302, HT.EmptyBody(); headers = headers, content_length = 0))
         end
         ws = W.open("ws://$redirect_address/start"; cookiejar = HT.CookieJar())
         @test ws.handshake_response.status == 101

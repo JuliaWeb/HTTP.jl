@@ -79,7 +79,7 @@ end
                 key === nothing && error("missing websocket key")
                 HT.setheader(headers, "Sec-WebSocket-Accept", HT.ws_compute_accept_key(key))
                 io = IOBuffer()
-                HT.write_response!(io, HT.Response(101; headers = headers, body = HT.EmptyBody(), content_length = 0))
+                HT.write_response!(io, HT.Response(101, HT.EmptyBody(); headers = headers, content_length = 0))
                 write(conn, take!(io))
                 frame = HT.WsFrame(opcode = UInt8(HT.WsOpcode.TEXT), payload = Vector{UInt8}("proxied"), fin = true)
                 encoded = HT.ws_encode_frame(frame)

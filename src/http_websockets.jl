@@ -1155,24 +1155,24 @@ function _origin_allowed(server::Server, request::Request)::Bool
 end
 
 function _upgrade_response(request::Request, server::Server)::Response
-    uppercase(request.method) == "GET" || return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
-    _ws_headers_have_token(request.headers, "Upgrade", "websocket", false) || return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
-    _ws_headers_have_token(request.headers, "Connection", "upgrade", false) || return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
+    uppercase(request.method) == "GET" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
+    _ws_headers_have_token(request.headers, "Upgrade", "websocket", false) || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
+    _ws_headers_have_token(request.headers, "Connection", "upgrade", false) || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     version = header(request.headers, "Sec-WebSocket-Version", nothing)
-    version === nothing && return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
-    strip(version) == "13" || return Response(400; body=BytesBody(Vector{UInt8}("websocket upgrade required")), content_length=26, headers=Headers())
+    version === nothing && return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
+    strip(version) == "13" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     raw_key = header(request.headers, "Sec-WebSocket-Key", nothing)
-    raw_key === nothing && return Response(400; body=BytesBody(Vector{UInt8}("missing websocket key")), content_length=21, headers=Headers())
-    _origin_allowed(server, request) || return Response(403; body=BytesBody(Vector{UInt8}("websocket origin rejected")), content_length=25, headers=Headers())
+    raw_key === nothing && return Response(400, BytesBody(Vector{UInt8}("missing websocket key")); content_length=21, headers=Headers())
+    _origin_allowed(server, request) || return Response(403, BytesBody(Vector{UInt8}("websocket origin rejected")); content_length=25, headers=Headers())
     key = ws_get_request_sec_websocket_key(request)
-    key === nothing && return Response(400; body=BytesBody(Vector{UInt8}("invalid websocket key")), content_length=21, headers=Headers())
+    key === nothing && return Response(400, BytesBody(Vector{UInt8}("invalid websocket key")); content_length=21, headers=Headers())
     headers = Headers()
     setheader(headers, "Upgrade", "websocket")
     setheader(headers, "Connection", "Upgrade")
     setheader(headers, "Sec-WebSocket-Accept", ws_compute_accept_key(key::String))
     selected = isempty(server.subprotocols) ? nothing : ws_select_subprotocol(request, server.subprotocols)
     selected === nothing || setheader(headers, "Sec-WebSocket-Protocol", selected::String)
-    return Response(101; headers=headers, body=EmptyBody(), content_length=0, request=request)
+    return Response(101, EmptyBody(); headers=headers, content_length=0, request=request)
 end
 
 function _serve_ws_session!(server::Server, conn, request::Request, response::Response)::Nothing

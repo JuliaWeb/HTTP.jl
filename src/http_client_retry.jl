@@ -186,7 +186,7 @@ end
 
 function _retry_policy_response(incoming::_IncomingResponse, fallback_request::Request)::Response
     head = incoming.head
-    return _response_nocopy_public(
+    return _response_nocopy_exact(
         head.status,
         head.reason,
         head.headers,

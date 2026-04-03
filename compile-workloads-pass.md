@@ -19,7 +19,7 @@
 - Implementation notes:
   - Add `PrecompileTools` as a package dependency with appropriate compat.
   - Follow the broad shape of `HTTP#master`'s precompile inclusion, but avoid `localhost` DNS gating by using explicit loopback addresses and local servers.
-  - Build the workload around exported entrypoints such as `HTTP.serve!`, `HTTP.get`/`HTTP.post`, `HTTP.open`, `HTTP.Router`, `HTTP.limitrequestbody`, `HTTP.fileserver`, and a public HTTP/2 client/server roundtrip if stable.
+  - Build the workload around exported entrypoints such as `HTTP.serve!`, `HTTP.get`/`HTTP.post`, `HTTP.open`, `HTTP.Router`, `HTTP.fileserver`, and a public HTTP/2 client/server roundtrip if stable.
   - Keep the workload safe for package precompilation: local only, no external network, no platform-specific branches, and careful cleanup of client/server resources.
 - Verification:
   - `julia --project=. -e 'using HTTP'`
@@ -48,7 +48,7 @@
   - Broaden the workload to cover representative public flows such as:
     - top-level request helpers on `String`/`URI`
     - reusable `Client` + `Transport`
-    - `Router`, `register!`, `limitrequestbody`, and `handlertimeout`
+    - `Router`, `register!`, and `handlertimeout`
     - redirects and cookies
     - `HTTP.open`
     - `response_body = IOBuffer()`
