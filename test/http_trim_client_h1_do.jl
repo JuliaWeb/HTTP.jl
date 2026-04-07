@@ -59,6 +59,7 @@ function run_http_trim_client_h1_do()::Nothing
         # `src/http_client.jl`, not the client H1 incoming path itself.
         request = HT.Request("GET", "/do"; host = address, body = HT.EmptyBody(), content_length = 0)
         incoming = HT._do_incoming!(
+            nothing,
             client,
             address,
             request,

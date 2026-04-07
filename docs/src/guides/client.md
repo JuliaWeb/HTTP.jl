@@ -224,6 +224,46 @@ Common body-related types:
 The retry path is explicit and conservative. For predictable behavior, prefer a
 long-lived `Client` over relying solely on default top-level behavior.
 
+### Request Tracing and Verbose Output
+
+`HTTP.request` accepts an optional leading trace callback:
+
+```julia
+using HTTP
+
+function trace(event::HTTP.RequestEvent)
+    @info "request" method = event.request.method url = event.url attempt = event.attempt
+end
+
+function trace(event::HTTP.ResponseHeadEvent)
+    @info "response" status = event.response.status url = event.url
+end
+
+function trace(event::HTTP.DoneEvent)
+    @info "done" url = event.url error = event.err
+end
+
+response = HTTP.request(trace, "GET", url)
+```
+
+The current event set is:
+
+- `HTTP.RequestEvent`
+- `HTTP.ResponseHeadEvent`
+- `HTTP.RetryEvent`
+- `HTTP.RedirectEvent`
+- `HTTP.DoneEvent`
+
+Verbose output is implemented on top of the same event path:
+
+```julia
+HTTP.request(trace, "GET", url; verbose = true)
+```
+
+`verbose = true` or `verbose = 1` prints one-line lifecycle messages to
+`stdout`, while `verbose = 2` also prints request and response heads. When both
+are used together, verbose output is emitted before the user callback runs.
+
 ### Timeout Model
 
 The client APIs now expose timeout controls by phase instead of only a single

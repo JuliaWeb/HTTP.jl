@@ -73,6 +73,17 @@ function _is_timeout_error_client(err)::Bool
     return _is_timeout_error_client(cause::Exception)
 end
 
+function _capture_stdout_client(f)::String
+    mktemp() do path, io
+        redirect_stdout(io) do
+            f()
+        end
+        flush(io)
+        close(io)
+        return read(path, String)
+    end
+end
+
 @testset "HTTP @client macro supports single middlewares" begin
     @eval module ClientSingleMiddleware
         using HTTP
@@ -248,6 +259,93 @@ end
     end
 end
 
+@testset "HTTP request trace emits request response and done events" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    events = Any[]
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            req = HT.read_request(HT._ConnReader(conn))
+            _send_response_client!(conn, req; body_text = "ok", close_conn = true)
+        finally
+            try
+                NC.close(conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    try
+        response = HT.request(event -> push!(events, event), "GET", "$(base_url)/trace"; retry = false)
+        @test response.status == 200
+        @test String(response.body) == "ok"
+        _wait_task_client!(server_task)
+        @test typeof.(events) == [HT.RequestEvent, HT.ResponseHeadEvent, HT.DoneEvent]
+        @test events[1].request.method == "GET"
+        @test events[1].url == "$(base_url)/trace"
+        @test events[1].attempt == 1
+        @test events[1].redirect_count == 0
+        @test events[1].protocol == :h1
+        @test events[2].response.status == 200
+        @test events[2].url == "$(base_url)/trace"
+        @test events[3].response.status == 200
+        @test events[3].err === nothing
+        @test events[3].url == "$(base_url)/trace"
+    finally
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP verbose wraps a request trace and prints to stdout" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    events = Any[]
+    response_ref = Ref{Union{Nothing, HT.Response}}(nothing)
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            req = HT.read_request(HT._ConnReader(conn))
+            _send_response_client!(conn, req; body_text = "ok", close_conn = true)
+        finally
+            try
+                NC.close(conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    try
+        output = _capture_stdout_client() do
+            response_ref[] = HT.request(event -> push!(events, event), "GET", "$(base_url)/verbose"; retry = false, verbose = 2)
+        end
+        response = response_ref[]::HT.Response
+        @test response.status == 200
+        @test String(response.body) == "ok"
+        _wait_task_client!(server_task)
+        @test typeof.(events) == [HT.RequestEvent, HT.ResponseHeadEvent, HT.DoneEvent]
+        @test occursin("[http] request attempt 1 GET $(base_url)/verbose via h1", output)
+        @test occursin("[http] request", output)
+        @test occursin("GET /verbose HTTP/1.1", output)
+        @test occursin("[http] response attempt 1 200 for $(base_url)/verbose", output)
+        @test occursin("[http] response", output)
+        @test occursin("HTTP/1.1 200 OK", output)
+        @test occursin("[http] done 200 for $(base_url)/verbose", output)
+    finally
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
 @testset "HTTP client redirect rewrites method" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
@@ -300,6 +398,65 @@ end
         @test redirected_content_type[] === nothing
     finally
         close(client.transport)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
+@testset "HTTP request trace emits redirect events" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    events = Any[]
+    server_task = errormonitor(Threads.@spawn begin
+        conn1 = NC.accept(listener)
+        try
+            req1 = HT.read_request(HT._ConnReader(conn1))
+            headers1 = HT.Headers()
+            HT.setheader(headers1, "Location", "/final")
+            HT.setheader(headers1, "Connection", "close")
+            _send_response_client!(conn1, req1; status = 302, reason = "Found", headers = headers1, close_conn = true)
+        finally
+            try
+                NC.close(conn1)
+            catch
+            end
+        end
+        conn2 = NC.accept(listener)
+        try
+            req2 = HT.read_request(HT._ConnReader(conn2))
+            _send_response_client!(conn2, req2; body_text = "ok", close_conn = true)
+        finally
+            try
+                NC.close(conn2)
+            catch
+            end
+        end
+        return nothing
+    end)
+    try
+        response = HT.request(event -> push!(events, event), "GET", "$(base_url)/start"; retry = false)
+        @test response.status == 200
+        @test String(response.body) == "ok"
+        _wait_task_client!(server_task)
+        @test typeof.(events) == [
+            HT.RequestEvent,
+            HT.ResponseHeadEvent,
+            HT.RedirectEvent,
+            HT.RequestEvent,
+            HT.ResponseHeadEvent,
+            HT.DoneEvent,
+        ]
+        redirect_event = events[3]::HT.RedirectEvent
+        @test redirect_event.response.status == 302
+        @test redirect_event.request.target == "/start"
+        @test redirect_event.from_url == "$(base_url)/start"
+        @test redirect_event.to_url == "$(base_url)/final"
+        @test redirect_event.redirect_count == 1
+    finally
         try
             NC.close(listener)
         catch

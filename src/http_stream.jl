@@ -183,6 +183,7 @@ function _client_start_stream_read!(stream::Stream{true})::Response
         meta.context,
     )
     incoming = _do_incoming!(
+        nothing,
         stream.client::Client,
         (stream.parsed::_URLParts).address,
         req,

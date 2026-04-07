@@ -2,6 +2,11 @@
 export Client
 export Cookie
 export CookieJar
+export DoneEvent
+export RedirectEvent
+export RequestEvent
+export ResponseHeadEvent
+export RetryEvent
 export do!
 export get!
 export RequestRetryError
@@ -39,6 +44,153 @@ mutable struct Client{CR}
     prefer_http2::Bool
     h2_lock::ReentrantLock
     h2_conns::Dict{String,Vector{H2Connection}}
+end
+
+abstract type ClientEvent end
+
+struct RequestEvent <: ClientEvent
+    request::Request
+    url::String
+    attempt::Int
+    redirect_count::Int
+    protocol::Symbol
+end
+
+struct ResponseHeadEvent <: ClientEvent
+    response::Response
+    url::String
+    attempt::Int
+    redirect_count::Int
+end
+
+struct RetryEvent <: ClientEvent
+    request::Request
+    url::String
+    attempt::Int
+    next_attempt::Int
+    redirect_count::Int
+    delay_ns::Int64
+    response::Union{Nothing,Response}
+    err::Union{Nothing,Exception}
+end
+
+struct RedirectEvent <: ClientEvent
+    request::Request
+    response::Response
+    from_url::String
+    to_url::String
+    redirect_count::Int
+end
+
+struct DoneEvent <: ClientEvent
+    response::Union{Nothing,Response}
+    err::Union{Nothing,Exception}
+    url::String
+end
+
+struct _VerboseTrace
+    level::Int
+end
+
+struct _ComposedTrace{A,B}
+    first::A
+    second::B
+end
+
+@inline _emit_trace(::Nothing, event::ClientEvent) = nothing
+
+@inline function _emit_trace(trace, event::ClientEvent)
+    trace(event)
+    return nothing
+end
+
+@inline function (trace::_ComposedTrace)(event::ClientEvent)
+    trace.first(event)
+    trace.second(event)
+    return nothing
+end
+
+@inline function _normalize_verbose_level(verbose)::Int
+    verbose === nothing && return 0
+    verbose === false && return 0
+    verbose === true && return 1
+    verbose isa Integer || throw(ArgumentError("verbose must be Bool or an integer level 0-2"))
+    level = Int(verbose)
+    0 <= level <= 2 || throw(ArgumentError("verbose must be one of false, true, 0, 1, or 2"))
+    return level
+end
+
+@inline function _wrap_request_trace(trace, verbose)
+    level = _normalize_verbose_level(verbose)
+    if level == 0
+        return trace
+    elseif trace === nothing
+        return _VerboseTrace(level)
+    end
+    return _ComposedTrace(_VerboseTrace(level), trace)
+end
+
+@inline function _verbose_line!(msg::AbstractString)::Nothing
+    println(stdout, "[http] ", msg)
+    flush(stdout)
+    return nothing
+end
+
+@inline function _verbose_block!(label::AbstractString, f)::Nothing
+    println(stdout, "[http] ", label)
+    f(stdout)
+    flush(stdout)
+    return nothing
+end
+
+function (trace::_VerboseTrace)(event::RequestEvent)::Nothing
+    _verbose_line!(string("request attempt ", event.attempt, " ", event.request.method, " ", event.url, " via ", event.protocol))
+    if trace.level >= 2
+        _verbose_block!("request", io -> begin
+            show(io, MIME"text/plain"(), event.request)
+            write(io, '\n')
+        end)
+    end
+    return nothing
+end
+
+function (trace::_VerboseTrace)(event::ResponseHeadEvent)::Nothing
+    _verbose_line!(string("response attempt ", event.attempt, " ", event.response.status, " for ", event.url))
+    if trace.level >= 2
+        _verbose_block!("response", io -> begin
+            show(io, MIME"text/plain"(), event.response)
+            write(io, '\n')
+        end)
+    end
+    return nothing
+end
+
+function (trace::_VerboseTrace)(event::RetryEvent)::Nothing
+    detail = if event.err !== nothing
+        sprint(showerror, event.err::Exception)
+    elseif event.response !== nothing
+        string("status ", (event.response::Response).status)
+    else
+        "retry"
+    end
+    _verbose_line!(string("retry ", event.attempt, " -> ", event.next_attempt, " after ", detail, " (", event.delay_ns, " ns)"))
+    return nothing
+end
+
+function (trace::_VerboseTrace)(event::RedirectEvent)::Nothing
+    _verbose_line!(string("redirect ", event.response.status, " ", event.from_url, " -> ", event.to_url))
+    return nothing
+end
+
+function (trace::_VerboseTrace)(event::DoneEvent)::Nothing
+    if event.err !== nothing
+        _verbose_line!(string("done with error for ", event.url, ": ", sprint(showerror, event.err::Exception)))
+    elseif event.response !== nothing
+        _verbose_line!(string("done ", (event.response::Response).status, " for ", event.url))
+    else
+        _verbose_line!(string("done for ", event.url))
+    end
+    return nothing
 end
 
 function Client(;
@@ -362,6 +514,7 @@ HTTP/2 first for secure requests and fall back to HTTP/1 when negotiation says
 that h2 is unavailable.
 """
 function _do_incoming!(
+    trace,
     client::Client,
     address::AbstractString,
     request::Request,
@@ -389,6 +542,7 @@ function _do_incoming!(
             request_url = _request_url(current_secure, current_address, current_request.target)
             proxy_plan = _proxy_plan(proxy_config, current_secure, current_address)
             use_h2 = _use_h2(client, current_secure, protocol) && proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD
+            _emit_trace(trace, RequestEvent(send_request, request_url, retry_attempt, redirect_count, use_h2 ? :h2 : :h1))
             host, path = _host_path_from_request(current_address, current_request)
             cookie_value = _cookie_header(cookiejar, cookies, current_secure, host, path)
             cookie_value === nothing || setheader(send_request.headers, "Cookie", cookie_value)
@@ -431,8 +585,9 @@ function _do_incoming!(
                 retry_token = nothing
                 if retry_controller !== nothing
                     if _should_retry_request_attempt(retry_controller, retry_attempt, current_request, RequestRetryError(err::Exception), nothing)
-                        scheduled, next_token = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, nothing)
+                        scheduled, next_token, delay_ns = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, nothing)
                         if scheduled
+                            _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, nothing, err::Exception))
                             retry_attempt += 1
                             retry_token = next_token
                             continue
@@ -449,6 +604,7 @@ function _do_incoming!(
             )
             _store_set_cookies!(cookiejar, cookies, current_secure, host, path, response.head.headers)
             status_response = _retry_policy_response(response, current_request)
+            _emit_trace(trace, ResponseHeadEvent(status_response, request_url, retry_attempt, redirect_count))
             if retry_controller !== nothing && retry_controller.bucket !== nothing && retry_token !== nothing
                 release(retry_controller.bucket::RetryBucket, retry_token::RetryToken, _retry_bucket_failure_cost(status_response.status))
             end
@@ -464,8 +620,9 @@ function _do_incoming!(
                     rethrow()
                 end
                 if should_retry
-                    scheduled, next_token = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, status_response)
+                    scheduled, next_token, delay_ns = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, status_response)
                     if scheduled
+                        _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, status_response, nothing))
                         retry_attempt += 1
                         retry_token = next_token
                         try
@@ -495,7 +652,19 @@ function _do_incoming!(
             previous_secure = current_secure
             previous_address = current_address
             previous_target = current_request.target
-            current_address, current_secure, next_target = _resolve_redirect_target(current_address, current_secure, location, current_request.target)
+            next_address, next_secure, next_target = _resolve_redirect_target(current_address, current_secure, location, current_request.target)
+            _emit_trace(
+                trace,
+                RedirectEvent(
+                    current_request,
+                    previous_response,
+                    request_url,
+                    _request_url(next_secure, next_address, next_target),
+                    redirect_count + 1,
+                ),
+            )
+            current_address = next_address
+            current_secure = next_secure
             if !explicit_server_name
                 current_server_name = _host_for_sni(current_address)
             end
@@ -545,6 +714,7 @@ function do!(
     effective_cookiejar = _effective_cookiejar(client, cookiejar)
     if protocol === :h1
         incoming = _do_incoming!(
+            nothing,
             client,
             address,
             request,
@@ -560,6 +730,7 @@ function do!(
         return _streaming_response(incoming::_IncomingResponse{H1Body})
     elseif protocol === :h2
         incoming = _do_incoming!(
+            nothing,
             client,
             address,
             request,
@@ -575,6 +746,7 @@ function do!(
         return _streaming_response(incoming::_IncomingResponse{H2Body})
     elseif protocol === :auto
         incoming = _do_incoming!(
+            nothing,
             client,
             address,
             request,
@@ -1180,8 +1352,13 @@ end
 
 """
     request(method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
+    request(trace, method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
 
 High-level one-shot HTTP request API.
+
+When `trace` is provided, it must be callable on any emitted client event.
+Current events are [`RequestEvent`](@ref), [`ResponseHeadEvent`](@ref),
+[`RetryEvent`](@ref), [`RedirectEvent`](@ref), and [`DoneEvent`](@ref).
 
 Keyword arguments:
 - `basicauth`: optional basic-auth credentials supplied as
@@ -1220,6 +1397,10 @@ Keyword arguments:
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
   successful SSE responses
+- `verbose`: `false` disables built-in logging; `true`/`1` prints high-level
+  request lifecycle lines to `stdout`; `2` also prints request and response
+  heads. When combined with `trace`, verbose output is emitted before the user
+  trace is called.
 - `client`: optional explicit `Client`; otherwise a default or ephemeral client
   is created
 - `connect_timeout`: connection establishment timeout in seconds, covering DNS,
@@ -1251,7 +1432,8 @@ Throws `ArgumentError` for unsupported inputs or invalid sink combinations,
 failing, plus any lower-level transport or protocol exception raised during the
 request. Automatic retries only occur for replayable request bodies.
 """
-function request(
+function _request_impl(
+    trace,
     method::Union{AbstractString,Symbol},
     url::Union{AbstractString,URI},
     h=Pair{String,String}[],
@@ -1288,71 +1470,251 @@ function request(
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto
 )
-    request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
-        request_timeout,
-        connect_timeout,
-        response_header_timeout,
-        read_idle_timeout,
-        write_idle_timeout,
-        expect_continue_timeout,
-        readtimeout,
-    )
-    parsed = _parse_http_url(url, query)
-    req_headers = _normalize_headers_input(headers)
-    normalized_cookies = _normalize_cookies_input(cookies)
-    sink = _resolve_response_sink(response_stream)
-    sse_callback === nothing || sink === nothing || throw(ArgumentError("sse_callback cannot be combined with response_stream"))
-    _apply_default_accept_encoding!(req_headers, decompress)
-    _apply_request_authorization!(req_headers, basicauth, parsed.authorization)
-    normalized_body = _normalize_body_input(body)
-    if normalized_body.default_content_type !== nothing && !hasheader(req_headers, "Content-Type")
-        setheader(req_headers, "Content-Type", normalized_body.default_content_type::String)
-    end
-    req = Request(
-        _method_upper(method),
-        parsed.target;
-        headers=req_headers,
-        body=normalized_body.body,
-        host=parsed.address,
-        content_length=normalized_body.content_length,
-    )
-    _apply_request_timeout_settings!(req.context, request_timeout_ns, timeout_config)
-    req_client, owns_client = _client_for_request(client, connect_timeout, require_ssl_verification)
-    retry_controller = _retry_controller(req_client, retry, retries, retry_non_idempotent, retry_if, respect_retry_after, retry_bucket)
-    client === nothing || proxy === _USE_TRANSPORT_PROXY || throw(ArgumentError("proxy override is not supported when passing an explicit Client"))
-    proxy_config = _proxy_config_for_request(req_client, proxy)
-    effective_cookiejar = _effective_cookiejar(client, cookiejar)
-    incoming_response = nothing
+    final_response = nothing
+    final_error = nothing
+    request_url = nothing
     try
-        incoming_response = _do_incoming!(
-            req_client,
-            parsed.address,
-            req,
-            parsed.secure,
-            parsed.server_name,
-            protocol,
-            _redirect_policy(req_client, redirect ? redirect_limit : 0, redirect_method, forwardheaders),
-            retry_controller,
-            proxy_config,
-            normalized_cookies,
-            effective_cookiejar,
+        request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
+            request_timeout,
+            connect_timeout,
+            response_header_timeout,
+            read_idle_timeout,
+            write_idle_timeout,
+            expect_continue_timeout,
+            readtimeout,
         )
-        incoming = incoming_response::_IncomingResponse
-        resolved_request = incoming.head.request === nothing ? req : incoming.head.request::Request
-        if sse_callback !== nothing
-            sse_response = _finalize_request_response(incoming, nobody, Int64(0), resolved_request, parsed.url)
-            if !_status_throws(sse_response)
-                _consume_incoming_sse!(incoming, sse_response, sse_callback::Function, decompress)
-                return sse_response
-            end
+        parsed = _parse_http_url(url, query)
+        request_url = parsed.url
+        req_headers = _normalize_headers_input(headers)
+        normalized_cookies = _normalize_cookies_input(cookies)
+        sink = _resolve_response_sink(response_stream)
+        sse_callback === nothing || sink === nothing || throw(ArgumentError("sse_callback cannot be combined with response_stream"))
+        _apply_default_accept_encoding!(req_headers, decompress)
+        _apply_request_authorization!(req_headers, basicauth, parsed.authorization)
+        normalized_body = _normalize_body_input(body)
+        if normalized_body.default_content_type !== nothing && !hasheader(req_headers, "Content-Type")
+            setheader(req_headers, "Content-Type", normalized_body.default_content_type::String)
         end
-        final_body, final_length = _consume_incoming_response!(incoming, sink, decompress)
-        response = _finalize_request_response(incoming, final_body, final_length, resolved_request, parsed.url)
-        status_exception && _status_throws(response) && throw(StatusError(response))
-        return response
+        req = Request(
+            _method_upper(method),
+            parsed.target;
+            headers=req_headers,
+            body=normalized_body.body,
+            host=parsed.address,
+            content_length=normalized_body.content_length,
+        )
+        _apply_request_timeout_settings!(req.context, request_timeout_ns, timeout_config)
+        req_client, owns_client = _client_for_request(client, connect_timeout, require_ssl_verification)
+        try
+            retry_controller = _retry_controller(req_client, retry, retries, retry_non_idempotent, retry_if, respect_retry_after, retry_bucket)
+            client === nothing || proxy === _USE_TRANSPORT_PROXY || throw(ArgumentError("proxy override is not supported when passing an explicit Client"))
+            proxy_config = _proxy_config_for_request(req_client, proxy)
+            effective_cookiejar = _effective_cookiejar(client, cookiejar)
+            incoming_response = _do_incoming!(
+                trace,
+                req_client,
+                parsed.address,
+                req,
+                parsed.secure,
+                parsed.server_name,
+                protocol,
+                _redirect_policy(req_client, redirect ? redirect_limit : 0, redirect_method, forwardheaders),
+                retry_controller,
+                proxy_config,
+                normalized_cookies,
+                effective_cookiejar,
+            )
+            incoming = incoming_response::_IncomingResponse
+            resolved_request = incoming.head.request === nothing ? req : incoming.head.request::Request
+            if sse_callback !== nothing
+                sse_response = _finalize_request_response(incoming, nobody, Int64(0), resolved_request, parsed.url)
+                if !_status_throws(sse_response)
+                    _consume_incoming_sse!(incoming, sse_response, sse_callback::Function, decompress)
+                    final_response = sse_response
+                    return sse_response
+                end
+            end
+            final_body, final_length = _consume_incoming_response!(incoming, sink, decompress)
+            response = _finalize_request_response(incoming, final_body, final_length, resolved_request, parsed.url)
+            final_response = response
+            status_exception && _status_throws(response) && throw(StatusError(response))
+            return response
+        finally
+            owns_client && close(req_client)
+        end
+    catch err
+        final_error = err::Exception
+        rethrow()
     finally
-        owns_client && close(req_client)
+        _emit_trace(trace, DoneEvent(final_response, final_error, request_url === nothing ? String(url) : request_url::String))
     end
+end
+
+function request(
+    trace,
+    method::Union{AbstractString,Symbol},
+    url::Union{AbstractString,URI},
+    h=Pair{String,String}[],
+    b=nothing;
+    headers=h,
+    body=b,
+    basicauth=nothing,
+    retry::Bool=true,
+    retries::Integer=4,
+    retry_non_idempotent::Bool=false,
+    retry_if=nothing,
+    respect_retry_after::Bool=true,
+    retry_bucket::Union{Bool,RetryBucket}=true,
+    status_exception::Bool=true,
+    redirect::Bool=true,
+    redirect_limit::Union{Nothing,Integer}=nothing,
+    redirect_method=nothing,
+    forwardheaders::Bool=true,
+    proxy=_USE_TRANSPORT_PROXY,
+    cookies=true,
+    cookiejar::Union{Nothing,CookieJar}=nothing,
+    query=nothing,
+    response_stream=nothing,
+    decompress::Union{Nothing,Bool}=nothing,
+    sse_callback=nothing,
+    client::Union{Nothing,Client}=nothing,
+    connect_timeout::Real=0,
+    request_timeout::Real=0,
+    response_header_timeout::Real=0,
+    read_idle_timeout::Real=0,
+    write_idle_timeout::Real=0,
+    expect_continue_timeout=nothing,
+    readtimeout=nothing,
+    verbose=false,
+    require_ssl_verification::Bool=true,
+    protocol::Symbol=:auto
+)
+    wrapped_trace = if verbose === false || verbose === nothing
+        trace
+    else
+        _wrap_request_trace(trace, verbose)
+    end
+    return _request_impl(
+        wrapped_trace,
+        method,
+        url,
+        h,
+        b;
+        headers=headers,
+        body=body,
+        basicauth=basicauth,
+        retry=retry,
+        retries=retries,
+        retry_non_idempotent=retry_non_idempotent,
+        retry_if=retry_if,
+        respect_retry_after=respect_retry_after,
+        retry_bucket=retry_bucket,
+        status_exception=status_exception,
+        redirect=redirect,
+        redirect_limit=redirect_limit,
+        redirect_method=redirect_method,
+        forwardheaders=forwardheaders,
+        proxy=proxy,
+        cookies=cookies,
+        cookiejar=cookiejar,
+        query=query,
+        response_stream=response_stream,
+        decompress=decompress,
+        sse_callback=sse_callback,
+        client=client,
+        connect_timeout=connect_timeout,
+        request_timeout=request_timeout,
+        response_header_timeout=response_header_timeout,
+        read_idle_timeout=read_idle_timeout,
+        write_idle_timeout=write_idle_timeout,
+        expect_continue_timeout=expect_continue_timeout,
+        readtimeout=readtimeout,
+        require_ssl_verification=require_ssl_verification,
+        protocol=protocol,
+    )
+end
+
+function request(
+    method::Union{AbstractString,Symbol},
+    url::Union{AbstractString,URI},
+    h=Pair{String,String}[],
+    b=nothing;
+    headers=h,
+    body=b,
+    basicauth=nothing,
+    retry::Bool=true,
+    retries::Integer=4,
+    retry_non_idempotent::Bool=false,
+    retry_if=nothing,
+    respect_retry_after::Bool=true,
+    retry_bucket::Union{Bool,RetryBucket}=true,
+    status_exception::Bool=true,
+    redirect::Bool=true,
+    redirect_limit::Union{Nothing,Integer}=nothing,
+    redirect_method=nothing,
+    forwardheaders::Bool=true,
+    proxy=_USE_TRANSPORT_PROXY,
+    cookies=true,
+    cookiejar::Union{Nothing,CookieJar}=nothing,
+    query=nothing,
+    response_stream=nothing,
+    decompress::Union{Nothing,Bool}=nothing,
+    sse_callback=nothing,
+    client::Union{Nothing,Client}=nothing,
+    connect_timeout::Real=0,
+    request_timeout::Real=0,
+    response_header_timeout::Real=0,
+    read_idle_timeout::Real=0,
+    write_idle_timeout::Real=0,
+    expect_continue_timeout=nothing,
+    readtimeout=nothing,
+    verbose=false,
+    require_ssl_verification::Bool=true,
+    protocol::Symbol=:auto
+)
+    wrapped_trace = if verbose === false || verbose === nothing
+        nothing
+    else
+        _wrap_request_trace(nothing, verbose)
+    end
+    return _request_impl(
+        wrapped_trace,
+        method,
+        url,
+        h,
+        b;
+        headers=headers,
+        body=body,
+        basicauth=basicauth,
+        retry=retry,
+        retries=retries,
+        retry_non_idempotent=retry_non_idempotent,
+        retry_if=retry_if,
+        respect_retry_after=respect_retry_after,
+        retry_bucket=retry_bucket,
+        status_exception=status_exception,
+        redirect=redirect,
+        redirect_limit=redirect_limit,
+        redirect_method=redirect_method,
+        forwardheaders=forwardheaders,
+        proxy=proxy,
+        cookies=cookies,
+        cookiejar=cookiejar,
+        query=query,
+        response_stream=response_stream,
+        decompress=decompress,
+        sse_callback=sse_callback,
+        client=client,
+        connect_timeout=connect_timeout,
+        request_timeout=request_timeout,
+        response_header_timeout=response_header_timeout,
+        read_idle_timeout=read_idle_timeout,
+        write_idle_timeout=write_idle_timeout,
+        expect_continue_timeout=expect_continue_timeout,
+        readtimeout=readtimeout,
+        require_ssl_verification=require_ssl_verification,
+        protocol=protocol,
+    )
 end
 
 function _finalize_request_response(

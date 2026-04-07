@@ -219,6 +219,48 @@ end
     end
 end
 
+@testset "HTTP request trace emits retry events" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    seen = Tuple{String, String, String}[]
+    events = Any[]
+    scenarios = [
+        (status = 503, reason = "Service Unavailable", retry_after = "0"),
+        (status = 200, reason = "OK", body_text = "ok"),
+    ]
+    server_task = _serve_retry_sequence(listener, scenarios, seen)
+    try
+        response = HT.request(event -> push!(events, event), "GET", "$(base_url)/retry"; retries = 1, status_exception = false)
+        @test response.status == 200
+        @test String(response.body) == "ok"
+        _wait_task_retry!(server_task)
+        @test seen == [("GET", "/retry", ""), ("GET", "/retry", "")]
+        @test typeof.(events) == [
+            HT.RequestEvent,
+            HT.ResponseHeadEvent,
+            HT.RetryEvent,
+            HT.RequestEvent,
+            HT.ResponseHeadEvent,
+            HT.DoneEvent,
+        ]
+        retry_event = events[3]::HT.RetryEvent
+        @test retry_event.attempt == 1
+        @test retry_event.next_attempt == 2
+        @test retry_event.redirect_count == 0
+        @test retry_event.response !== nothing
+        @test retry_event.err === nothing
+        @test (retry_event.response::HT.Response).status == 503
+        @test retry_event.delay_ns == 0
+    finally
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
 @testset "HTTP request treats PUT and DELETE as idempotent for retries" begin
     for (method, body_arg) in [("PUT", "payload"), ("DELETE", nothing)]
         listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)

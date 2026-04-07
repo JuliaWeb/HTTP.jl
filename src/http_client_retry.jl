@@ -182,18 +182,18 @@ function _arm_request_retry!(
             token = Base.acquire(bucket::RetryBucket, _retry_partition_for_address(address))
         catch err
             err isa RetryDeniedError || rethrow(err)
-            return false, nothing
+            return false, nothing, delay_ns
         end
     end
     ok = false
     try
-        _sleep_retry_delay!(request, delay_ns) || return false, nothing
+        _sleep_retry_delay!(request, delay_ns) || return false, nothing, delay_ns
         ok = true
     finally
         ok || (bucket !== nothing && token !== nothing && release(bucket::RetryBucket, token, nothing))
     end
     controller.remaining -= 1
-    return true, token
+    return true, token, delay_ns
 end
 
 function _retry_controller(
