@@ -4,7 +4,12 @@ const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _TRIM_PRE_RELEASE = !isempty(VERSION.prerelease)
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
 
-function _run_trim_compile(project_path::String, script_path::String, output_name::String; timeout_s::Float64 = 120.0, bundle_dir::Union{Nothing, String} = nothing)
+function _trim_compile_timeout_s()::Float64
+    default = Sys.iswindows() ? "240.0" : "120.0"
+    return parse(Float64, get(ENV, "HTTP_TRIM_COMPILE_TIMEOUT_S", default))
+end
+
+function _run_trim_compile(project_path::String, script_path::String, output_name::String; timeout_s::Float64 = _trim_compile_timeout_s(), bundle_dir::Union{Nothing, String} = nothing)
     julia_exe = joinpath(Sys.BINDIR, Base.julia_exename())
     cmd = if bundle_dir === nothing
         `$julia_exe --startup-file=no --history-file=no --code-coverage=none --project=$project_path -e $(_JULIAC_ENTRYPOINT_EXPR) -- --output-exe $output_name --project=$project_path --experimental --trim=safe $script_path`
