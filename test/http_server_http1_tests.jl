@@ -39,8 +39,11 @@ function _raw_http_request(port::Integer, request::AbstractString; settle_s::Flo
             NC.closewrite(sock)
         catch
         end
-        sleep(settle_s)
-        return _read_until_deadline(sock)
+        return _read_until_quiet(
+            sock;
+            timeout_s = max(2.0, settle_s + 1.0),
+            quiet_timeout_s = min(0.25, max(0.05, settle_s)),
+        )
     finally
         NC.close(sock)
     end
