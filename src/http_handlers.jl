@@ -40,7 +40,7 @@ dispatch on `Handler`.
 
 For advanced cases, a `Handler` function can also be of the form
 `f(stream::HTTP.Stream) -> Nothing`. In this case, the server would be run like
-`HTTP.serve(f, ...; stream=true)`. Any middleware used with a stream handler
+`HTTP.listen(f, ...)`. Any middleware used with a stream handler
 also needs to accept and return a stream handler.
 """
 abstract type Handler end

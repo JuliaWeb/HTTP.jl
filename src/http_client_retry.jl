@@ -8,6 +8,16 @@ mutable struct _RetryController{F}
     bucket::Union{Nothing,RetryBucket}
 end
 
+"""
+    RequestRetryError(err)
+
+Wrapper passed to `retry_if` for request-path failures. Inspect `err.err` to
+check the underlying transport or protocol exception.
+"""
+struct RequestRetryError <: Exception
+    err::Exception
+end
+
 @inline function _retryable_status(status::Int)::Bool
     return status == 408 || status == 429 || status == 500 || status == 502 || status == 503 || status == 504
 end
@@ -33,22 +43,54 @@ end
     return _retryable_request_method(request.method) || _retryable_request_headers(request)
 end
 
-function _retryable_request_error(err)::Bool
-    err isa EOFError && return true
-    err isa SystemError && return true
-    err isa ParseError && return true
-    err isa HostResolvers.DialTimeoutError && return true
-    err isa HostResolvers.OpError && return _retryable_request_error((err::HostResolvers.OpError).err)
-    err isa IOPoll.NetClosingError && return true
-    err isa IOPoll.NotPollableError && return true
-    err isa IOPoll.DeadlineExceededError && return false
-    err isa TLS.TLSHandshakeTimeoutError && return true
-    if err isa TLS.TLSError
-        cause = (err::TLS.TLSError).cause
-        cause === nothing && return false
-        return _retryable_request_error(cause::Exception)
+function _retryable_request_error(err::Exception)::Bool
+    current = err
+    while true
+        current isa EOFError && return true
+        current isa SystemError && return true
+        current isa ParseError && return true
+        current isa HostResolvers.DialTimeoutError && return true
+        current isa IOPoll.NetClosingError && return true
+        current isa IOPoll.NotPollableError && return true
+        current isa IOPoll.DeadlineExceededError && return false
+        current isa TLS.TLSHandshakeTimeoutError && return true
+        if current isa HostResolvers.OpError
+            current = (current::HostResolvers.OpError).err
+            continue
+        end
+        if current isa TLS.TLSError
+            cause = (current::TLS.TLSError).cause
+            cause === nothing && return false
+            current = cause::Exception
+            continue
+        end
+        return false
     end
-    return false
+end
+
+function _retryable_request_error(err::RequestRetryError)::Bool
+    current = err.err
+    while true
+        current isa EOFError && return true
+        current isa SystemError && return true
+        current isa ParseError && return true
+        current isa HostResolvers.DialTimeoutError && return true
+        current isa IOPoll.NetClosingError && return true
+        current isa IOPoll.NotPollableError && return true
+        current isa IOPoll.DeadlineExceededError && return false
+        current isa TLS.TLSHandshakeTimeoutError && return true
+        if current isa HostResolvers.OpError
+            current = (current::HostResolvers.OpError).err
+            continue
+        end
+        if current isa TLS.TLSError
+            cause = (current::TLS.TLSError).cause
+            cause === nothing && return false
+            current = cause::Exception
+            continue
+        end
+        return false
+    end
 end
 
 function _retry_hook_decision(controller::_RetryController, attempt::Int, err, req::Request, resp)
@@ -101,7 +143,14 @@ function _retry_delay_ns(
             retry_after_ns = _retry_after_delay_ns((response::Response).headers)
         end
     end
-    return _retry_delay_ns(controller.bucket, attempt; retry_after_ns=retry_after_ns)
+    return _retry_delay_ns(controller.bucket, attempt, retry_after_ns)
+end
+
+@inline function _retry_release_error(status::Int)::Union{Nothing,Exception}
+    if status == 429 || (500 <= status < 600)
+        return ErrorResponseStatus(status)
+    end
+    return nothing
 end
 
 function _sleep_retry_delay!(request::Request, delay_ns::Int64)::Bool
@@ -116,22 +165,6 @@ function _sleep_retry_delay!(request::Request, delay_ns::Int64)::Bool
     delay_ns == 0 && return true
     sleep(delay_ns / 1.0e9)
     return true
-end
-
-function _release_retry_token!(controller::_RetryController, token)
-    token === nothing && return nothing
-    bucket = controller.bucket
-    bucket === nothing && return nothing
-    Base.release(bucket::RetryBucket, token)
-    return nothing
-end
-
-function _release_retry_token!(controller::_RetryController, token, err)
-    token === nothing && return nothing
-    bucket = controller.bucket
-    bucket === nothing && return nothing
-    Base.release(bucket::RetryBucket, token, err)
-    return nothing
 end
 
 function _arm_request_retry!(
@@ -157,7 +190,7 @@ function _arm_request_retry!(
         _sleep_retry_delay!(request, delay_ns) || return false, nothing
         ok = true
     finally
-        ok || _release_retry_token!(controller, token)
+        ok || (bucket !== nothing && token !== nothing && release(bucket::RetryBucket, token, nothing))
     end
     controller.remaining -= 1
     return true, token

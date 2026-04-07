@@ -89,7 +89,7 @@ The current release intentionally defers:
 
 - HTTP/2 server push and any `Pusher`-style server API
 - Go `ResponseController` / hijack-style response-control APIs
-- full `httptrace` parity beyond the documented `HTTP.ClientTrace` hooks
+- full Go request lifecycle instrumentation parity
 - full `net/url` and `ServeMux` feature parity
 
 Treat these as explicit scope decisions for the current release, not accidental

@@ -36,7 +36,7 @@ The current release intentionally defers:
 
 - HTTP/2 server push and a `Pusher`-style surface
 - Go `ResponseController` / hijack-style server-control APIs
-- full `httptrace` parity beyond the documented `HTTP.ClientTrace` hooks
+- full Go request lifecycle instrumentation parity
 - full `net/url` and `ServeMux` feature parity
 
 These are explicit scope decisions for the 2.x release line rather than known
@@ -60,12 +60,12 @@ println(r.status)
 println(String(r.body))
 ```
 
-Stream directly into an `IO` sink with `response_body`, or use `HTTP.open` when
+Stream directly into an `IO` sink with `response_stream`, or use `HTTP.open` when
 you want pull-based control over the response stream.
 
 ```julia
 open("response.bin", "w") do io
-    HTTP.get("https://example.com/data.bin"; response_body = io)
+    HTTP.get("https://example.com/data.bin"; response_stream = io)
 end
 
 HTTP.open(:GET, "https://example.com/stream") do stream

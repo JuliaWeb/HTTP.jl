@@ -97,7 +97,12 @@ end
 
 function _trim_known_task_runtime_limitation(script_path::String)::Bool
     source = read(script_path, String)
-    return occursin("Task(", source) || occursin("Threads.@spawn", source)
+    return occursin("Task(", source) ||
+        occursin("Threads.@spawn", source) ||
+        occursin("HT.serve!(", source) ||
+        occursin("HTTP.serve!(", source) ||
+        occursin("HT.listen!(", source) ||
+        occursin("HTTP.listen!(", source)
 end
 
 function _trim_task_runtime_allow_failure(script_file::String, reason::String, output::String = "")
@@ -234,10 +239,9 @@ end
         ]
         if _trim_include_frontier_workloads()
             append!(trim_workloads, [
-                # These are the next public-client frontier workloads. They are
-                # intentionally opt-in until the `do!` / `request(...)` keyword
-                # wrappers become trim-safe again.
-                ("http_trim_client_h1_do.jl", "http_trim_client_h1_do"),
+                # Single high-level client/server frontier workload that uses
+                # public `serve!` + `request(...)` to exercise the highest
+                # request/response round-trip layer under trim compilation.
                 ("http_trim_client_h1_request.jl", "http_trim_client_h1_request"),
             ])
         end

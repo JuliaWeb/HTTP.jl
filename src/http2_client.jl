@@ -695,7 +695,7 @@ function _start_h2_read_loop!(conn::H2Connection)
     lock(conn.state_lock)
     try
         conn.read_task !== nothing && return nothing
-        conn.read_task = errormonitor(Threads.@spawn _run_h2_read_loop!(conn))
+        conn.read_task = Threads.@spawn _run_h2_read_loop!(conn)
     finally
         unlock(conn.state_lock)
     end

@@ -933,213 +933,6 @@ end
     end
 end
 
-@testset "HTTP client trace callbacks" begin
-    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
-    laddr = NC.addr(listener)::NC.SocketAddrV4
-    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    server_task = errormonitor(Threads.@spawn begin
-        conn = NC.accept(listener)
-        try
-            req = HT.read_request(HT._ConnReader(conn))
-            _send_response_client!(conn, req; body_text = "trace")
-        finally
-            try
-                NC.close(conn)
-            catch
-            end
-        end
-        return nothing
-    end)
-    events = Symbol[]
-    trace = HT.ClientTrace(
-        on_get_conn = (address, secure) -> begin
-            _ = (address, secure)
-            push!(events, :get_conn)
-            return nothing
-        end,
-        on_got_conn = (address, secure) -> begin
-            _ = (address, secure)
-            push!(events, :got_conn)
-            return nothing
-        end,
-        on_wrote_request = (method, target) -> begin
-            _ = (method, target)
-            push!(events, :wrote_request)
-            return nothing
-        end,
-        on_got_first_response_byte = status -> begin
-            _ = status
-            push!(events, :got_first_response_byte)
-            return nothing
-        end,
-    )
-    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), trace = trace)
-    try
-        response = HT.get!(client, address, "/trace")
-        @test response.status == 200
-        @test String(_read_all_body_bytes_client(response.body)) == "trace"
-        _wait_task_client!(server_task)
-        @test events == [:get_conn, :got_conn, :wrote_request, :got_first_response_byte]
-    finally
-        close(client.transport)
-        try
-            NC.close(listener)
-        catch
-        end
-    end
-end
-
-@testset "HTTP client verbose summaries" begin
-    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
-    laddr = NC.addr(listener)::NC.SocketAddrV4
-    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    verbose_io = IOBuffer()
-    server_task = errormonitor(Threads.@spawn begin
-        conn = NC.accept(listener)
-        try
-            req = HT.read_request(HT._ConnReader(conn))
-            _send_response_client!(conn, req; body_text = "verbose-summary", close_conn = true)
-        finally
-            try
-                NC.close(conn)
-            catch
-            end
-        end
-        return nothing
-    end)
-    try
-        response = HT.get("http://$(address)/summary"; verbose = true, verbose_io = verbose_io)
-        @test response.status == 200
-        @test String(response.body) == "verbose-summary"
-        _wait_task_client!(server_task)
-        log_text = String(take!(verbose_io))
-        @test occursin("[http] request GET http://$(address)/summary", log_text)
-        @test occursin("[http] attempt 1 via h1 GET http://$(address)/summary", log_text)
-        @test occursin("[http] response HTTP/1.1 200 OK for http://$(address)/summary", log_text)
-    finally
-        try
-            NC.close(listener)
-        catch
-        end
-    end
-end
-
-@testset "HTTP client verbose exact H1 wire capture" begin
-    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
-    laddr = NC.addr(listener)::NC.SocketAddrV4
-    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    verbose_l2 = IOBuffer()
-    verbose_l3 = IOBuffer()
-    expected_response_wire = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\nX-Trailer: done\r\n\r\n"
-    function _serve_verbose_wire!(listener::NC.Listener)
-        conn = NC.accept(listener)
-        try
-            req = HT.read_request(HT._ConnReader(conn))
-            payload = String(_read_all_body_bytes_client(req.body))
-            payload == "hello world" || error("unexpected request body: $payload")
-            _write_all_tcp_client!(conn, collect(codeunits(expected_response_wire)))
-        finally
-            try
-                NC.close(conn)
-            catch
-            end
-        end
-        return nothing
-    end
-    try
-        server_task_l2 = errormonitor(Threads.@spawn _serve_verbose_wire!(listener))
-        response_l2 = HT.post(
-            "http://$(address)/wire";
-            body = ["hello", " world"],
-            verbose = 2,
-            verbose_body_nbytes = 8,
-            verbose_io = verbose_l2,
-            status_exception = false,
-        )
-        @test response_l2.status == 200
-        @test String(response_l2.body) == "hello world"
-        _wait_task_client!(server_task_l2)
-        log_l2 = String(take!(verbose_l2))
-        @test occursin("[http] request dump (h1, attempt 1)", log_l2)
-        @test occursin("POST /wire HTTP/1.1\r\n", log_l2)
-        @test occursin("Transfer-Encoding: chunked\r\n", log_l2)
-        @test occursin("b\r\nhello world\r\n0\r\n\r\n", log_l2)
-        @test occursin("[http] response dump (h1, attempt 1)", log_l2)
-        @test occursin("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\nX-Trailer: done\r\n\r\n", log_l2)
-
-        server_task_l3 = errormonitor(Threads.@spawn _serve_verbose_wire!(listener))
-        response_l3 = HT.post(
-            "http://$(address)/wire";
-            body = ["hello", " world"],
-            verbose = 3,
-            verbose_body_nbytes = 1,
-            verbose_io = verbose_l3,
-            status_exception = false,
-        )
-        @test response_l3.status == 200
-        @test String(response_l3.body) == "hello world"
-        _wait_task_client!(server_task_l3)
-        log_l3 = String(take!(verbose_l3))
-        @test occursin("b\r\nhello world\r\n0\r\n\r\n", log_l3)
-        @test occursin(expected_response_wire, log_l3)
-    finally
-        try
-            NC.close(listener)
-        catch
-        end
-    end
-end
-
-@testset "HTTP client verbose suppresses compressed bodies" begin
-    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
-    laddr = NC.addr(listener)::NC.SocketAddrV4
-    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    verbose_io = IOBuffer()
-    payload = _gzip_bytes_client("zip-text")
-    server_task = errormonitor(Threads.@spawn begin
-        conn = NC.accept(listener)
-        try
-            req = HT.read_request(HT._ConnReader(conn))
-            headers = HT.Headers()
-            HT.setheader(headers, "Content-Encoding", "gzip")
-            HT.setheader(headers, "Connection", "close")
-            response = HT.Response(
-                200,
-                HT.BytesBody(payload);
-                headers = headers,
-                content_length = length(payload),
-                close = true,
-                request = req,
-            )
-            io = IOBuffer()
-            HT.write_response!(io, response)
-            _write_all_tcp_client!(conn, take!(io))
-        finally
-            try
-                NC.close(conn)
-            catch
-            end
-        end
-        return nothing
-    end)
-    try
-        response = HT.get("http://$(address)/gzip-verbose"; verbose = 2, verbose_io = verbose_io)
-        @test response.status == 200
-        @test String(response.body) == "zip-text"
-        _wait_task_client!(server_task)
-        log_text = String(take!(verbose_io))
-        @test occursin("Content-Encoding: gzip\r\n", log_text)
-        @test occursin("<gzip-compressed ", log_text)
-        @test occursin("-byte body omitted>", log_text)
-        @test !occursin("[truncated after", log_text)
-        @test !occursin("zip-text", log_text)
-    finally
-        try
-            NC.close(listener)
-        catch
-        end
-    end
-end
 
 @testset "HTTP high-level request interface" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
@@ -1453,7 +1246,7 @@ end
         @test accept_encodings["/gzip-off"] === nothing
 
         streamed_gzip = IOBuffer()
-        resp_gzip_stream = HT.get("$(base_url)/gzip-stream"; response_body = streamed_gzip, decompress = true)
+        resp_gzip_stream = HT.get("$(base_url)/gzip-stream"; response_stream = streamed_gzip, decompress = true)
         @test resp_gzip_stream.status == 200
         @test resp_gzip_stream.body === nothing
         @test String(take!(streamed_gzip)) == "gzip-stream"
@@ -1489,14 +1282,14 @@ end
         @test accept_encodings["/deflate-off"] === nothing
 
         streamed_deflate = IOBuffer()
-        resp_deflate_stream = HT.get("$(base_url)/deflate-stream"; response_body = streamed_deflate, decompress = true)
+        resp_deflate_stream = HT.get("$(base_url)/deflate-stream"; response_stream = streamed_deflate, decompress = true)
         @test resp_deflate_stream.status == 200
         @test resp_deflate_stream.body === nothing
         @test String(take!(streamed_deflate)) == "deflate-stream"
         @test accept_encodings["/deflate-stream"] == "gzip, deflate"
 
         deflate_buffer = Vector{UInt8}(undef, 32)
-        resp_deflate_buffer = HT.get("$(base_url)/deflate-buffer"; response_body = deflate_buffer, decompress = true)
+        resp_deflate_buffer = HT.get("$(base_url)/deflate-buffer"; response_stream = deflate_buffer, decompress = true)
         @test resp_deflate_buffer.status == 200
         @test resp_deflate_buffer.body === deflate_buffer
         @test String(resp_deflate_buffer.body) == "deflate-buffer"

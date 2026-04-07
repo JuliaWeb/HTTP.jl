@@ -147,8 +147,7 @@ end
 
 @testset "HTTP server top-level wrapper kwargs and stream abort state" begin
     aborted_states = Channel{Bool}(2)
-    server = HT.serve!("127.0.0.1", 0;
-        stream = true,
+    server = HT.listen!("127.0.0.1", 0;
         listenany = true,
         read_timeout_ns = 11_000_000_000,
         read_header_timeout_ns = 22_000_000_000,

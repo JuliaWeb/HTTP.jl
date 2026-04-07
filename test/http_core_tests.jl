@@ -179,7 +179,7 @@ end
     compact_plain = sprint(io -> show(IOContext(io, :compact => true), MIME"text/plain"(), request))
     @test compact_plain == compact
 
-    large_body = repeat("a", HT._VERBOSE_DEFAULT_BODY_NBYTES + 5)
+    large_body = repeat("a", HT._DEFAULT_MESSAGE_SHOW_BODY_NBYTES + 5)
     limited_request = HT.Request(
         "POST",
         "/large";
@@ -189,7 +189,7 @@ end
         content_length=ncodeunits(large_body),
     )
     limited_plain = sprint(io -> show(io, MIME"text/plain"(), limited_request))
-    @test occursin("[truncated after $(HT._VERBOSE_DEFAULT_BODY_NBYTES) of $(ncodeunits(large_body)) bytes]", limited_plain)
+    @test occursin("[truncated after $(HT._DEFAULT_MESSAGE_SHOW_BODY_NBYTES) of $(ncodeunits(large_body)) bytes]", limited_plain)
     full_print = sprint(print, limited_request)
     @test !occursin("[truncated after", full_print)
     @test occursin(large_body, full_print)

@@ -184,6 +184,76 @@ iscookienamevalid(raw) = raw == "" ? false : any(isurlchar, raw)
 gmtformat(::DateFormat{S,T}) where {S,T} = Dates.DateFormat(string(S, " G\\MT"))
 const AlternateRFC1123GMTFormat = gmtformat(dateformat"e, dd-uuu-yyyy HH:MM:SS")
 const RFC1123GMTFormat = gmtformat(Dates.RFC1123Format)
+const _HTTP_GMT_DATE_RE = r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),[ \t]+(\d{1,2})[- ]([A-Za-z]{3})[- ](\d{4})[ \t]+(\d{2}):(\d{2}):(\d{2})[ \t]+GMT$"
+
+@inline function _ascii_lower_byte(b::UInt8)::UInt8
+    0x41 <= b <= 0x5a || return b
+    return b + 0x20
+end
+
+@inline function _find_last_ascii_delim(s::String, delim::UInt8)::Int
+    bytes = codeunits(s)
+    for i in length(bytes):-1:1
+        @inbounds bytes[i] == delim && return i
+    end
+    return 0
+end
+
+@inline function _http_month_number(mon::AbstractString)::Int
+    bytes = codeunits(mon)
+    length(bytes) == 3 || return 0
+    b1 = _ascii_lower_byte(@inbounds bytes[1])
+    b2 = _ascii_lower_byte(@inbounds bytes[2])
+    b3 = _ascii_lower_byte(@inbounds bytes[3])
+    b1 == 0x6a && b2 == 0x61 && b3 == 0x6e && return 1
+    b1 == 0x66 && b2 == 0x65 && b3 == 0x62 && return 2
+    b1 == 0x6d && b2 == 0x61 && b3 == 0x72 && return 3
+    b1 == 0x61 && b2 == 0x70 && b3 == 0x72 && return 4
+    b1 == 0x6d && b2 == 0x61 && b3 == 0x79 && return 5
+    b1 == 0x6a && b2 == 0x75 && b3 == 0x6e && return 6
+    b1 == 0x6a && b2 == 0x75 && b3 == 0x6c && return 7
+    b1 == 0x61 && b2 == 0x75 && b3 == 0x67 && return 8
+    b1 == 0x73 && b2 == 0x65 && b3 == 0x70 && return 9
+    b1 == 0x6f && b2 == 0x63 && b3 == 0x74 && return 10
+    b1 == 0x6e && b2 == 0x6f && b3 == 0x76 && return 11
+    b1 == 0x64 && b2 == 0x65 && b3 == 0x63 && return 12
+    return 0
+end
+
+function _parse_http_gmt_datetime(value::AbstractString)::Union{Nothing,Dates.DateTime}
+    m = match(_HTTP_GMT_DATE_RE, value)
+    m === nothing && return nothing
+    captures = m.captures
+    day_capture = captures[1]
+    day_capture === nothing && return nothing
+    day = tryparse(Int, day_capture)
+    day === nothing && return nothing
+    month_capture = captures[2]
+    month_capture === nothing && return nothing
+    month = _http_month_number(month_capture)
+    month == 0 && return nothing
+    year_capture = captures[3]
+    year_capture === nothing && return nothing
+    year = tryparse(Int, year_capture)
+    year === nothing && return nothing
+    hour_capture = captures[4]
+    hour_capture === nothing && return nothing
+    hour = tryparse(Int, hour_capture)
+    hour === nothing && return nothing
+    minute_capture = captures[5]
+    minute_capture === nothing && return nothing
+    minute = tryparse(Int, minute_capture)
+    minute === nothing && return nothing
+    second_capture = captures[6]
+    second_capture === nothing && return nothing
+    second = tryparse(Int, second_capture)
+    second === nothing && return nothing
+    try
+        return Dates.DateTime(year, month, day, hour, minute, second)
+    catch
+        return nothing
+    end
+end
 
 function readsetcookies(hdrs::Headers)::Vector{Cookie}
     result = Cookie[]
@@ -249,15 +319,9 @@ function readsetcookies(hdrs::Headers)::Vector{Cookie}
                 end
             elseif lowerattr == "expires"
                 c.rawexpires = val
-                try
-                    c.expires = Dates.DateTime(val, RFC1123GMTFormat)
-                catch
-                    try
-                        c.expires = Dates.DateTime(val, AlternateRFC1123GMTFormat)
-                    catch
-                        continue
-                    end
-                end
+                parsed = _parse_http_gmt_datetime(val)
+                parsed === nothing && continue
+                c.expires = parsed
             elseif lowerattr == "path"
                 c.path = val
             else
@@ -549,8 +613,8 @@ function defaultPath(path)
     if isempty(path) || path[1] != '/'
         return "/"
     end
-    i = findlast('/', path)
-    if i === nothing || i == 1
+    i = _find_last_ascii_delim(path, UInt8('/'))
+    if i == 0 || i == 1
         return "/"
     end
     return path[1:(i-1)]
@@ -614,8 +678,8 @@ end
 
 function splithostport(hostport)
     j = k = 1
-    i = findlast(':', hostport)
-    i === nothing && return "", "", true
+    i = _find_last_ascii_delim(hostport, UInt8(':'))
+    i == 0 && return "", "", true
     if hostport[1] == '['
         z = findfirst(']', hostport)
         z === nothing && return "", "", true

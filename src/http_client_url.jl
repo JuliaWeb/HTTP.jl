@@ -186,7 +186,7 @@ end
     parts_split = split(userinfo, ':'; limit=2)
     username = parts_split[1]
     password = length(parts_split) == 2 ? parts_split[2] : ""
-    return "Basic " * base64encode(string(username, ":", password))
+    return "Basic " * _base64encode(string(username, ":", password))
 end
 
 function _query_string(query)::String

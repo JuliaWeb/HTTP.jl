@@ -89,11 +89,11 @@
   - Verification evidence: shimmed `http_client_tests.jl`, `http_client_transport_tests.jl`, `http_websocket_client_tests.jl`, and `http2_client_tests.jl` all passed with new H1 read-idle, H2 read-idle, and H2 write-idle regressions.
 
 ### [x] ITEM-004 (P1) Round out timeout coverage, defaults, and client-facing documentation/tests
-- Description: After the new timeout model exists, the remaining work is to make it feel production-ready: ensure verbose/docstrings/reference text describe the new behavior clearly, apply the appropriate timeout knobs to remaining client surfaces such as websockets, and add a realistic regression matrix around retries, redirects, streaming, and pooled/reused connections.
+- Description: After the new timeout model exists, the remaining work is to make it feel production-ready: ensure docstrings/reference text describe the new behavior clearly, apply the appropriate timeout knobs to remaining client surfaces such as websockets, and add a realistic regression matrix around retries, redirects, streaming, and pooled/reused connections.
 - Desired outcome: The rewrite exposes a coherent, well-documented timeout interface with regression coverage that reflects real production usage patterns rather than only isolated socket timeouts.
 - Affected files: `src/http_client.jl`, `src/http_stream.jl`, `src/http_websockets.jl`, `src/http_client_verbose.jl`, `test/http_client_tests.jl`, `test/http_stream_tests.jl`, `test/http_websocket_client_tests.jl`, `test/http_integration_tests.jl`
 - Implementation notes:
-  - Update high-level docstrings and any verbose/debug output that mention the old `readtimeout` behavior.
+  - Update high-level docstrings and any debug output that mention the old `readtimeout` behavior.
   - Ensure redirects/retries carry forward the new timeout semantics intentionally and do not accidentally reset or ignore them.
   - Validate websocket client behavior for connect/handshake/read inactivity timeouts where those semantics sensibly apply.
   - Add regression tests that exercise pooled connection reuse, redirects, retries, streaming bodies, and websocket handshakes under the new timeout model.

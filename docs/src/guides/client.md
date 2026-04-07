@@ -109,7 +109,7 @@ HTTP.open(:GET, base_url * "/stream"; proxy = HTTP.ProxyConfig()) do stream
 end
 ```
 
-If you only need to stream into an `IO`, prefer the `response_body` keyword:
+If you only need to stream into an `IO`, use the `response_stream` keyword:
 
 ```julia
 function wait_for_base_url(server)
@@ -146,7 +146,7 @@ end
 
 base_url = wait_for_base_url(server)
 buffer = IOBuffer()
-response = HTTP.get(base_url * "/buffered"; response_body = buffer, proxy = HTTP.ProxyConfig())
+response = HTTP.get(base_url * "/buffered"; response_stream = buffer, proxy = HTTP.ProxyConfig())
 seekstart(buffer)
 HTTP.forceclose(server)
 (status = response.status, body = String(take!(buffer)))
@@ -261,8 +261,12 @@ handshake-relevant subset (`connect_timeout`, `request_timeout`,
 Reach for these APIs when you need more control:
 
 - `RetryBucket` for coordinated retry throttling
-- `ClientTrace` for request lifecycle callbacks
 - `connect_timeout`, `request_timeout`, `response_header_timeout`,
   `read_idle_timeout`, `write_idle_timeout`, and `expect_continue_timeout`
   on `request`
 - `retry_if`, `retry_non_idempotent`, and `respect_retry_after` for custom retry policy
+
+When `retry_if` runs for a request-path failure, `err` is a
+`RequestRetryError`; inspect `err.err` to see the underlying transport or
+protocol exception. Response-based retry decisions keep `err = nothing` and
+pass the response through `resp`.

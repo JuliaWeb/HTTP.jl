@@ -1,10 +1,18 @@
 # HTTP client redirect policy, target resolution, and redirect request rewriting.
-struct _RedirectPolicy
-    check_redirect::Union{Nothing,Function}
+struct _RedirectPolicy{CR}
+    check_redirect::CR
     max_redirects::Int
     redirect_method::Union{Nothing,String}
     preserve_method::Bool
     forward_headers::Bool
+end
+
+@inline _call_check_redirect(::Nothing, response::Response, request::Request, location::String)::Bool = true
+
+@inline function _call_check_redirect(check_redirect, response::Response, request::Request, location::String)::Bool
+    proceed = check_redirect(response, request, location)
+    proceed isa Bool || throw(ProtocolError("check_redirect callback must return Bool"))
+    return proceed
 end
 
 function _normalize_redirect_method_override(redirect_method)::Tuple{Union{Nothing,String},Bool}
@@ -39,10 +47,18 @@ function _join_request_target(path::String, query::String)::String
     return string(final_path, "?", query)
 end
 
+@inline function _find_last_ascii_delim(s::String, delim::UInt8)::Int
+    bytes = codeunits(s)
+    for i in length(bytes):-1:1
+        @inbounds bytes[i] == delim && return i
+    end
+    return 0
+end
+
 function _merge_redirect_base_path(base_path::String, relative_path::String)::String
     isempty(relative_path) && return base_path
-    slash = findlast('/', base_path)
-    slash === nothing && return "/" * relative_path
+    slash = _find_last_ascii_delim(base_path, UInt8('/'))
+    slash == 0 && return "/" * relative_path
     return string(SubString(base_path, firstindex(base_path), slash), relative_path)
 end
 
@@ -136,8 +152,8 @@ function _strip_sensitive_redirect_headers!(headers::Headers)
 end
 
 function _normalize_redirect_authority(authority::String, secure::Bool)::String
-    at_idx = findlast('@', authority)
-    if at_idx !== nothing
+    at_idx = _find_last_ascii_delim(authority, UInt8('@'))
+    if at_idx != 0
         authority = String(SubString(authority, nextind(authority, at_idx), lastindex(authority)))
     end
     isempty(authority) && throw(ProtocolError("redirect location is missing host"))

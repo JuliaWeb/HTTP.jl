@@ -34,7 +34,7 @@ If you previously reached into parser, connection, server, or client internals,
 plan to move onto these stable 2.0 surfaces instead:
 
 - `Request`, `Response`, `Headers`
-- `Client`, `Transport`, `ClientTrace`
+- `Client`, `Transport`, `RetryBucket`
 - `serve!`, `listen!`, `listen`, `streamhandler`
 - `WebSockets`
 - `ProxyConfig`, `NoProxy`, `ProxyFromEnvironment`
@@ -58,9 +58,9 @@ bytes = resp.body
 text = String(resp.body)
 ```
 
-If you previously used `response_stream`, the preferred 2.0 spelling is
-`response_body`, and `HTTP.open` is usually the better fit when you want direct
-stream ownership.
+Continue using `response_stream` when you want to stream a response directly
+into an `IO` or preallocated byte buffer, and prefer `HTTP.open` when you want
+direct stream ownership.
 
 ## 2. Code that depended on undocumented connection internals
 
@@ -68,7 +68,7 @@ Move to:
 
 - `Client`
 - `Transport`
-- `ClientTrace`
+- `RetryBucket`
 - explicit retry and proxy configuration
 
 ## 3. Code that reached into parser or framing internals

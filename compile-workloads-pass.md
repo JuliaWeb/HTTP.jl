@@ -51,7 +51,7 @@
     - `Router`, `register!`, and `handlertimeout`
     - redirects and cookies
     - `HTTP.open`
-    - `response_body = IOBuffer()`
+    - `response_stream = IOBuffer()`
     - `servecontent` range handling and `fileserver`
     - one public HTTP/2 client/server flow
     - one public WebSocket echo flow
@@ -140,7 +140,7 @@
   - After isolating around the known package-internal task limitation, the next higher-layer blocker on the client side is now clearer as well: a simple top-level `HT.get("http://127.0.0.1:port/hello"; proxy=HT.ProxyConfig(), protocol=:h1, ...)` against a `Main`-rooted one-shot server task fails trim verification before runtime.
   - The first concrete public-client verifier error is the kw-wrapper dispatch in `src/http_client.jl`:
     - `Verifier error: unresolved call from statement HTTP.:(var"#request#187")(...)::Response{Vector{UInt8}}`
-  - Additional public-client probe failures stack on top of that first blocker for `HT.get(::URI)`, `HT.request(...; response_body=IOBuffer())`, and `HT.open(...)`, but those are currently treated as downstream noise until the base `HT.get(::String; ...)` path is trim-safe.
+  - Additional public-client probe failures stack on top of that first blocker for `HT.get(::URI)`, `HT.request(...; response_stream=IOBuffer())`, and `HT.open(...)`, but those are currently treated as downstream noise until the base `HT.get(::String; ...)` path is trim-safe.
 
 ### [ ] ITEM-006 (P1) Remove OS-specific trim harness behavior and align the suite with the production bar
 - Description: The trim harness still contains OS-specific timeout/bundle defaults and overly forgiving verifier parsing. That violates the desired “no OS-specific trim branches” rule and weakens the signal from the suite.

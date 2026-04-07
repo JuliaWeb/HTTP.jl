@@ -34,11 +34,6 @@ end
     CLOSED = 4
 end
 
-@enumx _StreamType::UInt8 begin
-    CLIENT = 0
-    SERVER = 1
-end
-
 @enumx _ServerStreamWriteMode::UInt8 begin
     UNDECIDED = 0
     NONE = 1
@@ -138,11 +133,8 @@ end
     return limit * 2
 end
 
-mutable struct Stream <: IO
-    side::_StreamType.T
-    method::Union{Nothing,String}
+mutable struct Stream{ISCLIENT,Req<:Request} <: IO
     parsed::Union{Nothing,_URLParts}
-    headers::Union{Nothing,Headers}
     client::Union{Nothing,Client}
     owns_client::Bool
     proxy_config::ProxyConfig
@@ -155,14 +147,15 @@ mutable struct Stream <: IO
     request_timeout_ns::Int64
     timeout_config::Union{Nothing,_RequestTimeoutConfig}
     retry_controller::Union{Nothing,_RetryController}
-    verbose_config::_VerboseConfig
     request_buffer::IOBuffer
     response::Union{Nothing,Response}
     reader::Union{Nothing,IO}
     producer::Union{Nothing,Task}
     server::Union{Nothing,Server}
     tracked::Union{Nothing,_ServerConn}
-    request::Union{Nothing,Request}
+    message::Req
+    request_body::AbstractBody
+    request_body_content_length::Int64
     @atomic started::Bool
     @atomic write_closed::Bool
     @atomic read_closed::Bool
@@ -173,17 +166,32 @@ mutable struct Stream <: IO
     written_bytes::Int64
 end
 
-function Stream(server::Server, tracked::_ServerConn, request::Request)
-    response = Response(
-        200;
+function _stream_request_metadata(request::Request)::Request{EmptyBody}
+    return Request(
+        request.method,
+        request.target;
+        headers=request.headers,
+        trailers=request.trailers,
+        body=EmptyBody(),
+        host=request.host,
+        content_length=request.content_length,
         proto_major=Int(request.proto_major),
         proto_minor=Int(request.proto_minor),
-        request=request,
+        close=request.close,
+        context=request.context,
     )
-    return Stream(
-        _StreamType.SERVER,
-        nothing,
-        nothing,
+end
+
+function Stream(server::Server, tracked::_ServerConn, request::Req) where {Req<:Request}
+    message = _stream_request_metadata(request)
+    response = Response(
+        200;
+        proto_major=Int(message.proto_major),
+        proto_minor=Int(message.proto_minor),
+        request=message,
+    )
+    body = request.body
+    return Stream{false,typeof(message)}(
         nothing,
         nothing,
         false,
@@ -197,14 +205,15 @@ function Stream(server::Server, tracked::_ServerConn, request::Request)
         Int64(0),
         nothing,
         nothing,
-        _quiet_verbose_config(),
         IOBuffer(),
         response,
         nothing,
         nothing,
         server,
         tracked,
-        request,
+        message,
+        body,
+        request.content_length,
         false,
         false,
         false,
@@ -216,17 +225,16 @@ function Stream(server::Server, tracked::_ServerConn, request::Request)
     )
 end
 
-function Stream(request::Request)
+function Stream(request::Req) where {Req<:Request}
+    message = _stream_request_metadata(request)
     response = Response(
         200;
-        proto_major=Int(request.proto_major),
-        proto_minor=Int(request.proto_minor),
-        request=request,
+        proto_major=Int(message.proto_major),
+        proto_minor=Int(message.proto_minor),
+        request=message,
     )
-    return Stream(
-        _StreamType.SERVER,
-        nothing,
-        nothing,
+    body = request.body
+    return Stream{false,typeof(message)}(
         nothing,
         nothing,
         false,
@@ -240,14 +248,15 @@ function Stream(request::Request)
         Int64(0),
         nothing,
         nothing,
-        _quiet_verbose_config(),
         IOBuffer(),
         response,
         nothing,
         nothing,
         nothing,
         nothing,
-        request,
+        message,
+        body,
+        request.content_length,
         false,
         false,
         false,
@@ -306,15 +315,13 @@ end
     return state == _ServerState.CLOSING || state == _ServerState.CLOSED
 end
 
-function _require_server_stream(stream::Stream)::Nothing
-    stream.side == _StreamType.SERVER && return nothing
-    throw(ArgumentError("operation is only valid for server-side HTTP streams"))
-end
+@inline _require_server_stream(::Stream{false}) = nothing
+@inline _require_server_stream(::Stream{true}) = throw(ArgumentError("operation is only valid for server-side HTTP streams"))
 
 @inline function _server_stream_buffered_h2(stream::Stream)::Bool
     _require_server_stream(stream)
-    request = stream.request
-    return stream.server === nothing && stream.tracked === nothing && request !== nothing && (request::Request).proto_major == UInt8(2)
+    request = stream.message
+    return stream.server === nothing && stream.tracked === nothing && request.proto_major == UInt8(2)
 end
 
 @inline function _server_stream_buffered_fixed_h1(stream::Stream)::Bool
@@ -407,7 +414,12 @@ end
 function _listener_bound_address(listener::Union{TCP.Listener,TLS.Listener})::Tuple{String,Int}
     laddr = _listener_addr(listener)
     laddr === nothing && return ("", 0)
-    return (sprint(show, laddr), Int(laddr.port))
+    if laddr isa TCP.SocketAddrV4
+        addr = laddr::TCP.SocketAddrV4
+        return (string(addr), Int(addr.port))
+    end
+    addr = laddr::TCP.SocketAddrV6
+    return (string(addr), Int(addr.port))
 end
 
 function _mark_server_listening!(server::Server, listener::Union{TCP.Listener,TLS.Listener})::Nothing
@@ -535,6 +547,13 @@ function _close_server_conn!(tracked::_ServerConn)::Nothing
         _close_server_transport!(tracked.conn)
     catch
     end
+    return nothing
+end
+
+@inline function _finalize_server_conn!(server::Server, tracked::_ServerConn)::Nothing
+    _clear_deadlines!(tracked.conn)
+    _close_server_conn!(tracked)
+    _untrack_conn!(server, tracked)
     return nothing
 end
 
@@ -675,7 +694,8 @@ end
     return headercontains(response.headers, "Connection", "close")
 end
 
-@inline function _server_request_body_fully_consumed(body::AbstractBody)::Bool
+@inline function _request_body_fully_consumed(request::Request)::Bool
+    body = request.body
     body isa EmptyBody && return true
     if body isa _H2ServerBody
         return _h2_server_body_fully_consumed(body::_H2ServerBody)
@@ -690,8 +710,60 @@ end
     return false
 end
 
-@inline function _request_body_fully_consumed(request::Request)::Bool
-    return _server_request_body_fully_consumed(request.body)
+@inline function _stream_request_body_fully_consumed(stream::Stream)::Bool
+    body = stream.request_body
+    body isa EmptyBody && return true
+    if body isa _H2ServerBody
+        return _h2_server_body_fully_consumed(body::_H2ServerBody)
+    end
+    if body isa FixedLengthBody
+        return (body::FixedLengthBody).remaining == 0
+    end
+    if body isa ChunkedBody
+        return (body::ChunkedBody).done
+    end
+    body isa EOFBody && return false
+    return false
+end
+
+@inline function _stream_request_body_read!(stream::Stream, dst::Vector{UInt8})::Int
+    body = stream.request_body
+    body isa EmptyBody && return 0
+    if body isa _H2ServerBody
+        return body_read!(body::_H2ServerBody, dst)
+    end
+    if body isa FixedLengthBody
+        return body_read!(body::FixedLengthBody, dst)
+    end
+    if body isa ChunkedBody
+        return body_read!(body::ChunkedBody, dst)
+    end
+    if body isa EOFBody
+        return body_read!(body::EOFBody, dst)
+    end
+    throw(ProtocolError("unsupported server request body type $(typeof(body))"))
+end
+
+@inline function _stream_request_body_close!(stream::Stream)::Nothing
+    body = stream.request_body
+    body isa EmptyBody && return nothing
+    if body isa _H2ServerBody
+        body_close!(body::_H2ServerBody)
+        return nothing
+    end
+    if body isa FixedLengthBody
+        body_close!(body::FixedLengthBody)
+        return nothing
+    end
+    if body isa ChunkedBody
+        body_close!(body::ChunkedBody)
+        return nothing
+    end
+    if body isa EOFBody
+        body_close!(body::EOFBody)
+        return nothing
+    end
+    throw(ProtocolError("unsupported server request body type $(typeof(body))"))
 end
 
 function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response)::Nothing
@@ -731,6 +803,39 @@ end
     return errno == Int(Base.Libc.ECONNRESET) ||
            errno == Int(Base.Libc.EPIPE) ||
            errno == Int(Base.Libc.ECONNABORTED)
+end
+
+@enum _ServerConnErrAction::UInt8 begin
+    _SERVER_CONN_ERR_CLOSE = 0
+    _SERVER_CONN_ERR_TIMEOUT = 1
+    _SERVER_CONN_ERR_RETHROW = 2
+end
+
+@enum _H2ConnCloseKind::UInt8 begin
+    _H2_CONN_CLOSE_CLEAN = 0
+    _H2_CONN_CLOSE_PEER = 1
+    _H2_CONN_CLOSE_PROTOCOL = 2
+    _H2_CONN_CLOSE_INTERNAL = 3
+end
+
+@inline function _classify_server_conn_error(err::Exception)::_ServerConnErrAction
+    err isa IOPoll.DeadlineExceededError && return _SERVER_CONN_ERR_TIMEOUT
+    if err isa ParseError || err isa ProtocolError || err isa EOFError ||
+       err isa IOPoll.NetClosingError || err isa TLS.TLSError ||
+       err isa TLS.TLSHandshakeTimeoutError || _is_peer_close_error(err)
+        return _SERVER_CONN_ERR_CLOSE
+    end
+    return _SERVER_CONN_ERR_RETHROW
+end
+
+@inline function _classify_h2_conn_close(err::Exception)::_H2ConnCloseKind
+    if err isa ProtocolError || err isa ParseError
+        return _H2_CONN_CLOSE_PROTOCOL
+    end
+    if err isa EOFError || err isa IOPoll.NetClosingError || err isa TLS.TLSError
+        return _H2_CONN_CLOSE_PEER
+    end
+    return _H2_CONN_CLOSE_INTERNAL
 end
 
 function _server_error_status(err::Exception)::Union{Nothing,Int}
@@ -1433,7 +1538,7 @@ end
 function _server_stream_allows_body(stream::Stream)::Bool
     _require_server_stream(stream)
     _body_allowed_for_status(stream.response.status) || return false
-    stream.request.method == "HEAD" && return false
+    stream.message.method == "HEAD" && return false
     return true
 end
 
@@ -1503,24 +1608,24 @@ end
 
 function _server_startread(stream::Stream)::Request
     _require_server_stream(stream)
-    return stream.request
+    return stream.message
 end
 
 function _maybe_write_continue!(stream::Stream)::Nothing
     _require_server_stream(stream)
-    stream.request.proto_major == UInt8(2) && return nothing
+    stream.message.proto_major == UInt8(2) && return nothing
     already_sent = @atomic :acquire stream.continue_sent
     already_sent && return nothing
     # We only acknowledge `Expect: 100-continue` once the handler actually tries
     # to consume the request body.
-    headercontains(stream.request.headers, "Expect", "100-continue") || return nothing
-    _request_body_fully_consumed(stream.request) && return nothing
+    headercontains(stream.message.headers, "Expect", "100-continue") || return nothing
+    _stream_request_body_fully_consumed(stream) && return nothing
     response = Response(
         100;
-        proto_major=Int(stream.request.proto_major),
-        proto_minor=Int(stream.request.proto_minor),
+        proto_major=Int(stream.message.proto_major),
+        proto_minor=Int(stream.message.proto_minor),
         content_length=0,
-        request=stream.request,
+        request=stream.message,
     )
     _write_all_response!(stream.tracked.conn, response)
     @atomic :release stream.continue_sent = true
@@ -1534,7 +1639,7 @@ end
 
 function _server_eof(stream::Stream)::Bool
     _require_server_stream(stream)
-    return _request_body_fully_consumed(stream.request)
+    return _stream_request_body_fully_consumed(stream)
 end
 
 function _server_readbytes!(stream::Stream, dest::AbstractVector{UInt8}, nb::Integer=length(dest))
@@ -1544,10 +1649,10 @@ function _server_readbytes!(stream::Stream, dest::AbstractVector{UInt8}, nb::Int
     nb <= length(dest) || throw(ArgumentError("nb must be <= length(dest)"))
     _maybe_write_continue!(stream)
     buf = Vector{UInt8}(undef, nb)
-    n = body_read!(stream.request.body, buf)
+    n = _stream_request_body_read!(stream, buf)
     n == 0 && (@atomic :release stream.read_closed = true)
     n > 0 && copyto!(dest, 1, buf, 1, n)
-    _request_body_fully_consumed(stream.request) && (@atomic :release stream.read_closed = true)
+    _stream_request_body_fully_consumed(stream) && (@atomic :release stream.read_closed = true)
     return n
 end
 
@@ -1557,7 +1662,7 @@ function _server_read(stream::Stream)::Vector{UInt8}
     out = UInt8[]
     buf = Vector{UInt8}(undef, 16 * 1024)
     while true
-        n = body_read!(stream.request.body, buf)
+        n = _stream_request_body_read!(stream, buf)
         n == 0 && break
         append!(out, @view(buf[1:n]))
     end
@@ -1611,7 +1716,7 @@ function startwrite(stream::Stream)::Response
     _require_server_stream(stream)
     started = @atomic :acquire stream.response_started
     started && return stream.response
-    !_request_body_fully_consumed(stream.request) && (stream.response.close = true)
+    !_stream_request_body_fully_consumed(stream) && (stream.response.close = true)
     !_server_stream_allows_body(stream) && (stream.ignore_writes = true)
     if _server_stream_buffered_h2(stream)
         @atomic :release stream.response_started = true
@@ -1695,10 +1800,10 @@ function _server_closeread(stream::Stream)::Response
     _require_server_stream(stream)
     already_closed = @atomic :acquire stream.read_closed
     already_closed && return stream.response
-    if !_request_body_fully_consumed(stream.request)
+    if !_stream_request_body_fully_consumed(stream)
         stream.response.close = true
         try
-            body_close!(stream.request.body)
+            _stream_request_body_close!(stream)
         catch
         end
     end
@@ -1755,8 +1860,27 @@ struct _StreamHandlerAdapter{F}
     handler::F
 end
 
+function _buffered_stream_request(stream::Stream)::Request
+    request = startread(stream)
+    body_bytes = read(stream)
+    body = isempty(body_bytes) ? EmptyBody() : BytesBody(body_bytes)
+    return Request(
+        request.method,
+        request.target;
+        headers=request.headers,
+        trailers=request.trailers,
+        body=body,
+        host=request.host,
+        content_length=length(body_bytes),
+        proto_major=Int(request.proto_major),
+        proto_minor=Int(request.proto_minor),
+        close=request.close,
+        context=request.context,
+    )
+end
+
 function (adapter::_StreamHandlerAdapter)(stream::Stream)
-    req = startread(stream)
+    req = _buffered_stream_request(stream)
     resp = adapter.handler(req)
     resp isa Response || throw(ProtocolError("streamhandler request handler must return HTTP.Response"))
     response = resp::Response
@@ -1794,7 +1918,7 @@ mutable struct _H2ServerStreamState
     handler_started::Bool
     handler_finished::Bool
     aborted::Bool
-    error::Union{Nothing,Exception}
+    cancel_kind::UInt8
 end
 
 function _H2ServerStreamState(stream_id::UInt32)
@@ -1816,7 +1940,7 @@ function _H2ServerStreamState(stream_id::UInt32)
         false,
         false,
         false,
-        nothing,
+        UInt8(0),
     )
 end
 
@@ -1829,7 +1953,6 @@ mutable struct _H2SendWindowState
     peer_max_header_list_size::Int
     header_encoder::Encoder
     stream_send_window::Dict{UInt32,Int64}
-    conn_error::Union{Nothing,Exception}
     @atomic closed::Bool
 end
 
@@ -1844,9 +1967,21 @@ function _H2SendWindowState()
         0,
         Encoder(),
         Dict{UInt32,Int64}(),
-        nothing,
         false,
     )
+end
+
+@enum _H2ServerStreamCancelKind::UInt8 begin
+    _H2_SERVER_STREAM_OPEN = 0
+    _H2_SERVER_STREAM_RESET = 1
+    _H2_SERVER_STREAM_CONN_CLOSED = 2
+end
+
+@inline function _h2_server_stream_exception(kind::_H2ServerStreamCancelKind)::ProtocolError
+    if kind == _H2_SERVER_STREAM_RESET
+        return ProtocolError("HTTP/2 stream reset by peer")
+    end
+    return ProtocolError("HTTP/2 connection is closed")
 end
 
 mutable struct _H2ServerConnControl
@@ -1859,8 +1994,8 @@ function _H2ServerConnControl()
     return _H2ServerConnControl(false, false, UInt32(0))
 end
 
-mutable struct _H2ServerBody{C} <: AbstractBody
-    conn::C
+mutable struct _H2ServerBody <: AbstractBody
+    conn::Union{TCP.Conn,TLS.Conn}
     write_lock::ReentrantLock
     states_lock::ReentrantLock
     states::Dict{UInt32,_H2ServerStreamState}
@@ -1897,10 +2032,9 @@ function _compact_h2_server_body_buffer!(state::_H2ServerStreamState)::Nothing
     return nothing
 end
 
-function _fail_h2_send_window_state!(send_state::_H2SendWindowState, err::Exception)::Nothing
+function _fail_h2_send_window_state!(send_state::_H2SendWindowState)::Nothing
     lock(send_state.state_lock)
     try
-        send_state.conn_error === nothing && (send_state.conn_error = err)
         @atomic :release send_state.closed = true
         notify(send_state.window_condition; all=true)
     finally
@@ -2009,7 +2143,6 @@ function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UIn
     try
         while true
             (@atomic :acquire send_state.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
-            send_state.conn_error === nothing || throw(send_state.conn_error::Exception)
             haskey(send_state.stream_send_window, stream_id) || throw(ProtocolError("HTTP/2 stream send window is closed"))
             stream_window = send_state.stream_send_window[stream_id]
             if stream_window <= 0 || send_state.conn_send_window <= 0
@@ -2088,16 +2221,16 @@ function _maybe_cleanup_h2_server_state!(
     return nothing
 end
 
-function _set_h2_server_stream_error!(
+function _set_h2_server_stream_cancelled!(
     state::_H2ServerStreamState,
-    err::Exception,
+    kind::_H2ServerStreamCancelKind,
     aborted::Bool=true,
     discard_body::Bool=true,
     finish_if_unstarted::Bool=false,
 )::Nothing
     lock(state.lock)
     try
-        state.error === nothing && (state.error = err)
+        state.cancel_kind == UInt8(_H2_SERVER_STREAM_OPEN) && (state.cancel_kind = UInt8(kind))
         aborted && (state.aborted = true)
         state.stream_done = true
         if discard_body
@@ -2116,7 +2249,6 @@ function _fail_h2_server_streams!(
     states_lock::ReentrantLock,
     states::Dict{UInt32,_H2ServerStreamState},
     send_state::_H2SendWindowState,
-    err::Exception,
 )::Nothing
     snapshot = _H2ServerStreamState[]
     lock(states_lock)
@@ -2126,7 +2258,7 @@ function _fail_h2_server_streams!(
         unlock(states_lock)
     end
     for state in snapshot
-        _set_h2_server_stream_error!(state, err, true, true, true)
+        _set_h2_server_stream_cancelled!(state, _H2_SERVER_STREAM_CONN_CLOSED, true, true, true)
         _unregister_h2_send_window!(send_state, state.stream_id)
     end
     return nothing
@@ -2153,7 +2285,9 @@ function body_read!(body::_H2ServerBody, dst::Vector{UInt8})::Int
         done = false
         lock(body.state.lock)
         try
-            body.state.error === nothing || throw(body.state.error::Exception)
+            if body.state.cancel_kind != UInt8(_H2_SERVER_STREAM_OPEN)
+                throw(_h2_server_stream_exception(_H2ServerStreamCancelKind(body.state.cancel_kind)))
+            end
             available = _h2_server_available_bytes(body.state)
             if available > 0
                 nread = min(length(dst), available)
@@ -2492,9 +2626,9 @@ function _decode_h2_request(headers::Vector{HeaderField}, body::Vector{UInt8})::
     return _decode_h2_request(headers, request_body, true)
 end
 
-function _encode_h2_response_headers!(encoder::Encoder, response::Response, max_header_list_size::Int=0)::Vector{UInt8}
-    header_fields = HeaderField[HeaderField(":status", string(response.status), false)]
-    _append_h2_headers!(header_fields, response.headers)
+function _encode_h2_response_headers!(encoder::Encoder, response_status::Int, response_headers::Headers, max_header_list_size::Int=0)::Vector{UInt8}
+    header_fields = HeaderField[HeaderField(":status", string(response_status), false)]
+    _append_h2_headers!(header_fields, response_headers)
     max_header_list_size > 0 && _header_list_size(header_fields) > max_header_list_size && throw(ProtocolError("HTTP/2 response headers exceed peer SETTINGS_MAX_HEADER_LIST_SIZE"))
     return encode_header_block(encoder, header_fields)
 end
@@ -2524,7 +2658,8 @@ function _write_h2_response_headers!(
     write_lock::ReentrantLock,
     send_state::_H2SendWindowState,
     stream_id::UInt32,
-    response::Response,
+    response_status::Int,
+    response_headers::Headers,
     end_stream::Bool,
 )::Nothing
     max_frame_size = 16_384
@@ -2538,7 +2673,7 @@ function _write_h2_response_headers!(
     end
     lock(write_lock)
     try
-        header_block = _encode_h2_response_headers!(send_state.header_encoder, response, max_header_list_size)
+        header_block = _encode_h2_response_headers!(send_state.header_encoder, response_status, response_headers, max_header_list_size)
         _write_h2_header_block_locked!(conn, stream_id, header_block, end_stream, max_frame_size)
     finally
         unlock(write_lock)
@@ -2628,13 +2763,13 @@ function _write_h2_response!(
             body_close!(response.body)
         catch
         end
-        _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response, !has_trailers)
+        _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, !has_trailers)
         has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
         return nothing
     end
     body_empty = response.body isa EmptyBody
     end_stream = body_empty && !has_trailers
-    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response, end_stream)
+    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream)
     body_empty || _write_response_body_h2_server!(conn, write_lock, send_state, stream_id, response, !has_trailers)
     has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
     return nothing
@@ -2660,7 +2795,7 @@ function _write_h2_buffered_stream_response!(
     has_body = !isempty(body_bytes)
     has_trailers = !isempty(response.trailers)
     end_stream = !has_body && !has_trailers
-    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response, end_stream)
+    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream)
     has_body && _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, body_bytes; end_stream=!has_trailers)
     has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
     return nothing
@@ -2753,7 +2888,7 @@ function _handle_h2_stream!(
         stream_cancelled = false
         lock(state.lock)
         try
-            stream_cancelled = state.error !== nothing || state.aborted
+            stream_cancelled = state.cancel_kind != UInt8(_H2_SERVER_STREAM_OPEN) || state.aborted
         finally
             unlock(state.lock)
         end
@@ -2801,7 +2936,7 @@ function _dispatch_h2_stream!(
     finally
         unlock(state.lock)
     end
-    errormonitor(Threads.@spawn _handle_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state.stream_id, state, decoded_headers::Vector{HeaderField}))
+    Threads.@spawn _handle_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state.stream_id, state, decoded_headers::Vector{HeaderField})
     return nothing
 end
 
@@ -2846,8 +2981,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     continuation_stream = UInt32(0)
     max_stream_id = UInt32(0)
     peer_goaway_last_stream_id = typemax(UInt32)
-    close_err = nothing
-    goaway_error_code = nothing
+    close_kind = _H2_CONN_CLOSE_CLEAN
     try
         preface = _read_exact_h2_server!(reader_source, length(_H2_PREFACE))
         preface == _H2_PREFACE || throw(ProtocolError("invalid h2 client preface"))
@@ -2903,7 +3037,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     unlock(states_lock)
                 end
                 state === nothing && continue
-                _set_h2_server_stream_error!(state, ProtocolError("HTTP/2 stream reset by peer"), true, true, true)
+                _set_h2_server_stream_cancelled!(state, _H2_SERVER_STREAM_RESET, true, true, true)
                 _unregister_h2_send_window!(send_state, rst.stream_id)
                 _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
                 continue
@@ -3059,26 +3193,15 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             end
         end
     catch err
-        if err isa ProtocolError || err isa ParseError
-            close_err = err
-            goaway_error_code = UInt32(0x1)
-            return nothing
-        end
-        if err isa EOFError || err isa IOPoll.NetClosingError || err isa TLS.TLSError
-            close_err = err isa EOFError ? ProtocolError("HTTP/2 connection is closed") : err
-            return nothing
-        end
-        close_err = err
-        rethrow(err)
+        close_kind = _classify_h2_conn_close(err::Exception)
+        close_kind == _H2_CONN_CLOSE_INTERNAL && rethrow(err)
+        return nothing
     finally
-        fail_err = close_err === nothing ? ProtocolError("HTTP/2 connection is closed") : (close_err::Exception)
-        goaway_error_code === nothing || _try_write_h2_goaway!(conn, write_lock, max_stream_id, goaway_error_code::UInt32)
-        _fail_h2_send_window_state!(send_state, fail_err)
-        _fail_h2_server_streams!(states_lock, states, send_state, fail_err)
+        close_kind == _H2_CONN_CLOSE_PROTOCOL && _try_write_h2_goaway!(conn, write_lock, max_stream_id, UInt32(0x1))
+        _fail_h2_send_window_state!(send_state)
+        _fail_h2_server_streams!(states_lock, states, send_state)
         _set_conn_shutdown_hook!(tracked, nothing)
-        _clear_deadlines!(conn)
-        _close_server_conn!(tracked)
-        _untrack_conn!(server, tracked)
+        _finalize_server_conn!(server, tracked)
     end
     return nothing
 end
@@ -3106,19 +3229,18 @@ function _serve_conn!(server::Server, tracked::_ServerConn)::Nothing
         end
         return _serve_h1_conn!(server, tracked, reader_source)
     catch err
-        if err isa IOPoll.DeadlineExceededError
+        action = _classify_server_conn_error(err::Exception)
+        if action == _SERVER_CONN_ERR_TIMEOUT
             _try_write_server_error!(tracked.conn, nothing, 408)
             return nothing
         end
-        if err isa ParseError || err isa ProtocolError || err isa EOFError || err isa IOPoll.DeadlineExceededError || err isa IOPoll.NetClosingError || err isa TLS.TLSError || err isa TLS.TLSHandshakeTimeoutError || _is_peer_close_error(err::Exception)
+        if action == _SERVER_CONN_ERR_CLOSE
             return nothing
         end
         rethrow(err)
     finally
         if !entered_helper
-            _clear_deadlines!(tracked.conn)
-            _close_server_conn!(tracked)
-            _untrack_conn!(server, tracked)
+            _finalize_server_conn!(server, tracked)
         end
     end
 end
@@ -3132,9 +3254,10 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             request = try
                 read_request(reader; max_header_bytes=server.max_header_bytes)
             catch err
+                action = _classify_server_conn_error(err::Exception)
                 status = _server_error_status(err::Exception)
                 status === nothing || _try_write_server_error!(tracked.conn, nothing, status::Int)
-                if err isa ParseError || err isa ProtocolError || err isa EOFError || err isa IOPoll.DeadlineExceededError || err isa IOPoll.NetClosingError || err isa TLS.TLSError || err isa TLS.TLSHandshakeTimeoutError || _is_peer_close_error(err::Exception)
+                if action != _SERVER_CONN_ERR_RETHROW
                     return nothing
                 end
                 rethrow(err)
@@ -3206,9 +3329,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             _set_idle_deadline!(server, tracked.conn)
         end
     finally
-        _clear_deadlines!(tracked.conn)
-        _close_server_conn!(tracked)
-        _untrack_conn!(server, tracked)
+        _finalize_server_conn!(server, tracked)
     end
     return nothing
 end
@@ -3232,7 +3353,7 @@ function _serve_listener!(server::Server, listener::Union{TCP.Listener,TLS.Liste
         end
         tracked = _ServerConn(conn, ReentrantLock(), nothing, _ConnState.NEW, floor(Int64, time()))
         _track_conn!(server, tracked)
-        errormonitor(Threads.@spawn _serve_conn!(server, tracked))
+        Threads.@spawn _serve_conn!(server, tracked)
     end
     return nothing
 end
@@ -3252,24 +3373,19 @@ function _run_server!(server::Server, ready::Threads.Event)
     return nothing
 end
 
-"""
-    listen!(server) -> Server
-
-Start a configured `Server` asynchronously and return it.
-"""
-function listen!(server::Server)::Server
+function _start_server_task!(f::F, server::Server)::Server where {F}
     state = _server_state(server)
     state == _ServerState.CLOSED && throw(ProtocolError("closed servers cannot be restarted"))
     state == _ServerState.RUNNING && throw(ProtocolError("server is already running"))
     ready = Threads.Event(true)
-    task = errormonitor(Threads.@spawn begin
+    task = Threads.@spawn begin
         try
-            _run_server!(server, ready)
+            f(ready)
         catch
             notify(ready)
             rethrow()
         end
-    end)
+    end
     lock(server.lock)
     try
         server.serve_task = task
@@ -3278,6 +3394,17 @@ function listen!(server::Server)::Server
     end
     wait(ready)
     return server
+end
+
+"""
+    listen!(server) -> Server
+
+Start a configured `Server` asynchronously and return it.
+"""
+function listen!(server::Server)::Server
+    return _start_server_task!(server) do ready
+        _run_server!(server, ready)
+    end
 end
 
 """
@@ -3356,7 +3483,7 @@ function listen!(
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
-) where {F}
+    ) where {F}
     listenany && throw(ArgumentError("listenany is not valid when passing an existing listener"))
     _ = reuseaddr
     _ = backlog
@@ -3375,23 +3502,9 @@ function listen!(
         reuseaddr=reuseaddr,
         backlog=backlog,
     )
-    ready = Threads.Event(true)
-    task = errormonitor(Threads.@spawn begin
-        try
-            _serve_listener!(server, listener, ready)
-        catch
-            notify(ready)
-            rethrow()
-        end
-    end)
-    lock(server.lock)
-    try
-        server.serve_task = task
-    finally
-        unlock(server.lock)
+    return _start_server_task!(server) do ready
+        _serve_listener!(server, listener, ready)
     end
-    wait(ready)
-    return server
 end
 
 """
@@ -3414,7 +3527,7 @@ end
 
 """
     serve!(handler, host="127.0.0.1", port=8080;
-           stream=false, read_timeout_ns=0, read_header_timeout_ns=0,
+           read_timeout_ns=0, read_header_timeout_ns=0,
            write_timeout_ns=0, idle_timeout_ns=0,
            max_header_bytes=1*1024*1024, listenany=false, reuseaddr=true,
            backlog=128) -> Server
@@ -3423,13 +3536,12 @@ end
 
 Start an HTTP server and return the running `Server`.
 
-By default `handler` is called with an `HTTP.Request` and must return an
-`HTTP.Response`. Pass `stream=true` to use the lower-level `HTTP.Stream`
-handler path instead.
+`handler` is called with an `HTTP.Request` and must return an `HTTP.Response`.
+Use `listen!` for the lower-level `HTTP.Stream` handler path.
 """
 function serve!(
-    handler::F, args...;
-    stream::Bool=false,
+    handler::F,
+    listener::Union{TCP.Listener,TLS.Listener};
     read_timeout_ns::Integer=Int64(0),
     read_header_timeout_ns::Integer=Int64(0),
     write_timeout_ns::Integer=Int64(0),
@@ -3439,67 +3551,81 @@ function serve!(
     reuseaddr::Bool=true,
     backlog::Integer=128,
 ) where {F}
-    if stream
-        return listen!(
-            handler,
-            args...;
-            read_timeout_ns=read_timeout_ns,
-            read_header_timeout_ns=read_header_timeout_ns,
-            write_timeout_ns=write_timeout_ns,
-            idle_timeout_ns=idle_timeout_ns,
-            max_header_bytes=max_header_bytes,
-            listenany=listenany,
-            reuseaddr=reuseaddr,
-            backlog=backlog,
-        )
-    end
-    if length(args) == 1 && args[1] isa Union{TCP.Listener,TLS.Listener}
-        listener = args[1]::Union{TCP.Listener,TLS.Listener}
-        bound_address, _ = _listener_bound_address(listener)
-        server = Server(
-            network="tcp",
-            address=bound_address,
-            handler=handler,
-            stream=false,
-            read_timeout_ns=read_timeout_ns,
-            read_header_timeout_ns=read_header_timeout_ns,
-            write_timeout_ns=write_timeout_ns,
-            idle_timeout_ns=idle_timeout_ns,
-            max_header_bytes=max_header_bytes,
-            listenany=false,
-            reuseaddr=reuseaddr,
-            backlog=backlog,
-        )
-        ready = Threads.Event(true)
-        task = errormonitor(Threads.@spawn begin
-            try
-                _serve_listener!(server, listener, ready)
-            catch
-                notify(ready)
-                rethrow()
-            end
-        end)
-        lock(server.lock)
-        try
-            server.serve_task = task
-        finally
-            unlock(server.lock)
-        end
-        wait(ready)
-        return server
-    end
-    host, port_num = if length(args) == 1 && args[1] isa Integer
-        ("127.0.0.1", Int(args[1]::Integer))
-    elseif length(args) == 2 && args[1] isa AbstractString && args[2] isa Integer
-        (args[1]::AbstractString, Int(args[2]::Integer))
-    else
-        throw(ArgumentError("serve! expects host/port, port, or existing listener"))
-    end
-    return listen!(Server(
+    listenany && throw(ArgumentError("listenany is not valid when passing an existing listener"))
+    _ = reuseaddr
+    _ = backlog
+    bound_address, _ = _listener_bound_address(listener)
+    server = Server(
         network="tcp",
-        address=HostResolvers.join_host_port(host, port_num),
+        address=bound_address,
         handler=handler,
         stream=false,
+        read_timeout_ns=read_timeout_ns,
+        read_header_timeout_ns=read_header_timeout_ns,
+        write_timeout_ns=write_timeout_ns,
+        idle_timeout_ns=idle_timeout_ns,
+        max_header_bytes=max_header_bytes,
+        listenany=false,
+        reuseaddr=reuseaddr,
+        backlog=backlog,
+    )
+    return _start_server_task!(server) do ready
+        _serve_listener!(server, listener, ready)
+    end
+end
+
+function serve!(
+    handler::F,
+    host::AbstractString="127.0.0.1",
+    port_num::Integer=8080;
+    read_timeout_ns::Integer=Int64(0),
+    read_header_timeout_ns::Integer=Int64(0),
+    write_timeout_ns::Integer=Int64(0),
+    idle_timeout_ns::Integer=Int64(0),
+    max_header_bytes::Integer=1 * 1024 * 1024,
+    listenany::Bool=false,
+    reuseaddr::Bool=true,
+    backlog::Integer=128,
+) where {F}
+    bind_address = HostResolvers.join_host_port(host, listenany ? 0 : Int(port_num))
+    listener = TCP.listen("tcp", bind_address; backlog=backlog, reuseaddr=reuseaddr)
+    try
+        return serve!(
+            handler,
+            listener;
+            read_timeout_ns=read_timeout_ns,
+            read_header_timeout_ns=read_header_timeout_ns,
+            write_timeout_ns=write_timeout_ns,
+            idle_timeout_ns=idle_timeout_ns,
+            max_header_bytes=max_header_bytes,
+            reuseaddr=reuseaddr,
+            backlog=backlog,
+        )
+    catch
+        try
+            TCP.close(listener)
+        catch
+        end
+        rethrow()
+    end
+end
+
+function serve!(
+    handler::F,
+    port_num::Integer;
+    read_timeout_ns::Integer=Int64(0),
+    read_header_timeout_ns::Integer=Int64(0),
+    write_timeout_ns::Integer=Int64(0),
+    idle_timeout_ns::Integer=Int64(0),
+    max_header_bytes::Integer=1 * 1024 * 1024,
+    listenany::Bool=false,
+    reuseaddr::Bool=true,
+    backlog::Integer=128,
+) where {F}
+    return serve!(
+        handler,
+        "127.0.0.1",
+        port_num;
         read_timeout_ns=read_timeout_ns,
         read_header_timeout_ns=read_header_timeout_ns,
         write_timeout_ns=write_timeout_ns,
@@ -3508,7 +3634,7 @@ function serve!(
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
-    ))
+    )
 end
 
 """
@@ -3519,7 +3645,6 @@ Run `serve!` in the foreground, blocking until the server is closed.
 function serve(
     handler::F,
     args...;
-    stream::Bool=false,
     read_timeout_ns::Integer=Int64(0),
     read_header_timeout_ns::Integer=Int64(0),
     write_timeout_ns::Integer=Int64(0),
@@ -3532,7 +3657,6 @@ function serve(
     server = serve!(
         handler,
         args...;
-        stream=stream,
         read_timeout_ns=read_timeout_ns,
         read_header_timeout_ns=read_header_timeout_ns,
         write_timeout_ns=write_timeout_ns,

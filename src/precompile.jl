@@ -181,7 +181,7 @@ function _run_precompile_workload!()::Nothing
         @assert String(cookie_second.body) == "cookie:seen"
 
         buffer = IOBuffer()
-        buffered = request("GET", "http://$(request_address)/hello/buffer"; client=client, response_body=buffer, request_timeouts...)
+        buffered = request("GET", "http://$(request_address)/hello/buffer"; client=client, response_stream=buffer, request_timeouts...)
         @assert buffered.status == 200
         @assert String(take!(buffer)) == "hello:buffer"
 

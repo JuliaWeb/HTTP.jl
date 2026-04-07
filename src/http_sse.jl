@@ -192,7 +192,7 @@ end
 
 function sse_stream(response::Response, f::Function; max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN)::SSEStream
     stream = sse_stream(response; max_len=max_len)
-    errormonitor(Threads.@spawn begin
+    Threads.@spawn begin
         try
             f(stream)
         catch err
@@ -204,7 +204,7 @@ function sse_stream(response::Response, f::Function; max_len::Integer=_DEFAULT_S
             catch
             end
         end
-    end)
+    end
     return stream
 end
 
@@ -556,13 +556,13 @@ function _consume_incoming_sse!(
         raw_stream
     end
     cancelled = Ref(false)
-    producer = errormonitor(Threads.@spawn begin
+    producer = Threads.@spawn begin
         try
             _pump_response_body!(raw_stream, incoming.rawbody)
         catch err
             cancelled[] || rethrow(err)
         end
-    end)
+    end
     stream = _SSEClientStream(response, () -> begin
         cancelled[] = true
         try

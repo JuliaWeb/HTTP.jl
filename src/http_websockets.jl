@@ -63,7 +63,6 @@ import .._should_copy_sensitive_headers_on_redirect
 import .._store_set_cookies!
 import .._strip_sensitive_redirect_headers!
 import .._streaming_response
-import .._validate_request_extra_kwargs
 import .._apply_conn_deadline!
 import .._clear_conn_deadline!
 import .._new_conn!
@@ -444,7 +443,7 @@ end
 
 function _start_read_task!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     ws.readtask !== nothing && return nothing
-    ws.readtask = errormonitor(Threads.@spawn _ws_read_loop!(ws, buffer_bytes))
+    ws.readtask = Threads.@spawn _ws_read_loop!(ws, buffer_bytes)
     return nothing
 end
 
@@ -723,10 +722,8 @@ function _open_client_websocket(
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
     write_idle_timeout::Real=0,
-    require_ssl_verification::Bool=true,
-    kwargs...,
+    require_ssl_verification::Bool=true
 )::WebSocket
-    _validate_request_extra_kwargs(kwargs)
     parsed = _parse_websocket_url(url, query)
     req_headers = _normalize_headers_input(headers)
     normalized_cookies = _normalize_cookies_input(cookies)
@@ -1259,7 +1256,7 @@ function serve!(server::Server, listener, ready::Threads.Event)::Server
             err isa EOFError && return server
             rethrow(err)
         end
-        errormonitor(Threads.@spawn _serve_ws_conn!(server, conn))
+        Threads.@spawn _serve_ws_conn!(server, conn)
     end
     return server
 end
@@ -1382,14 +1379,14 @@ function listen!(
         read_buffer_bytes=read_buffer_bytes,
     )
     ready = Threads.Event(true)
-    server.serve_task = errormonitor(Threads.@spawn begin
+    server.serve_task = Threads.@spawn begin
         try
             _listen_ws(server, ready)
         catch
             notify(ready)
             rethrow()
         end
-    end)
+    end
     wait(ready)
     return server
 end

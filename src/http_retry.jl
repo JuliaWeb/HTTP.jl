@@ -23,8 +23,10 @@ end
 Shared retry-budget bucket keyed by caller-supplied partitions.
 
 Each partition tracks its own remaining capacity. `acquire(bucket, partition)`
-reserves retry capacity for one retry attempt, and `release(bucket, token)` or
-`release(bucket, token, err)` returns all or part of that reserved capacity.
+reserves retry capacity for one retry attempt, and
+`release(bucket, token, failure_cost)` returns all or part of that reserved
+capacity. Use `failure_cost = 0` for a full refund, or a positive cost to keep
+some or all of the reserved retry capacity consumed.
 """
 mutable struct RetryBucket
     backoff_scale_factor_ms::Int
@@ -45,8 +47,16 @@ struct RetryDeniedError <: Exception
     partition::String
 end
 
+struct ErrorResponseStatus <: Exception
+    status::Int
+end
+
 function Base.showerror(io::IO, err::RetryDeniedError)
     return print(io, "retry bucket denied retry capacity for partition ", repr(err.partition))
+end
+
+function Base.showerror(io::IO, err::ErrorResponseStatus)
+    return print(io, "retryable HTTP response status ", err.status)
 end
 
 function RetryBucket(;
@@ -95,44 +105,28 @@ end
     return min(token.reserved_capacity, _RETRY_BUCKET_ACQUIRE_COST)
 end
 
-@inline function _retry_bucket_failure_cost(::Exception)::Int
-    return _RETRY_BUCKET_ACQUIRE_COST
-end
-
-@inline function _retry_bucket_failure_cost(response::Response)::Int
-    status = response.status
+@inline function _retry_bucket_failure_cost(status::Union{Nothing,Int})::Int
+    status === nothing && return 0
     if status == 429 || (500 <= status < 600)
         return _RETRY_BUCKET_RETRYABLE_RESPONSE_COST
     end
-    return 0
+    return _RETRY_BUCKET_ACQUIRE_COST
 end
 
-@inline function _retry_bucket_failure_cost(_)::Int
-    return 0
-end
-
-function release(bucket::RetryBucket, token::RetryToken)
+@inline function release(bucket::RetryBucket, token::RetryToken, failure_cost::Int)::Nothing
     token.bucket === bucket || throw(ArgumentError("retry token does not belong to the provided retry bucket"))
-    return lock(bucket.lock) do
-        token.released && return nothing
-        state = _retry_bucket_partition!(bucket, token.partition)
-        state.capacity = min(bucket.capacity, state.capacity + _retry_bucket_reserved_cost(token))
-        token.released = true
-        return nothing
-    end
-end
-
-function release(bucket::RetryBucket, token::RetryToken, err)
-    token.bucket === bucket || throw(ArgumentError("retry token does not belong to the provided retry bucket"))
-    return lock(bucket.lock) do
+    lock(bucket.lock)
+    try
         token.released && return nothing
         state = _retry_bucket_partition!(bucket, token.partition)
         reserved = _retry_bucket_reserved_cost(token)
-        consumed = min(reserved, max(0, _retry_bucket_failure_cost(err)))
+        consumed = min(reserved, max(0, failure_cost))
         refund = reserved - consumed
         state.capacity = min(bucket.capacity, state.capacity + refund)
         token.released = true
         return nothing
+    finally
+        unlock(bucket.lock)
     end
 end
 
@@ -161,7 +155,7 @@ end
 
 function _retry_delay_ns(
     bucket::Union{Nothing,RetryBucket},
-    attempt::Int;
+    attempt::Int,
     retry_after_ns::Union{Nothing,Int64}=nothing,
 )::Int64
     cap_ns = _retry_backoff_cap_ns(bucket, attempt)
@@ -193,15 +187,7 @@ function _parse_retry_after_delay_ns(value::AbstractString)::Union{Nothing,Int64
         secs > typemax(Int64) ÷ 1_000_000_000 && return typemax(Int64)
         return Int64(secs) * Int64(1_000_000_000)
     end
-    parsed_dt = nothing
-    for fmt in (Cookies.RFC1123GMTFormat, Cookies.AlternateRFC1123GMTFormat)
-        parsed_dt = try
-            Dates.DateTime(stripped, fmt)
-        catch
-            nothing
-        end
-        parsed_dt === nothing || break
-    end
+    parsed_dt = Cookies._parse_http_gmt_datetime(stripped)
     parsed_dt === nothing && return nothing
     delta = parsed_dt::Dates.DateTime - Dates.now(Dates.UTC)
     millis = Dates.value(delta)

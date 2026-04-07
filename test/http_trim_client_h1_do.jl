@@ -53,7 +53,6 @@ function run_http_trim_client_h1_do()::Nothing
         #     protocol = :h1,
         #     proxy = HT.ProxyConfig(),
         #     cookies = false,
-        #     verbose = false,
         # )
         #
         # Current trim blocker at that layer is the keyword wrapper in

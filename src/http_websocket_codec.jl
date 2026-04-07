@@ -522,12 +522,12 @@ function ws_get_outgoing_data!(ws::WSConn)::Vector{UInt8}
 end
 
 function ws_random_handshake_key()::String
-    return Base64.base64encode(rand(UInt8, 16))
+    return _base64encode(rand(UInt8, 16))
 end
 
 function ws_compute_accept_key(key::AbstractString)::String
     hash = SHA.sha1(Vector{UInt8}(codeunits(string(key, WS_GUID))))
-    return Base64.base64encode(hash)
+    return _base64encode(hash)
 end
 
 function _ws_valid_handshake_key(key::AbstractString)::Bool

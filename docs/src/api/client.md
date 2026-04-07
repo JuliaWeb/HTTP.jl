@@ -13,7 +13,6 @@ Depth = 2
 
 ```@docs
 HTTP.Transport
-HTTP.ClientTrace
 HTTP.Client
 HTTP.RetryBucket
 HTTP.roundtrip!

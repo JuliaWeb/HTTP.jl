@@ -4,7 +4,6 @@ export roundtrip!
 export close_idle_connections!
 export idle_connection_count
 
-using Base64
 using CodecZlib
 using Reseau.TCP
 using Reseau.HostResolvers
@@ -40,7 +39,7 @@ HTTP-specific buffering policy.
 """
 function _ConnReader(conn::Union{TCP.Conn,TLS.Conn}, buffer_bytes::Integer=_CONN_READER_DEFAULT_BUFFER_BYTES)
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
-    return _ConnReader(Vector{UInt8}(undef, Int(buffer_bytes)), 1, 0, nothing, conn)
+    return _ConnReader(Vector{UInt8}(undef, Int(buffer_bytes)), 1, 0, conn)
 end
 
 @inline function _set_conn_reader_conn!(reader::_ConnReader, conn::Union{TCP.Conn,TLS.Conn})::Nothing
@@ -55,23 +54,6 @@ end
 @inline function _conn_reader_available(reader::_ConnReader)::Int
     reader.next > reader.stop && return 0
     return reader.stop - reader.next + 1
-end
-
-@inline function _set_conn_reader_capture!(reader::_ConnReader, capture::Union{Nothing,_VerboseCaptureBuffer})::Nothing
-    reader.capture = capture
-    return nothing
-end
-
-@inline function _capture_conn_reader_bytes!(reader::_ConnReader, data::AbstractVector{UInt8})::Nothing
-    capture = reader.capture
-    capture === nothing || _verbose_capture!(capture::_VerboseCaptureBuffer, data)
-    return nothing
-end
-
-@inline function _capture_conn_reader_bytes!(reader::_ConnReader, byte::UInt8)::Nothing
-    capture = reader.capture
-    capture === nothing || _verbose_capture!(capture::_VerboseCaptureBuffer, byte)
-    return nothing
 end
 
 @inline function _apply_request_write_deadline!(io::_RequestDeadlineWriteIO)::Nothing
@@ -477,7 +459,6 @@ function _close_conn!(conn::Conn)::Bool
         return false
     end
     @atomic :release conn.closed = true
-    _set_conn_reader_capture!(conn.reader, nothing)
     if conn.secure
         if conn.tls !== nothing
             try
@@ -647,7 +628,6 @@ function _wait_for_conn!(transport::Transport, waiter::_ConnWaiter, deadline_ns:
 end
 
 function _prepare_conn_for_reuse!(conn::Conn)
-    _set_conn_reader_capture!(conn.reader, nothing)
     if conn.secure
         conn.tls === nothing || TLS.set_deadline!(conn.tls::TLS.Conn, Int64(0))
     else
@@ -1097,14 +1077,12 @@ function Base.read(reader::_ConnReader, ::Type{UInt8})
     if _conn_reader_available(reader) > 0
         b = @inbounds reader.buf[reader.next]
         reader.next += 1
-        _capture_conn_reader_bytes!(reader, b)
         return b
     end
     n = _fill_conn_reader!(reader)
     n == 0 && throw(EOFError())
     reader.next = 2
     b = @inbounds reader.buf[1]
-    _capture_conn_reader_bytes!(reader, b)
     return b
 end
 
@@ -1116,7 +1094,6 @@ function Base.readbytes!(reader::_ConnReader, dst::Vector{UInt8}, nb::Integer=le
     if available > 0
         copied = min(available, target)
         copyto!(dst, 1, reader.buf, reader.next, copied)
-        _capture_conn_reader_bytes!(reader, view(reader.buf, reader.next:(reader.next + copied - 1)))
         reader.next += copied
         total = copied
         total == target && return total
@@ -1126,7 +1103,6 @@ function Base.readbytes!(reader::_ConnReader, dst::Vector{UInt8}, nb::Integer=le
         n == 0 && break
         copied = min(n, target - total)
         copyto!(dst, total + 1, reader.buf, 1, copied)
-        _capture_conn_reader_bytes!(reader, view(reader.buf, 1:copied))
         reader.next = copied + 1
         reader.stop = n
         total += copied
@@ -1138,14 +1114,12 @@ end
     if _conn_reader_available(reader) > 0
         b = @inbounds reader.buf[reader.next]
         reader.next += 1
-        _capture_conn_reader_bytes!(reader, b)
         return b
     end
     n = _fill_conn_reader!(reader)
     n == 0 && throw(ParseError("unexpected EOF while reading HTTP/1 data"))
     reader.next = 2
     b = @inbounds reader.buf[1]
-    _capture_conn_reader_bytes!(reader, b)
     return b
 end
 
@@ -1170,14 +1144,12 @@ function _readline_crlf(reader::_ConnReader, max_line_bytes::Integer)::String
             segment_len = stop - start + 1
             length(bytes) + segment_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
             append!(bytes, @view(reader.buf[start:stop]))
-            _capture_conn_reader_bytes!(reader, view(reader.buf, start:stop))
             reader.next = stop + 1
             continue
         end
         segment_len = nl_idx - start + 1
         length(bytes) + segment_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
         append!(bytes, @view(reader.buf[start:nl_idx]))
-        _capture_conn_reader_bytes!(reader, view(reader.buf, start:nl_idx))
         reader.next = nl_idx + 1
         nbytes = length(bytes)
         if nbytes >= 2 && bytes[nbytes-1] == 0x0d && bytes[nbytes] == 0x0a
@@ -1515,7 +1487,6 @@ function _roundtrip_incoming!(
         request_io = _reset_request_buffer!(conn)
         stream = _conn_stream(conn)
         deadline_stream = _RequestDeadlineWriteIO(stream, conn, request)
-        exchange = _request_context_verbose_exchange(request.context)
         has_request_body = _request_has_body(request)
         write_state = has_request_body ? _RequestWriteState(_request_expects_continue(request)) : nothing
         writer_err = Base.RefValue{Union{Nothing,Exception}}(nothing)
@@ -1523,25 +1494,14 @@ function _roundtrip_incoming!(
         if has_request_body
             writer_task = Threads.@spawn begin
                 try
-                    if exchange === nothing
-                        _write_request_streaming!(
-                            request_io,
-                            deadline_stream,
-                            request,
-                            plan,
-                            write_state,
-                            request_deadline,
-                        )
-                    else
-                        _write_request_streaming!(
-                            request_io,
-                            _VerboseTeeWriteIO(deadline_stream, (exchange::_VerboseExchangeState).request_capture),
-                            request,
-                            plan,
-                            write_state,
-                            request_deadline,
-                        )
-                    end
+                    _write_request_streaming!(
+                        request_io,
+                        deadline_stream,
+                        request,
+                        plan,
+                        write_state,
+                        request_deadline,
+                    )
                 catch err
                     writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
                     _request_write_allows_close(write_state) || return nothing
@@ -1574,16 +1534,7 @@ function _roundtrip_incoming!(
             end
         else
             try
-                if exchange === nothing
-                    _write_request_streaming!(request_io, deadline_stream, request, plan)
-                else
-                    _write_request_streaming!(
-                        request_io,
-                        _VerboseTeeWriteIO(deadline_stream, (exchange::_VerboseExchangeState).request_capture),
-                        request,
-                        plan,
-                    )
-                end
+                _write_request_streaming!(request_io, deadline_stream, request, plan)
             finally
                 try
                     body_close!(request.body)
@@ -1592,7 +1543,6 @@ function _roundtrip_incoming!(
             end
         end
         reader = conn.reader
-        _set_conn_reader_capture!(reader, exchange === nothing ? nothing : (exchange::_VerboseExchangeState).response_capture)
         _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(request))
         raw_response = _read_transport_incoming_response(reader, transport, conn, request)
         # HTTP/1 informational responses are consumed internally so callers
@@ -1608,7 +1558,6 @@ function _roundtrip_incoming!(
             raw_response = _read_transport_incoming_response(reader, transport, conn, request)
         end
         _set_conn_read_deadline!(conn, request_deadline)
-        _set_verbose_response_head!(exchange, raw_response.head)
         early_final = false
         if _request_write_should_wait_for_continue(write_state) && _request_write_continue_state(write_state::_RequestWriteState) == _REQUEST_WRITE_CONTINUE_PENDING
             _request_write_mark_continue_suppressed!(write_state::_RequestWriteState)

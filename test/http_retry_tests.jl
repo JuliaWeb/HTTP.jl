@@ -129,53 +129,53 @@ end
     other = Base.acquire(bucket, "other.example.com")
     @test other.partition == "other.example.com"
 
-    Base.release(bucket, token)
+    Base.release(bucket, token, 0)
     token2 = Base.acquire(bucket, "EXAMPLE.com")
     @test token2.partition == "example.com"
 
-    Base.release(bucket, token2)
-    Base.release(bucket, other)
+    Base.release(bucket, token2, 0)
+    Base.release(bucket, other, 0)
 end
 
 @testset "HTTP retry bucket successful release restores reserved capacity" begin
     bucket = HT.RetryBucket(capacity = 20)
 
     token = Base.acquire(bucket, "svc.example")
-    Base.release(bucket, token)
-    Base.release(bucket, token)
+    Base.release(bucket, token, 0)
+    Base.release(bucket, token, 0)
 
     token1 = Base.acquire(bucket, "svc.example")
     token2 = Base.acquire(bucket, "svc.example")
     @test_throws HT.RetryDeniedError Base.acquire(bucket, "svc.example")
 
-    Base.release(bucket, token1)
-    Base.release(bucket, token2)
+    Base.release(bucket, token1, 0)
+    Base.release(bucket, token2, 0)
 end
 
 @testset "HTTP retry bucket response failure release keeps partial cost" begin
     bucket = HT.RetryBucket(capacity = 25)
 
     token = Base.acquire(bucket, "svc.example")
-    Base.release(bucket, token, HT.Response(503))
+    Base.release(bucket, token, HT._RETRY_BUCKET_RETRYABLE_RESPONSE_COST)
 
     token1 = Base.acquire(bucket, "svc.example")
     token2 = Base.acquire(bucket, "svc.example")
     @test_throws HT.RetryDeniedError Base.acquire(bucket, "svc.example")
 
-    Base.release(bucket, token1)
-    Base.release(bucket, token2)
+    Base.release(bucket, token1, 0)
+    Base.release(bucket, token2, 0)
 end
 
 @testset "HTTP retry bucket exception failure release keeps full transient cost" begin
     bucket = HT.RetryBucket(capacity = 25)
 
     token = Base.acquire(bucket, "svc.example")
-    Base.release(bucket, token, EOFError())
+    Base.release(bucket, token, HT._RETRY_BUCKET_ACQUIRE_COST)
 
     token1 = Base.acquire(bucket, "svc.example")
     @test_throws HT.RetryDeniedError Base.acquire(bucket, "svc.example")
 
-    Base.release(bucket, token1)
+    Base.release(bucket, token1, 0)
 end
 
 @testset "HTTP transport owns an optional default retry bucket" begin
@@ -349,6 +349,24 @@ end
             NC.close(listener2)
         catch
         end
+    end
+end
+
+@testset "HTTP retry_if sees RequestRetryError for request-path failures" begin
+    seen_err = Ref{Any}(nothing)
+    hook = (attempt, err, req, resp) -> begin
+        seen_err[] = err
+        return false
+    end
+    client = HT.Client(transport = HT.Transport(retry_bucket = nothing, max_idle_per_host = 1, max_idle_total = 1), cookiejar = nothing)
+    try
+        controller = HT._retry_controller(client, true, 1, false, hook, true, false)
+        request = HT.Request("GET", "/hook"; host = "example.com", body = HT.EmptyBody(), content_length = 0)
+        @test !HT._should_retry_request_attempt(controller, 1, request, HT.RequestRetryError(EOFError()), nothing)
+        @test seen_err[] isa HT.RequestRetryError
+        @test (seen_err[]::HT.RequestRetryError).err isa EOFError
+    finally
+        close(client)
     end
 end
 
