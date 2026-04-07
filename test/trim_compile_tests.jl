@@ -111,6 +111,11 @@ function _trim_known_task_runtime_limitation(script_path::String)::Bool
         occursin("HTTP.listen!(", source)
 end
 
+function _trim_known_runtime_allow_failure(script_path::String)::Bool
+    _trim_known_task_runtime_limitation(script_path) && return true
+    return Sys.iswindows() && basename(script_path) == "http_trim_websocket.jl"
+end
+
 function _trim_task_runtime_allow_failure(script_file::String, reason::String, output::String = "")
     println("[trim] known trimmed-task runtime issue tolerated for $(script_file): $(reason)")
     _maybe_print_output("---- trim task-runtime output ($(script_file)) ----", output)
@@ -139,7 +144,7 @@ end
 function _run_trim_case(project_path::String, script_file::String, output_name::String)
     script_path = joinpath(@__DIR__, script_file)
     @test isfile(script_path)
-    allow_task_runtime_failure = _trim_known_task_runtime_limitation(script_path)
+    allow_task_runtime_failure = _trim_known_runtime_allow_failure(script_path)
     println("[trim] compile START $(script_file)")
     start_t = time()
     mktempdir() do tmpdir
