@@ -91,7 +91,8 @@ function _maybe_print_output(header::String, output::String)
 end
 
 function _trim_executable_timeout_s()::Float64
-    return parse(Float64, get(ENV, "HTTP_TRIM_EXE_TIMEOUT_S", "30.0"))
+    default = Sys.iswindows() ? "60.0" : "30.0"
+    return parse(Float64, get(ENV, "HTTP_TRIM_EXE_TIMEOUT_S", default))
 end
 
 function _trim_prerelease_allow_failure(script_file::String, reason::String, output::String = "")
