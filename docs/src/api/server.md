@@ -19,6 +19,10 @@ HTTP.listen
 HTTP.serve!
 HTTP.serve
 HTTP.streamhandler
+HTTP.Handlers.handlertimeout
+HTTP.servefile
+HTTP.fileserver
+HTTP.servecontent
 HTTP.forceclose
 HTTP.port
 HTTP.startread

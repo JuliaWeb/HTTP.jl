@@ -133,6 +133,17 @@ end
     return limit * 2
 end
 
+"""
+    Stream
+
+Bidirectional HTTP stream used by `listen!`, `serve!`, `HTTP.open`, and
+stream-oriented request/response handlers.
+
+Server-side streams expose request metadata through `startread(stream)` and let
+handlers consume request bytes from the stream directly before writing a
+response. Client-side streams let callers write a request body first, then
+switch to reading the response head/body from the same object.
+"""
 mutable struct Stream{ISCLIENT,Req<:Request} <: IO
     parsed::Union{Nothing,_URLParts}
     client::Union{Nothing,Client}

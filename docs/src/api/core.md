@@ -53,7 +53,6 @@ HTTP.CallbackBody
 HTTP.FixedLengthBody
 HTTP.ChunkedBody
 HTTP.EOFBody
-HTTP.ManagedBody
 HTTP.nobody
 HTTP.body_read!
 HTTP.body_close!

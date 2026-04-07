@@ -215,7 +215,7 @@ internals expose explicit body types instead.
 Common body-related types:
 
 - `BytesBody` for already-buffered data
-- `FixedLengthBody`, `ChunkedBody`, and `ManagedBody` for streamed bodies
+- `FixedLengthBody`, `ChunkedBody`, and `EOFBody` for streamed bodies
 - `EmptyBody` for requests or responses with no payload
 - `Form` when you need a multipart/form-data request body
 

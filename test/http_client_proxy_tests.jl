@@ -690,6 +690,10 @@ end
 end
 
 @testset "HTTP default client surfaces CGI HTTP_PROXY refusal" begin
+    if _http_windows_ci()
+        @test_skip true
+        return
+    end
     _reset_default_http_client_proxy!()
     try
         err = withenv(

@@ -142,6 +142,8 @@ automatically when the callback finishes.
 The `response`-accepting forms are for responses that already have an
 `SSEStream` body.
 """
+function sse_stream end
+
 @inline function _configure_sse_response!(response::Response)::Response
     response.content_length = Int64(-1)
     setheader(response.headers, "Content-Type", "text/event-stream")

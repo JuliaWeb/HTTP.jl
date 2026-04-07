@@ -15,6 +15,7 @@ Depth = 2
 HTTP.Transport
 HTTP.Client
 HTTP.RetryBucket
+HTTP.RequestRetryError
 HTTP.roundtrip!
 HTTP.request
 HTTP.get
@@ -27,7 +28,18 @@ HTTP.options
 HTTP.open
 HTTP.do!
 HTTP.get!
+HTTP.@client
 HTTP.close_idle_connections!
 HTTP.idle_connection_count
 HTTP.isaborted
+```
+
+## Request Trace Events
+
+```@docs
+HTTP.RequestEvent
+HTTP.ResponseHeadEvent
+HTTP.RetryEvent
+HTTP.RedirectEvent
+HTTP.DoneEvent
 ```

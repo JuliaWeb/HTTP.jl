@@ -48,6 +48,18 @@ end
 
 abstract type ClientEvent end
 
+"""
+    RequestEvent
+
+Trace event emitted immediately before a high-level request attempt is sent.
+
+Fields:
+- `request`: request head/body metadata for the attempt
+- `url`: absolute request URL for the attempt
+- `attempt`: 1-based request attempt number
+- `redirect_count`: number of redirects already followed before this attempt
+- `protocol`: `:h1` or `:h2` for the selected wire protocol
+"""
 struct RequestEvent <: ClientEvent
     request::Request
     url::String
@@ -56,6 +68,18 @@ struct RequestEvent <: ClientEvent
     protocol::Symbol
 end
 
+"""
+    ResponseHeadEvent
+
+Trace event emitted after response headers are available for a successful
+request attempt and before the body is fully consumed.
+
+Fields:
+- `response`: response head metadata for the attempt
+- `url`: absolute request URL for the attempt
+- `attempt`: 1-based request attempt number
+- `redirect_count`: number of redirects followed before this response
+"""
 struct ResponseHeadEvent <: ClientEvent
     response::Response
     url::String
@@ -63,6 +87,21 @@ struct ResponseHeadEvent <: ClientEvent
     redirect_count::Int
 end
 
+"""
+    RetryEvent
+
+Trace event emitted when the high-level request path schedules another attempt.
+
+Fields:
+- `request`: request metadata that will be retried
+- `url`: absolute request URL for the attempt being retried
+- `attempt`: current 1-based attempt number
+- `next_attempt`: next 1-based attempt number
+- `redirect_count`: redirects already followed when the retry decision was made
+- `delay_ns`: delay before the next attempt in nanoseconds
+- `response`: retry-triggering response, or `nothing` for request-path failures
+- `err`: retry-triggering exception, or `nothing` for response-based retries
+"""
 struct RetryEvent <: ClientEvent
     request::Request
     url::String
@@ -74,6 +113,19 @@ struct RetryEvent <: ClientEvent
     err::Union{Nothing,Exception}
 end
 
+"""
+    RedirectEvent
+
+Trace event emitted when a redirect response is accepted and a follow-up request
+is about to be issued.
+
+Fields:
+- `request`: original request metadata that produced the redirect response
+- `response`: redirect response head
+- `from_url`: original absolute request URL
+- `to_url`: resolved redirect target URL
+- `redirect_count`: 1-based redirect count after accepting this redirect
+"""
 struct RedirectEvent <: ClientEvent
     request::Request
     response::Response
@@ -82,6 +134,17 @@ struct RedirectEvent <: ClientEvent
     redirect_count::Int
 end
 
+"""
+    DoneEvent
+
+Trace event emitted when a high-level request call finishes, either with a
+final response or an exception.
+
+Fields:
+- `response`: final response, or `nothing` if the request failed before one was produced
+- `err`: terminal exception, or `nothing` when the request completed successfully
+- `url`: absolute request URL for the overall call
+"""
 struct DoneEvent <: ClientEvent
     response::Union{Nothing,Response}
     err::Union{Nothing,Exception}
@@ -1350,88 +1413,6 @@ function _request_connect_host_resolver(base::_TransportHostResolver, request::R
 end
 
 
-"""
-    request(method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
-    request(trace, method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
-
-High-level one-shot HTTP request API.
-
-When `trace` is provided, it must be callable on any emitted client event.
-Current events are [`RequestEvent`](@ref), [`ResponseHeadEvent`](@ref),
-[`RetryEvent`](@ref), [`RedirectEvent`](@ref), and [`DoneEvent`](@ref).
-
-Keyword arguments:
-- `basicauth`: optional basic-auth credentials supplied as
-  `(username, password)` or `username => password`; explicit
-  `Authorization` headers take precedence, and URL `userinfo` is only used as a
-  fallback when neither is provided
-- `retry`: overall toggle for high-level request retries; lower-level reused-connection transport retries still happen independently
-- `retries`: maximum number of retry attempts after the initial request attempt
-- `retry_non_idempotent`: allow automatic retries for methods like `POST`/`PATCH`; `PUT` and `DELETE` are already treated as idempotent
-- `retry_if`: optional callback `(attempt, err, req, resp) -> Bool | nothing`; request-path failures are passed as `RequestRetryError` so implementations can inspect `err.err`, while response-based retry checks pass `err = nothing` and `resp = response`; `true` forces a retry when the request body is replayable, `false` suppresses retry, and `nothing` defers to built-in retry rules
-- `respect_retry_after`: honor server `Retry-After` on retryable `429`/`503` responses
-- `retry_bucket`: `true` uses the request transport's default `RetryBucket`, `false` disables bucket coordination, and a custom `RetryBucket` overrides the transport default
-- automatic retries only occur for replayable request bodies; built-in policy retries idempotent methods (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`, `DELETE`) plus requests carrying `Idempotency-Key`/`X-Idempotency-Key`
-- `status_exception`: throw `StatusError` for non-success responses
-- `redirect`: follow redirects through `do!`
-- `redirect_limit`: maximum number of redirects to follow for this call;
-  `0` disables redirect following while still returning the redirect response
-- `redirect_method`: override the method used for `301`/`302` redirects; pass
-  `:same` to preserve the original method
-- `forwardheaders`: whether original request headers are copied onto redirect
-  follow-up requests
-- request bodies may be passed positionally or, for convenience helpers like
-  `post(url; body=...)`, via the `body` keyword; supported inputs include
-  strings, byte vectors, `IO`, `Dict`/`NamedTuple` form fields, `HTTP.Form`,
-  iterable chunks, and existing `HTTP.AbstractBody` values
-- `proxy`: explicit proxy override for this call; pass a proxy URL string, a
-  `ProxyConfig`, or `nothing` to force direct connections
-- `cookies`: `true` to use the effective cookie jar, `false` to disable cookie
-  send/store for this call, or a dictionary of extra cookie name/value pairs to
-  append to jar-derived cookies
-- `cookiejar`: optional cookie jar override for this call; explicit clients
-  default to `client.cookiejar`, while implicit convenience calls default to the
-  shared `HTTP.COOKIEJAR`
-- `query`: optional query string or key/value collection appended to the URL
-- `response_stream`: optional sink `IO` or byte buffer written with the final response body
-- `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
-- `sse_callback`: callback receiving `(event)` or `(stream, event)` for
-  successful SSE responses
-- `verbose`: `false` disables built-in logging; `true`/`1` prints high-level
-  request lifecycle lines to `stdout`; `2` also prints request and response
-  heads. When combined with `trace`, verbose output is emitted before the user
-  trace is called.
-- `client`: optional explicit `Client`; otherwise a default or ephemeral client
-  is created
-- `connect_timeout`: connection establishment timeout in seconds, covering DNS,
-  TCP connect, proxy CONNECT, TLS handshake, and HTTP/2 session setup in the
-  high-level client paths
-- `request_timeout`: overall request deadline in seconds
-- `response_header_timeout`: maximum time to wait for response headers after
-  the request has been sent
-- `read_idle_timeout`: maximum time between inbound read progress events
-- `write_idle_timeout`: maximum time between outbound write progress events
-- `expect_continue_timeout`: how long to wait for a `100 Continue` response
-  before sending the request body anyway; pass `0` to disable the wait
-- `readtimeout`: deprecated alias for `read_idle_timeout`
-- `require_ssl_verification`: disable certificate verification only for testing
-- `protocol`: `:auto`, `:h1`, or `:h2`
-
-The built-in retry policy is intentionally conservative: it retries transient
-transport errors plus retryable `408`/`429`/`5xx` responses for replayable
-requests, but does not automatically retry request read-timeout/deadline
-failures.
-
-Returns a high-level `Response`. When no response body sink is provided,
-`response.body` is a fully materialized `Vector{UInt8}`. When `response_stream`
-is provided, the final `Response` contains either the filled buffer/view or
-`nothing` for `IO` sinks.
-
-Throws `ArgumentError` for unsupported inputs or invalid sink combinations,
-`StatusError` when `status_exception=true` and the response status is considered
-failing, plus any lower-level transport or protocol exception raised during the
-request. Automatic retries only occur for replayable request bodies.
-"""
 function _request_impl(
     trace,
     method::Union{AbstractString,Symbol},
@@ -1550,6 +1531,88 @@ function _request_impl(
     end
 end
 
+"""
+    request(method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
+    request(trace, method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
+
+High-level one-shot HTTP request API.
+
+When `trace` is provided, it must be callable on any emitted client event.
+Current events are [`RequestEvent`](@ref), [`ResponseHeadEvent`](@ref),
+[`RetryEvent`](@ref), [`RedirectEvent`](@ref), and [`DoneEvent`](@ref).
+
+Keyword arguments:
+- `basicauth`: optional basic-auth credentials supplied as
+  `(username, password)` or `username => password`; explicit
+  `Authorization` headers take precedence, and URL `userinfo` is only used as a
+  fallback when neither is provided
+- `retry`: overall toggle for high-level request retries; lower-level reused-connection transport retries still happen independently
+- `retries`: maximum number of retry attempts after the initial request attempt
+- `retry_non_idempotent`: allow automatic retries for methods like `POST`/`PATCH`; `PUT` and `DELETE` are already treated as idempotent
+- `retry_if`: optional callback `(attempt, err, req, resp) -> Bool | nothing`; request-path failures are passed as `RequestRetryError` so implementations can inspect `err.err`, while response-based retry checks pass `err = nothing` and `resp = response`; `true` forces a retry when the request body is replayable, `false` suppresses retry, and `nothing` defers to built-in retry rules
+- `respect_retry_after`: honor server `Retry-After` on retryable `429`/`503` responses
+- `retry_bucket`: `true` uses the request transport's default `RetryBucket`, `false` disables bucket coordination, and a custom `RetryBucket` overrides the transport default
+- automatic retries only occur for replayable request bodies; built-in policy retries idempotent methods (`GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT`, `DELETE`) plus requests carrying `Idempotency-Key`/`X-Idempotency-Key`
+- `status_exception`: throw `StatusError` for non-success responses
+- `redirect`: follow redirects through `do!`
+- `redirect_limit`: maximum number of redirects to follow for this call;
+  `0` disables redirect following while still returning the redirect response
+- `redirect_method`: override the method used for `301`/`302` redirects; pass
+  `:same` to preserve the original method
+- `forwardheaders`: whether original request headers are copied onto redirect
+  follow-up requests
+- request bodies may be passed positionally or, for convenience helpers like
+  `post(url; body=...)`, via the `body` keyword; supported inputs include
+  strings, byte vectors, `IO`, `Dict`/`NamedTuple` form fields, `HTTP.Form`,
+  iterable chunks, and existing `HTTP.AbstractBody` values
+- `proxy`: explicit proxy override for this call; pass a proxy URL string, a
+  `ProxyConfig`, or `nothing` to force direct connections
+- `cookies`: `true` to use the effective cookie jar, `false` to disable cookie
+  send/store for this call, or a dictionary of extra cookie name/value pairs to
+  append to jar-derived cookies
+- `cookiejar`: optional cookie jar override for this call; explicit clients
+  default to `client.cookiejar`, while implicit convenience calls default to the
+  shared `HTTP.COOKIEJAR`
+- `query`: optional query string or key/value collection appended to the URL
+- `response_stream`: optional sink `IO` or byte buffer written with the final response body
+- `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
+- `sse_callback`: callback receiving `(event)` or `(stream, event)` for
+  successful SSE responses
+- `verbose`: `false` disables built-in logging; `true`/`1` prints high-level
+  request lifecycle lines to `stdout`; `2` also prints request and response
+  heads. When combined with `trace`, verbose output is emitted before the user
+  trace is called.
+- `client`: optional explicit `Client`; otherwise a default or ephemeral client
+  is created
+- `connect_timeout`: connection establishment timeout in seconds, covering DNS,
+  TCP connect, proxy CONNECT, TLS handshake, and HTTP/2 session setup in the
+  high-level client paths
+- `request_timeout`: overall request deadline in seconds
+- `response_header_timeout`: maximum time to wait for response headers after
+  the request has been sent
+- `read_idle_timeout`: maximum time between inbound read progress events
+- `write_idle_timeout`: maximum time between outbound write progress events
+- `expect_continue_timeout`: how long to wait for a `100 Continue` response
+  before sending the request body anyway; pass `0` to disable the wait
+- `readtimeout`: deprecated alias for `read_idle_timeout`
+- `require_ssl_verification`: disable certificate verification only for testing
+- `protocol`: `:auto`, `:h1`, or `:h2`
+
+The built-in retry policy is intentionally conservative: it retries transient
+transport errors plus retryable `408`/`429`/`5xx` responses for replayable
+requests, but does not automatically retry request read-timeout/deadline
+failures.
+
+Returns a high-level `Response`. When no response body sink is provided,
+`response.body` is a fully materialized `Vector{UInt8}`. When `response_stream`
+is provided, the final `Response` contains either the filled buffer/view or
+`nothing` for `IO` sinks.
+
+Throws `ArgumentError` for unsupported inputs or invalid sink combinations,
+`StatusError` when `status_exception=true` and the response status is considered
+failing, plus any lower-level transport or protocol exception raised during the
+request. Automatic retries only occur for replayable request bodies.
+"""
 function request(
     trace,
     method::Union{AbstractString,Symbol},
