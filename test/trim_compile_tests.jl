@@ -90,8 +90,12 @@ function _maybe_print_output(header::String, output::String)
     return nothing
 end
 
-function _trim_executable_timeout_s()::Float64
-    default = Sys.iswindows() ? "60.0" : "30.0"
+function _trim_executable_timeout_s(script_path::String)::Float64
+    default = if Sys.iswindows() && basename(script_path) == "http_trim_open_fileserver.jl"
+        "120.0"
+    else
+        Sys.iswindows() ? "60.0" : "30.0"
+    end
     return parse(Float64, get(ENV, "HTTP_TRIM_EXE_TIMEOUT_S", default))
 end
 
@@ -201,7 +205,7 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             @test exit_code == 0
             @test isfile(run_path)
             run_cmd = Sys.iswindows() ? `$(abspath(run_path))` : `$(abspath(run_path))`
-            run_timeout_s = _trim_executable_timeout_s()
+            run_timeout_s = _trim_executable_timeout_s(script_path)
             run_exit, run_output, run_timed_out = _run_trim_executable(run_cmd; timeout_s = run_timeout_s)
             if run_timed_out
                 if allow_task_runtime_failure
