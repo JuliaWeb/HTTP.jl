@@ -358,6 +358,42 @@ end
     end
 end
 
+@testset "HTTP fileserver SPA fallback over HTTP/1.1" begin
+    mktempdir() do dir
+        write(joinpath(dir, "index.html"), "<p>shell</p>")
+        assets_dir = joinpath(dir, "assets")
+        mkpath(assets_dir)
+        write(joinpath(assets_dir, "app.js"), "console.log('ok');")
+
+        @test_throws ArgumentError HT.fileserver(dir; spa_fallback = "../index.html")
+
+        server = HT.serve!(HT.fileserver(dir; spa_fallback = "index.html"), "127.0.0.1", 0; listenany = true)
+        address = _wait_server_addr(server)
+        try
+            route_resp = HT.get("http://$(address)/gallery"; status_exception = false)
+            @test route_resp.status == 200
+            @test String(route_resp.body) == "<p>shell</p>"
+
+            nested_resp = HT.get("http://$(address)/gallery/featured"; status_exception = false)
+            @test nested_resp.status == 200
+            @test String(nested_resp.body) == "<p>shell</p>"
+
+            asset_resp = HT.get("http://$(address)/assets/app.js"; status_exception = false)
+            @test asset_resp.status == 200
+            @test String(asset_resp.body) == "console.log('ok');"
+
+            missing_asset = HT.get("http://$(address)/assets/missing.js"; status_exception = false)
+            @test missing_asset.status == 404
+
+            dotted_route = HT.get("http://$(address)/gallery.v2"; status_exception = false)
+            @test dotted_route.status == 404
+        finally
+            _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+            _run_with_timeout(() -> wait(server); label = "server task completion")
+        end
+    end
+end
+
 @testset "HTTP server request handler timeout middleware on HTTP/1.1" begin
     handler = HT.handlertimeout(0.05)(request -> begin
         if request.target == "/fast"

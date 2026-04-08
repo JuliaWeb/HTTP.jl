@@ -215,6 +215,44 @@ end
     end
 end
 
+@testset "HTTP/2 server fileserver supports SPA fallback" begin
+    mktempdir() do dir
+        write(joinpath(dir, "index.html"), "<p>shell</p>")
+        assets_dir = joinpath(dir, "assets")
+        mkpath(assets_dir)
+        write(joinpath(assets_dir, "app.js"), "console.log('ok');")
+
+        server = HT.serve!(HT.fileserver(dir; spa_fallback = "index.html"), "127.0.0.1", 0; listenany = true)
+        address = _wait_http_server_addr(server)
+        conn = HT.connect_h2!(address; secure = false)
+        try
+            route_req = HT.Request("GET", "/gallery"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            route_res = HT.h2_roundtrip!(conn, route_req)
+            @test route_res.status == 200
+            @test String(_read_all_h2_server(route_res.body)) == "<p>shell</p>"
+
+            asset_req = HT.Request("GET", "/assets/app.js"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            asset_res = HT.h2_roundtrip!(conn, asset_req)
+            @test asset_res.status == 200
+            @test String(_read_all_h2_server(asset_res.body)) == "console.log('ok');"
+
+            missing_asset_req = HT.Request("GET", "/assets/missing.js"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            missing_asset_res = HT.h2_roundtrip!(conn, missing_asset_req)
+            @test missing_asset_res.status == 404
+            @test isempty(_read_all_h2_server(missing_asset_res.body))
+
+            dotted_route_req = HT.Request("GET", "/gallery.v2"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            dotted_route_res = HT.h2_roundtrip!(conn, dotted_route_req)
+            @test dotted_route_res.status == 404
+            @test isempty(_read_all_h2_server(dotted_route_res.body))
+        finally
+            close(conn)
+            HT.forceclose(server)
+            _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+        end
+    end
+end
+
 @testset "HTTP/2 server request handler timeout middleware" begin
     handler = HT.handlertimeout(0.05)(request -> begin
         if request.target == "/fast"

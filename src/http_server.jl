@@ -1382,6 +1382,20 @@ function _decoded_request_path_segments(path::AbstractString)::Vector{String}
     return segments
 end
 
+@inline function _find_last_ascii_delim(s::AbstractString, delim::UInt8)::Int
+    bytes = codeunits(s)
+    @inbounds for i in length(bytes):-1:1
+        bytes[i] == delim && return i
+    end
+    return 0
+end
+
+@inline function _looks_like_file_request_path(path::AbstractString)::Bool
+    slash = _find_last_ascii_delim(path, 0x2f)
+    dot = _find_last_ascii_delim(path, 0x2e)
+    return dot != 0 && dot > slash
+end
+
 function _server_response(
     request::Request,
     status::Integer,
@@ -1513,6 +1527,10 @@ end
     fileserver(root; ...)
 
 Return a request handler that serves static files rooted at `root`.
+
+If `spa_fallback` is provided, missing request paths whose final segment does
+not look like a filename are served from that file within `root`. Missing
+asset-like paths still return `404`.
 """
 function fileserver(
     root::AbstractString;
@@ -1520,10 +1538,20 @@ function fileserver(
     redirect_canonical::Bool=true,
     etag=nothing,
     cache_control::Union{Nothing,AbstractString}=nothing,
+    spa_fallback::Union{Nothing,AbstractString}=nothing,
 )
     root_path = abspath(String(root))
     isdir(root_path) || throw(ArgumentError("fileserver root must be an existing directory"))
     index_name = String(index_file)
+    spa_fallback_path = if spa_fallback === nothing
+        nothing
+    else
+        segments = _decoded_request_path_segments("/" * String(spa_fallback))
+        isempty(segments) && throw(ArgumentError("fileserver spa_fallback must resolve to an existing file within root"))
+        resolved = joinpath(root_path, segments...)
+        isfile(resolved) || throw(ArgumentError("fileserver spa_fallback must resolve to an existing file within root"))
+        resolved
+    end
     return function (request::Request)
         (request.method == "GET" || request.method == "HEAD") || return _method_not_allowed_response(request)
         request_path, query_suffix = _request_path_and_query(request.target)
@@ -1533,7 +1561,7 @@ function fileserver(
             return _server_response(request, 400)
         end
         resolved = isempty(segments) ? root_path : joinpath(root_path, segments...)
-        return _servefile_response(
+        response = _servefile_response(
             request,
             resolved,
             request_path,
@@ -1543,6 +1571,19 @@ function fileserver(
             etag,
             cache_control,
         )
+        if response.status == 404 && spa_fallback_path !== nothing && !_looks_like_file_request_path(request_path)
+            return _servefile_response(
+                request,
+                spa_fallback_path::String,
+                request_path,
+                query_suffix,
+                index_name,
+                false,
+                etag,
+                cache_control,
+            )
+        end
+        return response
     end
 end
 
