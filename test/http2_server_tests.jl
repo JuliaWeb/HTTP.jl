@@ -300,17 +300,31 @@ end
         bad_trailer_block = HT.encode_header_block(encoder, HT.HeaderField[HT.HeaderField(":path", "/oops", false)])
         _write_frame_h2_server_raw!(conn, HT.HeadersFrame(UInt32(1), true, true, bad_trailer_block))
         NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
-        frame_or_err = try
-            HT.read_frame!(reader)
-        catch err
-            err
+        saw_goaway = false
+        saw_exception = false
+        goaway_error_code = UInt32(0)
+        try
+            while true
+                frame_or_err = try
+                    HT.read_frame!(reader)
+                catch err
+                    err
+                end
+                if frame_or_err isa HT.GoAwayFrame
+                    saw_goaway = true
+                    goaway_error_code = (frame_or_err::HT.GoAwayFrame).error_code
+                    break
+                end
+                if frame_or_err isa Exception
+                    saw_exception = true
+                    break
+                end
+            end
         finally
             NC.set_deadline!(conn::NC.Conn, Int64(0))
         end
-        @test frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception
-        if frame_or_err isa HT.GoAwayFrame
-            @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
-        end
+        @test saw_goaway || saw_exception
+        saw_goaway && @test goaway_error_code == UInt32(0x1)
     finally
         conn === nothing || try
             NC.close(conn::NC.Conn)
