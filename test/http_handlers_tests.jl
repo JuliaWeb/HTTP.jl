@@ -4,10 +4,6 @@ using Reseau
 
 const HT = HTTP
 
-@inline function _handlers_windows_ci_ice()::Bool
-    return Sys.iswindows() && get(ENV, "GITHUB_ACTIONS", "false") == "true"
-end
-
 function _read_all_handler_bytes(body::HT.AbstractBody)::Vector{UInt8}
     out = UInt8[]
     buf = Vector{UInt8}(undef, 64)
@@ -154,8 +150,7 @@ end
 end
 
 @testset "HTTP handlers request timeout middleware" begin
-    fast_timeout_s = _handlers_windows_ci_ice() ? 0.2 : 0.05
-    fast = HT.handlertimeout(fast_timeout_s)(req -> begin
+    fast = HT.handlertimeout(0.05)(req -> begin
         _ = req
         return _response_with_text("ok")
     end)
@@ -175,76 +170,64 @@ end
 end
 
 @testset "HTTP streamhandler helper" begin
-    if _handlers_windows_ci_ice()
-        @test_skip true
-    else
-        server = HT.listen!(HT.streamhandler(_streamhandler_echo_request), "127.0.0.1", 0; listenany = true)
-        address = _wait_handlers_server_addr(server)
-        try
-            resp = HT.get("http://$(address)/")
-            @test resp.status == 200
-            @test String(_read_all_handler_bytes(resp.body)) == "ping"
+    server = HT.listen!(HT.streamhandler(_streamhandler_echo_request), "127.0.0.1", 0; listenany = true)
+    address = _wait_handlers_server_addr(server)
+    try
+        resp = HT.get("http://$(address)/")
+        @test resp.status == 200
+        @test String(_read_all_handler_bytes(resp.body)) == "ping"
 
-            resp = HT.post("http://$(address)/"; body = "echo")
-            @test resp.status == 200
-            @test String(_read_all_handler_bytes(resp.body)) == "echo"
-        finally
-            HT.forceclose(server)
-            wait(server)
-        end
+        resp = HT.post("http://$(address)/"; body = "echo")
+        @test resp.status == 200
+        @test String(_read_all_handler_bytes(resp.body)) == "echo"
+    finally
+        HT.forceclose(server)
+        wait(server)
     end
 end
 
 @testset "HTTP router live request handler server" begin
-    if _handlers_windows_ci_ice()
-        @test_skip true
-    else
-        router = HT.Router()
-        HT.register!(router, "GET", "/hello/{name}", _router_hello_request)
-        HT.register!(router, "POST", "/echo/{name}", _router_echo_request)
+    router = HT.Router()
+    HT.register!(router, "GET", "/hello/{name}", _router_hello_request)
+    HT.register!(router, "POST", "/echo/{name}", _router_echo_request)
 
-        server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
-        address = _wait_handlers_server_addr(server)
-        try
-            hello = HT.get("http://$(address)/hello/jane?lang=en")
-            @test hello.status == 200
-            @test String(_read_all_handler_bytes(hello.body)) == "hello:jane"
+    server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
+    address = _wait_handlers_server_addr(server)
+    try
+        hello = HT.get("http://$(address)/hello/jane?lang=en")
+        @test hello.status == 200
+        @test String(_read_all_handler_bytes(hello.body)) == "hello:jane"
 
-            echo = HT.post("http://$(address)/echo/jane"; body = "ping")
-            @test echo.status == 200
-            @test String(_read_all_handler_bytes(echo.body)) == "echo:jane:ping"
+        echo = HT.post("http://$(address)/echo/jane"; body = "ping")
+        @test echo.status == 200
+        @test String(_read_all_handler_bytes(echo.body)) == "echo:jane:ping"
 
-            missing_method = HT.request("PUT", "http://$(address)/hello/jane"; status_exception = false)
-            @test missing_method.status == 405
+        missing_method = HT.request("PUT", "http://$(address)/hello/jane"; status_exception = false)
+        @test missing_method.status == 405
 
-            missing_route = HT.get("http://$(address)/missing"; status_exception = false)
-            @test missing_route.status == 404
-        finally
-            HT.forceclose(server)
-            wait(server)
-        end
+        missing_route = HT.get("http://$(address)/missing"; status_exception = false)
+        @test missing_route.status == 404
+    finally
+        HT.forceclose(server)
+        wait(server)
     end
 end
 
 @testset "HTTP router live stream handler server" begin
-    if _handlers_windows_ci_ice()
-        @test_skip true
-    else
-        router = HT.Router()
-        HT.register!(router, "POST", "/stream/{name}", _router_stream_request)
+    router = HT.Router()
+    HT.register!(router, "POST", "/stream/{name}", _router_stream_request)
 
-        server = HT.listen!(router, "127.0.0.1", 0; listenany = true)
-        address = _wait_handlers_server_addr(server)
-        try
-            resp = HT.post("http://$(address)/stream/sam"; body = "pong")
-            @test resp.status == 200
-            @test String(_read_all_handler_bytes(resp.body)) == "stream:sam:pong"
+    server = HT.listen!(router, "127.0.0.1", 0; listenany = true)
+    address = _wait_handlers_server_addr(server)
+    try
+        resp = HT.post("http://$(address)/stream/sam"; body = "pong")
+        @test resp.status == 200
+        @test String(_read_all_handler_bytes(resp.body)) == "stream:sam:pong"
 
-            wrong_method = HT.get("http://$(address)/stream/sam"; status_exception = false)
-            @test wrong_method.status == 405
-        finally
-            HT.forceclose(server)
-            wait(server)
-        end
+        wrong_method = HT.get("http://$(address)/stream/sam"; status_exception = false)
+        @test wrong_method.status == 405
+    finally
+        HT.forceclose(server)
+        wait(server)
     end
 end

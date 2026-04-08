@@ -51,7 +51,7 @@ function _precompile_reset_default_client!()::Nothing
     return nothing
 end
 
-function _run_precompile_workload!()::Nothing
+function _run_precompile_workload_inner!()::Nothing
     request_server = nothing
     stream_server = nothing
     file_server = nothing
@@ -246,6 +246,25 @@ function _run_precompile_workload!()::Nothing
         end
         rm(temp_dir; force=true, recursive=true)
     end
+    return nothing
+end
+
+function _run_precompile_workload!()::Nothing
+    task = Threads.@spawn _run_precompile_workload_inner!()
+    status = timedwait(() -> istaskdone(task), 20.0; pollint = 0.01)
+    if status == :timed_out
+        try
+            IOPoll.shutdown!()
+        catch
+        end
+        try
+            Base.throwto(task, InterruptException())
+        catch
+        end
+        _ = timedwait(() -> istaskdone(task), 2.0; pollint = 0.01)
+        error("HTTP precompile workload timed out")
+    end
+    fetch(task)
     return nothing
 end
 
