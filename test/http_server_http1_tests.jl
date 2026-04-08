@@ -303,6 +303,8 @@ end
     mktempdir() do dir
         hello_path = joinpath(dir, "hello.txt")
         write(hello_path, "hello world")
+        blob_path = joinpath(dir, "blob.custom")
+        write(blob_path, "blob")
         docs_dir = joinpath(dir, "docs")
         mkpath(docs_dir)
         write(joinpath(docs_dir, "index.html"), "<p>docs</p>")
@@ -311,8 +313,13 @@ end
         direct_resp = HT.servefile(direct_req, hello_path; etag = :weak_stat, cache_control = "public, max-age=60")
         @test direct_resp.status == 200
         @test HT.header(direct_resp.headers, "Cache-Control") == "public, max-age=60"
+        @test HT.header(direct_resp.headers, "Content-Type") == "text/plain; charset=utf-8"
         @test !isempty(HT.header(direct_resp.headers, "ETag", ""))
         @test String(_read_all_server_bytes(direct_resp.body)) == "hello world"
+
+        blob_resp = HT.servefile(HT.Request("GET", "/blob.custom"), blob_path)
+        @test blob_resp.status == 200
+        @test HT.header(blob_resp.headers, "Content-Type") == "application/octet-stream"
 
         server = HT.serve!(HT.fileserver(dir; etag = :weak_stat, cache_control = "public, max-age=60"), "127.0.0.1", 0; listenany = true)
         address = _wait_server_addr(server)

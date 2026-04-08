@@ -966,13 +966,7 @@ end
 function _parse_http_date(value::AbstractString)::Union{Nothing,DateTime}
     stripped = strip(value)
     isempty(stripped) && return nothing
-    for fmt in (Cookies.RFC1123GMTFormat, Cookies.AlternateRFC1123GMTFormat)
-        try
-            return Dates.DateTime(stripped, fmt)
-        catch
-        end
-    end
-    return nothing
+    return Cookies._parse_http_gmt_datetime(stripped)
 end
 
 @inline function _servecontent_etag_body_start(value::AbstractString)::Int
@@ -1175,9 +1169,16 @@ function _parse_single_range(range_header::AbstractString, size::Int64)::Union{N
 end
 
 function _servecontent_extension_type(name::AbstractString)::Union{Nothing,String}
-    ext = lowercase(splitext(String(name))[2])
-    isempty(ext) && return nothing
+    slash = _find_last_ascii_delim(name, 0x2f)
+    dot = _find_last_ascii_delim(name, 0x2e)
+    (dot == 0 || dot <= slash) && return nothing
+    ext = lowercase(String(SubString(name, dot, lastindex(name))))
     return get(() -> nothing, _SERVECONTENT_EXTENSION_MIME_TYPES, ext)
+end
+
+@inline function _servefile_content_type(name::AbstractString)::String
+    ext_type = _servecontent_extension_type(name)
+    return ext_type === nothing ? "application/octet-stream" : (ext_type::String)
 end
 
 function _sniff_content_type_source(source::AbstractVector{UInt8})::String
@@ -1371,8 +1372,8 @@ end
 function _decoded_request_path_segments(path::AbstractString)::Vector{String}
     decoded = try
         URIs.unescapeuri(String(path))
-    catch err
-        throw(ArgumentError("invalid request path: $(sprint(showerror, err))"))
+    catch
+        throw(ArgumentError("invalid request path"))
     end
     segments = String[]
     for segment in split(decoded, '/'; keepempty=false)
@@ -1380,6 +1381,23 @@ function _decoded_request_path_segments(path::AbstractString)::Vector{String}
         push!(segments, segment)
     end
     return segments
+end
+
+function _join_request_path(root::String, segments::Vector{String})::String
+    path = root
+    @inbounds for segment in segments
+        path = joinpath(path, segment)
+    end
+    return path
+end
+
+function _fileserver_spa_fallback_path(root_path::String, spa_fallback::Union{Nothing,AbstractString})::Union{Nothing,String}
+    spa_fallback === nothing && return nothing
+    segments = _decoded_request_path_segments("/" * String(spa_fallback))
+    isempty(segments) && throw(ArgumentError("fileserver spa_fallback must resolve to an existing file within root"))
+    resolved = _join_request_path(root_path, segments)
+    isfile(resolved) || throw(ArgumentError("fileserver spa_fallback must resolve to an existing file within root"))
+    return resolved
 end
 
 @inline function _find_last_ascii_delim(s::AbstractString, delim::UInt8)::Int
@@ -1481,6 +1499,7 @@ function _servefile_response(
         name=basename(path),
         size=st.size,
         modtime=modtime,
+        content_type=_servefile_content_type(path),
         etag=resolved_etag,
         headers=response_headers,
     )
@@ -1543,15 +1562,7 @@ function fileserver(
     root_path = abspath(String(root))
     isdir(root_path) || throw(ArgumentError("fileserver root must be an existing directory"))
     index_name = String(index_file)
-    spa_fallback_path = if spa_fallback === nothing
-        nothing
-    else
-        segments = _decoded_request_path_segments("/" * String(spa_fallback))
-        isempty(segments) && throw(ArgumentError("fileserver spa_fallback must resolve to an existing file within root"))
-        resolved = joinpath(root_path, segments...)
-        isfile(resolved) || throw(ArgumentError("fileserver spa_fallback must resolve to an existing file within root"))
-        resolved
-    end
+    spa_fallback_path = _fileserver_spa_fallback_path(root_path, spa_fallback)
     return function (request::Request)
         (request.method == "GET" || request.method == "HEAD") || return _method_not_allowed_response(request)
         request_path, query_suffix = _request_path_and_query(request.target)
@@ -1560,7 +1571,7 @@ function fileserver(
         catch
             return _server_response(request, 400)
         end
-        resolved = isempty(segments) ? root_path : joinpath(root_path, segments...)
+        resolved = isempty(segments) ? root_path : _join_request_path(root_path, segments)
         response = _servefile_response(
             request,
             resolved,
