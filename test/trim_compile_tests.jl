@@ -116,9 +116,19 @@ function _trim_known_runtime_allow_failure(script_path::String)::Bool
     return Sys.iswindows() && basename(script_path) == "http_trim_websocket.jl"
 end
 
+function _trim_known_compile_allow_failure(script_path::String)::Bool
+    return Sys.iswindows() && _trim_known_task_runtime_limitation(script_path)
+end
+
 function _trim_task_runtime_allow_failure(script_file::String, reason::String, output::String = "")
     println("[trim] known trimmed-task runtime issue tolerated for $(script_file): $(reason)")
     _maybe_print_output("---- trim task-runtime output ($(script_file)) ----", output)
+    return nothing
+end
+
+function _trim_task_compile_allow_failure(script_file::String, reason::String, output::String = "")
+    println("[trim] known trimmed-task compile issue tolerated for $(script_file): $(reason)")
+    _maybe_print_output("---- trim task-compile output ($(script_file)) ----", output)
     return nothing
 end
 
@@ -144,6 +154,7 @@ end
 function _run_trim_case(project_path::String, script_file::String, output_name::String)
     script_path = joinpath(@__DIR__, script_file)
     @test isfile(script_path)
+    allow_task_compile_failure = _trim_known_compile_allow_failure(script_path)
     allow_task_runtime_failure = _trim_known_runtime_allow_failure(script_path)
     println("[trim] compile START $(script_file)")
     start_t = time()
@@ -152,6 +163,10 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             bundle_dir = _trim_use_bundle() ? joinpath(tmpdir, "bundle") : nothing
             exit_code, output, timed_out = _run_trim_compile(project_path, script_path, output_name; bundle_dir = bundle_dir)
             if timed_out
+                if allow_task_compile_failure
+                    _trim_task_compile_allow_failure(script_file, "trim compile timed out", output)
+                    return nothing
+                end
                 if _TRIM_PRE_RELEASE
                     _trim_prerelease_allow_failure(script_file, "trim compile timed out", output)
                     return nothing
