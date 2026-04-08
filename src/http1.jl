@@ -562,6 +562,32 @@ function _write_exact_body!(io::IO, body::AbstractBody, expected_len::Int64)
     return nothing
 end
 
+function _write_exact_body!(io::IO, body::AbstractString, expected_len::Int64)
+    expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
+    actual_len = Int64(ncodeunits(body))
+    actual_len == expected_len || throw(ProtocolError("body bytes did not match expected Content-Length"))
+    actual_len == 0 && return nothing
+    n = write(io, body)
+    n == expected_len || throw(ProtocolError("transport short write"))
+    return nothing
+end
+
+function _write_exact_body!(io::IO, body::AbstractVector{UInt8}, expected_len::Int64)
+    expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
+    actual_len = Int64(length(body))
+    actual_len == expected_len || throw(ProtocolError("body bytes did not match expected Content-Length"))
+    actual_len == 0 && return nothing
+    n = write(io, body)
+    n == expected_len || throw(ProtocolError("transport short write"))
+    return nothing
+end
+
+function _write_exact_body!(::IO, body, expected_len::Int64)
+    expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
+    expected_len == 0 && return nothing
+    throw(ProtocolError("unsupported HTTP/1 response body type $(typeof(body))"))
+end
+
 function _write_exact_bytes_body!(stream, body::BytesBody, expected_len::Int64)
     expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
     expected_len == 0 && return nothing
@@ -592,6 +618,35 @@ function _write_chunked_body!(io::IO, body::AbstractBody, trailer_values::Header
     _write_headers!(io, trailer_values)
     write(io, "\r\n")
     return nothing
+end
+
+function _write_chunked_body!(io::IO, body::AbstractString, trailer_values::Headers)
+    if !isempty(body)
+        n = ncodeunits(body)
+        print(io, string(n, base=16), "\r\n")
+        write(io, body)
+        write(io, "\r\n")
+    end
+    write(io, "0\r\n")
+    _write_headers!(io, trailer_values)
+    write(io, "\r\n")
+    return nothing
+end
+
+function _write_chunked_body!(io::IO, body::AbstractVector{UInt8}, trailer_values::Headers)
+    if !isempty(body)
+        print(io, string(length(body), base=16), "\r\n")
+        write(io, body)
+        write(io, "\r\n")
+    end
+    write(io, "0\r\n")
+    _write_headers!(io, trailer_values)
+    write(io, "\r\n")
+    return nothing
+end
+
+function _write_chunked_body!(::IO, body, ::Headers)
+    throw(ProtocolError("unsupported HTTP/1 response body type $(typeof(body))"))
 end
 
 function _request_has_body(request::Request)::Bool
@@ -648,7 +703,13 @@ end
 
 function _response_has_body(response::Response)::Bool
     _body_allowed_for_status(response.status) || return false
+    response.body === nothing && return false
     response.body isa EmptyBody && return false
+    if response.body isa AbstractString
+        isempty(response.body::AbstractString) && return false
+    elseif response.body isa AbstractVector{UInt8}
+        isempty(response.body::AbstractVector{UInt8}) && return false
+    end
     response.content_length == 0 && return false
     return true
 end
@@ -697,7 +758,7 @@ Body suppression rules for status codes like `1xx`, `204`, and `304` are
 enforced here so callers can hand the function a regular `Response` object and
 let the serializer apply wire-level HTTP/1 rules.
 """
-function write_response!(io::IO, response::Response{B}) where {B<:AbstractBody}
+function write_response!(io::IO, response::Response)
     headers = copy(response.headers)
     response_close = response.close || _should_close_connection(headers, response.proto_major, response.proto_minor)
     response_close && setheader(headers, "Connection", "close")

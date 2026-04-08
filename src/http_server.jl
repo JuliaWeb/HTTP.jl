@@ -2727,13 +2727,25 @@ function _write_response_body_h2_server!(
     response::Response,
     end_stream::Bool=true,
 )::Nothing
-    response.body isa EmptyBody && return nothing
+    body = response.body
+    body isa EmptyBody && return nothing
+    if body isa AbstractString
+        bytes = Vector{UInt8}(codeunits(String(body)))
+        isempty(bytes) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, bytes; end_stream=end_stream)
+        return nothing
+    end
+    if body isa AbstractVector{UInt8}
+        bytes = body isa Vector{UInt8} ? body : Vector{UInt8}(body)
+        isempty(bytes) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, bytes; end_stream=end_stream)
+        return nothing
+    end
+    body isa AbstractBody || throw(ProtocolError("unsupported HTTP/2 response body type $(typeof(body))"))
     buf = Vector{UInt8}(undef, 16 * 1024)
     pending = UInt8[]
     have_pending = false
     try
         while true
-            n = body_read!(response.body, buf)
+            n = body_read!(body::AbstractBody, buf)
             if n == 0
                 if have_pending
                     _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, pending; end_stream=end_stream)
@@ -2752,7 +2764,7 @@ function _write_response_body_h2_server!(
         end
     finally
         try
-            body_close!(response.body)
+            body_close!(body::AbstractBody)
         catch
         end
     end
@@ -2771,14 +2783,16 @@ function _write_h2_response!(
     has_trailers = !isempty(response.trailers)
     if !allows_body
         try
-            body_close!(response.body)
+            response.body isa AbstractBody && body_close!(response.body::AbstractBody)
         catch
         end
         _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, !has_trailers)
         has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
         return nothing
     end
-    body_empty = response.body isa EmptyBody
+    body_empty = response.body isa EmptyBody ||
+                 (response.body isa AbstractString && isempty(response.body::AbstractString)) ||
+                 (response.body isa AbstractVector{UInt8} && isempty(response.body::AbstractVector{UInt8}))
     end_stream = body_empty && !has_trailers
     _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream)
     body_empty || _write_response_body_h2_server!(conn, write_lock, send_state, stream_id, response, !has_trailers)

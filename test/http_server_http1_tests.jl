@@ -213,6 +213,22 @@ end
     end
 end
 
+@testset "HTTP server request handlers support text response bodies" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        return HT.Response(404, "Not found")
+    end
+    address = _wait_server_addr(server)
+    try
+        response = HT.get("http://$(address)/missing"; retry = false, status_exception = false)
+        @test response.status == 404
+        @test String(response.body) == "Not found"
+    finally
+        _run_with_timeout(() -> close(server); label = "server close")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP servecontent direct conditionals and single ranges" begin
     payload = collect(codeunits("abcdef"))
     modtime = Dates.DateTime(2024, 1, 2, 3, 4, 5)

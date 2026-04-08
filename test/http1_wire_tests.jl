@@ -182,6 +182,22 @@ end
     @test HT.header(parsed_response.trailers, "X-Custom") == "yes"
 end
 
+@testset "HTTP/1 serializes text and byte-vector response bodies" begin
+    text_response = HT.Response(404, "Not found")
+    text_io = IOBuffer()
+    HT.write_response!(text_io, text_response)
+    parsed_text = HT._read_response(IOBuffer(take!(text_io)))
+    @test parsed_text.status == 404
+    @test String(_read_all_body_bytes(parsed_text.body)) == "Not found"
+
+    bytes_response = HT.Response(200, UInt8[0x6f, 0x6b]; content_length = 2)
+    bytes_io = IOBuffer()
+    HT.write_response!(bytes_io, bytes_response)
+    parsed_bytes = HT._read_response(IOBuffer(take!(bytes_io)))
+    @test parsed_bytes.status == 200
+    @test _read_all_body_bytes(parsed_bytes.body) == UInt8[0x6f, 0x6b]
+end
+
 @testset "HTTP/1 parse and framing errors" begin
     bad_header = "GET / HTTP/1.1\r\nHost example.com\r\n\r\n"
     @test_throws HT.ParseError HT.read_request(IOBuffer(codeunits(bad_header)))

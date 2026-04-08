@@ -127,6 +127,25 @@ end
     end
 end
 
+@testset "HTTP/2 server request handlers support text response bodies" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        return HT.Response(404, "Not found"; proto_major = 2, proto_minor = 0)
+    end
+    address = _wait_http_server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        req = HT.Request("GET", "/missing"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        res = HT.h2_roundtrip!(conn, req)
+        @test res.status == 404
+        @test String(_read_all_h2_server(res.body)) == "Not found"
+    finally
+        close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server servecontent supports ranges and conditionals" begin
     payload = collect(codeunits("abcdef"))
     modtime = Dates.DateTime(2024, 1, 2, 3, 4, 5)
