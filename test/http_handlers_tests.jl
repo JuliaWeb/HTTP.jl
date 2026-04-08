@@ -154,7 +154,8 @@ end
 end
 
 @testset "HTTP handlers request timeout middleware" begin
-    fast = HT.handlertimeout(0.05)(req -> begin
+    fast_timeout_s = _handlers_windows_ci_ice() ? 0.2 : 0.05
+    fast = HT.handlertimeout(fast_timeout_s)(req -> begin
         _ = req
         return _response_with_text("ok")
     end)
