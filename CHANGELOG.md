@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Documentation examples migrated from the deprecated JSON3.jl to JSON.jl v1.
+  Affects `docs/examples/simple_server.jl` and `docs/examples/cors_server.jl`.
+  No public API of HTTP.jl changes. ([#1249])
+### Fixed
+- `docs/examples/simple_server.jl` and `docs/examples/cors_server.jl` no longer
+  fail to parse on Julia ≥ 1.12: the leading description is now a `#=...=#`
+  block comment instead of a top-of-file string literal that the parser tried
+  to attach as a docstring to the following `using` statement. ([#1249])
+- `docs/examples/cors_server.jl`: the demonstration `HTTP.get` against an
+  intentionally bad path now passes `status_exception=false` so the script
+  can exercise the cors404 handler without raising. ([#1249])
 
 ## [v1.11.0] - 2025-12-20
 ### Added
@@ -703,3 +715,4 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
 [#1119]: https://github.com/JuliaWeb/HTTP.jl/issues/1119
 [#1126]: https://github.com/JuliaWeb/HTTP.jl/issues/1126
 [#1127]: https://github.com/JuliaWeb/HTTP.jl/issues/1127
+[#1249]: https://github.com/JuliaWeb/HTTP.jl/issues/1249

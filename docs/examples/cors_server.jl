@@ -1,10 +1,10 @@
-"""
+#=
 Server example that takes after the simple server, however,
 handles dealing with CORS preflight headers when dealing with more
 than just a simple request. For CORS details, see e.g. https://cors-errors.info/
-"""
+=#
 
-using HTTP, JSON3, StructTypes, Sockets, UUIDs
+using HTTP, JSON, Sockets, UUIDs
 
 # modified Animal struct to associate with specific user
 mutable struct Animal
@@ -13,9 +13,8 @@ mutable struct Animal
     type::String
     name::String
     Animal() = new()
+    Animal(id, userId, type, name) = new(id, userId, type, name)
 end
-
-StructTypes.StructType(::Type{Animal}) = StructTypes.Mutable()
 
 # use a plain `Dict` as a "data store", outer Dict maps userId to user-specific Animals
 const ANIMALS = Dict{UUID, Dict{Int, Animal}}()
@@ -52,14 +51,14 @@ function JSONMiddleware(handler)
             ret = handler(req)
         else
             # replace request body with parsed Animal instance
-            req.body = JSON3.read(req.body, Animal)
+            req.body = JSON.parse(req.body, Animal)
             ret = handler(req)
         end
         # return a Response, if its a response already (from 404 and 405 handlers)
         if ret isa HTTP.Response
             return ret
         else # otherwise serialize any Animal as json string and wrap it in Response
-            return HTTP.Response(200, CORS_RES_HEADERS, ret === nothing ? "" : JSON3.write(ret))
+            return HTTP.Response(200, CORS_RES_HEADERS, ret === nothing ? "" : JSON.json(ret))
         end
     end
 end
@@ -133,19 +132,19 @@ server = HTTP.serve!(ANIMAL_ROUTER |> JSONMiddleware |> CorsMiddleware, Sockets.
 
 # using our server
 resp = HTTP.post("http://localhost:8080/api/zoo/v1/users")
-userId = JSON3.read(resp.body, UUID)
+userId = JSON.parse(resp.body, UUID)
 x = Animal()
 x.userId = userId
 x.type = "cat"
 x.name = "pete"
 # create 1st animal
-resp = HTTP.post("http://localhost:8080/api/zoo/v1/users/$(userId)/animals", [], JSON3.write(x))
-x2 = JSON3.read(resp.body, Animal)
+resp = HTTP.post("http://localhost:8080/api/zoo/v1/users/$(userId)/animals", [], JSON.json(x))
+x2 = JSON.parse(resp.body, Animal)
 # retrieve it back
 resp = HTTP.get("http://localhost:8080/api/zoo/v1/users/$(userId)/animals/$(x2.id)")
-x3 = JSON3.read(resp.body, Animal)
+x3 = JSON.parse(resp.body, Animal)
 # try bad path
-resp = HTTP.get("http://localhost:8080/api/zoo/v1/badpath")
+resp = HTTP.get("http://localhost:8080/api/zoo/v1/badpath"; status_exception=false)
 
 # close the server which will stop the HTTP server from listening
 close(server)
