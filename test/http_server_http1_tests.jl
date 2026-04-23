@@ -31,6 +31,26 @@ function _run_with_timeout(f::F; timeout_s::Float64 = 5.0, label::String = "oper
     return fetch(task)
 end
 
+mutable struct _BlockingResponseBody <: HT.AbstractBody
+    gate::Channel{Nothing}
+    data::Vector{UInt8}
+    sent::Bool
+end
+
+function HT.body_read!(body::_BlockingResponseBody, dst::Vector{UInt8})::Int
+    body.sent && return 0
+    take!(body.gate)
+    n = min(length(dst), length(body.data))
+    copyto!(dst, 1, body.data, 1, n)
+    body.sent = true
+    return n
+end
+
+function HT.body_close!(body::_BlockingResponseBody)
+    body.sent = true
+    return nothing
+end
+
 function _raw_http_request(port::Integer, request::AbstractString; settle_s::Float64 = 0.5)::String
     sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
     try
@@ -181,6 +201,36 @@ end
         @test take!(aborted_states) == false
         @test take!(aborted_states) == true
     finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP server streams ordinary H1 response heads before body EOF" begin
+    gate = Channel{Nothing}(1)
+    payload = collect(codeunits("hello"))
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        body = _BlockingResponseBody(gate, payload, false)
+        return HT.Response(200, body; content_length = length(payload))
+    end
+    address = _wait_server_addr(server)
+    conn = ND.connect("tcp", address)
+    try
+        write(conn, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
+        head = _read_until_quiet(conn; timeout_s = 2.0, quiet_timeout_s = 0.05)
+        @test occursin("HTTP/1.1 200", head)
+        @test occursin("\r\n\r\n", head)
+        @test !occursin("hello", head)
+
+        put!(gate, nothing)
+        rest = _read_until_quiet(conn; timeout_s = 2.0, quiet_timeout_s = 0.05)
+        @test occursin("hello", head * rest)
+    finally
+        try
+            NC.close(conn)
+        catch
+        end
         _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
         _run_with_timeout(() -> wait(server); label = "server task completion")
     end
@@ -782,7 +832,7 @@ end
         # Bound the post-shutdown probe so Windows CI cannot hang indefinitely
         # if a stale keep-alive conn does not surface close immediately.
         probe = HT.Request("GET", "/after-shutdown"; host = address, body = HT.EmptyBody(), content_length = 0)
-        HT.set_deadline!(probe.context, Int64(time_ns()) + Int64(2_000_000_000))
+        HT.set_deadline!(HT.get_request_context(probe), Int64(time_ns()) + Int64(2_000_000_000))
         @test_throws Exception _run_with_timeout(() -> HT.do!(client, address, probe); timeout_s = 3.0, label = "post-shutdown request")
     finally
         close(client.transport)

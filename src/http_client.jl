@@ -151,6 +151,43 @@ struct DoneEvent <: ClientEvent
     url::String
 end
 
+@inline function _warn_ignored_client_compat_kw(name::AbstractString)::Nothing
+    @warn "`$name` is accepted for compatibility but is no longer supported in the HTTP 2.0 client and has no effect" maxlog=1
+    return nothing
+end
+
+@inline function _warn_unimplemented_client_compat_kw(name::AbstractString)::Nothing
+    @warn "`$name` is accepted for compatibility but is not implemented yet in the HTTP 2.0 client" maxlog=1
+    return nothing
+end
+
+function _handle_client_compat_kwargs(;
+    copyheaders=nothing,
+    pool=nothing,
+    canonicalize_headers=nothing,
+    detect_content_type=nothing,
+    observelayers=nothing,
+    retry_delays=nothing,
+    retry_check=nothing,
+    sslconfig=nothing,
+    socket_type_tls=nothing,
+    logerrors=nothing,
+    logtag=nothing,
+)::Nothing
+    copyheaders === nothing || _warn_ignored_client_compat_kw("copyheaders")
+    pool === nothing || _warn_ignored_client_compat_kw("pool")
+    canonicalize_headers === nothing || _warn_ignored_client_compat_kw("canonicalize_headers")
+    detect_content_type === nothing || _warn_ignored_client_compat_kw("detect_content_type")
+    observelayers === nothing || _warn_ignored_client_compat_kw("observelayers")
+    retry_delays === nothing || _warn_ignored_client_compat_kw("retry_delays")
+    retry_check === nothing || _warn_ignored_client_compat_kw("retry_check")
+    sslconfig === nothing || _warn_ignored_client_compat_kw("sslconfig")
+    socket_type_tls === nothing || _warn_ignored_client_compat_kw("socket_type_tls")
+    logerrors === nothing || logerrors === false || _warn_unimplemented_client_compat_kw("logerrors")
+    logtag === nothing || _warn_unimplemented_client_compat_kw("logtag")
+    return nothing
+end
+
 struct _VerboseTrace
     level::Int
 end
@@ -526,7 +563,7 @@ function _copy_request(request::Request)
         request.proto_major,
         request.proto_minor,
         request.close,
-        request.context,
+        get_request_context(request),
     )
 end
 
@@ -542,7 +579,7 @@ function _copy_request_shallow_body(request::Request)
         request.proto_major,
         request.proto_minor,
         request.close,
-        request.context,
+        get_request_context(request),
     )
 end
 
@@ -846,7 +883,7 @@ import Base: get
 
 Raised when `status_exception=true` and the response status indicates failure.
 """
-struct StatusError <: Exception
+struct StatusError <: HTTPError
     response::Response
 end
 
@@ -862,7 +899,7 @@ end
 Raised when redirect following is enabled and the client exceeds the configured
 redirect limit. The final redirect response is attached for inspection.
 """
-struct TooManyRedirectsError <: Exception
+struct TooManyRedirectsError <: HTTPError
     limit::Int
     response::Response
 end
@@ -1363,9 +1400,7 @@ function _client_for_request(
 end
 
 @inline function _request_deadline_ns(request::Request)::Int64
-    ctx = request.context
-    ctx === nothing && return Int64(0)
-    return (ctx::RequestContext).deadline_ns
+    return get_request_context(request).deadline_ns
 end
 
 function _apply_conn_deadline!(conn::Conn, deadline_ns::Int64)
@@ -1441,13 +1476,24 @@ function _request_impl(
     decompress::Union{Nothing,Bool}=nothing,
     sse_callback=nothing,
     client::Union{Nothing,Client}=nothing,
-    connect_timeout::Real=0,
+    connect_timeout::Real=30,
     request_timeout::Real=0,
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
     write_idle_timeout::Real=0,
     expect_continue_timeout=nothing,
     readtimeout=nothing,
+    copyheaders=nothing,
+    pool=nothing,
+    canonicalize_headers=nothing,
+    detect_content_type=nothing,
+    observelayers=nothing,
+    retry_delays=nothing,
+    retry_check=nothing,
+    sslconfig=nothing,
+    socket_type_tls=nothing,
+    logerrors=nothing,
+    logtag=nothing,
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto
 )
@@ -1455,6 +1501,19 @@ function _request_impl(
     final_error = nothing
     request_url = nothing
     try
+        _handle_client_compat_kwargs(
+            copyheaders=copyheaders,
+            pool=pool,
+            canonicalize_headers=canonicalize_headers,
+            detect_content_type=detect_content_type,
+            observelayers=observelayers,
+            retry_delays=retry_delays,
+            retry_check=retry_check,
+            sslconfig=sslconfig,
+            socket_type_tls=socket_type_tls,
+            logerrors=logerrors,
+            logtag=logtag,
+        )
         request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
             request_timeout,
             connect_timeout,
@@ -1484,7 +1543,7 @@ function _request_impl(
             host=parsed.address,
             content_length=normalized_body.content_length,
         )
-        _apply_request_timeout_settings!(req.context, request_timeout_ns, timeout_config)
+        _apply_request_timeout_settings!(get_request_context(req), request_timeout_ns, timeout_config)
         req_client, owns_client = _client_for_request(client, connect_timeout, require_ssl_verification)
         try
             retry_controller = _retry_controller(req_client, retry, retries, retry_non_idempotent, retry_if, respect_retry_after, retry_bucket)
@@ -1641,13 +1700,24 @@ function request(
     decompress::Union{Nothing,Bool}=nothing,
     sse_callback=nothing,
     client::Union{Nothing,Client}=nothing,
-    connect_timeout::Real=0,
+    connect_timeout::Real=30,
     request_timeout::Real=0,
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
     write_idle_timeout::Real=0,
     expect_continue_timeout=nothing,
     readtimeout=nothing,
+    copyheaders=nothing,
+    pool=nothing,
+    canonicalize_headers=nothing,
+    detect_content_type=nothing,
+    observelayers=nothing,
+    retry_delays=nothing,
+    retry_check=nothing,
+    sslconfig=nothing,
+    socket_type_tls=nothing,
+    logerrors=nothing,
+    logtag=nothing,
     verbose=false,
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto
@@ -1692,6 +1762,17 @@ function request(
         write_idle_timeout=write_idle_timeout,
         expect_continue_timeout=expect_continue_timeout,
         readtimeout=readtimeout,
+        copyheaders=copyheaders,
+        pool=pool,
+        canonicalize_headers=canonicalize_headers,
+        detect_content_type=detect_content_type,
+        observelayers=observelayers,
+        retry_delays=retry_delays,
+        retry_check=retry_check,
+        sslconfig=sslconfig,
+        socket_type_tls=socket_type_tls,
+        logerrors=logerrors,
+        logtag=logtag,
         require_ssl_verification=require_ssl_verification,
         protocol=protocol,
     )
@@ -1724,13 +1805,24 @@ function request(
     decompress::Union{Nothing,Bool}=nothing,
     sse_callback=nothing,
     client::Union{Nothing,Client}=nothing,
-    connect_timeout::Real=0,
+    connect_timeout::Real=30,
     request_timeout::Real=0,
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
     write_idle_timeout::Real=0,
     expect_continue_timeout=nothing,
     readtimeout=nothing,
+    copyheaders=nothing,
+    pool=nothing,
+    canonicalize_headers=nothing,
+    detect_content_type=nothing,
+    observelayers=nothing,
+    retry_delays=nothing,
+    retry_check=nothing,
+    sslconfig=nothing,
+    socket_type_tls=nothing,
+    logerrors=nothing,
+    logtag=nothing,
     verbose=false,
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto
@@ -1775,6 +1867,17 @@ function request(
         write_idle_timeout=write_idle_timeout,
         expect_continue_timeout=expect_continue_timeout,
         readtimeout=readtimeout,
+        copyheaders=copyheaders,
+        pool=pool,
+        canonicalize_headers=canonicalize_headers,
+        detect_content_type=detect_content_type,
+        observelayers=observelayers,
+        retry_delays=retry_delays,
+        retry_check=retry_check,
+        sslconfig=sslconfig,
+        socket_type_tls=socket_type_tls,
+        logerrors=logerrors,
+        logtag=logtag,
         require_ssl_verification=require_ssl_verification,
         protocol=protocol,
     )

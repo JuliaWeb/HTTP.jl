@@ -270,7 +270,7 @@ function _prepare_request_for_redirect(request::Request, status::Int, new_target
             request.proto_major,
             request.proto_minor,
             request.close,
-            request.context,
+            get_request_context(request),
         )
     end
     removeheader(redirected.headers, "Host")

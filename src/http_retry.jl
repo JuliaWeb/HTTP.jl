@@ -43,11 +43,11 @@ mutable struct RetryToken
     released::Bool
 end
 
-struct RetryDeniedError <: Exception
+struct RetryDeniedError <: HTTPError
     partition::String
 end
 
-struct ErrorResponseStatus <: Exception
+struct ErrorResponseStatus <: HTTPError
     status::Int
 end
 

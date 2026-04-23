@@ -141,8 +141,8 @@ end
             read_idle_timeout = 0.25,
             write_idle_timeout = 0.25,
         )
-        @test ws.handshake_request.context.deadline_ns != 0
-        timeout_config = HT._request_context_timeout_config(ws.handshake_request.context)
+        @test HT.get_request_context(ws.handshake_request).deadline_ns != 0
+        timeout_config = HT._request_context_timeout_config(HT.get_request_context(ws.handshake_request))
         @test timeout_config !== nothing
         @test (timeout_config::HT._RequestTimeoutConfig).response_header_timeout_ns == 250_000_000
         @test timeout_config.read_idle_timeout_ns == 250_000_000

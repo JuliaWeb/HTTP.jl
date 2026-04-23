@@ -98,13 +98,13 @@ function _apply_request_timeout_settings!(
 end
 
 @inline function _request_connect_timeout_ns(request::Request)::Int64
-    config = _request_context_timeout_config(request.context)
+    config = _request_context_timeout_config(get_request_context(request))
     config === nothing && return Int64(0)
     return (config::_RequestTimeoutConfig).connect_timeout_ns
 end
 
 @inline function _request_response_header_timeout_ns(request::Request)::Int64
-    config = _request_context_timeout_config(request.context)
+    config = _request_context_timeout_config(get_request_context(request))
     config === nothing && return Int64(0)
     return (config::_RequestTimeoutConfig).response_header_timeout_ns
 end
@@ -115,7 +115,7 @@ end
 end
 
 @inline function _request_read_idle_timeout_ns(request::Request)::Int64
-    config = _request_context_timeout_config(request.context)
+    config = _request_context_timeout_config(get_request_context(request))
     config === nothing && return Int64(0)
     return (config::_RequestTimeoutConfig).read_idle_timeout_ns
 end
@@ -125,7 +125,7 @@ end
 end
 
 @inline function _request_write_idle_timeout_ns(request::Request)::Int64
-    config = _request_context_timeout_config(request.context)
+    config = _request_context_timeout_config(get_request_context(request))
     config === nothing && return Int64(0)
     return (config::_RequestTimeoutConfig).write_idle_timeout_ns
 end
@@ -135,7 +135,7 @@ end
 end
 
 @inline function _request_expect_continue_timeout_ns(request::Request)::Int64
-    config = _request_context_timeout_config(request.context)
+    config = _request_context_timeout_config(get_request_context(request))
     config === nothing && return Int64(0)
     return (config::_RequestTimeoutConfig).expect_continue_timeout_ns
 end

@@ -6,6 +6,8 @@ export Headers
 export Request
 export Response
 export RequestContext
+export get_request_context
+export HTTPError
 export AbstractBody
 export EmptyBody
 export BytesBody
@@ -14,6 +16,7 @@ export nobody
 export ParseError
 export ProtocolError
 export CanceledError
+export TimeoutError
 export HTTPTimeoutError
 export canonical_header_key
 export header
@@ -40,7 +43,9 @@ Raised when byte-level HTTP syntax cannot be parsed. This is used for malformed
 request/status lines, invalid header syntax, truncated framed bodies, and other
 wire-format failures where the peer did not send valid HTTP.
 """
-struct ParseError <: Exception
+abstract type HTTPError <: Exception end
+
+struct ParseError <: HTTPError
     message::String
 end
 
@@ -57,7 +62,7 @@ Raised when the bytes are syntactically valid but violate higher-level HTTP
 rules. Examples include mismatched `Content-Length` values, impossible frame
 ordering, or unsupported control-flow states in the client/server stacks.
 """
-struct ProtocolError <: Exception
+struct ProtocolError <: HTTPError
     message::String
     code::_ProtocolErrorCode
     err::Union{Nothing,Exception}
@@ -76,18 +81,18 @@ Raised when request processing is canceled explicitly through `RequestContext`.
 Unlike `ParseError` and `ProtocolError`, this usually reflects local control
 flow rather than a bad peer.
 """
-struct CanceledError <: Exception
+struct CanceledError <: HTTPError
     message::String
 end
 
 """
-    HTTPTimeoutError
+    TimeoutError
 
 Raised when an HTTP-layer deadline expires. This is intentionally separate from
 lower-level socket timeout exceptions so higher layers can distinguish "request
 context expired" from transport-specific readiness or handshake failures.
 """
-struct HTTPTimeoutError <: Exception
+struct TimeoutError <: HTTPError
     operation::String
     timeout_ns::Int64
 end
@@ -113,10 +118,12 @@ function Base.showerror(io::IO, err::CanceledError)
     return nothing
 end
 
-function Base.showerror(io::IO, err::HTTPTimeoutError)
+function Base.showerror(io::IO, err::TimeoutError)
     print(io, "http timeout during ", err.operation, " after ", err.timeout_ns, " ns")
     return nothing
 end
+
+const HTTPTimeoutError = TimeoutError
 
 """Shared empty byte-vector payload used for responses with no buffered body."""
 const nobody = UInt8[]
@@ -233,6 +240,16 @@ function _normalize_header_field_value(value::AbstractString)::Union{Nothing,Str
         raw
     end
     return _trim_http_ows(sanitized)
+end
+
+function _normalize_strict_header_field_value(value::AbstractString)::Union{Nothing,String}
+    raw = value isa String ? (value::String) : String(value)
+    @inbounds for b in codeunits(raw)
+        if b == 0x0d || b == 0x0a
+            return nothing
+        end
+    end
+    return _normalize_header_field_value(raw)
 end
 
 const _FORBIDDEN_TRAILER_HEADERS = Set([
@@ -912,6 +929,33 @@ function Base.empty!(ctx::RequestContext)
     return ctx
 end
 
+@inline function _compat_request_context(context)::RequestContext
+    context isa RequestContext && return context::RequestContext
+    context === nothing && return RequestContext()
+    context isa AbstractDict || throw(ArgumentError("context must be a RequestContext, Dict-like object, or nothing"))
+    ctx = RequestContext()
+    metadata = _request_context_metadata!(ctx)
+    for (key, value) in pairs(context::AbstractDict)
+        key isa Symbol || throw(ArgumentError("request context keys must be Symbol"))
+        metadata[key::Symbol] = value
+    end
+    return ctx
+end
+
+@inline function _compat_proto_version(version, default_major::Int=1, default_minor::Int=1)::Tuple{Int,Int}
+    version === nothing && return default_major, default_minor
+    if version isa VersionNumber
+        return Int((version::VersionNumber).major), Int((version::VersionNumber).minor)
+    end
+    if version isa Tuple && length(version) == 2
+        return Int(version[1]), Int(version[2])
+    end
+    if hasproperty(version, :major) && hasproperty(version, :minor)
+        return Int(getproperty(version, :major)), Int(getproperty(version, :minor))
+    end
+    throw(ArgumentError("unsupported HTTP version value $(typeof(version))"))
+end
+
 """
     AbstractBody
 
@@ -965,6 +1009,15 @@ end
 """Construct a `CallbackBody` from read and close callbacks."""
 function CallbackBody(read_cb::R, close_cb::C) where {R,C}
     return CallbackBody{R,C}(read_cb, close_cb, false)
+end
+
+@inline _compat_body_arg(::Nothing) = EmptyBody()
+@inline _compat_body_arg(body::AbstractBody) = body
+@inline _compat_body_arg(body::AbstractVector{UInt8}) = BytesBody(body)
+@inline _compat_body_arg(body::AbstractString) = BytesBody(Vector{UInt8}(codeunits(String(body))))
+
+function _compat_body_arg(body)
+    throw(ArgumentError("compat Request/Response constructors only support `nothing`, `HTTP.AbstractBody`, `AbstractString`, or `AbstractVector{UInt8}` bodies"))
 end
 
 """
@@ -1080,6 +1133,8 @@ mutable struct Request{B<:AbstractBody}
     context::RequestContext
 end
 
+Request() = _request_nocopy("", "", Headers(), Headers(), EmptyBody(), nothing, Int64(-1), UInt8(1), UInt8(1), false, RequestContext())
+
 function Request(
     method::AbstractString,
     target::AbstractString;
@@ -1114,6 +1169,56 @@ function Request(
     )
 end
 
+function Request(
+    method::AbstractString,
+    target::AbstractString,
+    headers;
+    version=nothing,
+    url=nothing,
+    responsebody=nothing,
+    parent=nothing,
+    context=nothing,
+)
+    _ = url
+    _ = responsebody
+    _ = parent
+    proto_major, proto_minor = _compat_proto_version(version)
+    return Request(
+        method,
+        target;
+        headers=headers,
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+        context=_compat_request_context(context),
+    )
+end
+
+function Request(
+    method::AbstractString,
+    target::AbstractString,
+    headers,
+    body;
+    version=nothing,
+    url=nothing,
+    responsebody=nothing,
+    parent=nothing,
+    context=nothing,
+)
+    _ = url
+    _ = responsebody
+    _ = parent
+    proto_major, proto_minor = _compat_proto_version(version)
+    return Request(
+        method,
+        target;
+        headers=headers,
+        body=_compat_body_arg(body),
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+        context=_compat_request_context(context),
+    )
+end
+
 @inline function _request_nocopy(
     method::String,
     target::String,
@@ -1142,6 +1247,8 @@ end
     )
 end
 
+@inline get_request_context(request::Request)::RequestContext = getfield(request, :context)
+
 @inline function _request_with_context(
     request::Request{B},
     context::RequestContext,
@@ -1159,6 +1266,12 @@ end
         request.close,
         context,
     )
+end
+
+function Base.getproperty(request::Request, field::Symbol)
+    field === :context && return _request_context_metadata!(getfield(request, :context))
+    field === :version && return VersionNumber(Int(getfield(request, :proto_major)), Int(getfield(request, :proto_minor)))
+    return getfield(request, field)
 end
 
 """
@@ -1252,6 +1365,126 @@ function Response(
     )
 end
 
+Response() = Response(0)
+
+Response(status::Int, body::AbstractString) = Response(status, BytesBody(Vector{UInt8}(codeunits(String(body)))))
+Response(body::AbstractString) = Response(200, BytesBody(Vector{UInt8}(codeunits(String(body)))))
+Response(body::AbstractVector{UInt8}) = Response(200, BytesBody(body))
+
+function Response(
+    status::Integer,
+    headers,
+    body;
+    version=nothing,
+    request=nothing,
+)
+    proto_major, proto_minor = _compat_proto_version(version)
+    return Response(
+        status,
+        _compat_body_arg(body);
+        headers=headers,
+        request=request,
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+    )
+end
+
+function Response(
+    status::Integer,
+    headers::Headers;
+    body=nobody,
+    request=nothing,
+    version=nothing,
+)
+    proto_major, proto_minor = _compat_proto_version(version)
+    compat_body = _compat_body_arg(body)
+    return Response(
+        status,
+        compat_body;
+        headers=headers,
+        request=request,
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+    )
+end
+
+function Response(
+    status::Integer,
+    headers::AbstractDict;
+    body=nobody,
+    request=nothing,
+    version=nothing,
+)
+    proto_major, proto_minor = _compat_proto_version(version)
+    compat_body = _compat_body_arg(body)
+    return Response(
+        status,
+        compat_body;
+        headers=headers,
+        request=request,
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+    )
+end
+
+function Response(
+    status::Integer,
+    headers::Tuple;
+    body=nobody,
+    request=nothing,
+    version=nothing,
+)
+    proto_major, proto_minor = _compat_proto_version(version)
+    compat_body = _compat_body_arg(body)
+    return Response(
+        status,
+        compat_body;
+        headers=headers,
+        request=request,
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+    )
+end
+
+function Response(
+    status::Integer,
+    headers::AbstractVector{<:Pair};
+    body=nobody,
+    request=nothing,
+    version=nothing,
+)
+    proto_major, proto_minor = _compat_proto_version(version)
+    compat_body = _compat_body_arg(body)
+    return Response(
+        status,
+        compat_body;
+        headers=headers,
+        request=request,
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+    )
+end
+
+function Response(
+    status::Integer,
+    headers::AbstractVector{<:Tuple};
+    body=nobody,
+    request=nothing,
+    version=nothing,
+)
+    all(item -> length(item) == 2, headers) || throw(ArgumentError("invalid header list for compat Response constructor"))
+    proto_major, proto_minor = _compat_proto_version(version)
+    compat_body = _compat_body_arg(body)
+    return Response(
+        status,
+        compat_body;
+        headers=headers,
+        request=request,
+        proto_major=proto_major,
+        proto_minor=proto_minor,
+    )
+end
+
 @inline function _response_nocopy_exact(
     status::Int,
     reason::String,
@@ -1333,6 +1566,7 @@ Base.getindex(message::Union{Request,Response}, key::AbstractString) = header(me
 
 function Base.getproperty(response::Response, field::Symbol)
     field === :url && return getfield(response, :request_url)
+    field === :version && return VersionNumber(Int(getfield(response, :proto_major)), Int(getfield(response, :proto_minor)))
     return getfield(response, field)
 end
 

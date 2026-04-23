@@ -22,6 +22,11 @@ using URIs
 
 const VERSION = v"2.0.0"
 
+export WebSockets
+export escape
+
+Base.@deprecate escape escapeuri
+
 include("http_core.jl")
 include("http_client_timeouts.jl")
 include("http1.jl")

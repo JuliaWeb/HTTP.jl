@@ -220,7 +220,7 @@ function _proxy_windows_ci_warmup!()::Nothing
             prefer_http2 = false,
         )
         request = HT.Request("GET", "/warmup"; host = origin_address, body = HT.EmptyBody(), content_length = 0)
-        HT.set_deadline!(request.context, Int64(time_ns()) + 3_000_000_000)
+        HT.set_deadline!(HT.get_request_context(request), Int64(time_ns()) + 3_000_000_000)
         try
             request_task = errormonitor(Threads.@spawn HT.do!(client, origin_address, request; secure = true, protocol = :h1))
             _wait_task_proxy!(request_task; timeout_s = 2.0)
@@ -577,7 +577,7 @@ end
     )
     try
         request = HT.Request("GET", "/via-proxy"; host = origin_address, body = HT.EmptyBody(), content_length = 0)
-        HT.set_deadline!(request.context, Int64(time_ns()) + 3_000_000_000)
+        HT.set_deadline!(HT.get_request_context(request), Int64(time_ns()) + 3_000_000_000)
         response = HT.do!(client, origin_address, request; secure = true, protocol = :h1)
         @test response.status == 200
         @test String(_read_all_proxy(response.body)) == "tls-proxied"

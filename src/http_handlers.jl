@@ -28,6 +28,7 @@ import ..serve!
 import ..cancel!
 import ..canceled
 import ..body_close!
+import ..get_request_context
 import .._request_with_context
 
 """
@@ -383,7 +384,7 @@ function _handler_timeout_response(
 end
 
 function (middleware::_HandlerTimeoutMiddleware)(req::Request)
-    derived_ctx = _timeout_child_context(req.context, middleware.timeout_ns)
+    derived_ctx = _timeout_child_context(get_request_context(req), middleware.timeout_ns)
     timed_req = _request_with_context(req, derived_ctx)
     result = Channel{Tuple{Bool,Any}}(1)
     Threads.@spawn begin

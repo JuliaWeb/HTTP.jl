@@ -111,7 +111,7 @@ function _transport_windows_ci_warmup!()::Nothing
         transport = HT.Transport(max_idle_per_host = 2, max_idle_total = 2)
         for target in ("/warmup-one", "/warmup-two")
             req = HT.Request("GET", target; host = address, body = HT.EmptyBody(), content_length = 0)
-            HT.set_deadline!(req.context, Int64(time_ns()) + 2_000_000_000)
+            HT.set_deadline!(HT.get_request_context(req), Int64(time_ns()) + 2_000_000_000)
             resp = HT.roundtrip!(transport, address, req)
             _read_all_body_bytes(resp.body)
         end
@@ -173,8 +173,8 @@ function _transport_windows_hostresolver_warmup!()::Nothing
         req1 = HT.Request("GET", "/one"; host = address, body = HT.EmptyBody(), content_length = 0)
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
         deadline_ns = Int64(time_ns()) + 3_000_000_000
-        HT.set_deadline!(req1.context, deadline_ns)
-        HT.set_deadline!(req2.context, deadline_ns)
+        HT.set_deadline!(HT.get_request_context(req1), deadline_ns)
+        HT.set_deadline!(HT.get_request_context(req2), deadline_ns)
         task1 = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req1))
         task2 = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req2))
         try
@@ -285,8 +285,8 @@ end
         req1 = HT.Request("GET", "/one"; host = address, body = HT.EmptyBody(), content_length = 0)
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
         deadline_ns = Int64(time_ns()) + 3_000_000_000
-        HT.set_deadline!(req1.context, deadline_ns)
-        HT.set_deadline!(req2.context, deadline_ns)
+        HT.set_deadline!(HT.get_request_context(req1), deadline_ns)
+        HT.set_deadline!(HT.get_request_context(req2), deadline_ns)
         task1 = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req1))
         task2 = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req2))
         @test _wait_task!(task1) === nothing
@@ -779,7 +779,7 @@ end
         @test res1.status == 200
 
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
-        HT.set_deadline!(req2.context, Int64(time_ns()) + 50_000_000)
+        HT.set_deadline!(HT.get_request_context(req2), Int64(time_ns()) + 50_000_000)
         err = try
             HT.roundtrip!(transport, address, req2)
             nothing

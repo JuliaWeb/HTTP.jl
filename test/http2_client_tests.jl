@@ -145,6 +145,12 @@ end
     invalid_te_request = HT.Request("GET", "/te"; headers = invalid_te_headers, body = HT.EmptyBody(), content_length = 0)
     invalid_te_fields = HT._request_headers_for_h2("example.com:443", invalid_te_request, true)
     @test !any(field -> field.name == "te", invalid_te_fields)
+
+    cookie_headers = HT.Headers()
+    HT.setheader(cookie_headers, "Cookie", "a=1; b=2")
+    cookie_request = HT.Request("GET", "/cookie"; headers = cookie_headers, body = HT.EmptyBody(), content_length = 0)
+    cookie_fields = HT._request_headers_for_h2("example.com:443", cookie_request, true)
+    @test [field.value for field in cookie_fields if field.name == "cookie"] == ["a=1", "b=2"]
 end
 
 @testset "HTTP/2 client validates response pseudo-headers" begin
@@ -160,6 +166,10 @@ end
     @test_throws HT.ProtocolError HT._decode_response_headers(HT.HeaderField[
         HT.HeaderField("x-test", "ok", false),
         HT.HeaderField(":status", "200", false),
+    ])
+    @test_throws HT.ProtocolError HT._decode_response_headers(HT.HeaderField[
+        HT.HeaderField(":status", "200", false),
+        HT.HeaderField("x-test", "ok\r\nInjected: yes", false),
     ])
 end
 
@@ -200,6 +210,59 @@ end
         try
             NC.close(listener)
         catch
+        end
+    end
+end
+
+@testset "HTTP/2 client preserves and enforces response Content-Length" begin
+    for (declared, payload, should_error) in ((2, "ok", false), (2, "oops", true), (5, "abc", true))
+        listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+        laddr = NC.addr(listener)::NC.SocketAddrV4
+        address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+        server_task = errormonitor(Threads.@spawn begin
+            accepted_conn = NC.accept(listener)
+            reader = HT._ConnReader(accepted_conn)
+            server_encoder = HT.Encoder()
+            server_decoder = HT.Decoder()
+            try
+                _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+                _ = HT.read_frame!(reader)
+                _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+                _ = HT.read_frame!(reader)
+                headers_frame = _read_next_headers_frame!(reader)
+                hf = headers_frame::HT.HeadersFrame
+                _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+                encoded = HT.encode_header_block(server_encoder, HT.HeaderField[
+                    HT.HeaderField(":status", "200", false),
+                    HT.HeaderField("content-length", string(declared), false),
+                ])
+                _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+                _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits(payload))))
+            finally
+                try
+                    NC.close(accepted_conn)
+                catch
+                end
+            end
+            return nothing
+        end)
+        h2_conn = HT.connect_h2!(address; secure = false)
+        try
+            request = HT.Request("GET", "/content-length"; host = address, body = HT.EmptyBody(), content_length = 0)
+            response = HT.h2_roundtrip!(h2_conn, request)
+            @test response.content_length == declared
+            if should_error
+                @test_throws HT.ProtocolError _read_all_h2_body(response.body)
+            else
+                @test String(_read_all_h2_body(response.body)) == payload
+            end
+            _wait_task_h2!(server_task)
+        finally
+            close(h2_conn)
+            try
+                NC.close(listener)
+            catch
+            end
         end
     end
 end
@@ -323,7 +386,7 @@ end
     try
         request = HT.Request("GET", "/slow-headers"; host = address, body = HT.EmptyBody(), content_length = 0)
         request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0.05)
-        HT._apply_request_timeout_settings!(request.context, request_timeout_ns, timeout_config)
+        HT._apply_request_timeout_settings!(HT.get_request_context(request), request_timeout_ns, timeout_config)
         @test_throws Reseau.IOPoll.DeadlineExceededError HT.h2_roundtrip!(h2_conn, request)
         _wait_task_h2!(server_task)
     finally
@@ -369,7 +432,7 @@ end
     try
         request = HT.Request("GET", "/slow-body"; host = address, body = HT.EmptyBody(), content_length = 0)
         request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 0.05)
-        HT._apply_request_timeout_settings!(request.context, request_timeout_ns, timeout_config)
+        HT._apply_request_timeout_settings!(HT.get_request_context(request), request_timeout_ns, timeout_config)
         response = HT.h2_roundtrip!(h2_conn, request)
         buf = Vector{UInt8}(undef, 8)
         @test HT.body_read!(response.body, buf) == 1
@@ -424,7 +487,7 @@ end
         body = HT.BytesBody(collect(codeunits("abcd")))
         request = HT.Request("POST", "/slow-upload"; host = address, body = body, content_length = 4)
         request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 0, 0.05)
-        HT._apply_request_timeout_settings!(request.context, request_timeout_ns, timeout_config)
+        HT._apply_request_timeout_settings!(HT.get_request_context(request), request_timeout_ns, timeout_config)
         @test_throws Reseau.IOPoll.DeadlineExceededError HT.h2_roundtrip!(h2_conn, request)
         _wait_task_h2!(server_task)
     finally

@@ -104,6 +104,17 @@ function _read_h2_server_header_block!(reader::IO)
     return headers_frame, fragments, frames
 end
 
+function _read_h2_server_data_frame!(reader::IO)::HT.DataFrame
+    while true
+        frame = HT.read_frame!(reader)
+        frame isa HT.DataFrame && return frame::HT.DataFrame
+        frame isa HT.WindowUpdateFrame && continue
+        frame isa HT.SettingsFrame && continue
+        frame isa HT.PingFrame && continue
+        error("expected data frame, got $(typeof(frame))")
+    end
+end
+
 @testset "HTTP/2 server request handling" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("h2:" * request.target))
@@ -600,6 +611,60 @@ end
     end
 end
 
+@testset "HTTP/2 server stream handlers flush DATA before handler return" begin
+    first_written = Channel{Nothing}(1)
+    release = Channel{Nothing}(1)
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.setheader(stream, "Content-Type", "text/plain")
+        HT.startwrite(stream)
+        write(stream, "first")
+        put!(first_written, nothing)
+        take!(release)
+        write(stream, "second")
+        return nothing
+    end
+    address = _wait_http_server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        decoder = HT.Decoder()
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/streaming")
+        take!(first_written)
+
+        NC.set_read_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
+        headers_frame, header_block, _ = _read_h2_server_header_block!(reader)
+        first_data = _read_h2_server_data_frame!(reader)
+        NC.set_read_deadline!(conn::NC.Conn, Int64(0))
+
+        decoded_headers = HT.decode_header_block(decoder, header_block)
+        first_payload = copy(first_data.data)
+        @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
+        @test String(copy(first_payload)) == "first"
+        @test !first_data.end_stream
+
+        put!(release, nothing)
+        body = first_payload
+        while true
+            frame = _read_h2_server_data_frame!(reader)
+            append!(body, frame.data)
+            frame.end_stream && break
+        end
+        @test String(body) == "firstsecond"
+        @test headers_frame.stream_id == UInt32(1)
+    finally
+        isready(release) || put!(release, nothing)
+        conn === nothing || try
+            NC.close(conn::NC.Conn)
+        catch
+        end
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server router stream handlers work" begin
     router = HT.Router()
     HT.register!(router, "POST", "/stream/{name}", stream -> begin
@@ -952,6 +1017,20 @@ end
             HT.HeaderField(":path", "/bad-connection", false),
             HT.HeaderField("connection", "close", false),
         ],
+        HT.HeaderField[
+            HT.HeaderField(":method", "GET", false),
+            HT.HeaderField(":scheme", "http", false),
+            HT.HeaderField(":authority", address, false),
+            HT.HeaderField(":path", "/bad-value", false),
+            HT.HeaderField("x-test", "ok\r\nInjected: yes", false),
+        ],
+        HT.HeaderField[
+            HT.HeaderField(":method", "GET", false),
+            HT.HeaderField(":scheme", "http", false),
+            HT.HeaderField(":authority", address, false),
+            HT.HeaderField(":path", "/bad-name", false),
+            HT.HeaderField("bad name", "ok", false),
+        ],
     )
     try
         for header_fields in invalid_cases
@@ -959,6 +1038,67 @@ end
             try
                 conn, reader = _open_raw_h2_server_conn(address)
                 _write_frame_h2_server_raw!(conn::NC.Conn, HT.HeadersFrame(UInt32(1), true, true, HT.encode_header_block(HT.Encoder(), header_fields)))
+                NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
+                frame_or_err = try
+                    HT.read_frame!(reader)
+                catch err
+                    err
+                finally
+                    NC.set_deadline!(conn::NC.Conn, Int64(0))
+                end
+                @test frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception
+                if frame_or_err isa HT.GoAwayFrame
+                    @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
+                end
+            finally
+                conn === nothing || try
+                    NC.close(conn::NC.Conn)
+                catch
+                end
+            end
+        end
+    finally
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server combines cookie fields with semicolons" begin
+    fields = HT.HeaderField[
+        HT.HeaderField(":method", "GET", false),
+        HT.HeaderField(":scheme", "http", false),
+        HT.HeaderField(":authority", "example.test", false),
+        HT.HeaderField(":path", "/", false),
+        HT.HeaderField("cookie", "a=1", false),
+        HT.HeaderField("cookie", "b=2", false),
+    ]
+    _, _, _, _, headers = HT._validate_h2_request_headers!(fields)
+    @test HT.header(headers, "Cookie") == "a=1; b=2"
+end
+
+@testset "HTTP/2 server rejects request Content-Length mismatches" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = String(_read_all_h2_server(request.body))
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    try
+        for (declared, payload) in ((2, "abc"), (5, "abc"))
+            conn = nothing
+            try
+                conn, reader = _open_raw_h2_server_conn(address)
+                encoder = HT.Encoder()
+                _write_h2_server_request_headers!(
+                    conn::NC.Conn,
+                    encoder,
+                    UInt32(1),
+                    address,
+                    "/bad-length";
+                    method = "POST",
+                    headers = HT.HeaderField[HT.HeaderField("content-length", string(declared), false)],
+                    end_stream = false,
+                )
+                _write_frame_h2_server_raw!(conn::NC.Conn, HT.DataFrame(UInt32(1), true, collect(codeunits(payload))))
                 NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
                 frame_or_err = try
                     HT.read_frame!(reader)

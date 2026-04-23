@@ -87,6 +87,10 @@ function Stream(
         request,
         EmptyBody(),
         Int64(0),
+        nothing,
+        nothing,
+        nothing,
+        UInt32(0),
         false,
         false,
         false,
@@ -180,7 +184,7 @@ function _client_start_stream_read!(stream::Stream{true})::Response
         meta.proto_major,
         meta.proto_minor,
         meta.close,
-        meta.context,
+        get_request_context(meta),
     )
     incoming = _do_incoming!(
         nothing,
@@ -377,16 +381,40 @@ function open(
     decompress::Union{Nothing,Bool}=nothing,
     basicauth=nothing,
     client::Union{Nothing,Client}=nothing,
-    connect_timeout::Real=0,
+    connect_timeout::Real=30,
     request_timeout::Real=0,
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
     write_idle_timeout::Real=0,
     expect_continue_timeout=nothing,
     readtimeout=nothing,
+    copyheaders=nothing,
+    pool=nothing,
+    canonicalize_headers=nothing,
+    detect_content_type=nothing,
+    observelayers=nothing,
+    retry_delays=nothing,
+    retry_check=nothing,
+    sslconfig=nothing,
+    socket_type_tls=nothing,
+    logerrors=nothing,
+    logtag=nothing,
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto
 )::Stream
+    _handle_client_compat_kwargs(
+        copyheaders=copyheaders,
+        pool=pool,
+        canonicalize_headers=canonicalize_headers,
+        detect_content_type=detect_content_type,
+        observelayers=observelayers,
+        retry_delays=retry_delays,
+        retry_check=retry_check,
+        sslconfig=sslconfig,
+        socket_type_tls=socket_type_tls,
+        logerrors=logerrors,
+        logtag=logtag,
+    )
     parsed = _parse_http_url(url, query)
     req_headers = _normalize_headers_input(headers)
     normalized_cookies = _normalize_cookies_input(cookies)

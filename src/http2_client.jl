@@ -14,7 +14,7 @@ const _H2_DEFAULT_MAX_HEADER_BLOCK_BYTES = 2 * _H2_DEFAULT_MAX_HEADER_LIST_SIZE
 Raised when the connection transport succeeds but cannot be used for HTTP/2,
 most notably when TLS ALPN negotiates a protocol other than `h2`.
 """
-struct H2NegotiationError <: Exception
+struct H2NegotiationError <: HTTPError
     message::String
 end
 
@@ -29,7 +29,7 @@ end
 Raised when an HTTP/2 connection can no longer accept a stream because the peer
 sent `GOAWAY`.
 """
-struct H2GoAwayError <: Exception
+struct H2GoAwayError <: HTTPError
     message::String
     last_stream_id::UInt32
 end
@@ -141,6 +141,8 @@ mutable struct H2Body <: AbstractBody
     state::H2StreamState
     request::Request
     trailers::Headers
+    expected_content_length::Int64
+    bytes_read::Int64
     @atomic closed::Bool
 end
 
@@ -968,14 +970,22 @@ function _request_headers_for_h2(address::String, request::Request, secure::Bool
         end
         values = headers(request.headers, key)
         for value in values
-            if lowered == "te"
-                lowercase(_trim_http_ows(value)) == "trailers" || continue
-                push!(fields, HeaderField("te", "trailers", false))
-                continue
+                if lowered == "te"
+                    lowercase(_trim_http_ows(value)) == "trailers" || continue
+                    push!(fields, HeaderField("te", "trailers", false))
+                    continue
+                end
+                if lowered == "cookie"
+                    for item in split(value, ';')
+                        cookie_value = _trim_http_ows(item)
+                        isempty(cookie_value) && continue
+                        push!(fields, HeaderField("cookie", String(cookie_value), false))
+                    end
+                    continue
+                end
+                push!(fields, HeaderField(lowered, value, false))
             end
-            push!(fields, HeaderField(lowered, value, false))
         end
-    end
     return fields
 end
 
@@ -987,7 +997,7 @@ function _decode_response_headers(headers::Vector{HeaderField})::Tuple{Int,Heade
         name = header.name
         value = header.value
         name == lowercase(name) || throw(ProtocolError("HTTP/2 header field names must be lowercase"))
-        normalized = _normalize_header_field_value(value)
+        normalized = _normalize_strict_header_field_value(value)
         normalized === nothing && throw(ProtocolError("invalid HTTP/2 header field value for $(repr(name))"))
         if startswith(name, ':')
             saw_regular && throw(ProtocolError("HTTP/2 pseudo-headers must precede regular headers"))
@@ -1022,7 +1032,7 @@ function _decode_h2_trailer_headers(headers::Vector{HeaderField})::Headers
         name == lowercase(name) || throw(ProtocolError("HTTP/2 trailer field names must be lowercase"))
         startswith(name, ':') && throw(ProtocolError("HTTP/2 trailers must not include pseudo-headers"))
         _valid_trailer_header_name(name) || throw(ProtocolError("invalid HTTP/2 trailer header $(repr(name))"))
-        normalized = _normalize_header_field_value(value)
+        normalized = _normalize_strict_header_field_value(value)
         normalized === nothing && throw(ProtocolError("invalid HTTP/2 trailer field value for $(repr(name))"))
         appendheader(out, name, normalized)
     end
@@ -1095,16 +1105,25 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
     while true
         nread = 0
         done = false
+        too_many = false
         lock(body.state.lock)
         try
             available = _stream_available_bytes(body.state)
             if available > 0
                 body.state.conn_errored && !body.state.stream_done && _throw_stream_error(body.conn, body.state)
                 nread = min(length(dst), available)
+                expected = body.expected_content_length
+                if expected >= 0 && body.bytes_read + Int64(nread) > expected
+                    too_many = true
+                    body.state.stream_error = ProtocolError("HTTP/2 response body exceeded Content-Length")
+                    body.state.stream_done = true
+                    notify(body.state.condition)
+                else
                 copyto!(dst, 1, body.state.body, body.state.body_read_index, nread)
                 body.state.body_read_index += nread
                 _compact_stream_body_buffer!(body.state)
                 notify(body.state.condition)
+                end
             elseif body.state.stream_done
                 _publish_h2_response_trailers!(body.state)
                 done = true
@@ -1132,11 +1151,26 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         finally
             unlock(body.state.lock)
         end
+        if too_many
+            @atomic :release body.closed = true
+            try
+                _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x1)))
+            catch
+            end
+            _unregister_stream!(body.conn, body.stream_id)
+            throw(ProtocolError("HTTP/2 response body exceeded Content-Length"))
+        end
         if nread > 0
+            body.bytes_read += Int64(nread)
             _send_window_updates!(body.conn, body.stream_id, nread)
             return nread
         end
         if done
+            if body.expected_content_length >= 0 && body.bytes_read != body.expected_content_length
+                @atomic :release body.closed = true
+                _unregister_stream!(body.conn, body.stream_id)
+                throw(ProtocolError("HTTP/2 response body ended before Content-Length bytes were received"))
+            end
             @atomic :release body.closed = true
             _unregister_stream!(body.conn, body.stream_id)
             return 0
@@ -1241,9 +1275,13 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
             stream_state.decoded_headers === nothing && throw(ProtocolError("HTTP/2 response missing decoded headers"))
             decoded_headers = stream_state.decoded_headers::Vector{HeaderField}
             status, response_headers = _decode_response_headers(decoded_headers)
+            response_content_length = _parse_content_length(response_headers)
             response_trailers = Headers()
             stream_state.response_trailers = response_trailers
             if stream_state.stream_done && _stream_available_bytes(stream_state) == 0
+                if response_content_length > 0 && _body_allowed_for_status(status) && request.method != "HEAD"
+                    throw(ProtocolError("HTTP/2 response body ended before Content-Length bytes were received"))
+                end
                 _publish_h2_response_trailers!(stream_state)
                 cleanup_on_exit = false
                 _unregister_stream!(conn, stream_state.stream_id)
@@ -1253,7 +1291,7 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
                         "",
                         response_headers,
                         response_trailers,
-                        Int64(0),
+                        response_content_length >= 0 ? response_content_length : Int64(0),
                         UInt8(2),
                         UInt8(0),
                         false,
@@ -1265,7 +1303,7 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
                     EmptyBody(),
                 )
             end
-            body = H2Body(conn, stream_state.stream_id, stream_state, request, response_trailers, false)
+            body = H2Body(conn, stream_state.stream_id, stream_state, request, response_trailers, response_content_length, Int64(0), false)
             cleanup_on_exit = false
             return _IncomingResponse(
                 _IncomingResponseHead(
@@ -1273,7 +1311,7 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
                     "",
                     response_headers,
                     response_trailers,
-                    Int64(-1),
+                    response_content_length,
                     UInt8(2),
                     UInt8(0),
                     false,

@@ -14,6 +14,7 @@ module WebSockets
 import Base: close, iterate
 
 import ..Headers
+import ..HTTPError
 import ..HostResolvers
 import ..Request
 import ..Response
@@ -57,6 +58,7 @@ import .._request_response_header_deadline_ns
 import .._request_write_deadline_ns
 import .._resolve_request_timeout_settings
 import .._apply_request_timeout_settings!
+import ..get_request_context
 import .._request_url
 import .._resolve_redirect_target
 import .._should_copy_sensitive_headers_on_redirect
@@ -148,7 +150,7 @@ error.
 Inspect `err.message.code` and `err.message.reason` to distinguish normal
 closures from errors.
 """
-struct WebSocketError <: Exception
+struct WebSocketError <: HTTPError
     message::CloseFrameBody
 end
 
@@ -717,7 +719,7 @@ function _open_client_websocket(
     cookies=true,
     cookiejar::Union{Nothing,CookieJar}=nothing,
     proxy=_USE_TRANSPORT_PROXY,
-    connect_timeout::Real=0,
+    connect_timeout::Real=30,
     request_timeout::Real=0,
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,
@@ -740,7 +742,7 @@ function _open_client_websocket(
         read_idle_timeout,
         write_idle_timeout,
     )
-    _apply_request_timeout_settings!(request.context, request_timeout_ns, timeout_config)
+    _apply_request_timeout_settings!(get_request_context(request), request_timeout_ns, timeout_config)
     req_client, owns_client = _client_for_request(client, connect_timeout, require_ssl_verification)
     client === nothing || proxy === _USE_TRANSPORT_PROXY || throw(ArgumentError("proxy override is not supported when passing an explicit Client"))
     proxy_config = _proxy_config_for_request(req_client, proxy)
@@ -868,7 +870,7 @@ function open(
     cookies=true,
     cookiejar::Union{Nothing,CookieJar}=nothing,
     proxy=_USE_TRANSPORT_PROXY,
-    connect_timeout::Real=0,
+    connect_timeout::Real=30,
     request_timeout::Real=0,
     response_header_timeout::Real=0,
     read_idle_timeout::Real=0,

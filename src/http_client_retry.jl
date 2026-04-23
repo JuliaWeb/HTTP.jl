@@ -14,7 +14,7 @@ end
 Wrapper passed to `retry_if` for request-path failures. Inspect `err.err` to
 check the underlying transport or protocol exception.
 """
-struct RequestRetryError <: Exception
+struct RequestRetryError <: HTTPError
     err::Exception
 end
 

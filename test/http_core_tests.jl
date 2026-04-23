@@ -147,6 +147,32 @@ end
     HT.setheader(headers, "content-type", "application/json")
     @test HT.header(req.headers, "content-type") == "text/plain"
     @test HT.header(res.headers, "content-type") == "text/plain"
+
+    compat_req = HT.Request(
+        "PUT",
+        "/compat",
+        ["X-Test" => "1"],
+        "body";
+        version=v"1.0",
+        context=Dict(:route => "/compat"),
+    )
+    @test compat_req.version == v"1.0.0"
+    @test compat_req.context[:route] == "/compat"
+    @test HT.get_request_context(compat_req) isa HT.RequestContext
+    @test HT.get_request_context(compat_req) !== compat_req.context
+    @test compat_req.body isa HT.BytesBody
+
+    compat_res = HT.Response(202, ["X-Reply" => "yes"], "ok"; version=v"1.0", request=compat_req)
+    @test compat_res.version == v"1.0.0"
+    @test HT.header(compat_res.headers, "X-Reply") == "yes"
+    @test compat_res.request === compat_req
+    @test compat_res.body isa HT.BytesBody
+end
+
+@testset "HTTP core compatibility aliases" begin
+    @test HT.TimeoutError === HT.HTTPTimeoutError
+    @test HT.TimeoutError("read", Int64(1)) isa HT.HTTPError
+    @test HT.escape("a b") == "a%20b"
 end
 
 @testset "HTTP core request/response display" begin
