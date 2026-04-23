@@ -16,10 +16,11 @@ HTTP.Request
 HTTP.Response
 HTTP.Headers
 HTTP.RequestContext
+HTTP.HTTPError
 HTTP.ParseError
 HTTP.ProtocolError
 HTTP.CanceledError
-HTTP.HTTPTimeoutError
+HTTP.TimeoutError
 HTTP.StatusError
 HTTP.TooManyRedirectsError
 ```

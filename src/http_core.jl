@@ -37,14 +37,19 @@ export canceled
 export expired
 
 """
+    HTTPError
+
+Abstract supertype for HTTP-specific exceptions raised by HTTP.jl.
+"""
+abstract type HTTPError <: Exception end
+
+"""
     ParseError
 
 Raised when byte-level HTTP syntax cannot be parsed. This is used for malformed
 request/status lines, invalid header syntax, truncated framed bodies, and other
 wire-format failures where the peer did not send valid HTTP.
 """
-abstract type HTTPError <: Exception end
-
 struct ParseError <: HTTPError
     message::String
 end
