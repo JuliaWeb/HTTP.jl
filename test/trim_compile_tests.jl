@@ -57,8 +57,9 @@ function _wait_process_with_timeout!(proc::Base.Process; timeout_s::Float64, log
                 kill(proc)
             catch
             end
+            _kill_windows_process_tree!(proc)
             _wait_process_exit_after_kill!(proc; timeout_s = 5.0, log_label = log_label)
-            break
+            return timed_out
         end
         if now >= next_log_at
             elapsed = round(now - started_at; digits = 1)
@@ -75,6 +76,20 @@ function _wait_process_with_timeout!(proc::Base.Process; timeout_s::Float64, log
         end
     end
     return timed_out
+end
+
+function _kill_windows_process_tree!(proc::Base.Process)::Nothing
+    Sys.iswindows() || return nothing
+    pid = try
+        getpid(proc)
+    catch
+        return nothing
+    end
+    try
+        run(ignorestatus(`taskkill /PID $pid /T /F`))
+    catch
+    end
+    return nothing
 end
 
 function _wait_process_exit_after_kill!(proc::Base.Process; timeout_s::Float64, log_label::String)::Nothing
