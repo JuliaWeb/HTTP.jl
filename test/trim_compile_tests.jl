@@ -57,6 +57,7 @@ function _wait_process_with_timeout!(proc::Base.Process; timeout_s::Float64, log
                 kill(proc)
             catch
             end
+            _wait_process_exit_after_kill!(proc; timeout_s = 5.0, log_label = log_label)
             break
         end
         if now >= next_log_at
@@ -67,11 +68,25 @@ function _wait_process_with_timeout!(proc::Base.Process; timeout_s::Float64, log
         end
         sleep(0.1)
     end
-    try
-        wait(proc)
-    catch
+    if !Base.process_running(proc)
+        try
+            wait(proc)
+        catch
+        end
     end
     return timed_out
+end
+
+function _wait_process_exit_after_kill!(proc::Base.Process; timeout_s::Float64, log_label::String)::Nothing
+    deadline = time() + timeout_s
+    while Base.process_running(proc) && time() < deadline
+        sleep(0.1)
+    end
+    if Base.process_running(proc)
+        println("[trim] $(log_label) process still running after kill; continuing after timeout")
+        flush(stdout)
+    end
+    return nothing
 end
 
 function _trim_timeout_error(kind::String, script_file::String, output::String = "")
