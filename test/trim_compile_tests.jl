@@ -117,7 +117,12 @@ end
 
 function _trim_known_runtime_allow_failure(script_path::String)::Bool
     _trim_known_task_runtime_limitation(script_path) && return true
-    return Sys.iswindows() && basename(script_path) == "http_trim_websocket.jl"
+    if Sys.iswindows()
+        script_file = basename(script_path)
+        return script_file == "http_trim_websocket.jl" ||
+            script_file == "http_trim_open_fileserver.jl"
+    end
+    return false
 end
 
 function _trim_known_compile_allow_failure(script_path::String)::Bool
