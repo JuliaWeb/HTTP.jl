@@ -51,13 +51,15 @@ function HT.body_close!(body::_BlockingResponseBody)
     return nothing
 end
 
-function _raw_http_request(port::Integer, request::AbstractString; settle_s::Float64 = 0.5)::String
+function _raw_http_request(port::Integer, request::AbstractString; settle_s::Float64 = 0.5, close_write::Bool = true)::String
     sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
     try
         write(sock, Vector{UInt8}(codeunits(String(request))))
-        try
-            NC.closewrite(sock)
-        catch
+        if close_write
+            try
+                NC.closewrite(sock)
+            catch
+            end
         end
         return _read_until_quiet(
             sock;
@@ -548,10 +550,10 @@ end
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
             return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2)
-        end
+    end
     address = _wait_server_addr(server)
     try
-        raw = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 0\r\nExpect: fancy-feature\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        raw = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 0\r\nExpect: fancy-feature\r\nConnection: close\r\n\r\n"; settle_s = 0.3, close_write = false)
         @test occursin("HTTP/1.1 417", raw)
     finally
         _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")

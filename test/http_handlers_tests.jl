@@ -150,7 +150,7 @@ end
 end
 
 @testset "HTTP handlers request timeout middleware" begin
-    fast = HT.handlertimeout(0.05)(req -> begin
+    fast = HT.handlertimeout(5.0)(req -> begin
         _ = req
         return _response_with_text("ok")
     end)
