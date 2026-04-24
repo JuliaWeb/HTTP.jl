@@ -151,6 +151,19 @@ end
     cookie_request = HT.Request("GET", "/cookie"; headers = cookie_headers, body = HT.EmptyBody(), content_length = 0)
     cookie_fields = HT._request_headers_for_h2("example.com:443", cookie_request, true)
     @test [field.value for field in cookie_fields if field.name == "cookie"] == ["a=1", "b=2"]
+
+    bad_value_headers = HT.Headers()
+    HT.setheader(bad_value_headers, "X-Bad", "ok\r\nInjected: yes")
+    bad_value_request = HT.Request("GET", "/bad-value"; headers = bad_value_headers, body = HT.EmptyBody(), content_length = 0)
+    @test_throws HT.ProtocolError HT._request_headers_for_h2("example.com:443", bad_value_request, true)
+
+    bad_name_headers = HT.Headers()
+    HT.setheader(bad_name_headers, "Bad Name", "ok")
+    bad_name_request = HT.Request("GET", "/bad-name"; headers = bad_name_headers, body = HT.EmptyBody(), content_length = 0)
+    @test_throws HT.ProtocolError HT._request_headers_for_h2("example.com:443", bad_name_request, true)
+
+    bad_path_request = HT.Request("GET", "/bad\r\npath"; body = HT.EmptyBody(), content_length = 0)
+    @test_throws HT.ProtocolError HT._request_headers_for_h2("example.com:443", bad_path_request, true)
 end
 
 @testset "HTTP/2 client validates response pseudo-headers" begin

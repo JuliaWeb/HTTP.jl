@@ -2649,12 +2649,20 @@ end
            lower == "trailer"
 end
 
-function _append_h2_headers!(out::Vector{HeaderField}, hdrs::Headers)::Nothing
+function _append_h2_headers!(out::Vector{HeaderField}, hdrs::Headers; trailers::Bool=false)::Nothing
     for key in header_keys(hdrs)
-        _skip_h2_header(key) && continue
+        if trailers
+            _valid_trailer_header_name(key) || throw(ProtocolError("invalid HTTP/2 trailer field name: $(repr(key))"))
+        else
+            _valid_header_field_name(key) || throw(ProtocolError("invalid HTTP/2 header field name: $(repr(key))"))
+            _skip_h2_header(key) && continue
+        end
+        lower = lowercase(key)
         values = headers(hdrs, key)
         for value in values
-            push!(out, HeaderField(lowercase(key), value, false))
+            normalized = _normalize_strict_header_field_value(value)
+            normalized === nothing && throw(ProtocolError("invalid HTTP/2 header field value for $(repr(key))"))
+            push!(out, HeaderField(lower, normalized, false))
         end
     end
     return nothing
@@ -2967,7 +2975,7 @@ end
 
 function _encode_h2_trailer_headers!(encoder::Encoder, trailers::Headers, max_header_list_size::Int=0)::Vector{UInt8}
     header_fields = HeaderField[]
-    _append_h2_headers!(header_fields, trailers)
+    _append_h2_headers!(header_fields, trailers; trailers=true)
     max_header_list_size > 0 && _header_list_size(header_fields) > max_header_list_size && throw(ProtocolError("HTTP/2 response trailers exceed peer SETTINGS_MAX_HEADER_LIST_SIZE"))
     return encode_header_block(encoder, header_fields)
 end

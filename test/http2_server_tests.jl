@@ -1333,6 +1333,20 @@ end
     end
 end
 
+@testset "HTTP/2 server validates outbound header fields before HPACK" begin
+    bad_value_headers = HT.Headers()
+    HT.setheader(bad_value_headers, "X-Bad", "ok\r\nInjected: yes")
+    @test_throws HT.ProtocolError HT._encode_h2_response_headers!(HT.Encoder(), 200, bad_value_headers)
+
+    bad_name_headers = HT.Headers()
+    HT.setheader(bad_name_headers, "Bad Name", "ok")
+    @test_throws HT.ProtocolError HT._encode_h2_response_headers!(HT.Encoder(), 200, bad_name_headers)
+
+    bad_trailers = HT.Headers()
+    HT.setheader(bad_trailers, "Content-Length", "2")
+    @test_throws HT.ProtocolError HT._encode_h2_trailer_headers!(HT.Encoder(), bad_trailers)
+end
+
 @testset "HTTP/2 server honors connection-level flow control on responses" begin
     payload = fill(UInt8('z'), 70_000)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request

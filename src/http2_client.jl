@@ -953,39 +953,49 @@ end
     return name == "connection" || name == "proxy-connection" || name == "keep-alive" || name == "upgrade"
 end
 
+@inline function _strict_h2_outgoing_header_value(name::AbstractString, value::AbstractString)::String
+    normalized = _normalize_strict_header_field_value(value)
+    normalized === nothing && throw(ProtocolError("invalid HTTP/2 header field value for $(repr(name))"))
+    return normalized
+end
+
 function _request_headers_for_h2(address::String, request::Request, secure::Bool)::Vector{HeaderField}
-    authority = request.host === nothing ? address : (request.host::String)
+    method = request.method
+    _valid_header_field_name(method) || throw(ProtocolError("invalid HTTP/2 :method pseudo-header"))
+    authority = _strict_h2_outgoing_header_value(":authority", request.host === nothing ? address : (request.host::String))
     normal_connect = request.method == "CONNECT" && !startswith(request.target, "/")
-    fields = HeaderField[HeaderField(":method", request.method, false)]
+    fields = HeaderField[HeaderField(":method", method, false)]
     push!(fields, HeaderField(":authority", authority, false))
     if !normal_connect
         push!(fields, HeaderField(":scheme", secure ? "https" : "http", false))
-        push!(fields, HeaderField(":path", request.target, false))
+        push!(fields, HeaderField(":path", _strict_h2_outgoing_header_value(":path", request.target), false))
     end
     for key in header_keys(request.headers)
-        startswith(key, ":") && continue
+        startswith(key, ":") && throw(ProtocolError("HTTP/2 request headers must not include pseudo-header $(repr(key))"))
+        _valid_header_field_name(key) || throw(ProtocolError("invalid HTTP/2 header field name: $(repr(key))"))
         lowered = lowercase(key)
         if lowered == "host" || _is_h2_connection_specific_header(lowered) || lowered == "transfer-encoding"
             continue
         end
         values = headers(request.headers, key)
         for value in values
-                if lowered == "te"
-                    lowercase(_trim_http_ows(value)) == "trailers" || continue
-                    push!(fields, HeaderField("te", "trailers", false))
-                    continue
-                end
-                if lowered == "cookie"
-                    for item in split(value, ';')
-                        cookie_value = _trim_http_ows(item)
-                        isempty(cookie_value) && continue
-                        push!(fields, HeaderField("cookie", String(cookie_value), false))
-                    end
-                    continue
-                end
-                push!(fields, HeaderField(lowered, value, false))
+            normalized = _strict_h2_outgoing_header_value(key, value)
+            if lowered == "te"
+                lowercase(_trim_http_ows(normalized)) == "trailers" || continue
+                push!(fields, HeaderField("te", "trailers", false))
+                continue
             end
+            if lowered == "cookie"
+                for item in split(normalized, ';')
+                    cookie_value = _trim_http_ows(item)
+                    isempty(cookie_value) && continue
+                    push!(fields, HeaderField("cookie", String(cookie_value), false))
+                end
+                continue
+            end
+            push!(fields, HeaderField(lowered, normalized, false))
         end
+    end
     return fields
 end
 
