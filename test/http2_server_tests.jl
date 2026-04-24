@@ -1369,12 +1369,19 @@ end
     try
         conn, reader = _open_raw_h2_server_conn(address)
         _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/conn-window")
-        headers_frame = HT.read_frame!(reader)
+        headers_frame = _read_h2_server_frame_until!(
+            conn::NC.Conn,
+            reader,
+            frame -> frame isa HT.HeadersFrame && (frame::HT.HeadersFrame).stream_id == UInt32(1),
+        )
         @test headers_frame isa HT.HeadersFrame
         received = 0
         while received < 65_535
-            frame = HT.read_frame!(reader)
-            frame isa HT.DataFrame || continue
+            frame = _read_h2_server_frame_until!(
+                conn::NC.Conn,
+                reader,
+                frame -> frame isa HT.DataFrame && (frame::HT.DataFrame).stream_id == UInt32(1),
+            )
             received += length((frame::HT.DataFrame).data)
         end
         @test received == 65_535
@@ -1393,8 +1400,11 @@ end
         _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(0), UInt32(remaining)))
         _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(1), UInt32(remaining)))
         while received < length(payload)
-            frame = HT.read_frame!(reader)
-            frame isa HT.DataFrame || continue
+            frame = _read_h2_server_frame_until!(
+                conn::NC.Conn,
+                reader,
+                frame -> frame isa HT.DataFrame && (frame::HT.DataFrame).stream_id == UInt32(1),
+            )
             received += length((frame::HT.DataFrame).data)
             (frame::HT.DataFrame).end_stream && break
         end
@@ -1446,10 +1456,18 @@ end
         response_body = UInt8[]
         saw_headers = false
         while true
-            frame = HT.read_frame!(reader)
+            frame = _read_h2_server_frame_until!(
+                conn::NC.Conn,
+                reader,
+                frame -> begin
+                    frame isa HT.HeadersFrame && (frame::HT.HeadersFrame).stream_id == UInt32(3) && return true
+                    frame isa HT.DataFrame && (frame::HT.DataFrame).stream_id == UInt32(3) && return true
+                    frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).stream_id == UInt32(3) && return true
+                    return false
+                end,
+            )
             if frame isa HT.HeadersFrame
                 headers_frame = frame::HT.HeadersFrame
-                headers_frame.stream_id == UInt32(3) || continue
                 decoded = HT.decode_header_block(decoder, headers_frame.header_block_fragment)
                 @test any(field -> field.name == ":status" && field.value == "200", decoded)
                 saw_headers = true
@@ -1457,7 +1475,6 @@ end
             end
             frame isa HT.DataFrame || continue
             data_frame = frame::HT.DataFrame
-            data_frame.stream_id == UInt32(3) || continue
             append!(response_body, data_frame.data)
             data_frame.end_stream && break
         end
