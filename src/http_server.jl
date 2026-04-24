@@ -731,31 +731,35 @@ function Base.close(server::Server)::Nothing
     return nothing
 end
 
+@inline function _deadline_after(timeout_ns::Int64)::Int64
+    timeout_ns <= 0 && return Int64(0)
+    return Int64(time_ns()) + timeout_ns
+end
+
+@inline function _server_write_deadline_ns(server::Server)::Int64
+    return _deadline_after(server.write_timeout_ns)
+end
+
 function _set_read_deadline_for_header!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
     timeout = server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns
-    timeout <= 0 && return nothing
-    _set_read_deadline!(conn, Int64(time_ns()) + timeout)
+    _set_read_deadline!(conn, _deadline_after(timeout))
     return nothing
 end
 
 function _set_read_deadline_for_body!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
     timeout = server.read_timeout_ns
-    timeout <= 0 && return nothing
-    _set_read_deadline!(conn, Int64(time_ns()) + timeout)
+    _set_read_deadline!(conn, _deadline_after(timeout))
     return nothing
 end
 
 function _set_idle_deadline!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
     timeout = server.idle_timeout_ns > 0 ? server.idle_timeout_ns : server.read_timeout_ns
-    timeout <= 0 && return nothing
-    _set_read_deadline!(conn, Int64(time_ns()) + timeout)
+    _set_read_deadline!(conn, _deadline_after(timeout))
     return nothing
 end
 
 function _set_write_deadline!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
-    timeout = server.write_timeout_ns
-    timeout <= 0 && return nothing
-    _set_write_deadline!(conn, Int64(time_ns()) + timeout)
+    _set_write_deadline!(conn, _server_write_deadline_ns(server))
     return nothing
 end
 
@@ -906,6 +910,9 @@ end
 @inline function _classify_h2_conn_close(err::Exception)::_H2ConnCloseKind
     if err isa ProtocolError || err isa ParseError
         return _H2_CONN_CLOSE_PROTOCOL
+    end
+    if err isa IOPoll.DeadlineExceededError
+        return _H2_CONN_CLOSE_PEER
     end
     if err isa EOFError || err isa IOPoll.NetClosingError || err isa TLS.TLSError
         return _H2_CONN_CLOSE_PEER
@@ -1698,6 +1705,7 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
         return nothing
     end
     if _server_stream_live_h2(stream)
+        deadline_ns = _server_write_deadline_ns(stream.server::Server)
         _write_data_frames_h2_server!(
             stream.h2_conn::Union{TCP.Conn,TLS.Conn},
             stream.h2_write_lock::ReentrantLock,
@@ -1705,6 +1713,7 @@ function _write_server_stream_bytes!(stream::Stream, bytes::AbstractVector{UInt8
             stream.h2_stream_id,
             data;
             end_stream=false,
+            write_deadline_ns=deadline_ns,
         )
         return nothing
     end
@@ -1746,6 +1755,7 @@ function _write_server_stream_head!(stream::Stream)::Nothing
             stream.response.status,
             headers,
             end_stream,
+            _server_write_deadline_ns(stream.server::Server),
         )
         @atomic :release stream.response_started = true
         return nothing
@@ -1968,12 +1978,14 @@ function _server_closewrite(stream::Stream)::Nothing
                     stream.h2_send_state::_H2SendWindowState,
                     stream.h2_stream_id,
                     stream.response.trailers,
+                    _server_write_deadline_ns(stream.server::Server),
                 )
             elseif stream.write_mode != _ServerStreamWriteMode.NONE
                 _write_frame_h2_server_threadsafe!(
                     stream.h2_write_lock::ReentrantLock,
                     stream.h2_conn::Union{TCP.Conn,TLS.Conn},
                     DataFrame(stream.h2_stream_id, true, UInt8[]),
+                    _server_write_deadline_ns(stream.server::Server),
                 )
             end
         end
@@ -2358,7 +2370,23 @@ function _apply_h2_window_update!(send_state::_H2SendWindowState, frame::WindowU
     return nothing
 end
 
-function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UInt32, wanted::Int)::Int
+function _wait_h2_send_window_locked!(send_state::_H2SendWindowState, deadline_ns::Int64)::Nothing
+    if deadline_ns == 0
+        wait(send_state.window_condition)
+        return nothing
+    end
+    remaining_ns = deadline_ns - Int64(time_ns())
+    remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
+    unlock(send_state.state_lock)
+    try
+        sleep(min(remaining_ns / 1.0e9, 0.001))
+    finally
+        lock(send_state.state_lock)
+    end
+    return nothing
+end
+
+function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UInt32, wanted::Int, deadline_ns::Int64=Int64(0))::Int
     wanted > 0 || throw(ArgumentError("wanted send window must be > 0"))
     lock(send_state.state_lock)
     try
@@ -2367,7 +2395,7 @@ function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UIn
             haskey(send_state.stream_send_window, stream_id) || throw(ProtocolError("HTTP/2 stream send window is closed"))
             stream_window = send_state.stream_send_window[stream_id]
             if stream_window <= 0 || send_state.conn_send_window <= 0
-                wait(send_state.window_condition)
+                _wait_h2_send_window_locked!(send_state, deadline_ns)
                 continue
             end
             allowed = min(
@@ -2378,7 +2406,7 @@ function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UIn
                 Int64(_H2_SERVER_MAX_DATA_FRAME_SIZE),
             )
             if allowed <= 0
-                wait(send_state.window_condition)
+                _wait_h2_send_window_locked!(send_state, deadline_ns)
                 continue
             end
             send_state.conn_send_window -= allowed
@@ -2691,17 +2719,23 @@ function _write_all_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, bytes::Vector{UIn
     return nothing
 end
 
-function _write_frame_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, frame::AbstractFrame)::Nothing
+function _write_frame_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, frame::AbstractFrame, write_deadline_ns::Int64=Int64(0))::Nothing
     io = IOBuffer()
     write_frame!(io, frame)
+    _set_write_deadline!(conn, write_deadline_ns)
     _write_all_h2_server!(conn, take!(io))
     return nothing
 end
 
-function _write_frame_h2_server_threadsafe!(write_lock::ReentrantLock, conn::Union{TCP.Conn,TLS.Conn}, frame::AbstractFrame)::Nothing
+function _write_frame_h2_server_threadsafe!(
+    write_lock::ReentrantLock,
+    conn::Union{TCP.Conn,TLS.Conn},
+    frame::AbstractFrame,
+    write_deadline_ns::Int64=Int64(0),
+)::Nothing
     lock(write_lock)
     try
-        _write_frame_h2_server!(conn, frame)
+        _write_frame_h2_server!(conn, frame, write_deadline_ns)
     finally
         unlock(write_lock)
     end
@@ -2715,17 +2749,18 @@ function _write_data_frames_h2_server!(
     stream_id::UInt32,
     data::Vector{UInt8};
     end_stream::Bool,
+    write_deadline_ns::Int64=Int64(0),
 )::Nothing
     isempty(data) && return nothing
     offset = 1
     total_len = length(data)
     while offset <= total_len
         remaining = total_len - offset + 1
-        chunk_len = _reserve_h2_send_window!(send_state, stream_id, remaining)
+        chunk_len = _reserve_h2_send_window!(send_state, stream_id, remaining, write_deadline_ns)
         chunk = Vector{UInt8}(undef, chunk_len)
         copyto!(chunk, 1, data, offset, chunk_len)
         final_chunk = (offset + chunk_len - 1) == total_len
-        _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, end_stream && final_chunk, chunk))
+        _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, end_stream && final_chunk, chunk), write_deadline_ns)
         offset += chunk_len
     end
     return nothing
@@ -2738,6 +2773,25 @@ function _h2_server_has_active_streams(states_lock::ReentrantLock, states::Dict{
     finally
         unlock(states_lock)
     end
+end
+
+function _set_h2_frame_read_deadline!(
+    server::Server,
+    conn::Union{TCP.Conn,TLS.Conn},
+    states_lock::ReentrantLock,
+    states::Dict{UInt32,_H2ServerStreamState},
+    continuation_stream::UInt32,
+)::Nothing
+    if continuation_stream != UInt32(0)
+        _set_read_deadline_for_header!(server, conn)
+    elseif _h2_server_has_active_streams(states_lock, states)
+        _set_read_deadline_for_body!(server, conn)
+    elseif server.idle_timeout_ns > 0
+        _set_idle_deadline!(server, conn)
+    else
+        _set_read_deadline_for_header!(server, conn)
+    end
+    return nothing
 end
 
 function _update_h2_server_conn_state!(tracked::_ServerConn, states_lock::ReentrantLock, states::Dict{UInt32,_H2ServerStreamState})::Nothing
@@ -2886,9 +2940,10 @@ function _write_h2_header_block_locked!(
     header_block::Vector{UInt8},
     end_stream::Bool,
     max_frame_size::Int,
+    write_deadline_ns::Int64=Int64(0),
 )::Nothing
     _header_block_frames(stream_id, end_stream, header_block, max_frame_size) do frame
-        _write_frame_h2_server!(conn, frame)
+        _write_frame_h2_server!(conn, frame, write_deadline_ns)
     end
     return nothing
 end
@@ -2901,6 +2956,7 @@ function _write_h2_response_headers!(
     response_status::Int,
     response_headers::Headers,
     end_stream::Bool,
+    write_deadline_ns::Int64=Int64(0),
 )::Nothing
     max_frame_size = 16_384
     max_header_list_size = 0
@@ -2914,7 +2970,7 @@ function _write_h2_response_headers!(
     lock(write_lock)
     try
         header_block = _encode_h2_response_headers!(send_state.header_encoder, response_status, response_headers, max_header_list_size)
-        _write_h2_header_block_locked!(conn, stream_id, header_block, end_stream, max_frame_size)
+        _write_h2_header_block_locked!(conn, stream_id, header_block, end_stream, max_frame_size, write_deadline_ns)
     finally
         unlock(write_lock)
     end
@@ -2927,6 +2983,7 @@ function _write_h2_trailers!(
     send_state::_H2SendWindowState,
     stream_id::UInt32,
     trailers::Headers,
+    write_deadline_ns::Int64=Int64(0),
 )::Nothing
     isempty(trailers) && return nothing
     max_frame_size = 16_384
@@ -2941,7 +2998,7 @@ function _write_h2_trailers!(
     lock(write_lock)
     try
         header_block = _encode_h2_trailer_headers!(send_state.header_encoder, trailers, max_header_list_size)
-        _write_h2_header_block_locked!(conn, stream_id, header_block, true, max_frame_size)
+        _write_h2_header_block_locked!(conn, stream_id, header_block, true, max_frame_size, write_deadline_ns)
     finally
         unlock(write_lock)
     end
@@ -2955,17 +3012,18 @@ function _write_response_body_h2_server!(
     stream_id::UInt32,
     response::Response,
     end_stream::Bool=true,
+    write_deadline_ns::Int64=Int64(0),
 )::Nothing
     body = response.body
     body isa EmptyBody && return nothing
     if body isa AbstractString
         bytes = Vector{UInt8}(codeunits(String(body)))
-        isempty(bytes) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, bytes; end_stream=end_stream)
+        isempty(bytes) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, bytes; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
         return nothing
     end
     if body isa AbstractVector{UInt8}
         bytes = body isa Vector{UInt8} ? body : Vector{UInt8}(body)
-        isempty(bytes) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, bytes; end_stream=end_stream)
+        isempty(bytes) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, bytes; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
         return nothing
     end
     body isa AbstractBody || throw(ProtocolError("unsupported HTTP/2 response body type $(typeof(body))"))
@@ -2977,16 +3035,16 @@ function _write_response_body_h2_server!(
             n = body_read!(body::AbstractBody, buf)
             if n == 0
                 if have_pending
-                    _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, pending; end_stream=end_stream)
+                    _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, pending; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
                 elseif end_stream
-                    _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]))
+                    _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
                 end
                 return nothing
             end
             current = Vector{UInt8}(undef, n)
             copyto!(current, 1, buf, 1, n)
             if have_pending
-                _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, pending; end_stream=false)
+                _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, pending; end_stream=false, write_deadline_ns=write_deadline_ns)
             end
             pending = current
             have_pending = true
@@ -3006,6 +3064,7 @@ function _write_h2_response!(
     stream_id::UInt32,
     request::Request,
     response::Response,
+    write_deadline_ns::Int64=Int64(0),
 )::Nothing
     response.request = request
     allows_body = _h2_response_allows_body(request, response)
@@ -3015,17 +3074,17 @@ function _write_h2_response!(
             response.body isa AbstractBody && body_close!(response.body::AbstractBody)
         catch
         end
-        _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, !has_trailers)
-        has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
+        _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, !has_trailers, write_deadline_ns)
+        has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers, write_deadline_ns)
         return nothing
     end
     body_empty = response.body isa EmptyBody ||
                  (response.body isa AbstractString && isempty(response.body::AbstractString)) ||
                  (response.body isa AbstractVector{UInt8} && isempty(response.body::AbstractVector{UInt8}))
     end_stream = body_empty && !has_trailers
-    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream)
-    body_empty || _write_response_body_h2_server!(conn, write_lock, send_state, stream_id, response, !has_trailers)
-    has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
+    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream, write_deadline_ns)
+    body_empty || _write_response_body_h2_server!(conn, write_lock, send_state, stream_id, response, !has_trailers, write_deadline_ns)
+    has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers, write_deadline_ns)
     return nothing
 end
 
@@ -3036,6 +3095,7 @@ function _write_h2_buffered_stream_response!(
     stream_id::UInt32,
     request::Request,
     stream::Stream,
+    write_deadline_ns::Int64=Int64(0),
 )::Nothing
     response = stream.response::Response
     response.request = request
@@ -3049,9 +3109,9 @@ function _write_h2_buffered_stream_response!(
     has_body = !isempty(body_bytes)
     has_trailers = !isempty(response.trailers)
     end_stream = !has_body && !has_trailers
-    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream)
-    has_body && _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, body_bytes; end_stream=!has_trailers)
-    has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers)
+    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream, write_deadline_ns)
+    has_body && _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, body_bytes; end_stream=!has_trailers, write_deadline_ns=write_deadline_ns)
+    has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers, write_deadline_ns)
     return nothing
 end
 
@@ -3124,25 +3184,26 @@ function _handle_h2_stream!(
                 server.handler(request)
             catch err
                 status = _server_error_status(err::Exception)
-                _write_h2_response!(
-                    conn,
-                    write_lock,
-                    send_state,
-                    stream_id,
-                    request,
-                    Response(
-                        status === nothing ? 500 : status::Int;
-                        proto_major=2,
-                        proto_minor=0,
-                        request=request,
-                    ),
-                )
-                return nothing
-            end
-            response isa Response || throw(ProtocolError("h2 server handler must return HTTP.Response"))
-            response_obj = response::Response
-            _write_h2_response!(conn, write_lock, send_state, stream_id, request, response_obj)
-        end
+	                _write_h2_response!(
+	                    conn,
+	                    write_lock,
+	                    send_state,
+	                    stream_id,
+	                    request,
+	                    Response(
+	                        status === nothing ? 500 : status::Int;
+	                        proto_major=2,
+	                        proto_minor=0,
+	                        request=request,
+	                    ),
+	                    _server_write_deadline_ns(server),
+	                )
+	                return nothing
+	            end
+	            response isa Response || throw(ProtocolError("h2 server handler must return HTTP.Response"))
+	            response_obj = response::Response
+	            _write_h2_response!(conn, write_lock, send_state, stream_id, request, response_obj, _server_write_deadline_ns(server))
+	        end
         _request_body_fully_consumed(request) || body_close!(request.body)
     catch err
         stream_cancelled = false
@@ -3253,11 +3314,14 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
         client_settings isa SettingsFrame || throw(ProtocolError("expected initial h2 SETTINGS frame"))
         (client_settings::SettingsFrame).ack && throw(ProtocolError("initial h2 SETTINGS frame must not be ACK"))
         _apply_h2_peer_settings!(send_state, write_lock, (client_settings::SettingsFrame).settings)
-        _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(false, Pair{UInt16,UInt32}[]))
-        _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(true, Pair{UInt16,UInt32}[]))
+        _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(false, Pair{UInt16,UInt32}[]), _server_write_deadline_ns(server))
+        _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(true, Pair{UInt16,UInt32}[]), _server_write_deadline_ns(server))
+        _clear_deadlines!(conn)
         _set_conn_shutdown_hook!(tracked, () -> _request_h2_conn_shutdown!(conn, write_lock, conn_control))
         _set_conn_state!(tracked, _ConnState.IDLE)
         while true
+            _server_shutting_down(server) && return nothing
+            _set_h2_frame_read_deadline!(server, conn, states_lock, states, continuation_stream)
             frame = try
                 read_frame!(reader)
             catch err
@@ -3277,13 +3341,13 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 sf = frame::SettingsFrame
                 if !sf.ack
                     _apply_h2_peer_settings!(send_state, write_lock, sf.settings)
-                    _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(true, Pair{UInt16,UInt32}[]))
+                    _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(true, Pair{UInt16,UInt32}[]), _server_write_deadline_ns(server))
                 end
                 continue
             end
             if frame isa PingFrame
                 ping = frame::PingFrame
-                ping.ack || _write_frame_h2_server_threadsafe!(write_lock, conn, PingFrame(true, ping.opaque_data))
+                ping.ack || _write_frame_h2_server_threadsafe!(write_lock, conn, PingFrame(true, ping.opaque_data), _server_write_deadline_ns(server))
                 continue
             end
             if frame isa WindowUpdateFrame

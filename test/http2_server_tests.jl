@@ -1313,6 +1313,22 @@ end
     end
 end
 
+@testset "HTTP/2 server send-window reservation honors write deadlines" begin
+    send_state = HT._H2SendWindowState()
+    HT._register_h2_send_window!(send_state, UInt32(1))
+    lock(send_state.state_lock)
+    try
+        send_state.conn_send_window = Int64(0)
+    finally
+        unlock(send_state.state_lock)
+    end
+    deadline_ns = Int64(time_ns()) + Int64(50_000_000)
+    elapsed = @elapsed begin
+        @test_throws Reseau.IOPoll.DeadlineExceededError HT._reserve_h2_send_window!(send_state, UInt32(1), 1, deadline_ns)
+    end
+    @test elapsed < 0.5
+end
+
 @testset "HTTP/2 server keeps the connection usable after stream resets" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             if request.target == "/cancel"
