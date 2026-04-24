@@ -115,6 +115,48 @@ function _read_h2_server_data_frame!(reader::IO)::HT.DataFrame
     end
 end
 
+function _read_h2_server_frame_until!(conn::NC.Conn, reader::IO, predicate; timeout_s::Float64 = 1.0)
+    NC.set_deadline!(conn, Int64(time_ns() + round(Int, timeout_s * 1_000_000_000)))
+    try
+        for _ in 1:64
+            frame = HT.read_frame!(reader)
+            predicate(frame) && return frame
+        end
+        error("timed out waiting for expected HTTP/2 frame")
+    finally
+        NC.set_deadline!(conn, Int64(0))
+    end
+end
+
+function _read_h2_server_text_response!(conn::NC.Conn, reader::IO, decoder::HT.Decoder, stream_id::UInt32)::String
+    body = UInt8[]
+    saw_headers = false
+    while true
+        frame = _read_h2_server_frame_until!(conn, reader, f -> begin
+            f isa HT.HeadersFrame && (f::HT.HeadersFrame).stream_id == stream_id && return true
+            f isa HT.DataFrame && (f::HT.DataFrame).stream_id == stream_id && return true
+            f isa HT.RSTStreamFrame && (f::HT.RSTStreamFrame).stream_id == stream_id && return true
+            return false
+        end)
+        if frame isa HT.HeadersFrame
+            headers_frame = frame::HT.HeadersFrame
+            decoded = HT.decode_header_block(decoder, headers_frame.header_block_fragment)
+            @test any(field -> field.name == ":status" && field.value == "200", decoded)
+            saw_headers = true
+            headers_frame.end_stream && break
+            continue
+        end
+        if frame isa HT.RSTStreamFrame
+            error("unexpected RST_STREAM for stream $stream_id")
+        end
+        data_frame = frame::HT.DataFrame
+        append!(body, data_frame.data)
+        data_frame.end_stream && break
+    end
+    @test saw_headers
+    return String(body)
+end
+
 @testset "HTTP/2 server request handling" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("h2:" * request.target))
@@ -1088,6 +1130,7 @@ end
             try
                 conn, reader = _open_raw_h2_server_conn(address)
                 encoder = HT.Encoder()
+                decoder = HT.Decoder()
                 _write_h2_server_request_headers!(
                     conn::NC.Conn,
                     encoder,
@@ -1099,18 +1142,11 @@ end
                     end_stream = false,
                 )
                 _write_frame_h2_server_raw!(conn::NC.Conn, HT.DataFrame(UInt32(1), true, collect(codeunits(payload))))
-                NC.set_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
-                frame_or_err = try
-                    HT.read_frame!(reader)
-                catch err
-                    err
-                finally
-                    NC.set_deadline!(conn::NC.Conn, Int64(0))
-                end
-                @test frame_or_err isa HT.GoAwayFrame || frame_or_err isa Exception
-                if frame_or_err isa HT.GoAwayFrame
-                    @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
-                end
+                reset_frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, frame -> frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).stream_id == UInt32(1))
+                @test (reset_frame::HT.RSTStreamFrame).error_code == UInt32(0x1)
+
+                _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/ok")
+                @test _read_h2_server_text_response!(conn::NC.Conn, reader, decoder, UInt32(3)) == "ok"
             finally
                 conn === nothing || try
                     NC.close(conn::NC.Conn)
@@ -1119,6 +1155,41 @@ end
             end
         end
     finally
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server rejects DATA after END_STREAM without closing connection" begin
+    release = Channel{Nothing}(1)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            if request.target == "/ended"
+                take!(release)
+            end
+            return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
+        end
+    address = _wait_http_server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address)
+        encoder = HT.Encoder()
+        decoder = HT.Decoder()
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(1), address, "/ended"; end_stream = true)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.DataFrame(UInt32(1), true, collect(codeunits("late"))))
+        reset_frame = _read_h2_server_frame_until!(conn::NC.Conn, reader, frame -> frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).stream_id == UInt32(1))
+        @test (reset_frame::HT.RSTStreamFrame).error_code == UInt32(0x1)
+
+        _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/ok")
+        @test _read_h2_server_text_response!(conn::NC.Conn, reader, decoder, UInt32(3)) == "ok"
+    finally
+        try
+            put!(release, nothing)
+        catch
+        end
+        conn === nothing || try
+            NC.close(conn::NC.Conn)
+        catch
+        end
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end

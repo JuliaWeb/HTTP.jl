@@ -2225,6 +2225,9 @@ mutable struct _H2ServerBody <: AbstractBody
 end
 
 const _H2_FLOW_CONTROL_MAX_WINDOW = Int64(0x7fff_ffff)
+const _H2_ERROR_PROTOCOL = UInt32(0x1)
+const _H2_ERROR_INTERNAL = UInt32(0x2)
+const _H2_ERROR_CANCEL = UInt32(0x8)
 
 @inline function _h2_server_available_bytes(state::_H2ServerStreamState)::Int
     available = (length(state.body) - state.body_read_index) + 1
@@ -2510,6 +2513,41 @@ function _fail_h2_server_streams!(
         _set_h2_server_stream_cancelled!(state, _H2_SERVER_STREAM_CONN_CLOSED, true, true, true)
         _unregister_h2_send_window!(send_state, state.stream_id)
     end
+    return nothing
+end
+
+function _fail_h2_server_stream!(
+    server::Server,
+    tracked::_ServerConn,
+    conn::Union{TCP.Conn,TLS.Conn},
+    write_lock::ReentrantLock,
+    states_lock::ReentrantLock,
+    states::Dict{UInt32,_H2ServerStreamState},
+    send_state::_H2SendWindowState,
+    state::_H2ServerStreamState,
+    error_code::UInt32,
+)::Nothing
+    should_reset = false
+    lock(state.lock)
+    try
+        should_reset = state.cancel_kind == UInt8(_H2_SERVER_STREAM_OPEN)
+    finally
+        unlock(state.lock)
+    end
+    _set_h2_server_stream_cancelled!(state, _H2_SERVER_STREAM_RESET, true, true, true)
+    if should_reset
+        try
+            _write_frame_h2_server_threadsafe!(
+                write_lock,
+                conn,
+                RSTStreamFrame(state.stream_id, error_code),
+                _server_write_deadline_ns(server),
+            )
+        catch
+        end
+    end
+    _unregister_h2_send_window!(send_state, state.stream_id)
+    _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
     return nothing
 end
 
@@ -3240,6 +3278,7 @@ function _dispatch_h2_stream!(
     state::_H2ServerStreamState,
 )::Nothing
     decoded_headers = nothing
+    body_end_error = false
     lock(state.lock)
     try
         state.handler_started && return nothing
@@ -3255,10 +3294,24 @@ function _dispatch_h2_stream!(
     try
         state.handler_started && return nothing
         state.declared_body_bytes = declared_body_bytes
-        state.stream_done && _check_h2_server_body_end_locked(state)
-        state.handler_started = true
+        if state.stream_done
+            try
+                _check_h2_server_body_end_locked(state)
+            catch err
+                if err isa ProtocolError
+                    body_end_error = true
+                else
+                    rethrow(err)
+                end
+            end
+        end
+        body_end_error || (state.handler_started = true)
     finally
         unlock(state.lock)
+    end
+    if body_end_error
+        _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_PROTOCOL)
+        return nothing
     end
     Threads.@spawn _handle_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state.stream_id, state, decoded_headers::Vector{HeaderField})
     return nothing
@@ -3403,6 +3456,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 finally
                     unlock(states_lock)
                 end
+                stream_error = false
                 lock(state.lock)
                 try
                     initial_headers = !state.headers_complete
@@ -3434,13 +3488,25 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     hf.end_headers || (continuation_stream = hf.stream_id)
                     if hf.end_stream
                         state.stream_done = true
-                        _check_h2_server_body_end_locked(state)
+                        try
+                            _check_h2_server_body_end_locked(state)
+                        catch err
+                            if err isa ProtocolError
+                                stream_error = true
+                            else
+                                rethrow(err)
+                            end
+                        end
                     end
                     notify(state.condition)
                 finally
                     unlock(state.lock)
                 end
                 _update_h2_server_conn_state!(tracked, states_lock, states)
+                if stream_error
+                    _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_PROTOCOL)
+                    continue
+                end
                 if hf.end_headers
                     continuation_stream = UInt32(0)
                     !state.trailers_complete && _dispatch_h2_stream!(server, tracked, conn, write_lock, send_state, states_lock, states, state)
@@ -3499,31 +3565,45 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 finally
                     unlock(states_lock)
                 end
+                stream_error = false
                 lock(state.lock)
                 try
                     state.headers_complete || throw(ProtocolError("DATA frame received before END_HEADERS"))
-                    if state.aborted
+                    if state.stream_done || state.trailers_complete
+                        stream_error = true
+                    elseif state.aborted
                         df.end_stream && (state.stream_done = true)
                         notify(state.condition)
                     else
                         new_received = state.received_body_bytes + Int64(length(df.data))
                         if state.declared_body_bytes >= 0 && new_received > state.declared_body_bytes
-                            throw(_h2_server_content_length_error(state.declared_body_bytes, new_received, true))
-                        end
-                        available_after = _h2_server_available_bytes(state) + length(df.data)
-                        available_after <= state.max_buffered_bytes || throw(ProtocolError("HTTP/2 request body exceeded buffered server limit"))
-                        append!(state.body, df.data)
-                        state.received_body_bytes = new_received
-                        if df.end_stream
-                            state.stream_done = true
-                            _check_h2_server_body_end_locked(state)
+                            stream_error = true
+                        else
+                            available_after = _h2_server_available_bytes(state) + length(df.data)
+                            available_after <= state.max_buffered_bytes || throw(ProtocolError("HTTP/2 request body exceeded buffered server limit"))
+                            append!(state.body, df.data)
+                            state.received_body_bytes = new_received
+                            if df.end_stream
+                                state.stream_done = true
+                                try
+                                    _check_h2_server_body_end_locked(state)
+                                catch err
+                                    if err isa ProtocolError
+                                        stream_error = true
+                                    else
+                                        rethrow(err)
+                                    end
+                                end
+                            end
                         end
                         notify(state.condition)
                     end
                 finally
                     unlock(state.lock)
                 end
-                if state.aborted
+                if stream_error
+                    _fail_h2_server_stream!(server, tracked, conn, write_lock, states_lock, states, send_state, state, _H2_ERROR_PROTOCOL)
+                elseif state.aborted
                     _send_h2_server_window_updates!(conn, write_lock, df.stream_id, length(df.data), false)
                     _maybe_cleanup_h2_server_state!(tracked, states_lock, states, state, send_state)
                 end
