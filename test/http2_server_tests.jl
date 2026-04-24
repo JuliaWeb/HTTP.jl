@@ -48,13 +48,22 @@ function _write_frame_h2_server_raw!(conn::NC.Conn, frame::HT.AbstractFrame)
     return nothing
 end
 
+function _read_h2_server_frame!(conn::NC.Conn, reader::IO; timeout_s::Float64 = 5.0)
+    NC.set_deadline!(conn, Int64(time_ns() + round(Int, timeout_s * 1_000_000_000)))
+    try
+        return HT.read_frame!(reader)
+    finally
+        NC.set_deadline!(conn, Int64(0))
+    end
+end
+
 function _open_raw_h2_server_conn(address::String; settings::Vector{Pair{UInt16, UInt32}} = Pair{UInt16, UInt32}[])
     conn = ND.connect("tcp", address)
     reader = HT._ConnReader(conn)
     _write_all_h2_server_raw!(conn, HT._H2_PREFACE)
     _write_frame_h2_server_raw!(conn, HT.SettingsFrame(false, settings))
-    first = HT.read_frame!(reader)
-    second = HT.read_frame!(reader)
+    first = _read_h2_server_frame!(conn, reader)
+    second = _read_h2_server_frame!(conn, reader)
     frames = (first, second)
     count(frame -> frame isa HT.SettingsFrame && !(frame::HT.SettingsFrame).ack, frames) == 1 || error("expected server SETTINGS frame")
     count(frame -> frame isa HT.SettingsFrame && (frame::HT.SettingsFrame).ack, frames) == 1 || error("expected server SETTINGS ACK frame")
@@ -82,10 +91,10 @@ function _write_h2_server_request_headers!(
     return nothing
 end
 
-function _read_h2_server_header_block!(reader::IO)
-    first = HT.read_frame!(reader)
+function _read_h2_server_header_block!(conn::NC.Conn, reader::IO)
+    first = _read_h2_server_frame!(conn, reader)
     while first isa HT.WindowUpdateFrame || first isa HT.SettingsFrame || first isa HT.PingFrame
-        first = HT.read_frame!(reader)
+        first = _read_h2_server_frame!(conn, reader)
     end
     first isa HT.HeadersFrame || error("expected headers frame, got $(typeof(first))")
     headers_frame = first::HT.HeadersFrame
@@ -93,7 +102,7 @@ function _read_h2_server_header_block!(reader::IO)
     frames = HT.AbstractFrame[headers_frame]
     end_headers = headers_frame.end_headers
     while !end_headers
-        frame = HT.read_frame!(reader)
+        frame = _read_h2_server_frame!(conn, reader)
         frame isa HT.ContinuationFrame || error("expected continuation frame, got $(typeof(frame))")
         cont = frame::HT.ContinuationFrame
         cont.stream_id == headers_frame.stream_id || error("unexpected continuation stream")
@@ -104,9 +113,9 @@ function _read_h2_server_header_block!(reader::IO)
     return headers_frame, fragments, frames
 end
 
-function _read_h2_server_data_frame!(reader::IO)::HT.DataFrame
+function _read_h2_server_data_frame!(conn::NC.Conn, reader::IO)::HT.DataFrame
     while true
-        frame = HT.read_frame!(reader)
+        frame = _read_h2_server_frame!(conn, reader)
         frame isa HT.DataFrame && return frame::HT.DataFrame
         frame isa HT.WindowUpdateFrame && continue
         frame isa HT.SettingsFrame && continue
@@ -357,12 +366,12 @@ end
         _write_frame_h2_server_raw!(conn, HT.DataFrame(UInt32(1), false, collect(codeunits("ok"))))
         trailer_block = HT.encode_header_block(encoder, HT.HeaderField[HT.HeaderField("x-trailer", "done", false)])
         _write_frame_h2_server_raw!(conn, HT.HeadersFrame(UInt32(1), true, true, trailer_block))
-        headers_frame, header_block, _ = _read_h2_server_header_block!(reader)
+        headers_frame, header_block, _ = _read_h2_server_header_block!(conn, reader)
         decoded_headers = HT.decode_header_block(decoder, header_block)
         @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
-        data_frame = HT.read_frame!(reader)
+        data_frame = _read_h2_server_frame!(conn, reader)
         while data_frame isa HT.WindowUpdateFrame || data_frame isa HT.SettingsFrame || data_frame isa HT.PingFrame
-            data_frame = HT.read_frame!(reader)
+            data_frame = _read_h2_server_frame!(conn, reader)
         end
         @test data_frame isa HT.DataFrame
         @test String((data_frame::HT.DataFrame).data) == "ok|done"
@@ -440,7 +449,7 @@ end
     decoder = HT.Decoder()
     try
         _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/large-headers")
-        headers_frame, fragments, frames = _read_h2_server_header_block!(reader)
+        headers_frame, fragments, frames = _read_h2_server_header_block!(conn, reader)
         @test headers_frame.end_stream
         @test !headers_frame.end_headers
         @test count(frame -> frame isa HT.ContinuationFrame, frames) > 0
@@ -472,14 +481,14 @@ end
     decoder = HT.Decoder()
     try
         _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/large-trailers")
-        headers_frame, header_block, _ = _read_h2_server_header_block!(reader)
+        headers_frame, header_block, _ = _read_h2_server_header_block!(conn, reader)
         decoded_headers = HT.decode_header_block(decoder, header_block)
         @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
-        data_frame = HT.read_frame!(reader)
+        data_frame = _read_h2_server_frame!(conn, reader)
         @test data_frame isa HT.DataFrame
         @test !(data_frame::HT.DataFrame).end_stream
         @test String((data_frame::HT.DataFrame).data) == "ok"
-        trailer_frame, trailer_block, trailer_frames = _read_h2_server_header_block!(reader)
+        trailer_frame, trailer_block, trailer_frames = _read_h2_server_header_block!(conn, reader)
         @test trailer_frame.end_stream
         @test count(frame -> frame isa HT.ContinuationFrame, trailer_frames) > 0
         decoded_trailers = HT.decode_header_block(decoder, trailer_block)
@@ -508,10 +517,10 @@ end
     decoder = HT.Decoder()
     try
         _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/one")
-        _, block1, _ = _read_h2_server_header_block!(reader)
+        _, block1, _ = _read_h2_server_header_block!(conn, reader)
         _ = HT.decode_header_block(decoder, block1)
         _write_h2_server_request_headers!(conn, encoder, UInt32(3), address, "/two")
-        _, block2, _ = _read_h2_server_header_block!(reader)
+        _, block2, _ = _read_h2_server_header_block!(conn, reader)
         decoded2 = HT.decode_header_block(decoder, block2)
         @test any(field -> field.name == "x-reused" && field.value == repeated_value, decoded2)
         @test length(block2) < length(block1)
@@ -538,13 +547,13 @@ end
     decoder = HT.Decoder()
     try
         _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/one")
-        _, block1, _ = _read_h2_server_header_block!(reader)
+        _, block1, _ = _read_h2_server_header_block!(conn, reader)
         decoded1 = HT.decode_header_block(decoder, block1)
         @test any(field -> field.name == "x-reused" && field.value == "same", decoded1)
         @test isempty(decoder.table.entries)
 
         _write_h2_server_request_headers!(conn, encoder, UInt32(3), address, "/two")
-        _, block2, _ = _read_h2_server_header_block!(reader)
+        _, block2, _ = _read_h2_server_header_block!(conn, reader)
         decoded2 = HT.decode_header_block(decoder, block2)
         @test any(field -> field.name == "x-reused" && field.value == "same", decoded2)
         @test isempty(decoder.table.entries)
@@ -572,11 +581,11 @@ end
     decoder = HT.Decoder()
     try
         _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/dup-settings")
-        headers_frame = HT.read_frame!(reader)
+        headers_frame = _read_h2_server_frame!(conn, reader)
         @test headers_frame isa HT.HeadersFrame
         decoded_headers = HT.decode_header_block(decoder, (headers_frame::HT.HeadersFrame).header_block_fragment)
         @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
-        data_frame = HT.read_frame!(reader)
+        data_frame = _read_h2_server_frame!(conn, reader)
         @test data_frame isa HT.DataFrame
         @test String((data_frame::HT.DataFrame).data) == "dup:/dup-settings"
     finally
@@ -688,8 +697,8 @@ end
         take!(first_written)
 
         NC.set_read_deadline!(conn::NC.Conn, Int64(time_ns() + 1_000_000_000))
-        headers_frame, header_block, _ = _read_h2_server_header_block!(reader)
-        first_data = _read_h2_server_data_frame!(reader)
+        headers_frame, header_block, _ = _read_h2_server_header_block!(conn, reader)
+        first_data = _read_h2_server_data_frame!(conn, reader)
         NC.set_read_deadline!(conn::NC.Conn, Int64(0))
 
         decoded_headers = HT.decode_header_block(decoder, header_block)
@@ -701,7 +710,7 @@ end
         put!(release, nothing)
         body = first_payload
         while true
-            frame = _read_h2_server_data_frame!(reader)
+            frame = _read_h2_server_data_frame!(conn, reader)
             append!(body, frame.data)
             frame.end_stream && break
         end
@@ -909,7 +918,7 @@ end
         _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/slow")
         take!(started)
         close_task = Threads.@spawn close(server)
-        goaway = HT.read_frame!(reader)
+        goaway = _read_h2_server_frame!(conn::NC.Conn, reader)
         @test goaway isa HT.GoAwayFrame
         @test (goaway::HT.GoAwayFrame).error_code == UInt32(0)
         @test (goaway::HT.GoAwayFrame).last_stream_id == UInt32(1)
@@ -918,7 +927,7 @@ end
         saw_headers = false
         response_body = UInt8[]
         while true
-            frame = HT.read_frame!(reader)
+            frame = _read_h2_server_frame!(conn::NC.Conn, reader)
             if frame isa HT.HeadersFrame
                 headers_frame = frame::HT.HeadersFrame
                 headers_frame.stream_id == UInt32(1) || continue
@@ -1012,8 +1021,8 @@ end
     try
         _write_all_h2_server_raw!(conn, HT._H2_PREFACE)
         _write_frame_h2_server_raw!(conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
-        _ = HT.read_frame!(reader)
-        _ = HT.read_frame!(reader)
+        _ = _read_h2_server_frame!(conn, reader)
+        _ = _read_h2_server_frame!(conn, reader)
         encoder = HT.Encoder()
         header_block = HT.encode_header_block(
             encoder,
@@ -1313,14 +1322,14 @@ end
         conn, reader = _open_raw_h2_server_conn(address; settings = Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(32)])
         decoder = HT.Decoder()
         _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/windowed")
-        headers_frame = HT.read_frame!(reader)
+        headers_frame = _read_h2_server_frame!(conn::NC.Conn, reader)
         @test headers_frame isa HT.HeadersFrame
         decoded_headers = HT.decode_header_block(decoder, (headers_frame::HT.HeadersFrame).header_block_fragment)
         @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
         @test any(field -> field.name == "x-extra" && field.value == "ok", decoded_headers)
         @test all(field -> !(field.name in ("connection", "keep-alive", "te", "trailer", "transfer-encoding", "upgrade")), decoded_headers)
 
-        first_data = HT.read_frame!(reader)
+        first_data = _read_h2_server_frame!(conn::NC.Conn, reader)
         @test first_data isa HT.DataFrame
         @test length((first_data::HT.DataFrame).data) == 32
         @test !((first_data::HT.DataFrame).end_stream)
@@ -1328,7 +1337,7 @@ end
         _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(1), UInt32(96)))
         received = length((first_data::HT.DataFrame).data)
         while received < length(payload)
-            frame = HT.read_frame!(reader)
+            frame = _read_h2_server_frame!(conn::NC.Conn, reader)
             frame isa HT.DataFrame || continue
             received += length((frame::HT.DataFrame).data)
             (frame::HT.DataFrame).end_stream && break
