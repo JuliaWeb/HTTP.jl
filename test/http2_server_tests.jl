@@ -786,6 +786,8 @@ end
 
 @testset "HTTP/2 server starts handling request bodies before upload completion" begin
     first_chunk_seen = Channel{String}(1)
+    final_chunk_requested = Channel{Nothing}(1)
+    release_final_chunk = Channel{Nothing}(1)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             buf = Vector{UInt8}(undef, 5)
             n = HT.body_read!(request.body, buf)
@@ -818,7 +820,8 @@ end
                     return length(bytes)
                 end
                 if stage[] == 3
-                    sleep(1.0)
+                    put!(final_chunk_requested, nothing)
+                    take!(release_final_chunk)
                     bytes = collect(codeunits("world"))
                     copyto!(dst, 1, bytes, 1, length(bytes))
                     stage[] = 4
@@ -829,16 +832,25 @@ end
             () -> nothing,
         )
         request = HT.Request("POST", "/stream-body"; host = address, body = request_body, content_length = 11, proto_major = 2, proto_minor = 0)
-        started = time()
         response_task = Threads.@spawn HT.h2_roundtrip!(conn, request)
+        final_requested = timedwait(() -> isready(final_chunk_requested), 3.0; pollint = 0.001)
+        @test final_requested != :timed_out
+        final_requested == :timed_out && error("timed out waiting for final request chunk")
+        take!(final_chunk_requested)
+        first_seen = timedwait(() -> isready(first_chunk_seen), 3.0; pollint = 0.001)
+        @test first_seen != :timed_out
+        first_seen == :timed_out && error("timed out waiting for handler to read first chunk")
         first_chunk = take!(first_chunk_seen)
-        elapsed = time() - started
         @test first_chunk == "hello"
-        @test elapsed < 0.75
+        put!(release_final_chunk, nothing)
         response = fetch(response_task)
         @test response.status == 200
         @test String(_read_all_h2_server(response.body)) == "11"
     finally
+        try
+            isready(release_final_chunk) || put!(release_final_chunk, nothing)
+        catch
+        end
         close(conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
