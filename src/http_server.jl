@@ -742,18 +742,21 @@ end
 
 function _set_read_deadline_for_header!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
     timeout = server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns
+    timeout <= 0 && return nothing
     _set_read_deadline!(conn, _deadline_after(timeout))
     return nothing
 end
 
 function _set_read_deadline_for_body!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
     timeout = server.read_timeout_ns
+    timeout <= 0 && return nothing
     _set_read_deadline!(conn, _deadline_after(timeout))
     return nothing
 end
 
 function _set_idle_deadline!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
     timeout = server.idle_timeout_ns > 0 ? server.idle_timeout_ns : server.read_timeout_ns
+    timeout <= 0 && return nothing
     _set_read_deadline!(conn, _deadline_after(timeout))
     return nothing
 end
@@ -2826,15 +2829,17 @@ function _set_h2_frame_read_deadline!(
     states::Dict{UInt32,_H2ServerStreamState},
     continuation_stream::UInt32,
 )::Nothing
+    timeout = Int64(0)
     if continuation_stream != UInt32(0)
-        _set_read_deadline_for_header!(server, conn)
+        timeout = server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns
     elseif _h2_server_has_active_streams(states_lock, states)
-        _set_read_deadline_for_body!(server, conn)
+        timeout = server.read_timeout_ns
     elseif server.idle_timeout_ns > 0
-        _set_idle_deadline!(server, conn)
+        timeout = server.idle_timeout_ns
     else
-        _set_read_deadline_for_header!(server, conn)
+        timeout = server.read_header_timeout_ns > 0 ? server.read_header_timeout_ns : server.read_timeout_ns
     end
+    _set_read_deadline!(conn, _deadline_after(timeout))
     return nothing
 end
 
