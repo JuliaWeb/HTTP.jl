@@ -1970,24 +1970,22 @@ function _server_closewrite(stream::Stream)::Nothing
         if stream.response.content_length >= 0 && stream.written_bytes != stream.response.content_length
             throw(ProtocolError("response body bytes did not match Content-Length"))
         end
-        if !stream.ignore_writes
-            if !isempty(stream.response.trailers)
-                _write_h2_trailers!(
-                    stream.h2_conn::Union{TCP.Conn,TLS.Conn},
-                    stream.h2_write_lock::ReentrantLock,
-                    stream.h2_send_state::_H2SendWindowState,
-                    stream.h2_stream_id,
-                    stream.response.trailers,
-                    _server_write_deadline_ns(stream.server::Server),
-                )
-            elseif stream.write_mode != _ServerStreamWriteMode.NONE
-                _write_frame_h2_server_threadsafe!(
-                    stream.h2_write_lock::ReentrantLock,
-                    stream.h2_conn::Union{TCP.Conn,TLS.Conn},
-                    DataFrame(stream.h2_stream_id, true, UInt8[]),
-                    _server_write_deadline_ns(stream.server::Server),
-                )
-            end
+        if !isempty(stream.response.trailers)
+            _write_h2_trailers!(
+                stream.h2_conn::Union{TCP.Conn,TLS.Conn},
+                stream.h2_write_lock::ReentrantLock,
+                stream.h2_send_state::_H2SendWindowState,
+                stream.h2_stream_id,
+                stream.response.trailers,
+                _server_write_deadline_ns(stream.server::Server),
+            )
+        elseif !stream.ignore_writes && stream.write_mode != _ServerStreamWriteMode.NONE
+            _write_frame_h2_server_threadsafe!(
+                stream.h2_write_lock::ReentrantLock,
+                stream.h2_conn::Union{TCP.Conn,TLS.Conn},
+                DataFrame(stream.h2_stream_id, true, UInt8[]),
+                _server_write_deadline_ns(stream.server::Server),
+            )
         end
         @atomic :release stream.write_closed = true
         return nothing

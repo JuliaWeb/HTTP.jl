@@ -620,14 +620,19 @@ end
 
 @testset "HTTP/2 server stream handlers work and suppress HEAD bodies" begin
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
-            request = HT.startread(stream)
-            body = String(read(stream))
+        request = HT.startread(stream)
+        body = String(read(stream))
+        if request.target == "/no-content-trailers"
+            HT.setstatus(stream, 204)
+            HT.addtrailer(stream, "X-Trailer" => "done")
+        else
             HT.setstatus(stream, 200)
-            HT.setheader(stream, "Content-Type", "text/plain")
-            HT.startwrite(stream)
-            write(stream, isempty(body) ? "ok" : body)
-            return nothing
         end
+        HT.setheader(stream, "Content-Type", "text/plain")
+        HT.startwrite(stream)
+        write(stream, isempty(body) ? "ok" : body)
+        return nothing
+    end
     address = _wait_http_server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
     try
@@ -646,6 +651,12 @@ end
         head_res = HT.h2_roundtrip!(conn, head_req)
         @test head_res.status == 200
         @test isempty(_read_all_h2_server(head_res.body))
+
+        no_content_req = HT.Request("GET", "/no-content-trailers"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        no_content_res = HT.h2_roundtrip!(conn, no_content_req)
+        @test no_content_res.status == 204
+        @test isempty(_read_all_h2_server(no_content_res.body))
+        @test HT.header(no_content_res.trailers, "X-Trailer") == "done"
     finally
         close(conn)
         HT.forceclose(server)
