@@ -29,12 +29,17 @@ High-level HTTP client with transport pooling, redirect policy, cookies, and
 optional HTTP/2.
 
 Keyword arguments:
-- `transport`: lower-level HTTP/1 transport/pool implementation
+- `transport`: reusable lower-level HTTP/1 transport/pool implementation
 - `check_redirect`: optional callback deciding whether a redirect should be
   followed
 - `cookiejar`: cookie jar implementation, or `nothing` to disable cookies
 - `max_redirects`: maximum redirect hops before failing
 - `prefer_http2`: whether secure requests should try HTTP/2 when available
+
+Pass a `Client` with the `client` keyword to `request`, `get`, `open`, or the
+other verb helpers when you want connection reuse and shared cookies across
+many calls. Close the client when you are finished if it owns resources you do
+not want to keep alive.
 """
 mutable struct Client{CR}
     transport::Transport
@@ -1656,6 +1661,15 @@ Keyword arguments:
 - `readtimeout`: deprecated alias for `read_idle_timeout`
 - `require_ssl_verification`: disable certificate verification only for testing
 - `protocol`: `:auto`, `:h1`, or `:h2`
+
+HTTP.jl 2.0 accepts several HTTP.jl 1.x keywords as migration shims:
+`readtimeout` maps to `read_idle_timeout`; `pool`, `retry_delays`,
+`retry_check`, `sslconfig`, `socket_type_tls`, `copyheaders`,
+`canonicalize_headers`, `detect_content_type`, `logerrors`, `logtag`, and
+`observelayers` are accepted so older call sites fail less abruptly. Prefer the
+2.0 forms listed above for new code: `client` / `transport` for pooling,
+`retry_if` / `retry_bucket` for retries, Reseau `Transport` TLS configuration
+for TLS/socket behavior, and `verbose` / `trace` for request observation.
 
 The built-in retry policy is intentionally conservative: it retries transient
 transport errors plus retryable `408`/`429`/`5xx` responses for replayable

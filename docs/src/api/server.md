@@ -9,7 +9,7 @@ Pages = ["api/server.md"]
 Depth = 2
 ```
 
-## Server and Routing
+## Server Lifecycle and Request Handlers
 
 ```@docs
 HTTP.Server
@@ -19,22 +19,34 @@ HTTP.listen
 HTTP.serve!
 HTTP.serve
 HTTP.streamhandler
-HTTP.Handlers.handlertimeout
 HTTP.servefile
 HTTP.fileserver
 HTTP.servecontent
 HTTP.forceclose
 HTTP.port
 HTTP.startread
+HTTP.startwrite
+HTTP.setstatus
+HTTP.addtrailer
 HTTP.closeread
-HTTP.Handler
-HTTP.Middleware
-HTTP.Router
-HTTP.register!
-HTTP.getroute
-HTTP.getparams
-HTTP.getparam
-HTTP.getcookies
+```
+
+## Routing and Middleware
+
+The router and middleware helpers live in `HTTP.Handlers` and are also
+available through `HTTP.Router`, `HTTP.register!`, and the related imported
+aliases for compatibility.
+
+```@docs
+HTTP.Handlers.Handler
+HTTP.Handlers.Middleware
+HTTP.Handlers.Router
+HTTP.Handlers.register!
+HTTP.Handlers.getroute
+HTTP.Handlers.getparams
+HTTP.Handlers.getparam
+HTTP.Handlers.getcookies
+HTTP.Handlers.handlertimeout
 ```
 
 ## Server-Sent Events

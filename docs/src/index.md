@@ -70,7 +70,7 @@ String(resp.body)
 - The [Server guide](guides/server.md) covers request handlers, stream handlers, lifecycle management, and SSE-oriented server patterns.
 - The [Protocols guide](guides/protocols.md) covers WebSockets and where HTTP/2 fits into the normal client/server APIs.
 - The [Migration guide](guides/migration-1x.md) calls out the major 1.x to 2.0 shifts.
-- The [API reference](api/reference.md) is the canonical home for exported docstrings.
+- The [API reference](api/reference.md) is the canonical home for exported and documented submodule APIs.
 
 ## Design Direction
 

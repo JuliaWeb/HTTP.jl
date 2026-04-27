@@ -7,6 +7,13 @@ CurrentModule = HTTP
 The top-level request helpers are intentionally familiar, but in 2.0 the
 underlying pieces are explicit and reusable.
 
+The short version:
+
+- use `HTTP.request` or verb helpers for eager responses
+- use `HTTP.open` or `response_stream` for streaming
+- use `HTTP.Client` when you want connection reuse or shared cookies
+- use phase-specific timeout keywords instead of the old `readtimeout`
+
 ## High-Level Requests
 
 `HTTP.request` is the main entrypoint. The verb helpers such as `HTTP.get` and
@@ -243,6 +250,7 @@ function trace(event::HTTP.DoneEvent)
     @info "done" url = event.url error = event.err
 end
 
+url = "https://example.com"
 response = HTTP.request(trace, "GET", url)
 ```
 
@@ -310,3 +318,19 @@ When `retry_if` runs for a request-path failure, `err` is a
 `RequestRetryError`; inspect `err.err` to see the underlying transport or
 protocol exception. Response-based retry decisions keep `err = nothing` and
 pass the response through `resp`.
+
+### 1.x Compatibility Keywords
+
+HTTP.jl 2.0 accepts several 1.x client keywords as migration aids. Treat them
+as temporary compatibility, not as the preferred API:
+
+- `readtimeout` maps to `read_idle_timeout`
+- `pool` should become a long-lived `Client` or `Transport`
+- `retry_delays` and `retry_check` should become `retry_if`, `retries`, and
+  `retry_bucket`
+- `sslconfig` and `socket_type_tls` should move to transport/TLS configuration
+- `copyheaders`, `canonicalize_headers`, `detect_content_type`,
+  `observelayers`, `logerrors`, and `logtag` are accepted for compatibility
+  where possible
+
+See the [migration guide](migration-1x.md) for before/after examples.

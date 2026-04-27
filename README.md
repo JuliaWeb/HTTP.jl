@@ -27,6 +27,11 @@ cookies, multipart forms, retries, and proxy-aware transports for Julia.
 
 Current package compat targets Julia `1.10` and later.
 
+HTTP.jl 2.0 is a breaking release. See the
+[migration guide][migration-guide-url] for the main 1.x to 2.0 changes around
+response fields, constructors, request context, client pooling, retries,
+timeouts, servers, WebSockets, and SSE.
+
 ## Scope and Deferred Go Parity
 
 `HTTP.jl` 2.x borrows heavily from Go's `net/http` design, but it is not a
@@ -143,3 +148,4 @@ HTTP.WebSockets.forceclose(server)
 [codecov-url]: https://codecov.io/gh/JuliaWeb/HTTP.jl
 
 [issues-url]: https://github.com/JuliaWeb/HTTP.jl/issues
+[migration-guide-url]: https://juliaweb.github.io/HTTP.jl/dev/guides/migration-1x/

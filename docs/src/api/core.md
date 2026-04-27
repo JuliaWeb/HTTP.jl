@@ -21,6 +21,7 @@ HTTP.ParseError
 HTTP.ProtocolError
 HTTP.CanceledError
 HTTP.TimeoutError
+HTTP.HTTPTimeoutError
 HTTP.StatusError
 HTTP.TooManyRedirectsError
 ```
@@ -38,6 +39,7 @@ HTTP.defaultheader!
 HTTP.appendheader
 HTTP.removeheader
 HTTP.mkheaders
+HTTP.get_request_context
 HTTP.set_deadline!
 HTTP.cancel!
 HTTP.canceled

@@ -6,27 +6,113 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Changed
-- Documented the intentionally deferred Go-parity areas for the 2.x release
-  line, including HTTP/2 server push, `Pusher`, `ResponseController` /
-  hijack-style control APIs, full `httptrace` parity, and full `net/url` /
-  `ServeMux` parity.
 
-## [v2.0.0] - 2026-03-18
+## [v2.0.0] - 2026-04-27
+HTTP.jl 2.0 is a major rewrite of the package internals and public API. The
+release keeps the familiar `HTTP.request`, verb helpers, `HTTP.serve`, routing,
+WebSocket, and SSE workflows, but rebuilds them on a smaller, explicit core
+that delegates transport mechanics to
+[`Reseau.jl`](https://github.com/JuliaServices/Reseau.jl). The 2.0 line is the
+new foundation for HTTP/1.1, HTTP/2, timeouts, streaming, precompilation, and
+future protocol work.
+
+### Added
+- Added a new core API around `Request`, `Response`, `Headers`,
+  `RequestContext`, explicit request/response body types, and structured
+  timeout configuration.
+- Added `Client` and `Transport` objects for reusable client configuration,
+  connection reuse, cookie jars, redirect limits, retry policy, default
+  headers, and HTTP/2 preference.
+- Added first-class HTTP/2 client and server support through the Reseau-backed
+  transport layer, including stream lifecycle handling, flow-control-aware
+  body reads, and h2c prior-knowledge support for local/plaintext use cases.
+- Added structured timeout phases for connection establishment, complete
+  request deadlines, response-header waits, read-idle waits, write-idle waits,
+  and `Expect: 100-continue` waits.
+- Added `HTTP.HTTPTimeoutError` as the public timeout exception alias and
+  richer timeout messages for client and server failures.
+- Added `HTTP.open` for response streaming with the same request pipeline as
+  `HTTP.request`.
+- Added request tracing support through trace callbacks, client event types,
+  and the `verbose` request keyword.
+- Added server helpers for streaming handlers, static content, file serving,
+  file-server roots, graceful shutdown callbacks, handler timeouts, and
+  socket-close control.
+- Added Server-Sent Events support for clients and servers through
+  `SSEEvent`, `sse_stream`, and the `sse_callback` request keyword.
+- Added WebSocket client/server support under `HTTP.WebSockets`, including
+  `HTTP.WebSockets.open`, `HTTP.WebSockets.listen`, and
+  `HTTP.WebSockets.listen!`.
+- Added precompile workloads that cover common client, server, router, SSE,
+  WebSocket, and streaming paths.
+- Added curated manual and API-reference documentation for the 2.0 public
+  surface, plus a migration guide for common 1.x call patterns.
+
 ### Changed
 - The package now presents a curated 2.0 public API built around `Request`,
   `Response`, `Stream`, `Client`, `Transport`, and explicit body types on top
   of `Reseau`.
-- High-level request helpers materialize `Response.body::Vector{UInt8}` by
-  default. Use `response_stream` or `HTTP.open` when you want streaming
-  control.
-- `Response.status_code` has been renamed to `status`.
-- Internal pooling, routing, HPACK, and explicit HTTP/2 implementation details
-  are no longer part of the documented public API surface.
+- Julia 1.10 is now the minimum supported Julia version.
+- `HTTP.request` and the verb helpers now return a fully materialized
+  `Response.body::Vector{UInt8}` by default. Use `HTTP.open` or the
+  `response_stream` keyword when you need streaming control.
+- `Request` and `Response` constructors now prefer explicit keyword-oriented
+  forms. Common 1.x positional constructor forms remain accepted as migration
+  shims, but new code should use `Request(method, target; ...)` and
+  `Response(status; headers=..., body=...)`.
+- `Response.status_code` has been renamed to `Response.status`.
+- `RequestContext` is now a typed request state object with cancellation,
+  deadline, metadata, and timeout fields. Dict-like metadata access is
+  preserved for migration, but new code should treat it as request state rather
+  than as a plain `Dict{Symbol,Any}`.
+- Client retry configuration now centers on `retry`, `retries`, `retry_if`,
+  `respect_retry_after`, and `retry_bucket` instead of the 1.x
+  `retry_delays` / `retry_check` pair.
+- Client timeout keywords now use explicit phase names. In particular,
+  `readtimeout` is replaced by `read_idle_timeout`; request-wide deadlines
+  should use `request_timeout`.
+- Connection pooling is now owned by `Client` / `Transport` instead of the 1.x
+  `pool` keyword and layer stack.
+- TLS and socket behavior are now configured through the Reseau transport layer
+  instead of the 1.x `sslconfig` / `socket_type_tls` extension points.
+- Routing helpers are documented as part of the `HTTP.Handlers` surface, while
+  the high-level server APIs continue to accept ordinary Julia functions,
+  router objects, middleware, and stream handlers.
+- WebSocket entrypoints now live under `HTTP.WebSockets`; use
+  `HTTP.WebSockets.open`, `HTTP.WebSockets.listen`, and
+  `HTTP.WebSockets.listen!` for WebSocket-specific behavior.
+- The documentation now explicitly calls out intentionally deferred Go-parity
+  areas for the 2.x release line, including HTTP/2 server push, `Pusher`,
+  `ResponseController` / hijack-style control APIs, fuller `httptrace`
+  coverage, and full `net/url` / `ServeMux` parity.
+
+### Deprecated
+- `readtimeout` remains accepted as a migration alias for `read_idle_timeout`.
+- Several 1.x client keywords remain accepted for compatibility but are either
+  mapped to the new API or ignored with migration warnings when there is no
+  direct 2.0 equivalent: `pool`, `retry_delays`, `retry_check`, `sslconfig`,
+  `socket_type_tls`, `copyheaders`, `canonicalize_headers`,
+  `detect_content_type`, `logerrors`, `logtag`, and `observelayers`.
+- Treating `RequestContext` as a plain dictionary is deprecated in favor of the
+  typed fields and metadata helpers.
 
 ### Removed
 - Undocumented 1.x internals are no longer supported migration targets for the
   2.0 line.
+- The old layer-stack internals, connection-pool internals, HPACK internals,
+  parser internals, and low-level HTTP/2 implementation details are no longer
+  documented public API.
+- The package no longer carries a source override for Reseau; release builds
+  resolve the registered `Reseau = "1"` dependency.
+
+### Fixed
+- Hardened HTTP/1.1 and HTTP/2 server behavior around request-body streaming,
+  content-length accounting, invalid header handling, timeout cleanup,
+  connection teardown, and stream cancellation.
+- Hardened client-side redirect, retry, proxy, cookie, timeout, and streaming
+  paths against the new transport abstraction.
+- Improved docs coverage so exported APIs and documented submodule APIs are
+  covered by the Documenter build.
 
 ## [v1.11.0] - 2025-12-20
 ### Added
@@ -493,7 +579,9 @@ See changes for 0.9.15: this release is equivalent to 0.9.15 with [#752] reverte
   `HTTP.request` and friends ([#619]).
 
 
-[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/JuliaWeb/HTTP.jl/compare/v2.0.0...HEAD
+[v2.0.0]: https://github.com/JuliaWeb/HTTP.jl/compare/v1.11.0...v2.0.0
+[v1.11.0]: https://github.com/JuliaWeb/HTTP.jl/releases/tag/v1.11.0
 
 
 <!-- Links generated by Changelog.jl -->

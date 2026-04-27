@@ -61,6 +61,10 @@ Stateful HTTP server handle returned by [`listen!`](@ref) and [`serve!`](@ref).
 The handle owns the listener, background task, active-connection set, and
 timeout configuration. Keep it around for lifecycle operations such as
 [`port`](@ref), `wait(server)`, `close(server)`, or [`forceclose`](@ref).
+
+Timeout fields are stored in nanoseconds. Use the convenience `listen!` and
+`serve!` keywords to configure request-read, header-read, response-write, and
+idle deadlines without constructing a `Server` manually.
 """
 mutable struct Server{F}
     network::String
@@ -1328,6 +1332,11 @@ end
 
 Build a response for `request` from byte-backed or seekable content while
 handling conditional headers and single-byte-range requests.
+
+`source` may be an `AbstractVector{UInt8}` or a seekable `IO`. The helper sets
+`Content-Type`, `Content-Length`, `Last-Modified`, `ETag`, `Accept-Ranges`, and
+`Content-Range` when enough information is provided. It returns `304`, `412`,
+or `416` responses for the corresponding precondition/range outcomes.
 """
 function servecontent(
     request::Request,
@@ -1588,6 +1597,9 @@ end
 
 Serve the file or directory at `path` for `request` using `servecontent`
 semantics and canonical redirect handling.
+
+Only `GET` and `HEAD` are served. Directory requests resolve `index_file`;
+missing files return `404`, and unsafe or invalid request paths return `400`.
 """
 function servefile(
     request::Request,
@@ -1624,6 +1636,9 @@ Return a request handler that serves static files rooted at `root`.
 If `spa_fallback` is provided, missing request paths whose final segment does
 not look like a filename are served from that file within `root`. Missing
 asset-like paths still return `404`.
+
+The returned function is a normal `Request -> Response` handler suitable for
+`serve!`, routers, and middleware.
 """
 function fileserver(
     root::AbstractString;
@@ -1851,6 +1866,12 @@ function _server_read(stream::Stream)::Vector{UInt8}
     return out
 end
 
+"""
+    setstatus(stream, status) -> nothing
+
+Set the response status for a server-side `Stream` before response writing
+starts.
+"""
 function setstatus(stream::Stream, status::Integer)::Nothing
     _require_server_stream(stream)
     (@atomic :acquire stream.response_started) && throw(ArgumentError("cannot change status after response writing has started"))
@@ -1858,6 +1879,13 @@ function setstatus(stream::Stream, status::Integer)::Nothing
     return nothing
 end
 
+"""
+    setheader(stream, key, value) -> nothing
+    setheader(stream, key => value) -> nothing
+
+Set a response header for a server-side `Stream` before response writing
+starts.
+"""
 function setheader(stream::Stream, key::AbstractString, value::AbstractString)::Nothing
     _require_server_stream(stream)
     (@atomic :acquire stream.response_started) && throw(ArgumentError("cannot change headers after response writing has started"))
@@ -1869,6 +1897,12 @@ function setheader(stream::Stream, header::Pair{<:AbstractString,<:AbstractStrin
     return setheader(stream, header.first, header.second)
 end
 
+"""
+    addtrailer(stream, header_or_headers) -> nothing
+
+Append response trailers for a server-side `Stream`. Trailers are emitted when
+the response body is closed, so call this before `closewrite(stream)`.
+"""
 function addtrailer(stream::Stream, trailers::Headers)::Nothing
     _require_server_stream(stream)
     for key in header_keys(trailers)
@@ -1893,6 +1927,13 @@ function addtrailer(stream::Stream, headers::AbstractVector{<:Pair})::Nothing
     return nothing
 end
 
+"""
+    startwrite(stream) -> Response
+
+Start the response side of a server-side `Stream` and return the response
+metadata. Calling `write(stream, data)` starts writing automatically; use
+`startwrite` explicitly when you need headers to be sent before body bytes.
+"""
 function startwrite(stream::Stream)::Response
     _require_server_stream(stream)
     started = @atomic :acquire stream.response_started
@@ -3861,7 +3902,9 @@ end
 Start a streaming HTTP server and return the running `Server`.
 
 `handler` is called with an `HTTP.Stream` and is responsible for reading the
-request and writing the response.
+request and writing the response. Timeout keywords ending in `_ns` are
+nanoseconds; the older `readtimeout` keyword is accepted as a seconds-valued
+migration alias for `read_timeout_ns`.
 """
 function listen!(
     handler::F, host::AbstractString="127.0.0.1", port_num::Integer=8080;
@@ -3993,6 +4036,8 @@ Start an HTTP server and return the running `Server`.
 
 `handler` is called with an `HTTP.Request` and must return an `HTTP.Response`.
 Use `listen!` for the lower-level `HTTP.Stream` handler path.
+Timeout keywords ending in `_ns` are nanoseconds; the older `readtimeout`
+keyword is accepted as a seconds-valued migration alias for `read_timeout_ns`.
 """
 function serve!(
     handler::F,

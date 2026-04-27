@@ -1,20 +1,24 @@
 """
     HTTP
 
-HTTP protocol layer built on top of `Reseau` transport, resolver, and TLS
-primitives.
+Client, server, streaming, WebSocket, and Server-Sent Events APIs for HTTP.jl.
 
-The source tree is organized by responsibility:
-- `http_core.jl` defines protocol-neutral request, response, header, body,
-  and cancellation types shared by client and server code.
-- `http1.jl` implements HTTP/1.1 parsing and serialization.
-- `hpack.jl` and `http2.jl` implement the internal HPACK and HTTP/2
-  wire layers used by higher-level code.
-- `http2_client.jl`, `http_client_url.jl`,
-  `http_client_redirect.jl`, `http_transport.jl`,
-  `http_client.jl`, `http_client_retry.jl`, `http_stream.jl`,
-  `http_sse.jl`, `http_server.jl`, and `http_handlers.jl`
-  build higher-level client/server behavior on top.
+The 2.0 API is built around explicit `Request`, `Response`, `Headers`,
+`RequestContext`, body, `Client`, `Transport`, `Server`, and `Stream` values.
+HTTP.jl owns HTTP message semantics and high-level client/server behavior,
+while `Reseau` provides the transport, resolver, and TLS substrate.
+
+Common entrypoints:
+
+- `request`, `get`, `post`, `put`, `patch`, `delete`, `head`, and `options`
+  for high-level client requests.
+- `open` for client-side request/response streaming.
+- `serve!` / `serve` for `Request -> Response` servers.
+- `listen!` / `listen` and `streamhandler` for stream-oriented servers.
+- `WebSockets` for WebSocket client and server helpers.
+- `SSEEvent` and `sse_stream` for Server-Sent Events.
+
+See the migration guide for the most important 1.x to 2.0 API changes.
 """
 module HTTP
 

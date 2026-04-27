@@ -12,6 +12,10 @@ HTTP/2 fits into normal `HTTP.jl` usage.
 
 WebSockets live under `HTTP.WebSockets`.
 
+Use `HTTP.WebSockets.open` for `ws://` and `wss://` URLs. Top-level
+`HTTP.open` is the ordinary HTTP request/response streaming API and expects an
+HTTP method such as `:GET`.
+
 ```julia
 using HTTP
 

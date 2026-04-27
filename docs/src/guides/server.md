@@ -58,9 +58,9 @@ This is the simplest server path and the best default for ordinary APIs.
 
 ## Stream Handlers
 
-Use `HTTP.listen!` or `stream=true` when you need lower-level ownership of the
-connection lifecycle. `HTTP.streamhandler` is the bridge when you want stream
-server mechanics with a request-style handler body.
+Use `HTTP.listen!` when you need lower-level ownership of the connection
+lifecycle. `HTTP.streamhandler` is the bridge when you want stream server
+mechanics with a request-style handler body.
 
 ```julia
 function wait_for_base_url(server)
@@ -85,7 +85,7 @@ function wait_for_base_url(server)
     error("server did not start listening in time")
 end
 
-stream_server = HTTP.serve!(
+stream_server = HTTP.listen!(
     HTTP.streamhandler() do req
         payload = "stream handler"
         return HTTP.Response(
@@ -96,7 +96,6 @@ stream_server = HTTP.serve!(
     end,
     "127.0.0.1",
     0;
-    stream = true,
     listenany = true,
 )
 
@@ -125,11 +124,82 @@ can:
 `HTTP.forceclose(server)` is the fast shutdown path when you need to stop
 accepting and serving immediately.
 
+Timeout keywords ending in `_ns` are nanoseconds:
+
+```julia
+server = HTTP.serve!(
+    handler,
+    "127.0.0.1",
+    8080;
+    read_header_timeout_ns = 5_000_000_000,
+    read_timeout_ns = 30_000_000_000,
+    write_timeout_ns = 30_000_000_000,
+    idle_timeout_ns = 120_000_000_000,
+)
+```
+
+The older `readtimeout` keyword is accepted as a seconds-valued migration alias
+for `read_timeout_ns`.
+
+## Routing and Middleware
+
+Use `HTTP.Handlers.Router` when you want route matching without bringing in a
+larger web framework:
+
+```julia
+router = HTTP.Handlers.Router()
+
+HTTP.Handlers.register!(router, "GET", "/users/{id}") do req
+    id = HTTP.Handlers.getparam(req, "id")
+    return HTTP.Response(200; body = HTTP.BytesBody(codeunits("user " * id)))
+end
+
+server = HTTP.serve!(router, "127.0.0.1", 8080)
+```
+
+Middleware is just function composition around handlers. For example, apply a
+handler timeout to every registered route:
+
+```julia
+timeout = HTTP.Handlers.handlertimeout(5.0; status = 503)
+router = HTTP.Handlers.Router(
+    req -> HTTP.Response(404),
+    req -> HTTP.Response(405),
+    timeout,
+)
+```
+
+The router stores route metadata on the request context. Read it with
+`HTTP.Handlers.getroute`, `HTTP.Handlers.getparams`, and
+`HTTP.Handlers.getparam`.
+
+## Static Files
+
+`HTTP.fileserver(root)` returns a normal request handler:
+
+```julia
+handler = HTTP.fileserver("public"; spa_fallback = "index.html")
+server = HTTP.serve!(handler, "127.0.0.1", 8080)
+```
+
+For lower-level control, use `HTTP.servefile(request, path)` or
+`HTTP.servecontent(request, source)`. These helpers handle common HTTP
+semantics such as conditional requests, content type, byte ranges, and
+canonical directory redirects.
+
 ## SSE and Long-Lived Responses
 
 `HTTP.jl` exposes `SSEEvent`, `SSEStream`, and `sse_stream` for server-sent
 events. Use these when you want a proper `text/event-stream` response instead
 of hand-assembling event lines.
+
+```julia
+server = HTTP.serve!("127.0.0.1", 8080) do req
+    return HTTP.sse_stream(200) do stream
+        write(stream, HTTP.SSEEvent("ready"; event = "status", id = "1"))
+    end
+end
+```
 
 ## HTTP/2 Servers
 

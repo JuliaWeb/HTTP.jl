@@ -128,6 +128,12 @@ function Base.showerror(io::IO, err::TimeoutError)
     return nothing
 end
 
+"""
+    HTTPTimeoutError
+
+Public alias for [`TimeoutError`](@ref), kept so code can catch timeout
+failures through the long-form HTTP-specific name.
+"""
 const HTTPTimeoutError = TimeoutError
 
 """Shared empty byte-vector payload used for responses with no buffered body."""
@@ -804,19 +810,6 @@ function defaultheader!(headers::Headers, item::Pair)
     return setheader(headers, item)
 end
 
-"""
-    RequestContext(; deadline_ns=0)
-
-Per-request cancellation and deadline metadata shared across the HTTP client and
-server layers.
-
-Arguments:
-- `deadline_ns`: absolute monotonic deadline in nanoseconds, or `0` to disable
-  deadline tracking.
-
-The context itself does not schedule timers; it is a passive state container
-that transport code consults before or during blocking operations.
-"""
 mutable struct _ConnReader <: IO
     buf::Vector{UInt8}
     next::Int
@@ -832,6 +825,30 @@ struct _RequestTimeoutConfig
     expect_continue_timeout_ns::Int64
 end
 
+"""
+    RequestContext(; deadline_ns=0)
+
+Per-request cancellation, deadline, timeout, and metadata state shared across
+client, server, middleware, and transport code.
+
+Arguments:
+- `deadline_ns`: absolute monotonic deadline in nanoseconds, or `0` to disable
+  deadline tracking.
+
+The context itself does not schedule timers; it is a passive state container
+that HTTP.jl consults before or during blocking operations. For migration from
+HTTP.jl 1.x, `RequestContext` also supports dict-like metadata access with
+symbol keys:
+
+```julia
+ctx = HTTP.RequestContext()
+ctx[:request_id] = "abc"
+get(ctx, :request_id, nothing)
+```
+
+New code should prefer typed fields and helper functions for cancellation and
+deadlines, and reserve dict-like access for application metadata.
+"""
 mutable struct RequestContext
     deadline_ns::Int64
     @atomic canceled_flag::Bool
@@ -1123,6 +1140,11 @@ Keyword arguments:
 Returns a new `Request{B}` where `B` is the concrete body type. Throws
 `ArgumentError` for invalid protocol numbers, empty method/target, or
 `content_length < -1`.
+
+For migration from HTTP.jl 1.x, common positional forms such as
+`Request(method, target, headers)` and `Request(method, target, headers, body)`
+are still accepted. New code should use the keyword form above so body,
+trailers, protocol metadata, and context ownership are explicit.
 """
 mutable struct Request{B<:AbstractBody}
     method::String
@@ -1252,6 +1274,15 @@ end
     )
 end
 
+"""
+    get_request_context(request) -> RequestContext
+
+Return the typed request context stored on `request`.
+
+Use this helper when middleware or low-level code needs cancellation,
+deadline, or timeout state. The legacy `request.context` property returns the
+dict-like metadata view for compatibility with HTTP.jl 1.x code.
+"""
 @inline get_request_context(request::Request)::RequestContext = getfield(request, :context)
 
 @inline function _request_with_context(
@@ -1290,12 +1321,17 @@ Keyword arguments mirror `Request` closely. `request` optionally links the
 response back to the originating request, which is especially useful in client
 redirect flows and server handler pipelines.
 
-    Returns a new `Response{B}` where `B` is the exact body field type. The
-    optional `body` positional argument determines the response body type for
-    dispatch and storage. `request_url` is optional client metadata used by
-    high-level request helpers.
+Returns a new `Response{B}` where `B` is the exact body field type. The
+optional `body` positional argument determines the response body type for
+dispatch and storage. `request_url` is optional client metadata used by
+high-level request helpers.
 
-    Throws `ArgumentError` for invalid status or protocol metadata.
+Throws `ArgumentError` for invalid status or protocol metadata.
+
+For migration from HTTP.jl 1.x, common forms such as
+`Response(status, headers, body)` and `Response(status, headers; body=...)`
+are still accepted. New code should prefer `Response(status; headers=...,
+body=..., content_length=...)`.
 """
 mutable struct Response{B}
     status::Int

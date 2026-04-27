@@ -195,10 +195,22 @@ function match(node::Node, method, segments, i)
 end
 
 """
-    HTTP.Router(_404, _405, middleware=nothing)
+    HTTP.Handlers.Router([_404], [_405], [middleware])
+    HTTP.Router([_404], [_405], [middleware])
 
 Define a router object that maps incoming requests by path to registered routes
 and associated handlers.
+
+Routes are matched by method and path segments. Supported segment patterns are:
+
+- exact segments, such as `/users`
+- named variables, such as `/users/{id}`
+- named variables with regular expressions, such as `/files/{name:\\w+}`
+- single-segment wildcards with `*`
+- trailing multi-segment wildcards with `**`
+
+Matched route metadata is stored on the request context and can be read with
+[`getroute`](@ref), [`getparams`](@ref), and [`getparam`](@ref).
 """
 struct Router{T,S,F}
     _404::T
@@ -222,6 +234,10 @@ Register a new route in `router`.
 
 The `path` may include named path variables like `/{id}` or wildcard segments.
 The 3-argument form registers the handler for all methods.
+
+`handler` may be a `Request -> Response` handler for `serve!` or a
+`Stream -> Nothing` handler for `listen!`, as long as the router is used with
+the matching server entrypoint.
 """
 function register! end
 
@@ -312,6 +328,9 @@ getroute(req) = get(req.context, :route, nothing)
     HTTP.getparams(req) -> Union{Nothing, Dict{String, String}}
 
 Retrieve any matched path parameters from the request context.
+
+Returns `nothing` when the request has not been routed or the route contained
+no path variables.
 """
 getparams(req) = get(req.context, :params, nothing)
 
@@ -420,6 +439,11 @@ end
 
 Wrap a request handler with a wall-clock timeout and synthesize a timeout
 response when the handler does not finish in time.
+
+The wrapped handler receives a child `RequestContext` whose deadline is bounded
+by both the configured timeout and any existing parent request deadline. On
+timeout, the child context is canceled and a response with `status`, `body`,
+and `content_type` is returned.
 """
 function handlertimeout(
     timeout_s::Real;
