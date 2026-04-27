@@ -113,6 +113,9 @@ future protocol work.
   paths against the new transport abstraction.
 - Improved docs coverage so exported APIs and documented submodule APIs are
   covered by the Documenter build.
+- Skipped the package precompile workload when Julia is running with coverage
+  instrumentation, keeping CI focused on tests while preserving normal package
+  precompilation for users.
 
 ## [v1.11.0] - 2025-12-20
 ### Added
