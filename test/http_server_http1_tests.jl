@@ -553,7 +553,7 @@ end
     end
     address = _wait_server_addr(server)
     try
-        raw = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 0\r\nExpect: fancy-feature\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        raw = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 0\r\nExpect: fancy-feature\r\nConnection: close\r\n\r\n"; settle_s = 0.3, close_write = false)
         @test occursin("HTTP/1.1 417", raw)
     finally
         _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
