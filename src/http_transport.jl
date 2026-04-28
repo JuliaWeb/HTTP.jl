@@ -803,6 +803,21 @@ function _perform_http_connect_tunnel!(
     return nothing
 end
 
+function _new_tcp_conn!(
+    plan::_ProxyPlan,
+    address::String,
+    host_resolver::_TransportHostResolver,
+    connect_deadline_ns::Int64=Int64(0),
+)::TCP.Conn
+    tcp = TCP.connect(host_resolver, "tcp", plan.first_hop_address)
+    if plan.mode == _ProxyPlanMode.HTTP_TUNNEL
+        proxy = plan.proxy
+        proxy === nothing && throw(ProtocolError("proxy CONNECT tunnel is missing proxy config"))
+        _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
+    end
+    return tcp
+end
+
 function _new_conn!(
     transport::Transport,
     plan::_ProxyPlan,
@@ -813,20 +828,49 @@ function _new_conn!(
     connect_deadline_ns::Int64=Int64(0),
     tls_handshake_timeout_ns::Int64=Int64(0),
 )::Conn
-    tcp = TCP.connect(host_resolver, "tcp", plan.first_hop_address)
-    if plan.mode == _ProxyPlanMode.HTTP_TUNNEL
-        proxy = plan.proxy
-        proxy === nothing && throw(ProtocolError("proxy CONNECT tunnel is missing proxy config"))
-        _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
-    end
-    if secure
-        cfg = _effective_tls_config(transport, address, server_name, tls_handshake_timeout_ns)
-        tls = TLS.client(tcp, cfg)
-        connect_deadline_ns == 0 || TLS.set_deadline!(tls, connect_deadline_ns)
-        TLS.handshake!(tls)
-        return Conn(plan.pool_key, plan.first_hop_address, true, tcp, tls, _ConnReader(tls), IOBuffer(), false, false, time_ns())
-    end
+    return _new_conn!(
+        transport,
+        plan,
+        address,
+        Val(secure),
+        server_name,
+        host_resolver,
+        connect_deadline_ns,
+        tls_handshake_timeout_ns,
+    )
+end
+
+function _new_conn!(
+    transport::Transport,
+    plan::_ProxyPlan,
+    address::String,
+    ::Val{false},
+    server_name::Union{Nothing,String},
+    host_resolver::_TransportHostResolver=transport.host_resolver,
+    connect_deadline_ns::Int64=Int64(0),
+    tls_handshake_timeout_ns::Int64=Int64(0),
+)::Conn
+    _ = (server_name, tls_handshake_timeout_ns)
+    tcp = _new_tcp_conn!(plan, address, host_resolver, connect_deadline_ns)
     return Conn(plan.pool_key, plan.first_hop_address, false, tcp, nothing, _ConnReader(tcp), IOBuffer(), false, false, time_ns())
+end
+
+function _new_conn!(
+    transport::Transport,
+    plan::_ProxyPlan,
+    address::String,
+    ::Val{true},
+    server_name::Union{Nothing,String},
+    host_resolver::_TransportHostResolver=transport.host_resolver,
+    connect_deadline_ns::Int64=Int64(0),
+    tls_handshake_timeout_ns::Int64=Int64(0),
+)::Conn
+    tcp = _new_tcp_conn!(plan, address, host_resolver, connect_deadline_ns)
+    cfg = _effective_tls_config(transport, address, server_name, tls_handshake_timeout_ns)
+    tls = TLS.client(tcp, cfg)
+    connect_deadline_ns == 0 || TLS.set_deadline!(tls, connect_deadline_ns)
+    TLS.handshake!(tls)
+    return Conn(plan.pool_key, plan.first_hop_address, true, tcp, tls, _ConnReader(tls), IOBuffer(), false, false, time_ns())
 end
 
 function _evict_expired_idle_locked!(transport::Transport, key::String, now_ns::Int64)::Vector{Conn}
@@ -856,6 +900,30 @@ function _acquire_conn!(
     plan::_ProxyPlan,
     address::String,
     secure::Bool,
+    server_name::Union{Nothing,String},
+    acquire_deadline_ns::Int64=Int64(0),
+    host_resolver::_TransportHostResolver=transport.host_resolver,
+    connect_deadline_ns::Int64=Int64(0),
+    tls_handshake_timeout_ns::Int64=Int64(0),
+)::Conn
+    return _acquire_conn!(
+        transport,
+        plan,
+        address,
+        Val(secure),
+        server_name,
+        acquire_deadline_ns,
+        host_resolver,
+        connect_deadline_ns,
+        tls_handshake_timeout_ns,
+    )
+end
+
+function _acquire_conn!(
+    transport::Transport,
+    plan::_ProxyPlan,
+    address::String,
+    secure::Val,
     server_name::Union{Nothing,String},
     acquire_deadline_ns::Int64=Int64(0),
     host_resolver::_TransportHostResolver=transport.host_resolver,
@@ -1469,9 +1537,29 @@ function _roundtrip_incoming!(
     proxy_config::ProxyConfig=transport.proxy,
     attempt::Int=1,
 )
+    return _roundtrip_incoming!(
+        transport,
+        address,
+        request,
+        Val(secure),
+        server_name,
+        proxy_config,
+        attempt,
+    )
+end
+
+function _roundtrip_incoming!(
+    transport::Transport,
+    address::AbstractString,
+    request::Request,
+    secure::Val{S},
+    server_name::Union{Nothing,AbstractString}=nothing,
+    proxy_config::ProxyConfig=transport.proxy,
+    attempt::Int=1,
+) where {S}
     request_deadline = _request_deadline_ns(request)
     retry_template = attempt == 1 && _retryable_request(request) ? _copy_request(request) : nothing
-    plan = _proxy_plan(proxy_config, secure, String(address))
+    plan = _proxy_plan(proxy_config, S, String(address))
     connect_host_resolver = _request_connect_host_resolver(transport.host_resolver, request)
     connect_deadline_ns = _request_connect_phase_deadline_ns(transport.host_resolver, request)
     tls_handshake_timeout_ns = _request_connect_phase_timeout_ns(transport.host_resolver, request)
@@ -1619,6 +1707,10 @@ end
 Execute a single request through `transport` without the higher-level redirect,
 cookie, or retry orchestration provided by `Client`.
 """
+function roundtrip!(transport::Transport, address::String, request::Request)
+    return _streaming_response(_roundtrip_incoming!(transport, address, request, Val(false), nothing))
+end
+
 function roundtrip!(
     transport::Transport,
     address::AbstractString,
