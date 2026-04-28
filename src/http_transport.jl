@@ -1308,7 +1308,9 @@ function body_read!(body::H1Body, dst::Vector{UInt8})::Int
     isempty(dst) && return 0
     body_closed(body) && return 0
     try
-        body.manage_conn && _set_conn_read_deadline!(body.conn, _request_read_deadline_ns(body.request))
+        if body.manage_conn && _request_read_idle_timeout_ns(body.request) > 0
+            _set_conn_read_deadline!(body.conn, _request_read_deadline_ns(body.request))
+        end
         if body.kind == _H1_BODY_EMPTY
             _finish_h1_body!(body)
             return 0
