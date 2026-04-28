@@ -660,15 +660,18 @@ function _effective_tls_config(
     return TLS.Config(
         server_name=cfg.server_name === nothing ? sni : cfg.server_name,
         verify_peer=cfg.verify_peer,
+        verify_hostname=cfg.verify_hostname,
         client_auth=cfg.client_auth,
         cert_file=cfg.cert_file,
         key_file=cfg.key_file,
         ca_file=cfg.ca_file,
         client_ca_file=cfg.client_ca_file,
         alpn_protocols=copy(cfg.alpn_protocols),
+        curve_preferences=copy(cfg.curve_preferences),
         handshake_timeout_ns=effective_handshake_timeout_ns,
         min_version=cfg.min_version,
         max_version=cfg.max_version,
+        session_tickets_disabled=cfg.session_tickets_disabled,
     )
 end
 
