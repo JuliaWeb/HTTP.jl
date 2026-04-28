@@ -1371,7 +1371,8 @@ end
 
 function Response(
     status::Integer,
-    body::B=EmptyBody();
+    response_body::B=EmptyBody();
+    body=nobody,
     reason::AbstractString="",
     headers=Headers(),
     trailers=Headers(),
@@ -1384,17 +1385,18 @@ function Response(
     previous::Union{Nothing,Response}=nothing,
     redirect_count::Integer=0,
 ) where {B}
+    actual_body = body === nobody ? response_body : _compat_body_arg(body)
     status < 0 && throw(ArgumentError("status must be >= 0"))
     content_length < -1 && throw(ArgumentError("content_length must be >= -1"))
     redirect_count < 0 && throw(ArgumentError("redirect_count must be >= 0"))
     (proto_major < 0 || proto_major > typemax(UInt8)) && throw(ArgumentError("proto_major must fit in UInt8"))
     (proto_minor < 0 || proto_minor > typemax(UInt8)) && throw(ArgumentError("proto_minor must fit in UInt8"))
-    return Response{B}(
+    return Response{typeof(actual_body)}(
         Int(status),
         String(reason),
         copy(mkheaders(headers)),
         copy(mkheaders(trailers)),
-        body,
+        actual_body,
         Int64(content_length),
         UInt8(proto_major),
         UInt8(proto_minor),

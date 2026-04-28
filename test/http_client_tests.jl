@@ -1292,7 +1292,7 @@ end
     base_url = "http://$(address)"
     accept_encodings = Dict{String, Union{Nothing, String}}()
     server_task = errormonitor(Threads.@spawn begin
-        for _ in 1:12
+        for _ in 1:13
             conn = NC.accept(listener)
             try
                 req = HT.read_request(HT._ConnReader(conn))
@@ -1332,6 +1332,11 @@ end
                     headers = HT.Headers()
                     HT.setheader(headers, "Content-Encoding", "gzip")
                     _send_response_bytes_client!(conn, req; body_bytes = payload, headers = headers, close_conn = true)
+                elseif req.target == "/gzip-empty-304"
+                    accept_encodings[req.target] = HT.header(req.headers, "Accept-Encoding", nothing)
+                    headers = HT.Headers()
+                    HT.setheader(headers, "Content-Encoding", "gzip")
+                    _send_response_bytes_client!(conn, req; status = 304, reason = "Not Modified", body_bytes = UInt8[], headers = headers, close_conn = true)
                 elseif req.target == "/deflate-default"
                     accept_encodings[req.target] = HT.header(req.headers, "Accept-Encoding", nothing)
                     payload = _deflate_bytes_client("deflate-default")
@@ -1427,6 +1432,11 @@ end
             @test occursin("Unable to grow response stream IOBuffer", sprint(showerror, gzip_small_err))
         end
         @test accept_encodings["/gzip-too-small"] == "gzip, deflate"
+
+        resp_gzip_empty_304 = HT.get("$(base_url)/gzip-empty-304"; status_exception = false)
+        @test resp_gzip_empty_304.status == 304
+        @test resp_gzip_empty_304.body == UInt8[]
+        @test accept_encodings["/gzip-empty-304"] == "gzip, deflate"
 
         resp_deflate = HT.get("$(base_url)/deflate-default")
         @test resp_deflate.status == 200

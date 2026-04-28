@@ -1063,6 +1063,16 @@ function _should_decompress_response(headers::Headers, decompress::Union{Nothing
     return _response_content_encoding(headers, decompress) !== nothing
 end
 
+@inline function _status_has_no_response_body(status::Integer)::Bool
+    return (100 <= status < 200) || status == 204 || status == 304
+end
+
+@inline function _incoming_response_has_no_body(incoming::_IncomingResponse)::Bool
+    return _status_has_no_response_body(incoming.head.status) ||
+        incoming.head.content_length == 0 ||
+        incoming.rawbody isa EmptyBody
+end
+
 @inline function _closed_bufferstream_error(err)::Bool
     return err isa Base.IOError && occursin("stream is closed or unusable", sprint(showerror, err))
 end
@@ -1232,7 +1242,7 @@ function _consume_incoming_response!(
     sink,
     decompress::Union{Nothing,Bool},
 )::Tuple{Any,Int64}
-    if !_should_decompress_response(incoming.head.headers, decompress)
+    if _incoming_response_has_no_body(incoming) || !_should_decompress_response(incoming.head.headers, decompress)
         try
             if sink === nothing
                 body = _read_all_response_bytes(incoming.rawbody, incoming.head.content_length)

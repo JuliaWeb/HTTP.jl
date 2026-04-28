@@ -167,6 +167,15 @@ end
     @test HT.header(compat_res.headers, "X-Reply") == "yes"
     @test compat_res.request === compat_req
     @test compat_res.body isa HT.BytesBody
+
+    keyword_body_res = HT.Response(200; headers=["X-Body" => "keyword"], body="ok")
+    @test keyword_body_res.status == 200
+    @test HT.header(keyword_body_res.headers, "X-Body") == "keyword"
+    @test keyword_body_res.body isa HT.BytesBody
+
+    keyword_empty_res = HT.Response(204; body=nothing)
+    @test keyword_empty_res.status == 204
+    @test keyword_empty_res.body isa HT.EmptyBody
 end
 
 @testset "HTTP core compatibility aliases" begin

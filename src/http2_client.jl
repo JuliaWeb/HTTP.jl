@@ -1109,6 +1109,24 @@ function body_closed(body::H2Body)::Bool
     return @atomic :acquire body.closed
 end
 
+function _wait_h2_body_progress!(state::H2StreamState, deadline_ns::Int64)::Nothing
+    while true
+        remaining_ns = deadline_ns - Int64(time_ns())
+        remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
+        status = timedwait(() -> begin
+            lock(state.lock)
+            try
+                (_stream_failed(state) || state.stream_done) && return true
+                return _stream_available_bytes(state) > 0
+            finally
+                unlock(state.lock)
+            end
+        end, remaining_ns / 1.0e9; pollint=0.001)
+        status == :timed_out && throw(IOPoll.DeadlineExceededError())
+        return nothing
+    end
+end
+
 function body_read!(body::H2Body, dst::Vector{UInt8})::Int
     isempty(dst) && return 0
     body_closed(body) && return 0
@@ -1116,6 +1134,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         nread = 0
         done = false
         too_many = false
+        wait_deadline_ns = Int64(0)
         lock(body.state.lock)
         try
             available = _stream_available_bytes(body.state)
@@ -1129,10 +1148,10 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
                     body.state.stream_done = true
                     notify(body.state.condition)
                 else
-                copyto!(dst, 1, body.state.body, body.state.body_read_index, nread)
-                body.state.body_read_index += nread
-                _compact_stream_body_buffer!(body.state)
-                notify(body.state.condition)
+                    copyto!(dst, 1, body.state.body, body.state.body_read_index, nread)
+                    body.state.body_read_index += nread
+                    _compact_stream_body_buffer!(body.state)
+                    notify(body.state.condition)
                 end
             elseif body.state.stream_done
                 _publish_h2_response_trailers!(body.state)
@@ -1143,24 +1162,13 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
                 if deadline_ns == 0
                     wait(body.state.condition)
                 else
-                    remaining_ns = deadline_ns - Int64(time_ns())
-                    remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
-                    status = timedwait(() -> begin
-                        lock(body.state.lock)
-                        try
-                            (_stream_failed(body.state) || body.state.stream_done) && return true
-                            return _stream_available_bytes(body.state) > 0
-                        finally
-                            unlock(body.state.lock)
-                        end
-                    end, remaining_ns / 1.0e9; pollint=0.001)
-                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
+                    wait_deadline_ns = deadline_ns
                 end
-                continue
             end
         finally
             unlock(body.state.lock)
         end
+        wait_deadline_ns == 0 || (_wait_h2_body_progress!(body.state, wait_deadline_ns); continue)
         if too_many
             @atomic :release body.closed = true
             try

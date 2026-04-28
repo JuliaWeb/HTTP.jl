@@ -465,6 +465,57 @@ end
     end
 end
 
+@testset "HTTP/2 client read_idle_timeout allows delayed first body frame" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _ = HT.read_frame!(reader)
+            headers_frame = _read_next_headers_frame!(reader)
+            hf = headers_frame::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            sleep(0.05)
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, UInt8[UInt8('o'), UInt8('k')]))
+        finally
+            try
+                NC.close(accepted_conn)
+            catch
+            end
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false)
+    response = nothing
+    try
+        request = HT.Request("GET", "/delayed-body"; host = address, body = HT.EmptyBody(), content_length = 0)
+        request_timeout_ns, timeout_config = HT._resolve_request_timeout_settings(0, 0, 0, 0.5)
+        HT._apply_request_timeout_settings!(HT.get_request_context(request), request_timeout_ns, timeout_config)
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test String(_read_all_h2_body(response.body)) == "ok"
+        _wait_task_h2!(server_task)
+    finally
+        response === nothing || try
+            HT.body_close!(response.body)
+        catch
+        end
+        close(h2_conn)
+        try
+            NC.close(listener)
+        catch
+        end
+    end
+end
+
 @testset "HTTP/2 client write_idle_timeout bounds flow-control stalls" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
