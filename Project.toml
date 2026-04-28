@@ -24,9 +24,10 @@ URIs = "1.6.1"
 julia = "1.10"
 
 [extras]
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 JuliaC = "acedd4c2-ced6-4a15-accc-2607eb759ba2"
 Reseau = "802f3686-a58f-41ce-bb0c-3c43c75bba36"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["JuliaC", "Reseau", "Test"]
+test = ["Base64", "JuliaC", "Reseau", "Test"]
