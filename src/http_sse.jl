@@ -1,7 +1,4 @@
 # Server-Sent Event parsing plus client/server helpers.
-export SSEEvent
-export SSEStream
-export sse_stream
 
 import Base: close, eof, isopen, readavailable, write
 
@@ -12,7 +9,6 @@ const _SSE_SPACE = UInt8(' ')
 const _DEFAULT_SSE_STREAM_MAX_LEN = 16 * 1024 * 1024
 
 """
-    SSEEvent
     SSEEvent(data; event=nothing, id=nothing, retry=nothing)
 
 Server-Sent Event value used for both client-side parsing and server-side
@@ -69,26 +65,18 @@ function SSEStream(; max_len::Integer=_DEFAULT_SSE_STREAM_MAX_LEN)
     return SSEStream(Base.BufferStream(), IOBuffer(), ReentrantLock(), Int(max_len))
 end
 
-function isopen(stream::SSEStream)::Bool
-    return isopen(stream.buffer)
-end
+isopen(stream::SSEStream)::Bool = isopen(stream.buffer)
 
-function eof(stream::SSEStream)::Bool
-    return eof(stream.buffer)
-end
+eof(stream::SSEStream)::Bool = eof(stream.buffer)
 
 function close(stream::SSEStream)
     close(stream.buffer)
     return nothing
 end
 
-function readavailable(stream::SSEStream)
-    return readavailable(stream.buffer)
-end
+readavailable(stream::SSEStream) = readavailable(stream.buffer)
 
-function body_closed(stream::SSEStream)::Bool
-    return !isopen(stream)
-end
+body_closed(stream::SSEStream)::Bool = !isopen(stream)
 
 function body_close!(stream::SSEStream)
     close(stream)

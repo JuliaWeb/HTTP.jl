@@ -5,9 +5,9 @@ CurrentModule = HTTP
 # HTTP.jl
 
 `HTTP.jl` provides HTTP client/server functionality, HTTP/2 support, SSE, and
-WebSockets on top of `Reseau`'s transport, resolver, and TLS stack. The
-high-level surface stays familiar while keeping request, response, body,
-transport, and stream types explicit.
+WebSockets on top of [`Reseau`](https://github.com/JuliaServices/Reseau.jl)'s
+transport, resolver, and TLS stack. The high-level surface stays familiar while
+keeping request, response, body, transport, and stream types explicit.
 
 ## Quick Start
 
@@ -17,39 +17,16 @@ reads the response body:
 ```julia
 using HTTP
 
-function wait_for_base_url(server)
-    for _ in 1:100
-        port = HTTP.port(server)
-        if port != 0
-            base_url = "http://127.0.0.1:$(port)"
-            try
-                HTTP.get(
-                    base_url * "/";
-                    status_exception = false,
-                    proxy = HTTP.ProxyConfig(),
-                    connect_timeout = 0.1,
-                    request_timeout = 0.1,
-                )
-                return base_url
-            catch
-            end
-        end
-        sleep(0.01)
-    end
-    error("server did not start listening in time")
-end
-
 server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
     payload = "hello from HTTP.jl docs"
     return HTTP.Response(
         200;
         headers = ["Content-Type" => "text/plain"],
-        body = HTTP.BytesBody(codeunits(payload)),
-        content_length = ncodeunits(payload),
+        body = payload,
     )
 end
 
-url = wait_for_base_url(server) * "/hello"
+url = "http://127.0.0.1:$(HTTP.port(server))/hello"
 resp = HTTP.get(url; proxy = HTTP.ProxyConfig())
 HTTP.forceclose(server)
 String(resp.body)
@@ -75,7 +52,8 @@ String(resp.body)
 ## Design Direction
 
 - `HTTP.jl` owns the HTTP protocol stack; `Reseau` owns the transport/runtime/TLS substrate.
-- Request and response bodies are explicit types instead of loosely typed byte blobs.
+- Request and response bodies have explicit internal representations while
+  ordinary user-facing calls accept familiar strings, byte vectors, forms, and
+  streams.
 - Client/server internals follow a more explicit state-machine design, which makes retries, proxying, streaming, and HTTP/2 behavior easier to reason about.
 - Most wire-level HTTP/2 and HPACK details are implementation details rather than part of the documented public API.
-- `HTTP.jl` is not a drop-in clone of Go's `net/http`; see the Protocols guide for the intentionally deferred Go-parity areas in the current release.

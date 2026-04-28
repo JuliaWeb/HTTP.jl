@@ -296,7 +296,7 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
                 if dec.fragment_opcode == UInt8(WsOpcode.TEXT)
                     append!(dec.text_fragment_payload, dec.payload_buf)
                     if dec.fin
-                        isvalid(String, dec.text_fragment_payload) || begin
+                        if !isvalid(String, dec.text_fragment_payload)
                             dec.expecting_continuation = false
                             dec.fragment_opcode = UInt8(0)
                             empty!(dec.text_fragment_payload)

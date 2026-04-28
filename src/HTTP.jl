@@ -54,7 +54,6 @@ include("http_stream.jl")
 include("http_handlers.jl")
 using .Handlers
 include("http_sse.jl")
-include("http_websocket_codec.jl")
 include("http_websockets.jl")
 
 if ccall(:jl_generating_output, Cint, ()) == 1

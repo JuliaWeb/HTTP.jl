@@ -1,16 +1,4 @@
 # Shared HTTP server kernel for HTTP/1, TLS, and HTTP/2.
-export Server
-export Stream
-export listen
-export listen!
-export serve
-export serve!
-export streamhandler
-export servecontent
-export servefile
-export fileserver
-export forceclose
-export port
 
 using Dates
 using EnumX: @enumx
@@ -209,6 +197,7 @@ function Stream(server::Server, tracked::_ServerConn, request::Req) where {Req<:
         proto_minor=Int(message.proto_minor),
         request=message,
     )
+    response.content_length = -1
     body = request.body
     return Stream{false,typeof(message)}(
         nothing,
@@ -256,6 +245,7 @@ function Stream(request::Req) where {Req<:Request}
         proto_minor=Int(message.proto_minor),
         request=message,
     )
+    response.content_length = -1
     body = request.body
     return Stream{false,typeof(message)}(
         nothing,
@@ -311,6 +301,7 @@ function Stream(
         proto_minor=0,
         request=message,
     )
+    response.content_length = -1
     body = request.body
     return Stream{false,typeof(message)}(
         nothing,
@@ -728,7 +719,7 @@ function Base.close(server::Server)::Nothing
     while true
         _request_conn_shutdowns!(server)
         _close_idle_conns!(server) && break
-        sleep(poll_s)
+        IOPoll.sleep(poll_s)
         poll_s < 0.5 && (poll_s = min(poll_s * 2, 0.5))
     end
     _set_server_state!(server, _ServerState.CLOSED)
@@ -1575,7 +1566,7 @@ function _servefile_response(
     response_headers = Headers()
     cache_control === nothing || setheader(response_headers, "Cache-Control", String(cache_control))
     resolved_etag = _resolve_file_etag(path, st, etag)
-    source = open(path, "r")
+    source = Base.open(path, "r")
     response = servecontent(
         request,
         source;
@@ -1994,7 +1985,7 @@ function _server_write(stream::Stream, data::AbstractVector{UInt8})::Int
     return length(data)
 end
 
-function _server_write(stream::Stream, data::Union{String,SubString{String}})::Int
+function _server_write(stream::Stream, data::AbstractString)::Int
     return _server_write(stream, Vector{UInt8}(codeunits(String(data))))
 end
 
@@ -2424,7 +2415,7 @@ function _wait_h2_send_window_locked!(send_state::_H2SendWindowState, deadline_n
     remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
     unlock(send_state.state_lock)
     try
-        sleep(min(remaining_ns / 1.0e9, 0.001))
+        IOPoll.sleep_ns(min(remaining_ns, Int64(1_000_000)))
     finally
         lock(send_state.state_lock)
     end
@@ -3877,13 +3868,36 @@ function listen!(server::Server)::Server
     end
 end
 
-@inline function _resolve_server_read_timeout_ns(read_timeout_ns::Integer, readtimeout)
-    if readtimeout === nothing
-        return Int64(read_timeout_ns)
+@inline function _resolve_server_timeout_ns(ns_name::AbstractString, ns_value::Integer, seconds_name::AbstractString, seconds_value)::Int64
+    seconds_value === nothing && return Int64(ns_value)
+    ns_value == 0 || throw(ArgumentError("$(seconds_name) cannot be combined with $(ns_name)"))
+    return _timeout_ns_from_seconds(seconds_name, seconds_value)
+end
+
+@inline function _resolve_server_timeouts(
+    read_timeout_ns::Integer,
+    read_timeout,
+    read_header_timeout_ns::Integer,
+    read_header_timeout,
+    write_timeout_ns::Integer,
+    write_timeout,
+    idle_timeout_ns::Integer,
+    idle_timeout,
+    readtimeout,
+)::Tuple{Int64,Int64,Int64,Int64}
+    effective_read_timeout_ns = _resolve_server_timeout_ns("read_timeout_ns", read_timeout_ns, "read_timeout", read_timeout)
+    if readtimeout !== nothing
+        read_timeout === nothing || throw(ArgumentError("readtimeout cannot be combined with read_timeout"))
+        read_timeout_ns == 0 || throw(ArgumentError("readtimeout cannot be combined with read_timeout_ns"))
+        @warn "`readtimeout` is deprecated; use `read_timeout` for server inactivity timeouts" maxlog=1
+        effective_read_timeout_ns = _timeout_ns_from_seconds("readtimeout", readtimeout)
     end
-    read_timeout_ns == 0 || throw(ArgumentError("readtimeout cannot be combined with read_timeout_ns"))
-    @warn "`readtimeout` is deprecated; use `read_timeout_ns` for server inactivity timeouts" maxlog=1
-    return _timeout_ns_from_seconds("readtimeout", readtimeout)
+    return (
+        effective_read_timeout_ns,
+        _resolve_server_timeout_ns("read_header_timeout_ns", read_header_timeout_ns, "read_header_timeout", read_header_timeout),
+        _resolve_server_timeout_ns("write_timeout_ns", write_timeout_ns, "write_timeout", write_timeout),
+        _resolve_server_timeout_ns("idle_timeout_ns", idle_timeout_ns, "idle_timeout", idle_timeout),
+    )
 end
 
 @inline function _warn_server_verbose_compat(verbose)::Nothing
@@ -3903,8 +3917,9 @@ Start a streaming HTTP server and return the running `Server`.
 
 `handler` is called with an `HTTP.Stream` and is responsible for reading the
 request and writing the response. Timeout keywords ending in `_ns` are
-nanoseconds; the older `readtimeout` keyword is accepted as a seconds-valued
-migration alias for `read_timeout_ns`.
+nanoseconds; `read_timeout`, `read_header_timeout`, `write_timeout`, and
+`idle_timeout` accept seconds. The older `readtimeout` keyword is accepted as a
+seconds-valued migration alias for `read_timeout`.
 """
 function listen!(
     handler::F, host::AbstractString="127.0.0.1", port_num::Integer=8080;
@@ -3912,6 +3927,10 @@ function listen!(
     read_header_timeout_ns::Integer=Int64(0),
     write_timeout_ns::Integer=Int64(0),
     idle_timeout_ns::Integer=Int64(0),
+    read_timeout=nothing,
+    read_header_timeout=nothing,
+    write_timeout=nothing,
+    idle_timeout=nothing,
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
@@ -3919,7 +3938,8 @@ function listen!(
     reuseaddr::Bool=true,
     backlog::Integer=128,
 ) where {F}
-    effective_read_timeout_ns = _resolve_server_read_timeout_ns(read_timeout_ns, readtimeout)
+    effective_read_timeout_ns, effective_read_header_timeout_ns, effective_write_timeout_ns, effective_idle_timeout_ns =
+        _resolve_server_timeouts(read_timeout_ns, read_timeout, read_header_timeout_ns, read_header_timeout, write_timeout_ns, write_timeout, idle_timeout_ns, idle_timeout, readtimeout)
     _warn_server_verbose_compat(verbose)
     return listen!(Server(
         network="tcp",
@@ -3927,9 +3947,9 @@ function listen!(
         handler=handler,
         stream=true,
         read_timeout_ns=effective_read_timeout_ns,
-        read_header_timeout_ns=read_header_timeout_ns,
-        write_timeout_ns=write_timeout_ns,
-        idle_timeout_ns=idle_timeout_ns,
+        read_header_timeout_ns=effective_read_header_timeout_ns,
+        write_timeout_ns=effective_write_timeout_ns,
+        idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
         listenany=listenany,
         reuseaddr=reuseaddr,
@@ -3943,6 +3963,10 @@ function listen!(
     read_header_timeout_ns::Integer=Int64(0),
     write_timeout_ns::Integer=Int64(0),
     idle_timeout_ns::Integer=Int64(0),
+    read_timeout=nothing,
+    read_header_timeout=nothing,
+    write_timeout=nothing,
+    idle_timeout=nothing,
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
@@ -3958,6 +3982,10 @@ function listen!(
         read_header_timeout_ns=read_header_timeout_ns,
         write_timeout_ns=write_timeout_ns,
         idle_timeout_ns=idle_timeout_ns,
+        read_timeout=read_timeout,
+        read_header_timeout=read_header_timeout,
+        write_timeout=write_timeout,
+        idle_timeout=idle_timeout,
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,
@@ -3973,6 +4001,10 @@ function listen!(
     read_header_timeout_ns::Integer=Int64(0),
     write_timeout_ns::Integer=Int64(0),
     idle_timeout_ns::Integer=Int64(0),
+    read_timeout=nothing,
+    read_header_timeout=nothing,
+    write_timeout=nothing,
+    idle_timeout=nothing,
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
@@ -3980,7 +4012,8 @@ function listen!(
     reuseaddr::Bool=true,
     backlog::Integer=128,
     ) where {F}
-    effective_read_timeout_ns = _resolve_server_read_timeout_ns(read_timeout_ns, readtimeout)
+    effective_read_timeout_ns, effective_read_header_timeout_ns, effective_write_timeout_ns, effective_idle_timeout_ns =
+        _resolve_server_timeouts(read_timeout_ns, read_timeout, read_header_timeout_ns, read_header_timeout, write_timeout_ns, write_timeout, idle_timeout_ns, idle_timeout, readtimeout)
     _warn_server_verbose_compat(verbose)
     listenany && throw(ArgumentError("listenany is not valid when passing an existing listener"))
     _ = reuseaddr
@@ -3992,9 +4025,9 @@ function listen!(
         handler=handler,
         stream=true,
         read_timeout_ns=effective_read_timeout_ns,
-        read_header_timeout_ns=read_header_timeout_ns,
-        write_timeout_ns=write_timeout_ns,
-        idle_timeout_ns=idle_timeout_ns,
+        read_header_timeout_ns=effective_read_header_timeout_ns,
+        write_timeout_ns=effective_write_timeout_ns,
+        idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
         listenany=false,
         reuseaddr=reuseaddr,
@@ -4037,7 +4070,7 @@ Start an HTTP server and return the running `Server`.
 `handler` is called with an `HTTP.Request` and must return an `HTTP.Response`.
 Use `listen!` for the lower-level `HTTP.Stream` handler path.
 Timeout keywords ending in `_ns` are nanoseconds; the older `readtimeout`
-keyword is accepted as a seconds-valued migration alias for `read_timeout_ns`.
+keyword is accepted as a seconds-valued migration alias for `read_timeout`.
 """
 function serve!(
     handler::F,
@@ -4046,6 +4079,10 @@ function serve!(
     read_header_timeout_ns::Integer=Int64(0),
     write_timeout_ns::Integer=Int64(0),
     idle_timeout_ns::Integer=Int64(0),
+    read_timeout=nothing,
+    read_header_timeout=nothing,
+    write_timeout=nothing,
+    idle_timeout=nothing,
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
@@ -4053,7 +4090,8 @@ function serve!(
     reuseaddr::Bool=true,
     backlog::Integer=128,
 ) where {F}
-    effective_read_timeout_ns = _resolve_server_read_timeout_ns(read_timeout_ns, readtimeout)
+    effective_read_timeout_ns, effective_read_header_timeout_ns, effective_write_timeout_ns, effective_idle_timeout_ns =
+        _resolve_server_timeouts(read_timeout_ns, read_timeout, read_header_timeout_ns, read_header_timeout, write_timeout_ns, write_timeout, idle_timeout_ns, idle_timeout, readtimeout)
     _warn_server_verbose_compat(verbose)
     listenany && throw(ArgumentError("listenany is not valid when passing an existing listener"))
     _ = reuseaddr
@@ -4065,9 +4103,9 @@ function serve!(
         handler=handler,
         stream=false,
         read_timeout_ns=effective_read_timeout_ns,
-        read_header_timeout_ns=read_header_timeout_ns,
-        write_timeout_ns=write_timeout_ns,
-        idle_timeout_ns=idle_timeout_ns,
+        read_header_timeout_ns=effective_read_header_timeout_ns,
+        write_timeout_ns=effective_write_timeout_ns,
+        idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
         listenany=false,
         reuseaddr=reuseaddr,
@@ -4086,6 +4124,10 @@ function serve!(
     read_header_timeout_ns::Integer=Int64(0),
     write_timeout_ns::Integer=Int64(0),
     idle_timeout_ns::Integer=Int64(0),
+    read_timeout=nothing,
+    read_header_timeout=nothing,
+    write_timeout=nothing,
+    idle_timeout=nothing,
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
@@ -4103,6 +4145,10 @@ function serve!(
             read_header_timeout_ns=read_header_timeout_ns,
             write_timeout_ns=write_timeout_ns,
             idle_timeout_ns=idle_timeout_ns,
+            read_timeout=read_timeout,
+            read_header_timeout=read_header_timeout,
+            write_timeout=write_timeout,
+            idle_timeout=idle_timeout,
             readtimeout=readtimeout,
             verbose=verbose,
             max_header_bytes=max_header_bytes,
@@ -4125,6 +4171,10 @@ function serve!(
     read_header_timeout_ns::Integer=Int64(0),
     write_timeout_ns::Integer=Int64(0),
     idle_timeout_ns::Integer=Int64(0),
+    read_timeout=nothing,
+    read_header_timeout=nothing,
+    write_timeout=nothing,
+    idle_timeout=nothing,
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
@@ -4140,6 +4190,10 @@ function serve!(
         read_header_timeout_ns=read_header_timeout_ns,
         write_timeout_ns=write_timeout_ns,
         idle_timeout_ns=idle_timeout_ns,
+        read_timeout=read_timeout,
+        read_header_timeout=read_header_timeout,
+        write_timeout=write_timeout,
+        idle_timeout=idle_timeout,
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,
@@ -4161,6 +4215,10 @@ function serve(
     read_header_timeout_ns::Integer=Int64(0),
     write_timeout_ns::Integer=Int64(0),
     idle_timeout_ns::Integer=Int64(0),
+    read_timeout=nothing,
+    read_header_timeout=nothing,
+    write_timeout=nothing,
+    idle_timeout=nothing,
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
@@ -4175,6 +4233,10 @@ function serve(
         read_header_timeout_ns=read_header_timeout_ns,
         write_timeout_ns=write_timeout_ns,
         idle_timeout_ns=idle_timeout_ns,
+        read_timeout=read_timeout,
+        read_header_timeout=read_header_timeout,
+        write_timeout=write_timeout,
+        idle_timeout=idle_timeout,
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,

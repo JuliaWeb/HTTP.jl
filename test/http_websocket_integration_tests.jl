@@ -75,14 +75,14 @@ end
                 headers = HT.Headers()
                 HT.setheader(headers, "Upgrade", "websocket")
                 HT.setheader(headers, "Connection", "Upgrade")
-                key = HT.ws_get_request_sec_websocket_key(request)
+                key = HT.WebSockets.ws_get_request_sec_websocket_key(request)
                 key === nothing && error("missing websocket key")
-                HT.setheader(headers, "Sec-WebSocket-Accept", HT.ws_compute_accept_key(key))
+                HT.setheader(headers, "Sec-WebSocket-Accept", HT.WebSockets.ws_compute_accept_key(key))
                 io = IOBuffer()
                 HT.write_response!(io, HT.Response(101, HT.EmptyBody(); headers = headers, content_length = 0))
                 write(conn, take!(io))
-                frame = HT.WsFrame(opcode = UInt8(HT.WsOpcode.TEXT), payload = Vector{UInt8}("proxied"), fin = true)
-                encoded = HT.ws_encode_frame(frame)
+                frame = HT.WebSockets.WsFrame(opcode = UInt8(HT.WebSockets.WsOpcode.TEXT), payload = Vector{UInt8}("proxied"), fin = true)
+                encoded = HT.WebSockets.ws_encode_frame(frame)
                 write(conn, encoded, length(encoded))
             finally
                 try

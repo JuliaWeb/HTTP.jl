@@ -196,6 +196,37 @@ end
     return conn.peer_max_send_frame_size
 end
 
+@inline function _h2_send_window_ready_locked(conn::H2Connection, stream_id::UInt32)::Bool
+    (@atomic :acquire conn.closed) && return true
+    conn.conn_error !== nothing && return true
+    stream_window = get(() -> Int64(0), conn.stream_send_window, stream_id)
+    return stream_window > 0 && conn.conn_send_window > 0
+end
+
+function _wait_h2_send_window_locked!(conn::H2Connection, stream_id::UInt32, deadline_ns::Int64)::Nothing
+    if deadline_ns == 0
+        wait(conn.window_condition)
+        return nothing
+    end
+    remaining_ns = deadline_ns - Int64(time_ns())
+    remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
+    unlock(conn.state_lock)
+    try
+        status = IOPoll.timedwait(() -> begin
+            lock(conn.state_lock)
+            try
+                return _h2_send_window_ready_locked(conn, stream_id)
+            finally
+                unlock(conn.state_lock)
+            end
+        end, remaining_ns / 1.0e9; pollint=0.001)
+        status == :timed_out && throw(IOPoll.DeadlineExceededError())
+    finally
+        lock(conn.state_lock)
+    end
+    return nothing
+end
+
 function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::Int, deadline_ns::Int64)::Int
     wanted > 0 || throw(ArgumentError("wanted send window must be > 0"))
     lock(conn.state_lock)
@@ -207,48 +238,10 @@ function _reserve_send_window!(conn::H2Connection, stream_id::UInt32, wanted::In
             if stream_window <= 0 || conn.conn_send_window <= 0
                 # Both the connection-level and per-stream windows must allow
                 # progress. The read loop replenishes these via WINDOW_UPDATE.
-                if deadline_ns == 0
-                    wait(conn.window_condition)
-                else
-                    remaining_ns = deadline_ns - Int64(time_ns())
-                    remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
-                    status = timedwait(() -> begin
-                        lock(conn.state_lock)
-                        try
-                            (@atomic :acquire conn.closed) && return true
-                            conn.conn_error !== nothing && return true
-                            stream_window_now = get(() -> Int64(0), conn.stream_send_window, stream_id)
-                            return stream_window_now > 0 && conn.conn_send_window > 0
-                        finally
-                            unlock(conn.state_lock)
-                        end
-                    end, remaining_ns / 1.0e9; pollint=0.001)
-                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
-                end
+                _wait_h2_send_window_locked!(conn, stream_id, deadline_ns)
                 continue
             end
             allowed = min(Int64(wanted), conn.conn_send_window, stream_window, Int64(_h2_max_data_frame_size(conn)))
-            if allowed <= 0
-                if deadline_ns == 0
-                    wait(conn.window_condition)
-                else
-                    remaining_ns = deadline_ns - Int64(time_ns())
-                    remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
-                    status = timedwait(() -> begin
-                        lock(conn.state_lock)
-                        try
-                            (@atomic :acquire conn.closed) && return true
-                            conn.conn_error !== nothing && return true
-                            stream_window_now = get(() -> Int64(0), conn.stream_send_window, stream_id)
-                            return stream_window_now > 0 && conn.conn_send_window > 0
-                        finally
-                            unlock(conn.state_lock)
-                        end
-                    end, remaining_ns / 1.0e9; pollint=0.001)
-                    status == :timed_out && throw(IOPoll.DeadlineExceededError())
-                end
-                continue
-            end
             conn.conn_send_window -= allowed
             conn.stream_send_window[stream_id] = stream_window - allowed
             return Int(allowed)
@@ -456,16 +449,10 @@ end
 function _close_h2_transports!(conn::H2Connection)
     if conn.secure
         if conn.tls !== nothing
-            try
-                TLS.close(conn.tls::TLS.Conn)
-            catch
-            end
+            @try_ignore TLS.close(conn.tls::TLS.Conn)
         end
     end
-    try
-        TCP.close(conn.tcp)
-    catch
-    end
+    @try_ignore TCP.close(conn.tcp)
     return nothing
 end
 
@@ -582,13 +569,11 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
             _write_frame_h2_threadsafe!(conn, SettingsFrame(true, Pair{UInt16,UInt32}[]))
         end
         return nothing
-    end
-    if frame isa PingFrame
+    elseif frame isa PingFrame
         ping = frame::PingFrame
         ping.ack || _write_frame_h2_threadsafe!(conn, PingFrame(true, ping.opaque_data))
         return nothing
-    end
-    if frame isa GoAwayFrame
+    elseif frame isa GoAwayFrame
         goaway = frame::GoAwayFrame
         goaway.error_code == UInt32(0) || throw(ProtocolError("HTTP/2 peer sent GOAWAY"))
         to_fail = Pair{UInt32,H2StreamState}[]
@@ -614,15 +599,13 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
             _set_stream_error!(failed.second, H2GoAwayError("HTTP/2 stream rejected by GOAWAY", goaway.last_stream_id))
         end
         return nothing
-    end
-    if frame isa RSTStreamFrame
+    elseif frame isa RSTStreamFrame
         rst = frame::RSTStreamFrame
         state = _stream_state(conn, rst.stream_id)
         state === nothing && return nothing
         _set_stream_error!(state::H2StreamState, ProtocolError("HTTP/2 stream reset by peer"))
         return nothing
-    end
-    if frame isa WindowUpdateFrame
+    elseif frame isa WindowUpdateFrame
         update = frame::WindowUpdateFrame
         increment = Int64(update.window_size_increment)
         lock(conn.state_lock)
@@ -638,25 +621,21 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
             unlock(conn.state_lock)
         end
         return nothing
-    end
-    if frame isa HeadersFrame
+    elseif frame isa HeadersFrame
         headers = frame::HeadersFrame
         state = _stream_state(conn, headers.stream_id)
         state === nothing && return nothing
         _handle_stream_header_fragment!(conn, state::H2StreamState, headers.header_block_fragment, headers.end_headers, headers.end_stream)
         return nothing
-    end
-    if frame isa PushPromiseFrame
+    elseif frame isa PushPromiseFrame
         throw(ProtocolError("HTTP/2 server push is unsupported"))
-    end
-    if frame isa ContinuationFrame
+    elseif frame isa ContinuationFrame
         cont = frame::ContinuationFrame
         state = _stream_state(conn, cont.stream_id)
         state === nothing && return nothing
         _handle_stream_header_fragment!(conn, state::H2StreamState, cont.header_block_fragment, cont.end_headers, false)
         return nothing
-    end
-    if frame isa DataFrame
+    elseif frame isa DataFrame
         data = frame::DataFrame
         state = _stream_state(conn, data.stream_id)
         state === nothing && return nothing
@@ -759,15 +738,11 @@ function _make_tls_config_for_h2(
 end
 
 """
-    _connect_h2_from_tcp!(tcp, address; secure=false, tls_config=nothing) -> H2Connection
+    _connect_h2_from_tcp!(tcp, address, secure=false, tls_config=nothing, connect_deadline_ns=0) -> H2Connection
 
 Open and initialize an HTTP/2 client connection on an existing TCP socket,
 including client preface, SETTINGS exchange, optional TLS handshake, and ALPN
 verification.
-
-Keyword arguments:
-- `secure`: when `true`, connect over TLS and require ALPN `h2`
-- `tls_config`: optional TLS configuration, augmented as needed to advertise `h2`
 
 Returns a ready-to-use `H2Connection`. Throws `H2NegotiationError` for ALPN
 failures, `ProtocolError` for invalid peer behavior during setup, and any TCP,
@@ -838,15 +813,9 @@ function _connect_h2_from_tcp!(
         return conn
     catch
         if tls_conn !== nothing
-            try
-                TLS.close(tls_conn::TLS.Conn)
-            catch
-            end
+            @try_ignore TLS.close(tls_conn::TLS.Conn)
         end
-        try
-            TCP.close(tcp)
-        catch
-        end
+        @try_ignore TCP.close(tcp)
         rethrow()
     end
 end
@@ -942,10 +911,7 @@ function _write_request_body_h2!(conn::H2Connection, stream_id::UInt32, request:
             have_pending = true
         end
     finally
-        try
-            body_close!(request.body)
-        catch
-        end
+        @try_ignore body_close!(request.body)
     end
 end
 
@@ -1113,7 +1079,7 @@ function _wait_h2_body_progress!(state::H2StreamState, deadline_ns::Int64)::Noth
     while true
         remaining_ns = deadline_ns - Int64(time_ns())
         remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
-        status = timedwait(() -> begin
+        status = IOPoll.timedwait(() -> begin
             lock(state.lock)
             try
                 (_stream_failed(state) || state.stream_done) && return true
@@ -1171,10 +1137,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         wait_deadline_ns == 0 || (_wait_h2_body_progress!(body.state, wait_deadline_ns); continue)
         if too_many
             @atomic :release body.closed = true
-            try
-                _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x1)))
-            catch
-            end
+            @try_ignore _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x1)))
             _unregister_stream!(body.conn, body.stream_id)
             throw(ProtocolError("HTTP/2 response body exceeded Content-Length"))
         end
@@ -1213,10 +1176,7 @@ function body_close!(body::H2Body)
         unlock(body.state.lock)
     end
     if should_reset
-        try
-            _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x8)))
-        catch
-        end
+        @try_ignore _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x8)))
     end
     _unregister_stream!(body.conn, body.stream_id)
     return nothing
@@ -1243,7 +1203,7 @@ function _wait_stream_headers!(conn::H2Connection, state::H2StreamState, deadlin
         end
         remaining_ns = deadline_ns - Int64(time_ns())
         remaining_ns <= 0 && throw(IOPoll.DeadlineExceededError())
-        status = timedwait(() -> begin
+        status = IOPoll.timedwait(() -> begin
             lock(state.lock)
             try
                 return state.headers_complete || state.stream_done || _stream_failed(state)

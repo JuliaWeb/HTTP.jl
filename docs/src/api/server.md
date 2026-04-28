@@ -41,6 +41,7 @@ aliases for compatibility.
 HTTP.Handlers.Handler
 HTTP.Handlers.Middleware
 HTTP.Handlers.Router
+HTTP.Handlers.Node
 HTTP.Handlers.register!
 HTTP.Handlers.getroute
 HTTP.Handlers.getparams

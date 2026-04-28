@@ -1,5 +1,4 @@
 # Shared retry bucket primitives used by the higher-level HTTP client retry flow.
-export RetryBucket
 
 import Base: acquire, release
 using Dates
@@ -13,6 +12,7 @@ const _RETRY_BUCKET_RETRYABLE_RESPONSE_COST = 5
 const _RETRY_BUCKET_DEFAULT_BACKOFF_SCALE_FACTOR_NS = Int64(_RETRY_BUCKET_DEFAULT_BACKOFF_SCALE_FACTOR_MS) * Int64(1_000_000)
 const _RETRY_BUCKET_DEFAULT_MAX_BACKOFF_NS = Int64(_RETRY_BUCKET_DEFAULT_MAX_BACKOFF_SECS) * Int64(1_000_000_000)
 
+"""Retry capacity tracked independently for one retry partition key."""
 mutable struct _RetryPartition
     capacity::Int
 end
@@ -36,6 +36,7 @@ mutable struct RetryBucket
     lock::ReentrantLock
 end
 
+"""Handle returned by `acquire` and consumed by `release` to refund retry budget."""
 mutable struct RetryToken
     bucket::RetryBucket
     partition::String

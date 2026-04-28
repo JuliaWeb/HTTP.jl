@@ -1,32 +1,18 @@
 # HTTP/2 frame model and frame (read/write) implementation.
-"""HTTP/2 DATA frame type code (`0x0`)."""
 const FRAME_DATA = UInt8(0x0)
-"""HTTP/2 HEADERS frame type code (`0x1`)."""
 const FRAME_HEADERS = UInt8(0x1)
-"""HTTP/2 PRIORITY frame type code (`0x2`)."""
 const FRAME_PRIORITY = UInt8(0x2)
-"""HTTP/2 RST_STREAM frame type code (`0x3`)."""
 const FRAME_RST_STREAM = UInt8(0x3)
-"""HTTP/2 SETTINGS frame type code (`0x4`)."""
 const FRAME_SETTINGS = UInt8(0x4)
-"""HTTP/2 PUSH_PROMISE frame type code (`0x5`)."""
 const FRAME_PUSH_PROMISE = UInt8(0x5)
-"""HTTP/2 PING frame type code (`0x6`)."""
 const FRAME_PING = UInt8(0x6)
-"""HTTP/2 GOAWAY frame type code (`0x7`)."""
 const FRAME_GOAWAY = UInt8(0x7)
-"""HTTP/2 WINDOW_UPDATE frame type code (`0x8`)."""
 const FRAME_WINDOW_UPDATE = UInt8(0x8)
-"""HTTP/2 CONTINUATION frame type code (`0x9`)."""
 const FRAME_CONTINUATION = UInt8(0x9)
 
-"""HTTP/2 flag bit indicating that a frame ends the stream."""
 const FLAG_END_STREAM = UInt8(0x1)
-"""HTTP/2 flag bit indicating that a HEADERS or CONTINUATION frame ends the header block."""
 const FLAG_END_HEADERS = UInt8(0x4)
-"""HTTP/2 flag bit used by SETTINGS and PING acknowledgment frames."""
 const FLAG_ACK = UInt8(0x1)
-"""HTTP/2 flag bit indicating padded payload data."""
 const FLAG_PADDED = UInt8(0x8)
 const _FLAG_HEADERS_PRIORITY = UInt8(0x20)
 const _H2_MAX_FRAME_SIZE = 16_384
@@ -50,14 +36,12 @@ Abstract supertype for concrete HTTP/2 wire frame representations.
 """
 abstract type AbstractFrame end
 
-"""HTTP/2 DATA frame."""
 struct DataFrame <: AbstractFrame
     stream_id::UInt32
     end_stream::Bool
     data::Vector{UInt8}
 end
 
-"""HTTP/2 HEADERS frame."""
 struct HeadersFrame <: AbstractFrame
     stream_id::UInt32
     end_stream::Bool
@@ -65,7 +49,6 @@ struct HeadersFrame <: AbstractFrame
     header_block_fragment::Vector{UInt8}
 end
 
-"""HTTP/2 PRIORITY frame."""
 struct PriorityFrame <: AbstractFrame
     stream_id::UInt32
     exclusive::Bool
@@ -73,19 +56,16 @@ struct PriorityFrame <: AbstractFrame
     weight::UInt8
 end
 
-"""HTTP/2 RST_STREAM frame."""
 struct RSTStreamFrame <: AbstractFrame
     stream_id::UInt32
     error_code::UInt32
 end
 
-"""HTTP/2 SETTINGS frame."""
 struct SettingsFrame <: AbstractFrame
     ack::Bool
     settings::Vector{Pair{UInt16,UInt32}}
 end
 
-"""HTTP/2 PUSH_PROMISE frame."""
 struct PushPromiseFrame <: AbstractFrame
     stream_id::UInt32
     promised_stream_id::UInt32
@@ -93,33 +73,28 @@ struct PushPromiseFrame <: AbstractFrame
     header_block_fragment::Vector{UInt8}
 end
 
-"""HTTP/2 PING frame."""
 struct PingFrame <: AbstractFrame
     ack::Bool
     opaque_data::NTuple{8,UInt8}
 end
 
-"""HTTP/2 GOAWAY frame."""
 struct GoAwayFrame <: AbstractFrame
     last_stream_id::UInt32
     error_code::UInt32
     debug_data::Vector{UInt8}
 end
 
-"""HTTP/2 WINDOW_UPDATE frame."""
 struct WindowUpdateFrame <: AbstractFrame
     stream_id::UInt32
     window_size_increment::UInt32
 end
 
-"""HTTP/2 CONTINUATION frame."""
 struct ContinuationFrame <: AbstractFrame
     stream_id::UInt32
     end_headers::Bool
     header_block_fragment::Vector{UInt8}
 end
 
-"""Unknown frame passthrough for forward-compatible parsing."""
 struct UnknownFrame <: AbstractFrame
     header::FrameHeader
     payload::Vector{UInt8}
@@ -329,7 +304,8 @@ function read_frame!(io::IO)::AbstractFrame
     return UnknownFrame(header, payload)
 end
 
-function _serialize_frame(frame::AbstractFrame)::Tuple{FrameHeader,Vector{UInt8}}
+@inline function _serialize_frame(frame::AbstractFrame)::Tuple{FrameHeader,Vector{UInt8}}
+    @nospecialize frame
     if frame isa DataFrame
         f = frame::DataFrame
         _require_nonzero_stream_id(f.stream_id, "DATA")

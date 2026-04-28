@@ -95,25 +95,25 @@ function _accept_ws_request!(conn, request::HT.Request; subprotocol::Union{Nothi
     headers = HT.Headers()
     HT.setheader(headers, "Upgrade", "websocket")
     HT.setheader(headers, "Connection", "Upgrade")
-    key = HT.ws_get_request_sec_websocket_key(request)
+    key = HT.WebSockets.ws_get_request_sec_websocket_key(request)
     key === nothing && error("missing websocket key")
-    HT.setheader(headers, "Sec-WebSocket-Accept", HT.ws_compute_accept_key(key))
+    HT.setheader(headers, "Sec-WebSocket-Accept", HT.WebSockets.ws_compute_accept_key(key))
     subprotocol === nothing || HT.setheader(headers, "Sec-WebSocket-Protocol", subprotocol)
     _write_response_all!(conn, HT.Response(101, HT.EmptyBody(); headers = headers, content_length = 0))
     return nothing
 end
 
 function _write_ws_frame!(conn, opcode::UInt8, payload::AbstractVector{UInt8}; fin::Bool = true, masked::Bool = false)
-    frame = HT.WsFrame(opcode = opcode, payload = payload, fin = fin, masked = masked, masking_key = (0x01, 0x02, 0x03, 0x04))
-    encoded = HT.ws_encode_frame(frame)
+    frame = HT.WebSockets.WsFrame(opcode = opcode, payload = payload, fin = fin, masked = masked, masking_key = (0x01, 0x02, 0x03, 0x04))
+    encoded = HT.WebSockets.ws_encode_frame(frame)
     write(conn, encoded, length(encoded))
     return nothing
 end
 
 function _read_ws_frames(conn, ws::W.Conn)
     buf = readavailable(conn)
-    isempty(buf) && return HT.WsFrame{Vector{UInt8}}[]
-    return HT.ws_on_incoming_data!(ws, buf)
+    isempty(buf) && return HT.WebSockets.WsFrame{Vector{UInt8}}[]
+    return HT.WebSockets.ws_on_incoming_data!(ws, buf)
 end
 
 @testset "HTTP.WebSockets client open over ws" begin
@@ -125,14 +125,14 @@ end
             request = _read_ws_request(conn)
             @test W.isupgrade(request)
             _accept_ws_request!(conn, request)
-            _write_ws_frame!(conn, UInt8(HT.WsOpcode.TEXT), Vector{UInt8}("hello"))
+            _write_ws_frame!(conn, UInt8(HT.WebSockets.WsOpcode.TEXT), Vector{UInt8}("hello"))
             server_ws = W.Conn(is_client = false)
             frames = _read_ws_frames(conn, server_ws)
             @test length(frames) == 1
-            @test frames[1].opcode == UInt8(HT.WsOpcode.TEXT)
+            @test frames[1].opcode == UInt8(HT.WebSockets.WsOpcode.TEXT)
             @test frames[1].payload == Vector{UInt8}("pong")
-            HT.ws_close!(server_ws; status_code = UInt16(1000), reason = UInt8[])
-            write(conn, HT.ws_get_outgoing_data!(server_ws))
+            HT.WebSockets.ws_close!(server_ws; status_code = UInt16(1000), reason = UInt8[])
+            write(conn, HT.WebSockets.ws_get_outgoing_data!(server_ws))
         end
         ws = W.open(
             "ws://$address/chat";
@@ -142,7 +142,7 @@ end
             write_idle_timeout = 0.25,
         )
         @test HT.get_request_context(ws.handshake_request).deadline_ns != 0
-        timeout_config = HT._request_context_timeout_config(HT.get_request_context(ws.handshake_request))
+        timeout_config = HT.get_request_context(ws.handshake_request).timeout_config
         @test timeout_config !== nothing
         @test (timeout_config::HT._RequestTimeoutConfig).response_header_timeout_ns == 250_000_000
         @test timeout_config.read_idle_timeout_ns == 250_000_000
@@ -172,10 +172,10 @@ end
         listener, task, address = _ws_server(; secure = true) do conn
             request = _read_ws_request(conn)
             _accept_ws_request!(conn, request)
-            _write_ws_frame!(conn, UInt8(HT.WsOpcode.TEXT), Vector{UInt8}("secure"))
+            _write_ws_frame!(conn, UInt8(HT.WebSockets.WsOpcode.TEXT), Vector{UInt8}("secure"))
             server_ws = W.Conn(is_client = false)
-            HT.ws_close!(server_ws; status_code = UInt16(1000), reason = UInt8[])
-            write(conn, HT.ws_get_outgoing_data!(server_ws))
+            HT.WebSockets.ws_close!(server_ws; status_code = UInt16(1000), reason = UInt8[])
+            write(conn, HT.WebSockets.ws_get_outgoing_data!(server_ws))
         end
         ws = W.open("wss://$address/secure"; require_ssl_verification = false)
         @test W.receive(ws) == "secure"
@@ -193,11 +193,11 @@ end
     try
         listener, task, address = _ws_server() do conn
             request = _read_ws_request(conn)
-            @test HT.ws_select_subprotocol(request, ["chat", "superchat"]) == "chat"
+            @test HT.WebSockets.ws_select_subprotocol(request, ["chat", "superchat"]) == "chat"
             _accept_ws_request!(conn, request; subprotocol = "chat")
             server_ws = W.Conn(is_client = false)
-            HT.ws_close!(server_ws; status_code = UInt16(1000), reason = UInt8[])
-            write(conn, HT.ws_get_outgoing_data!(server_ws))
+            HT.WebSockets.ws_close!(server_ws; status_code = UInt16(1000), reason = UInt8[])
+            write(conn, HT.WebSockets.ws_get_outgoing_data!(server_ws))
         end
         ws = W.open("ws://$address/subproto"; subprotocols = ["chat", "superchat"])
         @test ws.subprotocol == "chat"
@@ -220,8 +220,8 @@ end
             @test HT.header(request.headers, "Cookie") == "session=abc"
             _accept_ws_request!(conn, request)
             server_ws = W.Conn(is_client = false)
-            HT.ws_close!(server_ws; status_code = UInt16(1000), reason = UInt8[])
-            write(conn, HT.ws_get_outgoing_data!(server_ws))
+            HT.WebSockets.ws_close!(server_ws; status_code = UInt16(1000), reason = UInt8[])
+            write(conn, HT.WebSockets.ws_get_outgoing_data!(server_ws))
         end
         redirect_listener, redirect_task, redirect_address = _ws_server() do conn
             request = _read_ws_request(conn)

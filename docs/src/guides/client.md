@@ -11,7 +11,8 @@ The short version:
 
 - use `HTTP.request` or verb helpers for eager responses
 - use `HTTP.open` or `response_stream` for streaming
-- use `HTTP.Client` when you want connection reuse or shared cookies
+- use `HTTP.Client` when you want one reusable bundle of transport, retry,
+  cookie, proxy, and HTTP/2 preferences
 - use phase-specific timeout keywords instead of the old `readtimeout`
 
 ## High-Level Requests
@@ -22,28 +23,6 @@ The short version:
 ```julia
 using HTTP
 
-function wait_for_base_url(server)
-    for _ in 1:100
-        port = HTTP.port(server)
-        if port != 0
-            base_url = "http://127.0.0.1:$(port)"
-            try
-                HTTP.get(
-                    base_url * "/";
-                    status_exception = false,
-                    proxy = HTTP.ProxyConfig(),
-                    connect_timeout = 0.1,
-                    request_timeout = 0.1,
-                )
-                return base_url
-            catch
-            end
-        end
-        sleep(0.01)
-    end
-    error("server did not start listening in time")
-end
-
 server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
     payload = if req.target == "/stream"
         "streaming response body"
@@ -53,12 +32,11 @@ server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
     return HTTP.Response(
         200;
         headers = ["Content-Type" => "text/plain"],
-        body = HTTP.BytesBody(codeunits(payload)),
-        content_length = ncodeunits(payload),
+        body = payload,
     )
 end
 
-base_url = wait_for_base_url(server)
+base_url = "http://127.0.0.1:$(HTTP.port(server))"
 resp = HTTP.request("GET", base_url * "/requests"; proxy = HTTP.ProxyConfig())
 HTTP.forceclose(server)
 (status = resp.status, body = String(resp.body))
@@ -76,39 +54,16 @@ Useful top-level request helpers:
 using the normal redirect/decompression machinery.
 
 ```julia
-function wait_for_base_url(server)
-    for _ in 1:100
-        port = HTTP.port(server)
-        if port != 0
-            base_url = "http://127.0.0.1:$(port)"
-            try
-                HTTP.get(
-                    base_url * "/";
-                    status_exception = false,
-                    proxy = HTTP.ProxyConfig(),
-                    connect_timeout = 0.1,
-                    request_timeout = 0.1,
-                )
-                return base_url
-            catch
-            end
-        end
-        sleep(0.01)
-    end
-    error("server did not start listening in time")
-end
-
 server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
     payload = req.target == "/stream" ? "streaming response body" : "$(req.method) $(req.target)"
     return HTTP.Response(
         200;
         headers = ["Content-Type" => "text/plain"],
-        body = HTTP.BytesBody(codeunits(payload)),
-        content_length = ncodeunits(payload),
+        body = payload,
     )
 end
 
-base_url = wait_for_base_url(server)
+base_url = "http://127.0.0.1:$(HTTP.port(server))"
 HTTP.open(:GET, base_url * "/stream"; proxy = HTTP.ProxyConfig()) do stream
     response_text = String(read(stream))
     HTTP.forceclose(server)
@@ -119,39 +74,16 @@ end
 If you only need to stream into an `IO`, use the `response_stream` keyword:
 
 ```julia
-function wait_for_base_url(server)
-    for _ in 1:100
-        port = HTTP.port(server)
-        if port != 0
-            base_url = "http://127.0.0.1:$(port)"
-            try
-                HTTP.get(
-                    base_url * "/";
-                    status_exception = false,
-                    proxy = HTTP.ProxyConfig(),
-                    connect_timeout = 0.1,
-                    request_timeout = 0.1,
-                )
-                return base_url
-            catch
-            end
-        end
-        sleep(0.01)
-    end
-    error("server did not start listening in time")
-end
-
 server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
     payload = req.target == "/stream" ? "streaming response body" : "$(req.method) $(req.target)"
     return HTTP.Response(
         200;
         headers = ["Content-Type" => "text/plain"],
-        body = HTTP.BytesBody(codeunits(payload)),
-        content_length = ncodeunits(payload),
+        body = payload,
     )
 end
 
-base_url = wait_for_base_url(server)
+base_url = "http://127.0.0.1:$(HTTP.port(server))"
 buffer = IOBuffer()
 response = HTTP.get(base_url * "/buffered"; response_stream = buffer, proxy = HTTP.ProxyConfig())
 seekstart(buffer)
@@ -161,45 +93,33 @@ HTTP.forceclose(server)
 
 ## Reusing a `Client`
 
-Construct a `Client` when you want connection reuse, a shared cookie jar,
-custom proxy settings, or an explicit retry posture.
+Construct a `Client` when a set of options should travel together across many
+requests. Top-level calls already reuse default connection and cookie machinery;
+a `Client` gives you an explicit owner for a particular transport, cookie jar,
+retry bucket, proxy policy, and HTTP/2 preference.
 
 ```julia
-function wait_for_base_url(server)
-    for _ in 1:100
-        port = HTTP.port(server)
-        if port != 0
-            base_url = "http://127.0.0.1:$(port)"
-            try
-                HTTP.get(
-                    base_url * "/";
-                    status_exception = false,
-                    proxy = HTTP.ProxyConfig(),
-                    connect_timeout = 0.1,
-                    request_timeout = 0.1,
-                )
-                return base_url
-            catch
-            end
-        end
-        sleep(0.01)
-    end
-    error("server did not start listening in time")
-end
-
 server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
     payload = req.target == "/stream" ? "streaming response body" : "$(req.method) $(req.target)"
     return HTTP.Response(
         200;
         headers = ["Content-Type" => "text/plain"],
-        body = HTTP.BytesBody(codeunits(payload)),
-        content_length = ncodeunits(payload),
+        body = payload,
     )
 end
 
-base_url = wait_for_base_url(server)
-transport = HTTP.Transport(max_idle_per_host = 2, max_idle_total = 4, proxy = HTTP.ProxyConfig())
-client = HTTP.Client(transport = transport, cookiejar = HTTP.CookieJar())
+base_url = "http://127.0.0.1:$(HTTP.port(server))"
+retry_bucket = HTTP.RetryBucket(capacity = 100)
+transport = HTTP.Transport(
+    max_idle_per_host = 2,
+    max_idle_total = 4,
+    proxy = HTTP.ProxyConfig(),
+)
+client = HTTP.Client(
+    transport = transport,
+    cookiejar = HTTP.CookieJar(),
+    retry_bucket = retry_bucket,
+)
 client_response = HTTP.request("GET", base_url * "/reused"; client = client)
 close(client)
 HTTP.forceclose(server)
@@ -212,65 +132,41 @@ Important `Client` and `Transport` knobs:
 - connection-pool sizing via `max_idle_per_host` and `max_idle_total`
 - shared `CookieJar` state across related requests
 - explicit proxy routing with `ProxyConfig`, `ProxyURL`, `ProxyFromEnvironment`, and `NoProxy`
+- coordinated retries through a shared `RetryBucket`
 
 ## Request and Response Bodies
 
 The top-level request helpers buffer response bodies into `Vector{UInt8}` by
-default. Lower-level APIs such as `HTTP.open`, `roundtrip!`, and stream/server
-internals expose explicit body types instead.
+default. For request and server-response bodies, ordinary strings, byte vectors,
+forms, and `IO` objects cover the common user-facing cases. Lower-level body
+wrappers exist for the protocol implementation and custom streaming extensions,
+but most application code should not need to construct them directly.
 
-Common body-related types:
-
-- `BytesBody` for already-buffered data
-- `FixedLengthBody`, `ChunkedBody`, and `EOFBody` for streamed bodies
-- `EmptyBody` for requests or responses with no payload
-- `Form` when you need a multipart/form-data request body
-
-## Retries, Timeouts, and Tracing
+## Retries and Timeouts
 
 The retry path is explicit and conservative. For predictable behavior, prefer a
 long-lived `Client` over relying solely on default top-level behavior.
 
-### Request Tracing and Verbose Output
-
-`HTTP.request` accepts an optional leading trace callback:
-
 ```julia
-using HTTP
+bucket = HTTP.RetryBucket(capacity = 100)
 
-function trace(event::HTTP.RequestEvent)
-    @info "request" method = event.request.method url = event.url attempt = event.attempt
-end
-
-function trace(event::HTTP.ResponseHeadEvent)
-    @info "response" status = event.response.status url = event.url
-end
-
-function trace(event::HTTP.DoneEvent)
-    @info "done" url = event.url error = event.err
+function retry_if(attempt, err, req, resp)
+    if err !== nothing
+        return attempt <= 2
+    end
+    return resp !== nothing && resp.status in (429, 503) && attempt <= 3
 end
 
 url = "https://example.com"
-response = HTTP.request(trace, "GET", url)
+response = HTTP.get(
+    url;
+    retry = true,
+    retries = 3,
+    retry_bucket = bucket,
+    retry_if = retry_if,
+    respect_retry_after = true,
+)
 ```
-
-The current event set is:
-
-- `HTTP.RequestEvent`
-- `HTTP.ResponseHeadEvent`
-- `HTTP.RetryEvent`
-- `HTTP.RedirectEvent`
-- `HTTP.DoneEvent`
-
-Verbose output is implemented on top of the same event path:
-
-```julia
-HTTP.request(trace, "GET", url; verbose = true)
-```
-
-`verbose = true` or `verbose = 1` prints one-line lifecycle messages to
-`stdout`, while `verbose = 2` also prints request and response heads. When both
-are used together, verbose output is emitted before the user callback runs.
 
 ### Timeout Model
 
@@ -314,10 +210,17 @@ Reach for these APIs when you need more control:
   on `request`
 - `retry_if`, `retry_non_idempotent`, and `respect_retry_after` for custom retry policy
 
-When `retry_if` runs for a request-path failure, `err` is a
-`RequestRetryError`; inspect `err.err` to see the underlying transport or
-protocol exception. Response-based retry decisions keep `err = nothing` and
-pass the response through `resp`.
+The full custom retry callback signature is:
+
+```julia
+retry_if(attempt::Integer, err, req::HTTP.Request, resp) -> Union{Bool,Nothing}
+```
+
+When it runs for a request-path failure, `err` is a `RequestRetryError`; inspect
+`err.err` to see the underlying transport or protocol exception. Response-based
+retry decisions keep `err = nothing` and pass the response through `resp`.
+Returning `true` requests another attempt when the request body can be replayed,
+`false` suppresses a retry, and `nothing` defers to the built-in retry rules.
 
 ### 1.x Compatibility Keywords
 

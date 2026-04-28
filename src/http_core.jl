@@ -2,40 +2,6 @@
 using Reseau.TCP
 using Reseau.TLS
 
-export Headers
-export Request
-export Response
-export RequestContext
-export get_request_context
-export HTTPError
-export AbstractBody
-export EmptyBody
-export BytesBody
-export CallbackBody
-export nobody
-export ParseError
-export ProtocolError
-export CanceledError
-export TimeoutError
-export HTTPTimeoutError
-export canonical_header_key
-export header
-export headers
-export hasheader
-export headercontains
-export setheader
-export defaultheader!
-export appendheader
-export removeheader
-export mkheaders
-export body_read!
-export body_close!
-export body_closed
-export set_deadline!
-export cancel!
-export canceled
-export expired
-
 """
     HTTPError
 
@@ -73,11 +39,8 @@ struct ProtocolError <: HTTPError
     err::Union{Nothing,Exception}
 end
 
-ProtocolError(message::AbstractString) = ProtocolError(String(message), _PROTOCOL_ERROR_GENERIC, nothing)
-ProtocolError(message::AbstractString, code::_ProtocolErrorCode) = ProtocolError(String(message), code, nothing)
-ProtocolError(message::String, err::Exception) = invoke(ProtocolError, Tuple{String, _ProtocolErrorCode, Union{Nothing,Exception}}, message, _PROTOCOL_ERROR_GENERIC, err)
-ProtocolError(message::AbstractString, err::Exception) = ProtocolError(String(message), err::Exception)
-ProtocolError(message::AbstractString, code::_ProtocolErrorCode, err::Exception) = ProtocolError(String(message), code, err)
+ProtocolError(msg, err::Exception) = ProtocolError(String(msg), _PROTOCOL_ERROR_GENERIC, err)
+ProtocolError(msg, code::_ProtocolErrorCode=_PROTOCOL_ERROR_GENERIC) = ProtocolError(String(msg), code, nothing)
 
 """
     CanceledError
@@ -139,6 +102,16 @@ const HTTPTimeoutError = TimeoutError
 """Shared empty byte-vector payload used for responses with no buffered body."""
 const nobody = UInt8[]
 const _BASE64_ALPHABET = codeunits("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+
+macro try_ignore(ex)
+    return quote
+        try
+            $(esc(ex))
+        catch
+        end
+        nothing
+    end
+end
 
 function _base64encode(data::AbstractVector{UInt8})::String
     n = length(data)
@@ -203,26 +176,14 @@ end
     return b + 0x20
 end
 
-@inline function _is_http_ows_byte(b::UInt8)::Bool
-    return b == 0x20 || b == 0x09
-end
-
-@inline function _is_http_ctl_byte(b::UInt8)::Bool
-    return b < 0x20 || b == 0x7f
-end
-
-@inline function _is_http_token_byte(b::UInt8)::Bool
-    (0x30 <= b <= 0x39 || 0x41 <= b <= 0x5a || 0x61 <= b <= 0x7a) && return true
-    return b == 0x21 || b == 0x23 || b == 0x24 || b == 0x25 || b == 0x26 || b == 0x27 ||
-           b == 0x2a || b == 0x2b || b == 0x2d || b == 0x2e || b == 0x5e || b == 0x5f ||
-           b == 0x60 || b == 0x7c || b == 0x7e
-end
-
 function _valid_header_field_name(name::AbstractString)::Bool
     raw = name isa String ? (name::String) : String(name)
     isempty(raw) && return false
     @inbounds for b in codeunits(raw)
-        _is_http_token_byte(b) || return false
+        (0x30 <= b <= 0x39 || 0x41 <= b <= 0x5a || 0x61 <= b <= 0x7a ||
+         b == 0x21 || b == 0x23 || b == 0x24 || b == 0x25 || b == 0x26 || b == 0x27 ||
+         b == 0x2a || b == 0x2b || b == 0x2d || b == 0x2e || b == 0x5e || b == 0x5f ||
+         b == 0x60 || b == 0x7c || b == 0x7e) || return false
     end
     return true
 end
@@ -236,7 +197,7 @@ function _normalize_header_field_value(value::AbstractString)::Union{Nothing,Str
             needs_rewrite = true
             continue
         end
-        if _is_http_ctl_byte(b) && b != 0x09
+        if (b < 0x20 || b == 0x7f) && b != 0x09
             return nothing
         end
     end
@@ -296,7 +257,7 @@ end
 
 function _string_contains_ctl_byte(value::AbstractString)::Bool
     @inbounds for b in codeunits(value)
-        _is_http_ctl_byte(b) && return true
+        (b < 0x20 || b == 0x7f) && return true
     end
     return false
 end
@@ -405,9 +366,7 @@ mutable struct Headers <: AbstractVector{Pair{String,String}}
 end
 
 """Create and return an empty `Headers` collection."""
-function Headers()
-    return Headers(Pair{String,String}[])
-end
+Headers() = Headers(Pair{String,String}[])
 
 """
     Headers(hint)
@@ -428,45 +387,31 @@ end
 Deep-copy constructor for header collections. The underlying pair storage is
 copied, so mutating the result does not affect the source.
 """
-function Headers(headers::Headers)
-    return Headers(copy(headers.entries))
-end
+Headers(headers::Headers) = Headers(copy(headers.entries))
 
 Headers(items::AbstractDict) = mkheaders(items)
 Headers(items::AbstractVector) = mkheaders(items)
 Headers(items::Tuple) = mkheaders(items)
 
-function Base.copy(headers::Headers)
-    return Headers(headers)
-end
+Base.copy(headers::Headers) = Headers(headers)
 
 Base.IndexStyle(::Type{Headers}) = IndexLinear()
 Base.eltype(::Type{Headers}) = Pair{String,String}
 
-function Base.size(headers::Headers)
-    return (length(headers.entries),)
-end
+Base.size(headers::Headers) = (length(headers.entries),)
 
-function Base.length(headers::Headers)
-    return length(headers.entries)
-end
+Base.length(headers::Headers) = length(headers.entries)
 
-function Base.isempty(headers::Headers)
-    return isempty(headers.entries)
-end
+Base.isempty(headers::Headers) = isempty(headers.entries)
 
 function Base.empty!(headers::Headers)
     empty!(headers.entries)
     return headers
 end
 
-function Base.iterate(headers::Headers, state...)
-    return iterate(headers.entries, state...)
-end
+Base.iterate(headers::Headers, state...) = iterate(headers.entries, state...)
 
-function Base.getindex(headers::Headers, i::Int)
-    return headers.entries[i]
-end
+Base.getindex(headers::Headers, i::Int) = headers.entries[i]
 
 @inline function _header_pair(key, value)::Pair{String,String}
     return canonical_header_key(String(key)) => String(value)
@@ -482,19 +427,6 @@ function Base.push!(headers::Headers, item)
     return headers
 end
 
-"""
-    mkheaders(headers_input) -> Headers
-
-Normalize a header-like input into a mutable `Headers` collection.
-
-`headers_input` may be `nothing`, an existing `Headers`, a dictionary, or an
-iterable of `Pair`s/2-tuples. Vector-valued entries are expanded into repeated
-header values using the same merge rules as `appendheader`.
-"""
-function mkheaders(headers::Headers)::Headers
-    return headers
-end
-
 function _append_header_values!(headers::Headers, key, value)
     if value isa AbstractVector && !(value isa AbstractString)
         for item in value
@@ -506,6 +438,15 @@ function _append_header_values!(headers::Headers, key, value)
     return headers
 end
 
+"""
+    mkheaders(headers_input) -> Headers
+
+Normalize a header-like input into a mutable `Headers` collection.
+
+`headers_input` may be `nothing`, an existing `Headers`, a dictionary, or an
+iterable of `Pair`s/2-tuples. Vector-valued entries are expanded into repeated
+header values using the same merge rules as `appendheader`.
+"""
 function mkheaders(headers_input)
     headers_input === nothing && return Headers()
     headers_input isa Headers && return headers_input
@@ -723,10 +664,10 @@ end
 @inline function _trim_http_ows_bounds(bytes)::Tuple{Int,Int}
     lo = firstindex(bytes)
     hi = lastindex(bytes)
-    while lo <= hi && _is_http_ows_byte(bytes[lo])
+    while lo <= hi && (bytes[lo] == 0x20 || bytes[lo] == 0x09)
         lo += 1
     end
-    while hi >= lo && _is_http_ows_byte(bytes[hi])
+    while hi >= lo && (bytes[hi] == 0x20 || bytes[hi] == 0x09)
         hi -= 1
     end
     return lo, hi
@@ -757,7 +698,7 @@ function _header_value_contains_token(value::String, token::String)::Bool
     i = firstindex(value_bytes)
     last = lastindex(value_bytes)
     while i <= last
-        while i <= last && _is_http_ows_byte(value_bytes[i])
+        while i <= last && (value_bytes[i] == 0x20 || value_bytes[i] == 0x09)
             i += 1
         end
         seg_lo = i
@@ -765,7 +706,7 @@ function _header_value_contains_token(value::String, token::String)::Bool
             i += 1
         end
         seg_hi = i - 1
-        while seg_hi >= seg_lo && _is_http_ows_byte(value_bytes[seg_hi])
+        while seg_hi >= seg_lo && (value_bytes[seg_hi] == 0x20 || value_bytes[seg_hi] == 0x09)
             seg_hi -= 1
         end
         if seg_hi >= seg_lo && _ascii_equal_fold_slice(value_bytes, seg_lo, seg_hi, token_bytes, token_lo, token_hi)
@@ -810,6 +751,10 @@ function defaultheader!(headers::Headers, item::Pair)
     return setheader(headers, item)
 end
 
+"""
+Internal buffered reader that first drains already-read bytes before continuing
+from the underlying TCP or TLS connection.
+"""
 mutable struct _ConnReader <: IO
     buf::Vector{UInt8}
     next::Int
@@ -817,6 +762,10 @@ mutable struct _ConnReader <: IO
     conn::Union{TCP.Conn,TLS.Conn}
 end
 
+"""
+Per-request timeout bundle normalized to nanoseconds and attached to
+`RequestContext` for transport and stream code.
+"""
 struct _RequestTimeoutConfig
     connect_timeout_ns::Int64
     response_header_timeout_ns::Int64
@@ -1038,6 +987,13 @@ end
 @inline _compat_body_arg(body::AbstractVector{UInt8}) = BytesBody(body)
 @inline _compat_body_arg(body::AbstractString) = BytesBody(Vector{UInt8}(codeunits(String(body))))
 
+@inline _compat_body_length(::Nothing)::Int64 = Int64(0)
+@inline _compat_body_length(::EmptyBody)::Int64 = Int64(0)
+@inline _compat_body_length(body::BytesBody)::Int64 = Int64(max(0, length(body.data) - body.next_index + 1))
+@inline _compat_body_length(body::AbstractVector{UInt8})::Int64 = Int64(length(body))
+@inline _compat_body_length(body::AbstractString)::Int64 = Int64(ncodeunits(body))
+@inline _compat_body_length(::AbstractBody)::Int64 = Int64(-1)
+
 function _compat_body_arg(body)
     throw(ArgumentError("compat Request/Response constructors only support `nothing`, `HTTP.AbstractBody`, `AbstractString`, or `AbstractVector{UInt8}` bodies"))
 end
@@ -1167,28 +1123,30 @@ function Request(
     target::AbstractString;
     headers=Headers(),
     trailers=Headers(),
-    body::B=EmptyBody(),
+    body=EmptyBody(),
     host::Union{Nothing,AbstractString}=nothing,
     content_length::Integer=Int64(-1),
     proto_major::Integer=1,
     proto_minor::Integer=1,
     close::Bool=false,
     context::RequestContext=RequestContext(),
-) where {B<:AbstractBody}
+)
     isempty(method) && throw(ArgumentError("method must not be empty"))
     isempty(target) && throw(ArgumentError("target must not be empty"))
     content_length < -1 && throw(ArgumentError("content_length must be >= -1"))
     (proto_major < 0 || proto_major > typemax(UInt8)) && throw(ArgumentError("proto_major must fit in UInt8"))
     (proto_minor < 0 || proto_minor > typemax(UInt8)) && throw(ArgumentError("proto_minor must fit in UInt8"))
     host_s = host === nothing ? nothing : String(host)
-    return Request{B}(
+    actual_body = _compat_body_arg(body)
+    actual_content_length = content_length < 0 ? _compat_body_length(body) : Int64(content_length)
+    return Request{typeof(actual_body)}(
         String(method),
         String(target),
         copy(mkheaders(headers)),
         copy(mkheaders(trailers)),
-        body,
+        actual_body,
         host_s,
-        Int64(content_length),
+        actual_content_length,
         UInt8(proto_major),
         UInt8(proto_minor),
         close,
@@ -1385,7 +1343,12 @@ function Response(
     previous::Union{Nothing,Response}=nothing,
     redirect_count::Integer=0,
 ) where {B}
-    actual_body = body === nobody ? response_body : _compat_body_arg(body)
+    actual_body = body === nobody ? _compat_body_arg(response_body) : _compat_body_arg(body)
+    actual_content_length = if content_length < 0
+        body === nobody ? _compat_body_length(response_body) : _compat_body_length(body)
+    else
+        Int64(content_length)
+    end
     status < 0 && throw(ArgumentError("status must be >= 0"))
     content_length < -1 && throw(ArgumentError("content_length must be >= -1"))
     redirect_count < 0 && throw(ArgumentError("redirect_count must be >= 0"))
@@ -1397,7 +1360,7 @@ function Response(
         copy(mkheaders(headers)),
         copy(mkheaders(trailers)),
         actual_body,
-        Int64(content_length),
+        actual_content_length,
         UInt8(proto_major),
         UInt8(proto_minor),
         close,
@@ -1609,6 +1572,7 @@ Base.getindex(message::Union{Request,Response}, key::AbstractString) = header(me
 
 function Base.getproperty(response::Response, field::Symbol)
     field === :url && return getfield(response, :request_url)
+    field === :status_code && return getfield(response, :status)
     field === :version && return VersionNumber(Int(getfield(response, :proto_major)), Int(getfield(response, :proto_minor)))
     return getfield(response, field)
 end

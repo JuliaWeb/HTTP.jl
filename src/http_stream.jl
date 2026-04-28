@@ -1,20 +1,9 @@
 # Streaming HTTP client API built on top of the shared client execution path.
 export startread
 export closeread
-export open
-export isaborted
 
-import Base: close, closewrite, eof, isopen, open, read, readbytes!, write
+import Base: close, closewrite, eof, isopen, read, readbytes!, write
 
-"""
-    Stream <: IO
-
-Client-side request/response stream returned by `HTTP.open`.
-
-Writes append request body bytes until response reading begins. After
-`startread(stream)`, reads consume the response body from the underlying
-connection using the same redirect/decompression machinery as `request(...)`.
-"""
 function _client_stream_request(
     method::Union{AbstractString,Symbol},
     parsed::_URLParts,
@@ -102,10 +91,12 @@ function Stream(
     )
 end
 
-@inline _stream_is_client(::Stream{ISCLIENT}) where {ISCLIENT} = ISCLIENT
+@inline _stream_is_client(::Stream{IS_CLIENT}) where {IS_CLIENT} = IS_CLIENT
 
-@inline _require_client_stream(::Stream{true}) = nothing
-@inline _require_client_stream(::Stream{false}) = throw(ArgumentError("operation is only valid for client-side HTTP streams"))
+@inline function _require_client_stream(stream::Stream{IS_CLIENT}) where {IS_CLIENT}
+    IS_CLIENT || throw(ArgumentError("operation is only valid for client-side HTTP streams"))
+    return nothing
+end
 
 function _stream_response(stream::Stream)::Response
     resp = stream.response
@@ -254,11 +245,15 @@ function write(stream::Stream{true}, data::AbstractVector{UInt8})::Int
 end
 write(stream::Stream{false}, data::AbstractVector{UInt8}) = _server_write(stream, data)
 
-function write(stream::Stream{true}, data::Union{String,SubString{String}})::Int
+function _client_stream_write(stream::Stream{true}, data::AbstractString)::Int
     (@atomic :acquire stream.started) && throw(ArgumentError("cannot write request body after response reading has started"))
     (@atomic :acquire stream.write_closed) && throw(ArgumentError("request body writes are closed"))
-    return write(stream.request_buffer, data)
+    return write(stream.request_buffer, String(data))
 end
+
+write(stream::Stream{true}, data::AbstractString)::Int = _client_stream_write(stream, data)
+write(stream::Stream{true}, data::Union{String,SubString{String}})::Int = _client_stream_write(stream, data)
+write(stream::Stream{false}, data::AbstractString) = _server_write(stream, data)
 write(stream::Stream{false}, data::Union{String,SubString{String}}) = _server_write(stream, data)
 
 function closewrite(stream::Stream{true})
@@ -325,8 +320,8 @@ end
 close(stream::Stream{false}) = _server_close(stream)
 
 """
-    open(method::Symbol, url, headers=Pair{String,String}[]; kwargs...) -> Stream
-    open(f, method::Symbol, url, headers=Pair{String,String}[]; kwargs...)
+    open(method, url, headers=Pair{String,String}[]; kwargs...) -> Stream
+    open(f, method, url, headers=Pair{String,String}[]; kwargs...)
 
 Create a streaming HTTP client request/response exchange.
 
@@ -357,11 +352,9 @@ As with `request(...)`, `retry_if` sees request-path failures as
 The `do`-block form closes request writes automatically, closes the readable
 side on exit, and returns the final response metadata.
 
-Method is currently a `Symbol` to avoid colliding with Base's file-opening
-`open(::AbstractString, ::AbstractString)` methods during precompilation.
 """
 function open(
-    method::Symbol,
+    method::Union{AbstractString,Symbol},
     url::Union{AbstractString,URI},
     headers=Pair{String,String}[];
     retry::Bool=true,
@@ -454,42 +447,27 @@ function open(
     return stream
 end
 
-function _open_with_callback(
-    opener,
-    f::Function,
-    method::Symbol,
-    url,
-    headers=Pair{String,String}[];
-    status_exception::Bool=true,
-    kwargs...,
-)
-    stream = opener(method, url, headers; kwargs...)
-    callback_error = nothing
-    try
-        f(stream)
-    catch err
-        callback_error = err
-    finally
-        try
-            closewrite(stream)
-        catch
-        end
-    end
-    response = closeread(stream)
-    if status_exception && _status_throws(response)
-        throw(StatusError(response))
-    end
-    callback_error === nothing || throw(callback_error)
-    return response
-end
-
 function open(
     f::Function,
-    method::Symbol,
+    method::Union{AbstractString,Symbol},
     url::Union{AbstractString,URI},
     headers=Pair{String,String}[];
     status_exception::Bool=true,
     kwargs...,
 )
-    return _open_with_callback(open, f, method, url, headers; status_exception=status_exception, kwargs...)
+    stream = open(method, url, headers; kwargs...)
+    try
+        f(stream)
+    catch
+        @try_ignore closewrite(stream)
+        @try_ignore closeread(stream)
+        rethrow()
+    finally
+        @try_ignore closewrite(stream)
+    end
+    response = closeread(stream)
+    if status_exception && _status_throws(response)
+        throw(StatusError(response))
+    end
+    return response
 end

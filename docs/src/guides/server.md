@@ -16,39 +16,16 @@ Use `HTTP.serve!` or `HTTP.serve` when your application naturally maps
 ```julia
 using HTTP
 
-function wait_for_base_url(server)
-    for _ in 1:100
-        port = HTTP.port(server)
-        if port != 0
-            base_url = "http://127.0.0.1:$(port)"
-            try
-                HTTP.get(
-                    base_url * "/";
-                    status_exception = false,
-                    proxy = HTTP.ProxyConfig(),
-                    connect_timeout = 0.1,
-                    request_timeout = 0.1,
-                )
-                return base_url
-            catch
-            end
-        end
-        sleep(0.01)
-    end
-    error("server did not start listening in time")
-end
-
 server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
     payload = "handled " * req.target
     return HTTP.Response(
         200;
         headers = ["X-Handler" => "request"],
-        body = HTTP.BytesBody(codeunits(payload)),
-        content_length = ncodeunits(payload),
+        body = payload,
     )
 end
 
-base_url = wait_for_base_url(server)
+base_url = "http://127.0.0.1:$(HTTP.port(server))"
 resp = HTTP.get(base_url * "/health"; proxy = HTTP.ProxyConfig())
 HTTP.forceclose(server)
 (status = resp.status, header = HTTP.header(resp, "X-Handler"), body = String(resp.body))
@@ -63,43 +40,16 @@ lifecycle. `HTTP.streamhandler` is the bridge when you want stream server
 mechanics with a request-style handler body.
 
 ```julia
-function wait_for_base_url(server)
-    for _ in 1:100
-        port = HTTP.port(server)
-        if port != 0
-            base_url = "http://127.0.0.1:$(port)"
-            try
-                HTTP.get(
-                    base_url * "/";
-                    status_exception = false,
-                    proxy = HTTP.ProxyConfig(),
-                    connect_timeout = 0.1,
-                    request_timeout = 0.1,
-                )
-                return base_url
-            catch
-            end
-        end
-        sleep(0.01)
-    end
-    error("server did not start listening in time")
-end
-
 stream_server = HTTP.listen!(
     HTTP.streamhandler() do req
-        payload = "stream handler"
-        return HTTP.Response(
-            201;
-            body = HTTP.BytesBody(codeunits(payload)),
-            content_length = ncodeunits(payload),
-        )
+        return HTTP.Response(201; body = "stream handler")
     end,
     "127.0.0.1",
     0;
     listenany = true,
 )
 
-stream_url = wait_for_base_url(stream_server)
+stream_url = "http://127.0.0.1:$(HTTP.port(stream_server))"
 stream_resp = HTTP.get(stream_url * "/echo"; status_exception = false, proxy = HTTP.ProxyConfig())
 HTTP.forceclose(stream_server)
 (status = stream_resp.status, body = String(stream_resp.body))
@@ -124,7 +74,8 @@ can:
 `HTTP.forceclose(server)` is the fast shutdown path when you need to stop
 accepting and serving immediately.
 
-Timeout keywords ending in `_ns` are nanoseconds:
+Every server timeout has both a seconds-valued keyword and a nanosecond-valued
+`_ns` keyword:
 
 ```julia
 server = HTTP.serve!(
@@ -138,8 +89,20 @@ server = HTTP.serve!(
 )
 ```
 
+```julia
+server = HTTP.serve!(
+    handler,
+    "127.0.0.1",
+    8080;
+    read_timeout = 30,
+    read_header_timeout = 5,
+    write_timeout = 30,
+    idle_timeout = 120,
+)
+```
+
 The older `readtimeout` keyword is accepted as a seconds-valued migration alias
-for `read_timeout_ns`.
+for `read_timeout`.
 
 ## Routing and Middleware
 
@@ -151,7 +114,7 @@ router = HTTP.Handlers.Router()
 
 HTTP.Handlers.register!(router, "GET", "/users/{id}") do req
     id = HTTP.Handlers.getparam(req, "id")
-    return HTTP.Response(200; body = HTTP.BytesBody(codeunits("user " * id)))
+    return HTTP.Response(200; body = "user " * id)
 end
 
 server = HTTP.serve!(router, "127.0.0.1", 8080)
@@ -175,17 +138,21 @@ The router stores route metadata on the request context. Read it with
 
 ## Static Files
 
-`HTTP.fileserver(root)` returns a normal request handler:
+`HTTP.fileserver(root)` returns a normal request handler rooted at a directory.
+It serves static files, normalizes directory redirects, can fall back to a
+single-page-app entrypoint, and emits conditional and range-aware responses.
 
 ```julia
 handler = HTTP.fileserver("public"; spa_fallback = "index.html")
 server = HTTP.serve!(handler, "127.0.0.1", 8080)
 ```
 
-For lower-level control, use `HTTP.servefile(request, path)` or
-`HTTP.servecontent(request, source)`. These helpers handle common HTTP
-semantics such as conditional requests, content type, byte ranges, and
-canonical directory redirects.
+For lower-level control, use `HTTP.servefile(request, path)` when you already
+resolved a filesystem path, or `HTTP.servecontent(request, source)` when the
+bytes/string/seekable `IO` content is already in hand. These helpers populate
+content type, `Last-Modified`, `ETag`, `Accept-Ranges`, and `Content-Range`
+headers as appropriate, and honor conditional and range request headers before
+returning a `Response`.
 
 ## SSE and Long-Lived Responses
 
@@ -203,6 +170,8 @@ end
 
 ## HTTP/2 Servers
 
-The same server entrypoints can serve HTTP/2 when TLS/ALPN or a cleartext
-HTTP/2 preface selects it. Most applications do not need a separate server API
-for HTTP/2; use the normal `serve!`, `listen!`, and `streamhandler` surfaces.
+The same server entrypoints can serve HTTP/2. For browser and most production
+clients, configure TLS so ALPN can select `h2`; for cleartext prior-knowledge
+clients, HTTP.jl accepts the HTTP/2 connection preface on the normal listener.
+Most applications do not need a separate server API for HTTP/2; use the normal
+`serve!`, `listen!`, and `streamhandler` surfaces.

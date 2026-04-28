@@ -10,10 +10,11 @@ The most important 2.0 changes are:
 
 - Julia 1.10 is the minimum supported Julia version.
 - HTTP.jl now delegates transport, resolver, and TLS substrate work to Reseau.
+- `HTTP.Headers` is now a standalone mutable header struct rather than an alias
+  for a vector of substring pairs.
 - `Request`, `Response`, `Headers`, `RequestContext`, bodies, `Client`,
   `Transport`, `Server`, and `Stream` are the core public building blocks.
 - Top-level request helpers buffer `Response.body::Vector{UInt8}` by default.
-- `Response.status_code` is now `Response.status`.
 - `RequestContext` is typed request state, not a plain `Dict`.
 - Client pooling, retries, TLS, proxying, and timeouts use more explicit
   `Client` / `Transport` / keyword configuration.
@@ -47,24 +48,6 @@ resp = HTTP.get(url)
 text = String(resp.body)
 ```
 
-The main response-field change is status access.
-
-Before:
-
-```julia
-if resp.status_code == 200
-    println(String(resp.body))
-end
-```
-
-After:
-
-```julia
-if resp.status == 200
-    println(String(resp.body))
-end
-```
-
 By default, `HTTP.request` and verb helpers return a fully materialized
 `Vector{UInt8}` in `resp.body`. For streaming, use `response_stream` or
 `HTTP.open`.
@@ -81,9 +64,14 @@ After:
 
 ```julia
 open("payload.bin", "w") do io
-    HTTP.get(url; response_stream = io)
+    resp = HTTP.get(url; response_stream = io)
+    @assert resp.body === nothing
 end
 ```
+
+In 1.x, the supplied `response_stream` object could also appear as
+`resp.body`. In 2.0, the sink remains owned by the caller; read the data back
+from the original `IO` or byte buffer you passed as `response_stream`.
 
 For pull-based streaming:
 
@@ -104,51 +92,25 @@ end
 
 ## Request and Response Constructors
 
-HTTP.jl 2.0 prefers explicit keyword-oriented constructors. Common 1.x
-positional forms are accepted as migration shims, but new code should move to
-the clearer 2.0 forms.
-
-Before:
+Common 1.x positional constructors remain accepted as migration shims, including
+string and byte-vector request or response bodies:
 
 ```julia
 req = HTTP.Request("POST", "/widgets", ["Content-Type" => "text/plain"], "hello")
+resp = HTTP.Response(201, ["Location" => "/widgets/1"], "created")
 ```
 
-After:
+New code may use the keyword forms when it needs explicit headers, trailers,
+protocol metadata, or context ownership:
 
 ```julia
-body = HTTP.BytesBody(codeunits("hello"))
 req = HTTP.Request(
     "POST",
     "/widgets";
     headers = ["Content-Type" => "text/plain"],
-    body = body,
-    content_length = ncodeunits("hello"),
+    body = "hello",
 )
 ```
-
-Before:
-
-```julia
-resp = HTTP.Response(201, ["Location" => "/widgets/1"], "created")
-```
-
-After:
-
-```julia
-payload = "created"
-resp = HTTP.Response(
-    201;
-    headers = ["Location" => "/widgets/1"],
-    body = HTTP.BytesBody(codeunits(payload)),
-    content_length = ncodeunits(payload),
-)
-```
-
-The compatibility constructors still accept common forms like
-`Response(status, headers, body)`, so you can migrate incrementally. Prefer the
-keyword form when touching code because it makes body ownership, protocol
-metadata, trailers, and content length explicit.
 
 ## Headers
 
@@ -239,11 +201,28 @@ Use a long-lived `Client` when you want connection reuse, shared cookies, proxy
 configuration, retry buckets, and HTTP/2 preference to be consistent across
 many requests.
 
+## `HTTP.@client`
+
+In 1.x, `HTTP.@client` composed one request middleware chain plus, optionally, a
+stream middleware chain. In 2.0, each position may be a single middleware or a
+tuple of middlewares:
+
+```julia
+HTTP.@client request_middleware
+HTTP.@client request_middleware stream_middleware
+HTTP.@client (outer_request, inner_request) (outer_stream, inner_stream)
+```
+
+Request middlewares wrap high-level `request(...)` calls. Stream middlewares
+wrap `HTTP.open(...)` calls. Tuple entries are applied in order, so the first
+middleware listed is the outermost wrapper.
+
 ## Retries
 
 HTTP.jl 2.0 retries are explicit and conservative. The old `retry_delays` and
 `retry_check` keywords are accepted as compatibility shims, but new code should
-use `retry`, `retries`, `retry_if`, `respect_retry_after`, and `retry_bucket`.
+use `retry`, `retries`, `retry_if`, `respect_retry_after`, and
+[`HTTP.RetryBucket`](@ref).
 
 Before:
 
@@ -277,10 +256,18 @@ end
 resp = HTTP.get(url; retry_if = retry_if)
 ```
 
-When `retry_if` sees a request-path failure, `err` is a
-`HTTP.RequestRetryError`; inspect `err.err` for the underlying transport or
-protocol exception. Response-based decisions pass `err = nothing` and the
-response in `resp`.
+The full callback signature is:
+
+```julia
+retry_if(attempt::Integer, err, req::HTTP.Request, resp) -> Union{Bool,Nothing}
+```
+
+`attempt` is the current one-based attempt number. `err` is a
+`HTTP.RequestRetryError` for request-path failures; inspect `err.err` for the
+underlying transport or protocol exception. Response-based decisions pass
+`err = nothing` and the response in `resp`. Returning `true` requests another
+attempt when the body can be replayed, `false` suppresses a retry, and `nothing`
+uses the built-in retry rules.
 
 ## Timeouts
 
@@ -321,9 +308,10 @@ Timeout failures are reported as `HTTP.HTTPTimeoutError`, an alias for
 
 ## TLS, Sockets, and Proxies
 
-The old `sslconfig` and `socket_type_tls` extension points are no longer the
-preferred API. Configure TLS and socket behavior through the Reseau-backed
-`Transport` layer.
+The old `sslconfig` and `socket_type_tls` extension points are retained for
+backwards compatibility only; they are no longer functional extension points
+for the 2.0 transport architecture. Configure TLS and socket behavior through
+the Reseau-backed `Transport` layer.
 
 Before:
 
@@ -339,7 +327,9 @@ client = HTTP.Client(transport = transport)
 resp = HTTP.get(url; client = client)
 ```
 
-Proxy configuration is explicit:
+Proxy configuration is more flexible and can be more explicit. As before, it can
+come from the environment, but callers can also pass a direct/no-proxy policy or
+a fixed proxy URL per request, client, or transport:
 
 ```julia
 direct = HTTP.ProxyConfig()
@@ -366,12 +356,7 @@ After:
 
 ```julia
 HTTP.serve!("127.0.0.1", 8080) do req
-    payload = "ok"
-    return HTTP.Response(
-        200;
-        body = HTTP.BytesBody(codeunits(payload)),
-        content_length = ncodeunits(payload),
-    )
+    return HTTP.Response(200; body = "ok")
 end
 ```
 
@@ -388,9 +373,9 @@ server = HTTP.listen!("127.0.0.1", 8080) do stream
 end
 ```
 
-Server timeout keywords ending in `_ns` are nanoseconds. The old server
-`readtimeout` keyword is accepted as a seconds-valued migration alias for
-`read_timeout_ns`.
+Every server timeout has a seconds-valued keyword and a nanosecond-valued
+`_ns` keyword. The old server `readtimeout` keyword is accepted as a
+seconds-valued migration alias for `read_timeout`.
 
 ```julia
 server = HTTP.serve!(
@@ -402,15 +387,30 @@ server = HTTP.serve!(
     write_timeout_ns = 30_000_000_000,
     idle_timeout_ns = 120_000_000_000,
 )
+
+server = HTTP.serve!(
+    handler,
+    "127.0.0.1",
+    8080;
+    read_timeout = 30,
+    read_header_timeout = 5,
+    write_timeout = 30,
+    idle_timeout = 120,
+)
 ```
 
 Useful server helpers in 2.0 include:
 
-- `HTTP.fileserver(root)` for static file handlers.
-- `HTTP.servefile(request, path)` and `HTTP.servecontent(request, source)` for
-  conditional/range-aware responses.
+- `HTTP.fileserver(root)` builds a ready-to-use static-file handler rooted at
+  `root`. It serves ordinary files, normalizes directory redirects, can serve a
+  configured SPA fallback, and uses the same conditional/range-aware response
+  helpers as the lower-level APIs.
+- `HTTP.servefile(request, path)` serves one filesystem path for a request,
+  including `If-Modified-Since`, `If-None-Match`, `Range`, content type,
+  `Last-Modified`, `ETag`, and `Accept-Ranges` handling.
+- `HTTP.servecontent(request, source)` applies the same conditional and range
+  response logic to bytes, strings, or seekable `IO` content you already own.
 - `HTTP.Handlers.Router` for route matching.
-- `HTTP.Handlers.handlertimeout(timeout_s)` for request-handler timeouts.
 - `HTTP.forceclose(server)` for immediate shutdown.
 
 ## Routing and Middleware
@@ -423,7 +423,7 @@ router = HTTP.Handlers.Router()
 
 HTTP.Handlers.register!(router, "GET", "/users/{id}") do req
     id = HTTP.Handlers.getparam(req, "id")
-    return HTTP.Response(200; body = HTTP.BytesBody(codeunits(id)))
+    return HTTP.Response(200; body = id)
 end
 
 server = HTTP.serve!(router, "127.0.0.1", 8080)
@@ -495,8 +495,6 @@ These 1.x internals are not migration targets for 2.0:
 - layer-stack internals
 - connection-pool internals
 - parser internals
-- HPACK tables and encoder/decoder state
-- direct HTTP/2 frame/session internals
 - undocumented socket/TLS extension points
 
 Move those call sites to documented `Client`, `Transport`, `Stream`, server,
@@ -523,7 +521,7 @@ Treat these as temporary migration aids. New code should use the documented
 
 ## Final Checklist
 
-- Replace `resp.status_code` with `resp.status`.
+- Prefer `resp.status`; `resp.status_code` remains available as a compatibility alias.
 - Use `HTTP.get_request_context(req)` for cancellation/deadline state.
 - Prefer keyword constructors for `Request` and `Response`.
 - Replace `pool` usage with a long-lived `HTTP.Client`.

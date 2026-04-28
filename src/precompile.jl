@@ -62,10 +62,10 @@ function _run_precompile_workload_inner!()::Nothing
     temp_dir = mktempdir()
     try
         request_router = Router()
-        register!(request_router, "GET", "/hello/{name}", handlertimeout(0.5)(req ->
+        register!(request_router, "GET", "/hello/{name}", Handlers.handlertimeout(0.5)(req ->
             _precompile_text_response("hello:" * getparam(req, "name"))
         ))
-        register!(request_router, "POST", "/echo/{name}", handlertimeout(0.5)(req -> begin
+        register!(request_router, "POST", "/echo/{name}", Handlers.handlertimeout(0.5)(req -> begin
             payload = _precompile_body_string(req.body)
             return _precompile_text_response("echo:" * getparam(req, "name") * ":" * payload)
         end))
@@ -240,10 +240,6 @@ function _run_precompile_workload_inner!()::Nothing
             catch
             end
         end
-        try
-            IOPoll.shutdown!()
-        catch
-        end
         rm(temp_dir; force=true, recursive=true)
     end
     return nothing
@@ -251,25 +247,37 @@ end
 
 function _run_precompile_workload!()::Nothing
     task = Threads.@spawn _run_precompile_workload_inner!()
-    status = timedwait(() -> istaskdone(task), 20.0; pollint = 0.01)
-    if status == :timed_out
+    try
+        status = IOPoll.timedwait(() -> istaskdone(task), 20.0; pollint = 0.01)
+        if status == :timed_out
+            try
+                IOPoll.shutdown!()
+            catch
+            end
+            try
+                Base.throwto(task, InterruptException())
+            catch
+            end
+            _ = IOPoll.timedwait(() -> istaskdone(task), 2.0; pollint = 0.01)
+            error("HTTP precompile workload timed out")
+        end
+        fetch(task)
+    finally
         try
             IOPoll.shutdown!()
         catch
         end
-        try
-            Base.throwto(task, InterruptException())
-        catch
-        end
-        _ = timedwait(() -> istaskdone(task), 2.0; pollint = 0.01)
-        error("HTTP precompile workload timed out")
     end
-    fetch(task)
     return nothing
 end
 
 function _precompile_workload_enabled()::Bool
-    return Base.JLOptions().code_coverage == 0
+    Base.JLOptions().code_coverage == 0 || return false
+    try
+        return !isempty(HostResolvers.resolve_tcp_addrs("tcp", "localhost:0"))
+    catch
+        return false
+    end
 end
 
 if _precompile_workload_enabled()

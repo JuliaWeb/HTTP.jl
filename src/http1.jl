@@ -1,11 +1,4 @@
 # HTTP/1.1 parser and serializer primitives used by client and server stacks.
-export read_request
-export write_request!
-export write_response!
-export trailers
-export FixedLengthBody
-export ChunkedBody
-export EOFBody
 
 const _HTTP1_DEFAULT_MAX_LINE_BYTES = 8 * 1024
 const _HTTP1_DEFAULT_MAX_HEADER_BYTES = 1 * 1024 * 1024

@@ -1,4 +1,5 @@
 using Test
+using Base64
 using HTTP
 using Reseau
 
@@ -280,7 +281,7 @@ end
     @test (proxy.all::HT._ProxyTarget).url == "http://proxy.local:8080/"
     @test !(proxy.all::HT._ProxyTarget).secure
     @test (proxy.all::HT._ProxyTarget).address == "proxy.local:8080"
-    @test (proxy.all::HT._ProxyTarget).authorization == "Basic " * HTTP.Base64.base64encode("user:pass")
+    @test (proxy.all::HT._ProxyTarget).authorization == "Basic " * Base64.base64encode("user:pass")
 
     default_scheme = HT.ProxyURL("proxy.local:9000")
     @test default_scheme.all !== nothing
@@ -351,7 +352,7 @@ end
     http_proxy = HT._proxy_for(selector, false, "public.local", 80)
     @test http_proxy !== nothing
     @test (http_proxy::HT._ProxyTarget).address == "http-proxy.local:8080"
-    @test (http_proxy::HT._ProxyTarget).authorization == "Basic " * HTTP.Base64.base64encode("user:pass")
+    @test (http_proxy::HT._ProxyTarget).authorization == "Basic " * Base64.base64encode("user:pass")
 
     https_proxy = HT._proxy_for(selector, true, "secure.local", 443)
     @test https_proxy !== nothing
@@ -480,7 +481,7 @@ end
         _wait_task_proxy!(server_task)
         @test seen_target[] == "http://example.com:80/forward?x=1"
         @test seen_host[] == "example.com:80"
-        @test seen_proxy_auth[] == "Basic " * HTTP.Base64.base64encode("user:pass")
+        @test seen_proxy_auth[] == "Basic " * Base64.base64encode("user:pass")
     finally
         close(client)
         try
@@ -585,7 +586,7 @@ end
         _wait_task_proxy!(origin_task)
         _wait_task_proxy!(proxy_task)
         @test seen_connect_host[] == origin_address
-        @test seen_proxy_auth[] == "Basic " * HTTP.Base64.base64encode("user:pass")
+        @test seen_proxy_auth[] == "Basic " * Base64.base64encode("user:pass")
         @test seen_origin_target[] == "/via-proxy"
     finally
         close(client)

@@ -20,6 +20,8 @@ import ..Request
 import ..Response
 import ..TCP
 import ..TLS
+import ..IOPoll
+import ..Conn as TransportConn
 import ..BytesBody
 import ..EmptyBody
 import ..ProtocolError
@@ -71,6 +73,7 @@ import .._new_conn!
 import .._set_conn_read_deadline!
 import .._set_conn_write_deadline!
 import .._is_redirect_status
+import .._base64encode
 import ..header
 import ..headers
 import ..hasheader
@@ -80,40 +83,8 @@ import ..body_close!
 import ..read_request
 import ..write_response!
 import ..write_request!
-import ..WsOpcode
-import ..WsFrame
-import ..WSConn
-import .._ws_headers_have_token
-import ..ws_send_frame!
-import ..ws_send_ping!
-import ..ws_send_pong!
-import ..ws_close!
-import ..ws_on_incoming_data!
-import ..ws_get_outgoing_data!
-import ..ws_random_handshake_key
-import ..ws_compute_accept_key
-import ..ws_decode_close_payload
-import ..ws_is_valid_close_status
-import ..ws_get_request_sec_websocket_key
-import ..ws_select_subprotocol
-import ..ws_is_websocket_request
-import ..WebSocketProtocolError
-import ..WebSocketInvalidPayloadError
 
-export WebSocket
-export WebSocketError
-export CloseFrameBody
-export send
-export receive
-export ping
-export pong
-export Conn
-export Server
-export serve!
-export listen!
-export listen
-export server_addr
-export forceclose
+include("http_websocket_codec.jl")
 
 const DEFAULT_MAX_FRAG = 1024
 const DEFAULT_READ_BUFFER_BYTES = 16 * 1024
@@ -128,7 +99,6 @@ frame-level state. Most client and server code should work with
 [`WebSocket`](@ref) instead.
 """
 const Conn = WSConn
-const TransportConn = getfield(parentmodule(@__MODULE__), :Conn)
 
 """
     CloseFrameBody(code, reason="")
@@ -576,7 +546,7 @@ function close(ws::WebSocket, body::Union{Nothing,CloseFrameBody}=nothing)
         deadline = time() + 5.0
         while time() < deadline
             ws.readclosed && break
-            sleep(0.05)
+            IOPoll.sleep(0.05)
         end
         ws.readclosed = true
     end

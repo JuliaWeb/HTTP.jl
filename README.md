@@ -32,22 +32,6 @@ HTTP.jl 2.0 is a breaking release. See the
 response fields, constructors, request context, client pooling, retries,
 timeouts, servers, WebSockets, and SSE.
 
-## Scope and Deferred Go Parity
-
-`HTTP.jl` 2.x borrows heavily from Go's `net/http` design, but it is not a
-drop-in clone of every Go API or feature.
-
-The current release intentionally defers:
-
-- HTTP/2 server push and a `Pusher`-style surface
-- Go `ResponseController` / hijack-style server-control APIs
-- full Go request lifecycle instrumentation parity
-- full `net/url` and `ServeMux` feature parity
-
-These are explicit scope decisions for the 2.x release line rather than known
-bugs in the documented client, server, streaming, proxy, HTTP/2, SSE, and
-WebSocket APIs.
-
 ## Contributing and Questions
 
 Contributions are very welcome, as are feature requests and suggestions. Please open an
@@ -101,8 +85,7 @@ server = HTTP.serve!("127.0.0.1", 8081) do request
     return HTTP.Response(
         200;
         headers = ["Content-Type" => "text/plain"],
-        body = HTTP.BytesBody(codeunits(payload)),
-        content_length = ncodeunits(payload),
+        body = payload,
     )
 end
 

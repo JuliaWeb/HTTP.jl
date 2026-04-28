@@ -161,17 +161,21 @@ end
     @test HT.get_request_context(compat_req) isa HT.RequestContext
     @test HT.get_request_context(compat_req) !== compat_req.context
     @test compat_req.body isa HT.BytesBody
+    @test compat_req.content_length == 4
 
     compat_res = HT.Response(202, ["X-Reply" => "yes"], "ok"; version=v"1.0", request=compat_req)
     @test compat_res.version == v"1.0.0"
+    @test compat_res.status_code == 202
     @test HT.header(compat_res.headers, "X-Reply") == "yes"
     @test compat_res.request === compat_req
     @test compat_res.body isa HT.BytesBody
+    @test compat_res.content_length == 2
 
     keyword_body_res = HT.Response(200; headers=["X-Body" => "keyword"], body="ok")
     @test keyword_body_res.status == 200
     @test HT.header(keyword_body_res.headers, "X-Body") == "keyword"
     @test keyword_body_res.body isa HT.BytesBody
+    @test keyword_body_res.content_length == 2
 
     keyword_empty_res = HT.Response(204; body=nothing)
     @test keyword_empty_res.status == 204

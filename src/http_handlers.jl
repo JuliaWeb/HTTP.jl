@@ -10,7 +10,8 @@ export getroute
 export getparams
 export getparam
 export getcookies
-export handlertimeout
+export streamhandler
+export Node
 
 import ..Request
 import ..RequestContext
@@ -25,6 +26,8 @@ import ..setheader
 import ..startread
 import ..serve
 import ..serve!
+import ..streamhandler
+import ..IOPoll
 import ..cancel!
 import ..canceled
 import ..body_close!
@@ -415,7 +418,7 @@ function (middleware::_HandlerTimeoutMiddleware)(req::Request)
         return nothing
     end
     timeout_s = middleware.timeout_ns / 1.0e9
-    status = timedwait(() -> isready(result), timeout_s; pollint=0.001)
+    status = IOPoll.timedwait(() -> isready(result), timeout_s; pollint=0.001)
     if status == :ok
         success, value = take!(result)
         success && return value

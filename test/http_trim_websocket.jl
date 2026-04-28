@@ -14,22 +14,22 @@ function run_http_trim_websocket()::Nothing
     # W.receive(ws) == "ping!" || error("unexpected websocket echo payload")
 
     payload = collect(codeunits("ping"))
-    frame = HT.WsFrame(
-        opcode = UInt8(HT.WsOpcode.TEXT),
+    frame = HT.WebSockets.WsFrame(
+        opcode = UInt8(HT.WebSockets.WsOpcode.TEXT),
         payload = payload,
         fin = true,
         masked = true,
         masking_key = (0x01, 0x02, 0x03, 0x04),
     )
-    encoded = HT.ws_encode_frame(frame)
+    encoded = HT.WebSockets.ws_encode_frame(frame)
     isempty(encoded) && error("expected websocket frame bytes")
 
-    decoder = HT.ws_decoder_new()
-    decoded = HT.ws_decoder_process!(decoder, encoded)
+    decoder = HT.WebSockets.ws_decoder_new()
+    decoded = HT.WebSockets.ws_decoder_process!(decoder, encoded)
     length(decoded) == 1 || error("expected one decoded websocket frame")
     rf = decoded[1]
     rf.fin || error("expected final websocket frame")
-    rf.opcode == UInt8(HT.WsOpcode.TEXT) || error("unexpected websocket opcode")
+    rf.opcode == UInt8(HT.WebSockets.WsOpcode.TEXT) || error("unexpected websocket opcode")
     String(rf.payload) == "ping" || error("unexpected websocket payload")
     return nothing
 end

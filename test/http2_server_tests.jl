@@ -316,7 +316,7 @@ end
 end
 
 @testset "HTTP/2 server request handler timeout middleware" begin
-    handler = HT.handlertimeout(0.05)(request -> begin
+    handler = HT.Handlers.handlertimeout(0.05)(request -> begin
         if request.target == "/fast"
             return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, proto_major = 2, proto_minor = 0)
         end

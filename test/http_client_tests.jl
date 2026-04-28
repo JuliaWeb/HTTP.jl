@@ -7,6 +7,12 @@ const NC = Reseau.TCP
 const ND = Reseau.HostResolvers
 const TL = Reseau.TLS
 
+if !isdefined(@__MODULE__, :_http_windows_ci)
+    @inline function _http_windows_ci()::Bool
+        return Sys.iswindows() && get(ENV, "GITHUB_ACTIONS", "false") == "true"
+    end
+end
+
 function _read_all_body_bytes_client(body::HT.AbstractBody)::Vector{UInt8}
     out = UInt8[]
     buf = Vector{UInt8}(undef, 32)
@@ -2008,13 +2014,13 @@ end
 
     ctx = HT.RequestContext()
     HT._apply_request_timeout_settings!(ctx, request_timeout_ns, config)
-    stored = HT._request_context_timeout_config(ctx)
+    stored = ctx.timeout_config
     @test stored !== nothing
     @test stored == config
     @test ctx.deadline_ns > time_ns()
     @test !HT.expired(ctx)
     empty!(ctx)
-    @test HT._request_context_timeout_config(ctx) === nothing
+    @test ctx.timeout_config === nothing
 
     legacy_request_timeout_ns = Int64(-1)
     legacy_config = nothing

@@ -50,12 +50,7 @@ HTTP.expired
 
 ```@docs
 HTTP.AbstractBody
-HTTP.EmptyBody
-HTTP.BytesBody
 HTTP.CallbackBody
-HTTP.FixedLengthBody
-HTTP.ChunkedBody
-HTTP.EOFBody
 HTTP.nobody
 HTTP.body_read!
 HTTP.body_close!

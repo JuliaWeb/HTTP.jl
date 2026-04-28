@@ -1,13 +1,7 @@
 # HTTP client proxy planning, env parsing, and no_proxy matching helpers.
-export ProxyConfig
-export NoProxy
-export ProxyURL
-export ProxyFromEnvironment
 
 using EnumX
-using Reseau: @gcsafe_ccall
 using Reseau.HostResolvers
-using Reseau.SocketOps
 
 struct _NoProxyIPRule{N}
     ip::NTuple{N,UInt8}
@@ -91,38 +85,11 @@ end
 
 NoProxy() = NoProxy(false, _NoProxyIPRule{4}[], _NoProxyIPRule{16}[], _NoProxyCIDRRule{4}[], _NoProxyCIDRRule{16}[], _NoProxyDomainRule[])
 
-function _parse_ipv4_literal(host::AbstractString)::Union{Nothing,NTuple{4,UInt8}}
-    h = String(host)
-    bytes = Vector{UInt8}(undef, 4)
-    rc = GC.@preserve bytes begin
-        @gcsafe_ccall inet_pton(
-            SocketOps.AF_INET::Cint,
-            h::Cstring,
-            pointer(bytes)::Ptr{UInt8},
-        )::Cint
-    end
-    rc == 1 || return nothing
-    return (bytes[1], bytes[2], bytes[3], bytes[4])
-end
+_parse_ipv4_literal(host::AbstractString)::Union{Nothing,NTuple{4,UInt8}} =
+    HostResolvers._parse_ipv4_literal(host)
 
-function _parse_ipv6_literal(host::AbstractString)::Union{Nothing,NTuple{16,UInt8}}
-    h = String(host)
-    bytes = Vector{UInt8}(undef, 16)
-    rc = GC.@preserve bytes begin
-        @gcsafe_ccall inet_pton(
-            SocketOps.AF_INET6::Cint,
-            h::Cstring,
-            pointer(bytes)::Ptr{UInt8},
-        )::Cint
-    end
-    rc == 1 || return nothing
-    return (
-        bytes[1], bytes[2], bytes[3], bytes[4],
-        bytes[5], bytes[6], bytes[7], bytes[8],
-        bytes[9], bytes[10], bytes[11], bytes[12],
-        bytes[13], bytes[14], bytes[15], bytes[16],
-    )
-end
+_parse_ipv6_literal(host::AbstractString)::Union{Nothing,NTuple{16,UInt8}} =
+    HostResolvers._parse_ipv6_literal(host)
 
 function _normalize_proxy_host(host::AbstractString)::String
     normalized = lowercase(String(host))

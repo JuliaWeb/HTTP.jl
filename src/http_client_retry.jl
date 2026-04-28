@@ -1,4 +1,6 @@
 # High-level HTTP client retry policy and request retry controller helpers.
+using Reseau.IOPoll
+
 mutable struct _RetryController{F}
     enabled::Bool
     remaining::Int
@@ -68,30 +70,7 @@ function _retryable_request_error(err::Exception)::Bool
     end
 end
 
-function _retryable_request_error(err::RequestRetryError)::Bool
-    current = err.err
-    while true
-        current isa EOFError && return true
-        current isa SystemError && return true
-        current isa ParseError && return true
-        current isa HostResolvers.DialTimeoutError && return true
-        current isa IOPoll.NetClosingError && return true
-        current isa IOPoll.NotPollableError && return true
-        current isa IOPoll.DeadlineExceededError && return false
-        current isa TLS.TLSHandshakeTimeoutError && return true
-        if current isa HostResolvers.OpError
-            current = (current::HostResolvers.OpError).err
-            continue
-        end
-        if current isa TLS.TLSError
-            cause = (current::TLS.TLSError).cause
-            cause === nothing && return false
-            current = cause::Exception
-            continue
-        end
-        return false
-    end
-end
+_retryable_request_error(err::RequestRetryError)::Bool = _retryable_request_error(err.err)
 
 function _retry_hook_decision(controller::_RetryController, attempt::Int, err, req::Request, resp)
     hook = controller.retry_if
@@ -116,14 +95,10 @@ function _should_retry_request_attempt(controller::_RetryController, attempt::In
     return decision::Bool
 end
 
-@inline function _retry_bucket_for_request(client::Client, retry_bucket::Bool)
-    retry_bucket || return nothing
+@inline function _retry_bucket_for_request(client::Client, retry_bucket::Union{Bool,RetryBucket})
+    retry_bucket isa RetryBucket && return retry_bucket
+    retry_bucket::Bool || return nothing
     return client.transport.retry_bucket
-end
-
-@inline function _retry_bucket_for_request(client::Client, retry_bucket::RetryBucket)
-    _ = client
-    return retry_bucket
 end
 
 @inline function _retry_partition_for_address(address::AbstractString)::String
@@ -163,7 +138,7 @@ function _sleep_retry_delay!(request::Request, delay_ns::Int64)::Bool
         now_ns + delay_ns <= deadline_ns || return false
     end
     delay_ns == 0 && return true
-    sleep(delay_ns / 1.0e9)
+    IOPoll.sleep_ns(delay_ns)
     return true
 end
 

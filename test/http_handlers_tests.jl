@@ -150,7 +150,7 @@ end
 end
 
 @testset "HTTP handlers request timeout middleware" begin
-    fast = HT.handlertimeout(5.0)(req -> begin
+    fast = HT.Handlers.handlertimeout(5.0)(req -> begin
         _ = req
         return _response_with_text("ok")
     end)
@@ -158,7 +158,7 @@ end
     @test fast_resp.status == 200
     @test String(_read_all_handler_bytes(fast_resp.body)) == "ok"
 
-    slow = HT.handlertimeout(0.02; status = 504, body = "custom timeout")(req -> begin
+    slow = HT.Handlers.handlertimeout(0.02; status = 504, body = "custom timeout")(req -> begin
         _ = req
         sleep(0.1)
         return _response_with_text("late")

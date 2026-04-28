@@ -25,7 +25,7 @@ function _raw_upgrade_response(address::String; secure::Bool = false, origin::Un
         headers = HT.Headers()
         HT.setheader(headers, "Upgrade", "websocket")
         HT.setheader(headers, "Connection", "Upgrade")
-        HT.setheader(headers, "Sec-WebSocket-Key", key === nothing ? HT.ws_random_handshake_key() : key::String)
+        HT.setheader(headers, "Sec-WebSocket-Key", key === nothing ? HT.WebSockets.ws_random_handshake_key() : key::String)
         HT.setheader(headers, "Sec-WebSocket-Version", "13")
         origin === nothing || HT.setheader(headers, "Origin", origin)
         request = HT.Request("GET", "/ws"; headers = headers, host = address, content_length = 0)

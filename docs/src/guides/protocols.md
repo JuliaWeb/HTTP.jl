@@ -19,24 +19,14 @@ HTTP method such as `:GET`.
 ```julia
 using HTTP
 
-function wait_for_ws_url(server)
-    for _ in 1:100
-        try
-            return "ws://" * HTTP.WebSockets.server_addr(server) * "/echo"
-        catch
-            sleep(0.01)
-        end
-    end
-    error("websocket server did not start listening in time")
-end
-
 server = HTTP.WebSockets.listen!("127.0.0.1", 0; listenany = true) do ws
     for msg in ws
         HTTP.WebSockets.send(ws, uppercase(String(msg)))
     end
 end
 
-reply = HTTP.WebSockets.open(wait_for_ws_url(server); proxy = HTTP.ProxyConfig()) do ws
+url = "ws://" * HTTP.WebSockets.server_addr(server) * "/echo"
+reply = HTTP.WebSockets.open(url; proxy = HTTP.ProxyConfig()) do ws
     HTTP.WebSockets.send(ws, "hello")
     HTTP.WebSockets.receive(ws)
 end
@@ -69,10 +59,22 @@ public docstrings.
 
 `HTTP.jl` supports HTTP/2 through the normal client and server APIs.
 
-On the client side, set `prefer_http2 = true` on `Transport` or `Client` when
-you want secure connections to negotiate HTTP/2 when the server supports it.
-On the server side, the standard `serve!`/`listen!` entrypoints can speak
-HTTP/2 when TLS/ALPN or a cleartext HTTP/2 preface selects it.
+On the client side, `prefer_http2 = true` is the default, so secure connections
+try to negotiate HTTP/2 with ALPN when the server supports it. Set
+`prefer_http2 = false` on `Transport` or `Client` to force HTTP/1.1 for those
+connections.
+
+```julia
+h1_only = HTTP.Client(transport = HTTP.Transport(prefer_http2 = false))
+resp = HTTP.get("https://example.com"; client = h1_only)
+close(h1_only)
+```
+
+On the server side, use the same `serve!` and `listen!` entrypoints. For browser
+and most production HTTP/2 traffic, run the server with TLS configured so ALPN
+can select `h2`. Cleartext HTTP/2 is accepted when the peer starts the
+connection with the HTTP/2 prior-knowledge preface; ordinary HTTP/1.1 upgrade
+requests are not a separate public server API.
 
 Use these higher-level APIs for ordinary HTTP/2 traffic:
 
@@ -83,19 +85,3 @@ Use these higher-level APIs for ordinary HTTP/2 traffic:
 
 HPACK tables, HTTP/2 frame structs, and direct connection/session types are
 internal implementation details rather than part of the documented public API.
-
-## Intentional Go Parity Gaps
-
-`HTTP.jl` 2.x borrows ideas from Go's `net/http`, but it does not aim to
-surface every Go API or compatibility point.
-
-The current release intentionally defers:
-
-- HTTP/2 server push and any `Pusher`-style server API
-- Go `ResponseController` / hijack-style response-control APIs
-- full Go request lifecycle instrumentation parity
-- full `net/url` and `ServeMux` feature parity
-
-Treat these as explicit scope decisions for the current release, not accidental
-regressions in the supported client, server, HTTP/2, or WebSocket features
-documented here.

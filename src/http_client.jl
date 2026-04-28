@@ -606,7 +606,7 @@ function _copy_request_for_send(request::Request, allow_nonreplayable::Bool=fals
 end
 
 """
-    _do_incoming!(client, address, request, false, nothing, :auto)
+    _do_incoming!(trace, client, address, request, false, nothing, :auto)
 
 Send `request` with redirect handling and return the final low-level
 `_IncomingResponse`.
@@ -741,6 +741,7 @@ function _do_incoming!(
             if !_is_redirect_status(response.head.status)
                 return response
             end
+            # From here on, resolve and validate the next request in a redirect chain.
             location = header(response.head.headers, "Location", nothing)
             (location === nothing || isempty(location::String)) && return response
             redirect_policy.max_redirects == 0 && return response
@@ -1103,6 +1104,7 @@ function _pump_response_body!(stream::Base.BufferStream, body::AbstractBody)::No
     return nothing
 end
 
+# IO adapter used when callers ask for streaming response bodies as ordinary IO.
 mutable struct _BodyIO{B<:AbstractBody} <: IO
     body::B
     buf::Vector{UInt8}
@@ -1173,6 +1175,17 @@ function Base.readbytes!(io::_BodyIO, dst::Vector{UInt8}, nb::Integer=length(dst
         total += chunk
     end
     return total
+end
+
+function Base.read(io::_BodyIO)::Vector{UInt8}
+    out = UInt8[]
+    buf = Vector{UInt8}(undef, 8192)
+    while true
+        n = readbytes!(io, buf)
+        n == 0 && break
+        append!(out, @view(buf[1:n]))
+    end
+    return out
 end
 
 function Base.unsafe_read(io::_BodyIO, ptr::Ptr{UInt8}, nbytes::UInt)
@@ -1463,8 +1476,7 @@ function _request_connect_host_resolver(base::_TransportHostResolver, request::R
 end
 
 
-function _request_impl(
-    trace,
+function request(
     method::Union{AbstractString,Symbol},
     url::Union{AbstractString,URI},
     h=Pair{String,String}[],
@@ -1509,9 +1521,16 @@ function _request_impl(
     socket_type_tls=nothing,
     logerrors=nothing,
     logtag=nothing,
+    trace=nothing,
+    verbose=false,
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto
 )
+    trace = if verbose === false || verbose === nothing
+        trace
+    else
+        _wrap_request_trace(trace, verbose)
+    end
     final_response = nothing
     final_error = nothing
     request_url = nothing
@@ -1606,7 +1625,7 @@ function _request_impl(
 end
 
 """
-    request(method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
+    request(method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; trace=nothing, kwargs...)
     request(trace, method, url::Union{AbstractString,URI}, headers=Pair{String,String}[], body=nothing; kwargs...)
 
 High-level one-shot HTTP request API.
@@ -1652,6 +1671,7 @@ Keyword arguments:
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
   successful SSE responses
+- `trace`: optional callback receiving request lifecycle events
 - `verbose`: `false` disables built-in logging; `true`/`1` prints high-level
   request lifecycle lines to `stdout`; `2` also prints request and response
   heads. When combined with `trace`, verbose output is emitted before the user
@@ -1702,209 +1722,9 @@ function request(
     url::Union{AbstractString,URI},
     h=Pair{String,String}[],
     b=nothing;
-    headers=h,
-    body=b,
-    basicauth=nothing,
-    retry::Bool=true,
-    retries::Integer=4,
-    retry_non_idempotent::Bool=false,
-    retry_if=nothing,
-    respect_retry_after::Bool=true,
-    retry_bucket::Union{Bool,RetryBucket}=true,
-    status_exception::Bool=true,
-    redirect::Bool=true,
-    redirect_limit::Union{Nothing,Integer}=nothing,
-    redirect_method=nothing,
-    forwardheaders::Bool=true,
-    proxy=_USE_TRANSPORT_PROXY,
-    cookies=true,
-    cookiejar::Union{Nothing,CookieJar}=nothing,
-    query=nothing,
-    response_stream=nothing,
-    decompress::Union{Nothing,Bool}=nothing,
-    sse_callback=nothing,
-    client::Union{Nothing,Client}=nothing,
-    connect_timeout::Real=30,
-    request_timeout::Real=0,
-    response_header_timeout::Real=0,
-    read_idle_timeout::Real=0,
-    write_idle_timeout::Real=0,
-    expect_continue_timeout=nothing,
-    readtimeout=nothing,
-    copyheaders=nothing,
-    pool=nothing,
-    canonicalize_headers=nothing,
-    detect_content_type=nothing,
-    observelayers=nothing,
-    retry_delays=nothing,
-    retry_check=nothing,
-    sslconfig=nothing,
-    socket_type_tls=nothing,
-    logerrors=nothing,
-    logtag=nothing,
-    verbose=false,
-    require_ssl_verification::Bool=true,
-    protocol::Symbol=:auto
+    kwargs...,
 )
-    wrapped_trace = if verbose === false || verbose === nothing
-        trace
-    else
-        _wrap_request_trace(trace, verbose)
-    end
-    return _request_impl(
-        wrapped_trace,
-        method,
-        url,
-        h,
-        b;
-        headers=headers,
-        body=body,
-        basicauth=basicauth,
-        retry=retry,
-        retries=retries,
-        retry_non_idempotent=retry_non_idempotent,
-        retry_if=retry_if,
-        respect_retry_after=respect_retry_after,
-        retry_bucket=retry_bucket,
-        status_exception=status_exception,
-        redirect=redirect,
-        redirect_limit=redirect_limit,
-        redirect_method=redirect_method,
-        forwardheaders=forwardheaders,
-        proxy=proxy,
-        cookies=cookies,
-        cookiejar=cookiejar,
-        query=query,
-        response_stream=response_stream,
-        decompress=decompress,
-        sse_callback=sse_callback,
-        client=client,
-        connect_timeout=connect_timeout,
-        request_timeout=request_timeout,
-        response_header_timeout=response_header_timeout,
-        read_idle_timeout=read_idle_timeout,
-        write_idle_timeout=write_idle_timeout,
-        expect_continue_timeout=expect_continue_timeout,
-        readtimeout=readtimeout,
-        copyheaders=copyheaders,
-        pool=pool,
-        canonicalize_headers=canonicalize_headers,
-        detect_content_type=detect_content_type,
-        observelayers=observelayers,
-        retry_delays=retry_delays,
-        retry_check=retry_check,
-        sslconfig=sslconfig,
-        socket_type_tls=socket_type_tls,
-        logerrors=logerrors,
-        logtag=logtag,
-        require_ssl_verification=require_ssl_verification,
-        protocol=protocol,
-    )
-end
-
-function request(
-    method::Union{AbstractString,Symbol},
-    url::Union{AbstractString,URI},
-    h=Pair{String,String}[],
-    b=nothing;
-    headers=h,
-    body=b,
-    basicauth=nothing,
-    retry::Bool=true,
-    retries::Integer=4,
-    retry_non_idempotent::Bool=false,
-    retry_if=nothing,
-    respect_retry_after::Bool=true,
-    retry_bucket::Union{Bool,RetryBucket}=true,
-    status_exception::Bool=true,
-    redirect::Bool=true,
-    redirect_limit::Union{Nothing,Integer}=nothing,
-    redirect_method=nothing,
-    forwardheaders::Bool=true,
-    proxy=_USE_TRANSPORT_PROXY,
-    cookies=true,
-    cookiejar::Union{Nothing,CookieJar}=nothing,
-    query=nothing,
-    response_stream=nothing,
-    decompress::Union{Nothing,Bool}=nothing,
-    sse_callback=nothing,
-    client::Union{Nothing,Client}=nothing,
-    connect_timeout::Real=30,
-    request_timeout::Real=0,
-    response_header_timeout::Real=0,
-    read_idle_timeout::Real=0,
-    write_idle_timeout::Real=0,
-    expect_continue_timeout=nothing,
-    readtimeout=nothing,
-    copyheaders=nothing,
-    pool=nothing,
-    canonicalize_headers=nothing,
-    detect_content_type=nothing,
-    observelayers=nothing,
-    retry_delays=nothing,
-    retry_check=nothing,
-    sslconfig=nothing,
-    socket_type_tls=nothing,
-    logerrors=nothing,
-    logtag=nothing,
-    verbose=false,
-    require_ssl_verification::Bool=true,
-    protocol::Symbol=:auto
-)
-    wrapped_trace = if verbose === false || verbose === nothing
-        nothing
-    else
-        _wrap_request_trace(nothing, verbose)
-    end
-    return _request_impl(
-        wrapped_trace,
-        method,
-        url,
-        h,
-        b;
-        headers=headers,
-        body=body,
-        basicauth=basicauth,
-        retry=retry,
-        retries=retries,
-        retry_non_idempotent=retry_non_idempotent,
-        retry_if=retry_if,
-        respect_retry_after=respect_retry_after,
-        retry_bucket=retry_bucket,
-        status_exception=status_exception,
-        redirect=redirect,
-        redirect_limit=redirect_limit,
-        redirect_method=redirect_method,
-        forwardheaders=forwardheaders,
-        proxy=proxy,
-        cookies=cookies,
-        cookiejar=cookiejar,
-        query=query,
-        response_stream=response_stream,
-        decompress=decompress,
-        sse_callback=sse_callback,
-        client=client,
-        connect_timeout=connect_timeout,
-        request_timeout=request_timeout,
-        response_header_timeout=response_header_timeout,
-        read_idle_timeout=read_idle_timeout,
-        write_idle_timeout=write_idle_timeout,
-        expect_continue_timeout=expect_continue_timeout,
-        readtimeout=readtimeout,
-        copyheaders=copyheaders,
-        pool=pool,
-        canonicalize_headers=canonicalize_headers,
-        detect_content_type=detect_content_type,
-        observelayers=observelayers,
-        retry_delays=retry_delays,
-        retry_check=retry_check,
-        sslconfig=sslconfig,
-        socket_type_tls=socket_type_tls,
-        logerrors=logerrors,
-        logtag=logtag,
-        require_ssl_verification=require_ssl_verification,
-        protocol=protocol,
-    )
+    return request(method, url, h, b; trace=trace, kwargs...)
 end
 
 function _finalize_request_response(
@@ -1958,41 +1778,56 @@ end
     return middleware(base)
 end
 
-"""`GET` convenience wrapper around `request`."""
+const _REQUEST_HELPER_DOC = """
+    request(method, url, headers=Pair{String,String}[], body=nothing; kwargs...)
+    get(url, headers=Pair{String,String}[]; kwargs...)
+    head(url, headers=Pair{String,String}[]; kwargs...)
+    post(url, [headers], [body]; kwargs...)
+    put(url, [headers], [body]; kwargs...)
+    patch(url, [headers], [body]; kwargs...)
+    delete(url, [headers], [body]; kwargs...)
+    options(url, headers=Pair{String,String}[]; kwargs...)
+
+High-level one-shot client request helpers. The verb helpers call
+`request(method, ...)` with a fixed HTTP method and accept the same keyword
+arguments as `request`.
+"""
+
+@doc _REQUEST_HELPER_DOC
 function get(url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...)
     return request("GET", url, headers, nothing; kwargs...)
 end
 
-"""`HEAD` convenience wrapper around `request`."""
+@doc _REQUEST_HELPER_DOC
 function head(url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...)
     return request("HEAD", url, headers, nothing; kwargs...)
 end
 
-"""`POST` convenience wrapper around `request`."""
+@doc _REQUEST_HELPER_DOC
 function post(url::Union{AbstractString,URI}, args...; kwargs...)
     headers, body = _split_headers_body_args(args)
     return request("POST", url, headers, body; kwargs...)
 end
 
-"""`PUT` convenience wrapper around `request`."""
+@doc _REQUEST_HELPER_DOC
 function put(url::Union{AbstractString,URI}, args...; kwargs...)
     headers, body = _split_headers_body_args(args)
     return request("PUT", url, headers, body; kwargs...)
 end
 
-"""`PATCH` convenience wrapper around `request`."""
+@doc _REQUEST_HELPER_DOC
 function patch(url::Union{AbstractString,URI}, args...; kwargs...)
     headers, body = _split_headers_body_args(args)
     return request("PATCH", url, headers, body; kwargs...)
 end
 
-"""`DELETE` convenience wrapper around `request`."""
+@doc _REQUEST_HELPER_DOC
 function delete(url::Union{AbstractString,URI}, args...; kwargs...)
     headers, body = _split_headers_body_args(args)
     return request("DELETE", url, headers, body; kwargs...)
 end
 
-"""`OPTIONS` convenience wrapper around `request`."""
+@doc _REQUEST_HELPER_DOC
 function options(url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...)
     return request("OPTIONS", url, headers, nothing; kwargs...)
 end
@@ -2007,7 +1842,7 @@ public HTTP client APIs with custom client-side middleware.
 Each middleware must be a callable of the form `mw(next) -> wrapped`, where
 `wrapped` matches either:
 - `request(method, url, headers, body; kwargs...)` for one-shot requests
-- `open(method::Symbol, url, headers; kwargs...)` for streaming requests
+- `open(method, url, headers; kwargs...)` for streaming requests
 
 Pass either a single middleware or a tuple of middlewares for each position.
 Tuple middlewares are applied from left to right, so `(outer, inner)` runs
@@ -2064,14 +1899,31 @@ macro client(request_middleware, stream_middleware=:(()))
             return request("OPTIONS", url, headers, nothing; kwargs...)
         end
 
-        function open(method::Symbol, url, headers=Pair{String,String}[]; kwargs...)
+        function open(method::Union{AbstractString,Symbol}, url, headers=Pair{String,String}[]; kwargs...)
             $__source__
             return $open_handler(method, url, headers; kwargs...)
         end
 
-        function open(f::Function, method::Symbol, url, headers=Pair{String,String}[]; status_exception::Bool=true, kwargs...)
+        function open(f::Function, method::Union{AbstractString,Symbol}, url, headers=Pair{String,String}[]; status_exception::Bool=true, kwargs...)
             $__source__
-            return HTTP._open_with_callback($open_handler, f, method, url, headers; status_exception=status_exception, kwargs...)
+            stream = $open_handler(method, url, headers; kwargs...)
+            callback_error = nothing
+            try
+                f(stream)
+            catch err
+                callback_error = err
+            finally
+                try
+                    closewrite(stream)
+                catch
+                end
+            end
+            response = HTTP.closeread(stream)
+            if status_exception && HTTP._status_throws(response)
+                throw(HTTP.StatusError(response))
+            end
+            callback_error === nothing || throw(callback_error)
+            return response
         end
     end
     return esc(Base.remove_linenums!(expr))

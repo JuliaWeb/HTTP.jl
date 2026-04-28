@@ -1,13 +1,10 @@
 # HTTP client transport, connection pooling, and low-level HTTP/1 roundtrip APIs.
-export Transport
-export roundtrip!
-export close_idle_connections!
-export idle_connection_count
 
 using CodecZlib
 using Reseau.TCP
 using Reseau.HostResolvers
 using Reseau.TLS
+using Reseau.IOPoll
 
 const _CONN_READER_DEFAULT_BUFFER_BYTES = 16 * 1024
 const _TRANSPORT_WRITE_BODY_CHUNK_BYTES = 16 * 1024
@@ -21,6 +18,12 @@ const _H1_BODY_CHUNKED = UInt8(0x2)
 const _H1_BODY_EOF = UInt8(0x3)
 const _TransportHostResolver = typeof(HostResolvers.HostResolver())
 
+"""
+    _RequestDeadlineWriteIO(inner, conn, request)
+
+Small write-through adapter that reapplies the request's current write deadline
+before each outbound body write.
+"""
 mutable struct _RequestDeadlineWriteIO{S} <: IO
     inner::S
     conn
@@ -375,7 +378,7 @@ function _await_expect_continue!(write_state::_RequestWriteState, request_deadli
         state == _REQUEST_WRITE_CONTINUE_SUPPRESSED && return false
         remaining_ns = deadline_ns - Int64(time_ns())
         remaining_ns <= 0 && return true
-        timedwait(() -> begin
+        IOPoll.timedwait(() -> begin
             state_now = _request_write_continue_state(write_state)
             return state_now == _REQUEST_WRITE_CONTINUE_ALLOWED || state_now == _REQUEST_WRITE_CONTINUE_SUPPRESSED
         end, remaining_ns / 1.0e9; pollint=0.001)
@@ -623,7 +626,7 @@ function _wait_for_conn!(transport::Transport, waiter::_ConnWaiter, deadline_ns:
             continue
         end
         timeout_s = min((deadline_ns - now_ns) / 1.0e9, 0.05)
-        timedwait(() -> (@atomic :acquire waiter.state) != _CONN_WAITER_WAITING, timeout_s; pollint=0.001)
+        IOPoll.timedwait(() -> (@atomic :acquire waiter.state) != _CONN_WAITER_WAITING, timeout_s; pollint=0.001)
     end
 end
 
@@ -828,38 +831,39 @@ function _new_conn!(
     connect_deadline_ns::Int64=Int64(0),
     tls_handshake_timeout_ns::Int64=Int64(0),
 )::Conn
-    return _new_conn!(
-        transport,
+    if secure
+        return _new_conn_tls!(
+            transport,
+            plan,
+            address,
+            server_name,
+            host_resolver,
+            connect_deadline_ns,
+            tls_handshake_timeout_ns,
+        )
+    end
+    return _new_conn_tcp!(
         plan,
         address,
-        Val(secure),
-        server_name,
         host_resolver,
         connect_deadline_ns,
-        tls_handshake_timeout_ns,
     )
 end
 
-function _new_conn!(
-    transport::Transport,
+function _new_conn_tcp!(
     plan::_ProxyPlan,
     address::String,
-    ::Val{false},
-    server_name::Union{Nothing,String},
-    host_resolver::_TransportHostResolver=transport.host_resolver,
+    host_resolver::_TransportHostResolver,
     connect_deadline_ns::Int64=Int64(0),
-    tls_handshake_timeout_ns::Int64=Int64(0),
 )::Conn
-    _ = (server_name, tls_handshake_timeout_ns)
     tcp = _new_tcp_conn!(plan, address, host_resolver, connect_deadline_ns)
     return Conn(plan.pool_key, plan.first_hop_address, false, tcp, nothing, _ConnReader(tcp), IOBuffer(), false, false, time_ns())
 end
 
-function _new_conn!(
+function _new_conn_tls!(
     transport::Transport,
     plan::_ProxyPlan,
     address::String,
-    ::Val{true},
     server_name::Union{Nothing,String},
     host_resolver::_TransportHostResolver=transport.host_resolver,
     connect_deadline_ns::Int64=Int64(0),
@@ -900,30 +904,6 @@ function _acquire_conn!(
     plan::_ProxyPlan,
     address::String,
     secure::Bool,
-    server_name::Union{Nothing,String},
-    acquire_deadline_ns::Int64=Int64(0),
-    host_resolver::_TransportHostResolver=transport.host_resolver,
-    connect_deadline_ns::Int64=Int64(0),
-    tls_handshake_timeout_ns::Int64=Int64(0),
-)::Conn
-    return _acquire_conn!(
-        transport,
-        plan,
-        address,
-        Val(secure),
-        server_name,
-        acquire_deadline_ns,
-        host_resolver,
-        connect_deadline_ns,
-        tls_handshake_timeout_ns,
-    )
-end
-
-function _acquire_conn!(
-    transport::Transport,
-    plan::_ProxyPlan,
-    address::String,
-    secure::Val,
     server_name::Union{Nothing,String},
     acquire_deadline_ns::Int64=Int64(0),
     host_resolver::_TransportHostResolver=transport.host_resolver,
@@ -1537,29 +1517,9 @@ function _roundtrip_incoming!(
     proxy_config::ProxyConfig=transport.proxy,
     attempt::Int=1,
 )
-    return _roundtrip_incoming!(
-        transport,
-        address,
-        request,
-        Val(secure),
-        server_name,
-        proxy_config,
-        attempt,
-    )
-end
-
-function _roundtrip_incoming!(
-    transport::Transport,
-    address::AbstractString,
-    request::Request,
-    secure::Val{S},
-    server_name::Union{Nothing,AbstractString}=nothing,
-    proxy_config::ProxyConfig=transport.proxy,
-    attempt::Int=1,
-) where {S}
     request_deadline = _request_deadline_ns(request)
     retry_template = attempt == 1 && _retryable_request(request) ? _copy_request(request) : nothing
-    plan = _proxy_plan(proxy_config, S, String(address))
+    plan = _proxy_plan(proxy_config, secure, String(address))
     connect_host_resolver = _request_connect_host_resolver(transport.host_resolver, request)
     connect_deadline_ns = _request_connect_phase_deadline_ns(transport.host_resolver, request)
     tls_handshake_timeout_ns = _request_connect_phase_timeout_ns(transport.host_resolver, request)
@@ -1614,10 +1574,10 @@ function _roundtrip_incoming!(
             end
             if request_deadline == 0
                 while !_request_write_head_written_or_done(write_state)
-                    timedwait(() -> _request_write_head_written_or_done(write_state), 0.05; pollint=0.001)
+                    IOPoll.timedwait(() -> _request_write_head_written_or_done(write_state), 0.05; pollint=0.001)
                 end
             else
-                status = timedwait(() -> _request_write_head_written_or_done(write_state), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
+                status = IOPoll.timedwait(() -> _request_write_head_written_or_done(write_state), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
                 status == :timed_out && throw(IOPoll.DeadlineExceededError())
             end
             if _request_write_done(write_state)
@@ -1666,7 +1626,7 @@ function _roundtrip_incoming!(
             if request_deadline == 0
                 wait(writer_task::Task)
             else
-                status = timedwait(() -> istaskdone(writer_task::Task), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
+                status = IOPoll.timedwait(() -> istaskdone(writer_task::Task), max((request_deadline - Int64(time_ns())) / 1.0e9, 0.0); pollint=0.001)
                 status == :timed_out && throw(IOPoll.DeadlineExceededError())
                 wait(writer_task::Task)
             end
@@ -1708,7 +1668,7 @@ Execute a single request through `transport` without the higher-level redirect,
 cookie, or retry orchestration provided by `Client`.
 """
 function roundtrip!(transport::Transport, address::String, request::Request)
-    return _streaming_response(_roundtrip_incoming!(transport, address, request, Val(false), nothing))
+    return _streaming_response(_roundtrip_incoming!(transport, address, request, false, nothing))
 end
 
 function roundtrip!(
