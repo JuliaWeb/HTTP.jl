@@ -536,25 +536,25 @@ end
     small_header_address = HT.server_addr(small_header_server)
     try
         port_num = HT.port(server)
-        large_header_resp = _raw_http_request(HT.port(small_header_server), "GET / HTTP/1.1\r\nHost: $(small_header_address)\r\n$(repeat("Foo: Bar\r\n", 200))\r\n")
+        large_header_resp, _ = _raw_http_request_until_close(HT.port(small_header_server), "GET / HTTP/1.1\r\nHost: $(small_header_address)\r\n$(repeat("Foo: Bar\r\n", 200))\r\n"; timeout_s = 5.0)
         @test occursin("HTTP/1.1 431 Request Header Fields Too Large", large_header_resp)
 
-        invalid_resp = _raw_http_request(port_num, "GET / HTP/1.1\r\n\r\n")
+        invalid_resp, _ = _raw_http_request_until_close(port_num, "GET / HTP/1.1\r\n\r\n"; timeout_s = 5.0)
         @test occursin("HTTP/1.1 400 Bad Request", invalid_resp)
 
-        no_target_resp = _raw_http_request(port_num, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
+        no_target_resp, _ = _raw_http_request_until_close(port_num, "SOMEMETHOD HTTP/1.1\r\nContent-Length: 0\r\n\r\n"; timeout_s = 5.0)
         @test occursin("HTTP/1.1 400 Bad Request", no_target_resp)
 
-        missing_host_resp = _raw_http_request(port_num, "GET / HTTP/1.1\r\n\r\n")
+        missing_host_resp, _ = _raw_http_request_until_close(port_num, "GET / HTTP/1.1\r\n\r\n"; timeout_s = 5.0)
         @test occursin("HTTP/1.1 400 Bad Request", missing_host_resp)
 
-        whitespace_host_resp = _raw_http_request(port_num, "GET / HTTP/1.1\r\nHost : $(address)\r\n\r\n")
+        whitespace_host_resp, _ = _raw_http_request_until_close(port_num, "GET / HTTP/1.1\r\nHost : $(address)\r\n\r\n"; timeout_s = 5.0)
         @test occursin("HTTP/1.1 400 Bad Request", whitespace_host_resp)
 
-        duplicate_host_resp = _raw_http_request(port_num, "GET / HTTP/1.1\r\nHost: $(address)\r\nHost: $(address)\r\n\r\n")
+        duplicate_host_resp, _ = _raw_http_request_until_close(port_num, "GET / HTTP/1.1\r\nHost: $(address)\r\nHost: $(address)\r\n\r\n"; timeout_s = 5.0)
         @test occursin("HTTP/1.1 400 Bad Request", duplicate_host_resp)
 
-        invalid_target_resp = _raw_http_request(port_num, "GET foo HTTP/1.1\r\nHost: $(address)\r\n\r\n")
+        invalid_target_resp, _ = _raw_http_request_until_close(port_num, "GET foo HTTP/1.1\r\nHost: $(address)\r\n\r\n"; timeout_s = 5.0)
         @test occursin("HTTP/1.1 400 Bad Request", invalid_target_resp)
 
         sock = ND.connect("tcp", "127.0.0.1:$(port_num)")
