@@ -583,6 +583,12 @@ end
             payload = collect(codeunits("router:" * HT.getparam(req, "name")))
             return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end)
+    seen_buffered = Channel{Bool}(1)
+    HT.register!(router, "POST", "/echo", req -> begin
+            put!(seen_buffered, req.body isa HT.BytesBody)
+            payload = String(req.body)
+            return HT.Response(200, HT.BytesBody(collect(codeunits(payload))); content_length = ncodeunits(payload), proto_major = 2, proto_minor = 0)
+        end)
     server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
     address = _wait_http_server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
@@ -595,6 +601,13 @@ end
         wrong_method = HT.Request("POST", "/router/alex"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
         wrong_method_res = HT.h2_roundtrip!(conn, wrong_method)
         @test wrong_method_res.status == 405
+
+        echo_payload = collect(codeunits("echo"))
+        echo_req = HT.Request("POST", "/echo"; host = address, body = HT.BytesBody(echo_payload), content_length = length(echo_payload), proto_major = 2, proto_minor = 0)
+        echo_res = HT.h2_roundtrip!(conn, echo_req)
+        @test echo_res.status == 200
+        @test String(_read_all_h2_server(echo_res.body)) == "echo"
+        @test take!(seen_buffered)
 
         missing_req = HT.Request("GET", "/missing"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
         missing_res = HT.h2_roundtrip!(conn, missing_req)
@@ -760,22 +773,23 @@ end
     end
 end
 
-@testset "HTTP/2 server starts handling request bodies before upload completion" begin
+@testset "HTTP/2 server stream handlers start reading bodies before upload completion" begin
     first_chunk_seen = Channel{String}(1)
     final_chunk_requested = Channel{Nothing}(1)
     release_final_chunk = Channel{Nothing}(1)
-    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            _ = HT.startread(stream)
             buf = Vector{UInt8}(undef, 5)
-            n = HT.body_read!(request.body, buf)
+            n = readbytes!(stream, buf, 5)
             put!(first_chunk_seen, String(buf[1:n]))
             total = n
             while true
-                n = HT.body_read!(request.body, buf)
+                n = readbytes!(stream, buf, length(buf))
                 n == 0 && break
                 total += n
             end
-            payload = collect(codeunits(string(total)))
-            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
+            write(stream, string(total))
+            return nothing
         end
     address = _wait_http_server_addr(server)
     conn = HT.connect_h2!(address; secure = false)

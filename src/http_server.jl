@@ -776,9 +776,47 @@ end
     return headercontains(response.headers, "Connection", "close")
 end
 
+function _read_all_server_request_body(body::AbstractBody)::Vector{UInt8}
+    body isa EmptyBody && return UInt8[]
+    body isa BytesBody && return _remaining_bytes_body(body::BytesBody)
+    out = IOBuffer()
+    buf = Vector{UInt8}(undef, 16 * 1024)
+    try
+        while true
+            n = body_read!(body, buf)
+            n == 0 && break
+            write(out, @view(buf[1:n]))
+        end
+    finally
+        @try_ignore body_close!(body)
+    end
+    return take!(out)
+end
+
+function _buffer_server_request(request::Request)::Request
+    body = request.body
+    body isa EmptyBody && return request
+    body_bytes = _read_all_server_request_body(body)
+    buffered_body = isempty(body_bytes) ? EmptyBody() : BytesBody(body_bytes)
+    return Request(
+        request.method,
+        request.target;
+        headers=request.headers,
+        trailers=request.trailers,
+        body=buffered_body,
+        host=request.host,
+        content_length=length(body_bytes),
+        proto_major=Int(request.proto_major),
+        proto_minor=Int(request.proto_minor),
+        close=request.close,
+        context=get_request_context(request),
+    )
+end
+
 @inline function _request_body_fully_consumed(request::Request)::Bool
     body = request.body
     body isa EmptyBody && return true
+    body isa BytesBody && return true
     if body isa _H2ServerBody
         return _h2_server_body_fully_consumed(body::_H2ServerBody)
     end
@@ -1040,8 +1078,10 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     return nothing
                 end
             else
+                handler_request = request
                 response = try
-                    server.handler(request)
+                    handler_request = _buffer_server_request(request)
+                    server.handler(handler_request)
                 catch err
                     status = _server_error_status(err::Exception)
                     _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
@@ -1049,18 +1089,18 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 end
                 response isa Response || throw(ProtocolError("server handler must return HTTP.Response"))
                 response_obj = response::Response
-                response_obj.request = request
-                if !_request_body_fully_consumed(request)
+                response_obj.request = handler_request
+                if !_request_body_fully_consumed(handler_request)
                     response_obj.close = true
                     @try_ignore begin
-                        body_close!(request.body)
+                        body_close!(handler_request.body)
                     end
                 end
                 _set_write_deadline!(server, tracked.conn)
                 _write_all_response!(tracked.conn, response_obj)
                 _clear_deadlines!(tracked.conn)
                 _server_shutting_down(server) && return nothing
-                if _request_wants_close(request) || _response_wants_close(response_obj)
+                if _request_wants_close(handler_request) || _response_wants_close(response_obj)
                     return nothing
                 end
             end

@@ -769,6 +769,29 @@ end
     end
 end
 
+@testset "HTTP server ordinary handlers receive buffered request bodies" begin
+    seen_buffered = Channel{Bool}(2)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            put!(seen_buffered, request.body isa HT.BytesBody)
+            return HT.Response(200, String(request.body))
+        end
+    address = _wait_h1_server_addr(server)
+    try
+        resp1 = HT.post("http://$(address)/echo"; body = "echo")
+        @test resp1.status == 200
+        @test String(resp1.body) == "echo"
+        @test take!(seen_buffered)
+
+        resp2 = HT.post("http://$(address)/again"; body = "again")
+        @test resp2.status == 200
+        @test String(resp2.body) == "again"
+        @test take!(seen_buffered)
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP server stream handler request and response flow" begin
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
             _ = HT.startread(stream)

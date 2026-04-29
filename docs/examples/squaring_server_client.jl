@@ -45,17 +45,6 @@ using HTTP
 
 const ROUTER = HTTP.Router()
 
-function request_body(req::HTTP.Request)
-    out = IOBuffer()
-    buf = Vector{UInt8}(undef, 8192)
-    while true
-        n = HTTP.body_read!(req.body, buf)
-        n == 0 && break
-        write(out, @view buf[1:n])
-    end
-    return take!(out)
-end
-
 function square(req::HTTP.Request)
     headers = [
         "Access-Control-Allow-Origin" => "*",
@@ -65,7 +54,7 @@ function square(req::HTTP.Request)
     if req.method == "OPTIONS"
         return HTTP.Response(200, headers)
     end
-    body = parse(Float64, String(request_body(req)))
+    body = parse(Float64, String(req.body))
     square = body^2
     HTTP.Response(200, headers, string(square))
 end

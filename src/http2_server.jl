@@ -1106,30 +1106,32 @@ function _handle_h2_stream!(
                 closeread(stream)
             end
         else
+            handler_request = request
             response = try
-                server.handler(request)
+                handler_request = _buffer_server_request(request)
+                server.handler(handler_request)
             catch err
                 status = _server_error_status(err::Exception)
-	                _write_h2_response!(
-	                    conn,
-	                    write_lock,
-	                    send_state,
-	                    stream_id,
-	                    request,
-	                    Response(
-	                        status === nothing ? 500 : status::Int;
-	                        proto_major=2,
-	                        proto_minor=0,
-	                        request=request,
-	                    ),
-	                    _server_write_deadline_ns(server),
-	                )
-	                return nothing
-	            end
-	            response isa Response || throw(ProtocolError("h2 server handler must return HTTP.Response"))
-	            response_obj = response::Response
-	            _write_h2_response!(conn, write_lock, send_state, stream_id, request, response_obj, _server_write_deadline_ns(server))
-	        end
+                _write_h2_response!(
+                    conn,
+                    write_lock,
+                    send_state,
+                    stream_id,
+                    request,
+                    Response(
+                        status === nothing ? 500 : status::Int;
+                        proto_major=2,
+                        proto_minor=0,
+                        request=request,
+                    ),
+                    _server_write_deadline_ns(server),
+                )
+                return nothing
+            end
+            response isa Response || throw(ProtocolError("h2 server handler must return HTTP.Response"))
+            response_obj = response::Response
+            _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, response_obj, _server_write_deadline_ns(server))
+        end
         _request_body_fully_consumed(request) || body_close!(request.body)
     catch err
         stream_cancelled = false
@@ -1510,4 +1512,3 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
     end
     return nothing
 end
-

@@ -24,25 +24,7 @@ function getNextId()
     return id
 end
 
-function animal_from_json(body)
-    data = JSON.parse(String(body))
-    animal = Animal()
-    id = get(data, "id", nothing)
-    id === nothing || (animal.id = Int(id))
-    animal.userId = UUID(data["userId"])
-    animal.type = String(data["type"])
-    animal.name = String(data["name"])
-    return animal
-end
-
-function JSON.lower(animal::Animal)
-    return Dict(
-        "id" => isdefined(animal, :id) ? animal.id : nothing,
-        "userId" => string(animal.userId),
-        "type" => animal.type,
-        "name" => animal.name,
-    )
-end
+animal_from_json(body) = JSON.parse(String(body), Animal)
 
 # CORS preflight headers that show what kinds of complex requests are allowed to API
 const CORS_OPT_HEADERS = [
@@ -147,6 +129,7 @@ server = HTTP.serve!(ANIMAL_ROUTER |> JSONMiddleware |> CorsMiddleware, "127.0.0
 resp = HTTP.post("http://localhost:8080/api/zoo/v1/users")
 userId = UUID(JSON.parse(String(resp.body)))
 x = Animal()
+x.id = 0
 x.userId = userId
 x.type = "cat"
 x.name = "pete"
@@ -157,7 +140,7 @@ x2 = animal_from_json(resp.body)
 resp = HTTP.get("http://localhost:8080/api/zoo/v1/users/$(userId)/animals/$(x2.id)")
 x3 = animal_from_json(resp.body)
 # try bad path
-resp = HTTP.get("http://localhost:8080/api/zoo/v1/badpath")
+resp = HTTP.get("http://localhost:8080/api/zoo/v1/badpath"; status_exception=false)
 
 # close the server which will stop the HTTP server from listening
 HTTP.forceclose(server)

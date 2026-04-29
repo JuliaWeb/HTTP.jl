@@ -965,6 +965,16 @@ function BytesBody(data::T) where {T<:AbstractVector{UInt8}}
     return BytesBody{T}(data, 1, false)
 end
 
+function Base.String(body::BytesBody)
+    remaining = (length(body.data) - body.next_index) + 1
+    remaining <= 0 && return ""
+    bytes = Vector{UInt8}(undef, remaining)
+    copyto!(bytes, 1, body.data, body.next_index, remaining)
+    return String(bytes)
+end
+
+Base.String(::EmptyBody) = ""
+
 """
     CallbackBody(read_cb, close_cb)
 

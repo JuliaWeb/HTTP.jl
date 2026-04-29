@@ -22,25 +22,7 @@ function getNextId()
     return id
 end
 
-function animal_from_json(body)
-    data = JSON.parse(String(body))
-    animal = Animal()
-    id = get(data, "id", nothing)
-    id === nothing || (animal.id = Int(id))
-    animal.userId = UUID(data["userId"])
-    animal.type = String(data["type"])
-    animal.name = String(data["name"])
-    return animal
-end
-
-function JSON.lower(animal::Animal)
-    return Dict(
-        "id" => isdefined(animal, :id) ? animal.id : nothing,
-        "userId" => isdefined(animal, :userId) ? string(animal.userId) : nothing,
-        "type" => animal.type,
-        "name" => animal.name,
-    )
-end
+animal_from_json(body) = JSON.parse(String(body), Animal)
 
 # "service" functions to actually do the work
 function createAnimal(req::HTTP.Request)
@@ -80,6 +62,7 @@ server = HTTP.serve!(ANIMAL_ROUTER, "127.0.0.1", 8080)
 
 # using our server
 x = Animal()
+x.id = 0
 x.userId = uuid4()
 x.type = "cat"
 x.name = "pete"
