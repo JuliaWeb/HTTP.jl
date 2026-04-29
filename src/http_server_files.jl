@@ -12,11 +12,16 @@ end
 function body_read!(body::_SeekableResponseBody, dst::Vector{UInt8})::Int
     body_closed(body) && return 0
     isempty(dst) && return 0
-    body.remaining <= 0 && return 0
+    if body.remaining <= 0
+        body_close!(body)
+        return 0
+    end
     to_read = Int(min(Int64(length(dst)), body.remaining))
     n = readbytes!(body.io, dst, to_read)
     body.remaining -= n
-    n == 0 && (@atomic :release body.closed = true)
+    if n == 0 || body.remaining <= 0
+        body_close!(body)
+    end
     return n
 end
 
@@ -721,4 +726,3 @@ function fileserver(
         return response
     end
 end
-

@@ -389,15 +389,23 @@ end
 
         direct_req = HT.Request("GET", "/hello.txt")
         direct_resp = HT.servefile(direct_req, hello_path; etag = :weak_stat, cache_control = "public, max-age=60")
-        @test direct_resp.status == 200
-        @test HT.header(direct_resp.headers, "Cache-Control") == "public, max-age=60"
-        @test HT.header(direct_resp.headers, "Content-Type") == "text/plain; charset=utf-8"
-        @test !isempty(HT.header(direct_resp.headers, "ETag", ""))
-        @test String(_read_all_server_bytes(direct_resp.body)) == "hello world"
+        try
+            @test direct_resp.status == 200
+            @test HT.header(direct_resp.headers, "Cache-Control") == "public, max-age=60"
+            @test HT.header(direct_resp.headers, "Content-Type") == "text/plain; charset=utf-8"
+            @test !isempty(HT.header(direct_resp.headers, "ETag", ""))
+            @test String(_read_all_server_bytes(direct_resp.body)) == "hello world"
+        finally
+            HT.body_close!(direct_resp.body)
+        end
 
         blob_resp = HT.servefile(HT.Request("GET", "/blob.custom"), blob_path)
-        @test blob_resp.status == 200
-        @test HT.header(blob_resp.headers, "Content-Type") == "application/octet-stream"
+        try
+            @test blob_resp.status == 200
+            @test HT.header(blob_resp.headers, "Content-Type") == "application/octet-stream"
+        finally
+            HT.body_close!(blob_resp.body)
+        end
 
         server = HT.serve!(HT.fileserver(dir; etag = :weak_stat, cache_control = "public, max-age=60"), "127.0.0.1", 0; listenany = true)
         address = HT.server_addr(server)
@@ -771,17 +779,19 @@ end
             return HT.Response(200, String(request.body))
         end
     address = HT.server_addr(server)
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 1, max_idle_total = 1), cookiejar = nothing)
     try
-        resp1 = HT.post("http://$(address)/echo"; body = "echo")
+        resp1 = HT.post("http://$(address)/echo"; body = "echo", client = client)
         @test resp1.status == 200
         @test String(resp1.body) == "echo"
         @test take!(seen_buffered)
 
-        resp2 = HT.post("http://$(address)/again"; body = "again")
+        resp2 = HT.post("http://$(address)/again"; body = "again", client = client)
         @test resp2.status == 200
         @test String(resp2.body) == "again"
         @test take!(seen_buffered)
     finally
+        close(client)
         _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
         _run_with_timeout(() -> wait(server); label = "server task completion")
     end

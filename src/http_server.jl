@@ -887,7 +887,13 @@ end
 end
 
 function _write_all_response!(conn::Union{TCP.Conn,TLS.Conn}, response::Response)::Nothing
-    write_response!(conn, response)
+    try
+        write_response!(conn, response)
+    finally
+        if response.body isa AbstractBody
+            @try_ignore body_close!(response.body::AbstractBody)
+        end
+    end
     return nothing
 end
 
