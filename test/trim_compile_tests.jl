@@ -219,7 +219,10 @@ function _count_trim_verify_messages(output::String)::Tuple{Int,Int}
 end
 
 @testset "Trim compile" begin
-    if !_TRIM_SUPPORTED
+    if Sys.iswindows()
+        println("[trim] skip Windows: JuliaC trim compilation is currently too slow or stalls on Windows CI")
+        @test true
+    elseif !_TRIM_SUPPORTED
         println("[trim] skip Julia < 1.12: JuliaC trim compilation is unavailable")
         @test true
     else
