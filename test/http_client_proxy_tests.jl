@@ -169,10 +169,7 @@ function _proxy_windows_ci_warmup!()::Nothing
                 HT.write_response!(io, response)
                 write(conn, take!(io))
             finally
-                try
-                    TL.close(conn)
-                catch
-                end
+                HTTP.@try_ignore TL.close(conn)
             end
             return nothing
         end)
@@ -189,20 +186,13 @@ function _proxy_windows_ci_warmup!()::Nothing
                 _send_response_proxy!(client_conn, connect_req; status = 200, reason = "Connection Established", headers = headers)
                 bridge1 = errormonitor(Threads.@spawn _bridge_proxy!(client_conn, origin_conn))
                 bridge2 = errormonitor(Threads.@spawn _bridge_proxy!(origin_conn, client_conn))
-                try
+                HTTP.@try_ignore begin
                     _wait_task_proxy!(bridge1; timeout_s = 2.0)
                     _wait_task_proxy!(bridge2; timeout_s = 2.0)
-                catch
                 end
             finally
-                try
-                    NC.close(client_conn)
-                catch
-                end
-                try
-                    NC.close(origin_conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(client_conn)
+                HTTP.@try_ignore NC.close(origin_conn)
             end
             return nothing
         end)
@@ -222,7 +212,7 @@ function _proxy_windows_ci_warmup!()::Nothing
         )
         request = HT.Request("GET", "/warmup"; host = origin_address, body = HT.EmptyBody(), content_length = 0)
         HT.set_deadline!(HT.get_request_context(request), Int64(time_ns()) + 3_000_000_000)
-        try
+        HTTP.@try_ignore begin
             request_task = errormonitor(Threads.@spawn HT.do!(client, origin_address, request; secure = true, protocol = :h1))
             _wait_task_proxy!(request_task; timeout_s = 2.0)
             response = fetch(request_task)
@@ -230,35 +220,22 @@ function _proxy_windows_ci_warmup!()::Nothing
             close(client)
             _wait_task_proxy!(origin_task; timeout_s = 2.0)
             _wait_task_proxy!(proxy_task; timeout_s = 2.0)
-        catch
         end
     catch
         # The warmup is best-effort: it exists only to exercise the flaky
         # Windows CI proxy/TLS compiler path before the real tests.
     finally
-        client === nothing || try
-            close(client)
-        catch
-        end
-        try
-            origin_listener === nothing || TL.close(origin_listener)
-        catch
-        end
-        try
-            proxy_listener === nothing || NC.close(proxy_listener)
-        catch
-        end
-        origin_task !== nothing && try
+        client === nothing || HTTP.@try_ignore close(client)
+        HTTP.@try_ignore origin_listener === nothing || TL.close(origin_listener)
+        HTTP.@try_ignore proxy_listener === nothing || NC.close(proxy_listener)
+        origin_task === nothing || HTTP.@try_ignore begin
             _wait_task_proxy!(origin_task; timeout_s = 0.5)
-        catch
         end
-        proxy_task !== nothing && try
+        proxy_task === nothing || HTTP.@try_ignore begin
             _wait_task_proxy!(proxy_task; timeout_s = 0.5)
-        catch
         end
-        request_task !== nothing && try
+        request_task === nothing || HTTP.@try_ignore begin
             _wait_task_proxy!(request_task; timeout_s = 0.5)
-        catch
         end
         GC.gc()
         yield()
@@ -466,10 +443,7 @@ end
             seen_proxy_auth[] = HT.header(req.headers, "Proxy-Authorization")
             _send_response_proxy!(conn, req; body_text = "proxied", close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -484,10 +458,7 @@ end
         @test seen_proxy_auth[] == "Basic " * Base64.base64encode("user:pass")
     finally
         close(client)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -526,10 +497,7 @@ end
             HT.write_response!(io, response)
             write(conn, take!(io))
         finally
-            try
-                TL.close(conn)
-            catch
-            end
+            HTTP.@try_ignore TL.close(conn)
         end
         return nothing
     end)
@@ -552,14 +520,8 @@ end
             _wait_task_proxy!(bridge1; timeout_s = 5.0)
             _wait_task_proxy!(bridge2; timeout_s = 5.0)
         finally
-            try
-                NC.close(client_conn)
-            catch
-            end
-            try
-                NC.close(origin_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(client_conn)
+            HTTP.@try_ignore NC.close(origin_conn)
         end
         return nothing
     end)
@@ -590,14 +552,8 @@ end
         @test seen_origin_target[] == "/via-proxy"
     finally
         close(client)
-        try
-            TL.close(origin_listener)
-        catch
-        end
-        try
-            NC.close(proxy_listener)
-        catch
-        end
+        HTTP.@try_ignore TL.close(origin_listener)
+        HTTP.@try_ignore NC.close(proxy_listener)
     end
     end
 end
@@ -619,10 +575,7 @@ end
                     _send_response_proxy!(conn, req; body_text = "request-proxied", close_conn = true)
                 end
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -646,10 +599,7 @@ end
             "http://example.com:80/open",
         ]
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -665,10 +615,7 @@ end
             seen_target[] = req.target
             _send_response_proxy!(conn, req; body_text = "env-proxied", close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -683,10 +630,7 @@ end
         @test seen_target[] == "http://env.local:80/via-env"
     finally
         _reset_default_http_client_proxy!()
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -789,10 +733,7 @@ end
                 end
             end
         finally
-            try
-                TL.close(conn)
-            catch
-            end
+            HTTP.@try_ignore TL.close(conn)
         end
         return nothing
     end)
@@ -808,14 +749,8 @@ end
             errormonitor(Threads.@spawn _bridge_proxy!(origin_conn, client_conn))
             wait(tunnel_done)
         finally
-            try
-                NC.close(client_conn)
-            catch
-            end
-            try
-                NC.close(origin_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(client_conn)
+            HTTP.@try_ignore NC.close(origin_conn)
         end
         return nothing
     end)
@@ -836,14 +771,8 @@ end
         @test seen_h2_path[] == "/via-h2"
     finally
         _reset_default_http_client_proxy!()
-        try
-            TL.close(origin_listener)
-        catch
-        end
-        try
-            NC.close(proxy_listener)
-        catch
-        end
+        HTTP.@try_ignore TL.close(origin_listener)
+        HTTP.@try_ignore NC.close(proxy_listener)
     end
     end
 end

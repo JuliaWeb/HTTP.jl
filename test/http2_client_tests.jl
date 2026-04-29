@@ -206,10 +206,7 @@ end
             encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField("x-test", "ok", false)])
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, true, true, encoded))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -220,10 +217,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -252,10 +246,7 @@ end
                 _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
                 _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits(payload))))
             finally
-                try
-                    NC.close(accepted_conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(accepted_conn)
             end
             return nothing
         end)
@@ -272,10 +263,7 @@ end
             _wait_task_h2!(server_task)
         finally
             close(h2_conn)
-            try
-                NC.close(listener)
-            catch
-            end
+            HTTP.@try_ignore NC.close(listener)
         end
     end
 end
@@ -292,10 +280,7 @@ end
             _ = HT.read_frame!(reader)
             _write_frame_to_conn!(accepted_conn, HT.PingFrame(false, ntuple(_ -> UInt8(0), 8)))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -303,10 +288,7 @@ end
         @test_throws HT.ProtocolError HT.connect_h2!(address; secure = false)
         _wait_task_h2!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -319,10 +301,7 @@ end
         try
             sleep(0.20)
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -330,10 +309,7 @@ end
         @test_throws Reseau.IOPoll.DeadlineExceededError HT.connect_h2!(address; secure = false, connect_deadline_ns = Int64(time_ns() + 50_000_000))
         _wait_task_h2!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -349,10 +325,7 @@ end
             _ = HT.read_frame!(reader)
             _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[UInt16(0x2) => UInt32(1)]))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -360,10 +333,7 @@ end
         @test_throws HT.ProtocolError HT.connect_h2!(address; secure = false)
         _wait_task_h2!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -388,10 +358,7 @@ end
             encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, true, true, encoded))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -404,10 +371,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -433,10 +397,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, false, UInt8[UInt8('a')]))
             sleep(0.20)
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -453,15 +414,9 @@ end
         @test_throws Reseau.IOPoll.DeadlineExceededError HT.body_read!(response.body, buf)
         _wait_task_h2!(server_task)
     finally
-        response === nothing || try
-            HT.body_close!(response.body)
-        catch
-        end
+        response === nothing || HTTP.@try_ignore HT.body_close!(response.body)
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -487,10 +442,7 @@ end
             sleep(0.05)
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, UInt8[UInt8('o'), UInt8('k')]))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -504,15 +456,9 @@ end
         @test String(_read_all_h2_body(response.body)) == "ok"
         _wait_task_h2!(server_task)
     finally
-        response === nothing || try
-            HT.body_close!(response.body)
-        catch
-        end
+        response === nothing || HTTP.@try_ignore HT.body_close!(response.body)
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -539,10 +485,7 @@ end
             end
             sleep(0.20)
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -556,10 +499,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -586,10 +526,7 @@ end
                 _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(headers_frame.stream_id, true, true, encoded))
             end
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -604,10 +541,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -624,10 +558,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[UInt16(0x6) => UInt32(96)]))
             _ = HT.read_frame!(reader)
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -641,10 +572,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -673,10 +601,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(headers_frame.stream_id, false, true, encoded))
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(headers_frame.stream_id, true, collect(codeunits("ok"))))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -692,10 +617,7 @@ end
         @test continuation_count[] > 0
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -726,10 +648,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(headers_frame.stream_id, false, false, encoded[1:split_idx]))
             _write_frame_to_conn!(accepted_conn, HT.ContinuationFrame(headers_frame.stream_id, true, encoded[(split_idx + 1):end]))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -741,10 +660,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -772,10 +688,7 @@ end
             encoded = HT.encode_header_block(server_encoder, response_headers)
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(headers_frame.stream_id, true, true, encoded))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -795,10 +708,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -833,10 +743,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -850,10 +757,7 @@ end
         @test seen_paths == ["/h2"]
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -881,10 +785,7 @@ end
             trailer_block = HT.encode_header_block(server_encoder, trailer_fields)
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, true, true, trailer_block))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -899,10 +800,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -929,10 +827,7 @@ end
             bad_trailers = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "204", false)])
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, true, true, bad_trailers))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -967,10 +862,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -997,10 +889,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
             _write_padded_data_frame_to_conn!(accepted_conn, hf.stream_id, collect(codeunits("ok")); end_stream = true, padding = 3)
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -1013,10 +902,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1045,10 +931,7 @@ end
                 _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("s" * string(hf.stream_id)))))
             end
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -1066,10 +949,7 @@ end
         @test seen_streams == UInt32[1, 3]
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1108,10 +988,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -1128,10 +1005,7 @@ end
         @test sum(frame_sizes) == 70_000
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1167,10 +1041,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -1181,10 +1052,7 @@ end
         _wait_task_h2!(server_task)
         @test String(take!(received)) == "hey there sailor"
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1222,10 +1090,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -1242,10 +1107,7 @@ end
         @test sum(chunk_sizes) == 128
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1283,10 +1145,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -1309,10 +1168,7 @@ end
         @test sum(chunk_sizes) == 128
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1341,10 +1197,7 @@ end
                 _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
             end
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -1364,10 +1217,7 @@ end
         @test sort(seen_streams) == UInt32[1, 3, 5, 7]
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1405,10 +1255,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(first.first, false, true, encoded))
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(first.first, true, collect(codeunits("resp:" * first.second))))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -1433,10 +1280,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1466,10 +1310,7 @@ end
             push_block = HT.encode_header_block(server_encoder, promised)
             _write_frame_to_conn!(accepted_conn, HT.PushPromiseFrame(hf.stream_id, UInt32(2), true, push_block))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -1480,10 +1321,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1510,10 +1348,7 @@ end
             _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(UInt32(1), false, true, encoded))
             _write_frame_to_conn!(accepted_conn, HT.DataFrame(UInt32(1), true, collect(codeunits("ok"))))
         finally
-            try
-                NC.close(accepted_conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(accepted_conn)
         end
         return nothing
     end)
@@ -1549,10 +1384,7 @@ end
         _wait_task_h2!(server_task)
     finally
         close(h2_conn)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1586,10 +1418,7 @@ end
                 end
             end
         finally
-            conn === nothing || try
-                TL.close(conn::TL.Conn)
-            catch
-            end
+            conn === nothing || HTTP.@try_ignore TL.close(conn::TL.Conn)
         end
         return nothing
     end)

@@ -6,10 +6,7 @@ const _HTTP_WINDOWS_WARMED = Ref(false)
 
 function _http_close_quiet!(x)
     x === nothing && return nothing
-    try
-        close(x)
-    catch
-    end
+    HTTP.@try_ignore close(x)
     return nothing
 end
 

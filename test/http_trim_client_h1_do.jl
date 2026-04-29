@@ -20,10 +20,7 @@ function _http_trim_h1_do_server_entry()::Nothing
         end
     finally
         _HTTP_TRIM_H1_DO_DONE[] = true
-        try
-            close(conn)
-        catch
-        end
+        HTTP.@try_ignore close(conn)
     end
     return nothing
 end
@@ -78,29 +75,19 @@ function run_http_trim_client_h1_do()::Nothing
         body isa HT.H1Body || error("expected H1Body response body")
         trim_body_string(body::HT.H1Body) == "h1-do" || error("unexpected response body")
     finally
-        try
-            client === nothing || close(client::HT.Client)
-        catch
-        end
+        HTTP.@try_ignore client === nothing || close(client::HT.Client)
         _HTTP_TRIM_H1_DO_LISTENER[] = nothing
-        try
-            listener === nothing || close(listener::Reseau.TCP.Listener)
-        catch
-        end
-        try
-            if server_task !== nothing
+        HTTP.@try_ignore listener === nothing || close(listener::Reseau.TCP.Listener)
+        if server_task !== nothing
+            HTTP.@try_ignore begin
                 done_status = Reseau.IOPoll.timedwait(() -> _HTTP_TRIM_H1_DO_DONE[] || istaskdone(server_task::Task), 5.0; pollint = 0.001)
                 done_status == :timed_out && error("timed out waiting for trim H1 do! server task shutdown")
                 wait(server_task)
             end
-        catch
         end
         yield()
         GC.gc()
-        try
-            Reseau.IOPoll.shutdown!()
-        catch
-        end
+        HTTP.@try_ignore Reseau.IOPoll.shutdown!()
     end
     return nothing
 end

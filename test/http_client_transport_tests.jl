@@ -101,10 +101,7 @@ function _transport_windows_ci_warmup!()::Nothing
                     _write_response_to_conn!(conn, request; body_text = "warmup")
                 end
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
             return nothing
         end)
@@ -115,24 +112,19 @@ function _transport_windows_ci_warmup!()::Nothing
             resp = HT.roundtrip!(transport, address, req)
             _read_all_body_bytes(resp.body)
         end
-        try
+        HTTP.@try_ignore begin
             _wait_task!(server_task; timeout_s = 2.0)
-        catch
         end
     catch
         # The warmup is best-effort: it exists only to exercise the flaky
         # first-pass Windows CI compiler/runtime path before the real tests.
     finally
-        server_task !== nothing && try
+        server_task === nothing || HTTP.@try_ignore begin
             _wait_task!(server_task; timeout_s = 0.5)
-        catch
         end
         transport === nothing || close(transport)
         if listener !== nothing
-            try
-                NC.close(listener)
-            catch
-            end
+            HTTP.@try_ignore NC.close(listener)
         end
         GC.gc()
         yield()
@@ -161,10 +153,7 @@ function _transport_windows_hostresolver_warmup!()::Nothing
                     _read_all_body_bytes(request.body)
                     _write_response_to_conn!(conn, request; body_text = "warmup", close_conn = true)
                 finally
-                    try
-                        NC.close(conn)
-                    catch
-                    end
+                    HTTP.@try_ignore NC.close(conn)
                 end
             end
             return nothing
@@ -177,16 +166,14 @@ function _transport_windows_hostresolver_warmup!()::Nothing
         HT.set_deadline!(HT.get_request_context(req2), deadline_ns)
         task1 = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req1))
         task2 = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req2))
-        try
+        HTTP.@try_ignore begin
             _wait_task!(task1; timeout_s = 2.0)
             _wait_task!(task2; timeout_s = 2.0)
             _read_all_body_bytes(fetch(task1).body)
             _read_all_body_bytes(fetch(task2).body)
-        catch
         end
-        try
+        HTTP.@try_ignore begin
             _wait_task!(server_task; timeout_s = 2.0)
-        catch
         end
     catch
         # The warmup is best-effort: it exists only to exercise the flaky
@@ -194,14 +181,10 @@ function _transport_windows_hostresolver_warmup!()::Nothing
     finally
         transport === nothing || close(transport)
         if listener !== nothing
-            try
-                NC.close(listener)
-            catch
-            end
+            HTTP.@try_ignore NC.close(listener)
         end
-        server_task !== nothing && try
+        server_task === nothing || HTTP.@try_ignore begin
             _wait_task!(server_task; timeout_s = 0.5)
-        catch
         end
         GC.gc()
         yield()
@@ -272,10 +255,7 @@ end
                 _read_all_body_bytes(request.body)
                 _write_response_to_conn!(conn, request; body_text = "ok", close_conn = true)
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -298,10 +278,7 @@ end
         _wait_task!(server_task)
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -321,10 +298,7 @@ end
             write(client, raw[offset:stop])
             offset = stop + 1
         end
-        try
-            NC.closewrite(client)
-        catch
-        end
+        HTTP.@try_ignore NC.closewrite(client)
         reader = HT._ConnReader(conn, 32)
         request = HT.read_request(reader)
         @test request.method == "POST"
@@ -332,18 +306,9 @@ end
         @test request.content_length == 5
         @test String(_read_all_body_bytes(request.body)) == "hello"
     finally
-        client === nothing || try
-            NC.close(client)
-        catch
-        end
-        conn === nothing || try
-            NC.close(conn)
-        catch
-        end
-        try
-            NC.close(listener)
-        catch
-        end
+        client === nothing || HTTP.@try_ignore NC.close(client)
+        conn === nothing || HTTP.@try_ignore NC.close(conn)
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -421,10 +386,7 @@ else
                 _transport_debug("keep-alive reuse: server response written")
             end
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -453,10 +415,7 @@ else
         @test HT.idle_connection_count(transport) == 0
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -480,10 +439,7 @@ end
                 _read_all_body_bytes(request.body)
                 _write_response_to_conn!(conn, request; body_text = "bye", close_conn = true)
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -501,10 +457,7 @@ end
         @test HT.idle_connection_count(transport) == 0
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -533,10 +486,7 @@ end
                 )
             end
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -553,10 +503,7 @@ end
         @test HT.idle_connection_count(transport; key = "http://$address") == 1
     finally
         close(client)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -585,10 +532,7 @@ end
                 )
             end
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -605,10 +549,7 @@ end
         @test HT.idle_connection_count(transport; key = "http://$address") == 1
     finally
         close(client)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -631,10 +572,7 @@ end
             _read_all_body_bytes(req2.body)
             _write_response_to_conn!(conn, req2; body_text = "second", close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -659,10 +597,7 @@ end
         @test HT.idle_connection_count(transport) == 0
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -692,10 +627,7 @@ end
                 end
             end
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         accept_count[] += 1
@@ -704,10 +636,7 @@ end
             _read_all_body_bytes(req2.body)
             _write_response_to_conn!(conn2, req2; body_text = "second-response", close_conn = true)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -734,10 +663,7 @@ end
         @test HT.idle_connection_count(transport) == 0
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -765,10 +691,7 @@ end
                 end
             end
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -795,10 +718,7 @@ end
         @test HT.idle_connection_count(transport) == 0
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -814,10 +734,7 @@ end
             payload = collect(codeunits("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"))
             _write_all_tcp!(conn, payload)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -830,10 +747,7 @@ end
         _wait_task!(server_task)
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -862,10 +776,7 @@ end
             @test String(_read_all_body_bytes(request.body)) == "hello"
             _write_response_to_conn!(conn, request; body_text = "done", close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -881,10 +792,7 @@ end
         @test !sent_body_before_continue[]
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -922,10 +830,7 @@ end
             request = HT.read_request(HT._ConnReader(conn))
             _write_response_bytes_to_conn!(conn, request; body_bytes = collect(codeunits("early")), close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -942,10 +847,7 @@ end
         _wait_task!(server_task)
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -977,10 +879,7 @@ end
             @test String(_read_all_body_bytes(request.body)) == "ping"
             _write_response_to_conn!(conn, request; body_text = "done", close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -994,10 +893,7 @@ end
         @test timedwait(() -> close_count[] == 1, 2.0; pollint = 0.001) != :timed_out
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1030,10 +926,7 @@ end
                 end
             end
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         conn2 = NC.accept(listener)
         accept_count[] += 1
@@ -1043,10 +936,7 @@ end
             _read_all_body_bytes(req2.body)
             _write_response_to_conn!(conn2, req2; body_text = "second", close_conn = true)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -1067,10 +957,7 @@ end
         @test paths == ["/one", "/two"]
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1088,15 +975,9 @@ end
                 _read_all_body_bytes(request.body)
                 _write_response_to_conn!(conn, request; body_text = "ok")
                 NC.set_read_deadline!(conn, Int64(time_ns()) + 100_000_000)
-                try
-                    _ = HT.read_request(HT._ConnReader(conn))
-                catch
-                end
+                HTTP.@try_ignore _ = HT.read_request(HT._ConnReader(conn))
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -1116,10 +997,7 @@ end
         @test HT.idle_connection_count(transport) == 0
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1149,10 +1027,7 @@ end
                 end
             end
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         accept_count[] += 1
@@ -1161,10 +1036,7 @@ end
             _read_all_body_bytes(req2.body)
             _write_response_to_conn!(conn2, req2; body_text = "second-response", close_conn = true)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -1186,10 +1058,7 @@ end
         @test !same_conn_second_request[]
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1209,10 +1078,7 @@ end
             _write_response_to_conn!(conn1, req1; body_text = "warmup")
             sleep(0.15)
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         accept_count[] += 1
@@ -1222,10 +1088,7 @@ end
             _read_all_body_bytes(req2.body)
             _write_response_to_conn!(conn2, req2; body_text = "retried", close_conn = true)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -1244,10 +1107,7 @@ end
         @test paths == ["/warmup", "/retry"]
     finally
         close(transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 

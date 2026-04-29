@@ -223,10 +223,7 @@ end
                         _write_frame_h2_integration!(conn, HT.HeadersFrame(headers_frame.stream_id, false, true, encoded))
                         _write_frame_h2_integration!(conn, HT.DataFrame(headers_frame.stream_id, true, collect(codeunits("resp:" * path))))
                     finally
-                        try
-                            NC.close(conn)
-                        catch
-                        end
+                        HTTP.@try_ignore NC.close(conn)
                     end
                     return nothing
                 end))
@@ -256,10 +253,7 @@ end
         @test elapsed < 1.8
     finally
         close(client)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
         fetch(server_task)
     end
     accepted_count = 0

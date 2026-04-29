@@ -22,10 +22,7 @@ function run_http_trim_client_server()::Nothing
         server === nothing || trim_close_http_server(server::HT.Server)
         yield()
         GC.gc()
-        try
-            Reseau.IOPoll.shutdown!()
-        catch
-        end
+        HTTP.@try_ignore Reseau.IOPoll.shutdown!()
     end
     return nothing
 end

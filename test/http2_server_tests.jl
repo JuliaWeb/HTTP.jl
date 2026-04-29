@@ -377,10 +377,7 @@ end
         @test String((data_frame::HT.DataFrame).data) == "ok|done"
         @test (data_frame::HT.DataFrame).end_stream
     finally
-        try
-            NC.close(conn)
-        catch
-        end
+        HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -426,10 +423,7 @@ end
         @test saw_goaway || saw_exception
         saw_goaway && @test goaway_error_code == UInt32(0x1)
     finally
-        conn === nothing || try
-            NC.close(conn::NC.Conn)
-        catch
-        end
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -457,10 +451,7 @@ end
         @test any(field -> field.name == ":status" && field.value == "200", decoded)
         @test any(field -> field.name == "x-large" && field.value == large_value, decoded)
     finally
-        try
-            NC.close(conn)
-        catch
-        end
+        HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -494,10 +485,7 @@ end
         decoded_trailers = HT.decode_header_block(decoder, trailer_block)
         @test any(field -> field.name == "x-large-trailer" && field.value == large_trailer, decoded_trailers)
     finally
-        try
-            NC.close(conn)
-        catch
-        end
+        HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -525,10 +513,7 @@ end
         @test any(field -> field.name == "x-reused" && field.value == repeated_value, decoded2)
         @test length(block2) < length(block1)
     finally
-        try
-            NC.close(conn)
-        catch
-        end
+        HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -558,10 +543,7 @@ end
         @test any(field -> field.name == "x-reused" && field.value == "same", decoded2)
         @test isempty(decoder.table.entries)
     finally
-        try
-            NC.close(conn)
-        catch
-        end
+        HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -589,10 +571,7 @@ end
         @test data_frame isa HT.DataFrame
         @test String((data_frame::HT.DataFrame).data) == "dup:/dup-settings"
     finally
-        try
-            NC.close(conn)
-        catch
-        end
+        HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -718,10 +697,7 @@ end
         @test headers_frame.stream_id == UInt32(1)
     finally
         isready(release) || put!(release, nothing)
-        conn === nothing || try
-            NC.close(conn::NC.Conn)
-        catch
-        end
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -847,10 +823,7 @@ end
         @test response.status == 200
         @test String(_read_all_h2_server(response.body)) == "11"
     finally
-        try
-            isready(release_final_chunk) || put!(release_final_chunk, nothing)
-        catch
-        end
+        HTTP.@try_ignore isready(release_final_chunk) || put!(release_final_chunk, nothing)
         close(conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
@@ -960,14 +933,8 @@ end
         fail_fast_resolver = ND.HostResolver(timeout_ns = Int64(1_000_000_000))
         @test_throws Exception HT.connect_h2!(address; secure = false, host_resolver = fail_fast_resolver)
     finally
-        conn === nothing || try
-            NC.close(conn::NC.Conn)
-        catch
-        end
-        close_task === nothing || try
-            fetch(close_task::Task)
-        catch
-        end
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        close_task === nothing || HTTP.@try_ignore fetch(close_task::Task)
         isopen(server) && HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -1061,10 +1028,7 @@ end
             @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
         end
     finally
-        try
-            NC.close(conn)
-        catch
-        end
+        HTTP.@try_ignore NC.close(conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -1125,10 +1089,7 @@ end
                     @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
                 end
             finally
-                conn === nothing || try
-                    NC.close(conn::NC.Conn)
-                catch
-                end
+                conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
             end
         end
     finally
@@ -1180,10 +1141,7 @@ end
                 _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/ok")
                 @test _read_h2_server_text_response!(conn::NC.Conn, reader, decoder, UInt32(3)) == "ok"
             finally
-                conn === nothing || try
-                    NC.close(conn::NC.Conn)
-                catch
-                end
+                conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
             end
         end
     finally
@@ -1214,14 +1172,8 @@ end
         _write_h2_server_request_headers!(conn::NC.Conn, encoder, UInt32(3), address, "/ok")
         @test _read_h2_server_text_response!(conn::NC.Conn, reader, decoder, UInt32(3)) == "ok"
     finally
-        try
-            put!(release, nothing)
-        catch
-        end
-        conn === nothing || try
-            NC.close(conn::NC.Conn)
-        catch
-        end
+        HTTP.@try_ignore put!(release, nothing)
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -1263,10 +1215,7 @@ end
             @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
         end
     finally
-        conn === nothing || try
-            NC.close(conn::NC.Conn)
-        catch
-        end
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -1306,10 +1255,7 @@ end
             @test (frame_or_err::HT.GoAwayFrame).error_code == UInt32(0x1)
         end
     finally
-        conn === nothing || try
-            NC.close(conn::NC.Conn)
-        catch
-        end
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -1356,10 +1302,7 @@ end
         end
         @test received == length(payload)
     finally
-        conn === nothing || try
-            NC.close(conn::NC.Conn)
-        catch
-        end
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -1431,10 +1374,7 @@ end
         end
         @test received == length(payload)
     finally
-        conn === nothing || try
-            NC.close(conn::NC.Conn)
-        catch
-        end
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
@@ -1502,10 +1442,7 @@ end
         @test saw_headers
         @test String(response_body) == "ok"
     finally
-        try
-            NC.close(conn::NC.Conn)
-        catch
-        end
+        HTTP.@try_ignore NC.close(conn::NC.Conn)
         HT.forceclose(server)
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end

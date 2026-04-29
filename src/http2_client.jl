@@ -57,24 +57,24 @@ function Base.showerror(io::IO, err::H2GoAwayError)
     return nothing
 end
 
-@inline function _tls_config_from_parts(
-    server_name::Union{Nothing,String},
-    verify_peer::Bool,
-    verify_hostname::Bool,
-    client_auth::TLS.ClientAuthMode.T,
-    cert_file::Union{Nothing,String},
-    key_file::Union{Nothing,String},
-    ca_file::Union{Nothing,String},
-    client_ca_file::Union{Nothing,String},
-    alpn_protocols::Vector{String},
-    curve_preferences::Vector{UInt16},
-    handshake_timeout_ns::Int64,
-    min_version::Union{Nothing,UInt16},
-    max_version::Union{Nothing,UInt16},
-    session_tickets_disabled::Bool,
-    session_cache_capacity::Int=64,
-)::TLS.Config
-    if _TLS_CONFIG_POSITIONAL_AVAILABLE
+if _TLS_CONFIG_POSITIONAL_AVAILABLE
+    @inline function _tls_config_from_parts(
+        server_name::Union{Nothing,String},
+        verify_peer::Bool,
+        verify_hostname::Bool,
+        client_auth::TLS.ClientAuthMode.T,
+        cert_file::Union{Nothing,String},
+        key_file::Union{Nothing,String},
+        ca_file::Union{Nothing,String},
+        client_ca_file::Union{Nothing,String},
+        alpn_protocols::Vector{String},
+        curve_preferences::Vector{UInt16},
+        handshake_timeout_ns::Int64,
+        min_version::Union{Nothing,UInt16},
+        max_version::Union{Nothing,UInt16},
+        session_tickets_disabled::Bool,
+        session_cache_capacity::Int=64,
+    )::TLS.Config
         return TLS.Config(
             server_name,
             verify_peer,
@@ -93,23 +93,42 @@ end
             session_cache_capacity,
         )
     end
-    return TLS.Config(
-        server_name=server_name,
-        verify_peer=verify_peer,
-        verify_hostname=verify_hostname,
-        client_auth=client_auth,
-        cert_file=cert_file,
-        key_file=key_file,
-        ca_file=ca_file,
-        client_ca_file=client_ca_file,
-        alpn_protocols=alpn_protocols,
-        curve_preferences=curve_preferences,
-        handshake_timeout_ns=handshake_timeout_ns,
-        min_version=min_version,
-        max_version=max_version,
-        session_tickets_disabled=session_tickets_disabled,
-        session_cache_capacity=session_cache_capacity,
-    )
+else
+    @inline function _tls_config_from_parts(
+        server_name::Union{Nothing,String},
+        verify_peer::Bool,
+        verify_hostname::Bool,
+        client_auth::TLS.ClientAuthMode.T,
+        cert_file::Union{Nothing,String},
+        key_file::Union{Nothing,String},
+        ca_file::Union{Nothing,String},
+        client_ca_file::Union{Nothing,String},
+        alpn_protocols::Vector{String},
+        curve_preferences::Vector{UInt16},
+        handshake_timeout_ns::Int64,
+        min_version::Union{Nothing,UInt16},
+        max_version::Union{Nothing,UInt16},
+        session_tickets_disabled::Bool,
+        session_cache_capacity::Int=64,
+    )::TLS.Config
+        return TLS.Config(
+            server_name=server_name,
+            verify_peer=verify_peer,
+            verify_hostname=verify_hostname,
+            client_auth=client_auth,
+            cert_file=cert_file,
+            key_file=key_file,
+            ca_file=ca_file,
+            client_ca_file=client_ca_file,
+            alpn_protocols=alpn_protocols,
+            curve_preferences=curve_preferences,
+            handshake_timeout_ns=handshake_timeout_ns,
+            min_version=min_version,
+            max_version=max_version,
+            session_tickets_disabled=session_tickets_disabled,
+            session_cache_capacity=session_cache_capacity,
+        )
+    end
 end
 
 """

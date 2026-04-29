@@ -72,10 +72,7 @@ function _http_trim_h2_wire_server_entry()::Nothing
         _http_trim_write_h2_frame!(conn, HT.DataFrame(UInt32(1), true, collect(codeunits("h2-wire"))))
     finally
         _HTTP_TRIM_H2_WIRE_DONE[] = true
-        try
-            close(conn)
-        catch
-        end
+        HTTP.@try_ignore close(conn)
     end
     return nothing
 end
@@ -128,28 +125,18 @@ function run_http_trim_client_h2_wire()::Nothing
         String(df.data) == "h2-wire" || error("unexpected DATA payload")
     finally
         _HTTP_TRIM_H2_WIRE_LISTENER[] = nothing
-        try
-            conn === nothing || close(conn::Reseau.TCP.Conn)
-        catch
-        end
-        try
-            listener === nothing || close(listener::Reseau.TCP.Listener)
-        catch
-        end
-        try
+        HTTP.@try_ignore conn === nothing || close(conn::Reseau.TCP.Conn)
+        HTTP.@try_ignore listener === nothing || close(listener::Reseau.TCP.Listener)
+        HTTP.@try_ignore begin
             if server_task !== nothing
                 done_status = Reseau.IOPoll.timedwait(() -> _HTTP_TRIM_H2_WIRE_DONE[] || istaskdone(server_task::Task), 5.0; pollint = 0.001)
                 done_status == :timed_out && error("timed out waiting for trim H2 wire server task shutdown")
                 wait(server_task)
             end
-        catch
         end
         yield()
         GC.gc()
-        try
-            Reseau.IOPoll.shutdown!()
-        catch
-        end
+        HTTP.@try_ignore Reseau.IOPoll.shutdown!()
     end
     return nothing
 end

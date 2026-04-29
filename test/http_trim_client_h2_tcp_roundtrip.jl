@@ -79,10 +79,7 @@ function _http_trim_h2_tcp_roundtrip_server_entry()::Nothing
         _http_trim_h2_tcp_roundtrip_write_frame!(conn, HT.DataFrame(UInt32(1), true, collect(codeunits("h2-tcp-roundtrip"))))
     finally
         _HTTP_TRIM_H2_TCP_ROUNDTRIP_DONE[] = true
-        try
-            close(conn)
-        catch
-        end
+        HTTP.@try_ignore close(conn)
     end
     return nothing
 end
@@ -117,33 +114,20 @@ function run_http_trim_client_h2_tcp_roundtrip()::Nothing
         body isa HT.H2Body || error("expected H2Body response body")
         trim_body_string(body::HT.H2Body) == "h2-tcp-roundtrip" || error("unexpected response body")
     finally
-        try
-            tcp === nothing || close(tcp::Reseau.TCP.Conn)
-        catch
-        end
-        try
-            conn === nothing || close(conn::HT.H2Connection)
-        catch
-        end
+        HTTP.@try_ignore tcp === nothing || close(tcp::Reseau.TCP.Conn)
+        HTTP.@try_ignore conn === nothing || close(conn::HT.H2Connection)
         _HTTP_TRIM_H2_TCP_ROUNDTRIP_LISTENER[] = nothing
-        try
-            listener === nothing || close(listener::Reseau.TCP.Listener)
-        catch
-        end
-        try
+        HTTP.@try_ignore listener === nothing || close(listener::Reseau.TCP.Listener)
+        HTTP.@try_ignore begin
             if server_task !== nothing
                 done_status = Reseau.IOPoll.timedwait(() -> _HTTP_TRIM_H2_TCP_ROUNDTRIP_DONE[] || istaskdone(server_task::Task), 5.0; pollint = 0.001)
                 done_status == :timed_out && error("timed out waiting for trim H2 TCP roundtrip server task shutdown")
                 wait(server_task)
             end
-        catch
         end
         yield()
         GC.gc()
-        try
-            Reseau.IOPoll.shutdown!()
-        catch
-        end
+        HTTP.@try_ignore Reseau.IOPoll.shutdown!()
     end
     return nothing
 end

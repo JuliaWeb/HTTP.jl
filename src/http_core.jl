@@ -108,6 +108,7 @@ macro try_ignore(ex)
         try
             $(esc(ex))
         catch
+            nothing
         end
         nothing
     end

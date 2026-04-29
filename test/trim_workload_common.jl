@@ -37,10 +37,7 @@ function trim_body_string(body::HT.AbstractBody)::String
         n == 0 && break
         append!(out, @view(buf[1:n]))
     end
-    try
-        HT.body_close!(body)
-    catch
-    end
+    HTTP.@try_ignore HT.body_close!(body)
     return String(out)
 end
 
@@ -74,14 +71,8 @@ function trim_text_response(
 end
 
 function trim_close_http_server(server)::Nothing
-    try
-        HT.forceclose(server)
-    catch
-    end
-    try
-        wait(server)
-    catch
-    end
+    HTTP.@try_ignore HT.forceclose(server)
+    HTTP.@try_ignore wait(server)
     return nothing
 end
 
@@ -92,9 +83,6 @@ function trim_raw_http_exchange(port::Integer, request::AbstractString)::String
         closewrite(conn)
         return String(read(conn))
     finally
-        try
-            close(conn)
-        catch
-        end
+        HTTP.@try_ignore close(conn)
     end
 end

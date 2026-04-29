@@ -14,7 +14,7 @@ end
 
 function _close_ws_quiet!(x)
     x === nothing && return nothing
-    try
+    HTTP.@try_ignore begin
         if x isa HT.WebSockets.Server
             close(x)
         elseif x isa NC.Listener
@@ -24,7 +24,6 @@ function _close_ws_quiet!(x)
         elseif x isa Task
             wait(x)
         end
-    catch
     end
     return nothing
 end
@@ -85,16 +84,13 @@ end
                 encoded = HT.WebSockets.ws_encode_frame(frame)
                 write(conn, encoded, length(encoded))
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end)
         ws = W.open("ws://example.com/proxied"; proxy = "http://user:pass@$proxy_address")
         @test W.receive(ws) == "proxied"
     finally
-        ws === nothing || try close(ws) catch end
+        ws === nothing || HTTP.@try_ignore close(ws)
         _close_ws_quiet!(listener)
         _close_ws_quiet!(task)
     end

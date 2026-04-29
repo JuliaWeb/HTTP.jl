@@ -34,13 +34,12 @@ function _raw_upgrade_response(address::String; secure::Bool = false, origin::Un
         write(conn, take!(io))
         return HT._streaming_response(HT._read_incoming_response(HT._ConnReader(conn), request))
     finally
-        try
+        HTTP.@try_ignore begin
             if conn isa TL.Conn
                 TL.close(conn::TL.Conn)
             else
                 NC.close(conn::NC.Conn)
             end
-        catch
         end
     end
 end
@@ -199,9 +198,6 @@ end
         @test err isa W.WebSocketError
         @test (err::W.WebSocketError).message.code == 1001
     finally
-        ws === nothing || try
-            close(ws::W.WebSocket)
-        catch
-        end
+        ws === nothing || HTTP.@try_ignore close(ws::W.WebSocket)
     end
 end

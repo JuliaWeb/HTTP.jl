@@ -68,10 +68,7 @@ end
             bytes1 = take!(io1)
             write(conn1, bytes1)
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
@@ -83,10 +80,7 @@ end
             bytes2 = take!(io2)
             write(conn2, bytes2)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -100,10 +94,7 @@ end
         @test seen_methods == ["POST", "POST"]
     finally
         close(client)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -124,10 +115,7 @@ end
             HT.write_response!(io, resp)
             write(conn, take!(io))
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -148,10 +136,7 @@ end
         _wait_task_parity!(server_task)
     finally
         close(client)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -196,10 +181,7 @@ end
             HT.write_response!(io1, resp1)
             write(conn1, take!(io1))
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
@@ -211,10 +193,7 @@ end
             HT.write_response!(io2, resp2)
             write(conn2, take!(io2))
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -226,10 +205,7 @@ end
         @test seen_bodies == ["name=value", "name=value"]
         @test seen_content_types == ["application/x-www-form-urlencoded", "application/x-www-form-urlencoded"]
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -250,10 +226,7 @@ end
             HT.write_response!(io, resp)
             write(conn, take!(io))
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -263,9 +236,6 @@ end
         @test String(response.body) == "r"
         _wait_task_parity!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end

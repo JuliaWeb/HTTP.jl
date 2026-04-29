@@ -61,16 +61,13 @@ function _wait_task_ok(task::Task)
 end
 
 function _close_quiet!(x::Task)
-    try
-        _wait_task_ok(x)
-    catch
-    end
+    HTTP.@try_ignore _wait_task_ok(x)
     return nothing
 end
 
 function _close_quiet!(x)
     x === nothing && return nothing
-    try
+    HTTP.@try_ignore begin
         if x isa TL.Listener
             TL.close(x)
         elseif x isa NC.Listener
@@ -80,7 +77,6 @@ function _close_quiet!(x)
         elseif x isa NC.Conn
             NC.close(x)
         end
-    catch
     end
     return nothing
 end
@@ -158,7 +154,7 @@ end
         @test err isa W.WebSocketError
         @test W.isok(err)
     finally
-        ws === nothing || try close(ws) catch end
+        ws === nothing || HTTP.@try_ignore close(ws)
         _close_quiet!(listener)
         _close_quiet!(task)
     end
@@ -180,7 +176,7 @@ end
         ws = W.open("wss://$address/secure"; require_ssl_verification = false)
         @test W.receive(ws) == "secure"
     finally
-        ws === nothing || try close(ws) catch end
+        ws === nothing || HTTP.@try_ignore close(ws)
         _close_quiet!(listener)
         _close_quiet!(task)
     end
@@ -202,7 +198,7 @@ end
         ws = W.open("ws://$address/subproto"; subprotocols = ["chat", "superchat"])
         @test ws.subprotocol == "chat"
     finally
-        ws === nothing || try close(ws) catch end
+        ws === nothing || HTTP.@try_ignore close(ws)
         _close_quiet!(listener)
         _close_quiet!(task)
     end
@@ -233,7 +229,7 @@ end
         ws = W.open("ws://$redirect_address/start"; cookiejar = HT.CookieJar())
         @test ws.handshake_response.status == 101
     finally
-        ws === nothing || try close(ws) catch end
+        ws === nothing || HTTP.@try_ignore close(ws)
         _close_quiet!(redirect_listener)
         _close_quiet!(redirect_task)
         _close_quiet!(target_listener)

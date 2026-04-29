@@ -127,10 +127,7 @@ end
             push!(seen_tokens, HT.header(req1.headers, "X-Client-Token", ""))
             _send_response_client!(conn1, req1; body_text="request")
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
@@ -138,10 +135,7 @@ end
             push!(seen_tokens, HT.header(req2.headers, "X-Stream-Token", ""))
             _send_response_client!(conn2, req2; body_text="stream")
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -162,10 +156,7 @@ end
         @test seen_tokens == ["abc123", "stream-xyz"]
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -223,10 +214,7 @@ end
                 req = HT.read_request(HT._ConnReader(conn))
                 _send_response_client!(conn, req; body_text=body_text)
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -258,10 +246,7 @@ end
         ]
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -277,10 +262,7 @@ end
             req = HT.read_request(HT._ConnReader(conn))
             _send_response_client!(conn, req; body_text = "ok", close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -301,10 +283,7 @@ end
         @test events[3].err === nothing
         @test events[3].url == "$(base_url)/trace"
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -321,10 +300,7 @@ end
             req = HT.read_request(HT._ConnReader(conn))
             _send_response_client!(conn, req; body_text = "ok", close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -345,10 +321,7 @@ end
         @test occursin("HTTP/1.1 200 OK", output)
         @test occursin("[http] done 200 for $(base_url)/verbose", output)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -370,10 +343,7 @@ end
             HT.setheader(headers1, "Connection", "close")
             _send_response_client!(conn1, req1; status = 302, reason = "Found", headers = headers1, close_conn = true)
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
@@ -383,10 +353,7 @@ end
             redirected_content_type[] = HT.header(req2.headers, "Content-Type", nothing)
             _send_response_client!(conn2, req2; body_text = "final")
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -404,10 +371,7 @@ end
         @test redirected_content_type[] === nothing
     finally
         close(client.transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -426,20 +390,14 @@ end
             HT.setheader(headers1, "Connection", "close")
             _send_response_client!(conn1, req1; status = 302, reason = "Found", headers = headers1, close_conn = true)
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
             req2 = HT.read_request(HT._ConnReader(conn2))
             _send_response_client!(conn2, req2; body_text = "ok", close_conn = true)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -463,10 +421,7 @@ end
         @test redirect_event.to_url == "$(base_url)/final"
         @test redirect_event.redirect_count == 1
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -488,10 +443,7 @@ end
             HT.setheader(headers, "Connection", "close")
             _send_response_client!(conn1, req1; status = 302, reason = "Found", headers = headers, close_conn = true)
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
@@ -500,10 +452,7 @@ end
             push!(seen_bodies, String(_read_all_body_bytes_client(req2.body)))
             _send_response_client!(conn2, req2; body_text = "ok", close_conn = true)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -515,10 +464,7 @@ end
         @test seen_methods == ["POST", "POST"]
         @test seen_bodies == ["payload", "payload"]
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -546,10 +492,7 @@ end
             HT.setheader(headers, "Connection", "close")
             _send_response_client!(conn, req; status = 307, reason = "Temporary Redirect", headers = headers, body_text = "redirect", close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -563,10 +506,7 @@ end
         @test seen_methods == ["POST"]
     finally
         close(client.transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -584,10 +524,7 @@ end
             HT.setheader(headers1, "Connection", "close")
             _send_response_client!(conn1, req1; status = 302, reason = "Found", headers = headers1, close_conn = true)
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
@@ -595,10 +532,7 @@ end
             seen_referer[] = HT.header(req2.headers, "Referer", nothing)
             _send_response_client!(conn2, req2; body_text = "ok", close_conn = true)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -612,10 +546,7 @@ end
         @test seen_referer[] == "http://$(address)/start"
     finally
         close(client.transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
     @test HT._redirect_referer(true, "example.com:443", "/secure", false, nothing) === nothing
     @test HT._redirect_referer(false, "example.com:80", "/plain", false, "custom-ref") == "custom-ref"
@@ -643,10 +574,7 @@ end
             HT.setheader(headers, "Connection", "close")
             _send_response_client!(conn, req; status = 302, reason = "Found", headers = headers, close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -658,10 +586,7 @@ end
             seen_cookie_hop2[] = HT.header(req.headers, "Cookie", nothing)
             _send_response_client!(conn, req; body_text = "ok", close_conn = true)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -682,14 +607,8 @@ end
         @test seen_cookie_hop2[] === nothing
     finally
         close(client.transport)
-        try
-            NC.close(listener1)
-        catch
-        end
-        try
-            NC.close(listener2)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener1)
+        HTTP.@try_ignore NC.close(listener2)
     end
 end
 
@@ -725,10 +644,7 @@ end
             HT.setheader(headers, "Connection", "close")
             _send_response_client!(conn1, req1; status = 302, reason = "Found", headers = headers, close_conn = true)
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
@@ -737,10 +653,7 @@ end
             hop2_header[] = HT.header(req2.headers, "X-Test", nothing)
             _send_response_client!(conn2, req2; body_text = "ok", close_conn = true)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -754,10 +667,7 @@ end
         @test hop2_host[] == address
         @test hop2_header[] === nothing
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -816,10 +726,7 @@ end
                 HT.setheader(headers, "Connection", "close")
                 _send_response_client!(conn, req; status = 302, reason = "Found", headers = headers, body_text = "redirect", close_conn = true)
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -841,10 +748,7 @@ end
 
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -877,10 +781,7 @@ end
                     _send_response_client!(conn, req; status = 500, reason = "Unexpected", body_text = req.target, close_conn = true)
                 end
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -919,10 +820,7 @@ end
 
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -941,10 +839,7 @@ end
             HT.setheader(headers1, "Connection", "close")
             _send_response_client!(conn1, req1; body_text = "set", headers = headers1, close_conn = true)
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
@@ -952,10 +847,7 @@ end
             cookie_header_seen[] = HT.header(req2.headers, "Cookie", nothing)
             _send_response_client!(conn2, req2; body_text = "ok")
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -969,10 +861,7 @@ end
         @test cookie_header_seen[] == "session=abc"
     finally
         close(client.transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -992,10 +881,7 @@ end
             HT.setheader(headers1, "Connection", "close")
             _send_response_client!(conn1, req1; body_text = "set", headers = headers1, close_conn = true)
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
@@ -1003,10 +889,7 @@ end
             cookie_header_seen[] = HT.header(req2.headers, "Cookie", nothing)
             _send_response_client!(conn2, req2; body_text = "check", close_conn = true)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         conn3 = NC.accept(listener)
         try
@@ -1014,10 +897,7 @@ end
             cookie_header_disabled[] = HT.header(req3.headers, "Cookie", nothing)
             _send_response_client!(conn3, req3; body_text = "disabled", close_conn = true)
         finally
-            try
-                NC.close(conn3)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn3)
         end
         return nothing
     end)
@@ -1036,10 +916,7 @@ end
         @test cookie_header_seen[] == "session=abc; extra=1"
         @test cookie_header_disabled[] === nothing
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1058,10 +935,7 @@ end
             HT.setheader(headers1, "Connection", "close")
             _send_response_client!(conn1, req1; body_text = "set", headers = headers1, close_conn = true)
         finally
-            try
-                NC.close(conn1)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn1)
         end
         conn2 = NC.accept(listener)
         try
@@ -1069,10 +943,7 @@ end
             cookie_header_seen[] = HT.header(req2.headers, "Cookie", nothing)
             _send_response_client!(conn2, req2; body_text = "stream", close_conn = true)
         finally
-            try
-                NC.close(conn2)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn2)
         end
         return nothing
     end)
@@ -1089,10 +960,7 @@ end
         _wait_task_client!(server_task)
         @test cookie_header_seen[] == "streamcookie=abc"
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1130,10 +998,7 @@ end
                     _send_response_client!(conn, req; status = 500, reason = "Unexpected", body_text = req.target, close_conn = true)
                 end
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -1284,10 +1149,7 @@ end
         @test "/auth-url-uri" in seen_targets
         @test "/auth-header" in seen_targets
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1371,10 +1233,7 @@ end
                     _send_response_client!(conn, req; status = 500, reason = "Unexpected", body_text = req.target, close_conn = true)
                 end
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -1470,10 +1329,7 @@ end
 
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -1504,10 +1360,7 @@ end
                     _send_response_client!(conn, req; body_text = body_text, close_conn = true)
                 end
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -1558,10 +1411,7 @@ end
         @test any(part -> part.name == "field" && String(read(part)) == "value", parts)
         @test any(part -> part.name == "upload" && part.filename == "file.txt" && String(read(part)) == "multipart-body", parts)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
     end
 end
@@ -1609,10 +1459,7 @@ end
                     _send_response_client!(conn, req; status = 500, reason = "Unexpected", body_text = req.target, close_conn = true)
                 end
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -1689,10 +1536,7 @@ end
 
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
     end
 end
@@ -1723,10 +1567,7 @@ end
                     _send_response_client!(conn, req; status = 500, reason = "Unexpected", body_text = req.target, close_conn = true)
                 end
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -1778,10 +1619,7 @@ end
 
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
     end
 end
@@ -1823,10 +1661,7 @@ end
                     _send_response_client!(conn, req; status = 500, reason = "Unexpected", body_text = req.target, close_conn = true)
                 end
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -1906,10 +1741,7 @@ end
 
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
     end
 end
@@ -2050,10 +1882,7 @@ end
             _ = req
             sleep(0.20)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -2067,10 +1896,7 @@ end
         @test err isa Reseau.IOPoll.DeadlineExceededError
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
     end
 end
@@ -2087,10 +1913,7 @@ end
             _ = req
             sleep(0.20)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -2104,10 +1927,7 @@ end
         @test err isa Reseau.IOPoll.DeadlineExceededError
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -2124,10 +1944,7 @@ end
             write(conn, collect(codeunits("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\na")))
             sleep(0.20)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -2141,10 +1958,7 @@ end
         @test err isa Reseau.IOPoll.DeadlineExceededError
         _wait_task_client!(server_task)
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -2157,10 +1971,7 @@ end
         try
             sleep(0.20)
         finally
-            try
-                NC.close(conn)
-            catch
-            end
+            HTTP.@try_ignore NC.close(conn)
         end
         return nothing
     end)
@@ -2178,9 +1989,6 @@ end
         _wait_task_client!(server_task)
     finally
         close(client.transport)
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end

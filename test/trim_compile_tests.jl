@@ -1,4 +1,5 @@
 using Test
+using HTTP
 
 const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _TRIM_PRE_RELEASE = !isempty(VERSION.prerelease)
@@ -53,10 +54,7 @@ function _wait_process_with_timeout!(proc::Base.Process; timeout_s::Float64, log
         now = time()
         if now - started_at >= timeout_s
             timed_out = true
-            try
-                kill(proc)
-            catch
-            end
+            HTTP.@try_ignore kill(proc)
             _kill_windows_process_tree!(proc)
             _wait_process_exit_after_kill!(proc; timeout_s = 5.0, log_label = log_label)
             return timed_out
@@ -70,10 +68,7 @@ function _wait_process_with_timeout!(proc::Base.Process; timeout_s::Float64, log
         sleep(0.1)
     end
     if !Base.process_running(proc)
-        try
-            wait(proc)
-        catch
-        end
+        HTTP.@try_ignore wait(proc)
     end
     return timed_out
 end
@@ -85,10 +80,7 @@ function _kill_windows_process_tree!(proc::Base.Process)::Nothing
     catch
         return nothing
     end
-    try
-        run(ignorestatus(`taskkill /PID $pid /T /F`))
-    catch
-    end
+    HTTP.@try_ignore run(ignorestatus(`taskkill /PID $pid /T /F`))
     return nothing
 end
 
@@ -171,6 +163,35 @@ function _trim_task_compile_allow_failure(script_file::String, reason::String, o
     return nothing
 end
 
+function _trim_reseau_tls_config_allow_failure(script_file::String, reason::String, output::String = "")
+    println("[trim] registered Reseau TLS.Config keyword-constructor issue tolerated for $(script_file): $(reason)")
+    _maybe_print_output("---- trim Reseau TLS.Config output ($(script_file)) ----", output)
+    return nothing
+end
+
+function _trim_verifier_error_blocks(output::String)::Vector{String}
+    matches = collect(eachmatch(r"Verifier error #\d+:", output))
+    isempty(matches) && return String[]
+    blocks = String[]
+    for (i, m) in pairs(matches)
+        start = m.offset
+        stop = i == lastindex(matches) ? lastindex(output) : matches[i + 1].offset - 1
+        push!(blocks, output[start:stop])
+    end
+    return blocks
+end
+
+function _trim_known_registered_reseau_tls_config_failure(output::String)::Bool
+    getfield(HTTP, :_TLS_CONFIG_POSITIONAL_AVAILABLE) && return false
+    blocks = _trim_verifier_error_blocks(output)
+    isempty(blocks) && return false
+    return all(blocks) do block
+        occursin("Core.kwcall", block) &&
+            occursin("Reseau.TLS.Config", block) &&
+            occursin("_tls_config_from_parts", block)
+    end
+end
+
 function _trim_selected_workloads(workloads::Vector{Tuple{String, String}})::Vector{Tuple{String, String}}
     only = strip(get(ENV, "HTTP_TRIM_ONLY", ""))
     isempty(only) && return workloads
@@ -217,6 +238,9 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
                 fallback = _count_trim_verify_messages(output)
                 if exit_code == 0 && fallback == (0, 0)
                     fallback
+                elseif _trim_known_registered_reseau_tls_config_failure(output)
+                    _trim_reseau_tls_config_allow_failure(script_file, "registered Reseau lacks positional TLS.Config constructor", output)
+                    return nothing
                 elseif _TRIM_PRE_RELEASE
                     _trim_prerelease_allow_failure(script_file, "failed to parse trim verifier summary", output)
                     return nothing
@@ -231,6 +255,10 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             end
             if _TRIM_PRE_RELEASE && (trim_errors > 0 || exit_code != 0)
                 _trim_prerelease_allow_failure(script_file, "trim verify finished with $(trim_errors) errors, $(trim_warnings) warnings (exit=$(exit_code))", output)
+                return nothing
+            end
+            if trim_errors > 0 && _trim_known_registered_reseau_tls_config_failure(output)
+                _trim_reseau_tls_config_allow_failure(script_file, "registered Reseau lacks positional TLS.Config constructor", output)
                 return nothing
             end
             @test trim_errors == 0

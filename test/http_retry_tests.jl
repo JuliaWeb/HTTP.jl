@@ -80,10 +80,7 @@ function _serve_retry_sequence(listener, scenarios, seen)
                     close_conn = get(scenario, :close_conn, true),
                 )
             finally
-                try
-                    NC.close(conn)
-                catch
-                end
+                HTTP.@try_ignore NC.close(conn)
             end
         end
         return nothing
@@ -212,10 +209,7 @@ end
         _wait_task_retry!(server_task)
         @test seen == [("GET", "/idempotent", ""), ("GET", "/idempotent", "")]
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -254,10 +248,7 @@ end
         @test (retry_event.response::HT.Response).status == 503
         @test retry_event.delay_ns == 0
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -280,10 +271,7 @@ end
             expected_body = body_arg === nothing ? "" : "payload"
             @test seen == [(method, "/method", expected_body), (method, "/method", expected_body)]
         finally
-            try
-                NC.close(listener)
-            catch
-            end
+            HTTP.@try_ignore NC.close(listener)
         end
     end
 end
@@ -300,10 +288,7 @@ end
         _wait_task_retry!(server_task1)
         @test seen1 == [("POST", "/post", "payload")]
     finally
-        try
-            NC.close(listener1)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener1)
     end
 
     listener2 = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
@@ -320,10 +305,7 @@ end
         _wait_task_retry!(server_task2)
         @test seen2 == [("POST", "/post", "payload"), ("POST", "/post", "payload")]
     finally
-        try
-            NC.close(listener2)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener2)
     end
 
     listener3 = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
@@ -346,10 +328,7 @@ end
         _wait_task_retry!(server_task3)
         @test seen3 == [("POST", "/post", "payload"), ("POST", "/post", "payload")]
     finally
-        try
-            NC.close(listener3)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener3)
     end
 end
 
@@ -369,10 +348,7 @@ end
         _wait_task_retry!(server_task1)
         @test seen1 == [("GET", "/hook", ""), ("GET", "/hook", "")]
     finally
-        try
-            NC.close(listener1)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener1)
     end
 
     listener2 = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
@@ -387,10 +363,7 @@ end
         _wait_task_retry!(server_task2)
         @test seen2 == [("GET", "/hook", "")]
     finally
-        try
-            NC.close(listener2)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener2)
     end
 end
 
@@ -430,10 +403,7 @@ end
         _wait_task_retry!(server_task)
         @test seen == [("POST", "/streaming", "payload")]
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -453,10 +423,7 @@ end
         _wait_task_retry!(server_task1)
         @test seen1 == [("GET", "/bucket", ""), ("GET", "/bucket", "")]
     finally
-        try
-            NC.close(listener1)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener1)
     end
 
     listener2 = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
@@ -475,10 +442,7 @@ end
         _wait_task_retry!(server_task2)
         @test seen2 == [("GET", "/bucket", ""), ("GET", "/bucket", ""), ("GET", "/bucket", "")]
     finally
-        try
-            NC.close(listener2)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener2)
     end
 end
 
@@ -503,10 +467,7 @@ end
         _wait_task_retry!(server_task)
         @test seen == [("GET", "/open", ""), ("GET", "/open", "")]
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
@@ -531,10 +492,7 @@ end
         _wait_task_retry!(server_task)
         @test seen == [("POST", "/open-post", "payload"), ("POST", "/open-post", "payload")]
     finally
-        try
-            NC.close(listener)
-        catch
-        end
+        HTTP.@try_ignore NC.close(listener)
     end
 end
 
