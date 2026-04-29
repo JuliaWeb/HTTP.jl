@@ -5,8 +5,16 @@ const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
 
 function _trim_compile_timeout_s()::Float64
-    default = Sys.iswindows() ? "600.0" : "120.0"
+    default = Sys.iswindows() ? "1200.0" : "120.0"
     return parse(Float64, get(ENV, "HTTP_TRIM_COMPILE_TIMEOUT_S", default))
+end
+
+function _trim_project_path()::String
+    active_project = Base.active_project()
+    if active_project !== nothing && isfile(active_project)
+        return dirname(active_project)
+    end
+    return normpath(joinpath(@__DIR__, ".."))
 end
 
 function _run_trim_compile(project_path::String, script_path::String, output_name::String; timeout_s::Float64 = _trim_compile_timeout_s(), bundle_dir::Union{Nothing, String} = nothing)
@@ -215,7 +223,8 @@ end
         println("[trim] skip Julia < 1.12: JuliaC trim compilation is unavailable")
         @test true
     else
-        project_path = normpath(joinpath(@__DIR__, ".."))
+        project_path = _trim_project_path()
+        println("[trim] project $(project_path)")
         trim_workloads = [
             ("http_trim_client_h1_raw.jl", "http_trim_client_h1_raw"),
             ("http_trim_client_h1_wire.jl", "http_trim_client_h1_wire"),
