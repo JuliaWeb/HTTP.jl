@@ -121,7 +121,7 @@ end
 
 function _trim_executable_timeout_s(script_path::String)::Float64
     _ = script_path
-    default = Sys.iswindows() ? "60.0" : "30.0"
+    default = Sys.iswindows() ? "180.0" : "30.0"
     return parse(Float64, get(ENV, "HTTP_TRIM_EXE_TIMEOUT_S", default))
 end
 
