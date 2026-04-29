@@ -73,6 +73,34 @@ In 1.x, the supplied `response_stream` object could also appear as
 `resp.body`. In 2.0, the sink remains owned by the caller; read the data back
 from the original `IO` or byte buffer you passed as `response_stream`.
 
+## `HTTP.download`
+
+`HTTP.download` is not supported in HTTP.jl 2.0. For the closest direct
+replacement, use the `Downloads.download` function from Julia's standard
+library:
+
+```julia
+using Downloads
+
+Downloads.download(url, "payload.bin")
+```
+
+If you want to keep all request handling inside HTTP.jl, stream the response
+body into an `IOStream` that you own:
+
+```julia
+open("payload.bin", "w") do io
+    resp = HTTP.request("GET", url; response_stream = io)
+    @assert 200 <= resp.status < 300
+    @assert resp.body === nothing
+end
+```
+
+Use this pattern when you need HTTP.jl client configuration such as custom
+headers, retries, proxy settings, TLS configuration, or a reusable
+`HTTP.Client`. Use `Downloads.download` when you just need a URL copied to a
+file.
+
 For pull-based streaming:
 
 ```julia
@@ -526,6 +554,8 @@ Treat these as temporary migration aids. New code should use the documented
 - Prefer keyword constructors for `Request` and `Response`.
 - Replace `pool` usage with a long-lived `HTTP.Client`.
 - Replace `readtimeout` with the precise timeout keyword you need.
+- Replace `HTTP.download` with `Downloads.download` or an explicit
+  `HTTP.request(...; response_stream = io)` file stream.
 - Move WebSocket code to `HTTP.WebSockets`.
 - Replace internal parser/connection/HPACK/HTTP2 usage with documented APIs.
 - Run integration tests for redirects, retries, proxy configuration, cookies,
