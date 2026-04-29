@@ -1835,6 +1835,10 @@ Tuple middlewares are applied from left to right, so `(outer, inner)` runs
 macro client(request_middleware, stream_middleware=:(()))
     request_handler = gensym(:http_client_request)
     open_handler = gensym(:http_client_open)
+    try_ignore = GlobalRef(@__MODULE__, Symbol("@try_ignore"))
+    closewrite_ignore = Expr(:macrocall, try_ignore, __source__, quote
+        closewrite(stream)
+    end)
     expr = quote
         const $request_handler = HTTP._compose_client_middleware(HTTP.request, $request_middleware)
         const $open_handler = HTTP._compose_client_middleware(HTTP.open, $stream_middleware)
@@ -1897,9 +1901,7 @@ macro client(request_middleware, stream_middleware=:(()))
             catch err
                 callback_error = err
             finally
-                @try_ignore begin
-                    closewrite(stream)
-                end
+                $closewrite_ignore
             end
             response = HTTP.closeread(stream)
             if status_exception && HTTP._status_throws(response)
