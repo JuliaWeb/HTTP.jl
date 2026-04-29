@@ -1,26 +1,4 @@
 # High-level HTTP client orchestration, HTTP/2 integration, cookies, response sinks, and convenience APIs.
-export Client
-export Cookie
-export CookieJar
-export DoneEvent
-export RedirectEvent
-export RequestEvent
-export ResponseHeadEvent
-export RetryEvent
-export do!
-export get!
-export RequestRetryError
-export StatusError
-export TooManyRedirectsError
-export request
-export get
-export head
-export post
-export put
-export patch
-export delete
-export options
-export @client
 
 """
     Client(; ...)
@@ -346,9 +324,8 @@ function Base.close(client::Client)
     try
         for (_, conns) in client.h2_conns
             for conn in conns
-                try
+                @try_ignore begin
                     close(conn)
-                catch
                 end
             end
         end
@@ -385,9 +362,8 @@ function _acquire_h2_conn!(
             if !_h2_conn_available(existing::H2Connection)
                 if !_h2_conn_reusable(existing::H2Connection)
                     deleteat!(conns, i)
-                    try
+                    @try_ignore begin
                         close(existing::H2Connection)
-                    catch
                     end
                     continue
                 end
@@ -423,9 +399,8 @@ function _acquire_h2_conn!(
                 _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
                 connect_h2!(tcp, address; secure=secure, tls_config=tls_cfg, connect_deadline_ns=connect_deadline_ns)
             catch
-                try
+                @try_ignore begin
                     TCP.close(tcp)
-                catch
                 end
                 rethrow()
             end
@@ -452,9 +427,8 @@ function _drop_h2_conn!(client::Client, plan::_ProxyPlan, target::Union{Nothing,
         kept = H2Connection[]
         for conn in conns
             if target === nothing || conn === target
-                try
+                @try_ignore begin
                     close(conn)
-                catch
                 end
             else
                 push!(kept, conn)
@@ -718,9 +692,8 @@ function _do_incoming!(
                 should_retry = try
                     _should_retry_request_attempt(retry_controller, retry_attempt, current_request, nothing, status_response)
                 catch
-                    try
+                    @try_ignore begin
                         body_close!(response.rawbody)
-                    catch
                     end
                     rethrow()
                 end
@@ -730,9 +703,8 @@ function _do_incoming!(
                         _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, status_response, nothing))
                         retry_attempt += 1
                         retry_token = next_token
-                        try
+                        @try_ignore begin
                             body_close!(response.rawbody)
-                        catch
                         end
                         continue
                     end
@@ -1092,13 +1064,11 @@ function _pump_response_body!(stream::Base.BufferStream, body::AbstractBody)::No
             end
         end
     finally
-        try
+        @try_ignore begin
             body_close!(body)
-        catch
         end
-        try
+        @try_ignore begin
             close(stream)
-        catch
         end
     end
     return nothing
@@ -1236,9 +1206,8 @@ function _with_response_reader(f::F, incoming::_IncomingResponse, decompress::Un
     try
         return f(reader)
     finally
-        try
+        @try_ignore begin
             close(reader)
-        catch
         end
     end
 end
@@ -1271,9 +1240,8 @@ function _consume_incoming_response!(
             end
             return view(sink::AbstractVector{UInt8}, 1:Int(n)), n
         catch
-            try
+            @try_ignore begin
                 body_close!(incoming.rawbody)
-            catch
             end
             rethrow()
         end
@@ -1416,7 +1384,23 @@ function _client_for_request(
     if require_ssl_verification
         return _default_client!(), false
     end
-    tls_config = require_ssl_verification ? nothing : TLS.Config(verify_peer=false)
+    tls_config = _tls_config_from_parts(
+        nothing,
+        false,
+        false,
+        TLS.ClientAuthMode.NoClientCert,
+        nothing,
+        nothing,
+        nothing,
+        nothing,
+        String[],
+        UInt16[],
+        Int64(0),
+        TLS.TLS1_2_VERSION,
+        nothing,
+        false,
+        64,
+    )
     transport = Transport(
         tls_config=tls_config,
         proxy=ProxyFromEnvironment(),
@@ -1913,9 +1897,8 @@ macro client(request_middleware, stream_middleware=:(()))
             catch err
                 callback_error = err
             finally
-                try
+                @try_ignore begin
                     closewrite(stream)
-                catch
                 end
             end
             response = HTTP.closeread(stream)

@@ -130,17 +130,15 @@ function _client_finish_stream_read!(stream::Stream{true}, suppress_producer_err
     @atomic :release stream.read_closed = true
     reader = stream.reader
     producer = stream.producer
-    try
+    @try_ignore begin
         if reader !== nothing
             close(reader)
         end
-    catch
     end
     if producer !== nothing
         if suppress_producer_errors
-            try
+            @try_ignore begin
                 wait(producer)
-            catch
             end
         else
             wait(producer)
@@ -307,13 +305,11 @@ end
 closeread(stream::Stream{false}) = _server_closeread(stream)
 
 function close(stream::Stream{true})
-    try
+    @try_ignore begin
         closewrite(stream)
-    catch
     end
-    try
+    @try_ignore begin
         closeread(stream)
-    catch
     end
     return nothing
 end

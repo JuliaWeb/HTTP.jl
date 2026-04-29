@@ -4,7 +4,7 @@ handles dealing with CORS preflight headers when dealing with more
 than just a simple request. For CORS details, see e.g. https://cors-errors.info/
 =#
 
-using HTTP, JSON3, StructTypes, UUIDs
+using HTTP, JSON, UUIDs
 
 # modified Animal struct to associate with specific user
 mutable struct Animal
@@ -15,8 +15,6 @@ mutable struct Animal
     Animal() = new()
 end
 
-StructTypes.StructType(::Type{Animal}) = StructTypes.Mutable()
-
 # use a plain `Dict` as a "data store", outer Dict maps userId to user-specific Animals
 const ANIMALS = Dict{UUID, Dict{Int, Animal}}()
 const NEXT_ID = Ref(0)
@@ -26,15 +24,24 @@ function getNextId()
     return id
 end
 
-function request_body(req::HTTP.Request)
-    out = IOBuffer()
-    buf = Vector{UInt8}(undef, 8192)
-    while true
-        n = HTTP.body_read!(req.body, buf)
-        n == 0 && break
-        write(out, @view buf[1:n])
-    end
-    return take!(out)
+function animal_from_json(body)
+    data = JSON.parse(String(body))
+    animal = Animal()
+    id = get(data, "id", nothing)
+    id === nothing || (animal.id = Int(id))
+    animal.userId = UUID(data["userId"])
+    animal.type = String(data["type"])
+    animal.name = String(data["name"])
+    return animal
+end
+
+function JSON.lower(animal::Animal)
+    return Dict(
+        "id" => isdefined(animal, :id) ? animal.id : nothing,
+        "userId" => string(animal.userId),
+        "type" => animal.type,
+        "name" => animal.name,
+    )
 end
 
 # CORS preflight headers that show what kinds of complex requests are allowed to API
@@ -64,7 +71,7 @@ function JSONMiddleware(handler)
         if ret isa HTTP.Response
             return ret
         else # otherwise serialize any Animal as json string and wrap it in Response
-            return HTTP.Response(200, CORS_RES_HEADERS, ret === nothing ? "" : JSON3.write(ret))
+            return HTTP.Response(200, CORS_RES_HEADERS, ret === nothing ? "" : JSON.json(ret))
         end
     end
 end
@@ -89,7 +96,7 @@ end
 
 # **simplified** "service" functions
 function createAnimal(req::HTTP.Request)
-    animal = JSON3.read(request_body(req), Animal)
+    animal = animal_from_json(req.body)
     animal.id = getNextId()
     ANIMALS[animal.userId][animal.id] = animal
     return animal
@@ -103,7 +110,7 @@ function getAnimal(req::HTTP.Request)
 end
 
 function updateAnimal(req::HTTP.Request)
-    animal = JSON3.read(request_body(req), Animal)
+    animal = animal_from_json(req.body)
     ANIMALS[animal.userId][animal.id] = animal
     return animal
 end
@@ -138,17 +145,17 @@ server = HTTP.serve!(ANIMAL_ROUTER |> JSONMiddleware |> CorsMiddleware, "127.0.0
 
 # using our server
 resp = HTTP.post("http://localhost:8080/api/zoo/v1/users")
-userId = JSON3.read(resp.body, UUID)
+userId = UUID(JSON.parse(String(resp.body)))
 x = Animal()
 x.userId = userId
 x.type = "cat"
 x.name = "pete"
 # create 1st animal
-resp = HTTP.post("http://localhost:8080/api/zoo/v1/users/$(userId)/animals", [], JSON3.write(x))
-x2 = JSON3.read(resp.body, Animal)
+resp = HTTP.post("http://localhost:8080/api/zoo/v1/users/$(userId)/animals", [], JSON.json(x))
+x2 = animal_from_json(resp.body)
 # retrieve it back
 resp = HTTP.get("http://localhost:8080/api/zoo/v1/users/$(userId)/animals/$(x2.id)")
-x3 = JSON3.read(resp.body, Animal)
+x3 = animal_from_json(resp.body)
 # try bad path
 resp = HTTP.get("http://localhost:8080/api/zoo/v1/badpath")
 

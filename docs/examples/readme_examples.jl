@@ -54,15 +54,15 @@ server = HTTP.serve!() do request::HTTP.Request
 
 #WebSocket Examples
 using HTTP
-server = HTTP.WebSockets.listen!("127.0.0.1", 8081) do ws
+server = WebSockets.listen!("127.0.0.1", 8081) do ws
         for msg in ws
-            HTTP.WebSockets.send(ws, msg)
+            WebSockets.send(ws, msg)
         end
     end
 
-HTTP.WebSockets.open("ws://127.0.0.1:8081") do ws
-           HTTP.WebSockets.send(ws, "Hello")
-           s = HTTP.WebSockets.receive(ws)
+WebSockets.open("ws://127.0.0.1:8081") do ws
+           WebSockets.send(ws, "Hello")
+           s = WebSockets.receive(ws)
            println(s)
        end;
 #Output: Hello

@@ -10,9 +10,8 @@ function _precompile_body_string(body::AbstractBody)::String
         n == 0 && break
         append!(out, @view(buf[1:n]))
     end
-    try
+    @try_ignore begin
         body_close!(body)
-    catch
     end
     return String(out)
 end
@@ -216,28 +215,24 @@ function _run_precompile_workload_inner!()::Nothing
         end
         @assert ws_reply == "PING!"
     finally
-        try
+        @try_ignore begin
             _precompile_reset_default_client!()
-        catch
         end
         for owned in (client, h2_client)
             owned === nothing && continue
-            try
+            @try_ignore begin
                 close(owned::Client)
-            catch
             end
         end
         for server in (request_server, stream_server, file_server, h2_server)
             server === nothing && continue
-            try
+            @try_ignore begin
                 forceclose(server)
-            catch
             end
         end
         if ws_server !== nothing
-            try
+            @try_ignore begin
                 WebSockets.forceclose(ws_server::WebSockets.Server)
-            catch
             end
         end
         rm(temp_dir; force=true, recursive=true)
@@ -250,22 +245,19 @@ function _run_precompile_workload!()::Nothing
     try
         status = IOPoll.timedwait(() -> istaskdone(task), 20.0; pollint = 0.01)
         if status == :timed_out
-            try
+            @try_ignore begin
                 IOPoll.shutdown!()
-            catch
             end
-            try
+            @try_ignore begin
                 Base.throwto(task, InterruptException())
-            catch
             end
             _ = IOPoll.timedwait(() -> istaskdone(task), 2.0; pollint = 0.01)
             error("HTTP precompile workload timed out")
         end
         fetch(task)
     finally
-        try
+        @try_ignore begin
             IOPoll.shutdown!()
-        catch
         end
     end
     return nothing

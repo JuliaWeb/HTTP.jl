@@ -24,20 +24,9 @@ function getNextId()
     return id
 end
 
-function request_body(req::HTTP.Request)
-    out = IOBuffer()
-    buf = Vector{UInt8}(undef, 8192)
-    while true
-        n = HTTP.body_read!(req.body, buf)
-        n == 0 && break
-        write(out, @view buf[1:n])
-    end
-    return take!(out)
-end
-
 # "service" functions to actually do the work
 function createAnimal(req::HTTP.Request)
-    animal = JSON3.read(request_body(req), Animal)
+    animal = JSON3.read(req.body, Animal)
     animal.id = getNextId()
     ANIMALS[animal.id] = animal
     return HTTP.Response(200, JSON3.write(animal))
@@ -50,7 +39,7 @@ function getAnimal(req::HTTP.Request)
 end
 
 function updateAnimal(req::HTTP.Request)
-    animal = JSON3.read(request_body(req), Animal)
+    animal = JSON3.read(req.body, Animal)
     ANIMALS[animal.id] = animal
     return HTTP.Response(200, JSON3.write(animal))
 end

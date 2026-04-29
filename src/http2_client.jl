@@ -39,6 +39,42 @@ function Base.showerror(io::IO, err::H2GoAwayError)
     return nothing
 end
 
+@inline function _tls_config_from_parts(
+    server_name::Union{Nothing,String},
+    verify_peer::Bool,
+    verify_hostname::Bool,
+    client_auth::TLS.ClientAuthMode.T,
+    cert_file::Union{Nothing,String},
+    key_file::Union{Nothing,String},
+    ca_file::Union{Nothing,String},
+    client_ca_file::Union{Nothing,String},
+    alpn_protocols::Vector{String},
+    curve_preferences::Vector{UInt16},
+    handshake_timeout_ns::Int64,
+    min_version::Union{Nothing,UInt16},
+    max_version::Union{Nothing,UInt16},
+    session_tickets_disabled::Bool,
+    session_cache_capacity::Int=64,
+)::TLS.Config
+    return TLS.Config(
+        server_name,
+        verify_peer,
+        verify_hostname,
+        client_auth,
+        cert_file,
+        key_file,
+        ca_file,
+        client_ca_file,
+        alpn_protocols,
+        curve_preferences,
+        handshake_timeout_ns,
+        min_version,
+        max_version,
+        session_tickets_disabled,
+        session_cache_capacity,
+    )
+end
+
 """
     H2StreamState
 
@@ -277,17 +313,11 @@ function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,
             value = setting.second
             if id == UInt16(0x1)
                 header_table_size = Int(value)
-                continue
-            end
-            if id == UInt16(0x2)
+            elseif id == UInt16(0x2)
                 value == UInt32(0) || throw(ProtocolError("HTTP/2 servers must not enable push"))
-                continue
-            end
-            if id == UInt16(0x3)
+            elseif id == UInt16(0x3)
                 conn.peer_max_concurrent_streams = Int(value)
-                continue
-            end
-            if id == UInt16(0x4)
+            elseif id == UInt16(0x4)
                 value > UInt32(0x7fff_ffff) && throw(ProtocolError("HTTP/2 SETTINGS_INITIAL_WINDOW_SIZE too large"))
                 new_window = Int64(value)
                 delta = new_window - conn.initial_stream_send_window
@@ -295,15 +325,11 @@ function _apply_peer_settings!(conn::H2Connection, settings::Vector{Pair{UInt16,
                 for stream_id in keys(conn.stream_send_window)
                     conn.stream_send_window[stream_id] = conn.stream_send_window[stream_id] + delta
                 end
-                continue
-            end
-            if id == UInt16(0x5)
+            elseif id == UInt16(0x5)
                 value < UInt32(16_384) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too small"))
                 value > UInt32(16_777_215) && throw(ProtocolError("HTTP/2 SETTINGS_MAX_FRAME_SIZE too large"))
                 conn.peer_max_send_frame_size = Int(value)
-                continue
-            end
-            if id == UInt16(0x6)
+            elseif id == UInt16(0x6)
                 conn.peer_max_header_list_size = Int(value)
             end
         end
@@ -717,23 +743,43 @@ function _make_tls_config_for_h2(
     host, _ = HostResolvers.split_host_port(address)
     effective_server_name = server_name === nothing ? host : server_name
     if config === nothing
-        return TLS.Config(server_name=effective_server_name, alpn_protocols=["h2"], handshake_timeout_ns=handshake_timeout_ns)
+        return _tls_config_from_parts(
+            effective_server_name,
+            true,
+            true,
+            TLS.ClientAuthMode.NoClientCert,
+            nothing,
+            nothing,
+            nothing,
+            nothing,
+            ["h2"],
+            UInt16[],
+            handshake_timeout_ns,
+            TLS.TLS1_2_VERSION,
+            nothing,
+            false,
+            64,
+        )
     end
     protocols = isempty(config.alpn_protocols) ? ["h2"] : copy(config.alpn_protocols)
     in("h2", protocols) || push!(protocols, "h2")
     effective_handshake_timeout_ns = _min_nonzero_ns(config.handshake_timeout_ns, handshake_timeout_ns)
-    return TLS.Config(
-        server_name=server_name === nothing ? (config.server_name === nothing ? host : config.server_name) : server_name,
-        verify_peer=config.verify_peer,
-        client_auth=config.client_auth,
-        cert_file=config.cert_file,
-        key_file=config.key_file,
-        ca_file=config.ca_file,
-        client_ca_file=config.client_ca_file,
-        alpn_protocols=protocols,
-        handshake_timeout_ns=effective_handshake_timeout_ns,
-        min_version=config.min_version,
-        max_version=config.max_version,
+    return _tls_config_from_parts(
+        server_name === nothing ? (config.server_name === nothing ? host : config.server_name) : server_name,
+        config.verify_peer,
+        config.verify_hostname,
+        config.client_auth,
+        config.cert_file,
+        config.key_file,
+        config.ca_file,
+        config.client_ca_file,
+        protocols,
+        copy(config.curve_preferences),
+        effective_handshake_timeout_ns,
+        config.min_version,
+        config.max_version,
+        config.session_tickets_disabled,
+        64,
     )
 end
 

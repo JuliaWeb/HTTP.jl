@@ -74,6 +74,7 @@ import .._set_conn_read_deadline!
 import .._set_conn_write_deadline!
 import .._is_redirect_status
 import .._base64encode
+import ..@try_ignore
 import ..header
 import ..headers
 import ..hasheader
@@ -255,9 +256,8 @@ end
 
 function _enqueue_message!(ws::WebSocket, msg)::Nothing
     if isopen(ws.readchannel)
-        try
+        @try_ignore begin
             put!(ws.readchannel, msg)
-        catch
         end
     end
     return nothing
@@ -397,16 +397,14 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             _queue_close!(ws, close_body)
         end
         if !ws.writeclosed && close_body.code != 1006
-            try
+            @try_ignore begin
                 close(ws, close_body)
-            catch
             end
         end
     finally
         if ws.readclosed && ws.writeclosed
-            try
+            @try_ignore begin
                 ws.close_transport!()
-            catch
             end
         end
     end
@@ -524,20 +522,18 @@ function close(ws::WebSocket, body::Union{Nothing,CloseFrameBody}=nothing)
                 if !_valid_close_status(body.code)
                     body = CloseFrameBody(1002, "invalid close status code")
                 end
-                try
+                @try_ignore begin
                     @lock ws.sendlock begin
                         ws_close!(ws.codec; status_code=UInt16(body.code), reason=codeunits(body.reason))
                         _flush_ws_output_locked!(ws)
                     end
-                catch
                 end
             else
-                try
+                @try_ignore begin
                     @lock ws.sendlock begin
                         ws_close!(ws.codec; status_code=UInt16(1000), reason=UInt8[])
                         _flush_ws_output_locked!(ws)
                     end
-                catch
                 end
             end
         end
@@ -550,9 +546,8 @@ function close(ws::WebSocket, body::Union{Nothing,CloseFrameBody}=nothing)
         end
         ws.readclosed = true
     end
-    try
+    @try_ignore begin
         ws.close_transport!()
-    catch
     end
     _close_channel!(ws)
     return nothing
@@ -656,9 +651,8 @@ function _websocket_roundtrip!(
         wrote == nbytes || throw(ProtocolError("transport short write"))
         _set_conn_read_deadline!(conn, _request_response_header_deadline_ns(request))
         response = _read_incoming_response(conn.reader, request)
-        try
+        @try_ignore begin
             body_close!(response.rawbody)
-        catch
         end
         buffered = response.head.status == 101 ? _take_conn_reader_buffer!(conn.reader) : UInt8[]
         public_response = _streaming_response(response)
@@ -1071,13 +1065,12 @@ function _active_ws_tasks(server::Server)::Vector{Task}
 end
 
 function _close_ws_server_conn!(conn)::Nothing
-    try
+    @try_ignore begin
         if conn isa TLS.Conn
             TLS.close(conn::TLS.Conn)
         else
             TCP.close(conn::TCP.Conn)
         end
-    catch
     end
     return nothing
 end
@@ -1174,9 +1167,8 @@ function _serve_ws_session!(server::Server, conn, request::Request, response::Re
         isok(err) || rethrow(err)
     finally
         if !isclosed(ws)
-            try
+            @try_ignore begin
                 close(ws, CloseFrameBody(1000, ""))
-            catch
             end
         end
         _untrack_session!(server, ws)
@@ -1240,13 +1232,12 @@ function _listen_ws(server::Server, ready::Threads.Event)
     try
         serve!(server, listener, ready)
     finally
-        try
+        @try_ignore begin
             if listener isa TLS.Listener
                 TLS.close(listener::TLS.Listener)
             else
                 TCP.close(listener::TCP.Listener)
             end
-        catch
         end
     end
     return server
@@ -1268,20 +1259,18 @@ function forceclose(server::Server)::Nothing
         unlock(server.lock)
     end
     if listener !== nothing
-        try
+        @try_ignore begin
             if listener isa TLS.Listener
                 TLS.close(listener::TLS.Listener)
             else
                 TCP.close(listener::TCP.Listener)
             end
-        catch
         end
     end
     sessions = _active_sessions(server)
     for session in sessions
-        try
+        @try_ignore begin
             close(session::WebSocket, CloseFrameBody(1001, "server shutting down"))
-        catch
         end
     end
     lock(server.lock)

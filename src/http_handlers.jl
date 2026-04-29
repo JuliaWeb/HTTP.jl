@@ -33,6 +33,7 @@ import ..canceled
 import ..body_close!
 import ..get_request_context
 import .._request_with_context
+import ..@try_ignore
 
 """
     Handler
@@ -425,9 +426,8 @@ function (middleware::_HandlerTimeoutMiddleware)(req::Request)
         throw(value)
     end
     cancel!(derived_ctx; message="handler timed out")
-    try
+    @try_ignore begin
         body_close!(timed_req.body)
-    catch
     end
     return _handler_timeout_response(req, middleware)
 end

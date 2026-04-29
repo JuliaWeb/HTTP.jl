@@ -189,9 +189,8 @@ function sse_stream(response::Response, f::Function; max_len::Integer=_DEFAULT_S
             err isa InterruptException && rethrow()
             @error "SSE stream handler error" exception = (err, catch_backtrace())
         finally
-            try
+            @try_ignore begin
                 close(stream)
-            catch
             end
         end
     end
@@ -555,13 +554,11 @@ function _consume_incoming_sse!(
     end
     stream = _SSEClientStream(response, () -> begin
         cancelled[] = true
-        try
+        @try_ignore begin
             body_close!(incoming.rawbody)
-        catch
         end
-        try
+        @try_ignore begin
             close(raw_stream)
-        catch
         end
         return nothing
     end)
@@ -572,9 +569,8 @@ function _consume_incoming_sse!(
     catch err
         err isa _SSEStop || (parse_err = err)
     finally
-        try
+        @try_ignore begin
             close(reader)
-        catch
         end
         try
             wait(producer)

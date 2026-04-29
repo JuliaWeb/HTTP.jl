@@ -464,16 +464,14 @@ function _close_conn!(conn::Conn)::Bool
     @atomic :release conn.closed = true
     if conn.secure
         if conn.tls !== nothing
-            try
+            @try_ignore begin
                 TLS.close(conn.tls::TLS.Conn)
-            catch
             end
         end
     else
         if conn.tcp !== nothing
-            try
+            @try_ignore begin
                 TCP.close(conn.tcp::TCP.Conn)
-            catch
             end
         end
     end
@@ -654,27 +652,44 @@ function _effective_tls_config(
     sni = server_name === nothing ? _host_for_sni(address) : server_name
     cfg = transport.tls_config
     if cfg === nothing
-        return TLS.Config(server_name=sni, handshake_timeout_ns=handshake_timeout_ns)
+        return _tls_config_from_parts(
+            sni,
+            true,
+            true,
+            TLS.ClientAuthMode.NoClientCert,
+            nothing,
+            nothing,
+            nothing,
+            nothing,
+            String[],
+            UInt16[],
+            handshake_timeout_ns,
+            TLS.TLS1_2_VERSION,
+            nothing,
+            false,
+            64,
+        )
     end
     effective_handshake_timeout_ns = _min_nonzero_ns(cfg.handshake_timeout_ns, handshake_timeout_ns)
     if cfg.server_name !== nothing && effective_handshake_timeout_ns == cfg.handshake_timeout_ns
         return cfg
     end
-    return TLS.Config(
-        server_name=cfg.server_name === nothing ? sni : cfg.server_name,
-        verify_peer=cfg.verify_peer,
-        verify_hostname=cfg.verify_hostname,
-        client_auth=cfg.client_auth,
-        cert_file=cfg.cert_file,
-        key_file=cfg.key_file,
-        ca_file=cfg.ca_file,
-        client_ca_file=cfg.client_ca_file,
-        alpn_protocols=copy(cfg.alpn_protocols),
-        curve_preferences=copy(cfg.curve_preferences),
-        handshake_timeout_ns=effective_handshake_timeout_ns,
-        min_version=cfg.min_version,
-        max_version=cfg.max_version,
-        session_tickets_disabled=cfg.session_tickets_disabled,
+    return _tls_config_from_parts(
+        cfg.server_name === nothing ? sni : cfg.server_name,
+        cfg.verify_peer,
+        cfg.verify_hostname,
+        cfg.client_auth,
+        cfg.cert_file,
+        cfg.key_file,
+        cfg.ca_file,
+        cfg.client_ca_file,
+        copy(cfg.alpn_protocols),
+        copy(cfg.curve_preferences),
+        effective_handshake_timeout_ns,
+        cfg.min_version,
+        cfg.max_version,
+        cfg.session_tickets_disabled,
+        64,
     )
 end
 
@@ -790,7 +805,7 @@ function _perform_http_connect_tunnel!(
     response = _read_incoming_response(_ConnReader(tcp), request)
     response.head.status == 200 || throw(ProtocolError("proxy CONNECT failed with status $(response.head.status)"))
     body = response.rawbody
-    try
+    @try_ignore begin
         if body isa EmptyBody
         elseif body isa FixedLengthBody
             body_close!(body)
@@ -801,7 +816,6 @@ function _perform_http_connect_tunnel!(
         else
             error("unexpected proxy CONNECT response body type")
         end
-    catch
     end
     return nothing
 end
@@ -1558,17 +1572,14 @@ function _roundtrip_incoming!(
                 catch err
                     writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
                     _request_write_allows_close(write_state) || return nothing
-                    try
+                    @try_ignore begin
                         _close_conn!(conn)
-                    catch
                     end
                 finally
-                    try
+                    @try_ignore begin
                         body_close!(request.body)
-                    catch
-                    finally
-                        _request_write_mark_done!(write_state)
                     end
+                    _request_write_mark_done!(write_state)
                 end
                 return nothing
             end
@@ -1589,9 +1600,8 @@ function _roundtrip_incoming!(
             try
                 _write_request_streaming!(request_io, deadline_stream, request, plan)
             finally
-                try
+                @try_ignore begin
                     body_close!(request.body)
-                catch
                 end
             end
         end
@@ -1604,9 +1614,8 @@ function _roundtrip_incoming!(
             if _request_write_should_wait_for_continue(write_state) && raw_response.head.status == 100
                 _request_write_mark_continue_allowed!(write_state::_RequestWriteState)
             end
-            try
+            @try_ignore begin
                 body_close!(raw_response.rawbody)
-            catch
             end
             raw_response = _read_transport_incoming_response(reader, transport, conn, request)
         end
