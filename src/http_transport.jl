@@ -643,6 +643,38 @@ function _host_for_sni(address::AbstractString)::String
     return host
 end
 
+function _copy_tls_config_for_request(
+    cfg::TLS.Config,
+    server_name::String,
+    alpn_protocols::Vector{String},
+    curve_preferences::Vector{UInt16},
+    handshake_timeout_ns::Int64,
+)::TLS.Config
+    return TLS.Config(
+        server_name,
+        cfg.verify_peer,
+        cfg.verify_hostname,
+        cfg.client_auth,
+        cfg.cert_file,
+        cfg.key_file,
+        cfg.ca_file,
+        cfg.client_ca_file,
+        alpn_protocols,
+        curve_preferences,
+        handshake_timeout_ns,
+        cfg.min_version,
+        cfg.max_version,
+        cfg.session_tickets_disabled,
+        cfg._session_ticket_keys,
+        cfg._client_session_cache,
+        cfg._server_session_cache,
+        cfg._client_session_cache12,
+        cfg._server_session_cache12,
+        cfg._client_identity,
+        cfg._server_identity,
+    )
+end
+
 function _effective_tls_config(
     transport::Transport,
     address::String,
@@ -652,7 +684,7 @@ function _effective_tls_config(
     sni = server_name === nothing ? _host_for_sni(address) : server_name
     cfg = transport.tls_config
     if cfg === nothing
-        return _tls_config_from_parts(
+        return TLS.Config(
             sni,
             true,
             true,
@@ -674,22 +706,12 @@ function _effective_tls_config(
     if cfg.server_name !== nothing && effective_handshake_timeout_ns == cfg.handshake_timeout_ns
         return cfg
     end
-    return _tls_config_from_parts(
-        cfg.server_name === nothing ? sni : cfg.server_name,
-        cfg.verify_peer,
-        cfg.verify_hostname,
-        cfg.client_auth,
-        cfg.cert_file,
-        cfg.key_file,
-        cfg.ca_file,
-        cfg.client_ca_file,
+    return _copy_tls_config_for_request(
+        cfg,
+        cfg.server_name === nothing ? sni : cfg.server_name::String,
         copy(cfg.alpn_protocols),
         copy(cfg.curve_preferences),
         effective_handshake_timeout_ns,
-        cfg.min_version,
-        cfg.max_version,
-        cfg.session_tickets_disabled,
-        64,
     )
 end
 

@@ -7,25 +7,6 @@ using Reseau.IOPoll
 const _H2_PREFACE = collect(codeunits("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"))
 const _H2_DEFAULT_MAX_HEADER_LIST_SIZE = 10 * 1024 * 1024
 const _H2_DEFAULT_MAX_HEADER_BLOCK_BYTES = 2 * _H2_DEFAULT_MAX_HEADER_LIST_SIZE
-const _TLS_CONFIG_POSITIONAL_TYPES = Tuple{
-    Union{Nothing,String},
-    Bool,
-    Bool,
-    TLS.ClientAuthMode.T,
-    Union{Nothing,String},
-    Union{Nothing,String},
-    Union{Nothing,String},
-    Union{Nothing,String},
-    Vector{String},
-    Vector{UInt16},
-    Int64,
-    Union{Nothing,UInt16},
-    Union{Nothing,UInt16},
-    Bool,
-    Int,
-}
-const _TLS_CONFIG_POSITIONAL_AVAILABLE = hasmethod(TLS.Config, _TLS_CONFIG_POSITIONAL_TYPES)
-
 """
     H2NegotiationError
 
@@ -55,80 +36,6 @@ end
 function Base.showerror(io::IO, err::H2GoAwayError)
     print(io, err.message)
     return nothing
-end
-
-if _TLS_CONFIG_POSITIONAL_AVAILABLE
-    @inline function _tls_config_from_parts(
-        server_name::Union{Nothing,String},
-        verify_peer::Bool,
-        verify_hostname::Bool,
-        client_auth::TLS.ClientAuthMode.T,
-        cert_file::Union{Nothing,String},
-        key_file::Union{Nothing,String},
-        ca_file::Union{Nothing,String},
-        client_ca_file::Union{Nothing,String},
-        alpn_protocols::Vector{String},
-        curve_preferences::Vector{UInt16},
-        handshake_timeout_ns::Int64,
-        min_version::Union{Nothing,UInt16},
-        max_version::Union{Nothing,UInt16},
-        session_tickets_disabled::Bool,
-        session_cache_capacity::Int=64,
-    )::TLS.Config
-        return TLS.Config(
-            server_name,
-            verify_peer,
-            verify_hostname,
-            client_auth,
-            cert_file,
-            key_file,
-            ca_file,
-            client_ca_file,
-            alpn_protocols,
-            curve_preferences,
-            handshake_timeout_ns,
-            min_version,
-            max_version,
-            session_tickets_disabled,
-            session_cache_capacity,
-        )
-    end
-else
-    @inline function _tls_config_from_parts(
-        server_name::Union{Nothing,String},
-        verify_peer::Bool,
-        verify_hostname::Bool,
-        client_auth::TLS.ClientAuthMode.T,
-        cert_file::Union{Nothing,String},
-        key_file::Union{Nothing,String},
-        ca_file::Union{Nothing,String},
-        client_ca_file::Union{Nothing,String},
-        alpn_protocols::Vector{String},
-        curve_preferences::Vector{UInt16},
-        handshake_timeout_ns::Int64,
-        min_version::Union{Nothing,UInt16},
-        max_version::Union{Nothing,UInt16},
-        session_tickets_disabled::Bool,
-        session_cache_capacity::Int=64,
-    )::TLS.Config
-        return TLS.Config(
-            server_name=server_name,
-            verify_peer=verify_peer,
-            verify_hostname=verify_hostname,
-            client_auth=client_auth,
-            cert_file=cert_file,
-            key_file=key_file,
-            ca_file=ca_file,
-            client_ca_file=client_ca_file,
-            alpn_protocols=alpn_protocols,
-            curve_preferences=curve_preferences,
-            handshake_timeout_ns=handshake_timeout_ns,
-            min_version=min_version,
-            max_version=max_version,
-            session_tickets_disabled=session_tickets_disabled,
-            session_cache_capacity=session_cache_capacity,
-        )
-    end
 end
 
 """
@@ -799,7 +706,7 @@ function _make_tls_config_for_h2(
     host, _ = HostResolvers.split_host_port(address)
     effective_server_name = server_name === nothing ? host : server_name
     if config === nothing
-        return _tls_config_from_parts(
+        return TLS.Config(
             effective_server_name,
             true,
             true,
@@ -820,22 +727,17 @@ function _make_tls_config_for_h2(
     protocols = isempty(config.alpn_protocols) ? ["h2"] : copy(config.alpn_protocols)
     in("h2", protocols) || push!(protocols, "h2")
     effective_handshake_timeout_ns = _min_nonzero_ns(config.handshake_timeout_ns, handshake_timeout_ns)
-    return _tls_config_from_parts(
-        server_name === nothing ? (config.server_name === nothing ? host : config.server_name) : server_name,
-        config.verify_peer,
-        config.verify_hostname,
-        config.client_auth,
-        config.cert_file,
-        config.key_file,
-        config.ca_file,
-        config.client_ca_file,
+    effective_server_name = if server_name === nothing
+        config.server_name === nothing ? host : config.server_name::String
+    else
+        server_name
+    end
+    return _copy_tls_config_for_request(
+        config,
+        effective_server_name,
         protocols,
         copy(config.curve_preferences),
         effective_handshake_timeout_ns,
-        config.min_version,
-        config.max_version,
-        config.session_tickets_disabled,
-        64,
     )
 end
 

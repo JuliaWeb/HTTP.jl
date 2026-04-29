@@ -1,5 +1,25 @@
 using Test
 using HTTP
+using Reseau.TLS
+
+const _TLS_CONFIG_POSITIONAL_TYPES = Tuple{
+    Union{Nothing,String},
+    Bool,
+    Bool,
+    TLS.ClientAuthMode.T,
+    Union{Nothing,String},
+    Union{Nothing,String},
+    Union{Nothing,String},
+    Union{Nothing,String},
+    Vector{String},
+    Vector{UInt16},
+    Int64,
+    Union{Nothing,UInt16},
+    Union{Nothing,UInt16},
+    Bool,
+    Int,
+}
+_tls_config_positional_available()::Bool = hasmethod(TLS.Config, _TLS_CONFIG_POSITIONAL_TYPES)
 
 const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _TRIM_PRE_RELEASE = !isempty(VERSION.prerelease)
@@ -182,13 +202,12 @@ function _trim_verifier_error_blocks(output::String)::Vector{String}
 end
 
 function _trim_known_registered_reseau_tls_config_failure(output::String)::Bool
-    getfield(HTTP, :_TLS_CONFIG_POSITIONAL_AVAILABLE) && return false
+    _tls_config_positional_available() && return false
     blocks = _trim_verifier_error_blocks(output)
     isempty(blocks) && return false
     return all(blocks) do block
-        occursin("Core.kwcall", block) &&
-            occursin("Reseau.TLS.Config", block) &&
-            occursin("_tls_config_from_parts", block)
+        occursin("Reseau.TLS.Config", block) &&
+            (occursin("Core.kwcall", block) || occursin("invoke", block))
     end
 end
 

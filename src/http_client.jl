@@ -1384,7 +1384,7 @@ function _client_for_request(
     if require_ssl_verification
         return _default_client!(), false
     end
-    tls_config = _tls_config_from_parts(
+    tls_config = TLS.Config(
         nothing,
         false,
         false,
