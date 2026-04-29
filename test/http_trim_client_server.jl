@@ -9,7 +9,7 @@ function run_http_trim_client_server()::Nothing
             return trim_text_response("hello")
         end
 
-        port = trim_wait_http_server_port(server)
+        port = HT.port(server)
         response = trim_raw_http_exchange(port,
             "GET /hello HTTP/1.1\r\n" *
             "Host: 127.0.0.1:$(port)\r\n" *

@@ -7,11 +7,6 @@ const W = HTTP.WebSockets
 const NC = Reseau.TCP
 const ND = Reseau.HostResolvers
 
-function _wait_ws_server_addr(server; timeout_s::Float64 = 5.0)
-    _ = timeout_s
-    return W.server_addr(server)
-end
-
 function _close_ws_quiet!(x)
     x === nothing && return nothing
     HTTP.@try_ignore begin
@@ -40,7 +35,7 @@ end
         @test W.receive(ws) == "ok"
     end
     try
-        address = _wait_ws_server_addr(server)
+        address = W.server_addr(server)
         ws = W.open("ws://$address/writers")
         try
             received = Set{String}()

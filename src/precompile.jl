@@ -19,6 +19,27 @@ end
 _precompile_body_string(body::AbstractVector{UInt8}) = String(body)
 _precompile_body_string(body::AbstractString) = String(body)
 
+function _precompile_encoded_bytes(text::AbstractString, encoding::Symbol)::Vector{UInt8}
+    bytes = collect(codeunits(String(text)))
+    if encoding == :gzip
+        return transcode(CodecZlib.GzipCompressor, bytes)
+    elseif encoding == :deflate
+        return transcode(CodecZlib.ZlibCompressor, bytes)
+    end
+    throw(ArgumentError("unknown precompile encoding: $(encoding)"))
+end
+
+function _precompile_encoded_response(text::AbstractString, encoding::Symbol)::Response
+    encoded = _precompile_encoded_bytes(text, encoding)
+    header_value = encoding == :gzip ? "gzip" : "deflate"
+    return Response(
+        200,
+        BytesBody(encoded);
+        headers=["Content-Encoding" => header_value],
+        content_length=length(encoded),
+    )
+end
+
 function _precompile_text_response(
     text::AbstractString,
     status::Integer=200,
@@ -50,11 +71,32 @@ function _precompile_reset_default_client!()::Nothing
     return nothing
 end
 
+function _precompile_tls_config(cert_file::String, key_file::String)::TLS.Config
+    return TLS.Config(
+        nothing,
+        false,
+        false,
+        TLS.ClientAuthMode.NoClientCert,
+        cert_file,
+        key_file,
+        nothing,
+        nothing,
+        ["http/1.1"],
+        UInt16[],
+        Int64(0),
+        TLS.TLS1_2_VERSION,
+        nothing,
+        false,
+        64,
+    )
+end
+
 function _run_precompile_workload_inner!()::Nothing
     request_server = nothing
     stream_server = nothing
     file_server = nothing
     h2_server = nothing
+    tls_server = nothing
     ws_server = nothing
     client = nothing
     h2_client = nothing
@@ -99,6 +141,8 @@ function _run_precompile_workload_inner!()::Nothing
                 modtime=servecontent_modtime,
             )
         )
+        register!(request_router, "GET", "/gzip", req -> _precompile_encoded_response("gzip:decoded", :gzip))
+        register!(request_router, "GET", "/deflate", req -> _precompile_encoded_response("deflate:decoded", :deflate))
 
         request_server = serve!(request_router, "127.0.0.1", 0; listenany=true)
         stream_server = listen!("127.0.0.1", 0; listenany=true) do stream
@@ -123,6 +167,19 @@ function _run_precompile_workload_inner!()::Nothing
             )
         end
 
+        tls_resource_dir = normpath(joinpath(@__DIR__, "..", "test", "resources"))
+        tls_cert_path = joinpath(tls_resource_dir, "unittests.crt")
+        tls_key_path = joinpath(tls_resource_dir, "unittests.key")
+        tls_listener = TLS.listen(
+            "tcp",
+            "127.0.0.1:0",
+            _precompile_tls_config(tls_cert_path, tls_key_path);
+            backlog=128,
+        )
+        tls_server = serve!(tls_listener) do request
+            return _precompile_text_response("tls:" * request.target)
+        end
+
         ws_server = WebSockets.listen!("127.0.0.1", 0) do ws
             for msg in ws
                 WebSockets.send(ws, uppercase(String(msg)))
@@ -130,10 +187,11 @@ function _run_precompile_workload_inner!()::Nothing
             return nothing
         end
 
-        request_address = "127.0.0.1:$(port(request_server))"
-        stream_address = "127.0.0.1:$(port(stream_server))"
-        file_address = "127.0.0.1:$(port(file_server))"
-        h2_address = "127.0.0.1:$(port(h2_server))"
+        request_address = server_addr(request_server)
+        stream_address = server_addr(stream_server)
+        file_address = server_addr(file_server)
+        h2_address = server_addr(h2_server)
+        tls_address = server_addr(tls_server)
         ws_url = "ws://" * WebSockets.server_addr(ws_server::WebSockets.Server) * "/echo"
 
         request_timeouts = (
@@ -204,6 +262,18 @@ function _run_precompile_workload_inner!()::Nothing
         @assert String(range_resp.body) == "range"
         @assert header(range_resp, "Content-Range", nothing) == "bytes 0-4/13"
 
+        gzip_resp = get("http://$(request_address)/gzip"; client=client, request_timeouts...)
+        @assert gzip_resp.status == 200
+        @assert String(gzip_resp.body) == "gzip:decoded"
+
+        deflate_resp = get("http://$(request_address)/deflate"; client=client, request_timeouts...)
+        @assert deflate_resp.status == 200
+        @assert String(deflate_resp.body) == "deflate:decoded"
+
+        tls_resp = get("https://$(tls_address)/secure"; require_ssl_verification=false, protocol=:h1, request_timeouts...)
+        @assert tls_resp.status == 200
+        @assert String(tls_resp.body) == "tls:/secure"
+
         h2_resp = get("http://$(h2_address)/h2"; client=h2_client, protocol=:h2)
         @assert h2_resp.status == 200
         @assert h2_resp.proto_major == 2
@@ -224,7 +294,7 @@ function _run_precompile_workload_inner!()::Nothing
                 close(owned::Client)
             end
         end
-        for server in (request_server, stream_server, file_server, h2_server)
+        for server in (request_server, stream_server, file_server, h2_server, tls_server)
             server === nothing && continue
             @try_ignore begin
                 forceclose(server)

@@ -11,6 +11,7 @@ function run_http_trim_client_h1_request()::Nothing
             request.target == "/request" || return trim_text_response("missing"; status = 404)
             return trim_text_response("h1-request")
         end
+        yield()
 
         url = "$(trim_http_base_url(server))/request"
         response = HT.request(
@@ -21,6 +22,11 @@ function run_http_trim_client_h1_request()::Nothing
             retry = false,
             redirect = false,
             cookies = false,
+            connect_timeout = 1.0,
+            request_timeout = 5.0,
+            response_header_timeout = 5.0,
+            read_idle_timeout = 5.0,
+            write_idle_timeout = 5.0,
         )
         response.status == 200 || error("expected 200 response, got $(response.status)")
         body = response.body

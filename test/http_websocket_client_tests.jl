@@ -204,6 +204,34 @@ end
     end
 end
 
+@testset "HTTP.WebSockets client rejects unexpected subprotocols" begin
+    for (requested, returned, expected_reason) in (
+        (String[], "chat", "unexpected websocket subprotocol in response"),
+        (["superchat"], "chat", "unrequested websocket subprotocol in response"),
+    )
+        listener = nothing
+        task = nothing
+        try
+            listener, task, address = _ws_server() do conn
+                request = _read_ws_request(conn)
+                _accept_ws_request!(conn, request; subprotocol = returned)
+            end
+            err = try
+                W.open("ws://$address/subproto"; subprotocols = requested)
+                nothing
+            catch ex
+                ex
+            end
+            @test err isa W.WebSocketError
+            @test (err::W.WebSocketError).message.code == 1002
+            @test err.message.reason == expected_reason
+        finally
+            _close_quiet!(listener)
+            _close_quiet!(task)
+        end
+    end
+end
+
 @testset "HTTP.WebSockets client redirects and cookies" begin
     redirect_listener = nothing
     redirect_task = nothing

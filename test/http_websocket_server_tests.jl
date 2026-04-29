@@ -11,11 +11,6 @@ const ND = Reseau.HostResolvers
 const _TLS_CERT_PATH = joinpath(@__DIR__, "resources", "unittests.crt")
 const _TLS_KEY_PATH = joinpath(@__DIR__, "resources", "unittests.key")
 
-function _wait_server_addr(server; timeout_s::Float64 = 5.0)
-    _ = timeout_s
-    return W.server_addr(server)
-end
-
 function _raw_upgrade_response(address::String; secure::Bool = false, origin::Union{Nothing, String} = nothing, key::Union{Nothing, String} = nothing)
     conn = secure ?
         TL.client(NC.connect(ND.HostResolver(), "tcp", address), TL.Config(server_name = "127.0.0.1", verify_peer = false)) :
@@ -55,13 +50,75 @@ function _read_all_ws_body(body::HT.AbstractBody)::String
     return String(out)
 end
 
+function _ws_frame(opcode, payload::AbstractVector{UInt8}; fin::Bool = true)
+    return W.WsFrame(opcode = UInt8(opcode), payload = Vector{UInt8}(payload), fin = fin)
+end
+
+function _ws_frame(opcode, payload::AbstractString; fin::Bool = true)
+    return _ws_frame(opcode, collect(codeunits(payload)); fin = fin)
+end
+
+function _websocket_error_after_frames(frames::Vector{<:W.WsFrame}; maxframesize::Integer = typemax(Int), maxfragmentation::Integer = W.DEFAULT_MAX_FRAG)
+    ws = W.WebSocket(IOBuffer(), () -> nothing; maxframesize = maxframesize, maxfragmentation = maxfragmentation)
+    for frame in frames
+        W._process_incoming_frame!(ws, frame)
+    end
+    err = try
+        W.receive(ws)
+        nothing
+    catch ex
+        ex
+    end
+    @test err isa W.WebSocketError
+    return err::W.WebSocketError
+end
+
+@testset "HTTP.WebSockets server frame error branches" begin
+    too_large = _websocket_error_after_frames([
+        _ws_frame(W.WsOpcode.TEXT, "toolong"),
+    ]; maxframesize = 3)
+    @test too_large.message.code == 1009
+    @test too_large.message.reason == "frame too large"
+
+    invalid_close = _websocket_error_after_frames([
+        _ws_frame(W.WsOpcode.CLOSE, UInt8[0x03, 0xe7]),
+    ])
+    @test invalid_close.message.code == 1002
+    @test invalid_close.message.reason == "invalid close status code"
+
+    unexpected_continuation = _websocket_error_after_frames([
+        _ws_frame(W.WsOpcode.CONTINUATION, "orphan"),
+    ])
+    @test unexpected_continuation.message.code == 1002
+    @test unexpected_continuation.message.reason == "unexpected continuation"
+
+    fragmented = W.WebSocket(IOBuffer(), () -> nothing; maxfragmentation = 2)
+    W._process_incoming_frame!(fragmented, _ws_frame(W.WsOpcode.TEXT, "hel"; fin = false))
+    W._process_incoming_frame!(fragmented, _ws_frame(W.WsOpcode.CONTINUATION, "lo"))
+    @test W.receive(fragmented) == "hello"
+
+    too_fragmented = _websocket_error_after_frames([
+        _ws_frame(W.WsOpcode.TEXT, "a"; fin = false),
+        _ws_frame(W.WsOpcode.CONTINUATION, "b"),
+    ]; maxfragmentation = 1)
+    @test too_fragmented.message.code == 1009
+    @test too_fragmented.message.reason == "message too large"
+
+    unexpected_data = _websocket_error_after_frames([
+        _ws_frame(W.WsOpcode.TEXT, "a"; fin = false),
+        _ws_frame(W.WsOpcode.BINARY, UInt8[0x62]),
+    ])
+    @test unexpected_data.message.code == 1002
+    @test unexpected_data.message.reason == "unexpected new data frame"
+end
+
 @testset "HTTP.WebSockets server listen! over ws" begin
     server = W.listen!("127.0.0.1", 0) do ws
         msg = W.receive(ws)
         W.send(ws, msg)
     end
     try
-        address = _wait_server_addr(server)
+        address = W.server_addr(server)
         ws = W.open("ws://$address/echo")
         try
             W.send(ws, "hello")
@@ -83,7 +140,7 @@ end
         W.send(ws, "secure")
     end
     try
-        address = _wait_server_addr(server)
+        address = W.server_addr(server)
         ws = W.open("wss://$address/secure"; require_ssl_verification = false)
         try
             @test W.receive(ws) == "secure"
@@ -100,7 +157,7 @@ end
         W.send(ws, "ok")
     end
     try
-        address = _wait_server_addr(server)
+        address = W.server_addr(server)
         ws = W.open("ws://$address/proto"; subprotocols = ["chat", "superchat"])
         try
             @test ws.subprotocol == "chat"
@@ -118,7 +175,7 @@ end
         W.send(ws, "nope")
     end
     try
-        address = _wait_server_addr(server)
+        address = W.server_addr(server)
         response = _raw_upgrade_response(address; origin = "http://evil.example")
         @test response.status == 403
     finally
@@ -135,7 +192,7 @@ end
         W.send(ws, "allowed")
     end
     try
-        address = _wait_server_addr(server)
+        address = W.server_addr(server)
         ws = W.open("ws://$address/origin"; headers = ["Origin" => "http://evil.example"])
         try
             @test W.receive(ws) == "allowed"
@@ -152,7 +209,7 @@ end
         W.send(ws, "nope")
     end
     try
-        address = _wait_server_addr(server)
+        address = W.server_addr(server)
         for key in ("x", "%%%", "AQIDBA==")
             response = _raw_upgrade_response(address; key = key)
             try
@@ -183,7 +240,7 @@ end
     end
     ws = nothing
     try
-        address = _wait_server_addr(server)
+        address = W.server_addr(server)
         ws = W.open("ws://$address/shutdown")
         take!(started)
         close(server)

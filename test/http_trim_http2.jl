@@ -7,7 +7,7 @@ function run_http_trim_http2()::Nothing
     #     trim_text_response("h2:" * request.target; proto_major = 2, proto_minor = 0)
     # end
     # client = HT.Client()
-    # address = "127.0.0.1:$(trim_wait_value(() -> HT.port(server)))"
+    # address = HT.server_addr(server)
     # request = HT.Request("GET", "/h2"; host = address, body = HT.EmptyBody(), content_length = 0)
     # response = HT.do!(client, address, request; protocol = :h2)
 

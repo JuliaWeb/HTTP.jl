@@ -1,28 +1,7 @@
 using Test
 using HTTP
-using Reseau.TLS
-
-const _TLS_CONFIG_POSITIONAL_TYPES = Tuple{
-    Union{Nothing,String},
-    Bool,
-    Bool,
-    TLS.ClientAuthMode.T,
-    Union{Nothing,String},
-    Union{Nothing,String},
-    Union{Nothing,String},
-    Union{Nothing,String},
-    Vector{String},
-    Vector{UInt16},
-    Int64,
-    Union{Nothing,UInt16},
-    Union{Nothing,UInt16},
-    Bool,
-    Int,
-}
-_tls_config_positional_available()::Bool = hasmethod(TLS.Config, _TLS_CONFIG_POSITIONAL_TYPES)
 
 const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
-const _TRIM_PRE_RELEASE = !isempty(VERSION.prerelease)
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
 
 function _trim_compile_timeout_s()::Float64
@@ -141,76 +120,6 @@ function _trim_executable_timeout_s(script_path::String)::Float64
     return parse(Float64, get(ENV, "HTTP_TRIM_EXE_TIMEOUT_S", default))
 end
 
-function _trim_prerelease_allow_failure(script_file::String, reason::String, output::String = "")
-    println("[trim] prerelease issue tolerated for $(script_file): $(reason)")
-    _maybe_print_output("---- trim prerelease output ($(script_file)) ----", output)
-    return nothing
-end
-
-function _trim_known_task_runtime_limitation(script_path::String)::Bool
-    source = read(script_path, String)
-    return occursin("Task(", source) ||
-        occursin("Threads.@spawn", source) ||
-        occursin("HT.serve!(", source) ||
-        occursin("HTTP.serve!(", source) ||
-        occursin("HT.listen!(", source) ||
-        occursin("HTTP.listen!(", source)
-end
-
-function _trim_known_runtime_allow_failure(script_path::String)::Bool
-    _trim_known_task_runtime_limitation(script_path) && return true
-    if Sys.iswindows()
-        script_file = basename(script_path)
-        return script_file == "http_trim_websocket.jl" ||
-            script_file == "http_trim_open_fileserver.jl"
-    end
-    return false
-end
-
-function _trim_known_compile_allow_failure(script_path::String)::Bool
-    return Sys.iswindows() && _trim_known_task_runtime_limitation(script_path)
-end
-
-function _trim_task_runtime_allow_failure(script_file::String, reason::String, output::String = "")
-    println("[trim] known trimmed-task runtime issue tolerated for $(script_file): $(reason)")
-    _maybe_print_output("---- trim task-runtime output ($(script_file)) ----", output)
-    return nothing
-end
-
-function _trim_task_compile_allow_failure(script_file::String, reason::String, output::String = "")
-    println("[trim] known trimmed-task compile issue tolerated for $(script_file): $(reason)")
-    _maybe_print_output("---- trim task-compile output ($(script_file)) ----", output)
-    return nothing
-end
-
-function _trim_reseau_tls_config_allow_failure(script_file::String, reason::String, output::String = "")
-    println("[trim] registered Reseau TLS.Config keyword-constructor issue tolerated for $(script_file): $(reason)")
-    _maybe_print_output("---- trim Reseau TLS.Config output ($(script_file)) ----", output)
-    return nothing
-end
-
-function _trim_verifier_error_blocks(output::String)::Vector{String}
-    matches = collect(eachmatch(r"Verifier error #\d+:", output))
-    isempty(matches) && return String[]
-    blocks = String[]
-    for (i, m) in pairs(matches)
-        start = m.offset
-        stop = i == lastindex(matches) ? lastindex(output) : matches[i + 1].offset - 1
-        push!(blocks, output[start:stop])
-    end
-    return blocks
-end
-
-function _trim_known_registered_reseau_tls_config_failure(output::String)::Bool
-    _tls_config_positional_available() && return false
-    blocks = _trim_verifier_error_blocks(output)
-    isempty(blocks) && return false
-    return all(blocks) do block
-        occursin("Reseau.TLS.Config", block) &&
-            (occursin("Core.kwcall", block) || occursin("invoke", block))
-    end
-end
-
 function _trim_selected_workloads(workloads::Vector{Tuple{String, String}})::Vector{Tuple{String, String}}
     only = strip(get(ENV, "HTTP_TRIM_ONLY", ""))
     isempty(only) && return workloads
@@ -226,15 +135,23 @@ function _trim_use_bundle()::Bool
     return get(ENV, "HTTP_TRIM_BUNDLE", "0") == "1"
 end
 
-function _trim_include_frontier_workloads()::Bool
-    return get(ENV, "HTTP_TRIM_INCLUDE_FRONTIER", "0") == "1"
+function _trim_task_backed_workload(script_path::String)::Bool
+    source = join((line for line in eachsplit(read(script_path, String), '\n') if !startswith(strip(line), "#")), '\n')
+    return occursin("Task(", source) ||
+        occursin("Threads.@spawn", source) ||
+        occursin("HT.serve!(", source) ||
+        occursin("HTTP.serve!(", source) ||
+        occursin("HT.listen!(", source) ||
+        occursin("HTTP.listen!(", source)
+end
+
+function _trim_run_task_backed_executables()::Bool
+    return get(ENV, "HTTP_TRIM_RUN_TASK_EXECUTABLES", "0") == "1"
 end
 
 function _run_trim_case(project_path::String, script_file::String, output_name::String)
     script_path = joinpath(@__DIR__, script_file)
     @test isfile(script_path)
-    allow_task_compile_failure = _trim_known_compile_allow_failure(script_path)
-    allow_task_runtime_failure = _trim_known_runtime_allow_failure(script_path)
     println("[trim] compile START $(script_file)")
     start_t = time()
     mktempdir() do tmpdir
@@ -242,14 +159,6 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             bundle_dir = _trim_use_bundle() ? joinpath(tmpdir, "bundle") : nothing
             exit_code, output, timed_out = _run_trim_compile(project_path, script_path, output_name; bundle_dir = bundle_dir)
             if timed_out
-                if allow_task_compile_failure
-                    _trim_task_compile_allow_failure(script_file, "trim compile timed out", output)
-                    return nothing
-                end
-                if _TRIM_PRE_RELEASE
-                    _trim_prerelease_allow_failure(script_file, "trim compile timed out", output)
-                    return nothing
-                end
                 _trim_timeout_error("compile", script_file, output)
             end
             totals = _parse_trim_verify_totals(output)
@@ -257,12 +166,6 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
                 fallback = _count_trim_verify_messages(output)
                 if exit_code == 0 && fallback == (0, 0)
                     fallback
-                elseif _trim_known_registered_reseau_tls_config_failure(output)
-                    _trim_reseau_tls_config_allow_failure(script_file, "registered Reseau lacks positional TLS.Config constructor", output)
-                    return nothing
-                elseif _TRIM_PRE_RELEASE
-                    _trim_prerelease_allow_failure(script_file, "failed to parse trim verifier summary", output)
-                    return nothing
                 else
                     error("failed to parse trim verifier summary:\n$output")
                 end
@@ -272,42 +175,21 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
             if get(ENV, "HTTP_TRIM_PRINT_OUTPUT", "0") == "1" || trim_errors > 0 || trim_warnings > 0
                 _maybe_print_output("---- trim compile output ($(script_file)) ----", output)
             end
-            if _TRIM_PRE_RELEASE && (trim_errors > 0 || exit_code != 0)
-                _trim_prerelease_allow_failure(script_file, "trim verify finished with $(trim_errors) errors, $(trim_warnings) warnings (exit=$(exit_code))", output)
-                return nothing
-            end
-            if trim_errors > 0 && _trim_known_registered_reseau_tls_config_failure(output)
-                _trim_reseau_tls_config_allow_failure(script_file, "registered Reseau lacks positional TLS.Config constructor", output)
-                return nothing
-            end
             @test trim_errors == 0
             @test trim_warnings == 0
             output_path = Sys.iswindows() ? "$(output_name).exe" : output_name
             run_path = bundle_dir === nothing ? output_path : joinpath(bundle_dir, "bin", output_path)
             @test exit_code == 0
             @test isfile(run_path)
+            if _trim_task_backed_workload(script_path) && !_trim_run_task_backed_executables()
+                println("[trim] run SKIP $(script_file): task-backed trimmed executables currently hang in the Julia runtime; compile verifier stayed strict")
+                return nothing
+            end
             run_cmd = Sys.iswindows() ? `$(abspath(run_path))` : `$(abspath(run_path))`
             run_timeout_s = _trim_executable_timeout_s(script_path)
             run_exit, run_output, run_timed_out = _run_trim_executable(run_cmd; timeout_s = run_timeout_s)
             if run_timed_out
-                if allow_task_runtime_failure
-                    _trim_task_runtime_allow_failure(script_file, "trim executable run timed out", run_output)
-                    return nothing
-                end
-                if _TRIM_PRE_RELEASE
-                    _trim_prerelease_allow_failure(script_file, "trim executable run timed out", run_output)
-                    return nothing
-                else
-                    _trim_timeout_error("executable run", script_file, run_output)
-                end
-            end
-            if allow_task_runtime_failure && run_exit != 0
-                _trim_task_runtime_allow_failure(script_file, "trim executable exited with status $(run_exit)", run_output)
-                return nothing
-            end
-            if _TRIM_PRE_RELEASE && run_exit != 0
-                _trim_prerelease_allow_failure(script_file, "trim executable exited with status $(run_exit)", run_output)
-                return nothing
+                _trim_timeout_error("executable run", script_file, run_output)
             end
             if run_exit != 0
                 _maybe_print_output("---- trim executable output ($(script_file)) ----", run_output)
@@ -348,15 +230,11 @@ end
             ("http_trim_open_fileserver.jl", "http_trim_open_fileserver"),
             ("http_trim_http2.jl", "http_trim_http2"),
             ("http_trim_websocket.jl", "http_trim_websocket"),
+            # High-level client/server frontier workloads use public
+            # `serve!` + `request(...)` and must remain trim-clean.
+            ("http_trim_client_h1_request.jl", "http_trim_client_h1_request"),
+            ("http_trim_client_h1_tls_request.jl", "http_trim_client_h1_tls_request"),
         ]
-        if _trim_include_frontier_workloads()
-            append!(trim_workloads, [
-                # Single high-level client/server frontier workload that uses
-                # public `serve!` + `request(...)` to exercise the highest
-                # request/response round-trip layer under trim compilation.
-                ("http_trim_client_h1_request.jl", "http_trim_client_h1_request"),
-            ])
-        end
         trim_workloads = _trim_selected_workloads(trim_workloads)
         for (script_file, output_name) in trim_workloads
             _run_trim_case(project_path, script_file, output_name)

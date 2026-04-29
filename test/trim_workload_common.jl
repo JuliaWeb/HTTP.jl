@@ -3,30 +3,8 @@ using Reseau
 
 const HT = HTTP
 
-function trim_wait_value(fetcher::Function; timeout_s::Float64 = 5.0)
-    deadline = time() + timeout_s
-    while time() < deadline
-        try
-            return fetcher()
-        catch
-            sleep(0.01)
-        end
-    end
-    return fetcher()
-end
-
 function trim_http_base_url(server; scheme::AbstractString = "http")::String
-    return string(scheme, "://127.0.0.1:", trim_wait_http_server_port(server))
-end
-
-function trim_wait_http_server_port(server; timeout_s::Float64 = 5.0)::Int
-    return trim_wait_value(;
-        timeout_s = timeout_s,
-    ) do
-        port = HT.port(server)
-        port == 0 && error("server port not ready")
-        return port
-    end
+    return string(scheme, "://", HT.server_addr(server))
 end
 
 function trim_body_string(body::HT.AbstractBody)::String

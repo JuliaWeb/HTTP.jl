@@ -145,24 +145,12 @@ end
     end
 end
 
-function _wait_http_addr(server::HT.Server; timeout_s::Float64 = 5.0)
-    deadline = time() + timeout_s
-    while time() < deadline
-        try
-            return HT.server_addr(server)
-        catch
-            sleep(0.01)
-        end
-    end
-    error("timed out waiting for HTTP/1 server addr")
-end
-
 @testset "HTTP integration protocol selection" begin
     h1_server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             payload = collect(codeunits("h1:" * request.target))
             return HT.Response(200, HT.BytesBody(payload); content_length = length(payload))
         end
-    h1_address = _wait_http_addr(h1_server)
+    h1_address = HT.server_addr(h1_server)
     client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), prefer_http2 = true)
     try
         h1_response = HT.get!(client, h1_address, "/auto-h1"; secure = false, protocol = :auto)
@@ -178,7 +166,7 @@ end
             payload = collect(codeunits("h2:" * request.target))
             return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
         end
-    h2_address = _wait_http_addr(h2_server)
+    h2_address = HT.server_addr(h2_server)
     client2 = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), prefer_http2 = true)
     try
         h2_response = HT.get!(client2, h2_address, "/explicit-h2"; secure = false, protocol = :h2)

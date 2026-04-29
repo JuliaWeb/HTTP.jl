@@ -1506,7 +1506,7 @@ function request(
     logerrors=nothing,
     logtag=nothing,
     trace=nothing,
-    verbose=false,
+    verbose=nothing,
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto
 )

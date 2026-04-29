@@ -17,18 +17,6 @@ end
 
 _read_all_handler_bytes(body::AbstractVector{UInt8}) = Vector{UInt8}(body)
 
-function _wait_handlers_server_addr(server; timeout_s::Float64 = 5.0)::String
-    deadline = time() + timeout_s
-    while time() < deadline
-        try
-            return HT.server_addr(server)
-        catch
-            sleep(0.01)
-        end
-    end
-    error("timed out waiting for server address")
-end
-
 function _response_with_text(text::AbstractString; status::Integer = 200)::HT.Response
     bytes = collect(codeunits(String(text)))
     return HT.Response(status, HT.BytesBody(bytes); content_length = length(bytes))
@@ -171,7 +159,7 @@ end
 
 @testset "HTTP streamhandler helper" begin
     server = HT.listen!(HT.streamhandler(_streamhandler_echo_request), "127.0.0.1", 0; listenany = true)
-    address = _wait_handlers_server_addr(server)
+    address = HT.server_addr(server)
     try
         resp = HT.get("http://$(address)/")
         @test resp.status == 200
@@ -192,7 +180,7 @@ end
     HT.register!(router, "POST", "/echo/{name}", _router_echo_request)
 
     server = HT.serve!(router, "127.0.0.1", 0; listenany = true)
-    address = _wait_handlers_server_addr(server)
+    address = HT.server_addr(server)
     try
         hello = HT.get("http://$(address)/hello/jane?lang=en")
         @test hello.status == 200
@@ -218,7 +206,7 @@ end
     HT.register!(router, "POST", "/stream/{name}", _router_stream_request)
 
     server = HT.listen!(router, "127.0.0.1", 0; listenany = true)
-    address = _wait_handlers_server_addr(server)
+    address = HT.server_addr(server)
     try
         resp = HT.post("http://$(address)/stream/sam"; body = "pong")
         @test resp.status == 200
