@@ -13,7 +13,7 @@ if !isdefined(@__MODULE__, :_http_windows_ci)
     end
 end
 
-function _read_all_body_bytes(body::HT.AbstractBody)::Vector{UInt8}
+function _read_all_transport_body_bytes(body::HT.AbstractBody)::Vector{UInt8}
     out = UInt8[]
     buf = Vector{UInt8}(undef, 32)
     while true
@@ -97,7 +97,7 @@ function _transport_windows_ci_warmup!()::Nothing
             try
                 for _ in 1:2
                     request = HT.read_request(HT._ConnReader(conn))
-                    _read_all_body_bytes(request.body)
+                    _read_all_transport_body_bytes(request.body)
                     _write_response_to_conn!(conn, request; body_text = "warmup")
                 end
             finally
@@ -110,7 +110,7 @@ function _transport_windows_ci_warmup!()::Nothing
             req = HT.Request("GET", target; host = address, body = HT.EmptyBody(), content_length = 0)
             HT.set_deadline!(HT.get_request_context(req), Int64(time_ns()) + 2_000_000_000)
             resp = HT.roundtrip!(transport, address, req)
-            _read_all_body_bytes(resp.body)
+            _read_all_transport_body_bytes(resp.body)
         end
         HTTP.@try_ignore begin
             _wait_task!(server_task; timeout_s = 2.0)
@@ -150,7 +150,7 @@ function _transport_windows_hostresolver_warmup!()::Nothing
                 conn = NC.accept(listener)
                 try
                     request = HT.read_request(HT._ConnReader(conn))
-                    _read_all_body_bytes(request.body)
+                    _read_all_transport_body_bytes(request.body)
                     _write_response_to_conn!(conn, request; body_text = "warmup", close_conn = true)
                 finally
                     HTTP.@try_ignore NC.close(conn)
@@ -169,8 +169,8 @@ function _transport_windows_hostresolver_warmup!()::Nothing
         HTTP.@try_ignore begin
             _wait_task!(task1; timeout_s = 2.0)
             _wait_task!(task2; timeout_s = 2.0)
-            _read_all_body_bytes(fetch(task1).body)
-            _read_all_body_bytes(fetch(task2).body)
+            _read_all_transport_body_bytes(fetch(task1).body)
+            _read_all_transport_body_bytes(fetch(task2).body)
         end
         HTTP.@try_ignore begin
             _wait_task!(server_task; timeout_s = 2.0)
@@ -252,7 +252,7 @@ end
             conn = NC.accept(listener)
             try
                 request = HT.read_request(HT._ConnReader(conn))
-                _read_all_body_bytes(request.body)
+                _read_all_transport_body_bytes(request.body)
                 _write_response_to_conn!(conn, request; body_text = "ok", close_conn = true)
             finally
                 HTTP.@try_ignore NC.close(conn)
@@ -273,8 +273,8 @@ end
         @test _wait_task!(task2) === nothing
         res1 = fetch(task1)
         res2 = fetch(task2)
-        @test String(_read_all_body_bytes(res1.body)) == "ok"
-        @test String(_read_all_body_bytes(res2.body)) == "ok"
+        @test String(_read_all_transport_body_bytes(res1.body)) == "ok"
+        @test String(_read_all_transport_body_bytes(res2.body)) == "ok"
         _wait_task!(server_task)
     finally
         close(transport)
@@ -304,7 +304,7 @@ end
         @test request.method == "POST"
         @test request.target == "/upload"
         @test request.content_length == 5
-        @test String(_read_all_body_bytes(request.body)) == "hello"
+        @test String(_read_all_transport_body_bytes(request.body)) == "hello"
     finally
         client === nothing || HTTP.@try_ignore NC.close(client)
         conn === nothing || HTTP.@try_ignore NC.close(conn)
@@ -381,7 +381,7 @@ else
                 request = HT.read_request(HT._ConnReader(conn))
                 _transport_debug("keep-alive reuse: server read_request done")
                 push!(paths, request.target)
-                _read_all_body_bytes(request.body)
+                _read_all_transport_body_bytes(request.body)
                 _write_response_to_conn!(conn, request; body_text = "ok")
                 _transport_debug("keep-alive reuse: server response written")
             end
@@ -399,12 +399,12 @@ else
         _transport_debug("keep-alive reuse: client req1 roundtrip call")
         res1 = HT.roundtrip!(transport, address, req1)
         _transport_debug("keep-alive reuse: client req1 roundtrip done")
-        @test String(_read_all_body_bytes(res1.body)) == "ok"
+        @test String(_read_all_transport_body_bytes(res1.body)) == "ok"
         _transport_debug("keep-alive reuse: client req2 begin")
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
         res2 = HT.roundtrip!(transport, address, req2)
         _transport_debug("keep-alive reuse: client req2 roundtrip done")
-        @test String(_read_all_body_bytes(res2.body)) == "ok"
+        @test String(_read_all_transport_body_bytes(res2.body)) == "ok"
         _transport_debug("keep-alive reuse: waiting server task")
         _wait_task!(server_task)
         _transport_debug("keep-alive reuse: server task done")
@@ -436,7 +436,7 @@ end
             end
             try
                 request = HT.read_request(HT._ConnReader(conn))
-                _read_all_body_bytes(request.body)
+                _read_all_transport_body_bytes(request.body)
                 _write_response_to_conn!(conn, request; body_text = "bye", close_conn = true)
             finally
                 HTTP.@try_ignore NC.close(conn)
@@ -448,10 +448,10 @@ end
     try
         req1 = HT.Request("GET", "/a"; host = address, body = HT.EmptyBody(), content_length = 0)
         res1 = HT.roundtrip!(transport, address, req1)
-        @test String(_read_all_body_bytes(res1.body)) == "bye"
+        @test String(_read_all_transport_body_bytes(res1.body)) == "bye"
         req2 = HT.Request("GET", "/b"; host = address, body = HT.EmptyBody(), content_length = 0)
         res2 = HT.roundtrip!(transport, address, req2)
-        @test String(_read_all_body_bytes(res2.body)) == "bye"
+        @test String(_read_all_transport_body_bytes(res2.body)) == "bye"
         _wait_task!(server_task)
         @test accept_count[] == 2
         @test HT.idle_connection_count(transport) == 0
@@ -475,7 +475,7 @@ end
             for _ in 1:2
                 request = HT.read_request(HT._ConnReader(conn))
                 push!(paths, request.target)
-                _read_all_body_bytes(request.body)
+                _read_all_transport_body_bytes(request.body)
                 headers = HT.Headers()
                 HT.setheader(headers, "Content-Encoding", "gzip")
                 _write_response_bytes_to_conn!(
@@ -521,7 +521,7 @@ end
             for _ in 1:2
                 request = HT.read_request(HT._ConnReader(conn))
                 push!(paths, request.target)
-                _read_all_body_bytes(request.body)
+                _read_all_transport_body_bytes(request.body)
                 headers = HT.Headers()
                 HT.setheader(headers, "Content-Encoding", "deflate")
                 _write_response_bytes_to_conn!(
@@ -565,11 +565,11 @@ end
         try
             req1 = HT.read_request(HT._ConnReader(conn))
             push!(paths, req1.target)
-            _read_all_body_bytes(req1.body)
+            _read_all_transport_body_bytes(req1.body)
             _write_response_to_conn!(conn, req1; body_text = "first")
             req2 = HT.read_request(HT._ConnReader(conn))
             push!(paths, req2.target)
-            _read_all_body_bytes(req2.body)
+            _read_all_transport_body_bytes(req2.body)
             _write_response_to_conn!(conn, req2; body_text = "second", close_conn = true)
         finally
             HTTP.@try_ignore NC.close(conn)
@@ -586,11 +586,11 @@ end
         res2_task = errormonitor(Threads.@spawn HT.roundtrip!(transport, address, req2))
         @test timedwait(() -> istaskdone(res2_task), 0.05; pollint = 0.001) == :timed_out
 
-        @test String(_read_all_body_bytes(res1.body)) == "first"
+        @test String(_read_all_transport_body_bytes(res1.body)) == "first"
 
         res2 = fetch(res2_task)
         @test res2.status == 200
-        @test String(_read_all_body_bytes(res2.body)) == "second"
+        @test String(_read_all_transport_body_bytes(res2.body)) == "second"
         _wait_task!(server_task)
         @test accept_count[] == 1
         @test paths == ["/one", "/two"]
@@ -613,13 +613,13 @@ end
         accept_count[] += 1
         try
             req1 = HT.read_request(HT._ConnReader(conn1))
-            _read_all_body_bytes(req1.body)
+            _read_all_transport_body_bytes(req1.body)
             _write_response_bytes_to_conn!(conn1, req1; body_bytes = first_body)
             NC.set_read_deadline!(conn1, Int64(time_ns()) + 300_000_000)
             try
                 req_maybe = HT.read_request(HT._ConnReader(conn1))
                 same_conn_second_request[] = true
-                _read_all_body_bytes(req_maybe.body)
+                _read_all_transport_body_bytes(req_maybe.body)
                 _write_response_to_conn!(conn1, req_maybe; body_text = "unexpected")
             catch err
                 if !(err isa EOFError || err isa SystemError || err isa Reseau.IOPoll.DeadlineExceededError || err isa Reseau.IOPoll.NetClosingError || err isa HT.ParseError || err isa HT.ProtocolError)
@@ -633,7 +633,7 @@ end
         accept_count[] += 1
         try
             req2 = HT.read_request(HT._ConnReader(conn2))
-            _read_all_body_bytes(req2.body)
+            _read_all_transport_body_bytes(req2.body)
             _write_response_to_conn!(conn2, req2; body_text = "second-response", close_conn = true)
         finally
             HTTP.@try_ignore NC.close(conn2)
@@ -656,7 +656,7 @@ end
 
         res2 = fetch(res2_task)
         @test res2.status == 200
-        @test String(_read_all_body_bytes(res2.body)) == "second-response"
+        @test String(_read_all_transport_body_bytes(res2.body)) == "second-response"
         _wait_task!(server_task)
         @test accept_count[] == 2
         @test !same_conn_second_request[]
@@ -678,13 +678,13 @@ end
         accept_count[] += 1
         try
             req1 = HT.read_request(HT._ConnReader(conn))
-            _read_all_body_bytes(req1.body)
+            _read_all_transport_body_bytes(req1.body)
             _write_response_to_conn!(conn, req1; body_text = "first")
             NC.set_read_deadline!(conn, Int64(time_ns()) + 300_000_000)
             try
                 req2 = HT.read_request(HT._ConnReader(conn))
                 second_request_seen[] = true
-                _read_all_body_bytes(req2.body)
+                _read_all_transport_body_bytes(req2.body)
             catch err
                 if !(err isa EOFError || err isa SystemError || err isa Reseau.IOPoll.DeadlineExceededError || err isa Reseau.IOPoll.NetClosingError || err isa HT.ParseError || err isa HT.ProtocolError)
                     rethrow(err)
@@ -730,7 +730,7 @@ end
         conn = NC.accept(listener)
         try
             request = HT.read_request(HT._ConnReader(conn))
-            _read_all_body_bytes(request.body)
+            _read_all_transport_body_bytes(request.body)
             payload = collect(codeunits("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"))
             _write_all_tcp!(conn, payload)
         finally
@@ -743,7 +743,7 @@ end
         req = HT.Request("POST", "/one"; host = address, body = HT.BytesBody(UInt8[0x78]), content_length = 1)
         res = HT.roundtrip!(transport, address, req)
         @test res.status == 200
-        @test String(_read_all_body_bytes(res.body)) == "ok"
+        @test String(_read_all_transport_body_bytes(res.body)) == "ok"
         _wait_task!(server_task)
     finally
         close(transport)
@@ -773,7 +773,7 @@ end
                 NC.set_read_deadline!(conn, Int64(0))
             end
             _write_all_tcp!(conn, collect(codeunits("HTTP/1.1 100 Continue\r\n\r\n")))
-            @test String(_read_all_body_bytes(request.body)) == "hello"
+            @test String(_read_all_transport_body_bytes(request.body)) == "hello"
             _write_response_to_conn!(conn, request; body_text = "done", close_conn = true)
         finally
             HTTP.@try_ignore NC.close(conn)
@@ -787,7 +787,7 @@ end
         req = HT.Request("POST", "/continue"; host = address, headers = headers, body = HT.BytesBody(collect(codeunits("hello"))), content_length = 5)
         res = HT.roundtrip!(transport, address, req)
         @test res.status == 200
-        @test String(_read_all_body_bytes(res.body)) == "done"
+        @test String(_read_all_transport_body_bytes(res.body)) == "done"
         _wait_task!(server_task)
         @test !sent_body_before_continue[]
     finally
@@ -841,7 +841,7 @@ end
         res = HT.roundtrip!(transport, address, req)
         elapsed = time() - started
         @test res.status == 200
-        @test String(_read_all_body_bytes(res.body)) == "early"
+        @test String(_read_all_transport_body_bytes(res.body)) == "early"
         @test elapsed < 0.75
         @test timedwait(() -> close_count[] == 1, 2.0; pollint = 0.001) != :timed_out
         _wait_task!(server_task)
@@ -876,7 +876,7 @@ end
         conn = NC.accept(listener)
         try
             request = HT.read_request(HT._ConnReader(conn))
-            @test String(_read_all_body_bytes(request.body)) == "ping"
+            @test String(_read_all_transport_body_bytes(request.body)) == "ping"
             _write_response_to_conn!(conn, request; body_text = "done", close_conn = true)
         finally
             HTTP.@try_ignore NC.close(conn)
@@ -888,7 +888,7 @@ end
         req = HT.Request("POST", "/close"; host = address, body = callback_body, content_length = 4)
         res = HT.roundtrip!(transport, address, req)
         @test res.status == 200
-        @test String(_read_all_body_bytes(res.body)) == "done"
+        @test String(_read_all_transport_body_bytes(res.body)) == "done"
         _wait_task!(server_task)
         @test timedwait(() -> close_count[] == 1, 2.0; pollint = 0.001) != :timed_out
     finally
@@ -911,14 +911,14 @@ end
         try
             req1 = HT.read_request(HT._ConnReader(conn))
             push!(paths, req1.target)
-            _read_all_body_bytes(req1.body)
+            _read_all_transport_body_bytes(req1.body)
             _write_response_bytes_to_conn!(conn, req1; body_bytes = first_body)
             NC.set_read_deadline!(conn, Int64(time_ns()) + 300_000_000)
             try
                 req2 = HT.read_request(HT._ConnReader(conn))
                 same_conn_second_request[] = true
                 push!(paths, req2.target)
-                _read_all_body_bytes(req2.body)
+                _read_all_transport_body_bytes(req2.body)
                 _write_response_to_conn!(conn, req2; body_text = "unexpected")
             catch err
                 if !(err isa EOFError || err isa SystemError || err isa Reseau.IOPoll.DeadlineExceededError || err isa Reseau.IOPoll.NetClosingError || err isa HT.ParseError || err isa HT.ProtocolError)
@@ -933,7 +933,7 @@ end
         try
             req2 = HT.read_request(HT._ConnReader(conn2))
             push!(paths, req2.target)
-            _read_all_body_bytes(req2.body)
+            _read_all_transport_body_bytes(req2.body)
             _write_response_to_conn!(conn2, req2; body_text = "second", close_conn = true)
         finally
             HTTP.@try_ignore NC.close(conn2)
@@ -950,7 +950,7 @@ end
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
         res2 = HT.roundtrip!(transport, address, req2)
         @test res2.status == 200
-        @test String(_read_all_body_bytes(res2.body)) == "second"
+        @test String(_read_all_transport_body_bytes(res2.body)) == "second"
         _wait_task!(server_task)
         @test accept_count[] == 2
         @test !same_conn_second_request[]
@@ -972,7 +972,7 @@ end
             accept_count[] += 1
             try
                 request = HT.read_request(HT._ConnReader(conn))
-                _read_all_body_bytes(request.body)
+                _read_all_transport_body_bytes(request.body)
                 _write_response_to_conn!(conn, request; body_text = "ok")
                 NC.set_read_deadline!(conn, Int64(time_ns()) + 100_000_000)
                 HTTP.@try_ignore _ = HT.read_request(HT._ConnReader(conn))
@@ -988,10 +988,10 @@ end
         HT.setheader(headers, "Connection", "close")
         req1 = HT.Request("GET", "/one"; host = address, headers = headers, body = HT.EmptyBody(), content_length = 0)
         res1 = HT.roundtrip!(transport, address, req1)
-        @test String(_read_all_body_bytes(res1.body)) == "ok"
+        @test String(_read_all_transport_body_bytes(res1.body)) == "ok"
         req2 = HT.Request("GET", "/two"; host = address, headers = headers, body = HT.EmptyBody(), content_length = 0)
         res2 = HT.roundtrip!(transport, address, req2)
-        @test String(_read_all_body_bytes(res2.body)) == "ok"
+        @test String(_read_all_transport_body_bytes(res2.body)) == "ok"
         _wait_task!(server_task)
         @test accept_count[] == 2
         @test HT.idle_connection_count(transport) == 0
@@ -1013,13 +1013,13 @@ end
         accept_count[] += 1
         try
             req1 = HT.read_request(HT._ConnReader(conn1))
-            _read_all_body_bytes(req1.body)
+            _read_all_transport_body_bytes(req1.body)
             _write_response_bytes_to_conn!(conn1, req1; body_bytes = first_body)
             NC.set_read_deadline!(conn1, Int64(time_ns()) + 300_000_000)
             try
                 req_maybe = HT.read_request(HT._ConnReader(conn1))
                 same_conn_second_request[] = true
-                _read_all_body_bytes(req_maybe.body)
+                _read_all_transport_body_bytes(req_maybe.body)
                 _write_response_to_conn!(conn1, req_maybe; body_text = "unexpected")
             catch err
                 if !(err isa EOFError || err isa SystemError || err isa Reseau.IOPoll.DeadlineExceededError || err isa Reseau.IOPoll.NetClosingError || err isa HT.ParseError || err isa HT.ProtocolError)
@@ -1033,7 +1033,7 @@ end
         accept_count[] += 1
         try
             req2 = HT.read_request(HT._ConnReader(conn2))
-            _read_all_body_bytes(req2.body)
+            _read_all_transport_body_bytes(req2.body)
             _write_response_to_conn!(conn2, req2; body_text = "second-response", close_conn = true)
         finally
             HTTP.@try_ignore NC.close(conn2)
@@ -1052,7 +1052,7 @@ end
         req2 = HT.Request("GET", "/two"; host = address, body = HT.EmptyBody(), content_length = 0)
         res2 = HT.roundtrip!(transport, address, req2)
         @test res2.status == 200
-        @test String(_read_all_body_bytes(res2.body)) == "second-response"
+        @test String(_read_all_transport_body_bytes(res2.body)) == "second-response"
         _wait_task!(server_task)
         @test accept_count[] == 2
         @test !same_conn_second_request[]
@@ -1074,7 +1074,7 @@ end
         try
             req1 = HT.read_request(HT._ConnReader(conn1))
             push!(paths, req1.target)
-            _read_all_body_bytes(req1.body)
+            _read_all_transport_body_bytes(req1.body)
             _write_response_to_conn!(conn1, req1; body_text = "warmup")
             sleep(0.15)
         finally
@@ -1085,7 +1085,7 @@ end
         try
             req2 = HT.read_request(HT._ConnReader(conn2))
             push!(paths, req2.target)
-            _read_all_body_bytes(req2.body)
+            _read_all_transport_body_bytes(req2.body)
             _write_response_to_conn!(conn2, req2; body_text = "retried", close_conn = true)
         finally
             HTTP.@try_ignore NC.close(conn2)
@@ -1096,12 +1096,12 @@ end
     try
         req1 = HT.Request("GET", "/warmup"; host = address, body = HT.EmptyBody(), content_length = 0)
         res1 = HT.roundtrip!(transport, address, req1)
-        @test String(_read_all_body_bytes(res1.body)) == "warmup"
+        @test String(_read_all_transport_body_bytes(res1.body)) == "warmup"
         sleep(0.20)
         req2 = HT.Request("GET", "/retry"; host = address, body = HT.EmptyBody(), content_length = 0)
         res2 = HT.roundtrip!(transport, address, req2)
         @test res2.status == 200
-        @test String(_read_all_body_bytes(res2.body)) == "retried"
+        @test String(_read_all_transport_body_bytes(res2.body)) == "retried"
         _wait_task!(server_task)
         @test accept_count[] == 2
         @test paths == ["/warmup", "/retry"]

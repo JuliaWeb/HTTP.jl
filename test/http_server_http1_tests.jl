@@ -19,7 +19,7 @@ function _read_all_server_bytes(body::HT.AbstractBody)::Vector{UInt8}
     return out
 end
 
-function _wait_server_addr(server; timeout_s::Float64 = 5.0)::String
+function _wait_h1_server_addr(server; timeout_s::Float64 = 5.0)::String
     _ = timeout_s
     return HT.server_addr(server)
 end
@@ -178,7 +178,7 @@ end
             end
             return response
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         @test isopen(server)
         @test HT.port(server) > 0
@@ -221,7 +221,7 @@ end
         write(stream, "aborted")
         return nothing
     end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         @test server.read_timeout_ns == 11_000_000_000
         @test server.read_header_timeout_ns == 22_000_000_000
@@ -248,7 +248,7 @@ end
         body = _BlockingResponseBody(gate, payload, false)
         return HT.Response(200, body; content_length = length(payload))
     end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     conn = ND.connect("tcp", address)
     try
         write(conn, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
@@ -276,7 +276,7 @@ end
             payload = collect(codeunits("echo:" * request.target))
             return HT.Response(200, HT.BytesBody(payload); reason = "OK", content_length = length(payload))
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4))
     try
         @test isopen(server)
@@ -301,7 +301,7 @@ end
         _ = request
         return HT.Response(404, "Not found")
     end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         response = HT.get("http://$(address)/missing"; retry = false, status_exception = false)
         @test response.status == 404
@@ -362,7 +362,7 @@ end
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             return HT.servecontent(request, payload; name = "demo.txt", etag = "\"v1\"", modtime = modtime)
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         range_headers = HT.Headers()
         HT.setheader(range_headers, "Range", "bytes=1-3")
@@ -405,7 +405,7 @@ end
         @test HT.header(blob_resp.headers, "Content-Type") == "application/octet-stream"
 
         server = HT.serve!(HT.fileserver(dir; etag = :weak_stat, cache_control = "public, max-age=60"), "127.0.0.1", 0; listenany = true)
-        address = _wait_server_addr(server)
+        address = _wait_h1_server_addr(server)
         try
             range_headers = HT.Headers()
             HT.setheader(range_headers, "Range", "bytes=6-10")
@@ -458,7 +458,7 @@ end
         @test_throws ArgumentError HT.fileserver(dir; spa_fallback = "../index.html")
 
         server = HT.serve!(HT.fileserver(dir; spa_fallback = "index.html"), "127.0.0.1", 0; listenany = true)
-        address = _wait_server_addr(server)
+        address = _wait_h1_server_addr(server)
         try
             route_resp = HT.get("http://$(address)/gallery"; status_exception = false)
             @test route_resp.status == 200
@@ -493,7 +493,7 @@ end
         return HT.Response(200, HT.BytesBody(UInt8[0x6c, 0x61, 0x74, 0x65]); content_length = 4)
     end)
     server = HT.serve!(handler, "127.0.0.1", 0; listenany = true)
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         slow = HT.get("http://$(address)/slow"; status_exception = false)
         @test slow.status == 503
@@ -529,8 +529,8 @@ end
         isempty(body) || write(stream, body)
         return nothing
     end
-    address = _wait_server_addr(server)
-    small_header_address = _wait_server_addr(small_header_server)
+    address = _wait_h1_server_addr(server)
+    small_header_address = _wait_h1_server_addr(small_header_server)
     try
         port_num = HT.port(server)
         large_header_resp = _raw_http_request(HT.port(small_header_server), "GET / HTTP/1.1\r\nHost: $(small_header_address)\r\n$(repeat("Foo: Bar\r\n", 200))\r\n")
@@ -582,7 +582,7 @@ end
             _ = request
             return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2)
     end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         raw = _raw_http_request(HT.port(server), "POST / HTTP/1.1\r\nHost: $(address)\r\nContent-Length: 0\r\nExpect: fancy-feature\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
         @test occursin("HTTP/1.1 417", raw)
@@ -606,7 +606,7 @@ end
             write(stream, "oops")
             return nothing
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         head_raw = _raw_http_request(HT.port(server), "HEAD /head HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
         @test occursin("HTTP/1.1 200 OK", head_raw)
@@ -639,7 +639,7 @@ end
         end,
     )
     HT.listen!(timeout_server)
-    timeout_address = _wait_server_addr(timeout_server)
+    timeout_address = _wait_h1_server_addr(timeout_server)
     try
         sock = ND.connect("tcp", "127.0.0.1:$(HT.port(timeout_server))")
         try
@@ -658,7 +658,7 @@ end
         _ = request
         error("boom")
     end
-    error_address = _wait_server_addr(error_server)
+    error_address = _wait_h1_server_addr(error_server)
     try
         response = HT.get("http://$(error_address)/"; retry = false, status_exception = false)
         @test response.status == 500
@@ -682,7 +682,7 @@ end
         end,
     )
     HT.listen!(server)
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
     try
         write(sock, Vector{UInt8}(codeunits("GET /one HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
@@ -729,7 +729,7 @@ end
         end,
     )
     HT.listen!(server)
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
     try
         write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
@@ -754,7 +754,7 @@ end
                 request = request,
             )
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         head_raw = _raw_http_request(HT.port(server), "HEAD /head HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
         @test occursin("HTTP/1.1 200 OK", head_raw)
@@ -779,7 +779,7 @@ end
             write(stream, isempty(body) ? "ping" : body)
             return nothing
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         resp1 = HT.get("http://$(address)/")
         @test resp1.status == 200
@@ -808,7 +808,7 @@ end
             write(stream, "hi")
             return nothing
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         overflow_raw = _raw_http_request(HT.port(server), "GET /overflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
         @test !occursin("toolong", overflow_raw)
@@ -833,7 +833,7 @@ end
             HT.addtrailer(stream, "X-Trailer" => "ok")
             return nothing
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         raw = _raw_http_request(HT.port(server), "GET / HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
         lower_raw = lowercase(raw)
@@ -851,7 +851,7 @@ end
             _ = request
             return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); reason = "OK", content_length = 2)
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4))
     try
         response = _run_with_timeout(() -> HT.get!(client, address, "/live"); label = "live request")
@@ -879,7 +879,7 @@ end
             take!(release)
             return HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2)
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4))
     close_task = nothing
     try
@@ -913,7 +913,7 @@ end
             write(stream, payload)
             return nothing
         end
-    address = _wait_server_addr(server)
+    address = _wait_h1_server_addr(server)
     try
         post_response, post_closed = _raw_http_request_until_close(
             HT.port(server),
