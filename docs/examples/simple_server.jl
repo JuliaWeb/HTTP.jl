@@ -2,18 +2,16 @@
 A simple example of creating a server with HTTP.jl. It handles creating, deleting, 
 updating, and retrieving Animals from a dictionary through 4 different routes
 =#
-using HTTP, JSON3, StructTypes
+using HTTP, JSON, UUIDs
+using StructUtils: @noarg
 
 # modified Animal struct to associate with specific user
-mutable struct Animal
+@noarg mutable struct Animal
     id::Int
-    userId::Base.UUID
+    userId::UUID
     type::String
     name::String
-    Animal() = new()
 end
-
-StructTypes.StructType(::Type{Animal}) = StructTypes.Mutable()
 
 # use a plain `Dict` as a "data store"
 const ANIMALS = Dict{Int, Animal}()
@@ -24,24 +22,44 @@ function getNextId()
     return id
 end
 
+function animal_from_json(body)
+    data = JSON.parse(String(body))
+    animal = Animal()
+    id = get(data, "id", nothing)
+    id === nothing || (animal.id = Int(id))
+    animal.userId = UUID(data["userId"])
+    animal.type = String(data["type"])
+    animal.name = String(data["name"])
+    return animal
+end
+
+function JSON.lower(animal::Animal)
+    return Dict(
+        "id" => isdefined(animal, :id) ? animal.id : nothing,
+        "userId" => isdefined(animal, :userId) ? string(animal.userId) : nothing,
+        "type" => animal.type,
+        "name" => animal.name,
+    )
+end
+
 # "service" functions to actually do the work
 function createAnimal(req::HTTP.Request)
-    animal = JSON3.read(req.body, Animal)
+    animal = animal_from_json(req.body)
     animal.id = getNextId()
     ANIMALS[animal.id] = animal
-    return HTTP.Response(200, JSON3.write(animal))
+    return HTTP.Response(200, JSON.json(animal))
 end
 
 function getAnimal(req::HTTP.Request)
     animalId = HTTP.getparams(req)["id"]
     animal = ANIMALS[parse(Int, animalId)]
-    return HTTP.Response(200, JSON3.write(animal))
+    return HTTP.Response(200, JSON.json(animal))
 end
 
 function updateAnimal(req::HTTP.Request)
-    animal = JSON3.read(req.body, Animal)
+    animal = animal_from_json(req.body)
     ANIMALS[animal.id] = animal
-    return HTTP.Response(200, JSON3.write(animal))
+    return HTTP.Response(200, JSON.json(animal))
 end
 
 function deleteAnimal(req::HTTP.Request)
@@ -62,14 +80,15 @@ server = HTTP.serve!(ANIMAL_ROUTER, "127.0.0.1", 8080)
 
 # using our server
 x = Animal()
+x.userId = uuid4()
 x.type = "cat"
 x.name = "pete"
 # create 1st animal
-resp = HTTP.post("http://localhost:8080/api/zoo/v1/animals", [], JSON3.write(x))
-x2 = JSON3.read(resp.body, Animal)
+resp = HTTP.post("http://localhost:8080/api/zoo/v1/animals", [], JSON.json(x))
+x2 = animal_from_json(resp.body)
 # retrieve it back
 resp = HTTP.get("http://localhost:8080/api/zoo/v1/animals/$(x2.id)")
-x3 = JSON3.read(resp.body, Animal)
+x3 = animal_from_json(resp.body)
 
 # close the server which will stop the HTTP server from listening
 HTTP.forceclose(server)

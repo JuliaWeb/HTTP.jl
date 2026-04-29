@@ -5,14 +5,14 @@ than just a simple request. For CORS details, see e.g. https://cors-errors.info/
 =#
 
 using HTTP, JSON, UUIDs
+using StructUtils: @noarg
 
 # modified Animal struct to associate with specific user
-mutable struct Animal
+@noarg mutable struct Animal
     id::Int
     userId::UUID
     type::String
     name::String
-    Animal() = new()
 end
 
 # use a plain `Dict` as a "data store", outer Dict maps userId to user-specific Animals
