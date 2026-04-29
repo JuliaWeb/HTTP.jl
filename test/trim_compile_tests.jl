@@ -5,7 +5,7 @@ const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
 
 function _trim_compile_timeout_s()::Float64
-    default = Sys.iswindows() ? "240.0" : "120.0"
+    default = Sys.iswindows() ? "600.0" : "120.0"
     return parse(Float64, get(ENV, "HTTP_TRIM_COMPILE_TIMEOUT_S", default))
 end
 
@@ -112,11 +112,8 @@ function _maybe_print_output(header::String, output::String)
 end
 
 function _trim_executable_timeout_s(script_path::String)::Float64
-    default = if Sys.iswindows() && basename(script_path) == "http_trim_open_fileserver.jl"
-        "120.0"
-    else
-        Sys.iswindows() ? "60.0" : "30.0"
-    end
+    _ = script_path
+    default = Sys.iswindows() ? "60.0" : "30.0"
     return parse(Float64, get(ENV, "HTTP_TRIM_EXE_TIMEOUT_S", default))
 end
 

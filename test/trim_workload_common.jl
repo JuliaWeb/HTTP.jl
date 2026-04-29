@@ -54,6 +54,13 @@ function trim_close_http_server(server)::Nothing
     return nothing
 end
 
+function trim_shutdown_runtime()::Nothing
+    yield()
+    GC.gc()
+    HTTP.@try_ignore Reseau.IOPoll.shutdown!()
+    return nothing
+end
+
 function trim_raw_http_exchange(port::Integer, request::AbstractString)::String
     conn = Reseau.TCP.connect(Reseau.TCP.loopback_addr(port))
     try
