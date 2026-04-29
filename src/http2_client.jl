@@ -7,6 +7,24 @@ using Reseau.IOPoll
 const _H2_PREFACE = collect(codeunits("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"))
 const _H2_DEFAULT_MAX_HEADER_LIST_SIZE = 10 * 1024 * 1024
 const _H2_DEFAULT_MAX_HEADER_BLOCK_BYTES = 2 * _H2_DEFAULT_MAX_HEADER_LIST_SIZE
+const _TLS_CONFIG_POSITIONAL_TYPES = Tuple{
+    Union{Nothing,String},
+    Bool,
+    Bool,
+    TLS.ClientAuthMode.T,
+    Union{Nothing,String},
+    Union{Nothing,String},
+    Union{Nothing,String},
+    Union{Nothing,String},
+    Vector{String},
+    Vector{UInt16},
+    Int64,
+    Union{Nothing,UInt16},
+    Union{Nothing,UInt16},
+    Bool,
+    Int,
+}
+const _TLS_CONFIG_POSITIONAL_AVAILABLE = hasmethod(TLS.Config, _TLS_CONFIG_POSITIONAL_TYPES)
 
 """
     H2NegotiationError
@@ -56,22 +74,41 @@ end
     session_tickets_disabled::Bool,
     session_cache_capacity::Int=64,
 )::TLS.Config
+    if _TLS_CONFIG_POSITIONAL_AVAILABLE
+        return TLS.Config(
+            server_name,
+            verify_peer,
+            verify_hostname,
+            client_auth,
+            cert_file,
+            key_file,
+            ca_file,
+            client_ca_file,
+            alpn_protocols,
+            curve_preferences,
+            handshake_timeout_ns,
+            min_version,
+            max_version,
+            session_tickets_disabled,
+            session_cache_capacity,
+        )
+    end
     return TLS.Config(
-        server_name,
-        verify_peer,
-        verify_hostname,
-        client_auth,
-        cert_file,
-        key_file,
-        ca_file,
-        client_ca_file,
-        alpn_protocols,
-        curve_preferences,
-        handshake_timeout_ns,
-        min_version,
-        max_version,
-        session_tickets_disabled,
-        session_cache_capacity,
+        server_name=server_name,
+        verify_peer=verify_peer,
+        verify_hostname=verify_hostname,
+        client_auth=client_auth,
+        cert_file=cert_file,
+        key_file=key_file,
+        ca_file=ca_file,
+        client_ca_file=client_ca_file,
+        alpn_protocols=alpn_protocols,
+        curve_preferences=curve_preferences,
+        handshake_timeout_ns=handshake_timeout_ns,
+        min_version=min_version,
+        max_version=max_version,
+        session_tickets_disabled=session_tickets_disabled,
+        session_cache_capacity=session_cache_capacity,
     )
 end
 
