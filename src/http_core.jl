@@ -546,6 +546,51 @@ function hasheader(headers::Headers, key::AbstractString)::Bool
 end
 
 """
+    headers[key] -> String
+
+Dict-style indexing on `Headers`. Returns the canonical first value for
+`key`, throwing `KeyError(key)` if the header is absent or has empty value.
+Use [`HTTP.header`](@ref) when you want a string default instead of an
+exception.
+"""
+function Base.getindex(headers::Headers, key::AbstractString)::String
+    v = header(headers, key)
+    isempty(v) || return v
+    hasheader(headers, key) || throw(KeyError(key))
+    return v
+end
+
+"""
+    get(headers, key, default) -> String
+
+Dict-style `get` on `Headers`. Returns the first value for `key`, or
+`default` if the header is absent.
+"""
+function Base.get(headers::Headers, key::AbstractString, default)
+    v = header(headers, key)
+    !isempty(v) && return v
+    hasheader(headers, key) && return v
+    return default
+end
+
+"""
+    haskey(headers, key) -> Bool
+
+Dict-style `haskey` on `Headers`. Returns `true` when `key` is present
+(case-insensitive), regardless of whether its value is empty.
+"""
+function Base.haskey(headers::Headers, key::AbstractString)::Bool
+    canon = canonical_header_key(key)
+    for (name, _) in headers
+        name == canon && return true
+    end
+    return false
+end
+
+# Request/Response convenience overloads are added later in this file once
+# those types are defined.
+
+"""
     hasheader(headers, key, value) -> Bool
 
 Return `true` when any stored header value for `key` matches `value`
@@ -1026,7 +1071,12 @@ end
 @inline _compat_body_arg(::Nothing) = EmptyBody()
 @inline _compat_body_arg(body::AbstractBody) = body
 @inline _compat_body_arg(body::AbstractVector{UInt8}) = BytesBody(body)
-@inline _compat_body_arg(body::AbstractString) = BytesBody(Vector{UInt8}(codeunits(String(body))))
+# Wrap String/SubString bodies in a BytesBody that aliases the underlying
+# codeunits via the immutable string buffer — saves a length-of-body memcpy
+# on every Response construction. Strings are immutable so this is safe even
+# if the caller reuses the same String across multiple Responses; HTTP body
+# write paths only read via copyto!/unsafe_write.
+@inline _compat_body_arg(body::AbstractString) = BytesBody(codeunits(String(body)))
 
 @inline _compat_body_length(::Nothing)::Int64 = Int64(0)
 @inline _compat_body_length(::EmptyBody)::Int64 = Int64(0)
@@ -1610,6 +1660,8 @@ function removeheader(message::Union{Request,Response}, key::AbstractString)
 end
 
 Base.getindex(message::Union{Request,Response}, key::AbstractString) = header(message, key)
+Base.get(message::Union{Request,Response}, key::AbstractString, default) = get(message.headers, key, default)
+Base.haskey(message::Union{Request,Response}, key::AbstractString) = haskey(message.headers, key)
 
 function Base.getproperty(response::Response, field::Symbol)
     field === :url && return getfield(response, :request_url)

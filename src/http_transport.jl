@@ -1212,6 +1212,35 @@ end
 
 function _readline_crlf(reader::_ConnReader, max_line_bytes::Integer)::String
     max_line_bytes <= 0 && throw(ArgumentError("max_line_bytes must be > 0"))
+    # Fast path: line fully contained in the current fill of the conn buffer.
+    # This is the common case for HTTP/1 request lines and headers in
+    # well-behaved clients, and avoids the per-line Vector{UInt8} allocation
+    # and copy that the multi-buffer slow path requires.
+    if _conn_reader_available(reader) > 0
+        start = reader.next
+        stop = reader.stop
+        nl_idx = 0
+        @inbounds for i in start:stop
+            if reader.buf[i] == 0x0a
+                nl_idx = i
+                break
+            end
+        end
+        if nl_idx > 0
+            line_len = nl_idx - start + 1
+            line_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
+            reader.next = nl_idx + 1
+            # Strip terminator: \r\n preferred, bare \n tolerated.
+            content_stop = nl_idx - 1
+            if content_stop >= start && @inbounds(reader.buf[content_stop]) == 0x0d
+                content_stop -= 1
+            end
+            content_len = content_stop - start + 1
+            content_len <= 0 && return ""
+            return unsafe_string(pointer(reader.buf, start), content_len)
+        end
+    end
+    # Slow path: line spans multiple buffer fills.
     bytes = UInt8[]
     while true
         if _conn_reader_available(reader) == 0

@@ -628,7 +628,7 @@ function _close_server_conn!(tracked::_ServerConn)::Nothing
 end
 
 @inline function _finalize_server_conn!(server::Server, tracked::_ServerConn)::Nothing
-    _clear_deadlines!(tracked.conn)
+    _clear_deadlines!(server, tracked.conn)
     _close_server_conn!(tracked)
     _untrack_conn!(server, tracked)
     return nothing
@@ -755,7 +755,23 @@ function _set_idle_deadline!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::No
 end
 
 function _set_write_deadline!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
-    _set_write_deadline!(conn, _server_write_deadline_ns(server))
+    server.write_timeout_ns > 0 || return nothing
+    _set_write_deadline!(conn, _deadline_after(server.write_timeout_ns))
+    return nothing
+end
+
+@inline function _server_has_any_timeouts(server::Server)::Bool
+    return server.read_timeout_ns > 0 ||
+           server.read_header_timeout_ns > 0 ||
+           server.write_timeout_ns > 0 ||
+           server.idle_timeout_ns > 0
+end
+
+function _clear_deadlines!(server::Server, conn::Union{TCP.Conn,TLS.Conn})::Nothing
+    _server_has_any_timeouts(server) || return nothing
+    @try_ignore begin
+        _set_deadline!(conn, Int64(0))
+    end
     return nothing
 end
 
@@ -1062,7 +1078,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                         closewrite(stream)
                     end
                     closeread(stream)
-                    _clear_deadlines!(tracked.conn)
+                    _clear_deadlines!(server, tracked.conn)
                     _server_shutting_down(server) && return nothing
                     if _request_wants_close(request) || _response_wants_close(stream.response)
                         return nothing
@@ -1104,7 +1120,7 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                 end
                 _set_write_deadline!(server, tracked.conn)
                 _write_all_response!(tracked.conn, response_obj)
-                _clear_deadlines!(tracked.conn)
+                _clear_deadlines!(server, tracked.conn)
                 _server_shutting_down(server) && return nothing
                 if _request_wants_close(handler_request) || _response_wants_close(response_obj)
                     return nothing

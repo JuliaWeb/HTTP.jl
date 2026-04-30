@@ -130,6 +130,32 @@ const _STATIC_TABLE = HeaderField[
     HeaderField("www-authenticate", "", false),
 ]
 
+# Pre-built indexes over the (immutable) HPACK static table for O(1) lookup
+# of (name, value) → exact-index and name → first-index. These are the hot
+# paths inside `encode_header_block`; the static table has 61 entries and
+# was previously linearly scanned twice per encoded header field.
+const _STATIC_TABLE_EXACT_INDEX = let
+    d = Dict{Tuple{String,String},Int}()
+    @inbounds for i in 1:length(_STATIC_TABLE)
+        e = _STATIC_TABLE[i]
+        # Static table can have duplicate names with different values; the
+        # spec lookup wants the *lowest* index for any match, so only insert
+        # the first sighting of each (name, value) pair (`get!`).
+        get!(d, (e.name, e.value), i)
+    end
+    d
+end
+
+const _STATIC_TABLE_NAME_INDEX = let
+    d = Dict{String,Int}()
+    @inbounds for i in 1:length(_STATIC_TABLE)
+        e = _STATIC_TABLE[i]
+        # Same lowest-index rule for name-only lookups.
+        get!(d, e.name, i)
+    end
+    d
+end
+
 const _HUFFMAN_CODES = UInt32[
     0x1ff8,
     0x7fffd8,
@@ -674,13 +700,11 @@ function _table_get(table::DynamicTable, index::Int)::HeaderField
 end
 
 function _find_exact_index(table::DynamicTable, name::String, value::String)::Int
-    for i in 1:length(_STATIC_TABLE)
-        entry = _STATIC_TABLE[i]
-        if entry.name == name && entry.value == value
-            return i
-        end
-    end
-    for i in 1:length(table.entries)
+    # O(1) static-table lookup via prebuilt Dict. The static table is
+    # immutable so the Dict can be shared across all encoders.
+    static_hit = get(_STATIC_TABLE_EXACT_INDEX, (name, value), 0)
+    static_hit > 0 && return static_hit
+    @inbounds for i in 1:length(table.entries)
         entry = table.entries[i]
         if entry.name == name && entry.value == value
             return length(_STATIC_TABLE) + i
@@ -690,11 +714,9 @@ function _find_exact_index(table::DynamicTable, name::String, value::String)::In
 end
 
 function _find_name_index(table::DynamicTable, name::String)::Int
-    for i in 1:length(_STATIC_TABLE)
-        entry = _STATIC_TABLE[i]
-        entry.name == name && return i
-    end
-    for i in 1:length(table.entries)
+    static_hit = get(_STATIC_TABLE_NAME_INDEX, name, 0)
+    static_hit > 0 && return static_hit
+    @inbounds for i in 1:length(table.entries)
         entry = table.entries[i]
         entry.name == name && return length(_STATIC_TABLE) + i
     end
@@ -854,7 +876,16 @@ Throws `ArgumentError` for invalid sizing inputs and `ProtocolError` if an
 indexed lookup becomes inconsistent.
 """
 function encode_header_block(encoder::Encoder, headers::Vector{HeaderField})::Vector{UInt8}
-    out = UInt8[]
+    # Pre-size the output buffer using a rough upper bound (most encoded
+    # headers are 1–2 bytes for indexed entries, 3–N for literal entries
+    # where N is name+value length). Avoids the doubling-grow chain that
+    # `push!`-into-empty Vector incurs for ~3–10 header blocks per response.
+    estimated = 0
+    for h in headers
+        estimated += 4 + ncodeunits(h.name) + ncodeunits(h.value)
+    end
+    out = Vector{UInt8}()
+    sizehint!(out, estimated + 16)
     _emit_table_size_updates!(out, encoder)
     for header in headers
         # Prefer the most compact representation available: exact indexed

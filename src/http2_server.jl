@@ -284,12 +284,18 @@ function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UIn
                 _wait_h2_send_window_locked!(send_state, deadline_ns)
                 continue
             end
+            # Reservation is bounded by the peer's send-window credits only.
+            # Per-frame max-frame-size is a *framing* constraint enforced by
+            # the caller when slicing the reservation into DATA frames; it
+            # has no business capping the reservation itself. Conflating
+            # them caused the H/2 large-body path to issue one socket write
+            # per max-frame-size chunk instead of one per window chunk —
+            # 7× more writev syscalls than necessary for a 100 KB body
+            # with peer max-frame-size = 16 KiB.
             allowed = min(
                 Int64(wanted),
                 send_state.conn_send_window,
                 stream_window,
-                Int64(send_state.peer_max_send_frame_size),
-                Int64(_H2_SERVER_MAX_DATA_FRAME_SIZE),
             )
             if allowed <= 0
                 _wait_h2_send_window_locked!(send_state, deadline_ns)
@@ -549,7 +555,15 @@ function _append_h2_headers!(out::Vector{HeaderField}, hdrs::Headers; trailers::
     return nothing
 end
 
-const _H2_SERVER_MAX_DATA_FRAME_SIZE = 16_384
+# Server-side cap on how large an outgoing DATA frame can be. The HTTP/2
+# minimum-required value is 16 KiB; we still respect the peer's advertised
+# `SETTINGS_MAX_FRAME_SIZE` at flow-control reservation time, so the
+# effective frame size on the wire is `min(this, peer.SETTINGS_MAX_FRAME_SIZE)`.
+# Larger values reduce per-frame framing overhead (9-byte header per chunk)
+# and let `_write_data_frames_h2_server!` batch fewer frames into each
+# socket write. 64 KiB is well within the 16 MiB protocol upper bound and
+# matches what most production HTTP/2 servers (nginx, h2o) advertise.
+const _H2_SERVER_MAX_DATA_FRAME_SIZE = 65_536
 
 mutable struct _ServerPrefaceConn{C} <: IO
     prefix::Vector{UInt8}
@@ -649,7 +663,7 @@ end
 function _write_frame_h2_server!(conn::Union{TCP.Conn,TLS.Conn}, frame::AbstractFrame, write_deadline_ns::Int64=Int64(0))::Nothing
     io = IOBuffer()
     write_frame!(io, frame)
-    _set_write_deadline!(conn, write_deadline_ns)
+    write_deadline_ns > 0 && _set_write_deadline!(conn, write_deadline_ns)
     _write_all_h2_server!(conn, take!(io))
     return nothing
 end
@@ -669,26 +683,100 @@ function _write_frame_h2_server_threadsafe!(
     return nothing
 end
 
+@inline function _stamp_h2_data_header!(buf::Vector{UInt8}, pos::Int, payload_len::Int, end_stream::Bool, stream_id::UInt32)::Nothing
+    @inbounds buf[pos]     = UInt8((payload_len >> 16) & 0xff)
+    @inbounds buf[pos + 1] = UInt8((payload_len >> 8) & 0xff)
+    @inbounds buf[pos + 2] = UInt8(payload_len & 0xff)
+    @inbounds buf[pos + 3] = FRAME_DATA
+    @inbounds buf[pos + 4] = end_stream ? UInt8(0x01) : UInt8(0x00)
+    sid = stream_id & 0x7fff_ffff
+    @inbounds buf[pos + 5] = UInt8((sid >> 24) & 0xff)
+    @inbounds buf[pos + 6] = UInt8((sid >> 16) & 0xff)
+    @inbounds buf[pos + 7] = UInt8((sid >> 8) & 0xff)
+    @inbounds buf[pos + 8] = UInt8(sid & 0xff)
+    return nothing
+end
+
 function _write_data_frames_h2_server!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
     send_state::_H2SendWindowState,
     stream_id::UInt32,
-    data::Vector{UInt8};
+    data::AbstractVector{UInt8};
     end_stream::Bool,
     write_deadline_ns::Int64=Int64(0),
 )::Nothing
     isempty(data) && return nothing
     offset = 1
     total_len = length(data)
+    peer_max = lock(send_state.state_lock) do
+        send_state.peer_max_send_frame_size
+    end
+    max_frame_size = min(Int(_H2_SERVER_MAX_DATA_FRAME_SIZE), peer_max)
+    write_deadline_ns > 0 && _set_write_deadline!(conn, write_deadline_ns)
+    # Each "batch" drains as much of the body as the peer's current send
+    # window allows, builds it into a single contiguous byte buffer
+    # (interleaved 9-byte DATA-frame headers + payload slices), and writes
+    # the whole batch to the socket under one lock acquisition. The previous
+    # implementation paid one IOBuffer allocation, one frame-header
+    # allocation, and one socket write per frame; this version pays one
+    # allocation and one socket write per *batch*.
     while offset <= total_len
-        remaining = total_len - offset + 1
-        chunk_len = _reserve_h2_send_window!(send_state, stream_id, remaining, write_deadline_ns)
-        chunk = Vector{UInt8}(undef, chunk_len)
-        copyto!(chunk, 1, data, offset, chunk_len)
-        final_chunk = (offset + chunk_len - 1) == total_len
-        _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, end_stream && final_chunk, chunk), write_deadline_ns)
-        offset += chunk_len
+        # Probe the current allowed window with the size remaining.
+        # Reservation is bounded by stream/conn windows only; per-frame
+        # max-frame-size is applied below when slicing the reservation
+        # into DATA frames.
+        first_chunk = _reserve_h2_send_window!(send_state, stream_id, total_len - offset + 1, write_deadline_ns)
+        first_chunk <= 0 && continue
+        # Pre-size an output Vector that fits this batch exactly.
+        n_frames_first = cld(first_chunk, max_frame_size)
+        batch_len = first_chunk + 9 * n_frames_first
+        out = Vector{UInt8}(undef, batch_len)
+        out_pos = 1
+        # Emit frames covering this reservation.
+        remaining_in_res = first_chunk
+        while remaining_in_res > 0
+            payload = min(remaining_in_res, max_frame_size, total_len - offset + 1)
+            final_chunk = (offset + payload - 1) == total_len
+            _stamp_h2_data_header!(out, out_pos, payload, end_stream && final_chunk, stream_id)
+            out_pos += 9
+            unsafe_copyto!(out, out_pos, data, offset, payload)
+            out_pos += payload
+            offset += payload
+            remaining_in_res -= payload
+        end
+        # If there's still body to send AND the peer's window currently
+        # allows more, append more frames into the same batch buffer to
+        # collapse them into one socket write.
+        while offset <= total_len
+            extra = _reserve_h2_send_window!(send_state, stream_id, total_len - offset + 1, write_deadline_ns)
+            extra <= 0 && break
+            n_extra_frames = cld(extra, max_frame_size)
+            need = extra + 9 * n_extra_frames
+            resize!(out, length(out) + need)
+            remaining_in_res = extra
+            while remaining_in_res > 0
+                payload = min(remaining_in_res, max_frame_size, total_len - offset + 1)
+                final_chunk = (offset + payload - 1) == total_len
+                _stamp_h2_data_header!(out, out_pos, payload, end_stream && final_chunk, stream_id)
+                out_pos += 9
+                unsafe_copyto!(out, out_pos, data, offset, payload)
+                out_pos += payload
+                offset += payload
+                remaining_in_res -= payload
+            end
+        end
+        # Trim if we resized too liberally (rare but possible if cld()
+        # rounded up — this is essentially a no-op on the first iteration).
+        if out_pos - 1 != length(out)
+            resize!(out, out_pos - 1)
+        end
+        lock(write_lock)
+        try
+            _write_all_h2_server!(conn, out)
+        finally
+            unlock(write_lock)
+        end
     end
     return nothing
 end
@@ -946,8 +1034,11 @@ function _write_response_body_h2_server!(
     body = response.body
     body isa EmptyBody && return nothing
     if body isa AbstractString
-        bytes = Vector{UInt8}(codeunits(String(body)))
-        isempty(bytes) || _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, bytes; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
+        # Zero-copy fast path: alias the String's codeunits (immutable) instead
+        # of allocating a fresh Vector{UInt8} of the same length.
+        s = String(body)
+        ncodeunits(s) == 0 && return nothing
+        _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, codeunits(s); end_stream=end_stream, write_deadline_ns=write_deadline_ns)
         return nothing
     end
     if body isa AbstractVector{UInt8}
@@ -985,6 +1076,34 @@ function _write_response_body_h2_server!(
     end
 end
 
+"""
+    _encode_h2_headers_frame_bytes!(send_state, write_lock, stream_id, status,
+                                    headers, end_stream, max_frame_size,
+                                    max_header_list_size) -> Vector{UInt8}
+
+Encode a response's HEADERS frame (and any required CONTINUATION frames)
+under `write_lock`, returning the wire bytes ready to write directly to
+the connection. Caller is responsible for emitting these bytes BEFORE any
+other header block emission on the same connection so HPACK dynamic-table
+state stays consistent. Holds `write_lock` only for the encoding step.
+"""
+function _encode_h2_headers_frame_bytes_locked!(
+    send_state::_H2SendWindowState,
+    stream_id::UInt32,
+    response_status::Int,
+    response_headers::Headers,
+    end_stream::Bool,
+    max_frame_size::Int,
+    max_header_list_size::Int,
+)::Vector{UInt8}
+    header_block = _encode_h2_response_headers!(send_state.header_encoder, response_status, response_headers, max_header_list_size)
+    out = IOBuffer()
+    _header_block_frames(stream_id, end_stream, header_block, max_frame_size) do frame
+        write_frame!(out, frame)
+    end
+    return take!(out)
+end
+
 function _write_h2_response!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
@@ -1009,9 +1128,187 @@ function _write_h2_response!(
                  (response.body isa AbstractString && isempty(response.body::AbstractString)) ||
                  (response.body isa AbstractVector{UInt8} && isempty(response.body::AbstractVector{UInt8}))
     end_stream = body_empty && !has_trailers
-    _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream, write_deadline_ns)
-    body_empty || _write_response_body_h2_server!(conn, write_lock, send_state, stream_id, response, !has_trailers, write_deadline_ns)
+    body = response.body
+    # Fallback path for streaming/empty bodies: original two-step path.
+    if body_empty || !(body isa AbstractString || body isa AbstractVector{UInt8})
+        _write_h2_response_headers!(conn, write_lock, send_state, stream_id, response.status, response.headers, end_stream, write_deadline_ns)
+        body_empty || _write_response_body_h2_server!(conn, write_lock, send_state, stream_id, response, !has_trailers, write_deadline_ns)
+        has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers, write_deadline_ns)
+        return nothing
+    end
+    # Fast path for buffered bodies (AbstractString or AbstractVector{UInt8}):
+    # encode the HEADERS frame and emit headers + first DATA batch in a
+    # single socket write under one write_lock acquisition. This both saves
+    # syscalls and preserves HPACK ordering — the encoder mutation is on
+    # the same lock as the wire emission.
+    max_frame_size = 16_384
+    max_header_list_size = 0
+    lock(send_state.state_lock)
+    try
+        max_frame_size = send_state.peer_max_send_frame_size
+        max_header_list_size = send_state.peer_max_header_list_size
+    finally
+        unlock(send_state.state_lock)
+    end
+    body_bytes::AbstractVector{UInt8} = body isa AbstractString ?
+        codeunits(String(body)) :
+        (body isa Vector{UInt8} ? body : Vector{UInt8}(body))
+    _write_h2_headers_and_first_batch!(
+        conn, write_lock, send_state, stream_id,
+        response.status, response.headers,
+        body_bytes, !has_trailers,
+        max_frame_size, max_header_list_size, write_deadline_ns,
+    )
     has_trailers && _write_h2_trailers!(conn, write_lock, send_state, stream_id, response.trailers, write_deadline_ns)
+    return nothing
+end
+
+"""
+    _write_h2_headers_and_first_batch!(...) -> Nothing
+
+Emit the HEADERS frame + as many DATA frames as the current send window
+allows in one socket write, holding `write_lock` across encoder + emit so
+HPACK state stays consistent. Any body bytes that don't fit in the first
+window reservation fall through to the regular `_write_data_frames_h2_server!`
+batching path (which re-acquires the lock per batch).
+"""
+function _write_h2_headers_and_first_batch!(
+    conn::Union{TCP.Conn,TLS.Conn},
+    write_lock::ReentrantLock,
+    send_state::_H2SendWindowState,
+    stream_id::UInt32,
+    response_status::Int,
+    response_headers::Headers,
+    body::AbstractVector{UInt8},
+    body_end_stream::Bool,
+    max_frame_size::Int,
+    max_header_list_size::Int,
+    write_deadline_ns::Int64,
+)::Nothing
+    write_deadline_ns > 0 && _set_write_deadline!(conn, write_deadline_ns)
+    total_len = length(body)
+    # Per-frame cap — the smaller of our local cap and the peer's setting.
+    peer_max = lock(send_state.state_lock) do
+        send_state.peer_max_send_frame_size
+    end
+    server_max = min(Int(_H2_SERVER_MAX_DATA_FRAME_SIZE), peer_max)
+    # Reserve send window for as much of the body as we can take immediately.
+    first_chunk = total_len == 0 ? 0 : _reserve_h2_send_window!(send_state, stream_id, total_len, write_deadline_ns)
+    # Acquire write_lock and emit HEADERS + DATA batch atomically.
+    lock(write_lock)
+    try
+        # 1. HEADERS frame bytes (encoder state advances under the lock).
+        headers_bytes = _encode_h2_headers_frame_bytes_locked!(
+            send_state, stream_id, response_status, response_headers,
+            total_len == 0 ? body_end_stream : false,
+            max_frame_size, max_header_list_size,
+        )
+        if total_len == 0
+            _write_all_h2_server!(conn, headers_bytes)
+            return nothing
+        end
+        # 2. Vectored write of [HEADERS][DATA-hdr_1][body_slice_1]…
+        # We build a single iovec list that points directly into the
+        # caller's body memory — no per-batch body copy. Only the small
+        # 9-byte DATA frame headers are freshly allocated.
+        _writev_headers_and_batch!(conn, stream_id, body, headers_bytes,
+                                   1, first_chunk, server_max, body_end_stream, total_len)
+        offset = 1 + first_chunk
+        # 3. More body? Same idea but no headers prelude.
+        while offset <= total_len
+            extra = _reserve_h2_send_window!(send_state, stream_id, total_len - offset + 1, write_deadline_ns)
+            extra <= 0 && break
+            _writev_headers_and_batch!(conn, stream_id, body, nothing,
+                                       offset, extra, server_max, body_end_stream, total_len)
+            offset += extra
+        end
+    finally
+        unlock(write_lock)
+    end
+    return nothing
+end
+
+@inline function _writev_headers_and_batch!(
+    conn::Union{TCP.Conn,TLS.Conn},
+    stream_id::UInt32,
+    body::AbstractVector{UInt8},
+    headers_bytes::Union{Nothing,Vector{UInt8}},
+    body_offset::Int,
+    body_len::Int,
+    server_max::Int,
+    body_end_stream::Bool,
+    total_len::Int,
+)::Nothing
+    # For TLS, vectored writes don't help (each iovec becomes a TLS record);
+    # build a single contiguous buffer instead. For TCP, writev avoids the
+    # userspace memcpy of the body — this is especially important on H/2
+    # large bodies where copying 100 KB per response was a major fraction
+    # of the per-request cost.
+    if conn isa TLS.Conn
+        _write_h2_batch_via_single_buffer!(conn::TLS.Conn, stream_id, body,
+            headers_bytes, body_offset, body_len, server_max, body_end_stream, total_len)
+        return nothing
+    end
+    # Compute frame count + alloc one block of 9-byte slots for all frame headers.
+    n_data_frames = cld(body_len, server_max)
+    frame_hdrs = Vector{UInt8}(undef, 9 * n_data_frames)
+    iovecs = Vector{AbstractVector{UInt8}}(undef, (headers_bytes === nothing ? 0 : 1) + 2 * n_data_frames)
+    iov_idx = 1
+    if headers_bytes !== nothing
+        iovecs[iov_idx] = headers_bytes
+        iov_idx += 1
+    end
+    hdr_pos = 1
+    rem = body_len
+    cur = body_offset
+    while rem > 0
+        payload = min(rem, server_max, total_len - cur + 1)
+        final_chunk = (cur + payload - 1) == total_len
+        _stamp_h2_data_header!(frame_hdrs, hdr_pos, payload, body_end_stream && final_chunk, stream_id)
+        iovecs[iov_idx] = view(frame_hdrs, hdr_pos:(hdr_pos + 8))
+        iov_idx += 1
+        iovecs[iov_idx] = view(body, cur:(cur + payload - 1))
+        iov_idx += 1
+        hdr_pos += 9
+        cur += payload
+        rem -= payload
+    end
+    TCP.writev(conn::TCP.Conn, iovecs)
+    return nothing
+end
+
+@inline function _write_h2_batch_via_single_buffer!(
+    conn::Union{TCP.Conn,TLS.Conn},
+    stream_id::UInt32,
+    body::AbstractVector{UInt8},
+    headers_bytes::Union{Nothing,Vector{UInt8}},
+    body_offset::Int,
+    body_len::Int,
+    server_max::Int,
+    body_end_stream::Bool,
+    total_len::Int,
+)::Nothing
+    n_data_frames = cld(body_len, server_max)
+    out_len = (headers_bytes === nothing ? 0 : length(headers_bytes)) + body_len + 9 * n_data_frames
+    out = Vector{UInt8}(undef, out_len)
+    out_pos = 1
+    if headers_bytes !== nothing
+        unsafe_copyto!(out, out_pos, headers_bytes, 1, length(headers_bytes))
+        out_pos += length(headers_bytes)
+    end
+    rem = body_len
+    cur = body_offset
+    while rem > 0
+        payload = min(rem, server_max, total_len - cur + 1)
+        final_chunk = (cur + payload - 1) == total_len
+        _stamp_h2_data_header!(out, out_pos, payload, body_end_stream && final_chunk, stream_id)
+        out_pos += 9
+        unsafe_copyto!(out, out_pos, body, cur, payload)
+        out_pos += payload
+        cur += payload
+        rem -= payload
+    end
+    write(conn, out)
     return nothing
 end
 

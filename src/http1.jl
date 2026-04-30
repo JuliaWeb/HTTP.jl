@@ -485,6 +485,19 @@ function _write_status_line!(io::IO, response::Response)
     return nothing
 end
 
+function _append_status_line!(buf::IOBuffer, response::Response)
+    reason = isempty(response.reason) ? _status_text(response.status) : response.reason
+    print(buf, "HTTP/", Int(response.proto_major), '.', Int(response.proto_minor), ' ', response.status, ' ', reason, "\r\n")
+    return nothing
+end
+
+function _append_headers!(buf::IOBuffer, hdrs::Headers)
+    for (key, value) in hdrs
+        print(buf, key, ": ", value, "\r\n")
+    end
+    return nothing
+end
+
 function _write_headers!(io::IO, hdrs::Headers)
     _normalize_outgoing_headers!(hdrs)
     for (key, value) in hdrs
@@ -679,6 +692,12 @@ function _prepare_request_headers_for_write(
     return headers, use_chunked
 end
 
+function _append_start_line!(buf::IOBuffer, request::Request, wire_target::Union{Nothing,AbstractString}=nothing)
+    target = wire_target === nothing ? request.target : String(wire_target)
+    print(buf, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
+    return nothing
+end
+
 function _write_request_head!(
     io::IO,
     request::Request,
@@ -688,9 +707,11 @@ function _write_request_head!(
     headers, use_chunked = _prepare_request_headers_for_write(request, proxy_authorization)
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, request.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
-    _write_start_line!(io, request, wire_target)
-    _write_headers!(io, headers)
-    write(io, "\r\n")
+    head_buf = IOBuffer()
+    _append_start_line!(head_buf, request, wire_target)
+    _append_headers!(head_buf, headers)
+    print(head_buf, "\r\n")
+    write(io, take!(head_buf))
     return use_chunked, trailer_values
 end
 
@@ -784,9 +805,16 @@ function write_response!(io::IO, response::Response)
     end
     trailer_values = use_chunked ? _prepare_trailer_header!(headers, response.trailers) : Headers()
     _normalize_outgoing_headers!(headers)
-    _write_status_line!(io, response)
-    _write_headers!(io, headers)
-    write(io, "\r\n")
+    # Buffer the entire response head (status line + all header lines + blank
+    # CRLF) into a single IOBuffer and write it to the transport in one
+    # syscall. The transport's `write` does not buffer internally, so emitting
+    # the head field-by-field via `print` translates to a write syscall per
+    # argument (~20 per typical response).
+    head_buf = IOBuffer()
+    _append_status_line!(head_buf, response)
+    _append_headers!(head_buf, headers)
+    print(head_buf, "\r\n")
+    write(io, take!(head_buf))
     allows_body || return nothing
     if use_chunked
         _write_chunked_body!(io, response.body, trailer_values)
