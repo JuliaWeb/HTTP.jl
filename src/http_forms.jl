@@ -304,9 +304,15 @@ end
 
 """
     parse_multipart_form(content_type_header, body) -> Union{Vector{Multipart}, Nothing}
+    parse_multipart_form(request) -> Union{Vector{Multipart}, Nothing}
 
 Parse a `multipart/form-data` payload using the boundary from
 `content_type_header`.
+
+The `Request` overload reads the `Content-Type` header and request body bytes
+out of the incoming request — use it from inside an [`HTTP.serve!`](@ref)
+handler to inspect file uploads and form fields without re-implementing the
+header/body extraction.
 
 Returns `nothing` when either input is missing or the content type is not a
 multipart form body.
@@ -322,3 +328,17 @@ function parse_multipart_form(
     length(boundary_delimiter) > 70 && error("boundary delimiter must not be greater than 70 characters")
     return parse_multipart_body(body, boundary_delimiter)
 end
+
+function parse_multipart_form(request::Request)::Union{Vector{Multipart},Nothing}
+    ct = header(request, "Content-Type")
+    isempty(ct) && return nothing
+    bytes = _request_body_bytes(request.body)
+    bytes === nothing && return nothing
+    return parse_multipart_form(ct, bytes)
+end
+
+@inline _request_body_bytes(::EmptyBody) = nothing
+@inline _request_body_bytes(body::BytesBody) =
+    body.next_index > length(body.data) ? UInt8[] :
+    @view body.data[body.next_index:end]
+@inline _request_body_bytes(::AbstractBody) = nothing

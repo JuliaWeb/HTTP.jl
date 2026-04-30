@@ -40,6 +40,8 @@ lifecycle. `HTTP.streamhandler` is the bridge when you want stream server
 mechanics with a request-style handler body.
 
 ```julia
+using HTTP
+
 stream_server = HTTP.listen!(
     HTTP.streamhandler() do req
         return HTTP.Response(201; body = "stream handler")
@@ -78,6 +80,8 @@ Every server timeout has both a seconds-valued keyword and a nanosecond-valued
 `_ns` keyword:
 
 ```julia
+using HTTP
+
 server = HTTP.serve!(
     handler,
     "127.0.0.1",
@@ -90,6 +94,8 @@ server = HTTP.serve!(
 ```
 
 ```julia
+using HTTP
+
 server = HTTP.serve!(
     handler,
     "127.0.0.1",
@@ -110,6 +116,8 @@ Use `HTTP.Handlers.Router` when you want route matching without bringing in a
 larger web framework:
 
 ```julia
+using HTTP
+
 router = HTTP.Handlers.Router()
 
 HTTP.Handlers.register!(router, "GET", "/users/{id}") do req
@@ -124,6 +132,8 @@ Middleware is just function composition around handlers. For example, apply a
 handler timeout to every registered route:
 
 ```julia
+using HTTP
+
 timeout = HTTP.Handlers.handlertimeout(5.0; status = 503)
 router = HTTP.Handlers.Router(
     req -> HTTP.Response(404),
@@ -143,6 +153,8 @@ It serves static files, normalizes directory redirects, can fall back to a
 single-page-app entrypoint, and emits conditional and range-aware responses.
 
 ```julia
+using HTTP
+
 handler = HTTP.fileserver("public"; spa_fallback = "index.html")
 server = HTTP.serve!(handler, "127.0.0.1", 8080)
 ```
@@ -161,6 +173,8 @@ events. Use these when you want a proper `text/event-stream` response instead
 of hand-assembling event lines.
 
 ```julia
+using HTTP
+
 server = HTTP.serve!("127.0.0.1", 8080) do req
     return HTTP.sse_stream(200) do stream
         write(stream, HTTP.SSEEvent("ready"; event = "status", id = "1"))

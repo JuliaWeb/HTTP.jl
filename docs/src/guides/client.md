@@ -54,6 +54,8 @@ Useful top-level request helpers:
 using the normal redirect/decompression machinery.
 
 ```julia
+using HTTP
+
 server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
     payload = req.target == "/stream" ? "streaming response body" : "$(req.method) $(req.target)"
     return HTTP.Response(
@@ -64,16 +66,23 @@ server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
 end
 
 base_url = "http://127.0.0.1:$(HTTP.port(server))"
-HTTP.open(:GET, base_url * "/stream"; proxy = HTTP.ProxyConfig()) do stream
+response = HTTP.open(:GET, base_url * "/stream"; proxy = HTTP.ProxyConfig()) do stream
     response_text = String(read(stream))
-    HTTP.forceclose(server)
-    response_text
+    @info "got body" response_text
 end
+HTTP.forceclose(server)
+response
 ```
+
+The `do`-block form returns the final [`HTTP.Response`](@ref), not the value
+returned by the `do` block. Capture anything you want to keep from inside the
+block in an outer variable.
 
 If you only need to stream into an `IO`, use the `response_stream` keyword:
 
 ```julia
+using HTTP
+
 server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
     payload = req.target == "/stream" ? "streaming response body" : "$(req.method) $(req.target)"
     return HTTP.Response(
@@ -99,6 +108,8 @@ a `Client` gives you an explicit owner for a particular transport, cookie jar,
 retry bucket, proxy policy, and HTTP/2 preference.
 
 ```julia
+using HTTP
+
 server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
     payload = req.target == "/stream" ? "streaming response body" : "$(req.method) $(req.target)"
     return HTTP.Response(
@@ -142,12 +153,73 @@ forms, and `IO` objects cover the common user-facing cases. Lower-level body
 wrappers exist for the protocol implementation and custom streaming extensions,
 but most application code should not need to construct them directly.
 
+### Reading the response body
+
+Convert the raw bytes to a `String` when you want text:
+
+```julia
+using HTTP
+
+response = HTTP.get("http://example.com")
+text = String(response.body)
+```
+
+!!! warning "`String(response.body)` consumes the bytes"
+    `String(::Vector{UInt8})` aliases the underlying buffer rather than
+    copying it, so `response.body` is left empty (`length == 0`) once the
+    `String` has been constructed. If you want to keep the bytes around for a
+    second read, use `String(copy(response.body))` (or `copy(response.body)`
+    if you want raw bytes), or stream into a sink you own with
+    `response_stream = IOBuffer()`.
+
+### Sending JSON
+
+HTTP.jl ships without a JSON dependency, so the request body is yours to
+serialize. The recommended JSON library is
+[JSON.jl](https://github.com/JuliaIO/JSON.jl) — pair it with an explicit
+`Content-Type: application/json` header:
+
+```julia
+using HTTP, JSON
+
+payload = Dict("name" => "alice", "age" => 30)
+response = HTTP.post(
+    "https://api.example.com/users";
+    headers = ["Content-Type" => "application/json"],
+    body = JSON.json(payload),
+)
+
+returned = JSON.parse(String(response.body))
+```
+
+The verb helpers accept the body either positionally
+(`HTTP.post(url, headers, body)`) or via the `body=` keyword as shown above.
+
+### Sending form data
+
+`HTTP.post(url, [], dict)` (or `NamedTuple`) auto-serializes to
+`application/x-www-form-urlencoded` and sets the matching `Content-Type` header
+for you:
+
+```julia
+HTTP.post("http://example.com/login", [], Dict("user" => "alice", "pw" => "s3cret"))
+```
+
+For `multipart/form-data` (file uploads), use [`HTTP.Form`](@ref):
+
+```julia
+form = HTTP.Form(Dict("file" => open("upload.bin", "r"), "kind" => "binary"))
+HTTP.post("http://example.com/upload", [], form)
+```
+
 ## Retries and Timeouts
 
 The retry path is explicit and conservative. For predictable behavior, prefer a
 long-lived `Client` over relying solely on default top-level behavior.
 
 ```julia
+using HTTP
+
 bucket = HTTP.RetryBucket(capacity = 100)
 
 function retry_if(attempt, err, req, resp)
@@ -190,6 +262,8 @@ behaves like `read_idle_timeout`.
 For example:
 
 ```julia
+using HTTP
+
 resp = HTTP.get(
     url;
     connect_timeout = 2.0,

@@ -860,14 +860,24 @@ import Base: get
     StatusError
 
 Raised when `status_exception=true` and the response status indicates failure.
+
+Fields:
+
+- `status::Int16` — the response status code (mirrors `response.status` for
+  convenience so catch sites can write `err.status` instead of
+  `err.response.status`).
+- `response::Response` — the full response that triggered the error.
 """
 struct StatusError <: HTTPError
+    status::Int16
     response::Response
 end
 
+StatusError(response::Response) = StatusError(response.status, response)
+
 function Base.showerror(io::IO, err::StatusError)
     resp = err.response
-    print(io, "http status error: ", resp.status, " for ", resp.request.method, " ", resp.url)
+    print(io, "http status error: ", err.status, " for ", resp.request.method, " ", resp.url)
     return nothing
 end
 
@@ -1330,6 +1340,14 @@ function _apply_default_accept_encoding!(headers::Headers, decompress::Union{Not
     return nothing
 end
 
+const DEFAULT_USER_AGENT = "HTTP.jl/" * string(VERSION)
+
+function _apply_default_user_agent!(headers::Headers)::Nothing
+    hasheader(headers, "User-Agent") && return nothing
+    setheader(headers, "User-Agent", DEFAULT_USER_AGENT)
+    return nothing
+end
+
 
 function _method_upper(method::Union{AbstractString,Symbol})::String
     return uppercase(String(method))
@@ -1548,6 +1566,7 @@ function request(
         sink = _resolve_response_sink(response_stream)
         sse_callback === nothing || sink === nothing || throw(ArgumentError("sse_callback cannot be combined with response_stream"))
         _apply_default_accept_encoding!(req_headers, decompress)
+        _apply_default_user_agent!(req_headers)
         _apply_request_authorization!(req_headers, basicauth, parsed.authorization)
         normalized_body = _normalize_body_input(body)
         if normalized_body.default_content_type !== nothing && !hasheader(req_headers, "Content-Type")
@@ -1601,8 +1620,9 @@ function request(
             owns_client && close(req_client)
         end
     catch err
-        final_error = err::Exception
-        rethrow()
+        wrapped = _is_transport_timeout(err) ? _wrap_transport_timeout(err, "request") : err
+        final_error = wrapped::Exception
+        wrapped === err ? rethrow() : throw(wrapped)
     finally
         _emit_trace(trace, DoneEvent(final_response, final_error, request_url === nothing ? String(url) : request_url::String))
     end
@@ -1695,10 +1715,69 @@ Returns a high-level `Response`. When no response body sink is provided,
 is provided, the final `Response` contains either the filled buffer/view or
 `nothing` for `IO` sinks.
 
+# Working with the response body
+
+By default the buffered body is a `Vector{UInt8}`:
+
+```julia
+using HTTP
+
+response = HTTP.get("http://example.com")
+@assert response.body isa Vector{UInt8}
+```
+
+Convert it to a `String` with `String(response.body)`:
+
+```julia
+text = String(response.body)
+```
+
+!!! warning "`String(response.body)` consumes the bytes"
+    `String(::Vector{UInt8})` is the standard Julia conversion and it
+    *aliases* the underlying byte buffer rather than copying it. After
+    `String(response.body)` runs, `response.body` is left empty (`length == 0`).
+    If you want to keep the bytes around, take a copy first
+    (`copy(response.body)` or `String(copy(response.body))`), or use the
+    `response_stream` keyword to write the body somewhere you own.
+
+# Sending JSON
+
+There is no `json=` keyword. Serialize the payload yourself with the JSON
+library of your choice — [JSON.jl](https://github.com/JuliaIO/JSON.jl) is the
+recommended option — and set the `Content-Type` header explicitly:
+
+```julia
+using HTTP, JSON
+
+payload = Dict("name" => "alice", "age" => 30)
+response = HTTP.post(
+    "https://api.example.com/users";
+    headers = ["Content-Type" => "application/json"],
+    body = JSON.json(payload),
+)
+
+returned = JSON.parse(String(response.body))
+```
+
+Form-encoded payloads (`application/x-www-form-urlencoded`) are auto-derived
+from `Dict`/`NamedTuple` bodies, so `HTTP.post(url, [], Dict("a" => "1"))`
+sends `a=1` with the matching `Content-Type` header for you.
+
+# Default headers
+
+If the caller does not supply them, HTTP.jl fills in:
+
+- `User-Agent: HTTP.jl/<version>` — override by passing your own `User-Agent`
+  header.
+- `Accept-Encoding: gzip, deflate` — disable by passing `decompress=false` or
+  by setting your own `Accept-Encoding`.
+
 Throws `ArgumentError` for unsupported inputs or invalid sink combinations,
-`StatusError` when `status_exception=true` and the response status is considered
-failing, plus any lower-level transport or protocol exception raised during the
-request. Automatic retries only occur for replayable request bodies.
+`StatusError` (with `.status` and `.response` fields) when
+`status_exception=true` and the response status is considered failing,
+`HTTP.TimeoutError` (alias `HTTP.HTTPTimeoutError`) for timeout failures, plus
+any lower-level transport or protocol exception raised during the request.
+Automatic retries only occur for replayable request bodies.
 """
 function request(
     trace,
@@ -1774,7 +1853,13 @@ const _REQUEST_HELPER_DOC = """
 
 High-level one-shot client request helpers. The verb helpers call
 `request(method, ...)` with a fixed HTTP method and accept the same keyword
-arguments as `request`.
+arguments as `request` — see the [`request`](@ref) docstring for the full
+keyword list, the body-encoding rules, and the JSON example.
+
+`response.body` is a `Vector{UInt8}` by default; convert with
+`String(response.body)`. Note that the conversion aliases the underlying buffer
+and leaves `response.body` empty afterwards — see [`request`](@ref) for the
+full warning and the safe-copy idioms.
 """
 
 @doc _REQUEST_HELPER_DOC

@@ -71,6 +71,7 @@ function _wait_task_client!(task::Task; timeout_s::Float64 = 5.0)
 end
 
 function _is_timeout_error_client(err)::Bool
+    err isa HT.TimeoutError && return true
     err isa Reseau.IOPoll.DeadlineExceededError && return true
     err isa TL.TLSHandshakeTimeoutError && return true
     err isa TL.TLSError || return false
@@ -1893,7 +1894,7 @@ end
         catch ex
             ex
         end
-        @test err isa Reseau.IOPoll.DeadlineExceededError
+        @test err isa HT.TimeoutError
         _wait_task_client!(server_task)
     finally
         HTTP.@try_ignore NC.close(listener)
@@ -1924,7 +1925,7 @@ end
         catch ex
             ex
         end
-        @test err isa Reseau.IOPoll.DeadlineExceededError
+        @test err isa HT.TimeoutError
         _wait_task_client!(server_task)
     finally
         HTTP.@try_ignore NC.close(listener)
@@ -1955,7 +1956,7 @@ end
         catch ex
             ex
         end
-        @test err isa Reseau.IOPoll.DeadlineExceededError
+        @test err isa HT.TimeoutError
         _wait_task_client!(server_task)
     finally
         HTTP.@try_ignore NC.close(listener)

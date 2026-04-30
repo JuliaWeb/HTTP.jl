@@ -44,28 +44,59 @@ High-level request helpers return a `Response` whose `body` is a
 `Vector{UInt8}` by default.
 
 ```julia
+using HTTP
+
 r = HTTP.get("http://httpbin.org/ip")
 println(r.status)
 println(String(r.body))
 ```
 
-Stream directly into an `IO` sink with `response_stream`, or use `HTTP.open` when
-you want pull-based control over the response stream.
+> ⚠️ `String(r.body)` aliases the underlying byte buffer rather than copying
+> it, so `r.body` is left empty afterwards. Use `String(copy(r.body))` (or
+> `response_stream = IOBuffer()`) when you need to keep the bytes around.
+
+To send JSON, serialize the payload with [JSON.jl](https://github.com/JuliaIO/JSON.jl)
+and set the `Content-Type` header explicitly — HTTP.jl ships without a JSON
+dependency:
 
 ```julia
+using HTTP, JSON
+
+payload = Dict("name" => "alice", "age" => 30)
+r = HTTP.post(
+    "http://httpbin.org/post";
+    headers = ["Content-Type" => "application/json"],
+    body = JSON.json(payload),
+)
+returned = JSON.parse(String(r.body))
+```
+
+Stream directly into an `IO` sink with `response_stream`, or use `HTTP.open` when
+you want pull-based control over the response stream. The `do`-block form of
+`HTTP.open` returns the final `HTTP.Response`, not the value returned by the
+`do` block.
+
+```julia
+using HTTP
+
 open("response.bin", "w") do io
     HTTP.get("https://example.com/data.bin"; response_stream = io)
 end
 
-HTTP.open(:GET, "https://example.com/stream") do stream
-    println(String(read(stream)))
+text = ""
+response = HTTP.open(:GET, "https://example.com/stream") do stream
+    text = String(read(stream))
 end
+@assert response isa HTTP.Response
+println(text)
 ```
 
 Handle [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
 by passing an `sse_callback` function to `HTTP.request`:
 
 ```julia
+using HTTP
+
 events = HTTP.SSEEvent[]
 HTTP.request("GET", "http://127.0.0.1:8080/events"; sse_callback = event -> push!(events, event))
 ```

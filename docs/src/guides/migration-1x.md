@@ -6,6 +6,12 @@ should usually migrate with small edits. Code that reached into parser,
 connection-pool, layer-stack, HPACK, or HTTP/2 internals should move to the
 documented 2.0 API instead of chasing renamed internals.
 
+The Before/After snippets below are intentionally minimal — they show the API
+shape change, not full runnable programs. Each runnable snippet assumes the
+caller has already issued `using HTTP`, plus any extra `using` statements
+shown in-line (for example `using JSON` for JSON examples or `using Downloads`
+for the [`HTTP.download`](#httpdownload) discussion).
+
 The most important 2.0 changes are:
 
 - Julia 1.10 is the minimum supported Julia version.
@@ -75,9 +81,19 @@ from the original `IO` or byte buffer you passed as `response_stream`.
 
 ## `HTTP.download`
 
-`HTTP.download` is not supported in HTTP.jl 2.0. For the closest direct
-replacement, use the `Downloads.download` function from Julia's standard
-library:
+The dedicated 1.x `HTTP.download` helper has been removed in HTTP.jl 2.0.
+
+!!! note "`HTTP.download` still resolves — but it is no longer HTTP.jl's"
+    Because `HTTP` re-exports `Base.download`, calls like
+    `HTTP.download(url, path)` continue to work. Those calls now go through
+    `Base.download` (which is itself backed by the `Downloads` standard
+    library), **not** through HTTP.jl's request stack — so options like
+    `proxy`, `retry`, `headers`, custom `Client`/`Transport`, and TLS
+    configuration are silently ignored. Update such call sites to use one of
+    the patterns below.
+
+For the closest direct replacement, use the `Downloads.download` function from
+Julia's standard library:
 
 ```julia
 using Downloads
@@ -89,6 +105,8 @@ If you want to keep all request handling inside HTTP.jl, stream the response
 body into an `IOStream` that you own:
 
 ```julia
+using HTTP
+
 open("payload.bin", "w") do io
     resp = HTTP.request("GET", url; response_stream = io)
     @assert 200 <= resp.status < 300
@@ -104,6 +122,8 @@ file.
 For pull-based streaming:
 
 ```julia
+using HTTP
+
 HTTP.open(:GET, url) do stream
     response = HTTP.startread(stream)
     @info "status" response.status
@@ -114,9 +134,13 @@ HTTP.open(:GET, url) do stream
         n == 0 && break
         write(output, @view buf[1:n])
     end
-    take!(output)
+    @info "captured bytes" length(take!(output))
 end
 ```
+
+Like all `HTTP.open` `do`-block calls, the form above returns the final
+[`HTTP.Response`](@ref) — capture data you want to keep in an outer variable
+rather than as the value of the `do` block.
 
 ## Request and Response Constructors
 

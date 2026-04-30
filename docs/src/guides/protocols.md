@@ -65,6 +65,8 @@ try to negotiate HTTP/2 with ALPN when the server supports it. Set
 connections.
 
 ```julia
+using HTTP
+
 h1_only = HTTP.Client(transport = HTTP.Transport(prefer_http2 = false))
 resp = HTTP.get("https://example.com"; client = h1_only)
 close(h1_only)

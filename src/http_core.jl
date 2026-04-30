@@ -1,6 +1,8 @@
 # Core HTTP request/response/header/body types and errors.
 using Reseau.TCP
 using Reseau.TLS
+using Reseau.IOPoll
+using Reseau.HostResolvers
 
 """
     HTTPError
@@ -98,6 +100,34 @@ Public alias for [`TimeoutError`](@ref), kept so code can catch timeout
 failures through the long-form HTTP-specific name.
 """
 const HTTPTimeoutError = TimeoutError
+
+"""
+    _is_transport_timeout(err)
+
+Return `true` if `err` is one of the lower-level transport/resolver/TLS timeout
+exceptions raised by Reseau. These are intentionally wrapped at the public HTTP
+boundary so callers can pattern-match against [`TimeoutError`](@ref) /
+[`HTTPTimeoutError`](@ref) without depending on Reseau internals.
+"""
+@inline function _is_transport_timeout(err)::Bool
+    err isa IOPoll.DeadlineExceededError && return true
+    err isa HostResolvers.DialTimeoutError && return true
+    err isa TLS.TLSHandshakeTimeoutError && return true
+    return false
+end
+
+"""
+    _wrap_transport_timeout(err, operation, timeout_ns=0)
+
+If `err` is a transport-level timeout exception (see [`_is_transport_timeout`](@ref)),
+return an [`HTTPTimeoutError`](@ref) tagged with `operation`. Otherwise return
+`err` unchanged. Used at public HTTP boundaries to keep timeout exceptions
+catchable as `HTTP.TimeoutError`.
+"""
+@inline function _wrap_transport_timeout(err, operation::AbstractString, timeout_ns::Integer=Int64(0))
+    _is_transport_timeout(err) || return err
+    return TimeoutError(String(operation), Int64(timeout_ns))
+end
 
 """Shared empty byte-vector payload used for responses with no buffered body."""
 const nobody = UInt8[]

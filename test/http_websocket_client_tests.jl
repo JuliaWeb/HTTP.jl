@@ -280,7 +280,7 @@ end
         catch ex
             ex
         end
-        @test err isa Reseau.IOPoll.DeadlineExceededError
+        @test err isa HTTP.TimeoutError
     finally
         _close_quiet!(listener)
         _close_quiet!(task)

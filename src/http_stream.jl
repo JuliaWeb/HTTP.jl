@@ -345,9 +345,32 @@ behaves like `read_idle_timeout`.
 As with `request(...)`, `retry_if` sees request-path failures as
 `RequestRetryError` and can inspect the underlying exception via `err.err`.
 
-The `do`-block form closes request writes automatically, closes the readable
-side on exit, and returns the final response metadata.
+# Return values
 
+The plain form `open(method, url, ...)` returns the underlying [`Stream`](@ref)
+so the caller can drive request writes and response reads explicitly.
+
+The `do`-block form `open(f, method, url, ...)` runs the user-provided function
+`f(stream)` against that same stream, automatically closes the writable and
+readable sides on exit, and **returns the final [`Response`](@ref) — not the
+value returned by `f`.** Any data the caller wants to keep from inside `f`
+should be captured in an outer variable rather than relied upon as the
+function's return value:
+
+```julia
+using HTTP
+
+response_text = ""
+response = HTTP.open(:GET, "http://example.com") do stream
+    response_text = String(read(stream))
+end
+
+@assert response isa HTTP.Response
+@assert response.status == 200
+```
+
+If the response indicates failure and `status_exception` is left at its default
+of `true`, an `HTTP.StatusError` is thrown after `f` runs.
 """
 function open(
     method::Union{AbstractString,Symbol},
@@ -408,6 +431,7 @@ function open(
     req_headers = _normalize_headers_input(headers)
     normalized_cookies = _normalize_cookies_input(cookies)
     _apply_default_accept_encoding!(req_headers, decompress)
+    _apply_default_user_agent!(req_headers)
     _apply_request_authorization!(req_headers, basicauth, parsed.authorization)
     req_client, owns_client = _client_for_request(client, connect_timeout, require_ssl_verification)
     request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
@@ -451,17 +475,28 @@ function open(
     status_exception::Bool=true,
     kwargs...,
 )
-    stream = open(method, url, headers; kwargs...)
+    stream = try
+        open(method, url, headers; kwargs...)
+    catch err
+        _is_transport_timeout(err) && throw(_wrap_transport_timeout(err, "request"))
+        rethrow()
+    end
     try
         f(stream)
-    catch
+    catch err
         @try_ignore closewrite(stream)
         @try_ignore closeread(stream)
+        _is_transport_timeout(err) && throw(_wrap_transport_timeout(err, "request"))
         rethrow()
     finally
         @try_ignore closewrite(stream)
     end
-    response = closeread(stream)
+    response = try
+        closeread(stream)
+    catch err
+        _is_transport_timeout(err) && throw(_wrap_transport_timeout(err, "request"))
+        rethrow()
+    end
     if status_exception && _status_throws(response)
         throw(StatusError(response))
     end

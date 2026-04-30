@@ -233,6 +233,8 @@ Router(_404=default404, _405=default405, middleware=nothing) = Router(_404, _405
 """
     register!(router, method, path, handler) -> Nothing
     register!(router, path, handler) -> Nothing
+    register!(handler, router, method, path) -> Nothing
+    register!(handler, router, path) -> Nothing
 
 Register a new route in `router`.
 
@@ -242,6 +244,15 @@ The 3-argument form registers the handler for all methods.
 `handler` may be a `Request -> Response` handler for `serve!` or a
 `Stream -> Nothing` handler for `listen!`, as long as the router is used with
 the matching server entrypoint.
+
+The handler-first forms accept the handler as the first positional argument so
+that `do`-block syntax may be used:
+
+```julia
+register!(router, "GET", "/users/{id}") do req
+    return HTTP.Response(200; body = HTTP.Handlers.getparam(req, "id"))
+end
+```
 """
 function register! end
 
@@ -255,6 +266,9 @@ function register!(r::Router, method, path, handler)
 end
 
 register!(r::Router, path, handler) = register!(r, "*", path, handler)
+
+register!(handler, r::Router, method, path) = register!(r, method, path, handler)
+register!(handler, r::Router, path) = register!(r, "*", path, handler)
 
 const Params = Dict{String,String}
 

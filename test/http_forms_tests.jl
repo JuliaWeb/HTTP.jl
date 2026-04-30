@@ -171,6 +171,29 @@ end
     @test HT.parse_multipart_form("multipart/form-data; boundary=--------------------------918073721150061572809433", nothing) === nothing
 end
 
+@testset "parse_multipart_form(request) overload" begin
+    form = HT.Form(Dict("alpha" => "1", "beta" => "two words"))
+    body_bytes = read(form)
+    ct = HT.content_type(form)
+    request = HT.Request(
+        "POST",
+        "/upload";
+        headers=["Content-Type" => ct],
+        body=body_bytes,
+    )
+    parts = HT.parse_multipart_form(request)
+    @test parts !== nothing
+    @test length(parts) == 2
+    names = sort(String[p.name for p in parts])
+    @test names == ["alpha", "beta"]
+
+    plain_request = HT.Request("POST", "/upload"; headers=["Content-Type" => "text/plain"], body="hi")
+    @test HT.parse_multipart_form(plain_request) === nothing
+
+    empty_request = HT.Request("GET", "/upload")
+    @test HT.parse_multipart_form(empty_request) === nothing
+end
+
 @testset "HTTP request body helpers" begin
     string_bytes, string_content_type = HT._materialize_request_body_bytes("hello")
     @test string_bytes isa Base.CodeUnits{UInt8, String}

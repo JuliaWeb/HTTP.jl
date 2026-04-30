@@ -84,6 +84,8 @@ import ..body_close!
 import ..read_request
 import ..write_response!
 import ..write_request!
+import .._is_transport_timeout
+import .._wrap_transport_timeout
 
 include("http_websocket_codec.jl")
 
@@ -842,29 +844,34 @@ function open(
     require_ssl_verification::Bool=true,
     kwargs...,
 )
-    ws = _open_client_websocket(
-        url;
-        headers=headers,
-        maxframesize=maxframesize,
-        maxfragmentation=maxfragmentation,
-        subprotocols=subprotocols,
-        query=query,
-        client=client,
-        redirect=redirect,
-        redirect_limit=redirect_limit,
-        redirect_method=redirect_method,
-        forwardheaders=forwardheaders,
-        cookies=cookies,
-        cookiejar=cookiejar,
-        proxy=proxy,
-        connect_timeout=connect_timeout,
-        request_timeout=request_timeout,
-        response_header_timeout=response_header_timeout,
-        read_idle_timeout=read_idle_timeout,
-        write_idle_timeout=write_idle_timeout,
-        require_ssl_verification=require_ssl_verification,
-        kwargs...,
-    )
+    ws = try
+        _open_client_websocket(
+            url;
+            headers=headers,
+            maxframesize=maxframesize,
+            maxfragmentation=maxfragmentation,
+            subprotocols=subprotocols,
+            query=query,
+            client=client,
+            redirect=redirect,
+            redirect_limit=redirect_limit,
+            redirect_method=redirect_method,
+            forwardheaders=forwardheaders,
+            cookies=cookies,
+            cookiejar=cookiejar,
+            proxy=proxy,
+            connect_timeout=connect_timeout,
+            request_timeout=request_timeout,
+            response_header_timeout=response_header_timeout,
+            read_idle_timeout=read_idle_timeout,
+            write_idle_timeout=write_idle_timeout,
+            require_ssl_verification=require_ssl_verification,
+            kwargs...,
+        )
+    catch err
+        _is_transport_timeout(err) && throw(_wrap_transport_timeout(err, "websocket handshake"))
+        rethrow()
+    end
     return ws
 end
 
@@ -1315,7 +1322,9 @@ end
 Start a background WebSocket server and return its [`Server`](@ref) handle.
 
 Pass `tls_config` to serve `wss://` traffic, `subprotocols` to advertise
-supported subprotocols, and `check_origin` to customize origin validation.
+supported subprotocols, and `check_origin` to customize origin validation. Pass
+`listenany=true` to ignore `port` and bind to an OS-assigned ephemeral port;
+read the actual address afterwards with [`server_addr`](@ref).
 """
 function listen!(
     handler::Function,
@@ -1327,10 +1336,12 @@ function listen!(
     maxframesize::Integer=typemax(Int),
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
     read_buffer_bytes::Integer=DEFAULT_READ_BUFFER_BYTES,
+    listenany::Bool=false,
 )::Server
+    bind_port = listenany ? 0 : Int(port)
     server = Server(
         network="tcp",
-        address=HostResolvers.join_host_port(host, Int(port)),
+        address=HostResolvers.join_host_port(host, bind_port),
         handler=handler,
         tls_config=tls_config,
         subprotocols=subprotocols,
