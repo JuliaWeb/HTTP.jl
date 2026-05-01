@@ -482,16 +482,18 @@ end
         () -> nothing,
     )
     seen_methods = String[]
+    server_close = Channel{Nothing}(1)
     server_task = errormonitor(Threads.@spawn begin
         conn = NC.accept(listener)
         try
             req = HT.read_request(HT._ConnReader(conn))
             push!(seen_methods, req.method)
-            _ = _read_all_body_bytes_client(req.body)
             headers = HT.Headers()
             HT.setheader(headers, "Location", "/final")
-            HT.setheader(headers, "Connection", "close")
-            _send_response_client!(conn, req; status = 307, reason = "Temporary Redirect", headers = headers, body_text = "redirect", close_conn = true)
+            _send_response_client!(conn, req; status = 307, reason = "Temporary Redirect", headers = headers, body_text = "redirect")
+            status = timedwait(() -> isready(server_close), 5.0; pollint = 0.001)
+            status == :timed_out && error("timed out waiting for 307 test client to finish")
+            take!(server_close)
         finally
             HTTP.@try_ignore NC.close(conn)
         end
@@ -503,9 +505,11 @@ end
         resp = HT.do!(client, address, req)
         @test resp.status == 307
         @test String(_read_all_body_bytes_client(resp.body)) == "redirect"
+        put!(server_close, nothing)
         _wait_task_client!(server_task)
         @test seen_methods == ["POST"]
     finally
+        isready(server_close) || HTTP.@try_ignore put!(server_close, nothing)
         close(client.transport)
         HTTP.@try_ignore NC.close(listener)
     end
