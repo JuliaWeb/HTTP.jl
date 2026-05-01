@@ -1421,6 +1421,37 @@ end
     end
 end
 
+@testset "HTTP/2 server sends response headers before waiting for response flow-control credit" begin
+    payload = Vector{UInt8}("blocked-body")
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            _ = request
+            return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
+        end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn, reader = _open_raw_h2_server_conn(address; settings = Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(0)])
+        decoder = HT.Decoder()
+        _write_h2_server_request_headers!(conn::NC.Conn, HT.Encoder(), UInt32(1), address, "/blocked-response-window")
+
+        headers_frame, fragments, _ = _read_h2_server_header_block!(conn::NC.Conn, reader)
+        @test headers_frame.stream_id == UInt32(1)
+        decoded_headers = HT.decode_header_block(decoder, fragments)
+        @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
+        @test !headers_frame.end_stream
+
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.WindowUpdateFrame(UInt32(1), UInt32(length(payload))))
+        data_frame = _read_h2_server_data_frame!(conn::NC.Conn, reader)
+        @test data_frame.stream_id == UInt32(1)
+        @test data_frame.data == payload
+        @test data_frame.end_stream
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server validates outbound header fields before HPACK" begin
     bad_value_headers = HT.Headers()
     HT.setheader(bad_value_headers, "X-Bad", "ok\r\nInjected: yes")

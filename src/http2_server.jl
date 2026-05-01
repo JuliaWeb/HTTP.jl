@@ -310,6 +310,23 @@ function _reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UIn
     end
 end
 
+function _try_reserve_h2_send_window!(send_state::_H2SendWindowState, stream_id::UInt32, wanted::Int)::Int
+    wanted > 0 || throw(ArgumentError("wanted send window must be > 0"))
+    lock(send_state.state_lock)
+    try
+        (@atomic :acquire send_state.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
+        haskey(send_state.stream_send_window, stream_id) || throw(ProtocolError("HTTP/2 stream send window is closed"))
+        stream_window = send_state.stream_send_window[stream_id]
+        allowed = min(Int64(wanted), send_state.conn_send_window, stream_window)
+        allowed <= 0 && return 0
+        send_state.conn_send_window -= allowed
+        send_state.stream_send_window[stream_id] = stream_window - allowed
+        return Int(allowed)
+    finally
+        unlock(send_state.state_lock)
+    end
+end
+
 function _send_h2_server_window_updates!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
@@ -704,10 +721,12 @@ function _write_data_frames_h2_server!(
     stream_id::UInt32,
     data::AbstractVector{UInt8};
     end_stream::Bool,
+    start::Int=1,
     write_deadline_ns::Int64=Int64(0),
 )::Nothing
     isempty(data) && return nothing
-    offset = 1
+    (1 <= start <= length(data)) || throw(ArgumentError("start must index data"))
+    offset = start
     total_len = length(data)
     peer_max = lock(send_state.state_lock) do
         send_state.peer_max_send_frame_size
@@ -745,29 +764,10 @@ function _write_data_frames_h2_server!(
             offset += payload
             remaining_in_res -= payload
         end
-        # If there's still body to send AND the peer's window currently
-        # allows more, append more frames into the same batch buffer to
-        # collapse them into one socket write.
-        while offset <= total_len
-            extra = _reserve_h2_send_window!(send_state, stream_id, total_len - offset + 1, write_deadline_ns)
-            extra <= 0 && break
-            n_extra_frames = cld(extra, max_frame_size)
-            need = extra + 9 * n_extra_frames
-            resize!(out, length(out) + need)
-            remaining_in_res = extra
-            while remaining_in_res > 0
-                payload = min(remaining_in_res, max_frame_size, total_len - offset + 1)
-                final_chunk = (offset + payload - 1) == total_len
-                _stamp_h2_data_header!(out, out_pos, payload, end_stream && final_chunk, stream_id)
-                out_pos += 9
-                unsafe_copyto!(out, out_pos, data, offset, payload)
-                out_pos += payload
-                offset += payload
-                remaining_in_res -= payload
-            end
-        end
-        # Trim if we resized too liberally (rare but possible if cld()
-        # rounded up — this is essentially a no-op on the first iteration).
+        # Write this reservation before waiting for more flow-control credit.
+        # Peers often grant additional stream window only after observing the
+        # first DATA frame, so trying to reserve another batch here can
+        # deadlock the sender and receiver.
         if out_pos - 1 != length(out)
             resize!(out, out_pos - 1)
         end
@@ -1193,7 +1193,7 @@ function _write_h2_headers_and_first_batch!(
     end
     server_max = min(Int(_H2_SERVER_MAX_DATA_FRAME_SIZE), peer_max)
     # Reserve send window for as much of the body as we can take immediately.
-    first_chunk = total_len == 0 ? 0 : _reserve_h2_send_window!(send_state, stream_id, total_len, write_deadline_ns)
+    first_chunk = total_len == 0 ? 0 : _try_reserve_h2_send_window!(send_state, stream_id, total_len)
     # Acquire write_lock and emit HEADERS + DATA batch atomically.
     lock(write_lock)
     try
@@ -1207,23 +1207,31 @@ function _write_h2_headers_and_first_batch!(
             _write_all_h2_server!(conn, headers_bytes)
             return nothing
         end
-        # 2. Vectored write of [HEADERS][DATA-hdr_1][body_slice_1]…
-        # We build a single iovec list that points directly into the
-        # caller's body memory — no per-batch body copy. Only the small
-        # 9-byte DATA frame headers are freshly allocated.
-        _writev_headers_and_batch!(conn, stream_id, body, headers_bytes,
-                                   1, first_chunk, server_max, body_end_stream, total_len)
-        offset = 1 + first_chunk
-        # 3. More body? Same idea but no headers prelude.
-        while offset <= total_len
-            extra = _reserve_h2_send_window!(send_state, stream_id, total_len - offset + 1, write_deadline_ns)
-            extra <= 0 && break
-            _writev_headers_and_batch!(conn, stream_id, body, nothing,
-                                       offset, extra, server_max, body_end_stream, total_len)
-            offset += extra
+        if first_chunk == 0
+            _write_all_h2_server!(conn, headers_bytes)
+        else
+            # 2. Vectored write of [HEADERS][DATA-hdr_1][body_slice_1]…
+            # We build a single iovec list that points directly into the
+            # caller's body memory — no per-batch body copy. Only the small
+            # 9-byte DATA frame headers are freshly allocated.
+            _writev_headers_and_batch!(conn, stream_id, body, headers_bytes,
+                                       1, first_chunk, server_max, body_end_stream, total_len)
         end
     finally
         unlock(write_lock)
+    end
+    offset = 1 + first_chunk
+    if offset <= total_len
+        _write_data_frames_h2_server!(
+            conn,
+            write_lock,
+            send_state,
+            stream_id,
+            body;
+            end_stream=body_end_stream,
+            start=offset,
+            write_deadline_ns=write_deadline_ns,
+        )
     end
     return nothing
 end

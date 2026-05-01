@@ -19,7 +19,7 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 CodecZlib = "0.7"
 EnumX = "1"
 PrecompileTools = "1.2.1"
-Reseau = "1"
+Reseau = "1.1.1"
 URIs = "1.6.1"
 julia = "1.10"
 
