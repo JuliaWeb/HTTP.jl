@@ -714,6 +714,16 @@ end
     return nothing
 end
 
+@inline function _copy_h2_payload!(dst::Vector{UInt8}, dst_pos::Int, src::Vector{UInt8}, src_pos::Int, n::Int)::Nothing
+    unsafe_copyto!(dst, dst_pos, src, src_pos, n)
+    return nothing
+end
+
+@inline function _copy_h2_payload!(dst::Vector{UInt8}, dst_pos::Int, src::AbstractVector{UInt8}, src_pos::Int, n::Int)::Nothing
+    copyto!(dst, dst_pos, src, src_pos, n)
+    return nothing
+end
+
 function _write_data_frames_h2_server!(
     conn::Union{TCP.Conn,TLS.Conn},
     write_lock::ReentrantLock,
@@ -759,7 +769,7 @@ function _write_data_frames_h2_server!(
             final_chunk = (offset + payload - 1) == total_len
             _stamp_h2_data_header!(out, out_pos, payload, end_stream && final_chunk, stream_id)
             out_pos += 9
-            unsafe_copyto!(out, out_pos, data, offset, payload)
+            _copy_h2_payload!(out, out_pos, data, offset, payload)
             out_pos += payload
             offset += payload
             remaining_in_res -= payload
@@ -1311,7 +1321,7 @@ end
         final_chunk = (cur + payload - 1) == total_len
         _stamp_h2_data_header!(out, out_pos, payload, body_end_stream && final_chunk, stream_id)
         out_pos += 9
-        unsafe_copyto!(out, out_pos, body, cur, payload)
+        _copy_h2_payload!(out, out_pos, body, cur, payload)
         out_pos += payload
         cur += payload
         rem -= payload

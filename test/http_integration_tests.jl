@@ -119,8 +119,7 @@ end
     laddr = TL.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
     server = HT.serve!(listener) do request
-        payload = collect(codeunits("tls-h2:" * request.target))
-        return HT.Response(200, HT.BytesBody(payload); content_length = length(payload), proto_major = 2, proto_minor = 0)
+        return HT.Response(200, "tls-h2:" * request.target; proto_major = 2, proto_minor = 0)
     end
     client = HT.Client(
         transport = HT.Transport(

@@ -942,11 +942,11 @@ end
     end
 end
 
-@testset "HTTP/2 server splits large response bodies into valid DATA frames" begin
-    large_payload = fill(UInt8('z'), 70_000)
+@testset "HTTP/2 server splits large text response bodies into valid DATA frames" begin
+    large_payload = repeat("z", 70_000)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             _ = request
-            return HT.Response(200, HT.BytesBody(large_payload); content_length = length(large_payload), proto_major = 2, proto_minor = 0)
+            return HT.Response(200, large_payload; proto_major = 2, proto_minor = 0)
         end
     address = HT.server_addr(server)
     conn = HT.connect_h2!(address; secure = false)
@@ -956,7 +956,7 @@ end
         @test res.status == 200
         body = _read_all_h2_server(res.body)
         @test length(body) == 70_000
-        @test body == large_payload
+        @test String(body) == large_payload
     finally
         close(conn)
         HT.forceclose(server)
