@@ -670,6 +670,20 @@ end
         _run_with_timeout(() -> HT.forceclose(error_server); label = "error server forceclose")
         _run_with_timeout(() -> wait(error_server); label = "error server task completion")
     end
+
+    # Handler returning a non-Response should yield a clean 500, not a connection error.
+    bad_return_server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        return "this is not a Response"
+    end
+    bad_return_address = HT.server_addr(bad_return_server)
+    try
+        response = HT.get("http://$(bad_return_address)/"; retry = false, status_exception = false)
+        @test response.status == 500
+    finally
+        _run_with_timeout(() -> HT.forceclose(bad_return_server); label = "bad return server forceclose")
+        _run_with_timeout(() -> wait(bad_return_server); label = "bad return server task completion")
+    end
 end
 
 @testset "HTTP server idle timeout closes keep-alive connections" begin

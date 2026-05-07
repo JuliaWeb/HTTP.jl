@@ -46,6 +46,21 @@ end
     @test occursin("; SameSite=Strict", HT.stringify(strict_cookie, false))
     @test occursin("; SameSite=None", HT.stringify(none_cookie, false))
 
+    # SameSite enum values are re-exported at top level
+    @test HT.SameSiteDefaultMode === HT.Cookies.SameSiteDefaultMode
+    @test HT.SameSiteLaxMode === HT.Cookies.SameSiteLaxMode
+    @test HT.SameSiteStrictMode === HT.Cookies.SameSiteStrictMode
+    @test HT.SameSiteNoneMode === HT.Cookies.SameSiteNoneMode
+    top_level_cookie = HT.Cookie("session", "abc"; samesite = HT.SameSiteStrictMode)
+    @test occursin("; SameSite=Strict", HT.stringify(top_level_cookie, false))
+
+    # Symbol shorthand maps to enum constants
+    @test HT.Cookie("a", "1"; samesite = :strict).samesite == HT.SameSiteStrictMode
+    @test HT.Cookie("a", "1"; samesite = :lax).samesite == HT.SameSiteLaxMode
+    @test HT.Cookie("a", "1"; samesite = :none).samesite == HT.SameSiteNoneMode
+    @test HT.Cookie("a", "1"; samesite = :default).samesite == HT.SameSiteDefaultMode
+    @test_throws ArgumentError HT.Cookie("a", "1"; samesite = :bogus)
+
     @test HT.stringify("a=1;", [HT.Cookie("b", "2")]) == "a=1; b=2"
     @test HT.stringify("a=1", [HT.Cookie("b", "2")]) == "a=1; b=2"
 

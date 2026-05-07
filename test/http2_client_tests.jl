@@ -794,7 +794,6 @@ end
         request = HT.Request("GET", "/trailers"; host = address, body = HT.EmptyBody(), content_length = 0)
         response = HT.h2_roundtrip!(h2_conn, request)
         @test response.status == 200
-        @test isempty(response.trailers)
         @test String(_read_all_h2_body(response.body)) == "ok"
         @test HT.header(response.trailers, "X-Trailer") == "done"
         _wait_task_h2!(server_task)
@@ -1433,4 +1432,96 @@ end
     )
     _wait_task_h2!(server_task)
     TL.close(listener)
+end
+
+# Regression: concurrent h2_roundtrip! must allocate stream ids in increasing
+# wire order. Without write-locked id allocation, two tasks could pick A < B
+# and then race to ship HEADERS, sending B before A and triggering peer GOAWAY.
+@testset "HTTP/2 client multiplexes concurrent roundtrips on one connection" begin
+    server = HTTP.serve!("127.0.0.1", 0; listenany = true) do req
+        return HTTP.Response(200; body = "hello")
+    end
+    addr = "127.0.0.1:$(HTTP.port(server))"
+    conn = HT.connect_h2!(addr; secure = false)
+    try
+        N = 32
+        tasks = [
+            Threads.@spawn HT.h2_roundtrip!(
+                conn,
+                HT.Request("GET", "/r$i"; host = addr, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0),
+            )
+            for i in 1:N
+        ]
+        results = [fetch(t) for t in tasks]
+        @test all(r.status == 200 for r in results)
+    finally
+        close(conn)
+        HTTP.forceclose(server)
+    end
+end
+
+# Regression: trailers reach the response even when the user inspects them
+# before draining the body. Required for gRPC-style consumers that only check
+# `response.trailers["grpc-status"]`.
+@testset "HTTP/2 client surfaces trailers without forcing body drain" begin
+    server = HTTP.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HTTP.startread(stream)
+        HTTP.setstatus(stream, 200)
+        HTTP.setheader(stream, "Trailer", "grpc-status")
+        HTTP.startwrite(stream)
+        write(stream, "hello")
+        HTTP.addtrailer(stream, "grpc-status" => "0")
+        HTTP.closeread(stream)
+        HTTP.closewrite(stream)
+    end
+    addr = "127.0.0.1:$(HTTP.port(server))"
+    conn = HT.connect_h2!(addr; secure = false)
+    try
+        request = HT.Request("GET", "/"; host = addr, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        response = HT.h2_roundtrip!(conn, request)
+        # Allow the trailing HEADERS frame to land. The fix surfaces it
+        # whether it arrives before or after the response head is built.
+        sleep(0.1)
+        @test response.status == 200
+        @test HT.header(response.trailers, "grpc-status") == "0"
+    finally
+        close(conn)
+        HTTP.forceclose(server)
+    end
+end
+
+# Regression: a transport with `alpn_protocols=["http/1.1"]` must not
+# negotiate h2 even when `prefer_http2=true`. Skipping the h2 attempt here
+# avoids a wasted TLS handshake and matches user expectations of an h1-pin.
+@testset "HTTP/2 client honors restricted ALPN list on auto protocol" begin
+    listener = TL.listen(
+        "tcp",
+        "127.0.0.1:0",
+        TL.Config(
+            verify_peer = false,
+            cert_file = _TLS_CERT_PATH,
+            key_file = _TLS_KEY_PATH,
+            alpn_protocols = ["h2", "http/1.1"],
+        );
+        backlog = 8,
+    )
+    laddr = TL.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server = HTTP.serve!(listener) do req
+        return HTTP.Response(200; body = "proto=$(req.proto_major).$(req.proto_minor)")
+    end
+    tls = TL.Config(verify_peer = false, server_name = "localhost", alpn_protocols = ["http/1.1"])
+    transport = HT.Transport(tls_config = tls)
+    client = HT.Client(transport = transport, prefer_http2 = true)
+    try
+        # `_use_h2` should refuse h2 because the ALPN list excludes it.
+        @test !HT._use_h2(client, true, :auto)
+        # Verify end-to-end that protocol=:auto picks h1.
+        response = HT.get!(client, address, "/"; secure = true, protocol = :auto)
+        @test response.status == 200
+        @test response.proto_major == UInt8(1)
+    finally
+        close(client)
+        HTTP.forceclose(server)
+    end
 end

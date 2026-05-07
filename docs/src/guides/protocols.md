@@ -10,44 +10,47 @@ HTTP/2 fits into normal `HTTP.jl` usage.
 
 ## WebSockets
 
-WebSockets are exported as `WebSockets` when you `using HTTP`.
+The WebSocket entrypoints live in the `HTTP.WebSockets` submodule. (The bare
+`WebSockets` name is also exported when you `using HTTP`, but the docs always
+use the fully-qualified `HTTP.WebSockets.*` form to avoid being shadowed by
+other packages.)
 
-Use `WebSockets.open` for `ws://` and `wss://` URLs. Top-level
+Use `HTTP.WebSockets.open` for `ws://` and `wss://` URLs. Top-level
 `HTTP.open` is the ordinary HTTP request/response streaming API and expects an
 HTTP method such as `:GET`.
 
 ```julia
 using HTTP
 
-server = WebSockets.listen!("127.0.0.1", 0; listenany = true) do ws
+server = HTTP.WebSockets.listen!("127.0.0.1", 0; listenany = true) do ws
     for msg in ws
-        WebSockets.send(ws, uppercase(String(msg)))
+        HTTP.WebSockets.send(ws, uppercase(String(msg)))
     end
 end
 
-url = "ws://" * WebSockets.server_addr(server) * "/echo"
-reply = WebSockets.open(url; proxy = HTTP.ProxyConfig()) do ws
-    WebSockets.send(ws, "hello")
-    WebSockets.receive(ws)
+url = "ws://" * HTTP.WebSockets.server_addr(server) * "/echo"
+reply = HTTP.WebSockets.open(url; proxy = HTTP.ProxyConfig()) do ws
+    HTTP.WebSockets.send(ws, "hello")
+    HTTP.WebSockets.receive(ws)
 end
-WebSockets.forceclose(server)
+HTTP.WebSockets.forceclose(server)
 reply
 ```
 
 Main WebSocket entrypoints:
 
-- `WebSockets.open`
-- `WebSockets.listen!`
-- `WebSockets.send`
-- `WebSockets.receive`
-- `WebSockets.forceclose`
+- `HTTP.WebSockets.open`
+- `HTTP.WebSockets.listen!`
+- `HTTP.WebSockets.send`
+- `HTTP.WebSockets.receive`
+- `HTTP.WebSockets.forceclose`
 
 The WebSocket layer covers close/ping/pong framing, server helpers, and
 proxy-aware clients without forcing you through internal parser state. The
 [WebSockets API reference](../api/websockets.md) is the canonical home for the
 public docstrings.
 
-`WebSockets.open` also accepts the client-side handshake timeout controls:
+`HTTP.WebSockets.open` also accepts the client-side handshake timeout controls:
 
 - `connect_timeout`
 - `request_timeout`

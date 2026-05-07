@@ -2,7 +2,7 @@
 export startread
 export closeread
 
-import Base: close, closewrite, eof, isopen, read, readbytes!, write
+import Base: bytesavailable, close, closewrite, eof, isopen, read, readavailable, readbytes!, write
 
 function _client_stream_request(
     method::Union{AbstractString,Symbol},
@@ -10,9 +10,10 @@ function _client_stream_request(
     headers::Headers,
     request_timeout_ns::Int64,
     timeout_config::Union{Nothing,_RequestTimeoutConfig},
+    context::Union{Nothing,RequestContext}=nothing,
 )::Request{EmptyBody}
-    context = RequestContext()
-    _apply_request_timeout_settings!(context, request_timeout_ns, timeout_config)
+    ctx = context === nothing ? RequestContext() : context::RequestContext
+    _apply_request_timeout_settings!(ctx, request_timeout_ns, timeout_config)
     return Request{EmptyBody}(
         String(method),
         parsed.target,
@@ -24,7 +25,7 @@ function _client_stream_request(
         UInt8(1),
         UInt8(1),
         false,
-        context,
+        ctx,
     )
 end
 
@@ -44,6 +45,7 @@ function Stream(
     request_timeout_ns::Integer,
     timeout_config::Union{Nothing,_RequestTimeoutConfig},
     retry_controller::Union{Nothing,_RetryController},
+    context::Union{Nothing,RequestContext}=nothing,
 )
     request_timeout_ns >= 0 || throw(ArgumentError("request_timeout_ns must be >= 0"))
     request = _client_stream_request(
@@ -52,6 +54,7 @@ function Stream(
         headers,
         Int64(request_timeout_ns),
         timeout_config,
+        context,
     )
     return Stream{true,typeof(request)}(
         parsed,
@@ -281,6 +284,23 @@ function read(stream::Stream, ::Type{String})::String
     return String(read(stream))
 end
 
+function read(stream::Stream{true}, ::Type{UInt8})::UInt8
+    _client_start_stream_read!(stream)
+    return read(_stream_reader(stream), UInt8)
+end
+
+function readavailable(stream::Stream{true})::Vector{UInt8}
+    _client_start_stream_read!(stream)
+    return readavailable(_stream_reader(stream))
+end
+
+function bytesavailable(stream::Stream{true})::Int
+    (@atomic :acquire stream.started) || return 0
+    reader = stream.reader
+    reader === nothing && return 0
+    return bytesavailable(reader::IO)
+end
+
 function eof(stream::Stream{true})::Bool
     _client_start_stream_read!(stream)
     done = eof(_stream_reader(stream))
@@ -393,6 +413,7 @@ function open(
     decompress::Union{Nothing,Bool}=nothing,
     basicauth=nothing,
     client::Union{Nothing,Client}=nothing,
+    context::Union{Nothing,RequestContext}=nothing,
     connect_timeout::Real=30,
     request_timeout::Real=0,
     response_header_timeout::Real=0,
@@ -414,6 +435,7 @@ function open(
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto
 )::Stream
+    client === nothing || _check_client_open(client)
     _handle_client_compat_kwargs(
         copyheaders=copyheaders,
         pool=pool,
@@ -427,8 +449,19 @@ function open(
         logerrors=logerrors,
         logtag=logtag,
     )
-    parsed = _parse_http_url(url, query)
+    # Apply client defaults (per-call wins)
+    connect_timeout = _client_default_timeout(client, connect_timeout, :default_connect_timeout)
+    request_timeout = _client_default_timeout(client, request_timeout, :default_request_timeout)
+    response_header_timeout = _client_default_timeout(client, response_header_timeout, :default_response_header_timeout)
+    read_idle_timeout = _client_default_timeout(client, read_idle_timeout, :default_read_idle_timeout)
+    write_idle_timeout = _client_default_timeout(client, write_idle_timeout, :default_write_idle_timeout)
+    if basicauth === nothing && client !== nothing
+        basicauth = client.default_basicauth
+    end
+    merged_query = _merge_client_default_query(client, query)
+    parsed = _parse_http_url(url, merged_query)
     req_headers = _normalize_headers_input(headers)
+    _apply_client_default_headers!(req_headers, client)
     normalized_cookies = _normalize_cookies_input(cookies)
     _apply_default_accept_encoding!(req_headers, decompress)
     _apply_default_user_agent!(req_headers)
@@ -463,9 +496,17 @@ function open(
         timeout_config=timeout_config,
         retry_controller=retry_controller,
         redirect_policy=_redirect_policy(req_client, redirect_limit, redirect_method, forwardheaders),
+        context=context,
     )
     return stream
 end
+
+# Positional Client overloads.
+open(client::Client, method::Union{AbstractString,Symbol}, url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...) =
+    open(method, url, headers; client=client, kwargs...)
+
+open(f::Function, client::Client, method::Union{AbstractString,Symbol}, url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...) =
+    open(f, method, url, headers; client=client, kwargs...)
 
 function open(
     f::Function,
@@ -475,27 +516,44 @@ function open(
     status_exception::Bool=true,
     kwargs...,
 )
+    start_ns = Int64(time_ns())
+    ctx_kw = get(kwargs, :context, nothing)
     stream = try
         open(method, url, headers; kwargs...)
     catch err
-        _is_transport_timeout(err) && throw(_wrap_transport_timeout(err, "request"))
-        rethrow()
+        elapsed_ns = Int64(time_ns()) - start_ns
+        if !(err isa CanceledError) && ctx_kw isa RequestContext && canceled(ctx_kw::RequestContext)
+            msg = (ctx_kw::RequestContext).cancel_message === nothing ? "request canceled" : (ctx_kw::RequestContext).cancel_message::String
+            throw(CanceledError(msg))
+        end
+        wrapped = _wrap_client_transport_error(err, "request", Int64(0), elapsed_ns)
+        wrapped === err ? rethrow() : throw(wrapped)
     end
     try
         f(stream)
     catch err
         @try_ignore closewrite(stream)
         @try_ignore closeread(stream)
-        _is_transport_timeout(err) && throw(_wrap_transport_timeout(err, "request"))
-        rethrow()
+        elapsed_ns = Int64(time_ns()) - start_ns
+        if !(err isa CanceledError) && ctx_kw isa RequestContext && canceled(ctx_kw::RequestContext)
+            msg = (ctx_kw::RequestContext).cancel_message === nothing ? "request canceled" : (ctx_kw::RequestContext).cancel_message::String
+            throw(CanceledError(msg))
+        end
+        wrapped = _wrap_client_transport_error(err, "request", Int64(0), elapsed_ns)
+        wrapped === err ? rethrow() : throw(wrapped)
     finally
         @try_ignore closewrite(stream)
     end
     response = try
         closeread(stream)
     catch err
-        _is_transport_timeout(err) && throw(_wrap_transport_timeout(err, "request"))
-        rethrow()
+        elapsed_ns = Int64(time_ns()) - start_ns
+        if !(err isa CanceledError) && ctx_kw isa RequestContext && canceled(ctx_kw::RequestContext)
+            msg = (ctx_kw::RequestContext).cancel_message === nothing ? "request canceled" : (ctx_kw::RequestContext).cancel_message::String
+            throw(CanceledError(msg))
+        end
+        wrapped = _wrap_client_transport_error(err, "request", Int64(0), elapsed_ns)
+        wrapped === err ? rethrow() : throw(wrapped)
     end
     if status_exception && _status_throws(response)
         throw(StatusError(response))

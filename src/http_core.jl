@@ -61,11 +61,77 @@ end
 Raised when an HTTP-layer deadline expires. This is intentionally separate from
 lower-level socket timeout exceptions so higher layers can distinguish "request
 context expired" from transport-specific readiness or handshake failures.
+
+Fields:
+
+- `operation::String` — short label identifying which deadline fired. Common
+  values are `"connect"`, `"tls_handshake"`, `"request"`, `"response_header"`,
+  `"read_idle"`, `"write_idle"`, and `"expect_continue"`.
+- `timeout_ns::Int64` — the budget that fired, in nanoseconds. `0` means the
+  budget was unknown at the wrap site.
+- `elapsed_ns::Int64` — best-effort elapsed time when the deadline fired, in
+  nanoseconds. `0` means the elapsed time is unknown at the wrap site.
 """
 struct TimeoutError <: HTTPError
     operation::String
     timeout_ns::Int64
+    elapsed_ns::Int64
 end
+
+TimeoutError(operation::AbstractString, timeout_ns::Integer) =
+    TimeoutError(String(operation), Int64(timeout_ns), Int64(0))
+
+"""
+    ConnectError(address, cause)
+
+Raised when a low-level connect attempt fails before any HTTP exchange begins.
+`address` records the target the client tried to reach (host:port) and `cause`
+is the underlying transport exception. This wraps Reseau-internal types like
+`HostResolvers.OpError` so callers can pattern-match on `HTTP.ConnectError`
+without depending on Reseau internals.
+"""
+struct ConnectError <: HTTPError
+    address::String
+    cause::Exception
+end
+
+ConnectError(address::AbstractString, cause::Exception) = ConnectError(String(address), cause)
+
+"""
+    DNSError(hostname, cause)
+
+Raised when host resolution fails before any connect attempt. `hostname` is the
+name that could not be resolved and `cause` is the underlying transport
+exception (typically `Reseau.HostResolvers.LookupError`).
+"""
+struct DNSError <: HTTPError
+    hostname::String
+    cause::Exception
+end
+
+DNSError(hostname::AbstractString, cause::Exception) = DNSError(String(hostname), cause)
+
+"""
+    TLSHandshakeError(cause)
+
+Raised when a TLS handshake fails (other than a handshake timeout, which
+surfaces as [`TimeoutError`](@ref) with `operation = "tls_handshake"`).
+"""
+struct TLSHandshakeError <: HTTPError
+    cause::Exception
+end
+
+"""
+    AddressInUseError(address)
+
+Raised when a server cannot bind because the requested address is already in
+use. `address` records the bind target (host:port).
+"""
+struct AddressInUseError <: HTTPError
+    address::String
+end
+
+AddressInUseError(address::AbstractString) = AddressInUseError(String(address))
 
 function Base.showerror(io::IO, err::ParseError)
     print(io, "http parse error: ", err.message)
@@ -89,7 +155,39 @@ function Base.showerror(io::IO, err::CanceledError)
 end
 
 function Base.showerror(io::IO, err::TimeoutError)
-    print(io, "http timeout during ", err.operation, " after ", err.timeout_ns, " ns")
+    print(io, "http timeout during ", err.operation)
+    if err.timeout_ns > 0
+        print(io, " (budget ", err.timeout_ns, " ns")
+        if err.elapsed_ns > 0
+            print(io, ", elapsed ", err.elapsed_ns, " ns")
+        end
+        print(io, ")")
+    elseif err.elapsed_ns > 0
+        print(io, " (elapsed ", err.elapsed_ns, " ns)")
+    end
+    return nothing
+end
+
+function Base.showerror(io::IO, err::ConnectError)
+    print(io, "http connect error to ", err.address, ": ")
+    showerror(io, err.cause)
+    return nothing
+end
+
+function Base.showerror(io::IO, err::DNSError)
+    print(io, "http dns error for ", err.hostname, ": ")
+    showerror(io, err.cause)
+    return nothing
+end
+
+function Base.showerror(io::IO, err::TLSHandshakeError)
+    print(io, "http tls handshake error: ")
+    showerror(io, err.cause)
+    return nothing
+end
+
+function Base.showerror(io::IO, err::AddressInUseError)
+    print(io, "http address already in use: ", err.address)
     return nothing
 end
 
@@ -117,16 +215,108 @@ boundary so callers can pattern-match against [`TimeoutError`](@ref) /
 end
 
 """
-    _wrap_transport_timeout(err, operation, timeout_ns=0)
+    _is_address_in_use_systemerror(err)
+
+Heuristic that returns `true` when `err::SystemError` corresponds to the
+"address already in use" condition (`EADDRINUSE`).
+"""
+@inline function _is_address_in_use_systemerror(err::Base.SystemError)::Bool
+    return Int(err.errnum) == Int(Base.Libc.EADDRINUSE)
+end
+
+"""
+    _wrap_transport_timeout(err, operation, timeout_ns=0, elapsed_ns=0)
 
 If `err` is a transport-level timeout exception (see [`_is_transport_timeout`](@ref)),
 return an [`HTTPTimeoutError`](@ref) tagged with `operation`. Otherwise return
 `err` unchanged. Used at public HTTP boundaries to keep timeout exceptions
 catchable as `HTTP.TimeoutError`.
 """
-@inline function _wrap_transport_timeout(err, operation::AbstractString, timeout_ns::Integer=Int64(0))
+@inline function _wrap_transport_timeout(err, operation::AbstractString, timeout_ns::Integer=Int64(0), elapsed_ns::Integer=Int64(0))
     _is_transport_timeout(err) || return err
-    return TimeoutError(String(operation), Int64(timeout_ns))
+    return TimeoutError(String(operation), Int64(timeout_ns), Int64(elapsed_ns))
+end
+
+@inline function _opaddress(err::HostResolvers.OpError)::String
+    addr = err.addr
+    addr === nothing && return ""
+    return string(addr)
+end
+
+function _wrap_op_error(err::HostResolvers.OpError, operation::AbstractString, timeout_ns::Int64, elapsed_ns::Int64=Int64(0))
+    inner = err.err
+    address = _opaddress(err)
+    if inner isa HostResolvers.DialTimeoutError
+        return TimeoutError(String("connect"), timeout_ns, elapsed_ns)
+    end
+    if inner isa TLS.TLSHandshakeTimeoutError
+        return TimeoutError(String("tls_handshake"), Int64(inner.timeout_ns), elapsed_ns)
+    end
+    if inner isa IOPoll.DeadlineExceededError
+        return TimeoutError(String(operation), timeout_ns, elapsed_ns)
+    end
+    if inner isa HostResolvers.LookupError
+        return DNSError(inner.name, err)
+    end
+    if inner isa TLS.TLSError
+        return TLSHandshakeError(err)
+    end
+    if inner isa Base.SystemError && _is_address_in_use_systemerror(inner)
+        return AddressInUseError(address)
+    end
+    return ConnectError(address, err)
+end
+
+"""
+    _wrap_client_transport_error(err, operation="request", timeout_ns=0, elapsed_ns=0)
+
+Wrap Reseau-internal transport errors that escape the client request path so
+callers see HTTP-typed exceptions only. Returns either a wrapped
+[`TimeoutError`](@ref), [`ConnectError`](@ref), [`DNSError`](@ref),
+[`TLSHandshakeError`](@ref), or `err` unchanged when no wrapping rule applies.
+"""
+function _wrap_client_transport_error(err, operation::AbstractString="request", timeout_ns::Integer=Int64(0), elapsed_ns::Integer=Int64(0))
+    if err isa TLS.TLSHandshakeTimeoutError
+        return TimeoutError(String("tls_handshake"), Int64(err.timeout_ns), Int64(elapsed_ns))
+    end
+    if err isa HostResolvers.DialTimeoutError
+        return TimeoutError(String("connect"), Int64(timeout_ns), Int64(elapsed_ns))
+    end
+    if err isa IOPoll.DeadlineExceededError
+        return TimeoutError(String(operation), Int64(timeout_ns), Int64(elapsed_ns))
+    end
+    if err isa HostResolvers.OpError
+        return _wrap_op_error(err::HostResolvers.OpError, operation, Int64(timeout_ns), Int64(elapsed_ns))
+    end
+    if err isa HostResolvers.LookupError
+        return DNSError(err.name, err)
+    end
+    if err isa TLS.TLSError
+        return TLSHandshakeError(err)
+    end
+    return err
+end
+
+"""
+    _wrap_server_listen_error(err, address)
+
+Wrap Reseau-internal listen errors so server callers (e.g. `serve!`/`listen!`)
+see HTTP-typed exceptions only. Returns [`AddressInUseError`](@ref) when the
+underlying error is `EADDRINUSE`, otherwise rewraps as [`ConnectError`](@ref)
+to keep the bind failure under the HTTPError hierarchy.
+"""
+function _wrap_server_listen_error(err, address::AbstractString)
+    if err isa HostResolvers.OpError
+        inner = err.err
+        if inner isa Base.SystemError && _is_address_in_use_systemerror(inner)
+            return AddressInUseError(address)
+        end
+        return ConnectError(String(address), err)
+    end
+    if err isa Base.SystemError && _is_address_in_use_systemerror(err)
+        return AddressInUseError(address)
+    end
+    return err
 end
 
 """Shared empty byte-vector payload used for responses with no buffered body."""
@@ -880,12 +1070,14 @@ mutable struct RequestContext
     cancel_message::Union{Nothing,String}
     metadata::Union{Nothing,Dict{Symbol,Any}}
     timeout_config::Union{Nothing,_RequestTimeoutConfig}
+    cancel_callbacks_lock::ReentrantLock
+    cancel_callbacks::Vector{Any}
 end
 
 """Construct a `RequestContext`; throws `ArgumentError` when `deadline_ns < 0`."""
 function RequestContext(; deadline_ns::Integer=Int64(0))
     deadline_ns < 0 && throw(ArgumentError("deadline_ns must be >= 0"))
-    return RequestContext(Int64(deadline_ns), false, nothing, nothing, nothing)
+    return RequestContext(Int64(deadline_ns), false, nothing, nothing, nothing, ReentrantLock(), Any[])
 end
 
 """
@@ -910,6 +1102,61 @@ state into a `CanceledError`.
 function cancel!(ctx::RequestContext; message::AbstractString="request canceled")
     @atomic :release ctx.canceled_flag = true
     ctx.cancel_message = String(message)
+    callbacks = lock(ctx.cancel_callbacks_lock) do
+        copy(ctx.cancel_callbacks)
+    end
+    for cb in callbacks
+        try
+            cb()
+        catch
+            # callbacks must not propagate errors back into cancel!
+        end
+    end
+    return ctx
+end
+
+"""
+    _on_cancel!(ctx, callback) -> ctx
+
+Register `callback` (a zero-argument function) to run when `cancel!(ctx)` fires.
+If `ctx` is already canceled, `callback` runs immediately. Internal helper used
+by the transport layer to interrupt in-flight reads/writes.
+"""
+function _on_cancel!(ctx::RequestContext, callback)
+    if (@atomic :acquire ctx.canceled_flag)
+        try
+            callback()
+        catch
+        end
+        return ctx
+    end
+    lock(ctx.cancel_callbacks_lock) do
+        if (@atomic :acquire ctx.canceled_flag)
+            try
+                callback()
+            catch
+            end
+        else
+            push!(ctx.cancel_callbacks, callback)
+        end
+    end
+    return ctx
+end
+
+"""
+    _remove_cancel_callback!(ctx, callback) -> ctx
+
+Remove a previously-registered cancellation callback if still present.
+"""
+function _remove_cancel_callback!(ctx::RequestContext, callback)
+    lock(ctx.cancel_callbacks_lock) do
+        for (idx, cb) in enumerate(ctx.cancel_callbacks)
+            if cb === callback
+                deleteat!(ctx.cancel_callbacks, idx)
+                break
+            end
+        end
+    end
     return ctx
 end
 

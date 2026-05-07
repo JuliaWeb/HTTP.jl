@@ -122,6 +122,11 @@ mutable struct H2Connection
     peer_goaway_last_stream_id::UInt32
     accepting_new_streams::Bool
     max_header_block_bytes::Int
+    # Concurrent acquirers that have committed to opening a stream on this
+    # connection but haven't reached `_register_stream!` yet. Used by
+    # `_h2_conn_available` so a second caller doesn't decide a peer-capped
+    # connection is reusable while the first caller is still in flight.
+    pending_stream_count::Int
     @atomic closed::Bool
 end
 
@@ -381,10 +386,61 @@ function _h2_conn_available(conn::H2Connection)::Bool
         conn.conn_error === nothing || return false
         conn.accepting_new_streams || return false
         conn.next_stream_id <= conn.peer_goaway_last_stream_id || return false
-        return length(conn.streams) < conn.peer_max_concurrent_streams
+        # Count callers currently between `_acquire_h2_conn!` and
+        # `_register_stream!` so two acquirers can't both lay claim to the
+        # last available slot on a peer-capped connection.
+        in_flight = length(conn.streams) + conn.pending_stream_count
+        return in_flight < conn.peer_max_concurrent_streams
     finally
         unlock(conn.state_lock)
     end
+end
+
+"""
+    _try_claim_h2_pending_slot!(conn) -> Bool
+
+If `conn` has an available slot, atomically reserve it by bumping
+`pending_stream_count`. Returns `true` on success, `false` when the slot was
+just taken by another acquirer or the connection is no longer usable.
+
+The reservation must be released by exactly one of:
+* `_release_h2_pending_slot!(conn)` if the request never reaches
+  `_register_stream!` (e.g. an early failure), or
+* `_register_stream!` itself, which converts the reservation into an entry in
+  `streams`.
+"""
+function _try_claim_h2_pending_slot!(conn::H2Connection)::Bool
+    lock(conn.state_lock)
+    try
+        (@atomic :acquire conn.closed) && return false
+        conn.conn_error === nothing || return false
+        conn.accepting_new_streams || return false
+        conn.next_stream_id <= conn.peer_goaway_last_stream_id || return false
+        in_flight = length(conn.streams) + conn.pending_stream_count
+        in_flight < conn.peer_max_concurrent_streams || return false
+        conn.pending_stream_count += 1
+        return true
+    finally
+        unlock(conn.state_lock)
+    end
+end
+
+"""
+    _release_h2_pending_slot!(conn)
+
+Drop a reservation made by `_try_claim_h2_pending_slot!` without performing a
+`_register_stream!`. Used to back out cleanly when the caller decides not to
+proceed (e.g. before opening a new connection on a different host).
+"""
+function _release_h2_pending_slot!(conn::H2Connection)
+    lock(conn.state_lock)
+    try
+        conn.pending_stream_count -= 1
+        notify(conn.stream_condition; all=true)
+    finally
+        unlock(conn.state_lock)
+    end
+    return nothing
 end
 
 function _h2_conn_reusable(conn::H2Connection)::Bool
@@ -398,7 +454,14 @@ function _h2_conn_reusable(conn::H2Connection)::Bool
     end
 end
 
-function _register_stream!(conn::H2Connection)::H2StreamState
+"""
+    _wait_for_stream_slot!(conn)
+
+Block until the connection has room for another concurrent client-initiated
+stream (or the connection has failed). Does not hold `write_lock`, so the
+read loop and other writers can keep making progress.
+"""
+function _wait_for_stream_slot!(conn::H2Connection)
     lock(conn.state_lock)
     try
         while true
@@ -407,19 +470,119 @@ function _register_stream!(conn::H2Connection)::H2StreamState
             if !conn.accepting_new_streams || conn.next_stream_id > conn.peer_goaway_last_stream_id
                 throw(H2GoAwayError("HTTP/2 connection is draining after GOAWAY", conn.peer_goaway_last_stream_id))
             end
-            if length(conn.streams) >= conn.peer_max_concurrent_streams
-                wait(conn.stream_condition)
-                continue
-            end
-            stream_id = conn.next_stream_id
-            conn.next_stream_id += UInt32(2)
-            state = H2StreamState(stream_id)
-            conn.streams[stream_id] = state
-            conn.stream_send_window[stream_id] = conn.initial_stream_send_window
-            return state
+            length(conn.streams) < conn.peer_max_concurrent_streams && return nothing
+            wait(conn.stream_condition)
         end
     finally
         unlock(conn.state_lock)
+    end
+end
+
+"""
+    _try_register_stream_locked!(conn) -> Union{Nothing,H2StreamState}
+
+Allocate a stream id and bookkeeping entry without blocking. Returns
+`nothing` if the connection is at `peer_max_concurrent_streams` so the caller
+can release `write_lock` and wait for a slot to free up before retrying.
+"""
+function _try_register_stream_locked!(conn::H2Connection)::Union{Nothing,H2StreamState}
+    lock(conn.state_lock)
+    try
+        (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
+        conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
+        if !conn.accepting_new_streams || conn.next_stream_id > conn.peer_goaway_last_stream_id
+            throw(H2GoAwayError("HTTP/2 connection is draining after GOAWAY", conn.peer_goaway_last_stream_id))
+        end
+        length(conn.streams) < conn.peer_max_concurrent_streams || return nothing
+        stream_id = conn.next_stream_id
+        conn.next_stream_id += UInt32(2)
+        state = H2StreamState(stream_id)
+        conn.streams[stream_id] = state
+        conn.stream_send_window[stream_id] = conn.initial_stream_send_window
+        # Convert the caller's pending reservation into the real stream entry.
+        # The reservation was placed by `_acquire_h2_conn!` (or by the retry
+        # loop in `_register_stream_and_send_headers!` on the slow path).
+        if conn.pending_stream_count > 0
+            conn.pending_stream_count -= 1
+        end
+        return state
+    finally
+        unlock(conn.state_lock)
+    end
+end
+
+"""
+    _register_stream_and_send_headers!(conn, request, headers) -> H2StreamState
+
+Allocate a fresh client stream id and emit the initial HEADERS (+ optional
+END_STREAM) frames for it as a single atomic step on the wire.
+
+Holding `write_lock` for the register-then-write window guarantees HTTP/2
+stream identifiers reach the peer in strictly increasing order, even when
+many tasks share the same connection. Without this, two concurrent requests
+can pick IDs A < B (under `state_lock`), then race on `write_lock` and write
+B's HEADERS first; per RFC 7540 §5.1.1 the peer then closes A as idle and
+replies with GOAWAY when A's frames eventually appear.
+
+Concurrency-stream limits are honored by waiting for a slot OUTSIDE
+`write_lock` so the read loop can keep draining frames (and the body reader
+can release its window updates). After acquiring `write_lock` we re-check the
+slot; if a competing task burned it first, we drop `write_lock` and retry.
+"""
+function _register_stream_and_send_headers!(
+    conn::H2Connection,
+    request::Request,
+    headers::Vector{HeaderField};
+    pending_slot_claimed::Bool=false,
+)::H2StreamState
+    end_stream = request.body isa EmptyBody
+    write_deadline_ns = _request_write_deadline_ns(request)
+    # When the pool acquirer reserved a pending slot for us, we must release
+    # it on any abnormal exit. Once `_try_register_stream_locked!` succeeds,
+    # the reservation is converted into the real stream entry and we no
+    # longer own it.
+    pending_owned = pending_slot_claimed
+    success = false
+    try
+        while true
+            _wait_for_stream_slot!(conn)
+            stream_state = nothing
+            lock(conn.write_lock)
+            try
+                (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
+                conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
+                stream_state = _try_register_stream_locked!(conn)
+                if stream_state !== nothing
+                    pending_owned = false
+                    try
+                        header_block = encode_header_block(conn.encoder, headers)
+                        _write_h2_header_block_locked!(
+                            conn,
+                            stream_state.stream_id,
+                            header_block,
+                            end_stream,
+                            write_deadline_ns,
+                        )
+                    catch err
+                        _unregister_stream!(conn, stream_state.stream_id)
+                        _fail_h2_connection!(conn, ProtocolError("HTTP/2 write failed", err::Exception))
+                        rethrow()
+                    end
+                end
+            finally
+                unlock(conn.write_lock)
+            end
+            if stream_state !== nothing
+                success = true
+                return stream_state::H2StreamState
+            end
+            # Slot was burned by another task between `_wait_for_stream_slot!`
+            # and our write_lock acquisition; wait for one to free and retry.
+        end
+    finally
+        if !success && pending_owned
+            _release_h2_pending_slot!(conn)
+        end
     end
 end
 
@@ -501,6 +664,11 @@ function _handle_stream_header_fragment!(
                         appendheader(state.pending_trailers, key, value)
                     end
                 end
+                # If the response head was already constructed, the caller is
+                # holding a reference to `state.response_trailers`. Publish the
+                # decoded trailers into it immediately so callers that don't
+                # drain the body still observe trailers on `response.trailers`.
+                _publish_h2_response_trailers!(state)
             end
         end
         if end_stream
@@ -724,8 +892,12 @@ function _make_tls_config_for_h2(
             64,
         )
     end
+    # If the user supplied an explicit ALPN list, honor it verbatim. Forcing
+    # "h2" into a user-restricted list would let the connection negotiate h2
+    # against an h1+h2 server even when the caller asked us to pin h1 only.
+    # An empty list still defaults to ["h2"] because the only reason to call
+    # this helper is to attempt an h2 handshake.
     protocols = isempty(config.alpn_protocols) ? ["h2"] : copy(config.alpn_protocols)
-    in("h2", protocols) || push!(protocols, "h2")
     effective_handshake_timeout_ns = _min_nonzero_ns(config.handshake_timeout_ns, handshake_timeout_ns)
     effective_server_name = if server_name === nothing
         config.server_name === nothing ? host : config.server_name::String
@@ -802,6 +974,7 @@ function _connect_h2_from_tcp!(
             typemax(UInt32),
             true,
             _H2_DEFAULT_MAX_HEADER_BLOCK_BYTES,
+            0,
             false,
         )
         _verify_h2_alpn!(conn)
@@ -1029,7 +1202,14 @@ function _publish_h2_response_trailers!(state::H2StreamState)
             appendheader(target::Headers, key, value)
         end
     end
-    state.trailers_published = true
+    # `pending_trailers` may still be empty if the trailing HEADERS frame has
+    # not arrived yet. Drop what we already copied so a later call won't append
+    # the same entries again, and keep `trailers_published=false` until the
+    # stream is fully done so the read loop can deliver late-arriving trailers.
+    empty!(state.pending_trailers.entries)
+    if state.stream_done
+        state.trailers_published = true
+    end
     return nothing
 end
 
@@ -1219,31 +1399,32 @@ function _wait_stream_headers!(conn::H2Connection, state::H2StreamState, deadlin
     end
 end
 
-function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_IncomingResponse
-    stream_state = _register_stream!(conn)
+function _h2_roundtrip_incoming!(
+    conn::H2Connection,
+    request::Request;
+    pending_slot_claimed::Bool=false,
+)::_IncomingResponse
+    headers = try
+        _request_headers_for_h2(conn.address, request, conn.secure)
+    catch
+        pending_slot_claimed && _release_h2_pending_slot!(conn)
+        rethrow()
+    end
+    if conn.peer_max_header_list_size > 0 && _header_list_size(headers) > conn.peer_max_header_list_size
+        pending_slot_claimed && _release_h2_pending_slot!(conn)
+        throw(ProtocolError("HTTP/2 request headers exceed peer SETTINGS_MAX_HEADER_LIST_SIZE"))
+    end
+    # Stream-id allocation and the initial HEADERS write must happen atomically
+    # under write_lock. RFC 7540 §5.1.1 requires the peer to see stream
+    # identifiers in monotonically increasing order; if two threads each
+    # allocate an ID and then race to acquire write_lock, the wire order can be
+    # inverted and the peer treats the lower-numbered stream as implicitly
+    # closed (then sends GOAWAY when frames arrive on it).
+    stream_state = _register_stream_and_send_headers!(conn, request, headers; pending_slot_claimed)
     cleanup_on_exit = true
     try
-        headers = _request_headers_for_h2(conn.address, request, conn.secure)
-        if conn.peer_max_header_list_size > 0 && _header_list_size(headers) > conn.peer_max_header_list_size
-            throw(ProtocolError("HTTP/2 request headers exceed peer SETTINGS_MAX_HEADER_LIST_SIZE"))
-        end
         try
             end_stream = request.body isa EmptyBody
-            lock(conn.write_lock)
-            try
-                (@atomic :acquire conn.closed) && throw(ProtocolError("HTTP/2 connection is closed"))
-                conn.conn_error === nothing || throw(conn.conn_error::ProtocolError)
-                header_block = encode_header_block(conn.encoder, headers)
-                _write_h2_header_block_locked!(
-                    conn,
-                    stream_state.stream_id,
-                    header_block,
-                    end_stream,
-                    _request_write_deadline_ns(request),
-                )
-            finally
-                unlock(conn.write_lock)
-            end
             end_stream || _write_request_body_h2!(conn, stream_state.stream_id, request)
         catch err
             _fail_h2_connection!(conn, ProtocolError("HTTP/2 write failed", err::Exception))
@@ -1260,6 +1441,11 @@ function _h2_roundtrip_incoming!(conn::H2Connection, request::Request)::_Incomin
             response_content_length = _parse_content_length(response_headers)
             response_trailers = Headers()
             stream_state.response_trailers = response_trailers
+            # If the trailing HEADERS frame already arrived before we got here,
+            # `state.pending_trailers` has the values but `response_trailers`
+            # was nothing at the time, so the read loop short-circuited. Drain
+            # them into the user-visible `response_trailers` now.
+            _publish_h2_response_trailers!(stream_state)
             if stream_state.stream_done && _stream_available_bytes(stream_state) == 0
                 if response_content_length > 0 && _body_allowed_for_status(status) && request.method != "HEAD"
                     throw(ProtocolError("HTTP/2 response body ended before Content-Length bytes were received"))

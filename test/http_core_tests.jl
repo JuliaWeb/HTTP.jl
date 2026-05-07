@@ -184,8 +184,39 @@ end
 
 @testset "HTTP core compatibility aliases" begin
     @test HT.TimeoutError === HT.HTTPTimeoutError
-    @test HT.TimeoutError("read", Int64(1)) isa HT.HTTPError
+    # Two-arg constructor (legacy compatibility) defaults elapsed_ns to 0.
+    legacy = HT.TimeoutError("read", Int64(1))
+    @test legacy isa HT.HTTPError
+    @test legacy.operation == "read"
+    @test legacy.timeout_ns == 1
+    @test legacy.elapsed_ns == 0
     @test HT.escape("a b") == "a%20b"
+end
+
+@testset "HTTP core transport error wrappers" begin
+    # New error types are subtypes of HTTPError so callers can pattern-match
+    # on `e isa HTTP.HTTPError` without depending on Reseau internals.
+    @test HT.ConnectError <: HT.HTTPError
+    @test HT.DNSError <: HT.HTTPError
+    @test HT.TLSHandshakeError <: HT.HTTPError
+    @test HT.AddressInUseError <: HT.HTTPError
+
+    addr = "127.0.0.1:1"
+    cause = ErrorException("boom")
+    @test HT.ConnectError(addr, cause).address == addr
+    @test HT.ConnectError(addr, cause).cause === cause
+    @test HT.DNSError("host.invalid", cause).hostname == "host.invalid"
+    @test HT.AddressInUseError(addr).address == addr
+
+    # TimeoutError carries operation, timeout_ns, and elapsed_ns.
+    err = HT.TimeoutError("connect", Int64(2_000_000_000), Int64(1_999_000_000))
+    @test err.operation == "connect"
+    @test err.timeout_ns == 2_000_000_000
+    @test err.elapsed_ns == 1_999_000_000
+    msg = sprint(showerror, err)
+    @test occursin("connect", msg)
+    @test occursin("budget", msg)
+    @test occursin("elapsed", msg)
 end
 
 @testset "HTTP core request/response display" begin

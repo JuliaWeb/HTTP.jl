@@ -1588,6 +1588,8 @@ function _roundtrip_incoming!(
     connect_host_resolver = _request_connect_host_resolver(transport.host_resolver, request)
     connect_deadline_ns = _request_connect_phase_deadline_ns(transport.host_resolver, request)
     tls_handshake_timeout_ns = _request_connect_phase_timeout_ns(transport.host_resolver, request)
+    request_ctx = get_request_context(request)
+    canceled(request_ctx) && throw(CanceledError(request_ctx.cancel_message === nothing ? "request canceled" : request_ctx.cancel_message::String))
     conn = _acquire_conn!(
         transport,
         plan,
@@ -1600,7 +1602,22 @@ function _roundtrip_incoming!(
         tls_handshake_timeout_ns,
     )
     was_reused = conn.reused
+    cancel_cb = let conn = conn
+        () -> begin
+            try
+                _set_conn_read_deadline!(conn, Int64(1))
+                _set_conn_write_deadline!(conn, Int64(1))
+            catch
+            end
+            try
+                _close_conn!(conn)
+            catch
+            end
+        end
+    end
+    _on_cancel!(request_ctx, cancel_cb)
     try
+        canceled(request_ctx) && throw(CanceledError(request_ctx.cancel_message === nothing ? "request canceled" : request_ctx.cancel_message::String))
         _apply_conn_deadline!(conn, request_deadline)
         request_io = _reset_request_buffer!(conn)
         stream = _conn_stream(conn)

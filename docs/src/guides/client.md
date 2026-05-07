@@ -145,6 +145,87 @@ Important `Client` and `Transport` knobs:
 - explicit proxy routing with `ProxyConfig`, `ProxyURL`, `ProxyFromEnvironment`, and `NoProxy`
 - coordinated retries through a shared `RetryBucket`
 
+### Per-`Client` defaults
+
+`Client` can also act as a configuration container, just like
+`requests.Session()` or `axios.create()` in other ecosystems. Defaults set on
+the client apply to every request issued through it; per-call keywords always
+win when both are provided.
+
+```julia
+client = HTTP.Client(
+    default_headers = ["User-Agent" => "MyApp/1.0", "X-API-Version" => "v2"],
+    default_query = Dict("api_key" => "secret"),
+    default_basicauth = "alice" => "password",
+    request_timeout = 30,
+    connect_timeout = 5,
+    read_idle_timeout = 10,
+)
+
+# Defaults applied automatically.
+HTTP.get(client, "https://api.example.com/users")
+
+# Per-call values override defaults for this call only.
+HTTP.get(client, "https://api.example.com/users";
+    headers = ["X-API-Version" => "v1"],
+    request_timeout = 60,
+)
+```
+
+Recognized client defaults:
+
+- `default_headers`: vector or dict of headers added when not present per-call
+- `default_query`: dict, named-tuple, or vector-of-pairs of query parameters; per-call keys override matching defaults
+- `default_basicauth`: applied unless the call passes `basicauth` or an explicit `Authorization` header
+- `connect_timeout`, `request_timeout`, `response_header_timeout`,
+  `read_idle_timeout`, `write_idle_timeout`: applied when the per-call timeout
+  is `0` (the default)
+
+### Positional `Client` calls
+
+The verb helpers also accept the `Client` positionally — `HTTP.get(client, url)`
+is equivalent to `HTTP.get(url; client = client)`. This works for `get`, `head`,
+`post`, `put`, `patch`, `delete`, `options`, `request`, and `open`.
+
+### Closed clients are poisoned
+
+After `close(client)`, subsequent calls that use it raise `ArgumentError`:
+
+```julia
+client = HTTP.Client()
+HTTP.get(client, "https://example.com")
+close(client)
+HTTP.get(client, "https://example.com")  # throws ArgumentError("HTTP.Client is closed")
+```
+
+Use `isopen(client)` to check the live state.
+
+## Cancelling an in-flight request
+
+Pass an `HTTP.RequestContext` via the `context` keyword to give an external
+task control over an outstanding request. Calling `HTTP.cancel!(ctx)` from
+another task aborts the in-flight read/write and the spawning task observes an
+`HTTP.CanceledError`:
+
+```julia
+ctx = HTTP.RequestContext()
+task = Threads.@spawn HTTP.get("https://slow.example.com/long"; context = ctx)
+sleep(0.5)
+HTTP.cancel!(ctx; message = "user pressed Ctrl-C")
+try
+    fetch(task)
+catch e
+    inner = e isa Base.TaskFailedException ? e.task.exception : e
+    @assert inner isa HTTP.CanceledError
+end
+```
+
+The same `context` keyword works on `HTTP.request`, `HTTP.get`/`head`/`post`/
+`put`/`patch`/`delete`/`options`, `HTTP.open`, and the lower-level `HTTP.do!`.
+Combined with a deadline (`HTTP.RequestContext(deadline_ns = ...)` or
+`HTTP.set_deadline!(ctx, ...)`) the same `context` value can drive both
+absolute deadlines and external cancellation.
+
 ## Request and Response Bodies
 
 The top-level request helpers buffer response bodies into `Vector{UInt8}` by
@@ -212,6 +293,54 @@ form = HTTP.Form(Dict("file" => open("upload.bin", "r"), "kind" => "binary"))
 HTTP.post("http://example.com/upload", [], form)
 ```
 
+### Query parameters
+
+The `query` keyword URL-encodes a `Dict` or vector of pairs and appends them
+to the URL's query string. Use it instead of building the query string by hand.
+
+```julia
+HTTP.get("http://example.com/search"; query = Dict("page" => 2, "limit" => 10))
+# GET /search?limit=10&page=2
+```
+
+A `Dict` is convenient but does not preserve order. Pass a vector of pairs
+when ordering matters:
+
+```julia
+HTTP.get("http://example.com/search"; query = ["page" => 2, "tag" => "hot"])
+# GET /search?page=2&tag=hot
+```
+
+Repeat a key in the vector form to send the same parameter multiple times:
+
+```julia
+HTTP.get("http://example.com/search"; query = ["tag" => "a", "tag" => "b"])
+# GET /search?tag=a&tag=b
+```
+
+`query` is *appended* to any existing query string in the URL — it does not
+replace it:
+
+```julia
+HTTP.get("http://example.com/search?type=user"; query = ["page" => 2])
+# GET /search?type=user&page=2
+```
+
+#### Reading query parameters on the server
+
+Server-side, `req.target` holds the request path plus its query string. Use
+`HTTP.URI` to split the two and `HTTP.queryparams` (returns a `Dict`) or
+`HTTP.queryparampairs` (preserves order and repeated keys) to decode them:
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do req
+    uri = HTTP.URI(req.target)
+    params = HTTP.queryparams(uri.query)            # Dict{String,String}
+    pairs  = HTTP.queryparampairs(uri.query)        # Vector{Pair{String,String}}
+    return HTTP.Response(200; body = "got $(length(params)) params")
+end
+```
+
 ## Retries and Timeouts
 
 The retry path is explicit and conservative. For predictable behavior, prefer a
@@ -275,6 +404,42 @@ resp = HTTP.get(
 `HTTP.open` uses the same timeout model, and `HTTP.WebSockets.open` uses the
 handshake-relevant subset (`connect_timeout`, `request_timeout`,
 `response_header_timeout`, `read_idle_timeout`, and `write_idle_timeout`).
+
+### Debugging Requests
+
+When a request misbehaves, `verbose` prints what the client is doing on the
+wire. `verbose = 1` shows one-line attempt/response/done summaries;
+`verbose = 2` adds the request and response head text:
+
+```julia
+HTTP.get("http://example.com"; verbose = 2)
+```
+
+Sample output:
+
+```
+[http] request attempt 1 GET http://example.com/ via h1
+[http] request
+GET / HTTP/1.1
+Host: example.com
+Accept-Encoding: gzip, deflate
+User-Agent: HTTP.jl/2.0.0
+[http] response attempt 1 200 for http://example.com/
+[http] response
+HTTP/1.1 200 OK
+Content-Length: 1256
+[http] done 200 for http://example.com/
+```
+
+For programmatic introspection — for example, to push events into your own
+logger — pass a `trace` callback. The callback receives subtypes of
+`HTTP.ClientEvent`:
+
+- [`HTTP.RequestEvent`](@ref) — request being sent
+- [`HTTP.ResponseHeadEvent`](@ref) — response headers received
+- [`HTTP.RetryEvent`](@ref) — retry scheduled
+- [`HTTP.RedirectEvent`](@ref) — redirect followed
+- [`HTTP.DoneEvent`](@ref) — request finished (with response or error)
 
 Reach for these APIs when you need more control:
 

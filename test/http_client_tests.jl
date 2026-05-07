@@ -1546,6 +1546,80 @@ end
     end
 end
 
+@testset "HTTP.open per-byte stream reads" begin
+    if _http_windows_ci()
+        @test_skip true
+    else
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    base_url = "http://$(address)"
+    server_task = errormonitor(Threads.@spawn begin
+        for _ in 1:5
+            conn = NC.accept(listener)
+            try
+                req = HT.read_request(HT._ConnReader(conn))
+                _send_response_client!(conn, req; body_text = "line1\nline2\nline3\n", close_conn = true)
+            finally
+                HTTP.@try_ignore NC.close(conn)
+            end
+        end
+        return nothing
+    end)
+    try
+        # Read whole body via read(stream) (the canonical pattern from migration docs)
+        body_via_read = HT.open(:GET, "$(base_url)/lines") do stream
+            HT.startread(stream)
+            @test String(read(stream)) == "line1\nline2\nline3\n"
+        end
+        @test body_via_read.status == 200
+
+        # readline iterates one line at a time
+        lines_seen = String[]
+        HT.open(:GET, "$(base_url)/lines") do stream
+            HT.startread(stream)
+            while !eof(stream)
+                push!(lines_seen, readline(stream))
+            end
+        end
+        @test lines_seen == ["line1", "line2", "line3"]
+
+        # readavailable returns currently-buffered bytes without blocking past EOF
+        HT.open(:GET, "$(base_url)/lines") do stream
+            HT.startread(stream)
+            chunks = Vector{UInt8}[]
+            while !eof(stream)
+                push!(chunks, readavailable(stream))
+            end
+            @test String(reduce(vcat, chunks; init = UInt8[])) == "line1\nline2\nline3\n"
+        end
+
+        # Single-byte reads compose into the full body
+        HT.open(:GET, "$(base_url)/lines") do stream
+            HT.startread(stream)
+            bytes = UInt8[]
+            while !eof(stream)
+                push!(bytes, read(stream, UInt8))
+            end
+            @test String(bytes) == "line1\nline2\nline3\n"
+        end
+
+        # readbytes! drains in chunks
+        HT.open(:GET, "$(base_url)/lines") do stream
+            HT.startread(stream)
+            buf = Vector{UInt8}(undef, 4)
+            n1 = readbytes!(stream, buf)
+            @test n1 == 4
+            @test String(buf[1:n1]) == "line"
+        end
+
+        _wait_task_client!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+    end
+end
+
 @testset "HTTP.open stream guard rails" begin
     if _http_windows_ci()
         @test_skip true
@@ -1995,5 +2069,242 @@ end
     finally
         close(client.transport)
         HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP transport error wrapping" begin
+    # Connect refused: should wrap to HTTP.ConnectError, never leak Reseau internals.
+    err = try
+        HT.get("http://127.0.0.1:1/"; connect_timeout=2, retry=false)
+        nothing
+    catch ex
+        ex
+    end
+    @test err isa HT.ConnectError
+    @test err isa HT.HTTPError
+    @test occursin("127.0.0.1", err.address)
+
+    # DNS failure: should wrap to HTTP.DNSError.
+    dns_err = try
+        HT.get("http://this-host-does-not-exist.invalid/"; retry=false)
+        nothing
+    catch ex
+        ex
+    end
+    @test dns_err isa HT.DNSError
+    @test dns_err isa HT.HTTPError
+    @test occursin("invalid", dns_err.hostname)
+
+    # request_timeout populates timeout_ns and elapsed_ns on TimeoutError.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog=8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            req = HT.read_request(HT._ConnReader(conn))
+            _ = req
+            sleep(0.5)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    try
+        timeout_err = try
+            HT.get("http://$(address)/slow"; request_timeout=0.05, retry=false)
+            nothing
+        catch ex
+            ex
+        end
+        @test timeout_err isa HT.TimeoutError
+        @test timeout_err.timeout_ns > 0
+        @test timeout_err.elapsed_ns > 0
+        _wait_task_client!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP server bind-in-use wraps to AddressInUseError" begin
+    s1 = HT.serve!(req -> HT.Response(200, "first"), "127.0.0.1", 0; listenany=true)
+    bound_port = HT.port(s1)
+    try
+        bound_err = try
+            HT.serve!(req -> HT.Response(200, "second"), "127.0.0.1", bound_port)
+            nothing
+        catch ex
+            ex
+        end
+        @test bound_err isa HT.AddressInUseError
+        @test bound_err isa HT.HTTPError
+        @test occursin("$(bound_port)", bound_err.address)
+    finally
+        close(s1)
+    end
+end
+
+@testset "Client default_headers and per-call override" begin
+    server = HT.serve!("127.0.0.1", 0; listenany=true) do req
+        v = HT.header(req, "X-Custom")
+        return HT.Response(200; body=v)
+    end
+    try
+        client = HT.Client(default_headers=["X-Custom"=>"default"])
+        try
+            resp = HT.get(client, "http://127.0.0.1:$(HT.port(server))/")
+            @test String(resp.body) == "default"
+
+            resp2 = HT.get(client, "http://127.0.0.1:$(HT.port(server))/"; headers=["X-Custom"=>"override"])
+            @test String(resp2.body) == "override"
+        finally
+            close(client)
+        end
+    finally
+        HT.forceclose(server)
+    end
+end
+
+@testset "Client default_query merges with per-call query" begin
+    server = HT.serve!("127.0.0.1", 0; listenany=true) do req
+        return HT.Response(200; body=req.target)
+    end
+    try
+        client = HT.Client(default_query=Dict("api_key"=>"abc"))
+        try
+            resp = HT.get(client, "http://127.0.0.1:$(HT.port(server))/x")
+            @test occursin("api_key=abc", String(resp.body))
+
+            # Per-call query merges, with override winning
+            resp2 = HT.get(client, "http://127.0.0.1:$(HT.port(server))/x"; query=["api_key"=>"override", "extra"=>"y"])
+            body2 = String(resp2.body)
+            @test occursin("api_key=override", body2)
+            @test occursin("extra=y", body2)
+            @test !occursin("api_key=abc", body2)
+        finally
+            close(client)
+        end
+    finally
+        HT.forceclose(server)
+    end
+end
+
+@testset "Client positional verb helpers" begin
+    server = HT.serve!("127.0.0.1", 0; listenany=true) do req
+        return HT.Response(200; body=req.method)
+    end
+    try
+        client = HT.Client()
+        try
+            url = "http://127.0.0.1:$(HT.port(server))/"
+            @test String(HT.get(client, url).body) == "GET"
+            @test String(HT.post(client, url; body="x").body) == "POST"
+            @test String(HT.put(client, url; body="x").body) == "PUT"
+            @test String(HT.patch(client, url; body="x").body) == "PATCH"
+            @test String(HT.delete(client, url).body) == "DELETE"
+            @test HT.head(client, url).status == 200
+            @test HT.options(client, url).status == 200
+        finally
+            close(client)
+        end
+    finally
+        HT.forceclose(server)
+    end
+end
+
+@testset "Client poisoning after close" begin
+    server = HT.serve!("127.0.0.1", 0; listenany=true) do req
+        return HT.Response(200; body="ok")
+    end
+    try
+        client = HT.Client()
+        # Initial request works.
+        resp = HT.get(client, "http://127.0.0.1:$(HT.port(server))/")
+        @test resp.status == 200
+        @test isopen(client)
+        close(client)
+        @test !isopen(client)
+        # Subsequent calls must fail with ArgumentError.
+        @test_throws ArgumentError HT.get(client, "http://127.0.0.1:$(HT.port(server))/")
+        @test_throws ArgumentError HT.get(client, "http://127.0.0.1:$(HT.port(server))/")
+    finally
+        HT.forceclose(server)
+    end
+end
+
+@testset "RequestContext cancellation interrupts in-flight request" begin
+    slow_server = HT.serve!("127.0.0.1", 0; listenany=true) do req
+        sleep(60)
+        return HT.Response(200; body="late")
+    end
+    try
+        ctx = HT.RequestContext()
+        url = "http://127.0.0.1:$(HT.port(slow_server))/"
+        t = Threads.@spawn HT.get($url; context=$ctx)
+        sleep(0.5)
+        HT.cancel!(ctx; message="user pressed Ctrl-C")
+        start = time()
+        result = try
+            fetch(t)
+            (:ok, nothing)
+        catch e
+            inner = e isa Base.TaskFailedException ? e.task.exception : e
+            (:err, inner)
+        end
+        elapsed = time() - start
+        @test result[1] == :err
+        @test result[2] isa HT.CanceledError
+        @test (result[2]::HT.CanceledError).message == "user pressed Ctrl-C"
+        @test elapsed < 5  # cancellation should fire promptly, not wait for sleep(60)
+    finally
+        HT.forceclose(slow_server)
+    end
+end
+
+@testset "Client default_basicauth applied unless overridden" begin
+    server = HT.serve!("127.0.0.1", 0; listenany=true) do req
+        v = HT.header(req, "Authorization")
+        return HT.Response(200; body=v)
+    end
+    try
+        client = HT.Client(default_basicauth="alice"=>"secret")
+        try
+            url = "http://127.0.0.1:$(HT.port(server))/"
+            resp = HT.get(client, url)
+            @test startswith(String(resp.body), "Basic ")
+
+            # Per-call basicauth overrides
+            resp2 = HT.get(client, url; basicauth=("bob","other"))
+            @test resp2.body !== resp.body
+            @test startswith(String(resp2.body), "Basic ")
+        finally
+            close(client)
+        end
+    finally
+        HT.forceclose(server)
+    end
+end
+
+@testset "Client default_request_timeout applied unless overridden" begin
+    slow_server = HT.serve!("127.0.0.1", 0; listenany=true) do req
+        sleep(5)
+        return HT.Response(200)
+    end
+    try
+        client = HT.Client(request_timeout=0.5)
+        try
+            url = "http://127.0.0.1:$(HT.port(slow_server))/"
+            err = try
+                HT.get(client, url; retry=false)
+                nothing
+            catch e
+                e
+            end
+            @test err isa HT.TimeoutError
+        finally
+            close(client)
+        end
+    finally
+        HT.forceclose(slow_server)
     end
 end

@@ -24,6 +24,10 @@ HTTP.TimeoutError
 HTTP.HTTPTimeoutError
 HTTP.StatusError
 HTTP.TooManyRedirectsError
+HTTP.ConnectError
+HTTP.DNSError
+HTTP.TLSHandshakeError
+HTTP.AddressInUseError
 ```
 
 ## Header and Context Helpers

@@ -83,14 +83,15 @@ from the original `IO` or byte buffer you passed as `response_stream`.
 
 The dedicated 1.x `HTTP.download` helper has been removed in HTTP.jl 2.0.
 
-!!! note "`HTTP.download` still resolves — but it is no longer HTTP.jl's"
+!!! warning "`HTTP.download` still resolves — but it is no longer HTTP.jl's"
     Because `HTTP` re-exports `Base.download`, calls like
     `HTTP.download(url, path)` continue to work. Those calls now go through
     `Base.download` (which is itself backed by the `Downloads` standard
-    library), **not** through HTTP.jl's request stack — so options like
-    `proxy`, `retry`, `headers`, custom `Client`/`Transport`, and TLS
-    configuration are silently ignored. Update such call sites to use one of
-    the patterns below.
+    library), **not** through HTTP.jl's request stack. The 1.x keyword
+    arguments (`proxy`, `retry`, `headers`, `client`, `transport`, TLS
+    configuration, etc.) are not recognized by `Base.download` — passing them
+    raises `MethodError` rather than silently being applied. Update such call
+    sites to use one of the patterns below.
 
 For the closest direct replacement, use the `Downloads.download` function from
 Julia's standard library:
@@ -462,19 +463,21 @@ Useful server helpers in 2.0 include:
   `Last-Modified`, `ETag`, and `Accept-Ranges` handling.
 - `HTTP.servecontent(request, source)` applies the same conditional and range
   response logic to bytes, strings, or seekable `IO` content you already own.
-- `HTTP.Handlers.Router` for route matching.
+- `HTTP.Router` for route matching.
 - `HTTP.forceclose(server)` for immediate shutdown.
 
 ## Routing and Middleware
 
-Router helpers live in `HTTP.Handlers` and are also available as imported
-aliases such as `HTTP.Router` and `HTTP.register!`.
+`HTTP.Router` and `HTTP.register!` are the top-level public router names; the
+underlying implementation lives in `HTTP.Handlers` and remains available as
+`HTTP.Handlers.Router` / `HTTP.Handlers.register!` if you prefer the explicit
+path.
 
 ```julia
-router = HTTP.Handlers.Router()
+router = HTTP.Router()
 
-HTTP.Handlers.register!(router, "GET", "/users/{id}") do req
-    id = HTTP.Handlers.getparam(req, "id")
+HTTP.register!(router, "GET", "/users/{id}") do req
+    id = HTTP.getparam(req, "id")
     return HTTP.Response(200; body = id)
 end
 
@@ -482,7 +485,8 @@ server = HTTP.serve!(router, "127.0.0.1", 8080)
 ```
 
 When a route matches, the route string and path parameters are stored in the
-request context. Retrieve them with `getroute`, `getparams`, or `getparam`.
+request context. Retrieve them with `HTTP.getroute`, `HTTP.getparams`, or
+`HTTP.getparam`.
 
 ## WebSockets
 

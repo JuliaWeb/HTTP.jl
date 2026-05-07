@@ -4,7 +4,10 @@
     Client(; ...)
 
 High-level HTTP client with transport pooling, redirect policy, cookies, and
-optional HTTP/2.
+optional HTTP/2. Also acts as a configuration container so that defaults set
+once on the client (headers, query parameters, timeouts, basic auth) apply
+to every request issued through it unless the per-call `request`/`get`/`post`
+keywords override them.
 
 Keyword arguments:
 - `transport`: reusable lower-level HTTP/1 transport/pool implementation
@@ -13,11 +16,22 @@ Keyword arguments:
 - `cookiejar`: cookie jar implementation, or `nothing` to disable cookies
 - `max_redirects`: maximum redirect hops before failing
 - `prefer_http2`: whether secure requests should try HTTP/2 when available
+- `default_headers`: headers applied to every request issued through this
+  client; per-call `headers` are appended on top, and per-call values for the
+  same name take precedence
+- `default_query`: query parameters appended to every request URL; per-call
+  `query` overrides any keys it shares with the default
+- `default_basicauth`: default basic-auth credentials applied unless the call
+  passes `basicauth` or an explicit `Authorization` header
+- `connect_timeout`, `request_timeout`, `response_header_timeout`,
+  `read_idle_timeout`, `write_idle_timeout`: defaults applied to every request
+  unless the call passes the matching keyword. `0` disables.
 
 Pass a `Client` with the `client` keyword to `request`, `get`, `open`, or the
 other verb helpers when you want connection reuse and shared cookies across
-many calls. Close the client when you are finished if it owns resources you do
-not want to keep alive.
+many calls. The verb helpers also accept the client positionally
+(`HTTP.get(client, url; ...)`). Close the client when you are finished; once
+closed, subsequent calls that use it raise `ArgumentError`.
 """
 mutable struct Client{CR}
     transport::Transport
@@ -27,6 +41,15 @@ mutable struct Client{CR}
     prefer_http2::Bool
     h2_lock::ReentrantLock
     h2_conns::Dict{String,Vector{H2Connection}}
+    default_headers::Headers
+    default_query::Union{Nothing,Vector{Pair{String,String}}}
+    default_basicauth::Any
+    default_connect_timeout::Float64
+    default_request_timeout::Float64
+    default_response_header_timeout::Float64
+    default_read_idle_timeout::Float64
+    default_write_idle_timeout::Float64
+    @atomic closed::Bool
 end
 
 abstract type ClientEvent end
@@ -282,6 +305,14 @@ function Client(;
     cookiejar::Union{Nothing,CookieJar}=CookieJar(),
     max_redirects::Integer=10,
     prefer_http2::Bool=true,
+    default_headers=Pair{String,String}[],
+    default_query=nothing,
+    default_basicauth=nothing,
+    connect_timeout::Real=0,
+    request_timeout::Real=0,
+    response_header_timeout::Real=0,
+    read_idle_timeout::Real=0,
+    write_idle_timeout::Real=0,
 )
     max_redirects >= 0 || throw(ArgumentError("max_redirects must be >= 0"))
     return Client{typeof(check_redirect)}(
@@ -292,7 +323,41 @@ function Client(;
         prefer_http2,
         ReentrantLock(),
         Dict{String,Vector{H2Connection}}(),
+        _normalize_headers_input(default_headers),
+        _normalize_default_query(default_query),
+        default_basicauth,
+        Float64(connect_timeout),
+        Float64(request_timeout),
+        Float64(response_header_timeout),
+        Float64(read_idle_timeout),
+        Float64(write_idle_timeout),
+        false,
     )
+end
+
+# Normalize default_query input into a Vector{Pair{String,String}} stored on the Client.
+function _normalize_default_query(q)::Union{Nothing,Vector{Pair{String,String}}}
+    q === nothing && return nothing
+    pairs_out = Pair{String,String}[]
+    if q isa AbstractDict
+        for (k, v) in q
+            push!(pairs_out, String(k) => String(v))
+        end
+    elseif q isa NamedTuple
+        for (k, v) in pairs(q)
+            push!(pairs_out, String(k) => String(v))
+        end
+    else
+        for kv in q
+            if kv isa Pair
+                push!(pairs_out, String(kv.first) => String(kv.second))
+            else
+                throw(ArgumentError("default_query entries must be Pair{String,String}"))
+            end
+        end
+    end
+    isempty(pairs_out) && return nothing
+    return pairs_out
 end
 
 struct _UseTransportProxy end
@@ -319,6 +384,7 @@ function _proxy_config_for_request(client::Client, proxy)::ProxyConfig
 end
 
 function Base.close(client::Client)
+    @atomic :release client.closed = true
     close(client.transport)
     lock(client.h2_lock)
     try
@@ -332,6 +398,20 @@ function Base.close(client::Client)
         empty!(client.h2_conns)
     finally
         unlock(client.h2_lock)
+    end
+    return nothing
+end
+
+"""
+    isopen(client::Client) -> Bool
+
+Return `true` while `client` has not yet been closed.
+"""
+@inline Base.isopen(client::Client)::Bool = !(@atomic :acquire client.closed)
+
+@inline function _check_client_open(client::Client)
+    if @atomic :acquire client.closed
+        throw(ArgumentError("HTTP.Client is closed"))
     end
     return nothing
 end
@@ -368,7 +448,14 @@ function _acquire_h2_conn!(
                     continue
                 end
             else
-                return existing::H2Connection
+                # Atomically claim a pending slot so a concurrent acquirer
+                # entering this loop doesn't see the same `existing` as
+                # available before our caller calls `_register_stream!`.
+                if _try_claim_h2_pending_slot!(existing::H2Connection)
+                    return existing::H2Connection
+                end
+                # Lost the race for the last slot; fall through to evaluate
+                # remaining cached connections (and ultimately open a new one).
             end
             i += 1
         end
@@ -407,6 +494,9 @@ function _acquire_h2_conn!(
         else
             throw(ArgumentError("HTTP/2 is not supported for proxy plan mode $(plan.mode)"))
         end
+        # Claim a slot on the freshly opened connection up front so subsequent
+        # acquirers that race in see this caller's pending request.
+        _try_claim_h2_pending_slot!(conn::H2Connection)
         push!(conns, conn)
         client.h2_conns[key] = conns
         return conn::H2Connection
@@ -450,7 +540,15 @@ function _use_h2(client::Client, secure::Bool, protocol::Symbol)::Bool
     protocol == :h2 && return true
     protocol == :auto || throw(ArgumentError("protocol must be :auto, :h1, or :h2"))
     secure || return false
-    return client.prefer_http2
+    client.prefer_http2 || return false
+    # If the user pinned the transport's ALPN list to a non-empty set that does
+    # not include "h2", skip the h2 attempt entirely. Otherwise prefer_http2
+    # would force a TLS handshake the user explicitly asked us not to attempt.
+    cfg = client.transport.tls_config
+    if cfg !== nothing && !isempty(cfg.alpn_protocols) && !in("h2", cfg.alpn_protocols)
+        return false
+    end
+    return true
 end
 
 function _host_path_from_request(address::String, request::Request)::Tuple{String,String}
@@ -630,7 +728,7 @@ function _do_incoming!(
                     conn = nothing
                     try
                         conn = _acquire_h2_conn!(client, proxy_plan, current_address, current_secure, send_request, current_server_name)
-                        _h2_roundtrip_incoming!(conn::H2Connection, send_request)
+                        _h2_roundtrip_incoming!(conn::H2Connection, send_request; pending_slot_claimed=true)
                     catch err
                         _drop_h2_conn!(client, proxy_plan, conn)
                         if protocol == :auto && _should_fallback_h2_to_h1(err)
@@ -785,61 +883,83 @@ function do!(
     forwardheaders::Bool=true,
     cookies=true,
     cookiejar::Union{Nothing,CookieJar}=nothing,
+    context::Union{Nothing,RequestContext}=nothing,
 )
-    normalized_cookies = _normalize_cookies_input(cookies)
-    policy = _redirect_policy(client, redirect_limit, redirect_method, forwardheaders)
-    proxy_config = _proxy_config_for_request(client, proxy)
-    effective_cookiejar = _effective_cookiejar(client, cookiejar)
-    if protocol === :h1
-        incoming = _do_incoming!(
-            nothing,
-            client,
-            address,
-            request,
-            secure,
-            server_name,
-            :h1,
-            policy,
-            nothing,
-            proxy_config,
-            normalized_cookies,
-            effective_cookiejar,
-        )
-        return _streaming_response(incoming::_IncomingResponse{H1Body})
-    elseif protocol === :h2
-        incoming = _do_incoming!(
-            nothing,
-            client,
-            address,
-            request,
-            secure,
-            server_name,
-            :h2,
-            policy,
-            nothing,
-            proxy_config,
-            normalized_cookies,
-            effective_cookiejar,
-        )
-        return _streaming_response(incoming::_IncomingResponse{H2Body})
-    elseif protocol === :auto
-        incoming = _do_incoming!(
-            nothing,
-            client,
-            address,
-            request,
-            secure,
-            server_name,
-            :auto,
-            policy,
-            nothing,
-            proxy_config,
-            normalized_cookies,
-            effective_cookiejar,
-        )
-        return _streaming_response(incoming::Union{_IncomingResponse{H1Body},_IncomingResponse{H2Body}})
+    _check_client_open(client)
+    if context !== nothing
+        # Replace the request's context so cancellation/deadline writes propagate.
+        request = _request_with_context(request, context::RequestContext)
     end
-    throw(ArgumentError("protocol must be :auto, :h1, or :h2"))
+    start_ns = Int64(time_ns())
+    deadline_ns = _request_deadline_ns(request)
+    timeout_ns = deadline_ns > 0 ? max(Int64(0), deadline_ns - start_ns) : Int64(0)
+    try
+        normalized_cookies = _normalize_cookies_input(cookies)
+        policy = _redirect_policy(client, redirect_limit, redirect_method, forwardheaders)
+        proxy_config = _proxy_config_for_request(client, proxy)
+        effective_cookiejar = _effective_cookiejar(client, cookiejar)
+        if protocol === :h1
+            incoming = _do_incoming!(
+                nothing,
+                client,
+                address,
+                request,
+                secure,
+                server_name,
+                :h1,
+                policy,
+                nothing,
+                proxy_config,
+                normalized_cookies,
+                effective_cookiejar,
+            )
+            return _streaming_response(incoming::_IncomingResponse{H1Body})
+        elseif protocol === :h2
+            incoming = _do_incoming!(
+                nothing,
+                client,
+                address,
+                request,
+                secure,
+                server_name,
+                :h2,
+                policy,
+                nothing,
+                proxy_config,
+                normalized_cookies,
+                effective_cookiejar,
+            )
+            return _streaming_response(incoming::_IncomingResponse{H2Body})
+        elseif protocol === :auto
+            incoming = _do_incoming!(
+                nothing,
+                client,
+                address,
+                request,
+                secure,
+                server_name,
+                :auto,
+                policy,
+                nothing,
+                proxy_config,
+                normalized_cookies,
+                effective_cookiejar,
+            )
+            return _streaming_response(incoming::Union{_IncomingResponse{H1Body},_IncomingResponse{H2Body}})
+        end
+        throw(ArgumentError("protocol must be :auto, :h1, or :h2"))
+    catch err
+        if !(err isa CanceledError)
+            req_ctx = get_request_context(request)
+            if canceled(req_ctx)
+                msg = req_ctx.cancel_message === nothing ? "request canceled" : req_ctx.cancel_message::String
+                throw(CanceledError(msg))
+            end
+        end
+        elapsed_ns = Int64(time_ns()) - start_ns
+        wrapped = _wrap_client_transport_error(err, "request", timeout_ns, elapsed_ns)
+        wrapped === err ? rethrow() : throw(wrapped)
+    end
 end
 
 """
@@ -1136,6 +1256,18 @@ function Base.read(io::_BodyIO, ::Type{UInt8})::UInt8
     b = io.buf[io.next_index]
     io.next_index += 1
     return b
+end
+
+function Base.readavailable(io::_BodyIO)::Vector{UInt8}
+    available = _buffered_bytes(io)
+    if available == 0
+        _fill_bodyio!(io)
+        available = _buffered_bytes(io)
+    end
+    available == 0 && return UInt8[]
+    out = io.buf[io.next_index:(io.next_index + available - 1)]
+    io.next_index += available
+    return out
 end
 
 function Base.readbytes!(io::_BodyIO, dst::Vector{UInt8}, nb::Integer=length(dst))::Int
@@ -1477,6 +1609,77 @@ function _request_connect_host_resolver(base::_TransportHostResolver, request::R
     )
 end
 
+# --- Client default merging ---------------------------------------------------
+
+"""
+Apply `client.default_headers` to `req_headers` for every header key not already
+set by the per-call headers. Per-call values take precedence over defaults.
+"""
+function _apply_client_default_headers!(req_headers::Headers, client::Union{Nothing,Client})
+    client === nothing && return req_headers
+    defaults = client.default_headers
+    isempty(defaults.entries) && return req_headers
+    for entry in defaults.entries
+        key = first(entry)
+        hasheader(req_headers, key) && continue
+        setheader(req_headers, key, last(entry))
+    end
+    return req_headers
+end
+
+"""
+Merge `client.default_query` with the per-call `query`. Per-call query takes
+precedence — keys it provides override defaults of the same name. Returns a
+merged query, or the original `query` when the client has no default query.
+"""
+function _merge_client_default_query(client::Union{Nothing,Client}, query)
+    client === nothing && return query
+    defaults = client.default_query
+    defaults === nothing && return query
+    if query === nothing
+        return defaults
+    end
+    overrides_keys = Set{String}()
+    overrides_pairs = Pair{String,String}[]
+    if query isa AbstractDict
+        for (k, v) in query
+            sk = String(k)
+            push!(overrides_keys, sk)
+            push!(overrides_pairs, sk => String(v))
+        end
+    elseif query isa NamedTuple
+        for (k, v) in pairs(query)
+            sk = String(k)
+            push!(overrides_keys, sk)
+            push!(overrides_pairs, sk => String(v))
+        end
+    elseif query isa AbstractVector
+        for kv in query
+            kv isa Pair || throw(ArgumentError("query entries must be Pair{String,String}"))
+            sk = String(kv.first)
+            push!(overrides_keys, sk)
+            push!(overrides_pairs, sk => String(kv.second))
+        end
+    else
+        return query
+    end
+    merged = Pair{String,String}[]
+    for kv in defaults
+        kv.first in overrides_keys || push!(merged, kv)
+    end
+    append!(merged, overrides_pairs)
+    return merged
+end
+
+"""
+For timeout kwargs left at `0`, fall back to the client's default for the named field.
+"""
+@inline function _client_default_timeout(client::Union{Nothing,Client}, value::Real, field::Symbol)
+    client === nothing && return value
+    value > 0 && return value
+    return getfield(client, field)
+end
+
 
 function request(
     method::Union{AbstractString,Symbol},
@@ -1505,6 +1708,7 @@ function request(
     decompress::Union{Nothing,Bool}=nothing,
     sse_callback=nothing,
     client::Union{Nothing,Client}=nothing,
+    context::Union{Nothing,RequestContext}=nothing,
     connect_timeout::Real=30,
     request_timeout::Real=0,
     response_header_timeout::Real=0,
@@ -1528,6 +1732,7 @@ function request(
     require_ssl_verification::Bool=true,
     protocol::Symbol=:auto
 )
+    client === nothing || _check_client_open(client)
     trace = if verbose === false || verbose === nothing
         trace
     else
@@ -1536,6 +1741,9 @@ function request(
     final_response = nothing
     final_error = nothing
     request_url = nothing
+    request_timeout_ns = Int64(0)
+    request_start_ns = Int64(time_ns())
+    req_context = context === nothing ? RequestContext() : context::RequestContext
     try
         _handle_client_compat_kwargs(
             copyheaders=copyheaders,
@@ -1550,6 +1758,15 @@ function request(
             logerrors=logerrors,
             logtag=logtag,
         )
+        # Merge per-call values with client defaults (per-call wins)
+        connect_timeout = _client_default_timeout(client, connect_timeout, :default_connect_timeout)
+        request_timeout = _client_default_timeout(client, request_timeout, :default_request_timeout)
+        response_header_timeout = _client_default_timeout(client, response_header_timeout, :default_response_header_timeout)
+        read_idle_timeout = _client_default_timeout(client, read_idle_timeout, :default_read_idle_timeout)
+        write_idle_timeout = _client_default_timeout(client, write_idle_timeout, :default_write_idle_timeout)
+        if basicauth === nothing && client !== nothing
+            basicauth = client.default_basicauth
+        end
         request_timeout_ns, timeout_config = _resolve_request_timeout_settings(
             request_timeout,
             connect_timeout,
@@ -1559,9 +1776,11 @@ function request(
             expect_continue_timeout,
             readtimeout,
         )
-        parsed = _parse_http_url(url, query)
+        merged_query = _merge_client_default_query(client, query)
+        parsed = _parse_http_url(url, merged_query)
         request_url = parsed.url
         req_headers = _normalize_headers_input(headers)
+        _apply_client_default_headers!(req_headers, client)
         normalized_cookies = _normalize_cookies_input(cookies)
         sink = _resolve_response_sink(response_stream)
         sse_callback === nothing || sink === nothing || throw(ArgumentError("sse_callback cannot be combined with response_stream"))
@@ -1579,6 +1798,7 @@ function request(
             body=normalized_body.body,
             host=parsed.address,
             content_length=normalized_body.content_length,
+            context=req_context,
         )
         _apply_request_timeout_settings!(get_request_context(req), request_timeout_ns, timeout_config)
         req_client, owns_client = _client_for_request(client, connect_timeout, require_ssl_verification)
@@ -1620,7 +1840,14 @@ function request(
             owns_client && close(req_client)
         end
     catch err
-        wrapped = _is_transport_timeout(err) ? _wrap_transport_timeout(err, "request") : err
+        if !(err isa CanceledError) && canceled(req_context)
+            msg = req_context.cancel_message === nothing ? "request canceled" : req_context.cancel_message::String
+            wrapped = CanceledError(msg)
+            final_error = wrapped::Exception
+            throw(wrapped)
+        end
+        elapsed_ns = Int64(time_ns()) - request_start_ns
+        wrapped = _wrap_client_transport_error(err, "request", request_timeout_ns, elapsed_ns)
         final_error = wrapped::Exception
         wrapped === err ? rethrow() : throw(wrapped)
     finally
@@ -1900,6 +2127,43 @@ end
 function options(url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...)
     return request("OPTIONS", url, headers, nothing; kwargs...)
 end
+
+# Positional `Client` overloads — `HTTP.get(client, url; ...)` is equivalent to
+# `HTTP.get(url; client=client, ...)`. These exist so users coming from
+# `requests.Session()` / `axios.create()` / `reqwest::Client::builder()` don't
+# hit a `MethodError` listing unrelated `Base.get` methods.
+
+request(client::Client, method::Union{AbstractString,Symbol}, url::Union{AbstractString,URI}, args...; kwargs...) =
+    request(method, url, args...; client=client, kwargs...)
+
+get(client::Client, url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...) =
+    request("GET", url, headers, nothing; client=client, kwargs...)
+
+head(client::Client, url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...) =
+    request("HEAD", url, headers, nothing; client=client, kwargs...)
+
+function post(client::Client, url::Union{AbstractString,URI}, args...; kwargs...)
+    headers, body = _split_headers_body_args(args)
+    return request("POST", url, headers, body; client=client, kwargs...)
+end
+
+function put(client::Client, url::Union{AbstractString,URI}, args...; kwargs...)
+    headers, body = _split_headers_body_args(args)
+    return request("PUT", url, headers, body; client=client, kwargs...)
+end
+
+function patch(client::Client, url::Union{AbstractString,URI}, args...; kwargs...)
+    headers, body = _split_headers_body_args(args)
+    return request("PATCH", url, headers, body; client=client, kwargs...)
+end
+
+function delete(client::Client, url::Union{AbstractString,URI}, args...; kwargs...)
+    headers, body = _split_headers_body_args(args)
+    return request("DELETE", url, headers, body; client=client, kwargs...)
+end
+
+options(client::Client, url::Union{AbstractString,URI}, headers=Pair{String,String}[]; kwargs...) =
+    request("OPTIONS", url, headers, nothing; client=client, kwargs...)
 
 """
     HTTP.@client request_middleware

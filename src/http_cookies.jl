@@ -49,9 +49,21 @@ end
 
 function Cookie(cookie::Cookie; kwargs...)
     for (k, v) in kwargs
-        setfield!(cookie, k, convert(fieldtype(Cookie, k), v))
+        if k === :samesite && v isa Symbol
+            setfield!(cookie, k, _samesite_from_symbol(v))
+        else
+            setfield!(cookie, k, convert(fieldtype(Cookie, k), v))
+        end
     end
     return cookie
+end
+
+function _samesite_from_symbol(s::Symbol)::SameSite
+    s === :strict && return SameSiteStrictMode
+    s === :lax && return SameSiteLaxMode
+    s === :none && return SameSiteNoneMode
+    s === :default && return SameSiteDefaultMode
+    throw(ArgumentError("invalid samesite symbol $(repr(s)); expected :strict, :lax, :none, or :default"))
 end
 
 Cookie(; kwargs...) = Cookie(Cookie("", "", ""); kwargs...)
@@ -712,4 +724,5 @@ end
 
 end
 
-using .Cookies: Cookie, CookieJar, cookies, stringify, getcookies!, setcookies!, addcookie!
+using .Cookies: Cookie, CookieJar, cookies, stringify, getcookies!, setcookies!, addcookie!,
+    SameSite, SameSiteDefaultMode, SameSiteLaxMode, SameSiteStrictMode, SameSiteNoneMode

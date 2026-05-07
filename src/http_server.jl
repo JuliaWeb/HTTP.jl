@@ -1109,7 +1109,11 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     _try_write_server_error!(tracked.conn, request, status === nothing ? 500 : status::Int)
                     return nothing
                 end
-                response isa Response || throw(ProtocolError("server handler must return HTTP.Response"))
+                if !(response isa Response)
+                    @error "server handler must return HTTP.Response, got $(typeof(response))"
+                    _try_write_server_error!(tracked.conn, request, 500)
+                    return nothing
+                end
                 response_obj = response::Response
                 response_obj.request = handler_request
                 if !_request_body_fully_consumed(handler_request)
@@ -1193,6 +1197,18 @@ function _start_server_task!(f::F, server::Server)::Server where {F}
         unlock(server.lock)
     end
     wait(ready)
+    # If the spawned serve loop failed during startup, surface the failure
+    # synchronously to the caller. We rely on the synchronous bind path in
+    # the `serve!(handler, host, port; ...)` form to translate bind errors
+    # (EADDRINUSE etc.) to `HTTP.AddressInUseError` before the task is even
+    # spawned. Anything that fails inside the task itself is rethrown as
+    # `TaskFailedException` here without further unwrapping; the JuliaC
+    # trim verifier does not allow `current_exceptions(::Task)` and
+    # `getproperty(::TaskFailedException, :task)` is also trim-unsafe in
+    # the path that JuliaC compiles.
+    if istaskdone(task) && istaskfailed(task)
+        wait(task)
+    end
     return server
 end
 
@@ -1474,7 +1490,12 @@ function serve!(
     backlog::Integer=128,
 ) where {F}
     bind_address = HostResolvers.join_host_port(host, listenany ? 0 : Int(port_num))
-    listener = TCP.listen("tcp", bind_address; backlog=backlog, reuseaddr=reuseaddr)
+    listener = try
+        TCP.listen("tcp", bind_address; backlog=backlog, reuseaddr=reuseaddr)
+    catch err
+        wrapped = _wrap_server_listen_error(err, bind_address)
+        wrapped === err ? rethrow() : throw(wrapped)
+    end
     try
         return serve!(
             handler,

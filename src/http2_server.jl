@@ -1378,7 +1378,19 @@ function _handle_h2_stream!(
                 )
                 return nothing
             end
-            response isa Response || throw(ProtocolError("h2 server handler must return HTTP.Response"))
+            if !(response isa Response)
+                @error "h2 server handler must return HTTP.Response, got $(typeof(response))"
+                _write_h2_response!(
+                    conn,
+                    write_lock,
+                    send_state,
+                    stream_id,
+                    request,
+                    Response(500; proto_major=2, proto_minor=0, request=request),
+                    _server_write_deadline_ns(server),
+                )
+                return nothing
+            end
             response_obj = response::Response
             _write_h2_response!(conn, write_lock, send_state, stream_id, handler_request, response_obj, _server_write_deadline_ns(server))
         end

@@ -507,7 +507,13 @@ function receive(ws::WebSocket)
 end
 
 function Base.iterate(ws::WebSocket, st=nothing)
-    isclosed(ws) && return nothing
+    # Note: do not early-return on isclosed(ws) here: messages may still be
+    # buffered in ws.readchannel after the read task has set readclosed=true
+    # and the close path has set writeclosed=true. receive() already handles
+    # the buffered-take fast-path when the channel is closed but non-empty.
+    if isclosed(ws) && !isready(ws.readchannel)
+        return nothing
+    end
     try
         return receive(ws), nothing
     catch err
@@ -1174,8 +1180,13 @@ function _serve_ws_session!(server::Server, conn, request::Request, response::Re
         isok(err) || rethrow(err)
     finally
         if !isclosed(ws)
+            # Prefer the real close reason captured by _queue_close! (e.g.
+            # 1009 frame too large, 1007 invalid utf8, 1002 protocol error)
+            # over the default 1000 so the peer sees the actual cause when
+            # a handler returns normally after an internal protocol violation.
+            body = ws.closebody === nothing ? CloseFrameBody(1000, "") : ws.closebody::CloseFrameBody
             @try_ignore begin
-                close(ws, CloseFrameBody(1000, ""))
+                close(ws, body)
             end
         end
         _untrack_session!(server, ws)

@@ -82,6 +82,7 @@ Every server timeout has both a seconds-valued keyword and a nanosecond-valued
 ```julia
 using HTTP
 
+handler = req -> HTTP.Response(200; body = "ok")
 server = HTTP.serve!(
     handler,
     "127.0.0.1",
@@ -96,6 +97,7 @@ server = HTTP.serve!(
 ```julia
 using HTTP
 
+handler = req -> HTTP.Response(200; body = "ok")
 server = HTTP.serve!(
     handler,
     "127.0.0.1",
@@ -112,16 +114,16 @@ for `read_timeout`.
 
 ## Routing and Middleware
 
-Use `HTTP.Handlers.Router` when you want route matching without bringing in a
+Use `HTTP.Router` when you want route matching without bringing in a
 larger web framework:
 
 ```julia
 using HTTP
 
-router = HTTP.Handlers.Router()
+router = HTTP.Router()
 
-HTTP.Handlers.register!(router, "GET", "/users/{id}") do req
-    id = HTTP.Handlers.getparam(req, "id")
+HTTP.register!(router, "GET", "/users/{id}") do req
+    id = HTTP.getparam(req, "id")
     return HTTP.Response(200; body = "user " * id)
 end
 
@@ -135,7 +137,7 @@ handler timeout to every registered route:
 using HTTP
 
 timeout = HTTP.Handlers.handlertimeout(5.0; status = 503)
-router = HTTP.Handlers.Router(
+router = HTTP.Router(
     req -> HTTP.Response(404),
     req -> HTTP.Response(405),
     timeout,
@@ -143,8 +145,7 @@ router = HTTP.Handlers.Router(
 ```
 
 The router stores route metadata on the request context. Read it with
-`HTTP.Handlers.getroute`, `HTTP.Handlers.getparams`, and
-`HTTP.Handlers.getparam`.
+`HTTP.getroute`, `HTTP.getparams`, and `HTTP.getparam`.
 
 ## Static Files
 
