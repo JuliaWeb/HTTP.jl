@@ -142,6 +142,8 @@ This forces the socket to send whatever data is within its buffer immediately,
 rather than waiting 10's of milliseconds for the buffer to fill more.
 """
 function Base.flush(c::Connection)
+    has_tcpsocket(c) || return
+
     # Flushing the TCP buffer requires support for `Sockets.nagle()`
     # which was only added in Julia v1.3
     @static if VERSION >= v"1.3"
