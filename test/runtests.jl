@@ -33,6 +33,7 @@ isok(r) = r.status == 200
         "httpversion.jl",
         "websockets/autobahn.jl",
         "websockets/multiple_writers.jl",
+        "websockets/raw_io.jl",
     ]
     # ARGS can be most easily passed like this:
     # import Pkg; Pkg.test("HTTP"; test_args=`ascii.jl parser.jl`)
