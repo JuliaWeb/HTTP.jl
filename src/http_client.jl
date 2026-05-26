@@ -341,16 +341,16 @@ function _normalize_default_query(q)::Union{Nothing,Vector{Pair{String,String}}}
     pairs_out = Pair{String,String}[]
     if q isa AbstractDict
         for (k, v) in q
-            push!(pairs_out, String(k) => String(v))
+            push!(pairs_out, string(k) => string(v))
         end
     elseif q isa NamedTuple
         for (k, v) in pairs(q)
-            push!(pairs_out, String(k) => String(v))
+            push!(pairs_out, string(k) => string(v))
         end
     else
         for kv in q
             if kv isa Pair
-                push!(pairs_out, String(kv.first) => String(kv.second))
+                push!(pairs_out, string(kv.first) => string(kv.second))
             else
                 throw(ArgumentError("default_query entries must be Pair{String,String}"))
             end
@@ -1643,22 +1643,22 @@ function _merge_client_default_query(client::Union{Nothing,Client}, query)
     overrides_pairs = Pair{String,String}[]
     if query isa AbstractDict
         for (k, v) in query
-            sk = String(k)
+            sk = string(k)
             push!(overrides_keys, sk)
-            push!(overrides_pairs, sk => String(v))
+            push!(overrides_pairs, sk => string(v))
         end
     elseif query isa NamedTuple
         for (k, v) in pairs(query)
-            sk = String(k)
+            sk = string(k)
             push!(overrides_keys, sk)
-            push!(overrides_pairs, sk => String(v))
+            push!(overrides_pairs, sk => string(v))
         end
     elseif query isa AbstractVector
         for kv in query
             kv isa Pair || throw(ArgumentError("query entries must be Pair{String,String}"))
-            sk = String(kv.first)
+            sk = string(kv.first)
             push!(overrides_keys, sk)
-            push!(overrides_pairs, sk => String(kv.second))
+            push!(overrides_pairs, sk => string(kv.second))
         end
     else
         return query

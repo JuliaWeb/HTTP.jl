@@ -217,6 +217,8 @@ mutable struct H1Body <: AbstractBody
     done::Bool
     @atomic closed::Bool
     @atomic released::Bool
+    cancel_context::Union{Nothing,RequestContext}
+    cancel_callback::Union{Nothing,Function}
 end
 
 function Transport(;
@@ -1321,6 +1323,8 @@ end
         done,
         false,
         false,
+        nothing,
+        nothing,
     )
 end
 
@@ -1367,6 +1371,7 @@ end
     was_released = @atomic :acquire body.released
     was_released && return nothing
     @atomic :release body.released = true
+    _clear_h1_cancel_callback!(body)
     if body.reusable
         _put_idle_conn!(body.transport, body.conn)
     else
@@ -1375,9 +1380,27 @@ end
     return nothing
 end
 
-@inline function _arm_h1_body!(body::H1Body, reusable::Bool)::H1Body
+@inline function _clear_h1_cancel_callback!(body::H1Body)::Nothing
+    ctx = body.cancel_context
+    cb = body.cancel_callback
+    body.cancel_context = nothing
+    body.cancel_callback = nothing
+    if ctx !== nothing && cb !== nothing
+        _remove_cancel_callback!(ctx::RequestContext, cb::Function)
+    end
+    return nothing
+end
+
+@inline function _arm_h1_body!(
+    body::H1Body,
+    reusable::Bool,
+    cancel_context::Union{Nothing,RequestContext}=nothing,
+    cancel_callback::Union{Nothing,Function}=nothing,
+)::H1Body
     body.reusable = reusable
     body.manage_conn = true
+    body.cancel_context = cancel_context
+    body.cancel_callback = cancel_callback
     return body
 end
 
@@ -1716,12 +1739,13 @@ function _roundtrip_incoming!(
         end
         reusable = _response_reusable(raw_response, request)
         early_final && (reusable = false)
-        body = _arm_h1_body!(raw_response.rawbody::H1Body, reusable)
+        body = _arm_h1_body!(raw_response.rawbody::H1Body, reusable, request_ctx, cancel_cb)
         if _body_immediately_empty(body)
             body_close!(body)
         end
         return _IncomingResponse(raw_response.head, body)
     catch err
+        _remove_cancel_callback!(request_ctx, cancel_cb)
         _close_owned_conn!(transport, conn)
         if attempt == 1 && was_reused && retry_template !== nothing && _retryable_reused_conn_error(err)
             return _roundtrip_incoming!(

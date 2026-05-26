@@ -205,7 +205,8 @@ Use `isopen(client)` to check the live state.
 Pass an `HTTP.RequestContext` via the `context` keyword to give an external
 task control over an outstanding request. Calling `HTTP.cancel!(ctx)` from
 another task aborts the in-flight read/write and the spawning task observes an
-`HTTP.CanceledError`:
+`HTTP.CanceledError`. HTTP/1 cancellation closes the active connection, while
+HTTP/2 cancellation resets the active stream:
 
 ```julia
 ctx = HTTP.RequestContext()

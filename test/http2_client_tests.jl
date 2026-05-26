@@ -1055,6 +1055,62 @@ end
     end
 end
 
+@testset "HTTP/2 request context cancellation resets in-flight stream" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    stream_ids = Channel{UInt32}(1)
+    reset_codes = Channel{UInt32}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            headers_frame = _read_next_headers_frame!(reader)
+            stream_id = (headers_frame::HT.HeadersFrame).stream_id
+            put!(stream_ids, stream_id)
+            while true
+                frame = HT.read_frame!(reader)
+                if frame isa HT.RSTStreamFrame && (frame::HT.RSTStreamFrame).stream_id == stream_id
+                    put!(reset_codes, (frame::HT.RSTStreamFrame).error_code)
+                    break
+                end
+            end
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    client = HT.Client()
+    ctx = HT.RequestContext()
+    url = "http://$(address)/cancel"
+    request_task = Threads.@spawn HT.get($url; protocol = :h2, context = $ctx, client = $client, retry = false)
+    try
+        @test timedwait(() -> isready(stream_ids), 5.0; pollint = 0.001) != :timed_out
+        isready(stream_ids) && take!(stream_ids)
+        HT.cancel!(ctx; message = "user canceled h2")
+        result = try
+            fetch(request_task)
+            (:ok, nothing)
+        catch e
+            inner = e isa Base.TaskFailedException ? e.task.exception : e
+            (:err, inner)
+        end
+        @test result[1] == :err
+        @test result[2] isa HT.CanceledError
+        @test (result[2]::HT.CanceledError).message == "user canceled h2"
+        @test isempty(ctx.cancel_callbacks)
+        @test timedwait(() -> isready(reset_codes), 5.0; pollint = 0.001) != :timed_out
+        isready(reset_codes) && @test take!(reset_codes) == UInt32(0x8)
+        _wait_task_h2!(server_task)
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP/2 client honors stream-level flow control" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4

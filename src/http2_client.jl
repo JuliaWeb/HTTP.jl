@@ -148,6 +148,8 @@ mutable struct H2Body <: AbstractBody
     expected_content_length::Int64
     bytes_read::Int64
     @atomic closed::Bool
+    cancel_context::Union{Nothing,RequestContext}
+    cancel_callback::Union{Nothing,Function}
 end
 
 @inline function _h2_stream(conn::H2Connection)
@@ -1259,6 +1261,17 @@ function body_closed(body::H2Body)::Bool
     return @atomic :acquire body.closed
 end
 
+@inline function _clear_h2_cancel_callback!(body::H2Body)::Nothing
+    ctx = body.cancel_context
+    cb = body.cancel_callback
+    body.cancel_context = nothing
+    body.cancel_callback = nothing
+    if ctx !== nothing && cb !== nothing
+        _remove_cancel_callback!(ctx::RequestContext, cb::Function)
+    end
+    return nothing
+end
+
 function _wait_h2_body_progress!(state::H2StreamState, deadline_ns::Int64)::Nothing
     while true
         remaining_ns = deadline_ns - Int64(time_ns())
@@ -1322,6 +1335,7 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         if too_many
             @atomic :release body.closed = true
             @try_ignore _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x1)))
+            _clear_h2_cancel_callback!(body)
             _unregister_stream!(body.conn, body.stream_id)
             throw(ProtocolError("HTTP/2 response body exceeded Content-Length"))
         end
@@ -1333,10 +1347,12 @@ function body_read!(body::H2Body, dst::Vector{UInt8})::Int
         if done
             if body.expected_content_length >= 0 && body.bytes_read != body.expected_content_length
                 @atomic :release body.closed = true
+                _clear_h2_cancel_callback!(body)
                 _unregister_stream!(body.conn, body.stream_id)
                 throw(ProtocolError("HTTP/2 response body ended before Content-Length bytes were received"))
             end
             @atomic :release body.closed = true
+            _clear_h2_cancel_callback!(body)
             _unregister_stream!(body.conn, body.stream_id)
             return 0
         end
@@ -1362,6 +1378,7 @@ function body_close!(body::H2Body)
     if should_reset
         @try_ignore _write_frame_h2_threadsafe!(body.conn, RSTStreamFrame(body.stream_id, UInt32(0x8)))
     end
+    _clear_h2_cancel_callback!(body)
     _unregister_stream!(body.conn, body.stream_id)
     return nothing
 end
@@ -1404,6 +1421,10 @@ function _h2_roundtrip_incoming!(
     request::Request;
     pending_slot_claimed::Bool=false,
 )::_IncomingResponse
+    request_ctx = get_request_context(request)
+    if canceled(request_ctx)
+        throw(_canceled_error(request_ctx))
+    end
     headers = try
         _request_headers_for_h2(conn.address, request, conn.secure)
     catch
@@ -1421,8 +1442,26 @@ function _h2_roundtrip_incoming!(
     # inverted and the peer treats the lower-numbered stream as implicitly
     # closed (then sends GOAWAY when frames arrive on it).
     stream_state = _register_stream_and_send_headers!(conn, request, headers; pending_slot_claimed)
+    cancel_cb = let conn = conn, stream_state = stream_state, request_ctx = request_ctx
+        () -> begin
+            _set_stream_error!(stream_state, _canceled_error(request_ctx))
+            @try_ignore _write_frame_h2_threadsafe!(conn, RSTStreamFrame(stream_state.stream_id, UInt32(0x8)))
+            lock(conn.state_lock)
+            try
+                notify(conn.window_condition; all=true)
+                notify(conn.stream_condition; all=true)
+            finally
+                unlock(conn.state_lock)
+            end
+        end
+    end
+    _on_cancel!(request_ctx, cancel_cb)
     cleanup_on_exit = true
+    cleanup_cancel_callback = true
     try
+        if canceled(request_ctx)
+            throw(_canceled_error(request_ctx))
+        end
         try
             end_stream = request.body isa EmptyBody
             end_stream || _write_request_body_h2!(conn, stream_state.stream_id, request)
@@ -1471,7 +1510,8 @@ function _h2_roundtrip_incoming!(
                     EmptyBody(),
                 )
             end
-            body = H2Body(conn, stream_state.stream_id, stream_state, request, response_trailers, response_content_length, Int64(0), false)
+            body = H2Body(conn, stream_state.stream_id, stream_state, request, response_trailers, response_content_length, Int64(0), false, request_ctx, cancel_cb)
+            cleanup_cancel_callback = false
             cleanup_on_exit = false
             return _IncomingResponse(
                 _IncomingResponseHead(
@@ -1494,6 +1534,7 @@ function _h2_roundtrip_incoming!(
             unlock(stream_state.lock)
         end
     finally
+        cleanup_cancel_callback && _remove_cancel_callback!(request_ctx, cancel_cb)
         cleanup_on_exit && _unregister_stream!(conn, stream_state.stream_id)
     end
 end

@@ -2073,16 +2073,28 @@ end
 end
 
 @testset "HTTP transport error wrapping" begin
+    refused = ND.OpError("dial", "tcp", nothing, nothing, Base.SystemError("connect", Base.Libc.ECONNREFUSED))
+    wrapped_refused = HT._wrap_client_transport_error(refused, "request", Int64(0), Int64(0))
+    @test wrapped_refused isa HT.ConnectError
+    @test (wrapped_refused::HT.ConnectError).cause === refused
+
     # Connect refused: should wrap to HTTP.ConnectError, never leak Reseau internals.
+    # Some Windows CI runners report this port-1 probe as a connect timeout
+    # instead of an immediate refusal, so keep the live probe focused on the
+    # public HTTPError boundary and test the refusal mapping directly above.
     err = try
         HT.get("http://127.0.0.1:1/"; connect_timeout=2, retry=false)
         nothing
     catch ex
         ex
     end
-    @test err isa HT.ConnectError
     @test err isa HT.HTTPError
-    @test occursin("127.0.0.1", err.address)
+    @test err isa HT.ConnectError || err isa HT.TimeoutError
+    if err isa HT.ConnectError
+        @test occursin("127.0.0.1", err.address)
+    else
+        @test (err::HT.TimeoutError).operation == "connect"
+    end
 
     # DNS failure: should wrap to HTTP.DNSError.
     dns_err = try
@@ -2170,16 +2182,19 @@ end
         return HT.Response(200; body=req.target)
     end
     try
-        client = HT.Client(default_query=Dict("api_key"=>"abc"))
+        client = HT.Client(default_query=Dict("api_key"=>"abc", "page"=>2))
         try
             resp = HT.get(client, "http://127.0.0.1:$(HT.port(server))/x")
-            @test occursin("api_key=abc", String(resp.body))
+            body = String(resp.body)
+            @test occursin("api_key=abc", body)
+            @test occursin("page=2", body)
 
             # Per-call query merges, with override winning
-            resp2 = HT.get(client, "http://127.0.0.1:$(HT.port(server))/x"; query=["api_key"=>"override", "extra"=>"y"])
+            resp2 = HT.get(client, "http://127.0.0.1:$(HT.port(server))/x"; query=["api_key"=>"override", "extra"=>true])
             body2 = String(resp2.body)
             @test occursin("api_key=override", body2)
-            @test occursin("extra=y", body2)
+            @test occursin("extra=true", body2)
+            @test occursin("page=2", body2)
             @test !occursin("api_key=abc", body2)
         finally
             close(client)
@@ -2256,6 +2271,7 @@ end
         @test result[2] isa HT.CanceledError
         @test (result[2]::HT.CanceledError).message == "user pressed Ctrl-C"
         @test elapsed < 5  # cancellation should fire promptly, not wait for sleep(60)
+        @test isempty(ctx.cancel_callbacks)
     finally
         HT.forceclose(slow_server)
     end

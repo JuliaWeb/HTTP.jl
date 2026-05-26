@@ -1071,13 +1071,13 @@ mutable struct RequestContext
     metadata::Union{Nothing,Dict{Symbol,Any}}
     timeout_config::Union{Nothing,_RequestTimeoutConfig}
     cancel_callbacks_lock::ReentrantLock
-    cancel_callbacks::Vector{Any}
+    cancel_callbacks::Vector{Function}
 end
 
 """Construct a `RequestContext`; throws `ArgumentError` when `deadline_ns < 0`."""
 function RequestContext(; deadline_ns::Integer=Int64(0))
     deadline_ns < 0 && throw(ArgumentError("deadline_ns must be >= 0"))
-    return RequestContext(Int64(deadline_ns), false, nothing, nothing, nothing, ReentrantLock(), Any[])
+    return RequestContext(Int64(deadline_ns), false, nothing, nothing, nothing, ReentrantLock(), Function[])
 end
 
 """
@@ -1102,8 +1102,11 @@ state into a `CanceledError`.
 function cancel!(ctx::RequestContext; message::AbstractString="request canceled")
     @atomic :release ctx.canceled_flag = true
     ctx.cancel_message = String(message)
-    callbacks = lock(ctx.cancel_callbacks_lock) do
+    lock(ctx.cancel_callbacks_lock)
+    callbacks = try
         copy(ctx.cancel_callbacks)
+    finally
+        unlock(ctx.cancel_callbacks_lock)
     end
     for cb in callbacks
         try
@@ -1115,6 +1118,15 @@ function cancel!(ctx::RequestContext; message::AbstractString="request canceled"
     return ctx
 end
 
+@inline function _cancel_message(ctx::RequestContext)::String
+    msg = ctx.cancel_message
+    return msg === nothing ? "request canceled" : msg::String
+end
+
+@inline function _canceled_error(ctx::RequestContext)::CanceledError
+    return CanceledError(_cancel_message(ctx))
+end
+
 """
     _on_cancel!(ctx, callback) -> ctx
 
@@ -1122,7 +1134,7 @@ Register `callback` (a zero-argument function) to run when `cancel!(ctx)` fires.
 If `ctx` is already canceled, `callback` runs immediately. Internal helper used
 by the transport layer to interrupt in-flight reads/writes.
 """
-function _on_cancel!(ctx::RequestContext, callback)
+function _on_cancel!(ctx::RequestContext, callback::Function)
     if (@atomic :acquire ctx.canceled_flag)
         try
             callback()
@@ -1130,7 +1142,8 @@ function _on_cancel!(ctx::RequestContext, callback)
         end
         return ctx
     end
-    lock(ctx.cancel_callbacks_lock) do
+    lock(ctx.cancel_callbacks_lock)
+    try
         if (@atomic :acquire ctx.canceled_flag)
             try
                 callback()
@@ -1139,6 +1152,8 @@ function _on_cancel!(ctx::RequestContext, callback)
         else
             push!(ctx.cancel_callbacks, callback)
         end
+    finally
+        unlock(ctx.cancel_callbacks_lock)
     end
     return ctx
 end
@@ -1148,14 +1163,17 @@ end
 
 Remove a previously-registered cancellation callback if still present.
 """
-function _remove_cancel_callback!(ctx::RequestContext, callback)
-    lock(ctx.cancel_callbacks_lock) do
+function _remove_cancel_callback!(ctx::RequestContext, callback::Function)
+    lock(ctx.cancel_callbacks_lock)
+    try
         for (idx, cb) in enumerate(ctx.cancel_callbacks)
             if cb === callback
                 deleteat!(ctx.cancel_callbacks, idx)
                 break
             end
         end
+    finally
+        unlock(ctx.cancel_callbacks_lock)
     end
     return ctx
 end
