@@ -2139,19 +2139,32 @@ end
 end
 
 @testset "HTTP server bind-in-use wraps to AddressInUseError" begin
+    bind_address = "127.0.0.1:54321"
+    bind_err = Base.SystemError("bind", Base.Libc.EADDRINUSE)
+    wrapped_bind = HT._wrap_server_listen_error(bind_err, bind_address)
+    @test wrapped_bind isa HT.AddressInUseError
+    @test wrapped_bind isa HT.HTTPError
+    @test (wrapped_bind::HT.AddressInUseError).address == bind_address
+
     s1 = HT.serve!(req -> HT.Response(200, "first"), "127.0.0.1", 0; listenany=true)
     bound_port = HT.port(s1)
+    s2 = nothing
     try
         bound_err = try
-            HT.serve!(req -> HT.Response(200, "second"), "127.0.0.1", bound_port)
+            s2 = HT.serve!(req -> HT.Response(200, "second"), "127.0.0.1", bound_port)
             nothing
         catch ex
             ex
         end
-        @test bound_err isa HT.AddressInUseError
-        @test bound_err isa HT.HTTPError
-        @test occursin("$(bound_port)", bound_err.address)
+        if bound_err === nothing
+            @test Sys.iswindows()
+        else
+            @test bound_err isa HT.AddressInUseError
+            @test bound_err isa HT.HTTPError
+            @test occursin("$(bound_port)", (bound_err::HT.AddressInUseError).address)
+        end
     finally
+        s2 === nothing || close(s2)
         close(s1)
     end
 end
