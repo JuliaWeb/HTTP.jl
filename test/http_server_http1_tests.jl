@@ -796,12 +796,22 @@ end
     address = HT.server_addr(server)
     client = HT.Client(transport = HT.Transport(max_idle_per_host = 1, max_idle_total = 1), cookiejar = nothing)
     try
-        resp1 = HT.post("http://$(address)/echo"; body = "echo", client = client)
+        resp1 = HT.post(
+            "http://$(address)/echo";
+            headers = ["Connection" => "close"],
+            body = "echo",
+            client = client,
+        )
         @test resp1.status == 200
         @test String(resp1.body) == "echo"
         @test take!(seen_buffered)
 
-        resp2 = HT.post("http://$(address)/again"; body = "again", client = client)
+        resp2 = HT.post(
+            "http://$(address)/again";
+            headers = ["Connection" => "close"],
+            body = "again",
+            client = client,
+        )
         @test resp2.status == 200
         @test String(resp2.body) == "again"
         @test take!(seen_buffered)
