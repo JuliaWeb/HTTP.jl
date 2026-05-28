@@ -74,6 +74,7 @@ function _request_deadline_write_bytes!(io::_RequestDeadlineWriteIO, data::Abstr
     return write(io.inner, data)
 end
 
+Base.write(io::_RequestDeadlineWriteIO, data::Vector{UInt8})::Int = _request_deadline_write_bytes!(io, data)
 Base.write(io::_RequestDeadlineWriteIO, data::StridedVector{UInt8})::Int = _request_deadline_write_bytes!(io, data)
 Base.write(io::_RequestDeadlineWriteIO, data::AbstractVector{UInt8})::Int = _request_deadline_write_bytes!(io, data)
 

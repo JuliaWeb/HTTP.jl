@@ -962,6 +962,8 @@ function do!(
     end
 end
 
+import Base: get, get!
+
 """
     get!(client, address, target; secure=false, protocol=:auto)
 
@@ -973,8 +975,6 @@ function get!(client::Client, address::AbstractString, target::AbstractString; s
     request = Request("GET", target; host=String(address), body=EmptyBody(), content_length=0)
     return do!(client, address, request; secure=secure, protocol=protocol, kwargs...)
 end
-
-import Base: get
 
 """
     StatusError
