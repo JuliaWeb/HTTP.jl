@@ -15,7 +15,7 @@ end
 
 #SERVERS
 
-#Using HTTP.Servers.listen:
+#Using HTTP.listen:
 #The server will start listening on 127.0.0.1:8081 by default.
 
 using HTTP
@@ -33,7 +33,7 @@ HTTP.listen() do http::HTTP.Stream
     write(http, "more response body")
 end
 
-#Using HTTP.Handlers.serve:
+#Using HTTP.serve!:
 
 using HTTP
 
@@ -44,29 +44,27 @@ server = HTTP.serve!() do request::HTTP.Request
     @show HTTP.header(request, "Content-Type")
     @show request.body
     try
-        return HTTP.Response("Hello")
+        return HTTP.Response(200, "Hello")
     catch e
         return HTTP.Response(400, "Error: $e")
     end
  end
  # HTTP.serve! returns an `HTTP.Server` object that we can close manually
- close(server)
+ HTTP.forceclose(server)
 
 #WebSocket Examples
-using HTTP.WebSockets
+using HTTP
 server = WebSockets.listen!("127.0.0.1", 8081) do ws
         for msg in ws
-            send(ws, msg)
+            WebSockets.send(ws, msg)
         end
     end
 
 WebSockets.open("ws://127.0.0.1:8081") do ws
-           send(ws, "Hello")
-           s = receive(ws)
+           WebSockets.send(ws, "Hello")
+           s = WebSockets.receive(ws)
            println(s)
        end;
-Hello
 #Output: Hello
 
-close(server)
-
+HTTP.forceclose(server)

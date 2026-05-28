@@ -20,12 +20,17 @@ or by using Pkg functions
 julia> using Pkg; Pkg.add("HTTP")
 ```
 
-## Project Status
+## Overview
 
-The package has matured and is used in many production systems.
-But as with all open-source software, please try it out and report your experience.
+`HTTP.jl` provides HTTP client/server support, HTTP/2, WebSockets, SSE,
+cookies, multipart forms, retries, and proxy-aware transports for Julia.
 
-The package is tested against current Julia LTS (1.6), and current master on Linux, macOS, and Windows.
+Current package compat targets Julia `1.10` and later.
+
+HTTP.jl 2.0 is a breaking release. See the
+[migration guide][migration-guide-url] for the main 1.x to 2.0 changes around
+response fields, constructors, request context, client pooling, retries,
+timeouts, servers, WebSockets, and SSE.
 
 ## Contributing and Questions
 
@@ -35,98 +40,113 @@ Contributions are very welcome, as are feature requests and suggestions. Please 
 
 ## Client Examples
 
-[`HTTP.request`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.request-Tuple{String,HTTP.URIs.URI,Array{Pair{SubString{String},SubString{String}},1},Any})
-sends a HTTP Request Message and returns a Response Message.
+High-level request helpers return a `Response` whose `body` is a
+`Vector{UInt8}` by default.
 
 ```julia
-r = HTTP.request("GET", "http://httpbin.org/ip")
+using HTTP
+
+r = HTTP.get("http://httpbin.org/ip")
 println(r.status)
 println(String(r.body))
 ```
 
-[`HTTP.open`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.open)
-sends a HTTP Request Message and
-opens an `IO` stream from which the Response can be read.
+> ⚠️ `String(r.body)` aliases the underlying byte buffer rather than copying
+> it, so `r.body` is left empty afterwards. Use `String(copy(r.body))` (or
+> `response_stream = IOBuffer()`) when you need to keep the bytes around.
+
+To send JSON, serialize the payload with [JSON.jl](https://github.com/JuliaIO/JSON.jl)
+and set the `Content-Type` header explicitly — HTTP.jl ships without a JSON
+dependency:
 
 ```julia
-HTTP.open(:GET, "https://tinyurl.com/bach-cello-suite-1-ogg") do http
-    open(`vlc -q --play-and-exit --intf dummy -`, "w") do vlc
-        write(vlc, http)
-    end
-end
+using HTTP, JSON
+
+payload = Dict("name" => "alice", "age" => 30)
+r = HTTP.post(
+    "http://httpbin.org/post";
+    headers = ["Content-Type" => "application/json"],
+    body = JSON.json(payload),
+)
+returned = JSON.parse(String(r.body))
 ```
 
-Handle [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events) (SSE) streams by passing an `sse_callback` function to `HTTP.request`:
+Stream directly into an `IO` sink with `response_stream`, or use `HTTP.open` when
+you want pull-based control over the response stream. The `do`-block form of
+`HTTP.open` returns the final `HTTP.Response`, not the value returned by the
+`do` block.
 
 ```julia
+using HTTP
+
+open("response.bin", "w") do io
+    HTTP.get("https://example.com/data.bin"; response_stream = io)
+end
+
+text = ""
+response = HTTP.open(:GET, "https://example.com/stream") do stream
+    text = String(read(stream))
+end
+@assert response isa HTTP.Response
+println(text)
+```
+
+Handle [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
+by passing an `sse_callback` function to `HTTP.request`:
+
+```julia
+using HTTP
+
 events = HTTP.SSEEvent[]
 HTTP.request("GET", "http://127.0.0.1:8080/events"; sse_callback = event -> push!(events, event))
 ```
 
-Each callback receives an `HTTP.SSEEvent` with the parsed `data`, `event`, `id`, `retry`, and `fields` from the stream.
+Each callback receives an `HTTP.SSEEvent` with the parsed `data`, `event`,
+`id`, `retry`, and `fields` from the stream.
 
 ## Server Examples
 
-[`HTTP.Servers.listen`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.Servers.listen):
-
-The server will start listening on 127.0.0.1:8081 by default.
+Use `HTTP.serve!` for request/response handlers:
 
 ```julia
 using HTTP
 
-# start a blocking server
-HTTP.listen() do http::HTTP.Stream
-    @show http.message
-    @show HTTP.header(http, "Content-Type")
-    while !eof(http)
-        println("body data: ", String(readavailable(http)))
-    end
-    HTTP.setstatus(http, 404)
-    HTTP.setheader(http, "Foo-Header" => "bar")
-    HTTP.startwrite(http)
-    write(http, "response body")
-    write(http, "more response body")
+server = HTTP.serve!("127.0.0.1", 8081) do request
+    payload = "Hello from HTTP.jl"
+    return HTTP.Response(
+        200;
+        headers = ["Content-Type" => "text/plain"],
+        body = payload,
+    )
 end
+
+resp = HTTP.get("http://127.0.0.1:8081"; proxy = HTTP.ProxyConfig())
+println(resp.status)
+println(String(resp.body))
+
+HTTP.forceclose(server)
 ```
 
-[`HTTP.Handlers.serve`](https://juliaweb.github.io/HTTP.jl/stable/index.html#HTTP.Handlers.serve):
-```julia
-using HTTP
-
-# HTTP.listen! and HTTP.serve! are the non-blocking versions of HTTP.listen/HTTP.serve
-server = HTTP.serve!() do request::HTTP.Request
-   @show request
-   @show request.method
-   @show HTTP.header(request, "Content-Type")
-   @show request.body
-   try
-       return HTTP.Response("Hello")
-   catch e
-       return HTTP.Response(400, "Error: $e")
-   end
-end
-# HTTP.serve! returns an `HTTP.Server` object that we can close manually
-close(server)
-```
+Use `HTTP.listen!` or `HTTP.streamhandler` when you need lower-level stream
+ownership for incremental reads, writes, or trailers.
 
 ## WebSocket Examples
 
 ```julia
-julia> using HTTP.WebSockets
-julia> server = WebSockets.listen!("127.0.0.1", 8081) do ws
-        for msg in ws
-            send(ws, msg)
-        end
+using HTTP
+
+server = HTTP.WebSockets.listen!("127.0.0.1", 8081) do ws
+    for msg in ws
+        HTTP.WebSockets.send(ws, msg)
     end
+end
 
-julia> WebSockets.open("ws://127.0.0.1:8081") do ws
-           send(ws, "Hello")
-           s = receive(ws)
-           println(s)
-       end;
-Hello
+HTTP.WebSockets.open("ws://127.0.0.1:8081"; proxy = HTTP.ProxyConfig()) do ws
+    HTTP.WebSockets.send(ws, "Hello")
+    println(HTTP.WebSockets.receive(ws))
+end
 
-julia> close(server)
+HTTP.WebSockets.forceclose(server)
 ```
 
 [docs-dev-img]: https://img.shields.io/badge/docs-dev-blue.svg
@@ -142,3 +162,4 @@ julia> close(server)
 [codecov-url]: https://codecov.io/gh/JuliaWeb/HTTP.jl
 
 [issues-url]: https://github.com/JuliaWeb/HTTP.jl/issues
+[migration-guide-url]: https://juliaweb.github.io/HTTP.jl/dev/guides/migration-1x/

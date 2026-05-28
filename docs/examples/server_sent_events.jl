@@ -1,4 +1,4 @@
-"""
+#=
 Simple server that implements [server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events),
 loosely following [this tutorial](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events).
 
@@ -39,12 +39,12 @@ loosely following [this tutorial](https://developer.mozilla.org/en-US/docs/Web/A
 using HTTP, JSON
 
 # Using sse_callback for automatic SSE parsing:
-HTTP.request("GET", "http://127.0.0.1:8080/api/events"; sse_callback = (stream, event) -> begin
+HTTP.request("GET", "http://127.0.0.1:8080/api/events"; sse_callback = event -> begin
     @info "Received event" data=event.data event_type=event.event id=event.id
 end)
 
 # Or using HTTP.open for raw streaming:
-HTTP.open("GET", "http://127.0.0.1:8080/api/events") do io
+HTTP.open(:GET, "http://127.0.0.1:8080/api/events") do io
     while !eof(io)
         println(String(readavailable(io)))
     end
@@ -52,18 +52,14 @@ end
 ```
 
 ### Server code (using HTTP.sse_stream - recommended):
-"""
-using HTTP, Sockets, JSON
+=#
+using HTTP, JSON
 
 # Simple SSE server using the HTTP.sse_stream helper
 function simple_sse_server()
-    server = HTTP.serve!(listenany=true) do request
-        response = HTTP.Response(200)
-        # Add CORS headers for browser clients
-        HTTP.setheader(response, "Access-Control-Allow-Origin" => "*")
-
+    server = HTTP.serve!("127.0.0.1", 8080; listenany=true) do request
         # Create SSE stream - automatically sets Content-Type and Cache-Control
-        HTTP.sse_stream(response) do stream
+        HTTP.sse_stream(200; headers = ["Access-Control-Allow-Origin" => "*"]) do stream
             for i in 1:10
                 # Write a ping event with timestamp
                 write(stream, HTTP.SSEEvent(string(round(Int, time())); event="ping"))
@@ -75,8 +71,6 @@ function simple_sse_server()
                 sleep(1)
             end
         end
-
-        return response
     end
     return server
 end
@@ -89,7 +83,7 @@ function getItems(req::HTTP.Request)
         "Access-Control-Allow-Origin" => "*",
         "Access-Control-Allow-Methods" => "GET, OPTIONS"
     ]
-    if HTTP.method(req) == "OPTIONS"
+    if req.method == "OPTIONS"
         return HTTP.Response(200, headers)
     end
     return HTTP.Response(200, headers, JSON.json(rand(2)))
@@ -97,16 +91,14 @@ end
 
 # Using HTTP.sse_stream with a request handler
 function events_handler(req::HTTP.Request)
-    if HTTP.method(req) == "OPTIONS"
+    if req.method == "OPTIONS"
         return HTTP.Response(200, [
             "Access-Control-Allow-Origin" => "*",
             "Access-Control-Allow-Methods" => "GET, OPTIONS"
         ])
     end
 
-    response = HTTP.Response(200)
-    HTTP.setheader(response, "Access-Control-Allow-Origin" => "*")
-    HTTP.sse_stream(response) do stream
+    return HTTP.sse_stream(200; headers = ["Access-Control-Allow-Origin" => "*"]) do stream
         while true
             write(stream, HTTP.SSEEvent(string(round(Int, time())); event="ping"))
             if rand(Bool)
@@ -116,7 +108,6 @@ function events_handler(req::HTTP.Request)
         end
     end
 
-    return response
 end
 
 # Alternative: manual SSE using stream handler (lower-level approach)
@@ -126,7 +117,7 @@ function events_stream(stream::HTTP.Stream)
     HTTP.setheader(stream, "Content-Type" => "text/event-stream")
     HTTP.setheader(stream, "Cache-Control" => "no-cache")
 
-    if HTTP.method(stream.message) == "OPTIONS"
+    if stream.message.method == "OPTIONS"
         return nothing
     end
 
@@ -153,9 +144,9 @@ server = HTTP.serve!(ROUTER, "127.0.0.1", 8080)
 stop = Ref(false)
 @async begin
     try
-        HTTP.request("GET", "http://127.0.0.1:8080/api/events"; sse_callback = (stream, event) -> begin
+        HTTP.request("GET", "http://127.0.0.1:8080/api/events"; sse_callback = event -> begin
             println("Event: ", event.event, " | Data: ", event.data)
-            stop[] && close(stream)
+            stop[] && throw(InterruptException())
         end)
     catch e
         # Connection closed or stopped
@@ -166,5 +157,5 @@ end
 stop[] = true
 
 # close the server which will stop the HTTP server from listening
-close(server)
-@assert istaskdone(server.task)
+HTTP.forceclose(server)
+wait(server)

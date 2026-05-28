@@ -1,4 +1,4 @@
-"""
+#=
 Simple server in Julia and client code in JS.
 
 ### Example client code (JS):
@@ -40,7 +40,7 @@ Simple server in Julia and client code in JS.
 ```
 
 ### Server code:
-"""
+=#
 using HTTP
 
 const ROUTER = HTTP.Router()
@@ -51,7 +51,7 @@ function square(req::HTTP.Request)
         "Access-Control-Allow-Methods" => "POST, OPTIONS"
     ]
     # handle CORS requests
-    if HTTP.method(req) == "OPTIONS"
+    if req.method == "OPTIONS"
         return HTTP.Response(200, headers)
     end
     body = parse(Float64, String(req.body))
@@ -61,7 +61,7 @@ end
 
 HTTP.register!(ROUTER, "POST", "/api/square", square)
 
-server = HTTP.serve!(ROUTER, Sockets.localhost, 8080)
+server = HTTP.serve!(ROUTER, "127.0.0.1", 8080)
 
 # usage
 resp = HTTP.post("http://localhost:8080/api/square"; body="3")
@@ -69,5 +69,5 @@ sq = parse(Float64, String(resp.body))
 @assert sq == 9.0
 
 # close the server which will stop the HTTP server from listening
-close(server)
-@assert istaskdone(server.task)
+HTTP.forceclose(server)
+wait(server)

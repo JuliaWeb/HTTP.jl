@@ -1,21 +1,19 @@
-"""
+#=
 Server example that takes after the simple server, however,
 handles dealing with CORS preflight headers when dealing with more
 than just a simple request. For CORS details, see e.g. https://cors-errors.info/
-"""
+=#
 
-using HTTP, JSON3, StructTypes, Sockets, UUIDs
+using HTTP, JSON, UUIDs
+using StructUtils: @noarg
 
 # modified Animal struct to associate with specific user
-mutable struct Animal
+@noarg mutable struct Animal
     id::Int
     userId::UUID
     type::String
     name::String
-    Animal() = new()
 end
-
-StructTypes.StructType(::Type{Animal}) = StructTypes.Mutable()
 
 # use a plain `Dict` as a "data store", outer Dict maps userId to user-specific Animals
 const ANIMALS = Dict{UUID, Dict{Int, Animal}}()
@@ -25,6 +23,8 @@ function getNextId()
     NEXT_ID[] += 1
     return id
 end
+
+animal_from_json(body) = JSON.parse(String(body), Animal)
 
 # CORS preflight headers that show what kinds of complex requests are allowed to API
 const CORS_OPT_HEADERS = [
@@ -45,21 +45,15 @@ back a success response code
 function JSONMiddleware(handler)
     # Middleware functions return *Handler* functions
     return function(req::HTTP.Request)
-        # first check if there's any request body
-        if isempty(req.body)
-            # we slightly change the Handler interface here because we know
-            # our handler methods will either return nothing or an Animal instance
-            ret = handler(req)
-        else
-            # replace request body with parsed Animal instance
-            req.body = JSON3.read(req.body, Animal)
-            ret = handler(req)
-        end
+        # We slightly change the Handler interface here because we know our
+        # handler methods will either return nothing or a JSON-serializable
+        # value.
+        ret = handler(req)
         # return a Response, if its a response already (from 404 and 405 handlers)
         if ret isa HTTP.Response
             return ret
         else # otherwise serialize any Animal as json string and wrap it in Response
-            return HTTP.Response(200, CORS_RES_HEADERS, ret === nothing ? "" : JSON3.write(ret))
+            return HTTP.Response(200, CORS_RES_HEADERS, ret === nothing ? "" : JSON.json(ret))
         end
     end
 end
@@ -74,7 +68,7 @@ not a preflight request, it will simply go to the JSONMiddleware to be passed to
 correct service function =#
 function CorsMiddleware(handler)
     return function(req::HTTP.Request)
-        if HTTP.method(req)=="OPTIONS"
+        if req.method == "OPTIONS"
             return HTTP.Response(200, CORS_OPT_HEADERS)
         else 
             return handler(req)
@@ -84,7 +78,7 @@ end
 
 # **simplified** "service" functions
 function createAnimal(req::HTTP.Request)
-    animal = req.body
+    animal = animal_from_json(req.body)
     animal.id = getNextId()
     ANIMALS[animal.userId][animal.id] = animal
     return animal
@@ -98,7 +92,7 @@ function getAnimal(req::HTTP.Request)
 end
 
 function updateAnimal(req::HTTP.Request)
-    animal = req.body
+    animal = animal_from_json(req.body)
     ANIMALS[animal.userId][animal.id] = animal
     return animal
 end
@@ -107,7 +101,7 @@ function deleteAnimal(req::HTTP.Request)
     # retrieve our matched path parameters from registered route
     animalId = parse(Int, HTTP.getparams(req)["id"])
     userId = UUID(HTTP.getparams(req)["userId"])
-    delete!(ANIMALS[userId], animal.id)
+    delete!(ANIMALS[userId], animalId)
     return nothing
 end
 
@@ -129,24 +123,25 @@ HTTP.register!(ANIMAL_ROUTER, "POST", "/api/zoo/v1/users/{userId}/animals", crea
 HTTP.register!(ANIMAL_ROUTER, "GET", "/api/zoo/v1/users/{userId}/animals/{id}", getAnimal)
 HTTP.register!(ANIMAL_ROUTER, "DELETE", "/api/zoo/v1/users/{userId}/animals/{id}", deleteAnimal)
 
-server = HTTP.serve!(ANIMAL_ROUTER |> JSONMiddleware |> CorsMiddleware, Sockets.localhost, 8080)
+server = HTTP.serve!(ANIMAL_ROUTER |> JSONMiddleware |> CorsMiddleware, "127.0.0.1", 8080)
 
 # using our server
 resp = HTTP.post("http://localhost:8080/api/zoo/v1/users")
-userId = JSON3.read(resp.body, UUID)
+userId = UUID(JSON.parse(String(resp.body)))
 x = Animal()
+x.id = 0
 x.userId = userId
 x.type = "cat"
 x.name = "pete"
 # create 1st animal
-resp = HTTP.post("http://localhost:8080/api/zoo/v1/users/$(userId)/animals", [], JSON3.write(x))
-x2 = JSON3.read(resp.body, Animal)
+resp = HTTP.post("http://localhost:8080/api/zoo/v1/users/$(userId)/animals", [], JSON.json(x))
+x2 = animal_from_json(resp.body)
 # retrieve it back
 resp = HTTP.get("http://localhost:8080/api/zoo/v1/users/$(userId)/animals/$(x2.id)")
-x3 = JSON3.read(resp.body, Animal)
+x3 = animal_from_json(resp.body)
 # try bad path
-resp = HTTP.get("http://localhost:8080/api/zoo/v1/badpath")
+resp = HTTP.get("http://localhost:8080/api/zoo/v1/badpath"; status_exception=false)
 
 # close the server which will stop the HTTP server from listening
-close(server)
-@assert istaskdone(server.task)
+HTTP.forceclose(server)
+wait(server)
