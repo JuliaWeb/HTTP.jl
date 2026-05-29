@@ -183,9 +183,11 @@ end
 end
 
 @inline function _userinfo_basic_authorization(userinfo::AbstractString)::String
+    # Per RFC 3986 §3.2.1 the userinfo sub-components are percent-encoded; decode
+    # them before building the Basic credential (matches 1.x, curl and browsers).
     parts_split = split(userinfo, ':'; limit=2)
-    username = parts_split[1]
-    password = length(parts_split) == 2 ? parts_split[2] : ""
+    username = URIs.unescapeuri(parts_split[1])
+    password = length(parts_split) == 2 ? URIs.unescapeuri(parts_split[2]) : ""
     return "Basic " * _base64encode(string(username, ":", password))
 end
 

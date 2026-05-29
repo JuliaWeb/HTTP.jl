@@ -280,6 +280,20 @@ end
     @test merged.no_proxy !== nothing
 end
 
+@testset "percent-encoded userinfo is decoded for Basic auth" begin
+    # RFC 3986 §3.2.1: userinfo sub-components are percent-encoded and must be
+    # decoded before forming the Basic credential ("%40" -> "@", "%24" -> "\$").
+    # Affects both proxy credentials and request-URL credentials (same code path).
+    proxy = HT.ProxyURL("http://user:p%40ss%24@proxy.local:8080")
+    @test (proxy.all::HT._ProxyTarget).authorization == "Basic " * Base64.base64encode("user:p@ss\$")
+    # an encoded username ("%2B" -> "+") is decoded as well
+    enc_user = HT.ProxyURL("http://a%2Bb:secret@proxy.local:8080")
+    @test (enc_user.all::HT._ProxyTarget).authorization == "Basic " * Base64.base64encode("a+b:secret")
+    # request URL userinfo (not a proxy) is decoded too
+    @test HT._parse_http_url("https://user:p%40ss@api.local/path").authorization ==
+          "Basic " * Base64.base64encode("user:p@ss")
+end
+
 @testset "HTTP proxy no_proxy matching" begin
     matcher = HT.NoProxy("example.com,.internal.local,127.0.0.1,10.0.0.0/8,[::1],*.svc.local,1.2.3.4:8443")
     @test HT._matches_no_proxy(matcher, "example.com", 80)
