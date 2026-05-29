@@ -1292,7 +1292,8 @@ end
 
 Simple in-memory body backed by a retained `AbstractVector{UInt8}`. Reads
 advance an internal cursor until EOF; closing marks the body closed but does
-not free or truncate the stored bytes.
+not free or truncate the stored bytes. Collection-style operations expose the
+remaining unread bytes.
 """
 mutable struct BytesBody{T<:AbstractVector{UInt8}} <: AbstractBody
     data::T
@@ -1312,6 +1313,41 @@ function Base.String(body::BytesBody)
     copyto!(bytes, 1, body.data, body.next_index, remaining)
     return String(bytes)
 end
+
+@inline function Base.length(body::BytesBody)::Int
+    return max(0, (length(body.data) - body.next_index) + 1)
+end
+
+Base.isempty(body::BytesBody)::Bool = length(body) == 0
+Base.eltype(::Type{<:BytesBody}) = UInt8
+Base.IteratorSize(::Type{<:BytesBody}) = Base.HasLength()
+Base.IteratorEltype(::Type{<:BytesBody}) = Base.HasEltype()
+Base.firstindex(::BytesBody) = 1
+Base.lastindex(body::BytesBody) = length(body)
+
+function Base.getindex(body::BytesBody, i::Integer)::UInt8
+    index = Int(i)
+    1 <= index <= length(body) || throw(BoundsError(body, i))
+    return @inbounds body.data[body.next_index + index - 1]
+end
+
+function Base.iterate(body::BytesBody, state::Int=body.next_index)
+    state > length(body.data) && return nothing
+    return @inbounds(body.data[state]), state + 1
+end
+
+function Base.copy(body::BytesBody)::Vector{UInt8}
+    remaining = length(body)
+    remaining == 0 && return UInt8[]
+    bytes = Vector{UInt8}(undef, remaining)
+    copyto!(bytes, 1, body.data, body.next_index, remaining)
+    return bytes
+end
+
+Base.convert(::Type{Vector{UInt8}}, body::BytesBody) = copy(body)
+(::Type{Array})(body::BytesBody) = copy(body)
+(::Type{Array{UInt8}})(body::BytesBody) = copy(body)
+(::Type{Vector{UInt8}})(body::BytesBody) = copy(body)
 
 Base.String(::EmptyBody) = ""
 
@@ -1353,6 +1389,12 @@ end
 function _compat_body_arg(body)
     throw(ArgumentError("compat Request/Response constructors only support `nothing`, `HTTP.AbstractBody`, `AbstractString`, or `AbstractVector{UInt8}` bodies"))
 end
+
+@inline _response_body_arg(::Nothing) = EmptyBody()
+@inline _response_body_arg(body::AbstractBody) = body
+@inline _response_body_arg(body::AbstractVector{UInt8}) = body
+@inline _response_body_arg(body::AbstractString) = _compat_body_arg(body)
+_response_body_arg(body) = _compat_body_arg(body)
 
 """
     body_closed(body) -> Bool
@@ -1635,10 +1677,11 @@ Keyword arguments mirror `Request` closely. `request` optionally links the
 response back to the originating request, which is especially useful in client
 redirect flows and server handler pipelines.
 
-Returns a new `Response{B}` where `B` is the exact body field type. The
-optional `body` positional argument determines the response body type for
-dispatch and storage. `request_url` is optional client metadata used by
-high-level request helpers.
+Returns a new `Response{B}` where `B` is the stored body field type. Byte-vector
+response bodies are retained as vectors so test fixtures can inspect
+`response.body` directly; pass a `BytesBody` when cursor-based body reads are
+desired. `request_url` is optional client metadata used by high-level request
+helpers.
 
 Throws `ArgumentError` for invalid status or protocol metadata.
 
@@ -1699,7 +1742,7 @@ function Response(
     previous::Union{Nothing,Response}=nothing,
     redirect_count::Integer=0,
 ) where {B}
-    actual_body = body === nobody ? _compat_body_arg(response_body) : _compat_body_arg(body)
+    actual_body = body === nobody ? _response_body_arg(response_body) : _response_body_arg(body)
     actual_content_length = if content_length < 0
         body === nobody ? _compat_body_length(response_body) : _compat_body_length(body)
     else
@@ -1731,7 +1774,7 @@ Response() = Response(0)
 
 Response(status::Int, body::AbstractString) = Response(status, BytesBody(Vector{UInt8}(codeunits(String(body)))))
 Response(body::AbstractString) = Response(200, BytesBody(Vector{UInt8}(codeunits(String(body)))))
-Response(body::AbstractVector{UInt8}) = Response(200, BytesBody(body))
+Response(body::AbstractVector{UInt8}) = Response(200, body)
 
 function Response(
     status::Integer,
@@ -1743,7 +1786,7 @@ function Response(
     proto_major, proto_minor = _compat_proto_version(version)
     return Response(
         status,
-        _compat_body_arg(body);
+        _response_body_arg(body);
         headers=headers,
         request=request,
         proto_major=proto_major,
@@ -1759,7 +1802,7 @@ function Response(
     version=nothing,
 )
     proto_major, proto_minor = _compat_proto_version(version)
-    compat_body = _compat_body_arg(body)
+    compat_body = _response_body_arg(body)
     return Response(
         status,
         compat_body;
@@ -1778,7 +1821,7 @@ function Response(
     version=nothing,
 )
     proto_major, proto_minor = _compat_proto_version(version)
-    compat_body = _compat_body_arg(body)
+    compat_body = _response_body_arg(body)
     return Response(
         status,
         compat_body;
@@ -1797,7 +1840,7 @@ function Response(
     version=nothing,
 )
     proto_major, proto_minor = _compat_proto_version(version)
-    compat_body = _compat_body_arg(body)
+    compat_body = _response_body_arg(body)
     return Response(
         status,
         compat_body;
@@ -1816,7 +1859,7 @@ function Response(
     version=nothing,
 )
     proto_major, proto_minor = _compat_proto_version(version)
-    compat_body = _compat_body_arg(body)
+    compat_body = _response_body_arg(body)
     return Response(
         status,
         compat_body;
@@ -1836,7 +1879,7 @@ function Response(
 )
     all(item -> length(item) == 2, headers) || throw(ArgumentError("invalid header list for compat Response constructor"))
     proto_major, proto_minor = _compat_proto_version(version)
-    compat_body = _compat_body_arg(body)
+    compat_body = _response_body_arg(body)
     return Response(
         status,
         compat_body;

@@ -94,15 +94,27 @@ end
 
 @testset "HTTP core bodies" begin
     body = HT.BytesBody(UInt8[0x41, 0x42, 0x43])
+    @test length(body) == 3
+    @test !isempty(body)
+    @test body[1] == 0x41
+    @test body[3] == 0x43
+    @test collect(body) == UInt8[0x41, 0x42, 0x43]
+    @test copy(body) == UInt8[0x41, 0x42, 0x43]
+    @test convert(Vector{UInt8}, body) == UInt8[0x41, 0x42, 0x43]
+    @test Array(body) == UInt8[0x41, 0x42, 0x43]
+    @test Vector{UInt8}(body) == UInt8[0x41, 0x42, 0x43]
     dst = Vector{UInt8}(undef, 2)
     n = HT.body_read!(body, dst)
     @test n == 2
     @test dst == UInt8[0x41, 0x42]
+    @test length(body) == 1
+    @test collect(body) == UInt8[0x43]
     n = HT.body_read!(body, dst)
     @test n == 1
     @test dst[1] == 0x43
     n = HT.body_read!(body, dst)
     @test n == 0
+    @test isempty(body)
     HT.body_close!(body)
     @test HT.body_closed(body)
     cb_closed = Ref(false)
@@ -180,6 +192,21 @@ end
     keyword_empty_res = HT.Response(204; body=nothing)
     @test keyword_empty_res.status == 204
     @test keyword_empty_res.body isa HT.EmptyBody
+
+    bytes = UInt8[0x00, 0x01]
+    byte_res = HT.Response(200, bytes)
+    @test byte_res.body === bytes
+    @test byte_res.body[1] == 0x00
+    @test collect(byte_res.body) == bytes
+    @test byte_res.content_length == 2
+
+    keyword_byte_res = HT.Response(200; body=bytes)
+    @test keyword_byte_res.body === bytes
+    @test keyword_byte_res.content_length == 2
+
+    compat_byte_res = HT.Response(200, ["Content-Type" => "application/octet-stream"], bytes)
+    @test compat_byte_res.body === bytes
+    @test compat_byte_res.content_length == 2
 end
 
 @testset "HTTP core compatibility aliases" begin
