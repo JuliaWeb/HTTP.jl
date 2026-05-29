@@ -221,6 +221,14 @@ function isclosed(ws::WebSocket)::Bool
     return ws.readclosed && ws.writeclosed
 end
 
+"""
+    isupgrade(message) -> Bool
+
+Return `true` when `message` is a WebSocket upgrade. For a request this checks
+for a valid client upgrade handshake — use it to guard [`upgrade`](@ref) inside
+an `HTTP.listen!` stream handler. For a response it checks for a `101 Switching
+Protocols` handshake response.
+"""
 function isupgrade(message::Request)::Bool
     return ws_is_websocket_request(message)
 end

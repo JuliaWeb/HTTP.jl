@@ -36,6 +36,8 @@ HTTP.WebSockets.Server
 HTTP.WebSockets.listen!
 HTTP.WebSockets.listen
 HTTP.WebSockets.serve!
+HTTP.WebSockets.upgrade
+HTTP.WebSockets.isupgrade
 HTTP.WebSockets.server_addr
 HTTP.WebSockets.forceclose
 ```
