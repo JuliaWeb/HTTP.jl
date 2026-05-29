@@ -7,10 +7,21 @@ on:
   pull_request:
   release:
 
+# Cancel superseded in-progress runs for the same PR. Pushes to master/release
+# use the unique run_id as the group, so those are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
+    # Fail fast on a hung job instead of running to GitHub's 6h default. Clean
+    # jobs finish in <=11m; 25m leaves headroom for cache-cold precompilation.
+    timeout-minutes: 25
+    # Prerelease Julia is informational; don't let it block merges.
+    continue-on-error: ${{ matrix.version == 'pre' }}
     strategy:
       fail-fast: false
       matrix:
