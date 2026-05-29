@@ -773,6 +773,61 @@ end
     end
 end
 
+@testset "HTTP server write timeout fires reliably under repetition (Windows write-timeout repro)" begin
+    # Looped, watchdog-bounded repro of the intermittent Windows hang in
+    # "HTTP server write timeout aborts stalled responses". Reseau's raw-conn
+    # deadlines were exonerated (single-arm, concurrent, and re-arm-per-write all
+    # pass on Windows), so this exercises the layer above: HTTP.jl's chunked
+    # server stream-write path (_server_write -> chunk framing ->
+    # _write_server_stream_bytes! -> per-chunk write-deadline re-arm). Each
+    # iteration counts a "strand" if the handler's stalled write does not surface
+    # a write-timeout within the watchdog, and fails fast instead of hanging.
+    iterations = 60
+    watchdog_s = 5.0
+    strands = 0
+    for _ in 1:iterations
+        timeout_seen = Channel{Bool}(1)
+        server = HT.Server(
+            address = "127.0.0.1:0",
+            stream = true,
+            write_timeout_ns = 200_000_000,
+            handler = stream -> begin
+                _ = HT.startread(stream)
+                HT.setstatus(stream, 200)
+                HT.startwrite(stream)
+                chunk = fill(UInt8('x'), 4 * 1024)   # small chunks: more frames + re-arms
+                try
+                    while true
+                        write(stream, chunk)
+                    end
+                catch err
+                    put!(timeout_seen, err isa IOP.DeadlineExceededError)
+                end
+                return nothing
+            end,
+        )
+        HT.listen!(server)
+        address = HT.server_addr(server)
+        sock = ND.connect("tcp", "127.0.0.1:$(HT.port(server))")
+        try
+            write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
+            status = timedwait(() -> isready(timeout_seen), watchdog_s; pollint = 0.001)
+            if status == :timed_out
+                strands += 1
+            else
+                @test take!(timeout_seen)
+            end
+        finally
+            HT.@try_ignore begin
+                NC.close(sock)
+            end
+            _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+            _run_with_timeout(() -> wait(server); label = "server task completion")
+        end
+    end
+    @test strands == 0
+end
+
 @testset "HTTP server ordinary handlers suppress bodies for HEAD" begin
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
             return HT.Response(
