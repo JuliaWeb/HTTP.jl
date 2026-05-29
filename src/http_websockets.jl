@@ -86,6 +86,8 @@ import ..write_response!
 import ..write_request!
 import .._is_transport_timeout
 import .._wrap_transport_timeout
+import ..Stream
+import .._clear_deadlines!
 
 include("http_websocket_codec.jl")
 
@@ -219,6 +221,14 @@ function isclosed(ws::WebSocket)::Bool
     return ws.readclosed && ws.writeclosed
 end
 
+"""
+    isupgrade(message) -> Bool
+
+Return `true` when `message` is a WebSocket upgrade. For a request this checks
+for a valid client upgrade handshake — use it to guard [`upgrade`](@ref) inside
+an `HTTP.listen!` stream handler. For a response it checks for a `101 Switching
+Protocols` handshake response.
+"""
 function isupgrade(message::Request)::Bool
     return ws_is_websocket_request(message)
 end
@@ -1114,9 +1124,7 @@ function _origin_allowed_default(request::Request)::Bool
     return lowercase(origin_host) == lowercase(request_host::String)
 end
 
-function _origin_allowed(server::Server, request::Request)::Bool
-    checker = server.check_origin
-    checker === nothing && return _origin_allowed_default(request)
+function _run_origin_check(checker, request::Request)::Bool
     origin = header(request.headers, "Origin", nothing)
     if applicable(checker, request, origin)
         result = checker(request, origin)
@@ -1129,7 +1137,17 @@ function _origin_allowed(server::Server, request::Request)::Bool
     return result
 end
 
-function _upgrade_response(request::Request, server::Server)::Response
+function _origin_allowed(server::Server, request::Request)::Bool
+    checker = server.check_origin
+    checker === nothing && return _origin_allowed_default(request)
+    return _run_origin_check(checker, request)
+end
+
+function _upgrade_response(
+    request::Request;
+    subprotocols::AbstractVector{<:AbstractString}=String[],
+    check_origin::Union{Nothing,Function}=nothing,
+)::Response
     uppercase(request.method) == "GET" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     _ws_headers_have_token(request.headers, "Upgrade", "websocket", false) || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     _ws_headers_have_token(request.headers, "Connection", "upgrade", false) || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
@@ -1138,16 +1156,130 @@ function _upgrade_response(request::Request, server::Server)::Response
     strip(version) == "13" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     raw_key = header(request.headers, "Sec-WebSocket-Key", nothing)
     raw_key === nothing && return Response(400, BytesBody(Vector{UInt8}("missing websocket key")); content_length=21, headers=Headers())
-    _origin_allowed(server, request) || return Response(403, BytesBody(Vector{UInt8}("websocket origin rejected")); content_length=25, headers=Headers())
+    allowed = check_origin === nothing ? _origin_allowed_default(request) : _run_origin_check(check_origin, request)
+    allowed || return Response(403, BytesBody(Vector{UInt8}("websocket origin rejected")); content_length=25, headers=Headers())
     key = ws_get_request_sec_websocket_key(request)
     key === nothing && return Response(400, BytesBody(Vector{UInt8}("invalid websocket key")); content_length=21, headers=Headers())
     headers = Headers()
     setheader(headers, "Upgrade", "websocket")
     setheader(headers, "Connection", "Upgrade")
     setheader(headers, "Sec-WebSocket-Accept", ws_compute_accept_key(key::String))
-    selected = isempty(server.subprotocols) ? nothing : ws_select_subprotocol(request, server.subprotocols)
+    selected = isempty(subprotocols) ? nothing : ws_select_subprotocol(request, subprotocols)
     selected === nothing || setheader(headers, "Sec-WebSocket-Protocol", selected::String)
     return Response(101, EmptyBody(); headers=headers, content_length=0, request=request)
+end
+
+_upgrade_response(request::Request, server::Server)::Response =
+    _upgrade_response(request; subprotocols=server.subprotocols, check_origin=server.check_origin)
+
+"""
+    upgrade(f, stream::HTTP.Stream; kwargs...)
+
+Upgrade an in-flight HTTP/1.1 server `stream` to a WebSocket connection and run
+`f(ws::WebSocket)`. This is the manual counterpart to [`listen!`](@ref): it lets
+a single `HTTP.listen!` / `HTTP.Router` server mix ordinary HTTP routes with
+WebSocket routes by upgrading the connection from inside a stream handler.
+
+Guard the call with [`isupgrade`](@ref) and call `upgrade` before writing any
+response to the stream:
+
+```julia
+HTTP.listen!("127.0.0.1", 8080) do stream
+    if HTTP.WebSockets.isupgrade(stream.message)
+        HTTP.WebSockets.upgrade(stream) do ws
+            for msg in ws
+                HTTP.WebSockets.send(ws, msg)
+            end
+        end
+    else
+        HTTP.setstatus(stream, 200)
+        HTTP.startwrite(stream)
+        write(stream, "ok")
+    end
+end
+```
+
+`f` runs synchronously; the connection is closed when it returns. Keyword
+arguments mirror [`listen!`](@ref): `subprotocols`, `check_origin`,
+`maxframesize`, and `maxfragmentation`. WebSocket upgrades over HTTP/2 are not
+supported.
+"""
+function upgrade(
+    f::Function,
+    stream::Stream;
+    subprotocols::AbstractVector{<:AbstractString}=String[],
+    check_origin::Union{Nothing,Function}=nothing,
+    maxframesize::Integer=typemax(Int),
+    maxfragmentation::Integer=DEFAULT_MAX_FRAG,
+)
+    stream.tracked === nothing &&
+        throw(WebSocketError(CloseFrameBody(1011, "stream cannot be upgraded: not an HTTP/1.1 server stream")))
+    (stream.message.proto_major != UInt8(1) || stream.h2_conn !== nothing) &&
+        throw(WebSocketError(CloseFrameBody(1011, "WebSocket upgrade over HTTP/2 is not supported")))
+
+    conn = stream.tracked.conn
+    response = _upgrade_response(stream.message; subprotocols=subprotocols, check_origin=check_origin)
+    _write_ws_response!(conn, response)
+
+    # We have written the handshake response directly to the connection, so take
+    # ownership of it away from the normal HTTP/1 server loop: mark the stream's
+    # read/write sides closed (so the loop's post-handler closewrite/closeread
+    # become no-ops) and request connection close (so the loop does not try to
+    # read another request off what is now a WebSocket).
+    @atomic :release stream.response_started = true
+    @atomic :release stream.write_closed = true
+    @atomic :release stream.read_closed = true
+    stream.response.close = true
+
+    if response.status != 101
+        _close_ws_server_conn!(conn)
+        throw(WebSocketError(CloseFrameBody(1002, "websocket upgrade rejected with status $(response.status)")))
+    end
+
+    # The server loop armed a body read-deadline before invoking the handler and
+    # only clears it after the handler returns (i.e. after this whole session);
+    # clear it now so a long-lived socket is not torn down mid-session.
+    _clear_deadlines!(conn)
+
+    buffered = stream.reader isa _ConnReader ? _take_conn_reader_buffer!(stream.reader::_ConnReader) : UInt8[]
+    close_transport! = let conn = conn
+        () -> _close_ws_server_conn!(conn)
+    end
+    ws = WebSocket(
+        conn,
+        close_transport!,
+        subprotocol=header(response.headers, "Sec-WebSocket-Protocol"),
+        maxframesize=maxframesize,
+        maxfragmentation=maxfragmentation,
+        is_client=false,
+    )
+    ws.handshake_request = stream.message
+    ws.handshake_response = response
+    if !isempty(buffered)
+        ws_on_incoming_data!(frame -> _process_incoming_frame!(ws, frame), ws.codec, buffered)
+        _flush_ws_output!(ws)
+    end
+    _start_read_task!(ws)
+    try
+        f(ws)
+    catch err
+        if !isclosed(ws)
+            if err isa WebSocketError
+                close(ws, (err::WebSocketError).message)
+            else
+                close(ws, CloseFrameBody(1011, "unexpected server websocket error"))
+            end
+        end
+        isok(err) || rethrow(err)
+    finally
+        if !isclosed(ws)
+            body = ws.closebody === nothing ? CloseFrameBody(1000, "") : ws.closebody::CloseFrameBody
+            @try_ignore begin
+                close(ws, body)
+            end
+        end
+    end
+    return nothing
 end
 
 function _serve_ws_session!(server::Server, conn, request::Request, response::Response)::Nothing

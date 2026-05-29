@@ -158,3 +158,58 @@ end
         _close_ws_quiet!(task)
     end
 end
+
+@testset "HTTP.WebSockets.upgrade mixes HTTP and WebSocket routes" begin
+    # Manual upgrade from a normal HTTP.listen! stream handler (1.x parity): one
+    # server serves both a normal HTTP route and a WebSocket route. read_timeout
+    # is short to prove upgrade() clears the server's per-request read deadline.
+    server = HT.listen!("127.0.0.1", 0; listenany = true, read_timeout = 1) do stream
+        if W.isupgrade(stream.message)
+            W.upgrade(stream) do ws
+                for msg in ws
+                    W.send(ws, msg)
+                end
+            end
+        else
+            HT.setstatus(stream, 200)
+            HT.startwrite(stream)
+            write(stream, "ok")
+        end
+    end
+    try
+        address = "127.0.0.1:$(HT.port(server))"
+        # normal HTTP route on the same server
+        r = HT.get("http://$address/"; status_exception = false)
+        @test r.status == 200
+        @test String(r.body) == "ok"
+        # WebSocket route: text + binary echo
+        W.open("ws://$address/ws") do ws
+            W.send(ws, "hello")
+            @test W.receive(ws) == "hello"
+            W.send(ws, UInt8[1, 2, 3])
+            @test W.receive(ws) == UInt8[1, 2, 3]
+        end
+        # upgrade() must clear the per-request read deadline: a pause longer than
+        # read_timeout (1s) must not tear down the WebSocket session.
+        W.open("ws://$address/ws") do ws
+            W.send(ws, "a")
+            @test W.receive(ws) == "a"
+            sleep(1.5)
+            W.send(ws, "b")
+            @test W.receive(ws) == "b"
+        end
+        # server still serves normal HTTP after the WebSocket sessions
+        r2 = HT.get("http://$address/"; status_exception = false)
+        @test r2.status == 200
+        @test String(r2.body) == "ok"
+    finally
+        HT.forceclose(server)
+    end
+end
+
+@testset "HTTP.WebSockets.upgrade rejects non-upgradeable streams" begin
+    # A client-style stream has no tracked server connection and cannot be upgraded.
+    bad = HT.Request("GET", "/"; headers = ["Host" => "127.0.0.1"])
+    stream = HT.Stream(bad)
+    @test_throws W.WebSocketError W.upgrade(ws -> nothing, stream)
+end

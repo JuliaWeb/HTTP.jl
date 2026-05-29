@@ -1072,6 +1072,11 @@ function _serve_h1_conn!(server::Server, tracked::_ServerConn, reader_source)::N
             _set_read_deadline_for_body!(server, tracked.conn)
             if server.stream
                 stream = Stream(server, tracked, request)
+                # Expose the per-connection reader so a stream handler can hand
+                # the connection off to WebSockets.upgrade (which must recover any
+                # bytes buffered past the request). Server streams otherwise read
+                # the request body via stream.request_body, not stream.reader.
+                stream.reader = reader
                 try
                     server.handler(stream)
                     if !(@atomic :acquire stream.write_closed)

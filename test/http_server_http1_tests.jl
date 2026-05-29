@@ -111,34 +111,43 @@ function _read_until_deadline(conn::NC.Conn; timeout_s::Float64 = 1.0)::String
 end
 
 function _read_until_quiet(conn::NC.Conn; timeout_s::Float64 = 1.0, quiet_timeout_s::Float64 = 0.1)::String
-    buf = Vector{UInt8}(undef, 1024)
-    out = UInt8[]
-    deadline_ns = Int64(time_ns()) + round(Int64, timeout_s * 1.0e9)
-    saw_bytes = false
-    while true
-        remaining_ns = deadline_ns - Int64(time_ns())
-        remaining_ns <= 0 && break
-        read_timeout_s = saw_bytes ? min(quiet_timeout_s, remaining_ns / 1.0e9) : (remaining_ns / 1.0e9)
-        NC.set_read_deadline!(conn, Int64(time_ns()) + round(Int64, read_timeout_s * 1.0e9))
-        try
-            chunk = readavailable(conn)
-            n = length(chunk)
-            n == 0 && break
-            n > length(buf) && resize!(buf, n)
-            copyto!(buf, 1, chunk, 1, n)
-            append!(out, @view(buf[1:n]))
-            saw_bytes = true
-        catch err
-            if err isa IOP.DeadlineExceededError || err isa EOFError
-                break
+    # Task-level watchdog. The set_read_deadline! below is the intended timeout
+    # mechanism, but on Windows a re-armed read deadline can intermittently fail
+    # to wake a parked `readavailable`, stranding this loop indefinitely (Reseau
+    # IOCP issue JuliaServices/Reseau.jl#107). Bounding the whole read here turns
+    # a strand into a fast, legible failure instead of hanging the suite, and
+    # covers callers that invoke `_read_until_quiet` directly (not just via
+    # `_raw_http_request`).
+    return _run_with_timeout(; timeout_s = timeout_s + 5.0, label = "_read_until_quiet") do
+        buf = Vector{UInt8}(undef, 1024)
+        out = UInt8[]
+        deadline_ns = Int64(time_ns()) + round(Int64, timeout_s * 1.0e9)
+        saw_bytes = false
+        while true
+            remaining_ns = deadline_ns - Int64(time_ns())
+            remaining_ns <= 0 && break
+            read_timeout_s = saw_bytes ? min(quiet_timeout_s, remaining_ns / 1.0e9) : (remaining_ns / 1.0e9)
+            NC.set_read_deadline!(conn, Int64(time_ns()) + round(Int64, read_timeout_s * 1.0e9))
+            try
+                chunk = readavailable(conn)
+                n = length(chunk)
+                n == 0 && break
+                n > length(buf) && resize!(buf, n)
+                copyto!(buf, 1, chunk, 1, n)
+                append!(out, @view(buf[1:n]))
+                saw_bytes = true
+            catch err
+                if err isa IOP.DeadlineExceededError || err isa EOFError
+                    break
+                end
+                if HT._is_peer_close_error(err::Exception)
+                    break
+                end
+                rethrow(err)
             end
-            if HT._is_peer_close_error(err::Exception)
-                break
-            end
-            rethrow(err)
         end
+        return String(out)
     end
-    return String(out)
 end
 
 function _read_until_close(conn::NC.Conn; timeout_s::Float64 = 1.0)::Tuple{String, Bool}
@@ -763,7 +772,9 @@ end
         write(sock, Vector{UInt8}(codeunits("GET / HTTP/1.1\r\nHost: $(address)\r\n\r\n")))
         status = timedwait(() -> isready(timeout_seen), 5.0; pollint = 0.001)
         @test status != :timed_out
-        @test take!(timeout_seen)
+        # Only take! when the channel is ready: if the write-timeout did not fire
+        # (status timed out), take! on an empty channel would hang forever.
+        status == :timed_out || @test take!(timeout_seen)
     finally
         HT.@try_ignore begin
             NC.close(sock)

@@ -16,6 +16,39 @@ const ND = Reseau.HostResolvers
 const NC = Reseau.TCP
 const IP = Reseau.IOPoll
 
+# --- Hang diagnostic watchdog ---------------------------------------------
+# An intermittent hang strikes various timeout/network tests on Windows CI, in a
+# different testset each run (root cause: Reseau IOCP read-deadline strand,
+# JuliaServices/Reseau.jl#107). If the suite exceeds this budget, dump every
+# task's backtrace so CI captures a stack trace pinpointing the stuck task, then
+# hard-exit before the job's wall-clock cap swallows the output. Tune/disable via
+# HTTP_HANG_WATCHDOG_S (<= 0 disables).
+const _HANG_WATCHDOG_BUDGET_S = parse(Float64, get(ENV, "HTTP_HANG_WATCHDOG_S", "1200"))
+function _arm_hang_watchdog()
+    _HANG_WATCHDOG_BUDGET_S > 0 || return nothing
+    Threads.@spawn begin
+        deadline = time() + _HANG_WATCHDOG_BUDGET_S
+        while time() < deadline
+            sleep(5.0)
+        end
+        try
+            println(stderr, "\n\n==== HTTP HANG WATCHDOG: suite exceeded $(_HANG_WATCHDOG_BUDGET_S)s ====")
+            println(stderr, "==== dumping all task backtraces to locate the stuck task ====")
+            flush(stdout)
+            flush(stderr)
+            ccall(:jl_print_task_backtraces, Cvoid, (Cint,), 0)
+            flush(stderr)
+        catch err
+            println(stderr, "==== HANG WATCHDOG: backtrace dump failed: ", err)
+            flush(stderr)
+        end
+        sleep(2.0)
+        ccall(:exit, Cvoid, (Cint,), 1)
+    end
+    return nothing
+end
+_arm_hang_watchdog()
+
 function _include_with_progress(path::AbstractString)
     _log_test_progress("[runtests] include START: $(path)")
     include(path)
