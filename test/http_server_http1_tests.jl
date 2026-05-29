@@ -46,32 +46,42 @@ function HT.body_close!(body::_BlockingResponseBody)
     return nothing
 end
 
+# Both raw-socket helpers bound their reads with socket read deadlines, but on
+# Windows a blocked `readavailable` is not always interrupted by the deadline,
+# so the loop never gets back to its own timeout check and the read hangs
+# indefinitely. Wrap the whole exchange in `_run_with_timeout`, a task-level
+# watchdog that does not depend on socket deadlines, so a stuck read fails the
+# test in seconds instead of hanging the job until CI's wall-clock limit.
 function _raw_http_request(port::Integer, request::AbstractString; settle_s::Float64 = 0.5, close_write::Bool = true)::String
-    sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
-    try
-        write(sock, Vector{UInt8}(codeunits(String(request))))
-        if close_write
-            HT.@try_ignore begin
-                NC.closewrite(sock)
+    return _run_with_timeout(; timeout_s = max(8.0, settle_s + 4.0), label = "raw http request (port $(port))") do
+        sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
+        try
+            write(sock, Vector{UInt8}(codeunits(String(request))))
+            if close_write
+                HT.@try_ignore begin
+                    NC.closewrite(sock)
+                end
             end
+            return _read_until_quiet(
+                sock;
+                timeout_s = max(2.0, settle_s + 1.0),
+                quiet_timeout_s = min(0.25, max(0.05, settle_s)),
+            )
+        finally
+            NC.close(sock)
         end
-        return _read_until_quiet(
-            sock;
-            timeout_s = max(2.0, settle_s + 1.0),
-            quiet_timeout_s = min(0.25, max(0.05, settle_s)),
-        )
-    finally
-        NC.close(sock)
     end
 end
 
 function _raw_http_request_until_close(port::Integer, request::AbstractString; timeout_s::Float64 = 3.0)::Tuple{String, Bool}
-    sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
-    try
-        write(sock, Vector{UInt8}(codeunits(String(request))))
-        return _read_until_close(sock; timeout_s)
-    finally
-        NC.close(sock)
+    return _run_with_timeout(; timeout_s = timeout_s + 4.0, label = "raw http request until close (port $(port))") do
+        sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
+        try
+            write(sock, Vector{UInt8}(codeunits(String(request))))
+            return _read_until_close(sock; timeout_s)
+        finally
+            NC.close(sock)
+        end
     end
 end
 
