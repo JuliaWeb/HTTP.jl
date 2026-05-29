@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Percent-decode `userinfo` before building the `Basic` auth header (RFC 3986); fixes wrong credentials for request URLs and proxies containing percent-encoded characters.
+
 ## [v2.0.0] - 2026-04-27
 HTTP.jl 2.0 is a major rewrite of the package internals and public API. The
 release keeps the familiar `HTTP.request`, verb helpers, `HTTP.serve`, routing,
