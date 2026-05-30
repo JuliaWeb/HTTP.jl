@@ -1342,19 +1342,84 @@ function Base.close(io::_BodyIO)
     return nothing
 end
 
-function _response_body_reader(incoming::_IncomingResponse, decompress::Union{Nothing,Bool})::Tuple{IO,Union{Nothing,Task}}
-    raw_stream = _BodyIO(incoming.rawbody)
-    encoding = _response_content_encoding(incoming.head.headers, decompress)
-    if encoding == :gzip
-        return CodecZlib.GzipDecompressorStream(raw_stream), nothing
-    elseif encoding == :deflate
-        return CodecZlib.ZlibDecompressorStream(raw_stream), nothing
-    end
-    return raw_stream, nothing
+"""
+    DecompressionLimitError(limit)
+
+Thrown when an automatically decompressed response body exceeds the
+`max_decompressed_size` byte limit passed to the request. Guards against
+decompression bombs — small compressed payloads that inflate to exhaust memory.
+"""
+struct DecompressionLimitError <: Exception
+    limit::Int
 end
 
-function _with_response_reader(f::F, incoming::_IncomingResponse, decompress::Union{Nothing,Bool}) where {F}
-    reader, _ = _response_body_reader(incoming, decompress)
+function Base.showerror(io::IO, err::DecompressionLimitError)
+    print(io, "DecompressionLimitError: decompressed response body exceeded max_decompressed_size = ", err.limit, " bytes")
+    return nothing
+end
+
+# IO wrapper that caps how many decompressed bytes may be read from `inner`,
+# throwing `DecompressionLimitError` once the running total exceeds `limit`.
+# Response bodies are read via chunked `readbytes!`, so the limit fires after at
+# most one extra chunk and memory stays bounded near `limit`.
+mutable struct _DecompressLimitReader{S<:IO} <: IO
+    inner::S
+    limit::Int
+    seen::Int
+end
+_DecompressLimitReader(inner::IO, limit::Integer) = _DecompressLimitReader{typeof(inner)}(inner, Int(limit), 0)
+
+@inline function _count_decompressed!(r::_DecompressLimitReader, n::Integer)::Nothing
+    r.seen += Int(n)
+    r.seen > r.limit && throw(DecompressionLimitError(r.limit))
+    return nothing
+end
+
+function Base.readbytes!(r::_DecompressLimitReader, dst::AbstractVector{UInt8}, nb::Integer=length(dst))::Int
+    n = readbytes!(r.inner, dst, nb)
+    _count_decompressed!(r, n)
+    return n
+end
+
+function Base.readavailable(r::_DecompressLimitReader)::Vector{UInt8}
+    chunk = readavailable(r.inner)
+    _count_decompressed!(r, length(chunk))
+    return chunk
+end
+
+function Base.read(r::_DecompressLimitReader)::Vector{UInt8}
+    out = UInt8[]
+    buf = Vector{UInt8}(undef, 65536)
+    while true
+        n = readbytes!(r.inner, buf, length(buf))
+        n == 0 && break
+        _count_decompressed!(r, n)
+        append!(out, @view(buf[1:n]))
+    end
+    return out
+end
+
+Base.eof(r::_DecompressLimitReader)::Bool = eof(r.inner)
+Base.bytesavailable(r::_DecompressLimitReader)::Int = bytesavailable(r.inner)
+Base.isopen(r::_DecompressLimitReader)::Bool = isopen(r.inner)
+Base.close(r::_DecompressLimitReader) = close(r.inner)
+
+function _response_body_reader(incoming::_IncomingResponse, decompress::Union{Nothing,Bool}, max_decompressed_size::Int=0)::Tuple{IO,Union{Nothing,Task}}
+    raw_stream = _BodyIO(incoming.rawbody)
+    encoding = _response_content_encoding(incoming.head.headers, decompress)
+    decompressor = if encoding == :gzip
+        CodecZlib.GzipDecompressorStream(raw_stream)
+    elseif encoding == :deflate
+        CodecZlib.ZlibDecompressorStream(raw_stream)
+    else
+        return raw_stream, nothing
+    end
+    reader = max_decompressed_size > 0 ? _DecompressLimitReader(decompressor, max_decompressed_size) : decompressor
+    return reader, nothing
+end
+
+function _with_response_reader(f::F, incoming::_IncomingResponse, decompress::Union{Nothing,Bool}, max_decompressed_size::Int=0) where {F}
+    reader, _ = _response_body_reader(incoming, decompress, max_decompressed_size)
     try
         return f(reader)
     finally
@@ -1375,6 +1440,7 @@ function _consume_incoming_response!(
     incoming::_IncomingResponse,
     sink,
     decompress::Union{Nothing,Bool},
+    max_decompressed_size::Int=0,
 )::Tuple{Any,Int64}
     if _incoming_response_has_no_body(incoming) || !_should_decompress_response(incoming.head.headers, decompress)
         try
@@ -1398,7 +1464,7 @@ function _consume_incoming_response!(
             rethrow()
         end
     end
-    return _with_response_reader(incoming, decompress) do reader
+    return _with_response_reader(incoming, decompress, max_decompressed_size) do reader
         if sink === nothing
             body = _read_all_response_bytes(reader)
             return body, Int64(length(body))
@@ -1716,6 +1782,7 @@ function request(
     query=nothing,
     response_stream=nothing,
     decompress::Union{Nothing,Bool}=nothing,
+    max_decompressed_size::Integer=0,
     sse_callback=nothing,
     client::Union{Nothing,Client}=nothing,
     context::Union{Nothing,RequestContext}=nothing,
@@ -1841,7 +1908,7 @@ function request(
                     return sse_response
                 end
             end
-            final_body, final_length = _consume_incoming_response!(incoming, sink, decompress)
+            final_body, final_length = _consume_incoming_response!(incoming, sink, decompress, Int(max_decompressed_size))
             response = _finalize_request_response(incoming, final_body, final_length, resolved_request, parsed.url)
             final_response = response
             status_exception && _status_throws(response) && throw(StatusError(response))
@@ -1910,6 +1977,7 @@ Keyword arguments:
 - `query`: optional query string or key/value collection appended to the URL
 - `response_stream`: optional sink `IO` or byte buffer written with the final response body
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
+- `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. `0` (default) disables the limit
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
   successful SSE responses
 - `trace`: optional callback receiving request lifecycle events

@@ -2338,3 +2338,46 @@ end
         HT.forceclose(slow_server)
     end
 end
+
+@testset "max_decompressed_size guards against decompression bombs" begin
+    # ~4 MB of zeros compresses to a few KB of gzip — a small "bomb".
+    big = zeros(UInt8, 4_000_000)
+    gz = transcode(HTTP.CodecZlib.GzipCompressor, big)
+    @test length(gz) < 100_000   # confirm the payload really is small on the wire
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do req
+        return HT.Response(200; headers = ["Content-Encoding" => "gzip"], body = gz)
+    end
+    try
+        base = "http://127.0.0.1:$(HT.port(server))/"
+
+        # No limit (default): the full body decompresses.
+        r = HT.get(base)
+        @test length(r.body) == length(big)
+
+        # Limit below the decompressed size: rejected before the bomb inflates.
+        err = try
+            HT.get(base; max_decompressed_size = 1024)
+            nothing
+        catch e
+            e
+        end
+        @test err isa HTTP.DecompressionLimitError
+        err isa HTTP.DecompressionLimitError && @test err.limit == 1024
+
+        # Limit at/above the decompressed size: succeeds.
+        r2 = HT.get(base; max_decompressed_size = length(big))
+        @test length(r2.body) == length(big)
+
+        # The limit also applies to a caller-owned IO sink.
+        sink = IOBuffer()
+        err2 = try
+            HT.get(base; response_stream = sink, max_decompressed_size = 1024)
+            nothing
+        catch e
+            e
+        end
+        @test err2 isa HTTP.DecompressionLimitError
+    finally
+        HT.forceclose(server)
+    end
+end
