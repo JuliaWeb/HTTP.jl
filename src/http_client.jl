@@ -39,6 +39,9 @@ mutable struct Client{CR}
     cookiejar::Union{Nothing,CookieJar}
     max_redirects::Int
     prefer_http2::Bool
+    h2_initial_window_size::Int
+    h2_connection_window_size::Int
+    h2_max_buffered_bytes::Int
     h2_lock::ReentrantLock
     h2_conns::Dict{String,Vector{H2Connection}}
     default_headers::Headers
@@ -305,6 +308,9 @@ function Client(;
     cookiejar::Union{Nothing,CookieJar}=CookieJar(),
     max_redirects::Integer=10,
     prefer_http2::Bool=true,
+    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
     default_headers=Pair{String,String}[],
     default_query=nothing,
     default_basicauth=nothing,
@@ -315,12 +321,16 @@ function Client(;
     write_idle_timeout::Real=0,
 )
     max_redirects >= 0 || throw(ArgumentError("max_redirects must be >= 0"))
+    _validate_h2_window_config(h2_initial_window_size, h2_connection_window_size, h2_max_buffered_bytes)
     return Client{typeof(check_redirect)}(
         transport,
         check_redirect,
         cookiejar,
         Int(max_redirects),
         prefer_http2,
+        Int(h2_initial_window_size),
+        Int(h2_connection_window_size),
+        Int(h2_max_buffered_bytes),
         ReentrantLock(),
         Dict{String,Vector{H2Connection}}(),
         _normalize_headers_input(default_headers),
@@ -479,6 +489,9 @@ function _acquire_h2_conn!(
                 host_resolver=connect_host_resolver,
                 tls_config=tls_cfg,
                 connect_deadline_ns=connect_deadline_ns,
+                h2_initial_window_size=client.h2_initial_window_size,
+                h2_connection_window_size=client.h2_connection_window_size,
+                h2_max_buffered_bytes=client.h2_max_buffered_bytes,
             )
         elseif plan.mode == _ProxyPlanMode.HTTP_TUNNEL
             proxy = plan.proxy
@@ -486,7 +499,7 @@ function _acquire_h2_conn!(
             tcp = TCP.connect(connect_host_resolver, "tcp", plan.first_hop_address)
             try
                 _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
-                connect_h2!(tcp, address; secure=secure, tls_config=tls_cfg, connect_deadline_ns=connect_deadline_ns)
+                connect_h2!(tcp, address; secure=secure, tls_config=tls_cfg, connect_deadline_ns=connect_deadline_ns, h2_initial_window_size=client.h2_initial_window_size, h2_connection_window_size=client.h2_connection_window_size, h2_max_buffered_bytes=client.h2_max_buffered_bytes)
             catch
                 @try_ignore begin
                     TCP.close(tcp)

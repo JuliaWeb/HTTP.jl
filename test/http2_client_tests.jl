@@ -1581,3 +1581,91 @@ end
         HTTP.forceclose(server)
     end
 end
+
+@testset "HTTP/2 client advertises configured flow-control windows" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    captured = Channel{Vector{HT.AbstractFrame}}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            client_settings = HT.read_frame!(reader)
+            window_update = HT.read_frame!(reader)
+            put!(captured, HT.AbstractFrame[client_settings, window_update])
+            # Send our SETTINGS so the client's connect handshake completes.
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+        catch
+            isready(captured) || put!(captured, HT.AbstractFrame[])
+        end
+        return accepted_conn
+    end)
+    conn = nothing
+    try
+        conn = HT.connect_h2!(
+            address;
+            secure = false,
+            h2_initial_window_size = 1_048_576,
+            h2_connection_window_size = 2_097_152,
+            h2_max_buffered_bytes = 4_194_304,
+        )
+        frames = take!(captured)
+        @test length(frames) == 2
+        settings = frames[1]
+        @test settings isa HT.SettingsFrame
+        @test !(settings::HT.SettingsFrame).ack
+        @test (settings::HT.SettingsFrame).settings ==
+            Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(1_048_576)]
+        wu = frames[2]
+        @test wu isa HT.WindowUpdateFrame
+        @test (wu::HT.WindowUpdateFrame).stream_id == UInt32(0)
+        @test (wu::HT.WindowUpdateFrame).window_size_increment == UInt32(2_097_152 - 65_535)
+        @test conn.max_buffered_bytes == 4_194_304
+    finally
+        conn === nothing || HTTP.@try_ignore close(conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client keeps default flow-control windows byte-for-byte" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    captured = Channel{HT.AbstractFrame}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            client_settings = HT.read_frame!(reader)
+            put!(captured, client_settings)
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+        catch
+        end
+        return accepted_conn
+    end)
+    conn = nothing
+    try
+        conn = HT.connect_h2!(address; secure = false)
+        settings = take!(captured)
+        @test settings isa HT.SettingsFrame
+        # With default windows the client advertises an empty SETTINGS payload and
+        # sends no connection-level WINDOW_UPDATE (the next frame is our SETTINGS).
+        @test isempty((settings::HT.SettingsFrame).settings)
+        @test conn.max_buffered_bytes == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
+    finally
+        conn === nothing || HTTP.@try_ignore close(conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP/2 client flow-control window configuration validation" begin
+    @test_throws ArgumentError HT.Client(; h2_initial_window_size = 0)
+    @test_throws ArgumentError HT.Client(; h2_connection_window_size = Int(0x7fff_ffff) + 1)
+    @test_throws ArgumentError HT.Client(; h2_initial_window_size = 131_072, h2_max_buffered_bytes = 65_536)
+    # Validation runs before any socket work, so an invalid config raises without
+    # attempting to connect.
+    @test_throws ArgumentError HT.connect_h2!("127.0.0.1:1"; h2_initial_window_size = 131_072, h2_max_buffered_bytes = 65_536)
+end

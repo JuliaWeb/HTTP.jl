@@ -53,6 +53,20 @@ timeout configuration. Keep it around for lifecycle operations such as
 Timeout fields are stored in nanoseconds. Use the convenience `listen!` and
 `serve!` keywords to configure request-read, header-read, response-write, and
 idle deadlines without constructing a `Server` manually.
+
+HTTP/2 flow control is configurable through three keywords, all defaulting to the
+protocol defaults so existing behavior is unchanged:
+
+- `h2_initial_window_size` (default 65535): the per-stream receive window the
+  server advertises via `SETTINGS_INITIAL_WINDOW_SIZE`.
+- `h2_connection_window_size` (default 65535): the connection-level receive
+  window. Values above 65535 are applied with an initial `WINDOW_UPDATE`.
+- `h2_max_buffered_bytes` (default 262144): the per-stream receive buffer cap. It
+  must be at least `h2_initial_window_size`.
+
+Raising these windows improves single-stream throughput on links with non-trivial
+latency, where the default 64 KiB window would otherwise cap a transfer at roughly
+`window / RTT`.
 """
 mutable struct Server{F}
     network::String
@@ -64,6 +78,9 @@ mutable struct Server{F}
     write_timeout_ns::Int64
     idle_timeout_ns::Int64
     max_header_bytes::Int
+    h2_initial_window_size::Int
+    h2_connection_window_size::Int
+    h2_max_buffered_bytes::Int
     listenany::Bool
     reuseaddr::Bool
     backlog::Int
@@ -86,6 +103,9 @@ function Server(;
     write_timeout_ns::Integer=Int64(0),
     idle_timeout_ns::Integer=Int64(0),
     max_header_bytes::Integer=1 * 1024 * 1024,
+    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -96,6 +116,7 @@ function Server(;
     idle_timeout_ns >= 0 || throw(ArgumentError("idle_timeout_ns must be >= 0"))
     max_header_bytes > 0 || throw(ArgumentError("max_header_bytes must be > 0"))
     backlog > 0 || throw(ArgumentError("backlog must be > 0"))
+    _validate_h2_window_config(h2_initial_window_size, h2_connection_window_size, h2_max_buffered_bytes)
     return Server{F}(
         String(network),
         String(address),
@@ -106,6 +127,9 @@ function Server(;
         Int64(write_timeout_ns),
         Int64(idle_timeout_ns),
         Int(max_header_bytes),
+        Int(h2_initial_window_size),
+        Int(h2_connection_window_size),
+        Int(h2_max_buffered_bytes),
         listenany,
         reuseaddr,
         Int(backlog),
@@ -1294,6 +1318,9 @@ function listen!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1311,6 +1338,9 @@ function listen!(
         write_timeout_ns=effective_write_timeout_ns,
         idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
+        h2_initial_window_size=h2_initial_window_size,
+        h2_connection_window_size=h2_connection_window_size,
+        h2_max_buffered_bytes=h2_max_buffered_bytes,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1330,6 +1360,9 @@ function listen!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1349,6 +1382,9 @@ function listen!(
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,
+        h2_initial_window_size=h2_initial_window_size,
+        h2_connection_window_size=h2_connection_window_size,
+        h2_max_buffered_bytes=h2_max_buffered_bytes,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1368,6 +1404,9 @@ function listen!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1389,6 +1428,9 @@ function listen!(
         write_timeout_ns=effective_write_timeout_ns,
         idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
+        h2_initial_window_size=h2_initial_window_size,
+        h2_connection_window_size=h2_connection_window_size,
+        h2_max_buffered_bytes=h2_max_buffered_bytes,
         listenany=false,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1445,6 +1487,9 @@ function serve!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1466,6 +1511,9 @@ function serve!(
         write_timeout_ns=effective_write_timeout_ns,
         idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
+        h2_initial_window_size=h2_initial_window_size,
+        h2_connection_window_size=h2_connection_window_size,
+        h2_max_buffered_bytes=h2_max_buffered_bytes,
         listenany=false,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1490,6 +1538,9 @@ function serve!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1516,6 +1567,9 @@ function serve!(
             readtimeout=readtimeout,
             verbose=verbose,
             max_header_bytes=max_header_bytes,
+        h2_initial_window_size=h2_initial_window_size,
+        h2_connection_window_size=h2_connection_window_size,
+        h2_max_buffered_bytes=h2_max_buffered_bytes,
             reuseaddr=reuseaddr,
             backlog=backlog,
         )
@@ -1541,6 +1595,9 @@ function serve!(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1560,6 +1617,9 @@ function serve!(
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,
+        h2_initial_window_size=h2_initial_window_size,
+        h2_connection_window_size=h2_connection_window_size,
+        h2_max_buffered_bytes=h2_max_buffered_bytes,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1585,6 +1645,9 @@ function serve(
     readtimeout=nothing,
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
+    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1603,6 +1666,9 @@ function serve(
         readtimeout=readtimeout,
         verbose=verbose,
         max_header_bytes=max_header_bytes,
+        h2_initial_window_size=h2_initial_window_size,
+        h2_connection_window_size=h2_connection_window_size,
+        h2_max_buffered_bytes=h2_max_buffered_bytes,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,

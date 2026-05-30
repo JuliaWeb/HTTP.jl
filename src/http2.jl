@@ -17,6 +17,34 @@ const FLAG_PADDED = UInt8(0x8)
 const _FLAG_HEADERS_PRIORITY = UInt8(0x20)
 const _H2_MAX_FRAME_SIZE = 16_384
 
+# SETTINGS parameter identifier for the per-stream initial receive window
+# (RFC 7540 §6.5.2). Used when advertising a non-default flow-control window.
+const _H2_SETTINGS_INITIAL_WINDOW_SIZE = UInt16(0x4)
+
+# Protocol-default flow-control window (RFC 7540 §6.9.2) and the default
+# per-stream receive buffer cap used when callers do not override them.
+const _H2_DEFAULT_WINDOW_SIZE = 65_535
+const _H2_DEFAULT_MAX_BUFFERED_BYTES = 256 * 1024
+
+# Validate caller-supplied HTTP/2 flow-control window configuration shared by the
+# server (`Server`) and client (`Client`) constructors. Window values must be in
+# the protocol-legal range, and the per-stream receive buffer must be large
+# enough to hold a full advertised window before the application reads it (a peer
+# may send up to the advertised window before the handler consumes any bytes).
+function _validate_h2_window_config(
+    h2_initial_window_size::Integer,
+    h2_connection_window_size::Integer,
+    h2_max_buffered_bytes::Integer,
+)::Nothing
+    1 <= h2_initial_window_size <= _H2_FLOW_CONTROL_MAX_WINDOW ||
+        throw(ArgumentError("h2_initial_window_size must be in 1..$(_H2_FLOW_CONTROL_MAX_WINDOW)"))
+    1 <= h2_connection_window_size <= _H2_FLOW_CONTROL_MAX_WINDOW ||
+        throw(ArgumentError("h2_connection_window_size must be in 1..$(_H2_FLOW_CONTROL_MAX_WINDOW)"))
+    h2_max_buffered_bytes >= h2_initial_window_size ||
+        throw(ArgumentError("h2_max_buffered_bytes ($h2_max_buffered_bytes) must be >= h2_initial_window_size ($h2_initial_window_size)"))
+    return nothing
+end
+
 """
     FrameHeader
 
