@@ -1076,12 +1076,15 @@ function _status_throws(resp::Response)::Bool
     return resp.status >= 300 && !_is_redirect_status(resp.status)
 end
 
-function _read_all_response_bytes(io::IO)::Vector{UInt8}
+function _read_all_response_bytes(io::IO, limit::Int=0)::Vector{UInt8}
     out = UInt8[]
     buf = Vector{UInt8}(undef, 8192)
+    total = 0
     while true
         n = readbytes!(io, buf, length(buf))
         n == 0 && return out
+        total += n
+        limit > 0 && total > limit && throw(DecompressionLimitError(limit))
         append!(out, @view(buf[1:n]))
     end
 end
@@ -1105,18 +1108,19 @@ function _read_all_response_bytes(body::AbstractBody, content_length_hint::Int64
     end
 end
 
-function _copy_response_bytes!(dest::IO, io::IO)::Int64
+function _copy_response_bytes!(dest::IO, io::IO, limit::Int=0)::Int64
     buf = Vector{UInt8}(undef, 8192)
     total = Int64(0)
     while true
         n = readbytes!(io, buf, length(buf))
         n == 0 && return total
         total += n
+        limit > 0 && total > limit && throw(DecompressionLimitError(limit))
         write(dest, view(buf, 1:n))
     end
 end
 
-function _copy_response_bytes!(dest::AbstractVector{UInt8}, io::IO)::Int64
+function _copy_response_bytes!(dest::AbstractVector{UInt8}, io::IO, limit::Int=0)::Int64
     buf = Vector{UInt8}(undef, 8192)
     total = 0
     capacity = length(dest)
@@ -1124,6 +1128,7 @@ function _copy_response_bytes!(dest::AbstractVector{UInt8}, io::IO)::Int64
         n = readbytes!(io, buf, length(buf))
         n == 0 && break
         needed = total + n
+        limit > 0 && needed > limit && throw(DecompressionLimitError(limit))
         needed <= capacity || throw(ArgumentError("Unable to grow response stream IOBuffer $(capacity) large enough for response body size: $(needed)"))
         copyto!(dest, total + 1, buf, 1, n)
         total = needed
@@ -1358,68 +1363,19 @@ function Base.showerror(io::IO, err::DecompressionLimitError)
     return nothing
 end
 
-# IO wrapper that caps how many decompressed bytes may be read from `inner`,
-# throwing `DecompressionLimitError` once the running total exceeds `limit`.
-# Response bodies are read via chunked `readbytes!`, so the limit fires after at
-# most one extra chunk and memory stays bounded near `limit`.
-mutable struct _DecompressLimitReader{S<:IO} <: IO
-    inner::S
-    limit::Int
-    seen::Int
-end
-_DecompressLimitReader(inner::IO, limit::Integer) = _DecompressLimitReader{typeof(inner)}(inner, Int(limit), 0)
-
-@inline function _count_decompressed!(r::_DecompressLimitReader, n::Integer)::Nothing
-    r.seen += Int(n)
-    r.seen > r.limit && throw(DecompressionLimitError(r.limit))
-    return nothing
-end
-
-function Base.readbytes!(r::_DecompressLimitReader, dst::AbstractVector{UInt8}, nb::Integer=length(dst))::Int
-    n = readbytes!(r.inner, dst, nb)
-    _count_decompressed!(r, n)
-    return n
-end
-
-function Base.readavailable(r::_DecompressLimitReader)::Vector{UInt8}
-    chunk = readavailable(r.inner)
-    _count_decompressed!(r, length(chunk))
-    return chunk
-end
-
-function Base.read(r::_DecompressLimitReader)::Vector{UInt8}
-    out = UInt8[]
-    buf = Vector{UInt8}(undef, 65536)
-    while true
-        n = readbytes!(r.inner, buf, length(buf))
-        n == 0 && break
-        _count_decompressed!(r, n)
-        append!(out, @view(buf[1:n]))
-    end
-    return out
-end
-
-Base.eof(r::_DecompressLimitReader)::Bool = eof(r.inner)
-Base.bytesavailable(r::_DecompressLimitReader)::Int = bytesavailable(r.inner)
-Base.isopen(r::_DecompressLimitReader)::Bool = isopen(r.inner)
-Base.close(r::_DecompressLimitReader) = close(r.inner)
-
-function _response_body_reader(incoming::_IncomingResponse, decompress::Union{Nothing,Bool}, max_decompressed_size::Int=0)::Tuple{IO,Union{Nothing,Task}}
+function _response_body_reader(incoming::_IncomingResponse, decompress::Union{Nothing,Bool})::Tuple{IO,Union{Nothing,Task}}
     raw_stream = _BodyIO(incoming.rawbody)
     encoding = _response_content_encoding(incoming.head.headers, decompress)
-    decompressor = if encoding == :gzip
-        CodecZlib.GzipDecompressorStream(raw_stream)
+    if encoding == :gzip
+        return CodecZlib.GzipDecompressorStream(raw_stream), nothing
     elseif encoding == :deflate
-        CodecZlib.ZlibDecompressorStream(raw_stream)
-    else
-        return raw_stream, nothing
+        return CodecZlib.ZlibDecompressorStream(raw_stream), nothing
     end
-    reader = max_decompressed_size > 0 ? _DecompressLimitReader(decompressor, max_decompressed_size) : decompressor
-    return reader, nothing
+    return raw_stream, nothing
 end
 
-function _with_response_reader(f::F, incoming::_IncomingResponse, decompress::Union{Nothing,Bool}, max_decompressed_size::Int=0) where {F}
-    reader, _ = _response_body_reader(incoming, decompress, max_decompressed_size)
+function _with_response_reader(f::F, incoming::_IncomingResponse, decompress::Union{Nothing,Bool}) where {F}
+    reader, _ = _response_body_reader(incoming, decompress)
     try
         return f(reader)
     finally
@@ -1464,16 +1420,16 @@ function _consume_incoming_response!(
             rethrow()
         end
     end
-    return _with_response_reader(incoming, decompress, max_decompressed_size) do reader
+    return _with_response_reader(incoming, decompress) do reader
         if sink === nothing
-            body = _read_all_response_bytes(reader)
+            body = _read_all_response_bytes(reader, max_decompressed_size)
             return body, Int64(length(body))
         end
         if sink isa IO
-            n = _copy_response_bytes!(sink::IO, reader)
+            n = _copy_response_bytes!(sink::IO, reader, max_decompressed_size)
             return nothing, n
         end
-        n = _copy_response_bytes!(sink::AbstractVector{UInt8}, reader)
+        n = _copy_response_bytes!(sink::AbstractVector{UInt8}, reader, max_decompressed_size)
         if sink isa Vector{UInt8}
             return sink::Vector{UInt8}, n
         end
