@@ -213,3 +213,23 @@ end
     stream = HT.Stream(bad)
     @test_throws W.WebSocketError W.upgrade(ws -> nothing, stream)
 end
+
+@testset "HTTP.WebSockets.isready reports buffered messages" begin
+    server = W.listen!("127.0.0.1", 0) do ws
+        msg = W.receive(ws)
+        W.send(ws, msg)
+    end
+    try
+        address = W.server_addr(server)
+        W.open("ws://$address/isready") do ws
+            @test !isready(ws)                                    # nothing buffered yet
+            W.send(ws, "ping")
+            @test timedwait(() -> isready(ws), 5.0) != :timed_out # echo arrives in the channel
+            @test isready(ws)                                     # a message is ready; receive won't block
+            @test W.receive(ws) == "ping"
+            @test !isready(ws)                                    # drained
+        end
+    finally
+        close(server)
+    end
+end

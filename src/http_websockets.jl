@@ -11,7 +11,7 @@ with [`WebSocket`](@ref) values directly rather than the lower-level
 """
 module WebSockets
 
-import Base: close, iterate
+import Base: close, iterate, isready
 
 import ..Headers
 import ..HTTPError
@@ -515,6 +515,19 @@ function receive(ws::WebSocket)
     end
     return take!(ws.readchannel)
 end
+
+"""
+    isready(ws) -> Bool
+
+Return `true` when at least one complete message is buffered and can be read with
+[`receive`](@ref) without blocking, and `false` otherwise. Useful for polling a
+WebSocket for incoming messages without committing to a blocking `receive`.
+
+A `false` result does not imply the connection is closed — more messages may
+still arrive. Conversely, messages buffered before the connection closed remain
+`isready` and are returned by `receive` before it throws.
+"""
+isready(ws::WebSocket)::Bool = isready(ws.readchannel)
 
 function Base.iterate(ws::WebSocket, st=nothing)
     # Note: do not early-return on isclosed(ws) here: messages may still be
