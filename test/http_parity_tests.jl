@@ -24,6 +24,14 @@ function _wait_task_parity!(task::Task; timeout_s::Float64 = 5.0)
     return nothing
 end
 
+function _write_response_parity!(conn::NC.Conn, response::HT.Response)
+    io = IOBuffer()
+    HT.write_response!(io, response)
+    write(conn, take!(io))
+    HTTP.@try_ignore closewrite(conn)
+    return nothing
+end
+
 @testset "HTTP parity framing guards" begin
     raw_204 = "HTTP/1.1 204 No Content\r\nContent-Length: 10\r\n\r\nignored"
     response_204 = HT._read_response(IOBuffer(codeunits(raw_204)))
@@ -64,10 +72,7 @@ end
             HT.setheader(headers, "Location", "/next")
             HT.setheader(headers, "Connection", "close")
             resp1 = HT.Response(307, HT.EmptyBody(); reason = "Temporary Redirect", headers = headers, content_length = 0, close = true, request = req1)
-            io1 = IOBuffer()
-            HT.write_response!(io1, resp1)
-            bytes1 = take!(io1)
-            write(conn1, bytes1)
+            _write_response_parity!(conn1, resp1)
         finally
             HTTP.@try_ignore NC.close(conn1)
         end
@@ -76,10 +81,7 @@ end
             req2 = HT.read_request(HT._ConnReader(conn2))
             push!(seen_methods, req2.method)
             resp2 = HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, request = req2)
-            io2 = IOBuffer()
-            HT.write_response!(io2, resp2)
-            bytes2 = take!(io2)
-            write(conn2, bytes2)
+            _write_response_parity!(conn2, resp2)
         finally
             HTTP.@try_ignore NC.close(conn2)
         end
@@ -112,9 +114,7 @@ end
             HT.setheader(headers, "Location", "/next")
             HT.setheader(headers, "Connection", "close")
             resp = HT.Response(307, HT.BytesBody(UInt8[0x72]); reason = "Temporary Redirect", headers = headers, content_length = 1, close = true, request = req)
-            io = IOBuffer()
-            HT.write_response!(io, resp)
-            write(conn, take!(io))
+            _write_response_parity!(conn, resp)
         finally
             HTTP.@try_ignore NC.close(conn)
         end
@@ -178,9 +178,7 @@ end
             HT.setheader(headers, "Location", "/next")
             HT.setheader(headers, "Connection", "close")
             resp1 = HT.Response(307, HT.EmptyBody(); reason = "Temporary Redirect", headers = headers, content_length = 0, close = true, request = req1)
-            io1 = IOBuffer()
-            HT.write_response!(io1, resp1)
-            write(conn1, take!(io1))
+            _write_response_parity!(conn1, resp1)
         finally
             HTTP.@try_ignore NC.close(conn1)
         end
@@ -190,9 +188,7 @@ end
             push!(seen_bodies, String(_read_all_parity(req2.body)))
             push!(seen_content_types, HT.header(req2.headers, "Content-Type"))
             resp2 = HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, request = req2)
-            io2 = IOBuffer()
-            HT.write_response!(io2, resp2)
-            write(conn2, take!(io2))
+            _write_response_parity!(conn2, resp2)
         finally
             HTTP.@try_ignore NC.close(conn2)
         end
@@ -223,9 +219,7 @@ end
             HT.setheader(headers, "Location", "/next")
             HT.setheader(headers, "Connection", "close")
             resp = HT.Response(307, HT.BytesBody(UInt8[0x72]); reason = "Temporary Redirect", headers = headers, content_length = 1, close = true, request = req)
-            io = IOBuffer()
-            HT.write_response!(io, resp)
-            write(conn, take!(io))
+            _write_response_parity!(conn, resp)
         finally
             HTTP.@try_ignore NC.close(conn)
         end
