@@ -107,7 +107,6 @@ mutable struct _H2ServerBody <: AbstractBody
     @atomic closed::Bool
 end
 
-const _H2_FLOW_CONTROL_MAX_WINDOW = Int64(0x7fff_ffff)
 const _H2_ERROR_PROTOCOL = UInt32(0x1)
 const _H2_ERROR_INTERNAL = UInt32(0x2)
 const _H2_ERROR_CANCEL = UInt32(0x8)
@@ -1562,13 +1561,13 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
         (client_settings::SettingsFrame).ack && throw(ProtocolError("initial h2 SETTINGS frame must not be ACK"))
         _apply_h2_peer_settings!(send_state, write_lock, (client_settings::SettingsFrame).settings)
         initial_settings = Pair{UInt16,UInt32}[]
-        if server.h2_initial_window_size != _H2_DEFAULT_WINDOW_SIZE
-            push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(server.h2_initial_window_size))
+        if server.http2_settings.initial_window_size != _H2_DEFAULT_WINDOW_SIZE
+            push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(server.http2_settings.initial_window_size))
         end
         _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(false, initial_settings), _server_write_deadline_ns(server))
         _write_frame_h2_server_threadsafe!(write_lock, conn, SettingsFrame(true, Pair{UInt16,UInt32}[]), _server_write_deadline_ns(server))
-        if server.h2_connection_window_size > _H2_DEFAULT_WINDOW_SIZE
-            _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), UInt32(server.h2_connection_window_size - _H2_DEFAULT_WINDOW_SIZE)), _server_write_deadline_ns(server))
+        if server.http2_settings.connection_window_size > _H2_DEFAULT_WINDOW_SIZE
+            _write_frame_h2_server_threadsafe!(write_lock, conn, WindowUpdateFrame(UInt32(0), UInt32(server.http2_settings.connection_window_size - _H2_DEFAULT_WINDOW_SIZE)), _server_write_deadline_ns(server))
         end
         _clear_deadlines!(conn)
         _set_conn_shutdown_hook!(tracked, () -> _request_h2_conn_shutdown!(conn, write_lock, conn_control))
@@ -1649,7 +1648,7 @@ function _serve_h2_conn!(server::Server, tracked::_ServerConn, reader_source)::N
                     if haskey(states, hf.stream_id)
                         states[hf.stream_id]
                     else
-                        created = _H2ServerStreamState(hf.stream_id, server.h2_max_buffered_bytes)
+                        created = _H2ServerStreamState(hf.stream_id, _h2_buffered_bytes(server.http2_settings))
                         states[hf.stream_id] = created
                         _register_h2_send_window!(send_state, hf.stream_id)
                         created

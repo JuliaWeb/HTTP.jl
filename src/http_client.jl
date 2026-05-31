@@ -16,6 +16,8 @@ Keyword arguments:
 - `cookiejar`: cookie jar implementation, or `nothing` to disable cookies
 - `max_redirects`: maximum redirect hops before failing
 - `prefer_http2`: whether secure requests should try HTTP/2 when available
+- `http2_settings`: an [`HTTP2Settings`](@ref) configuring HTTP/2 receive
+  flow-control windows for connections this client opens
 - `default_headers`: headers applied to every request issued through this
   client; per-call `headers` are appended on top, and per-call values for the
   same name take precedence
@@ -39,9 +41,7 @@ mutable struct Client{CR}
     cookiejar::Union{Nothing,CookieJar}
     max_redirects::Int
     prefer_http2::Bool
-    h2_initial_window_size::Int
-    h2_connection_window_size::Int
-    h2_max_buffered_bytes::Int
+    http2_settings::HTTP2Settings
     h2_lock::ReentrantLock
     h2_conns::Dict{String,Vector{H2Connection}}
     default_headers::Headers
@@ -308,9 +308,7 @@ function Client(;
     cookiejar::Union{Nothing,CookieJar}=CookieJar(),
     max_redirects::Integer=10,
     prefer_http2::Bool=true,
-    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
-    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
-    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
     default_headers=Pair{String,String}[],
     default_query=nothing,
     default_basicauth=nothing,
@@ -321,16 +319,13 @@ function Client(;
     write_idle_timeout::Real=0,
 )
     max_redirects >= 0 || throw(ArgumentError("max_redirects must be >= 0"))
-    _validate_h2_window_config(h2_initial_window_size, h2_connection_window_size, h2_max_buffered_bytes)
     return Client{typeof(check_redirect)}(
         transport,
         check_redirect,
         cookiejar,
         Int(max_redirects),
         prefer_http2,
-        Int(h2_initial_window_size),
-        Int(h2_connection_window_size),
-        Int(h2_max_buffered_bytes),
+        http2_settings,
         ReentrantLock(),
         Dict{String,Vector{H2Connection}}(),
         _normalize_headers_input(default_headers),
@@ -489,9 +484,7 @@ function _acquire_h2_conn!(
                 host_resolver=connect_host_resolver,
                 tls_config=tls_cfg,
                 connect_deadline_ns=connect_deadline_ns,
-                h2_initial_window_size=client.h2_initial_window_size,
-                h2_connection_window_size=client.h2_connection_window_size,
-                h2_max_buffered_bytes=client.h2_max_buffered_bytes,
+                http2_settings=client.http2_settings,
             )
         elseif plan.mode == _ProxyPlanMode.HTTP_TUNNEL
             proxy = plan.proxy
@@ -499,7 +492,7 @@ function _acquire_h2_conn!(
             tcp = TCP.connect(connect_host_resolver, "tcp", plan.first_hop_address)
             try
                 _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
-                connect_h2!(tcp, address; secure=secure, tls_config=tls_cfg, connect_deadline_ns=connect_deadline_ns, h2_initial_window_size=client.h2_initial_window_size, h2_connection_window_size=client.h2_connection_window_size, h2_max_buffered_bytes=client.h2_max_buffered_bytes)
+                connect_h2!(tcp, address; secure=secure, tls_config=tls_cfg, connect_deadline_ns=connect_deadline_ns, http2_settings=client.http2_settings)
             catch
                 @try_ignore begin
                     TCP.close(tcp)

@@ -937,9 +937,7 @@ function _connect_h2_from_tcp!(
     secure::Bool=false,
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
-    h2_initial_window_size::Int=_H2_DEFAULT_WINDOW_SIZE,
-    h2_connection_window_size::Int=_H2_DEFAULT_WINDOW_SIZE,
-    h2_max_buffered_bytes::Int=_H2_DEFAULT_MAX_BUFFERED_BYTES,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
 )::H2Connection
     tls_conn = nothing
     try
@@ -984,19 +982,19 @@ function _connect_h2_from_tcp!(
             typemax(UInt32),
             true,
             _H2_DEFAULT_MAX_HEADER_BLOCK_BYTES,
-            h2_max_buffered_bytes,
+            _h2_buffered_bytes(http2_settings),
             0,
             false,
         )
         _verify_h2_alpn!(conn)
         _write_all_h2!(conn, _H2_PREFACE)
         initial_settings = Pair{UInt16,UInt32}[]
-        if h2_initial_window_size != _H2_DEFAULT_WINDOW_SIZE
-            push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(h2_initial_window_size))
+        if http2_settings.initial_window_size != _H2_DEFAULT_WINDOW_SIZE
+            push!(initial_settings, _H2_SETTINGS_INITIAL_WINDOW_SIZE => UInt32(http2_settings.initial_window_size))
         end
         _write_frame_h2_threadsafe!(conn, SettingsFrame(false, initial_settings))
-        if h2_connection_window_size > _H2_DEFAULT_WINDOW_SIZE
-            _write_frame_h2_threadsafe!(conn, WindowUpdateFrame(UInt32(0), UInt32(h2_connection_window_size - _H2_DEFAULT_WINDOW_SIZE)))
+        if http2_settings.connection_window_size > _H2_DEFAULT_WINDOW_SIZE
+            _write_frame_h2_threadsafe!(conn, WindowUpdateFrame(UInt32(0), UInt32(http2_settings.connection_window_size - _H2_DEFAULT_WINDOW_SIZE)))
         end
         _read_settings_until_ready!(conn)
         if tls_conn !== nothing
@@ -1024,12 +1022,10 @@ Establish an explicit HTTP/2 client connection.
 This bypasses the higher-level `Client`/`Transport` pool and returns a reusable
 `H2Connection` for applications that need direct session ownership.
 
-HTTP/2 receive flow control is configurable with `h2_initial_window_size`
-(per-stream receive window advertised via `SETTINGS_INITIAL_WINDOW_SIZE`),
-`h2_connection_window_size` (connection-level receive window, raised with an
-initial `WINDOW_UPDATE` when above 65535), and `h2_max_buffered_bytes` (per-stream
-receive buffer cap, which must be at least `h2_initial_window_size`). All three
-default to the protocol defaults, leaving existing behavior unchanged.
+HTTP/2 receive flow control is configurable with `http2_settings`, an
+[`HTTP2Settings`](@ref) carrying the per-stream and connection-level receive
+windows. It defaults to the protocol defaults, leaving existing behavior
+unchanged.
 """
 function connect_h2!(
     tcp::TCP.Conn,
@@ -1037,12 +1033,9 @@ function connect_h2!(
     secure::Bool=false,
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
-    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
-    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
-    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
 )::H2Connection
-    _validate_h2_window_config(h2_initial_window_size, h2_connection_window_size, h2_max_buffered_bytes)
-    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, Int(h2_initial_window_size), Int(h2_connection_window_size), Int(h2_max_buffered_bytes))
+    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, http2_settings)
 end
 
 function connect_h2!(
@@ -1051,13 +1044,10 @@ function connect_h2!(
     host_resolver::HostResolvers.HostResolver=HostResolvers.HostResolver(),
     tls_config::Union{Nothing,TLS.Config}=nothing,
     connect_deadline_ns::Int64=Int64(0),
-    h2_initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
-    h2_connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
-    h2_max_buffered_bytes::Integer=_H2_DEFAULT_MAX_BUFFERED_BYTES,
+    http2_settings::HTTP2Settings=HTTP2Settings(),
 )::H2Connection
-    _validate_h2_window_config(h2_initial_window_size, h2_connection_window_size, h2_max_buffered_bytes)
     tcp = TCP.connect(host_resolver, "tcp", address)
-    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, Int(h2_initial_window_size), Int(h2_connection_window_size), Int(h2_max_buffered_bytes))
+    return _connect_h2_from_tcp!(tcp, String(address), secure, tls_config, connect_deadline_ns, http2_settings)
 end
 
 """

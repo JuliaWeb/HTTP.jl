@@ -1697,9 +1697,10 @@ end
     server = HT.serve!(
         "127.0.0.1", 0;
         listenany = true,
-        h2_initial_window_size = 1_048_576,
-        h2_connection_window_size = 2_097_152,
-        h2_max_buffered_bytes = 4_194_304,
+        http2_settings = HT.HTTP2Settings(
+            initial_window_size = 1_048_576,
+            connection_window_size = 2_097_152,
+        ),
     ) do request
         _ = request
         return HT.Response(200, HT.BytesBody(UInt8[]); content_length = 0, proto_major = 2, proto_minor = 0)
@@ -1761,13 +1762,16 @@ end
 end
 
 @testset "HTTP/2 server flow-control window configuration validation" begin
-    @test_throws ArgumentError HT.Server(; handler = identity, h2_initial_window_size = 0)
-    @test_throws ArgumentError HT.Server(; handler = identity, h2_connection_window_size = Int(0x7fff_ffff) + 1)
-    @test_throws ArgumentError HT.Server(; handler = identity, h2_initial_window_size = 131_072, h2_max_buffered_bytes = 65_536)
+    # Invalid windows are rejected at HTTP2Settings construction.
+    @test_throws ArgumentError HT.HTTP2Settings(initial_window_size = 0)
+    @test_throws ArgumentError HT.HTTP2Settings(connection_window_size = Int(0x7fff_ffff) + 1)
+    # The connection-level window cannot be advertised below the protocol default.
+    @test_throws ArgumentError HT.HTTP2Settings(connection_window_size = 65_534)
     @test HT.Server(;
         handler = identity,
-        h2_initial_window_size = 1_048_576,
-        h2_connection_window_size = 1_048_576,
-        h2_max_buffered_bytes = 1_048_576,
+        http2_settings = HT.HTTP2Settings(
+            initial_window_size = 1_048_576,
+            connection_window_size = 1_048_576,
+        ),
     ) isa HT.Server
 end

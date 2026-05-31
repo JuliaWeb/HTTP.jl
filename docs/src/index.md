@@ -35,7 +35,7 @@ String(resp.body)
 ## What You Get
 
 - Familiar top-level request helpers: `HTTP.get`, `HTTP.post`, `HTTP.request`, `HTTP.open`
-- Explicit client controls: `HTTP.Client`, `HTTP.Transport`, `HTTP.RetryBucket`, `HTTP.ProxyConfig`
+- Explicit client controls: `HTTP.Client`, `HTTP.Transport`, `HTTP.RetryBucket`, `HTTP.ProxyConfig`, `HTTP.HTTP2Settings`
 - Rich client timeout controls: `connect_timeout`, `request_timeout`, `response_header_timeout`, `read_idle_timeout`, and `write_idle_timeout`
 - Server entrypoints for request/response and stream-level handlers: `HTTP.serve!`, `HTTP.listen!`, `HTTP.streamhandler`
 - Built-in HTTP/2 support in the normal client and server workflows

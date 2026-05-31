@@ -1607,9 +1607,10 @@ end
         conn = HT.connect_h2!(
             address;
             secure = false,
-            h2_initial_window_size = 1_048_576,
-            h2_connection_window_size = 2_097_152,
-            h2_max_buffered_bytes = 4_194_304,
+            http2_settings = HT.HTTP2Settings(
+                initial_window_size = 1_048_576,
+                connection_window_size = 2_097_152,
+            ),
         )
         frames = take!(captured)
         @test length(frames) == 2
@@ -1622,7 +1623,9 @@ end
         @test wu isa HT.WindowUpdateFrame
         @test (wu::HT.WindowUpdateFrame).stream_id == UInt32(0)
         @test (wu::HT.WindowUpdateFrame).window_size_increment == UInt32(2_097_152 - 65_535)
-        @test conn.max_buffered_bytes == 4_194_304
+        # The per-stream receive buffer cap is derived from the window: it grows to
+        # the initial window when that exceeds the default cap.
+        @test conn.max_buffered_bytes == 1_048_576
     finally
         conn === nothing || HTTP.@try_ignore close(conn)
         HTTP.@try_ignore NC.close(listener)
@@ -1662,10 +1665,22 @@ end
 end
 
 @testset "HTTP/2 client flow-control window configuration validation" begin
-    @test_throws ArgumentError HT.Client(; h2_initial_window_size = 0)
-    @test_throws ArgumentError HT.Client(; h2_connection_window_size = Int(0x7fff_ffff) + 1)
-    @test_throws ArgumentError HT.Client(; h2_initial_window_size = 131_072, h2_max_buffered_bytes = 65_536)
-    # Validation runs before any socket work, so an invalid config raises without
-    # attempting to connect.
-    @test_throws ArgumentError HT.connect_h2!("127.0.0.1:1"; h2_initial_window_size = 131_072, h2_max_buffered_bytes = 65_536)
+    # Invalid windows are rejected at HTTP2Settings construction, before any
+    # Client or socket work.
+    @test_throws ArgumentError HT.HTTP2Settings(initial_window_size = 0)
+    @test_throws ArgumentError HT.HTTP2Settings(initial_window_size = Int(0x7fff_ffff) + 1)
+    @test_throws ArgumentError HT.HTTP2Settings(connection_window_size = Int(0x7fff_ffff) + 1)
+    # The per-stream window may be set below the protocol default for tighter
+    # backpressure, but the connection-level window cannot be advertised below it.
+    @test HT.HTTP2Settings(initial_window_size = 1_024) isa HT.HTTP2Settings
+    @test_throws ArgumentError HT.HTTP2Settings(connection_window_size = 65_534)
+end
+
+@testset "HTTP/2 client derives the receive buffer cap from the window" begin
+    # The per-stream buffer cap is the larger of the configured window and the
+    # default cap, so a small window keeps the default and a large window grows it.
+    @test HT._h2_buffered_bytes(HT.HTTP2Settings()) == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
+    @test HT._h2_buffered_bytes(HT.HTTP2Settings(initial_window_size = 16_384)) ==
+        HT._H2_DEFAULT_MAX_BUFFERED_BYTES
+    @test HT._h2_buffered_bytes(HT.HTTP2Settings(initial_window_size = 1_048_576)) == 1_048_576
 end
