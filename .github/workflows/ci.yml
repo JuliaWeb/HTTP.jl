@@ -44,6 +44,9 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
+      - name: Use Reseau Windows IOCP experiment
+        if: matrix.os == 'windows-latest'
+        run: julia --project=. --startup-file=no --history-file=no -e 'using Pkg; Pkg.develop(PackageSpec(url="https://github.com/JuliaServices/Reseau.jl", rev="codex/windows-overlapped-tcp-io")); Pkg.instantiate()'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
