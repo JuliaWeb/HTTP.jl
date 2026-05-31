@@ -48,7 +48,7 @@ jobs:
       - uses: julia-actions/cache@v2
       - name: Use Reseau Windows IOCP experiment
         if: matrix.os == 'windows-latest'
-        run: julia --project=. --startup-file=no --history-file=no -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]="0"; using Pkg; Pkg.add(PackageSpec(name="Reseau", url="https://github.com/JuliaServices/Reseau.jl", rev="674122b3487b7c7ffd845288110d90d957eee6ae")); Pkg.instantiate()'
+        run: julia --project=. --startup-file=no --history-file=no -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]="0"; using Pkg; Pkg.add(PackageSpec(name="Reseau", url="https://github.com/JuliaServices/Reseau.jl", rev="365d67ffb2727da1aaef3e2304070b5a6764ca6c")); Pkg.instantiate()'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
