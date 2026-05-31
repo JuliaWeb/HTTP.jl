@@ -1687,7 +1687,9 @@ function _roundtrip_incoming!(
             if _request_write_done(write_state)
                 wait(writer_task::Task)
                 err = writer_err[]
-                err === nothing || throw(err::Exception)
+                if err !== nothing && !_request_write_head_written(write_state)
+                    throw(err::Exception)
+                end
             end
         else
             try
