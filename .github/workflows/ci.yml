@@ -22,8 +22,6 @@ jobs:
     timeout-minutes: 25
     # Prerelease Julia is informational; don't let it block merges.
     continue-on-error: ${{ matrix.version == 'pre' }}
-    env:
-      RESEAU_IOCP_TRACE_ERRORS: "1"
     strategy:
       fail-fast: false
       matrix:

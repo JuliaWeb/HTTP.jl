@@ -58,6 +58,7 @@ end
         conn1 = NC.accept(listener)
         try
             req1 = HT.read_request(HT._ConnReader(conn1))
+            _ = _read_all_parity(req1.body)
             push!(seen_methods, req1.method)
             headers = HT.Headers()
             HT.setheader(headers, "Location", "/next")
