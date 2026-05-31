@@ -898,18 +898,40 @@ end
 end
 
 @testset "HTTP server stream handler emits chunked trailers" begin
+    events_lock = ReentrantLock()
+    events = String[]
+    function mark_chunked_trailer_event!(event::String)
+        lock(events_lock)
+        try
+            push!(events, event)
+        finally
+            unlock(events_lock)
+        end
+        @info "chunked trailers stream event" event
+        return nothing
+    end
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            mark_chunked_trailer_event!("handler-enter")
             _ = HT.startread(stream)
+            mark_chunked_trailer_event!("after-startread")
             _ = read(stream)
+            mark_chunked_trailer_event!("after-read")
             HT.setstatus(stream, 200)
             HT.startwrite(stream)
+            mark_chunked_trailer_event!("after-startwrite")
             write(stream, "hello")
+            mark_chunked_trailer_event!("after-write")
             HT.addtrailer(stream, "X-Trailer" => "ok")
+            mark_chunked_trailer_event!("after-addtrailer")
             return nothing
         end
     address = HT.server_addr(server)
     try
         raw = _raw_http_request(HT.port(server), "GET / HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        observed_events = lock(events_lock) do
+            copy(events)
+        end
+        @info "chunked trailers raw response" raw = repr(raw) observed_events
         lower_raw = lowercase(raw)
         @test occursin("transfer-encoding: chunked", lower_raw)
         @test occursin("hello", raw)
