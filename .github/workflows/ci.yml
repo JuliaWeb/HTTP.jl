@@ -20,6 +20,8 @@ jobs:
     # Fail fast on a hung job instead of running to GitHub's 6h default. Clean
     # jobs finish in <=11m; 25m leaves headroom for cache-cold precompilation.
     timeout-minutes: 25
+    env:
+      RESEAU_IOCP_TRACE_ERRORS: '1'
     # Prerelease Julia is informational; don't let it block merges.
     continue-on-error: ${{ matrix.version == 'pre' }}
     strategy:
