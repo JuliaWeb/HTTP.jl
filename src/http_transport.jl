@@ -1663,6 +1663,7 @@ function _roundtrip_incoming!(
                     )
                 catch err
                     writer_err[] = err isa Exception ? err : ProtocolError("request upload failed")
+                    _request_write_head_written(write_state) && return nothing
                     _request_write_allows_close(write_state) || return nothing
                     @try_ignore begin
                         _close_conn!(conn)
@@ -1713,6 +1714,10 @@ function _roundtrip_incoming!(
         end
         _set_conn_read_deadline!(conn, request_deadline)
         early_final = false
+        upload_err = has_request_body ? writer_err[] : nothing
+        if upload_err !== nothing && _request_upload_abort_error(upload_err::Exception)
+            early_final = true
+        end
         if _request_write_should_wait_for_continue(write_state) && _request_write_continue_state(write_state::_RequestWriteState) == _REQUEST_WRITE_CONTINUE_PENDING
             _request_write_mark_continue_suppressed!(write_state::_RequestWriteState)
             early_final = true
