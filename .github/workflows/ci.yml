@@ -20,8 +20,6 @@ jobs:
     # Fail fast on a hung job instead of running to GitHub's 6h default. Clean
     # jobs finish in <=11m; 25m leaves headroom for cache-cold precompilation.
     timeout-minutes: 25
-    env:
-      RESEAU_IOCP_TRACE_ERRORS: '1'
     # Prerelease Julia is informational; don't let it block merges.
     continue-on-error: ${{ matrix.version == 'pre' }}
     strategy:
@@ -48,7 +46,7 @@ jobs:
       - uses: julia-actions/cache@v2
       - name: Use Reseau Windows IOCP experiment
         if: matrix.os == 'windows-latest'
-        run: julia --project=. --startup-file=no --history-file=no -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]="0"; using Pkg; Pkg.add(PackageSpec(name="Reseau", url="https://github.com/JuliaServices/Reseau.jl", rev="1a8e677fce94177b0b6b4294614742bdbc997bb7")); Pkg.instantiate()'
+        run: julia --project=. --startup-file=no --history-file=no -e 'ENV["JULIA_PKG_PRECOMPILE_AUTO"]="0"; using Pkg; Pkg.add(PackageSpec(name="Reseau", url="https://github.com/JuliaServices/Reseau.jl", rev="a44a716ef0d38faa82a77adb0a282b329cd11b2b")); Pkg.instantiate()'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
