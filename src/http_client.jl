@@ -1076,12 +1076,15 @@ function _status_throws(resp::Response)::Bool
     return resp.status >= 300 && !_is_redirect_status(resp.status)
 end
 
-function _read_all_response_bytes(io::IO)::Vector{UInt8}
+function _read_all_response_bytes(io::IO, limit::Int=0)::Vector{UInt8}
     out = UInt8[]
     buf = Vector{UInt8}(undef, 8192)
+    total = 0
     while true
         n = readbytes!(io, buf, length(buf))
         n == 0 && return out
+        total += n
+        limit > 0 && total > limit && throw(DecompressionLimitError(limit))
         append!(out, @view(buf[1:n]))
     end
 end
@@ -1105,18 +1108,19 @@ function _read_all_response_bytes(body::AbstractBody, content_length_hint::Int64
     end
 end
 
-function _copy_response_bytes!(dest::IO, io::IO)::Int64
+function _copy_response_bytes!(dest::IO, io::IO, limit::Int=0)::Int64
     buf = Vector{UInt8}(undef, 8192)
     total = Int64(0)
     while true
         n = readbytes!(io, buf, length(buf))
         n == 0 && return total
         total += n
+        limit > 0 && total > limit && throw(DecompressionLimitError(limit))
         write(dest, view(buf, 1:n))
     end
 end
 
-function _copy_response_bytes!(dest::AbstractVector{UInt8}, io::IO)::Int64
+function _copy_response_bytes!(dest::AbstractVector{UInt8}, io::IO, limit::Int=0)::Int64
     buf = Vector{UInt8}(undef, 8192)
     total = 0
     capacity = length(dest)
@@ -1124,6 +1128,7 @@ function _copy_response_bytes!(dest::AbstractVector{UInt8}, io::IO)::Int64
         n = readbytes!(io, buf, length(buf))
         n == 0 && break
         needed = total + n
+        limit > 0 && needed > limit && throw(DecompressionLimitError(limit))
         needed <= capacity || throw(ArgumentError("Unable to grow response stream IOBuffer $(capacity) large enough for response body size: $(needed)"))
         copyto!(dest, total + 1, buf, 1, n)
         total = needed
@@ -1342,6 +1347,22 @@ function Base.close(io::_BodyIO)
     return nothing
 end
 
+"""
+    DecompressionLimitError(limit)
+
+Thrown when an automatically decompressed response body exceeds the
+`max_decompressed_size` byte limit passed to the request. Guards against
+decompression bombs — small compressed payloads that inflate to exhaust memory.
+"""
+struct DecompressionLimitError <: Exception
+    limit::Int
+end
+
+function Base.showerror(io::IO, err::DecompressionLimitError)
+    print(io, "DecompressionLimitError: decompressed response body exceeded max_decompressed_size = ", err.limit, " bytes")
+    return nothing
+end
+
 function _response_body_reader(incoming::_IncomingResponse, decompress::Union{Nothing,Bool})::Tuple{IO,Union{Nothing,Task}}
     raw_stream = _BodyIO(incoming.rawbody)
     encoding = _response_content_encoding(incoming.head.headers, decompress)
@@ -1375,6 +1396,7 @@ function _consume_incoming_response!(
     incoming::_IncomingResponse,
     sink,
     decompress::Union{Nothing,Bool},
+    max_decompressed_size::Int=0,
 )::Tuple{Any,Int64}
     if _incoming_response_has_no_body(incoming) || !_should_decompress_response(incoming.head.headers, decompress)
         try
@@ -1400,14 +1422,14 @@ function _consume_incoming_response!(
     end
     return _with_response_reader(incoming, decompress) do reader
         if sink === nothing
-            body = _read_all_response_bytes(reader)
+            body = _read_all_response_bytes(reader, max_decompressed_size)
             return body, Int64(length(body))
         end
         if sink isa IO
-            n = _copy_response_bytes!(sink::IO, reader)
+            n = _copy_response_bytes!(sink::IO, reader, max_decompressed_size)
             return nothing, n
         end
-        n = _copy_response_bytes!(sink::AbstractVector{UInt8}, reader)
+        n = _copy_response_bytes!(sink::AbstractVector{UInt8}, reader, max_decompressed_size)
         if sink isa Vector{UInt8}
             return sink::Vector{UInt8}, n
         end
@@ -1716,6 +1738,7 @@ function request(
     query=nothing,
     response_stream=nothing,
     decompress::Union{Nothing,Bool}=nothing,
+    max_decompressed_size::Integer=0,
     sse_callback=nothing,
     client::Union{Nothing,Client}=nothing,
     context::Union{Nothing,RequestContext}=nothing,
@@ -1841,7 +1864,7 @@ function request(
                     return sse_response
                 end
             end
-            final_body, final_length = _consume_incoming_response!(incoming, sink, decompress)
+            final_body, final_length = _consume_incoming_response!(incoming, sink, decompress, Int(max_decompressed_size))
             response = _finalize_request_response(incoming, final_body, final_length, resolved_request, parsed.url)
             final_response = response
             status_exception && _status_throws(response) && throw(StatusError(response))
@@ -1910,6 +1933,7 @@ Keyword arguments:
 - `query`: optional query string or key/value collection appended to the URL
 - `response_stream`: optional sink `IO` or byte buffer written with the final response body
 - `decompress`: `nothing`/`true` auto-decompress gzip and deflate responses, `false` leaves wire bytes untouched
+- `max_decompressed_size`: cap, in bytes, on an auto-decompressed response body; reading past it throws `DecompressionLimitError`, guarding against decompression bombs. `0` (default) disables the limit
 - `sse_callback`: callback receiving `(event)` or `(stream, event)` for
   successful SSE responses
 - `trace`: optional callback receiving request lifecycle events
