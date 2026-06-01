@@ -427,6 +427,7 @@ function _acquire_h2_conn!(
     secure::Bool,
     request::Union{Nothing,Request}=nothing,
     server_name::Union{Nothing,String}=nothing,
+    allow_h1_alpn::Bool=false,
 )::H2Connection
     key = _h2_key(plan)
     base_host_resolver = client.transport.host_resolver
@@ -465,6 +466,7 @@ function _acquire_h2_conn!(
                 address,
                 server_name,
                 tls_handshake_timeout_ns,
+                allow_h1_alpn,
             )
         else
             nothing
@@ -727,7 +729,15 @@ function _do_incoming!(
                 if use_h2
                     conn = nothing
                     try
-                        conn = _acquire_h2_conn!(client, proxy_plan, current_address, current_secure, send_request, current_server_name)
+                        conn = _acquire_h2_conn!(
+                            client,
+                            proxy_plan,
+                            current_address,
+                            current_secure,
+                            send_request,
+                            current_server_name,
+                            protocol == :auto,
+                        )
                         _h2_roundtrip_incoming!(conn::H2Connection, send_request; pending_slot_claimed=true)
                     catch err
                         _drop_h2_conn!(client, proxy_plan, conn)

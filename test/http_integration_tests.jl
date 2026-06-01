@@ -86,7 +86,6 @@ end
             tls_config = TL.Config(
                 verify_peer = false,
                 server_name = "localhost",
-                alpn_protocols = ["h2", "http/1.1"],
             ),
             max_idle_per_host = 4,
             max_idle_total = 4,
