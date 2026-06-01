@@ -872,9 +872,11 @@ function _make_tls_config_for_h2(
     address::String,
     server_name::Union{Nothing,String}=nothing,
     handshake_timeout_ns::Int64=Int64(0),
+    allow_h1_alpn::Bool=false,
 )::TLS.Config
     host, _ = HostResolvers.split_host_port(address)
     effective_server_name = server_name === nothing ? host : server_name
+    default_protocols = allow_h1_alpn ? ["h2", "http/1.1"] : ["h2"]
     if config === nothing
         return TLS.Config(
             effective_server_name,
@@ -885,7 +887,7 @@ function _make_tls_config_for_h2(
             nothing,
             nothing,
             nothing,
-            ["h2"],
+            default_protocols,
             UInt16[],
             handshake_timeout_ns,
             TLS.TLS1_2_VERSION,
@@ -897,9 +899,9 @@ function _make_tls_config_for_h2(
     # If the user supplied an explicit ALPN list, honor it verbatim. Forcing
     # "h2" into a user-restricted list would let the connection negotiate h2
     # against an h1+h2 server even when the caller asked us to pin h1 only.
-    # An empty list still defaults to ["h2"] because the only reason to call
-    # this helper is to attempt an h2 handshake.
-    protocols = isempty(config.alpn_protocols) ? ["h2"] : copy(config.alpn_protocols)
+    # An empty list uses the caller's h2-attempt default: high-level :auto also
+    # offers h1 so TLS can complete and fall back when the peer declines h2.
+    protocols = isempty(config.alpn_protocols) ? default_protocols : copy(config.alpn_protocols)
     effective_handshake_timeout_ns = _min_nonzero_ns(config.handshake_timeout_ns, handshake_timeout_ns)
     effective_server_name = if server_name === nothing
         config.server_name === nothing ? host : config.server_name::String

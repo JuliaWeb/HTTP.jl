@@ -59,6 +59,7 @@ end
         try
             req1 = HT.read_request(HT._ConnReader(conn1))
             push!(seen_methods, req1.method)
+            _ = _read_all_parity(req1.body)
             headers = HT.Headers()
             HT.setheader(headers, "Location", "/next")
             HT.setheader(headers, "Connection", "close")
@@ -74,6 +75,7 @@ end
         try
             req2 = HT.read_request(HT._ConnReader(conn2))
             push!(seen_methods, req2.method)
+            _ = _read_all_parity(req2.body)
             resp2 = HT.Response(200, HT.BytesBody(UInt8[0x6f, 0x6b]); content_length = 2, request = req2)
             io2 = IOBuffer()
             HT.write_response!(io2, resp2)

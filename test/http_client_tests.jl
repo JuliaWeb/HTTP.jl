@@ -339,6 +339,7 @@ end
             req1 = HT.read_request(HT._ConnReader(conn1))
             push!(seen_methods, req1.method)
             push!(seen_targets, req1.target)
+            _ = _read_all_body_bytes_client(req1.body)
             headers1 = HT.Headers()
             HT.setheader(headers1, "Location", "/final")
             HT.setheader(headers1, "Connection", "close")
