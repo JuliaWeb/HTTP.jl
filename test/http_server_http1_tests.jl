@@ -52,7 +52,13 @@ end
 # indefinitely. Wrap the whole exchange in `_run_with_timeout`, a task-level
 # watchdog that does not depend on socket deadlines, so a stuck read fails the
 # test in seconds instead of hanging the job until CI's wall-clock limit.
-function _raw_http_request(port::Integer, request::AbstractString; settle_s::Float64 = 0.5, close_write::Bool = true)::String
+function _raw_http_request(
+    port::Integer,
+    request::AbstractString;
+    settle_s::Float64 = 0.5,
+    close_write::Bool = true,
+    wait_for_first_byte::Bool = false,
+)::String
     return _run_with_timeout(; timeout_s = max(8.0, settle_s + 4.0), label = "raw http request (port $(port))") do
         sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
         try
@@ -66,6 +72,7 @@ function _raw_http_request(port::Integer, request::AbstractString; settle_s::Flo
                 sock;
                 timeout_s = max(2.0, settle_s + 1.0),
                 quiet_timeout_s = min(0.25, max(0.05, settle_s)),
+                wait_for_first_byte = wait_for_first_byte,
             )
         finally
             NC.close(sock)
@@ -110,7 +117,12 @@ function _read_until_deadline(conn::NC.Conn; timeout_s::Float64 = 1.0)::String
     return String(out)
 end
 
-function _read_until_quiet(conn::NC.Conn; timeout_s::Float64 = 1.0, quiet_timeout_s::Float64 = 0.1)::String
+function _read_until_quiet(
+    conn::NC.Conn;
+    timeout_s::Float64 = 1.0,
+    quiet_timeout_s::Float64 = 0.1,
+    wait_for_first_byte::Bool = false,
+)::String
     # Task-level watchdog. The set_read_deadline! below is the intended timeout
     # mechanism, but on Windows a re-armed read deadline can intermittently fail
     # to wake a parked `readavailable`, stranding this loop indefinitely (Reseau
@@ -131,7 +143,13 @@ function _read_until_quiet(conn::NC.Conn; timeout_s::Float64 = 1.0, quiet_timeou
             try
                 chunk = readavailable(conn)
                 n = length(chunk)
-                n == 0 && break
+                if n == 0
+                    # Some transports can report an empty read before the server
+                    # has produced the response bytes this probe is asserting on.
+                    (saw_bytes || !wait_for_first_byte) && break
+                    yield()
+                    continue
+                end
                 n > length(buf) && resize!(buf, n)
                 copyto!(buf, 1, chunk, 1, n)
                 append!(out, @view(buf[1:n]))
@@ -909,7 +927,12 @@ end
         end
     address = HT.server_addr(server)
     try
-        raw = _raw_http_request(HT.port(server), "GET / HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        raw = _raw_http_request(
+            HT.port(server),
+            "GET / HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n";
+            settle_s = 0.3,
+            wait_for_first_byte = true,
+        )
         lower_raw = lowercase(raw)
         @test occursin("transfer-encoding: chunked", lower_raw)
         @test occursin("hello", raw)
