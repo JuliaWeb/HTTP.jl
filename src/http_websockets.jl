@@ -312,7 +312,10 @@ function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
     end
     op = frame.opcode
     fin = frame.fin
-    frame_payload = copy(frame.payload)
+    # `frame.payload` is already a fresh owned Vector (the decoder builds each
+    # frame with `copy(dec.payload_buf)`) and the frame is discarded right after
+    # this call, so we can take it directly instead of copying a second time.
+    frame_payload = frame.payload
     if op == UInt8(WsOpcode.PING) || op == UInt8(WsOpcode.PONG)
         return nothing
     end
@@ -385,11 +388,12 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
     buf = Vector{UInt8}(undef, buffer_bytes)
     try
         while true
-            chunk = readavailable(ws.stream)
-            n = length(chunk)
+            # Read directly into the reusable `buf`. `readavailable` would
+            # allocate a fresh Base.SZ_UNBUFFERED_IO (64KB) buffer on every
+            # frame read (16× the bytes/RTT vs HTTP 1.x), driving GC pressure;
+            # `readbytes!(...; all=false)` does one socket read into `buf`.
+            n = readbytes!(ws.stream, buf, length(buf); all=false)
             n == 0 && break
-            n > length(buf) && resize!(buf, n)
-            copyto!(buf, 1, chunk, 1, n)
             ws_on_incoming_data!(frame -> _process_incoming_frame!(ws, frame), ws.codec, @view buf[1:n])
             _flush_ws_output!(ws)
             ws.readclosed && break
@@ -425,7 +429,12 @@ end
 
 function _start_read_task!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     ws.readtask !== nothing && return nothing
-    ws.readtask = Threads.@spawn _ws_read_loop!(ws, buffer_bytes)
+    # Sticky (`@async`, not `Threads.@spawn`): pin the reader to a home thread.
+    # The poller wakes it via `schedule(task)`; a migratable reader would be
+    # woken into the global pool, forcing a cold parked-worker wake whose cost
+    # scales with nthreads (catastrophic at -t 32). Requires Reseau's `pollwait!`
+    # to preserve task stickiness (it must not reset `task.sticky = false`).
+    ws.readtask = @async _ws_read_loop!(ws, buffer_bytes)
     return nothing
 end
 
