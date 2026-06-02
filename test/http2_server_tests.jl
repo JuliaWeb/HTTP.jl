@@ -196,6 +196,107 @@ end
     end
 end
 
+@testset "HTTP/2 server writes unread BytesBody response bytes directly" begin
+    payload = collect(codeunits("abcdef"))
+    returned_body = Ref{Union{Nothing,HT.BytesBody}}(nothing)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        body = HT.BytesBody(copy(payload))
+        scratch = Vector{UInt8}(undef, 2)
+        @test HT.body_read!(body, scratch) == 2
+        @test scratch == UInt8[0x61, 0x62]
+        returned_body[] = body
+        return HT.Response(200, body; content_length = 4, proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        req = HT.Request("GET", "/bytesbody"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        res = HT.h2_roundtrip!(conn, req)
+        @test res.status == 200
+        @test String(_read_all_h2_server(res.body)) == "cdef"
+        @test returned_body[] !== nothing
+        returned = returned_body[]::HT.BytesBody
+        @test HT.body_closed(returned)
+        @test HT.body_read!(returned, Vector{UInt8}(undef, 1)) == 0
+    finally
+        close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server handles empty and closed BytesBody responses" begin
+    closed_body = Ref{Union{Nothing,HT.BytesBody}}(nothing)
+    empty_body = Ref{Union{Nothing,HT.BytesBody}}(nothing)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        if request.target == "/closed"
+            body = HT.BytesBody(UInt8[0x78])
+            HT.body_close!(body)
+            closed_body[] = body
+            return HT.Response(200, body; content_length = 0, proto_major = 2, proto_minor = 0)
+        end
+        body = HT.BytesBody(UInt8[])
+        empty_body[] = body
+        return HT.Response(200, body; content_length = 0, proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        for target in ("/closed", "/empty")
+            req = HT.Request("GET", target; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            res = HT.h2_roundtrip!(conn, req)
+            @test res.status == 200
+            @test isempty(_read_all_h2_server(res.body))
+        end
+        @test closed_body[] !== nothing
+        @test empty_body[] !== nothing
+        @test HT.body_closed(closed_body[]::HT.BytesBody)
+        @test HT.body_closed(empty_body[]::HT.BytesBody)
+    finally
+        close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server writes vector responses with trailers" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        trailers = HT.Headers()
+        HT.setheader(trailers, "X-Trailer", "done")
+        return HT.Response(200, UInt8[0x6f, 0x6b]; trailers = trailers, content_length = 2, proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn, reader = _open_raw_h2_server_conn(address)
+    encoder = HT.Encoder()
+    decoder = HT.Decoder()
+    try
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/vector-trailers")
+        headers_frame, header_block, _ = _read_h2_server_header_block!(conn, reader)
+        decoded_headers = HT.decode_header_block(decoder, header_block)
+        @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
+        @test !headers_frame.end_stream
+
+        data_frame = _read_h2_server_frame!(conn, reader)
+        while data_frame isa HT.WindowUpdateFrame || data_frame isa HT.SettingsFrame || data_frame isa HT.PingFrame
+            data_frame = _read_h2_server_frame!(conn, reader)
+        end
+        @test data_frame isa HT.DataFrame
+        @test String((data_frame::HT.DataFrame).data) == "ok"
+        @test !(data_frame::HT.DataFrame).end_stream
+
+        trailer_frame, trailer_block, _ = _read_h2_server_header_block!(conn, reader)
+        decoded_trailers = HT.decode_header_block(decoder, trailer_block)
+        @test any(field -> field.name == "x-trailer" && field.value == "done", decoded_trailers)
+        @test trailer_frame.end_stream
+    finally
+        HTTP.@try_ignore NC.close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server servecontent supports ranges and conditionals" begin
     payload = collect(codeunits("abcdef"))
     modtime = Dates.DateTime(2024, 1, 2, 3, 4, 5)
