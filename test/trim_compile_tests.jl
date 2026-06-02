@@ -5,7 +5,14 @@ const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
 const _JULIAC_ENTRYPOINT_EXPR = "using JuliaC; if isdefined(JuliaC, :main); JuliaC.main(ARGS); else JuliaC._main_cli(ARGS); end"
 
 function _trim_compile_timeout_s()::Float64
-    default = Sys.iswindows() ? "1200.0" : "120.0"
+    default = if Sys.iswindows()
+        "1200.0"
+    elseif (VERSION.major, VERSION.minor) >= (1, 13)
+        # Julia pre can spend most of the old budget precompiling before JuliaC compiles.
+        "240.0"
+    else
+        "120.0"
+    end
     return parse(Float64, get(ENV, "HTTP_TRIM_COMPILE_TIMEOUT_S", default))
 end
 
