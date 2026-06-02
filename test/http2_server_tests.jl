@@ -226,6 +226,40 @@ end
     end
 end
 
+@testset "HTTP/2 server handles empty and closed BytesBody responses" begin
+    closed_body = Ref{Union{Nothing,HT.BytesBody}}(nothing)
+    empty_body = Ref{Union{Nothing,HT.BytesBody}}(nothing)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        if request.target == "/closed"
+            body = HT.BytesBody(UInt8[0x78])
+            HT.body_close!(body)
+            closed_body[] = body
+            return HT.Response(200, body; content_length = 0, proto_major = 2, proto_minor = 0)
+        end
+        body = HT.BytesBody(UInt8[])
+        empty_body[] = body
+        return HT.Response(200, body; content_length = 0, proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        for target in ("/closed", "/empty")
+            req = HT.Request("GET", target; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+            res = HT.h2_roundtrip!(conn, req)
+            @test res.status == 200
+            @test isempty(_read_all_h2_server(res.body))
+        end
+        @test closed_body[] !== nothing
+        @test empty_body[] !== nothing
+        @test HT.body_closed(closed_body[]::HT.BytesBody)
+        @test HT.body_closed(empty_body[]::HT.BytesBody)
+    finally
+        close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server servecontent supports ranges and conditionals" begin
     payload = collect(codeunits("abcdef"))
     modtime = Dates.DateTime(2024, 1, 2, 3, 4, 5)
