@@ -196,6 +196,36 @@ end
     end
 end
 
+@testset "HTTP/2 server writes unread BytesBody response bytes directly" begin
+    payload = collect(codeunits("abcdef"))
+    returned_body = Ref{Union{Nothing,HT.BytesBody}}(nothing)
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        body = HT.BytesBody(copy(payload))
+        scratch = Vector{UInt8}(undef, 2)
+        @test HT.body_read!(body, scratch) == 2
+        @test scratch == UInt8[0x61, 0x62]
+        returned_body[] = body
+        return HT.Response(200, body; content_length = 4, proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn = HT.connect_h2!(address; secure = false)
+    try
+        req = HT.Request("GET", "/bytesbody"; host = address, body = HT.EmptyBody(), content_length = 0, proto_major = 2, proto_minor = 0)
+        res = HT.h2_roundtrip!(conn, req)
+        @test res.status == 200
+        @test String(_read_all_h2_server(res.body)) == "cdef"
+        @test returned_body[] !== nothing
+        returned = returned_body[]::HT.BytesBody
+        @test HT.body_closed(returned)
+        @test HT.body_read!(returned, Vector{UInt8}(undef, 1)) == 0
+    finally
+        close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server servecontent supports ranges and conditionals" begin
     payload = collect(codeunits("abcdef"))
     modtime = Dates.DateTime(2024, 1, 2, 3, 4, 5)

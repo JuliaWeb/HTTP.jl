@@ -1034,6 +1034,27 @@ function _write_response_body_h2_server!(
 )::Nothing
     body = response.body
     body isa EmptyBody && return nothing
+    if body isa BytesBody
+        bytes_body = body::BytesBody
+        try
+            if body_closed(bytes_body)
+                end_stream && _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
+                return nothing
+            end
+            first = bytes_body.next_index
+            last = length(bytes_body.data)
+            if first <= last
+                data = first == 1 ? bytes_body.data : @view(bytes_body.data[first:last])
+                _write_data_frames_h2_server!(conn, write_lock, send_state, stream_id, data; end_stream=end_stream, write_deadline_ns=write_deadline_ns)
+                bytes_body.next_index = last + 1
+            elseif end_stream
+                _write_frame_h2_server_threadsafe!(write_lock, conn, DataFrame(stream_id, true, UInt8[]), write_deadline_ns)
+            end
+        finally
+            body_close!(bytes_body)
+        end
+        return nothing
+    end
     if body isa AbstractString
         # Zero-copy fast path: alias the String's codeunits (immutable) instead
         # of allocating a fresh Vector{UInt8} of the same length.
