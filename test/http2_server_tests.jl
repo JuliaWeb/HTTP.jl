@@ -260,6 +260,43 @@ end
     end
 end
 
+@testset "HTTP/2 server writes vector responses with trailers" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        trailers = HT.Headers()
+        HT.setheader(trailers, "X-Trailer", "done")
+        return HT.Response(200, UInt8[0x6f, 0x6b]; trailers = trailers, content_length = 2, proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn, reader = _open_raw_h2_server_conn(address)
+    encoder = HT.Encoder()
+    decoder = HT.Decoder()
+    try
+        _write_h2_server_request_headers!(conn, encoder, UInt32(1), address, "/vector-trailers")
+        headers_frame, header_block, _ = _read_h2_server_header_block!(conn, reader)
+        decoded_headers = HT.decode_header_block(decoder, header_block)
+        @test any(field -> field.name == ":status" && field.value == "200", decoded_headers)
+        @test !headers_frame.end_stream
+
+        data_frame = _read_h2_server_frame!(conn, reader)
+        while data_frame isa HT.WindowUpdateFrame || data_frame isa HT.SettingsFrame || data_frame isa HT.PingFrame
+            data_frame = _read_h2_server_frame!(conn, reader)
+        end
+        @test data_frame isa HT.DataFrame
+        @test String((data_frame::HT.DataFrame).data) == "ok"
+        @test !(data_frame::HT.DataFrame).end_stream
+
+        trailer_frame, trailer_block, _ = _read_h2_server_header_block!(conn, reader)
+        decoded_trailers = HT.decode_header_block(decoder, trailer_block)
+        @test any(field -> field.name == "x-trailer" && field.value == "done", decoded_trailers)
+        @test trailer_frame.end_stream
+    finally
+        HTTP.@try_ignore NC.close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
 @testset "HTTP/2 server servecontent supports ranges and conditionals" begin
     payload = collect(codeunits("abcdef"))
     modtime = Dates.DateTime(2024, 1, 2, 3, 4, 5)
