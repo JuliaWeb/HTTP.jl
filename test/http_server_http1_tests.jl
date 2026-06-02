@@ -649,17 +649,17 @@ end
         end
     address = HT.server_addr(server)
     try
-        head_raw = _raw_http_request(HT.port(server), "HEAD /head HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        head_raw = _raw_http_request(HT.port(server), "HEAD /head HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3, wait_for_first_byte = true)
         @test occursin("HTTP/1.1 200 OK", head_raw)
         @test !occursin("oops", head_raw)
         @test !occursin("transfer-encoding: chunked", lowercase(head_raw))
 
-        no_content_raw = _raw_http_request(HT.port(server), "GET /nocontent HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        no_content_raw = _raw_http_request(HT.port(server), "GET /nocontent HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3, wait_for_first_byte = true)
         @test occursin("HTTP/1.1 204 No Content", no_content_raw)
         @test !occursin("oops", no_content_raw)
         @test !occursin("transfer-encoding: chunked", lowercase(no_content_raw))
 
-        not_modified_raw = _raw_http_request(HT.port(server), "GET /notmodified HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        not_modified_raw = _raw_http_request(HT.port(server), "GET /notmodified HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3, wait_for_first_byte = true)
         @test occursin("HTTP/1.1 304 Not Modified", not_modified_raw)
         @test !occursin("oops", not_modified_raw)
         @test !occursin("transfer-encoding: chunked", lowercase(not_modified_raw))
