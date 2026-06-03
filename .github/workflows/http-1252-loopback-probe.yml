@@ -1,0 +1,229 @@
+name: HTTP 1252 loopback probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/http-1252-precompile-probe
+
+jobs:
+  loopback:
+    name: Loopback / Julia ${{ matrix.julia-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - windows-latest
+        julia-version:
+          - '1.10.11'
+          - '1.11.9'
+          - '1.12.6'
+
+    env:
+      JULIA_NUM_THREADS: "1"
+      JULIA_PKG_PRECOMPILE_AUTO: "0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+
+      - name: Run same-process loopback probes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir repro
+          cd repro
+          cat > loopback_probe.jl <<'JL'
+          using Pkg
+          using InteractiveUtils
+
+          Pkg.activate(".")
+          Pkg.add([
+              Pkg.PackageSpec(name="HTTP", version="2.0.0"),
+              Pkg.PackageSpec(name="Reseau", version="1.1.4"),
+              Pkg.PackageSpec(name="Preferences"),
+          ])
+
+          using Preferences
+          set_preferences!("HTTP", "precompile_workload" => false; force=true)
+          Pkg.precompile()
+
+          using HTTP
+          using Reseau
+          using Reseau: TCP
+          using Reseau.IOPoll
+
+          versioninfo()
+          println("Sys.CPU_NAME=", Sys.CPU_NAME)
+          println("Threads.nthreads()=", Threads.nthreads())
+          Pkg.status(["HTTP", "Reseau"])
+
+          deadline_ns(seconds) = Int64(time_ns()) + Int64(round(Int, seconds * 1.0e9))
+
+          function wait_task_done!(task::Task, label::AbstractString, seconds::Real)
+              status = Base.timedwait(() -> istaskdone(task), seconds; pollint=0.01)
+              println(label, " task wait status=", status, " task=", task)
+              status == :ok || error(label * " task did not finish")
+              wait(task)
+              return nothing
+          end
+
+          function raw_tcp_probe()
+              println("BEGIN raw_tcp_probe")
+              listener = TCP.listen("tcp", "127.0.0.1:0")
+              TCP.set_deadline!(listener, deadline_ns(5))
+              addr = string(TCP.addr(listener))
+              println("raw listener addr=", addr)
+              server_task = Threads.@spawn begin
+                  conn = TCP.accept(listener)
+                  try
+                      TCP.set_deadline!(conn, deadline_ns(5))
+                      buf = Vector{UInt8}(undef, 4)
+                      n = readbytes!(conn, buf, 4)
+                      println("raw server read n=", n, " data=", String(buf[1:n]))
+                      write(conn, collect(codeunits("pong")))
+                  finally
+                      try
+                          close(conn)
+                      catch err
+                          println("raw server close error=", repr(err))
+                      end
+                  end
+              end
+              client = TCP.connect("tcp", addr; timeout_ns=Int64(2_000_000_000))
+              try
+                  TCP.set_deadline!(client, deadline_ns(5))
+                  write(client, collect(codeunits("ping")))
+                  buf = Vector{UInt8}(undef, 4)
+                  n = readbytes!(client, buf, 4)
+                  println("raw client read n=", n, " data=", String(buf[1:n]))
+                  @assert String(buf[1:n]) == "pong"
+              finally
+                  try
+                      close(client)
+                  catch err
+                      println("raw client close error=", repr(err))
+                  end
+                  try
+                      close(listener)
+                  catch err
+                      println("raw listener close error=", repr(err))
+                  end
+              end
+              wait_task_done!(server_task, "raw server", 6)
+              println("END raw_tcp_probe")
+              return nothing
+          end
+
+          function close_http_server!(server, label)
+              close_task = Threads.@spawn HTTP.forceclose(server)
+              status = Base.timedwait(() -> istaskdone(close_task), 6.0; pollint=0.01)
+              println(label, " forceclose status=", status, " task=", close_task)
+              status == :ok || error(label * " forceclose did not finish")
+              wait(close_task)
+              return nothing
+          end
+
+          function http_probe(label::AbstractString; protocol::Symbol=:auto, pause::Bool=false)
+              println("BEGIN http_probe label=", label, " protocol=", protocol, " pause=", pause)
+              hits = Threads.Atomic{Int}(0)
+              server = HTTP.serve!("127.0.0.1", 0; listenany=true) do req
+                  Threads.atomic_add!(hits, 1)
+                  println("handler label=", label, " target=", req.target, " task=", current_task())
+                  return HTTP.Response(200, "pong")
+              end
+              try
+                  addr = HTTP.server_addr(server)
+                  println("http server label=", label, " addr=", addr, " serve_task=", server.serve_task,
+                      " done=", istaskdone(server.serve_task))
+                  pause && sleep(0.05)
+                  t0 = time()
+                  response = HTTP.request(
+                      "GET",
+                      "http://$(addr)/ping";
+                      connect_timeout=2.0,
+                      request_timeout=4.0,
+                      response_header_timeout=4.0,
+                      read_idle_timeout=4.0,
+                      retry=false,
+                      protocol=protocol,
+                  )
+                  elapsed = time() - t0
+                  body = String(response.body)
+                  println("http response label=", label, " elapsed=", elapsed, " status=", response.status,
+                      " body=", body, " hits=", hits[])
+                  @assert response.status == 200
+                  @assert body == "pong"
+                  @assert hits[] == 1
+              catch err
+                  println("http probe failed label=", label, " hits=", hits[],
+                      " serve_task=", server.serve_task,
+                      " done=", istaskdone(server.serve_task),
+                      " failed=", istaskfailed(server.serve_task))
+                  showerror(stdout, err, catch_backtrace())
+                  println()
+                  rethrow()
+              finally
+                  close_http_server!(server, label)
+              end
+              println("END http_probe label=", label)
+              return nothing
+          end
+
+          raw_tcp_probe()
+          http_probe("auto-immediate"; protocol=:auto)
+          http_probe("h1-immediate"; protocol=:h1)
+          http_probe("h1-paused"; protocol=:h1, pause=true)
+
+          IOPoll.shutdown!()
+          println("loopback probes complete")
+          JL
+          julia --project=. loopback_probe.jl
+
+  precompile:
+    name: Precompile / Julia ${{ matrix.julia-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - windows-latest
+        julia-version:
+          - '1.11.9'
+          - '1.12.6'
+
+    env:
+      JULIA_NUM_THREADS: "1"
+      JULIA_PKG_PRECOMPILE_AUTO: "0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+
+      - name: Run full HTTP precompile workload
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir repro
+          cd repro
+          julia --project=. -e '
+              using Pkg
+              Pkg.add([
+                  Pkg.PackageSpec(name="HTTP", version="2.0.0"),
+                  Pkg.PackageSpec(name="Reseau", version="1.1.4"),
+              ])
+              Pkg.status(["HTTP", "Reseau"])
+          '
+          julia --project=. -e 'using Pkg; Pkg.precompile()'

@@ -2,9 +2,6 @@ name: HTTP 1252 precompile probe
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - codex/http-1252-precompile-probe
 
 jobs:
   precompile:
