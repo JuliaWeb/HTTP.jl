@@ -1,4 +1,5 @@
 using PrecompileTools: @setup_workload, @compile_workload
+using Preferences: load_preference
 
 # Shared high-level workload used by package precompilation.
 
@@ -313,7 +314,7 @@ end
 function _run_precompile_workload!()::Nothing
     task = Threads.@spawn _run_precompile_workload_inner!()
     try
-        status = IOPoll.timedwait(() -> istaskdone(task), 20.0; pollint = 0.01)
+        status = Base.timedwait(() -> istaskdone(task), 20.0; pollint = 0.01)
         if status == :timed_out
             @try_ignore begin
                 IOPoll.shutdown!()
@@ -321,7 +322,7 @@ function _run_precompile_workload!()::Nothing
             @try_ignore begin
                 Base.throwto(task, InterruptException())
             end
-            _ = IOPoll.timedwait(() -> istaskdone(task), 2.0; pollint = 0.01)
+            _ = Base.timedwait(() -> istaskdone(task), 2.0; pollint = 0.01)
             error("HTTP precompile workload timed out")
         end
         fetch(task)
@@ -335,6 +336,10 @@ end
 
 function _precompile_workload_enabled()::Bool
     Base.JLOptions().code_coverage == 0 || return false
+    # See JuliaWeb/HTTP.jl#1252: on Linux Julia 1.11+, the live precompile
+    # workload can hang in the Reseau/epoll path, so keep it opt-in there.
+    default_enabled = !(Sys.islinux() && VERSION >= v"1.11")
+    load_preference(@__MODULE__, "precompile_workload", default_enabled) || return false
     try
         return !isempty(HostResolvers.resolve_tcp_addrs("tcp", "localhost:0"))
     catch
