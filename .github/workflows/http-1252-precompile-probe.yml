@@ -35,7 +35,7 @@ jobs:
       - name: Show platform
         run: |
           uname -a
-          julia -e 'versioninfo()'
+          julia -e 'using InteractiveUtils; versioninfo()'
 
       - name: Instantiate clean repro project
         env:
