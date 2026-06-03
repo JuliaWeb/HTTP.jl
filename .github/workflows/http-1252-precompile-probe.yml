@@ -1,0 +1,85 @@
+name: HTTP 1252 precompile probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/http-1252-precompile-probe
+
+jobs:
+  precompile:
+    name: Julia ${{ matrix.julia-version }} / ${{ matrix.os }} / workload=${{ matrix.workload }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+        julia-version:
+          - '1.10.11'
+          - '1.11.9'
+          - '1.12.6'
+        workload:
+          - enabled
+          - disabled
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+
+      - name: Show platform
+        run: |
+          uname -a
+          julia -e 'versioninfo()'
+
+      - name: Instantiate clean repro project
+        env:
+          JULIA_PKG_PRECOMPILE_AUTO: "0"
+          HTTP1252_WORKLOAD: ${{ matrix.workload }}
+        run: |
+          set -euxo pipefail
+          mkdir repro
+          cd repro
+          julia --project=. -e '
+            using Pkg
+            Pkg.add(Pkg.PackageSpec(name="HTTP", version="2.0.0"))
+            Pkg.add(Pkg.PackageSpec(name="Reseau", version="1.1.4"))
+            if get(ENV, "HTTP1252_WORKLOAD", "enabled") == "disabled"
+                Pkg.add(Pkg.PackageSpec(name="Preferences"))
+                using Preferences
+                set_preferences!("HTTP", "precompile_workload" => false; force=true)
+            end
+            Pkg.status()
+          '
+
+      - name: Precompile with interrupt diagnostics
+        run: |
+          set -euxo pipefail
+          cd repro
+          cat > run_precompile.jl <<'JL'
+          using Pkg
+          Pkg.precompile()
+          JL
+          julia --project=. run_precompile.jl &
+          pid=$!
+          deadline=$((SECONDS + 300))
+          while kill -0 "$pid" 2>/dev/null; do
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                  echo "::warning::Pkg.precompile still running after 300s; sending SIGINT for stack diagnostics"
+                  kill -INT "$pid" || true
+                  sleep 20
+                  if kill -0 "$pid" 2>/dev/null; then
+                      echo "::warning::Pkg.precompile still running after SIGINT; sending SIGTERM"
+                      kill -TERM "$pid" || true
+                  fi
+                  wait "$pid"
+                  exit $?
+              fi
+              sleep 5
+          done
+          wait "$pid"
