@@ -47,9 +47,9 @@ jobs:
           Pkg.activate(".")
           Pkg.add([
               Pkg.PackageSpec(name="HTTP", version="2.0.0"),
-              Pkg.PackageSpec(name="Reseau", version="1.1.4"),
               Pkg.PackageSpec(name="Preferences"),
           ])
+          Pkg.add(Pkg.PackageSpec(url="https://github.com/JuliaServices/Reseau.jl", rev="codex/shutdown-wakes-timers"))
 
           using Preferences
           set_preferences!("HTTP", "precompile_workload" => false; force=true)
@@ -64,6 +64,8 @@ jobs:
           println("Sys.CPU_NAME=", Sys.CPU_NAME)
           println("Threads.nthreads()=", Threads.nthreads())
           Pkg.status(["HTTP", "Reseau"])
+
+          const HTTP_PROBE_FAILURES = String[]
 
           deadline_ns(seconds) = Int64(time_ns()) + Int64(round(Int, seconds * 1.0e9))
 
@@ -131,8 +133,9 @@ jobs:
               return nothing
           end
 
-          function http_probe(label::AbstractString; protocol::Symbol=:auto, pause::Bool=false)
-              println("BEGIN http_probe label=", label, " protocol=", protocol, " pause=", pause)
+          function http_probe(label::AbstractString; protocol::Symbol=:auto, pause::Bool=false, request_timeout::Real=4.0, allow_failure::Bool=false)
+              println("BEGIN http_probe label=", label, " protocol=", protocol, " pause=", pause,
+                  " request_timeout=", request_timeout, " allow_failure=", allow_failure)
               hits = Threads.Atomic{Int}(0)
               server = HTTP.serve!("127.0.0.1", 0; listenany=true) do req
                   Threads.atomic_add!(hits, 1)
@@ -149,9 +152,9 @@ jobs:
                       "GET",
                       "http://$(addr)/ping";
                       connect_timeout=2.0,
-                      request_timeout=4.0,
-                      response_header_timeout=4.0,
-                      read_idle_timeout=4.0,
+                      request_timeout=request_timeout,
+                      response_header_timeout=request_timeout,
+                      read_idle_timeout=request_timeout,
                       retry=false,
                       protocol=protocol,
                   )
@@ -169,7 +172,12 @@ jobs:
                       " failed=", istaskfailed(server.serve_task))
                   showerror(stdout, err, catch_backtrace())
                   println()
-                  rethrow()
+                  if allow_failure
+                      push!(HTTP_PROBE_FAILURES, String(label))
+                      return nothing
+                  else
+                      rethrow()
+                  end
               finally
                   close_http_server!(server, label)
               end
@@ -178,11 +186,13 @@ jobs:
           end
 
           raw_tcp_probe()
-          http_probe("auto-immediate"; protocol=:auto)
-          http_probe("h1-immediate"; protocol=:h1)
-          http_probe("h1-paused"; protocol=:h1, pause=true)
+          http_probe("auto-cold-4"; protocol=:auto, request_timeout=4.0, allow_failure=true)
+          http_probe("auto-cold-10"; protocol=:auto, request_timeout=10.0)
+          http_probe("h1-after-cold"; protocol=:h1, request_timeout=4.0)
+          http_probe("h1-paused"; protocol=:h1, pause=true, request_timeout=4.0)
 
           IOPoll.shutdown!()
+          println("allowed HTTP probe failures=", HTTP_PROBE_FAILURES)
           println("loopback probes complete")
           JL
           julia --project=. loopback_probe.jl
@@ -222,8 +232,23 @@ jobs:
               using Pkg
               Pkg.add([
                   Pkg.PackageSpec(name="HTTP", version="2.0.0"),
-                  Pkg.PackageSpec(name="Reseau", version="1.1.4"),
               ])
+              Pkg.add(Pkg.PackageSpec(url="https://github.com/JuliaServices/Reseau.jl", rev="codex/shutdown-wakes-timers"))
               Pkg.status(["HTTP", "Reseau"])
           '
           julia --project=. -e 'using Pkg; Pkg.precompile()'
+          julia --project=. -e '
+              using HTTP
+              server = HTTP.serve!("127.0.0.1", 0; listenany=true) do req
+                  return HTTP.Response(200, "pong")
+              end
+              try
+                  addr = HTTP.server_addr(server)
+                  response = HTTP.get("http://$(addr)/ping"; connect_timeout=2.0, request_timeout=4.0, response_header_timeout=4.0, read_idle_timeout=4.0, retry=false)
+                  @assert response.status == 200
+                  @assert String(response.body) == "pong"
+                  println("post-precompile loopback ok")
+              finally
+                  HTTP.forceclose(server)
+              end
+          '
