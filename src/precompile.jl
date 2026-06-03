@@ -2,6 +2,18 @@ using PrecompileTools: @setup_workload, @compile_workload
 
 # Shared high-level workload used by package precompilation.
 
+function _precompile_trace_enabled()::Bool
+    value = get(ENV, "HTTP_PRECOMPILE_TRACE", "")
+    return value == "1" || lowercase(value) == "true" || lowercase(value) == "yes"
+end
+
+function _precompile_trace(message::AbstractString)::Nothing
+    _precompile_trace_enabled() || return nothing
+    println(stderr, "[HTTP precompile] ", message)
+    flush(stderr)
+    return nothing
+end
+
 function _precompile_body_string(body::AbstractBody)::String
     out = UInt8[]
     buf = Vector{UInt8}(undef, 256)
@@ -92,6 +104,7 @@ function _precompile_tls_config(cert_file::String, key_file::String)::TLS.Config
 end
 
 function _run_precompile_workload_inner!()::Nothing
+    _precompile_trace("inner start")
     request_server = nothing
     stream_server = nothing
     file_server = nothing
@@ -102,6 +115,7 @@ function _run_precompile_workload_inner!()::Nothing
     h2_client = nothing
     temp_dir = mktempdir()
     try
+        _precompile_trace("build request router")
         request_router = Router()
         register!(request_router, "GET", "/hello/{name}", Handlers.handlertimeout(0.5)(req ->
             _precompile_text_response("hello:" * getparam(req, "name"))
@@ -144,7 +158,9 @@ function _run_precompile_workload_inner!()::Nothing
         register!(request_router, "GET", "/gzip", req -> _precompile_encoded_response("gzip:decoded", :gzip))
         register!(request_router, "GET", "/deflate", req -> _precompile_encoded_response("deflate:decoded", :deflate))
 
+        _precompile_trace("start request server")
         request_server = serve!(request_router, "127.0.0.1", 0; listenany=true)
+        _precompile_trace("start stream server")
         stream_server = listen!("127.0.0.1", 0; listenany=true) do stream
             request = startread(stream)
             payload = read(stream, String)
@@ -155,8 +171,10 @@ function _run_precompile_workload_inner!()::Nothing
         end
 
         write(joinpath(temp_dir, "hello.txt"), "static hello")
+        _precompile_trace("start file server")
         file_server = serve!(fileserver(temp_dir; etag=:weak_stat), "127.0.0.1", 0; listenany=true)
 
+        _precompile_trace("start h2 server")
         h2_server = serve!("127.0.0.1", 0; listenany=true) do request
             return _precompile_text_response(
                 "h2:" * request.target,
@@ -176,10 +194,12 @@ function _run_precompile_workload_inner!()::Nothing
             _precompile_tls_config(tls_cert_path, tls_key_path);
             backlog=128,
         )
+        _precompile_trace("start tls server")
         tls_server = serve!(tls_listener) do request
             return _precompile_text_response("tls:" * request.target)
         end
 
+        _precompile_trace("start websocket server")
         ws_server = WebSockets.listen!("127.0.0.1", 0) do ws
             for msg in ws
                 WebSockets.send(ws, uppercase(String(msg)))
@@ -218,30 +238,37 @@ function _run_precompile_workload_inner!()::Nothing
             prefer_http2=true,
         )
 
+        _precompile_trace("request top-level")
         top_level = get(URI("http://$(request_address)/hello/uri"); proxy=ProxyConfig(), request_timeouts...)
         @assert top_level.status == 200
         @assert String(top_level.body) == "hello:uri"
 
+        _precompile_trace("request echo")
         echo = post("http://$(request_address)/echo/jane"; client=client, body="ping", stream_timeouts...)
         @assert echo.status == 200
         @assert String(echo.body) == "echo:jane:ping"
 
+        _precompile_trace("request redirect")
         redirected = get("http://$(request_address)/redirect"; client=client, request_timeouts...)
         @assert redirected.status == 200
         @assert String(redirected.body) == "hello:redirected"
 
+        _precompile_trace("request cookie first")
         cookie_first = get("http://$(request_address)/cookie"; client=client, request_timeouts...)
         @assert cookie_first.status == 200
         @assert String(cookie_first.body) == "cookie:set"
+        _precompile_trace("request cookie second")
         cookie_second = get("http://$(request_address)/cookie"; client=client, request_timeouts...)
         @assert cookie_second.status == 200
         @assert String(cookie_second.body) == "cookie:seen"
 
+        _precompile_trace("request buffered")
         buffer = IOBuffer()
         buffered = request("GET", "http://$(request_address)/hello/buffer"; client=client, response_stream=buffer, request_timeouts...)
         @assert buffered.status == 200
         @assert String(take!(buffer)) == "hello:buffer"
 
+        _precompile_trace("request stream")
         streamed_body = Ref("")
         streamed = open(:POST, "http://$(stream_address)/stream"; client=client, retry=false, stream_timeouts...) do stream
             write(stream, "payload")
@@ -253,83 +280,106 @@ function _run_precompile_workload_inner!()::Nothing
         @assert streamed.body === nothing
         @assert streamed_body[] == "stream:/stream:payload"
 
+        _precompile_trace("request static")
         static_resp = get("http://$(file_address)/hello.txt"; client=client, request_timeouts...)
         @assert static_resp.status == 200
         @assert String(static_resp.body) == "static hello"
 
+        _precompile_trace("request range")
         range_resp = get("http://$(request_address)/content", ["Range" => "bytes=0-4"]; client=client, request_timeouts...)
         @assert range_resp.status == 206
         @assert String(range_resp.body) == "range"
         @assert header(range_resp, "Content-Range", nothing) == "bytes 0-4/13"
 
+        _precompile_trace("request gzip")
         gzip_resp = get("http://$(request_address)/gzip"; client=client, request_timeouts...)
         @assert gzip_resp.status == 200
         @assert String(gzip_resp.body) == "gzip:decoded"
 
+        _precompile_trace("request deflate")
         deflate_resp = get("http://$(request_address)/deflate"; client=client, request_timeouts...)
         @assert deflate_resp.status == 200
         @assert String(deflate_resp.body) == "deflate:decoded"
 
+        _precompile_trace("request tls")
         tls_resp = get("https://$(tls_address)/secure"; require_ssl_verification=false, protocol=:h1, request_timeouts...)
         @assert tls_resp.status == 200
         @assert String(tls_resp.body) == "tls:/secure"
 
+        _precompile_trace("request h2")
         h2_resp = get("http://$(h2_address)/h2"; client=h2_client, protocol=:h2)
         @assert h2_resp.status == 200
         @assert h2_resp.proto_major == 2
         @assert String(h2_resp.body) == "h2:/h2"
 
+        _precompile_trace("request websocket")
         ws_reply = WebSockets.open(ws_url; proxy=ProxyConfig(), stream_timeouts...) do ws
             WebSockets.send(ws, "ping!")
             return WebSockets.receive(ws)
         end
         @assert ws_reply == "PING!"
     finally
+        _precompile_trace("cleanup start")
         @try_ignore begin
+            _precompile_trace("cleanup default client")
             _precompile_reset_default_client!()
         end
         for owned in (client, h2_client)
             owned === nothing && continue
             @try_ignore begin
+                _precompile_trace("cleanup owned client")
                 close(owned::Client)
             end
         end
         for server in (request_server, stream_server, file_server, h2_server, tls_server)
             server === nothing && continue
             @try_ignore begin
+                _precompile_trace("cleanup server")
                 forceclose(server)
             end
         end
         if ws_server !== nothing
             @try_ignore begin
-                WebSockets.forceclose(ws_server::WebSockets.Server)
+                _precompile_trace("cleanup websocket server")
+                close(ws_server::WebSockets.Server)
             end
         end
+        _precompile_trace("cleanup temp dir")
         rm(temp_dir; force=true, recursive=true)
+        _precompile_trace("cleanup done")
     end
+    _precompile_trace("inner done")
     return nothing
 end
 
 function _run_precompile_workload!()::Nothing
+    _precompile_trace("outer spawn")
     task = Threads.@spawn _run_precompile_workload_inner!()
     try
+        _precompile_trace("outer wait")
         status = IOPoll.timedwait(() -> istaskdone(task), 20.0; pollint = 0.01)
+        _precompile_trace("outer wait status=$(status)")
         if status == :timed_out
             @try_ignore begin
+                _precompile_trace("outer timeout shutdown")
                 IOPoll.shutdown!()
             end
             @try_ignore begin
+                _precompile_trace("outer timeout interrupt")
                 Base.throwto(task, InterruptException())
             end
             _ = IOPoll.timedwait(() -> istaskdone(task), 2.0; pollint = 0.01)
             error("HTTP precompile workload timed out")
         end
+        _precompile_trace("outer fetch")
         fetch(task)
     finally
         @try_ignore begin
+            _precompile_trace("outer shutdown")
             IOPoll.shutdown!()
         end
     end
+    _precompile_trace("outer done")
     return nothing
 end
 
@@ -344,6 +394,7 @@ end
 
 if _precompile_workload_enabled()
     try
+        _precompile_trace("enabled")
         @setup_workload begin
             @compile_workload begin
                 _run_precompile_workload!()
@@ -352,4 +403,6 @@ if _precompile_workload_enabled()
     catch err
         @info "Ignoring an error that occurred during the precompilation workload" exception=(err, catch_backtrace())
     end
+else
+    _precompile_trace("disabled")
 end
