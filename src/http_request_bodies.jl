@@ -32,7 +32,12 @@ function _percent_encode_form_component(value)::String
     text = string(value)
     encoded = IOBuffer()
     for b in codeunits(text)
-        if _is_unreserved_form_byte(b)
+        if b == UInt8(' ')
+            # application/x-www-form-urlencoded serializes SP as '+' (WHATWG URL
+            # standard). A literal '+' is not an unreserved form byte, so it still
+            # percent-encodes to %2B below, keeping the round-trip unambiguous.
+            write(encoded, UInt8('+'))
+        elseif _is_unreserved_form_byte(b)
             write(encoded, b)
         else
             print(encoded, '%')

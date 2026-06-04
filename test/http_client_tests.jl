@@ -1374,7 +1374,7 @@ end
     try
         resp_dict = HT.post("$(base_url)/dict"; body = Dict("name" => "value with spaces"))
         @test resp_dict.status == 200
-        @test String(resp_dict.body) == "name=value%20with%20spaces"
+        @test String(resp_dict.body) == "name=value+with+spaces"
 
         resp_named = HT.post("$(base_url)/named"; body = (name = "value",))
         @test resp_named.status == 200
@@ -1402,7 +1402,7 @@ end
         @test String(resp_form.body) == "multipart"
 
         _wait_task_client!(server_task)
-        @test seen_bodies["/dict"] == "name=value%20with%20spaces"
+        @test seen_bodies["/dict"] == "name=value+with+spaces"
         @test seen_content_types["/dict"] == "application/x-www-form-urlencoded"
         @test seen_bodies["/named"] == "name=value"
         @test seen_content_types["/named"] == "application/x-www-form-urlencoded"

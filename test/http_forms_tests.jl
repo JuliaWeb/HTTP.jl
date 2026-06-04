@@ -207,8 +207,12 @@ end
     @test view_content_type === nothing
 
     bytes, content_type = HT._materialize_request_body_bytes(Dict("name" => "value with spaces"))
-    @test String(bytes) == "name=value%20with%20spaces"
+    @test String(bytes) == "name=value+with+spaces"   # x-www-form-urlencoded: SP -> '+' (#1138)
     @test content_type == "application/x-www-form-urlencoded"
+
+    # SP serializes as '+', while a literal '+' (and '&', '=') stays percent-encoded,
+    # so application/x-www-form-urlencoded round-trips unambiguously (#1138).
+    @test String(HT._form_urlencode(Dict("k" => "a +b&c=d"))) == "k=a+%2Bb%26c%3Dd"
 
     bytes_named, content_type_named = HT._materialize_request_body_bytes((name = "value",))
     @test String(bytes_named) == "name=value"
