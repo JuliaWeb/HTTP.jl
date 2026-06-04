@@ -33,7 +33,7 @@ const _H2_FLOW_CONTROL_MAX_WINDOW = Int64(0x7fff_ffff)
     HTTP2Settings(; initial_window_size=65535, connection_window_size=65535)
 
 HTTP/2 flow-control configuration shared by [`Server`](@ref), [`Client`](@ref),
-and [`connect_h2!`](@ref).
+and `connect_h2!`.
 
 - `initial_window_size`: the per-stream receive window advertised via
   `SETTINGS_INITIAL_WINDOW_SIZE` (RFC 7540 §6.5.2).
