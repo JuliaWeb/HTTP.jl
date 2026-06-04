@@ -54,18 +54,22 @@ with a `WINDOW_UPDATE`, so a smaller value cannot be advertised.
 struct HTTP2Settings
     initial_window_size::Int
     connection_window_size::Int
+
+    function HTTP2Settings(initial_window_size::Int, connection_window_size::Int)
+        1 <= initial_window_size <= _H2_FLOW_CONTROL_MAX_WINDOW ||
+            throw(ArgumentError("initial_window_size must be in 1..$(_H2_FLOW_CONTROL_MAX_WINDOW)"))
+        # The connection-level window starts at the protocol default and can only be
+        # enlarged with a WINDOW_UPDATE, so it cannot be advertised below the default.
+        _H2_DEFAULT_WINDOW_SIZE <= connection_window_size <= _H2_FLOW_CONTROL_MAX_WINDOW ||
+            throw(ArgumentError("connection_window_size must be in $(_H2_DEFAULT_WINDOW_SIZE)..$(_H2_FLOW_CONTROL_MAX_WINDOW)"))
+        return new(initial_window_size, connection_window_size)
+    end
 end
 
 function HTTP2Settings(;
     initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
     connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
 )
-    1 <= initial_window_size <= _H2_FLOW_CONTROL_MAX_WINDOW ||
-        throw(ArgumentError("initial_window_size must be in 1..$(_H2_FLOW_CONTROL_MAX_WINDOW)"))
-    # The connection-level window starts at the protocol default and can only be
-    # enlarged with a WINDOW_UPDATE, so it cannot be advertised below the default.
-    _H2_DEFAULT_WINDOW_SIZE <= connection_window_size <= _H2_FLOW_CONTROL_MAX_WINDOW ||
-        throw(ArgumentError("connection_window_size must be in $(_H2_DEFAULT_WINDOW_SIZE)..$(_H2_FLOW_CONTROL_MAX_WINDOW)"))
     return HTTP2Settings(Int(initial_window_size), Int(connection_window_size))
 end
 
