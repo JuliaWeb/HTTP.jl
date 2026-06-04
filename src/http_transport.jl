@@ -1084,10 +1084,17 @@ function _put_idle_conn!(transport::Transport, conn::Conn)
 end
 
 """
-    close_idle_connections!(transport)
+    close_idle_connections!()
+    close_idle_connections!(client::HTTP.Client)
+    close_idle_connections!(transport::HTTP.Transport)
 
-Close and discard all currently idle pooled connections. Active in-flight
-requests are unaffected. Returns `nothing`.
+Close all currently idle pooled connections, returning `nothing`. Active
+in-flight requests are unaffected.
+
+The no-argument form closes idle connections held by the default client used by
+`HTTP.get`, `HTTP.post`, `HTTP.request`, and friends (a no-op if no request has
+been made yet). Pass an `HTTP.Client` or `HTTP.Transport` to target a specific
+connection pool.
 """
 function close_idle_connections!(transport::Transport)
     to_close = Conn[]
