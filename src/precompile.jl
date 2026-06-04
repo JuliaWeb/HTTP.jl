@@ -383,8 +383,20 @@ function _run_precompile_workload!()::Nothing
     return nothing
 end
 
+function is_julia_automerge()
+    name = "JULIA_REGISTRYCI_AUTOMERGE"
+    value = get(ENV, name, "false")
+    maybe_b = tryparse(Bool, value)
+    b = maybe_b == true
+    return b
+end
+
 function _precompile_workload_enabled()::Bool
     Base.JLOptions().code_coverage == 0 || return false
+
+    # https://github.com/JuliaWeb/HTTP.jl/issues/1280
+    is_julia_automerge() && return true
+    
     try
         return !isempty(HostResolvers.resolve_tcp_addrs("tcp", "localhost:0"))
     catch
