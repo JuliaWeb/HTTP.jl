@@ -1072,6 +1072,19 @@ function _default_client!()::Client{Nothing}
     end
 end
 
+close_idle_connections!(client::Client) = close_idle_connections!(client.transport)
+
+function close_idle_connections!()
+    lock(_DEFAULT_CLIENT_LOCK)
+    client = try
+        _DEFAULT_CLIENT[]
+    finally
+        unlock(_DEFAULT_CLIENT_LOCK)
+    end
+    client === nothing && return nothing
+    return close_idle_connections!(client.transport)
+end
+
 function _status_throws(resp::Response)::Bool
     return resp.status >= 300 && !_is_redirect_status(resp.status)
 end

@@ -342,6 +342,27 @@ HTTP.serve!("127.0.0.1", 8080) do req
 end
 ```
 
+#### Reading POST form parameters on the server
+
+A request body sent as `application/x-www-form-urlencoded` — the default for HTML
+form posts, and what `HTTP.post(url, [], dict)` produces — uses the same encoding
+as a URL query string, except that a space is written as `+`. `HTTP.queryparams`
+decodes both `+` and `%20` to a space, so you can decode a form body by passing it
+straight to `queryparams` (or `queryparampairs` to preserve order and repeated
+keys):
+
+```julia
+HTTP.serve!("127.0.0.1", 8080) do req
+    params = HTTP.queryparams(String(req.body))     # Dict{String,String}
+    user = get(params, "user", "anonymous")
+    return HTTP.Response(200; body = "hello $user")
+end
+```
+
+This decodes the client-side `Dict`/`NamedTuple` form encoding shown under
+"Sending form data" above — for example a posted `user=a b` decodes back to
+`Dict("user" => "a b")`.
+
 ## Retries and Timeouts
 
 The retry path is explicit and conservative. For predictable behavior, prefer a

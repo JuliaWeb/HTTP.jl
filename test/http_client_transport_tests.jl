@@ -1116,3 +1116,24 @@ end
 @testset "HTTP client transport treats not-pollable reused errors as retryable" begin
     @test HT._retryable_reused_conn_error(Reseau.IOPoll.NotPollableError())
 end
+
+@testset "close_idle_connections! clears the default and per-client pools" begin
+    server = HTTP.serve!("127.0.0.1", 0) do req
+        return HTTP.Response(200, "ok")
+    end
+    try
+        url = "http://127.0.0.1:$(HTTP.port(server))/"
+        # A default-client GET leaves a reusable idle connection in the pool.
+        HTTP.get(url)
+        client = HTTP._DEFAULT_CLIENT[]
+        @test client !== nothing
+        @test timedwait(() -> HT.idle_connection_count(client.transport) >= 1, 5.0) === :ok
+        # No-arg form closes the default client's idle connections.
+        @test HTTP.close_idle_connections!() === nothing
+        @test HT.idle_connection_count(client.transport) == 0
+        # The Client overload delegates to its transport.
+        @test HTTP.close_idle_connections!(client) === nothing
+    finally
+        close(server)
+    end
+end

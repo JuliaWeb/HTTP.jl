@@ -294,3 +294,11 @@ end
     @test !normalized_custom.replayable
     @test_throws ArgumentError HT._normalize_body_input(_UnsupportedRequestBody())
 end
+
+@testset "queryparams decodes x-www-form-urlencoded bodies (#1118/#1123)" begin
+    # queryparams decodes '+' (and %20) as space, so it round-trips the form
+    # encoding produced by HTTP.post(url, [], dict).
+    @test HT.queryparams(String(HT._form_urlencode(Dict("user" => "a b", "x" => "1")))) ==
+          Dict("user" => "a b", "x" => "1")
+    @test HT.queryparams("a=b+c&d=e%20f") == Dict("a" => "b c", "d" => "e f")
+end
