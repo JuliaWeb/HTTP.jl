@@ -166,6 +166,7 @@ mutable struct WebSocket{S,C}
     fragment_payload::Vector{UInt8}
     fragment_count::Int
     closebody::Union{Nothing,CloseFrameBody}
+    read_idle_timeout_ns::Int64
 end
 
 function WebSocket(
@@ -174,6 +175,7 @@ function WebSocket(
     subprotocol::Union{Nothing,AbstractString}=nothing,
     maxframesize::Integer=typemax(Int),
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
+    read_idle_timeout_ns::Integer=0,
     is_client::Bool=true,
 ) where {S,C}
     maxframesize > 0 || throw(ArgumentError("maxframesize must be > 0"))
@@ -199,6 +201,7 @@ function WebSocket(
         UInt8[],
         0,
         nothing,
+        Int64(read_idle_timeout_ns),
     )
     return ws
 end
@@ -383,11 +386,21 @@ function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
     return nothing
 end
 
+# Set the read deadline directly on the underlying Reseau stream so an opt-in
+# WebSocket read idle timeout can be re-armed before each read.
+_ws_arm_read_deadline!(stream::TLS.Conn, deadline_ns::Int64) = TLS.set_read_deadline!(stream, deadline_ns)
+_ws_arm_read_deadline!(stream::TCP.Conn, deadline_ns::Int64) = TCP.set_read_deadline!(stream, deadline_ns)
+
 function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
     buf = Vector{UInt8}(undef, buffer_bytes)
     try
         while true
+            # Opt-in read idle timeout: re-arm before each read so it fires only
+            # after `read_idle_timeout` seconds with no data, resetting whenever a
+            # frame arrives (#1062).
+            ws.read_idle_timeout_ns > 0 &&
+                _ws_arm_read_deadline!(ws.stream, Int64(time_ns()) + ws.read_idle_timeout_ns)
             # Read directly into the reusable `buf`. `readavailable` would
             # allocate a fresh Base.SZ_UNBUFFERED_IO (64KB) buffer on every
             # frame read (16× the bytes/RTT vs HTTP 1.x), driving GC pressure;
@@ -402,7 +415,13 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             _queue_close!(ws, CloseFrameBody(1006, ""))
         end
     catch err
-        close_body = if err isa WebSocketInvalidPayloadError
+        # A read idle timeout surfaces as IOPoll.DeadlineExceededError over TCP, or
+        # wrapped in a TLS.TLSError (`.cause`) over TLS.
+        read_timed_out = err isa IOPoll.DeadlineExceededError ||
+            (err isa TLS.TLSError && (err::TLS.TLSError).cause isa IOPoll.DeadlineExceededError)
+        close_body = if read_timed_out
+            CloseFrameBody(1006, "websocket read idle timeout")
+        elseif err isa WebSocketInvalidPayloadError
             CloseFrameBody(1007, "invalid websocket payload")
         elseif err isa WebSocketProtocolError
             CloseFrameBody(1002, "websocket protocol error")
@@ -792,6 +811,7 @@ function _open_client_websocket(
                 subprotocol=negotiated,
                 maxframesize=maxframesize,
                 maxfragmentation=maxfragmentation,
+                read_idle_timeout_ns=read_idle_timeout > 0 ? round(Int64, read_idle_timeout * 1.0e9) : Int64(0),
                 is_client=true,
             )
             ws.handshake_request = send_request
