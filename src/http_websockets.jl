@@ -56,8 +56,10 @@ import .._request_deadline_ns
 import .._request_connect_host_resolver
 import .._request_connect_phase_deadline_ns
 import .._request_connect_phase_timeout_ns
+import .._request_read_idle_timeout_ns
 import .._request_response_header_deadline_ns
 import .._request_write_deadline_ns
+import .._phase_deadline_ns
 import .._resolve_request_timeout_settings
 import .._apply_request_timeout_settings!
 import ..get_request_context
@@ -388,7 +390,9 @@ end
 
 # Set the read deadline directly on the underlying Reseau stream so an opt-in
 # WebSocket read idle timeout can be re-armed before each read.
-_ws_arm_read_deadline!(stream, deadline_ns::Int64) = TLS.set_read_deadline!(stream, deadline_ns)
+_ws_arm_read_deadline!(stream::TLS.Conn, deadline_ns::Int64) = TLS.set_read_deadline!(stream, deadline_ns)
+_ws_arm_read_deadline!(stream::TCP.Conn, deadline_ns::Int64) = TCP.set_read_deadline!(stream, deadline_ns)
+_ws_read_deadline_ns(timeout_ns::Int64)::Int64 = _phase_deadline_ns(timeout_ns, Int64(0))
 
 function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
@@ -399,7 +403,7 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             # after `read_idle_timeout` seconds with no data, resetting whenever a
             # frame arrives (#1062).
             ws.read_idle_timeout_ns > 0 &&
-                _ws_arm_read_deadline!(ws.stream, Int64(time_ns()) + ws.read_idle_timeout_ns)
+                _ws_arm_read_deadline!(ws.stream, _ws_read_deadline_ns(ws.read_idle_timeout_ns))
             # Read directly into the reusable `buf`. `readavailable` would
             # allocate a fresh Base.SZ_UNBUFFERED_IO (64KB) buffer on every
             # frame read (16× the bytes/RTT vs HTTP 1.x), driving GC pressure;
@@ -810,7 +814,7 @@ function _open_client_websocket(
                 subprotocol=negotiated,
                 maxframesize=maxframesize,
                 maxfragmentation=maxfragmentation,
-                read_idle_timeout_ns=read_idle_timeout > 0 ? round(Int64, read_idle_timeout * 1.0e9) : Int64(0),
+                read_idle_timeout_ns=_request_read_idle_timeout_ns(send_request),
                 is_client=true,
             )
             ws.handshake_request = send_request
@@ -871,11 +875,12 @@ end
 Open a client WebSocket connection to `url`.
 
 Keyword arguments cover handshake headers, redirect behavior, cookies, proxy
-selection, TLS verification, handshake timeout controls, and frame limits.
+selection, TLS verification, timeout controls, and frame limits.
 `request_timeout` applies an overall handshake deadline, while
-`response_header_timeout`, `read_idle_timeout`, and `write_idle_timeout`
-configure the underlying HTTP handshake phases. When called with a function,
-the socket is closed automatically with status code `1000` when `f` returns.
+`response_header_timeout` and `write_idle_timeout` configure HTTP handshake
+phases. `read_idle_timeout` bounds both handshake response-header reads and
+post-upgrade inbound WebSocket inactivity. When called with a function, the
+socket is closed automatically with status code `1000` when `f` returns.
 """
 function open(
     url::AbstractString;
