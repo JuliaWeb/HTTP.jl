@@ -143,6 +143,8 @@ end
         @test (timeout_config::HT._RequestTimeoutConfig).response_header_timeout_ns == 250_000_000
         @test timeout_config.read_idle_timeout_ns == 250_000_000
         @test timeout_config.write_idle_timeout_ns == 250_000_000
+        @test ws.read_idle_timeout_ns == 250_000_000
+        @test W._ws_read_deadline_ns(typemax(Int64)) == typemax(Int64)
         @test W.receive(ws) == "hello"
         W.send(ws, "pong")
         err = try

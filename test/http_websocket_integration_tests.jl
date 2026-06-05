@@ -233,3 +233,32 @@ end
         close(server)
     end
 end
+
+@testset "HTTP.WebSockets client read_idle_timeout fires on silence (#1062)" begin
+    # The read idle timeout resets on each received message and fires only after
+    # `read_idle_timeout` seconds with no data: it must not interrupt an active
+    # stream, but must surface a silently-stalled connection.
+    server = W.listen!("127.0.0.1", 0) do ws
+        W.send(ws, "hello")
+        sleep(3)                       # stay silent so the client idle timeout fires first
+    end
+    try
+        url = "ws://$(W.server_addr(server))/"
+        msgs = String[]
+        err = nothing
+        try
+            W.open(url; read_idle_timeout = 1.0, suppress_close_error = true) do ws
+                push!(msgs, String(W.receive(ws)))   # "hello" arrives during activity
+                W.receive(ws)                          # no more data -> idle timeout
+            end
+        catch e
+            err = e
+        end
+        @test msgs == ["hello"]
+        @test err isa W.WebSocketError
+        @test err !== nothing && (err::W.WebSocketError).message.code == 1006
+        @test err !== nothing && occursin("idle timeout", (err::W.WebSocketError).message.reason)
+    finally
+        close(server)
+    end
+end
