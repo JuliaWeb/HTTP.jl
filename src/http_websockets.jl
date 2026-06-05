@@ -388,8 +388,7 @@ end
 
 # Set the read deadline directly on the underlying Reseau stream so an opt-in
 # WebSocket read idle timeout can be re-armed before each read.
-_ws_arm_read_deadline!(stream::TLS.Conn, deadline_ns::Int64) = TLS.set_read_deadline!(stream, deadline_ns)
-_ws_arm_read_deadline!(stream::TCP.Conn, deadline_ns::Int64) = TCP.set_read_deadline!(stream, deadline_ns)
+_ws_arm_read_deadline!(stream, deadline_ns::Int64) = TLS.set_read_deadline!(stream, deadline_ns)
 
 function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
