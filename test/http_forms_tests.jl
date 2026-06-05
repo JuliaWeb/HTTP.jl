@@ -134,6 +134,19 @@ end
     for json in json_cases
         @test HT.sniff(IOBuffer(json)) == "application/json; charset=utf-8"
     end
+
+    # A valid JSON *prefix* followed by other bytes is not JSON (#1084):
+    # e.g. "2A" parses the leading number but leaves a trailing "A".
+    not_json_cases = [
+        "2A",
+        "12A",
+        "{\"a\":1}junk",
+        "[1,2,3]x",
+    ]
+    for payload in not_json_cases
+        @test HT.sniff(payload) == "text/plain; charset=utf-8"
+        @test HT.sniff(IOBuffer(payload)) == "text/plain; charset=utf-8"
+    end
 end
 
 @testset "HTTP multipart parsing extended cases" begin
