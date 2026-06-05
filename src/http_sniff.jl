@@ -209,7 +209,16 @@ function _sniff_match(::_SniffTextSig, data::AbstractVector{UInt8}, firstnonws::
 end
 
 function _sniff_match(::_SniffJSONSig, data::AbstractVector{UInt8}, firstnonws::Int)::Bool
-    return isjson(data, firstnonws - 1)[1]
+    matched, i = isjson(data, firstnonws - 1)
+    matched || return false
+    # A valid JSON *prefix* is not enough: e.g. "2A" parses the leading number
+    # but leaves trailing bytes. Require the remainder (within the sniff window)
+    # to be whitespace only, otherwise it isn't JSON.
+    stop = min(length(data), _SNIFF_MAX_LENGTH)
+    @inbounds for j in (i + 1):stop
+        data[j] in _SNIFF_WHITESPACE || return false
+    end
+    return true
 end
 
 const _SNIFF_SIGNATURES = Any[
