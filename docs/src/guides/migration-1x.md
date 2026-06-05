@@ -187,6 +187,24 @@ Useful helpers include `HTTP.header`, `HTTP.headers`, `HTTP.hasheader`,
 `HTTP.headercontains`, `HTTP.setheader`, `HTTP.appendheader`, and
 `HTTP.removeheader`.
 
+## Cookies
+
+In 1.x, a manually-set `Cookie` request header was merged with the cookie jar, so hand-set
+cookies were preserved and augmented with jar / `Set-Cookie` state.
+
+Now, the `Cookie` header is built solely from the jar (plus the `cookies` keyword); a
+`Cookie` entry placed in `headers` is overwritten once the jar holds any cookie (i.e. after
+the first `Set-Cookie`). To send specific cookies:
+
+- use a `CookieJar` (e.g. via a `Client`) — recommended for multi-request sessions,
+  especially when the server **rotates** session cookies (a `Set-Cookie` on each response);
+- pass `cookies = Dict("name" => "value", ...)`;
+- or set `cookies = false` to send a raw `Cookie` header without jar management
+  (no `Set-Cookie` tracking).
+
+A static, hand-built `Cookie` header against a session-rotating server therefore succeeds
+once and is then superseded by the jar; prefer a `CookieJar` so rotation is tracked.
+
 ## Request Context
 
 In 1.x, middleware often treated request context as a plain dictionary. In 2.0,
