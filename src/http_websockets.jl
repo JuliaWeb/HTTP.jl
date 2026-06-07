@@ -29,6 +29,7 @@ import ..TooManyRedirectsError
 import ..Client
 import ..CookieJar
 import ..COOKIEJAR
+import ..Cookies
 import .._ConnReader
 import .._USE_TRANSPORT_PROXY
 import .._close_conn!
@@ -760,7 +761,8 @@ function _open_client_websocket(
     for redirect_count in 0:redirect_policy.max_redirects
         send_request = _copy_request(current_request)
         host, path = _host_path_from_request(current_address, current_request)
-        cookie_value = _cookie_header(effective_cookiejar, normalized_cookies, current_secure, host, path)
+        manual_cookies = normalized_cookies === false ? Cookies.Cookie[] : Cookies.readcookies(send_request.headers, "")
+        cookie_value = _cookie_header(effective_cookiejar, normalized_cookies, current_secure, host, path, manual_cookies)
         cookie_value === nothing || setheader(send_request.headers, "Cookie", cookie_value)
         expected_accept = ws_compute_accept_key(header(send_request.headers, "Sec-WebSocket-Key")::String)
         attempt = _websocket_roundtrip!(req_client, current_address, send_request, current_secure, current_server_name, proxy_config)
