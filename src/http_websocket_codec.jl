@@ -21,6 +21,16 @@ ws_is_control_frame(opcode::WsOpcode.T)::Bool = return ws_is_control_frame(UInt8
 const WS_MAX_PAYLOAD_LENGTH = UInt64(0x7fffffffffffffff)
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+# RFC 6455 §5.3 requires the client frame masking key to be derived from a strong
+# source of entropy so that an observer of prior frames cannot predict future
+# masks (a predictable mask enables crafting wire bytes that a non-conformant
+# transparent intermediary may interpret and cache, i.e. proxy cache poisoning).
+# The default task-local `rand` uses Xoshiro256++, which is not cryptographically
+# secure: its internal state is recoverable from a short run of outputs. Draw the
+# masking key (and the Sec-WebSocket-Key handshake nonce) from a CSPRNG instead.
+const WS_CSPRNG = Random.RandomDevice()
+ws_secure_random_bytes(n::Integer)::Vector{UInt8} = rand(WS_CSPRNG, UInt8, n)
+
 struct WebSocketProtocolError <: HTTPError
     message::String
 end
@@ -577,8 +587,9 @@ function ws_send_frame!(ws::WSConn, opcode::UInt8, payload::AbstractVector{UInt8
         length(payload) > 125 && throw(ArgumentError("control frame payloads must be <= 125 bytes"))
     end
     masking_key = if ws.is_client
-        key = rand(UInt32)
-        (key % UInt8, (key >> 8) % UInt8, (key >> 16) % UInt8, (key >> 24) % UInt8)
+        # RFC 6455 §5.3: the masking key must be unpredictable, so use a CSPRNG.
+        key = ws_secure_random_bytes(4)
+        (key[1], key[2], key[3], key[4])
     else
         (0x00, 0x00, 0x00, 0x00)
     end
@@ -708,7 +719,9 @@ function ws_get_outgoing_data!(ws::WSConn)::Vector{UInt8}
 end
 
 function ws_random_handshake_key()::String
-    return _base64encode(rand(UInt8, 16))
+    # RFC 6455 §5.3 / §4.1: generate the Sec-WebSocket-Key nonce from a CSPRNG so
+    # it shares the same unpredictable entropy source as the frame masking keys.
+    return _base64encode(ws_secure_random_bytes(16))
 end
 
 function ws_compute_accept_key(key::AbstractString)::String

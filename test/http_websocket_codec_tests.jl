@@ -2,6 +2,7 @@ using Test
 
 using Base64
 using HTTP
+using Random
 using Reseau
 
 const HT = HTTP
@@ -391,4 +392,52 @@ end
     dec = W.ws_decoder_new()
     f2 = W.ws_decoder_process!(dec, second_take)
     @test length(f2) == 1 && String(copy(f2[1].payload)) == "two"
+end
+
+# Helper: pull the 4-byte masking key out of a masked client TEXT frame whose
+# payload is < 126 bytes. Wire layout for such a frame is:
+#   byte 1: FIN/opcode, byte 2: MASK bit | payload length, bytes 3..6: masking key.
+function _extract_masking_key(ws::HT.WebSockets.WSConn, payload::Vector{UInt8})
+    HT.WebSockets.ws_send_frame!(ws, UInt8(HT.WebSockets.WsOpcode.TEXT), payload)
+    wire = HT.WebSockets.ws_get_outgoing_data!(ws)
+    @assert (wire[2] & 0x80) != 0 "expected masked client frame"
+    return (wire[3], wire[4], wire[5], wire[6])
+end
+
+# Regression for JLSEC-2026-622: RFC 6455 §5.3 requires the client masking key
+# (and the Sec-WebSocket-Key handshake nonce) to be unpredictable. The fix draws
+# them from a CSPRNG (Random.RandomDevice) instead of the task-local Xoshiro256++
+# PRNG. The defining property of the fix is that these values are independent of
+# the task-local RNG state: re-seeding the default RNG must NOT make the secrets
+# reproducible. On the unpatched code (`rand(UInt8, n)`) seeding the task RNG
+# makes them perfectly reproducible, so these tests fail there.
+@testset "JLSEC-2026-622 websocket secrets use a CSPRNG" begin
+    payload = collect(0x00:0x0f)
+
+    # 1) Masking keys do not depend on the task-local RNG seed.
+    Random.seed!(0xC0FFEE)
+    key_a = _extract_masking_key(HT.WebSockets.WSConn(; is_client = true), payload)
+    Random.seed!(0xC0FFEE)
+    key_b = _extract_masking_key(HT.WebSockets.WSConn(; is_client = true), payload)
+    @test key_a != key_b
+
+    # 2) The Sec-WebSocket-Key handshake nonce likewise ignores the RNG seed.
+    Random.seed!(0xBADF00D)
+    nonce_a = HT.WebSockets.ws_random_handshake_key()
+    Random.seed!(0xBADF00D)
+    nonce_b = HT.WebSockets.ws_random_handshake_key()
+    @test nonce_a != nonce_b
+
+    # 3) Keys still have the right shape and clearly vary across frames (not a
+    #    constant), guarding against a degenerate "always zero" fix.
+    ws = HT.WebSockets.WSConn(; is_client = true)
+    keys = [_extract_masking_key(ws, payload) for _ in 1:32]
+    @test all(k -> length(k) == 4 && eltype(k) == UInt8, keys)
+    @test length(unique(keys)) > 1
+
+    # 4) The handshake nonce decodes to 16 random bytes per RFC 6455 §4.1 and is
+    #    not constant between calls.
+    decoded = Base64.base64decode(HT.WebSockets.ws_random_handshake_key())
+    @test length(decoded) == 16
+    @test HT.WebSockets.ws_random_handshake_key() != HT.WebSockets.ws_random_handshake_key()
 end
