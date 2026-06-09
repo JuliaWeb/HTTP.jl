@@ -265,6 +265,50 @@ end
     end
 end
 
+@testset "HTTP server SSE rejects CR/LF injection in event/id/retry fields" begin
+    # Serialize an event offline by writing it into an SSEStream and reading the
+    # framed bytes back out, so we can assert on the exact wire output.
+    function serialize_sse(event::HT.SSEEvent)
+        stream = HT.SSEStream()
+        write(stream, event)
+        close(stream)
+        return String(_read_all_server_bytes(stream))
+    end
+
+    # Baseline: a well-formed event serializes to exactly one wire event.
+    wire = serialize_sse(HT.SSEEvent("payload"; event = "update", id = "7", retry = 1500))
+    @test wire == "event: update\nid: 7\nretry: 1500\ndata: payload\n\n"
+
+    # The keyword constructor must reject CR/LF in the single-line fields so an
+    # attacker-influenced id/event cannot inject extra SSE fields or a forged
+    # blank-line dispatch boundary.
+    @test_throws ArgumentError HT.SSEEvent("x"; id = "1\ndata: {\"role\":\"admin\"}\n")
+    @test_throws ArgumentError HT.SSEEvent("x"; id = "1\rdata: forged")
+    @test_throws ArgumentError HT.SSEEvent("x"; event = "ok\nevent: forged")
+    @test_throws ArgumentError HT.SSEEvent("x"; event = "ok\rfoo")
+    # NUL in id is rejected (browser EventSource parsers reject such ids).
+    @test_throws ArgumentError HT.SSEEvent("x"; id = "1\0bad")
+    # retry must be non-negative so it can only serialize as digits.
+    @test_throws ArgumentError HT.SSEEvent("x"; retry = -1)
+
+    # Defense-in-depth: even an SSEEvent built via the raw positional
+    # constructor (which bypasses keyword validation) must not be serialized
+    # with line breaks in the single-line fields.
+    forged_id = HT.SSEEvent("x", nothing, "1\ndata: forged", nothing, Dict{String,String}())
+    @test_throws ArgumentError serialize_sse(forged_id)
+    forged_event = HT.SSEEvent("x", "u\nid: 9", nothing, nothing, Dict{String,String}())
+    @test_throws ArgumentError serialize_sse(forged_event)
+
+    # A bare '\r' inside the (multi-line) data field is a valid SSE line
+    # terminator on the wire, so it must be re-prefixed as a new data: line and
+    # must not be emitted verbatim.
+    wire_cr = serialize_sse(HT.SSEEvent("a\rb"))
+    @test wire_cr == "data: a\ndata: b\n\n"
+    @test !occursin('\r', wire_cr)
+    # CRLF and LF in data are likewise normalized to separate data: lines.
+    @test serialize_sse(HT.SSEEvent("a\r\nb\nc")) == "data: a\ndata: b\ndata: c\n\n"
+end
+
 @testset "HTTP server top-level wrapper kwargs and stream abort state" begin
     aborted_states = Channel{Bool}(2)
     server = HT.listen!("127.0.0.1", 0;

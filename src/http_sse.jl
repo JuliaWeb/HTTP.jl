@@ -29,12 +29,38 @@ struct SSEEvent
     fields::Dict{String,String}
 end
 
+# A bare CR or LF (and therefore CRLF) is a valid SSE line terminator on the
+# wire, so any CR/LF embedded in a single-line field (event, id, retry) would
+# let one SSEEvent forge additional fields or a blank-line dispatch boundary and
+# inject events into every connected EventSource client. NUL is additionally
+# rejected in `id` because the SSE spec / browser EventSource parsers reject an
+# id containing NUL. The `data` field may legitimately span multiple lines, so
+# it is not validated here; it is split into `data:` lines at write time.
+function _reject_sse_line_breaks(name::String, value::AbstractString)
+    if occursin('\n', value) || occursin('\r', value)
+        throw(ArgumentError("SSE $name field must not contain CR or LF characters"))
+    end
+    return nothing
+end
+
 function SSEEvent(
     data::AbstractString;
     event::Union{Nothing,AbstractString}=nothing,
     id::Union{Nothing,AbstractString}=nothing,
     retry::Union{Nothing,Integer}=nothing,
 )
+    if event !== nothing
+        _reject_sse_line_breaks("event", event)
+    end
+    if id !== nothing
+        _reject_sse_line_breaks("id", id)
+        occursin('\0', id) && throw(ArgumentError("SSE id field must not contain NUL"))
+    end
+    if retry !== nothing && retry < 0
+        # `retry` is serialized as digits only; a negative value would emit a
+        # leading '-' that is not a valid retry hint.
+        throw(ArgumentError("SSE retry field must be non-negative"))
+    end
     return SSEEvent(
         String(data),
         event === nothing ? nothing : String(event),
@@ -88,7 +114,26 @@ function body_read!(stream::SSEStream, dst::Vector{UInt8})::Int
     return readbytes!(stream.buffer, dst, length(dst))
 end
 
+# Split `value` into logical lines, treating CR, LF and CRLF all as line
+# terminators. The SSE wire format and browser EventSource parsers accept any of
+# these as a line break, so splitting on '\n' alone (as before) would let a bare
+# '\r' inside `data` smuggle additional wire-level lines/fields. This normalizes
+# every line break in `data` to a fresh `data:` prefix instead.
+function _split_sse_data_lines(value::AbstractString)
+    return split(value, r"\r\n|\r|\n"; keepempty=true)
+end
+
 function write(stream::SSEStream, event::SSEEvent)::Int
+    # Defense-in-depth: the SSEEvent keyword constructor already rejects CR/LF in
+    # these single-line fields, but an SSEEvent can also be built via the raw
+    # positional constructor (e.g. by the client-side parser), so re-validate the
+    # values we are about to serialize verbatim before they reach the wire.
+    if event.event !== nothing
+        _reject_sse_line_breaks("event", event.event)
+    end
+    if event.id !== nothing
+        _reject_sse_line_breaks("id", event.id)
+    end
     bytes = lock(stream.lock) do
         buf = stream.format_buffer
         truncate(buf, 0)
@@ -99,9 +144,12 @@ function write(stream::SSEStream, event::SSEEvent)::Int
             write(buf, "id: ", event.id, "\n")
         end
         if event.retry !== nothing
+            # `retry` is an Int, so `string` yields digits (plus possibly a
+            # leading '-' which the constructor already rejects) and cannot
+            # contain a line break.
             write(buf, "retry: ", string(event.retry), "\n")
         end
-        for line in split(event.data, '\n'; keepempty=true)
+        for line in _split_sse_data_lines(event.data)
             write(buf, "data: ", line, "\n")
         end
         write(buf, "\n")
