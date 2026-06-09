@@ -340,3 +340,93 @@ end
         @test got[1].name == string(ch)
     end
 end
+
+@testset "HTTP CookieJar store-path secure/prefix protections (RFC 6265bis)" begin
+    # A plaintext (http) response must not be able to store a Secure cookie.
+    jar = HT.CookieJar()
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("plain=1; Path=/; Secure"))
+    @test isempty(HT.getcookies!(jar, "https", "example.com", "/"))
+
+    # The same cookie over https is accepted.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("plain=1; Path=/; Secure"))
+    @test "plain" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/")]
+
+    # __Secure- prefix: requires Secure attribute AND https origin.
+    jar = HT.CookieJar()
+    # Missing Secure attribute -> rejected even over https.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__Secure-a=1; Path=/"))
+    # Secure but plaintext origin -> rejected.
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("__Secure-a=1; Path=/; Secure"))
+    @test isempty(HT.getcookies!(jar, "https", "example.com", "/"))
+    # All requirements satisfied -> accepted.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__Secure-a=1; Path=/; Secure"))
+    @test "__Secure-a" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/")]
+
+    # __Host- prefix: requires Secure, https, Path=/ and NO Domain attribute.
+    jar = HT.CookieJar()
+    # A Domain attribute disqualifies a __Host- cookie.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__Host-a=1; Path=/; Secure; Domain=example.com"))
+    # A non-"/" Path disqualifies a __Host- cookie.
+    HT.setcookies!(jar, "https", "example.com", "/docs/index",
+        _set_cookie_headers("__Host-a=1; Path=/docs; Secure"))
+    # Plaintext origin disqualifies a __Host- cookie.
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("__Host-a=1; Path=/; Secure"))
+    @test isempty(HT.getcookies!(jar, "https", "example.com", "/"))
+    # All requirements satisfied -> accepted.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__Host-a=1; Path=/; Secure"))
+    @test "__Host-a" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/")]
+
+    # A plaintext origin must not overwrite an existing Secure cookie.
+    jar = HT.CookieJar()
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("SESSION=good; Path=/; Secure"))
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("SESSION=attacker; Path=/"))
+    stored = HT.getcookies!(jar, "https", "example.com", "/")
+    session = only(filter(c -> c.name == "SESSION", stored))
+    @test session.value == "good"
+
+    # A plaintext origin must not delete an existing Secure cookie (Max-Age=-1).
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("SESSION=gone; Path=/; Max-Age=-1"))
+    stored = HT.getcookies!(jar, "https", "example.com", "/")
+    @test "SESSION" in [c.name for c in stored]
+
+    # A secure origin may still legitimately overwrite a Secure cookie.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("SESSION=rotated; Path=/; Secure"))
+    stored = HT.getcookies!(jar, "https", "example.com", "/")
+    session = only(filter(c -> c.name == "SESSION", stored))
+    @test session.value == "rotated"
+
+    # RFC 6265bis §4.1.3.1/§4.1.3.2: prefix matching is ASCII case-insensitive,
+    # so case-variant prefixes must be subject to the same rules. A server that
+    # recognizes the prefix case-insensitively would otherwise trust these.
+    jar = HT.CookieJar()
+    # "__secure-" without the Secure attribute over https must be rejected.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__secure-a=evil; Path=/"))
+    # "__SECURE-" carrying Secure but arriving over http must be rejected.
+    HT.setcookies!(jar, "http", "example.com", "/",
+        _set_cookie_headers("__SECURE-b=evil; Path=/; Secure"))
+    # "__host-" without Secure over https must be rejected.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__host-c=evil; Path=/"))
+    # "__Host-" with a Domain attribute (not host-only) must be rejected even
+    # with a mixed-case prefix.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__HoSt-d=evil; Path=/; Secure; Domain=example.com"))
+    @test isempty(HT.getcookies!(jar, "https", "example.com", "/"))
+    # A correctly-formed mixed-case "__Host-" cookie is still accepted.
+    HT.setcookies!(jar, "https", "example.com", "/",
+        _set_cookie_headers("__host-ok=1; Path=/; Secure"))
+    @test "__host-ok" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/")]
+end
