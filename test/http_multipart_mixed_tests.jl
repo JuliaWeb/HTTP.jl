@@ -187,3 +187,122 @@ end
     @test String(read(parsed_parts[1])) == "First part content"
     @test String(read(parsed_parts[2])) == "{\"id\": 123}"
 end
+
+@testset "writemultipartheader Multipart filename branch (:formdata)" begin
+    # Covers the `else` branch: filename !== nothing in :formdata mode
+    part_with_file = HT.Multipart("report.csv", IOBuffer("a,b,c"), "text/csv", "", "upload")
+    form = HT.Form(Pair["upload" => part_with_file]; type=:formdata)
+    body_bytes = read(form)
+    body_text = String(copy(body_bytes))
+    @test occursin("filename=\"report.csv\"", body_text)
+    @test occursin("Content-Type: text/csv", body_text)
+
+    # Parse back via parse_multipart with required_type=:formdata
+    ct = HT.content_type(form)
+    parts = HT.parse_multipart(ct, body_bytes, :formdata)
+    @test parts !== nothing
+    @test length(parts) == 1
+    @test parts[1].filename == "report.csv"
+    @test String(read(parts[1])) == "a,b,c"
+end
+
+@testset "writemultipartheader Multipart contenttransferencoding branch" begin
+    # Covers `contenttransferencoding != ""` → writes Content-Transfer-Encoding header
+    part_cte = HT.Multipart(nothing, IOBuffer("binary data"), "application/octet-stream", "binary", "")
+    form = HT.Form([part_cte])  # type=:mixed
+    body_bytes = read(form)
+    body_text = String(copy(body_bytes))
+    @test occursin("Content-Transfer-Encoding: binary", body_text)
+
+    # Round-trip: parse back
+    ct = HT.content_type(form)
+    parts = HT.parse_multipart_mixed(ct, body_bytes)
+    @test parts !== nothing
+    @test length(parts) == 1
+    @test String(read(parts[1])) == "binary data"
+end
+
+@testset "writemultipartheader Multipart sniff contenttype branch" begin
+    # Covers `contenttype == ""` → calls sniff(part.data)
+    part_no_ct = HT.Multipart(nothing, IOBuffer("plain text"), "", "", "")
+    form = HT.Form([part_no_ct])  # type=:mixed
+    body_bytes = read(form)
+    body_text = String(copy(body_bytes))
+    # sniff should detect "text/plain; charset=utf-8"
+    @test occursin("Content-Type: text/plain", body_text)
+end
+
+@testset "Form(d; type=:mixed) with IO value" begin
+    # Covers the `isa(v, IO)` branch inside Form(d; ...) when type=:mixed
+    io_val = IOBuffer("io content")
+    form = HT.Form(Pair["1" => io_val]; type=:mixed)
+    @test form.type == :mixed
+    body_bytes = read(form)
+    @test occursin("io content", String(copy(body_bytes)))
+end
+
+@testset "parse_multipart boundary length error" begin
+    # Covers the `length(boundary_delimiter) > 70` error path
+    long_boundary = 'a'^71
+    ct = "multipart/mixed; boundary=$long_boundary"
+    body = Vector{UInt8}("--$(long_boundary)\r\n\r\ndata\r\n--$(long_boundary)--\r\n")
+    @test_throws ErrorException HT.parse_multipart(ct, body)
+    @test_throws ErrorException HT.parse_multipart_mixed(ct, body)
+end
+
+@testset "parse_multipart with required_type=:formdata" begin
+    # Covers the formdata require_contentdisposition=true path via parse_multipart
+    boundary = "formboundary99"
+    body_text = join([
+        "--$boundary",
+        "Content-Disposition: form-data; name=\"field1\"",
+        "Content-Type: text/plain",
+        "",
+        "hello",
+        "--$boundary--",
+        "",
+    ], "\r\n")
+    body = Vector{UInt8}(body_text)
+    ct = "multipart/form-data; boundary=$boundary"
+
+    parts = HT.parse_multipart(ct, body, :formdata)
+    @test parts !== nothing
+    @test length(parts) == 1
+    @test parts[1].name == "field1"
+    @test String(read(parts[1])) == "hello"
+
+    # required_type mismatch → nothing
+    @test HT.parse_multipart(ct, body, :mixed) === nothing
+end
+
+@testset "parse_multipart(request) overload" begin
+    boundary = "reqboundary7"
+    body_text = join([
+        "--$boundary",
+        "Content-Type: text/plain",
+        "",
+        "batch body",
+        "--$boundary--",
+        "",
+    ], "\r\n")
+    body_bytes = Vector{UInt8}(body_text)
+    ct = "multipart/mixed; boundary=$boundary"
+
+    request = HT.Request("POST", "/batch"; headers=["Content-Type" => ct], body=body_bytes)
+    parts = HT.parse_multipart(request)
+    @test parts !== nothing
+    @test length(parts) == 1
+    @test String(read(parts[1])) == "batch body"
+
+    # required_type filter via request overload
+    parts_typed = HT.parse_multipart(request, :mixed)
+    @test parts_typed !== nothing
+    @test length(parts_typed) == 1
+
+    # wrong required_type
+    @test HT.parse_multipart(request, :formdata) === nothing
+
+    # no Content-Type header
+    bare_request = HT.Request("GET", "/")
+    @test HT.parse_multipart(bare_request) === nothing
+end
