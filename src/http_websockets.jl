@@ -318,6 +318,33 @@ function _flush_ws_output!(ws::WebSocket)::Nothing
     return nothing
 end
 
+# Concurrency invariant: `ws.codec.outgoing_frames` is a plain `Vector`, and
+# mutating a Julia `Vector` from two OS threads at once is undefined behavior.
+# `ws_on_incoming_data!` is not purely a parser — the auto-PONG and CLOSE-echo
+# paths `push!` onto `outgoing_frames` — so it must run under the same
+# `ws.sendlock` that guards application-initiated `send`/`ping`/`pong`/`close`
+# (which `push!`/iterate/`empty!` that buffer). Otherwise the reader task, spawned
+# separately and processing a remote PING flood, races those application sends and
+# can corrupt the array metadata / segfault the process. We take the lock only
+# around the decode + flush, never across the blocking socket read in the reader
+# loop, so this cannot deadlock with concurrent senders.
+function _process_incoming_data!(
+    ws::WebSocket,
+    on_frame::Function,
+    data::AbstractVector{UInt8},
+    datalen::Int=lastindex(data),
+)::Nothing
+    @lock ws.sendlock begin
+        ws_on_incoming_data!(on_frame, ws.codec, data, datalen)
+        _flush_ws_output_locked!(ws)
+    end
+    return nothing
+end
+
+function _process_incoming_data!(ws::WebSocket, data::AbstractVector{UInt8}, datalen::Int=lastindex(data))::Nothing
+    return _process_incoming_data!(ws, frame -> _process_incoming_frame!(ws, frame), data, datalen)
+end
+
 function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
     frame.payload_length <= ws.maxframesize || begin
         close_body = CloseFrameBody(1009, "frame too large")
@@ -446,8 +473,12 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             # `_blocking_readbytes!` does one blocking socket read into `buf`.
             n = _blocking_readbytes!(ws.stream, buf, length(buf))
             n == 0 && break
-            ws_on_incoming_data!(on_frame, ws.codec, buf, n)
-            _flush_ws_output!(ws)
+            # Decode + flush under `ws.sendlock` so the auto-PONG/CLOSE-echo
+            # frames pushed onto `ws.codec.outgoing_frames` never race a
+            # concurrent application `send`/`ping`/`close` (see
+            # `_process_incoming_data!`). The blocking read above runs
+            # outside the lock, so concurrent senders cannot deadlock the reader.
+            _process_incoming_data!(ws, on_frame, buf, n)
             ws.readclosed && break
         end
         if !ws.readclosed
@@ -525,8 +556,7 @@ function _finish_client_websocket(
     ws.handshake_request = request
     ws.handshake_response = response
     if !isempty(buffered)
-        ws_on_incoming_data!(frame -> _process_incoming_frame!(ws, frame), ws.codec, buffered)
-        _flush_ws_output!(ws)
+        _process_incoming_data!(ws, buffered)
     end
     _start_read_task!(ws)
     return ws
@@ -1592,8 +1622,7 @@ function upgrade(
     ws.handshake_request = stream.message
     ws.handshake_response = response
     if !isempty(buffered)
-        ws_on_incoming_data!(frame -> _process_incoming_frame!(ws, frame), ws.codec, buffered)
-        _flush_ws_output!(ws)
+        _process_incoming_data!(ws, buffered)
     end
     _start_read_task!(ws)
     try

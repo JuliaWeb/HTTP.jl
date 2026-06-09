@@ -199,6 +199,63 @@ end
     @test_throws HT.WebSockets.WebSocketProtocolError HT.WebSockets.ws_on_incoming_data!(W.Conn(is_client = true), HT.WebSockets.ws_encode_frame(HT.WebSockets.WsFrame(opcode = UInt8(HT.WebSockets.WsOpcode.TEXT), payload = UInt8[0x41], fin = true, masked = true, masking_key = (0x01, 0x02, 0x03, 0x04))))
 end
 
+# Regression: the reader task processes incoming frames (auto-PONG / CLOSE-echo)
+# concurrently with application send/ping/close. Both paths mutate the shared
+# `ws.codec.outgoing` Vector. Before the fix, the reader path ran the
+# auto-PONG `push!` WITHOUT `ws.sendlock`, racing the application path's
+# `push!`/`empty!` under the lock — concurrent Vector mutation from two OS
+# threads is undefined behavior and could corrupt the array / segfault under a
+# remote PING flood. The fix routes the reader path through
+# `_process_incoming_data!`, which holds `ws.sendlock` around the decode + flush,
+# so all mutations of the buffer are serialized.
+@testset "HTTP websocket outgoing-frame buffer is single-locked" begin
+    # Drive the reader path (auto-PONG via `_process_incoming_data!`) and the
+    # application path (`ping`/`send`) from many tasks at once. With the fix this
+    # runs cleanly; without it, concurrent Vector mutation corrupts/segfaults
+    # under `julia -t N` (N > 1).
+    iobuf = IOBuffer()
+    ws = HT.WebSockets.WebSocket(iobuf, () -> nothing; is_client = false)
+
+    masking_key = (0x01, 0x02, 0x03, 0x04)
+    ping_wire = HT.WebSockets.ws_encode_frame(HT.WebSockets.WsFrame(
+        opcode = UInt8(HT.WebSockets.WsOpcode.PING),
+        payload = Vector{UInt8}("p"),
+        fin = true,
+        masked = true,
+        masking_key = masking_key,
+    ))
+
+    nworkers = 8
+    iters = 2_000
+    failures = Threads.Atomic{Int}(0)
+    tasks = Task[]
+    for w in 1:nworkers
+        push!(tasks, Threads.@spawn begin
+            try
+                for _ in 1:iters
+                    if isodd(w)
+                        # Reader-task path: decode a masked PING -> auto-PONG
+                        # push! onto outgoing_frames, then flush. Must be locked.
+                        HT.WebSockets._process_incoming_data!(ws, copy(ping_wire))
+                    else
+                        # Application path: push! a frame and flush under sendlock.
+                        HT.WebSockets.ping(ws, UInt8[0x61])
+                    end
+                end
+            catch
+                Threads.atomic_add!(failures, 1)
+            end
+        end)
+    end
+    foreach(wait, tasks)
+
+    @test failures[] == 0
+    # The connection was never closed, so the buffer must be fully drained and
+    # the codec still open after all the concurrent flushes.
+    @test isempty(ws.codec.outgoing)
+    @test ws.codec.is_open
+end
+
 @testset "HTTP websocket payload limits" begin
     ws = W.Conn(is_client = false, max_incoming_payload_length = UInt64(4))
     frame = HT.WebSockets.WsFrame(
