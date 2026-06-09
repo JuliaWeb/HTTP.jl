@@ -213,6 +213,48 @@ end
     end
 end
 
+@testset "HTTP.WebSockets default origin policy enforces scheme/host/port (JLSEC-2026-614)" begin
+    # Build a minimal upgrade request carrying the given Origin and Host headers.
+    function _origin_request(origin::Union{Nothing,String}, host::String)
+        headers = HT.Headers()
+        origin === nothing || HT.setheader(headers, "Origin", origin)
+        return HT.Request("GET", "/ws"; headers = headers, host = host, content_length = 0)
+    end
+    allowed(origin, host; secure::Bool = false) =
+        W._origin_allowed_default(_origin_request(origin, host), secure)
+
+    # No Origin header (e.g. non-browser clients): the default policy allows it.
+    @test allowed(nothing, "example.com")
+    @test allowed(nothing, "example.com"; secure = true)
+
+    # Exact same-origin requests are allowed for both ws/http and wss/https.
+    @test allowed("http://example.com", "example.com")
+    @test allowed("https://example.com", "example.com"; secure = true)
+    @test allowed("http://example.com:8080", "example.com:8080")
+    @test allowed("https://example.com:8443", "example.com:8443"; secure = true)
+
+    # Cross-port origins on the same host must be rejected even when the Host
+    # header omits the port (the default-port case the previous code mishandled).
+    @test !allowed("http://example.com:8080", "example.com")
+    @test !allowed("https://example.com:8443", "example.com"; secure = true)
+    @test !allowed("http://example.com:8080", "example.com:80")
+    @test !allowed("https://example.com:8443", "example.com:443"; secure = true)
+
+    # Cross-scheme origins on the same host/effective port must be rejected: a
+    # wss server must not accept an http origin, nor a ws server an https origin.
+    @test !allowed("http://example.com", "example.com"; secure = true)
+    @test !allowed("http://example.com:443", "example.com"; secure = true)
+    @test !allowed("https://example.com", "example.com")
+    @test !allowed("https://example.com:80", "example.com")
+
+    # Cross-host origins remain rejected.
+    @test !allowed("http://evil.example", "example.com")
+    @test !allowed("https://evil.example", "example.com"; secure = true)
+
+    # Malformed Origin headers are rejected.
+    @test !allowed("not a url", "example.com")
+end
+
 @testset "HTTP.WebSockets server custom origin policy can allow requests" begin
     server = W.listen!(
         "127.0.0.1",

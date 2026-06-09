@@ -1370,7 +1370,44 @@ function _write_ws_response!(conn, response::Response)::Nothing
     return nothing
 end
 
-function _origin_allowed_default(request::Request)::Bool
+# Split a Host header value into (host, port). When the value carries no
+# explicit port (the norm for default-port servers, where browsers omit the
+# port), substitute `default_port` so the server's effective origin is fully
+# determined. Returns `nothing` if the value cannot be parsed as a host[:port].
+function _split_host_with_default_port(value::AbstractString, default_port::Integer)::Union{Nothing,Tuple{String,String}}
+    s = String(value)
+    isempty(s) && return nothing
+    # An IPv6 literal is bracketed (`[::1]`); a port, if present, follows the
+    # closing bracket as `]:port`. For non-bracketed hosts a trailing `:port`
+    # is the only colon. Detect an explicit port without tripping over the
+    # colons inside an IPv6 literal.
+    has_explicit_port = if startswith(s, '[')
+        close_idx = findfirst(==(']'), s)
+        close_idx === nothing && return nothing
+        close_idx < lastindex(s) && s[nextind(s, close_idx)] == ':'
+    else
+        occursin(':', s)
+    end
+    if has_explicit_port
+        return try
+            HostResolvers.split_host_port(s)
+        catch
+            nothing
+        end
+    end
+    host = startswith(s, '[') ? s[nextind(s, firstindex(s)):prevind(s, lastindex(s))] : s
+    return (host, string(default_port))
+end
+
+# Default Origin policy for WebSocket upgrades. The browser same-origin policy
+# is defined over the full (scheme, host, port) triple, so all three must match
+# the server's own origin. `server_secure` indicates whether the server speaks
+# wss/https (true) or ws/http (false) and provides the scheme component plus the
+# default port (443 vs 80) used when the Host header omits the port. Comparing
+# only the host (as a previous version did when the Host header had no port)
+# allowed cross-scheme and cross-port origins on the same hostname to open
+# authenticated WebSockets.
+function _origin_allowed_default(request::Request, server_secure::Bool=false)::Bool
     origin = header(request.headers, "Origin", nothing)
     origin === nothing && return true
     parsed = try
@@ -1378,14 +1415,19 @@ function _origin_allowed_default(request::Request)::Bool
     catch
         return false
     end
+    # The Origin's scheme must match the server's transport: a wss/https server
+    # must not accept ws/http origins (and vice versa).
+    parsed.secure == server_secure || return false
     request_host = request.host === nothing ? header(request.headers, "Host", nothing) : request.host
     request_host === nothing && return false
+    # `parsed.address` always carries a port, defaulting to the Origin scheme's
+    # default (80/443) when the Origin omits it.
     origin_host, origin_port = HostResolvers.split_host_port(parsed.address)
-    if occursin(':', request_host::String)
-        req_host, req_port = HostResolvers.split_host_port(request_host::String)
-        return lowercase(origin_host) == lowercase(req_host) && origin_port == req_port
-    end
-    return lowercase(origin_host) == lowercase(request_host::String)
+    server_default_port = server_secure ? 443 : 80
+    server = _split_host_with_default_port(request_host::String, server_default_port)
+    server === nothing && return false
+    req_host, req_port = server
+    return lowercase(origin_host) == lowercase(req_host) && origin_port == req_port
 end
 
 function _run_origin_check(checker, request::Request)::Bool
@@ -1403,7 +1445,8 @@ end
 
 function _origin_allowed(server::Server, request::Request)::Bool
     checker = server.check_origin
-    checker === nothing && return _origin_allowed_default(request)
+    # A server configured with a TLS config serves wss/https; otherwise ws/http.
+    checker === nothing && return _origin_allowed_default(request, server.tls_config !== nothing)
     return _run_origin_check(checker, request)
 end
 
@@ -1412,6 +1455,7 @@ function _upgrade_response(
     subprotocols::AbstractVector{<:AbstractString}=String[],
     check_origin::Union{Nothing,Function}=nothing,
     compress::Bool=false,
+    server_secure::Bool=false,
 )::Response
     uppercase(request.method) == "GET" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     _ws_headers_have_token(request.headers, "Upgrade", "websocket", false) || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
@@ -1421,7 +1465,7 @@ function _upgrade_response(
     strip(version) == "13" || return Response(400, BytesBody(Vector{UInt8}("websocket upgrade required")); content_length=26, headers=Headers())
     raw_key = header(request.headers, "Sec-WebSocket-Key", nothing)
     raw_key === nothing && return Response(400, BytesBody(Vector{UInt8}("missing websocket key")); content_length=21, headers=Headers())
-    allowed = check_origin === nothing ? _origin_allowed_default(request) : _run_origin_check(check_origin, request)
+    allowed = check_origin === nothing ? _origin_allowed_default(request, server_secure) : _run_origin_check(check_origin, request)
     allowed || return Response(403, BytesBody(Vector{UInt8}("websocket origin rejected")); content_length=25, headers=Headers())
     key = ws_get_request_sec_websocket_key(request)
     key === nothing && return Response(400, BytesBody(Vector{UInt8}("invalid websocket key")); content_length=21, headers=Headers())
@@ -1437,7 +1481,13 @@ function _upgrade_response(
 end
 
 _upgrade_response(request::Request, server::Server)::Response =
-    _upgrade_response(request; subprotocols=server.subprotocols, check_origin=server.check_origin, compress=server.compress)
+    _upgrade_response(
+        request;
+        subprotocols=server.subprotocols,
+        check_origin=server.check_origin,
+        compress=server.compress,
+        server_secure=server.tls_config !== nothing,
+    )
 
 # Build the server-side permessage-deflate context for an accepted upgrade, or
 # nothing. Re-runs the (deterministic) negotiation that produced the response's
@@ -1496,7 +1546,14 @@ function upgrade(
         throw(WebSocketError(CloseFrameBody(1011, "WebSocket upgrade over HTTP/2 is not supported")))
 
     conn = stream.tracked.conn
-    response = _upgrade_response(stream.message; subprotocols=subprotocols, check_origin=check_origin, compress=compress)
+    # A TLS connection means the server speaks wss/https; plain TCP means ws/http.
+    response = _upgrade_response(
+        stream.message;
+        subprotocols=subprotocols,
+        check_origin=check_origin,
+        compress=compress,
+        server_secure=conn isa TLS.Conn,
+    )
     _write_ws_response!(conn, response)
 
     # We have written the handshake response directly to the connection, so take
