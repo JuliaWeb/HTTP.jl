@@ -61,6 +61,13 @@ Raising the windows improves single-stream throughput on links with non-trivial
 latency, where the default 64 KiB window would otherwise cap a transfer at roughly
 `window / RTT`.
 """
+# Default ceiling on the number of HTTP/2 streams a single connection may have
+# open concurrently. RFC 9113 §6.5.2 recommends a value no smaller than 100 so
+# that legitimate multiplexing keeps working; it is advertised to the peer via
+# SETTINGS_MAX_CONCURRENT_STREAMS and enforced per connection in http2_server.jl.
+# A value <= 0 disables the cap (legacy "unlimited" behavior).
+const _H2_DEFAULT_MAX_CONCURRENT_STREAMS = 100
+
 mutable struct Server{F}
     network::String
     address::String
@@ -72,6 +79,7 @@ mutable struct Server{F}
     idle_timeout_ns::Int64
     max_header_bytes::Int
     http2_settings::HTTP2Settings
+    max_concurrent_streams::Int
     listenany::Bool
     reuseaddr::Bool
     backlog::Int
@@ -95,6 +103,7 @@ function Server(;
     idle_timeout_ns::Integer=Int64(0),
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -104,6 +113,9 @@ function Server(;
     write_timeout_ns >= 0 || throw(ArgumentError("write_timeout_ns must be >= 0"))
     idle_timeout_ns >= 0 || throw(ArgumentError("idle_timeout_ns must be >= 0"))
     max_header_bytes > 0 || throw(ArgumentError("max_header_bytes must be > 0"))
+    # `max_concurrent_streams <= 0` disables the HTTP/2 concurrent-stream cap
+    # (the legacy RFC-default "unlimited" behavior); positive values are
+    # advertised via SETTINGS_MAX_CONCURRENT_STREAMS and enforced per connection.
     backlog > 0 || throw(ArgumentError("backlog must be > 0"))
     return Server{F}(
         String(network),
@@ -116,6 +128,7 @@ function Server(;
         Int64(idle_timeout_ns),
         Int(max_header_bytes),
         http2_settings,
+        Int(max_concurrent_streams),
         listenany,
         reuseaddr,
         Int(backlog),
@@ -1320,6 +1333,7 @@ function listen!(
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1338,6 +1352,7 @@ function listen!(
         idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
         http2_settings=http2_settings,
+        max_concurrent_streams=max_concurrent_streams,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1358,6 +1373,7 @@ function listen!(
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1378,6 +1394,7 @@ function listen!(
         verbose=verbose,
         max_header_bytes=max_header_bytes,
         http2_settings=http2_settings,
+        max_concurrent_streams=max_concurrent_streams,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1398,6 +1415,7 @@ function listen!(
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1420,6 +1438,7 @@ function listen!(
         idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
         http2_settings=http2_settings,
+        max_concurrent_streams=max_concurrent_streams,
         listenany=false,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1477,6 +1496,7 @@ function serve!(
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1499,6 +1519,7 @@ function serve!(
         idle_timeout_ns=effective_idle_timeout_ns,
         max_header_bytes=max_header_bytes,
         http2_settings=http2_settings,
+        max_concurrent_streams=max_concurrent_streams,
         listenany=false,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1524,6 +1545,7 @@ function serve!(
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1550,7 +1572,8 @@ function serve!(
             readtimeout=readtimeout,
             verbose=verbose,
             max_header_bytes=max_header_bytes,
-        http2_settings=http2_settings,
+            http2_settings=http2_settings,
+            max_concurrent_streams=max_concurrent_streams,
             reuseaddr=reuseaddr,
             backlog=backlog,
         )
@@ -1577,6 +1600,7 @@ function serve!(
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1597,6 +1621,7 @@ function serve!(
         verbose=verbose,
         max_header_bytes=max_header_bytes,
         http2_settings=http2_settings,
+        max_concurrent_streams=max_concurrent_streams,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
@@ -1623,6 +1648,7 @@ function serve(
     verbose=nothing,
     max_header_bytes::Integer=1 * 1024 * 1024,
     http2_settings::HTTP2Settings=HTTP2Settings(),
+    max_concurrent_streams::Integer=_H2_DEFAULT_MAX_CONCURRENT_STREAMS,
     listenany::Bool=false,
     reuseaddr::Bool=true,
     backlog::Integer=128,
@@ -1642,6 +1668,7 @@ function serve(
         verbose=verbose,
         max_header_bytes=max_header_bytes,
         http2_settings=http2_settings,
+        max_concurrent_streams=max_concurrent_streams,
         listenany=listenany,
         reuseaddr=reuseaddr,
         backlog=backlog,
