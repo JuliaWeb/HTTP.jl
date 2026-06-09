@@ -618,6 +618,67 @@ end
     end
 end
 
+@testset "JLSEC redirect does not leak explicit cookies= across origins" begin
+    # Two listeners on different ports of 127.0.0.1: a redirect between them is
+    # cross-origin under the (scheme, host, port) check. The caller passes the
+    # session secret via the `cookies=` kwarg, which the unpatched code
+    # re-attached on every hop via `_cookie_header` even after the Cookie header
+    # was stripped, leaking it to the redirect target. The fix drops the
+    # explicit-kwarg cookies once the origin changes.
+    listener1 = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    listener2 = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr1 = NC.addr(listener1)::NC.SocketAddrV4
+    laddr2 = NC.addr(listener2)::NC.SocketAddrV4
+    address1 = ND.join_host_port("127.0.0.1", Int(laddr1.port))
+    address2 = ND.join_host_port("127.0.0.1", Int(laddr2.port))
+    seen_cookie_hop1 = Ref{Union{Nothing, String}}(nothing)
+    seen_cookie_hop2 = Ref{Union{Nothing, String}}(nothing)
+    server_task1 = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener1)
+        try
+            req = HT.read_request(HT._ConnReader(conn))
+            seen_cookie_hop1[] = HT.header(req.headers, "Cookie", nothing)
+            headers = HT.Headers()
+            HT.setheader(headers, "Location", "http://$(address2)/final")
+            HT.setheader(headers, "Connection", "close")
+            _send_response_client!(conn, req; status = 302, reason = "Found", headers = headers, close_conn = true)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    server_task2 = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener2)
+        try
+            req = HT.read_request(HT._ConnReader(conn))
+            seen_cookie_hop2[] = HT.header(req.headers, "Cookie", nothing)
+            _send_response_client!(conn, req; body_text = "ok", close_conn = true)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    # cookiejar=nothing isolates the test from the shared jar; the secret flows
+    # only through the explicit cookies= kwarg.
+    client = HT.Client(transport = HT.Transport(max_idle_per_host = 4, max_idle_total = 4), cookiejar = nothing)
+    try
+        req = HT.Request("GET", "/start"; host = address1, body = HT.EmptyBody(), content_length = 0)
+        response = HT.do!(client, address1, req; cookies = Dict("session" => "s3cr3t"))
+        @test response.status == 200
+        @test String(_read_all_body_bytes_client(response.body)) == "ok"
+        _wait_task_client!(server_task1)
+        _wait_task_client!(server_task2)
+        # Original origin receives the explicit cookie...
+        @test seen_cookie_hop1[] == "session=s3cr3t"
+        # ...but the cross-origin redirect target must NOT.
+        @test seen_cookie_hop2[] === nothing
+    finally
+        close(client.transport)
+        HTTP.@try_ignore NC.close(listener1)
+        HTTP.@try_ignore NC.close(listener2)
+    end
+end
+
 @testset "HTTP client redirect helper strips all duplicate sensitive headers" begin
     headers = HT.Headers()
     push!(headers, "Authorization" => "Bearer one")
@@ -678,9 +739,39 @@ end
 end
 
 @testset "HTTP client redirect trusted host matching helper" begin
-    @test HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "foo.com:443")
-    @test HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "sub.foo.com:443")
-    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "bar.com:443")
+    # Same scheme + same host + same port: sensitive headers may be retained.
+    @test HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "foo.com:443", true, true)
+    @test HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "sub.foo.com:443", true, true)
+    # Bare host vs host:default-port over the same scheme is the same origin.
+    @test HT._should_copy_sensitive_headers_on_redirect("foo.com", "foo.com:443", true, true)
+    # Different host is a different origin.
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "bar.com:443", true, true)
+end
+
+@testset "JLSEC redirect sensitive-header origin (scheme/port/host) and cookie scoping" begin
+    # Scheme downgrade on the same host:port must NOT retain credentials
+    # (https -> http replays Authorization/Cookie over plaintext).
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "foo.com:80", true, false)
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "foo.com:443", true, false)
+    # Port change on the same host+scheme must NOT retain credentials
+    # (a different service may listen on the alternate port).
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:443", "foo.com:8443", true, true)
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "foo.com:8080", false, false)
+    # Identical full origin retains; same scheme http example.
+    @test HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "foo.com:80", false, false)
+    # A scheme upgrade (http -> https) is still a scheme change -> strip.
+    @test !HT._should_copy_sensitive_headers_on_redirect("foo.com:80", "foo.com:443", false, true)
+
+    # Cross-origin redirect must strip the explicit-kwarg Cookie header so the
+    # caller's cookies are not leaked to an attacker-controlled redirect target.
+    headers = HT.Headers()
+    HT.setheader(headers, "Cookie", "session=secret")
+    HT.setheader(headers, "Authorization", "Bearer t0ken")
+    HT.setheader(headers, "X-Keep", "keep")
+    HT._strip_sensitive_redirect_headers!(headers)
+    @test HT.header(headers, "Cookie", nothing) === nothing
+    @test HT.header(headers, "Authorization", nothing) === nothing
+    @test HT.header(headers, "X-Keep", nothing) == "keep"
 end
 
 @testset "HTTP client redirect absolute location default ports" begin

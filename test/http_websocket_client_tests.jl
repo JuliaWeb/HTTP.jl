@@ -267,6 +267,49 @@ end
     end
 end
 
+@testset "HTTP.WebSockets client redirect drops explicit cookies across origins" begin
+    redirect_listener = nothing
+    redirect_task = nothing
+    target_listener = nothing
+    target_task = nothing
+    ws = nothing
+    seen_redirect_cookie = Ref{Union{Nothing,String}}(nothing)
+    seen_target_cookie = Ref{Union{Nothing,String}}(nothing)
+    try
+        target_listener, target_task, target_address = _ws_server() do conn
+            request = _read_ws_request(conn)
+            seen_target_cookie[] = HT.header(request.headers, "Cookie", nothing)
+            _accept_ws_request!(conn, request)
+            server_ws = W.Conn(is_client = false)
+            HT.WebSockets.ws_close!(server_ws; status_code = UInt16(1000), reason = UInt8[])
+            write(conn, HT.WebSockets.ws_get_outgoing_data!(server_ws))
+        end
+        redirect_listener, redirect_task, redirect_address = _ws_server() do conn
+            request = _read_ws_request(conn)
+            seen_redirect_cookie[] = HT.header(request.headers, "Cookie", nothing)
+            headers = HT.Headers()
+            HT.setheader(headers, "Location", "ws://$target_address/final")
+            _write_response_all!(conn, HT.Response(302, HT.EmptyBody(); headers = headers, content_length = 0))
+        end
+        ws = W.open(
+            "ws://$redirect_address/start";
+            cookies = Dict("session" => "s3cr3t"),
+            cookiejar = HT.CookieJar(),
+        )
+        @test ws.handshake_response.status == 101
+        _close_quiet!(redirect_task)
+        _close_quiet!(target_task)
+        @test seen_redirect_cookie[] == "session=s3cr3t"
+        @test seen_target_cookie[] === nothing
+    finally
+        ws === nothing || HTTP.@try_ignore close(ws)
+        _close_quiet!(redirect_listener)
+        _close_quiet!(redirect_task)
+        _close_quiet!(target_listener)
+        _close_quiet!(target_task)
+    end
+end
+
 @testset "HTTP.WebSockets client handshake response_header_timeout" begin
     listener = nothing
     task = nothing

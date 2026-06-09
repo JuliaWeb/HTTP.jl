@@ -752,8 +752,19 @@ function _do_incoming!(
     current_address = String(address)
     initial_address = current_address
     current_secure = secure
-    explicit_server_name = server_name !== nothing
-    current_server_name = explicit_server_name ? String(server_name::AbstractString) : _host_for_sni(current_address)
+    # Remember the original request scheme so the sensitive-header same-origin
+    # check below can detect an https->http downgrade across the redirect chain.
+    initial_secure = secure
+    # `request()` always supplies `server_name` (derived from the initial URL via
+    # `_urlparts_server_name!`), so `server_name !== nothing` is not a reliable
+    # signal of a user-pinned SNI host. Only treat the SNI host as user-pinned
+    # when it does NOT match the host auto-derived from the initial address;
+    # otherwise we must recompute it from the redirect target on every hop so TLS
+    # verifies the peer certificate against the host we actually connect to
+    # (an auto value pinned to the original host would verify the wrong cert).
+    auto_server_name = _host_for_sni(current_address)
+    user_pinned_server_name = server_name !== nothing && String(server_name::AbstractString) != auto_server_name
+    current_server_name = user_pinned_server_name ? String(server_name::AbstractString) : auto_server_name
     current_request = _copy_request_shallow_body(request)
     previous_response = nothing
     retry_attempt = 1
@@ -897,7 +908,11 @@ function _do_incoming!(
             )
             current_address = next_address
             current_secure = next_secure
-            if !explicit_server_name
+            # Recompute the TLS verification host (SNI) from the redirect target
+            # unless the caller genuinely pinned a server_name. Otherwise TLS
+            # would verify the peer certificate against the original host while
+            # the TCP connection is dialed to the redirect target.
+            if !user_pinned_server_name
                 current_server_name = _host_for_sni(current_address)
             end
             current_request = _prepare_request_for_redirect(current_request, response.head.status, next_target, redirect_policy)
@@ -908,8 +923,22 @@ function _do_incoming!(
             else
                 setheader(current_request.headers, "Referer", next_ref::String)
             end
-            if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address)
+            # Compare the FULL origin (scheme + host + port) of the current hop
+            # against the original request origin. On any cross-origin hop, strip
+            # credential headers AND stop re-applying per-call explicit cookies,
+            # which are otherwise re-attached by `_cookie_header` on every hop
+            # even after the Cookie header was stripped here, leaking them to the
+            # redirect target.
+            if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address, initial_secure, current_secure)
                 _strip_sensitive_redirect_headers!(current_request.headers)
+                # Drop caller-supplied (`cookies=`) cookies once we leave the
+                # original origin so they are not re-merged into the Cookie
+                # header on subsequent hops. Jar-derived cookies remain
+                # host-scoped via `getcookies!`, so disabling only the explicit
+                # vector is sufficient; `false` keeps the jar active.
+                if cookies isa Vector{Cookie}
+                    cookies = Cookie[]
+                end
             end
             current_request.host = current_address
             break

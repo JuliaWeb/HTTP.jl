@@ -883,6 +883,9 @@ function _open_client_websocket(
     current_server_name = parsed.server_name
     current_request = request
     initial_address = current_address
+    # Remember the original scheme so the sensitive-header same-origin check can
+    # detect an https/wss -> http/ws downgrade across the redirect chain.
+    initial_secure = current_secure
     for redirect_count in 0:redirect_policy.max_redirects
         send_request = _copy_request(current_request)
         host, path = _host_path_from_request(current_address, current_request)
@@ -968,9 +971,18 @@ function _open_client_websocket(
         else
             setheader(current_request.headers, "Referer", next_ref::String)
         end
-        if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address)
+        # Strip credential headers on any cross-origin hop, where origin is the
+        # full (scheme, host, port) tuple rather than the host alone, so a scheme
+        # downgrade or a port change no longer replays Authorization/Cookie.
+        if !_should_copy_sensitive_headers_on_redirect(initial_address, current_address, initial_secure, current_secure)
             _strip_sensitive_redirect_headers!(current_request.headers)
             _apply_websocket_request_headers!(current_request.headers, key, subprotocols, pmce_offer)
+            # Stop re-applying caller-supplied explicit cookies once we leave the
+            # original origin; otherwise `_cookie_header` re-attaches them on the
+            # next hop after the Cookie header was just stripped.
+            if normalized_cookies isa Vector{Cookies.Cookie}
+                normalized_cookies = Cookies.Cookie[]
+            end
         end
     end
     owns_client && close(req_client)
