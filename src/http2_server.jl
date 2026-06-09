@@ -907,15 +907,32 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
             saw_regular && throw(ProtocolError("HTTP/2 pseudo-headers must precede regular headers"))
             if name == ":method"
                 method === nothing || throw(ProtocolError("duplicate HTTP/2 :method pseudo-header"))
+                # RFC 9113 8.3.1 / RFC 9110 9.1: :method carries an HTTP method,
+                # which is a `token`. `_normalize_strict_header_field_value` only
+                # rejects CR/LF/CTL and permits SP/HTAB, so a value such as
+                # "GET /admin?x=" would otherwise be accepted and smuggled into an
+                # HTTP/1 request line verbatim. Enforce the RFC 9110 token charset
+                # (same check the h1 server and h2 client apply to the method).
+                _valid_header_field_name(normalized) || throw(ProtocolError("invalid HTTP/2 :method pseudo-header: $(repr(normalized))"))
                 method = normalized
             elseif name == ":scheme"
                 scheme === nothing || throw(ProtocolError("duplicate HTTP/2 :scheme pseudo-header"))
                 scheme = normalized
             elseif name == ":path"
                 path === nothing || throw(ProtocolError("duplicate HTTP/2 :path pseudo-header"))
+                # RFC 9113 8.3.1: :path conveys the request-target's path/query and
+                # MUST NOT contain whitespace. Interior SP/HTAB would otherwise be
+                # written verbatim into an HTTP/1 request line, splitting the target
+                # and enabling request smuggling past path-based ACLs.
+                _string_contains_whitespace_byte(normalized) && throw(ProtocolError("invalid HTTP/2 :path pseudo-header: $(repr(normalized))"))
                 path = normalized
             elseif name == ":authority"
                 authority === nothing || throw(ProtocolError("duplicate HTTP/2 :authority pseudo-header"))
+                # RFC 9113 8.3.1: :authority is the request authority (host[:port]).
+                # Validate it with the same host validator used by the h1 server so
+                # interior whitespace / invalid host characters are rejected rather
+                # than forwarded verbatim to an HTTP/1 origin.
+                _valid_host_header(normalized) || throw(ProtocolError("invalid HTTP/2 :authority pseudo-header: $(repr(normalized))"))
                 authority = normalized
             else
                 throw(ProtocolError("unsupported HTTP/2 pseudo-header $(repr(name))"))
@@ -944,6 +961,23 @@ function _validate_h2_request_headers!(headers::Vector{HeaderField})::Tuple{Stri
         appendheader(out_headers, name, normalized)
     end
     method === nothing && throw(ProtocolError("missing HTTP/2 :method pseudo-header"))
+    # RFC 9113 8.3.1: "If the :authority pseudo-header field is present, the
+    # endpoint MUST NOT generate a request with a Host header field that differs
+    # from the :authority field." Treat an inbound request that carries any
+    # Host header differing from :authority as malformed; otherwise a proxy
+    # could authorize on the benign :authority while a hostile Host header is
+    # forwarded to (and prefers over request.host at) an HTTP/1 origin. Every
+    # Host value must match: a request may carry multiple (possibly
+    # non-adjacent) Host headers, and the HTTP/1 serializer forwards them all
+    # verbatim, so checking only the first value would leave a smuggling path.
+    # (The function parameter is named `headers`, so iterate the stored entries
+    # directly rather than calling the `headers(::Headers, key)` accessor.)
+    if authority !== nothing
+        for (entry_name, entry_value) in out_headers.entries
+            entry_name == "Host" || continue
+            entry_value == authority || throw(ProtocolError("HTTP/2 Host header does not match :authority"))
+        end
+    end
     if method == "CONNECT"
         authority === nothing && throw(ProtocolError("CONNECT requests require :authority"))
         scheme === nothing || throw(ProtocolError("CONNECT requests must not include :scheme"))

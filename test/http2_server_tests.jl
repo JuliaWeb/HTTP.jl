@@ -1902,3 +1902,64 @@ end
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
 end
+
+@testset "HTTP/2 server validates request pseudo-headers (JLSEC-2026-623)" begin
+    # Helper: build a minimal pseudo-header set, allowing overrides/extra fields.
+    function _h2_fields(; method="GET", scheme="http", path="/", authority="example.com",
+                          extra::Vector{HT.HeaderField}=HT.HeaderField[])
+        fields = HT.HeaderField[]
+        method === nothing || push!(fields, HT.HeaderField(":method", method, false))
+        scheme === nothing || push!(fields, HT.HeaderField(":scheme", scheme, false))
+        authority === nothing || push!(fields, HT.HeaderField(":authority", authority, false))
+        path === nothing || push!(fields, HT.HeaderField(":path", path, false))
+        append!(fields, extra)
+        return fields
+    end
+
+    # Sanity: a well-formed request still validates and decodes.
+    @test HT._validate_h2_request_headers!(_h2_fields())[1] == "GET"
+    req = HT._decode_h2_request(_h2_fields(), UInt8[])
+    @test req.method == "GET"
+    @test req.host == "example.com"
+
+    # ANT-2026-565042FN: :method must be an RFC 9110 token; embedded space (used
+    # to smuggle a request target into an HTTP/1 request line) is rejected.
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(method="GET /admin?x="))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(method="GET\tPOST"))
+
+    # ANT-2026-565042FN: :path must not contain interior whitespace.
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="/public /admin"))
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(path="/a\tb"))
+
+    # ANT-2026-565042FN: :authority must pass host validation (no whitespace).
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(_h2_fields(authority="allowed.example.com evil"))
+
+    # CWYA87HX: a Host header that disagrees with :authority is malformed.
+    mismatched = _h2_fields(authority="allowed.example.com",
+                            extra=HT.HeaderField[HT.HeaderField("host", "internal-admin", false)])
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(mismatched)
+
+    # CWYA87HX: a Host header that matches :authority is accepted.
+    matched = _h2_fields(authority="allowed.example.com",
+                         extra=HT.HeaderField[HT.HeaderField("host", "allowed.example.com", false)])
+    @test HT._validate_h2_request_headers!(matched)[4] == "allowed.example.com"
+
+    # CWYA87HX: a second, non-adjacent Host header that disagrees with
+    # :authority must still be rejected. A benign first Host (== :authority)
+    # would otherwise pass a first-value-only check while the HTTP/1 serializer
+    # forwards the hostile second Host verbatim.
+    split_hosts = _h2_fields(authority="allowed.example.com",
+                             extra=HT.HeaderField[
+                                 HT.HeaderField("host", "allowed.example.com", false),
+                                 HT.HeaderField("x-sep", "1", false),
+                                 HT.HeaderField("host", "internal-admin", false)])
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(split_hosts)
+
+    # CWYA87HX: two adjacent Host headers are merged into one comma-joined value
+    # which cannot equal a single :authority, so they are also rejected.
+    merged_hosts = _h2_fields(authority="allowed.example.com",
+                              extra=HT.HeaderField[
+                                  HT.HeaderField("host", "allowed.example.com", false),
+                                  HT.HeaderField("host", "internal-admin", false)])
+    @test_throws HT.ProtocolError HT._validate_h2_request_headers!(merged_hosts)
+end

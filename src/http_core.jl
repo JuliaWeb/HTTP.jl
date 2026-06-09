@@ -483,6 +483,16 @@ function _string_contains_ctl_byte(value::AbstractString)::Bool
     return false
 end
 
+# True if `value` contains an ASCII SP (0x20) or HTAB (0x09). Used to reject
+# interior whitespace in fields (e.g. the HTTP/2 :path pseudo-header) that must
+# not be split when re-serialized into an HTTP/1 request line (RFC 9113 8.3.1).
+function _string_contains_whitespace_byte(value::AbstractString)::Bool
+    @inbounds for b in codeunits(value)
+        (b == 0x20 || b == 0x09) && return true
+    end
+    return false
+end
+
 @inline function _is_valid_host_header_byte(b::UInt8)::Bool
     (0x30 <= b <= 0x39 || 0x41 <= b <= 0x5a || 0x61 <= b <= 0x7a) && return true
     return b == 0x21 || b == 0x24 || b == 0x25 || b == 0x26 || b == 0x27 || b == 0x28 ||
