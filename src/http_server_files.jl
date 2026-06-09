@@ -492,6 +492,34 @@ function _request_path_and_query(target::AbstractString)::Tuple{String,String}
     return isempty(path) ? "/" : path, query
 end
 
+# Reject a decoded path segment that could escape the document root once handed
+# to `joinpath`. We split request paths on '/' only, but `joinpath` and the
+# filesystem treat additional forms as separators or as absolute paths --
+# notably on Windows, where '\' is a separator and a leading drive ("C:\") or
+# UNC ("\\host\share") segment is absolute and discards the accumulated root.
+# Because URL-decoding happens before the '/' split, an encoded backslash
+# (%5c) survives inside a single segment and would otherwise pass the plain
+# '.'/'..' check. These checks are deliberately platform-independent (we treat
+# '\' as a separator and reject Windows-absolute forms even on POSIX hosts) so
+# the same hardening applies regardless of where the server runs and so it is
+# testable everywhere.
+@inline function _is_unsafe_request_path_segment(segment::AbstractString)::Bool
+    # Empty segments are filtered out by the caller via keepempty=false.
+    (segment == "." || segment == "..") && return true
+    # Any embedded path separator: '/' can only appear via decoding, '\' is a
+    # Windows separator. A segment that contains a separator is never a single
+    # legitimate path component.
+    ('/' in segment || '\\' in segment) && return true
+    # A colon introduces a Windows drive specifier ("C:...") or an alternate
+    # data stream ("file:...:$DATA"); neither is a valid component name here.
+    (':' in segment) && return true
+    # Absolute paths (POSIX or, when running on Windows, drive/UNC forms) cause
+    # joinpath to discard the root. Guard against the host's own notion of an
+    # absolute path as well as the cross-platform forms covered above.
+    isabspath(segment) && return true
+    return false
+end
+
 function _decoded_request_path_segments(path::AbstractString)::Vector{String}
     decoded = try
         URIs.unescapeuri(String(path))
@@ -500,18 +528,31 @@ function _decoded_request_path_segments(path::AbstractString)::Vector{String}
     end
     segments = String[]
     for segment in split(decoded, '/'; keepempty=false)
-        (segment == "." || segment == "..") && throw(ArgumentError("invalid request path"))
-        push!(segments, segment)
+        _is_unsafe_request_path_segment(segment) && throw(ArgumentError("invalid request path"))
+        push!(segments, String(segment))
     end
     return segments
 end
 
+# Append the (already validated) request-path segments onto the document root
+# and confirm the normalized result stays inside the root. The per-segment
+# checks in `_is_unsafe_request_path_segment` block the known traversal
+# vectors, but we also perform a normalized prefix-containment check as a
+# defense-in-depth backstop so the served path can never escape the root.
 function _join_request_path(root::String, segments::Vector{String})::String
     path = root
     @inbounds for segment in segments
         path = joinpath(path, segment)
     end
-    return path
+    resolved = normpath(path)
+    root_prefix = normpath(root)
+    # Suffix the root with a separator so that a sibling directory sharing a
+    # name prefix (e.g. "<root>_evil") cannot be mistaken for being inside the
+    # root. The root itself is allowed (resolved == root_prefix).
+    if resolved != root_prefix && !startswith(resolved, root_prefix * Base.Filesystem.path_separator)
+        throw(ArgumentError("invalid request path"))
+    end
+    return resolved
 end
 
 function _fileserver_spa_fallback_path(root_path::String, spa_fallback::Union{Nothing,AbstractString})::Union{Nothing,String}

@@ -519,6 +519,76 @@ end
     end
 end
 
+@testset "HTTP fileserver Windows backslash path traversal" begin
+    # Regression for the Windows path-traversal vector: URL-decoding happens
+    # before splitting the request path on '/', so an encoded backslash (%5c),
+    # a drive specifier ("C:\\..."), or a UNC prefix ("\\\\host\\share")
+    # survives as a single segment that is not equal to '.' or '..'. On Windows
+    # joinpath would then honor those separators / absolute forms and escape the
+    # document root. The hardening below is platform-independent so it is
+    # exercisable on POSIX hosts too. We test the internal segment validator and
+    # the join+containment check directly for determinism.
+
+    # The decoded forms an attacker would produce after %5c / drive / UNC
+    # decoding must all be rejected at validation time.
+    for bad in (
+        "..\\..\\Windows\\win.ini",   # encoded backslash traversal
+        "..\\secret",
+        "C:\\Windows\\win.ini",       # absolute drive path
+        "C:",                          # bare drive specifier
+        "\\\\attacker.example\\share", # UNC path (outbound SMB/NTLM)
+        "\\absolute",                  # leading backslash
+        "foo\\bar",                    # embedded backslash separator
+        "name:stream",                 # colon (drive / alternate data stream)
+    )
+        @test HT._is_unsafe_request_path_segment(bad)
+    end
+
+    # Ordinary single segments must still be accepted.
+    for ok in ("hello.txt", "docs", "app.js", "a.b.c", "win.ini")
+        @test !HT._is_unsafe_request_path_segment(ok)
+    end
+
+    # Full decode path: these request paths must raise (mapped to 400 by the
+    # caller) rather than yielding a path that escapes the root.
+    @test_throws ArgumentError HT._decoded_request_path_segments("/..%5c..%5cWindows%5cwin.ini")
+    @test_throws ArgumentError HT._decoded_request_path_segments("/C:%5cWindows%5cwin.ini")
+    @test_throws ArgumentError HT._decoded_request_path_segments("/%5c%5cattacker.example%5cshare%5cx")
+    @test_throws ArgumentError HT._decoded_request_path_segments("/%2e%2e/secret")
+
+    # A benign path still decodes to its segments.
+    @test HT._decoded_request_path_segments("/docs/index.html") == ["docs", "index.html"]
+
+    # The join+containment backstop keeps resolved paths within the root.
+    mktempdir() do dir
+        root = abspath(dir)
+        @test HT._join_request_path(root, ["docs", "index.html"]) ==
+              normpath(joinpath(root, "docs", "index.html"))
+        @test HT._join_request_path(root, String[]) == normpath(root)
+    end
+
+    # End-to-end: the fileserver handler must return 400 for the traversal
+    # request rather than reading an out-of-root file.
+    mktempdir() do dir
+        write(joinpath(dir, "index.html"), "<p>root</p>")
+        handler = HT.fileserver(dir)
+        for target in (
+            "/..%5c..%5c..%5c..%5cWindows%5cwin.ini",
+            "/C:%5cWindows%5cwin.ini",
+            "/%5c%5cattacker.example%5cshare%5cx",
+        )
+            resp = handler(HT.Request("GET", target))
+            @test resp.status == 400
+        end
+        # Sanity: a normal request is still served (the root resolves to the
+        # index file).
+        ok = handler(HT.Request("GET", "/"))
+        @test ok.status == 200
+        @test String(_read_all_server_bytes(ok.body)) == "<p>root</p>"
+        HT.body_close!(ok.body)
+    end
+end
+
 @testset "HTTP fileserver SPA fallback over HTTP/1.1" begin
     mktempdir() do dir
         write(joinpath(dir, "index.html"), "<p>shell</p>")
