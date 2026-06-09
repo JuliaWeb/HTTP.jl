@@ -1847,3 +1847,186 @@ end
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
 end
+
+# Build a bare H2Connection over a loopback TCP pair so internal frame handlers
+# can be driven directly (offline, no read loop). Only the decoder/streams state
+# is exercised here; the sockets exist solely to satisfy the struct.
+function _build_bare_h2_connection()
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 1)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    accept_task = Threads.@spawn NC.accept(listener)
+    client_tcp = NC.connect("tcp", address; timeout_ns = 3_000_000_000)
+    server_tcp = fetch(accept_task)
+    state_lock = ReentrantLock()
+    conn = HT.H2Connection(
+        address,
+        false,
+        client_tcp,
+        nothing,
+        HT._ConnReader(client_tcp),
+        16_384,
+        HT.Encoder(),
+        HT.Decoder(
+            max_string_length = HT._H2_DEFAULT_MAX_HEADER_LIST_SIZE,
+            max_header_list_size = HT._H2_DEFAULT_MAX_HEADER_LIST_SIZE,
+        ),
+        UInt32(1),
+        state_lock,
+        ReentrantLock(),
+        Dict{UInt32,HT.H2StreamState}(),
+        Threads.Condition(state_lock),
+        nothing,
+        Threads.Condition(state_lock),
+        nothing,
+        Threads.Condition(state_lock),
+        Int64(65_535),
+        Int64(65_535),
+        Dict{UInt32,Int64}(),
+        typemax(Int),
+        0,
+        typemax(UInt32),
+        true,
+        HT._H2_DEFAULT_MAX_HEADER_BLOCK_BYTES,
+        HT._H2_DEFAULT_MAX_BUFFERED_BYTES,
+        UInt32(0),
+        nothing,
+        UInt8[],
+        0,
+        false,
+    )
+    cleanup = () -> begin
+        close(client_tcp)
+        close(server_tcp)
+        close(listener)
+    end
+    return conn, cleanup
+end
+
+# Regression for the HPACK desync when a HEADERS/CONTINUATION block arrives for
+# an unknown/closed stream (ANT-2026-SCEWC4G3 / RFC 7541 §4). The client must
+# still pass every header block through `conn.decoder` so the connection-scoped
+# dynamic table stays in lockstep with the peer's encoder; otherwise indexed
+# references on *later* streams resolve to wrong values.
+@testset "HTTP/2 client decodes header blocks for unknown streams (HPACK sync)" begin
+    conn, cleanup = _build_bare_h2_connection()
+    try
+        # A single peer encoder produces three blocks; blocks 2 and 3 rely on the
+        # dynamic-table entries added by earlier blocks. The encoder mutates its
+        # dynamic table as a connection-scoped side effect, exactly like a real
+        # server, so the client decoder must mirror every block to stay in sync.
+        server_encoder = HT.Encoder()
+
+        # Block 1 -> live stream 1. Adds "x-custom: alpha" to the dynamic table.
+        live_state = HT._try_register_stream_locked!(conn)::HT.H2StreamState
+        @test live_state.stream_id == UInt32(1)
+        block1 = HT.encode_header_block(server_encoder, HT.HeaderField[
+            HT.HeaderField(":status", "200", false),
+            HT.HeaderField("x-custom", "alpha", false),
+        ])
+        HT._process_incoming_frame!(conn, HT.HeadersFrame(UInt32(1), true, true, block1))
+        @test live_state.headers_complete
+        @test any(f -> f.name == "x-custom" && f.value == "alpha", live_state.decoded_headers)
+
+        # Close stream 1 (mirrors trailers racing `_unregister_stream!`), then
+        # deliver block 2 to it. The stream is now unknown, but the block adds
+        # "x-trailer: omega" to the dynamic table. The pre-fix code dropped this
+        # block undecoded, desynchronizing the dynamic table for the connection.
+        HT._unregister_stream!(conn, UInt32(1))
+        @test HT._stream_state(conn, UInt32(1)) === nothing
+        block2 = HT.encode_header_block(server_encoder, HT.HeaderField[
+            HT.HeaderField(":status", "204", false),
+            HT.HeaderField("x-trailer", "omega", false),
+        ])
+        HT._process_incoming_frame!(conn, HT.HeadersFrame(UInt32(1), true, true, block2))
+
+        # Block 3 -> a freshly registered live stream (next client id is 3),
+        # referencing the entries added by blocks 1 and 2 via indexed HPACK
+        # references. If block 2 was decoded (post-fix), these resolve correctly;
+        # otherwise they resolve to stale/wrong table entries (or throw).
+        live_state2 = HT._try_register_stream_locked!(conn)::HT.H2StreamState
+        @test live_state2.stream_id == UInt32(3)
+        block3 = HT.encode_header_block(server_encoder, HT.HeaderField[
+            HT.HeaderField(":status", "200", false),
+            HT.HeaderField("x-custom", "alpha", false),
+            HT.HeaderField("x-trailer", "omega", false),
+        ])
+        HT._process_incoming_frame!(conn, HT.HeadersFrame(UInt32(3), true, true, block3))
+        @test live_state2.headers_complete
+        decoded = live_state2.decoded_headers::Vector{HT.HeaderField}
+        @test any(f -> f.name == "x-custom" && f.value == "alpha", decoded)
+        @test any(f -> f.name == "x-trailer" && f.value == "omega", decoded)
+        @test any(f -> f.name == ":status" && f.value == "200", decoded)
+    finally
+        cleanup()
+    end
+end
+
+# CONTINUATION sequencing must be enforced on the client just as on the server
+# (RFC 7540 §6.10): a HEADERS without END_HEADERS may only be followed by a
+# CONTINUATION on the same stream; anything else is a connection error.
+@testset "HTTP/2 client enforces CONTINUATION sequencing" begin
+    conn, cleanup = _build_bare_h2_connection()
+    try
+        server_encoder = HT.Encoder()
+        block = HT.encode_header_block(server_encoder, HT.HeaderField[
+            HT.HeaderField(":status", "200", false),
+        ])
+        # Open a header block on stream 1 (END_HEADERS unset) ...
+        live_state = HT._try_register_stream_locked!(conn)::HT.H2StreamState
+        HT._process_incoming_frame!(conn, HT.HeadersFrame(UInt32(1), false, false, block))
+        @test conn.continuation_stream == UInt32(1)
+        # ... then send a DATA frame instead of the required CONTINUATION.
+        @test_throws HT.ProtocolError HT._process_incoming_frame!(conn, HT.DataFrame(UInt32(1), false, UInt8[0x00]))
+    finally
+        cleanup()
+    end
+
+    conn2, cleanup2 = _build_bare_h2_connection()
+    try
+        server_encoder = HT.Encoder()
+        block = HT.encode_header_block(server_encoder, HT.HeaderField[
+            HT.HeaderField(":status", "200", false),
+        ])
+        # A CONTINUATION with no open header block is a connection error.
+        @test_throws HT.ProtocolError HT._process_incoming_frame!(conn2, HT.ContinuationFrame(UInt32(1), true, block))
+    finally
+        cleanup2()
+    end
+
+    # A multi-frame block for an UNKNOWN stream must still decode across frames
+    # and keep the dynamic table in sync, while honoring CONTINUATION sequencing.
+    conn3, cleanup3 = _build_bare_h2_connection()
+    try
+        server_encoder = HT.Encoder()
+        # Adds "x-multi: split" to the encoder dynamic table, then split the
+        # encoded block across HEADERS + CONTINUATION on unknown stream 3.
+        full = HT.encode_header_block(server_encoder, HT.HeaderField[
+            HT.HeaderField(":status", "200", false),
+            HT.HeaderField("x-multi", "split", false),
+        ])
+        @test length(full) >= 2
+        mid = cld(length(full), 2)
+        part1 = full[1:mid]
+        part2 = full[(mid + 1):end]
+        # Use a stream id the client never allocated, so the lookup misses.
+        @test HT._stream_state(conn3, UInt32(7)) === nothing
+        HT._process_incoming_frame!(conn3, HT.HeadersFrame(UInt32(7), false, false, part1))
+        @test conn3.continuation_stream == UInt32(7)
+        HT._process_incoming_frame!(conn3, HT.ContinuationFrame(UInt32(7), true, part2))
+        @test conn3.continuation_stream == UInt32(0)
+        @test isempty(conn3.orphan_header_block)
+
+        # The decoder is now in sync: a follow-up indexed reference to "x-multi"
+        # on a live stream resolves correctly.
+        live = HT._try_register_stream_locked!(conn3)::HT.H2StreamState
+        block = HT.encode_header_block(server_encoder, HT.HeaderField[
+            HT.HeaderField(":status", "200", false),
+            HT.HeaderField("x-multi", "split", false),
+        ])
+        HT._process_incoming_frame!(conn3, HT.HeadersFrame(live.stream_id, true, true, block))
+        @test any(f -> f.name == "x-multi" && f.value == "split", live.decoded_headers)
+    finally
+        cleanup3()
+    end
+end
