@@ -1328,11 +1328,18 @@ function _readline_crlf(reader::_ConnReader, max_line_bytes::Integer)::String
             line_len = nl_idx - start + 1
             line_len > max_line_bytes && throw(ProtocolError("HTTP/1 line exceeds configured max_line_bytes", _PROTOCOL_ERROR_LINE_TOO_LONG))
             reader.next = nl_idx + 1
-            # Strip terminator: \r\n preferred, bare \n tolerated.
+            # Require a strict CRLF terminator. A bare LF (no preceding CR) is
+            # rejected here so that request-line, header, and chunk-size framing
+            # is independent of socket-buffer fill state. Tolerating bare LF only
+            # on this fast path (while the slow path below and the generic
+            # _readline_crlf(::IO) reader both require CRLF) would make the
+            # accepted wire grammar depend on TCP segmentation, which is a parser
+            # differential that enables HTTP request smuggling behind a proxy
+            # (ANT-2026-CN279YCX, ANT-2026-MG2WTZ8Z).
             content_stop = nl_idx - 1
-            if content_stop >= start && @inbounds(reader.buf[content_stop]) == 0x0d
-                content_stop -= 1
-            end
+            (content_stop < start || @inbounds(reader.buf[content_stop]) != 0x0d) &&
+                throw(ParseError("HTTP/1 line not terminated by CRLF (bare LF)"))
+            content_stop -= 1
             content_len = content_stop - start + 1
             content_len <= 0 && return ""
             return unsafe_string(pointer(reader.buf, start), content_len)
@@ -1366,10 +1373,15 @@ function _readline_crlf(reader::_ConnReader, max_line_bytes::Integer)::String
         append!(bytes, @view(reader.buf[start:nl_idx]))
         reader.next = nl_idx + 1
         nbytes = length(bytes)
+        # Require a strict CRLF terminator (see the fast-path comment above). An
+        # LF not immediately preceded by CR is a bare LF and is rejected rather
+        # than folded into the line body, so both code paths agree regardless of
+        # buffer-fill boundaries (ANT-2026-CN279YCX, ANT-2026-MG2WTZ8Z).
         if nbytes >= 2 && bytes[nbytes-1] == 0x0d && bytes[nbytes] == 0x0a
             resize!(bytes, nbytes - 2)
             return String(bytes)
         end
+        throw(ParseError("HTTP/1 line not terminated by CRLF (bare LF)"))
     end
 end
 
