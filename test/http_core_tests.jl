@@ -50,6 +50,17 @@ const HT = HTTP
     empty_value = HT.Headers(["X-Empty" => ""])
     @test HT.header(empty_value, "X-Empty") == ""
     @test !HT.hasheader(empty_value, "X-Empty")
+
+    headers = HT.Headers(var"content-type" = "application/json")
+    @test headers == HTTP.Headers(["Content-Type" => "application/json"])
+    headers["content-type"] = "replaced"
+    @test headers["Content-Type"] == "replaced"
+
+    headers2 = HT.Headers(:a => "a", b = "b")
+    @test headers2 == HT.Headers(["A" => "a", "B" => "b"])
+
+    append!(headers, headers2)
+    @test headers == HTTP.Headers(["Content-Type" => "replaced", "A" => "a", "B" => "b"])
 end
 
 @testset "HTTP core header tokens" begin
