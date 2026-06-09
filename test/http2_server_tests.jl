@@ -1760,18 +1760,3 @@ end
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
 end
-
-@testset "HTTP/2 server flow-control window configuration validation" begin
-    # Invalid windows are rejected at HTTP2Settings construction.
-    @test_throws ArgumentError HT.HTTP2Settings(initial_window_size = 0)
-    @test_throws ArgumentError HT.HTTP2Settings(connection_window_size = Int(0x7fff_ffff) + 1)
-    # The connection-level window cannot be advertised below the protocol default.
-    @test_throws ArgumentError HT.HTTP2Settings(connection_window_size = 65_534)
-    @test HT.Server(;
-        handler = identity,
-        http2_settings = HT.HTTP2Settings(
-            initial_window_size = 1_048_576,
-            connection_window_size = 1_048_576,
-        ),
-    ) isa HT.Server
-end

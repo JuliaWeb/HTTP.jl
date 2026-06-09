@@ -1,6 +1,7 @@
 using Test
 using HTTP
 using Reseau
+using Random
 
 const HT = HTTP
 const ND = Reseau.HostResolvers
@@ -1227,6 +1228,101 @@ end
     end
 end
 
+@testset "HTTP/2 client connection window stays non-negative under a raised stream window" begin
+    # A raised SETTINGS_INITIAL_WINDOW_SIZE only enlarges the per-stream send
+    # window; the connection-level window is separate and stays at the protocol
+    # default until a stream-0 WINDOW_UPDATE arrives. With a 1 MiB stream window
+    # but a default connection window, the client must still cap connection-level
+    # output at 65535 bytes and stall, never letting the connection window go
+    # negative, even though the stream window alone would permit the whole body.
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    bytes_before_grant = Ref(0)
+    total_received = Ref(0)
+    payload_len = 200 * 1024
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        server_encoder = HT.Encoder()
+        server_decoder = HT.Decoder()
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            _ = HT.read_frame!(reader)
+            # Advertise a 1 MiB per-stream window but leave the connection window at
+            # the default (no stream-0 WINDOW_UPDATE), so the connection is the bind.
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(1 << 20)]))
+            _ = HT.read_frame!(reader)
+            hf = (_read_next_headers_frame!(reader))::HT.HeadersFrame
+            _ = HT.decode_header_block(server_decoder, hf.header_block_fragment)
+            # Drain everything the client sends without ever granting connection
+            # credit, until it stops emitting DATA. A compliant client exhausts the
+            # default 65535-byte connection window and then stalls, which we observe
+            # as a read deadline rather than more bytes. A client that wrongly leaned
+            # on its 1 MiB stream window would keep sending and reach END_STREAM here,
+            # so the drained byte count is what proves the connection-level cap.
+            got_end = false
+            NC.set_deadline!(accepted_conn, Int64(time_ns() + 1_000_000_000))
+            try
+                while !got_end
+                    frame = HT.read_frame!(reader)
+                    frame isa HT.DataFrame || continue
+                    df = frame::HT.DataFrame
+                    df.stream_id == hf.stream_id || continue
+                    bytes_before_grant[] += length(df.data)
+                    got_end = df.end_stream
+                end
+            catch err
+                err isa Reseau.IOPoll.DeadlineExceededError || rethrow(err)
+            finally
+                NC.set_deadline!(accepted_conn, Int64(0))
+            end
+            total_received[] = bytes_before_grant[]
+            # A compliant client stalled mid-body; release the rest of the connection
+            # window and finish reading. If it already hit END_STREAM (the overshoot
+            # case), skip this so a regression fails the assertion rather than hanging.
+            if !got_end
+                _write_frame_to_conn!(accepted_conn, HT.WindowUpdateFrame(UInt32(0), UInt32(payload_len - HT._H2_DEFAULT_WINDOW_SIZE)))
+                NC.set_deadline!(accepted_conn, Int64(time_ns() + 2_000_000_000))
+                try
+                    while !got_end
+                        frame = HT.read_frame!(reader)
+                        frame isa HT.DataFrame || continue
+                        df = frame::HT.DataFrame
+                        df.stream_id == hf.stream_id || continue
+                        total_received[] += length(df.data)
+                        got_end = df.end_stream
+                    end
+                finally
+                    NC.set_deadline!(accepted_conn, Int64(0))
+                end
+            end
+            encoded = HT.encode_header_block(server_encoder, HT.HeaderField[HT.HeaderField(":status", "200", false)])
+            _write_frame_to_conn!(accepted_conn, HT.HeadersFrame(hf.stream_id, false, true, encoded))
+            _write_frame_to_conn!(accepted_conn, HT.DataFrame(hf.stream_id, true, collect(codeunits("ok"))))
+        finally
+            HTTP.@try_ignore NC.close(accepted_conn)
+        end
+        return nothing
+    end)
+    h2_conn = HT.connect_h2!(address; secure = false, http2_settings = HT.HTTP2Settings(initial_window_size = 1 << 20))
+    try
+        payload = fill(UInt8('x'), payload_len)
+        request = HT.Request("POST", "/fc-conn-window"; host = address, body = HT.BytesBody(payload), content_length = payload_len)
+        response = HT.h2_roundtrip!(h2_conn, request)
+        @test response.status == 200
+        @test String(_read_all_h2_body(response.body)) == "ok"
+        _wait_task_h2!(server_task)
+        # Exactly the default connection window reached the server before any
+        # stream-0 WINDOW_UPDATE: the connection window never went negative.
+        @test bytes_before_grant[] == HT._H2_DEFAULT_WINDOW_SIZE
+        @test total_received[] == payload_len
+    finally
+        close(h2_conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
 @testset "HTTP/2 client shared connection concurrent calls are safe" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
@@ -1636,27 +1732,37 @@ end
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
     address = ND.join_host_port("127.0.0.1", Int(laddr.port))
-    captured = Channel{HT.AbstractFrame}(1)
+    captured = Channel{Vector{HT.AbstractFrame}}(1)
     server_task = errormonitor(Threads.@spawn begin
         accepted_conn = NC.accept(listener)
         reader = HT._ConnReader(accepted_conn)
         try
             _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
             client_settings = HT.read_frame!(reader)
-            put!(captured, client_settings)
+            # Send our SETTINGS so the client completes its handshake and sends its
+            # SETTINGS ACK. With raised windows a WINDOW_UPDATE would have been written
+            # right after the client SETTINGS, ahead of the ACK; TCP preserves that
+            # order, so reading one more frame here surfaces a stray WINDOW_UPDATE.
             _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            second = HT.read_frame!(reader)
+            put!(captured, HT.AbstractFrame[client_settings, second])
         catch
+            isready(captured) || put!(captured, HT.AbstractFrame[])
         end
         return accepted_conn
     end)
     conn = nothing
     try
         conn = HT.connect_h2!(address; secure = false)
-        settings = take!(captured)
+        frames = take!(captured)
+        @test length(frames) == 2
+        settings = frames[1]
         @test settings isa HT.SettingsFrame
         # With default windows the client advertises an empty SETTINGS payload and
-        # sends no connection-level WINDOW_UPDATE (the next frame is our SETTINGS).
+        # sends no connection-level WINDOW_UPDATE: the frame after SETTINGS is the
+        # client's SETTINGS ACK, never a WindowUpdateFrame.
         @test isempty((settings::HT.SettingsFrame).settings)
+        @test !(frames[2] isa HT.WindowUpdateFrame)
         @test conn.max_buffered_bytes == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
     finally
         conn === nothing || HTTP.@try_ignore close(conn)
@@ -1664,23 +1770,80 @@ end
     end
 end
 
-@testset "HTTP/2 client flow-control window configuration validation" begin
-    # Invalid windows are rejected at HTTP2Settings construction, before any
-    # Client or socket work.
-    @test_throws ArgumentError HT.HTTP2Settings(initial_window_size = 0)
-    @test_throws ArgumentError HT.HTTP2Settings(initial_window_size = Int(0x7fff_ffff) + 1)
-    @test_throws ArgumentError HT.HTTP2Settings(connection_window_size = Int(0x7fff_ffff) + 1)
-    # The per-stream window may be set below the protocol default for tighter
-    # backpressure, but the connection-level window cannot be advertised below it.
-    @test HT.HTTP2Settings(initial_window_size = 1_024) isa HT.HTTP2Settings
-    @test_throws ArgumentError HT.HTTP2Settings(connection_window_size = 65_534)
+@testset "HTTP/2 client advertises a sub-default stream window" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    captured = Channel{Union{HT.AbstractFrame, Nothing}}(1)
+    server_task = errormonitor(Threads.@spawn begin
+        accepted_conn = NC.accept(listener)
+        reader = HT._ConnReader(accepted_conn)
+        try
+            _ = _read_exact_h2_tcp!(accepted_conn, length(HT._H2_PREFACE))
+            put!(captured, HT.read_frame!(reader))
+            # Reply with our SETTINGS so the client's handshake completes and
+            # connect_h2! returns.
+            _write_frame_to_conn!(accepted_conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+        catch
+            isready(captured) || put!(captured, nothing)
+        end
+        return accepted_conn
+    end)
+    conn = nothing
+    try
+        conn = HT.connect_h2!(
+            address;
+            secure = false,
+            http2_settings = HT.HTTP2Settings(initial_window_size = 16_384),
+        )
+        settings = take!(captured)
+        @test settings isa HT.SettingsFrame
+        # A sub-default stream window is still advertised: the SETTINGS_INITIAL_WINDOW_SIZE
+        # entry is emitted whenever it differs from the protocol default, not only when
+        # it exceeds it.
+        @test (settings::HT.SettingsFrame).settings ==
+            Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(16_384)]
+        # A window below the default cap keeps the default per-stream buffer cap.
+        @test conn.max_buffered_bytes == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
+    finally
+        conn === nothing || HTTP.@try_ignore close(conn)
+        HTTP.@try_ignore NC.close(listener)
+    end
 end
 
-@testset "HTTP/2 client derives the receive buffer cap from the window" begin
-    # The per-stream buffer cap is the larger of the configured window and the
-    # default cap, so a small window keeps the default and a large window grows it.
-    @test HT._h2_buffered_bytes(HT.HTTP2Settings()) == HT._H2_DEFAULT_MAX_BUFFERED_BYTES
-    @test HT._h2_buffered_bytes(HT.HTTP2Settings(initial_window_size = 16_384)) ==
-        HT._H2_DEFAULT_MAX_BUFFERED_BYTES
-    @test HT._h2_buffered_bytes(HT.HTTP2Settings(initial_window_size = 1_048_576)) == 1_048_576
+@testset "HTTP/2 large body round-trips intact across a real client and server" begin
+    # End-to-end integrity check: a real client and server move a multi-MiB body in
+    # each direction and the echoed bytes must match exactly. The body is several
+    # times the per-stream window, so the single stream crosses the window boundary
+    # repeatedly and exercises ongoing WINDOW_UPDATE replenishment and reassembly in
+    # both directions. Raised windows are used so that replenishment happens in MiB
+    # steps; they are not what this test verifies (it would also pass at the default
+    # windows). That the configured windows reach the wire and are honored on the
+    # send side is covered by the "advertises configured flow-control windows" and
+    # "connection window stays non-negative under a raised stream window" tests.
+    settings = HT.HTTP2Settings(initial_window_size = 1 << 20, connection_window_size = 1 << 21)
+    server = HT.serve!("127.0.0.1", 0; listenany = true, http2_settings = settings) do request
+            buf = Vector{UInt8}(undef, 64 * 1024)
+            body = UInt8[]
+            while true
+                n = HT.body_read!(request.body, buf)
+                n == 0 && break
+                append!(body, @view(buf[1:n]))
+            end
+            return HT.Response(200, HT.BytesBody(body); content_length = length(body), proto_major = 2, proto_minor = 0)
+        end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn = HT.connect_h2!(address; secure = false, http2_settings = settings)
+        payload = rand(MersenneTwister(0x1264), UInt8, 3 << 20)
+        req = HT.Request("POST", "/echo"; host = address, body = HT.BytesBody(copy(payload)), content_length = length(payload), proto_major = 2, proto_minor = 0)
+        res = HT.h2_roundtrip!(conn, req)
+        @test res.status == 200
+        @test _read_all_h2_body(res.body) == payload
+    finally
+        conn === nothing || close(conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
 end

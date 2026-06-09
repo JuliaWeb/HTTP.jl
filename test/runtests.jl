@@ -111,6 +111,7 @@ test_files = [
     "http_server_http1_tests.jl",
     "hpack_tests.jl",
     "http2_frame_tests.jl",
+    "http2_settings_tests.jl",
     "http2_client_tests.jl",
     "http2_server_tests.jl",
     "http_integration_tests.jl",
