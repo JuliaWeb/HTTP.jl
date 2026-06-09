@@ -280,3 +280,51 @@ end
     @test parsed_raw.status == 299
     @test parsed_raw.reason == ""
 end
+
+@testset "HTTP/1 client rejects CRLF/CTL in request start line" begin
+    # Direct unit coverage of the client-side start-line validator. CR/LF and
+    # other control bytes in the method, target or host must be rejected before
+    # serialization so a caller-controlled URL cannot inject headers or smuggle a
+    # pipelined request onto the connection.
+    @test HT._validate_request_start_line!("GET", "/a/b?x=1") === nothing
+    @test HT._validate_request_start_line!("POST", "/ok", "example.com") === nothing
+    # CRLF (header injection) and a smuggled pipelined request in the target.
+    @test_throws HT.ParseError HT._validate_request_start_line!(
+        "GET", "/a HTTP/1.1\r\nX-Injected: 1\r\nX:")
+    @test_throws HT.ParseError HT._validate_request_start_line!(
+        "GET", "/a\r\n\r\nGET http://169.254.169.254/ HTTP/1.1\r\nX:")
+    # Bare CR, bare LF and NUL in the target are all control bytes.
+    @test_throws HT.ParseError HT._validate_request_start_line!("GET", "/a\rb")
+    @test_throws HT.ParseError HT._validate_request_start_line!("GET", "/a\nb")
+    @test_throws HT.ParseError HT._validate_request_start_line!("GET", "/a\0b")
+    # A method that is not a valid token (embedded space/CR/LF) is rejected.
+    @test_throws HT.ParseError HT._validate_request_start_line!("GET\r\nFoo: bar", "/")
+    @test_throws HT.ParseError HT._validate_request_start_line!("BAD METHOD", "/")
+    # Control bytes in an absolute-form/proxy host are rejected.
+    @test_throws HT.ParseError HT._validate_request_start_line!(
+        "GET", "/", "example.com\r\nX-Injected: 1")
+
+    # End-to-end origin-form write path: write_request! must refuse to emit a
+    # start line containing the injected CRLF (previously written verbatim).
+    headers = HT.Headers()
+    HT.setheader(headers, "Host", "example.com")
+    smuggled = HT.Request(
+        "GET", "/a HTTP/1.1\r\nX-Injected: 1\r\n\r\nGET /internal HTTP/1.1\r\nX:";
+        headers = headers, body = HT.EmptyBody(), content_length = 0)
+    @test_throws HT.ParseError HT.write_request!(IOBuffer(), smuggled)
+
+    # A benign request still serializes correctly (no false positives).
+    benign = HT.Request(
+        "GET", "/safe/path?q=1"; headers = headers, body = HT.EmptyBody(), content_length = 0)
+    benign_io = IOBuffer()
+    HT.write_request!(benign_io, benign)
+    @test startswith(String(take!(benign_io)), "GET /safe/path?q=1 HTTP/1.1\r\n")
+
+    # Absolute-form (forward-proxy) write path: a CRLF-laced host must be
+    # rejected before it is concatenated into the absolute target.
+    proxy_plan = HT._ProxyPlan(HT._ProxyPlanMode.HTTP_FORWARD, nothing, "proxy:8080", "proxy-key")
+    poison_host = HT.Request(
+        "GET", "/x"; headers = HT.Headers(),
+        host = "internal\r\nX-Injected: 1", body = HT.EmptyBody(), content_length = 0)
+    @test_throws HT.ParseError HT._write_request_head!(IOBuffer(), poison_host, proxy_plan)
+end

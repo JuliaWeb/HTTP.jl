@@ -281,6 +281,27 @@ function _validate_request_target!(method::String, target::String)::Nothing
     end
 end
 
+# Client-side guard for the HTTP/1 request start line. The method and target
+# flow from caller-constructed `Request` objects (often built by interpolating
+# user-controlled URL components) straight onto the wire via `print`, so we must
+# reject CR/LF and other control bytes here before serialization. Without this an
+# attacker who influences the URL path/query/method could embed `\r\n` to inject
+# headers or smuggle a pipelined request on a pooled keep-alive connection. The
+# server read path already enforces this via `_validate_request_target!`; this is
+# the symmetric check for the client write path (the HTTP/2 client validates
+# `:path`/`:method` analogously). `host`, when present, is the authority used in
+# absolute-form/proxy-forward start lines and must be control-byte-free as well.
+function _validate_request_start_line!(method::String, target::String, host::Union{Nothing,AbstractString}=nothing)::Nothing
+    # An HTTP method is an RFC 7230 token; `_valid_header_field_name` enforces
+    # exactly that grammar (and so excludes spaces, CR, LF and other CTLs).
+    _valid_header_field_name(method) || throw(ParseError("invalid HTTP method: $(repr(method))"))
+    _validate_request_target!(method, target)
+    if host !== nothing
+        _string_contains_ctl_byte(host) && throw(ParseError("invalid HTTP request host: $(repr(host))"))
+    end
+    return nothing
+end
+
 function _validate_request_host!(hdrs::Headers, method::String, proto_major::UInt8, proto_minor::UInt8)::Union{Nothing,String}
     host_values = headers(hdrs, "Host")
     if (proto_major > UInt8(1) || (proto_major == UInt8(1) && proto_minor >= UInt8(1))) &&
@@ -409,6 +430,8 @@ end
 
 function _write_start_line!(io::IO, request::Request, wire_target::Union{Nothing,AbstractString}=nothing)
     target = wire_target === nothing ? request.target : String(wire_target)
+    # Reject CR/LF/CTL in the method or target before they reach the socket.
+    _validate_request_start_line!(request.method, target)
     print(io, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
     return nothing
 end
@@ -698,6 +721,8 @@ end
 
 function _append_start_line!(buf::IOBuffer, request::Request, wire_target::Union{Nothing,AbstractString}=nothing)
     target = wire_target === nothing ? request.target : String(wire_target)
+    # Reject CR/LF/CTL in the method or target before they reach the socket.
+    _validate_request_start_line!(request.method, target)
     print(buf, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
     return nothing
 end

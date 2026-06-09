@@ -789,7 +789,14 @@ end
 
 function _write_start_line!(io::IO, request::Request, plan::_ProxyPlan)
     if plan.mode == _ProxyPlanMode.HTTP_FORWARD
-        target = _request_url(false, _request_forward_address(request), request.target)
+        forward_address = _request_forward_address(request)
+        # Absolute-form (forward-proxy) start line concatenates the host
+        # authority into the request target, so the host must be validated for
+        # CR/LF/CTL in addition to the method and target. Otherwise an attacker
+        # controlling the URL could smuggle a request through the proxy to an
+        # internal host. Validate the components before assembling the wire form.
+        _validate_request_start_line!(request.method, request.target, forward_address)
+        target = _request_url(false, forward_address, request.target)
         print(io, request.method, ' ', target, " HTTP/", Int(request.proto_major), '.', Int(request.proto_minor), "\r\n")
         return nothing
     end
