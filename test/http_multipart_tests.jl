@@ -305,4 +305,107 @@ end
     # no Content-Type header
     bare_request = HT.Request("GET", "/")
     @test HT.parse_multipart(bare_request) === nothing
+
+    # Content-Type header present but no body (EmptyBody) → bytes === nothing → return nothing
+    no_body_request = HT.Request("POST", "/batch"; headers=["Content-Type" => ct])
+    @test HT.parse_multipart(no_body_request) === nothing
+end
+
+@testset "writemultipartheader IOStream branch" begin
+    # Covers writemultipartheader(io::IOBuffer, stream::IOStream, type::Symbol)
+    # which is only dispatched when the value passed to Form(d; ...) is an IOStream.
+    tmp = tempname()
+    try
+        write(tmp, "file contents")
+        open(tmp) do fstream  # fstream::IOStream <: IO
+            form = HT.Form(Pair["upload" => fstream]; type=:formdata)
+            body_bytes = read(form)
+            body_text = String(copy(body_bytes))
+            @test occursin("filename=", body_text)
+            @test occursin("file contents", body_text)
+        end
+    finally
+        isfile(tmp) && rm(tmp)
+    end
+end
+
+@testset "parse_multipart_chunk: disposition without name" begin
+    # Covers `name === nothing && return nothing` inside the `if content_disposition_available` block.
+    # A part with Content-Disposition but no name= field is silently skipped.
+    boundary = "skipbnd"
+    body_text = join([
+        "--$boundary",
+        "Content-Disposition: form-data; filename=\"nameless.txt\"",
+        "Content-Type: text/plain",
+        "",
+        "should be skipped",
+        "--$boundary",
+        "Content-Disposition: form-data; name=\"kept\"",
+        "Content-Type: text/plain",
+        "",
+        "kept value",
+        "--$boundary--",
+        "",
+    ], "\r\n")
+    body = Vector{UInt8}(body_text)
+    ct = "multipart/form-data; boundary=$boundary"
+
+    parts = HT.parse_multipart_form(ct, body)
+    @test parts !== nothing
+    # the nameless part is skipped; only the named part survives
+    @test length(parts) == 1
+    @test parts[1].name == "kept"
+    @test String(read(parts[1])) == "kept value"
+end
+
+@testset "Multipart IO interface methods (IOBuffer)" begin
+    # Covers: bytesavailable (non-IOStream branch), eof, read(n), mark, reset, seekstart
+    m = HT.Multipart(nothing, IOBuffer("hello world"), "text/plain", "", "n")
+
+    @test bytesavailable(m) == 11
+    @test !eof(m)
+
+    @test String(read(m, 5)) == "hello"
+
+    mark(m)
+    @test String(read(m, 3)) == " wo"
+    reset(m)
+    @test String(read(m, 3)) == " wo"   # back to mark point
+
+    seekstart(m)
+    @test String(read(m)) == "hello world"
+    @test eof(m)
+end
+
+@testset "Multipart bytesavailable IOStream branch" begin
+    # Covers the `isa(m.data, IOStream)` branch of bytesavailable(m::Multipart)
+    tmp = tempname()
+    try
+        write(tmp, "file data here")
+        open(tmp) do fstream
+            m = HT.Multipart("f.txt", fstream, "text/plain", "", "")
+            expected = filesize(fstream) - position(fstream)
+            @test bytesavailable(m) == expected
+            @test bytesavailable(m) > 0
+        end
+    finally
+        isfile(tmp) && rm(tmp)
+    end
+end
+
+@testset "_request_body_bytes EmptyBody and AbstractBody" begin
+    # EmptyBody → nothing
+    # A request with Content-Type but no body has an EmptyBody
+    form_ct = HT.content_type(HT.Form(Dict("k" => "v")))
+    empty_body_request = HT.Request("POST", "/"; headers=["Content-Type" => form_ct])
+    @test typeof(empty_body_request.body) == HT.EmptyBody
+    @test HT._request_body_bytes(HT.EmptyBody()) === nothing
+
+    # AbstractBody catch-all (any non-BytesBody, non-EmptyBody subtype) → nothing
+    # EOFBody is the simplest concrete AbstractBody to construct directly
+    eofbody = HT.EOFBody(IOBuffer(""), false)
+    @test HT._request_body_bytes(eofbody) === nothing
+
+    # Ensure parse_multipart_form returns nothing for both
+    @test HT.parse_multipart_form(empty_body_request) === nothing
 end
