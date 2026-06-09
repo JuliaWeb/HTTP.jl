@@ -149,6 +149,86 @@ end
     end
 end
 
+@testset "HTTP sniff hardening (JLSEC-2026-621)" begin
+    # B) MP4 ftyp brand-scan must never read past the buffer (ANT-2026-07KFWYV3,
+    # ANT-2026-9PKP3RJA). The brand scan compares 3-byte windows via _byte_equal
+    # under @inbounds; with boxsize == length(data) the unpatched loop read
+    # data[len+1 .. len+3], i.e. past the end of the Vector. Because the access
+    # is inside an @inbounds block, with the default --check-bounds=auto this is
+    # a *silent* heap over-read that usually still returns the same content type
+    # (so the plain sniff() assertions below pass on buggy code too); only when
+    # bounds checks are forced on does it surface as a BoundsError. We therefore
+    # both (1) assert the expected classification and (2) re-run the PoC in a
+    # subprocess with --check-bounds=yes, which overrides @inbounds and turns the
+    # unpatched over-read into an observable BoundsError. That subprocess is the
+    # assertion that actually fails on unpatched code regardless of how the test
+    # runner itself is invoked.
+    mp4_boundary = UInt8[0x00, 0x00, 0x00, 0x10, 'f', 't', 'y', 'p',
+                         'X', 'X', 'X', 'X', 'Y', 'Y', 'Y', 'Y']  # boxsize=16==length
+    @test length(mp4_boundary) == 16
+    # No "mp4" brand here, so the expected classification is octet-stream.
+    @test HT.sniff(mp4_boundary) == "application/octet-stream"
+    @test HT.sniff(IOBuffer(mp4_boundary)) == "application/octet-stream"
+    # Also exercise the exact 16-byte PoC from the report.
+    poc = vcat(UInt8[0x00, 0x00, 0x00, 0x10], collect(codeunits("ftypXXXXYYYY")))
+    @test length(poc) == 16
+    @test HT.sniff(poc) == "application/octet-stream"
+    # A legitimate "mp4" major brand (offset 9) in a boundary-length buffer
+    # (boxsize == length == 16) still matches: the scan reads data[9..11], which
+    # must remain in-bounds after the clamp.
+    mp4_brand = UInt8[0x00, 0x00, 0x00, 0x10, 'f', 't', 'y', 'p',
+                      'm', 'p', '4', '2', 0x00, 0x00, 0x00, 0x00]
+    @test length(mp4_brand) == 16
+    @test HT.sniff(mp4_brand) == "video/mp4"
+
+    # Deterministic detection of the out-of-bounds read: sniff the boundary
+    # buffers with bounds checks forced on. --check-bounds=yes overrides the
+    # @inbounds in the brand scan, so the unpatched loop (upper bound boxsize+1)
+    # throws a BoundsError here; the clamped loop stays in-bounds and exits 0.
+    let proj = dirname(Base.active_project())
+        oob_probe = """
+            using HTTP
+            for d in (
+                vcat(UInt8[0x00,0x00,0x00,0x10], collect(codeunits("ftypXXXXYYYY"))),
+                UInt8[0x00,0x00,0x00,0x10,0x66,0x74,0x79,0x70,
+                      0x6d,0x70,0x34,0x32,0x00,0x00,0x00,0x00],
+            )
+                HTTP.sniff(d)
+            end
+            print("OK")
+        """
+        cmd = `$(Base.julia_cmd()) --project=$proj --check-bounds=yes -e $oob_probe`
+        out = IOBuffer()
+        ok = success(pipeline(cmd; stdout = out, stderr = devnull))
+        @test ok
+        @test String(take!(out)) == "OK"
+    end
+
+    # A) Number sniffing must be thread-safe and must not over-read the input
+    # (ANT-2026-5FMZ73VG). The strtod end-pointer used to live in a shared
+    # module global, so concurrent sniffs raced and could compute a bogus
+    # consumed length; the buffer was also not NUL-terminated. Run many
+    # concurrent sniffs over JSON-number payloads and require deterministic
+    # JSON classification every time.
+    number_payloads = ["-1.0", "123", "0", "[1,2,3]", "{\"a\": -1.0}",
+                       "[ 1 , -2.5 , 3e10 ]", "12345678901234567890"]
+    results = Vector{String}(undef, 256)
+    Threads.@threads for k in 1:length(results)
+        payload = number_payloads[(k % length(number_payloads)) + 1]
+        results[k] = HT.sniff(collect(codeunits(payload)))
+    end
+    @test all(==("application/json; charset=utf-8"), results)
+
+    # The per-call numeric buffer must be NUL-terminated so strtod cannot read
+    # past the bytes we hand it (bounds the scan independently of the caller).
+    nb = HTTP._sniff_number_buffer(collect(codeunits("123")), 1, HTTP._SNIFF_MAX_LENGTH)
+    @test nb[end] == 0x00
+    @test nb[1:3] == collect(codeunits("123"))
+    # "2A" is a JSON-number prefix followed by junk: still not JSON, even though
+    # the bytes are not NUL-terminated by the caller.
+    @test HT.sniff(collect(codeunits("2A"))) == "text/plain; charset=utf-8"
+end
+
 @testset "HTTP multipart parsing extended cases" begin
     body = _multipart_extended_fixture_body()
     parsed = HT.parse_multipart_form(
