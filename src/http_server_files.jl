@@ -596,9 +596,41 @@ function _server_response(
     )
 end
 
+# Collapse a same-origin redirect target down to an authority-free, single-rooted
+# path so it can never be parsed by a client as a network-path or absolute-URL
+# reference. A request target such as "//evil.example/" or "/\\evil.example/"
+# passes _validate_request_target! (leading '/', no CTL) and the ".." check, and
+# _decoded_request_path_segments drops the empty segments, yet echoing it verbatim
+# into a Location header yields "//evil.example/" -- a scheme-relative
+# network-path reference (RFC 3986 4.2) that browsers resolve to a foreign
+# authority, i.e. an open redirect. We treat a leading backslash as a slash
+# (browsers do) and collapse any run of leading '/'/'\\' to a single '/'.
+function _sanitize_redirect_location(location::AbstractString)::String
+    raw = String(location)
+    bytes = codeunits(raw)
+    i = 1
+    n = length(bytes)
+    # Count the run of leading slash/backslash separators.
+    @inbounds while i <= n && (bytes[i] == 0x2f || bytes[i] == 0x5c) # '/' or '\\'
+        i += 1
+    end
+    if i > 2
+        # More than one leading separator: re-root at a single '/'.
+        tail = i <= n ? String(SubString(raw, i, lastindex(raw))) : ""
+        return "/" * tail
+    elseif i == 2 && bytes[1] == 0x5c
+        # Single leading backslash (e.g. "\\foo"): normalize to '/'.
+        tail = i <= n ? String(SubString(raw, i, lastindex(raw))) : ""
+        return "/" * tail
+    end
+    return raw
+end
+
 function _redirect_response(request::Request, location::AbstractString)::Response
     headers = Headers()
-    setheader(headers, "Location", String(location))
+    # Always normalize so a canonical redirect Location refers to this server's
+    # own origin and can never set an attacker-controlled authority component.
+    setheader(headers, "Location", _sanitize_redirect_location(location))
     return _server_response(request, 301, headers)
 end
 

@@ -589,6 +589,62 @@ end
     end
 end
 
+@testset "HTTP fileserver canonical redirects cannot become network-path references" begin
+    # A request target like "//evil.example/index.html" passes request-target
+    # validation (leading '/', no CTL, no ".." segments), but echoing it verbatim
+    # into a canonical 301 Location yields "//evil.example/", a scheme-relative
+    # network-path reference (RFC 3986 4.2) that browsers resolve to a foreign
+    # authority -- an open redirect. Redirect Location values must stay rooted at
+    # a single '/' so they always refer to this server's own origin.
+
+    # Unit-level: the sanitizer collapses leading separators down to one '/'.
+    @test HT._sanitize_redirect_location("//evil.example/") == "/evil.example/"
+    @test HT._sanitize_redirect_location("///evil.example/") == "/evil.example/"
+    @test HT._sanitize_redirect_location("/\\evil.example/") == "/evil.example/"
+    @test HT._sanitize_redirect_location("\\evil.example/") == "/evil.example/"
+    @test HT._sanitize_redirect_location("\\\\evil.example/") == "/evil.example/"
+    @test HT._sanitize_redirect_location("//") == "/"
+    @test HT._sanitize_redirect_location("///") == "/"
+    @test HT._sanitize_redirect_location("\\") == "/"
+    @test HT._sanitize_redirect_location("\\\\") == "/"
+    # Legitimate single-rooted paths are left untouched.
+    @test HT._sanitize_redirect_location("/docs/") == "/docs/"
+    @test HT._sanitize_redirect_location("/hello.txt") == "/hello.txt"
+    @test HT._sanitize_redirect_location("/") == "/"
+
+    # Index-file strip branch: handled before any filesystem access, so a
+    # nonexistent path still exercises the redirect deterministically/offline.
+    index_strip = HT.servefile(HT.Request("GET", "//evil.example/index.html"), "/nonexistent")
+    @test index_strip.status == 301
+    index_loc = HT.header(index_strip.headers, "Location")
+    @test index_loc == "/evil.example/"
+    @test !startswith(index_loc, "//")
+    @test !startswith(index_loc, "/\\")
+
+    # Directory trailing-slash-add and file trailing-slash-strip branches.
+    mktempdir() do dir
+        sub = joinpath(dir, "evil.example")
+        mkpath(sub)
+        write(joinpath(sub, "index.html"), "<p>x</p>")
+
+        srv = HT.fileserver(dir)
+
+        dir_redirect = srv(HT.Request("GET", "//evil.example"))
+        @test dir_redirect.status == 301
+        dir_loc = HT.header(dir_redirect.headers, "Location")
+        @test dir_loc == "/evil.example/"
+        @test !startswith(dir_loc, "//")
+
+        file_path = joinpath(dir, "evil.example.txt")
+        write(file_path, "data")
+        strip_redirect = srv(HT.Request("GET", "//evil.example.txt/"))
+        @test strip_redirect.status == 301
+        strip_loc = HT.header(strip_redirect.headers, "Location")
+        @test strip_loc == "/evil.example.txt"
+        @test !startswith(strip_loc, "//")
+    end
+end
+
 @testset "HTTP fileserver SPA fallback over HTTP/1.1" begin
     mktempdir() do dir
         write(joinpath(dir, "index.html"), "<p>shell</p>")
