@@ -253,16 +253,22 @@ function write(stream::Stream{true}, data::AbstractVector{UInt8})::Int
 end
 write(stream::Stream{false}, data::AbstractVector{UInt8}) = _server_write(stream, data)
 
-function _client_stream_write(stream::Stream{true}, data::AbstractString)::Int
+# Strings are handled via unsafe_write instead of write(::Stream, ::AbstractString)
+# methods: Base's generic `write(io::IO, s::Union{String, SubString{String}})`
+# funnels through unsafe_write, and extending `write` for string types on a new
+# IO type invalidates every abstractly-inferred `write(::IO, ::String)` call
+# site in the ecosystem (measured: ~1380 invalidated instances at `using` time).
+function Base.unsafe_write(stream::Stream{true}, p::Ptr{UInt8}, n::UInt)::Int
     (@atomic :acquire stream.started) && throw(ArgumentError("cannot write request body after response reading has started"))
     (@atomic :acquire stream.write_closed) && throw(ArgumentError("request body writes are closed"))
-    return write(stream.request_buffer, String(data))
+    return Int(unsafe_write(stream.request_buffer, p, n))
 end
 
-write(stream::Stream{true}, data::AbstractString)::Int = _client_stream_write(stream, data)
-write(stream::Stream{true}, data::Union{String,SubString{String}})::Int = _client_stream_write(stream, data)
-write(stream::Stream{false}, data::AbstractString) = _server_write(stream, data)
-write(stream::Stream{false}, data::Union{String,SubString{String}}) = _server_write(stream, data)
+function Base.unsafe_write(stream::Stream{false}, p::Ptr{UInt8}, n::UInt)::Int
+    data = Vector{UInt8}(undef, n)
+    GC.@preserve data unsafe_copyto!(pointer(data), p, n)
+    return _server_write(stream, data)
+end
 
 function closewrite(stream::Stream{true})
     @atomic :release stream.write_closed = true
