@@ -465,11 +465,17 @@ const normal_url_char = Bool[
 
 """
     CookieJar()
+    CookieJar(entries::Dict{String, Dict{String, Cookie}})
 
 Create an in-memory cookie jar suitable for attaching to `Client`.
 
 The jar applies standard domain/path/expiry rules when storing cookies from
 responses and when selecting cookies for future requests.
+
+Pass `entries` to start from previously saved cookies: `jar.entries` is the
+jar's storage (keyed by canonical host), so persisting a jar amounts to saving
+`jar.entries` and restoring it is `CookieJar(entries)`. The jar takes ownership
+of the passed dict; it is not copied.
 """
 struct CookieJar
     lock::ReentrantLock
@@ -477,6 +483,7 @@ struct CookieJar
 end
 
 CookieJar() = CookieJar(ReentrantLock(), Dict{String,Dict{String,Cookie}}())
+CookieJar(entries::Dict{String,Dict{String,Cookie}}) = CookieJar(ReentrantLock(), entries)
 Base.empty!(c::CookieJar) = lock(() -> empty!(c.entries), c.lock)
 
 function shouldsend(cookie::Cookie, https::Bool, host, path)::Bool

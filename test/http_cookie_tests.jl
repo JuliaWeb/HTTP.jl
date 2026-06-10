@@ -135,6 +135,22 @@ end
     @test !("expired" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/docs/page")])
 end
 
+@testset "HTTP CookieJar restores from saved entries (#931)" begin
+    # "save": populate a jar, then keep its entries storage
+    jar = HT.CookieJar()
+    headers = _set_cookie_headers("session=abc; Path=/", "theme=dark; Path=/")
+    HT.setcookies!(jar, "https", "example.com", "/", headers)
+    saved = jar.entries
+    # "load": a jar prepopulated from saved entries serves the same cookies
+    restored = HT.CookieJar(saved)
+    names = sort([c.name for c in HT.getcookies!(restored, "https", "example.com", "/")])
+    @test names == ["session", "theme"]
+    # and keeps applying normal jar semantics for later updates
+    delete_headers = _set_cookie_headers("session=gone; Path=/; Max-Age=-1")
+    HT.setcookies!(restored, "https", "example.com", "/", delete_headers)
+    @test [c.name for c in HT.getcookies!(restored, "https", "example.com", "/")] == ["theme"]
+end
+
 @testset "HTTP cookie helper validation and canonicalization" begin
     headers = HT.Headers()
     HT.appendheader(headers, "Cookie", "flag; named=value")
