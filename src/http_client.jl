@@ -775,6 +775,7 @@ function _do_incoming!(
                         scheduled, next_token, delay_ns = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, nothing)
                         if scheduled
                             _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, nothing, err::Exception))
+                            get_request_context(current_request)[:retryattempt] = retry_attempt
                             retry_attempt += 1
                             retry_token = next_token
                             continue
@@ -809,6 +810,7 @@ function _do_incoming!(
                     scheduled, next_token, delay_ns = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, status_response)
                     if scheduled
                         _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, status_response, nothing))
+                        get_request_context(current_request)[:retryattempt] = retry_attempt
                         retry_attempt += 1
                         retry_token = next_token
                         @try_ignore begin
@@ -1008,7 +1010,27 @@ StatusError(response::Response) = StatusError(response.status, response)
 function Base.showerror(io::IO, err::StatusError)
     resp = err.response
     print(io, "http status error: ", err.status, " for ", resp.request.method, " ", resp.url)
+    retries = retry_attempts(resp)
+    retries > 0 && print(io, " (after ", retries, retries == 1 ? " retry" : " retries", ")")
     return nothing
+end
+
+"""
+    retry_attempts(x) -> Int
+
+Number of automatic retries the client performed for a request, `0` when the
+first attempt was the only one. Accepts the `Request` or a client `Response`
+(which consults its originating request).
+
+The count lives in the request's context under the `:retryattempt` key — the
+same location HTTP.jl 1.x used — so `get(req.context, :retryattempt, 0)`
+continues to work for migrated code.
+"""
+retry_attempts(request::Request)::Int = Int(get(get_request_context(request), :retryattempt, 0))
+
+function retry_attempts(response::Response)::Int
+    request = response.request
+    return request === nothing ? 0 : retry_attempts(request::Request)
 end
 
 """
