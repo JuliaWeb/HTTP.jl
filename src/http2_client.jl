@@ -38,6 +38,37 @@ function Base.showerror(io::IO, err::H2GoAwayError)
     return nothing
 end
 
+# RFC 9113 §7 error codes (0x0–0xd).
+const _H2_ERROR_CODE_NAMES = (
+    "NO_ERROR", "PROTOCOL_ERROR", "INTERNAL_ERROR", "FLOW_CONTROL_ERROR",
+    "SETTINGS_TIMEOUT", "STREAM_CLOSED", "FRAME_SIZE_ERROR", "REFUSED_STREAM",
+    "CANCEL", "COMPRESSION_ERROR", "CONNECT_ERROR", "ENHANCE_YOUR_CALM",
+    "INADEQUATE_SECURITY", "HTTP_1_1_REQUIRED",
+)
+const _H2_REFUSED_STREAM = UInt32(0x7)
+
+function _h2_error_code_name(code::UInt32)::String
+    code < UInt32(length(_H2_ERROR_CODE_NAMES)) && return _H2_ERROR_CODE_NAMES[Int(code) + 1]
+    return string("0x", string(code; base = 16))
+end
+
+"""
+    H2StreamResetError
+
+Raised when the peer resets an HTTP/2 stream with `RST_STREAM`. Carries the
+RFC 9113 §7 `error_code`. `REFUSED_STREAM` guarantees the stream was closed
+prior to any processing (RFC 9113 §8.7), so such requests are retried when
+retries are enabled.
+"""
+struct H2StreamResetError <: HTTPError
+    error_code::UInt32
+end
+
+function Base.showerror(io::IO, err::H2StreamResetError)
+    print(io, "HTTP/2 stream reset by peer: ", _h2_error_code_name(err.error_code))
+    return nothing
+end
+
 """
     H2StreamState
 
@@ -762,7 +793,7 @@ function _process_incoming_frame!(conn::H2Connection, frame::AbstractFrame)
         rst = frame::RSTStreamFrame
         state = _stream_state(conn, rst.stream_id)
         state === nothing && return nothing
-        _set_stream_error!(state::H2StreamState, ProtocolError("HTTP/2 stream reset by peer"))
+        _set_stream_error!(state::H2StreamState, H2StreamResetError(rst.error_code))
         return nothing
     elseif frame isa WindowUpdateFrame
         update = frame::WindowUpdateFrame
