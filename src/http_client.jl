@@ -587,6 +587,7 @@ function _cookie_header(
     secure::Bool,
     host::String,
     path::String,
+    manual::Vector{Cookie}=Cookie[],
 )::Union{Nothing,String}
     cookies === false && return nothing
     merged = Cookie[]
@@ -596,6 +597,22 @@ function _cookie_header(
     end
     if cookies !== true
         append!(merged, cookies::Vector{Cookie})
+    end
+    # Merge a caller-set `Cookie` request header with the managed cookies (this restores
+    # the pre-2.0 behaviour, where a manual header was not silently dropped), but
+    # de-duplicate by name so the wire header never carries the same name twice. Managed
+    # cookies (the jar plus any `cookies=` dict) win; the manual header only contributes
+    # names they do not already cover. This keeps a rotated jar cookie from being
+    # shadowed by a stale manual one and preserves path-scoped same-name cookies held in
+    # the jar. Use `cookies=false` to send a manual `Cookie` header verbatim.
+    if !isempty(manual)
+        managed = Set(c.name for c in merged)
+        for c in manual
+            if !(c.name in managed)
+                push!(merged, c)
+                push!(managed, c.name)
+            end
+        end
     end
     isempty(merged) && return nothing
     return stringify("", merged)
@@ -723,7 +740,8 @@ function _do_incoming!(
             use_h2 = _use_h2(client, current_secure, protocol) && proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD
             _emit_trace(trace, RequestEvent(send_request, request_url, retry_attempt, redirect_count, use_h2 ? :h2 : :h1))
             host, path = _host_path_from_request(current_address, current_request)
-            cookie_value = _cookie_header(cookiejar, cookies, current_secure, host, path)
+            manual_cookies = cookies === false ? Cookie[] : Cookies.readcookies(send_request.headers, "")
+            cookie_value = _cookie_header(cookiejar, cookies, current_secure, host, path, manual_cookies)
             cookie_value === nothing || setheader(send_request.headers, "Cookie", cookie_value)
             response = try
                 if use_h2
@@ -1959,9 +1977,11 @@ Keyword arguments:
   iterable chunks, and existing `HTTP.AbstractBody` values
 - `proxy`: explicit proxy override for this call; pass a proxy URL string, a
   `ProxyConfig`, or `nothing` to force direct connections
-- `cookies`: `true` to use the effective cookie jar, `false` to disable cookie
-  send/store for this call, or a dictionary of extra cookie name/value pairs to
-  append to jar-derived cookies
+- `cookies`: `true` (default) to use the effective cookie jar, `false` to disable
+  cookie send/store for this call, or a dictionary of extra cookie name/value pairs
+  to add. When the jar is active, it is merged with any manually-set `Cookie` header,
+  de-duplicated by name (jar / `cookies=` entries win); with `false` a manually-set
+  `Cookie` header is sent verbatim
 - `cookiejar`: optional cookie jar override for this call; explicit clients
   default to `client.cookiejar`, while implicit convenience calls default to the
   shared `HTTP.COOKIEJAR`
