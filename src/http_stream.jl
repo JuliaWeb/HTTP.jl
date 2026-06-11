@@ -258,17 +258,29 @@ write(stream::Stream{false}, data::AbstractVector{UInt8}) = _server_write(stream
 # funnels through unsafe_write, and extending `write` for string types on a new
 # IO type invalidates every abstractly-inferred `write(::IO, ::String)` call
 # site in the ecosystem (measured: ~1380 invalidated instances at `using` time).
-function Base.unsafe_write(stream::Stream{true}, p::Ptr{UInt8}, n::UInt)::Int
+function Base.unsafe_write(stream::Stream{true}, p::Ptr{UInt8}, n::UInt)::UInt
+    n == 0 && return UInt(0)
     (@atomic :acquire stream.started) && throw(ArgumentError("cannot write request body after response reading has started"))
     (@atomic :acquire stream.write_closed) && throw(ArgumentError("request body writes are closed"))
-    return Int(unsafe_write(stream.request_buffer, p, n))
+    return unsafe_write(stream.request_buffer, p, n)
 end
 
-function Base.unsafe_write(stream::Stream{false}, p::Ptr{UInt8}, n::UInt)::Int
-    data = Vector{UInt8}(undef, n)
+function Base.unsafe_write(stream::Stream{false}, p::Ptr{UInt8}, n::UInt)::UInt
+    n == 0 && return UInt(0)
+    data = Vector{UInt8}(undef, Int(n))
     GC.@preserve data unsafe_copyto!(pointer(data), p, n)
-    return _server_write(stream, data)
+    return UInt(_server_write(stream, data))
 end
+
+# The byte-I/O primitive: Base's fallbacks for `write(io, ::AbstractString)`
+# and `write(io, ::Char)` bottom out in `write(io, ::UInt8)`, so without this
+# generic strings throw "does not support byte I/O".
+function write(stream::Stream{true}, b::UInt8)::Int
+    (@atomic :acquire stream.started) && throw(ArgumentError("cannot write request body after response reading has started"))
+    (@atomic :acquire stream.write_closed) && throw(ArgumentError("request body writes are closed"))
+    return write(stream.request_buffer, b)
+end
+write(stream::Stream{false}, b::UInt8) = _server_write(stream, UInt8[b])
 
 function closewrite(stream::Stream{true})
     @atomic :release stream.write_closed = true
