@@ -856,13 +856,26 @@ function _perform_socks_connect!(
     target_address::String,
     deadline_ns::Int64,
 )::Nothing
-    SOCKS.connect!(
-        tcp,
-        target_address;
-        username=proxy.username,
-        password=proxy.password,
-        deadline_ns=deadline_ns,
-    )
+    try
+        SOCKS.connect!(
+            tcp,
+            target_address;
+            username=proxy.username,
+            password=proxy.password,
+            deadline_ns=deadline_ns,
+        )
+    catch err
+        ex = err::Exception
+        # Keep SOCKS failures catchable as HTTP-typed exceptions; timeouts and
+        # EOFs keep their existing transport classifications.
+        if ex isa SOCKS.AuthenticationError ||
+                ex isa SOCKS.ReplyError ||
+                ex isa SOCKS.ProtocolError ||
+                ex isa SOCKS.TargetAddressError
+            throw(ConnectError(target_address, ex))
+        end
+        rethrow(ex)
+    end
     return nothing
 end
 
@@ -939,11 +952,16 @@ function _new_conn_tls!(
     tls_handshake_timeout_ns::Int64=Int64(0),
 )::Conn
     tcp = _new_tcp_conn!(plan, address, host_resolver, connect_deadline_ns)
-    cfg = _effective_tls_config(transport, address, server_name, tls_handshake_timeout_ns)
-    tls = TLS.client(tcp, cfg)
-    connect_deadline_ns == 0 || TLS.set_deadline!(tls, connect_deadline_ns)
-    TLS.handshake!(tls)
-    return Conn(plan.pool_key, plan.first_hop_address, true, tcp, tls, _ConnReader(tls), IOBuffer(), false, false, time_ns())
+    try
+        cfg = _effective_tls_config(transport, address, server_name, tls_handshake_timeout_ns)
+        tls = TLS.client(tcp, cfg)
+        connect_deadline_ns == 0 || TLS.set_deadline!(tls, connect_deadline_ns)
+        TLS.handshake!(tls)
+        return Conn(plan.pool_key, plan.first_hop_address, true, tcp, tls, _ConnReader(tls), IOBuffer(), false, false, time_ns())
+    catch
+        @try_ignore TCP.close(tcp)
+        rethrow()
+    end
 end
 
 function _evict_expired_idle_locked!(transport::Transport, key::String, now_ns::Int64)::Vector{Conn}

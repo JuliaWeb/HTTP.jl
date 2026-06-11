@@ -330,13 +330,20 @@ function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_Prox
             @inbounds hostport[colon_idx] == ':' || throw(ArgumentError("invalid IPv6 proxy authority: $hostport"))
             port_text = String(SubString(hostport, nextind(hostport, colon_idx), lastindex(hostport)))
         end
-    elseif count(==(':'), hostport) == 1
-        host, port_text = HostResolvers.split_host_port(hostport)
+    elseif occursin(':', hostport)
+        host, port_text = try
+            HostResolvers.split_host_port(hostport)
+        catch err
+            ex = err::Exception
+            ex isa HostResolvers.AddressError || rethrow(ex)
+            throw(ArgumentError("invalid proxy URL authority: $hostport"))
+        end
     end
     isempty(host) && throw(ArgumentError("proxy URL missing host: $value"))
     port = if isempty(port_text)
         _proxy_default_port(scheme)
     else
+        all(ch -> '0' <= ch <= '9', port_text) || throw(ArgumentError("invalid proxy URL port: $port_text"))
         parsed_port = tryparse(Int, port_text)
         parsed_port === nothing && throw(ArgumentError("invalid proxy URL port: $port_text"))
         1 <= parsed_port <= 0xffff || throw(ArgumentError("proxy URL port out of range: $parsed_port"))
