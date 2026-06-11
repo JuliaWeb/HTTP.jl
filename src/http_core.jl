@@ -619,7 +619,7 @@ Headers(items::Tuple) = mkheaders(items)
 
 Construct a canonicalized Headers from items and/or kwargs
 """
-Headers(items...; kwargs...) = mkheaders(items...; kwargs...)
+Headers(items::Union{Pair,Tuple}...; kwargs...) = mkheaders(items...; kwargs...)
 
 Base.copy(headers::Headers) = Headers(headers)
 
@@ -651,11 +651,24 @@ function Base.setindex!(headers::Headers, item, i::Int)
 end
 
 function Base.setindex!(headers::Headers, value, key::Union{Symbol, AbstractString})
-    setheader(headers, String(key) => String(value))
+    setheader(headers, String(key) => string(value))
+end
+
+function Base.merge!(headers::Headers, items)
+    for (key, value) in Headers(items)
+        if key == "Set-Cookie"
+            push!(headers.entries, key => value)
+        else
+            setheader(headers, key => value)
+        end
+    end
+    return headers
 end
 
 function Base.append!(headers::Headers, items)
-    union!(append!(headers.entries, Headers(items)))
+    for (key, value) in Headers(items)
+        appendheader(headers, key => value)
+    end
     return headers
 end
 
@@ -718,7 +731,7 @@ function mkheaders(headers_input)
     return headers
 end
 
-mkheaders(items...; kwargs...) = mkheaders(Base.Iterators.flatten((items, kwargs)))
+mkheaders(items::Union{Pair,Tuple}...; kwargs...) = mkheaders(Base.Iterators.flatten((items, kwargs)))
 
 """Return a newly allocated `Vector{String}` of header keys in insertion order."""
 function header_keys(headers::Headers)::Vector{String}
