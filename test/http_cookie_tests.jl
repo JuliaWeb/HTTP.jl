@@ -316,8 +316,8 @@ end
     # The table was also missing the 112–119 row, shifting the final row up so
     # that 'w' (codepoint 119) was mapped to the DEL entry (false), causing
     # cookies named e.g. "w" to be silently dropped too.
-
-    @test HT.isurlchar('w') && HT.isurlchar('{') && HT.isurlchar('|') && HT.isurlchar('}') && !HTTP.isurlchar('\x7f')
+    isurlchar = HTTP.Cookies.isurlchar
+    @test isurlchar('w') && isurlchar('{') && isurlchar('|') && isurlchar('}') && !isurlchar('\x7f')
 
     jar = HT.CookieJar()
 
