@@ -353,33 +353,25 @@ function _run_precompile_workload_inner!()::Nothing
 end
 
 function _run_precompile_workload!()::Nothing
-    _precompile_trace("outer spawn")
-    task = Threads.@spawn _run_precompile_workload_inner!()
+    _precompile_trace("outer start")
     try
-        _precompile_trace("outer wait")
-        status = IOPoll.timedwait(() -> istaskdone(task), 20.0; pollint = 0.01)
-        _precompile_trace("outer wait status=$(status)")
-        if status == :timed_out
-            @try_ignore begin
-                _precompile_trace("outer timeout shutdown")
-                IOPoll.shutdown!()
-            end
-            @try_ignore begin
-                _precompile_trace("outer timeout interrupt")
-                Base.throwto(task, InterruptException())
-            end
-            _ = IOPoll.timedwait(() -> istaskdone(task), 2.0; pollint = 0.01)
-            error("HTTP precompile workload timed out")
-        end
-        _precompile_trace("outer fetch")
-        fetch(task)
+        _run_precompile_workload_inner!()
     finally
-        @try_ignore begin
-            _precompile_trace("outer shutdown")
-            IOPoll.shutdown!()
-        end
+        _precompile_shutdown!()
     end
     _precompile_trace("outer done")
+    return nothing
+end
+
+function _precompile_shutdown!()::Nothing
+    @try_ignore begin
+        _precompile_trace("outer host resolver shutdown")
+        HostResolvers.shutdown!()
+    end
+    @try_ignore begin
+        _precompile_trace("outer shutdown")
+        IOPoll.shutdown!()
+    end
     return nothing
 end
 
@@ -396,11 +388,19 @@ function _precompile_workload_enabled()::Bool
 
     # https://github.com/JuliaWeb/HTTP.jl/issues/1280
     is_julia_automerge() && return true
-    
+
+    return _precompile_host_resolver_available()
+end
+
+function _precompile_host_resolver_available()::Bool
     try
         return !isempty(HostResolvers.resolve_tcp_addrs("tcp", "localhost:0"))
     catch
         return false
+    finally
+        @try_ignore begin
+            HostResolvers.shutdown!()
+        end
     end
 end
 

@@ -29,6 +29,7 @@ import ..TooManyRedirectsError
 import ..Client
 import ..CookieJar
 import ..COOKIEJAR
+import ..Cookies
 import .._ConnReader
 import .._USE_TRANSPORT_PROXY
 import .._close_conn!
@@ -56,8 +57,10 @@ import .._request_deadline_ns
 import .._request_connect_host_resolver
 import .._request_connect_phase_deadline_ns
 import .._request_connect_phase_timeout_ns
+import .._request_read_idle_timeout_ns
 import .._request_response_header_deadline_ns
 import .._request_write_deadline_ns
+import .._phase_deadline_ns
 import .._resolve_request_timeout_settings
 import .._apply_request_timeout_settings!
 import ..get_request_context
@@ -166,6 +169,7 @@ mutable struct WebSocket{S,C}
     fragment_payload::Vector{UInt8}
     fragment_count::Int
     closebody::Union{Nothing,CloseFrameBody}
+    read_idle_timeout_ns::Int64
 end
 
 function WebSocket(
@@ -174,6 +178,7 @@ function WebSocket(
     subprotocol::Union{Nothing,AbstractString}=nothing,
     maxframesize::Integer=typemax(Int),
     maxfragmentation::Integer=DEFAULT_MAX_FRAG,
+    read_idle_timeout_ns::Integer=0,
     is_client::Bool=true,
 ) where {S,C}
     maxframesize > 0 || throw(ArgumentError("maxframesize must be > 0"))
@@ -199,6 +204,7 @@ function WebSocket(
         UInt8[],
         0,
         nothing,
+        Int64(read_idle_timeout_ns),
     )
     return ws
 end
@@ -383,11 +389,22 @@ function _process_incoming_frame!(ws::WebSocket, frame::WsFrame)::Nothing
     return nothing
 end
 
+# Set the read deadline directly on the underlying Reseau stream so an opt-in
+# WebSocket read idle timeout can be re-armed before each read.
+_ws_arm_read_deadline!(stream::TLS.Conn, deadline_ns::Int64) = TLS.set_read_deadline!(stream, deadline_ns)
+_ws_arm_read_deadline!(stream::TCP.Conn, deadline_ns::Int64) = TCP.set_read_deadline!(stream, deadline_ns)
+_ws_read_deadline_ns(timeout_ns::Int64)::Int64 = _phase_deadline_ns(timeout_ns, Int64(0))
+
 function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
     buf = Vector{UInt8}(undef, buffer_bytes)
     try
         while true
+            # Opt-in read idle timeout: re-arm before each read so it fires only
+            # after `read_idle_timeout` seconds with no data, resetting whenever a
+            # frame arrives (#1062).
+            ws.read_idle_timeout_ns > 0 &&
+                _ws_arm_read_deadline!(ws.stream, _ws_read_deadline_ns(ws.read_idle_timeout_ns))
             # Read directly into the reusable `buf`. `readavailable` would
             # allocate a fresh Base.SZ_UNBUFFERED_IO (64KB) buffer on every
             # frame read (16× the bytes/RTT vs HTTP 1.x), driving GC pressure;
@@ -402,7 +419,13 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             _queue_close!(ws, CloseFrameBody(1006, ""))
         end
     catch err
-        close_body = if err isa WebSocketInvalidPayloadError
+        # A read idle timeout surfaces as IOPoll.DeadlineExceededError over TCP, or
+        # wrapped in a TLS.TLSError (`.cause`) over TLS.
+        read_timed_out = err isa IOPoll.DeadlineExceededError ||
+            (err isa TLS.TLSError && (err::TLS.TLSError).cause isa IOPoll.DeadlineExceededError)
+        close_body = if read_timed_out
+            CloseFrameBody(1006, "websocket read idle timeout")
+        elseif err isa WebSocketInvalidPayloadError
             CloseFrameBody(1007, "invalid websocket payload")
         elseif err isa WebSocketProtocolError
             CloseFrameBody(1002, "websocket protocol error")
@@ -760,7 +783,8 @@ function _open_client_websocket(
     for redirect_count in 0:redirect_policy.max_redirects
         send_request = _copy_request(current_request)
         host, path = _host_path_from_request(current_address, current_request)
-        cookie_value = _cookie_header(effective_cookiejar, normalized_cookies, current_secure, host, path)
+        manual_cookies = normalized_cookies === false ? Cookies.Cookie[] : Cookies.readcookies(send_request.headers, "")
+        cookie_value = _cookie_header(effective_cookiejar, normalized_cookies, current_secure, host, path, manual_cookies)
         cookie_value === nothing || setheader(send_request.headers, "Cookie", cookie_value)
         expected_accept = ws_compute_accept_key(header(send_request.headers, "Sec-WebSocket-Key")::String)
         attempt = _websocket_roundtrip!(req_client, current_address, send_request, current_secure, current_server_name, proxy_config)
@@ -792,6 +816,7 @@ function _open_client_websocket(
                 subprotocol=negotiated,
                 maxframesize=maxframesize,
                 maxfragmentation=maxfragmentation,
+                read_idle_timeout_ns=_request_read_idle_timeout_ns(send_request),
                 is_client=true,
             )
             ws.handshake_request = send_request
@@ -852,11 +877,12 @@ end
 Open a client WebSocket connection to `url`.
 
 Keyword arguments cover handshake headers, redirect behavior, cookies, proxy
-selection, TLS verification, handshake timeout controls, and frame limits.
+selection, TLS verification, timeout controls, and frame limits.
 `request_timeout` applies an overall handshake deadline, while
-`response_header_timeout`, `read_idle_timeout`, and `write_idle_timeout`
-configure the underlying HTTP handshake phases. When called with a function,
-the socket is closed automatically with status code `1000` when `f` returns.
+`response_header_timeout` and `write_idle_timeout` configure HTTP handshake
+phases. `read_idle_timeout` bounds both handshake response-header reads and
+post-upgrade inbound WebSocket inactivity. When called with a function, the
+socket is closed automatically with status code `1000` when `f` returns.
 """
 function open(
     url::AbstractString;

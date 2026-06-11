@@ -586,6 +586,7 @@ function _cookie_header(
     secure::Bool,
     host::String,
     path::String,
+    manual::Vector{Cookie}=Cookie[],
 )::Union{Nothing,String}
     cookies === false && return nothing
     merged = Cookie[]
@@ -595,6 +596,22 @@ function _cookie_header(
     end
     if cookies !== true
         append!(merged, cookies::Vector{Cookie})
+    end
+    # Merge a caller-set `Cookie` request header with the managed cookies (this restores
+    # the pre-2.0 behaviour, where a manual header was not silently dropped), but
+    # de-duplicate by name so the wire header never carries the same name twice. Managed
+    # cookies (the jar plus any `cookies=` dict) win; the manual header only contributes
+    # names they do not already cover. This keeps a rotated jar cookie from being
+    # shadowed by a stale manual one and preserves path-scoped same-name cookies held in
+    # the jar. Use `cookies=false` to send a manual `Cookie` header verbatim.
+    if !isempty(manual)
+        managed = Set(c.name for c in merged)
+        for c in manual
+            if !(c.name in managed)
+                push!(merged, c)
+                push!(managed, c.name)
+            end
+        end
     end
     isempty(merged) && return nothing
     return stringify("", merged)
@@ -722,7 +739,8 @@ function _do_incoming!(
             use_h2 = _use_h2(client, current_secure, protocol) && proxy_plan.mode != _ProxyPlanMode.HTTP_FORWARD
             _emit_trace(trace, RequestEvent(send_request, request_url, retry_attempt, redirect_count, use_h2 ? :h2 : :h1))
             host, path = _host_path_from_request(current_address, current_request)
-            cookie_value = _cookie_header(cookiejar, cookies, current_secure, host, path)
+            manual_cookies = cookies === false ? Cookie[] : Cookies.readcookies(send_request.headers, "")
+            cookie_value = _cookie_header(cookiejar, cookies, current_secure, host, path, manual_cookies)
             cookie_value === nothing || setheader(send_request.headers, "Cookie", cookie_value)
             response = try
                 if use_h2
@@ -774,6 +792,7 @@ function _do_incoming!(
                         scheduled, next_token, delay_ns = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, nothing)
                         if scheduled
                             _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, nothing, err::Exception))
+                            get_request_context(current_request)[:retryattempt] = retry_attempt
                             retry_attempt += 1
                             retry_token = next_token
                             continue
@@ -808,6 +827,7 @@ function _do_incoming!(
                     scheduled, next_token, delay_ns = _arm_request_retry!(retry_controller, current_address, current_request, retry_attempt, status_response)
                     if scheduled
                         _emit_trace(trace, RetryEvent(current_request, request_url, retry_attempt, retry_attempt + 1, redirect_count, delay_ns, status_response, nothing))
+                        get_request_context(current_request)[:retryattempt] = retry_attempt
                         retry_attempt += 1
                         retry_token = next_token
                         @try_ignore begin
@@ -1007,7 +1027,27 @@ StatusError(response::Response) = StatusError(response.status, response)
 function Base.showerror(io::IO, err::StatusError)
     resp = err.response
     print(io, "http status error: ", err.status, " for ", resp.request.method, " ", resp.url)
+    retries = retry_attempts(resp)
+    retries > 0 && print(io, " (after ", retries, retries == 1 ? " retry" : " retries", ")")
     return nothing
+end
+
+"""
+    retry_attempts(x) -> Int
+
+Number of automatic retries the client performed for a request, `0` when the
+first attempt was the only one. Accepts the `Request` or a client `Response`
+(which consults its originating request).
+
+The count lives in the request's context under the `:retryattempt` key — the
+same location HTTP.jl 1.x used — so `get(req.context, :retryattempt, 0)`
+continues to work for migrated code.
+"""
+retry_attempts(request::Request)::Int = Int(get(get_request_context(request), :retryattempt, 0))
+
+function retry_attempts(response::Response)::Int
+    request = response.request
+    return request === nothing ? 0 : retry_attempts(request::Request)
 end
 
 """
@@ -1936,9 +1976,11 @@ Keyword arguments:
   iterable chunks, and existing `HTTP.AbstractBody` values
 - `proxy`: explicit proxy override for this call; pass a proxy URL string, a
   `ProxyConfig`, or `nothing` to force direct connections
-- `cookies`: `true` to use the effective cookie jar, `false` to disable cookie
-  send/store for this call, or a dictionary of extra cookie name/value pairs to
-  append to jar-derived cookies
+- `cookies`: `true` (default) to use the effective cookie jar, `false` to disable
+  cookie send/store for this call, or a dictionary of extra cookie name/value pairs
+  to add. When the jar is active, it is merged with any manually-set `Cookie` header,
+  de-duplicated by name (jar / `cookies=` entries win); with `false` a manually-set
+  `Cookie` header is sent verbatim
 - `cookiejar`: optional cookie jar override for this call; explicit clients
   default to `client.cookiejar`, while implicit convenience calls default to the
   shared `HTTP.COOKIEJAR`

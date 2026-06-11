@@ -140,9 +140,11 @@ end
         @test HT.get_request_context(ws.handshake_request).deadline_ns != 0
         timeout_config = HT.get_request_context(ws.handshake_request).timeout_config
         @test timeout_config !== nothing
-        @test (timeout_config::HT._RequestTimeoutConfig).response_header_timeout_ns == 2_000_000_000
+@test (timeout_config::HT._RequestTimeoutConfig).response_header_timeout_ns == 2_000_000_000
         @test timeout_config.read_idle_timeout_ns == 2_000_000_000
         @test timeout_config.write_idle_timeout_ns == 2_000_000_000
+        @test ws.read_idle_timeout_ns == 2_000_000_000
+        @test W._ws_read_deadline_ns(typemax(Int64)) == typemax(Int64)
         @test W.receive(ws) == "hello"
         W.send(ws, "pong")
         err = try
