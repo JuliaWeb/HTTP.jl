@@ -2,7 +2,7 @@
 export startread
 export closeread
 
-import Base: bytesavailable, close, closewrite, eof, isopen, read, readavailable, readbytes!, write
+import Base: bytesavailable, close, closewrite, eof, isopen, read, readavailable, readbytes!, unsafe_write, write
 
 function _client_stream_request(
     method::Union{AbstractString,Symbol},
@@ -224,6 +224,13 @@ startread(stream::Stream{false}) = _server_startread(stream)
 
 isopen(stream::Stream{true}) = !(@atomic :acquire stream.read_closed) || !(@atomic :acquire stream.write_closed)
 isopen(stream::Stream{false}) = _server_isopen(stream)
+
+function unsafe_write(stream::Stream, p::Ptr{UInt8}, n::UInt)::UInt
+    n == 0 && return UInt(0)
+    data = Vector{UInt8}(undef, Int(n))
+    unsafe_copyto!(pointer(data), p, n)
+    return UInt(write(stream, data))
+end
 
 function write(stream::Stream{true}, data::Vector{UInt8})::Int
     (@atomic :acquire stream.started) && throw(ArgumentError("cannot write request body after response reading has started"))
