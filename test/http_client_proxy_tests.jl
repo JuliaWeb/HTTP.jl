@@ -388,15 +388,18 @@ end
     @test (merged.all::HT._ProxyTarget).address == "env-all.local:3128"
     @test merged.no_proxy !== nothing
 
+    # Clear the lowercase variants before setting ALL_PROXY: Windows
+    # environment variables are case-insensitive, so a later
+    # "all_proxy" => nothing would delete the value set here.
     env_socks = withenv(
             "HTTP_PROXY" => nothing,
             "http_proxy" => nothing,
             "HTTPS_PROXY" => nothing,
             "https_proxy" => nothing,
-            "ALL_PROXY" => "socks5h://env-socks.local",
             "all_proxy" => nothing,
             "NO_PROXY" => nothing,
             "no_proxy" => nothing,
+            "ALL_PROXY" => "socks5h://env-socks.local",
         ) do
         HT.ProxyFromEnvironment()
     end
