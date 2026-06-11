@@ -886,6 +886,33 @@ end
     end
 end
 
+@testset "HTTP server stream handlers support IOBuffer writes" begin
+    payload = "io-buffer-body"
+    written = Channel{Int}(1)
+    empty_written = Channel{UInt}(1)
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            _ = HT.startread(stream)
+            HT.setstatus(stream, 200)
+            put!(empty_written, Base.unsafe_write(stream, Ptr{UInt8}(0), UInt(0)))
+            buf = IOBuffer()
+            write(buf, payload)
+            seekstart(buf)
+            put!(written, write(stream, buf))
+            return nothing
+        end
+    address = HT.server_addr(server)
+    try
+        resp = HT.get("http://$(address)/")
+        @test resp.status == 200
+        @test String(resp.body) == payload
+        @test take!(empty_written) == UInt(0)
+        @test take!(written) == ncodeunits(payload)
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP server stream handlers reject fixed-length mismatches before writing malformed bodies" begin
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
             request = HT.startread(stream)
