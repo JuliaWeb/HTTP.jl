@@ -238,7 +238,16 @@ end
     form = HT.Form(Pair["1" => io_val]; type=:mixed)
     @test form.type == :mixed
     body_bytes = read(form)
-    @test occursin("io content", String(copy(body_bytes)))
+    body_text = String(copy(body_bytes))
+    @test occursin("io content", body_text)
+    # generic IO + :mixed must not inject an extra blank line before the body
+    # (the part header section ends with exactly one \r\n blank line)
+    boundary = form.boundary
+    # find the part header/body separator: should be \r\n\r\n not \r\n\r\n\r\n
+    part_start = "--" * boundary * "\r\n"
+    idx = findfirst(part_start, body_text)
+    after_boundary = body_text[last(idx)+1:end]
+    @test startswith(after_boundary, "\r\nio content")  # one blank line only
 end
 
 @testset "parse_multipart boundary length error" begin
@@ -323,6 +332,16 @@ end
             body_text = String(copy(body_bytes))
             @test occursin("filename=", body_text)
             @test occursin("file contents", body_text)
+        end
+        # type=:mixed: no filename continuation; Content-Type header written directly
+        open(tmp) do fstream
+            form = HT.Form(Pair["upload" => fstream]; type=:mixed)
+            body_text = String(read(form))
+            @test !occursin("filename=", body_text)
+            @test occursin("Content-Type:", body_text)
+            @test occursin("file contents", body_text)
+            # must not have a stray ";" line where Content-Disposition would be
+            @test !any(startswith(";"), split(body_text, "\r\n"))
         end
     finally
         isfile(tmp) && rm(tmp)

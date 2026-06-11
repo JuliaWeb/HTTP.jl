@@ -1,6 +1,5 @@
 export Form
 export Multipart
-export Batch
 export content_type
 export parse_multipart_form
 export parse_multipart
@@ -91,11 +90,11 @@ function _default_form_boundary()::String
 end
 
 function Form(d; boundary=_default_form_boundary(), type::Symbol=:formdata)
-    @assert type in (:formdata, :mixed) "type must be either :formdata or :mixed"
+    type in (:formdata, :mixed) || throw(ArgumentError("type must be :formdata or :mixed"))
     bcharsnospace = raw"\w'\(\)\+,-\./:=\?"
     boundary_re = Regex("^[$bcharsnospace ]{0,69}[$bcharsnospace]\$")
-    @assert match(boundary_re, boundary) !== nothing
-    @assert eltype(d) <: Pair
+    match(boundary_re, boundary) !== nothing || throw(ArgumentError("invalid boundary"))
+    eltype(d) <: Pair || throw(ArgumentError("data must be a collection of pairs"))
     data = IO[]
     io = IOBuffer()
     for (i, (k, v)) in enumerate(d)
@@ -119,13 +118,19 @@ function Form(d; boundary=_default_form_boundary(), type::Symbol=:formdata)
 end
 
 function writemultipartheader(io::IOBuffer, stream::IOStream, type::Symbol=:formdata)
-    write(io, "; filename=\"$(basename(stream.name[7:end-1]))\"\r\n")
-    write(io, "Content-Type: $(sniff(stream))\r\n\r\n")
+    if type == :mixed
+        write(io, "Content-Type: $(sniff(stream))\r\n\r\n")
+    else
+        write(io, "; filename=\"$(basename(stream.name[7:end-1]))\"\r\n")
+        write(io, "Content-Type: $(sniff(stream))\r\n\r\n")
+    end
     return nothing
 end
 
 function writemultipartheader(io::IOBuffer, stream::IO, type::Symbol=:formdata)
-    write(io, "\r\n\r\n")
+    # :formdata: close the "Content-Disposition: …" line opened by the caller, then blank line
+    # :mixed: caller wrote nothing, so only the blank line ending the empty headers section
+    write(io, type == :mixed ? "\r\n" : "\r\n\r\n")
     return nothing
 end
 
