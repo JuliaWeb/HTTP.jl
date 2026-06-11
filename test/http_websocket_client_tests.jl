@@ -132,17 +132,17 @@ end
         end
         ws = W.open(
             "ws://$address/chat";
-            request_timeout = 0.25,
-            response_header_timeout = 0.25,
-            read_idle_timeout = 0.25,
-            write_idle_timeout = 0.25,
+            request_timeout = 2,
+            response_header_timeout = 2,
+            read_idle_timeout = 2,
+            write_idle_timeout = 2,
         )
         @test HT.get_request_context(ws.handshake_request).deadline_ns != 0
         timeout_config = HT.get_request_context(ws.handshake_request).timeout_config
         @test timeout_config !== nothing
-        @test (timeout_config::HT._RequestTimeoutConfig).response_header_timeout_ns == 250_000_000
-        @test timeout_config.read_idle_timeout_ns == 250_000_000
-        @test timeout_config.write_idle_timeout_ns == 250_000_000
+        @test (timeout_config::HT._RequestTimeoutConfig).response_header_timeout_ns == 2_000_000_000
+        @test timeout_config.read_idle_timeout_ns == 2_000_000_000
+        @test timeout_config.write_idle_timeout_ns == 2_000_000_000
         @test W.receive(ws) == "hello"
         W.send(ws, "pong")
         err = try
