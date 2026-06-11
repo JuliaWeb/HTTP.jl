@@ -1,0 +1,10 @@
+# WSBENCH julia=1.12.5 http=2.1.1 threads=4 scale=1.0
+RESULT name=send_16b msgs=100000 msg_bytes=16 secs=0.365 msgs_s=273947.8 mb_s=4.2 allocs_per_msg=9.33 kb_per_msg=0.39 gc_pct=0.2
+RESULT name=send_4k msgs=25000 msg_bytes=4096 secs=0.142 msgs_s=175881.4 mb_s=687.0 allocs_per_msg=13.07 kb_per_msg=13.35 gc_pct=10.0
+RESULT name=send_1m msgs=300 msg_bytes=1048576 secs=0.226 msgs_s=1328.5 mb_s=1328.5 allocs_per_msg=364.2 kb_per_msg=3146.35 gc_pct=54.6
+RESULT name=push_16b msgs=100000 msg_bytes=16 secs=0.289 msgs_s=345827.8 mb_s=5.3 allocs_per_msg=6.95 kb_per_msg=0.35 gc_pct=0.0
+RESULT name=push_4k msgs=25000 msg_bytes=4096 secs=0.127 msgs_s=196853.2 mb_s=769.0 allocs_per_msg=11.05 kb_per_msg=13.31 gc_pct=8.1
+RESULT name=echo_16b msgs=50000 msg_bytes=16 secs=0.25 msgs_s=199844.7 mb_s=3.0 allocs_per_msg=13.4 kb_per_msg=0.68 gc_pct=0.0
+RESULT name=echo_text16 msgs=50000 msg_bytes=16 secs=0.263 msgs_s=190309.8 mb_s=2.9 allocs_per_msg=15.44 kb_per_msg=0.77 gc_pct=0.3
+RESULT name=echo_64k msgs=2000 msg_bytes=65536 secs=0.212 msgs_s=9444.9 mb_s=590.3 allocs_per_msg=67.1 kb_per_msg=513.94 gc_pct=50.1
+RESULT name=latency_16b msgs=5000 msg_bytes=16 p50_us=62.3 p90_us=98.1 p99_us=166.8 rt_msgs_s=16053.4

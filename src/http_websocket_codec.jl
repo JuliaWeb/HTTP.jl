@@ -60,6 +60,37 @@ function WsFrame(;
     return WsFrame{P}(fin, rsv, opcode, masked, masking_key, UInt64(length(payload)), payload)
 end
 
+# XOR `n` bytes of `src` (from `src_from`) with the rotating 4-byte mask `key`
+# into `dst` (from `dst_from`), where `key_phase` payload bytes preceded this
+# chunk (frames arrive split across reads at arbitrary boundaries). Works
+# in-place (dst === src over the same region). Processes 8 bytes per iteration
+# with the key broadcast into a UInt64, so masking runs at memcpy speed instead
+# of the ~1 GiB/s of a byte-at-a-time XOR with a per-byte modulo.
+function _ws_mask_into!(dst::AbstractVector{UInt8}, dst_from::Int,
+                        src::AbstractVector{UInt8}, src_from::Int,
+                        n::Int, key::NTuple{4,UInt8}, key_phase::Int)::Nothing
+    n <= 0 && return nothing
+    phase = key_phase % 4
+    k = (key[phase+1], key[(phase+1)%4+1], key[(phase+2)%4+1], key[(phase+3)%4+1])
+    k64 = UInt64(k[1]) | (UInt64(k[2]) << 8) | (UInt64(k[3]) << 16) | (UInt64(k[4]) << 24)
+    k64 |= k64 << 32   # little-endian: byte j of k64 is k[(j % 4) + 1]
+    i = 0
+    GC.@preserve dst src begin
+        pd = pointer(dst, dst_from)
+        ps = pointer(src, src_from)
+        while i + 8 <= n
+            v = unsafe_load(Ptr{UInt64}(ps + i))
+            unsafe_store!(Ptr{UInt64}(pd + i), v ⊻ k64)
+            i += 8
+        end
+        while i < n
+            unsafe_store!(pd + i, unsafe_load(ps + i) ⊻ k[(i % 4) + 1])
+            i += 1
+        end
+    end
+    return nothing
+end
+
 function ws_encode_frame(frame::WsFrame)::ByteMemory
     header_size = 2
     if frame.payload_length >= 65536
@@ -109,10 +140,7 @@ function ws_encode_frame(frame::WsFrame)::ByteMemory
     end
     if !isempty(frame.payload)
         if frame.masked
-            for i in 1:Int(frame.payload_length)
-                buf[pos] = frame.payload[i] ⊻ frame.masking_key[((i-1)%4)+1]
-                pos += 1
-            end
+            _ws_mask_into!(buf, pos, frame.payload, 1, Int(frame.payload_length), frame.masking_key, 0)
         else
             copyto!(buf, pos, frame.payload, 1, Int(frame.payload_length))
         end
@@ -141,6 +169,7 @@ mutable struct WsDecoder
     length_cache::Vector{UInt8}
     key_cache::Vector{UInt8}
     payload_buf::Vector{UInt8}
+    payload_received::Int
     expecting_continuation::Bool
     fragment_opcode::UInt8
     text_fragment_payload::Vector{UInt8}
@@ -159,6 +188,7 @@ function ws_decoder_new()::WsDecoder
         UInt8[],
         UInt8[],
         UInt8[],
+        0,
         false,
         UInt8(0),
         UInt8[],
@@ -177,8 +207,14 @@ function _ws_decoder_reset!(dec::WsDecoder)::Nothing
     empty!(dec.length_cache)
     empty!(dec.key_cache)
     empty!(dec.payload_buf)
+    dec.payload_received = 0
     return nothing
 end
+
+# Pre-size the payload buffer to the exact frame length when the claimed length
+# is sane; beyond this cap, grow with the arriving chunks (amortized) so a
+# forged 8-byte length header cannot allocate unbounded memory up front.
+const _WS_PAYLOAD_PREALLOC_CAP = 4 * 1024 * 1024
 
 @inline function _ws_throw_protocol_error(message::AbstractString)
     throw(WebSocketProtocolError(String(message)))
@@ -268,20 +304,26 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
         elseif dec.state == WsDecoderState.PAYLOAD
             dec.payload_length > WS_MAX_PAYLOAD_LENGTH && _ws_throw_protocol_error("websocket payload length exceeds maximum")
             payload_length_int = Int(dec.payload_length)
-            remaining = payload_length_int - length(dec.payload_buf)
+            remaining = payload_length_int - dec.payload_received
             remaining < 0 && _ws_throw_protocol_error("websocket payload length underflow")
             available = min(remaining, lastindex(data) - pos + 1)
-            chunk = @view data[pos:(pos+available-1)]
-            pos += available
-            if dec.masked
-                offset = length(dec.payload_buf)
-                for i in 1:available
-                    push!(dec.payload_buf, chunk[i] ⊻ dec.masking_key[((offset+i-1)%4)+1])
+            if length(dec.payload_buf) < payload_length_int
+                if payload_length_int <= _WS_PAYLOAD_PREALLOC_CAP
+                    resize!(dec.payload_buf, payload_length_int)
+                elseif length(dec.payload_buf) < dec.payload_received + available
+                    resize!(dec.payload_buf, dec.payload_received + available)
                 end
-            else
-                append!(dec.payload_buf, chunk)
             end
-            length(dec.payload_buf) == payload_length_int && (dec.state = WsDecoderState.DONE)
+            if available > 0
+                if dec.masked
+                    _ws_mask_into!(dec.payload_buf, dec.payload_received + 1, data, pos, available, dec.masking_key, dec.payload_received)
+                else
+                    copyto!(dec.payload_buf, dec.payload_received + 1, data, pos, available)
+                end
+                dec.payload_received += available
+                pos += available
+            end
+            dec.payload_received == payload_length_int && (dec.state = WsDecoderState.DONE)
         end
         if dec.state == WsDecoderState.DONE
             if dec.opcode == UInt8(WsOpcode.CLOSE)
@@ -309,6 +351,12 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
                     dec.fragment_opcode = UInt8(0)
                 end
             end
+            # Hand the accumulated buffer to the frame and swap in a fresh one:
+            # the frame's payload must be caller-owned (it is delivered to user
+            # code), and the swap avoids a payload-sized copy per frame.
+            payload = dec.payload_buf
+            dec.payload_buf = UInt8[]
+            dec.payload_received = 0
             frame = WsFrame(
                 dec.fin,
                 dec.rsv,
@@ -316,7 +364,7 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
                 dec.masked,
                 dec.masking_key,
                 dec.payload_length,
-                copy(dec.payload_buf),
+                payload,
             )
             push!(frames, frame)
             f === nothing || f(frame)
@@ -403,8 +451,8 @@ function ws_send_frame!(ws::WSConn, opcode::UInt8, payload::AbstractVector{UInt8
         length(payload) > 125 && throw(ArgumentError("control frame payloads must be <= 125 bytes"))
     end
     masking_key = if ws.is_client
-        key = rand(UInt8, 4)
-        (key[1], key[2], key[3], key[4])
+        key = rand(UInt32)
+        (key % UInt8, (key >> 8) % UInt8, (key >> 16) % UInt8, (key >> 24) % UInt8)
     else
         (0x00, 0x00, 0x00, 0x00)
     end
