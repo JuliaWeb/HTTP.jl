@@ -829,6 +829,38 @@ end
     end
 end
 
+@testset "HTTP server ordinary handlers suppress bodies for 204 and 304" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            status = request.target == "/nocontent" ? 204 : 304
+            return HT.Response(
+                status,
+                HT.BytesBody(collect(codeunits("oops")));
+                content_length = 4,
+                request = request,
+            )
+        end
+    address = HT.server_addr(server)
+    try
+        for (target, status_line) in (
+            "/nocontent" => "HTTP/1.1 204 No Content",
+            "/notmodified" => "HTTP/1.1 304 Not Modified",
+        )
+            raw = _raw_http_request(HT.port(server), "GET $(target) HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+            lower_raw = lowercase(raw)
+            @test occursin(status_line, raw)
+            @test !occursin("content-length", lower_raw)
+            @test !occursin("transfer-encoding", lower_raw)
+            @test !occursin("oops", raw)
+            parts = split(raw, "\r\n\r\n"; limit = 2)
+            @test length(parts) == 2
+            @test parts[2] == ""
+        end
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP server ordinary handlers receive buffered request bodies" begin
     seen_buffered = Channel{Bool}(2)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
