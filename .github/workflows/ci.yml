@@ -46,10 +46,10 @@ jobs:
       - uses: julia-actions/cache@v2
       # TEMPORARY: Reseau.SOCKS ships in JuliaServices/Reseau.jl#123 and is not
       # registered yet. Pin Reseau to that PR head so dependency resolution
-      # succeeds; revert this commit once Reseau >= 1.2.1 is registered.
+      # succeeds; revert the pin commits once Reseau >= 1.3.0 is registered.
       - name: Pin unreleased Reseau (remove once registered)
         shell: bash
-        run: julia --project -e 'using Pkg; Pkg.add(url="https://github.com/JuliaServices/Reseau.jl", rev="264a4e41486dd48bd09201ac55729e72ed3bf83e")'
+        run: julia --project -e 'using Pkg; Pkg.add(url="https://github.com/JuliaServices/Reseau.jl", rev="59f4f3979df788300a0266b32d7f83a13369d062")'
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
@@ -71,8 +71,8 @@ jobs:
       # release with Reseau.SOCKS is registered.
       - name: Pin unreleased Reseau (remove once registered)
         run: |
-          julia --project -e 'using Pkg; Pkg.add(url="https://github.com/JuliaServices/Reseau.jl", rev="264a4e41486dd48bd09201ac55729e72ed3bf83e")'
-          julia --project=docs -e 'using Pkg; Pkg.develop(path="."); Pkg.add(url="https://github.com/JuliaServices/Reseau.jl", rev="264a4e41486dd48bd09201ac55729e72ed3bf83e")'
+          julia --project -e 'using Pkg; Pkg.add(url="https://github.com/JuliaServices/Reseau.jl", rev="59f4f3979df788300a0266b32d7f83a13369d062")'
+          julia --project=docs -e 'using Pkg; Pkg.develop(path="."); Pkg.add(url="https://github.com/JuliaServices/Reseau.jl", rev="59f4f3979df788300a0266b32d7f83a13369d062")'
       - uses: julia-actions/julia-buildpkg@latest
       - uses: julia-actions/julia-docdeploy@latest
         env:
