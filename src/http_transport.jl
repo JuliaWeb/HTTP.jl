@@ -5,6 +5,7 @@ using Reseau.TCP
 using Reseau.HostResolvers
 using Reseau.TLS
 using Reseau.IOPoll
+using Reseau.SOCKS
 
 const _CONN_READER_DEFAULT_BUFFER_BYTES = 16 * 1024
 const _TRANSPORT_WRITE_BODY_CHUNK_BYTES = 16 * 1024
@@ -845,6 +846,26 @@ function _perform_http_connect_tunnel!(
     return nothing
 end
 
+@inline function _proxy_plan_is_socks(plan::_ProxyPlan)::Bool
+    return plan.mode == _ProxyPlanMode.SOCKS5 || plan.mode == _ProxyPlanMode.SOCKS5H
+end
+
+function _perform_socks_connect!(
+    tcp::TCP.Conn,
+    proxy::_ProxyTarget,
+    target_address::String,
+    deadline_ns::Int64,
+)::Nothing
+    SOCKS.connect!(
+        tcp,
+        target_address;
+        username=proxy.username,
+        password=proxy.password,
+        deadline_ns=deadline_ns,
+    )
+    return nothing
+end
+
 function _new_tcp_conn!(
     plan::_ProxyPlan,
     address::String,
@@ -852,10 +873,19 @@ function _new_tcp_conn!(
     connect_deadline_ns::Int64=Int64(0),
 )::TCP.Conn
     tcp = TCP.connect(host_resolver, "tcp", plan.first_hop_address)
-    if plan.mode == _ProxyPlanMode.HTTP_TUNNEL
-        proxy = plan.proxy
-        proxy === nothing && throw(ProtocolError("proxy CONNECT tunnel is missing proxy config"))
-        _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
+    try
+        if plan.mode == _ProxyPlanMode.HTTP_TUNNEL
+            proxy = plan.proxy
+            proxy === nothing && throw(ProtocolError("proxy CONNECT tunnel is missing proxy config"))
+            _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
+        elseif _proxy_plan_is_socks(plan)
+            proxy = plan.proxy
+            proxy === nothing && throw(ProtocolError("SOCKS proxy connection is missing proxy config"))
+            _perform_socks_connect!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
+        end
+    catch
+        @try_ignore TCP.close(tcp)
+        rethrow()
     end
     return tcp
 end

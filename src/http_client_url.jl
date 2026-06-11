@@ -182,12 +182,18 @@ end
     return string(secure ? "https://" : "http://", address, target)
 end
 
-@inline function _userinfo_basic_authorization(userinfo::AbstractString)::String
+@inline function _userinfo_username_password(userinfo::AbstractString)::Tuple{String,String}
     # Per RFC 3986 §3.2.1 the userinfo sub-components are percent-encoded; decode
-    # them before building the Basic credential (matches 1.x, curl and browsers).
+    # them before they are used for Basic or SOCKS username/password credentials.
     parts_split = split(userinfo, ':'; limit=2)
     username = URIs.unescapeuri(parts_split[1])
     password = length(parts_split) == 2 ? URIs.unescapeuri(parts_split[2]) : ""
+    return username, password
+end
+
+@inline function _userinfo_basic_authorization(userinfo::AbstractString)::String
+    # Matches 1.x, curl, and browsers.
+    username, password = _userinfo_username_password(userinfo)
     return "Basic " * _base64encode(string(username, ":", password))
 end
 

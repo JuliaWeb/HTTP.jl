@@ -480,12 +480,11 @@ function _acquire_h2_conn!(
                 tls_config=tls_cfg,
                 connect_deadline_ns=connect_deadline_ns,
             )
-        elseif plan.mode == _ProxyPlanMode.HTTP_TUNNEL
+        elseif plan.mode == _ProxyPlanMode.HTTP_TUNNEL || _proxy_plan_is_socks(plan)
             proxy = plan.proxy
-            proxy === nothing && throw(ProtocolError("proxy CONNECT tunnel is missing proxy config"))
-            tcp = TCP.connect(connect_host_resolver, "tcp", plan.first_hop_address)
+            proxy === nothing && throw(ProtocolError("proxy connection is missing proxy config"))
+            tcp = _new_tcp_conn!(plan, address, connect_host_resolver, connect_deadline_ns)
             try
-                _perform_http_connect_tunnel!(tcp, proxy::_ProxyTarget, address, connect_deadline_ns)
                 connect_h2!(tcp, address; secure=secure, tls_config=tls_cfg, connect_deadline_ns=connect_deadline_ns)
             catch
                 @try_ignore begin
@@ -1957,8 +1956,8 @@ Keyword arguments:
 - `client`: optional explicit `Client`; otherwise a default or ephemeral client
   is created
 - `connect_timeout`: connection establishment timeout in seconds, covering DNS,
-  TCP connect, proxy CONNECT, TLS handshake, and HTTP/2 session setup in the
-  high-level client paths
+  TCP connect, HTTP proxy `CONNECT` or SOCKS5 handshakes, TLS handshake, and
+  HTTP/2 session setup in the high-level client paths
 - `request_timeout`: overall request deadline in seconds
 - `response_header_timeout`: maximum time to wait for response headers after
   the request has been sent

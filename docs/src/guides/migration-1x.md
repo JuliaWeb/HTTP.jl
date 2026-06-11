@@ -347,8 +347,8 @@ resp = HTTP.get(
 
 Use the timeout that matches your intent:
 
-- `connect_timeout` bounds DNS, TCP connect, proxy `CONNECT`, TLS handshake,
-  and HTTP/2 session setup.
+- `connect_timeout` bounds DNS, TCP connect, HTTP proxy `CONNECT` or SOCKS5
+  handshakes, TLS handshake, and HTTP/2 session setup.
 - `request_timeout` is the whole exchange deadline.
 - `response_header_timeout` bounds the wait for response headers.
 - `read_idle_timeout` bounds inactivity between inbound read progress events.
@@ -388,10 +388,15 @@ a fixed proxy URL per request, client, or transport:
 direct = HTTP.ProxyConfig()
 from_env = HTTP.ProxyFromEnvironment()
 fixed = HTTP.ProxyURL("http://proxy.internal:8080"; no_proxy = "localhost,127.0.0.1")
+socks = HTTP.ProxyURL("socks5h://proxy.internal:1080")
 
 HTTP.get(url; proxy = from_env)
 HTTP.get("http://127.0.0.1:8080"; proxy = direct)
 ```
+
+SOCKS5 proxies are configured with `socks5://` or `socks5h://` URLs. Both
+schemes follow Go's HTTP transport behavior and pass domain targets to the
+proxy for resolution.
 
 ## Servers
 

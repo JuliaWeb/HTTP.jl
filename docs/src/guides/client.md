@@ -142,7 +142,8 @@ Important `Client` and `Transport` knobs:
 - `prefer_http2 = true` to prefer ALPN-negotiated HTTP/2 for secure traffic
 - connection-pool sizing via `max_idle_per_host` and `max_idle_total`
 - shared `CookieJar` state across related requests
-- explicit proxy routing with `ProxyConfig`, `ProxyURL`, `ProxyFromEnvironment`, and `NoProxy`
+- explicit proxy routing with `ProxyConfig`, `ProxyURL`, `ProxyFromEnvironment`, and `NoProxy`;
+  proxy URLs may use `http://`, `socks5://`, or `socks5h://`
 - coordinated retries through a shared `RetryBucket`
 
 ### Per-`Client` defaults
@@ -396,8 +397,8 @@ response = HTTP.get(
 The client APIs now expose timeout controls by phase instead of only a single
 read timeout:
 
-- `connect_timeout` bounds DNS, TCP connect, proxy `CONNECT`, TLS handshake,
-  and HTTP/2 session setup
+- `connect_timeout` bounds DNS, TCP connect, HTTP proxy `CONNECT` or SOCKS5
+  handshakes, TLS handshake, and HTTP/2 session setup
 - `request_timeout` is the overall deadline for the whole exchange
 - `response_header_timeout` bounds the wait from "request sent" to "response
   headers available"
