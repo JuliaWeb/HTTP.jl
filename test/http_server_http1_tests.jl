@@ -57,7 +57,7 @@ function _raw_http_request(
     request::AbstractString;
     settle_s::Float64 = 0.5,
     close_write::Bool = true,
-    wait_for_first_byte::Bool = false,
+    wait_for_first_byte::Bool = true,
 )::String
     return _run_with_timeout(; timeout_s = max(8.0, settle_s + 4.0), label = "raw http request (port $(port))") do
         sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
@@ -163,6 +163,9 @@ function _read_until_quiet(
                 end
                 rethrow(err)
             end
+        end
+        if wait_for_first_byte && !saw_bytes
+            error("timed out waiting for first response byte")
         end
         return String(out)
     end
@@ -902,11 +905,21 @@ end
         end
     address = HT.server_addr(server)
     try
-        overflow_raw = _raw_http_request(HT.port(server), "GET /overflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        overflow_raw = _raw_http_request(
+            HT.port(server),
+            "GET /overflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n";
+            settle_s = 0.3,
+            wait_for_first_byte = false,
+        )
         @test !occursin("toolong", overflow_raw)
         @test !occursin("content-length: 2", lowercase(overflow_raw))
 
-        underflow_raw = _raw_http_request(HT.port(server), "GET /underflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        underflow_raw = _raw_http_request(
+            HT.port(server),
+            "GET /underflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n";
+            settle_s = 0.3,
+            wait_for_first_byte = false,
+        )
         @test !occursin("hi", underflow_raw)
         @test !occursin("content-length: 5", lowercase(underflow_raw))
     finally
