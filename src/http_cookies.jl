@@ -458,8 +458,8 @@ const normal_url_char = Bool[
     true, true, true, true, true, true, true, true,          # 88-95: X Y Z [ \ ] ^ _
     true, true, true, true, true, true, true, true,          # 96-103: ` a b c d e f g
     true, true, true, true, true, true, true, true,          # 104-111: h i j k l m n o
-    true, true, true, true, true, true, true, false,         # 112-119: p q r s t u v w
-    true, true, true, false, false, false, true, false,      # 120-127: x y z { | } ~ DEL
+    true, true, true, true, true, true, true, true,          # 112-119: p q r s t u v w
+    true, true, true, true, true, true, true, false,         # 120-127: x y z { | } ~ DEL
 ]
 
 @inline isurlchar(c) = c > '\u80' ? true : normal_url_char[Int(c)+1]
