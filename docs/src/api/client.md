@@ -16,6 +16,7 @@ HTTP.Transport
 HTTP.Client
 HTTP.RetryBucket
 HTTP.RequestRetryError
+HTTP.retry_attempts
 HTTP.roundtrip!
 HTTP.request
 HTTP.get

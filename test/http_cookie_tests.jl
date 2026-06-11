@@ -135,6 +135,22 @@ end
     @test !("expired" in [c.name for c in HT.getcookies!(jar, "https", "example.com", "/docs/page")])
 end
 
+@testset "HTTP CookieJar restores from saved entries (#931)" begin
+    # "save": populate a jar, then keep its entries storage
+    jar = HT.CookieJar()
+    headers = _set_cookie_headers("session=abc; Path=/", "theme=dark; Path=/")
+    HT.setcookies!(jar, "https", "example.com", "/", headers)
+    saved = jar.entries
+    # "load": a jar prepopulated from saved entries serves the same cookies
+    restored = HT.CookieJar(saved)
+    names = sort([c.name for c in HT.getcookies!(restored, "https", "example.com", "/")])
+    @test names == ["session", "theme"]
+    # and keeps applying normal jar semantics for later updates
+    delete_headers = _set_cookie_headers("session=gone; Path=/; Max-Age=-1")
+    HT.setcookies!(restored, "https", "example.com", "/", delete_headers)
+    @test [c.name for c in HT.getcookies!(restored, "https", "example.com", "/")] == ["theme"]
+end
+
 @testset "HTTP cookie helper validation and canonicalization" begin
     headers = HT.Headers()
     HT.appendheader(headers, "Cookie", "flag; named=value")
@@ -235,6 +251,62 @@ end
     cookies = HT.getcookies!(jar, "https", "example.com", "/")
     @test !any(cookie -> cookie.name == "stale", cookies)
     @test !haskey(jar.entries[key], HT.Cookies.id(stale))
+end
+
+@testset "_cookie_header merges a manual Cookie header (de-duped by name)" begin
+    host = "h.example.com"
+
+    # Serialize → parse back into (name, value) pairs using the library's own reader.
+    function _pairs(hdr)
+        hdr === nothing && return Tuple{String,String}[]
+        h = HT.Headers()
+        HT.appendheader(h, "Cookie", hdr)
+        return [(c.name, c.value) for c in HT.cookies(HT.Request("GET", "/"; headers = h))]
+    end
+
+    # Build a jar from (request-path => Set-Cookie) specs.
+    function seed(specs...)
+        jar = HT.CookieJar()
+        for (p, sc) in specs
+            HT.setcookies!(jar, "https", host, p, _set_cookie_headers(sc))
+        end
+        return jar
+    end
+
+    # cookies=false: the cookie layer must leave a manual header untouched.
+    @test HT._cookie_header(seed("/" => "sid=JAR; Path=/"), false, true, host, "/",
+                            [HT.Cookie("sid", "MANUAL")]) === nothing
+
+    # No jar, cookies=true: a manual header flows through unchanged.
+    @test _pairs(HT._cookie_header(nothing, true, true, host, "/",
+                                   [HT.Cookie("a", "1")])) == [("a", "1")]
+
+    # Duplicate names within the manual header collapse to the first occurrence.
+    @test _pairs(HT._cookie_header(nothing, true, true, host, "/",
+                                   [HT.Cookie("a", "1"), HT.Cookie("a", "2")])) == [("a", "1")]
+
+    # Disjoint names: jar and manual cookies are both sent.
+    p = _pairs(HT._cookie_header(seed("/" => "sid=JAR; Path=/"), true, true, host, "/",
+                                 [HT.Cookie("extra", "M")]))
+    @test ("sid", "JAR") in p && ("extra", "M") in p
+
+    # Same name: the managed (jar) cookie wins, the manual one is dropped, no duplicate.
+    @test _pairs(HT._cookie_header(seed("/" => "sid=JAR; Path=/"), true, true, host, "/",
+                                   [HT.Cookie("sid", "MANUAL")])) == [("sid", "JAR")]
+
+    # An explicit `cookies=` dict also wins over the manual header, by name.
+    p = _pairs(HT._cookie_header(seed("/" => "sid=JAR; Path=/"), [HT.Cookie("d", "1")],
+                                 true, host, "/", [HT.Cookie("sid", "X"), HT.Cookie("d", "X")]))
+    @test ("sid", "JAR") in p && ("d", "1") in p && !any(t -> t[2] == "X", p)
+
+    # Path-scoped same-name cookies in the jar (e.g. one2team's two JSESSIONIDs) are both
+    # preserved; a manual cookie of that name is dropped rather than shadowing either.
+    jar = seed("/" => "JSESSIONID=ROOT; Path=/", "/app" => "JSESSIONID=APP; Path=/app")
+    p = _pairs(HT._cookie_header(jar, true, true, host, "/app/page",
+                                 [HT.Cookie("JSESSIONID", "MANUAL")]))
+    jsess = [v for (n, v) in p if n == "JSESSIONID"]
+    @test Set(jsess) == Set(["ROOT", "APP"])
+    @test !("MANUAL" in jsess)
 end
 
 @testset "HTTP cookie name chars above ASCII 119 regression (BoundsError fix)" begin

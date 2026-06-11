@@ -1479,11 +1479,15 @@ end
         @test resp_get.status == 200
         @test resp_get.body === nothing
 
+        payload = "payload"
         resp_post = HT.open(:POST, "$(base_url)/open-post") do stream
-            write(stream, "payload")
+            buf = IOBuffer()
+            write(buf, payload)
+            seekstart(buf)
+            @test write(stream, buf) == ncodeunits(payload)
             meta = HT.startread(stream)
             @test meta.status == 200
-            @test String(read(stream)) == "payload"
+            @test String(read(stream)) == payload
         end
         @test resp_post.status == 200
         @test resp_post.body === nothing

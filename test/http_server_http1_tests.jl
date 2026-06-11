@@ -57,7 +57,7 @@ function _raw_http_request(
     request::AbstractString;
     settle_s::Float64 = 0.5,
     close_write::Bool = true,
-    wait_for_first_byte::Bool = false,
+    wait_for_first_byte::Bool = true,
 )::String
     return _run_with_timeout(; timeout_s = max(8.0, settle_s + 4.0), label = "raw http request (port $(port))") do
         sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
@@ -163,6 +163,9 @@ function _read_until_quiet(
                 end
                 rethrow(err)
             end
+        end
+        if wait_for_first_byte && !saw_bytes
+            error("timed out waiting for first response byte")
         end
         return String(out)
     end
@@ -826,6 +829,38 @@ end
     end
 end
 
+@testset "HTTP server ordinary handlers suppress bodies for 204 and 304" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+            status = request.target == "/nocontent" ? 204 : 304
+            return HT.Response(
+                status,
+                HT.BytesBody(collect(codeunits("oops")));
+                content_length = 4,
+                request = request,
+            )
+        end
+    address = HT.server_addr(server)
+    try
+        for (target, status_line) in (
+            "/nocontent" => "HTTP/1.1 204 No Content",
+            "/notmodified" => "HTTP/1.1 304 Not Modified",
+        )
+            raw = _raw_http_request(HT.port(server), "GET $(target) HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+            lower_raw = lowercase(raw)
+            @test occursin(status_line, raw)
+            @test !occursin("content-length", lower_raw)
+            @test !occursin("transfer-encoding", lower_raw)
+            @test !occursin("oops", raw)
+            parts = split(raw, "\r\n\r\n"; limit = 2)
+            @test length(parts) == 2
+            @test parts[2] == ""
+        end
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP server ordinary handlers receive buffered request bodies" begin
     seen_buffered = Channel{Bool}(2)
     server = HT.serve!("127.0.0.1", 0; listenany = true) do request
@@ -886,6 +921,33 @@ end
     end
 end
 
+@testset "HTTP server stream handlers support IOBuffer writes" begin
+    payload = "io-buffer-body"
+    written = Channel{Int}(1)
+    empty_written = Channel{UInt}(1)
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+            _ = HT.startread(stream)
+            HT.setstatus(stream, 200)
+            put!(empty_written, Base.unsafe_write(stream, Ptr{UInt8}(0), UInt(0)))
+            buf = IOBuffer()
+            write(buf, payload)
+            seekstart(buf)
+            put!(written, write(stream, buf))
+            return nothing
+        end
+    address = HT.server_addr(server)
+    try
+        resp = HT.get("http://$(address)/")
+        @test resp.status == 200
+        @test String(resp.body) == payload
+        @test take!(empty_written) == UInt(0)
+        @test take!(written) == ncodeunits(payload)
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
 @testset "HTTP server stream handlers reject fixed-length mismatches before writing malformed bodies" begin
     server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
             request = HT.startread(stream)
@@ -902,11 +964,21 @@ end
         end
     address = HT.server_addr(server)
     try
-        overflow_raw = _raw_http_request(HT.port(server), "GET /overflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        overflow_raw = _raw_http_request(
+            HT.port(server),
+            "GET /overflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n";
+            settle_s = 0.3,
+            wait_for_first_byte = false,
+        )
         @test !occursin("toolong", overflow_raw)
         @test !occursin("content-length: 2", lowercase(overflow_raw))
 
-        underflow_raw = _raw_http_request(HT.port(server), "GET /underflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n"; settle_s = 0.3)
+        underflow_raw = _raw_http_request(
+            HT.port(server),
+            "GET /underflow HTTP/1.1\r\nHost: $(address)\r\nConnection: close\r\n\r\n";
+            settle_s = 0.3,
+            wait_for_first_byte = false,
+        )
         @test !occursin("hi", underflow_raw)
         @test !occursin("content-length: 5", lowercase(underflow_raw))
     finally

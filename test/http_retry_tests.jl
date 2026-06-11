@@ -213,6 +213,71 @@ end
     end
 end
 
+@testset "HTTP retry_attempts reports client retries (#1011, #1019)" begin
+    # retried request: 503 -> 503 -> 200 with retries = 2
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    seen = Tuple{String, String, String}[]
+    scenarios = [
+        (status = 503, reason = "Service Unavailable", retry_after = "0"),
+        (status = 503, reason = "Service Unavailable", retry_after = "0"),
+        (status = 200, reason = "OK", body_text = "ok"),
+    ]
+    server_task = _serve_retry_sequence(listener, scenarios, seen)
+    try
+        response = HT.get("http://$(address)/attempts"; retries = 2, status_exception = false)
+        @test response.status == 200
+        @test HT.retry_attempts(response) == 2
+        @test HT.retry_attempts(response.request) == 2
+        # 1.x-compatible context location still works
+        @test get(HT.get_request_context(response.request), :retryattempt, 0) == 2
+        _wait_task_retry!(server_task)
+    finally
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # no retries needed: count stays 0
+    listener2 = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr2 = NC.addr(listener2)::NC.SocketAddrV4
+    address2 = ND.join_host_port("127.0.0.1", Int(laddr2.port))
+    seen2 = Tuple{String, String, String}[]
+    server_task2 = _serve_retry_sequence(listener2, [(status = 200, reason = "OK", body_text = "ok")], seen2)
+    try
+        response = HT.get("http://$(address2)/noretry"; retries = 2)
+        @test response.status == 200
+        @test HT.retry_attempts(response) == 0
+        _wait_task_retry!(server_task2)
+    finally
+        HTTP.@try_ignore NC.close(listener2)
+    end
+
+    # exhausted retries: StatusError message reports the retry count
+    listener3 = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr3 = NC.addr(listener3)::NC.SocketAddrV4
+    address3 = ND.join_host_port("127.0.0.1", Int(laddr3.port))
+    seen3 = Tuple{String, String, String}[]
+    scenarios3 = [
+        (status = 503, reason = "Service Unavailable", retry_after = "0"),
+        (status = 503, reason = "Service Unavailable", retry_after = "0"),
+    ]
+    server_task3 = _serve_retry_sequence(listener3, scenarios3, seen3)
+    try
+        err = try
+            HT.get("http://$(address3)/exhausted"; retries = 1)
+            nothing
+        catch e
+            e
+        end
+        @test err isa HT.StatusError
+        @test err !== nothing && HT.retry_attempts((err::HT.StatusError).response) == 1
+        @test err !== nothing && occursin("(after 1 retry)", sprint(showerror, err::HT.StatusError))
+        _wait_task_retry!(server_task3)
+    finally
+        HTTP.@try_ignore NC.close(listener3)
+    end
+end
+
 @testset "HTTP request trace emits retry events" begin
     listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
     laddr = NC.addr(listener)::NC.SocketAddrV4
