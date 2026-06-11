@@ -312,7 +312,9 @@ function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_Prox
 
     userinfo = nothing
     hostport = authority
-    at_idx = findlast(==('@'), authority)
+    # Byte scan instead of findlast(==('@'), ...): the predicate form lands on
+    # the generic Function method, which the juliac trim verifier rejects.
+    at_idx = _find_last_url_byte(codeunits(authority), firstindex(authority), lastindex(authority), UInt8('@'))
     if at_idx !== nothing
         userinfo = String(SubString(authority, firstindex(authority), prevind(authority, at_idx)))
         hostport = String(SubString(authority, nextind(authority, at_idx), lastindex(authority)))
