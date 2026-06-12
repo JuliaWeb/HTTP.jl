@@ -48,6 +48,10 @@ end
 function _retryable_request_error(err::Exception)::Bool
     current = err
     while true
+        # RFC 9113 §8.7: a stream reset with REFUSED_STREAM, or rejected by
+        # GOAWAY (stream_id > last_stream_id), was not processed by the server.
+        current isa H2StreamResetError && return (current::H2StreamResetError).error_code == _H2_REFUSED_STREAM
+        current isa H2GoAwayError && return true
         current isa EOFError && return true
         current isa SystemError && return true
         current isa ParseError && return true
@@ -72,6 +76,22 @@ end
 
 _retryable_request_error(err::RequestRetryError)::Bool = _retryable_request_error(err.err)
 
+# RFC 9113 §8.7: requests on streams reset with REFUSED_STREAM or rejected by
+# GOAWAY are guaranteed unprocessed, hence safe to retry regardless of method
+# idempotency. The replayable-body gate in `_should_retry_request_attempt`
+# still applies.
+function _h2_guaranteed_unprocessed(err)::Bool
+    current = err
+    while true
+        if current isa RequestRetryError
+            current = (current::RequestRetryError).err
+            continue
+        end
+        current isa H2StreamResetError && return (current::H2StreamResetError).error_code == _H2_REFUSED_STREAM
+        return current isa H2GoAwayError
+    end
+end
+
 function _retry_hook_decision(controller::_RetryController, attempt::Int, err, req::Request, resp)
     hook = controller.retry_if
     hook === nothing && return nothing
@@ -86,7 +106,8 @@ function _should_retry_request_attempt(controller::_RetryController, attempt::In
     _retryable_request_body(req) || return false
     built_in = false
     if err !== nothing
-        built_in = _retryable_policy_request(req, controller.retry_non_idempotent) && _retryable_request_error(err)
+        policy_ok = _retryable_policy_request(req, controller.retry_non_idempotent) || _h2_guaranteed_unprocessed(err)
+        built_in = policy_ok && _retryable_request_error(err)
     elseif resp !== nothing
         built_in = _retryable_policy_request(req, controller.retry_non_idempotent) && _retryable_status((resp::Response).status)
     end
