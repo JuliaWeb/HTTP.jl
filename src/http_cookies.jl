@@ -444,24 +444,25 @@ end
 sanitizeCookiePath(v) = filter(validcookiepathbyte, v)
 
 const normal_url_char = Bool[
-    false, false, false, false, false, false, false, false,
-    false, true, false, false, true, false, false, false,
-    false, false, false, false, false, false, false, false,
-    false, false, false, false, false, false, false, false,
-    false, true, true, false, true, true, true, true,
-    true, true, true, true, true, true, true, true,
-    true, true, true, true, true, true, true, true,
-    true, true, true, true, true, true, true, false,
-    true, true, true, true, true, true, true, true,
-    true, true, true, true, true, true, true, true,
-    true, true, true, true, true, true, true, true,
-    true, true, true, true, true, true, true, true,
-    true, true, true, true, true, true, true, true,
-    true, true, true, true, true, true, true, true,
-    true, true, true, true, true, true, true, false,
+    false, false, false, false, false, false, false, false,  # 0-7
+    false, true, false, false, true, false, false, false,    # 8-15
+    false, false, false, false, false, false, false, false,  # 16-23
+    false, false, false, false, false, false, false, false,  # 24-31
+    false, true, true, false, true, true, true, true,        # 32-39: space ! " # $ % & '
+    true, true, true, true, true, true, true, true,          # 40-47: ( ) * + , - . /
+    true, true, true, true, true, true, true, true,          # 48-55: 0-7
+    true, true, true, true, true, true, true, false,         # 56-63: 8 9 : ; < = > ?
+    true, true, true, true, true, true, true, true,          # 64-71: @ A B C D E F G
+    true, true, true, true, true, true, true, true,          # 72-79: H I J K L M N O
+    true, true, true, true, true, true, true, true,          # 80-87: P Q R S T U V W
+    true, true, true, true, true, true, true, true,          # 88-95: X Y Z [ \ ] ^ _
+    true, true, true, true, true, true, true, true,          # 96-103: ` a b c d e f g
+    true, true, true, true, true, true, true, true,          # 104-111: h i j k l m n o
+    true, true, true, true, true, true, true, true,          # 112-119: p q r s t u v w
+    true, true, true, true, true, true, true, false,         # 120-127: x y z { | } ~ DEL
 ]
 
-@inline isurlchar(c) = c > '\u80' ? true : normal_url_char[Int(c)+1]
+@inline isurlchar(c) = c ≥ '\u80' ? true : normal_url_char[Int(c)+1]
 
 """
     CookieJar()

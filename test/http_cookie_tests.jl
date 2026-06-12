@@ -308,3 +308,35 @@ end
     @test Set(jsess) == Set(["ROOT", "APP"])
     @test !("MANUAL" in jsess)
 end
+
+@testset "HTTP cookie name chars above ASCII 119 regression (BoundsError fix)" begin
+    # Regression test: the old normal_url_char table had only 120 entries, so any
+    # cookie name containing a char with codepoint >= 120 (x, y, z, {, |, }, ~)
+    # caused a BoundsError inside isurlchar, silently dropping the cookie.
+    # The table was also missing the 112–119 row, shifting the final row up so
+    # that 'w' (codepoint 119) was mapped to the DEL entry (false), causing
+    # cookies named e.g. "w" to be silently dropped too.
+    isurlchar = HTTP.Cookies.isurlchar
+    @test isurlchar('w') && isurlchar('{') && isurlchar('|') && isurlchar('}') && !isurlchar('\x7f') && isurlchar('\u80')
+
+    jar = HT.CookieJar()
+
+    # xsrf_token: name contains 'x' (codepoint 120) — previously threw BoundsError
+    headers = _set_cookie_headers("xsrf_token=abc123; Path=/")
+    HT.setcookies!(jar, "https", "example.com", "/", headers)
+    stored = HT.getcookies!(jar, "https", "example.com", "/")
+    names = [c.name for c in stored]
+    @test "xsrf_token" in names
+    xsrf = stored[findfirst(c -> c.name == "xsrf_token", stored)]
+    @test xsrf.value == "abc123"
+
+    # Cookie names that are single chars in the formerly-broken range
+    for ch in ('x', 'y', 'z', '{', '|', '}', '~', 'w')
+        jar2 = HT.CookieJar()
+        HT.setcookies!(jar2, "https", "example.com", "/",
+            _set_cookie_headers("$(ch)=1; Path=/"))
+        got = HT.getcookies!(jar2, "https", "example.com", "/")
+        @test length(got) == 1
+        @test got[1].name == string(ch)
+    end
+end
