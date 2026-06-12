@@ -68,9 +68,10 @@ function _raw_http_request(
                     NC.closewrite(sock)
                 end
             end
+            first_byte_timeout_s = max(Sys.iswindows() ? 5.0 : 2.0, settle_s + 1.0)
             return _read_until_quiet(
                 sock;
-                timeout_s = max(2.0, settle_s + 1.0),
+                timeout_s = first_byte_timeout_s,
                 quiet_timeout_s = min(0.25, max(0.05, settle_s)),
                 wait_for_first_byte = wait_for_first_byte,
             )
