@@ -295,7 +295,10 @@ function _server_write(stream::Stream, data::AbstractVector{UInt8})::Int
     if stream.write_mode == _ServerStreamWriteMode.CHUNKED
         io = IOBuffer()
         print(io, string(length(data), base=16), "\r\n")
-        write(io, data)
+        # concrete bytes: `write(io, ::AbstractVector{UInt8})` is an
+        # invalidation-prone edge (any package adding write methods recompiles
+        # the server write path); no copy in the common Vector case
+        write(io, data isa Vector{UInt8} ? data : Vector{UInt8}(data))
         write(io, "\r\n")
         _write_server_stream_bytes!(stream, take!(io))
     else
@@ -394,11 +397,15 @@ function _write_response_body_to_stream!(stream::Stream, body)::Nothing
         return nothing
     end
     if body isa AbstractString
-        write(stream, body::AbstractString)
+        # concrete String: a `write(::Stream, ::AbstractString)` edge gets
+        # invalidated whenever any package defines a write method for its
+        # own string type (LaTeXStrings, ...), recompiling the server
+        # response path
+        write(stream, body isa String ? body : String(body))
         return nothing
     end
     if body isa AbstractVector{UInt8}
-        write(stream, body::AbstractVector{UInt8})
+        write(stream, body isa Vector{UInt8} ? body : Vector{UInt8}(body))
         return nothing
     end
     if body isa AbstractBody

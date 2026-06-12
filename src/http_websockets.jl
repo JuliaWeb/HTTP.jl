@@ -398,6 +398,8 @@ _ws_read_deadline_ns(timeout_ns::Int64)::Int64 = _phase_deadline_ns(timeout_ns, 
 function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYTES)::Nothing
     buffer_bytes > 0 || throw(ArgumentError("buffer_bytes must be > 0"))
     buf = Vector{UInt8}(undef, buffer_bytes)
+    # hoisted: one callback closure for the whole loop, not one per socket read
+    on_frame = frame -> _process_incoming_frame!(ws, frame)
     try
         while true
             # Opt-in read idle timeout: re-arm before each read so it fires only
@@ -411,7 +413,7 @@ function _ws_read_loop!(ws::WebSocket, buffer_bytes::Int=DEFAULT_READ_BUFFER_BYT
             # `readbytes!(...; all=false)` does one socket read into `buf`.
             n = readbytes!(ws.stream, buf, length(buf); all=false)
             n == 0 && break
-            ws_on_incoming_data!(frame -> _process_incoming_frame!(ws, frame), ws.codec, @view buf[1:n])
+            ws_on_incoming_data!(on_frame, ws.codec, buf, n)
             _flush_ws_output!(ws)
             ws.readclosed && break
         end

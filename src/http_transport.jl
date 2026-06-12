@@ -79,9 +79,14 @@ Base.write(io::_RequestDeadlineWriteIO, data::Vector{UInt8})::Int = _request_dea
 Base.write(io::_RequestDeadlineWriteIO, data::StridedVector{UInt8})::Int = _request_deadline_write_bytes!(io, data)
 Base.write(io::_RequestDeadlineWriteIO, data::AbstractVector{UInt8})::Int = _request_deadline_write_bytes!(io, data)
 
-function Base.write(io::_RequestDeadlineWriteIO, data::Union{String,SubString{String}})::Int
+# Hook unsafe_write instead of write(::IO, ::Union{String, SubString{String}}):
+# Base's generic string write funnels through unsafe_write, so strings still
+# get the deadline applied, while extending `write` for String on a new IO
+# type invalidates every abstractly-inferred `write(::IO, ::String)` call site
+# in the ecosystem (measured: 1383 invalidated instances at `using` time).
+function Base.unsafe_write(io::_RequestDeadlineWriteIO, p::Ptr{UInt8}, n::UInt)::Int
     _apply_request_write_deadline!(io)
-    return write(io.inner, data)
+    return unsafe_write(io.inner, p, n)
 end
 
 @inline function _fill_conn_reader!(reader::_ConnReader)::Int
@@ -431,7 +436,10 @@ function _write_exact_bytes_body_transport!(
         else
             view(body.data, body.next_index:stop_index)
         end
-        n = write(stream, chunk)
+        # `stream` is deliberately untyped (multiple transports); without the
+        # Int assert `n` infers Any and poisons the loop comparisons with
+        # invalidation-prone `>(::Any, ::Int)` edges
+        n = Int(write(stream, chunk))
         n == chunk_len || throw(ProtocolError("transport short write"))
         body.next_index = stop_index + 1
         remaining -= n

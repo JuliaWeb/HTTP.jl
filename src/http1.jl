@@ -597,15 +597,19 @@ end
 function _write_exact_bytes_body!(stream, body::BytesBody, expected_len::Int64)
     expected_len < 0 && throw(ArgumentError("expected_len must be >= 0"))
     expected_len == 0 && return nothing
-    available = (length(body.data) - body.next_index) + 1
+    # `body` is usually abstract here and `stream` is deliberately untyped;
+    # the Int asserts keep the arithmetic/comparisons concretely inferred so
+    # this method carries no invalidation-prone `>=(::Any, ::Int)` edges
+    len = length(body.data)::Int
+    available = (len - body.next_index) + 1
     available >= expected_len || throw(ProtocolError("body ended before expected Content-Length bytes were written"))
     stop_index = body.next_index + Int(expected_len) - 1
-    chunk = if body.next_index == 1 && stop_index == length(body.data)
+    chunk = if body.next_index == 1 && stop_index == len
         body.data
     else
         view(body.data, body.next_index:stop_index)
     end
-    n = write(stream, chunk)
+    n = Int(write(stream, chunk))
     n == expected_len || throw(ProtocolError("transport short write"))
     body.next_index = stop_index + 1
     return nothing
