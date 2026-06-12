@@ -43,6 +43,18 @@ end
     @test collect(masked_encoded[3:6]) == UInt8[0x37, 0xfa, 0x21, 0x3d]
     @test length(masked_encoded) == 8
 
+    strided_payload = @view UInt8[0x0a, 0x14, 0x1e, 0x28, 0x32][1:2:5]
+    strided_masked = HT.WebSockets.WsFrame(
+        opcode = UInt8(HT.WebSockets.WsOpcode.BINARY),
+        payload = strided_payload,
+        fin = true,
+        masked = true,
+        masking_key = (0x01, 0x02, 0x03, 0x04),
+    )
+    strided_encoded = HT.WebSockets.ws_encode_frame(strided_masked)
+    strided_decoded = HT.WebSockets.ws_decoder_process!(HT.WebSockets.ws_decoder_new(), strided_encoded)
+    @test strided_decoded[1].payload == collect(strided_payload)
+
     medium_payload = fill(UInt8('a'), 126)
     medium_encoded = HT.WebSockets.ws_encode_frame(HT.WebSockets.WsFrame(opcode = UInt8(HT.WebSockets.WsOpcode.BINARY), payload = medium_payload, fin = true))
     @test medium_encoded[2] == 126

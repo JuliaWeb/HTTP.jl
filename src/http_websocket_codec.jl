@@ -63,13 +63,41 @@ end
 # XOR `n` bytes of `src` (from `src_from`) with the rotating 4-byte mask `key`
 # into `dst` (from `dst_from`), where `key_phase` payload bytes preceded this
 # chunk (frames arrive split across reads at arbitrary boundaries). Works
-# in-place (dst === src over the same region). Processes 8 bytes per iteration
-# with the key broadcast into a UInt64, so masking runs at memcpy speed instead
-# of the ~1 GiB/s of a byte-at-a-time XOR with a per-byte modulo.
+# in-place (dst === src over the same region). Contiguous sources process 8
+# bytes per iteration with the key broadcast into a UInt64, so masking runs at
+# memcpy speed instead of the ~1 GiB/s of a byte-at-a-time XOR with a per-byte
+# modulo. Non-contiguous sources fall back to indexed access to preserve
+# AbstractVector semantics.
+@inline function _ws_contiguous_vector(v::AbstractVector{UInt8})::Bool
+    v isa DenseVector{UInt8} && return true
+    v isa StridedVector{UInt8} && return stride(v, 1) == 1
+    return false
+end
+
+function _ws_mask_into_indexed!(dst::AbstractVector{UInt8}, dst_from::Int,
+                                src::AbstractVector{UInt8}, src_from::Int,
+                                n::Int, key::NTuple{4,UInt8}, key_phase::Int)::Nothing
+    phase = key_phase % 4
+    k = (key[phase+1], key[(phase+1)%4+1], key[(phase+2)%4+1], key[(phase+3)%4+1])
+    dst_i = dst_from
+    src_i = src_from
+    i = 0
+    @inbounds while i < n
+        dst[dst_i] = src[src_i] ⊻ k[(i % 4) + 1]
+        dst_i = nextind(dst, dst_i)
+        src_i = nextind(src, src_i)
+        i += 1
+    end
+    return nothing
+end
+
 function _ws_mask_into!(dst::AbstractVector{UInt8}, dst_from::Int,
                         src::AbstractVector{UInt8}, src_from::Int,
                         n::Int, key::NTuple{4,UInt8}, key_phase::Int)::Nothing
     n <= 0 && return nothing
+    if !_ws_contiguous_vector(dst) || !_ws_contiguous_vector(src)
+        return _ws_mask_into_indexed!(dst, dst_from, src, src_from, n, key, key_phase)
+    end
     phase = key_phase % 4
     k = (key[phase+1], key[(phase+1)%4+1], key[(phase+2)%4+1], key[(phase+3)%4+1])
     k64 = UInt64(k[1]) | (UInt64(k[2]) << 8) | (UInt64(k[3]) << 16) | (UInt64(k[4]) << 24)
