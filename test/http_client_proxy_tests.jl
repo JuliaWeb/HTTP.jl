@@ -4,6 +4,7 @@ using HTTP
 using Reseau
 
 const HT = HTTP
+const W = HTTP.WebSockets
 const TL = Reseau.TLS
 const NC = Reseau.TCP
 const ND = Reseau.HostResolvers
@@ -37,6 +38,79 @@ function _write_all_proxy!(conn::NC.Conn, bytes::Vector{UInt8})::Nothing
         n > 0 || error("expected write progress")
         total += n
     end
+    return nothing
+end
+
+function _read_exact_proxy!(conn::NC.Conn, n::Int)::Vector{UInt8}
+    out = Vector{UInt8}(undef, n)
+    got = readbytes!(conn, out, n; all = true)
+    got == n || throw(EOFError())
+    return out
+end
+
+struct _SocksConnectRequest
+    atyp::UInt8
+    host::String
+    port::UInt16
+end
+
+function _socks_read_greeting_proxy!(conn::NC.Conn)::Vector{UInt8}
+    head = _read_exact_proxy!(conn, 2)
+    @test head[1] == 0x05
+    nmethods = Int(head[2])
+    return _read_exact_proxy!(conn, nmethods)
+end
+
+function _socks_select_method_proxy!(conn::NC.Conn, method::UInt8)::Nothing
+    write(conn, UInt8[0x05, method])
+    return nothing
+end
+
+function _socks_read_username_password_proxy!(conn::NC.Conn)::Tuple{String,String}
+    head = _read_exact_proxy!(conn, 2)
+    @test head[1] == 0x01
+    username_bytes = _read_exact_proxy!(conn, Int(head[2]))
+    pass_len = Int(_read_exact_proxy!(conn, 1)[1])
+    password_bytes = _read_exact_proxy!(conn, pass_len)
+    write(conn, UInt8[0x01, 0x00])
+    return String(username_bytes), String(password_bytes)
+end
+
+function _socks_read_connect_request_proxy!(conn::NC.Conn)::_SocksConnectRequest
+    head = _read_exact_proxy!(conn, 4)
+    @test head[1] == 0x05
+    @test head[2] == 0x01
+    @test head[3] == 0x00
+    atyp = head[4]
+    if atyp == 0x01
+        data = _read_exact_proxy!(conn, 6)
+        host = string(data[1], ".", data[2], ".", data[3], ".", data[4])
+        port = (UInt16(data[5]) << 8) | UInt16(data[6])
+        return _SocksConnectRequest(atyp, host, port)
+    elseif atyp == 0x03
+        len = Int(_read_exact_proxy!(conn, 1)[1])
+        data = _read_exact_proxy!(conn, len + 2)
+        host = String(data[1:len])
+        port = (UInt16(data[len + 1]) << 8) | UInt16(data[len + 2])
+        return _SocksConnectRequest(atyp, host, port)
+    elseif atyp == 0x04
+        data = _read_exact_proxy!(conn, 18)
+        addr = NC.SocketAddrV6((
+                data[1], data[2], data[3], data[4],
+                data[5], data[6], data[7], data[8],
+                data[9], data[10], data[11], data[12],
+                data[13], data[14], data[15], data[16],
+            ),
+            0,
+        )
+        port = (UInt16(data[17]) << 8) | UInt16(data[18])
+        return _SocksConnectRequest(atyp, NC._format_ipv6(addr.ip), port)
+    end
+    error("unexpected SOCKS address type $atyp")
+end
+
+function _socks_write_success_proxy!(conn::NC.Conn)::Nothing
+    write(conn, UInt8[0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
     return nothing
 end
 
@@ -266,6 +340,41 @@ end
     @test !(default_scheme.all::HT._ProxyTarget).secure
     @test (default_scheme.all::HT._ProxyTarget).address == "proxy.local:9000"
 
+    socks = HT.ProxyURL("socks5://user:p%40ss@proxy.local")
+    @test (socks.all::HT._ProxyTarget).url == "socks5://proxy.local:1080/"
+    @test (socks.all::HT._ProxyTarget).scheme == "socks5"
+    @test !(socks.all::HT._ProxyTarget).secure
+    @test (socks.all::HT._ProxyTarget).address == "proxy.local:1080"
+    @test (socks.all::HT._ProxyTarget).username == "user"
+    @test (socks.all::HT._ProxyTarget).password == "p@ss"
+    @test (socks.all::HT._ProxyTarget).authorization == "Basic " * Base64.base64encode("user:p@ss")
+
+    socks5h = HT.ProxyURL("socks5h://proxy.local:1081")
+    @test (socks5h.all::HT._ProxyTarget).url == "socks5h://proxy.local:1081/"
+    @test (socks5h.all::HT._ProxyTarget).scheme == "socks5h"
+    @test (socks5h.all::HT._ProxyTarget).address == "proxy.local:1081"
+
+    upper_scheme = HT.ProxyURL("SOCKS5H://proxy.local:1081")
+    @test (upper_scheme.all::HT._ProxyTarget).scheme == "socks5h"
+
+    socks_v6 = HT.ProxyURL("socks5://[::1]")
+    @test (socks_v6.all::HT._ProxyTarget).address == "[::1]:1080"
+    socks_v6_port = HT.ProxyURL("socks5://[::1]:9050")
+    @test (socks_v6_port.all::HT._ProxyTarget).address == "[::1]:9050"
+
+    socks_pathy = HT.ProxyURL("socks5://proxy.local:1080/ignored?q=1#frag")
+    @test (socks_pathy.all::HT._ProxyTarget).address == "proxy.local:1080"
+    @test (socks_pathy.all::HT._ProxyTarget).url == "socks5://proxy.local:1080/"
+
+    @test_throws ArgumentError HT.ProxyURL("socks5://::1:1080")
+    @test_throws ArgumentError HT.ProxyURL("socks5://proxy.local:0x50")
+    @test_throws ArgumentError HT.ProxyURL("socks5://proxy.local:+1080")
+    @test_throws ArgumentError HT.ProxyURL("socks5://proxy.local:0")
+    @test_throws ArgumentError HT.ProxyURL("socks5://proxy.local:65536")
+    @test_throws ArgumentError HT.ProxyURL("socks5://user:pass@")
+    @test_throws ArgumentError HT.ProxyURL("socks4://proxy.local:1080")
+    @test_throws ArgumentError HT.ProxyURL("socks5://")
+
     merged = withenv(
             "HTTP_PROXY" => "http://env-http.local:8080",
             "HTTPS_PROXY" => "http://env-https.local:8443",
@@ -278,6 +387,24 @@ end
     @test (merged.https::HT._ProxyTarget).address == "env-https.local:8443"
     @test (merged.all::HT._ProxyTarget).address == "env-all.local:3128"
     @test merged.no_proxy !== nothing
+
+    # Clear the lowercase variants before setting ALL_PROXY: Windows
+    # environment variables are case-insensitive, so a later
+    # "all_proxy" => nothing would delete the value set here.
+    env_socks = withenv(
+            "HTTP_PROXY" => nothing,
+            "http_proxy" => nothing,
+            "HTTPS_PROXY" => nothing,
+            "https_proxy" => nothing,
+            "all_proxy" => nothing,
+            "NO_PROXY" => nothing,
+            "no_proxy" => nothing,
+            "ALL_PROXY" => "socks5h://env-socks.local",
+        ) do
+        HT.ProxyFromEnvironment()
+    end
+    @test (env_socks.all::HT._ProxyTarget).scheme == "socks5h"
+    @test (env_socks.all::HT._ProxyTarget).address == "env-socks.local:1080"
 end
 
 @testset "percent-encoded userinfo is decoded for Basic auth" begin
@@ -437,6 +564,23 @@ end
     @test tunnel.first_hop_address == "proxy.local:8080"
     @test tunnel.pool_key == "http://proxy.local:8080/|https://origin.local:443"
 
+    socks = HT.ProxyURL("socks5://proxy.local:1080")
+    socks_plan = HT._proxy_plan(socks, false, "origin.local:80")
+    @test socks_plan.mode == HT._ProxyPlanMode.SOCKS5
+    @test socks_plan.proxy !== nothing
+    @test socks_plan.first_hop_address == "proxy.local:1080"
+    @test socks_plan.pool_key == "socks5://proxy.local:1080/|http://origin.local:80"
+
+    socks5h = HT.ProxyURL("socks5h://proxy.local:1080")
+    socks5h_plan = HT._proxy_plan(socks5h, true, "origin.local:443")
+    @test socks5h_plan.mode == HT._ProxyPlanMode.SOCKS5H
+    @test socks5h_plan.first_hop_address == "proxy.local:1080"
+    @test socks5h_plan.pool_key == "socks5h://proxy.local:1080/|https://origin.local:443"
+
+    socks_no_proxy = HT.ProxyURL("socks5://proxy.local:1080"; no_proxy = "origin.local")
+    skipped_plan = HT._proxy_plan(socks_no_proxy, false, "origin.local:80")
+    @test skipped_plan.mode == HT._ProxyPlanMode.DIRECT
+
     https_proxy = HT.ProxyURL("https://proxy.local:8443")
     @test_throws ArgumentError HT._proxy_plan(https_proxy, true, "origin.local:443")
 end
@@ -470,6 +614,370 @@ end
         @test seen_target[] == "http://example.com:80/forward?x=1"
         @test seen_host[] == "example.com:80"
         @test seen_proxy_auth[] == "Basic " * Base64.base64encode("user:pass")
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP SOCKS5 proxy handshakes before plain HTTP requests" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    proxy_address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    seen_target = Ref{Union{Nothing, String}}(nothing)
+    seen_host = Ref{Union{Nothing, String}}(nothing)
+    seen_socks_host = Ref{Union{Nothing, String}}(nothing)
+    seen_socks_port = Ref{UInt16}(0)
+    seen_username = Ref{Union{Nothing, String}}(nothing)
+    seen_password = Ref{Union{Nothing, String}}(nothing)
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            methods = _socks_read_greeting_proxy!(conn)
+            @test methods == UInt8[0x00, 0x02]
+            _socks_select_method_proxy!(conn, 0x02)
+            seen_username[], seen_password[] = _socks_read_username_password_proxy!(conn)
+            req = _socks_read_connect_request_proxy!(conn)
+            seen_socks_host[] = req.host
+            seen_socks_port[] = req.port
+            _socks_write_success_proxy!(conn)
+            http_req = HT.read_request(HT._ConnReader(conn))
+            seen_target[] = http_req.target
+            seen_host[] = HT.header(http_req.headers, "Host")
+            _send_response_proxy!(conn, http_req; body_text = "socks-proxied", close_conn = true)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    client = HT.Client(transport = HT.Transport(proxy = HT.ProxyURL("socks5://user:p%40ss@$(proxy_address)"), max_idle_per_host = 4, max_idle_total = 4), prefer_http2 = false)
+    try
+        response = HT.get!(client, "example.com:80", "/via-socks?x=1"; secure = false, protocol = :h1)
+        @test response.status == 200
+        @test String(_read_all_proxy(response.body)) == "socks-proxied"
+        _wait_task_proxy!(server_task)
+        @test seen_username[] == "user"
+        @test seen_password[] == "p@ss"
+        @test seen_socks_host[] == "example.com"
+        @test seen_socks_port[] == UInt16(80)
+        @test seen_target[] == "/via-socks?x=1"
+        @test seen_host[] == "example.com:80"
+    finally
+        close(client)
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP WebSockets client uses SOCKS proxy stream" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    proxy_address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    seen_target = Ref{Union{Nothing, String}}(nothing)
+    seen_socks_host = Ref{Union{Nothing, String}}(nothing)
+    task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            methods = _socks_read_greeting_proxy!(conn)
+            @test methods == UInt8[0x00]
+            _socks_select_method_proxy!(conn, 0x00)
+            req = _socks_read_connect_request_proxy!(conn)
+            seen_socks_host[] = req.host
+            _socks_write_success_proxy!(conn)
+            request = HT.read_request(HT._ConnReader(conn))
+            seen_target[] = request.target
+            headers = HT.Headers()
+            HT.setheader(headers, "Upgrade", "websocket")
+            HT.setheader(headers, "Connection", "Upgrade")
+            key = W.ws_get_request_sec_websocket_key(request)
+            key === nothing && error("missing websocket key")
+            HT.setheader(headers, "Sec-WebSocket-Accept", W.ws_compute_accept_key(key))
+            io = IOBuffer()
+            HT.write_response!(io, HT.Response(101, HT.EmptyBody(); headers = headers, content_length = 0))
+            write(conn, take!(io))
+            frame = W.WsFrame(opcode = UInt8(W.WsOpcode.TEXT), payload = Vector{UInt8}("socks-ws"), fin = true)
+            encoded = W.ws_encode_frame(frame)
+            write(conn, encoded, length(encoded))
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    ws = nothing
+    try
+        ws = W.open("ws://example.com/proxied-ws"; proxy = "socks5://$(proxy_address)")
+        @test W.receive(ws) == "socks-ws"
+        _wait_task_proxy!(task)
+        @test seen_socks_host[] == "example.com"
+        @test seen_target[] == "/proxied-ws"
+    finally
+        ws === nothing || HTTP.@try_ignore close(ws)
+        HTTP.@try_ignore NC.close(listener)
+        _reset_default_http_client_proxy!()
+    end
+end
+
+@testset "HTTP SOCKS5 proxy failures surface as ConnectError" begin
+    # proxy rejects the CONNECT command
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    proxy_address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            _socks_read_greeting_proxy!(conn)
+            _socks_select_method_proxy!(conn, 0x00)
+            _socks_read_connect_request_proxy!(conn)
+            write(conn, UInt8[0x05, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    try
+        err = try
+            HT.get("http://example.com/refused"; proxy = "socks5://$(proxy_address)", retry = false)
+            nothing
+        catch ex
+            ex
+        end
+        @test err isa HT.ConnectError
+        if err isa HT.ConnectError
+            @test err.cause isa Reseau.SOCKS.ReplyError
+            @test err.address == "example.com:80"
+        end
+        _wait_task_proxy!(server_task)
+    finally
+        _reset_default_http_client_proxy!()
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # proxy demands username/password auth but the URL has no credentials
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    proxy_address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            methods = _socks_read_greeting_proxy!(conn)
+            @test methods == UInt8[0x00]
+            _socks_select_method_proxy!(conn, 0x02)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    try
+        err = try
+            HT.get("http://example.com/auth"; proxy = "socks5://$(proxy_address)", retry = false)
+            nothing
+        catch ex
+            ex
+        end
+        @test err isa HT.ConnectError
+        if err isa HT.ConnectError
+            @test err.cause isa Reseau.SOCKS.AuthenticationError
+        end
+        _wait_task_proxy!(server_task)
+    finally
+        _reset_default_http_client_proxy!()
+        HTTP.@try_ignore NC.close(listener)
+    end
+
+    # empty username from the proxy URL is rejected before any proxy bytes
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    proxy_address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        HTTP.@try_ignore NC.close(conn)
+        return nothing
+    end)
+    try
+        err = try
+            HT.get("http://example.com/empty-user"; proxy = "socks5://:secret@$(proxy_address)", retry = false)
+            nothing
+        catch ex
+            ex
+        end
+        @test err isa HT.ConnectError
+        if err isa HT.ConnectError
+            @test err.cause isa Reseau.SOCKS.AuthenticationError
+        end
+        _wait_task_proxy!(server_task)
+    finally
+        _reset_default_http_client_proxy!()
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTP SOCKS5 handshake honors connect timeout" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    proxy_address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    release = Base.Event()
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            _socks_read_greeting_proxy!(conn)
+            wait(release)
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    try
+        err = try
+            HT.get(
+                "http://example.com/stalled";
+                proxy = "socks5://$(proxy_address)",
+                retry = false,
+                connect_timeout = 0.3,
+            )
+            nothing
+        catch ex
+            ex
+        end
+        @test err isa HT.TimeoutError
+        notify(release)
+        _wait_task_proxy!(server_task)
+    finally
+        notify(release)
+        _reset_default_http_client_proxy!()
+        HTTP.@try_ignore NC.close(listener)
+    end
+end
+
+@testset "HTTPS h1 requests ride a SOCKS5 proxied TLS stream" begin
+    if _http_windows_ci()
+        @test_skip true
+    else
+    origin_listener = TL.listen(
+        "tcp",
+        "127.0.0.1:0",
+        TL.Config(
+            verify_peer = false,
+            cert_file = _TLS_CERT_PATH,
+            key_file = _TLS_KEY_PATH,
+            alpn_protocols = ["http/1.1"],
+        );
+        backlog = 8,
+    )
+    origin_addr = TL.addr(origin_listener)::NC.SocketAddrV4
+    origin_address = ND.join_host_port("127.0.0.1", Int(origin_addr.port))
+    target_address = ND.join_host_port("example.com", Int(origin_addr.port))
+    proxy_listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    proxy_addr = NC.addr(proxy_listener)::NC.SocketAddrV4
+    proxy_address = ND.join_host_port("127.0.0.1", Int(proxy_addr.port))
+    seen_socks_host = Ref{Union{Nothing, String}}(nothing)
+    seen_socks_port = Ref{UInt16}(0)
+    seen_origin_target = Ref{Union{Nothing, String}}(nothing)
+    origin_task = errormonitor(Threads.@spawn begin
+        conn = TL.accept(origin_listener)
+        try
+            TL.handshake!(conn)
+            req = HT.read_request(HT._ConnReader(conn))
+            seen_origin_target[] = req.target
+            payload = collect(codeunits("tls-socks-proxied"))
+            response = HT.Response(200, HT.BytesBody(payload); content_length = length(payload), request = req)
+            io = IOBuffer()
+            HT.write_response!(io, response)
+            write(conn, take!(io))
+        finally
+            HTTP.@try_ignore TL.close(conn)
+        end
+        return nothing
+    end)
+    proxy_task = errormonitor(Threads.@spawn begin
+        client_conn = NC.accept(proxy_listener)
+        origin_conn = NC.connect(ND.HostResolver(), "tcp", origin_address)
+        bridge1 = nothing
+        bridge2 = nothing
+        try
+            methods = _socks_read_greeting_proxy!(client_conn)
+            @test methods == UInt8[0x00]
+            _socks_select_method_proxy!(client_conn, 0x00)
+            req = _socks_read_connect_request_proxy!(client_conn)
+            seen_socks_host[] = req.host
+            seen_socks_port[] = req.port
+            _socks_write_success_proxy!(client_conn)
+            bridge1 = errormonitor(Threads.@spawn _bridge_proxy!(client_conn, origin_conn))
+            bridge2 = errormonitor(Threads.@spawn _bridge_proxy!(origin_conn, client_conn))
+            _wait_task_proxy!(bridge1; timeout_s = 5.0)
+            _wait_task_proxy!(bridge2; timeout_s = 5.0)
+        finally
+            HTTP.@try_ignore NC.close(client_conn)
+            HTTP.@try_ignore NC.close(origin_conn)
+        end
+        return nothing
+    end)
+    client = HT.Client(
+        transport = HT.Transport(
+            proxy = HT.ProxyURL("socks5h://$(proxy_address)"),
+            tls_config = TL.Config(
+                verify_peer = false,
+                server_name = "localhost",
+                alpn_protocols = ["http/1.1"],
+            ),
+            max_idle_per_host = 4,
+            max_idle_total = 4,
+        ),
+        prefer_http2 = false,
+    )
+    try
+        request = HT.Request("GET", "/via-socks-tls"; host = target_address, body = HT.EmptyBody(), content_length = 0)
+        HT.set_deadline!(HT.get_request_context(request), Int64(time_ns()) + 3_000_000_000)
+        response = HT.do!(client, target_address, request; secure = true, protocol = :h1)
+        @test response.status == 200
+        @test String(_read_all_proxy(response.body)) == "tls-socks-proxied"
+        close(client)
+        _wait_task_proxy!(origin_task)
+        _wait_task_proxy!(proxy_task)
+        @test seen_socks_host[] == "example.com"
+        @test seen_socks_port[] == UInt16(origin_addr.port)
+        @test seen_origin_target[] == "/via-socks-tls"
+    finally
+        close(client)
+        HTTP.@try_ignore TL.close(origin_listener)
+        HTTP.@try_ignore NC.close(proxy_listener)
+    end
+    end
+end
+
+@testset "HTTP SOCKS5 proxied connections are pooled and reused" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    proxy_address = ND.join_host_port("127.0.0.1", Int(laddr.port))
+    handshakes = Ref(0)
+    seen_targets = String[]
+    server_task = errormonitor(Threads.@spawn begin
+        conn = NC.accept(listener)
+        try
+            _socks_read_greeting_proxy!(conn)
+            _socks_select_method_proxy!(conn, 0x00)
+            _socks_read_connect_request_proxy!(conn)
+            handshakes[] += 1
+            _socks_write_success_proxy!(conn)
+            for i in 1:2
+                req = HT.read_request(HT._ConnReader(conn))
+                push!(seen_targets, req.target)
+                _send_response_proxy!(conn, req; body_text = "reuse-$(i)", close_conn = i == 2)
+            end
+        finally
+            HTTP.@try_ignore NC.close(conn)
+        end
+        return nothing
+    end)
+    client = HT.Client(transport = HT.Transport(proxy = HT.ProxyURL("socks5://$(proxy_address)"), max_idle_per_host = 4, max_idle_total = 4), prefer_http2 = false)
+    try
+        first_response = HT.get!(client, "example.com:80", "/reuse-1"; secure = false, protocol = :h1)
+        @test first_response.status == 200
+        @test String(_read_all_proxy(first_response.body)) == "reuse-1"
+        second_response = HT.get!(client, "example.com:80", "/reuse-2"; secure = false, protocol = :h1)
+        @test second_response.status == 200
+        @test String(_read_all_proxy(second_response.body)) == "reuse-2"
+        _wait_task_proxy!(server_task)
+        @test handshakes[] == 1
+        @test seen_targets == ["/reuse-1", "/reuse-2"]
     finally
         close(client)
         HTTP.@try_ignore NC.close(listener)
@@ -784,6 +1292,128 @@ end
         _wait_task_proxy!(proxy_task)
         @test seen_h2_path[] == "/via-h2"
     finally
+        _reset_default_http_client_proxy!()
+        HTTP.@try_ignore TL.close(origin_listener)
+        HTTP.@try_ignore NC.close(proxy_listener)
+    end
+    end
+end
+
+@testset "HTTP SOCKS5H proxy supports tunneled H2 requests" begin
+    if _http_windows_ci()
+        @test_skip true
+    else
+    origin_listener = TL.listen(
+        "tcp",
+        "127.0.0.1:0",
+        TL.Config(
+            verify_peer = false,
+            cert_file = _TLS_CERT_PATH,
+            key_file = _TLS_KEY_PATH,
+            alpn_protocols = ["h2"],
+        );
+        backlog = 8,
+    )
+    origin_addr = TL.addr(origin_listener)::NC.SocketAddrV4
+    origin_address = ND.join_host_port("127.0.0.1", Int(origin_addr.port))
+    target_address = ND.join_host_port("example.com", Int(origin_addr.port))
+    proxy_listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    proxy_addr = NC.addr(proxy_listener)::NC.SocketAddrV4
+    proxy_address = ND.join_host_port("127.0.0.1", Int(proxy_addr.port))
+    seen_h2_path = Ref{Union{Nothing, String}}(nothing)
+    seen_socks_host = Ref{Union{Nothing, String}}(nothing)
+    seen_socks_port = Ref{UInt16}(0)
+    tunnel_done = Base.Event()
+    origin_task = errormonitor(Threads.@spawn begin
+        conn = TL.accept(origin_listener)
+        try
+            TL.handshake!(conn)
+            preface = _read_exact_h2_proxy!(conn, length(HT._H2_PREFACE))
+            @test preface == HT._H2_PREFACE
+            reader = HT._ConnReader(conn)
+            decoder = HT.Decoder()
+            frame = HT.read_frame!(reader)
+            @test frame isa HT.SettingsFrame
+            _write_frame_h2_proxy!(conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+            _write_frame_h2_proxy!(conn, HT.SettingsFrame(true, Pair{UInt16, UInt32}[]))
+            request_headers = nothing
+            while request_headers === nothing
+                frame = HT.read_frame!(reader)
+                if frame isa HT.SettingsFrame
+                    continue
+                end
+                if frame isa HT.HeadersFrame
+                    decoded = HT.decode_header_block(decoder, (frame::HT.HeadersFrame).header_block_fragment)
+                    for header in decoded
+                        if header.name == ":path"
+                            seen_h2_path[] = header.value
+                        end
+                    end
+                    request_headers = decoded
+                end
+            end
+            encoder = HT.Encoder()
+            payload = collect(codeunits("h2-socks-proxied"))
+            header_block = HT.encode_header_block(encoder, [
+                HT.HeaderField(":status", "200", false),
+                HT.HeaderField("content-length", string(length(payload)), false),
+            ])
+            _write_frame_h2_proxy!(conn, HT.HeadersFrame(UInt32(1), false, true, header_block))
+            _write_frame_h2_proxy!(conn, HT.DataFrame(UInt32(1), true, payload))
+            while true
+                try
+                    _ = HT.read_frame!(reader)
+                catch err
+                    if err isa EOFError || err isa TL.TLSError || err isa HT.ParseError || err isa HT.ProtocolError
+                        break
+                    end
+                    rethrow(err)
+                end
+            end
+        finally
+            HTTP.@try_ignore TL.close(conn)
+        end
+        return nothing
+    end)
+    proxy_task = errormonitor(Threads.@spawn begin
+        client_conn = NC.accept(proxy_listener)
+        origin_conn = NC.connect(ND.HostResolver(), "tcp", origin_address)
+        try
+            methods = _socks_read_greeting_proxy!(client_conn)
+            @test methods == UInt8[0x00]
+            _socks_select_method_proxy!(client_conn, 0x00)
+            req = _socks_read_connect_request_proxy!(client_conn)
+            seen_socks_host[] = req.host
+            seen_socks_port[] = req.port
+            _socks_write_success_proxy!(client_conn)
+            errormonitor(Threads.@spawn _bridge_proxy!(client_conn, origin_conn))
+            errormonitor(Threads.@spawn _bridge_proxy!(origin_conn, client_conn))
+            wait(tunnel_done)
+        finally
+            HTTP.@try_ignore NC.close(client_conn)
+            HTTP.@try_ignore NC.close(origin_conn)
+        end
+        return nothing
+    end)
+    try
+        response = HT.get(
+            "https://$(target_address)/via-socks-h2";
+            proxy = "socks5h://$(proxy_address)",
+            protocol = :h2,
+            require_ssl_verification = false,
+        )
+        @test response.status == 200
+        @test String(response.body) == "h2-socks-proxied"
+        notify(tunnel_done)
+        close(HT._default_client!())
+        _reset_default_http_client_proxy!()
+        _wait_task_proxy!(origin_task)
+        _wait_task_proxy!(proxy_task)
+        @test seen_socks_host[] == "example.com"
+        @test seen_socks_port[] == UInt16(origin_addr.port)
+        @test seen_h2_path[] == "/via-socks-h2"
+    finally
+        notify(tunnel_done)
         _reset_default_http_client_proxy!()
         HTTP.@try_ignore TL.close(origin_listener)
         HTTP.@try_ignore NC.close(proxy_listener)

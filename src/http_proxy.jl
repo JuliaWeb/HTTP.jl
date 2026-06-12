@@ -39,9 +39,12 @@ end
 
 struct _ProxyTarget
     url::String
+    scheme::String
     secure::Bool
     address::String
     authorization::Union{Nothing,String}
+    username::Union{Nothing,String}
+    password::Union{Nothing,String}
 end
 
 """
@@ -52,6 +55,11 @@ HTTP client proxy configuration.
 
 Use this to route plain HTTP, HTTPS, or all traffic through explicit proxy
 targets, optionally with `NoProxy` exclusions or environment-driven defaults.
+Proxy URLs support `http://`, `https://` parsing for future compatibility
+(`https://` proxy transport is not implemented yet), and SOCKS5 proxy
+transport with `socks5://` or `socks5h://`. As in Go's `net/http`
+transport, `socks5://` and `socks5h://` both send domain targets to the SOCKS
+proxy instead of resolving them locally.
 """
 struct ProxyConfig
     http::Union{Nothing,_ProxyTarget}
@@ -262,19 +270,112 @@ function _matches_no_proxy(matcher::NoProxy, host::AbstractString, port::Integer
     return false
 end
 
+@inline function _proxy_default_port(scheme::String)::UInt16
+    scheme == "http" && return UInt16(80)
+    scheme == "https" && return UInt16(443)
+    (scheme == "socks5" || scheme == "socks5h") && return UInt16(1080)
+    throw(ArgumentError("unsupported proxy scheme '$scheme'"))
+end
+
+@inline function _proxy_scheme_supported(scheme::String)::Bool
+    return scheme == "http" || scheme == "https" || scheme == "socks5" || scheme == "socks5h"
+end
+
+@inline function _proxy_scheme_is_socks(scheme::String)::Bool
+    return scheme == "socks5" || scheme == "socks5h"
+end
+
+function _proxy_url_scheme(value::AbstractString)::Tuple{String,String}
+    text = String(value)
+    scheme_idx = findfirst("://", text)
+    if scheme_idx === nothing
+        return "http", "http://" * text
+    end
+    scheme = lowercase(String(SubString(text, firstindex(text), prevind(text, first(scheme_idx)))))
+    return scheme, text
+end
+
+function _proxy_url_as_http_url(value::String)::String
+    scheme_idx = findfirst("://", value)
+    scheme_idx === nothing && throw(ArgumentError("proxy URL must include a scheme"))
+    return string("http", SubString(value, first(scheme_idx), lastindex(value)))
+end
+
+function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_ProxyTarget
+    value = String(value)
+    parsed = _parse_http_url(_proxy_url_as_http_url(value))
+    hostport = _text_range_string(getfield(parsed, :source), getfield(parsed, :authority_range))
+    isempty(hostport) && throw(ArgumentError("proxy URL missing host: $value"))
+
+    host = hostport
+    port_text = ""
+    if startswith(hostport, "[")
+        close_idx = findfirst(']', hostport)
+        close_idx === nothing && throw(ArgumentError("invalid IPv6 proxy authority: $hostport"))
+        host = String(SubString(hostport, nextind(hostport, firstindex(hostport)), prevind(hostport, close_idx)))
+        if close_idx < lastindex(hostport)
+            colon_idx = nextind(hostport, close_idx)
+            @inbounds hostport[colon_idx] == ':' || throw(ArgumentError("invalid IPv6 proxy authority: $hostport"))
+            port_text = String(SubString(hostport, nextind(hostport, colon_idx), lastindex(hostport)))
+        end
+    elseif occursin(':', hostport)
+        host, port_text = try
+            HostResolvers.split_host_port(hostport)
+        catch err
+            ex = err::Exception
+            ex isa HostResolvers.AddressError || rethrow(ex)
+            throw(ArgumentError("invalid proxy URL authority: $hostport"))
+        end
+    end
+    isempty(host) && throw(ArgumentError("proxy URL missing host: $value"))
+    port = if isempty(port_text)
+        _proxy_default_port(scheme)
+    else
+        all(ch -> '0' <= ch <= '9', port_text) || throw(ArgumentError("invalid proxy URL port: $port_text"))
+        parsed_port = tryparse(Int, port_text)
+        parsed_port === nothing && throw(ArgumentError("invalid proxy URL port: $port_text"))
+        1 <= parsed_port <= 0xffff || throw(ArgumentError("proxy URL port out of range: $parsed_port"))
+        UInt16(parsed_port)
+    end
+    address = HostResolvers.join_host_port(host, Int(port))
+    authorization = nothing
+    username = nothing
+    password = nothing
+    if getfield(parsed, :has_userinfo)
+        userinfo = _text_range_string(getfield(parsed, :source), getfield(parsed, :userinfo_range))
+        authorization = _userinfo_basic_authorization(userinfo)
+        username, password = _userinfo_username_password(userinfo)
+    end
+    return _ProxyTarget(
+        string(scheme, "://", address, "/"),
+        scheme,
+        false,
+        address,
+        authorization,
+        username,
+        password,
+    )
+end
+
 function _parse_proxy_target(url::AbstractString, allow_unsupported::Bool=false)::_ProxyTarget
     value = strip(String(url))
     isempty(value) && throw(ArgumentError("proxy URL must not be empty"))
-    if !occursin("://", value)
-        value = "http://" * value
-    end
-    parsed = _parse_http_url(value)
-    secure = parsed.secure
-    scheme = secure ? "https" : "http"
-    if !allow_unsupported && !(scheme == "http" || scheme == "https")
+    scheme, value = _proxy_url_scheme(value)
+    if !_proxy_scheme_supported(scheme)
+        allow_unsupported || throw(ArgumentError("unsupported proxy scheme '$scheme'"))
         throw(ArgumentError("unsupported proxy scheme '$scheme'"))
     end
-    return _ProxyTarget(parsed.url, secure, parsed.address, parsed.authorization)
+    _proxy_scheme_is_socks(scheme) && return _parse_socks_proxy_target(value, scheme)
+    parsed = _parse_http_url(value)
+    return _ProxyTarget(
+        parsed.url,
+        scheme,
+        parsed.secure,
+        parsed.address,
+        parsed.authorization,
+        nothing,
+        nothing,
+    )
 end
 
 function _proxy_target(value)::Union{Nothing,_ProxyTarget}
@@ -338,7 +439,8 @@ end
     ProxyURL(url; no_proxy=nothing) -> ProxyConfig
 
 Convenience constructor for a single proxy URL applied to all outbound
-requests.
+requests. Supported proxy URL schemes are `http://`, `https://` (parsed but
+not yet dialed as a TLS proxy), `socks5://`, and `socks5h://`.
 """
 function ProxyURL(url::AbstractString; no_proxy=nothing)::ProxyConfig
     return ProxyConfig(url; no_proxy=no_proxy)
@@ -348,7 +450,8 @@ end
     ProxyFromEnvironment() -> ProxyConfig
 
 Load proxy configuration from the standard `HTTP_PROXY`, `HTTPS_PROXY`,
-`ALL_PROXY`, and `NO_PROXY` environment variables.
+`ALL_PROXY`, and `NO_PROXY` environment variables. Proxy values may use the
+same schemes accepted by `ProxyURL`, including `socks5://` and `socks5h://`.
 """
 function ProxyFromEnvironment()::ProxyConfig
     return ProxyConfig(; env=true)
@@ -390,6 +493,10 @@ function _proxy_plan(
         return _ProxyPlan(_ProxyPlanMode.DIRECT, nothing, String(address), string(secure ? "https://" : "http://", address))
     end
     (proxy::_ProxyTarget).secure && throw(ArgumentError("https proxy URLs are not supported yet"))
-    mode = secure ? _ProxyPlanMode.HTTP_TUNNEL : _ProxyPlanMode.HTTP_FORWARD
+    mode = if _proxy_scheme_is_socks((proxy::_ProxyTarget).scheme)
+        (proxy::_ProxyTarget).scheme == "socks5h" ? _ProxyPlanMode.SOCKS5H : _ProxyPlanMode.SOCKS5
+    else
+        secure ? _ProxyPlanMode.HTTP_TUNNEL : _ProxyPlanMode.HTTP_FORWARD
+    end
     return _ProxyPlan(mode, proxy::_ProxyTarget, (proxy::_ProxyTarget).address, string((proxy::_ProxyTarget).url, "|", secure ? "https://" : "http://", address))
 end
