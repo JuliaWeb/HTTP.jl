@@ -295,30 +295,16 @@ function _proxy_url_scheme(value::AbstractString)::Tuple{String,String}
     return scheme, text
 end
 
-function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_ProxyTarget
-    value = String(value)
+function _proxy_url_as_http_url(value::String)::String
     scheme_idx = findfirst("://", value)
     scheme_idx === nothing && throw(ArgumentError("proxy URL must include a scheme"))
-    authority_start = nextind(value, last(scheme_idx))
-    authority_start > lastindex(value) && throw(ArgumentError("proxy URL missing host: $value"))
-    authority_stop = lastindex(value)
-    for byte in ('/', '?', '#')
-        idx = findnext(byte, value, authority_start)
-        idx === nothing && continue
-        authority_stop = min(authority_stop, prevind(value, idx))
-    end
-    authority_start <= authority_stop || throw(ArgumentError("proxy URL missing host: $value"))
-    authority = String(SubString(value, authority_start, authority_stop))
+    return string("http", SubString(value, first(scheme_idx), lastindex(value)))
+end
 
-    userinfo = nothing
-    hostport = authority
-    # Byte scan instead of findlast(==('@'), ...): the predicate form lands on
-    # the generic Function method, which the juliac trim verifier rejects.
-    at_idx = _find_last_url_byte(codeunits(authority), firstindex(authority), lastindex(authority), UInt8('@'))
-    if at_idx !== nothing
-        userinfo = String(SubString(authority, firstindex(authority), prevind(authority, at_idx)))
-        hostport = String(SubString(authority, nextind(authority, at_idx), lastindex(authority)))
-    end
+function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_ProxyTarget
+    value = String(value)
+    parsed = _parse_http_url(_proxy_url_as_http_url(value))
+    hostport = _text_range_string(getfield(parsed, :source), getfield(parsed, :authority_range))
     isempty(hostport) && throw(ArgumentError("proxy URL missing host: $value"))
 
     host = hostport
@@ -355,9 +341,10 @@ function _parse_socks_proxy_target(value::AbstractString, scheme::String)::_Prox
     authorization = nothing
     username = nothing
     password = nothing
-    if userinfo !== nothing && !isempty(userinfo::String)
-        authorization = _userinfo_basic_authorization(userinfo::String)
-        username, password = _userinfo_username_password(userinfo::String)
+    if getfield(parsed, :has_userinfo)
+        userinfo = _text_range_string(getfield(parsed, :source), getfield(parsed, :userinfo_range))
+        authorization = _userinfo_basic_authorization(userinfo)
+        username, password = _userinfo_username_password(userinfo)
     end
     return _ProxyTarget(
         string(scheme, "://", address, "/"),
