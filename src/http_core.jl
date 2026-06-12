@@ -614,6 +614,13 @@ Headers(items::AbstractDict) = mkheaders(items)
 Headers(items::AbstractVector) = mkheaders(items)
 Headers(items::Tuple) = mkheaders(items)
 
+"""
+    Headers(items...; kwargs...) -> Headers
+
+Construct a canonicalized Headers from items and/or kwargs
+"""
+Headers(items::Union{Pair,Tuple}...; kwargs...) = mkheaders(items...; kwargs...)
+
 Base.copy(headers::Headers) = Headers(headers)
 
 Base.IndexStyle(::Type{Headers}) = IndexLinear()
@@ -643,6 +650,28 @@ function Base.setindex!(headers::Headers, item, i::Int)
     return headers.entries[i]
 end
 
+function Base.setindex!(headers::Headers, value, key::Union{Symbol, AbstractString})
+    setheader(headers, String(key) => string(value))
+end
+
+function Base.merge!(headers::Headers, items)
+    for (key, value) in Headers(items)
+        if key == "Set-Cookie"
+            push!(headers.entries, key => value)
+        else
+            setheader(headers, key => value)
+        end
+    end
+    return headers
+end
+
+function Base.append!(headers::Headers, items)
+    for (key, value) in Headers(items)
+        appendheader(headers, key => value)
+    end
+    return headers
+end
+
 function Base.push!(headers::Headers, item)
     push!(headers.entries, _header_pair(first(item), last(item)))
     return headers
@@ -664,7 +693,7 @@ end
 
 Normalize a header-like input into a mutable `Headers` collection.
 
-`headers_input` may be `nothing`, an existing `Headers`, a dictionary, or an
+`headers_input` may be `nothing`, a pair or 2-tuple, an existing `Headers`, a dictionary, or an
 iterable of `Pair`s/2-tuples. Vector-valued entries are expanded into repeated
 header values using the same merge rules as `appendheader`.
 """
@@ -676,6 +705,14 @@ function mkheaders(headers_input)
         for (k, v) in pairs(headers_input)
             _append_header_values!(headers, k, v)
         end
+        return headers
+    elseif headers_input isa Pair
+        pair = headers_input::Pair
+        _append_header_values!(headers, pair.first, pair.second)
+        return headers
+    elseif headers_input isa Tuple && length(headers_input) == 2
+        tup = headers_input::Tuple
+        _append_header_values!(headers, tup[1], tup[2])
         return headers
     end
     for item in headers_input
@@ -693,6 +730,8 @@ function mkheaders(headers_input)
     end
     return headers
 end
+
+mkheaders(items::Union{Pair,Tuple}...; kwargs...) = mkheaders(Base.Iterators.flatten((items, kwargs)))
 
 """Return a newly allocated `Vector{String}` of header keys in insertion order."""
 function header_keys(headers::Headers)::Vector{String}

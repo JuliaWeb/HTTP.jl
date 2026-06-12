@@ -50,6 +50,49 @@ const HT = HTTP
     empty_value = HT.Headers(["X-Empty" => ""])
     @test HT.header(empty_value, "X-Empty") == ""
     @test !HT.hasheader(empty_value, "X-Empty")
+
+    headers = HT.Headers(var"content-type" = "application/json")
+    @test headers == HTTP.Headers(["Content-Type" => "application/json"])
+    headers["content-type"] = "replaced"
+    @test headers["Content-Type"] == "replaced"
+
+    headers2 = HT.Headers(:a => "a", b = "b")
+    @test headers2 == HT.Headers(["A" => "a", "B" => "b"])
+
+    merge!(headers, headers2)
+    @test headers == HTTP.Headers(["Content-Type" => "replaced", "A" => "a", "B" => "b"])
+
+    # overlapping key: append! uses replace semantics — no duplicate entries
+    headers3 = HT.Headers(["Content-Type" => "text/plain", "X-Keep" => "yes"])
+    merge!(headers3, HT.Headers(["Content-Type" => "application/json", "X-New" => "1"]))
+    @test headers3["Content-Type"] == "application/json"  # replaced, not duplicated
+    @test headers3["X-Keep"] == "yes"                     # preserved
+    @test headers3["X-New"] == "1"                        # added
+    @test length(collect(headers3)) == 3                   # exactly 3 entries, no duplicate
+
+    # Set-Cookie is exempt: each entry is a distinct cookie, never overwritten
+    headers4 = HT.Headers(["Set-Cookie" => "a=1", "X-Other" => "v"])
+    merge!(headers4, HT.Headers(["Set-Cookie" => "b=2", "X-Other" => "w"]))
+    cookies = [v for (k, v) in collect(headers4) if k == "Set-Cookie"]
+    @test length(cookies) == 2          # both cookies preserved
+    @test "a=1" in cookies
+    @test "b=2" in cookies
+    @test headers4["X-Other"] == "w"   # non-cookie header replaced
+    @test length(collect(headers4)) == 3  # Set-Cookie×2 + X-Other×1
+
+    # append! uses appendheader semantics: comma-merges when last entry has same key
+    headers5 = HT.Headers(["Accept" => "text/html"])
+    append!(headers5, HT.Headers(["Accept" => "application/json"]))
+    @test headers5["Accept"] == "text/html, application/json"  # comma-merged
+    @test length(collect(headers5)) == 1  # merged into single entry
+    # non-adjacent same key: pushed as new entry (appendheader only merges the last entry)
+    headers5b = HT.Headers(["Accept" => "text/html", "X-Tag" => "v"])
+    append!(headers5b, HT.Headers(["Accept" => "application/json"]))
+    @test length([v for (k, v) in collect(headers5b) if k == "Accept"]) == 2  # not merged
+    # Set-Cookie via append! is always pushed (never merged)
+    headers6 = HT.Headers(["Set-Cookie" => "x=1"])
+    append!(headers6, HT.Headers(["Set-Cookie" => "y=2"]))
+    @test length([v for (k, v) in collect(headers6) if k == "Set-Cookie"]) == 2
 end
 
 @testset "HTTP core header tokens" begin
