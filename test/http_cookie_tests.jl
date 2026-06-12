@@ -317,7 +317,7 @@ end
     # that 'w' (codepoint 119) was mapped to the DEL entry (false), causing
     # cookies named e.g. "w" to be silently dropped too.
     isurlchar = HTTP.Cookies.isurlchar
-    @test isurlchar('w') && isurlchar('{') && isurlchar('|') && isurlchar('}') && !isurlchar('\x7f')
+    @test isurlchar('w') && isurlchar('{') && isurlchar('|') && isurlchar('}') && !isurlchar('\x7f') && isurlchar('\u80')
 
     jar = HT.CookieJar()
 

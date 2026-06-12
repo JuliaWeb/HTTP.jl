@@ -462,7 +462,7 @@ const normal_url_char = Bool[
     true, true, true, true, true, true, true, false,         # 120-127: x y z { | } ~ DEL
 ]
 
-@inline isurlchar(c) = c > '\u80' ? true : normal_url_char[Int(c)+1]
+@inline isurlchar(c) = c ≥ '\u80' ? true : normal_url_char[Int(c)+1]
 
 """
     CookieJar()
