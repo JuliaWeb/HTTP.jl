@@ -78,6 +78,8 @@ end
 Base.write(io::_RequestDeadlineWriteIO, data::Vector{UInt8})::Int = _request_deadline_write_bytes!(io, data)
 Base.write(io::_RequestDeadlineWriteIO, data::StridedVector{UInt8})::Int = _request_deadline_write_bytes!(io, data)
 Base.write(io::_RequestDeadlineWriteIO, data::AbstractVector{UInt8})::Int = _request_deadline_write_bytes!(io, data)
+# disambiguate vs Base's write(::IO, ::Base.CodeUnits) (#1302)
+Base.write(io::_RequestDeadlineWriteIO, data::Base.CodeUnits{UInt8})::Int = _request_deadline_write_bytes!(io, data)
 
 # Hook unsafe_write instead of write(::IO, ::Union{String, SubString{String}}):
 # Base's generic string write funnels through unsafe_write, so strings still

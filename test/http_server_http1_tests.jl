@@ -949,6 +949,74 @@ end
     end
 end
 
+@testset "HTTP stream writes accept codeunits without Base ambiguity (#1302)" begin
+    # Base defines write(::IO, ::Base.CodeUnits); the Stream StridedVector
+    # methods used to be ambiguous with it.
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.setheader(stream, "Content-Length" => "2")
+        HT.startwrite(stream)
+        write(stream, codeunits("ok"))
+        return nothing
+    end
+    address = HT.server_addr(server)
+    try
+        resp = HT.get("http://$(address)/")
+        @test resp.status == 200
+        @test String(resp.body) == "ok"
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+end
+
+@testset "HTTP stream handler error after deferred startwrite returns 500 (#1303)" begin
+    # h1 FIXED mode defers the response head at startwrite; a handler throw
+    # before anything reaches the wire must produce a raw 500, not a silent
+    # connection drop the client sees as "unexpected EOF".
+    server = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.setheader(stream, "Content-Length" => "2")
+        HT.startwrite(stream)      # FIXED: response_started, head NOT committed
+        error("boom")
+    end
+    address = HT.server_addr(server)
+    try
+        resp = HT.request("GET", "http://$(address)/"; status_exception = false, retry = false)
+        @test resp.status == 500
+    finally
+        _run_with_timeout(() -> HT.forceclose(server); label = "server forceclose")
+        _run_with_timeout(() -> wait(server); label = "server task completion")
+    end
+
+    # control: once the head is committed (chunked writes it at startwrite), a
+    # handler throw must NOT emit a spurious 500 after the real head
+    server2 = HT.listen!("127.0.0.1", 0; listenany = true) do stream
+        _ = HT.startread(stream)
+        HT.setstatus(stream, 200)
+        HT.setheader(stream, "Transfer-Encoding" => "chunked")
+        HT.startwrite(stream)      # chunked: head committed to the wire here
+        error("boom")
+    end
+    address2 = HT.server_addr(server2)
+    try
+        outcome = try
+            resp2 = HT.request("GET", "http://$(address2)/"; status_exception = false, retry = false)
+            resp2.status
+        catch err
+            err
+        end
+        # truncated 200 or a client-side error are both acceptable; a 500 means
+        # the server wrote a second head after the committed one
+        @test outcome != 500
+    finally
+        _run_with_timeout(() -> HT.forceclose(server2); label = "server forceclose")
+        _run_with_timeout(() -> wait(server2); label = "server task completion")
+    end
+end
+
 @testset "HTTP stream byte I/O supports generic AbstractStrings and Chars" begin
     # Strings are written via unsafe_write; generic AbstractStrings and Chars
     # fall back to Base's per-byte path, which requires write(io, ::UInt8).
