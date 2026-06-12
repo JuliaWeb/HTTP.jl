@@ -173,6 +173,9 @@ mutable struct WsDecoder
     expecting_continuation::Bool
     fragment_opcode::UInt8
     text_fragment_payload::Vector{UInt8}
+    # Reused result vector for ws_decoder_process! — contents are valid only
+    # until the next process! call on this decoder.
+    frames_scratch::Vector{WsFrame{Vector{UInt8}}}
 end
 
 function ws_decoder_new()::WsDecoder
@@ -192,6 +195,7 @@ function ws_decoder_new()::WsDecoder
         false,
         UInt8(0),
         UInt8[],
+        WsFrame{Vector{UInt8}}[],
     )
 end
 
@@ -224,10 +228,11 @@ end
     throw(WebSocketInvalidPayloadError(String(message)))
 end
 
-function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::AbstractVector{UInt8}; on_frame_header=nothing)::Vector{WsFrame{Vector{UInt8}}}
-    frames = WsFrame{Vector{UInt8}}[]
+function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::AbstractVector{UInt8}, datalen::Int=lastindex(data); on_frame_header=nothing)::Vector{WsFrame{Vector{UInt8}}}
+    frames = dec.frames_scratch
+    empty!(frames)
     pos = firstindex(data)
-    while pos <= lastindex(data)
+    while pos <= datalen
         if dec.state == WsDecoderState.OPCODE_BYTE
             b = data[pos]
             pos += 1
@@ -272,8 +277,10 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
             end
         elseif dec.state == WsDecoderState.EXTENDED_LENGTH
             needed = dec.extended_length_size - length(dec.length_cache)
-            available = min(needed, lastindex(data) - pos + 1)
-            append!(dec.length_cache, @view data[pos:(pos+available-1)])
+            available = min(needed, datalen - pos + 1)
+            @inbounds for k in 0:(available-1)
+                push!(dec.length_cache, data[pos+k])
+            end
             pos += available
             if length(dec.length_cache) == dec.extended_length_size
                 if dec.extended_length_size == 2
@@ -294,8 +301,10 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
             end
         elseif dec.state == WsDecoderState.MASKING_KEY
             needed = 4 - length(dec.key_cache)
-            available = min(needed, lastindex(data) - pos + 1)
-            append!(dec.key_cache, @view data[pos:(pos+available-1)])
+            available = min(needed, datalen - pos + 1)
+            @inbounds for k in 0:(available-1)
+                push!(dec.key_cache, data[pos+k])
+            end
             pos += available
             if length(dec.key_cache) == 4
                 dec.masking_key = (dec.key_cache[1], dec.key_cache[2], dec.key_cache[3], dec.key_cache[4])
@@ -306,7 +315,7 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
             payload_length_int = Int(dec.payload_length)
             remaining = payload_length_int - dec.payload_received
             remaining < 0 && _ws_throw_protocol_error("websocket payload length underflow")
-            available = min(remaining, lastindex(data) - pos + 1)
+            available = min(remaining, datalen - pos + 1)
             if length(dec.payload_buf) < payload_length_int
                 if payload_length_int <= _WS_PAYLOAD_PREALLOC_CAP
                     resize!(dec.payload_buf, payload_length_int)
@@ -374,8 +383,8 @@ function ws_decoder_process!(f::Union{Nothing,Function}, dec::WsDecoder, data::A
     return frames
 end
 
-function ws_decoder_process!(dec::WsDecoder, data::AbstractVector{UInt8}; on_frame_header=nothing)::Vector{WsFrame{Vector{UInt8}}}
-    return ws_decoder_process!(nothing, dec, data; on_frame_header=on_frame_header)
+function ws_decoder_process!(dec::WsDecoder, data::AbstractVector{UInt8}, datalen::Int=lastindex(data); on_frame_header=nothing)::Vector{WsFrame{Vector{UInt8}}}
+    return ws_decoder_process!(nothing, dec, data, datalen; on_frame_header=on_frame_header)
 end
 
 function ws_is_valid_close_status(code::UInt16)::Bool
@@ -422,7 +431,15 @@ mutable struct WSConn
     close_sent::Bool
     close_received::Bool
     decoder::WsDecoder
-    outgoing_frames::Vector{ByteMemory}
+    # Outgoing bytes are encoded directly into `outgoing` (no per-frame buffer,
+    # no concat copy). `out_lock` is a leaf lock guarding only buffer mutation —
+    # it is never held across socket I/O, so the read task can queue PONG/CLOSE
+    # replies while a writer is blocked in a socket write. Flushing swaps
+    # `outgoing` with `outgoing_spare` (socket writes themselves stay serialized
+    # by the connection's send lock, which all flush call sites hold).
+    out_lock::ReentrantLock
+    outgoing::Vector{UInt8}
+    outgoing_spare::Vector{UInt8}
     max_incoming_payload_length::UInt64
     incoming_message_payload_total::UInt64
 end
@@ -438,10 +455,68 @@ function WSConn(;
         false,
         false,
         decoder,
-        ByteMemory[],
+        ReentrantLock(),
+        UInt8[],
+        UInt8[],
         max_incoming_payload_length,
         UInt64(0),
     )
+end
+
+# Encode `frame` appended onto `out` (header + payload in place): the single
+# payload copy doubles as the masking pass, and capacity is retained across
+# flushes, so steady-state sends allocate nothing here.
+function _ws_append_frame!(out::Vector{UInt8}, frame::WsFrame)::Nothing
+    header_size = 2
+    if frame.payload_length >= 65536
+        header_size += 8
+    elseif frame.payload_length >= 126
+        header_size += 2
+    end
+    frame.masked && (header_size += 4)
+    old = length(out)
+    resize!(out, old + header_size + Int(frame.payload_length))
+    pos = old + 1
+    b1 = frame.opcode & 0x0f
+    frame.fin && (b1 |= 0x80)
+    frame.rsv[1] && (b1 |= 0x40)
+    frame.rsv[2] && (b1 |= 0x20)
+    frame.rsv[3] && (b1 |= 0x10)
+    @inbounds out[pos] = b1
+    pos += 1
+    b2 = UInt8(0)
+    frame.masked && (b2 |= 0x80)
+    if frame.payload_length < 126
+        @inbounds out[pos] = b2 | UInt8(frame.payload_length)
+        pos += 1
+    elseif frame.payload_length <= 0xffff
+        @inbounds out[pos] = b2 | UInt8(126)
+        @inbounds out[pos+1] = UInt8((frame.payload_length >> 8) & 0xff)
+        @inbounds out[pos+2] = UInt8(frame.payload_length & 0xff)
+        pos += 3
+    else
+        @inbounds out[pos] = b2 | UInt8(127)
+        pos += 1
+        for i in 7:-1:0
+            @inbounds out[pos] = UInt8((frame.payload_length >> (8 * i)) & 0xff)
+            pos += 1
+        end
+    end
+    if frame.masked
+        @inbounds out[pos] = frame.masking_key[1]
+        @inbounds out[pos+1] = frame.masking_key[2]
+        @inbounds out[pos+2] = frame.masking_key[3]
+        @inbounds out[pos+3] = frame.masking_key[4]
+        pos += 4
+    end
+    if !isempty(frame.payload)
+        if frame.masked
+            _ws_mask_into!(out, pos, frame.payload, 1, Int(frame.payload_length), frame.masking_key, 0)
+        else
+            copyto!(out, pos, frame.payload, 1, Int(frame.payload_length))
+        end
+    end
+    return nothing
 end
 
 function ws_send_frame!(ws::WSConn, opcode::UInt8, payload::AbstractVector{UInt8}; fin::Bool=true)::Nothing
@@ -463,7 +538,9 @@ function ws_send_frame!(ws::WSConn, opcode::UInt8, payload::AbstractVector{UInt8
         masked=ws.is_client,
         masking_key=masking_key,
     )
-    push!(ws.outgoing_frames, ws_encode_frame(frame))
+    @lock ws.out_lock begin
+        _ws_append_frame!(ws.outgoing, frame)
+    end
     return nothing
 end
 
@@ -488,29 +565,39 @@ function ws_close!(ws::WSConn; status_code::UInt16=UInt16(1000), reason::Abstrac
     return nothing
 end
 
-function ws_on_incoming_data!(f::Union{Nothing,Function}, ws::WSConn, data::AbstractVector{UInt8})::Vector{WsFrame{Vector{UInt8}}}
+# Frame-header guard for the configured-maximum path: a callable struct instead
+# of a closure so the running total isn't a captured-and-reassigned local
+# (which Julia would box, costing a heap Box plus dynamic loads per header).
+mutable struct _WsMaxLengthGuard
+    conn::WSConn
+    running_total::UInt64
+end
+
+function (g::_WsMaxLengthGuard)(opcode::UInt8, fin::Bool, payload_length::UInt64)
+    ws = g.conn
+    if ws_is_data_frame(opcode)
+        running_total = opcode == UInt8(WsOpcode.CONTINUATION) ? g.running_total : UInt64(0)
+        if running_total > ws.max_incoming_payload_length || payload_length > (ws.max_incoming_payload_length - running_total)
+            _ws_throw_protocol_error("incoming websocket payload exceeds configured maximum")
+        end
+        g.running_total = fin ? UInt64(0) : running_total + payload_length
+    else
+        payload_length > ws.max_incoming_payload_length && _ws_throw_protocol_error("incoming websocket control frame exceeds configured maximum")
+    end
+    return nothing
+end
+
+function ws_on_incoming_data!(f::Union{Nothing,Function}, ws::WSConn, data::AbstractVector{UInt8}, datalen::Int=lastindex(data))::Vector{WsFrame{Vector{UInt8}}}
     frames = if ws.max_incoming_payload_length > 0
-        incoming_total = ws.incoming_message_payload_total
         ws_decoder_process!(
             f,
             ws.decoder,
-            data;
-            on_frame_header=(opcode::UInt8, fin::Bool, payload_length::UInt64) -> begin
-                if ws_is_data_frame(opcode)
-                    running_total = opcode == UInt8(WsOpcode.CONTINUATION) ? incoming_total : UInt64(0)
-                    if running_total > ws.max_incoming_payload_length || payload_length > (ws.max_incoming_payload_length - running_total)
-                        _ws_throw_protocol_error("incoming websocket payload exceeds configured maximum")
-                    end
-                    incoming_total = running_total + payload_length
-                    fin && (incoming_total = UInt64(0))
-                else
-                    payload_length > ws.max_incoming_payload_length && _ws_throw_protocol_error("incoming websocket control frame exceeds configured maximum")
-                end
-                return nothing
-            end,
+            data,
+            datalen;
+            on_frame_header=_WsMaxLengthGuard(ws, ws.incoming_message_payload_total),
         )
     else
-        ws_decoder_process!(f, ws.decoder, data)
+        ws_decoder_process!(f, ws.decoder, data, datalen)
     end
     for (i, frame) in pairs(frames)
         if ws.is_client
@@ -549,24 +636,23 @@ function ws_on_incoming_data!(f::Union{Nothing,Function}, ws::WSConn, data::Abst
     return frames
 end
 
-function ws_on_incoming_data!(ws::WSConn, data::AbstractVector{UInt8})::Vector{WsFrame{Vector{UInt8}}}
-    return ws_on_incoming_data!(nothing, ws, data)
+function ws_on_incoming_data!(ws::WSConn, data::AbstractVector{UInt8}, datalen::Int=lastindex(data))::Vector{WsFrame{Vector{UInt8}}}
+    return ws_on_incoming_data!(nothing, ws, data, datalen)
 end
 
+# Take the pending outgoing bytes for writing. Returns the accumulation buffer
+# itself (a swap, not a copy); it remains valid until the *next* take, which is
+# safe because all flush/write call sites are serialized by the connection's
+# send lock.
 function ws_get_outgoing_data!(ws::WSConn)::Vector{UInt8}
-    total = 0
-    for frame in ws.outgoing_frames
-        total += length(frame)
+    @lock ws.out_lock begin
+        out = ws.outgoing
+        spare = ws.outgoing_spare
+        empty!(spare)
+        ws.outgoing = spare
+        ws.outgoing_spare = out
+        return out
     end
-    output = Vector{UInt8}(undef, total)
-    pos = 1
-    for frame in ws.outgoing_frames
-        n = length(frame)
-        copyto!(output, pos, frame, 1, n)
-        pos += n
-    end
-    empty!(ws.outgoing_frames)
-    return output
 end
 
 function ws_random_handshake_key()::String

@@ -144,7 +144,7 @@ end
     HT.WebSockets.ws_send_frame!(ws, UInt8(HT.WebSockets.WsOpcode.TEXT), Vector{UInt8}("A"))
     HT.WebSockets.ws_send_frame!(ws, UInt8(HT.WebSockets.WsOpcode.BINARY), UInt8[0x42])
     outgoing = HT.WebSockets.ws_get_outgoing_data!(ws)
-    @test isempty(ws.outgoing_frames)
+    @test isempty(ws.outgoing)
     frames = HT.WebSockets.ws_decoder_process!(HT.WebSockets.ws_decoder_new(), outgoing)
     @test length(frames) == 2
     @test frames[1].opcode == UInt8(HT.WebSockets.WsOpcode.TEXT)

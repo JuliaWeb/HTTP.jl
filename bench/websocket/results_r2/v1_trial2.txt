@@ -1,0 +1,28 @@
+# WSBENCH julia=1.12.5 http=1.11.0 threads=4 scale=1.0
+[ Info: Listening on: 127.0.0.1:9184, thread id: 1
+[ Info: Server on 127.0.0.1:9184 closing
+RESULT name=send_16b msgs=100000 msg_bytes=16 secs=2.554 msgs_s=39156.7 mb_s=0.6 allocs_per_msg=15.03 kb_per_msg=0.49 gc_pct=0.0
+[ Info: Listening on: 127.0.0.1:9185, thread id: 1
+[ Info: Server on 127.0.0.1:9185 closing
+RESULT name=send_4k msgs=25000 msg_bytes=4096 secs=0.756 msgs_s=33078.7 mb_s=129.2 allocs_per_msg=22.03 kb_per_msg=15.2 gc_pct=2.1
+[ Info: Listening on: 127.0.0.1:9186, thread id: 1
+[ Info: Server on 127.0.0.1:9186 closing
+RESULT name=send_1m msgs=300 msg_bytes=1048576 secs=0.315 msgs_s=953.3 mb_s=953.3 allocs_per_msg=26.46 kb_per_msg=2948.22 gc_pct=36.6
+[ Info: Listening on: 127.0.0.1:9187, thread id: 1
+[ Info: Server on 127.0.0.1:9187 closing
+RESULT name=push_16b msgs=100000 msg_bytes=16 secs=2.401 msgs_s=41641.1 mb_s=0.6 allocs_per_msg=12.03 kb_per_msg=0.45 gc_pct=0.0
+[ Info: Listening on: 127.0.0.1:9188, thread id: 1
+[ Info: Server on 127.0.0.1:9188 closing
+RESULT name=push_4k msgs=25000 msg_bytes=4096 secs=0.699 msgs_s=35784.4 mb_s=139.8 allocs_per_msg=19.37 kb_per_msg=15.17 gc_pct=2.3
+[ Info: Listening on: 127.0.0.1:9189, thread id: 1
+[ Info: Server on 127.0.0.1:9189 closing
+RESULT name=echo_16b msgs=50000 msg_bytes=16 secs=1.633 msgs_s=30612.9 mb_s=0.5 allocs_per_msg=23.35 kb_per_msg=0.87 gc_pct=0.0
+[ Info: Listening on: 127.0.0.1:9190, thread id: 1
+[ Info: Server on 127.0.0.1:9190 closing
+RESULT name=echo_text16 msgs=50000 msg_bytes=16 secs=1.638 msgs_s=30531.9 mb_s=0.5 allocs_per_msg=23.35 kb_per_msg=0.84 gc_pct=0.0
+[ Info: Listening on: 127.0.0.1:9191, thread id: 1
+[ Info: Server on 127.0.0.1:9191 closing
+RESULT name=echo_64k msgs=2000 msg_bytes=65536 secs=0.243 msgs_s=8241.8 mb_s=515.1 allocs_per_msg=40.89 kb_per_msg=369.61 gc_pct=31.8
+[ Info: Listening on: 127.0.0.1:9192, thread id: 1
+RESULT name=latency_16b msgs=5000 msg_bytes=16 p50_us=73.5 p90_us=86.8 p99_us=121.3 rt_msgs_s=13613.0
+[ Info: Server on 127.0.0.1:9192 closing

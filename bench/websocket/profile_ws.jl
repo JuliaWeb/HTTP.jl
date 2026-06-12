@@ -78,7 +78,7 @@ W.open("ws://127.0.0.1:$PORT/") do ws
         c, b = get(agg, key, (0, 0))
         agg[key] = (c + 1, b + a.size)
     end
-    rows = sort(collect(agg); by=x -> -x.2[2])
+    rows = sort(collect(agg); by=x -> -x[2][2])
     println(rpad("count", 9), lpad("MB", 9), "  type | allocating frame")
     for (k, (c, b)) in rows[1:min(end, 28)]
         println(rpad(c, 9), lpad(round(b / 1024^2; digits=2), 9), "  ", k)
