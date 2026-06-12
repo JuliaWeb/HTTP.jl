@@ -50,7 +50,7 @@ end
 # REFUSED_STREAM, or GOAWAY rejecting the in-flight stream), then answers 200.
 # An accept loop plus a per-connection headers loop keeps it agnostic to
 # whether the client retries on the same connection or on a new one.
-function _rsr_serve!(listener; scenario::Symbol, refuse_first::Int = 1)
+function _rsr_serve!(listener; scenario::Symbol, refuse_first::Int = 1, rst_code::UInt32 = _RSR_REFUSED_STREAM)
     attempts = Threads.Atomic{Int}(0)
     conns = Threads.Atomic{Int}(0)
     accept_task = errormonitor(Threads.@spawn begin
@@ -72,7 +72,7 @@ function _rsr_serve!(listener; scenario::Symbol, refuse_first::Int = 1)
                         attempt = Threads.atomic_add!(attempts, 1) + 1
                         if attempt <= refuse_first
                             if scenario === :rst
-                                _rsr_write_frame!(conn, HT.RSTStreamFrame(hf.stream_id, _RSR_REFUSED_STREAM))
+                                _rsr_write_frame!(conn, HT.RSTStreamFrame(hf.stream_id, rst_code))
                             elseif scenario === :goaway
                                 _rsr_write_frame!(conn, HT.GoAwayFrame(UInt32(0), _RSR_NO_ERROR, UInt8[]))
                                 break
@@ -142,6 +142,29 @@ end
         HTTP.@try_ignore NC.close(listener)
         HTTP.@try_ignore wait(accept_task)
     end
+end
+
+# Other reset codes give no unprocessed guarantee: they must surface, not retry.
+@testset "HTTP/2 client does not retry a stream reset with CANCEL" begin
+    listener = ND.listen("tcp", "127.0.0.1:0"; backlog = 8)
+    laddr = NC.addr(listener)::NC.SocketAddrV4
+    url = "http://" * ND.join_host_port("127.0.0.1", Int(laddr.port)) * "/"
+    attempts, conns, accept_task = _rsr_serve!(listener; scenario = :rst, rst_code = UInt32(0x8))
+    try
+        result = _rsr_request(url)
+        @test attempts[] == 1                  # surfaced on first occurrence
+        @test result isa HT.H2StreamResetError
+        result isa HT.H2StreamResetError && @test occursin("CANCEL", sprint(showerror, result))
+    finally
+        HTTP.@try_ignore NC.close(listener)
+        HTTP.@try_ignore wait(accept_task)
+    end
+end
+
+@testset "H2StreamResetError names RFC 9113 §7 error codes" begin
+    @test sprint(showerror, HT.H2StreamResetError(UInt32(0x7))) == "HTTP/2 stream reset by peer: REFUSED_STREAM"
+    @test sprint(showerror, HT.H2StreamResetError(UInt32(0xb))) == "HTTP/2 stream reset by peer: ENHANCE_YOUR_CALM"
+    @test endswith(sprint(showerror, HT.H2StreamResetError(UInt32(0xff))), ": 0xff")
 end
 
 end # parent testset
