@@ -43,6 +43,18 @@ end
     @test collect(masked_encoded[3:6]) == UInt8[0x37, 0xfa, 0x21, 0x3d]
     @test length(masked_encoded) == 8
 
+    strided_payload = @view UInt8[0x0a, 0x14, 0x1e, 0x28, 0x32][1:2:5]
+    strided_masked = HT.WebSockets.WsFrame(
+        opcode = UInt8(HT.WebSockets.WsOpcode.BINARY),
+        payload = strided_payload,
+        fin = true,
+        masked = true,
+        masking_key = (0x01, 0x02, 0x03, 0x04),
+    )
+    strided_encoded = HT.WebSockets.ws_encode_frame(strided_masked)
+    strided_decoded = HT.WebSockets.ws_decoder_process!(HT.WebSockets.ws_decoder_new(), strided_encoded)
+    @test strided_decoded[1].payload == collect(strided_payload)
+
     medium_payload = fill(UInt8('a'), 126)
     medium_encoded = HT.WebSockets.ws_encode_frame(HT.WebSockets.WsFrame(opcode = UInt8(HT.WebSockets.WsOpcode.BINARY), payload = medium_payload, fin = true))
     @test medium_encoded[2] == 126
@@ -144,7 +156,7 @@ end
     HT.WebSockets.ws_send_frame!(ws, UInt8(HT.WebSockets.WsOpcode.TEXT), Vector{UInt8}("A"))
     HT.WebSockets.ws_send_frame!(ws, UInt8(HT.WebSockets.WsOpcode.BINARY), UInt8[0x42])
     outgoing = HT.WebSockets.ws_get_outgoing_data!(ws)
-    @test isempty(ws.outgoing_frames)
+    @test isempty(ws.outgoing)
     frames = HT.WebSockets.ws_decoder_process!(HT.WebSockets.ws_decoder_new(), outgoing)
     @test length(frames) == 2
     @test frames[1].opcode == UInt8(HT.WebSockets.WsOpcode.TEXT)
@@ -244,4 +256,82 @@ end
     short_key_request = HT.Request("GET", "/ws"; headers = short_key_headers, host = "example.com", content_length = 0)
     @test !HT.WebSockets.ws_is_websocket_request(short_key_request)
     @test HT.WebSockets.ws_get_request_sec_websocket_key(short_key_request) === nothing
+end
+
+@testset "HTTP websocket decoder large-frame growth path and chunked masking" begin
+    # > _WS_PAYLOAD_PREALLOC_CAP exercises the incremental-growth branch (the
+    # claimed length must not be preallocated up front); odd-sized chunks
+    # exercise the masking key phase across chunk boundaries.
+    W = HT.WebSockets
+    sz = W._WS_PAYLOAD_PREALLOC_CAP + 65_537
+    payload = rand(UInt8, sz)
+    frame = W.WsFrame(opcode = UInt8(W.WsOpcode.BINARY), payload = payload, fin = true,
+                      masked = true, masking_key = (0x12, 0x34, 0x56, 0x78))
+    wire = Vector{UInt8}(W.ws_encode_frame(frame))
+    dec = W.ws_decoder_new()
+    frames = nothing
+    pos = 1
+    while pos <= length(wire)
+        n = min(13_331, length(wire) - pos + 1)   # odd chunk size: rotate key phase
+        got = W.ws_decoder_process!(dec, view(wire, pos:pos+n-1))
+        isempty(got) || (frames = collect(got))
+        pos += n
+    end
+    @test frames !== nothing && length(frames) == 1
+    @test frames[1].payload == payload
+
+    # exact-size presize path stays correct for a small masked frame split
+    # at every possible boundary
+    small = rand(UInt8, 19)
+    sframe = W.WsFrame(opcode = UInt8(W.WsOpcode.BINARY), payload = small, fin = true,
+                       masked = true, masking_key = (0xaa, 0xbb, 0xcc, 0xdd))
+    swire = Vector{UInt8}(W.ws_encode_frame(sframe))
+    for split in 1:(length(swire) - 1)
+        d = W.ws_decoder_new()
+        f1 = W.ws_decoder_process!(d, view(swire, 1:split))
+        f2 = W.ws_decoder_process!(d, view(swire, split+1:length(swire)))
+        out = isempty(f2) ? f1 : f2
+        @test length(out) == 1 && out[1].payload == small
+    end
+end
+
+@testset "HTTP websocket max-length guard (header pre-check)" begin
+    W = HT.WebSockets
+    conn = W.WSConn(is_client = false, max_incoming_payload_length = UInt64(100))
+    key = (0x01, 0x02, 0x03, 0x04)
+    enc(op, p; fin = true) = Vector{UInt8}(W.ws_encode_frame(
+        W.WsFrame(opcode = UInt8(op), payload = p, fin = fin, masked = true, masking_key = key)))
+
+    # within limit across a fragmented message, reset after fin
+    a = enc(W.WsOpcode.BINARY, rand(UInt8, 60); fin = false)
+    b = enc(W.WsOpcode.CONTINUATION, rand(UInt8, 40); fin = true)
+    frames = W.ws_on_incoming_data!(conn, vcat(a, b))
+    @test length(frames) == 2
+    c = enc(W.WsOpcode.BINARY, rand(UInt8, 100))   # full budget again post-reset
+    @test length(W.ws_on_incoming_data!(conn, c)) == 1
+
+    # fragmented total exceeding the limit is rejected at the header
+    conn2 = W.WSConn(is_client = false, max_incoming_payload_length = UInt64(100))
+    a2 = enc(W.WsOpcode.BINARY, rand(UInt8, 60); fin = false)
+    b2 = enc(W.WsOpcode.CONTINUATION, rand(UInt8, 41); fin = true)
+    @test_throws W.WebSocketProtocolError W.ws_on_incoming_data!(conn2, vcat(a2, b2))
+
+    # control frame over the limit is rejected
+    conn3 = W.WSConn(is_client = false, max_incoming_payload_length = UInt64(8))
+    ping = enc(W.WsOpcode.PING, rand(UInt8, 9))
+    @test_throws W.WebSocketProtocolError W.ws_on_incoming_data!(conn3, ping)
+end
+
+@testset "HTTP websocket outgoing buffer swap semantics" begin
+    W = HT.WebSockets
+    conn = W.WSConn(is_client = false)
+    W.ws_send_frame!(conn, UInt8(W.WsOpcode.TEXT), Vector{UInt8}("one"))
+    first_take = W.ws_get_outgoing_data!(conn)
+    @test !isempty(first_take)
+    @test isempty(W.ws_get_outgoing_data!(conn))   # nothing pending
+    W.ws_send_frame!(conn, UInt8(W.WsOpcode.TEXT), Vector{UInt8}("two"))
+    second_take = W.ws_get_outgoing_data!(conn)
+    dec = W.ws_decoder_new()
+    f2 = W.ws_decoder_process!(dec, second_take)
+    @test length(f2) == 1 && String(copy(f2[1].payload)) == "two"
 end
