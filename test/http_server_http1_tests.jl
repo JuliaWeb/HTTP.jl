@@ -52,32 +52,59 @@ end
 # indefinitely. Wrap the whole exchange in `_run_with_timeout`, a task-level
 # watchdog that does not depend on socket deadlines, so a stuck read fails the
 # test in seconds instead of hanging the job until CI's wall-clock limit.
+# Raised when the raw probe saw no response bytes at all within its budget.
+# On Windows this is the known IOCP wake strand (JuliaServices/Reseau.jl#107):
+# the parked reader is intermittently never woken even though bytes arrive.
+struct _FirstByteTimeout <: Exception end
+
+# `_read_until_quiet` runs under its own `_run_with_timeout` watchdog, so the
+# timeout surfaces here wrapped in (possibly nested) TaskFailedException.
+function _is_first_byte_timeout(err)::Bool
+    err isa _FirstByteTimeout && return true
+    err isa TaskFailedException || return false
+    inner = err.task.exception
+    return inner !== nothing && _is_first_byte_timeout(inner)
+end
+
 function _raw_http_request(
     port::Integer,
     request::AbstractString;
     settle_s::Float64 = 0.5,
     close_write::Bool = true,
     wait_for_first_byte::Bool = true,
+    # Re-dial fresh and retry when no first byte arrives. Windows-only by
+    # default so other platforms stay strict; safe for these probes because no
+    # caller asserts on server-side invocation counts.
+    attempts::Int = Sys.iswindows() ? 3 : 1,
 )::String
-    return _run_with_timeout(; timeout_s = max(8.0, settle_s + 4.0), label = "raw http request (port $(port))") do
-        sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
-        try
-            write(sock, Vector{UInt8}(codeunits(String(request))))
-            if close_write
-                HT.@try_ignore begin
-                    NC.closewrite(sock)
+    return _run_with_timeout(; timeout_s = max(8.0, settle_s + 4.0) * attempts, label = "raw http request (port $(port))") do
+        for attempt in 1:attempts
+            sock = ND.connect("tcp", "127.0.0.1:$(Int(port))")
+            try
+                write(sock, Vector{UInt8}(codeunits(String(request))))
+                if close_write
+                    HT.@try_ignore begin
+                        NC.closewrite(sock)
+                    end
                 end
+                # master hardening kept: longer first-byte budget on Windows,
+                # combined with the re-dial retry below
+                first_byte_timeout_s = max(Sys.iswindows() ? 5.0 : 2.0, settle_s + 1.0)
+                return _read_until_quiet(
+                    sock;
+                    timeout_s = first_byte_timeout_s,
+                    quiet_timeout_s = min(0.25, max(0.05, settle_s)),
+                    wait_for_first_byte = wait_for_first_byte,
+                )
+            catch err
+                _is_first_byte_timeout(err) || rethrow(err)
+                attempt < attempts || error("timed out waiting for first response byte ($(attempts) attempts)")
+                @warn "raw probe got no first byte; re-dialing — known Windows IOCP wake strand (Reseau#107)" attempt port
+            finally
+                NC.close(sock)
             end
-            first_byte_timeout_s = max(Sys.iswindows() ? 5.0 : 2.0, settle_s + 1.0)
-            return _read_until_quiet(
-                sock;
-                timeout_s = first_byte_timeout_s,
-                quiet_timeout_s = min(0.25, max(0.05, settle_s)),
-                wait_for_first_byte = wait_for_first_byte,
-            )
-        finally
-            NC.close(sock)
         end
+        error("unreachable: raw probe retry loop exited")
     end
 end
 
@@ -166,7 +193,7 @@ function _read_until_quiet(
             end
         end
         if wait_for_first_byte && !saw_bytes
-            error("timed out waiting for first response byte")
+            throw(_FirstByteTimeout())
         end
         return String(out)
     end
