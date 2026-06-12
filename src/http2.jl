@@ -17,6 +17,70 @@ const FLAG_PADDED = UInt8(0x8)
 const _FLAG_HEADERS_PRIORITY = UInt8(0x20)
 const _H2_MAX_FRAME_SIZE = 16_384
 
+# SETTINGS parameter identifier for the per-stream initial receive window
+# (RFC 7540 §6.5.2). Used when advertising a non-default flow-control window.
+const _H2_SETTINGS_INITIAL_WINDOW_SIZE = UInt16(0x4)
+
+# Protocol-default flow-control window (RFC 7540 §6.9.2) and the default
+# per-stream receive buffer cap used when callers do not override them.
+const _H2_DEFAULT_WINDOW_SIZE = 65_535
+const _H2_DEFAULT_MAX_BUFFERED_BYTES = 256 * 1024
+
+# Maximum legal flow-control window (RFC 7540 §6.9.1): 2^31 - 1.
+const _H2_FLOW_CONTROL_MAX_WINDOW = Int64(0x7fff_ffff)
+
+"""
+    HTTP2Settings(; initial_window_size=65535, connection_window_size=65535)
+
+HTTP/2 flow-control configuration shared by [`Server`](@ref), [`Client`](@ref),
+and `connect_h2!`.
+
+- `initial_window_size`: the per-stream receive window advertised via
+  `SETTINGS_INITIAL_WINDOW_SIZE` (RFC 7540 §6.5.2).
+- `connection_window_size`: the connection-level receive window. Values above the
+  protocol default of 65535 are applied with an initial `WINDOW_UPDATE`.
+
+Both default to the protocol default of 65535, leaving existing behavior
+unchanged. Raising them improves single-stream throughput on links with
+non-trivial latency, where the default 64 KiB window would otherwise cap a
+transfer at roughly `window / RTT`. The per-stream receive buffer cap is derived
+from `initial_window_size`, so it does not need to be configured separately.
+
+`initial_window_size` may be set below the default to apply tighter per-stream
+backpressure. `connection_window_size` must be at least the protocol default of
+65535: the connection-level window starts at that value and can only be enlarged
+with a `WINDOW_UPDATE`, so a smaller value cannot be advertised.
+"""
+struct HTTP2Settings
+    initial_window_size::Int
+    connection_window_size::Int
+
+    function HTTP2Settings(initial_window_size::Int, connection_window_size::Int)
+        1 <= initial_window_size <= _H2_FLOW_CONTROL_MAX_WINDOW ||
+            throw(ArgumentError("initial_window_size must be in 1..$(_H2_FLOW_CONTROL_MAX_WINDOW)"))
+        # The connection-level window starts at the protocol default and can only be
+        # enlarged with a WINDOW_UPDATE, so it cannot be advertised below the default.
+        _H2_DEFAULT_WINDOW_SIZE <= connection_window_size <= _H2_FLOW_CONTROL_MAX_WINDOW ||
+            throw(ArgumentError("connection_window_size must be in $(_H2_DEFAULT_WINDOW_SIZE)..$(_H2_FLOW_CONTROL_MAX_WINDOW)"))
+        return new(initial_window_size, connection_window_size)
+    end
+end
+
+function HTTP2Settings(;
+    initial_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+    connection_window_size::Integer=_H2_DEFAULT_WINDOW_SIZE,
+)
+    return HTTP2Settings(Int(initial_window_size), Int(connection_window_size))
+end
+
+# Per-stream receive buffer cap derived from the advertised window. The buffer
+# must hold a full advertised window before the application reads it (a peer may
+# send up to the advertised window before the handler consumes any bytes), so it
+# is the larger of the configured window and the default cap. This mirrors how
+# `_h2_max_header_block_bytes` derives an internal limit rather than exposing it.
+_h2_buffered_bytes(settings::HTTP2Settings) =
+    max(settings.initial_window_size, _H2_DEFAULT_MAX_BUFFERED_BYTES)
+
 """
     FrameHeader
 

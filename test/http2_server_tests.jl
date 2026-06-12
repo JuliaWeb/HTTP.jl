@@ -1692,3 +1692,71 @@ end
         _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
     end
 end
+
+@testset "HTTP/2 server advertises configured flow-control windows" begin
+    server = HT.serve!(
+        "127.0.0.1", 0;
+        listenany = true,
+        http2_settings = HT.HTTP2Settings(
+            initial_window_size = 1_048_576,
+            connection_window_size = 2_097_152,
+        ),
+    ) do request
+        _ = request
+        return HT.Response(200, HT.BytesBody(UInt8[]); content_length = 0, proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn = ND.connect("tcp", address)
+        reader = HT._ConnReader(conn)
+        _write_all_h2_server_raw!(conn::NC.Conn, HT._H2_PREFACE)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+        # The server proactively sends SETTINGS, a SETTINGS ACK, and (because the
+        # connection window is raised) one connection-level WINDOW_UPDATE.
+        frames = HT.AbstractFrame[_read_h2_server_frame!(conn::NC.Conn, reader) for _ in 1:3]
+        settings_idx = findfirst(f -> f isa HT.SettingsFrame && !(f::HT.SettingsFrame).ack, frames)
+        @test settings_idx !== nothing
+        @test (frames[settings_idx]::HT.SettingsFrame).settings ==
+            Pair{UInt16, UInt32}[UInt16(0x4) => UInt32(1_048_576)]
+        @test count(f -> f isa HT.SettingsFrame && (f::HT.SettingsFrame).ack, frames) == 1
+        wu_idx = findfirst(f -> f isa HT.WindowUpdateFrame, frames)
+        @test wu_idx !== nothing
+        wu = frames[wu_idx]::HT.WindowUpdateFrame
+        @test wu.stream_id == UInt32(0)
+        @test wu.window_size_increment == UInt32(2_097_152 - 65_535)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
+
+@testset "HTTP/2 server keeps default flow-control windows byte-for-byte" begin
+    server = HT.serve!("127.0.0.1", 0; listenany = true) do request
+        _ = request
+        return HT.Response(200, HT.BytesBody(UInt8[]); content_length = 0, proto_major = 2, proto_minor = 0)
+    end
+    address = HT.server_addr(server)
+    conn = nothing
+    try
+        conn = ND.connect("tcp", address)
+        reader = HT._ConnReader(conn)
+        _write_all_h2_server_raw!(conn::NC.Conn, HT._H2_PREFACE)
+        _write_frame_h2_server_raw!(conn::NC.Conn, HT.SettingsFrame(false, Pair{UInt16, UInt32}[]))
+        first = _read_h2_server_frame!(conn::NC.Conn, reader)
+        second = _read_h2_server_frame!(conn::NC.Conn, reader)
+        frames = (first, second)
+        settings_idx = findfirst(f -> f isa HT.SettingsFrame && !(f::HT.SettingsFrame).ack, frames)
+        @test settings_idx !== nothing
+        # With default windows the advertised SETTINGS payload stays empty and no
+        # connection-level WINDOW_UPDATE is sent before any stream opens.
+        @test isempty((frames[settings_idx]::HT.SettingsFrame).settings)
+        @test count(f -> f isa HT.SettingsFrame && (f::HT.SettingsFrame).ack, frames) == 1
+        @test !any(f -> f isa HT.WindowUpdateFrame, frames)
+    finally
+        conn === nothing || HTTP.@try_ignore NC.close(conn::NC.Conn)
+        HT.forceclose(server)
+        _ = timedwait(() -> istaskdone(server.serve_task::Task), 3.0; pollint = 0.001)
+    end
+end
